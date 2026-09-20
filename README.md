@@ -78,4 +78,5 @@ See [SECURITY.md](SECURITY.md) for how to report vulnerabilities.
 
 ## License
 
-Apache License 2.0. See [LICENSE](LICENSE).
+Apache License 2.0. See [LICENSE](LICENSE). Bundled third-party assets are listed in
+[THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md).

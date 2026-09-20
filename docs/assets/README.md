@@ -28,7 +28,10 @@ and at 16 px, where it would be a single pixel.
 | Teal | `#0E9F8E` | Badge value, links on light |
 | Snow | `#E6F6F9` | Cursor, snow cap, wordmark on dark |
 
-Text uses Inter with Helvetica and Arial as fallbacks so the SVGs need no web fonts.
+The wordmark and tagline in the lockups are Cantarell outlines (Bold 700 and Medium 500), so the
+SVGs render identically everywhere and depend on no installed font. Cantarell is also the UI
+typeface: the GNOME 0.311 variable font, subset to Latin, Greek and Cyrillic, bundled at
+`web/public/fonts/Cantarell-VF.woff2` under the SIL Open Font License 1.1.
 
 ## Favicon markup
 

@@ -1,12 +1,22 @@
 @import "./tokens.css";
 
+/* Cantarell (GNOME, SIL OFL 1.1) is bundled so the strict CSP needs no font host.
+   One variable file covers weights 100 to 800; see public/fonts/Cantarell-OFL.txt. */
+@font-face {
+  font-family: "Cantarell";
+  src: url("/fonts/Cantarell-VF.woff2") format("woff2-variations"), url("/fonts/Cantarell-VF.woff2") format("woff2");
+  font-weight: 100 800;
+  font-style: normal;
+  font-display: swap;
+}
+
 *, *::before, *::after { box-sizing: border-box; }
 html, body, #root { height: 100%; }
 body {
   margin: 0;
   background: var(--bg);
   color: var(--fg);
-  font: 14px/1.5 var(--font);
+  font: 15px/1.5 var(--font);
   -webkit-font-smoothing: antialiased;
 }
 a { color: var(--accent); text-decoration: none; }
