@@ -45,7 +45,9 @@ func main() {
 	if flag.NArg() > 0 {
 		addr = flag.Arg(0)
 	}
-	ln, err := net.Listen("tcp", addr)
+	// A demo server must be reachable from the gateway's LAN address, since
+	// the probe refuses loopback targets; hence the all-interfaces default.
+	ln, err := net.Listen("tcp", addr) // #nosec G102 -- dev tool, see comment
 	if err != nil {
 		panic(err)
 	}
