@@ -18,7 +18,7 @@ services:
       - "127.0.0.1:5432:5432"
 
   guacd:
-    image: guacamole/guacd:1.5.5
+    image: guacamole/guacd:1.6.0
     # guacd only needs to be reachable from zanskar; never publish it on a host port.
     read_only: true
     tmpfs:
