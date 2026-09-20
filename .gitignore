@@ -1,0 +1,24 @@
+# binaries
+/bin/
+/dist/
+*.exe
+*.test
+*.out
+
+# local config and secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+zanskar.db
+zanskar.db-*
+/data/
+
+# tooling
+.idea/
+.vscode/
+.DS_Store
+coverage.html
+node_modules/
+web/dist/

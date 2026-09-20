@@ -1,0 +1,2943 @@
+openapi: 3.1.0
+info:
+  title: Zanskar API
+  version: 0.1.0
+  summary: Agentless VM access gateway
+  description: |
+    Zanskar exposes a JSON API under `/api/v1` and two WebSocket endpoints under `/ws`.
+
+    ## Authentication
+
+    Every authenticated request carries the `zanskar_session` cookie. The cookie value is an
+    opaque random token; the server stores only its SHA-256 hash (`auth_sessions.token_hash`).
+    The cookie is set with `HttpOnly`, `Secure`, `SameSite=Strict` and `Path=/`.
+
+    Sessions are created by `POST /auth/login`. When the account has TOTP enrolled, or the
+    deployment requires MFA, the login response returns `mfa_required` and the session is created
+    with `mfa_verified=false`. Such a session may only call the `/auth/mfa/*` endpoints until
+    `POST /auth/mfa/totp/verify` succeeds.
+
+    ## CSRF
+
+    Every mutating request (`POST`, `PUT`, `PATCH`, `DELETE`) must send the `X-CSRF-Token` header.
+    The token is returned by `POST /auth/login` and `GET /auth/me` in the `csrf_token` field and is
+    bound to the session. Requests without a matching token are rejected with `403 csrf_invalid`.
+    WebSocket upgrades are protected by the one-time connect ticket instead.
+
+    ## Roles
+
+    - `admin`: manages configuration (users, groups, identity providers, credentials, targets,
+      autoscaling groups, policies), can terminate sessions, and can read the audit log and
+      recordings.
+    - `auditor`: reads the audit log, verifies the hash chain, and views recordings, but cannot
+      change configuration. Every recording view and audit query is itself recorded in
+      `recording_views` and in the audit log, whichever role performs it.
+    - `user`: sees the targets their groups' policies grant and opens sessions to them.
+
+    Endpoints are tagged by the role that may call them. A caller holding several roles may call
+    any endpoint tagged with one of them.
+
+    ## Pagination
+
+    Every list endpoint accepts `limit` (default 50, max 200) and `cursor`. Responses contain
+    `items` and `next_cursor`. A null `next_cursor` means the list is exhausted. Cursors are
+    opaque; do not construct them.
+
+    ## Errors
+
+    All errors use the `Error` schema. `request_id` matches the `X-Request-Id` response header
+    and is written to the server log, so include it in bug reports.
+
+    ## Secrets
+
+    Fields marked `writeOnly` (passwords, private keys, identity provider client secrets) are
+    accepted on create and update and are never returned by any endpoint.
+
+    ## Timestamps
+
+    All timestamps are RFC 3339 strings in UTC.
+  license:
+    name: Apache 2.0
+    identifier: Apache-2.0
+
+servers:
+  - url: /api/v1
+
+tags:
+  - name: system
+    description: Unauthenticated liveness and version endpoints.
+  - name: auth
+    description: Login, MFA, and session endpoints for any authenticated user.
+  - name: user
+    description: Endpoints for the `user` role.
+  - name: admin
+    description: Endpoints for the `admin` role.
+  - name: auditor
+    description: Read-only review endpoints, callable by `auditor` and `admin`.
+  - name: websocket
+    description: Session transport endpoints (documented, not callable as REST).
+
+security:
+  - cookieAuth: []
+
+paths:
+  # ------------------------------------------------------------------ system
+  /healthz:
+    get:
+      tags: [system]
+      summary: Liveness probe
+      security: []
+      responses:
+        "200":
+          description: Process is alive.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Health"
+  /readyz:
+    get:
+      tags: [system]
+      summary: Readiness probe
+      description: Returns 200 only when the database and, if configured, guacd are reachable.
+      security: []
+      responses:
+        "200":
+          description: Ready.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Health"
+        "503":
+          description: A dependency is unavailable.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Health"
+  /version:
+    get:
+      tags: [system]
+      summary: Version
+      description: Returns the release version only. No commit hash, build host, or dependency list.
+      security: []
+      responses:
+        "200":
+          description: Version string.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [version]
+                properties:
+                  version:
+                    type: string
+                    examples: ["0.1.0"]
+
+  # ------------------------------------------------------------------ auth
+  /auth/login:
+    post:
+      tags: [auth]
+      summary: Log in with username and password
+      description: |
+        Rate limited per source IP and per username. After repeated failures the account is set to
+        `locked` until `locked_until`. The response body does not reveal whether the username
+        exists. On success the `zanskar_session` cookie is set.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoginRequest"
+      responses:
+        "200":
+          description: Login accepted. Check `status`.
+          headers:
+            Set-Cookie:
+              schema:
+                type: string
+              description: "`zanskar_session=<opaque>; HttpOnly; Secure; SameSite=Strict; Path=/`"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LoginResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "423":
+          description: Account is locked.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+  /auth/mfa/totp/verify:
+    post:
+      tags: [auth]
+      summary: Complete login with a TOTP code
+      description: Marks the current session `mfa_verified`. Accepts a recovery code in place of a TOTP code.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TotpCode"
+      responses:
+        "200":
+          description: Session is now fully authenticated.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Me"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+  /auth/mfa/totp/enroll:
+    post:
+      tags: [auth]
+      summary: Start TOTP enrollment
+      description: |
+        Generates a new secret for the caller. The secret and the `otpauth://` URI are returned
+        exactly once. Enrollment is not active until `POST /auth/mfa/totp/confirm` succeeds.
+        Re-enrolling replaces an unconfirmed secret; replacing a confirmed secret requires the
+        current password in the request body.
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                current_password:
+                  type: string
+                  writeOnly: true
+      responses:
+        "200":
+          description: Enrollment material.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TotpEnrollment"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /auth/mfa/totp/confirm:
+    post:
+      tags: [auth]
+      summary: Confirm TOTP enrollment
+      description: Proves possession of the authenticator. Returns one-time recovery codes, shown once.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TotpCode"
+      responses:
+        "200":
+          description: TOTP is now active.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [recovery_codes]
+                properties:
+                  recovery_codes:
+                    type: array
+                    items:
+                      type: string
+        "400":
+          $ref: "#/components/responses/BadRequest"
+  /auth/logout:
+    post:
+      tags: [auth]
+      summary: Revoke the current session
+      responses:
+        "204":
+          description: Session revoked and cookie cleared.
+  /auth/me:
+    get:
+      tags: [auth]
+      summary: Current user
+      responses:
+        "200":
+          description: The caller, their roles, and a fresh CSRF token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Me"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /auth/oidc/{idp}/start:
+    get:
+      tags: [auth]
+      summary: Begin an OIDC login (stub)
+      description: |
+        Redirects the browser to the provider's authorization endpoint with PKCE, `state`, and
+        `nonce`. Phase 2. Until then returns 501.
+      security: []
+      parameters:
+        - $ref: "#/components/parameters/IdpName"
+      responses:
+        "302":
+          description: Redirect to the identity provider.
+        "501":
+          $ref: "#/components/responses/NotImplemented"
+    post:
+      tags: [auth]
+      summary: Begin an OIDC login without a redirect (stub)
+      description: Returns the authorization URL for single-page clients that prefer to navigate themselves.
+      security: []
+      parameters:
+        - $ref: "#/components/parameters/IdpName"
+      responses:
+        "200":
+          description: Authorization URL.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [authorization_url]
+                properties:
+                  authorization_url:
+                    type: string
+                    format: uri
+        "501":
+          $ref: "#/components/responses/NotImplemented"
+  /auth/oidc/{idp}/callback:
+    get:
+      tags: [auth]
+      summary: OIDC redirect callback (stub)
+      security: []
+      parameters:
+        - $ref: "#/components/parameters/IdpName"
+        - name: code
+          in: query
+          schema:
+            type: string
+        - name: state
+          in: query
+          schema:
+            type: string
+      responses:
+        "302":
+          description: Redirect into the portal with the session cookie set.
+        "501":
+          $ref: "#/components/responses/NotImplemented"
+    post:
+      tags: [auth]
+      summary: OIDC form-post callback (stub)
+      security: []
+      parameters:
+        - $ref: "#/components/parameters/IdpName"
+      requestBody:
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              properties:
+                code:
+                  type: string
+                state:
+                  type: string
+      responses:
+        "302":
+          description: Redirect into the portal with the session cookie set.
+        "501":
+          $ref: "#/components/responses/NotImplemented"
+
+  # ------------------------------------------------------------------ user
+  /me/targets:
+    get:
+      tags: [user]
+      summary: Targets the caller may reach
+      description: |
+        Evaluates every enabled policy of every group the caller belongs to. Returns static
+        targets and autoscaling groups with the union of allowed protocols, intersected with the
+        target's probed capabilities.
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+        - name: q
+          in: query
+          description: Substring match on name, address, or tag value.
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Reachable targets.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/PagedResponse"
+                  - type: object
+                    properties:
+                      items:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/ReachableTarget"
+  /me/autoscaling-groups/{id}/instances:
+    get:
+      tags: [user]
+      summary: Healthy instances in an autoscaling group
+      description: |
+        Only instances that are `InService`, have `lb_health` healthy or null, and `probe_health`
+        healthy are returned. The caller must have a policy that grants the group.
+      parameters:
+        - $ref: "#/components/parameters/Id"
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+      responses:
+        "200":
+          description: Healthy pool.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/PagedResponse"
+                  - type: object
+                    properties:
+                      items:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/AsgInstance"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /connect:
+    post:
+      tags: [user]
+      summary: Request a connect ticket
+      description: |
+        Server-side policy evaluation happens here: role, group membership, target selector,
+        protocol, time window, and MFA requirement. On success an `access_sessions` row is created
+        and a one-time ticket is returned. The ticket must be presented to `/ws/terminal` or
+        `/ws/desktop` within `expires_at` (30 seconds) and is invalid after first use. Credentials
+        supplied in the body are held in memory only for the life of the ticket.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ConnectRequest"
+      responses:
+        "201":
+          description: Ticket issued.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConnectTicket"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: The target is not reachable for this protocol (capability missing, host key untrusted or changed, or instance no longer healthy).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /me/sessions:
+    get:
+      tags: [user]
+      summary: The caller's own session history
+      description: Metadata only. Recording identifiers are not included.
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+      responses:
+        "200":
+          description: Sessions.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/PagedResponse"
+                  - type: object
+                    properties:
+                      items:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/OwnSession"
+  /sessions/{id}/failover:
+    post:
+      tags: [user]
+      summary: Switch to another healthy instance after target loss
+      description: |
+        Valid only when the session belongs to the caller, was opened against an autoscaling
+        instance, and ended with `end_reason=target_lost`. Creates a new session with
+        `failover_from_session_id` set to `{id}`, re-evaluates policy, and returns a fresh ticket.
+        The chosen instance must currently be in the healthy pool.
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [asg_instance_id]
+              properties:
+                asg_instance_id:
+                  type: string
+                credential:
+                  $ref: "#/components/schemas/UserSuppliedCredential"
+      responses:
+        "201":
+          description: Ticket for the replacement session.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConnectTicket"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: The session did not end with `target_lost`, or the chosen instance is not healthy.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  # ------------------------------------------------------------------ websocket
+  /ws/terminal:
+    get:
+      tags: [websocket]
+      summary: Terminal transport (SSH, WinRM)
+      description: |
+        Served at the root, not under `/api/v1`. The browser opens
+        `wss://<host>/ws/terminal?ticket=<ticket>`. The server validates the ticket, marks it
+        used, checks the `Origin` header against the configured public URL, and then dials the
+        target. Messages are binary frames. Client to server frames are raw keystrokes or a JSON
+        control frame `{"type":"resize","cols":N,"rows":N}`. Server to client frames are raw
+        terminal output or a JSON control frame `{"type":"target_lost","healthy_pool":[...]}`
+        when an autoscaling instance leaves the healthy pool. Idle and maximum-duration limits
+        from the policy are enforced here.
+      parameters:
+        - $ref: "#/components/parameters/Ticket"
+      security: []
+      responses:
+        "101":
+          description: Switching protocols.
+        "401":
+          description: Ticket missing, expired, or already used.
+        "403":
+          description: Origin mismatch.
+  /ws/desktop:
+    get:
+      tags: [websocket]
+      summary: Desktop transport (RDP, VNC)
+      description: |
+        Served at the root, not under `/api/v1`. Same ticket handshake as `/ws/terminal`. The
+        server speaks the Guacamole protocol to guacd on a private network and relays instructions
+        to the browser, which renders them with guacamole-common-js. Clipboard and file transfer
+        instructions are dropped unless the policy allows them. The same `target_lost` control
+        message is delivered as a Guacamole `error` instruction with status 519 and a JSON payload.
+      parameters:
+        - $ref: "#/components/parameters/Ticket"
+      security: []
+      responses:
+        "101":
+          description: Switching protocols.
+        "401":
+          description: Ticket missing, expired, or already used.
+        "403":
+          description: Origin mismatch.
+
+  # ------------------------------------------------------------------ admin: users
+  /users:
+    get:
+      tags: [admin]
+      summary: List users
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+        - name: status
+          in: query
+          schema:
+            $ref: "#/components/schemas/UserStatus"
+        - name: role
+          in: query
+          schema:
+            $ref: "#/components/schemas/Role"
+        - name: q
+          in: query
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Users.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/PagedResponse"
+                  - type: object
+                    properties:
+                      items:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/User"
+    post:
+      tags: [admin]
+      summary: Create a local user
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UserCreate"
+      responses:
+        "201":
+          description: Created.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "409":
+          $ref: "#/components/responses/Conflict"
+  /users/{id}:
+    parameters:
+      - $ref: "#/components/parameters/Id"
+    get:
+      tags: [admin]
+      summary: Get a user
+      responses:
+        "200":
+          description: User.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    patch:
+      tags: [admin]
+      summary: Update a user
+      description: |
+        Changing `roles` on your own account to drop `admin` is rejected when you are the last
+        admin. Setting `status` to `active` clears `failed_logins` and `locked_until`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UserUpdate"
+      responses:
+        "200":
+          description: Updated.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+    delete:
+      tags: [admin]
+      summary: Delete a user
+      description: Audit events and sessions referencing the user are retained; `actor_user_id` keeps the old id.
+      responses:
+        "204":
+          description: Deleted.
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: Cannot delete the last admin or yourself.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /users/{id}/sessions:
+    delete:
+      tags: [admin]
+      summary: Revoke all login sessions of a user
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "204":
+          description: All `auth_sessions` for the user are revoked.
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  # ------------------------------------------------------------------ admin: groups
+  /groups:
+    get:
+      tags: [admin]
+      summary: List groups
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+        - name: q
+          in: query
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Groups.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/PagedResponse"
+                  - type: object
+                    properties:
+                      items:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/Group"
+    post:
+      tags: [admin]
+      summary: Create a group
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/GroupWrite"
+      responses:
+        "201":
+          description: Created.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Group"
+        "409":
+          $ref: "#/components/responses/Conflict"
+  /groups/{id}:
+    parameters:
+      - $ref: "#/components/parameters/Id"
+    get:
+      tags: [admin]
+      summary: Get a group with its members
+      responses:
+        "200":
+          description: Group.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GroupDetail"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    patch:
+      tags: [admin]
+      summary: Update a group
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/GroupWrite"
+      responses:
+        "200":
+          description: Updated.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Group"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    delete:
+      tags: [admin]
+      summary: Delete a group
+      description: Policies bound to the group are deleted with it. Confirmation is the client's job.
+      responses:
+        "204":
+          description: Deleted.
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /groups/{id}/members:
+    parameters:
+      - $ref: "#/components/parameters/Id"
+    put:
+      tags: [admin]
+      summary: Replace the member list
+      description: Groups synced from an identity provider reject this call with 409.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [user_ids]
+              properties:
+                user_ids:
+                  type: array
+                  items:
+                    type: string
+      responses:
+        "200":
+          description: Updated membership.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GroupDetail"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+
+  # ------------------------------------------------------------------ admin: identity providers
+  /identity-providers:
+    get:
+      tags: [admin]
+      summary: List identity providers
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+      responses:
+        "200":
+          description: Providers with secrets omitted.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/PagedResponse"
+                  - type: object
+                    properties:
+                      items:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/IdentityProvider"
+    post:
+      tags: [admin]
+      summary: Create an identity provider
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/IdentityProviderWrite"
+      responses:
+        "201":
+          description: Created.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IdentityProvider"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "409":
+          $ref: "#/components/responses/Conflict"
+  /identity-providers/{id}:
+    parameters:
+      - $ref: "#/components/parameters/Id"
+    get:
+      tags: [admin]
+      summary: Get an identity provider
+      responses:
+        "200":
+          description: Provider with secrets omitted.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IdentityProvider"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    patch:
+      tags: [admin]
+      summary: Update an identity provider
+      description: Omitting a secret field keeps the stored value. Sending an empty string clears it.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/IdentityProviderWrite"
+      responses:
+        "200":
+          description: Updated.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IdentityProvider"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    delete:
+      tags: [admin]
+      summary: Delete an identity provider
+      description: Users and groups from this provider keep their rows with `idp_id` set to null and can no longer log in through it.
+      responses:
+        "204":
+          description: Deleted.
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /identity-providers/{id}/test:
+    post:
+      tags: [admin]
+      summary: Test connectivity to the provider
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: Result of discovery (OIDC) or bind (LDAP).
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok]
+                properties:
+                  ok:
+                    type: boolean
+                  message:
+                    type: string
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  # ------------------------------------------------------------------ admin: credentials
+  /credentials:
+    get:
+      tags: [admin]
+      summary: List credentials
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+        - name: type
+          in: query
+          schema:
+            $ref: "#/components/schemas/CredentialType"
+        - name: mode
+          in: query
+          schema:
+            $ref: "#/components/schemas/CredentialMode"
+      responses:
+        "200":
+          description: Credentials, secrets omitted.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/PagedResponse"
+                  - type: object
+                    properties:
+                      items:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/Credential"
+    post:
+      tags: [admin]
+      summary: Create a credential
+      description: |
+        For `ssh_key` and `ssh_ca` with `mode=vaulted`, either send `private_key` or omit it to
+        have Zanskar generate an ed25519 key. The public half is returned in `public_key`. For
+        `ec2_instance_connect` no secret is stored; the instance's IAM role is used.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CredentialWrite"
+      responses:
+        "201":
+          description: Created.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Credential"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "409":
+          $ref: "#/components/responses/Conflict"
+  /credentials/{id}:
+    parameters:
+      - $ref: "#/components/parameters/Id"
+    get:
+      tags: [admin]
+      summary: Get a credential
+      responses:
+        "200":
+          description: Credential, secret omitted.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Credential"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    patch:
+      tags: [admin]
+      summary: Update a credential
+      description: Sending a new secret sets `rotated_at`. `type` and `mode` are immutable.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CredentialWrite"
+      responses:
+        "200":
+          description: Updated.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Credential"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    delete:
+      tags: [admin]
+      summary: Delete a credential
+      description: Rejected with 409 while any target or autoscaling group still references it.
+      responses:
+        "204":
+          description: Deleted.
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+
+  # ------------------------------------------------------------------ admin: targets
+  /targets:
+    get:
+      tags: [admin]
+      summary: List static targets
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+        - name: os_family
+          in: query
+          schema:
+            $ref: "#/components/schemas/OsFamily"
+        - name: status
+          in: query
+          schema:
+            $ref: "#/components/schemas/ActiveStatus"
+        - name: tag
+          in: query
+          description: "`key=value`, repeatable."
+          schema:
+            type: array
+            items:
+              type: string
+        - name: q
+          in: query
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Targets.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/PagedResponse"
+                  - type: object
+                    properties:
+                      items:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/Target"
+    post:
+      tags: [admin]
+      summary: Create a static target
+      description: Creating does not probe. Call `/targets/{id}/probe` afterwards, or set `capabilities` by hand.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TargetWrite"
+      responses:
+        "201":
+          description: Created.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Target"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "409":
+          $ref: "#/components/responses/Conflict"
+  /targets/{id}:
+    parameters:
+      - $ref: "#/components/parameters/Id"
+    get:
+      tags: [admin]
+      summary: Get a target
+      responses:
+        "200":
+          description: Target.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Target"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    patch:
+      tags: [admin]
+      summary: Update a target
+      description: Changing `address` resets `host_key_status` to `unknown` and clears fingerprints.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TargetWrite"
+      responses:
+        "200":
+          description: Updated.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Target"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    delete:
+      tags: [admin]
+      summary: Delete a target
+      description: Open sessions to the target are terminated with `end_reason=admin_terminated`.
+      responses:
+        "204":
+          description: Deleted.
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /targets/{id}/probe:
+    post:
+      tags: [admin]
+      summary: Probe a target
+      description: |
+        Connects to each configured port from the gateway, records reachable protocols in
+        `capabilities`, and captures the SSH host key fingerprint and the RDP or WinRM TLS
+        certificate fingerprint. A new SSH fingerprint on a target whose status was `trusted`
+        sets `host_key_status=changed` and blocks SSH connects until an admin trusts it again.
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: Probe result. The target row is updated in the same transaction.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProbeResult"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "504":
+          description: Gateway could not reach the address on any port.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /targets/{id}/host-key/trust:
+    post:
+      tags: [admin]
+      summary: Trust the currently recorded host key
+      description: |
+        Moves `host_key_status` from `pending` or `changed` to `trusted`. The request must echo
+        the fingerprint it is trusting so a probe that races with this call cannot be approved
+        by accident. Audited as `target.host_key.trust`.
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [host_key_fingerprint]
+              properties:
+                host_key_fingerprint:
+                  type: string
+                  examples: ["SHA256:2Hm1kWm2v8lQ3o1n9p7Q9xL0Z2c5s8f1a4d7g0j3k6m"]
+      responses:
+        "200":
+          description: Trusted.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Target"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: Fingerprint in the body does not match the recorded one.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  # ------------------------------------------------------------------ admin: access policies
+  /access-policies:
+    get:
+      tags: [admin]
+      summary: List access policies
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+        - name: group_id
+          in: query
+          schema:
+            type: string
+        - name: enabled
+          in: query
+          schema:
+            type: boolean
+      responses:
+        "200":
+          description: Policies.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/PagedResponse"
+                  - type: object
+                    properties:
+                      items:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/AccessPolicy"
+    post:
+      tags: [admin]
+      summary: Create an access policy
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AccessPolicyWrite"
+      responses:
+        "201":
+          description: Created.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AccessPolicy"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "409":
+          $ref: "#/components/responses/Conflict"
+  /access-policies/{id}:
+    parameters:
+      - $ref: "#/components/parameters/Id"
+    get:
+      tags: [admin]
+      summary: Get an access policy
+      responses:
+        "200":
+          description: Policy.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AccessPolicy"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    patch:
+      tags: [admin]
+      summary: Update an access policy
+      description: Open sessions are re-evaluated against the new policy on the next timer tick and terminated if no longer permitted.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AccessPolicyWrite"
+      responses:
+        "200":
+          description: Updated.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AccessPolicy"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    delete:
+      tags: [admin]
+      summary: Delete an access policy
+      responses:
+        "204":
+          description: Deleted.
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  # ------------------------------------------------------------------ admin: autoscaling groups
+  /autoscaling-groups:
+    get:
+      tags: [admin]
+      summary: List autoscaling groups
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+        - name: status
+          in: query
+          schema:
+            $ref: "#/components/schemas/ActiveStatus"
+      responses:
+        "200":
+          description: Groups.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/PagedResponse"
+                  - type: object
+                    properties:
+                      items:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/AutoscalingGroup"
+    post:
+      tags: [admin]
+      summary: Enroll an autoscaling group
+      description: |
+        Zanskar generates `external_id`. The response includes `trust_policy`, a ready-to-paste
+        IAM trust policy naming Zanskar's principal and the ExternalId, and `permissions_policy`,
+        the least-privilege permissions the role needs. The first sync runs on creation; check
+        `last_error`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AutoscalingGroupWrite"
+      responses:
+        "201":
+          description: Enrolled.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AutoscalingGroupDetail"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "409":
+          $ref: "#/components/responses/Conflict"
+  /autoscaling-groups/{id}:
+    parameters:
+      - $ref: "#/components/parameters/Id"
+    get:
+      tags: [admin]
+      summary: Get an autoscaling group
+      responses:
+        "200":
+          description: Group with IAM policy documents.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AutoscalingGroupDetail"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    patch:
+      tags: [admin]
+      summary: Update an autoscaling group
+      description: "`external_id` cannot be changed; delete and re-enroll to rotate it."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AutoscalingGroupWrite"
+      responses:
+        "200":
+          description: Updated.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AutoscalingGroupDetail"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    delete:
+      tags: [admin]
+      summary: Un-enroll an autoscaling group
+      description: Open sessions to its instances are terminated with `end_reason=admin_terminated`.
+      responses:
+        "204":
+          description: Deleted.
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /autoscaling-groups/{id}/sync:
+    post:
+      tags: [admin]
+      summary: Sync now
+      description: Assumes the role, lists instances and load balancer target health, runs the gateway TCP probe, and updates `asg_instances`.
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: Sync result.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SyncResult"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "502":
+          description: AssumeRole or a Describe call failed. `message` contains the AWS error code, never the request signature.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /autoscaling-groups/{id}/instances:
+    get:
+      tags: [admin]
+      summary: All known instances
+      description: Includes unhealthy and recently terminated instances so admins can see churn. Users get the healthy pool only from `/me/autoscaling-groups/{id}/instances`.
+      parameters:
+        - $ref: "#/components/parameters/Id"
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+        - name: include_terminated
+          in: query
+          schema:
+            type: boolean
+            default: false
+      responses:
+        "200":
+          description: Instances.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/PagedResponse"
+                  - type: object
+                    properties:
+                      items:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/AsgInstance"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  # ------------------------------------------------------------------ admin: sessions
+  /sessions:
+    get:
+      tags: [admin]
+      summary: List all access sessions
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+        - name: user_id
+          in: query
+          schema:
+            type: string
+        - name: target_id
+          in: query
+          schema:
+            type: string
+        - name: asg_id
+          in: query
+          schema:
+            type: string
+        - name: protocol
+          in: query
+          schema:
+            $ref: "#/components/schemas/Protocol"
+        - name: open
+          in: query
+          description: Only sessions with no `ended_at`.
+          schema:
+            type: boolean
+        - name: from
+          in: query
+          schema:
+            type: string
+            format: date-time
+        - name: to
+          in: query
+          schema:
+            type: string
+            format: date-time
+      responses:
+        "200":
+          description: Sessions.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/PagedResponse"
+                  - type: object
+                    properties:
+                      items:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/AccessSession"
+  /sessions/{id}/terminate:
+    post:
+      tags: [admin]
+      summary: Terminate an open session
+      description: Closes the WebSocket and the upstream connection, sets `end_reason=admin_terminated`, and audits `session.terminate` with the optional reason.
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                reason:
+                  type: string
+                  maxLength: 500
+      responses:
+        "200":
+          description: Terminated.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AccessSession"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: Session already ended.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  # ------------------------------------------------------------------ auditor
+  /audit/events:
+    get:
+      tags: [auditor]
+      summary: Audit events
+      description: Ordered by `id` descending. The cursor encodes the last seen `id`.
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+        - name: actor_user_id
+          in: query
+          schema:
+            type: string
+        - name: action
+          in: query
+          description: Exact action or prefix ending in `.`, for example `session.`.
+          schema:
+            type: string
+        - name: object_type
+          in: query
+          schema:
+            type: string
+        - name: object_id
+          in: query
+          schema:
+            type: string
+        - name: outcome
+          in: query
+          schema:
+            $ref: "#/components/schemas/Outcome"
+        - name: from
+          in: query
+          schema:
+            type: string
+            format: date-time
+        - name: to
+          in: query
+          schema:
+            type: string
+            format: date-time
+      responses:
+        "200":
+          description: Events.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/PagedResponse"
+                  - type: object
+                    properties:
+                      items:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/AuditEvent"
+  /audit/verify:
+    get:
+      tags: [auditor]
+      summary: Verify the audit hash chain
+      description: Recomputes every hash from the first event (or from `from_id`) and compares. Long chains stream progress in the response; expect this to take seconds on large tables.
+      parameters:
+        - name: from_id
+          in: query
+          schema:
+            type: integer
+            format: int64
+      responses:
+        "200":
+          description: Verification result. `ok=false` is still 200; the break is described in the body.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuditVerifyResult"
+  /recordings:
+    get:
+      tags: [auditor]
+      summary: List recordings
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+        - name: user_id
+          in: query
+          schema:
+            type: string
+        - name: session_id
+          in: query
+          schema:
+            type: string
+        - name: format
+          in: query
+          schema:
+            $ref: "#/components/schemas/RecordingFormat"
+        - name: from
+          in: query
+          schema:
+            type: string
+            format: date-time
+        - name: to
+          in: query
+          schema:
+            type: string
+            format: date-time
+      responses:
+        "200":
+          description: Recordings with session metadata.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/PagedResponse"
+                  - type: object
+                    properties:
+                      items:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/Recording"
+  /recordings/{id}:
+    get:
+      tags: [auditor]
+      summary: Get recording metadata
+      description: Does not count as a view.
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: Recording.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Recording"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /recordings/{id}/stream:
+    get:
+      tags: [auditor]
+      summary: Stream recording content
+      description: |
+        Inserts a `recording_views` row and audits `recording.view` before the first byte is sent.
+        `asciicast` streams `application/x-asciicast` (asciicast v2, newline-delimited JSON).
+        `guac` streams `application/octet-stream` in the Guacamole recording format for the
+        guacamole-common-js player. Supports `Range` requests. The `ETag` is the recording's
+        `sha256`.
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: Full content.
+          content:
+            application/x-asciicast:
+              schema:
+                type: string
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        "206":
+          description: Partial content.
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: Recording is still in progress.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /recordings/{id}/views:
+    get:
+      tags: [auditor]
+      summary: Who viewed this recording
+      parameters:
+        - $ref: "#/components/parameters/Id"
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+      responses:
+        "200":
+          description: Views, newest first.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/PagedResponse"
+                  - type: object
+                    properties:
+                      items:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/RecordingView"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+# ====================================================================== components
+components:
+  securitySchemes:
+    cookieAuth:
+      type: apiKey
+      in: cookie
+      name: zanskar_session
+      description: Opaque session token. Mutating requests also require the `X-CSRF-Token` header.
+
+  parameters:
+    Id:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+    IdpName:
+      name: idp
+      in: path
+      required: true
+      description: The identity provider `name`.
+      schema:
+        type: string
+    Ticket:
+      name: ticket
+      in: query
+      required: true
+      schema:
+        type: string
+    Limit:
+      name: limit
+      in: query
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 200
+        default: 50
+    Cursor:
+      name: cursor
+      in: query
+      schema:
+        type: string
+
+  responses:
+    BadRequest:
+      description: Validation failed. `message` names the field.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    Unauthorized:
+      description: Not authenticated, MFA not completed, or bad credentials.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    Forbidden:
+      description: Authenticated but not permitted by role, policy, or CSRF check.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    NotFound:
+      description: No such resource, or not visible to the caller.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    Conflict:
+      description: Unique constraint or state conflict.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    RateLimited:
+      description: Too many requests.
+      headers:
+        Retry-After:
+          schema:
+            type: integer
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    NotImplemented:
+      description: Planned for a later phase.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+
+  schemas:
+    # ---------------------------------------------------------------- common
+    Error:
+      type: object
+      required: [code, message, request_id]
+      properties:
+        code:
+          type: string
+          description: Stable machine-readable code, for example `validation_failed`, `csrf_invalid`, `policy_denied`, `host_key_untrusted`, `instance_unhealthy`.
+        message:
+          type: string
+        request_id:
+          type: string
+    PagedResponse:
+      type: object
+      required: [items, next_cursor]
+      properties:
+        items:
+          type: array
+          items: {}
+        next_cursor:
+          type: [string, "null"]
+    Health:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [ok, degraded, down]
+        checks:
+          type: object
+          additionalProperties:
+            type: string
+          description: Component name to `ok` or a short failure word. Present on `/readyz` only.
+    Timestamp:
+      type: string
+      format: date-time
+      description: RFC 3339, UTC.
+    Role:
+      type: string
+      enum: [admin, auditor, user]
+    UserStatus:
+      type: string
+      enum: [active, disabled, locked]
+    ActiveStatus:
+      type: string
+      enum: [active, disabled]
+    OsFamily:
+      type: string
+      enum: [linux, windows, other]
+    Protocol:
+      type: string
+      enum: [ssh, rdp, vnc, winrm]
+    CredentialType:
+      type: string
+      enum: [password, ssh_key, ssh_ca, domain, ec2_instance_connect]
+    CredentialMode:
+      type: string
+      enum: [vaulted, user_supplied, passthrough]
+    HostKeyStatus:
+      type: string
+      enum: [unknown, pending, trusted, changed]
+    ProbeHealth:
+      type: string
+      enum: [unknown, healthy, unhealthy]
+    Outcome:
+      type: string
+      enum: [success, failure]
+    RecordingFormat:
+      type: string
+      enum: [asciicast, guac]
+    EndReason:
+      type: string
+      enum: [user_exit, idle_timeout, max_duration, admin_terminated, target_lost, failover, error]
+    Ports:
+      type: object
+      description: Port per protocol. Missing keys use defaults 22, 3389, 5900, 5986.
+      properties:
+        ssh:
+          type: integer
+          minimum: 1
+          maximum: 65535
+        rdp:
+          type: integer
+          minimum: 1
+          maximum: 65535
+        vnc:
+          type: integer
+          minimum: 1
+          maximum: 65535
+        winrm:
+          type: integer
+          minimum: 1
+          maximum: 65535
+    Tags:
+      type: object
+      additionalProperties:
+        type: string
+      examples:
+        - env: prod
+          team: payments
+
+    # ---------------------------------------------------------------- auth
+    LoginRequest:
+      type: object
+      required: [username, password]
+      properties:
+        username:
+          type: string
+          maxLength: 255
+        password:
+          type: string
+          writeOnly: true
+    LoginResponse:
+      type: object
+      required: [status, csrf_token]
+      properties:
+        status:
+          type: string
+          enum: [ok, mfa_required, mfa_enrollment_required]
+          description: "`ok` means the session is fully usable. `mfa_required` means call `/auth/mfa/totp/verify`. `mfa_enrollment_required` means the deployment requires MFA and the account has none; call `/auth/mfa/totp/enroll`."
+        csrf_token:
+          type: string
+        user:
+          $ref: "#/components/schemas/Me"
+    TotpCode:
+      type: object
+      required: [code]
+      properties:
+        code:
+          type: string
+          description: Six-digit TOTP code or a recovery code.
+          writeOnly: true
+    TotpEnrollment:
+      type: object
+      required: [secret, otpauth_uri]
+      properties:
+        secret:
+          type: string
+          description: Base32 secret, shown once.
+        otpauth_uri:
+          type: string
+          description: "`otpauth://totp/...` for QR rendering, shown once."
+    Me:
+      type: object
+      required: [id, username, display_name, roles, mfa_enrolled, mfa_verified, csrf_token]
+      properties:
+        id:
+          type: string
+        username:
+          type: string
+        email:
+          type: [string, "null"]
+          format: email
+        display_name:
+          type: string
+        roles:
+          type: array
+          items:
+            $ref: "#/components/schemas/Role"
+        idp_name:
+          type: [string, "null"]
+        mfa_enrolled:
+          type: boolean
+        mfa_verified:
+          type: boolean
+        csrf_token:
+          type: string
+        session_expires_at:
+          $ref: "#/components/schemas/Timestamp"
+
+    # ---------------------------------------------------------------- users and groups
+    User:
+      type: object
+      required: [id, username, display_name, status, roles, created_at, updated_at]
+      properties:
+        id:
+          type: string
+        username:
+          type: string
+        email:
+          type: [string, "null"]
+          format: email
+        display_name:
+          type: string
+        status:
+          $ref: "#/components/schemas/UserStatus"
+        roles:
+          type: array
+          items:
+            $ref: "#/components/schemas/Role"
+        idp_id:
+          type: [string, "null"]
+        external_id:
+          type: [string, "null"]
+        mfa_enrolled:
+          type: boolean
+        failed_logins:
+          type: integer
+        locked_until:
+          oneOf:
+            - $ref: "#/components/schemas/Timestamp"
+            - type: "null"
+        created_at:
+          $ref: "#/components/schemas/Timestamp"
+        updated_at:
+          $ref: "#/components/schemas/Timestamp"
+        last_login_at:
+          oneOf:
+            - $ref: "#/components/schemas/Timestamp"
+            - type: "null"
+    UserCreate:
+      type: object
+      required: [username, display_name, password, roles]
+      properties:
+        username:
+          type: string
+          minLength: 1
+          maxLength: 255
+          pattern: "^[a-z0-9._@-]+$"
+        email:
+          type: string
+          format: email
+        display_name:
+          type: string
+          minLength: 1
+          maxLength: 255
+        password:
+          type: string
+          minLength: 12
+          writeOnly: true
+          description: Checked against a breached-password list and hashed with Argon2id.
+        roles:
+          type: array
+          minItems: 1
+          items:
+            $ref: "#/components/schemas/Role"
+        must_change_password:
+          type: boolean
+          default: true
+    UserUpdate:
+      type: object
+      properties:
+        email:
+          type: [string, "null"]
+          format: email
+        display_name:
+          type: string
+        status:
+          $ref: "#/components/schemas/UserStatus"
+        roles:
+          type: array
+          minItems: 1
+          items:
+            $ref: "#/components/schemas/Role"
+        password:
+          type: string
+          minLength: 12
+          writeOnly: true
+          description: Setting a password revokes all of the user's login sessions.
+    Group:
+      type: object
+      required: [id, name, description, member_count, created_at, updated_at]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        description:
+          type: string
+        idp_id:
+          type: [string, "null"]
+        external_id:
+          type: [string, "null"]
+        member_count:
+          type: integer
+        created_at:
+          $ref: "#/components/schemas/Timestamp"
+        updated_at:
+          $ref: "#/components/schemas/Timestamp"
+    GroupDetail:
+      allOf:
+        - $ref: "#/components/schemas/Group"
+        - type: object
+          required: [members]
+          properties:
+            members:
+              type: array
+              items:
+                type: object
+                required: [user_id, username, display_name, added_at]
+                properties:
+                  user_id:
+                    type: string
+                  username:
+                    type: string
+                  display_name:
+                    type: string
+                  added_at:
+                    $ref: "#/components/schemas/Timestamp"
+    GroupWrite:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 255
+        description:
+          type: string
+          maxLength: 2000
+
+    # ---------------------------------------------------------------- identity providers
+    IdentityProvider:
+      type: object
+      required: [id, name, type, enabled, config, created_at, updated_at]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+          description: Used in `/auth/oidc/{idp}/...` paths.
+        type:
+          type: string
+          enum: [oidc, ldap, saml]
+        enabled:
+          type: boolean
+        config:
+          $ref: "#/components/schemas/IdentityProviderConfigPublic"
+        created_at:
+          $ref: "#/components/schemas/Timestamp"
+        updated_at:
+          $ref: "#/components/schemas/Timestamp"
+    IdentityProviderConfigPublic:
+      type: object
+      description: The non-secret part of the provider configuration. Stored encrypted alongside the secrets; secrets are never returned.
+      properties:
+        issuer_url:
+          type: string
+          format: uri
+          description: OIDC discovery issuer.
+        client_id:
+          type: string
+        scopes:
+          type: array
+          items:
+            type: string
+        groups_claim:
+          type: string
+          description: OIDC claim that carries group names.
+        ldap_url:
+          type: string
+          description: "`ldaps://host:636`. Plain `ldap://` is rejected unless `starttls` is true."
+        starttls:
+          type: boolean
+        bind_dn:
+          type: string
+        user_base_dn:
+          type: string
+        user_filter:
+          type: string
+        group_base_dn:
+          type: string
+        group_filter:
+          type: string
+        ca_certificate:
+          type: string
+          description: PEM bundle to pin the provider's TLS chain.
+        default_roles:
+          type: array
+          items:
+            $ref: "#/components/schemas/Role"
+          description: Roles granted to users provisioned through this provider on first login.
+    IdentityProviderWrite:
+      type: object
+      required: [name, type, config]
+      properties:
+        name:
+          type: string
+          pattern: "^[a-z0-9-]+$"
+          maxLength: 64
+        type:
+          type: string
+          enum: [oidc, ldap, saml]
+        enabled:
+          type: boolean
+          default: true
+        config:
+          allOf:
+            - $ref: "#/components/schemas/IdentityProviderConfigPublic"
+            - type: object
+              properties:
+                client_secret:
+                  type: string
+                  writeOnly: true
+                bind_password:
+                  type: string
+                  writeOnly: true
+
+    # ---------------------------------------------------------------- credentials
+    Credential:
+      type: object
+      required: [id, name, type, mode, created_at, updated_at, in_use_by]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        type:
+          $ref: "#/components/schemas/CredentialType"
+        mode:
+          $ref: "#/components/schemas/CredentialMode"
+        username:
+          type: [string, "null"]
+        domain:
+          type: [string, "null"]
+        public_key:
+          type: [string, "null"]
+          description: SSH public key or CA public key. The only key material ever returned.
+        has_secret:
+          type: boolean
+        key_version:
+          type: [integer, "null"]
+        created_by:
+          type: [string, "null"]
+        created_at:
+          $ref: "#/components/schemas/Timestamp"
+        updated_at:
+          $ref: "#/components/schemas/Timestamp"
+        rotated_at:
+          oneOf:
+            - $ref: "#/components/schemas/Timestamp"
+            - type: "null"
+        in_use_by:
+          type: object
+          required: [targets, autoscaling_groups]
+          properties:
+            targets:
+              type: integer
+            autoscaling_groups:
+              type: integer
+    CredentialWrite:
+      type: object
+      required: [name, type, mode]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 255
+        type:
+          $ref: "#/components/schemas/CredentialType"
+        mode:
+          $ref: "#/components/schemas/CredentialMode"
+        username:
+          type: string
+          description: Required for `vaulted`. Ignored for `user_supplied` and `passthrough`.
+        domain:
+          type: string
+          description: For `type=domain`.
+        password:
+          type: string
+          writeOnly: true
+          description: For `type=password` or `type=domain` with `mode=vaulted`.
+        private_key:
+          type: string
+          writeOnly: true
+          description: PEM or OpenSSH private key for `ssh_key` or `ssh_ca`. Omit to have Zanskar generate one.
+        private_key_passphrase:
+          type: string
+          writeOnly: true
+        certificate_ttl_seconds:
+          type: integer
+          minimum: 60
+          maximum: 86400
+          default: 900
+          description: For `ssh_ca`. Lifetime of certificates minted per session.
+        certificate_principals:
+          type: array
+          items:
+            type: string
+          description: For `ssh_ca`. Principals written into minted certificates. Defaults to the target username.
+
+    # ---------------------------------------------------------------- targets
+    Target:
+      type: object
+      required: [id, name, address, os_family, ports, capabilities, host_key_status, tags, status, credentials, created_at, updated_at]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        address:
+          type: string
+        os_family:
+          $ref: "#/components/schemas/OsFamily"
+        ports:
+          $ref: "#/components/schemas/Ports"
+        capabilities:
+          type: array
+          items:
+            $ref: "#/components/schemas/Protocol"
+        host_key_fingerprint:
+          type: [string, "null"]
+        host_key_status:
+          $ref: "#/components/schemas/HostKeyStatus"
+        tls_fingerprint:
+          type: [string, "null"]
+        tags:
+          $ref: "#/components/schemas/Tags"
+        status:
+          $ref: "#/components/schemas/ActiveStatus"
+        notes:
+          type: string
+        credentials:
+          type: object
+          description: Credential id per protocol.
+          additionalProperties:
+            type: string
+        created_by:
+          type: [string, "null"]
+        created_at:
+          $ref: "#/components/schemas/Timestamp"
+        updated_at:
+          $ref: "#/components/schemas/Timestamp"
+        last_probed_at:
+          oneOf:
+            - $ref: "#/components/schemas/Timestamp"
+            - type: "null"
+    TargetWrite:
+      type: object
+      required: [name, address, os_family]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 255
+        address:
+          type: string
+          description: Hostname or IP. Loopback, link-local, and the gateway's own addresses are rejected.
+        os_family:
+          $ref: "#/components/schemas/OsFamily"
+        ports:
+          $ref: "#/components/schemas/Ports"
+        capabilities:
+          type: array
+          description: Declared capabilities. Overwritten by the next probe.
+          items:
+            $ref: "#/components/schemas/Protocol"
+        tags:
+          $ref: "#/components/schemas/Tags"
+        status:
+          $ref: "#/components/schemas/ActiveStatus"
+        notes:
+          type: string
+          maxLength: 4000
+        credentials:
+          type: object
+          description: Credential id per protocol. Replaces the whole mapping.
+          additionalProperties:
+            type: string
+    ProbeResult:
+      type: object
+      required: [capabilities, host_key_status, probed_at, ports]
+      properties:
+        capabilities:
+          type: array
+          items:
+            $ref: "#/components/schemas/Protocol"
+        ports:
+          type: object
+          description: Per protocol, whether the port answered and the latency.
+          additionalProperties:
+            type: object
+            required: [reachable]
+            properties:
+              reachable:
+                type: boolean
+              latency_ms:
+                type: integer
+              error:
+                type: string
+        host_key_fingerprint:
+          type: [string, "null"]
+        host_key_status:
+          $ref: "#/components/schemas/HostKeyStatus"
+        host_key_changed_from:
+          type: [string, "null"]
+          description: The previously trusted fingerprint when `host_key_status` became `changed`.
+        tls_fingerprint:
+          type: [string, "null"]
+        probed_at:
+          $ref: "#/components/schemas/Timestamp"
+
+    # ---------------------------------------------------------------- policies
+    TimeWindow:
+      type: object
+      required: [days, from, to, tz]
+      properties:
+        days:
+          type: array
+          items:
+            type: string
+            enum: [mon, tue, wed, thu, fri, sat, sun]
+        from:
+          type: string
+          pattern: "^([01][0-9]|2[0-3]):[0-5][0-9]$"
+        to:
+          type: string
+          pattern: "^([01][0-9]|2[0-3]):[0-5][0-9]$"
+        tz:
+          type: string
+          description: IANA zone name.
+    TargetSelector:
+      type: object
+      description: A target matches if it is listed by id or if every tag pair matches. An autoscaling group matches the same way.
+      properties:
+        targets:
+          type: array
+          items:
+            type: string
+        asgs:
+          type: array
+          items:
+            type: string
+        tags:
+          $ref: "#/components/schemas/Tags"
+    AccessPolicy:
+      type: object
+      required: [id, name, description, enabled, group_id, target_selector, protocols, time_windows, idle_timeout_minutes, allow_clipboard, allow_file_transfer, require_mfa, created_at, updated_at]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        description:
+          type: string
+        enabled:
+          type: boolean
+        group_id:
+          type: string
+        target_selector:
+          $ref: "#/components/schemas/TargetSelector"
+        protocols:
+          type: array
+          items:
+            $ref: "#/components/schemas/Protocol"
+        time_windows:
+          type: array
+          items:
+            $ref: "#/components/schemas/TimeWindow"
+        max_session_minutes:
+          type: [integer, "null"]
+        idle_timeout_minutes:
+          type: integer
+        allow_clipboard:
+          type: boolean
+        allow_file_transfer:
+          type: boolean
+        require_mfa:
+          type: boolean
+        created_by:
+          type: [string, "null"]
+        created_at:
+          $ref: "#/components/schemas/Timestamp"
+        updated_at:
+          $ref: "#/components/schemas/Timestamp"
+    AccessPolicyWrite:
+      type: object
+      required: [name, group_id, target_selector, protocols]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 255
+        description:
+          type: string
+          maxLength: 2000
+        enabled:
+          type: boolean
+          default: true
+        group_id:
+          type: string
+        target_selector:
+          $ref: "#/components/schemas/TargetSelector"
+        protocols:
+          type: array
+          minItems: 1
+          items:
+            $ref: "#/components/schemas/Protocol"
+        time_windows:
+          type: array
+          items:
+            $ref: "#/components/schemas/TimeWindow"
+        max_session_minutes:
+          type: [integer, "null"]
+          minimum: 1
+        idle_timeout_minutes:
+          type: integer
+          minimum: 1
+          default: 15
+        allow_clipboard:
+          type: boolean
+          default: false
+        allow_file_transfer:
+          type: boolean
+          default: false
+        require_mfa:
+          type: boolean
+          default: true
+
+    # ---------------------------------------------------------------- autoscaling
+    AutoscalingGroup:
+      type: object
+      required: [id, name, provider, region, external_name, role_arn, external_id, os_family, ports, capabilities, address_preference, poll_interval_seconds, tags, status, credentials, healthy_count, total_count, created_at, updated_at]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        provider:
+          type: string
+          enum: [aws]
+        region:
+          type: string
+        external_name:
+          type: string
+          description: The AWS Auto Scaling group name.
+        role_arn:
+          type: string
+        external_id:
+          type: string
+          description: Generated by Zanskar. Must appear in the role's trust policy condition.
+        os_family:
+          $ref: "#/components/schemas/OsFamily"
+        ports:
+          $ref: "#/components/schemas/Ports"
+        capabilities:
+          type: array
+          items:
+            $ref: "#/components/schemas/Protocol"
+        address_preference:
+          type: string
+          enum: [private, public]
+        poll_interval_seconds:
+          type: integer
+        tags:
+          $ref: "#/components/schemas/Tags"
+        status:
+          $ref: "#/components/schemas/ActiveStatus"
+        credentials:
+          type: object
+          additionalProperties:
+            type: string
+        healthy_count:
+          type: integer
+        total_count:
+          type: integer
+        last_synced_at:
+          oneOf:
+            - $ref: "#/components/schemas/Timestamp"
+            - type: "null"
+        last_error:
+          type: [string, "null"]
+        created_by:
+          type: [string, "null"]
+        created_at:
+          $ref: "#/components/schemas/Timestamp"
+        updated_at:
+          $ref: "#/components/schemas/Timestamp"
+    AutoscalingGroupDetail:
+      allOf:
+        - $ref: "#/components/schemas/AutoscalingGroup"
+        - type: object
+          required: [trust_policy, permissions_policy]
+          properties:
+            trust_policy:
+              type: object
+              description: IAM trust policy JSON to attach to the role, with Zanskar's principal and the ExternalId condition filled in.
+            permissions_policy:
+              type: object
+              description: Least-privilege IAM permissions policy JSON for the role.
+    AutoscalingGroupWrite:
+      type: object
+      required: [name, provider, region, external_name, role_arn, os_family]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 255
+        provider:
+          type: string
+          enum: [aws]
+        region:
+          type: string
+          examples: [ap-south-1]
+        external_name:
+          type: string
+        role_arn:
+          type: string
+          pattern: "^arn:aws(-[a-z]+)?:iam::[0-9]{12}:role/.+$"
+        os_family:
+          $ref: "#/components/schemas/OsFamily"
+        ports:
+          $ref: "#/components/schemas/Ports"
+        capabilities:
+          type: array
+          items:
+            $ref: "#/components/schemas/Protocol"
+          description: Declared capabilities for every instance. The gateway probe confirms them per instance.
+        address_preference:
+          type: string
+          enum: [private, public]
+          default: private
+        poll_interval_seconds:
+          type: integer
+          minimum: 10
+          maximum: 3600
+          default: 30
+        tags:
+          $ref: "#/components/schemas/Tags"
+        status:
+          $ref: "#/components/schemas/ActiveStatus"
+        credentials:
+          type: object
+          description: Credential id per protocol. One credential profile serves every instance.
+          additionalProperties:
+            type: string
+    AsgInstance:
+      type: object
+      required: [id, asg_id, instance_id, lifecycle_state, probe_health, healthy, first_seen_at, last_seen_at]
+      properties:
+        id:
+          type: string
+        asg_id:
+          type: string
+        instance_id:
+          type: string
+        private_ip:
+          type: [string, "null"]
+        public_ip:
+          type: [string, "null"]
+        availability_zone:
+          type: [string, "null"]
+        lifecycle_state:
+          type: string
+          examples: [InService, Terminating]
+        lb_health:
+          type: [string, "null"]
+        probe_health:
+          $ref: "#/components/schemas/ProbeHealth"
+        healthy:
+          type: boolean
+          description: Derived. True when `lifecycle_state` is `InService`, `lb_health` is healthy or null, and `probe_health` is healthy.
+        host_key_fingerprint:
+          type: [string, "null"]
+        launched_at:
+          oneOf:
+            - $ref: "#/components/schemas/Timestamp"
+            - type: "null"
+        first_seen_at:
+          $ref: "#/components/schemas/Timestamp"
+        last_seen_at:
+          $ref: "#/components/schemas/Timestamp"
+        terminated_at:
+          oneOf:
+            - $ref: "#/components/schemas/Timestamp"
+            - type: "null"
+    SyncResult:
+      type: object
+      required: [synced_at, healthy_count, total_count, added, removed]
+      properties:
+        synced_at:
+          $ref: "#/components/schemas/Timestamp"
+        healthy_count:
+          type: integer
+        total_count:
+          type: integer
+        added:
+          type: array
+          items:
+            type: string
+          description: Instance ids seen for the first time.
+        removed:
+          type: array
+          items:
+            type: string
+          description: Instance ids marked terminated during this sync.
+        sessions_notified:
+          type: integer
+          description: Open sessions that received a `target_lost` message because their instance left the pool.
+
+    # ---------------------------------------------------------------- user-facing targets and connect
+    ReachableTarget:
+      type: object
+      required: [kind, id, name, os_family, capabilities, allowed_protocols, tags]
+      properties:
+        kind:
+          type: string
+          enum: [target, autoscaling_group]
+        id:
+          type: string
+        name:
+          type: string
+        os_family:
+          $ref: "#/components/schemas/OsFamily"
+        capabilities:
+          type: array
+          items:
+            $ref: "#/components/schemas/Protocol"
+        allowed_protocols:
+          type: array
+          description: Intersection of policy protocols and capabilities. The UI enables a button only for protocols listed here.
+          items:
+            $ref: "#/components/schemas/Protocol"
+        credential_prompts:
+          type: object
+          description: Per protocol, whether the user must supply a credential at connect time.
+          additionalProperties:
+            type: object
+            required: [mode]
+            properties:
+              mode:
+                $ref: "#/components/schemas/CredentialMode"
+              type:
+                $ref: "#/components/schemas/CredentialType"
+        tags:
+          $ref: "#/components/schemas/Tags"
+        host_key_status:
+          $ref: "#/components/schemas/HostKeyStatus"
+        healthy_count:
+          type: integer
+          description: For `autoscaling_group` only.
+        blocked_reason:
+          type: [string, "null"]
+          description: Set when the target is visible but not connectable right now, for example `outside_time_window` or `host_key_changed`.
+    UserSuppliedCredential:
+      type: object
+      description: Sent only when the target's credential for that protocol has `mode=user_supplied`. Never stored.
+      properties:
+        username:
+          type: string
+        password:
+          type: string
+          writeOnly: true
+        private_key:
+          type: string
+          writeOnly: true
+        private_key_passphrase:
+          type: string
+          writeOnly: true
+        domain:
+          type: string
+    ConnectRequest:
+      type: object
+      required: [protocol]
+      description: Exactly one of `target_id` or `asg_instance_id` must be set.
+      properties:
+        target_id:
+          type: string
+        asg_instance_id:
+          type: string
+        protocol:
+          $ref: "#/components/schemas/Protocol"
+        credential:
+          $ref: "#/components/schemas/UserSuppliedCredential"
+        terminal:
+          type: object
+          properties:
+            cols:
+              type: integer
+            rows:
+              type: integer
+        display:
+          type: object
+          properties:
+            width:
+              type: integer
+            height:
+              type: integer
+            dpi:
+              type: integer
+    ConnectTicket:
+      type: object
+      required: [ticket, session_id, transport, expires_at, policy]
+      properties:
+        ticket:
+          type: string
+          description: One-time, 32 bytes of randomness, base64url. Present as `?ticket=` on the WebSocket URL.
+        session_id:
+          type: string
+        transport:
+          type: string
+          enum: [terminal, desktop]
+        websocket_path:
+          type: string
+          examples: [/ws/terminal]
+        expires_at:
+          $ref: "#/components/schemas/Timestamp"
+        policy:
+          type: object
+          description: Effective limits the UI should display.
+          required: [idle_timeout_minutes, allow_clipboard, allow_file_transfer]
+          properties:
+            idle_timeout_minutes:
+              type: integer
+            max_session_minutes:
+              type: [integer, "null"]
+            allow_clipboard:
+              type: boolean
+            allow_file_transfer:
+              type: boolean
+
+    # ---------------------------------------------------------------- sessions
+    OwnSession:
+      type: object
+      required: [id, protocol, target_name, started_at]
+      properties:
+        id:
+          type: string
+        protocol:
+          $ref: "#/components/schemas/Protocol"
+        target_name:
+          type: string
+        target_id:
+          type: [string, "null"]
+        asg_id:
+          type: [string, "null"]
+        asg_instance_id:
+          type: [string, "null"]
+        instance_id:
+          type: [string, "null"]
+          description: The cloud instance id when the session was against an autoscaling instance.
+        started_at:
+          $ref: "#/components/schemas/Timestamp"
+        ended_at:
+          oneOf:
+            - $ref: "#/components/schemas/Timestamp"
+            - type: "null"
+        end_reason:
+          oneOf:
+            - $ref: "#/components/schemas/EndReason"
+            - type: "null"
+        failover_from_session_id:
+          type: [string, "null"]
+    AccessSession:
+      allOf:
+        - $ref: "#/components/schemas/OwnSession"
+        - type: object
+          required: [user_id, username, client_ip, has_recording]
+          properties:
+            user_id:
+              type: string
+            username:
+              type: string
+            policy_id:
+              type: [string, "null"]
+            credential_id:
+              type: [string, "null"]
+            client_ip:
+              type: string
+            user_agent:
+              type: string
+            has_recording:
+              type: boolean
+            recording_id:
+              type: [string, "null"]
+              description: Present only when the caller holds `auditor` or `admin`.
+
+    # ---------------------------------------------------------------- recordings
+    Recording:
+      type: object
+      required: [id, session_id, format, size_bytes, started_at, created_at, session, view_count]
+      properties:
+        id:
+          type: string
+        session_id:
+          type: string
+        format:
+          $ref: "#/components/schemas/RecordingFormat"
+        size_bytes:
+          type: integer
+          format: int64
+        sha256:
+          type: [string, "null"]
+          description: Set when the recording is finished.
+        started_at:
+          $ref: "#/components/schemas/Timestamp"
+        finished_at:
+          oneOf:
+            - $ref: "#/components/schemas/Timestamp"
+            - type: "null"
+        retention_until:
+          oneOf:
+            - $ref: "#/components/schemas/Timestamp"
+            - type: "null"
+        created_at:
+          $ref: "#/components/schemas/Timestamp"
+        session:
+          $ref: "#/components/schemas/AccessSession"
+        view_count:
+          type: integer
+    RecordingView:
+      type: object
+      required: [id, recording_id, user_id, username, ip, viewed_at]
+      properties:
+        id:
+          type: string
+        recording_id:
+          type: string
+        user_id:
+          type: string
+        username:
+          type: string
+        ip:
+          type: string
+        viewed_at:
+          $ref: "#/components/schemas/Timestamp"
+
+    # ---------------------------------------------------------------- audit
+    AuditEvent:
+      type: object
+      required: [id, ts, actor_ip, action, object_type, object_id, outcome, details, prev_hash, hash]
+      properties:
+        id:
+          type: integer
+          format: int64
+        ts:
+          $ref: "#/components/schemas/Timestamp"
+        actor_user_id:
+          type: [string, "null"]
+        actor_username:
+          type: [string, "null"]
+          description: Resolved at read time; null when the user no longer exists.
+        actor_ip:
+          type: string
+        action:
+          type: string
+          examples: [user.login, target.host_key.trust, session.start, recording.view]
+        object_type:
+          type: string
+        object_id:
+          type: string
+        outcome:
+          $ref: "#/components/schemas/Outcome"
+        details:
+          type: object
+          description: Action-specific fields. Never contains secrets.
+        prev_hash:
+          type: string
+        hash:
+          type: string
+    AuditVerifyResult:
+      type: object
+      required: [ok, checked_from_id, checked_to_id, checked_count, verified_at]
+      properties:
+        ok:
+          type: boolean
+        checked_from_id:
+          type: integer
+          format: int64
+        checked_to_id:
+          type: integer
+          format: int64
+        checked_count:
+          type: integer
+          format: int64
+        first_bad_id:
+          type: [integer, "null"]
+          format: int64
+          description: The first event whose hash did not match, when `ok` is false.
+        reason:
+          type: [string, "null"]
+          enum: [hash_mismatch, prev_hash_mismatch, gap, null]
+        verified_at:
+          $ref: "#/components/schemas/Timestamp"

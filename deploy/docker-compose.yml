@@ -1,0 +1,51 @@
+# Development stack: PostgreSQL + guacd + Zanskar.
+# Do not use these credentials outside a local machine.
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: zanskar
+      POSTGRES_PASSWORD: zanskar
+      POSTGRES_DB: zanskar
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U zanskar"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    ports:
+      - "127.0.0.1:5432:5432"
+
+  guacd:
+    image: guacamole/guacd:1.5.5
+    # guacd only needs to be reachable from zanskar; never publish it on a host port.
+    read_only: true
+    tmpfs:
+      - /tmp
+
+  zanskar:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    depends_on:
+      postgres:
+        condition: service_healthy
+      guacd:
+        condition: service_started
+    environment:
+      ZANSKAR_LISTEN_ADDR: 0.0.0.0:8443
+      ZANSKAR_DB_DRIVER: postgres
+      ZANSKAR_DB_DSN: postgres://zanskar:zanskar@postgres:5432/zanskar?sslmode=disable
+      ZANSKAR_GUACD_ADDR: guacd:4822
+      ZANSKAR_MASTER_KEY: ${ZANSKAR_MASTER_KEY:?run 'zanskar keygen' and export ZANSKAR_MASTER_KEY}
+      ZANSKAR_LOG_FORMAT: json
+    ports:
+      - "127.0.0.1:8443:8443"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+
+volumes:
+  pgdata:
