@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -58,10 +59,10 @@ func newEnv(t *testing.T) *env {
 	e.handler = NewHandler(e.users, e.sessions, e.totp, e.audit, log)
 	mux := http.NewServeMux()
 	e.handler.Register(mux)
-	mux.Handle("GET /api/v1/admin-only", RequireRole(user.RoleAdmin)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	mux.Handle("GET /api/v1/admin-only", RequireRole(user.RoleAdmin)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		WriteJSON(w, 200, map[string]string{"ok": "admin"})
 	})))
-	mux.Handle("POST /api/v1/mutate", RequireAuth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	mux.Handle("POST /api/v1/mutate", RequireAuth(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		WriteJSON(w, 200, map[string]string{"ok": "mutated"})
 	})))
 	mw := &Middleware{Sessions: e.sessions, Users: e.users, Log: log}
@@ -280,10 +281,10 @@ func TestSessionExpiry(t *testing.T) {
 		t.Fatal(err)
 	}
 	e.sessions.now = func() time.Time { return base.Add(61 * time.Minute) }
-	if _, err := e.sessions.Lookup(ctx, token); err != ErrNoSession {
+	if _, err := e.sessions.Lookup(ctx, token); !errors.Is(err, ErrNoSession) {
 		t.Fatalf("expected idle expiry, got %v", err)
 	}
-	if _, err := e.sessions.Lookup(ctx, "bogus"); err != ErrNoSession {
+	if _, err := e.sessions.Lookup(ctx, "bogus"); !errors.Is(err, ErrNoSession) {
 		t.Fatal("bogus token must fail")
 	}
 	if !e.sessions.CheckCSRF("s1", e.sessions.CSRFToken("s1")) || e.sessions.CheckCSRF("s1", e.sessions.CSRFToken("s2")) {

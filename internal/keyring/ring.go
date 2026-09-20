@@ -78,7 +78,7 @@ func (r *Ring) load(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("keyring: read key_versions: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	deks := map[int][]byte{}
 	active := 0

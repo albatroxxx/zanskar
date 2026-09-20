@@ -5,6 +5,7 @@ package auth
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net"
 	"net/http"
@@ -59,7 +60,7 @@ func (m *Middleware) Authenticate(next http.Handler) http.Handler {
 		}
 		sess, err := m.Sessions.Lookup(r.Context(), c.Value)
 		if err != nil {
-			if err != ErrNoSession {
+			if !errors.Is(err, ErrNoSession) {
 				m.Log.Error("session lookup", "err", err)
 			}
 			m.Sessions.ClearCookie(w)

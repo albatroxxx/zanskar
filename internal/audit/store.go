@@ -206,7 +206,7 @@ func (l *Log) List(ctx context.Context, f Filter) ([]Event, string, error) {
 	if err != nil {
 		return nil, "", fmt.Errorf("audit: list: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	events := make([]Event, 0, limit)
 	for rows.Next() {
@@ -285,7 +285,7 @@ func (l *Log) fetchBatch(ctx context.Context, q string, afterID int64) ([]Event,
 	if err != nil {
 		return nil, fmt.Errorf("audit: verify: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	batch := make([]Event, 0, verifyBatchSize)
 	for rows.Next() {
 		e, err := scanEvent(rows)

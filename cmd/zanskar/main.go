@@ -22,11 +22,21 @@ import (
 	"github.com/albatroxxx/zanskar/internal/audit"
 	"github.com/albatroxxx/zanskar/internal/auth"
 	"github.com/albatroxxx/zanskar/internal/config"
+	"github.com/albatroxxx/zanskar/internal/connect"
+	"github.com/albatroxxx/zanskar/internal/credential"
 	"github.com/albatroxxx/zanskar/internal/crypto"
+	"github.com/albatroxxx/zanskar/internal/gateway"
+	"github.com/albatroxxx/zanskar/internal/group"
 	"github.com/albatroxxx/zanskar/internal/keyring"
+	"github.com/albatroxxx/zanskar/internal/policy"
+	"github.com/albatroxxx/zanskar/internal/recording"
 	"github.com/albatroxxx/zanskar/internal/server"
+	"github.com/albatroxxx/zanskar/internal/session"
 	"github.com/albatroxxx/zanskar/internal/store"
+	"github.com/albatroxxx/zanskar/internal/target"
+	"github.com/albatroxxx/zanskar/internal/ticket"
 	"github.com/albatroxxx/zanskar/internal/user"
+	"github.com/albatroxxx/zanskar/internal/user/adminapi"
 	"github.com/albatroxxx/zanskar/internal/version"
 )
 
@@ -88,7 +98,7 @@ func runServe() error {
 	if err != nil {
 		return err
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	pending, err := store.Pending(ctx, db)
 	if err != nil {
@@ -125,9 +135,25 @@ func runServe() error {
 	if !cfg.RequireMFA {
 		log.Warn("ZANSKAR_REQUIRE_MFA=false: password-only logins are allowed")
 	}
+	vault := credential.NewVault(db, ring)
+	targets := target.NewRepo(db)
+	policies := policy.NewRepo(db)
+	sessionRepo := session.NewRepo(db)
+	registry := gateway.NewRegistry()
+	storage := &recording.LocalStorage{Dir: cfg.RecordingsDir}
 	deps := server.Deps{
 		AuthMiddleware: &auth.Middleware{Sessions: sessions, Users: users, Log: log},
 		Auth:           authHandler,
+		Handlers: []server.Registrar{
+			&adminapi.AdminHandler{Users: users, Sessions: sessions, TOTP: totp, Audit: auditLog, Log: log},
+			&group.AdminHandler{Groups: group.NewRepo(db), Audit: auditLog, Log: log},
+			&credential.AdminHandler{Vault: vault, Audit: auditLog, Log: log},
+			&target.AdminHandler{Repo: targets, Prober: &target.Prober{}, Audit: auditLog, Log: log},
+			&policy.AdminHandler{Repo: policies, Audit: auditLog, Log: log},
+			&session.Handler{Repo: sessionRepo, Audit: auditLog, Registry: registry, Storage: storage, Log: log},
+			&connect.Handler{Targets: targets, Policies: policies, Vault: vault, Sessions: sessionRepo, Tickets: ticket.NewStore(),
+				Registry: registry, Storage: storage, Audit: auditLog, Log: log, MFAEnrolled: totp.Enrolled},
+		},
 	}
 	if n, err := users.CountAdmins(ctx); err == nil && n == 0 {
 		log.Warn("no admin user exists; create one with `zanskar admin create`")
@@ -148,7 +174,7 @@ func runMigrate() error {
 	if err != nil {
 		return err
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 	ran, err := store.Migrate(ctx, db)
 	if err != nil {
 		return err

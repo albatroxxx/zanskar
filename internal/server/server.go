@@ -5,12 +5,14 @@
 package server
 
 import (
+	"bufio"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"log/slog"
+	"net"
 	"net/http"
 	"time"
 
@@ -28,11 +30,18 @@ type Server struct {
 	http *http.Server
 }
 
+// Registrar is anything that mounts routes on the mux. Every domain handler
+// package exposes one so the server never imports domain packages directly.
+type Registrar interface {
+	Register(mux *http.ServeMux)
+}
+
 // Deps are the domain handlers the server mounts. Nil fields are skipped,
 // which keeps the system routes testable on their own.
 type Deps struct {
 	AuthMiddleware *auth.Middleware
 	Auth           *auth.Handler
+	Handlers       []Registrar
 }
 
 // New builds a Server with the system routes and the given handlers registered.
@@ -45,6 +54,9 @@ func New(cfg *config.Config, db *store.DB, log *slog.Logger, deps Deps) *Server 
 	mux.HandleFunc("/", s.handleNotFound)
 	if deps.Auth != nil {
 		deps.Auth.Register(mux)
+	}
+	for _, h := range deps.Handlers {
+		h.Register(mux)
 	}
 
 	mws := []middleware{s.recoverer, requestID, s.securityHeaders, s.accessLog}
@@ -200,6 +212,26 @@ type statusRecorder struct {
 func (r *statusRecorder) WriteHeader(code int) {
 	r.status = code
 	r.ResponseWriter.WriteHeader(code)
+}
+
+// Unwrap lets http.ResponseController reach Hijack and Flush on the real
+// writer, which WebSocket upgrades need.
+func (r *statusRecorder) Unwrap() http.ResponseWriter { return r.ResponseWriter }
+
+// Hijack is kept for libraries that type-assert http.Hijacker directly.
+func (r *statusRecorder) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	if h, ok := r.ResponseWriter.(http.Hijacker); ok {
+		r.status = http.StatusSwitchingProtocols
+		return h.Hijack()
+	}
+	return nil, nil, http.ErrNotSupported
+}
+
+// Flush passes through streaming flushes.
+func (r *statusRecorder) Flush() {
+	if f, ok := r.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
 }
 
 func (s *Server) accessLog(next http.Handler) http.Handler {

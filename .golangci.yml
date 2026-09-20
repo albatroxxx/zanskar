@@ -17,9 +17,29 @@ linters:
     - unconvert
     - unparam
   settings:
+    errcheck:
+      exclude-functions:
+        - (*database/sql.Rows).Close
+        - (*database/sql.DB).Close
+        - (io.Closer).Close
+        - (io.ReadCloser).Close
+        - (net.Conn).Close
+        - (*net.TCPConn).Close
+        - (*github.com/coder/websocket.Conn).CloseNow
+        - (*golang.org/x/crypto/ssh.Client).Close
+        - (*golang.org/x/crypto/ssh.ServerConn).Close
+        - (golang.org/x/crypto/ssh.Channel).Close
     gosec:
       excludes:
         - G104 # handled by errcheck
+    revive:
+      rules:
+        - name: var-naming
+          arguments: [[], [], [{skip-initialism-name-checks: true}]]
+  exclusions:
+    rules:
+      - path: _test\.go
+        linters: [noctx, gosec]
 formatters:
   enable:
     - gofmt

@@ -91,10 +91,11 @@ func applyOne(ctx context.Context, db *DB, version, body string) (err error) {
 			_ = tx.Rollback()
 		}
 	}()
-	if _, err = tx.ExecContext(ctx, body); err != nil {
+	// body comes from the embedded migration set, not from any input.
+	if _, err = tx.ExecContext(ctx, body); err != nil { // #nosec G701
 		return fmt.Errorf("migrate %s: exec: %w", version, err)
 	}
-	_, err = tx.ExecContext(ctx, db.Rebind(`INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)`),
+	_, err = tx.ExecContext(ctx, db.Rebind(`INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)`), // #nosec G701 -- constant statement, bound args
 		version, time.Now().UTC().Format(time.RFC3339))
 	if err != nil {
 		return fmt.Errorf("migrate %s: record: %w", version, err)
@@ -110,7 +111,7 @@ func appliedVersions(ctx context.Context, db *DB) (map[string]bool, error) {
 	if err != nil {
 		return nil, fmt.Errorf("migrate: read applied: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	out := map[string]bool{}
 	for rows.Next() {
 		var v string

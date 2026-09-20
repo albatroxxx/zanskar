@@ -28,7 +28,7 @@ func runAudit(args []string) error {
 	if err != nil {
 		return err
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	res, err := audit.NewLog(db).Verify(ctx)
 	if err != nil {

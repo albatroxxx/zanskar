@@ -8,8 +8,6 @@ import (
 	"flag"
 	"fmt"
 	"os"
-	"strings"
-	"syscall"
 
 	"golang.org/x/term"
 
@@ -66,7 +64,7 @@ func runAdminCreate(args []string) error {
 	if err != nil {
 		return err
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 	if pending, err := store.Pending(ctx, db); err != nil {
 		return err
 	} else if len(pending) > 0 {
@@ -98,22 +96,23 @@ func readPassword() (string, error) {
 	if pw := os.Getenv("ZANSKAR_ADMIN_PASSWORD"); pw != "" {
 		return pw, nil
 	}
-	if !term.IsTerminal(int(syscall.Stdin)) {
+	fd := int(os.Stdin.Fd())
+	if !term.IsTerminal(fd) {
 		return "", errors.New("no terminal: set ZANSKAR_ADMIN_PASSWORD to provide the password")
 	}
 	fmt.Fprint(os.Stderr, "Password: ")
-	first, err := term.ReadPassword(int(syscall.Stdin))
+	first, err := term.ReadPassword(fd)
 	fmt.Fprintln(os.Stderr)
 	if err != nil {
 		return "", err
 	}
 	fmt.Fprint(os.Stderr, "Confirm password: ")
-	second, err := term.ReadPassword(int(syscall.Stdin))
+	second, err := term.ReadPassword(fd)
 	fmt.Fprintln(os.Stderr)
 	if err != nil {
 		return "", err
 	}
-	if !strings.EqualFold(string(first), string(second)) || string(first) != string(second) {
+	if string(first) != string(second) {
 		return "", errors.New("passwords do not match")
 	}
 	return string(first), nil

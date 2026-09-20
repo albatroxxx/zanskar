@@ -51,7 +51,7 @@ func runMigrationSuite(t *testing.T, db *DB) {
 
 	// A few schema constraints that the rest of the system depends on.
 	for _, table := range []string{"users", "user_roles", "credentials", "targets", "autoscaling_groups", "asg_instances", "access_policies", "access_sessions", "recordings", "audit_events", "key_versions"} {
-		if _, err := db.ExecContext(ctx, "SELECT 1 FROM "+table+" WHERE 1=0"); err != nil {
+		if _, err := db.ExecContext(ctx, "SELECT 1 FROM "+table+" WHERE 1=0"); err != nil { // #nosec G701 -- test constant
 			t.Errorf("table %s missing: %v", table, err)
 		}
 	}

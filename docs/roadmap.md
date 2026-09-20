@@ -28,8 +28,10 @@ Approved 2026-09-20. Durations are estimates for a small team; the order matters
 2. [x] Auth sessions (opaque cookie, hashed at rest), CSRF, TOTP enrollment and verification.
 3. [x] Audit persistence on top of `internal/audit` and `zanskar audit verify`.
 4. [x] Key ring on top of `internal/crypto` with `key_versions` bootstrap.
-4b. Admin API for users and groups; credentials vault.
-5. Targets with probe and host key trust workflow.
-6. Groups and access policies; policy evaluation service.
-7. Connect tickets and SSH terminal over WebSocket, with asciicast recording.
-8. React SPA: login, user portal, admin portal, auditor portal.
+5. [x] Admin API for users and groups; credentials vault with generated SSH keys.
+6. [x] Targets with probe (SSH host key, TLS cert, RDP negotiation, VNC banner) and host key trust workflow.
+7. [x] Access policies with tag selectors and time windows; evaluation on every connect.
+8. [x] Connect tickets and SSH terminal over WebSocket with asciicast recording, idle and max limits,
+   admin terminate, auditor/admin recording stream with audited views.
+9. React SPA: login, user portal, admin portal, auditor portal (needs Node).
+10. Postgres run of the full suite in CI; session cleanup job; recording retention.

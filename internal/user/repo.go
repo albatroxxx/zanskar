@@ -102,7 +102,7 @@ func (r *Repo) List(ctx context.Context, afterUsername string, limit int) ([]*Us
 	if err != nil {
 		return nil, "", err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var out []*User
 	for rows.Next() {
 		u, err := scanUser(rows)
@@ -281,7 +281,7 @@ func (r *Repo) roles(ctx context.Context, id string) ([]Role, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	roles := []Role{}
 	for rows.Next() {
 		var s string

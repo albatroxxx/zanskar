@@ -40,7 +40,9 @@ type Config struct {
 	// RequireMFA forces every password user to enroll an authenticator before
 	// the session becomes usable. Default true; set ZANSKAR_REQUIRE_MFA=false
 	// only for throwaway development databases.
-	RequireMFA      bool
+	RequireMFA bool
+	// RecordingsDir is where session recordings are written (local storage).
+	RecordingsDir   string
 	LogLevel        string
 	LogFormat       string
 	ShutdownTimeout time.Duration
@@ -66,6 +68,7 @@ func Load(opts Options) (*Config, error) {
 		TrustProxyTLS:   os.Getenv("ZANSKAR_TRUST_PROXY_TLS") == "true",
 		Issuer:          envOr("ZANSKAR_ISSUER", "Zanskar"),
 		RequireMFA:      envOr("ZANSKAR_REQUIRE_MFA", "true") != "false",
+		RecordingsDir:   envOr("ZANSKAR_RECORDINGS_DIR", "data/recordings"),
 		LogLevel:        strings.ToLower(envOr("ZANSKAR_LOG_LEVEL", "info")),
 		LogFormat:       strings.ToLower(envOr("ZANSKAR_LOG_FORMAT", "json")),
 		ShutdownTimeout: 20 * time.Second,
@@ -104,17 +107,20 @@ func Load(opts Options) (*Config, error) {
 		errs = append(errs, fmt.Errorf("ZANSKAR_LOG_FORMAT %q is not json or text", c.LogFormat))
 	}
 
-	if raw := os.Getenv("ZANSKAR_MASTER_KEY"); raw != "" {
+	raw := os.Getenv("ZANSKAR_MASTER_KEY")
+	switch {
+	case raw == "" && opts.RequireMasterKey:
+		errs = append(errs, errors.New("ZANSKAR_MASTER_KEY is required; generate one with `zanskar keygen`"))
+	case raw != "":
 		key, err := base64.StdEncoding.DecodeString(raw)
-		if err != nil {
+		switch {
+		case err != nil:
 			errs = append(errs, fmt.Errorf("ZANSKAR_MASTER_KEY is not valid base64: %w", err))
-		} else if len(key) != 32 {
+		case len(key) != 32:
 			errs = append(errs, fmt.Errorf("ZANSKAR_MASTER_KEY must decode to 32 bytes, got %d", len(key)))
-		} else {
+		default:
 			c.MasterKey = key
 		}
-	} else if opts.RequireMasterKey {
-		errs = append(errs, errors.New("ZANSKAR_MASTER_KEY is required; generate one with `zanskar keygen`"))
 	}
 
 	if len(errs) > 0 {
