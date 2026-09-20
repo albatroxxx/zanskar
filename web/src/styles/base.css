@@ -71,7 +71,7 @@ td .muted, .muted { color: var(--fg-muted); }
 .empty { padding: 32px; text-align: center; color: var(--fg-muted); }
 
 /* controls */
-.btn { display: inline-flex; align-items: center; gap: 6px; padding: 7px 12px; border-radius: var(--radius); border: 1px solid var(--line-strong); background: var(--bg-raised); cursor: pointer; white-space: nowrap; line-height: 1.2; }
+.btn { display: inline-flex; align-items: center; gap: 6px; padding: 7px 12px; border-radius: var(--radius); border: 1px solid var(--line-strong); background: var(--bg-raised); color: var(--fg); cursor: pointer; white-space: nowrap; line-height: 1.2; }
 .btn:hover { border-color: var(--fg-faint); }
 .btn:disabled { opacity: 0.5; cursor: not-allowed; }
 .btn.primary { background: var(--accent); color: var(--accent-fg); border-color: transparent; font-weight: 500; }
@@ -102,7 +102,8 @@ td .muted, .muted { color: var(--fg-muted); }
 
 /* modal */
 .modal-backdrop { position: fixed; inset: 0; background: rgba(10, 26, 44, 0.55); display: grid; place-items: center; padding: 16px; z-index: 50; }
-.modal { background: var(--bg-raised); border-radius: var(--radius-lg); border: 1px solid var(--line); box-shadow: var(--shadow); width: min(520px, 100%); padding: 22px 24px; }
+.modal { background: var(--bg-raised); color: var(--fg); border-radius: var(--radius-lg); border: 1px solid var(--line); box-shadow: var(--shadow); width: min(520px, 100%); padding: 22px 24px; }
+.modal p { margin: 0 0 10px; }
 .modal h2 { margin-bottom: 8px; }
 .modal .actions { justify-content: flex-end; margin-top: 18px; }
 
@@ -123,5 +124,9 @@ td .muted, .muted { color: var(--fg-muted); }
 .term-bar .stat { color: #9fb6c9; font-variant-numeric: tabular-nums; }
 .term-bar .stat.warn { color: var(--warn); }
 .term-bar .grow { flex: 1; }
+/* The bar is always dark, whatever the theme, so its controls carry their own colours. */
+.term-bar .btn { background: #1a3a58; color: var(--snow); border-color: #2f5f88; }
+.term-bar .btn:hover { background: #24507a; border-color: #4a7fae; }
+.term-bar .btn.danger { color: #ffb4ab; border-color: #a4443c; }
 .term-host { flex: 1; min-height: 0; padding: 6px; }
 .term-host .xterm { height: 100%; }
