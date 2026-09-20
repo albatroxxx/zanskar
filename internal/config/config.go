@@ -64,7 +64,7 @@ func Load(opts Options) (*Config, error) {
 		DBDSN:           envOr("ZANSKAR_DB_DSN", "file:zanskar.db?_pragma=journal_mode(WAL)&_pragma=foreign_keys(1)&_pragma=busy_timeout(5000)"),
 		TLSCert:         os.Getenv("ZANSKAR_TLS_CERT"),
 		TLSKey:          os.Getenv("ZANSKAR_TLS_KEY"),
-		GuacdAddr:       envOr("ZANSKAR_GUACD_ADDR", "127.0.0.1:4822"),
+		GuacdAddr:       os.Getenv("ZANSKAR_GUACD_ADDR"), // empty disables RDP and VNC
 		TrustProxyTLS:   os.Getenv("ZANSKAR_TRUST_PROXY_TLS") == "true",
 		Issuer:          envOr("ZANSKAR_ISSUER", "Zanskar"),
 		RequireMFA:      envOr("ZANSKAR_REQUIRE_MFA", "true") != "false",

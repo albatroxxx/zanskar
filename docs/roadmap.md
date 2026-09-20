@@ -33,5 +33,6 @@ Approved 2026-09-20. Durations are estimates for a small team; the order matters
 7. [x] Access policies with tag selectors and time windows; evaluation on every connect.
 8. [x] Connect tickets and SSH terminal over WebSocket with asciicast recording, idle and max limits,
    admin terminate, auditor/admin recording stream with audited views.
-9. React SPA: login, user portal, admin portal, auditor portal (needs Node).
-10. Postgres run of the full suite in CI; session cleanup job; recording retention.
+9. [x] React SPA: login with TOTP verify and enrollment, user portal (targets, terminal, my sessions),
+   admin portal, auditor portal; embedded in the binary behind `-tags webui`.
+10. [x] Postgres run of the full suite in CI; auth session sweeper. Recording retention moves to Phase 2.

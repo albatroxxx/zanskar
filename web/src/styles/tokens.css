@@ -1,0 +1,61 @@
+/* Zanskar design tokens. Palette from docs/assets/README.md, neutrals biased
+   toward the brand blue. Light is the default; dark follows the OS. */
+:root {
+  --night: #0a1a2c;
+  --slate: #16395c;
+  --glacier: #2dd4bf;
+  --frost: #8ff5e6;
+  --teal: #0e9f8e;
+  --snow: #e6f6f9;
+
+  --bg: #f3f6f8;
+  --bg-raised: #ffffff;
+  --bg-sunken: #e8eef2;
+  --fg: #0f1e2e;
+  --fg-muted: #52657a;
+  --fg-faint: #8a9bab;
+  --line: #d5dee6;
+  --line-strong: #b9c7d3;
+  --accent: var(--teal);
+  --accent-fg: #ffffff;
+  --accent-soft: #d9f4ef;
+  --danger: #b42318;
+  --danger-soft: #fde8e6;
+  --warn: #9a6700;
+  --warn-soft: #fff4d6;
+  --ok: #067647;
+  --ok-soft: #dcf5e7;
+  --focus: #2dd4bf;
+  --terminal-bg: #0a1a2c;
+
+  --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --mono: ui-monospace, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+
+  --radius: 6px;
+  --radius-lg: 10px;
+  --shadow: 0 1px 2px rgba(10, 26, 44, 0.08), 0 4px 16px rgba(10, 26, 44, 0.06);
+  --sidebar-w: 224px;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0b141f;
+    --bg-raised: #111c29;
+    --bg-sunken: #08111a;
+    --fg: #e6eef4;
+    --fg-muted: #93a6b8;
+    --fg-faint: #5f7387;
+    --line: #22303f;
+    --line-strong: #34465a;
+    --accent: var(--glacier);
+    --accent-fg: #0a1a2c;
+    --accent-soft: #123b3a;
+    --danger: #f97066;
+    --danger-soft: #3b1512;
+    --warn: #fdb022;
+    --warn-soft: #3a2a08;
+    --ok: #47cd89;
+    --ok-soft: #0c2e1f;
+    --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 4px 16px rgba(0, 0, 0, 0.3);
+  }
+}

@@ -47,7 +47,7 @@ func TestSessionsAndRecordings(t *testing.T) {
 		t.Fatal(err)
 	}
 	got, err := r.Get(ctx, s.ID)
-	if err != nil || got.RecordingID != rec.ID || got.EndedAt != nil {
+	if err != nil || got.RecordingID != rec.ID || got.EndedAt != nil || got.Username != "alice" || got.TargetName != "box" {
 		t.Fatalf("get: %+v %v", got, err)
 	}
 	open, _, _ := r.List(ctx, Filter{UserID: "u1", OpenOnly: true})

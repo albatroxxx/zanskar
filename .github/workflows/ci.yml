@@ -29,9 +29,16 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Build web UI
+        run: cd web && npm ci --ignore-scripts --no-fund --no-audit && npm run build && npx oxlint src
       - run: go mod verify
       - run: go vet ./...
-      - run: go build -trimpath ./...
+      - run: go build -trimpath -tags webui ./...
       - name: Test (SQLite and PostgreSQL)
         env:
           ZANSKAR_TEST_POSTGRES_DSN: postgres://zanskar:zanskar@localhost:5432/zanskar_test?sslmode=disable

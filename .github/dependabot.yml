@@ -15,3 +15,10 @@ updates:
     directory: /deploy
     schedule:
       interval: weekly
+  - package-ecosystem: npm
+    directory: /web
+    schedule:
+      interval: weekly
+    groups:
+      web-deps:
+        patterns: ["*"]

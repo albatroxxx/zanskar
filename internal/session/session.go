@@ -30,6 +30,8 @@ const (
 type Session struct {
 	ID                    string     `json:"id"`
 	UserID                string     `json:"user_id"`
+	Username              string     `json:"username,omitempty"`
+	TargetName            string     `json:"target_name,omitempty"`
 	PolicyID              string     `json:"policy_id,omitempty"`
 	TargetID              string     `json:"target_id,omitempty"`
 	ASGID                 string     `json:"asg_id,omitempty"`
@@ -201,19 +203,22 @@ func (r *Repo) RecordView(ctx context.Context, recordingID, userID, ip string) e
 }
 
 const selectSessions = `SELECT s.id, s.user_id, s.policy_id, s.target_id, s.asg_id, s.asg_instance_id, s.protocol, s.credential_id,
-	s.client_ip, s.user_agent, s.started_at, s.ended_at, s.end_reason, s.failover_from_session_id, rec.id
-	FROM access_sessions s LEFT JOIN recordings rec ON rec.session_id = s.id`
+	s.client_ip, s.user_agent, s.started_at, s.ended_at, s.end_reason, s.failover_from_session_id, rec.id, u.username, t.name
+	FROM access_sessions s
+	LEFT JOIN recordings rec ON rec.session_id = s.id
+	LEFT JOIN users u ON u.id = s.user_id
+	LEFT JOIN targets t ON t.id = s.target_id`
 
 type scanner interface{ Scan(dest ...any) error }
 
 func scanSession(sc scanner) (*Session, error) {
 	var (
-		s                                                        Session
-		policy, target, asg, inst, cred, reason, failover, recID sql.NullString
-		started, ended                                           store.NullTime
+		s                                                                         Session
+		policy, target, asg, inst, cred, reason, failover, recID, username, tname sql.NullString
+		started, ended                                                            store.NullTime
 	)
 	err := sc.Scan(&s.ID, &s.UserID, &policy, &target, &asg, &inst, &s.Protocol, &cred, &s.ClientIP, &s.UserAgent,
-		&started, &ended, &reason, &failover, &recID)
+		&started, &ended, &reason, &failover, &recID, &username, &tname)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound
@@ -222,6 +227,7 @@ func scanSession(sc scanner) (*Session, error) {
 	}
 	s.PolicyID, s.TargetID, s.ASGID, s.ASGInstanceID, s.CredentialID = policy.String, target.String, asg.String, inst.String, cred.String
 	s.EndReason, s.FailoverFromSessionID, s.RecordingID = reason.String, failover.String, recID.String
+	s.Username, s.TargetName = username.String, tname.String
 	s.StartedAt, s.EndedAt = started.Time, ended.Ptr()
 	return &s, nil
 }

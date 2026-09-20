@@ -18,6 +18,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/albatroxxx/zanskar/internal/audit"
 	"github.com/albatroxxx/zanskar/internal/auth"
@@ -38,6 +39,7 @@ import (
 	"github.com/albatroxxx/zanskar/internal/user"
 	"github.com/albatroxxx/zanskar/internal/user/adminapi"
 	"github.com/albatroxxx/zanskar/internal/version"
+	"github.com/albatroxxx/zanskar/web"
 )
 
 func main() {
@@ -152,14 +154,32 @@ func runServe() error {
 			&policy.AdminHandler{Repo: policies, Audit: auditLog, Log: log},
 			&session.Handler{Repo: sessionRepo, Audit: auditLog, Registry: registry, Storage: storage, Log: log},
 			&connect.Handler{Targets: targets, Policies: policies, Vault: vault, Sessions: sessionRepo, Tickets: ticket.NewStore(),
-				Registry: registry, Storage: storage, Audit: auditLog, Log: log, MFAEnrolled: totp.Enrolled},
+				Registry: registry, Storage: storage, Audit: auditLog, Log: log, MFAEnrolled: totp.Enrolled, GuacdAddr: cfg.GuacdAddr},
 		},
 	}
 	if n, err := users.CountAdmins(ctx); err == nil && n == 0 {
 		log.Warn("no admin user exists; create one with `zanskar admin create`")
 	}
 
-	log.Info("starting zanskar", "version", version.Version, "db_driver", cfg.DBDriver, "key_version", ring.ActiveVersion())
+	// Housekeeping: drop auth sessions that can never be used again.
+	go func() {
+		t := time.NewTicker(time.Hour)
+		defer t.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.C:
+				if n, err := sessions.DeleteExpired(ctx); err != nil {
+					log.Error("session sweep", "err", err)
+				} else if n > 0 {
+					log.Info("session sweep", "deleted", n)
+				}
+			}
+		}
+	}()
+
+	log.Info("starting zanskar", "version", version.Version, "db_driver", cfg.DBDriver, "key_version", ring.ActiveVersion(), "web_ui", web.Enabled)
 	return server.New(cfg, db, log, deps).ListenAndServe(ctx)
 }
 

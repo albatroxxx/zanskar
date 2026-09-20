@@ -43,6 +43,8 @@ type Handler struct {
 	Log         *slog.Logger
 	MFAEnrolled func(ctx context.Context, userID string) (bool, error)
 	DialTimeout time.Duration
+	// GuacdAddr enables RDP and VNC; empty disables desktop sessions.
+	GuacdAddr string
 }
 
 // Register mounts the routes. The WebSocket route sits outside the CSRF
@@ -52,6 +54,7 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.Handle("GET /api/v1/me/targets", auth.RequireAuth(http.HandlerFunc(h.myTargets)))
 	mux.Handle("POST /api/v1/connect", auth.RequireAuth(http.HandlerFunc(h.connect)))
 	mux.HandleFunc("GET /ws/terminal", h.terminal)
+	mux.HandleFunc("GET /ws/desktop", h.desktop)
 }
 
 // reachableTarget is what a user sees in their target list.
@@ -140,12 +143,20 @@ func (h *Handler) connect(w http.ResponseWriter, r *http.Request) {
 		h.record(r, actor.Event("session.connect", "target", req.TargetID, audit.Failure, map[string]string{"protocol": req.Protocol, "reason": code}))
 		httpx.WriteError(w, status, code, msg)
 	}
-	if req.Protocol != string(target.SSH) {
-		if target.ValidProtocol(target.Protocol(req.Protocol)) {
-			deny(http.StatusNotImplemented, "protocol_unavailable", "only ssh is available in this release")
-		} else {
-			httpx.BadRequest(w, "unknown protocol")
+	proto := target.Protocol(req.Protocol)
+	if !target.ValidProtocol(proto) {
+		httpx.BadRequest(w, "unknown protocol")
+		return
+	}
+	switch proto {
+	case target.SSH:
+	case target.RDP, target.VNC:
+		if h.GuacdAddr == "" {
+			deny(http.StatusNotImplemented, "protocol_unavailable", "desktop sessions are not configured on this gateway")
+			return
 		}
+	default:
+		deny(http.StatusNotImplemented, "protocol_unavailable", "winrm is not available yet")
 		return
 	}
 	t, err := h.Targets.Get(r.Context(), req.TargetID)
@@ -182,13 +193,17 @@ func (h *Handler) connect(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	if t.HostKeyStatus != target.HostKeyTrusted {
+	if proto == target.SSH && t.HostKeyStatus != target.HostKeyTrusted {
 		deny(http.StatusConflict, "host_key_untrusted", "the target's host key has not been trusted by an admin")
 		return
 	}
-	credID, ok := t.Credentials[target.SSH]
+	if proto == target.RDP && (t.TLSFingerprint == nil || *t.TLSFingerprint == "") {
+		deny(http.StatusConflict, "certificate_unpinned", "the target's RDP certificate has not been captured; probe it first")
+		return
+	}
+	credID, ok := t.Credentials[proto]
 	if !ok || credID == "" {
-		deny(http.StatusConflict, "no_credential", "no credential is configured for ssh on this target")
+		deny(http.StatusConflict, "no_credential", "no credential is configured for "+req.Protocol+" on this target")
 		return
 	}
 	cred, err := h.Vault.Get(r.Context(), credID)
@@ -222,7 +237,7 @@ func (h *Handler) connect(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.record(r, actor.Event("session.connect", "target", t.ID, audit.Success, map[string]any{"protocol": req.Protocol, "policy_id": d.Policy.ID, "credential_id": credID}))
-	httpx.WriteJSON(w, http.StatusOK, connectResponse{Ticket: tok, ExpiresAt: time.Now().Add(ticket.TTL), Path: "/ws/terminal"})
+	httpx.WriteJSON(w, http.StatusOK, connectResponse{Ticket: tok, ExpiresAt: time.Now().Add(ticket.TTL), Path: ticketPathFor(proto)})
 }
 
 // terminal redeems a ticket and runs the SSH bridge for its lifetime.

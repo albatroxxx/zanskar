@@ -14,12 +14,14 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/albatroxxx/zanskar/internal/auth"
 	"github.com/albatroxxx/zanskar/internal/config"
 	"github.com/albatroxxx/zanskar/internal/store"
 	"github.com/albatroxxx/zanskar/internal/version"
+	"github.com/albatroxxx/zanskar/web"
 )
 
 // Server owns the listener and the router.
@@ -51,7 +53,9 @@ func New(cfg *config.Config, db *store.DB, log *slog.Logger, deps Deps) *Server 
 	mux.HandleFunc("GET /healthz", s.handleHealthz)
 	mux.HandleFunc("GET /readyz", s.handleReadyz)
 	mux.HandleFunc("GET /api/v1/version", s.handleVersion)
-	mux.HandleFunc("/", s.handleNotFound)
+	mux.HandleFunc("/api/", s.handleNotFound)
+	mux.HandleFunc("/ws/", s.handleNotFound)
+	mux.Handle("/", spaHandler(web.FS()))
 	if deps.Auth != nil {
 		deps.Auth.Register(mux)
 	}
@@ -193,10 +197,12 @@ func (s *Server) securityHeaders(next http.Handler) http.Handler {
 		h.Set("X-Frame-Options", "DENY")
 		h.Set("Referrer-Policy", "no-referrer")
 		h.Set("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
-		h.Set("Cache-Control", "no-store")
-		// The SPA will relax script-src/style-src for its own bundle later; API
-		// responses never need scripts.
-		h.Set("Content-Security-Policy", "default-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
+		if p := r.URL.Path; strings.HasPrefix(p, "/api/") || strings.HasPrefix(p, "/ws/") || p == "/healthz" || p == "/readyz" {
+			h.Set("Cache-Control", "no-store")
+			h.Set("Content-Security-Policy", "default-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
+		} else {
+			h.Set("Content-Security-Policy", uiCSP)
+		}
 		if s.cfg.TLSCert != "" {
 			h.Set("Strict-Transport-Security", "max-age=63072000; includeSubDomains")
 		}

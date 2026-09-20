@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/albatroxxx/zanskar/internal/config"
@@ -66,7 +67,7 @@ func TestReadyzReportsPendingMigrations(t *testing.T) {
 func TestNotFoundIsJSONWithRequestID(t *testing.T) {
 	s := newTestServer(t, true)
 	rr := httptest.NewRecorder()
-	s.http.Handler.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/nope", nil))
+	s.http.Handler.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/api/v1/nope", nil))
 	if rr.Code != http.StatusNotFound {
 		t.Fatalf("got %d", rr.Code)
 	}
@@ -84,5 +85,24 @@ func TestClientRequestIDIgnored(t *testing.T) {
 	s.http.Handler.ServeHTTP(rr, req)
 	if rr.Header().Get("X-Request-Id") == "forged" {
 		t.Fatal("client-supplied request id must not be echoed")
+	}
+}
+
+func TestSPAFallbackAndCSP(t *testing.T) {
+	s := newTestServer(t, true)
+	for _, p := range []string{"/", "/admin/targets", "/login"} {
+		rr := httptest.NewRecorder()
+		s.http.Handler.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, p, nil))
+		if rr.Code != http.StatusOK || !strings.Contains(rr.Body.String(), "<title>Zanskar</title>") {
+			t.Fatalf("%s: %d %q", p, rr.Code, rr.Body.String()[:40])
+		}
+		if csp := rr.Header().Get("Content-Security-Policy"); !strings.Contains(csp, "script-src 'self'") {
+			t.Fatalf("%s: ui csp missing: %q", p, csp)
+		}
+	}
+	rr := httptest.NewRecorder()
+	s.http.Handler.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/api/v1/version", nil))
+	if csp := rr.Header().Get("Content-Security-Policy"); !strings.HasPrefix(csp, "default-src 'none'; frame-ancestors") {
+		t.Fatalf("api csp: %q", csp)
 	}
 }

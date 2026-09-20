@@ -49,12 +49,15 @@ cp .env.example .env
 export ZANSKAR_MASTER_KEY=$(go run ./cmd/zanskar keygen)
 go run ./cmd/zanskar migrate
 go run ./cmd/zanskar admin create --username admin --name "Your Name"   # prompts for a password
-make run            # SQLite, plain HTTP on 127.0.0.1:8443
-curl -s localhost:8443/readyz
+make build          # builds the web UI and a single binary with it embedded
+./bin/zanskar serve # SQLite, plain HTTP on 127.0.0.1:8443
 ```
 
-Sign in with `POST /api/v1/auth/login`, then enroll an authenticator with
-`POST /api/v1/auth/mfa/totp/enroll` and confirm it. `zanskar audit verify` checks the audit chain.
+Open http://127.0.0.1:8443, sign in, and enroll your authenticator when prompted. For UI work run
+`make web-dev` (Vite on :5173, proxying to the API) beside `make run`. `zanskar audit verify`
+checks the audit chain from the command line.
+
+Requires Go 1.27+ and Node 22+ to build.
 
 For PostgreSQL and guacd: `docker compose -f deploy/docker-compose.yml up`.
 
@@ -66,7 +69,7 @@ internal/         application code (not importable by other modules)
 migrations/       SQL migrations, one set per database driver
 docs/             threat model, ADRs, API spec, wireframes, roadmap
 deploy/           Dockerfile, docker-compose, Helm (later)
-web/              React frontend (Phase 1)
+web/              React + TypeScript frontend, embedded into the binary at build time
 ```
 
 ## Security
