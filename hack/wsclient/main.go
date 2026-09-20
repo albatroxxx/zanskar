@@ -18,7 +18,7 @@ import (
 func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
-	ws, _, err := websocket.Dial(ctx, os.Args[1], nil) //nolint:bodyclose // library closes the handshake body
+	ws, _, err := websocket.Dial(ctx, os.Args[1], nil)
 	if err != nil {
 		fmt.Println("dial error:", err)
 		cancel()

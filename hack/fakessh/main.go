@@ -13,6 +13,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/binary"
@@ -47,7 +48,7 @@ func main() {
 	}
 	// A demo server must be reachable from the gateway's LAN address, since
 	// the probe refuses loopback targets; hence the all-interfaces default.
-	ln, err := net.Listen("tcp", addr) // #nosec G102 -- dev tool, see comment
+	ln, err := (&net.ListenConfig{}).Listen(context.Background(), "tcp", addr) // #nosec G102 -- dev tool, see comment
 	if err != nil {
 		panic(err)
 	}
