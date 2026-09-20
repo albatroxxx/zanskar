@@ -30,5 +30,7 @@ gofmt -l . && go vet ./... && go test -race ./... && ~/go/bin/golangci-lint run 
 
 ## Smoke test
 
-`scratchpad/smoke.sh` in the session scratchpad stands up a fake SSH server and drives the whole
-admin-to-terminal flow against the built binary; recreate it from git history if lost.
+`hack/smoke.sh` stands up `hack/fakessh` (a toy SSH server, password test/pw) and drives the whole
+admin-to-terminal flow against `bin/zanskar` with `hack/wsclient`. Build the helpers first:
+`go build -o bin/fakessh ./hack/fakessh && go build -o bin/wsclient ./hack/wsclient`.
+For a local demo target, run `./bin/fakessh` and enroll `<your LAN IP>:2222` as a Linux target.
