@@ -24,10 +24,11 @@ Approved 2026-09-20. Durations are estimates for a small team; the order matters
 
 ## Phase 1 order of work
 
-1. Users, roles and Argon2id password auth with lockout.
-2. Auth sessions (opaque cookie, hashed at rest), CSRF, TOTP enrollment and verification.
-3. Audit persistence on top of `internal/audit` and `zanskar audit verify`.
-4. Credentials vault on top of `internal/crypto` with `key_versions` bootstrap.
+1. [x] Users, roles and Argon2id password auth with lockout.
+2. [x] Auth sessions (opaque cookie, hashed at rest), CSRF, TOTP enrollment and verification.
+3. [x] Audit persistence on top of `internal/audit` and `zanskar audit verify`.
+4. [x] Key ring on top of `internal/crypto` with `key_versions` bootstrap.
+4b. Admin API for users and groups; credentials vault.
 5. Targets with probe and host key trust workflow.
 6. Groups and access policies; policy evaluation service.
 7. Connect tickets and SSH terminal over WebSocket, with asciicast recording.

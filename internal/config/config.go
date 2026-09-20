@@ -31,6 +31,16 @@ type Config struct {
 	TLSCert         string
 	TLSKey          string
 	GuacdAddr       string
+	// TrustProxyTLS marks cookies Secure when TLS terminates in front of a
+	// loopback-bound Zanskar. Never set it when clients reach Zanskar over
+	// plain HTTP.
+	TrustProxyTLS bool
+	// Issuer is the name shown in authenticator apps.
+	Issuer string
+	// RequireMFA forces every password user to enroll an authenticator before
+	// the session becomes usable. Default true; set ZANSKAR_REQUIRE_MFA=false
+	// only for throwaway development databases.
+	RequireMFA      bool
 	LogLevel        string
 	LogFormat       string
 	ShutdownTimeout time.Duration
@@ -53,6 +63,9 @@ func Load(opts Options) (*Config, error) {
 		TLSCert:         os.Getenv("ZANSKAR_TLS_CERT"),
 		TLSKey:          os.Getenv("ZANSKAR_TLS_KEY"),
 		GuacdAddr:       envOr("ZANSKAR_GUACD_ADDR", "127.0.0.1:4822"),
+		TrustProxyTLS:   os.Getenv("ZANSKAR_TRUST_PROXY_TLS") == "true",
+		Issuer:          envOr("ZANSKAR_ISSUER", "Zanskar"),
+		RequireMFA:      envOr("ZANSKAR_REQUIRE_MFA", "true") != "false",
 		LogLevel:        strings.ToLower(envOr("ZANSKAR_LOG_LEVEL", "info")),
 		LogFormat:       strings.ToLower(envOr("ZANSKAR_LOG_FORMAT", "json")),
 		ShutdownTimeout: 20 * time.Second,
@@ -108,6 +121,11 @@ func Load(opts Options) (*Config, error) {
 		return nil, errors.Join(errs...)
 	}
 	return c, nil
+}
+
+// SecureCookies reports whether browser cookies should carry the Secure flag.
+func (c *Config) SecureCookies() bool {
+	return c.TLSCert != "" || c.TrustProxyTLS
 }
 
 func envOr(key, def string) string {

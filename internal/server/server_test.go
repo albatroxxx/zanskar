@@ -28,7 +28,7 @@ func newTestServer(t *testing.T, migrate bool) *Server {
 		}
 	}
 	cfg := &config.Config{ListenAddr: "127.0.0.1:0"}
-	return New(cfg, db, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	return New(cfg, db, slog.New(slog.NewTextHandler(io.Discard, nil)), Deps{})
 }
 
 func TestHealthAndHeaders(t *testing.T) {

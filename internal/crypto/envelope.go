@@ -12,7 +12,9 @@ import (
 	"context"
 	"crypto/aes"
 	"crypto/cipher"
+	"crypto/hkdf"
 	"crypto/rand"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 )
@@ -130,4 +132,14 @@ func open(aead cipher.AEAD, blob, aad []byte) ([]byte, error) {
 		return nil, ErrInvalidCiphertext
 	}
 	return pt, nil
+}
+
+// DeriveKey derives a 32-byte subkey from the master key for a named purpose
+// using HKDF-SHA256, so one master secret can safely back several uses
+// (KEK wrapping, CSRF HMAC) without any key being reused across them.
+func DeriveKey(master []byte, purpose string) ([]byte, error) {
+	if len(master) != keySize {
+		return nil, fmt.Errorf("crypto: master key must be %d bytes", keySize)
+	}
+	return hkdf.Key(sha256.New, master, nil, purpose, keySize)
 }

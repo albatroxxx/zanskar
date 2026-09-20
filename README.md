@@ -46,9 +46,15 @@ Phase 0 (foundations). See [docs/roadmap.md](docs/roadmap.md), the
 
 ```sh
 cp .env.example .env
+export ZANSKAR_MASTER_KEY=$(go run ./cmd/zanskar keygen)
+go run ./cmd/zanskar migrate
+go run ./cmd/zanskar admin create --username admin --name "Your Name"   # prompts for a password
 make run            # SQLite, plain HTTP on 127.0.0.1:8443
-curl -s localhost:8443/healthz
+curl -s localhost:8443/readyz
 ```
+
+Sign in with `POST /api/v1/auth/login`, then enroll an authenticator with
+`POST /api/v1/auth/mfa/totp/enroll` and confirm it. `zanskar audit verify` checks the audit chain.
 
 For PostgreSQL and guacd: `docker compose -f deploy/docker-compose.yml up`.
 

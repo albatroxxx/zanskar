@@ -5,6 +5,7 @@
 //	zanskar serve     run the gateway
 //	zanskar migrate   apply pending database migrations and exit
 //	zanskar keygen    print a new base64 master key for ZANSKAR_MASTER_KEY
+//	zanskar audit verify   walk the audit log and check the hash chain
 //	zanskar version   print the build version
 package main
 
@@ -18,9 +19,14 @@ import (
 	"os/signal"
 	"syscall"
 
+	"github.com/albatroxxx/zanskar/internal/audit"
+	"github.com/albatroxxx/zanskar/internal/auth"
 	"github.com/albatroxxx/zanskar/internal/config"
+	"github.com/albatroxxx/zanskar/internal/crypto"
+	"github.com/albatroxxx/zanskar/internal/keyring"
 	"github.com/albatroxxx/zanskar/internal/server"
 	"github.com/albatroxxx/zanskar/internal/store"
+	"github.com/albatroxxx/zanskar/internal/user"
 	"github.com/albatroxxx/zanskar/internal/version"
 )
 
@@ -39,6 +45,10 @@ func main() {
 		err = runKeygen()
 	case "version":
 		fmt.Println(version.Version)
+	case "admin":
+		err = runAdmin(os.Args[2:])
+	case "audit":
+		err = runAudit(os.Args[2:])
 	case "-h", "--help", "help":
 		usage()
 	default:
@@ -52,7 +62,7 @@ func main() {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: zanskar <serve|migrate|keygen|version>")
+	fmt.Fprintln(os.Stderr, "usage: zanskar <serve|migrate|keygen|admin create|audit verify|version>")
 }
 
 func newLogger(cfg *config.Config) *slog.Logger {
@@ -89,8 +99,42 @@ func runServe() error {
 		return fmt.Errorf("%d migration(s) pending; run `zanskar migrate` first", len(pending))
 	}
 
-	log.Info("starting zanskar", "version", version.Version, "db_driver", cfg.DBDriver)
-	return server.New(cfg, db, log).ListenAndServe(ctx)
+	kek, err := crypto.NewLocalKEK(cfg.MasterKey)
+	if err != nil {
+		return err
+	}
+	ring, err := keyring.Open(ctx, db, kek)
+	if err != nil {
+		return fmt.Errorf("key ring: %w", err)
+	}
+	defer ring.Close()
+
+	csrfKey, err := crypto.DeriveKey(cfg.MasterKey, "zanskar/csrf")
+	if err != nil {
+		return err
+	}
+	users := user.NewRepo(db)
+	sessions := auth.NewSessions(db, csrfKey, cfg.SecureCookies())
+	if !cfg.SecureCookies() {
+		log.Warn("session cookies are not marked Secure; fine on loopback, never in production")
+	}
+	auditLog := audit.NewLog(db)
+	totp := auth.NewTOTP(db, ring, cfg.Issuer)
+	authHandler := auth.NewHandler(users, sessions, totp, auditLog, log)
+	authHandler.RequireMFA = cfg.RequireMFA
+	if !cfg.RequireMFA {
+		log.Warn("ZANSKAR_REQUIRE_MFA=false: password-only logins are allowed")
+	}
+	deps := server.Deps{
+		AuthMiddleware: &auth.Middleware{Sessions: sessions, Users: users, Log: log},
+		Auth:           authHandler,
+	}
+	if n, err := users.CountAdmins(ctx); err == nil && n == 0 {
+		log.Warn("no admin user exists; create one with `zanskar admin create`")
+	}
+
+	log.Info("starting zanskar", "version", version.Version, "db_driver", cfg.DBDriver, "key_version", ring.ActiveVersion())
+	return server.New(cfg, db, log, deps).ListenAndServe(ctx)
 }
 
 func runMigrate() error {

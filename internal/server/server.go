@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/albatroxxx/zanskar/internal/auth"
 	"github.com/albatroxxx/zanskar/internal/config"
 	"github.com/albatroxxx/zanskar/internal/store"
 	"github.com/albatroxxx/zanskar/internal/version"
@@ -27,18 +28,33 @@ type Server struct {
 	http *http.Server
 }
 
-// New builds a Server with the system routes registered.
-func New(cfg *config.Config, db *store.DB, log *slog.Logger) *Server {
+// Deps are the domain handlers the server mounts. Nil fields are skipped,
+// which keeps the system routes testable on their own.
+type Deps struct {
+	AuthMiddleware *auth.Middleware
+	Auth           *auth.Handler
+}
+
+// New builds a Server with the system routes and the given handlers registered.
+func New(cfg *config.Config, db *store.DB, log *slog.Logger, deps Deps) *Server {
 	s := &Server{cfg: cfg, db: db, log: log}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", s.handleHealthz)
 	mux.HandleFunc("GET /readyz", s.handleReadyz)
 	mux.HandleFunc("GET /api/v1/version", s.handleVersion)
 	mux.HandleFunc("/", s.handleNotFound)
+	if deps.Auth != nil {
+		deps.Auth.Register(mux)
+	}
+
+	mws := []middleware{s.recoverer, requestID, s.securityHeaders, s.accessLog}
+	if deps.AuthMiddleware != nil {
+		mws = append(mws, deps.AuthMiddleware.Authenticate, deps.AuthMiddleware.CSRF)
+	}
 
 	s.http = &http.Server{
 		Addr:              cfg.ListenAddr,
-		Handler:           chain(mux, s.recoverer, requestID, s.securityHeaders, s.accessLog),
+		Handler:           chain(mux, mws...),
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       30 * time.Second,
 		WriteTimeout:      0, // WebSocket streams are long-lived; per-handler deadlines instead
