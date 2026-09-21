@@ -6,7 +6,7 @@ Approved 2026-09-20. Durations are estimates for a small team; the order matters
 |---|---|---|---|
 | 0. Foundations | 2 weeks | Threat model, ADRs, schema, OpenAPI spec, wireframes, repo scaffold with CI security gates, runnable server skeleton | in progress |
 | 1. MVP | 6 weeks | Local auth with Argon2id and TOTP, admin portal (users, groups, targets, credentials, policies), user portal, SSH web terminal over WebSocket, asciicast recording, audit log persistence and verify command, React frontend scaffold | next |
-| 2. Desktop and identity | 6 weeks | RDP and VNC through guacd, Windows CLI over WinRM, desktop recording, OIDC and LDAP/AD login, SSH certificate authority mode, file transfer and clipboard policy | |
+| 2. Desktop and identity | 6 weeks | RDP and VNC through guacd, Windows CLI over WinRM, desktop recording, OIDC and LDAP/AD login, SSH certificate authority mode, file transfer and clipboard policy | mostly done |
 | 3. Autoscaling | 6 weeks | AWS ASG enrollment with cross-account IAM role, healthy pool tracking, failover modal, EC2 Instance Connect credential mode, HA gateway deployment, Helm chart, SIEM export | |
 | 4. Enterprise | ongoing | Just-in-time access approvals, live session shadowing and termination, credential rotation, SAML and SCIM, GCP managed instance groups, Azure scale sets, WebAuthn | |
 
@@ -21,6 +21,22 @@ Approved 2026-09-20. Durations are estimates for a small team; the order matters
 - [x] Runnable skeleton: `serve`, `migrate`, `keygen`, health and readiness, security headers, envelope crypto, audit hash chain
 - [ ] Frontend scaffold (needs Node on the dev machine; moved to Phase 1)
 - [ ] Sign-off review of threat model and ADRs
+
+## Phase 2 status
+
+Done: RDP and VNC through guacd with certificate pinning (ADR 0012); OIDC login
+(discovery, PKCE, sealed state, just-in-time provisioning, group mapping); LDAP/AD
+bind-and-search login with the same provisioning; the identity-provider admin API
+and UI; SSH certificate authority mode (short-lived per-session certificates, no
+stored user key); WinRM PowerShell terminal (line-oriented console) with recording.
+
+Known follow-ups before Phase 2 is closed:
+
+- WinRM TLS currently trusts the target certificate without pinning. Add a
+  per-target CA/fingerprint pin, mirroring RDP (ADR 0012), and default to verify.
+- File-transfer UI for desktop sessions (the policy flag and bridge enforcement
+  exist; the browser side is not built).
+- Live session shadowing for auditors.
 
 ## Phase 1 order of work
 
