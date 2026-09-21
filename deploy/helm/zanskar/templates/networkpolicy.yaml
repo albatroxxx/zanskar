@@ -1,0 +1,71 @@
+{{- if .Values.networkPolicy.enabled }}
+{{- if .Values.guacd.enabled }}
+# guacd speaks an unauthenticated protocol and holds target credentials in
+# flight; only gateway pods may talk to it (threat model, ADR 0002).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "zanskar.fullname" . }}-guacd
+  labels:
+    {{- include "zanskar.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "zanskar.guacdSelectorLabels" . | nindent 6 }}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- include "zanskar.selectorLabels" . | nindent 14 }}
+      ports:
+        - port: 4822
+          protocol: TCP
+---
+{{- end }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "zanskar.fullname" . }}-gateway
+  labels:
+    {{- include "zanskar.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "zanskar.selectorLabels" . | nindent 6 }}
+  policyTypes:
+    - Ingress
+    {{- if .Values.networkPolicy.restrictGatewayEgress }}
+    - Egress
+    {{- end }}
+  ingress:
+    - ports:
+        - port: 8443
+          protocol: TCP
+      {{- with .Values.networkPolicy.ingressFrom }}
+      from:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+  {{- if .Values.networkPolicy.restrictGatewayEgress }}
+  egress:
+    - ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+    {{- if .Values.guacd.enabled }}
+    - to:
+        - podSelector:
+            matchLabels:
+              {{- include "zanskar.guacdSelectorLabels" . | nindent 14 }}
+      ports:
+        - port: 4822
+          protocol: TCP
+    {{- end }}
+    {{- range .Values.networkPolicy.gatewayEgressCIDRs }}
+    - to:
+        - ipBlock:
+            cidr: {{ . }}
+    {{- end }}
+  {{- end }}
+{{- end }}

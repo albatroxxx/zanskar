@@ -156,7 +156,20 @@ func runServe() error {
 	policies := policy.NewRepo(db)
 	sessionRepo := session.NewRepo(db)
 	registry := gateway.NewRegistry()
-	storage := &recording.LocalStorage{Dir: cfg.RecordingsDir}
+	var storage recording.Storage = &recording.LocalStorage{Dir: cfg.RecordingsDir}
+	if cfg.RecordingsS3Bucket != "" {
+		s3store, err := recording.NewS3Storage(ctx, recording.S3Options{
+			Bucket: cfg.RecordingsS3Bucket, Prefix: cfg.RecordingsS3Prefix, Region: cfg.RecordingsS3Region,
+			Endpoint: cfg.RecordingsS3Endpoint, KMSKeyID: cfg.RecordingsS3KMSKey, SpoolDir: cfg.RecordingsSpoolDir,
+		})
+		if err != nil {
+			return fmt.Errorf("recordings storage: %w", err)
+		}
+		storage = s3store
+		log.Info("recordings storage", "backend", "s3", "bucket", cfg.RecordingsS3Bucket, "prefix", cfg.RecordingsS3Prefix, "kms", cfg.RecordingsS3KMSKey != "")
+	} else {
+		log.Info("recordings storage", "backend", "local", "dir", cfg.RecordingsDir)
+	}
 	asgRepo := asg.NewRepo(db)
 	cloudProviders := asg.AWSProviders()
 	syncer := &asg.Syncer{Repo: asgRepo, Providers: cloudProviders, Prober: &target.Prober{}, Registry: registry, Audit: auditLog, Log: log}
@@ -185,6 +198,23 @@ func runServe() error {
 
 	// Autoscaling: keep instance membership and health current (ADR 0011).
 	go syncer.Run(ctx)
+
+	// SIEM export: ship the audit chain to the configured sinks.
+	var sinks []audit.Sink
+	if cfg.SIEMSyslogAddr != "" {
+		sinks = append(sinks, &audit.SyslogSink{Addr: cfg.SIEMSyslogAddr, Format: cfg.SIEMSyslogFormat, CAFile: cfg.SIEMSyslogCAFile})
+	}
+	if cfg.SIEMWebhookURL != "" {
+		sinks = append(sinks, &audit.WebhookSink{URL: cfg.SIEMWebhookURL, Secret: cfg.SIEMWebhookSecret})
+	}
+	if len(sinks) > 0 {
+		exporter := &audit.Exporter{Log: auditLog, Sinks: sinks, Logger: log}
+		go exporter.Run(ctx)
+		log.Info("audit export enabled", "sinks", len(sinks))
+	}
+	if cfg.AllowPlainHTTP && cfg.TLSCert == "" {
+		log.Warn("ZANSKAR_ALLOW_PLAIN_HTTP=true: serving without TLS on a non-loopback address; development only")
+	}
 
 	// Housekeeping: drop auth sessions that can never be used again.
 	go func() {

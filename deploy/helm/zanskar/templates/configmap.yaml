@@ -1,0 +1,31 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "zanskar.fullname" . }}
+  labels:
+    {{- include "zanskar.labels" . | nindent 4 }}
+data:
+  ZANSKAR_LISTEN_ADDR: {{ .Values.config.listenAddr | quote }}
+  ZANSKAR_DB_DRIVER: {{ .Values.config.dbDriver | quote }}
+  ZANSKAR_TLS_CERT: "/tls/tls.crt"
+  ZANSKAR_TLS_KEY: "/tls/tls.key"
+  ZANSKAR_TRUST_PROXY_TLS: {{ .Values.config.trustProxyTLS | quote }}
+  ZANSKAR_ISSUER: {{ .Values.config.issuer | quote }}
+  ZANSKAR_REQUIRE_MFA: {{ .Values.config.requireMFA | quote }}
+  ZANSKAR_LOG_LEVEL: {{ .Values.config.logLevel | quote }}
+  ZANSKAR_LOG_FORMAT: {{ .Values.config.logFormat | quote }}
+  {{- if .Values.guacd.enabled }}
+  ZANSKAR_GUACD_ADDR: {{ include "zanskar.guacdAddr" . | quote }}
+  {{- end }}
+  {{- if .Values.config.awsGatewayPrincipal }}
+  ZANSKAR_AWS_GATEWAY_PRINCIPAL: {{ .Values.config.awsGatewayPrincipal | quote }}
+  {{- end }}
+  {{- if eq .Values.recordings.backend "s3" }}
+  ZANSKAR_RECORDINGS_S3_BUCKET: {{ required "recordings.s3.bucket is required when recordings.backend=s3" .Values.recordings.s3.bucket | quote }}
+  ZANSKAR_RECORDINGS_S3_PREFIX: {{ .Values.recordings.s3.prefix | quote }}
+  {{- if .Values.recordings.s3.region }}
+  ZANSKAR_RECORDINGS_S3_REGION: {{ .Values.recordings.s3.region | quote }}
+  {{- end }}
+  {{- else }}
+  ZANSKAR_RECORDINGS_DIR: "/recordings"
+  {{- end }}

@@ -1,0 +1,17 @@
+{{- if and (eq .Values.recordings.backend "pvc") .Values.recordings.pvc.create (not .Values.recordings.pvc.existingClaim) }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "zanskar.fullname" . }}-recordings
+  labels:
+    {{- include "zanskar.labels" . | nindent 4 }}
+spec:
+  accessModes:
+    {{- toYaml .Values.recordings.pvc.accessModes | nindent 4 }}
+  {{- with .Values.recordings.pvc.storageClassName }}
+  storageClassName: {{ . }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.recordings.pvc.size }}
+{{- end }}

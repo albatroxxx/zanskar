@@ -7,7 +7,7 @@ Approved 2026-09-20. Durations are estimates for a small team; the order matters
 | 0. Foundations | 2 weeks | Threat model, ADRs, schema, OpenAPI spec, wireframes, repo scaffold with CI security gates, runnable server skeleton | done |
 | 1. MVP | 6 weeks | Local auth with Argon2id and TOTP, admin portal (users, groups, targets, credentials, policies), user portal, SSH web terminal over WebSocket, asciicast recording, audit log persistence and verify command, React frontend scaffold | done |
 | 2. Desktop and identity | 6 weeks | RDP and VNC through guacd, Windows CLI over WinRM, desktop recording, OIDC and LDAP/AD login, SSH certificate authority mode, file transfer and clipboard policy | done |
-| 3. Autoscaling | 6 weeks | AWS ASG enrollment with cross-account IAM role, healthy pool tracking, failover modal, EC2 Instance Connect credential mode, HA gateway deployment, Helm chart, SIEM export | next |
+| 3. Autoscaling | 6 weeks | AWS ASG enrollment with cross-account IAM role, healthy pool tracking, failover modal, EC2 Instance Connect credential mode, HA gateway deployment, Helm chart, SIEM export | done |
 | 4. Enterprise | ongoing | Just-in-time access approvals, live session shadowing and termination, credential rotation, SAML and SCIM, GCP managed instance groups, Azure scale sets, WebAuthn | |
 
 ## Phase 0 checklist
@@ -44,8 +44,15 @@ Done: AWS autoscaling groups as targets (cross-account role with ExternalId, ren
 trust and permissions policies), the sync loop with the ADR 0011 health model, host keys
 verified from the serial console with trust-on-first-use fallback, EC2 Instance Connect
 credential mode, user Autoscaling tab with instance chooser, failover dialog on instance
-loss, admin enrollment and instance views. Remaining in Phase 3: HA gateway deployment,
-Helm chart, SIEM export.
+loss, admin enrollment and instance views. Also: SIEM export of the audit chain (CEF or
+JSON over syslog TCP/TLS, HMAC-signed HTTPS webhook; at-least-once with per-sink
+checkpoints), S3-compatible recording storage for multi-gateway deployments, a Helm chart
+with hardened pods, guacd isolation and a pre-upgrade migrate hook, and docs/deploy.md
+covering topology, HA and its current per-pod limitations.
+
+Phase 3 is complete. Known limitation carried forward: admin terminate and auditor
+shadowing act only on sessions hosted by the pod that receives the request; a cross-pod
+control channel is the first Phase 4 infrastructure item.
 
 ## Phase 1 order of work
 

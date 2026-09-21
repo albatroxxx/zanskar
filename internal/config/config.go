@@ -43,6 +43,24 @@ type Config struct {
 	RequireMFA bool
 	// RecordingsDir is where session recordings are written (local storage).
 	RecordingsDir string
+	// RecordingsS3Bucket switches recordings to an S3-compatible bucket.
+	// Empty keeps the local directory backend.
+	RecordingsS3Bucket   string
+	RecordingsS3Prefix   string
+	RecordingsS3Region   string
+	RecordingsS3Endpoint string
+	RecordingsS3KMSKey   string
+	// RecordingsSpoolDir holds in-progress recordings before upload to S3.
+	RecordingsSpoolDir string
+	// SIEM export: audit events are shipped to any sink configured here.
+	SIEMSyslogAddr    string // tcp://host:port or tls://host:port
+	SIEMSyslogFormat  string // cef | json
+	SIEMSyslogCAFile  string
+	SIEMWebhookURL    string
+	SIEMWebhookSecret []byte
+	// AllowPlainHTTP permits listening without TLS on a non-loopback address.
+	// Development only (docker compose); every response is sent in clear.
+	AllowPlainHTTP bool
 	// AWSGatewayPrincipal is the ARN the gateway runs as (instance profile or
 	// user). It is rendered into the trust policy shown to admins enrolling
 	// an autoscaling group; empty leaves a placeholder.
@@ -62,21 +80,33 @@ type Options struct {
 // Load reads the environment and returns a validated Config.
 func Load(opts Options) (*Config, error) {
 	c := &Config{
-		ListenAddr:          envOr("ZANSKAR_LISTEN_ADDR", "127.0.0.1:8443"),
-		AdminListenAddr:     os.Getenv("ZANSKAR_ADMIN_LISTEN_ADDR"),
-		DBDriver:            envOr("ZANSKAR_DB_DRIVER", DriverSQLite),
-		DBDSN:               envOr("ZANSKAR_DB_DSN", "file:zanskar.db?_pragma=journal_mode(WAL)&_pragma=foreign_keys(1)&_pragma=busy_timeout(5000)"),
-		TLSCert:             os.Getenv("ZANSKAR_TLS_CERT"),
-		TLSKey:              os.Getenv("ZANSKAR_TLS_KEY"),
-		GuacdAddr:           os.Getenv("ZANSKAR_GUACD_ADDR"), // empty disables RDP and VNC
-		TrustProxyTLS:       os.Getenv("ZANSKAR_TRUST_PROXY_TLS") == "true",
-		Issuer:              envOr("ZANSKAR_ISSUER", "Zanskar"),
-		RequireMFA:          envOr("ZANSKAR_REQUIRE_MFA", "true") != "false",
-		RecordingsDir:       envOr("ZANSKAR_RECORDINGS_DIR", "data/recordings"),
-		AWSGatewayPrincipal: os.Getenv("ZANSKAR_AWS_GATEWAY_PRINCIPAL"),
-		LogLevel:            strings.ToLower(envOr("ZANSKAR_LOG_LEVEL", "info")),
-		LogFormat:           strings.ToLower(envOr("ZANSKAR_LOG_FORMAT", "json")),
-		ShutdownTimeout:     20 * time.Second,
+		ListenAddr:           envOr("ZANSKAR_LISTEN_ADDR", "127.0.0.1:8443"),
+		AdminListenAddr:      os.Getenv("ZANSKAR_ADMIN_LISTEN_ADDR"),
+		DBDriver:             envOr("ZANSKAR_DB_DRIVER", DriverSQLite),
+		DBDSN:                envOr("ZANSKAR_DB_DSN", "file:zanskar.db?_pragma=journal_mode(WAL)&_pragma=foreign_keys(1)&_pragma=busy_timeout(5000)"),
+		TLSCert:              os.Getenv("ZANSKAR_TLS_CERT"),
+		TLSKey:               os.Getenv("ZANSKAR_TLS_KEY"),
+		GuacdAddr:            os.Getenv("ZANSKAR_GUACD_ADDR"), // empty disables RDP and VNC
+		TrustProxyTLS:        os.Getenv("ZANSKAR_TRUST_PROXY_TLS") == "true",
+		Issuer:               envOr("ZANSKAR_ISSUER", "Zanskar"),
+		RequireMFA:           envOr("ZANSKAR_REQUIRE_MFA", "true") != "false",
+		RecordingsDir:        envOr("ZANSKAR_RECORDINGS_DIR", "data/recordings"),
+		RecordingsS3Bucket:   os.Getenv("ZANSKAR_RECORDINGS_S3_BUCKET"),
+		RecordingsS3Prefix:   envOr("ZANSKAR_RECORDINGS_S3_PREFIX", "recordings/"),
+		RecordingsS3Region:   os.Getenv("ZANSKAR_RECORDINGS_S3_REGION"),
+		RecordingsS3Endpoint: os.Getenv("ZANSKAR_RECORDINGS_S3_ENDPOINT"),
+		RecordingsS3KMSKey:   os.Getenv("ZANSKAR_RECORDINGS_S3_KMS_KEY"),
+		RecordingsSpoolDir:   os.Getenv("ZANSKAR_RECORDINGS_SPOOL_DIR"),
+		AWSGatewayPrincipal:  os.Getenv("ZANSKAR_AWS_GATEWAY_PRINCIPAL"),
+		SIEMSyslogAddr:       os.Getenv("ZANSKAR_SIEM_SYSLOG_ADDR"),
+		SIEMSyslogFormat:     strings.ToLower(envOr("ZANSKAR_SIEM_SYSLOG_FORMAT", "cef")),
+		SIEMSyslogCAFile:     os.Getenv("ZANSKAR_SIEM_SYSLOG_CA"),
+		SIEMWebhookURL:       os.Getenv("ZANSKAR_SIEM_WEBHOOK_URL"),
+		SIEMWebhookSecret:    []byte(os.Getenv("ZANSKAR_SIEM_WEBHOOK_SECRET")),
+		AllowPlainHTTP:       os.Getenv("ZANSKAR_ALLOW_PLAIN_HTTP") == "true",
+		LogLevel:             strings.ToLower(envOr("ZANSKAR_LOG_LEVEL", "info")),
+		LogFormat:            strings.ToLower(envOr("ZANSKAR_LOG_FORMAT", "json")),
+		ShutdownTimeout:      20 * time.Second,
 	}
 
 	var errs []error
@@ -98,8 +128,25 @@ func Load(opts Options) (*Config, error) {
 	if (c.TLSCert == "") != (c.TLSKey == "") {
 		errs = append(errs, errors.New("ZANSKAR_TLS_CERT and ZANSKAR_TLS_KEY must be set together"))
 	}
-	if c.TLSCert == "" && !isLoopback(c.ListenAddr) {
-		errs = append(errs, errors.New("refusing to serve plain HTTP on a non-loopback address; set ZANSKAR_TLS_CERT/ZANSKAR_TLS_KEY or terminate TLS in front and bind to loopback"))
+	if c.TLSCert == "" && !isLoopback(c.ListenAddr) && !c.AllowPlainHTTP {
+		errs = append(errs, errors.New("refusing to serve plain HTTP on a non-loopback address; set ZANSKAR_TLS_CERT/ZANSKAR_TLS_KEY, bind to loopback behind a TLS proxy, or set ZANSKAR_ALLOW_PLAIN_HTTP=true for development only"))
+	}
+	if c.SIEMSyslogAddr != "" && !strings.HasPrefix(c.SIEMSyslogAddr, "tcp://") && !strings.HasPrefix(c.SIEMSyslogAddr, "tls://") {
+		errs = append(errs, errors.New("ZANSKAR_SIEM_SYSLOG_ADDR must start with tcp:// or tls://"))
+	}
+	if c.SIEMSyslogFormat != "cef" && c.SIEMSyslogFormat != "json" {
+		errs = append(errs, errors.New("ZANSKAR_SIEM_SYSLOG_FORMAT must be cef or json"))
+	}
+	if c.SIEMWebhookURL != "" {
+		if !strings.HasPrefix(c.SIEMWebhookURL, "https://") {
+			errs = append(errs, errors.New("ZANSKAR_SIEM_WEBHOOK_URL must be https"))
+		}
+		if len(c.SIEMWebhookSecret) < 16 {
+			errs = append(errs, errors.New("ZANSKAR_SIEM_WEBHOOK_SECRET must be at least 16 characters"))
+		}
+	}
+	if c.RecordingsS3Endpoint != "" && !strings.HasPrefix(c.RecordingsS3Endpoint, "https://") && !strings.HasPrefix(c.RecordingsS3Endpoint, "http://") {
+		errs = append(errs, errors.New("ZANSKAR_RECORDINGS_S3_ENDPOINT must be an http(s) URL"))
 	}
 	switch c.LogLevel {
 	case "debug", "info", "warn", "error":

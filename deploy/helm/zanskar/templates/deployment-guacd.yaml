@@ -1,0 +1,75 @@
+{{- if .Values.guacd.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "zanskar.fullname" . }}-guacd
+  labels:
+    {{- include "zanskar.labels" . | nindent 4 }}
+    app.kubernetes.io/component: guacd
+spec:
+  replicas: {{ .Values.guacd.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "zanskar.guacdSelectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "zanskar.guacdSelectorLabels" . | nindent 8 }}
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: guacd
+          image: "{{ .Values.guacd.image.repository }}:{{ .Values.guacd.image.tag }}"
+          imagePullPolicy: {{ .Values.guacd.image.pullPolicy }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          ports:
+            - name: guacd
+              containerPort: 4822
+              protocol: TCP
+          readinessProbe:
+            tcpSocket:
+              port: guacd
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket:
+              port: guacd
+            periodSeconds: 30
+          resources:
+            {{- toYaml .Values.guacd.resources | nindent 12 }}
+          volumeMounts:
+            # Per-session RDP drive directories for file transfer; memory-backed,
+            # gone when the pod restarts.
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir:
+            medium: Memory
+            sizeLimit: {{ .Values.guacd.tmpSizeLimit }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "zanskar.fullname" . }}-guacd
+  labels:
+    {{- include "zanskar.labels" . | nindent 4 }}
+    app.kubernetes.io/component: guacd
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "zanskar.guacdSelectorLabels" . | nindent 4 }}
+  ports:
+    - name: guacd
+      port: 4822
+      targetPort: guacd
+{{- end }}

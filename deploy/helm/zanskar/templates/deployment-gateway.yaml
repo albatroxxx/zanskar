@@ -1,0 +1,100 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "zanskar.fullname" . }}
+  labels:
+    {{- include "zanskar.labels" . | nindent 4 }}
+    app.kubernetes.io/component: gateway
+spec:
+  {{- if not .Values.autoscaling.enabled }}
+  replicas: {{ .Values.replicaCount }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "zanskar.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "zanskar.selectorLabels" . | nindent 8 }}
+        {{- with .Values.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        {{- with .Values.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "zanskar.serviceAccountName" . }}
+      automountServiceAccountToken: {{ if .Values.serviceAccount.annotations }}true{{ else }}false{{ end }}
+      terminationGracePeriodSeconds: {{ .Values.terminationGracePeriodSeconds }}
+      {{- with .Values.priorityClassName }}
+      priorityClassName: {{ . }}
+      {{- end }}
+      securityContext:
+        {{- include "zanskar.podSecurityContext" . | nindent 8 }}
+      containers:
+        - name: gateway
+          image: {{ include "zanskar.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args: ["serve"]
+          securityContext:
+            {{- include "zanskar.containerSecurityContext" . | nindent 12 }}
+          ports:
+            - name: https
+              containerPort: 8443
+              protocol: TCP
+          envFrom:
+            {{- include "zanskar.envFrom" . | nindent 12 }}
+          env:
+            {{- include "zanskar.env" . | nindent 12 }}
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: https
+              scheme: HTTPS
+            initialDelaySeconds: 3
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: https
+              scheme: HTTPS
+            initialDelaySeconds: 10
+            periodSeconds: 20
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          volumeMounts:
+            - name: tls
+              mountPath: /tls
+              readOnly: true
+            {{- if eq .Values.recordings.backend "pvc" }}
+            - name: recordings
+              mountPath: /recordings
+            {{- end }}
+      volumes:
+        - name: tls
+          secret:
+            secretName: {{ required "tls.secretName is required: the gateway refuses plain HTTP off loopback" .Values.tls.secretName }}
+            defaultMode: 0440
+        {{- if eq .Values.recordings.backend "pvc" }}
+        - name: recordings
+          persistentVolumeClaim:
+            claimName: {{ default (printf "%s-recordings" (include "zanskar.fullname" .)) .Values.recordings.pvc.existingClaim }}
+        {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

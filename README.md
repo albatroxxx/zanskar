@@ -72,6 +72,12 @@ deploy/           Dockerfile, docker-compose, Helm (later)
 web/              React + TypeScript frontend, embedded into the binary at build time
 ```
 
+## Deploying
+
+Single node: `deploy/docker-compose.yml`. Kubernetes: the Helm chart in
+`deploy/helm/zanskar`. Topology, high availability, upgrades, backups and the security
+checklist are in [docs/deploy.md](docs/deploy.md).
+
 ## Security
 
 See [SECURITY.md](SECURITY.md) for how to report vulnerabilities.

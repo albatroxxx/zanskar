@@ -1,0 +1,44 @@
+Zanskar {{ .Chart.AppVersion }} is installed as release {{ .Release.Name }}.
+
+1. Secrets (must exist before install; the chart never stores them):
+
+   kubectl -n {{ .Release.Namespace }} create secret generic {{ .Values.existingSecret }} \
+     --from-literal=ZANSKAR_MASTER_KEY="$(docker run --rm {{ include "zanskar.image" . }} keygen)" \
+     --from-literal=ZANSKAR_DB_DSN="postgres://zanskar:PASSWORD@postgres:5432/zanskar?sslmode=require"
+
+   Keep ZANSKAR_MASTER_KEY in a vault as well. Losing it makes every stored
+   credential and authenticator secret unrecoverable.
+
+2. TLS: the gateway needs a certificate in the pod. Secret {{ .Values.tls.secretName }}
+   (type kubernetes.io/tls) is mounted at /tls. With cert-manager:
+
+   kubectl -n {{ .Release.Namespace }} apply -f - <<'CERT'
+   apiVersion: cert-manager.io/v1
+   kind: Certificate
+   metadata: { name: {{ .Values.tls.secretName }} }
+   spec:
+     secretName: {{ .Values.tls.secretName }}
+     dnsNames: [{{ .Values.ingress.host | quote }}, {{ printf "%s.%s.svc" (include "zanskar.fullname" .) .Release.Namespace | quote }}]
+     issuerRef: { name: YOUR-ISSUER, kind: ClusterIssuer }
+   CERT
+
+3. First admin (no unauthenticated bootstrap endpoint exists):
+
+   kubectl -n {{ .Release.Namespace }} exec -it deploy/{{ include "zanskar.fullname" . }} -- \
+     /zanskar admin create --username admin --name "Your Name"
+
+   Set ZANSKAR_ADMIN_PASSWORD in the exec environment to avoid the prompt.
+
+4. Reach the UI:
+{{- if .Values.ingress.enabled }}
+   https://{{ .Values.ingress.host }}
+{{- else }}
+   kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "zanskar.fullname" . }} 8443:{{ .Values.service.port }}
+   https://localhost:8443
+{{- end }}
+
+5. Autoscaling groups on EKS: annotate the service account with
+   eks.amazonaws.com/role-arn and set config.awsGatewayPrincipal to that role's ARN
+   so the trust policy shown to admins is correct.
+
+More: docs/deploy.md in the repository.

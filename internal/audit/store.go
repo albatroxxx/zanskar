@@ -360,3 +360,49 @@ func nullIfEmpty(s string) any {
 	}
 	return s
 }
+
+// ListAfter returns up to limit events with id > afterID in ascending order.
+// It is the feed for exporters, which must see every event in chain order.
+func (l *Log) ListAfter(ctx context.Context, afterID int64, limit int) ([]Event, error) {
+	if limit <= 0 || limit > maxListLimit {
+		limit = maxListLimit
+	}
+	rows, err := l.db.QueryContext(ctx, l.db.Rebind(selectColumns+" WHERE id > ? ORDER BY id ASC LIMIT "+strconv.Itoa(limit)), afterID)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	var out []Event
+	for rows.Next() {
+		ev, err := scanEvent(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, ev)
+	}
+	return out, rows.Err()
+}
+
+// ExportCheckpoint returns the last exported id for a sink (0 when none).
+func (l *Log) ExportCheckpoint(ctx context.Context, sink string) (int64, error) {
+	var id int64
+	err := l.db.QueryRowContext(ctx, l.db.Rebind(`SELECT last_id FROM audit_export_state WHERE sink = ?`), sink).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, nil
+	}
+	return id, err
+}
+
+// SaveExportCheckpoint records the last exported id for a sink.
+func (l *Log) SaveExportCheckpoint(ctx context.Context, sink string, lastID int64) error {
+	now := store.TimeArg(time.Now())
+	res, err := l.db.ExecContext(ctx, l.db.Rebind(`UPDATE audit_export_state SET last_id = ?, updated_at = ? WHERE sink = ?`), lastID, now, sink)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n > 0 {
+		return nil
+	}
+	_, err = l.db.ExecContext(ctx, l.db.Rebind(`INSERT INTO audit_export_state (sink, last_id, updated_at) VALUES (?, ?, ?)`), sink, lastID, now)
+	return err
+}

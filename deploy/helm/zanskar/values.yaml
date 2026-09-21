@@ -1,0 +1,150 @@
+# Zanskar Helm values. Secrets never live here: the chart reads
+# ZANSKAR_MASTER_KEY and ZANSKAR_DB_DSN from an existing Secret you create.
+
+image:
+  repository: ghcr.io/albatroxxx/zanskar
+  tag: ""            # defaults to .Chart.AppVersion
+  pullPolicy: IfNotPresent
+imagePullSecrets: []
+
+# Number of gateway pods. Gateways are stateless except for two in-memory
+# structures (connect tickets and the live-session registry), so >1 needs
+# session affinity: see service.sessionAffinity and ingress.affinity below.
+replicaCount: 2
+
+# Existing Secret holding the gateway secrets. Create it before installing:
+#   kubectl create secret generic zanskar-secrets \
+#     --from-literal=ZANSKAR_MASTER_KEY="$(zanskar keygen)" \
+#     --from-literal=ZANSKAR_DB_DSN="postgres://user:pass@host:5432/zanskar?sslmode=require"
+# Losing the master key makes every vaulted credential and TOTP secret unrecoverable.
+existingSecret: zanskar-secrets
+
+# TLS in the pod is mandatory: Zanskar refuses plain HTTP on a non-loopback
+# address (internal/config: "refusing to serve plain HTTP on a non-loopback
+# address"). Point tls.secretName at a kubernetes.io/tls Secret (cert-manager
+# can issue one); it is mounted at /tls and wired to ZANSKAR_TLS_CERT/KEY.
+# Terminating TLS only at the ingress is NOT enough for the pod to start.
+tls:
+  secretName: zanskar-tls
+  # When the cert is issued by cert-manager, set these annotations on the
+  # Certificate you create out of band; the chart does not create one.
+
+config:
+  # ZANSKAR_* settings (non-secret). Anything here lands in a ConfigMap.
+  listenAddr: "0.0.0.0:8443"
+  dbDriver: postgres          # postgres in production; sqlite only for single-node trials
+  issuer: Zanskar             # name shown in authenticator apps
+  requireMFA: "true"          # keep true; "false" only for throwaway installs
+  logLevel: info
+  logFormat: json
+  # trustProxyTLS marks cookies Secure when a TLS proxy fronts a loopback-bound
+  # gateway; not used in the default in-pod TLS mode. Leave "false".
+  trustProxyTLS: "false"
+  # ARN the gateway assumes roles from (IRSA role on EKS). Rendered into the
+  # trust policy shown to admins enrolling an autoscaling group.
+  awsGatewayPrincipal: ""
+  extraEnv: []                # additional {name, value} pairs
+  extraEnvFrom: []            # additional envFrom sources (e.g. SIEM secrets)
+
+# Session recordings. Exactly one backend:
+#  - pvc: a ReadWriteMany volume shared by all gateway pods (NFS, EFS, CephFS).
+#         ReadWriteOnce only works with replicaCount: 1.
+#  - s3:  object storage via ZANSKAR_RECORDINGS_S3_BUCKET (the S3 backend is
+#         being added alongside this chart; the env var is wired here so the
+#         upgrade is a values change). Uses the pod identity (IRSA) for access.
+recordings:
+  backend: pvc                # pvc | s3
+  pvc:
+    create: true
+    existingClaim: ""
+    storageClassName: ""
+    accessModes: [ReadWriteMany]
+    size: 50Gi
+  s3:
+    bucket: ""
+    prefix: recordings/
+    region: ""
+
+guacd:
+  enabled: true               # RDP and VNC need guacd; disable for SSH/WinRM-only installs
+  image:
+    repository: guacamole/guacd
+    tag: "1.6.0"              # >= 1.6 is required for certificate pinning (ADR 0012)
+    pullPolicy: IfNotPresent
+  replicaCount: 1
+  resources:
+    requests: {cpu: 100m, memory: 128Mi}
+    limits: {memory: 1Gi}
+  # /tmp holds per-session RDP drive directories for file transfer; memory-backed.
+  tmpSizeLimit: 512Mi
+
+service:
+  type: ClusterIP
+  port: 8443
+  # ClientIP affinity keeps a browser's /api/v1/connect call and its following
+  # /ws/* upgrade on the same pod (tickets are per pod). With an ingress that
+  # already does cookie affinity this can be "None".
+  sessionAffinity: ClientIP
+  sessionAffinityTimeoutSeconds: 10800
+
+ingress:
+  enabled: false
+  className: nginx
+  host: zanskar.example.com
+  tlsSecretName: ""           # ingress-side TLS (in addition to the pod's)
+  # Cookie affinity is the correct choice behind an ingress (client IPs are
+  # NATed). These annotations are for ingress-nginx; adapt for others.
+  annotations:
+    nginx.ingress.kubernetes.io/affinity: cookie
+    nginx.ingress.kubernetes.io/affinity-mode: persistent
+    nginx.ingress.kubernetes.io/session-cookie-name: zanskar_pod
+    nginx.ingress.kubernetes.io/session-cookie-secure: "true"
+    nginx.ingress.kubernetes.io/session-cookie-samesite: Strict
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+    nginx.ingress.kubernetes.io/backend-protocol: HTTPS
+
+serviceAccount:
+  create: true
+  name: ""
+  # EKS: bind the pod to an IAM role so it can assume the per-ASG roles.
+  # eks.amazonaws.com/role-arn: arn:aws:iam::123456789012:role/zanskar-gateway
+  annotations: {}
+
+networkPolicy:
+  enabled: true
+  # Gateways must reach targets anywhere; leave egress open unless you can
+  # enumerate target networks. Set to true to restrict egress to guacd, DNS
+  # and the CIDRs in gatewayEgressCIDRs.
+  restrictGatewayEgress: false
+  gatewayEgressCIDRs: []
+  # Which namespaces/pods may reach the gateway Service (ingress controller).
+  ingressFrom: []             # list of NetworkPolicyPeer; empty allows all
+
+migrate:
+  # Runs `zanskar migrate` as a Helm hook before install and upgrade.
+  # Migrations are an explicit step; the gateway refuses to start with any pending.
+  enabled: true
+  backoffLimit: 3
+
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 1
+
+autoscaling:
+  enabled: false
+  minReplicas: 2
+  maxReplicas: 6
+  targetCPUUtilizationPercentage: 70
+
+resources:
+  requests: {cpu: 250m, memory: 256Mi}
+  limits: {memory: 1Gi}
+
+podAnnotations: {}
+podLabels: {}
+nodeSelector: {}
+tolerations: []
+affinity: {}
+priorityClassName: ""
+terminationGracePeriodSeconds: 60   # let live sessions close cleanly

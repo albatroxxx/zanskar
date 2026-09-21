@@ -39,6 +39,9 @@ services:
         condition: service_started
     environment:
       ZANSKAR_LISTEN_ADDR: 0.0.0.0:8443
+      # The compose stack is a development environment reached over the
+      # loopback-published port; production must terminate TLS (see docs/deploy.md).
+      ZANSKAR_ALLOW_PLAIN_HTTP: "true"
       ZANSKAR_DB_DRIVER: postgres
       ZANSKAR_DB_DSN: postgres://zanskar:zanskar@postgres:5432/zanskar?sslmode=disable
       ZANSKAR_GUACD_ADDR: guacd:4822
