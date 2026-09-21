@@ -1,0 +1,83 @@
+#!/bin/bash
+# Zanskar gateway bootstrap (Amazon Linux 2023): Caddy for TLS, guacd and
+# Postgres in Docker, the gateway as a systemd service bound to loopback.
+set -euo pipefail
+exec > /var/log/zanskar-bootstrap.log 2>&1
+
+dnf install -y docker
+systemctl enable --now docker
+# Caddy from its official repo.
+dnf install -y 'dnf-command(copr)'
+dnf copr enable -y @caddy/caddy epel-9-x86_64 || true
+dnf install -y caddy || (curl -fsSL "https://caddyserver.com/api/download?os=linux&arch=amd64" -o /usr/bin/caddy && chmod 755 /usr/bin/caddy && useradd -r -s /sbin/nologin caddy || true)
+
+useradd -r -s /sbin/nologin -d /var/lib/zanskar zanskar || true
+install -d -o zanskar -g zanskar -m 0700 /var/lib/zanskar /var/lib/zanskar/spool /etc/zanskar
+aws s3 cp "s3://${bucket}/release/zanskar-linux-amd64" /usr/local/bin/zanskar --region "${region}"
+chmod 755 /usr/local/bin/zanskar
+
+# Postgres and guacd, both only on loopback / the docker network.
+docker network create zanskar || true
+PGPASS=$(openssl rand -hex 16)
+docker run -d --name postgres --restart unless-stopped --network zanskar -p 127.0.0.1:5432:5432 \
+  -e POSTGRES_USER=zanskar -e POSTGRES_PASSWORD="$PGPASS" -e POSTGRES_DB=zanskar postgres:16-alpine
+docker run -d --name guacd --restart unless-stopped --network zanskar -p 127.0.0.1:4822:4822 \
+  --read-only --tmpfs /tmp:size=512m,mode=1777 guacamole/guacd:1.6.0
+
+MASTER_KEY=$(/usr/local/bin/zanskar keygen)
+cat > /etc/zanskar/env <<ENV
+ZANSKAR_LISTEN_ADDR=127.0.0.1:8443
+ZANSKAR_TRUST_PROXY_TLS=true
+ZANSKAR_DB_DRIVER=postgres
+ZANSKAR_DB_DSN=postgres://zanskar:$PGPASS@127.0.0.1:5432/zanskar?sslmode=disable
+ZANSKAR_MASTER_KEY=$MASTER_KEY
+ZANSKAR_GUACD_ADDR=127.0.0.1:4822
+ZANSKAR_RECORDINGS_S3_BUCKET=${bucket}
+ZANSKAR_RECORDINGS_S3_PREFIX=recordings/
+ZANSKAR_RECORDINGS_S3_REGION=${region}
+ZANSKAR_RECORDINGS_SPOOL_DIR=/var/lib/zanskar/spool
+ZANSKAR_AWS_GATEWAY_PRINCIPAL=$(curl -s -H "X-aws-ec2-metadata-token: $(curl -s -X PUT http://169.254.169.254/latest/api/token -H 'X-aws-ec2-metadata-token-ttl-seconds: 60')" http://169.254.169.254/latest/meta-data/iam/info | python3 -c 'import sys,json; print(json.load(sys.stdin)["InstanceProfileArn"])' 2>/dev/null || echo "")
+ZANSKAR_LOG_FORMAT=json
+ENV
+chmod 0600 /etc/zanskar/env; chown zanskar:zanskar /etc/zanskar/env
+# Keep a copy of the master key for the operator; losing it loses every vaulted secret.
+cp /etc/zanskar/env /root/zanskar-env.backup; chmod 0600 /root/zanskar-env.backup
+
+cat > /etc/systemd/system/zanskar.service <<UNIT
+[Unit]
+Description=Zanskar access gateway
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+User=zanskar
+Group=zanskar
+EnvironmentFile=/etc/zanskar/env
+WorkingDirectory=/var/lib/zanskar
+ExecStartPre=/usr/local/bin/zanskar migrate
+ExecStart=/usr/local/bin/zanskar serve
+Restart=always
+RestartSec=3
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/zanskar
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+
+# Wait for postgres, then start.
+for i in $(seq 1 30); do docker exec postgres pg_isready -U zanskar >/dev/null 2>&1 && break; sleep 2; done
+systemctl daemon-reload
+systemctl enable --now zanskar
+
+cat > /etc/caddy/Caddyfile <<CADDY
+${hostname} {
+  encode zstd gzip
+  reverse_proxy 127.0.0.1:8443
+}
+CADDY
+systemctl enable --now caddy
+echo "bootstrap complete"

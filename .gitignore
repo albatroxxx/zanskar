@@ -28,3 +28,9 @@ coverage.html
 node_modules/
 web/dist/
 web/node_modules/
+
+# terraform
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars

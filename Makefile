@@ -3,7 +3,7 @@ MODULE   := github.com/albatroxxx/zanskar
 VERSION  ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 LDFLAGS  := -s -w -X $(MODULE)/internal/version.Version=$(VERSION)
 
-.PHONY: all build build-api web web-dev run test lint vet vuln sec tidy clean migrate-check
+.PHONY: all build build-api web web-dev dist-linux run test lint vet vuln sec tidy clean migrate-check
 
 all: lint test build
 
@@ -45,3 +45,7 @@ migrate-check:
 
 clean:
 	rm -rf bin/ dist/ coverage.out
+
+dist-linux: web
+	mkdir -p dist
+	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -tags webui -ldflags '$(LDFLAGS)' -o dist/zanskar-linux-amd64 ./cmd/zanskar

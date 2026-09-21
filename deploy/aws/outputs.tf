@@ -1,0 +1,11 @@
+output "gateway_url" { value = "https://${local.hostname}" }
+output "gateway_public_ip" { value = aws_eip.gateway.public_ip }
+output "gateway_ssh" { value = "ssh -i data/aws-boxes.pem ec2-user@${aws_eip.gateway.public_ip}" }
+output "linux_private_ip" { value = aws_instance.linux.private_ip }
+output "windows_private_ip" { value = aws_instance.windows.private_ip }
+output "windows_password_cmd" { value = "aws ec2 get-password-data --profile ${var.profile} --instance-id ${aws_instance.windows.id} --priv-launch-key data/aws-windows.pem --query PasswordData --output text" }
+output "asg_name" { value = aws_autoscaling_group.web.name }
+output "asg_role_arn" { value = aws_iam_role.asg_access.arn }
+output "asg_external_id" { value = local.external_id }
+output "bucket" { value = aws_s3_bucket.zanskar.bucket }
+output "gateway_role_arn" { value = aws_iam_role.gateway.arn }
