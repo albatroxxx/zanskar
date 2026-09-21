@@ -133,6 +133,9 @@ func authMethods(a Auth) ([]ssh.AuthMethod, error) {
 type Limits struct {
 	Idle time.Duration // ends the session after this long without input
 	Max  time.Duration // absolute cap from start; zero means none
+	// Tap, when set, receives every output chunk after it is recorded, so
+	// auditors can shadow the session live. Writes must never block.
+	Tap  interface{ Write([]byte) }
 	tick time.Duration // how often limits are checked; tests shorten it
 }
 
@@ -228,6 +231,9 @@ func Bridge(ctx context.Context, log *slog.Logger, client *ssh.Client, ws *webso
 						setEnd("error")
 						return
 					}
+				}
+				if lim.Tap != nil {
+					lim.Tap.Write(buf[:n])
 				}
 				if werr := ws.Write(ctx, websocket.MessageBinary, buf[:n]); werr != nil {
 					return

@@ -57,7 +57,16 @@ export function Sessions() {
                   <td>{fmtDuration(s.started_at, s.ended_at)}</td>
                   <td>{reasonBadge(s.end_reason)}</td>
                   <td>{s.recording_id ? <Link to={`/audit/recordings/${s.recording_id}`}>play</Link> : <span className="muted">—</span>}</td>
-                  <td>{!s.ended_at && <button className="btn sm danger" onClick={() => setTerminating(s)}>Terminate</button>}</td>
+                  <td>
+                    {!s.ended_at && (
+                      <span className="actions">
+                        <Link className="btn sm" to={`/audit/shadow/${s.id}?protocol=${s.protocol}&target=${encodeURIComponent(s.target_name ?? s.target_id ?? '')}`} title="Watch live, read-only; the view is audited">
+                          Watch
+                        </Link>
+                        <button className="btn sm danger" onClick={() => setTerminating(s)}>Terminate</button>
+                      </span>
+                    )}
+                  </td>
                 </tr>
               ))}
             </tbody>

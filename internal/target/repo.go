@@ -23,7 +23,7 @@ type Repo struct {
 func NewRepo(db *store.DB) *Repo { return &Repo{db: db} }
 
 const cols = `id, name, address, os_family, ports, capabilities, host_key_fingerprint, host_key_status,
-	tls_fingerprint, tags, status, notes, created_by, created_at, updated_at, last_probed_at`
+	tls_fingerprint, tags, status, notes, created_by, created_at, updated_at, last_probed_at, winrm_tls_fingerprint`
 
 // Create validates and inserts t, including its credential mapping.
 func (r *Repo) Create(ctx context.Context, t *Target) error {
@@ -34,7 +34,7 @@ func (r *Repo) Create(ctx context.Context, t *Target) error {
 	t.ID = store.NewID()
 	t.CreatedAt, t.UpdatedAt = now, now
 	t.HostKeyStatus = HostKeyUnknown
-	t.HostKeyFingerprint, t.TLSFingerprint, t.LastProbedAt = nil, nil, nil
+	t.HostKeyFingerprint, t.TLSFingerprint, t.WinRMTLSFingerprint, t.LastProbedAt = nil, nil, nil, nil
 	ports, capsJSON, tags := mustJSON(t.Ports), mustJSON(t.Capabilities), mustJSON(t.Tags)
 
 	tx, err := r.db.BeginTx(ctx, nil)
@@ -245,6 +245,10 @@ func (r *Repo) RecordProbe(ctx context.Context, id string, res ProbeResult) (*Ta
 		fp := res.TLS.Fingerprint
 		t.TLSFingerprint = &fp
 	}
+	if res.WinRMTLS != nil && res.WinRMTLS.Fingerprint != "" {
+		fp := res.WinRMTLS.Fingerprint
+		t.WinRMTLSFingerprint = &fp
+	}
 	caps := res.Capabilities
 	if caps == nil {
 		caps = []Protocol{}
@@ -258,8 +262,8 @@ func (r *Repo) RecordProbe(ctx context.Context, id string, res ProbeResult) (*Ta
 	t.LastProbedAt = &now
 	t.UpdatedAt = now
 	_, err = r.db.ExecContext(ctx, r.db.Rebind(`UPDATE targets SET capabilities = ?, host_key_fingerprint = ?, host_key_status = ?,
-		tls_fingerprint = ?, last_probed_at = ?, updated_at = ? WHERE id = ?`),
-		mustJSON(t.Capabilities), nullStr(t.HostKeyFingerprint), string(t.HostKeyStatus), nullStr(t.TLSFingerprint),
+		tls_fingerprint = ?, winrm_tls_fingerprint = ?, last_probed_at = ?, updated_at = ? WHERE id = ?`),
+		mustJSON(t.Capabilities), nullStr(t.HostKeyFingerprint), string(t.HostKeyStatus), nullStr(t.TLSFingerprint), nullStr(t.WinRMTLSFingerprint),
 		store.TimeArg(now), store.TimeArg(now), id)
 	if err != nil {
 		return nil, nil, err
@@ -370,10 +374,11 @@ func scanTarget(s scanner) (*Target, error) {
 		osFamily, hkStatus      string
 		ports, capsRaw, tagsRaw []byte
 		hk, tlsFP, createdBy    sql.NullString
+		winrmFP                 sql.NullString
 		created, updated, probe store.NullTime
 	)
 	err := s.Scan(&t.ID, &t.Name, &t.Address, &osFamily, &ports, &capsRaw, &hk, &hkStatus, &tlsFP, &tagsRaw,
-		&t.Status, &t.Notes, &createdBy, &created, &updated, &probe)
+		&t.Status, &t.Notes, &createdBy, &created, &updated, &probe, &winrmFP)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound
@@ -396,6 +401,9 @@ func scanTarget(s scanner) (*Target, error) {
 	}
 	if tlsFP.Valid {
 		t.TLSFingerprint = &tlsFP.String
+	}
+	if winrmFP.Valid {
+		t.WinRMTLSFingerprint = &winrmFP.String
 	}
 	if createdBy.Valid {
 		t.CreatedBy = &createdBy.String

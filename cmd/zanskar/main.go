@@ -170,6 +170,7 @@ func runServe() error {
 			&session.Handler{Repo: sessionRepo, Audit: auditLog, Registry: registry, Storage: storage, Log: log},
 			&connect.Handler{Targets: targets, Policies: policies, Vault: vault, Sessions: sessionRepo, Tickets: ticket.NewStore(),
 				Registry: registry, Storage: storage, Audit: auditLog, Log: log, MFAEnrolled: totp.Enrolled, GuacdAddr: cfg.GuacdAddr},
+			&connect.ShadowHandler{Registry: registry, Audit: auditLog, Log: log, GuacdAddr: cfg.GuacdAddr},
 		},
 	}
 	if n, err := users.CountAdmins(ctx); err == nil && n == 0 {

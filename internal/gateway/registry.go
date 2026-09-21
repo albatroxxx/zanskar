@@ -17,7 +17,19 @@ type Live struct {
 	TargetID  string
 	Protocol  string
 	StartedAt time.Time
-	cancel    context.CancelFunc
+	// Tap carries the output stream for shadowing. Terminal protocols get
+	// one automatically in Add; desktop sessions are shadowed through guacd
+	// instead (see GuacID).
+	Tap *Tap
+	// GuacID is the guacd connection id of a desktop session, set by the
+	// desktop bridge via SetGuacID so a watcher can join it read-only.
+	GuacID string
+	cancel context.CancelFunc
+}
+
+// isTerminal reports whether a protocol streams bytes a Tap can fan out.
+func isTerminal(protocol string) bool {
+	return protocol == "ssh" || protocol == "winrm"
 }
 
 // Registry tracks live sessions in this gateway process.
@@ -36,17 +48,54 @@ func (r *Registry) Add(parent context.Context, l Live) context.Context {
 	if l.StartedAt.IsZero() {
 		l.StartedAt = time.Now()
 	}
+	if l.Tap == nil && isTerminal(l.Protocol) {
+		l.Tap = NewTap()
+	}
 	r.mu.Lock()
 	r.live[l.SessionID] = &l
 	r.mu.Unlock()
 	return ctx
 }
 
-// Remove forgets a finished session.
+// Remove forgets a finished session and closes its tap so watchers end.
 func (r *Registry) Remove(sessionID string) {
 	r.mu.Lock()
+	l, ok := r.live[sessionID]
 	delete(r.live, sessionID)
 	r.mu.Unlock()
+	if ok && l.Tap != nil {
+		l.Tap.Close()
+	}
+}
+
+// Get returns a snapshot of a live session.
+func (r *Registry) Get(sessionID string) (Live, bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	l, ok := r.live[sessionID]
+	if !ok {
+		return Live{}, false
+	}
+	return *l, true
+}
+
+// Tap returns the output tap of a live terminal session, or nil.
+func (r *Registry) Tap(sessionID string) *Tap {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if l, ok := r.live[sessionID]; ok {
+		return l.Tap
+	}
+	return nil
+}
+
+// SetGuacID records the guacd connection id of a desktop session.
+func (r *Registry) SetGuacID(sessionID, guacID string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if l, ok := r.live[sessionID]; ok {
+		l.GuacID = guacID
+	}
 }
 
 // Terminate cancels a live session. It reports whether one was found.

@@ -225,3 +225,28 @@ func TestHostKeyStateMachine(t *testing.T) {
 		t.Fatal("expected not found")
 	}
 }
+
+func TestRecordProbeStoresWinRMFingerprint(t *testing.T) {
+	r := NewRepo(testDB(t))
+	ctx := context.Background()
+	tg := &Target{Name: "win-1", Address: "10.0.0.9", OSFamily: Windows}
+	if err := r.Create(ctx, tg); err != nil {
+		t.Fatal(err)
+	}
+	res := ProbeResult{
+		Ports:        map[Protocol]PortResult{WinRM: {Reachable: true}, RDP: {Reachable: true}},
+		Capabilities: []Protocol{RDP, WinRM},
+		TLS:          &TLSInfo{Fingerprint: "aa11", Subject: "CN=rdp", Source: "rdp"},
+		WinRMTLS:     &TLSInfo{Fingerprint: "bb22", Subject: "CN=winrm", Source: "winrm"},
+	}
+	if _, _, err := r.RecordProbe(ctx, tg.ID, res); err != nil {
+		t.Fatal(err)
+	}
+	got, err := r.Get(ctx, tg.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.TLSFingerprint == nil || *got.TLSFingerprint != "aa11" || got.WinRMTLSFingerprint == nil || *got.WinRMTLSFingerprint != "bb22" {
+		t.Fatalf("fingerprints not stored separately: rdp=%v winrm=%v", got.TLSFingerprint, got.WinRMTLSFingerprint)
+	}
+}

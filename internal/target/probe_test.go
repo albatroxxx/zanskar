@@ -90,8 +90,8 @@ func TestProbeTLSCapturesCertificate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !res.Reachable[WinRM] || res.TLS == nil || res.TLS.Fingerprint != want || res.TLS.Source != "winrm" {
-		t.Fatalf("tls not captured: %+v errors=%v", res.TLS, res.Errors)
+	if !res.Reachable[WinRM] || res.WinRMTLS == nil || res.WinRMTLS.Fingerprint != want || res.WinRMTLS.Source != "winrm" {
+		t.Fatalf("tls not captured: %+v errors=%v", res.WinRMTLS, res.Errors)
 	}
 	if res.Reachable[SSH] || res.Ports[SSH].Error == "" {
 		t.Fatalf("port 1 should be unreachable with an error: %+v", res.Ports[SSH])

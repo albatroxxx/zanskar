@@ -27,7 +27,13 @@ import (
 // browser never sees these. RDP certificate trust is pinned to the TLS
 // fingerprint captured at probe time (ADR 0012); without one the connection
 // is refused rather than trusted blindly.
-func desktopParams(t *target.Target, proto target.Protocol, a *credential.Opened, userSecret []byte, username string) (guac.Params, error) {
+//
+// File transfer uses guacd's drive redirection: when the policy allows it, a
+// per-session directory under drivePath is exposed to the RDP session as a
+// mapped drive named "Zanskar", and the browser uploads to and downloads from
+// it through Guacamole object streams. The directory lives in guacd's tmpfs and
+// disappears with the session. VNC has no file transfer.
+func desktopParams(t *target.Target, proto target.Protocol, a *credential.Opened, userSecret []byte, username string, allowFiles bool, drivePath string) (guac.Params, error) {
 	args := map[string]string{
 		"hostname": t.Address,
 		"port":     strconv.Itoa(t.Port(proto)),
@@ -58,8 +64,17 @@ func desktopParams(t *target.Target, proto target.Protocol, a *credential.Opened
 		args["resize-method"] = "display-update"
 		args["enable-wallpaper"] = "false"
 		args["disable-audio"] = "true"
-		args["enable-drive"] = "false"
 		args["enable-printing"] = "false"
+		if allowFiles {
+			args["enable-drive"] = "true"
+			args["drive-name"] = "Zanskar"
+			args["drive-path"] = drivePath
+			args["create-drive-path"] = "true"
+			args["disable-download"] = "false"
+			args["disable-upload"] = "false"
+		} else {
+			args["enable-drive"] = "false"
+		}
 	case target.VNC:
 		args["password"] = password
 		if username != "" {
@@ -106,7 +121,9 @@ func (h *Handler) desktop(w http.ResponseWriter, r *http.Request) {
 		}
 		defer opened.Close()
 	}
-	params, err := desktopParams(t, proto, opened, g.UserSecret, g.Username)
+	// Validate the target and credential before upgrading; the drive path is
+	// filled in once the session id exists.
+	params, err := desktopParams(t, proto, opened, g.UserSecret, g.Username, g.AllowFileTransfer, "")
 	if err != nil {
 		httpx.WriteError(w, http.StatusConflict, "target_unavailable", err.Error())
 		return
@@ -143,6 +160,9 @@ func (h *Handler) desktop(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	if g.AllowFileTransfer && proto == target.RDP {
+		params.Args["drive-path"] = drivePathFor(s.ID)
+	}
 	timeout := h.DialTimeout
 	if timeout <= 0 {
 		timeout = 10 * time.Second
@@ -170,13 +190,18 @@ func (h *Handler) desktop(w http.ResponseWriter, r *http.Request) {
 	h.record(r, actor.Event("session.start", "access_session", s.ID, audit.Success, map[string]any{"target_id": t.ID, "protocol": g.Protocol, "policy_id": g.PolicyID, "recording_id": recRow.ID}))
 
 	// guacamole-common-js expects the tunnel's internal opcode with an id first.
-	if err := ws.Write(r.Context(), websocket.MessageText, []byte(guac.Encode("", s.ID))); err != nil {
+	// It is followed by a Zanskar-specific instruction carrying the policy
+	// flags so the browser can show or hide the file and clipboard controls.
+	// Guacamole.Client ignores opcodes it does not know, so it is harmless to
+	// a stock client and never reaches guacd.
+	if err := ws.Write(r.Context(), websocket.MessageText, []byte(guac.Encode("", s.ID)+FlagsInstruction(g.AllowFileTransfer, g.AllowClipboard))); err != nil {
 		_, _, _ = rec.Close()
 		endWith(session.EndError, "")
 		return
 	}
 
 	ctx := h.Registry.Add(r.Context(), gateway.Live{SessionID: s.ID, UserID: g.UserID, TargetID: t.ID, Protocol: g.Protocol})
+	h.Registry.SetGuacID(s.ID, gc.ID) // lets auditors join this desktop via guacd
 	defer h.Registry.Remove(s.ID)
 	reason, berr := guac.Bridge(ctx, h.Log, gc, ws, rec, guac.Limits{Idle: g.IdleTimeout, Max: g.MaxSession, AllowClipboard: g.AllowClipboard, AllowFileTransfer: g.AllowFileTransfer})
 	size, sum, cerr := rec.Close()
@@ -191,6 +216,25 @@ func (h *Handler) desktop(w http.ResponseWriter, r *http.Request) {
 	}
 	endWith(reason, "")
 	_ = ws.Close(websocket.StatusNormalClosure, reason)
+}
+
+// drivePathFor is the per-session directory guacd exposes as the mapped drive.
+// It sits under guacd's tmpfs (see deploy/docker-compose.yml) and is never
+// visible to the gateway process itself.
+func drivePathFor(sessionID string) string {
+	return "/tmp/drives/" + sessionID
+}
+
+// FlagsInstruction encodes policy flags for the browser as a custom
+// Guacamole instruction: "zanskar,file,<0|1>,clipboard,<0|1>".
+func FlagsInstruction(files, clipboard bool) string {
+	b := func(v bool) string {
+		if v {
+			return "1"
+		}
+		return "0"
+	}
+	return guac.Encode("zanskar", "file", b(files), "clipboard", b(clipboard))
 }
 
 // ticketPathFor reports which WebSocket endpoint serves a protocol.

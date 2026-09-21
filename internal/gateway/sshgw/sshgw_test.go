@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -209,6 +210,7 @@ func TestBridgeEchoExitAndRecording(t *testing.T) {
 	var (
 		reasonCh = make(chan string, 1)
 		recCh    = make(chan *recording.Asciicast, 1)
+		tapped   = &tapBuf{}
 	)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ws, err := websocket.Accept(w, r, &websocket.AcceptOptions{InsecureSkipVerify: true})
@@ -226,7 +228,7 @@ func TestBridgeEchoExitAndRecording(t *testing.T) {
 			t.Errorf("rec: %v", err)
 			return
 		}
-		reason, err := Bridge(r.Context(), nil, client, ws, rec, 80, 24, Limits{Idle: time.Minute})
+		reason, err := Bridge(r.Context(), nil, client, ws, rec, 80, 24, Limits{Idle: time.Minute, Tap: tapped})
 		if err != nil {
 			t.Errorf("bridge: %v", err)
 		}
@@ -304,6 +306,9 @@ func TestBridgeEchoExitAndRecording(t *testing.T) {
 	if err != nil || size == 0 || sum == "" {
 		t.Fatalf("recording close: %d %q %v", size, sum, err)
 	}
+	if !strings.Contains(tapped.String(), "HELLO") {
+		t.Fatalf("tap did not receive session output: %q", tapped.String())
+	}
 }
 
 func TestBridgeIdleTimeout(t *testing.T) {
@@ -377,3 +382,12 @@ func base64Encode(dst, src []byte) {
 		}
 	}
 }
+
+// tapBuf collects tapped output for the shadowing assertion.
+type tapBuf struct {
+	mu sync.Mutex
+	b  []byte
+}
+
+func (t *tapBuf) Write(p []byte) { t.mu.Lock(); t.b = append(t.b, p...); t.mu.Unlock() }
+func (t *tapBuf) String() string { t.mu.Lock(); defer t.mu.Unlock(); return string(t.b) }

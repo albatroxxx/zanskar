@@ -43,6 +43,7 @@ export interface Target {
   host_key_fingerprint: string | null
   host_key_status: HostKeyStatus
   tls_fingerprint: string | null
+  winrm_tls_fingerprint: string | null
   tags: Record<string, string>
   status: 'active' | 'disabled'
   notes: string

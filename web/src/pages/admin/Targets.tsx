@@ -259,9 +259,14 @@ function TargetDetail({ target, credentials, onClose, onChanged, onDeleted, onEr
         <dd>
           {hostKeyBadge(t.host_key_status)} {fp && <span className="mono"> {fp}</span>}
         </dd>
+        {t.winrm_tls_fingerprint && (
+          <>
+            <dt>WinRM cert</dt><dd className="mono">{t.winrm_tls_fingerprint}</dd>
+          </>
+        )}
         {t.tls_fingerprint && (
           <>
-            <dt>TLS cert</dt><dd className="mono">{t.tls_fingerprint}</dd>
+            <dt>RDP cert</dt><dd className="mono">{t.tls_fingerprint}</dd>
           </>
         )}
         <dt>Tags</dt><dd><Tags tags={t.tags} /></dd>
@@ -312,9 +317,14 @@ function TargetDetail({ target, credentials, onClose, onChanged, onDeleted, onEr
                 <dt>Banner</dt><dd className="mono">{probe.probe.ssh_host_key.banner}</dd>
               </>
             )}
+            {probe.probe.winrm_tls && (
+              <>
+                <dt>WinRM cert</dt><dd className="mono">{probe.probe.winrm_tls.subject} · {probe.probe.winrm_tls.fingerprint}</dd>
+              </>
+            )}
             {probe.probe.tls && (
               <>
-                <dt>TLS ({probe.probe.tls.source})</dt><dd className="mono">{probe.probe.tls.subject} · {probe.probe.tls.fingerprint}</dd>
+                <dt>RDP cert</dt><dd className="mono">{probe.probe.tls.subject} · {probe.probe.tls.fingerprint}</dd>
               </>
             )}
             {probe.probe.vnc_version && (

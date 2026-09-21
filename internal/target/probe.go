@@ -60,7 +60,8 @@ type ProbeResult struct {
 	Ports        map[Protocol]PortResult `json:"ports"`
 	Capabilities []Protocol              `json:"capabilities"`
 	SSHHostKey   *SSHHostKey             `json:"ssh_host_key,omitempty"`
-	TLS          *TLSInfo                `json:"tls,omitempty"`
+	TLS          *TLSInfo                `json:"tls,omitempty"`       // RDP listener certificate
+	WinRMTLS     *TLSInfo                `json:"winrm_tls,omitempty"` // WinRM HTTPS listener certificate
 	VNCVersion   string                  `json:"vnc_version,omitempty"`
 	ProbedAt     time.Time               `json:"probed_at"`
 
@@ -114,8 +115,13 @@ func (p *Prober) Probe(ctx context.Context, address string, ports map[Protocol]i
 			if ssh != nil {
 				res.SSHHostKey = ssh
 			}
-			if tlsInfo != nil && (res.TLS == nil || proto == RDP) {
-				res.TLS = tlsInfo
+			if tlsInfo != nil {
+				switch proto {
+				case RDP:
+					res.TLS = tlsInfo
+				case WinRM:
+					res.WinRMTLS = tlsInfo
+				}
 			}
 			if vnc != "" {
 				res.VNCVersion = vnc

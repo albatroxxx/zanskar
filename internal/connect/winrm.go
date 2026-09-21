@@ -4,6 +4,7 @@ package connect
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"strconv"
 	"time"
@@ -20,12 +21,14 @@ import (
 	"github.com/albatroxxx/zanskar/internal/target"
 )
 
+func actorFor(userID, ip string) audit.Actor { return audit.Actor{UserID: userID, IP: ip} }
+
 // winrm redeems a ticket and runs a WinRM PowerShell console for its lifetime.
 // Route: GET /ws/winrm?ticket=...&cols=&rows=
 //
 // WinRM is a line-oriented console, not a raw PTY (see internal/gateway/winrmgw).
-// TLS to the target currently trusts the server certificate without pinning; a
-// pinned-CA mode is a planned follow-up, mirroring RDP certificate pinning.
+// TLS to the target is pinned to the listener certificate captured by the
+// probe (mirroring RDP, ADR 0012); plain-HTTP WinRM is refused outright.
 func (h *Handler) winrm(w http.ResponseWriter, r *http.Request) {
 	ip := auth.ClientIP(r)
 	g, err := h.Tickets.Redeem(r.URL.Query().Get("ticket"), ip)
@@ -67,10 +70,20 @@ func (h *Handler) winrm(w http.ResponseWriter, r *http.Request) {
 		timeout = 10 * time.Second
 	}
 	port := t.Port(target.WinRM)
-	client, err := winrmgw.Dial(r.Context(), winrmgw.Endpoint{Address: t.Address, Port: port, UseTLS: port != 5985, Insecure: true}, a, timeout)
+	if port == 5985 || t.WinRMTLSFingerprint == nil || *t.WinRMTLSFingerprint == "" {
+		// connect() already refuses these; re-check here because the ticket
+		// was issued earlier and the target may have been re-probed since.
+		httpx.WriteError(w, http.StatusConflict, "certificate_unpinned", "winrm target is not pinned; probe it over HTTPS first")
+		return
+	}
+	client, err := winrmgw.Dial(r.Context(), winrmgw.Endpoint{Address: t.Address, Port: port, UseTLS: true, PinnedFingerprint: *t.WinRMTLSFingerprint}, a, timeout)
 	if err != nil {
+		if errors.Is(err, winrmgw.ErrCertMismatch) {
+			h.record(r, actorFor(g.UserID, ip).Event("target.tls.mismatch", "target", t.ID, audit.Failure, map[string]string{"protocol": "winrm", "expected": *t.WinRMTLSFingerprint}))
+			httpx.WriteError(w, http.StatusConflict, "certificate_mismatch", "the target presented a different certificate; connection refused")
+			return
+		}
 		h.Log.Warn("winrm dial failed", "target", t.ID, "err", err)
-		// Persist a stub session so the failure is auditable, then report.
 		httpx.WriteError(w, http.StatusConflict, "target_unavailable", "could not connect to the target")
 		return
 	}

@@ -75,23 +75,24 @@ const (
 
 // Target is an enrolled machine.
 type Target struct {
-	ID                 string              `json:"id"`
-	Name               string              `json:"name"`
-	Address            string              `json:"address"`
-	OSFamily           OSFamily            `json:"os_family"`
-	Ports              map[Protocol]int    `json:"ports"`
-	Capabilities       []Protocol          `json:"capabilities"`
-	HostKeyFingerprint *string             `json:"host_key_fingerprint"`
-	HostKeyStatus      HostKeyStatus       `json:"host_key_status"`
-	TLSFingerprint     *string             `json:"tls_fingerprint"`
-	Tags               map[string]string   `json:"tags"`
-	Status             string              `json:"status"`
-	Notes              string              `json:"notes"`
-	Credentials        map[Protocol]string `json:"credentials"`
-	CreatedBy          *string             `json:"created_by"`
-	CreatedAt          time.Time           `json:"created_at"`
-	UpdatedAt          time.Time           `json:"updated_at"`
-	LastProbedAt       *time.Time          `json:"last_probed_at"`
+	ID                  string              `json:"id"`
+	Name                string              `json:"name"`
+	Address             string              `json:"address"`
+	OSFamily            OSFamily            `json:"os_family"`
+	Ports               map[Protocol]int    `json:"ports"`
+	Capabilities        []Protocol          `json:"capabilities"`
+	HostKeyFingerprint  *string             `json:"host_key_fingerprint"`
+	HostKeyStatus       HostKeyStatus       `json:"host_key_status"`
+	TLSFingerprint      *string             `json:"tls_fingerprint"`       // RDP listener certificate, SHA-256 hex
+	WinRMTLSFingerprint *string             `json:"winrm_tls_fingerprint"` // WinRM HTTPS listener certificate, SHA-256 hex
+	Tags                map[string]string   `json:"tags"`
+	Status              string              `json:"status"`
+	Notes               string              `json:"notes"`
+	Credentials         map[Protocol]string `json:"credentials"`
+	CreatedBy           *string             `json:"created_by"`
+	CreatedAt           time.Time           `json:"created_at"`
+	UpdatedAt           time.Time           `json:"updated_at"`
+	LastProbedAt        *time.Time          `json:"last_probed_at"`
 }
 
 // Port returns the effective port for p.

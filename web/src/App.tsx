@@ -11,6 +11,7 @@ import { MySessions } from './pages/user/MySessions'
 // The terminal pulls in xterm; load it only when a session opens.
 const Terminal = lazy(() => import('./pages/user/Terminal').then((m) => ({ default: m.Terminal })))
 const Desktop = lazy(() => import('./pages/user/Desktop').then((m) => ({ default: m.Desktop })))
+const Shadow = lazy(() => import('./pages/audit/Shadow').then((m) => ({ default: m.Shadow })))
 import { adminRoutes } from './pages/admin'
 import { auditRoutes } from './pages/audit'
 
@@ -43,6 +44,16 @@ export default function App() {
           <Guard>
             <Suspense fallback={<Empty>Loading desktop</Empty>}>
               <Desktop />
+            </Suspense>
+          </Guard>
+        }
+      />
+      <Route
+        path="/audit/shadow/:id"
+        element={
+          <Guard roles={['admin', 'auditor']}>
+            <Suspense fallback={<Empty>Connecting</Empty>}>
+              <Shadow />
             </Suspense>
           </Guard>
         }

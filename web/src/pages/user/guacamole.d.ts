@@ -1,11 +1,52 @@
 // Minimal typings for the parts of guacamole-common-js the Desktop page uses.
 declare module 'guacamole-common-js' {
+  export interface Status { code?: number; message?: string }
+
   export class WebSocketTunnel {
     constructor(url: string)
-    onerror: ((status: { code?: number; message?: string }) => void) | null
+    onerror: ((status: Status) => void) | null
+    oninstruction: ((opcode: string, args: string[]) => void) | null
   }
   export class Display {
     getElement(): HTMLElement
+  }
+  export class InputStream {
+    index: number
+    onblob: ((data: string) => void) | null
+    onend: (() => void) | null
+    sendAck(message: string, code: number): void
+  }
+  export class OutputStream {
+    index: number
+    onack: ((status: Status) => void) | null
+    sendBlob(data: string): void
+    sendEnd(): void
+  }
+  export class ArrayBufferReader {
+    constructor(stream: InputStream)
+    ondata: ((buffer: ArrayBuffer) => void) | null
+    onend: (() => void) | null
+  }
+  export class ArrayBufferWriter {
+    constructor(stream: OutputStream)
+    blobLength: number
+    onack: ((status: Status) => void) | null
+    sendData(data: ArrayBuffer | ArrayBufferView): void
+    sendEnd(): void
+  }
+  export class JSONReader {
+    constructor(stream: InputStream)
+    onprogress: ((length: number) => void) | null
+    onend: (() => void) | null
+    getJSON(): unknown
+  }
+  export class GuacObject {
+    static ROOT_STREAM: string
+    static STREAM_INDEX_MIMETYPE: string
+    index: number
+    onundefine: (() => void) | null
+    requestInputStream(name: string, bodyCallback?: (stream: InputStream, mimetype: string) => void): void
+    createOutputStream(mimetype: string, name: string): OutputStream
   }
   export class Client {
     constructor(tunnel: WebSocketTunnel)
@@ -15,8 +56,9 @@ declare module 'guacamole-common-js' {
     sendMouseState(state: unknown): void
     sendKeyEvent(pressed: number, keysym: number): void
     sendSize(width: number, height: number): void
-    onerror: ((status: { code?: number; message?: string }) => void) | null
+    onerror: ((status: Status) => void) | null
     onstatechange: ((state: number) => void) | null
+    onfilesystem: ((object: GuacObject, name: string) => void) | null
   }
   export class Mouse {
     constructor(element: HTMLElement)
@@ -34,6 +76,10 @@ declare module 'guacamole-common-js' {
     Client: typeof Client
     Mouse: typeof Mouse
     Keyboard: typeof Keyboard
+    ArrayBufferReader: typeof ArrayBufferReader
+    ArrayBufferWriter: typeof ArrayBufferWriter
+    JSONReader: typeof JSONReader
+    Object: typeof GuacObject
   }
   export default Guacamole
 }

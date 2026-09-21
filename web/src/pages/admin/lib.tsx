@@ -58,6 +58,7 @@ export interface ProbeWire {
   capabilities: Protocol[]
   ssh_host_key?: { fingerprint: string; type: string; banner: string }
   tls?: { fingerprint: string; subject: string; source: string }
+  winrm_tls?: { fingerprint: string; subject: string; source: string }
   vnc_version?: string
   probed_at: string
 }

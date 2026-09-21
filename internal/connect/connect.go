@@ -203,6 +203,16 @@ func (h *Handler) connect(w http.ResponseWriter, r *http.Request) {
 		deny(http.StatusConflict, "certificate_unpinned", "the target's RDP certificate has not been captured; probe it first")
 		return
 	}
+	if proto == target.WinRM {
+		if t.Port(target.WinRM) == 5985 {
+			deny(http.StatusConflict, "tls_required", "winrm over plain HTTP is not allowed; use the HTTPS listener (5986)")
+			return
+		}
+		if t.WinRMTLSFingerprint == nil || *t.WinRMTLSFingerprint == "" {
+			deny(http.StatusConflict, "certificate_unpinned", "the target's WinRM certificate has not been captured; probe it first")
+			return
+		}
+	}
 	credID, ok := t.Credentials[proto]
 	if !ok || credID == "" {
 		deny(http.StatusConflict, "no_credential", "no credential is configured for "+req.Protocol+" on this target")

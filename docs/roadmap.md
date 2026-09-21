@@ -4,10 +4,10 @@ Approved 2026-09-20. Durations are estimates for a small team; the order matters
 
 | Phase | Duration | Deliverable | Status |
 |---|---|---|---|
-| 0. Foundations | 2 weeks | Threat model, ADRs, schema, OpenAPI spec, wireframes, repo scaffold with CI security gates, runnable server skeleton | in progress |
-| 1. MVP | 6 weeks | Local auth with Argon2id and TOTP, admin portal (users, groups, targets, credentials, policies), user portal, SSH web terminal over WebSocket, asciicast recording, audit log persistence and verify command, React frontend scaffold | next |
-| 2. Desktop and identity | 6 weeks | RDP and VNC through guacd, Windows CLI over WinRM, desktop recording, OIDC and LDAP/AD login, SSH certificate authority mode, file transfer and clipboard policy | mostly done |
-| 3. Autoscaling | 6 weeks | AWS ASG enrollment with cross-account IAM role, healthy pool tracking, failover modal, EC2 Instance Connect credential mode, HA gateway deployment, Helm chart, SIEM export | |
+| 0. Foundations | 2 weeks | Threat model, ADRs, schema, OpenAPI spec, wireframes, repo scaffold with CI security gates, runnable server skeleton | done |
+| 1. MVP | 6 weeks | Local auth with Argon2id and TOTP, admin portal (users, groups, targets, credentials, policies), user portal, SSH web terminal over WebSocket, asciicast recording, audit log persistence and verify command, React frontend scaffold | done |
+| 2. Desktop and identity | 6 weeks | RDP and VNC through guacd, Windows CLI over WinRM, desktop recording, OIDC and LDAP/AD login, SSH certificate authority mode, file transfer and clipboard policy | done |
+| 3. Autoscaling | 6 weeks | AWS ASG enrollment with cross-account IAM role, healthy pool tracking, failover modal, EC2 Instance Connect credential mode, HA gateway deployment, Helm chart, SIEM export | next |
 | 4. Enterprise | ongoing | Just-in-time access approvals, live session shadowing and termination, credential rotation, SAML and SCIM, GCP managed instance groups, Azure scale sets, WebAuthn | |
 
 ## Phase 0 checklist
@@ -30,13 +30,13 @@ bind-and-search login with the same provisioning; the identity-provider admin AP
 and UI; SSH certificate authority mode (short-lived per-session certificates, no
 stored user key); WinRM PowerShell terminal (line-oriented console) with recording.
 
-Known follow-ups before Phase 2 is closed:
+Closed 2026-09-21: WinRM TLS is pinned to the listener certificate captured by the
+probe (per-protocol fingerprint, plain HTTP refused; ADR 0012 addendum); desktop file
+transfer through RDP drive redirection with a browser Files panel, gated by policy and
+enforced in the bridge; live session shadowing for admins and auditors (terminal fan-out
+with scrollback replay, guacd read-only join for desktops, every watch audited).
 
-- WinRM TLS currently trusts the target certificate without pinning. Add a
-  per-target CA/fingerprint pin, mirroring RDP (ADR 0012), and default to verify.
-- File-transfer UI for desktop sessions (the policy flag and bridge enforcement
-  exist; the browser side is not built).
-- Live session shadowing for auditors.
+Phase 2 is complete.
 
 ## Phase 1 order of work
 

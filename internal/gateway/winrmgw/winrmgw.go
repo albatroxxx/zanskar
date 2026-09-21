@@ -30,11 +30,18 @@ import (
 
 // Endpoint describes the WinRM listener on the target.
 type Endpoint struct {
-	Address   string
-	Port      int    // 0 uses 5986 for TLS, 5985 otherwise
-	UseTLS    bool   // WinRM over HTTPS (recommended)
-	Insecure  bool   // skip TLS verification (development only)
-	CACertPEM string // pins the target's CA chain when UseTLS
+	Address string
+	Port    int  // 0 uses 5986 for TLS, 5985 otherwise
+	UseTLS  bool // WinRM over HTTPS (required by the gateway; plain HTTP is refused)
+	// PinnedFingerprint is the SHA-256 (hex) of the listener's leaf certificate
+	// captured by the probe. When set, it is the only trust anchor: the CA and
+	// hostname checks are replaced by an exact match, like SSH host key pinning.
+	PinnedFingerprint string
+	// CACertPEM verifies the listener against a CA bundle instead of a pin.
+	CACertPEM string
+	// Insecure skips verification entirely. Development only; Dial refuses
+	// TLS endpoints that have neither a pin, a CA bundle, nor this flag.
+	Insecure bool
 }
 
 // Auth is how Zanskar authenticates to the target (ADR 0005). A non-empty
@@ -84,17 +91,28 @@ func Dial(ctx context.Context, ep Endpoint, a Auth, timeout time.Duration) (*Cli
 		}
 		caPEM = []byte(ep.CACertPEM)
 	}
+	if ep.UseTLS && ep.PinnedFingerprint == "" && caPEM == nil && !ep.Insecure {
+		return nil, ErrUnpinned
+	}
 	endpoint := winrm.NewEndpoint(ep.Address, port, ep.UseTLS, ep.Insecure, caPEM, nil, nil, timeout)
 
 	params := winrm.NewParameters("PT60S", "en-US", 153600)
 	user := a.Username
-	if a.Domain != "" {
-		// NTLM for AD. WinRM sends DOMAIN\user; the library's NTLM transport
-		// handles the handshake.
+	ntlm := a.Domain != ""
+	if ntlm {
+		// NTLM for AD. WinRM sends DOMAIN\user; the NTLM transport handles
+		// the handshake.
 		params.TransportDecorator = func() winrm.Transporter { return &winrm.ClientNTLM{} }
 		if !strings.Contains(user, "\\") && !strings.Contains(user, "@") {
 			user = a.Domain + "\\" + user
 		}
+	}
+	if ep.UseTLS && ep.PinnedFingerprint != "" {
+		pt, err := newPinnedTransport(ep.Address, port, user, a.Password, ep.PinnedFingerprint, ntlm)
+		if err != nil {
+			return nil, err
+		}
+		params.TransportDecorator = func() winrm.Transporter { return pt }
 	}
 	wc, err := winrm.NewClientWithParameters(endpoint, user, a.Password, params)
 	if err != nil {
@@ -137,6 +155,8 @@ func (s *winrmShell) Close() error { return nil }
 type Limits struct {
 	Idle time.Duration // ends the session after this long without input
 	Max  time.Duration // absolute cap from start; zero means none
+	// Tap, when set, receives every output chunk for live shadowing.
+	Tap  interface{ Write([]byte) }
 	tick time.Duration // how often limits are checked; tests shorten it
 }
 
@@ -194,6 +214,9 @@ func Bridge(ctx context.Context, log *slog.Logger, sh Shell, ws *websocket.Conn,
 				setEnd("error")
 				return false
 			}
+		}
+		if lim.Tap != nil {
+			lim.Tap.Write(b)
 		}
 		wmu.Lock()
 		defer wmu.Unlock()

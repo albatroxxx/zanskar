@@ -98,6 +98,11 @@ func fakeGuacd(t *testing.T, gotParams chan<- map[string]string) string {
 					if err != nil || in.Opcode == "disconnect" {
 						return
 					}
+					if in.Opcode == "trigger-fs" {
+						// Simulate guacd announcing the redirected drive.
+						_, _ = c.Write([]byte(Encode("filesystem", "0", "Zanskar")))
+						continue
+					}
 					_, _ = c.Write([]byte(Encode("echo", append([]string{in.Opcode}, in.Args...)...)))
 				}
 			}()
@@ -202,3 +207,70 @@ func TestBridgeRelayAndPolicy(t *testing.T) {
 type recFunc func(string) error
 
 func (f recFunc) Write(raw string) error { return f(raw) }
+
+// runBridge starts a bridge over a real websocket with the given limits and
+// returns a connected client plus helpers.
+func runBridge(t *testing.T, addr string, lim Limits) (send func(string), read func() string) {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ws, err := websocket.Accept(w, r, &websocket.AcceptOptions{InsecureSkipVerify: true})
+		if err != nil {
+			return
+		}
+		c, err := Dial(r.Context(), addr, Params{Protocol: "rdp", Args: map[string]string{}}, 2*time.Second)
+		if err != nil {
+			t.Errorf("dial: %v", err)
+			return
+		}
+		defer c.Close()
+		_, _ = Bridge(r.Context(), nil, c, ws, nil, lim)
+		_ = ws.Close(websocket.StatusNormalClosure, "")
+	}))
+	t.Cleanup(srv.Close)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	t.Cleanup(cancel)
+	ws, _, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(srv.URL, "http"), nil) //nolint:bodyclose
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = ws.CloseNow() })
+	send = func(raw string) {
+		if err := ws.Write(ctx, websocket.MessageText, []byte(raw)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	read = func() string {
+		_, data, err := ws.Read(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(data)
+	}
+	return send, read
+}
+
+func TestBridgeFileTransferPolicy(t *testing.T) {
+	addr := fakeGuacd(t, nil)
+
+	// Disallowed: "put" never reaches guacd (no echo) and the server's
+	// "filesystem" announcement is dropped; the following mouse echo proves
+	// the stream is still alive.
+	send, read := runBridge(t, addr, Limits{Idle: time.Minute, AllowFileTransfer: false, tick: 50 * time.Millisecond})
+	send(Encode("put", "0", "1", "application/octet-stream", "/x.txt"))
+	send(Encode("trigger-fs"))
+	send(Encode("mouse", "1", "1", "0"))
+	if got := read(); got != Encode("echo", "mouse", "1", "1", "0") {
+		t.Fatalf("expected put and filesystem to be dropped, got %q", got)
+	}
+
+	// Allowed: both pass.
+	send, read = runBridge(t, addr, Limits{Idle: time.Minute, AllowFileTransfer: true, tick: 50 * time.Millisecond})
+	send(Encode("put", "0", "1", "application/octet-stream", "/x.txt"))
+	if got := read(); got != Encode("echo", "put", "0", "1", "application/octet-stream", "/x.txt") {
+		t.Fatalf("put should pass when allowed, got %q", got)
+	}
+	send(Encode("trigger-fs"))
+	if got := read(); got != Encode("filesystem", "0", "Zanskar") {
+		t.Fatalf("filesystem should pass when allowed, got %q", got)
+	}
+}

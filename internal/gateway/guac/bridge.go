@@ -26,7 +26,8 @@ type Limits struct {
 	// AllowClipboard controls whether clipboard instructions pass in either
 	// direction. Without it, "clipboard" and its blob streams are dropped.
 	AllowClipboard bool
-	// AllowFileTransfer controls "file" and "pipe" streams.
+	// AllowFileTransfer controls "file" and "pipe" streams and the drive
+	// redirection object protocol ("filesystem", "body", "get", "put").
 	AllowFileTransfer bool
 	tick              time.Duration
 }
@@ -75,7 +76,7 @@ func Bridge(ctx context.Context, log *slog.Logger, c *Conn, ws *websocket.Conn, 
 				if !lim.AllowClipboard {
 					continue
 				}
-			case "file", "pipe":
+			case "file", "pipe", "filesystem", "body", "undefine":
 				if !lim.AllowFileTransfer {
 					continue
 				}
@@ -116,7 +117,7 @@ func Bridge(ctx context.Context, log *slog.Logger, c *Conn, ws *websocket.Conn, 
 					continue
 				}
 				touch(&mu, &lastIn)
-			case "file", "pipe":
+			case "file", "pipe", "get", "put":
 				if !lim.AllowFileTransfer {
 					continue
 				}
