@@ -15,6 +15,11 @@ zanskar.db
 zanskar.db-*
 /data/
 
+# local-only notes and scratch (never publish brainstorm material)
+/prompts
+/scratch/
+*.local.md
+
 # tooling
 .idea/
 .vscode/

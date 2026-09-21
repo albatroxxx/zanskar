@@ -355,3 +355,14 @@ func isUnique(err error) bool {
 	msg := strings.ToLower(err.Error())
 	return strings.Contains(msg, "unique") || strings.Contains(msg, "duplicate key")
 }
+
+// GetByExternalID finds a user provisioned from an identity provider.
+func (r *Repo) GetByExternalID(ctx context.Context, idpID, externalID string) (*User, error) {
+	row := r.db.QueryRowContext(ctx, r.db.Rebind(`SELECT `+userCols+` FROM users WHERE idp_id = ? AND external_id = ?`), idpID, externalID)
+	u, err := scanUser(row)
+	if err != nil {
+		return nil, err
+	}
+	u.Roles, err = r.roles(ctx, u.ID)
+	return u, err
+}
