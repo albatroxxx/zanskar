@@ -1,18 +1,18 @@
 import { useState, type FormEvent } from 'react'
 import { api, errorMessage } from '../../api/client'
-import type { Group, Policy, Protocol, Target, TimeWindow } from '../../api/types'
+import type { Group, Policy, Protocol, Target, TimeWindow, AutoscalingGroup } from '../../api/types'
 import { Alert, Badge, Confirm, Empty, Field, Modal, PageHead } from '../../components/ui'
 import { formatTags, parseTags, protocols, useList } from './lib'
 
 const days = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun']
 
-function selectorSummary(p: Policy, targets: Target[]) {
+function selectorSummary(p: Policy, targets: Target[], asgs: AutoscalingGroup[]) {
   const parts: string[] = []
   const tags = Object.entries(p.target_selector.tags ?? {})
   if (tags.length) parts.push(tags.map(([k, v]) => `${k}=${v}`).join(', '))
   const ids = p.target_selector.targets ?? []
   if (ids.length) parts.push(ids.map((id) => targets.find((t) => t.id === id)?.name ?? id.slice(0, 8)).join(', '))
-  if (p.target_selector.asgs?.length) parts.push(`${p.target_selector.asgs.length} ASG`)
+  if (p.target_selector.asgs?.length) parts.push(p.target_selector.asgs.map((id) => 'ASG ' + (asgs.find((g) => g.id === id)?.name ?? id.slice(0, 8))).join(', '))
   return parts.join(' · ') || '—'
 }
 
@@ -20,6 +20,7 @@ export function Policies() {
   const { items, err, setErr, reload } = useList<Policy>('/access-policies')
   const groups = useList<Group>('/groups')
   const targets = useList<Target>('/targets')
+  const asgs = useList<AutoscalingGroup>('/autoscaling-groups')
   const [editing, setEditing] = useState<Policy | 'new' | null>(null)
   const [deleting, setDeleting] = useState<Policy | null>(null)
   const groupName = (id: string) => groups.items?.find((g) => g.id === id)?.name ?? id.slice(0, 8)
@@ -58,7 +59,7 @@ export function Policies() {
                   </td>
                   <td>{groupName(p.group_id)}</td>
                   <td>{p.protocols.map((x) => <Badge key={x} tone="accent">{x}</Badge>)}</td>
-                  <td>{selectorSummary(p, targets.items ?? [])}</td>
+                  <td>{selectorSummary(p, targets.items ?? [], asgs.items ?? [])}</td>
                   <td>{p.time_windows.length === 0 ? <span className="muted">always</span> : p.time_windows.length}</td>
                   <td>{p.idle_timeout_minutes} m / {p.max_session_minutes ? `${p.max_session_minutes} m` : '∞'}</td>
                   <td>{p.enabled ? <Badge tone="ok">on</Badge> : <Badge>off</Badge>}</td>
@@ -77,6 +78,7 @@ export function Policies() {
           initial={editing === 'new' ? undefined : editing}
           groups={groups.items ?? []}
           targets={targets.items ?? []}
+          asgs={asgs.items ?? []}
           onClose={() => setEditing(null)}
           onSaved={() => {
             setEditing(null)
@@ -113,6 +115,7 @@ interface FormState {
   group_id: string
   tags: string
   targets: string[]
+  asgs: string[]
   protocols: Protocol[]
   windows: TimeWindow[]
   idle: string
@@ -122,7 +125,7 @@ interface FormState {
   require_mfa: boolean
 }
 
-function PolicyForm({ initial, groups, targets, onClose, onSaved }: { initial?: Policy; groups: Group[]; targets: Target[]; onClose: () => void; onSaved: () => void }) {
+function PolicyForm({ initial, groups, targets, asgs, onClose, onSaved }: { initial?: Policy; groups: Group[]; targets: Target[]; asgs: AutoscalingGroup[]; onClose: () => void; onSaved: () => void }) {
   const [f, setF] = useState<FormState>({
     name: initial?.name ?? '',
     description: initial?.description ?? '',
@@ -130,6 +133,7 @@ function PolicyForm({ initial, groups, targets, onClose, onSaved }: { initial?: 
     group_id: initial?.group_id ?? groups[0]?.id ?? '',
     tags: formatTags(initial?.target_selector.tags),
     targets: initial?.target_selector.targets ?? [],
+    asgs: initial?.target_selector.asgs ?? [],
     protocols: initial?.protocols ?? ['ssh'],
     windows: initial?.time_windows ?? [],
     idle: String(initial?.idle_timeout_minutes ?? 15),
@@ -143,6 +147,7 @@ function PolicyForm({ initial, groups, targets, onClose, onSaved }: { initial?: 
   const up = (patch: Partial<FormState>) => setF({ ...f, ...patch })
   const toggleProto = (p: Protocol) => up({ protocols: f.protocols.includes(p) ? f.protocols.filter((x) => x !== p) : [...f.protocols, p] })
   const toggleTarget = (id: string) => up({ targets: f.targets.includes(id) ? f.targets.filter((x) => x !== id) : [...f.targets, id] })
+  const toggleAsg = (id: string) => up({ asgs: f.asgs.includes(id) ? f.asgs.filter((x) => x !== id) : [...f.asgs, id] })
   const setWindow = (i: number, patch: Partial<TimeWindow>) => up({ windows: f.windows.map((w, j) => (j === i ? { ...w, ...patch } : w)) })
 
   const submit = async (e: FormEvent) => {
@@ -151,7 +156,7 @@ function PolicyForm({ initial, groups, targets, onClose, onSaved }: { initial?: 
     if (error) return setErr(error)
     if (!f.group_id) return setErr('choose a group')
     if (f.protocols.length === 0) return setErr('choose at least one protocol')
-    if (Object.keys(tags).length === 0 && f.targets.length === 0) return setErr('select targets by tag or by name')
+    if (Object.keys(tags).length === 0 && f.targets.length === 0 && f.asgs.length === 0) return setErr('select targets by tag, by name, or an autoscaling group')
     const idle = Number(f.idle)
     if (!Number.isInteger(idle) || idle < 1) return setErr('idle timeout must be a whole number of minutes')
     const max = f.max.trim() ? Number(f.max) : null
@@ -164,7 +169,7 @@ function PolicyForm({ initial, groups, targets, onClose, onSaved }: { initial?: 
         description: f.description,
         enabled: f.enabled,
         group_id: f.group_id,
-        target_selector: { ...(Object.keys(tags).length ? { tags } : {}), ...(f.targets.length ? { targets: f.targets } : {}) },
+        target_selector: { ...(Object.keys(tags).length ? { tags } : {}), ...(f.targets.length ? { targets: f.targets } : {}), ...(f.asgs.length ? { asgs: f.asgs } : {}) },
         protocols: f.protocols,
         time_windows: f.windows.map((w) => ({ ...w, tz: w.tz || 'UTC' })),
         idle_timeout_minutes: idle,
@@ -215,6 +220,17 @@ function PolicyForm({ initial, groups, targets, onClose, onSaved }: { initial?: 
                 <div key={t.id} className="field inline" style={{ margin: '2px 0' }}>
                   <input id={`p-target-${t.id}`} type="checkbox" checked={f.targets.includes(t.id)} onChange={() => toggleTarget(t.id)} />
                   <label htmlFor={`p-target-${t.id}`}>{t.name}</label>
+                </div>
+              ))}
+            </div>
+          </Field>
+          <Field label="Autoscaling groups" hint="Every healthy instance of a selected group">
+            <div style={{ maxHeight: 120, overflowY: 'auto', border: '1px solid var(--line)', borderRadius: 6, padding: 6 }}>
+              {asgs.length === 0 && <span className="muted">no autoscaling groups enrolled</span>}
+              {asgs.map((g) => (
+                <div key={g.id} className="field inline" style={{ margin: '2px 0' }}>
+                  <input id={`p-asg-${g.id}`} type="checkbox" checked={f.asgs.includes(g.id)} onChange={() => toggleAsg(g.id)} />
+                  <label htmlFor={`p-asg-${g.id}`}>{g.name}</label>
                 </div>
               ))}
             </div>

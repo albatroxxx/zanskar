@@ -3,8 +3,19 @@ import { Navigate, useLocation, useNavigate } from 'react-router-dom'
 import type { GuacObject, InputStream } from 'guacamole-common-js'
 import { fmtBytes, fmtSeconds } from '../../api/format'
 import { Modal } from '../../components/ui'
+import { FailoverDialog } from './Failover'
+import type { ConnectResponse } from '../../api/types'
 
-interface DesktopState { ticket: string; ws_path: string; target: string; protocol: string }
+interface DesktopState {
+  ticket: string
+  ws_path: string
+  target: string
+  protocol: string
+  asg_id?: string
+  asg_instance_id?: string
+  instance_label?: string
+  switched_from?: string
+}
 
 type GuacModule = typeof import('guacamole-common-js')['default']
 
@@ -24,9 +35,16 @@ interface Entry { name: string; path: string; dir: boolean }
  */
 export function Desktop() {
   const loc = useLocation()
-  const nav = useNavigate()
   const state = loc.state as DesktopState | null
+  if (!state) return <Navigate to="/" replace />
+  // Keyed on the ticket so a failover rebuilds the whole session.
+  return <DesktopSession key={state.ticket} state={state} />
+}
+
+function DesktopSession({ state }: { state: DesktopState }) {
+  const nav = useNavigate()
   const host = useRef<HTMLDivElement>(null)
+  const [sessionId, setSessionId] = useState('')
   const [elapsed, setElapsed] = useState(0)
   const [ended, setEnded] = useState<{ reason: string; msg?: string } | null>(null)
   const [flags, setFlags] = useState({ files: false, clipboard: false })
@@ -41,7 +59,7 @@ export function Desktop() {
   const fileInput = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
-    if (!state || !host.current) return
+    if (!host.current) return
     let disposed = false
     const start = Date.now()
     const tick = setInterval(() => setElapsed(Math.floor((Date.now() - start) / 1000)), 1000)
@@ -83,6 +101,8 @@ export function Desktop() {
       // Zanskar flags instruction is read here and everything else passes on.
       const inner = tunnel.oninstruction
       tunnel.oninstruction = (opcode, args) => {
+        // The tunnel's internal opcode carries the Zanskar session id first.
+        if (opcode === '' && args[0]) setSessionId((cur) => cur || args[0])
         if (opcode === 'zanskar') {
           const next = { files: false, clipboard: false }
           for (let i = 0; i + 1 < args.length; i += 2) {
@@ -108,7 +128,7 @@ export function Desktop() {
       disconnectRef.current()
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
+  }, [state.ticket])
 
   const list = useCallback((dir: string) => {
     const fs = fsRef.current
@@ -210,12 +230,29 @@ export function Desktop() {
     }
   }
 
-  if (!state) return <Navigate to="/" replace />
   const parent = cwd === '/' ? null : cwd.replace(/\/[^/]+\/?$/, '') || '/'
+  const onSwitched = (res: ConnectResponse) => {
+    nav('/desktop', {
+      replace: true,
+      state: {
+        ticket: res.ticket,
+        ws_path: res.ws_path,
+        target: state.target,
+        protocol: state.protocol,
+        asg_id: res.asg_id ?? state.asg_id,
+        asg_instance_id: res.asg_instance_id,
+        instance_label: res.instance_label,
+        switched_from: state.instance_label,
+      } satisfies DesktopState,
+    })
+  }
+  const failover = ended?.reason === 'target_lost' && !!state.asg_id && !!sessionId
   return (
     <div className="term-page">
       <div className="term-bar">
         <span className="name">{state.target}</span>
+        {state.instance_label && <span className="stat mono">{state.instance_label}</span>}
+        {state.switched_from && <span className="stat switched">switched from {state.switched_from}</span>}
         <span className="stat">{state.protocol.toUpperCase()}</span>
         <span className="stat">elapsed {fmtSeconds(elapsed)}</span>
         <span className="grow" />
@@ -262,7 +299,10 @@ export function Desktop() {
           </aside>
         )}
       </div>
-      {ended && (
+      {ended && failover && (
+        <FailoverDialog sessionId={sessionId} asgId={state.asg_id!} protocol={state.protocol} lostLabel={state.instance_label} onExit={() => nav('/')} onSwitched={onSwitched} />
+      )}
+      {ended && !failover && (
         <Modal title="Session ended" onClose={() => nav('/')}>
           <p>{ended.msg ?? ended.reason.replace(/_/g, ' ')}</p>
           <div className="actions">

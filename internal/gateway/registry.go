@@ -6,6 +6,7 @@ package gateway
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"time"
 )
@@ -24,7 +25,28 @@ type Live struct {
 	// GuacID is the guacd connection id of a desktop session, set by the
 	// desktop bridge via SetGuacID so a watcher can join it read-only.
 	GuacID string
-	cancel context.CancelFunc
+	cancel context.CancelCauseFunc
+}
+
+// Cancellation causes. Bridges read them with CancelReason to record why a
+// session ended when the registry, not the peer, closed it.
+var (
+	ErrAdminTerminated = errors.New("session terminated by an administrator")
+	ErrTargetLost      = errors.New("target left the healthy pool")
+	ErrPolicyRevoked   = errors.New("access policy no longer grants this session")
+)
+
+// CancelReason maps a registry cancellation to an access_sessions end reason
+// and a user-facing message. It returns admin_terminated for a bare cancel.
+func CancelReason(ctx context.Context) (reason, msg string) {
+	switch cause := context.Cause(ctx); {
+	case errors.Is(cause, ErrTargetLost):
+		return "target_lost", "the instance left the healthy pool"
+	case errors.Is(cause, ErrPolicyRevoked):
+		return "policy_revoked", "your access policy changed"
+	default:
+		return "admin_terminated", "session ended by an administrator"
+	}
 }
 
 // isTerminal reports whether a protocol streams bytes a Tap can fan out.
@@ -43,7 +65,7 @@ func NewRegistry() *Registry { return &Registry{live: map[string]*Live{}} }
 
 // Add registers a session and returns a context the bridge must run under.
 func (r *Registry) Add(parent context.Context, l Live) context.Context {
-	ctx, cancel := context.WithCancel(parent)
+	ctx, cancel := context.WithCancelCause(parent)
 	l.cancel = cancel
 	if l.StartedAt.IsZero() {
 		l.StartedAt = time.Now()
@@ -106,8 +128,37 @@ func (r *Registry) Terminate(sessionID string) bool {
 	if !ok {
 		return false
 	}
-	l.cancel()
+	l.cancel(ErrAdminTerminated)
 	return true
+}
+
+// TerminateWithCause cancels a live session recording why.
+func (r *Registry) TerminateWithCause(sessionID string, cause error) bool {
+	r.mu.Lock()
+	l, ok := r.live[sessionID]
+	r.mu.Unlock()
+	if !ok {
+		return false
+	}
+	l.cancel(cause)
+	return true
+}
+
+// TerminateTarget ends every live session on a target or instance id with
+// the given cause and returns how many were ended.
+func (r *Registry) TerminateTarget(targetID string, cause error) int {
+	r.mu.Lock()
+	var victims []*Live
+	for _, l := range r.live {
+		if l.TargetID == targetID {
+			victims = append(victims, l)
+		}
+	}
+	r.mu.Unlock()
+	for _, l := range victims {
+		l.cancel(cause)
+	}
+	return len(victims)
 }
 
 // TerminateUser ends every live session of a user (account disabled, roles
@@ -122,7 +173,7 @@ func (r *Registry) TerminateUser(userID string) int {
 	}
 	r.mu.Unlock()
 	for _, l := range victims {
-		l.cancel()
+		l.cancel(ErrAdminTerminated)
 	}
 	return len(victims)
 }

@@ -42,10 +42,14 @@ type Config struct {
 	// only for throwaway development databases.
 	RequireMFA bool
 	// RecordingsDir is where session recordings are written (local storage).
-	RecordingsDir   string
-	LogLevel        string
-	LogFormat       string
-	ShutdownTimeout time.Duration
+	RecordingsDir string
+	// AWSGatewayPrincipal is the ARN the gateway runs as (instance profile or
+	// user). It is rendered into the trust policy shown to admins enrolling
+	// an autoscaling group; empty leaves a placeholder.
+	AWSGatewayPrincipal string
+	LogLevel            string
+	LogFormat           string
+	ShutdownTimeout     time.Duration
 }
 
 // Options tunes what Load requires.
@@ -58,20 +62,21 @@ type Options struct {
 // Load reads the environment and returns a validated Config.
 func Load(opts Options) (*Config, error) {
 	c := &Config{
-		ListenAddr:      envOr("ZANSKAR_LISTEN_ADDR", "127.0.0.1:8443"),
-		AdminListenAddr: os.Getenv("ZANSKAR_ADMIN_LISTEN_ADDR"),
-		DBDriver:        envOr("ZANSKAR_DB_DRIVER", DriverSQLite),
-		DBDSN:           envOr("ZANSKAR_DB_DSN", "file:zanskar.db?_pragma=journal_mode(WAL)&_pragma=foreign_keys(1)&_pragma=busy_timeout(5000)"),
-		TLSCert:         os.Getenv("ZANSKAR_TLS_CERT"),
-		TLSKey:          os.Getenv("ZANSKAR_TLS_KEY"),
-		GuacdAddr:       os.Getenv("ZANSKAR_GUACD_ADDR"), // empty disables RDP and VNC
-		TrustProxyTLS:   os.Getenv("ZANSKAR_TRUST_PROXY_TLS") == "true",
-		Issuer:          envOr("ZANSKAR_ISSUER", "Zanskar"),
-		RequireMFA:      envOr("ZANSKAR_REQUIRE_MFA", "true") != "false",
-		RecordingsDir:   envOr("ZANSKAR_RECORDINGS_DIR", "data/recordings"),
-		LogLevel:        strings.ToLower(envOr("ZANSKAR_LOG_LEVEL", "info")),
-		LogFormat:       strings.ToLower(envOr("ZANSKAR_LOG_FORMAT", "json")),
-		ShutdownTimeout: 20 * time.Second,
+		ListenAddr:          envOr("ZANSKAR_LISTEN_ADDR", "127.0.0.1:8443"),
+		AdminListenAddr:     os.Getenv("ZANSKAR_ADMIN_LISTEN_ADDR"),
+		DBDriver:            envOr("ZANSKAR_DB_DRIVER", DriverSQLite),
+		DBDSN:               envOr("ZANSKAR_DB_DSN", "file:zanskar.db?_pragma=journal_mode(WAL)&_pragma=foreign_keys(1)&_pragma=busy_timeout(5000)"),
+		TLSCert:             os.Getenv("ZANSKAR_TLS_CERT"),
+		TLSKey:              os.Getenv("ZANSKAR_TLS_KEY"),
+		GuacdAddr:           os.Getenv("ZANSKAR_GUACD_ADDR"), // empty disables RDP and VNC
+		TrustProxyTLS:       os.Getenv("ZANSKAR_TRUST_PROXY_TLS") == "true",
+		Issuer:              envOr("ZANSKAR_ISSUER", "Zanskar"),
+		RequireMFA:          envOr("ZANSKAR_REQUIRE_MFA", "true") != "false",
+		RecordingsDir:       envOr("ZANSKAR_RECORDINGS_DIR", "data/recordings"),
+		AWSGatewayPrincipal: os.Getenv("ZANSKAR_AWS_GATEWAY_PRINCIPAL"),
+		LogLevel:            strings.ToLower(envOr("ZANSKAR_LOG_LEVEL", "info")),
+		LogFormat:           strings.ToLower(envOr("ZANSKAR_LOG_FORMAT", "json")),
+		ShutdownTimeout:     20 * time.Second,
 	}
 
 	var errs []error

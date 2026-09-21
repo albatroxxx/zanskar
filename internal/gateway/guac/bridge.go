@@ -11,6 +11,8 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
+
+	"github.com/albatroxxx/zanskar/internal/gateway"
 )
 
 // Recorder receives the server-to-client instruction stream. Replaying it
@@ -153,7 +155,10 @@ func Bridge(ctx context.Context, log *slog.Logger, c *Conn, ws *websocket.Conn, 
 	for {
 		select {
 		case <-ctx.Done():
-			return finish("admin_terminated", "session ended by an administrator")
+			// Cancelled by the registry: admin terminate, policy revocation, or
+			// the sync loop retiring the instance. The cause says which.
+			reason, msg := gateway.CancelReason(ctx)
+			return finish(reason, msg)
 		case <-wsDone:
 			r := current()
 			_ = c.Send("disconnect")

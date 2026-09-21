@@ -17,6 +17,7 @@ import (
 
 	"github.com/coder/websocket"
 
+	"github.com/albatroxxx/zanskar/internal/asg"
 	"github.com/albatroxxx/zanskar/internal/audit"
 	"github.com/albatroxxx/zanskar/internal/auth"
 	"github.com/albatroxxx/zanskar/internal/credential"
@@ -46,6 +47,9 @@ type Handler struct {
 	DialTimeout time.Duration
 	// GuacdAddr enables RDP and VNC; empty disables desktop sessions.
 	GuacdAddr string
+	// ASGs and Cloud enable autoscaling-group targets and EC2 Instance Connect.
+	ASGs  *asg.Repo
+	Cloud asg.ProviderFactory
 }
 
 // Register mounts the routes. The WebSocket route sits outside the CSRF
@@ -54,6 +58,8 @@ type Handler struct {
 func (h *Handler) Register(mux *http.ServeMux) {
 	mux.Handle("GET /api/v1/me/targets", auth.RequireAuth(http.HandlerFunc(h.myTargets)))
 	mux.Handle("POST /api/v1/connect", auth.RequireAuth(http.HandlerFunc(h.connect)))
+	mux.Handle("GET /api/v1/me/autoscaling-groups/{id}/instances", auth.RequireAuth(http.HandlerFunc(h.myInstances)))
+	mux.Handle("POST /api/v1/sessions/{id}/failover", auth.RequireAuth(http.HandlerFunc(h.failover)))
 	mux.HandleFunc("GET /ws/terminal", h.terminal)
 	mux.HandleFunc("GET /ws/desktop", h.desktop)
 	mux.HandleFunc("GET /ws/winrm", h.winrm)
@@ -61,6 +67,7 @@ func (h *Handler) Register(mux *http.ServeMux) {
 
 // reachableTarget is what a user sees in their target list.
 type reachableTarget struct {
+	Kind         string            `json:"kind"` // target | asg
 	ID           string            `json:"id"`
 	Name         string            `json:"name"`
 	OSFamily     target.OSFamily   `json:"os_family"`
@@ -68,6 +75,8 @@ type reachableTarget struct {
 	Capabilities []target.Protocol `json:"capabilities"`
 	Allowed      []string          `json:"allowed_protocols"`
 	HostKeyReady bool              `json:"host_key_ready"`
+	HealthyCount int               `json:"healthy_count,omitempty"`
+	InstanceCnt  int               `json:"instance_count,omitempty"`
 }
 
 func (h *Handler) myTargets(w http.ResponseWriter, r *http.Request) {
@@ -105,7 +114,7 @@ func (h *Handler) myTargets(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 			out = append(out, reachableTarget{
-				ID: t.ID, Name: t.Name, OSFamily: t.OSFamily, Tags: t.Tags, Capabilities: t.Capabilities,
+				Kind: "target", ID: t.ID, Name: t.Name, OSFamily: t.OSFamily, Tags: t.Tags, Capabilities: t.Capabilities,
 				Allowed: allowed, HostKeyReady: t.HostKeyStatus == target.HostKeyTrusted,
 			})
 		}
@@ -114,23 +123,65 @@ func (h *Handler) myTargets(w http.ResponseWriter, r *http.Request) {
 		}
 		after = next
 	}
+	if h.ASGs != nil {
+		groups, err := h.ASGs.List(r.Context(), true)
+		if err != nil {
+			h.fail(w, r, err)
+			return
+		}
+		for _, g := range groups {
+			ref := policy.TargetRef{ASGID: g.ID, Tags: g.Tags}
+			var allowed []string
+			for _, proto := range g.Capabilities {
+				if policy.Evaluate(pols, ref, string(proto), now).Allowed {
+					allowed = append(allowed, string(proto))
+				}
+			}
+			if len(allowed) == 0 {
+				continue
+			}
+			all, _ := h.ASGs.Instances(r.Context(), g.ID, false)
+			healthy := 0
+			live := 0
+			for _, in := range all {
+				if in.TerminatedAt != nil {
+					continue
+				}
+				live++
+				if in.Healthy {
+					healthy++
+				}
+			}
+			out = append(out, reachableTarget{
+				Kind: "asg", ID: g.ID, Name: g.Name, OSFamily: g.OSFamily, Tags: g.Tags, Capabilities: g.Capabilities,
+				Allowed: allowed, HostKeyReady: true, HealthyCount: healthy, InstanceCnt: live,
+			})
+		}
+	}
 	httpx.WriteJSON(w, http.StatusOK, httpx.Page[reachableTarget]{Items: out})
 }
 
 type connectRequest struct {
-	TargetID   string `json:"target_id"`
-	Protocol   string `json:"protocol"`
-	Credential *struct {
-		Username string `json:"username"`
-		Password string `json:"password"`
-	} `json:"credential,omitempty"`
+	TargetID      string          `json:"target_id"`
+	ASGID         string          `json:"asg_id"`
+	ASGInstanceID string          `json:"asg_instance_id"`
+	Protocol      string          `json:"protocol"`
+	Credential    *userCredential `json:"credential,omitempty"`
 }
 
 type connectResponse struct {
-	Ticket    string    `json:"ticket"`
-	ExpiresAt time.Time `json:"expires_at"`
-	Path      string    `json:"ws_path"`
-	SessionID string    `json:"-"`
+	Ticket        string    `json:"ticket"`
+	ExpiresAt     time.Time `json:"expires_at"`
+	Path          string    `json:"ws_path"`
+	ASGID         string    `json:"asg_id,omitempty"`
+	ASGInstanceID string    `json:"asg_instance_id,omitempty"`
+	InstanceLabel string    `json:"instance_label,omitempty"`
+}
+
+// userCredential is what a user_supplied credential mode asks for.
+type userCredential struct {
+	Username string `json:"username"`
+	Password string `json:"password"`
 }
 
 func (h *Handler) connect(w http.ResponseWriter, r *http.Request) {
@@ -161,95 +212,143 @@ func (h *Handler) connect(w http.ResponseWriter, r *http.Request) {
 		deny(http.StatusNotImplemented, "protocol_unavailable", "protocol not available")
 		return
 	}
-	t, err := h.Targets.Get(r.Context(), req.TargetID)
+	var (
+		ep  *endpoint
+		err error
+	)
+	switch {
+	case req.ASGInstanceID != "":
+		ep, err = h.resolveInstance(r.Context(), req.ASGInstanceID)
+	case req.ASGID != "":
+		ep, err = h.pickInstance(r.Context(), req.ASGID)
+	default:
+		ep, err = h.resolveTarget(r.Context(), req.TargetID)
+	}
 	if err != nil {
-		if errors.Is(err, target.ErrNotFound) {
+		switch {
+		case errors.Is(err, target.ErrNotFound), errors.Is(err, asg.ErrNotFound):
 			deny(http.StatusNotFound, "not_found", "target not found")
-			return
+		case errors.Is(err, errNoHealthyInstances):
+			deny(http.StatusConflict, "no_healthy_instances", "the autoscaling group has no healthy instances right now")
+		default:
+			h.fail(w, r, err)
 		}
-		h.fail(w, r, err)
 		return
 	}
-	if t.Status != "active" {
-		deny(http.StatusConflict, "target_disabled", "target is disabled")
-		return
-	}
-	pols, err := h.Policies.ForUser(r.Context(), p.User.ID)
+	res, code, msg, err := h.issueTicket(r.Context(), p, auth.ClientIP(r), ep, proto, req.Credential, "")
 	if err != nil {
 		h.fail(w, r, err)
 		return
 	}
-	d := policy.Evaluate(pols, policy.TargetRef{ID: t.ID, Tags: t.Tags}, req.Protocol, time.Now())
-	if !d.Allowed {
-		deny(http.StatusForbidden, "policy_denied", d.Reason)
+	if code != "" {
+		deny(codeStatus(code), code, msg)
 		return
+	}
+	h.record(r, actor.Event("session.connect", "target", ep.LiveKey, audit.Success, map[string]any{"protocol": req.Protocol, "asg_id": ep.ASGID, "instance": ep.CloudInstanceID}))
+	httpx.WriteJSON(w, http.StatusOK, res)
+}
+
+// issueTicket runs policy, pinning and credential checks for an endpoint and
+// issues a connect ticket. A non-empty code is a user-facing refusal.
+func (h *Handler) issueTicket(ctx context.Context, p *auth.Principal, ip string, ep *endpoint, proto target.Protocol, uc *userCredential, failoverFrom string) (*connectResponse, string, string, error) {
+	if !ep.Active {
+		if ep.ASGInstanceID != "" {
+			return nil, "instance_unhealthy", "the instance is no longer healthy", nil
+		}
+		return nil, "target_disabled", "target is disabled", nil
+	}
+	if ep.ASGID != "" && proto != target.SSH {
+		return nil, "protocol_unavailable", "autoscaling groups support ssh in this release", nil
+	}
+	pols, err := h.Policies.ForUser(ctx, p.User.ID)
+	if err != nil {
+		return nil, "", "", err
+	}
+	id, asgID, tags := ep.policyRef()
+	d := policy.Evaluate(pols, policy.TargetRef{ID: id, ASGID: asgID, Tags: tags}, string(proto), time.Now())
+	if !d.Allowed {
+		return nil, "policy_denied", d.Reason, nil
 	}
 	if d.RequireMFA && h.MFAEnrolled != nil {
-		enrolled, err := h.MFAEnrolled(r.Context(), p.User.ID)
+		enrolled, err := h.MFAEnrolled(ctx, p.User.ID)
 		if err != nil {
-			h.fail(w, r, err)
-			return
+			return nil, "", "", err
 		}
 		if !enrolled {
-			deny(http.StatusForbidden, "mfa_required_by_policy", "this policy requires an enrolled authenticator")
-			return
+			return nil, "mfa_required_by_policy", "this policy requires an enrolled authenticator", nil
 		}
 	}
-	if proto == target.SSH && t.HostKeyStatus != target.HostKeyTrusted {
-		deny(http.StatusConflict, "host_key_untrusted", "the target's host key has not been trusted by an admin")
-		return
-	}
-	if proto == target.RDP && (t.TLSFingerprint == nil || *t.TLSFingerprint == "") {
-		deny(http.StatusConflict, "certificate_unpinned", "the target's RDP certificate has not been captured; probe it first")
-		return
-	}
-	if proto == target.WinRM {
-		if t.Port(target.WinRM) == 5985 {
-			deny(http.StatusConflict, "tls_required", "winrm over plain HTTP is not allowed; use the HTTPS listener (5986)")
-			return
+	switch proto {
+	case target.SSH:
+		if !ep.HostKeyTrusted || ep.HostKeyFingerprint == "" {
+			if ep.ASGID != "" {
+				return nil, "host_key_unverified", "the instance's host key has not been verified yet; try again after the next sync", nil
+			}
+			return nil, "host_key_untrusted", "the target's host key has not been trusted by an admin", nil
 		}
-		if t.WinRMTLSFingerprint == nil || *t.WinRMTLSFingerprint == "" {
-			deny(http.StatusConflict, "certificate_unpinned", "the target's WinRM certificate has not been captured; probe it first")
-			return
+	case target.RDP:
+		if ep.TLSFingerprint == "" {
+			return nil, "certificate_unpinned", "the target's RDP certificate has not been captured; probe it first", nil
+		}
+	case target.WinRM:
+		if ep.port(target.WinRM) == 5985 {
+			return nil, "tls_required", "winrm over plain HTTP is not allowed; use the HTTPS listener (5986)", nil
+		}
+		if ep.WinRMTLSFingerprint == "" {
+			return nil, "certificate_unpinned", "the target's WinRM certificate has not been captured; probe it first", nil
 		}
 	}
-	credID, ok := t.Credentials[proto]
-	if !ok || credID == "" {
-		deny(http.StatusConflict, "no_credential", "no credential is configured for "+req.Protocol+" on this target")
-		return
+	credID := ep.Credentials[proto]
+	if credID == "" {
+		return nil, "no_credential", "no credential is configured for " + string(proto) + " on this target", nil
 	}
-	cred, err := h.Vault.Get(r.Context(), credID)
+	cred, err := h.Vault.Get(ctx, credID)
 	if err != nil {
-		h.fail(w, r, err)
-		return
+		return nil, "", "", err
 	}
 	grant := ticket.Grant{
 		UserID: p.User.ID, Username: p.User.Username, SessionID: p.Session.ID,
-		TargetID: t.ID, Protocol: req.Protocol, CredentialID: credID, PolicyID: d.Policy.ID,
+		TargetID: ep.TargetID, ASGID: ep.ASGID, ASGInstanceID: ep.ASGInstanceID,
+		Protocol: string(proto), CredentialID: credID, PolicyID: d.Policy.ID,
 		IdleTimeout: d.IdleTimeout, MaxSession: d.MaxSession,
 		AllowClipboard: d.AllowClipboard, AllowFileTransfer: d.AllowFileTransfer,
-		ClientIP: auth.ClientIP(r),
+		ClientIP: ip, FailoverFrom: failoverFrom,
 	}
 	switch cred.Mode {
 	case credential.ModeVaulted:
-	case credential.ModeUserSupplied:
-		if req.Credential == nil || req.Credential.Username == "" || req.Credential.Password == "" {
-			deny(http.StatusUnprocessableEntity, "credential_required", "this target needs your username and password")
-			return
+		if cred.Type == credential.TypeEC2InstanceConnect && (ep.ASGID == "" || h.Cloud == nil) {
+			return nil, "credential_mode_unavailable", "ec2 instance connect only applies to autoscaling instances", nil
 		}
-		grant.Username = req.Credential.Username
-		grant.UserSecret = []byte(req.Credential.Password)
+	case credential.ModeUserSupplied:
+		if uc == nil || uc.Username == "" || uc.Password == "" {
+			return nil, "credential_required", "this target needs your username and password", nil
+		}
+		grant.Username = uc.Username
+		grant.UserSecret = []byte(uc.Password)
 	default:
-		deny(http.StatusNotImplemented, "credential_mode_unavailable", "credential mode not supported yet")
-		return
+		return nil, "credential_mode_unavailable", "credential mode not supported yet", nil
 	}
 	tok, err := h.Tickets.Issue(grant)
 	if err != nil {
-		h.fail(w, r, err)
-		return
+		return nil, "", "", err
 	}
-	h.record(r, actor.Event("session.connect", "target", t.ID, audit.Success, map[string]any{"protocol": req.Protocol, "policy_id": d.Policy.ID, "credential_id": credID}))
-	httpx.WriteJSON(w, http.StatusOK, connectResponse{Ticket: tok, ExpiresAt: time.Now().Add(ticket.TTL), Path: ticketPathFor(proto)})
+	return &connectResponse{Ticket: tok, ExpiresAt: time.Now().Add(ticket.TTL), Path: ticketPathFor(proto),
+		ASGID: ep.ASGID, ASGInstanceID: ep.ASGInstanceID, InstanceLabel: ep.Label}, "", "", nil
+}
+
+func codeStatus(code string) int {
+	switch code {
+	case "policy_denied", "mfa_required_by_policy":
+		return http.StatusForbidden
+	case "credential_required":
+		return http.StatusUnprocessableEntity
+	case "protocol_unavailable", "credential_mode_unavailable":
+		return http.StatusNotImplemented
+	case "not_found":
+		return http.StatusNotFound
+	default:
+		return http.StatusConflict
+	}
 }
 
 // terminal redeems a ticket and runs the SSH bridge for its lifetime.
@@ -264,8 +363,8 @@ func (h *Handler) terminal(w http.ResponseWriter, r *http.Request) {
 	cols, _ := strconv.Atoi(r.URL.Query().Get("cols"))
 	rows, _ := strconv.Atoi(r.URL.Query().Get("rows"))
 
-	t, err := h.Targets.Get(r.Context(), g.TargetID)
-	if err != nil || t.HostKeyStatus != target.HostKeyTrusted || t.Status != "active" {
+	ep, err := h.resolveGrant(r.Context(), g)
+	if err != nil || !ep.Active || !ep.HostKeyTrusted || ep.HostKeyFingerprint == "" {
 		httpx.WriteError(w, http.StatusConflict, "target_unavailable", "target is no longer available")
 		return
 	}
@@ -283,7 +382,8 @@ func (h *Handler) terminal(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		defer opened.Close()
-		if opened.Type == credential.TypeSSHCA {
+		switch opened.Type {
+		case credential.TypeSSHCA:
 			// Certificate authority mode: mint a fresh, minutes-long user
 			// certificate for this session. The gateway stores no user key.
 			loginUser := opened.Username
@@ -299,7 +399,36 @@ func (h *Handler) terminal(w http.ResponseWriter, r *http.Request) {
 			a.Username = loginUser
 			a.PrivateKey = []byte(keyPEM)
 			a.Certificate = []byte(certLine)
-		} else {
+		case credential.TypeEC2InstanceConnect:
+			// Push a one-minute public key through the cloud API; nothing is
+			// stored anywhere. Requires the ec2-instance-connect package on
+			// the instance, which stock Amazon Linux and Ubuntu AMIs ship.
+			if ep.Group == nil || h.Cloud == nil {
+				httpx.WriteError(w, http.StatusConflict, "credential_unavailable", "instance connect needs an autoscaling instance")
+				return
+			}
+			provider, err := h.Cloud(r.Context(), ep.Group)
+			if err != nil {
+				h.Log.Error("cloud provider", "asg", ep.Group.Name, "err", err)
+				httpx.WriteError(w, http.StatusConflict, "credential_unavailable", "cloud access failed")
+				return
+			}
+			pubLine, privPEM, err := ephemeralSSHKey()
+			if err != nil {
+				h.fail(w, r, err)
+				return
+			}
+			osUser := opened.Username
+			if osUser == "" {
+				osUser = "ec2-user"
+			}
+			if err := provider.SendSSHPublicKey(r.Context(), ep.CloudInstanceID, ep.AvailabilityZone, osUser, []byte(pubLine)); err != nil {
+				h.Log.Warn("instance connect push failed", "instance", ep.CloudInstanceID, "err", err)
+				httpx.WriteError(w, http.StatusConflict, "credential_unavailable", "instance connect refused the key; check the role's permissions")
+				return
+			}
+			a.Username, a.PrivateKey = osUser, privPEM
+		default:
 			a.Username, a.Password, a.PrivateKey = opened.Username, opened.Password, opened.PrivateKey
 		}
 	}
@@ -312,16 +441,20 @@ func (h *Handler) terminal(w http.ResponseWriter, r *http.Request) {
 	ws.SetReadLimit(1 << 20)
 
 	// Persist the session first so even a failed dial leaves a trace.
-	s := &session.Session{UserID: g.UserID, PolicyID: g.PolicyID, TargetID: t.ID, Protocol: g.Protocol, CredentialID: g.CredentialID, ClientIP: ip, UserAgent: r.UserAgent()}
+	s := &session.Session{UserID: g.UserID, PolicyID: g.PolicyID, TargetID: ep.TargetID, ASGID: ep.ASGID, ASGInstanceID: ep.ASGInstanceID,
+		Protocol: g.Protocol, CredentialID: g.CredentialID, ClientIP: ip, UserAgent: r.UserAgent(), FailoverFromSessionID: g.FailoverFrom}
 	if err := h.Sessions.Start(r.Context(), s); err != nil {
 		h.Log.Error("start session", "err", err)
 		_ = ws.Close(websocket.StatusInternalError, "could not start session")
 		return
 	}
+	if g.FailoverFrom != "" {
+		_ = h.Sessions.End(context.Background(), g.FailoverFrom, session.EndFailover)
+	}
 	actor := audit.Actor{UserID: g.UserID, IP: ip}
 	endWith := func(reason, msg string) {
 		_ = h.Sessions.End(context.Background(), s.ID, reason)
-		h.record(r, actor.Event("session.end", "access_session", s.ID, audit.Success, map[string]string{"reason": reason, "target_id": t.ID}))
+		h.record(r, actor.Event("session.end", "access_session", s.ID, audit.Success, map[string]string{"reason": reason, "target_id": ep.LiveKey}))
 		if msg != "" {
 			_ = ws.Close(websocket.StatusPolicyViolation, msg)
 		}
@@ -331,27 +464,24 @@ func (h *Handler) terminal(w http.ResponseWriter, r *http.Request) {
 	if timeout <= 0 {
 		timeout = 10 * time.Second
 	}
-	fp := ""
-	if t.HostKeyFingerprint != nil {
-		fp = *t.HostKeyFingerprint
-	}
-	client, err := sshgw.Dial(r.Context(), sshgw.Endpoint{Address: t.Address, Port: t.Port(target.SSH), HostKeyFingerprint: fp, HostKeyTrusted: true}, a, timeout)
+	fp := ep.HostKeyFingerprint
+	client, err := sshgw.Dial(r.Context(), sshgw.Endpoint{Address: ep.Address, Port: ep.port(target.SSH), HostKeyFingerprint: fp, HostKeyTrusted: true}, a, timeout)
 	if err != nil {
 		reason, msg := session.EndError, "could not connect to the target"
 		switch {
 		case errors.Is(err, sshgw.ErrHostKeyMismatch):
 			msg = "host key mismatch; connection refused"
-			h.record(r, actor.Event("target.hostkey.mismatch", "target", t.ID, audit.Failure, map[string]string{"expected": fp}))
+			h.record(r, actor.Event("target.hostkey.mismatch", "target", ep.LiveKey, audit.Failure, map[string]string{"expected": fp}))
 		case errors.Is(err, sshgw.ErrAuthFailed):
 			msg = "authentication to the target failed"
 		}
-		h.Log.Warn("ssh dial failed", "target", t.ID, "err", err)
+		h.Log.Warn("ssh dial failed", "target", ep.LiveKey, "err", err)
 		endWith(reason, msg)
 		return
 	}
 	defer func() { _ = client.Close() }()
 
-	rec, uri, err := recording.NewAsciicast(r.Context(), h.Storage, s.ID+".cast", recording.Header{Width: cols, Height: rows, Title: t.Name,
+	rec, uri, err := recording.NewAsciicast(r.Context(), h.Storage, s.ID+".cast", recording.Header{Width: cols, Height: rows, Title: sessionLabel(ep),
 		Env: map[string]string{"ZANSKAR_SESSION": s.ID}})
 	if err != nil {
 		h.Log.Error("start recording", "err", err)
@@ -365,12 +495,12 @@ func (h *Handler) terminal(w http.ResponseWriter, r *http.Request) {
 		endWith(session.EndError, "recording could not be registered; session refused")
 		return
 	}
-	h.record(r, actor.Event("session.start", "access_session", s.ID, audit.Success, map[string]any{"target_id": t.ID, "protocol": g.Protocol, "policy_id": g.PolicyID, "recording_id": recRow.ID}))
+	h.record(r, actor.Event("session.start", "access_session", s.ID, audit.Success, map[string]any{"target_id": ep.LiveKey, "protocol": g.Protocol, "policy_id": g.PolicyID, "recording_id": recRow.ID}))
 
-	ctx := h.Registry.Add(r.Context(), gateway.Live{SessionID: s.ID, UserID: g.UserID, TargetID: t.ID, Protocol: g.Protocol})
+	ctx := h.Registry.Add(r.Context(), gateway.Live{SessionID: s.ID, UserID: g.UserID, TargetID: ep.LiveKey, Protocol: g.Protocol})
 	defer h.Registry.Remove(s.ID)
 
-	reason, berr := sshgw.Bridge(ctx, h.Log, client, ws, rec, cols, rows, sshgw.Limits{Idle: g.IdleTimeout, Max: g.MaxSession})
+	reason, berr := sshgw.Bridge(ctx, h.Log, client, ws, rec, cols, rows, sshgw.Limits{Idle: g.IdleTimeout, Max: g.MaxSession, SessionID: s.ID})
 	size, sum, cerr := rec.Close()
 	if cerr != nil {
 		h.Log.Error("close recording", "session", s.ID, "err", cerr)

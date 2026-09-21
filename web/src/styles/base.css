@@ -147,3 +147,9 @@ td .muted, .muted { color: var(--fg-muted); }
 .files-panel .status.err { color: #ffb4ab; }
 .files-panel progress { width: 100%; height: 6px; }
 @media (max-width: 760px) { .files-panel { width: 220px; } }
+
+/* failover dialog */
+.failover-list { display: flex; flex-direction: column; border: 1px solid var(--line); border-radius: var(--radius); margin: 12px 0; max-height: 40vh; overflow-y: auto; }
+.failover-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 12px; border-bottom: 1px solid var(--line); }
+.failover-row:last-child { border-bottom: 0; }
+.term-bar .stat.switched { color: var(--glacier); }

@@ -38,6 +38,15 @@ with scrollback replay, guacd read-only join for desktops, every watch audited).
 
 Phase 2 is complete.
 
+## Phase 3 status
+
+Done: AWS autoscaling groups as targets (cross-account role with ExternalId, rendered
+trust and permissions policies), the sync loop with the ADR 0011 health model, host keys
+verified from the serial console with trust-on-first-use fallback, EC2 Instance Connect
+credential mode, user Autoscaling tab with instance chooser, failover dialog on instance
+loss, admin enrollment and instance views. Remaining in Phase 3: HA gateway deployment,
+Helm chart, SIEM export.
+
 ## Phase 1 order of work
 
 1. [x] Users, roles and Argon2id password auth with lockout.

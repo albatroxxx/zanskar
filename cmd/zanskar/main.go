@@ -21,6 +21,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/albatroxxx/zanskar/internal/asg"
 	"github.com/albatroxxx/zanskar/internal/audit"
 	"github.com/albatroxxx/zanskar/internal/auth"
 	"github.com/albatroxxx/zanskar/internal/config"
@@ -156,6 +157,9 @@ func runServe() error {
 	sessionRepo := session.NewRepo(db)
 	registry := gateway.NewRegistry()
 	storage := &recording.LocalStorage{Dir: cfg.RecordingsDir}
+	asgRepo := asg.NewRepo(db)
+	cloudProviders := asg.AWSProviders()
+	syncer := &asg.Syncer{Repo: asgRepo, Providers: cloudProviders, Prober: &target.Prober{}, Registry: registry, Audit: auditLog, Log: log}
 	deps := server.Deps{
 		AuthMiddleware: &auth.Middleware{Sessions: sessions, Users: users, Log: log},
 		Auth:           authHandler,
@@ -167,15 +171,20 @@ func runServe() error {
 			&credential.AdminHandler{Vault: vault, Audit: auditLog, Log: log},
 			&target.AdminHandler{Repo: targets, Prober: &target.Prober{}, Audit: auditLog, Log: log},
 			&policy.AdminHandler{Repo: policies, Audit: auditLog, Log: log},
+			&asg.AdminHandler{Repo: asgRepo, Sync: syncer.SyncGroup, GatewayPrincipal: cfg.AWSGatewayPrincipal, Audit: auditLog, Log: log},
 			&session.Handler{Repo: sessionRepo, Audit: auditLog, Registry: registry, Storage: storage, Log: log},
 			&connect.Handler{Targets: targets, Policies: policies, Vault: vault, Sessions: sessionRepo, Tickets: ticket.NewStore(),
-				Registry: registry, Storage: storage, Audit: auditLog, Log: log, MFAEnrolled: totp.Enrolled, GuacdAddr: cfg.GuacdAddr},
+				Registry: registry, Storage: storage, Audit: auditLog, Log: log, MFAEnrolled: totp.Enrolled, GuacdAddr: cfg.GuacdAddr,
+				ASGs: asgRepo, Cloud: cloudProviders},
 			&connect.ShadowHandler{Registry: registry, Audit: auditLog, Log: log, GuacdAddr: cfg.GuacdAddr},
 		},
 	}
 	if n, err := users.CountAdmins(ctx); err == nil && n == 0 {
 		log.Warn("no admin user exists; create one with `zanskar admin create`")
 	}
+
+	// Autoscaling: keep instance membership and health current (ADR 0011).
+	go syncer.Run(ctx)
 
 	// Housekeeping: drop auth sessions that can never be used again.
 	go func() {

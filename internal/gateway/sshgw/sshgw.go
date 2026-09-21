@@ -20,6 +20,7 @@ import (
 	"github.com/coder/websocket"
 	"golang.org/x/crypto/ssh"
 
+	"github.com/albatroxxx/zanskar/internal/gateway"
 	"github.com/albatroxxx/zanskar/internal/recording"
 )
 
@@ -131,8 +132,11 @@ func authMethods(a Auth) ([]ssh.AuthMethod, error) {
 
 // Limits bound a live session, taken from the policy decision.
 type Limits struct {
-	Idle time.Duration // ends the session after this long without input
-	Max  time.Duration // absolute cap from start; zero means none
+	// SessionID is echoed in the ready frame so the browser can address the
+	// session later (failover, shadowing).
+	SessionID string
+	Idle      time.Duration // ends the session after this long without input
+	Max       time.Duration // absolute cap from start; zero means none
 	// Tap, when set, receives every output chunk after it is recorded, so
 	// auditors can shadow the session live. Writes must never block.
 	Tap  interface{ Write([]byte) }
@@ -150,9 +154,10 @@ type clientFrame struct {
 // control is what the server sends as a text message. Output is sent as
 // binary frames so it needs no framing at all.
 type control struct {
-	T      string `json:"t"` // "ready", "end"
-	Reason string `json:"reason,omitempty"`
-	Msg    string `json:"msg,omitempty"`
+	T         string `json:"t"` // "ready", "end"
+	SessionID string `json:"session_id,omitempty"`
+	Reason    string `json:"reason,omitempty"`
+	Msg       string `json:"msg,omitempty"`
 }
 
 // Bridge runs an interactive shell over the client and pumps it to the
@@ -216,7 +221,7 @@ func Bridge(ctx context.Context, log *slog.Logger, client *ssh.Client, ws *webso
 		defer wcancel()
 		_ = ws.Write(wctx, websocket.MessageText, b)
 	}
-	sendCtrl(control{T: "ready"})
+	sendCtrl(control{T: "ready", SessionID: lim.SessionID})
 
 	// target -> browser (+ recording)
 	go func() {
@@ -306,9 +311,10 @@ func Bridge(ctx context.Context, log *slog.Logger, client *ssh.Client, ws *webso
 	for {
 		select {
 		case <-ctx.Done():
-			// Cancelled from outside: an admin terminated it or the policy
-			// was revoked. The caller decides the recorded reason.
-			return finish("admin_terminated", "session ended by an administrator")
+			// Cancelled by the registry: admin terminate, policy revocation, or
+			// the sync loop retiring the instance. The cause says which.
+			reason, msg := gateway.CancelReason(ctx)
+			return finish(reason, msg)
 		case <-inDone:
 			// Browser went away (tab closed, network drop). Nothing to send.
 			r := current()

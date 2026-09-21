@@ -65,3 +65,28 @@ credential profile. The old session is closed with end reason `target_lost`.
 - Failover is a user action, never automatic, so recordings and audit trails stay unambiguous.
 - The same model applies to GCP managed instance groups and Azure scale sets later, behind a
   provider interface with the same three-signal health definition.
+
+## Addendum 2026-09-21: implementation notes
+
+- **Host keys for dynamic instances.** An admin cannot approve a host key for every
+  instance an autoscaling group launches. The sync loop therefore verifies each new
+  instance's SSH host key against the fingerprints cloud-init prints on the EC2 serial
+  console (`ec2:GetConsoleOutput`), which the gateway reads through the cloud API rather
+  than over the network path an attacker could sit on. A key confirmed this way is
+  recorded with `host_key_source = console`. When the console has no fingerprints
+  (custom images without cloud-init), the key is pinned on first contact and recorded as
+  `tofu`; the admin UI shows which. A console/observed mismatch is never pinned, the
+  instance is marked unhealthy, and `asg.instance.hostkey.mismatch` is audited. A change
+  on an already pinned instance is `asg.instance.hostkey.changed` and also unhealthy.
+- **EC2 Instance Connect** is a credential type (`ec2_instance_connect`): at connect time
+  the gateway generates an ephemeral key, pushes the public half through
+  `ec2-instance-connect:SendSSHPublicKey` (valid about a minute) and logs in with the
+  private half. Nothing is stored. The permissions policy scopes this to instances tagged
+  with the group name.
+- **Retiring sessions.** When an instance leaves the healthy pool the registry cancels
+  its live sessions with the `target_lost` cause; the browser shows the failover dialog
+  only for that reason. Failover is a user action that issues a fresh ticket bound to a
+  new session whose `failover_from_session_id` points at the lost one.
+- **Scope.** Autoscaling groups support SSH in this release. RDP and WinRM to dynamic
+  Windows instances need per-instance certificate pinning, which the console does not
+  publish; that is a follow-up.

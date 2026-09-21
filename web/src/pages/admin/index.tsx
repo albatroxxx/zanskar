@@ -1,5 +1,6 @@
 import { Route } from 'react-router-dom'
 import { Targets } from './Targets'
+import { Autoscaling } from './Autoscaling'
 import { Credentials } from './Credentials'
 import { Policies } from './Policies'
 import { UsersGroups } from './UsersGroups'
@@ -10,6 +11,7 @@ import { Sessions } from './Sessions'
 export const adminRoutes = (
   <>
     <Route index element={<Targets />} />
+    <Route path="autoscaling" element={<Autoscaling />} />
     <Route path="credentials" element={<Credentials />} />
     <Route path="policies" element={<Policies />} />
     <Route path="users" element={<UsersGroups />} />

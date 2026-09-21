@@ -82,6 +82,19 @@ export interface ReachableTarget {
   capabilities: Protocol[]
   allowed_protocols: Protocol[]
   host_key_ready: boolean
+  /** "target" for a static machine, "asg" for an autoscaling group; missing means "target". */
+  kind?: 'target' | 'asg'
+  healthy_count?: number
+  instance_count?: number
+}
+
+/** A healthy autoscaling instance a user may connect to. No addresses are exposed. */
+export interface ReachableInstance {
+  id: string
+  instance_id: string
+  availability_zone: string
+  launched_at: string
+  healthy: boolean
 }
 
 export type CredentialType = 'password' | 'ssh_key' | 'ssh_ca' | 'domain' | 'ec2_instance_connect'
@@ -183,4 +196,57 @@ export interface AuditEvent {
 
 export interface AuditVerify { intact: boolean; checked: number; last_id: number; last_hash: string; broken?: { Index: number; ID: number; Reason: string } | null }
 
-export interface ConnectResponse { ticket: string; expires_at: string; ws_path: string }
+export interface ConnectResponse {
+  ticket: string
+  expires_at: string
+  ws_path: string
+  asg_id?: string
+  asg_instance_id?: string
+  /** e.g. "i-0abc · ap-south-1a" */
+  instance_label?: string
+}
+
+export interface AutoscalingGroup {
+  id: string
+  name: string
+  provider: string
+  region: string
+  external_name: string
+  role_arn: string
+  external_id: string
+  os_family: OSFamily
+  ports: Partial<Record<Protocol, number>>
+  capabilities: Protocol[]
+  address_preference: 'private' | 'public'
+  poll_interval_seconds: number
+  tags: Record<string, string>
+  status: 'active' | 'disabled'
+  last_synced_at: string | null
+  last_error?: string
+  credentials: Partial<Record<Protocol, string>>
+  created_by?: string
+  created_at: string
+  updated_at: string
+  /** present on the list endpoint only */
+  healthy_count?: number
+  instance_count?: number
+}
+
+export interface AsgInstance {
+  id: string
+  asg_id: string
+  instance_id: string
+  private_ip?: string
+  public_ip?: string
+  availability_zone?: string
+  lifecycle_state: string
+  lb_health?: string
+  probe_health: 'unknown' | 'healthy' | 'unhealthy'
+  host_key_fingerprint?: string
+  host_key_source?: 'console' | 'tofu' | ''
+  launched_at?: string
+  first_seen_at: string
+  last_seen_at: string
+  terminated_at?: string
+  healthy: boolean
+}

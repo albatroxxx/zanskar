@@ -83,6 +83,7 @@ export default function App() {
               portal="admin"
               items={[
                 { to: '/admin', label: 'Targets', end: true },
+                { to: '/admin/autoscaling', label: 'Autoscaling' },
                 { to: '/admin/credentials', label: 'Credentials' },
                 { to: '/admin/policies', label: 'Policies' },
                 { to: '/admin/users', label: 'Users & groups' },

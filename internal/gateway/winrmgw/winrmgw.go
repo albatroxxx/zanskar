@@ -25,6 +25,7 @@ import (
 	"github.com/coder/websocket"
 	"github.com/masterzen/winrm"
 
+	"github.com/albatroxxx/zanskar/internal/gateway"
 	"github.com/albatroxxx/zanskar/internal/recording"
 )
 
@@ -153,8 +154,11 @@ func (s *winrmShell) Close() error { return nil }
 
 // Limits bound a live session, taken from the policy decision.
 type Limits struct {
-	Idle time.Duration // ends the session after this long without input
-	Max  time.Duration // absolute cap from start; zero means none
+	// SessionID is echoed in the ready frame so the browser can address the
+	// session later (failover, shadowing).
+	SessionID string
+	Idle      time.Duration // ends the session after this long without input
+	Max       time.Duration // absolute cap from start; zero means none
 	// Tap, when set, receives every output chunk for live shadowing.
 	Tap  interface{ Write([]byte) }
 	tick time.Duration // how often limits are checked; tests shorten it
@@ -168,9 +172,10 @@ type clientFrame struct {
 }
 
 type control struct {
-	T      string `json:"t"`
-	Reason string `json:"reason,omitempty"`
-	Msg    string `json:"msg,omitempty"`
+	T         string `json:"t"`
+	SessionID string `json:"session_id,omitempty"`
+	Reason    string `json:"reason,omitempty"`
+	Msg       string `json:"msg,omitempty"`
 }
 
 const prompt = "PS> "
@@ -231,7 +236,7 @@ func Bridge(ctx context.Context, log *slog.Logger, sh Shell, ws *websocket.Conn,
 		_ = ws.Write(wctx, websocket.MessageText, b)
 	}
 
-	sendCtrl(control{T: "ready"})
+	sendCtrl(control{T: "ready", SessionID: lim.SessionID})
 	out([]byte(prompt))
 
 	lineCh := make(chan string, 8)
@@ -354,7 +359,8 @@ func Bridge(ctx context.Context, log *slog.Logger, sh Shell, ws *websocket.Conn,
 		case <-ctx.Done():
 			// Only external cancellation reaches here (admin terminate or a
 			// revoked policy); the exit and idle paths return before this.
-			return finish("admin_terminated", msgFor("admin_terminated"))
+			reason, msg := gateway.CancelReason(ctx)
+			return finish(reason, msg)
 		case <-readerDone:
 			// Browser went away.
 			r := current()
