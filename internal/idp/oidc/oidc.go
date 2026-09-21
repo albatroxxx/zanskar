@@ -123,7 +123,9 @@ func (h *Handler) start(w http.ResponseWriter, r *http.Request) {
 	})
 	oc := h.oauthConfig(r, prov, op, cfg)
 	authURL := oc.AuthCodeURL(st.State, oauth2.S256ChallengeOption(st.Verifier), gooidc.Nonce(st.Nonce))
-	http.Redirect(w, r, authURL, http.StatusFound)
+	// authURL is built by the oauth2 library from the admin-configured issuer
+	// discovery document, not from request input.
+	http.Redirect(w, r, authURL, http.StatusFound) // #nosec G710
 }
 
 func (h *Handler) callback(w http.ResponseWriter, r *http.Request) {

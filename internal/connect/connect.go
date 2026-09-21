@@ -26,6 +26,7 @@ import (
 	"github.com/albatroxxx/zanskar/internal/policy"
 	"github.com/albatroxxx/zanskar/internal/recording"
 	"github.com/albatroxxx/zanskar/internal/session"
+	"github.com/albatroxxx/zanskar/internal/sshca"
 	"github.com/albatroxxx/zanskar/internal/target"
 	"github.com/albatroxxx/zanskar/internal/ticket"
 )
@@ -55,6 +56,7 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.Handle("POST /api/v1/connect", auth.RequireAuth(http.HandlerFunc(h.connect)))
 	mux.HandleFunc("GET /ws/terminal", h.terminal)
 	mux.HandleFunc("GET /ws/desktop", h.desktop)
+	mux.HandleFunc("GET /ws/winrm", h.winrm)
 }
 
 // reachableTarget is what a user sees in their target list.
@@ -149,14 +151,14 @@ func (h *Handler) connect(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	switch proto {
-	case target.SSH:
+	case target.SSH, target.WinRM:
 	case target.RDP, target.VNC:
 		if h.GuacdAddr == "" {
 			deny(http.StatusNotImplemented, "protocol_unavailable", "desktop sessions are not configured on this gateway")
 			return
 		}
 	default:
-		deny(http.StatusNotImplemented, "protocol_unavailable", "winrm is not available yet")
+		deny(http.StatusNotImplemented, "protocol_unavailable", "protocol not available")
 		return
 	}
 	t, err := h.Targets.Get(r.Context(), req.TargetID)
@@ -271,7 +273,25 @@ func (h *Handler) terminal(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		defer opened.Close()
-		a.Username, a.Password, a.PrivateKey = opened.Username, opened.Password, opened.PrivateKey
+		if opened.Type == credential.TypeSSHCA {
+			// Certificate authority mode: mint a fresh, minutes-long user
+			// certificate for this session. The gateway stores no user key.
+			loginUser := opened.Username
+			if loginUser == "" {
+				loginUser = g.Username
+			}
+			certLine, keyPEM, err := sshca.IssueForSession(opened.PrivateKey, loginUser, 5*time.Minute)
+			if err != nil {
+				h.Log.Error("mint ssh certificate", "id", g.CredentialID, "err", err)
+				httpx.WriteError(w, http.StatusConflict, "credential_unavailable", "could not issue a session certificate")
+				return
+			}
+			a.Username = loginUser
+			a.PrivateKey = []byte(keyPEM)
+			a.Certificate = []byte(certLine)
+		} else {
+			a.Username, a.Password, a.PrivateKey = opened.Username, opened.Password, opened.PrivateKey
+		}
 	}
 
 	ws, err := websocket.Accept(w, r, &websocket.AcceptOptions{CompressionMode: websocket.CompressionDisabled})

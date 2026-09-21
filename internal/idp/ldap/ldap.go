@@ -53,7 +53,7 @@ func (a *Authenticator) Authenticate(ctx context.Context, cfg *idp.LDAPConfig, u
 	if err != nil {
 		return nil, err
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 	if err := conn.Bind(cfg.BindDN, cfg.BindPassword); err != nil {
 		return nil, fmt.Errorf("%w: service bind: %v", ErrDirectory, redact(err))
 	}
@@ -99,7 +99,7 @@ func (a *Authenticator) Test(ctx context.Context, cfg *idp.LDAPConfig) error {
 	if err != nil {
 		return err
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 	if err := conn.Bind(cfg.BindDN, cfg.BindPassword); err != nil {
 		return fmt.Errorf("%w: service bind: %v", ErrDirectory, redact(err))
 	}
@@ -133,11 +133,11 @@ func (a *Authenticator) connect(ctx context.Context, cfg *idp.LDAPConfig) (*gold
 	conn.SetTimeout(a.timeout())
 	if u.Scheme == "ldap" {
 		if !cfg.StartTLS {
-			conn.Close()
+			_ = conn.Close()
 			return nil, fmt.Errorf("%w: plain ldap requires start_tls", ErrConfig)
 		}
 		if err := conn.StartTLS(tlsCfg); err != nil {
-			conn.Close()
+			_ = conn.Close()
 			return nil, fmt.Errorf("%w: starttls: %v", ErrDirectory, redact(err))
 		}
 	}

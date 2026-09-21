@@ -3,6 +3,7 @@
 package auth
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -15,6 +16,17 @@ import (
 	"github.com/albatroxxx/zanskar/internal/audit"
 	"github.com/albatroxxx/zanskar/internal/user"
 )
+
+// ErrNoExternalIdentity signals that no external identity provider (LDAP)
+// authenticated the given credentials, so the caller falls through to failure.
+var ErrNoExternalIdentity = errors.New("auth: no external identity matched")
+
+// ExternalAuthenticator authenticates a username/password against external
+// identity providers (LDAP/AD) and returns the resolved local user. It is
+// implemented outside this package (internal/idp) to avoid an import cycle.
+type ExternalAuthenticator interface {
+	Login(ctx context.Context, username, password, ip string) (*user.User, error)
+}
 
 // Handler serves /api/v1/auth/*.
 type Handler struct {
@@ -31,6 +43,9 @@ type Handler struct {
 	MFAAttempts int
 	// RequireMFA keeps a session partial until an authenticator is enrolled.
 	RequireMFA bool
+	// ExternalLogin, when set, authenticates users against LDAP providers
+	// after local password authentication does not apply.
+	ExternalLogin ExternalAuthenticator
 
 	loginLimiter *ipLimiter
 	mfaMu        sync.Mutex
@@ -115,41 +130,80 @@ func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
 			h.serverError(w, r, err)
 			return
 		}
+		// No local user: a first-time LDAP user is provisioned on login, so
+		// try external providers before rejecting.
+		if h.ExternalLogin != nil {
+			if eu, eerr := h.ExternalLogin.Login(r.Context(), req.Username, req.Password, ip); eerr == nil {
+				_ = h.Users.RecordLoginSuccess(r.Context(), eu.ID)
+				actor.UserID = eu.ID
+				h.completeLogin(w, r, eu, actor)
+				return
+			} else if !errors.Is(eerr, ErrNoExternalIdentity) {
+				h.Log.Warn("external login error", "err", eerr)
+			}
+		}
 		user.BurnPasswordCheck(req.Password)
 		h.record(r, actor.Event("user.login", "user", "", audit.Failure, map[string]string{"reason": "unknown_user", "username": attempted}))
 		WriteError(w, http.StatusUnauthorized, "invalid_credentials", "invalid username or password")
 		return
 	}
 	actor.UserID = u.ID
-	if u.IsLocked(time.Now()) || u.PasswordHash == "" {
-		user.BurnPasswordCheck(req.Password)
-		h.record(r, actor.Event("user.login", "user", u.ID, audit.Failure, map[string]string{"reason": "locked_or_no_password"}))
-		WriteError(w, http.StatusUnauthorized, "invalid_credentials", "invalid username or password")
-		return
-	}
-	if !user.VerifyPassword(u.PasswordHash, req.Password) {
-		locked, lerr := h.Users.RecordLoginFailure(r.Context(), u.ID, h.MaxFailures, h.LockFor)
-		if lerr != nil {
-			h.Log.Error("record login failure", "err", lerr)
+	// Local password path: only when the account carries a password hash.
+	if u.PasswordHash != "" {
+		if u.IsLocked(time.Now()) {
+			user.BurnPasswordCheck(req.Password)
+			h.record(r, actor.Event("user.login", "user", u.ID, audit.Failure, map[string]string{"reason": "locked"}))
+			WriteError(w, http.StatusUnauthorized, "invalid_credentials", "invalid username or password")
+			return
 		}
-		details := map[string]any{"reason": "bad_password"}
-		if locked {
-			details["locked_for"] = h.LockFor.String()
+		if !user.VerifyPassword(u.PasswordHash, req.Password) {
+			locked, lerr := h.Users.RecordLoginFailure(r.Context(), u.ID, h.MaxFailures, h.LockFor)
+			if lerr != nil {
+				h.Log.Error("record login failure", "err", lerr)
+			}
+			details := map[string]any{"reason": "bad_password"}
+			if locked {
+				details["locked_for"] = h.LockFor.String()
+			}
+			h.record(r, actor.Event("user.login", "user", u.ID, audit.Failure, details))
+			WriteError(w, http.StatusUnauthorized, "invalid_credentials", "invalid username or password")
+			return
 		}
-		h.record(r, actor.Event("user.login", "user", u.ID, audit.Failure, details))
-		WriteError(w, http.StatusUnauthorized, "invalid_credentials", "invalid username or password")
+		if user.NeedsRehash(u.PasswordHash) {
+			if nh, err := user.HashPassword(req.Password); err == nil {
+				_ = h.Users.SetPasswordHash(r.Context(), u.ID, nh)
+			}
+		}
+		if err := h.Users.RecordLoginSuccess(r.Context(), u.ID); err != nil {
+			h.serverError(w, r, err)
+			return
+		}
+		h.completeLogin(w, r, u, actor)
 		return
 	}
 
-	if user.NeedsRehash(u.PasswordHash) {
-		if nh, err := user.HashPassword(req.Password); err == nil {
-			_ = h.Users.SetPasswordHash(r.Context(), u.ID, nh)
+	// External path: the local user has no password (provisioned from an IdP),
+	// so try LDAP providers with the supplied credentials.
+	if h.ExternalLogin != nil {
+		eu, eerr := h.ExternalLogin.Login(r.Context(), req.Username, req.Password, ip)
+		if eerr == nil {
+			_ = h.Users.RecordLoginSuccess(r.Context(), eu.ID)
+			actor.UserID = eu.ID
+			h.completeLogin(w, r, eu, actor)
+			return
+		}
+		if !errors.Is(eerr, ErrNoExternalIdentity) {
+			h.Log.Warn("external login error", "err", eerr)
 		}
 	}
-	if err := h.Users.RecordLoginSuccess(r.Context(), u.ID); err != nil {
-		h.serverError(w, r, err)
-		return
-	}
+	user.BurnPasswordCheck(req.Password)
+	h.record(r, actor.Event("user.login", "user", u.ID, audit.Failure, map[string]string{"reason": "no_password_no_external"}))
+	WriteError(w, http.StatusUnauthorized, "invalid_credentials", "invalid username or password")
+}
+
+// completeLogin issues the session and returns the appropriate MFA status.
+func (h *Handler) completeLogin(w http.ResponseWriter, r *http.Request, u *user.User, actor audit.Actor) {
+	ip := ClientIP(r)
 	enrolled, err := h.TOTP.Enrolled(r.Context(), u.ID)
 	if err != nil {
 		h.serverError(w, r, err)
@@ -169,9 +223,6 @@ func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
 	}
 	if enrolled {
 		h.record(r, actor.Event("user.login", "user", u.ID, audit.Success, map[string]string{"stage": "password", "session_id": sess.ID}))
-		// The CSRF token is bound to the session and worthless without the
-		// cookie, so handing it out before the second factor is safe and lets
-		// the verify call pass the CSRF check.
 		WriteJSON(w, http.StatusOK, loginResponse{Status: "mfa_required", CSRFToken: h.Sessions.CSRFToken(sess.ID)})
 		return
 	}

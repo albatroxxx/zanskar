@@ -2,7 +2,7 @@ import { useEffect, useState, type FormEvent } from 'react'
 import { Navigate, useLocation } from 'react-router-dom'
 import QRCode from 'qrcode'
 import { useAuth } from '../auth/AuthContext'
-import { errorMessage } from '../api/client'
+import { api, errorMessage } from '../api/client'
 import { Alert, Field } from '../components/ui'
 
 type Step = 'password' | 'verify' | 'enroll' | 'recovery'
@@ -15,13 +15,23 @@ export function Login() {
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
   const [code, setCode] = useState('')
-  const [err, setErr] = useState('')
+  const [err, setErr] = useState(() => {
+    const e = new URLSearchParams(window.location.search).get('error')
+    return e ? 'Sign-in failed: ' + e.replace(/_/g, ' ') : ''
+  })
   const [busy, setBusy] = useState(false)
   const [enroll, setEnroll] = useState<{ secret: string; otpauth_url: string; qr: string } | null>(null)
+  const [providers, setProviders] = useState<{ id: string; name: string; type: string }[]>([])
   const [recovery, setRecovery] = useState<string[]>([])
 
   // A partial session that survived a reload lands on the right step.
   const effectiveStep: Step = step === 'password' && auth.status === 'partial' ? (auth.pending === 'enroll' ? 'enroll' : 'verify') : step
+
+  useEffect(() => {
+    api.get<{ items: { id: string; name: string; type: string }[] }>('/auth/providers')
+      .then((r) => setProviders(r.items ?? []))
+      .catch(() => {})
+  }, [])
 
   useEffect(() => {
     if (effectiveStep === 'enroll' && !enroll) {
@@ -102,6 +112,17 @@ export function Login() {
               <button className="btn primary" disabled={busy} style={{ width: '100%', justifyContent: 'center' }}>
                 {busy ? 'Signing in…' : 'Sign in'}
               </button>
+              {providers.filter((p) => p.type === 'oidc').length > 0 && (
+                <div style={{ marginTop: 16 }}>
+                  <div className="muted" style={{ textAlign: 'center', fontSize: '0.8rem', margin: '0 0 10px' }}>or</div>
+                  {providers.filter((p) => p.type === 'oidc').map((p) => (
+                    <a key={p.id} className="btn" style={{ width: '100%', justifyContent: 'center', marginBottom: 8 }}
+                       href={`/api/v1/auth/oidc/${p.id}/start?next=${encodeURIComponent(from)}`}>
+                      Sign in with {p.name}
+                    </a>
+                  ))}
+                </div>
+              )}
             </form>
           )}
 

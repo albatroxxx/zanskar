@@ -35,8 +35,8 @@ const (
 
 // Errors.
 var (
-	ErrBadCAKey       = errors.New("sshca: invalid CA private key")
-	ErrNoPrincipals   = errors.New("sshca: at least one principal is required")
+	ErrBadCAKey        = errors.New("sshca: invalid CA private key")
+	ErrNoPrincipals    = errors.New("sshca: at least one principal is required")
 	ErrValidityTooLong = errors.New("sshca: validity exceeds the maximum")
 )
 
@@ -122,8 +122,8 @@ func (s *Signer) Issue(userPub ssh.PublicKey, p CertParams) (*ssh.Certificate, e
 		CertType:        ssh.UserCert,
 		KeyId:           p.KeyID,
 		ValidPrincipals: p.Principals,
-		ValidAfter:      uint64(now.Add(-clockSkew).Unix()),
-		ValidBefore:     uint64(now.Add(validity).Unix()),
+		ValidAfter:      uint64(now.Add(-clockSkew).Unix()), // #nosec G115 -- unix seconds fit uint64
+		ValidBefore:     uint64(now.Add(validity).Unix()),   // #nosec G115 -- unix seconds fit uint64
 		Permissions: ssh.Permissions{
 			CriticalOptions: criticalOptions,
 			Extensions:      extensions,

@@ -15,8 +15,8 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"strings"
-	"testing"
 	"sync"
+	"testing"
 	"time"
 
 	"github.com/go-jose/go-jose/v4"
@@ -146,7 +146,7 @@ func newEnv(t *testing.T, f *fakeIdP, cfg idp.Config) (*env, string) {
 }
 
 // drive follows start -> provider -> callback manually so we can inspect each hop.
-func drive(t *testing.T, e *env, f *fakeIdP, id string) (*http.Response, []*http.Cookie) {
+func drive(t *testing.T, e *env, f *fakeIdP, id string) (status int, location string, cookies []*http.Cookie) {
 	t.Helper()
 	jar, _ := cookiejar.New(nil)
 	client := &http.Client{Jar: jar, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
@@ -173,9 +173,11 @@ func drive(t *testing.T, e *env, f *fakeIdP, id string) (*http.Response, []*http
 	if err != nil {
 		t.Fatal(err)
 	}
-	res.Body.Close()
+	status = res.StatusCode
+	location = res.Header.Get("Location")
+	_ = res.Body.Close()
 	u, _ := url.Parse(e.app.URL)
-	return res, jar.Cookies(u)
+	return status, location, jar.Cookies(u)
 }
 
 func mustReq(t *testing.T, u string) *http.Request {
@@ -200,9 +202,9 @@ func TestFlowProvisionsAndMapsGroups(t *testing.T) {
 	f := newFakeIdP(t)
 	f.claims = map[string]any{"preferred_username": "Alice", "email": "alice@corp.example", "name": "Alice A", "groups": []string{"ops-team", "other"}}
 	e, id := newEnv(t, f, idp.Config{OIDC: &idp.OIDCConfig{ClientID: "cid", ClientSecret: "s", GroupsClaim: "groups"}, AutoProvision: true, GroupMapping: idp.GroupMapping{}, DefaultRoles: []user.Role{user.RoleUser}})
-	res, cookies := drive(t, e, f, id)
-	if res.StatusCode != 302 || res.Header.Get("Location") != "/admin" || !hasSession(cookies) {
-		t.Fatalf("callback: %d %s cookies=%v", res.StatusCode, res.Header.Get("Location"), cookies)
+	status, location, cookies := drive(t, e, f, id)
+	if status != 302 || location != "/admin" || !hasSession(cookies) {
+		t.Fatalf("callback: %d %s cookies=%v", status, location, cookies)
 	}
 	u, err := e.users.GetByUsername(context.Background(), "alice")
 	if err != nil || u.IdPID != id || u.ExternalID != "sub-1" || u.Email != "alice@corp.example" || !u.HasRole(user.RoleUser) || u.HasRole(user.RoleAdmin) {
@@ -214,8 +216,8 @@ func TestFlowProvisionsAndMapsGroups(t *testing.T) {
 	}
 	// Second login with the group gone removes membership.
 	f.claims["groups"] = []string{"other"}
-	if res, _ := drive(t, e, f, id); res.StatusCode != 302 {
-		t.Fatalf("second login: %d", res.StatusCode)
+	if st, _, _ := drive(t, e, f, id); st != 302 {
+		t.Fatalf("second login: %d", st)
 	}
 	if members, _ := e.groups.Members(context.Background(), e.groupID); len(members) != 0 {
 		t.Fatalf("expected membership removed, got %v", members)
@@ -234,9 +236,9 @@ func TestDomainAndStateChecks(t *testing.T) {
 	f := newFakeIdP(t)
 	f.claims = map[string]any{"preferred_username": "bob", "email": "bob@else.example"}
 	e, id := newEnv(t, f, idp.Config{OIDC: &idp.OIDCConfig{ClientID: "cid", ClientSecret: "s", AllowedDomains: []string{"corp.example"}}, AutoProvision: true})
-	res, cookies := drive(t, e, f, id)
-	if res.StatusCode != 302 || !strings.Contains(res.Header.Get("Location"), "error=domain_not_allowed") || hasSession(cookies) {
-		t.Fatalf("domain check: %d %s", res.StatusCode, res.Header.Get("Location"))
+	status, location, cookies := drive(t, e, f, id)
+	if status != 302 || !strings.Contains(location, "error=domain_not_allowed") || hasSession(cookies) {
+		t.Fatalf("domain check: %d %s", status, location)
 	}
 	if _, err := e.users.GetByUsername(context.Background(), "bob"); err == nil {
 		t.Fatal("user must not be provisioned when domain is rejected")
@@ -265,15 +267,15 @@ func TestPartialSessionWhenEnrolled(t *testing.T) {
 	f.claims = map[string]any{"preferred_username": "carol", "email": "carol@corp.example"}
 	e, id := newEnv(t, f, idp.Config{OIDC: &idp.OIDCConfig{ClientID: "cid", ClientSecret: "s"}, AutoProvision: true})
 	e.h.MFAEnrolled = func(context.Context, string) (bool, error) { return true, nil }
-	res, cookies := drive(t, e, f, id)
-	if res.StatusCode != 302 || !strings.HasPrefix(res.Header.Get("Location"), "/login?next=") || !hasSession(cookies) {
-		t.Fatalf("expected partial session redirect to login: %d %s", res.StatusCode, res.Header.Get("Location"))
+	status, location, cookies := drive(t, e, f, id)
+	if status != 302 || !strings.HasPrefix(location, "/login?next=") || !hasSession(cookies) {
+		t.Fatalf("expected partial session redirect to login: %d %s", status, location)
 	}
 	// SkipMFA trusts the provider.
 	e.h.cache = sync.Map{}
 	e2, id2 := newEnv(t, f, idp.Config{OIDC: &idp.OIDCConfig{ClientID: "cid", ClientSecret: "s", SkipMFA: true}, AutoProvision: true})
 	e2.h.MFAEnrolled = func(context.Context, string) (bool, error) { return true, nil }
-	if res, _ := drive(t, e2, f, id2); res.Header.Get("Location") != "/admin" {
-		t.Fatalf("skip_mfa should complete the session: %s", res.Header.Get("Location"))
+	if _, location2, _ := drive(t, e2, f, id2); location2 != "/admin" {
+		t.Fatalf("skip_mfa should complete the session: %s", location2)
 	}
 }

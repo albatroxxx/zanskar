@@ -195,8 +195,12 @@ func (h *Handler) desktop(w http.ResponseWriter, r *http.Request) {
 
 // ticketPathFor reports which WebSocket endpoint serves a protocol.
 func ticketPathFor(p target.Protocol) string {
-	if p == target.RDP || p == target.VNC {
+	switch p {
+	case target.RDP, target.VNC:
 		return "/ws/desktop"
+	case target.WinRM:
+		return "/ws/winrm"
+	default:
+		return "/ws/terminal"
 	}
-	return "/ws/terminal"
 }

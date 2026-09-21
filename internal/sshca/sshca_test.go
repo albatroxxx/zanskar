@@ -40,11 +40,11 @@ func TestIssueAndVerify(t *testing.T) {
 	if cert.CertType != ssh.UserCert || cert.KeyId != "zanskar:alice:1" || cert.Serial == 0 {
 		t.Fatalf("unexpected cert: type=%d keyid=%q serial=%d", cert.CertType, cert.KeyId, cert.Serial)
 	}
-	if _, ok := cert.Permissions.Extensions["permit-pty"]; !ok {
+	if _, ok := cert.Extensions["permit-pty"]; !ok {
 		t.Fatal("permit-pty missing")
 	}
 	for _, forbidden := range []string{"permit-port-forwarding", "permit-agent-forwarding", "permit-X11-forwarding", "permit-user-rc"} {
-		if _, ok := cert.Permissions.Extensions[forbidden]; ok {
+		if _, ok := cert.Extensions[forbidden]; ok {
 			t.Fatalf("least privilege violated: %s present", forbidden)
 		}
 	}
@@ -56,7 +56,7 @@ func TestIssueAndVerify(t *testing.T) {
 	// The certificate must verify against the CA for principal alice.
 	checker := &ssh.CertChecker{
 		IsUserAuthority: func(k ssh.PublicKey) bool { return keyEqual(k, s.ca.PublicKey()) },
-		Clock:           func() time.Time { return time.Now() },
+		Clock:           time.Now,
 	}
 	if err := checker.CheckCert("alice", cert); err != nil {
 		t.Fatalf("valid cert rejected: %v", err)

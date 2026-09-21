@@ -91,7 +91,7 @@ func (fd *fakeDirectory) serve(c net.Conn) {
 		case 0: // BindRequest
 			fd.binds.Add(1)
 			name, _ := op.Children[1].Value.(string)
-			pw := string(op.Children[2].Data.Bytes())
+			pw := op.Children[2].Data.String()
 			code := goldap.LDAPResultInvalidCredentials
 			if (name == svcDN && pw == svcPW) || (name == aliceDN && pw == alicePW) {
 				code = goldap.LDAPResultSuccess

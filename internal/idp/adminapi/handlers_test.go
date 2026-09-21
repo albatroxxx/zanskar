@@ -90,7 +90,7 @@ func TestProviderCRUD(t *testing.T) {
 	body := map[string]any{
 		"name": "Okta", "type": "oidc",
 		"config": map[string]any{
-			"oidc":          map[string]any{"issuer": "https://okta.example", "client_id": "cid", "client_secret": "s3cret"},
+			"oidc":           map[string]any{"issuer": "https://okta.example", "client_id": "cid", "client_secret": "s3cret"},
 			"auto_provision": true, "default_roles": []string{"user"},
 		},
 	}

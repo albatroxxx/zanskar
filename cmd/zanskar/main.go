@@ -13,6 +13,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -28,6 +29,10 @@ import (
 	"github.com/albatroxxx/zanskar/internal/crypto"
 	"github.com/albatroxxx/zanskar/internal/gateway"
 	"github.com/albatroxxx/zanskar/internal/group"
+	"github.com/albatroxxx/zanskar/internal/idp"
+	idpadmin "github.com/albatroxxx/zanskar/internal/idp/adminapi"
+	"github.com/albatroxxx/zanskar/internal/idp/ldap"
+	"github.com/albatroxxx/zanskar/internal/idp/oidc"
 	"github.com/albatroxxx/zanskar/internal/keyring"
 	"github.com/albatroxxx/zanskar/internal/policy"
 	"github.com/albatroxxx/zanskar/internal/recording"
@@ -137,6 +142,14 @@ func runServe() error {
 	if !cfg.RequireMFA {
 		log.Warn("ZANSKAR_REQUIRE_MFA=false: password-only logins are allowed")
 	}
+	groups := group.NewRepo(db)
+	idpRepo := idp.NewRepo(db, ring)
+	provisioner := &idp.Provisioner{Users: users, Groups: groups}
+	stateKey, err := crypto.DeriveKey(cfg.MasterKey, "zanskar/oidc-state")
+	if err != nil {
+		return err
+	}
+	authHandler.ExternalLogin = ldapExternalAuth{ldap.NewLogin(idpRepo, provisioner)}
 	vault := credential.NewVault(db, ring)
 	targets := target.NewRepo(db)
 	policies := policy.NewRepo(db)
@@ -148,7 +161,9 @@ func runServe() error {
 		Auth:           authHandler,
 		Handlers: []server.Registrar{
 			&adminapi.AdminHandler{Users: users, Sessions: sessions, TOTP: totp, Audit: auditLog, Log: log},
-			&group.AdminHandler{Groups: group.NewRepo(db), Audit: auditLog, Log: log},
+			&group.AdminHandler{Groups: groups, Audit: auditLog, Log: log},
+			&idpadmin.AdminHandler{Providers: idpRepo, Audit: auditLog, Log: log, LDAPTester: &ldap.Authenticator{}},
+			&oidc.Handler{Providers: idpRepo, Provisioner: provisioner, Sessions: sessions, Audit: auditLog, Log: log, StateKey: stateKey, MFAEnrolled: totp.Enrolled, RequireMFA: cfg.RequireMFA},
 			&credential.AdminHandler{Vault: vault, Audit: auditLog, Log: log},
 			&target.AdminHandler{Repo: targets, Prober: &target.Prober{}, Audit: auditLog, Log: log},
 			&policy.AdminHandler{Repo: policies, Audit: auditLog, Log: log},
@@ -181,6 +196,19 @@ func runServe() error {
 
 	log.Info("starting zanskar", "version", version.Version, "db_driver", cfg.DBDriver, "key_version", ring.ActiveVersion(), "web_ui", web.Enabled)
 	return server.New(cfg, db, log, deps).ListenAndServe(ctx)
+}
+
+// ldapExternalAuth adapts the LDAP login helper to auth.ExternalAuthenticator,
+// translating "no provider matched" into auth's sentinel so an ordinary miss
+// is not logged as an error.
+type ldapExternalAuth struct{ l *ldap.Login }
+
+func (a ldapExternalAuth) Login(ctx context.Context, username, password, ip string) (*user.User, error) {
+	u, err := a.l.Login(ctx, username, password, ip)
+	if errors.Is(err, ldap.ErrNoMatch) {
+		return nil, auth.ErrNoExternalIdentity
+	}
+	return u, err
 }
 
 func runMigrate() error {
