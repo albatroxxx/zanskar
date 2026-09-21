@@ -55,7 +55,9 @@ make build          # builds the web UI and a single binary with it embedded
 
 Open http://127.0.0.1:8443, sign in, and enroll your authenticator when prompted. For UI work run
 `make web-dev` (Vite on :5173, proxying to the API) beside `make run`. `zanskar audit verify`
-checks the audit chain from the command line.
+checks the audit chain from the command line. If the only admin loses their authenticator,
+`zanskar admin reset-mfa --username <name>` on the gateway host clears it and audits the reset;
+the next login enrolls a new one.
 
 Requires Go 1.27+ and Node 22+ to build.
 

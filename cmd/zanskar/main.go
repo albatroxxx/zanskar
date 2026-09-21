@@ -80,7 +80,7 @@ func main() {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: zanskar <serve|migrate|keygen|admin create|audit verify|version>")
+	fmt.Fprintln(os.Stderr, "usage: zanskar <serve|migrate|keygen|admin create|admin reset-mfa|audit verify|version>")
 }
 
 func newLogger(cfg *config.Config) *slog.Logger {
