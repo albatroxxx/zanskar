@@ -1,6 +1,7 @@
 # binaries
 /bin/
 /dist/
+/zanskar
 *.exe
 *.test
 *.out

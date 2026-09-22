@@ -45,6 +45,10 @@ linters:
       - path: cmd/zanskar/init\.go
         linters: [gosec]
         text: "G304"
+      # backup/restore does controlled filesystem I/O (snapshot, tar, restore);
+      # the untrusted extraction path rejects traversal explicitly in code.
+      - path: cmd/zanskar/backup\.go
+        linters: [gosec]
 formatters:
   enable:
     - gofmt
