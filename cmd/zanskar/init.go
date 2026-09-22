@@ -282,7 +282,7 @@ func newMasterKey() (string, error) {
 // if none. Best-effort: a read error means "no key found", and the caller then
 // generates one.
 func masterKeyFrom(path string) string {
-	f, err := os.Open(path) //nosec G304 -- path is the operator-specified env file being (re)written; reading it back preserves the master key
+	f, err := os.Open(path) // #nosec G304 -- path is the operator-specified env file being (re)written; reading it back preserves the master key
 	if err != nil {
 		return ""
 	}
