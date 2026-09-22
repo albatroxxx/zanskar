@@ -59,6 +59,9 @@ type Recording struct {
 	FinishedAt     *time.Time `json:"finished_at,omitempty"`
 	RetentionUntil *time.Time `json:"retention_until,omitempty"`
 	CreatedAt      time.Time  `json:"created_at"`
+	// PurgedAt is set once retention has deleted the blob; the metadata row
+	// stays so audit events that reference this recording still resolve.
+	PurgedAt *time.Time `json:"purged_at,omitempty"`
 }
 
 // ErrNotFound is returned for unknown ids.
@@ -178,12 +181,12 @@ func (r *Repo) FinishRecording(ctx context.Context, id string, size int64, sha25
 // GetRecording returns one recording.
 func (r *Repo) GetRecording(ctx context.Context, id string) (*Recording, error) {
 	var (
-		rec                                Recording
-		sha                                sql.NullString
-		started, finished, retain, created store.NullTime
+		rec                                        Recording
+		sha                                        sql.NullString
+		started, finished, retain, created, purged store.NullTime
 	)
-	err := r.db.QueryRowContext(ctx, r.db.Rebind(`SELECT id, session_id, format, storage_uri, size_bytes, sha256, started_at, finished_at, retention_until, created_at
-		FROM recordings WHERE id = ?`), id).Scan(&rec.ID, &rec.SessionID, &rec.Format, &rec.StorageURI, &rec.SizeBytes, &sha, &started, &finished, &retain, &created)
+	err := r.db.QueryRowContext(ctx, r.db.Rebind(`SELECT id, session_id, format, storage_uri, size_bytes, sha256, started_at, finished_at, retention_until, created_at, purged_at
+		FROM recordings WHERE id = ?`), id).Scan(&rec.ID, &rec.SessionID, &rec.Format, &rec.StorageURI, &rec.SizeBytes, &sha, &started, &finished, &retain, &created, &purged)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound
@@ -191,7 +194,7 @@ func (r *Repo) GetRecording(ctx context.Context, id string) (*Recording, error) 
 		return nil, err
 	}
 	rec.SHA256 = sha.String
-	rec.StartedAt, rec.FinishedAt, rec.RetentionUntil, rec.CreatedAt = started.Time, finished.Ptr(), retain.Ptr(), created.Time
+	rec.StartedAt, rec.FinishedAt, rec.RetentionUntil, rec.CreatedAt, rec.PurgedAt = started.Time, finished.Ptr(), retain.Ptr(), created.Time, purged.Ptr()
 	return &rec, nil
 }
 

@@ -35,6 +35,7 @@ import (
 type s3API interface {
 	PutObject(ctx context.Context, in *s3.PutObjectInput, opts ...func(*s3.Options)) (*s3.PutObjectOutput, error)
 	GetObject(ctx context.Context, in *s3.GetObjectInput, opts ...func(*s3.Options)) (*s3.GetObjectOutput, error)
+	DeleteObject(ctx context.Context, in *s3.DeleteObjectInput, opts ...func(*s3.Options)) (*s3.DeleteObjectOutput, error)
 }
 
 // S3Options configures NewS3Storage.
@@ -135,6 +136,23 @@ func (s *S3Storage) Open(ctx context.Context, uri string) (io.ReadCloser, error)
 		return nil, fmt.Errorf("recording: get object: %w", err)
 	}
 	return out.Body, nil
+}
+
+// Delete implements Storage. Only objects inside this bucket and prefix are
+// removed; S3 treats deleting an absent key as success, so sweeps are idempotent.
+func (s *S3Storage) Delete(ctx context.Context, uri string) error {
+	want := "s3://" + s.Bucket + "/" + s.Prefix
+	if !strings.HasPrefix(uri, want) {
+		return errors.New("recording: uri outside the configured bucket and prefix")
+	}
+	key := strings.TrimPrefix(uri, "s3://"+s.Bucket+"/")
+	if path.Clean("/"+key) != "/"+key || strings.Contains(key, "..") {
+		return errors.New("recording: bad object key")
+	}
+	if _, err := s.client.DeleteObject(ctx, &s3.DeleteObjectInput{Bucket: aws.String(s.Bucket), Key: aws.String(key)}); err != nil {
+		return fmt.Errorf("recording: delete object: %w", err)
+	}
+	return nil
 }
 
 // s3Spool is the WriteCloser handed to the recorder.
