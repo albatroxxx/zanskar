@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/netip"
 	"strings"
 	"time"
 
@@ -31,15 +32,99 @@ func FromContext(ctx context.Context) (*Principal, bool) {
 	return p, ok && p != nil
 }
 
-// ClientIP returns the peer address. Proxy headers are ignored until a
-// trusted-proxy list exists; trusting them blindly would let a client forge
-// the address that lockouts, rate limits and audit rows are keyed on.
+const clientIPKey ctxKey = iota + 1
+
+// WithClientIP returns ctx carrying the resolved client address. RealIP sets it
+// once per request so handlers, audit rows and the access log all agree.
+func WithClientIP(ctx context.Context, ip string) context.Context {
+	return context.WithValue(ctx, clientIPKey, ip)
+}
+
+// ClientIP returns the address the request came from, without a port. Behind a
+// trusted reverse proxy this is the forwarded client address resolved by
+// RealIP; otherwise it is the peer address. Proxy headers are never believed
+// unless RealIP established that the peer is a trusted proxy, because a client
+// that could forge this would forge the address lockouts, rate limits and audit
+// rows are keyed on.
 func ClientIP(r *http.Request) string {
+	if ip, ok := r.Context().Value(clientIPKey).(string); ok && ip != "" {
+		return ip
+	}
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
 		return r.RemoteAddr
 	}
 	return host
+}
+
+// RealIP resolves the client address from X-Forwarded-For when the immediate
+// peer is one of the trusted proxies, and stores it for ClientIP.
+//
+// Anyone can send X-Forwarded-For, so it is only believable when the connection
+// itself comes from a proxy we run. The header is then read right to left,
+// skipping entries that are themselves trusted proxies: the first untrusted
+// entry is the closest hop our own proxy actually observed. A client that
+// prepends forged entries cannot move that boundary, because its forgeries sit
+// to the left of the address the proxy appended.
+//
+// With no trusted proxies configured the peer address is used unchanged.
+func RealIP(trusted []netip.Prefix) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if ip := resolveClientIP(r, trusted); ip != "" {
+				r = r.WithContext(WithClientIP(r.Context(), ip))
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
+func resolveClientIP(r *http.Request, trusted []netip.Prefix) string {
+	peer, ok := parseAddr(r.RemoteAddr)
+	if !ok {
+		return ""
+	}
+	if len(trusted) == 0 || !trustedAddr(peer, trusted) {
+		return peer.String()
+	}
+	var hops []string
+	for _, v := range r.Header.Values("X-Forwarded-For") {
+		hops = append(hops, strings.Split(v, ",")...)
+	}
+	for i := len(hops) - 1; i >= 0; i-- {
+		addr, ok := parseAddr(strings.TrimSpace(hops[i]))
+		if !ok || trustedAddr(addr, trusted) {
+			continue
+		}
+		return addr.String()
+	}
+	return peer.String()
+}
+
+// parseAddr accepts "host", "host:port" and IPv4-mapped IPv6, returning a
+// comparable address.
+func parseAddr(s string) (netip.Addr, bool) {
+	if s == "" {
+		return netip.Addr{}, false
+	}
+	if addr, err := netip.ParseAddr(s); err == nil {
+		return addr.Unmap(), true
+	}
+	if host, _, err := net.SplitHostPort(s); err == nil {
+		if addr, err := netip.ParseAddr(host); err == nil {
+			return addr.Unmap(), true
+		}
+	}
+	return netip.Addr{}, false
+}
+
+func trustedAddr(addr netip.Addr, trusted []netip.Prefix) bool {
+	for _, p := range trusted {
+		if p.Contains(addr) {
+			return true
+		}
+	}
+	return false
 }
 
 // Middleware resolves sessions and enforces access rules.

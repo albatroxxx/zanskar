@@ -41,6 +41,9 @@ func spaHandler(bundle fs.FS) http.Handler {
 
 // uiCSP is the policy for HTML and bundle responses. Scripts and styles come
 // only from our own origin; xterm and the recording player inject inline
-// styles, so style-src allows them. Connections are limited to our origin
-// (API) and its WebSocket.
-const uiCSP = "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self' ws: wss:; worker-src 'self' blob:; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"
+// styles, so style-src allows them. 'wasm-unsafe-eval' lets the asciicast
+// player instantiate its WebAssembly terminal emulator; without it recording
+// playback is a blank screen. It permits WebAssembly only, not JavaScript
+// eval, so script injection protection is unchanged. Connections are limited
+// to our origin (API) and its WebSocket.
+const uiCSP = "default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self' ws: wss:; worker-src 'self' blob:; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"

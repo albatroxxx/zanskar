@@ -63,7 +63,9 @@ func New(cfg *config.Config, db *store.DB, log *slog.Logger, deps Deps) *Server 
 		h.Register(mux)
 	}
 
-	mws := []middleware{s.recoverer, requestID, s.securityHeaders, s.accessLog}
+	// RealIP runs before accessLog and the handlers so the forwarded client
+	// address, not the proxy's, reaches the log and every audit row.
+	mws := []middleware{s.recoverer, requestID, auth.RealIP(cfg.TrustedProxies), s.securityHeaders, s.accessLog}
 	if deps.AuthMiddleware != nil {
 		mws = append(mws, deps.AuthMiddleware.Authenticate, deps.AuthMiddleware.CSRF)
 	}
@@ -252,7 +254,7 @@ func (s *Server) accessLog(next http.Handler) http.Handler {
 			"path", r.URL.Path,
 			"status", rec.status,
 			"duration_ms", time.Since(start).Milliseconds(),
-			"remote", r.RemoteAddr,
+			"remote", auth.ClientIP(r),
 		)
 	})
 }

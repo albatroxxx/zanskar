@@ -3,11 +3,14 @@
 package session
 
 import (
+	"context"
 	"errors"
 	"io"
 	"log/slog"
 	"net/http"
+	"regexp"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/albatroxxx/zanskar/internal/audit"
@@ -44,6 +47,7 @@ func (h *Handler) Register(mux *http.ServeMux) {
 
 	mux.Handle("GET /api/v1/audit/events", reviewer(http.HandlerFunc(h.auditEvents)))
 	mux.Handle("GET /api/v1/audit/verify", reviewer(http.HandlerFunc(h.auditVerify)))
+	mux.Handle("GET /api/v1/audit/facets", reviewer(http.HandlerFunc(h.auditFacets)))
 }
 
 func (h *Handler) mySessions(w http.ResponseWriter, r *http.Request) {
@@ -122,7 +126,17 @@ func (h *Handler) getRecording(w http.ResponseWriter, r *http.Request) {
 		h.fail(w, r, err)
 		return
 	}
-	httpx.WriteJSON(w, http.StatusOK, rec)
+	// The session tells a reviewer who was on which machine; without it the
+	// recording is just an id. Missing session metadata is not an error.
+	sess, err := h.Repo.Get(r.Context(), rec.SessionID)
+	if err != nil && !errors.Is(err, ErrNotFound) {
+		h.fail(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, struct {
+		*Recording
+		Session *Session `json:"session,omitempty"`
+	}{rec, sess})
 }
 
 // streamRecording sends the raw recording. Every stream is a recorded view
@@ -160,10 +174,45 @@ func (h *Handler) streamRecording(w http.ResponseWriter, r *http.Request) {
 	_, _ = io.Copy(w, rc)
 }
 
+// auditRow is an audit event as the review UI receives it: the stored record
+// plus display names looked up at read time. Names are decoration, not part
+// of the hash chain; a deleted user's events keep their id and lose the name.
+type auditRow struct {
+	audit.Event
+	ActorUsername string `json:"actor_username,omitempty"`
+	ObjectName    string `json:"object_name,omitempty"`
+}
+
+var excludeToken = regexp.MustCompile(`^[a-z0-9_.]{1,64}(:(success|failure))?$`)
+
 func (h *Handler) auditEvents(w http.ResponseWriter, r *http.Request) {
 	limit, cursor := httpx.Paging(r, 50, 500)
 	q := r.URL.Query()
 	f := audit.Filter{ActorUserID: q.Get("actor_user_id"), Action: q.Get("action"), ObjectType: q.Get("object_type"), ObjectID: q.Get("object_id"), Cursor: cursor, Limit: limit}
+	// Filter by the name a reviewer knows rather than an id. An unknown name
+	// matches nothing, not everything.
+	if name := strings.TrimSpace(q.Get("actor")); name != "" {
+		id, err := h.Repo.UserIDByUsername(r.Context(), name)
+		if err != nil {
+			h.fail(w, r, err)
+			return
+		}
+		if id == "" {
+			id = "-"
+		}
+		f.ActorUserID = id
+	}
+	for _, ex := range strings.Split(q.Get("exclude"), ",") {
+		ex = strings.TrimSpace(ex)
+		if ex == "" {
+			continue
+		}
+		if !excludeToken.MatchString(ex) || len(f.Exclude) >= 16 {
+			httpx.BadRequest(w, "exclude: expected action or action:outcome tokens")
+			return
+		}
+		f.Exclude = append(f.Exclude, ex)
+	}
 	if s := q.Get("from"); s != "" {
 		if t, err := time.Parse(time.RFC3339, s); err == nil {
 			f.From = t
@@ -179,10 +228,58 @@ func (h *Handler) auditEvents(w http.ResponseWriter, r *http.Request) {
 		h.fail(w, r, err)
 		return
 	}
+	rows, err := h.decorate(r.Context(), items)
+	if err != nil {
+		h.fail(w, r, err)
+		return
+	}
 	p, _ := auth.FromContext(r.Context())
 	h.record(r, audit.Actor{UserID: p.User.ID, IP: auth.ClientIP(r)}.Event("audit.read", "audit_log", "", audit.Success,
 		map[string]any{"count": len(items), "filter_action": f.Action, "filter_actor": f.ActorUserID}))
-	httpx.WriteJSON(w, http.StatusOK, httpx.Page[audit.Event]{Items: items, NextCursor: next})
+	httpx.WriteJSON(w, http.StatusOK, httpx.Page[auditRow]{Items: rows, NextCursor: next})
+}
+
+// decorate attaches actor usernames and object names to a page of events with
+// one lookup per object type. Queries run one after another, never with a
+// cursor left open, which the single-connection SQLite setup requires.
+func (h *Handler) decorate(ctx context.Context, items []audit.Event) ([]auditRow, error) {
+	actorIDs := make([]string, 0, len(items))
+	byType := map[string][]string{}
+	for _, e := range items {
+		actorIDs = append(actorIDs, e.ActorUserID)
+		if e.ObjectID != "" {
+			byType[e.ObjectType] = append(byType[e.ObjectType], e.ObjectID)
+		}
+	}
+	actors, err := h.Repo.ResolveNames(ctx, "user", actorIDs)
+	if err != nil {
+		return nil, err
+	}
+	names := map[string]map[string]string{}
+	for kind, ids := range byType {
+		m, err := h.Repo.ResolveNames(ctx, kind, ids)
+		if err != nil {
+			return nil, err
+		}
+		names[kind] = m
+	}
+	rows := make([]auditRow, len(items))
+	for i, e := range items {
+		rows[i] = auditRow{Event: e, ActorUsername: actors[e.ActorUserID], ObjectName: names[e.ObjectType][e.ObjectID]}
+	}
+	return rows, nil
+}
+
+// auditFacets lists the values the events filter can offer. Like auditVerify it
+// records no event of its own: it is part of loading the page whose read is
+// already logged, and a second row per page load would only add noise.
+func (h *Handler) auditFacets(w http.ResponseWriter, r *http.Request) {
+	f, err := h.Audit.Facets(r.Context())
+	if err != nil {
+		h.fail(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, f)
 }
 
 func (h *Handler) auditVerify(w http.ResponseWriter, r *http.Request) {

@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/netip"
 	"os"
 	"strings"
 	"time"
@@ -58,6 +59,12 @@ type Config struct {
 	SIEMSyslogCAFile  string
 	SIEMWebhookURL    string
 	SIEMWebhookSecret []byte
+	// TrustedProxies lists the networks whose X-Forwarded-For header is believed.
+	// The gateway normally runs behind a TLS-terminating proxy on loopback, so
+	// without this every request would be attributed to the proxy rather than the
+	// real client. Only addresses in this list may set the client address, since
+	// anyone can send the header.
+	TrustedProxies []netip.Prefix
 	// AllowPlainHTTP permits listening without TLS on a non-loopback address.
 	// Development only (docker compose); every response is sent in clear.
 	AllowPlainHTTP bool
@@ -104,12 +111,39 @@ func Load(opts Options) (*Config, error) {
 		SIEMWebhookURL:       os.Getenv("ZANSKAR_SIEM_WEBHOOK_URL"),
 		SIEMWebhookSecret:    []byte(os.Getenv("ZANSKAR_SIEM_WEBHOOK_SECRET")),
 		AllowPlainHTTP:       os.Getenv("ZANSKAR_ALLOW_PLAIN_HTTP") == "true",
+		TrustedProxies:       nil, // parsed below so a bad entry is a config error
 		LogLevel:             strings.ToLower(envOr("ZANSKAR_LOG_LEVEL", "info")),
 		LogFormat:            strings.ToLower(envOr("ZANSKAR_LOG_FORMAT", "json")),
 		ShutdownTimeout:      20 * time.Second,
 	}
 
 	var errs []error
+
+	// Loopback by default: the documented deployment terminates TLS in a proxy on
+	// the same host. Set ZANSKAR_TRUSTED_PROXIES to "" to trust nothing.
+	for _, raw := range strings.Split(envOr("ZANSKAR_TRUSTED_PROXIES", "127.0.0.1/32,::1/128"), ",") {
+		raw = strings.TrimSpace(raw)
+		if raw == "" {
+			continue
+		}
+		// Accept a bare address as a single-host network, which is what operators
+		// usually mean when naming one proxy.
+		if !strings.Contains(raw, "/") {
+			addr, err := netip.ParseAddr(raw)
+			if err != nil {
+				errs = append(errs, fmt.Errorf("ZANSKAR_TRUSTED_PROXIES: %q: %w", raw, err))
+				continue
+			}
+			c.TrustedProxies = append(c.TrustedProxies, netip.PrefixFrom(addr.Unmap(), addr.Unmap().BitLen()))
+			continue
+		}
+		p, err := netip.ParsePrefix(raw)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("ZANSKAR_TRUSTED_PROXIES: %q: %w", raw, err))
+			continue
+		}
+		c.TrustedProxies = append(c.TrustedProxies, p.Masked())
+	}
 
 	if _, _, err := net.SplitHostPort(c.ListenAddr); err != nil {
 		errs = append(errs, fmt.Errorf("ZANSKAR_LISTEN_ADDR: %w", err))
