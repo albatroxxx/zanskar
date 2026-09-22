@@ -104,3 +104,28 @@ jobs:
           severity: HIGH,CRITICAL
           exit-code: "1"
           ignore-unfixed: true
+
+  notices:
+    name: Third-party notices
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Install web deps (for the npm dependency tree)
+        run: cd web && npm ci --ignore-scripts --no-fund --no-audit
+      - name: Verify THIRD_PARTY_NOTICES.md is current
+        run: |
+          bash hack/gen-notices.sh > THIRD_PARTY_NOTICES.md
+          if ! git diff --quiet THIRD_PARTY_NOTICES.md; then
+            echo "::error::THIRD_PARTY_NOTICES.md is out of date. Regenerate it with: hack/gen-notices.sh > THIRD_PARTY_NOTICES.md"
+            git --no-pager diff --stat THIRD_PARTY_NOTICES.md
+            exit 1
+          fi
