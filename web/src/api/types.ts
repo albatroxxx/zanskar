@@ -264,3 +264,11 @@ export interface AuditFacets {
   actions: string[]
   object_types: string[]
 }
+
+/** Recording retention policy (admin-editable). Mirrors internal/session. */
+export interface RetentionPolicy {
+  max_age_days: number
+  max_total_bytes: number
+  updated_at?: string
+  updated_by?: string
+}

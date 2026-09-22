@@ -94,6 +94,7 @@ export default function App() {
                 { to: '/admin/users', label: 'Users & groups' },
                 { to: '/admin/identity-providers', label: 'Identity providers' },
                 { to: '/admin/sessions', label: 'Sessions' },
+                { to: '/admin/retention', label: 'Retention' },
                 { to: '/audit', label: 'Audit & recordings' },
               ]}
             />
