@@ -23,6 +23,22 @@ and a highly available Kubernetes deployment with the Helm chart in `deploy/helm
   gateways, or object storage (the S3 backend is being added; the chart already wires
   `ZANSKAR_RECORDINGS_S3_BUCKET`).
 
+## Guided single-node install
+
+For a single instance, `zanskar init` writes the environment file the server reads
+(ADR 0014): it asks for the listen address and TLS mode (own certificate, or behind a
+TLS proxy on loopback), the data directory, whether to enable RDP and VNC, MFA and
+logging; it generates the master key and prints the migrate and admin-create steps. It
+runs non-interactively from flags for cloud-init or Ansible, and re-running it preserves
+an existing master key.
+
+```sh
+sudo zanskar init                                              # interactive, writes /etc/zanskar/env
+zanskar init --print --behind-proxy --data-dir /var/lib/zanskar   # preview to stdout
+```
+
+The rest of this guide sets the same variables by hand, for Docker Compose and Kubernetes.
+
 ## Single node with Docker Compose
 
 `deploy/docker-compose.yml` runs PostgreSQL, guacd and the gateway. It publishes the

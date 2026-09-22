@@ -32,3 +32,4 @@ and update the status of the old one.
 | [0011](0011-autoscaling-health-model.md) | Autoscaling health model | Accepted |
 | [0012](0012-rdp-certificate-pinning.md) | RDP and VNC trust through guacd | Accepted |
 | [0013](0013-policy-subject-group-or-user.md) | Access policies bind to a group or to a single user | Accepted |
+| [0014](0014-guided-install-writes-env-file.md) | Guided install writes the environment file | Accepted |
