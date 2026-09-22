@@ -1,6 +1,6 @@
 import { useState, type FormEvent } from 'react'
 import { api, errorMessage } from '../../api/client'
-import type { Group, Policy, Protocol, Target, TimeWindow, AutoscalingGroup } from '../../api/types'
+import type { Group, Policy, Protocol, Target, TimeWindow, AutoscalingGroup, User } from '../../api/types'
 import { Alert, Badge, Confirm, Empty, Field, Modal, PageHead } from '../../components/ui'
 import { formatTags, parseTags, protocols, useList } from './lib'
 
@@ -19,15 +19,17 @@ function selectorSummary(p: Policy, targets: Target[], asgs: AutoscalingGroup[])
 export function Policies() {
   const { items, err, setErr, reload } = useList<Policy>('/access-policies')
   const groups = useList<Group>('/groups')
+  const users = useList<User>('/users')
   const targets = useList<Target>('/targets')
   const asgs = useList<AutoscalingGroup>('/autoscaling-groups')
   const [editing, setEditing] = useState<Policy | 'new' | null>(null)
   const [deleting, setDeleting] = useState<Policy | null>(null)
   const groupName = (id: string) => groups.items?.find((g) => g.id === id)?.name ?? id.slice(0, 8)
+  const userName = (id: string) => users.items?.find((u) => u.id === id)?.username ?? id.slice(0, 8)
 
   return (
     <>
-      <PageHead title="Access policies" lead="A policy lets one group reach a set of targets over chosen protocols, inside optional time windows, with session limits. When policies overlap, the most restrictive idle timeout wins.">
+      <PageHead title="Access policies" lead="A policy lets a group, or a single user, reach a set of targets over chosen protocols, inside optional time windows, with session limits. A user's access is the union of their own policies and their groups' policies; when policies overlap, the shortest idle timeout wins.">
         <button className="btn primary" onClick={() => setEditing('new')}>Add policy</button>
       </PageHead>
       {err && <Alert tone="danger">{err}</Alert>}
@@ -41,7 +43,7 @@ export function Policies() {
             <thead>
               <tr>
                 <th>Name</th>
-                <th>Group</th>
+                <th>Applies to</th>
                 <th>Protocols</th>
                 <th>Targets</th>
                 <th>Windows</th>
@@ -57,7 +59,17 @@ export function Policies() {
                     <strong>{p.name}</strong>
                     {p.description && <div className="muted">{p.description}</div>}
                   </td>
-                  <td>{groupName(p.group_id)}</td>
+                  <td>
+                    {p.user_id ? (
+                      <>
+                        <strong>{userName(p.user_id)}</strong> <Badge>user</Badge>
+                      </>
+                    ) : (
+                      <>
+                        {groupName(p.group_id ?? '')} <Badge>group</Badge>
+                      </>
+                    )}
+                  </td>
                   <td>{p.protocols.map((x) => <Badge key={x} tone="accent">{x}</Badge>)}</td>
                   <td>{selectorSummary(p, targets.items ?? [], asgs.items ?? [])}</td>
                   <td>{p.time_windows.length === 0 ? <span className="muted">always</span> : p.time_windows.length}</td>
@@ -77,6 +89,7 @@ export function Policies() {
         <PolicyForm
           initial={editing === 'new' ? undefined : editing}
           groups={groups.items ?? []}
+          users={users.items ?? []}
           targets={targets.items ?? []}
           asgs={asgs.items ?? []}
           onClose={() => setEditing(null)}
@@ -89,7 +102,7 @@ export function Policies() {
       {deleting && (
         <Confirm
           title={`Delete policy ${deleting.name}?`}
-          body="Users in its group lose the access it granted. Live sessions are not cut off by deletion."
+          body={deleting.user_id ? `${userName(deleting.user_id)} loses the access it granted. Live sessions are not cut off by deletion.` : 'Users in its group lose the access it granted. Live sessions are not cut off by deletion.'}
           confirmLabel="Delete"
           danger
           onClose={() => setDeleting(null)}
@@ -108,11 +121,15 @@ export function Policies() {
   )
 }
 
+type Subject = 'group' | 'user'
+
 interface FormState {
   name: string
   description: string
   enabled: boolean
+  subject: Subject
   group_id: string
+  user_id: string
   tags: string
   targets: string[]
   asgs: string[]
@@ -125,12 +142,14 @@ interface FormState {
   require_mfa: boolean
 }
 
-function PolicyForm({ initial, groups, targets, asgs, onClose, onSaved }: { initial?: Policy; groups: Group[]; targets: Target[]; asgs: AutoscalingGroup[]; onClose: () => void; onSaved: () => void }) {
+function PolicyForm({ initial, groups, users, targets, asgs, onClose, onSaved }: { initial?: Policy; groups: Group[]; users: User[]; targets: Target[]; asgs: AutoscalingGroup[]; onClose: () => void; onSaved: () => void }) {
   const [f, setF] = useState<FormState>({
     name: initial?.name ?? '',
     description: initial?.description ?? '',
     enabled: initial?.enabled ?? true,
+    subject: initial?.user_id ? 'user' : 'group',
     group_id: initial?.group_id ?? groups[0]?.id ?? '',
+    user_id: initial?.user_id ?? users[0]?.id ?? '',
     tags: formatTags(initial?.target_selector.tags),
     targets: initial?.target_selector.targets ?? [],
     asgs: initial?.target_selector.asgs ?? [],
@@ -154,7 +173,8 @@ function PolicyForm({ initial, groups, targets, asgs, onClose, onSaved }: { init
     e.preventDefault()
     const { tags, error } = parseTags(f.tags)
     if (error) return setErr(error)
-    if (!f.group_id) return setErr('choose a group')
+    if (f.subject === 'group' && !f.group_id) return setErr('choose a group')
+    if (f.subject === 'user' && !f.user_id) return setErr('choose a user')
     if (f.protocols.length === 0) return setErr('choose at least one protocol')
     if (Object.keys(tags).length === 0 && f.targets.length === 0 && f.asgs.length === 0) return setErr('select targets by tag, by name, or an autoscaling group')
     const idle = Number(f.idle)
@@ -168,7 +188,7 @@ function PolicyForm({ initial, groups, targets, asgs, onClose, onSaved }: { init
         name: f.name.trim(),
         description: f.description,
         enabled: f.enabled,
-        group_id: f.group_id,
+        ...(f.subject === 'group' ? { group_id: f.group_id } : { user_id: f.user_id }),
         target_selector: { ...(Object.keys(tags).length ? { tags } : {}), ...(f.targets.length ? { targets: f.targets } : {}), ...(f.asgs.length ? { asgs: f.asgs } : {}) },
         protocols: f.protocols,
         time_windows: f.windows.map((w) => ({ ...w, tz: w.tz || 'UTC' })),
@@ -196,6 +216,23 @@ function PolicyForm({ initial, groups, targets, asgs, onClose, onSaved }: { init
           <Field label="Name">
             <input id="p-name" value={f.name} onChange={(e) => up({ name: e.target.value })} required autoFocus />
           </Field>
+          <Field label="Description">
+            <input id="p-desc" value={f.description} onChange={(e) => up({ description: e.target.value })} />
+          </Field>
+        </div>
+        <Field label="Applies to" hint="A group policy reaches every member. A user policy reaches one person and leaves their groups untouched.">
+          <div className="actions" role="radiogroup" aria-label="Applies to">
+            <span className="field inline" style={{ margin: 0 }}>
+              <input id="p-subject-group" type="radio" name="p-subject" checked={f.subject === 'group'} onChange={() => up({ subject: 'group' })} />
+              <label htmlFor="p-subject-group">A group</label>
+            </span>
+            <span className="field inline" style={{ margin: 0 }}>
+              <input id="p-subject-user" type="radio" name="p-subject" checked={f.subject === 'user'} onChange={() => up({ subject: 'user' })} />
+              <label htmlFor="p-subject-user">One user</label>
+            </span>
+          </div>
+        </Field>
+        {f.subject === 'group' ? (
           <Field label="Group">
             <select id="p-group" value={f.group_id} onChange={(e) => up({ group_id: e.target.value })} required>
               {groups.length === 0 && <option value="">no groups yet</option>}
@@ -204,10 +241,16 @@ function PolicyForm({ initial, groups, targets, asgs, onClose, onSaved }: { init
               ))}
             </select>
           </Field>
-        </div>
-        <Field label="Description">
-          <input id="p-desc" value={f.description} onChange={(e) => up({ description: e.target.value })} />
-        </Field>
+        ) : (
+          <Field label="User">
+            <select id="p-user" value={f.user_id} onChange={(e) => up({ user_id: e.target.value })} required>
+              {users.length === 0 && <option value="">no users yet</option>}
+              {users.map((u) => (
+                <option key={u.id} value={u.id}>{u.username}{u.display_name && u.display_name !== u.username ? ` (${u.display_name})` : ''}</option>
+              ))}
+            </select>
+          </Field>
+        )}
         <h2>Targets</h2>
         <div className="form-grid">
           <Field label="By tag" hint="key=value per line; all must match">

@@ -22,7 +22,7 @@ type Repo struct {
 // NewRepo returns a repository over db.
 func NewRepo(db *store.DB) *Repo { return &Repo{db: db} }
 
-const cols = `id, name, description, enabled, group_id, target_selector, protocols, time_windows,
+const cols = `id, name, description, enabled, group_id, user_id, target_selector, protocols, time_windows,
 	max_session_minutes, idle_timeout_minutes, allow_clipboard, allow_file_transfer, require_mfa,
 	created_by, created_at, updated_at`
 
@@ -38,8 +38,8 @@ func (r *Repo) Create(ctx context.Context, p *Policy) error {
 		return err
 	}
 	_, err = r.db.ExecContext(ctx, r.db.Rebind(`INSERT INTO access_policies (`+cols+`)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`),
-		p.ID, p.Name, p.Description, p.Enabled, p.GroupID, sel, protos, wins,
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`),
+		p.ID, p.Name, p.Description, p.Enabled, nullStr(p.GroupID), nullStr(p.UserID), sel, protos, wins,
 		nullInt(p.MaxSessionMinutes), p.IdleTimeoutMinutes, p.AllowClipboard, p.AllowFileTransfer, p.RequireMFA,
 		nullStr(p.CreatedBy), store.TimeArg(now), store.TimeArg(now))
 	if err != nil {
@@ -58,10 +58,10 @@ func (r *Repo) Update(ctx context.Context, p *Policy) error {
 		return err
 	}
 	p.UpdatedAt = time.Now().UTC()
-	res, err := r.db.ExecContext(ctx, r.db.Rebind(`UPDATE access_policies SET name = ?, description = ?, enabled = ?, group_id = ?,
+	res, err := r.db.ExecContext(ctx, r.db.Rebind(`UPDATE access_policies SET name = ?, description = ?, enabled = ?, group_id = ?, user_id = ?,
 		target_selector = ?, protocols = ?, time_windows = ?, max_session_minutes = ?, idle_timeout_minutes = ?,
 		allow_clipboard = ?, allow_file_transfer = ?, require_mfa = ?, updated_at = ? WHERE id = ?`),
-		p.Name, p.Description, p.Enabled, p.GroupID, sel, protos, wins, nullInt(p.MaxSessionMinutes), p.IdleTimeoutMinutes,
+		p.Name, p.Description, p.Enabled, nullStr(p.GroupID), nullStr(p.UserID), sel, protos, wins, nullInt(p.MaxSessionMinutes), p.IdleTimeoutMinutes,
 		p.AllowClipboard, p.AllowFileTransfer, p.RequireMFA, store.TimeArg(p.UpdatedAt), p.ID)
 	if err != nil {
 		return mapErr(err)
@@ -106,12 +106,13 @@ func (r *Repo) Delete(ctx context.Context, id string) error {
 	return affected(res)
 }
 
-// ForUser returns the enabled policies of every group the user belongs to.
-// This is the input to Evaluate.
+// ForUser returns the enabled policies that apply to the user: those bound to
+// the user directly and those bound to any group they belong to. This is the
+// input to Evaluate.
 func (r *Repo) ForUser(ctx context.Context, userID string) ([]*Policy, error) {
 	rows, err := r.db.QueryContext(ctx, r.db.Rebind(`SELECT `+qualify(cols, "p")+` FROM access_policies p
-		JOIN group_members gm ON gm.group_id = p.group_id
-		WHERE gm.user_id = ? AND p.enabled = TRUE ORDER BY p.name`), userID)
+		WHERE p.enabled = TRUE AND (p.user_id = ? OR p.group_id IN (SELECT group_id FROM group_members WHERE user_id = ?))
+		ORDER BY p.name`), userID, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -139,10 +140,11 @@ func scan(s scanner) (*Policy, error) {
 		p                 Policy
 		sel, protos, wins []byte
 		maxSession        sql.NullInt64
+		groupID, userID   sql.NullString
 		createdBy         sql.NullString
 		created, updated  store.NullTime
 	)
-	err := s.Scan(&p.ID, &p.Name, &p.Description, &p.Enabled, &p.GroupID, &sel, &protos, &wins,
+	err := s.Scan(&p.ID, &p.Name, &p.Description, &p.Enabled, &groupID, &userID, &sel, &protos, &wins,
 		&maxSession, &p.IdleTimeoutMinutes, &p.AllowClipboard, &p.AllowFileTransfer, &p.RequireMFA,
 		&createdBy, &created, &updated)
 	if err != nil {
@@ -167,6 +169,7 @@ func scan(s scanner) (*Policy, error) {
 		v := int(maxSession.Int64)
 		p.MaxSessionMinutes = &v
 	}
+	p.GroupID, p.UserID = groupID.String, userID.String
 	p.CreatedBy = createdBy.String
 	p.CreatedAt, p.UpdatedAt = created.Time, updated.Time
 	return &p, nil
@@ -223,7 +226,10 @@ func mapErr(err error) error {
 		return ErrDuplicate
 	}
 	if strings.Contains(msg, "foreign key") {
-		return fmt.Errorf("%w: group does not exist", ErrInvalidInput)
+		return fmt.Errorf("%w: group or user does not exist", ErrInvalidInput)
+	}
+	if strings.Contains(msg, "check constraint") || strings.Contains(msg, "check failed") {
+		return fmt.Errorf("%w: exactly one of group_id or user_id is required", ErrInvalidInput)
 	}
 	return err
 }

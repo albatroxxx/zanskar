@@ -36,6 +36,7 @@ type input struct {
 	Description        string       `json:"description"`
 	Enabled            *bool        `json:"enabled"`
 	GroupID            string       `json:"group_id"`
+	UserID             string       `json:"user_id"`
 	Selector           Selector     `json:"target_selector"`
 	Protocols          []string     `json:"protocols"`
 	TimeWindows        []TimeWindow `json:"time_windows"`
@@ -47,7 +48,7 @@ type input struct {
 }
 
 func (in *input) apply(p *Policy) {
-	p.Name, p.Description, p.GroupID = in.Name, in.Description, in.GroupID
+	p.Name, p.Description, p.GroupID, p.UserID = in.Name, in.Description, in.GroupID, in.UserID
 	p.Selector, p.Protocols, p.TimeWindows, p.MaxSessionMinutes = in.Selector, in.Protocols, in.TimeWindows, in.MaxSessionMinutes
 	p.Enabled = in.Enabled == nil || *in.Enabled
 	p.IdleTimeoutMinutes = 15
@@ -135,7 +136,7 @@ func (h *AdminHandler) record(r *http.Request, action string, p *Policy) {
 	}
 	pr, _ := auth.FromContext(r.Context())
 	actor := audit.Actor{UserID: pr.User.ID, IP: auth.ClientIP(r)}
-	details := map[string]any{"name": p.Name, "group_id": p.GroupID, "protocols": p.Protocols, "selector": p.Selector, "enabled": p.Enabled}
+	details := map[string]any{"name": p.Name, "group_id": p.GroupID, "user_id": p.UserID, "protocols": p.Protocols, "selector": p.Selector, "enabled": p.Enabled}
 	if _, err := h.Audit.Record(r.Context(), actor.Event(action, "access_policy", p.ID, audit.Success, details)); err != nil {
 		h.Log.Error("audit record failed", "action", action, "err", err)
 	}

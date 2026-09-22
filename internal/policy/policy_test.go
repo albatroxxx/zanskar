@@ -164,3 +164,81 @@ func TestRepo(t *testing.T) {
 		t.Fatal("expected not found after delete")
 	}
 }
+
+// TestRepoUserScopedPolicy covers policies bound to one user rather than a
+// group (ADR 0013): they reach that user and nobody else, they combine with
+// the user's group policies, and a policy must name exactly one subject.
+func TestRepoUserScopedPolicy(t *testing.T) {
+	ctx := context.Background()
+	db, err := store.Open(ctx, config.DriverSQLite, "file::memory:?_pragma=foreign_keys(1)")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	if _, err := store.Migrate(ctx, db); err != nil {
+		t.Fatal(err)
+	}
+	now := store.TimeArg(time.Now())
+	for _, q := range []string{
+		`INSERT INTO groups (id, name, created_at, updated_at) VALUES ('g1', 'ops', ?, ?)`,
+		`INSERT INTO users (id, username, display_name, created_at, updated_at) VALUES ('u1', 'alice', 'Alice', ?, ?)`,
+		`INSERT INTO users (id, username, display_name, created_at, updated_at) VALUES ('u2', 'bob', 'Bob', ?, ?)`,
+	} {
+		if _, err := db.ExecContext(ctx, db.Rebind(q), now, now); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := db.ExecContext(ctx, db.Rebind(`INSERT INTO group_members (group_id, user_id, added_at) VALUES ('g1', 'u1', ?)`), now); err != nil {
+		t.Fatal(err)
+	}
+	r := NewRepo(db)
+	sel := Selector{Tags: map[string]string{"env": "prod"}}
+	groupPol := &Policy{Name: "ops", GroupID: "g1", Enabled: true, Selector: sel, Protocols: []string{"ssh"}, IdleTimeoutMinutes: 15}
+	bobPol := &Policy{Name: "bob-only", UserID: "u2", Enabled: true, Selector: sel, Protocols: []string{"rdp"}, IdleTimeoutMinutes: 15}
+	alicePol := &Policy{Name: "alice-extra", UserID: "u1", Enabled: true, Selector: sel, Protocols: []string{"winrm"}, IdleTimeoutMinutes: 15}
+	for _, p := range []*Policy{groupPol, bobPol, alicePol} {
+		if err := r.Create(ctx, p); err != nil {
+			t.Fatalf("create %s: %v", p.Name, err)
+		}
+	}
+
+	names := func(ps []*Policy) []string {
+		out := []string{}
+		for _, p := range ps {
+			out = append(out, p.Name)
+		}
+		return out
+	}
+	alice, err := r.ForUser(ctx, "u1")
+	if err != nil || len(alice) != 2 || alice[0].Name != "alice-extra" || alice[1].Name != "ops" {
+		t.Fatalf("alice gets her own policy plus her group's: %v %v", names(alice), err)
+	}
+	bob, err := r.ForUser(ctx, "u2")
+	if err != nil || len(bob) != 1 || bob[0].Name != "bob-only" || bob[0].UserID != "u2" || bob[0].GroupID != "" {
+		t.Fatalf("bob, in no group, gets only his own policy: %v %v", names(bob), err)
+	}
+
+	// A policy must name exactly one subject, and it must exist.
+	for _, bad := range []*Policy{
+		{Name: "none", Selector: sel, Protocols: []string{"ssh"}, IdleTimeoutMinutes: 15},
+		{Name: "both", GroupID: "g1", UserID: "u1", Selector: sel, Protocols: []string{"ssh"}, IdleTimeoutMinutes: 15},
+		{Name: "ghost", UserID: "nobody", Selector: sel, Protocols: []string{"ssh"}, IdleTimeoutMinutes: 15},
+	} {
+		if err := r.Create(ctx, bad); !errors.Is(err, ErrInvalidInput) {
+			t.Fatalf("%s: expected invalid input, got %v", bad.Name, err)
+		}
+	}
+
+	// Moving a policy from a group to a user, and back, round-trips.
+	groupPol.GroupID, groupPol.UserID = "", "u1"
+	if err := r.Update(ctx, groupPol); err != nil {
+		t.Fatal(err)
+	}
+	got, err := r.Get(ctx, groupPol.ID)
+	if err != nil || got.UserID != "u1" || got.GroupID != "" {
+		t.Fatalf("update to user subject: %+v %v", got, err)
+	}
+	if bob, _ = r.ForUser(ctx, "u2"); len(bob) != 1 {
+		t.Fatalf("bob unaffected by alice's policies: %v", names(bob))
+	}
+}

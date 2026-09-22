@@ -2394,7 +2394,11 @@ components:
           $ref: "#/components/schemas/Tags"
     AccessPolicy:
       type: object
-      required: [id, name, description, enabled, group_id, target_selector, protocols, time_windows, idle_timeout_minutes, allow_clipboard, allow_file_transfer, require_mfa, created_at, updated_at]
+      description: >-
+        One access rule. It applies to every member of a group (`group_id`) or to a single
+        user (`user_id`); exactly one of the two is set. A user's effective access is the union
+        of the policies bound to them and to any group they belong to.
+      required: [id, name, description, enabled, target_selector, protocols, time_windows, idle_timeout_minutes, allow_clipboard, allow_file_transfer, require_mfa, created_at, updated_at]
       properties:
         id:
           type: string
@@ -2406,6 +2410,10 @@ components:
           type: boolean
         group_id:
           type: string
+          description: The group this policy applies to. Absent when bound to a user.
+        user_id:
+          type: string
+          description: The single user this policy applies to. Absent when bound to a group.
         target_selector:
           $ref: "#/components/schemas/TargetSelector"
         protocols:
@@ -2434,7 +2442,8 @@ components:
           $ref: "#/components/schemas/Timestamp"
     AccessPolicyWrite:
       type: object
-      required: [name, group_id, target_selector, protocols]
+      description: Exactly one of `group_id` and `user_id` must be given.
+      required: [name, target_selector, protocols]
       properties:
         name:
           type: string
@@ -2448,6 +2457,10 @@ components:
           default: true
         group_id:
           type: string
+          description: Apply to every member of this group.
+        user_id:
+          type: string
+          description: Apply to this one user, without touching any group.
         target_selector:
           $ref: "#/components/schemas/TargetSelector"
         protocols:

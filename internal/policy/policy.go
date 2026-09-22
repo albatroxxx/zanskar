@@ -40,11 +40,14 @@ type TimeWindow struct {
 
 // Policy is one access rule.
 type Policy struct {
-	ID                 string       `json:"id"`
-	Name               string       `json:"name"`
-	Description        string       `json:"description"`
-	Enabled            bool         `json:"enabled"`
-	GroupID            string       `json:"group_id"`
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	Enabled     bool   `json:"enabled"`
+	// Exactly one of GroupID and UserID is set: a policy applies to every
+	// member of a group, or to one user directly (ADR 0013).
+	GroupID            string       `json:"group_id,omitempty"`
+	UserID             string       `json:"user_id,omitempty"`
 	Selector           Selector     `json:"target_selector"`
 	Protocols          []string     `json:"protocols"`
 	TimeWindows        []TimeWindow `json:"time_windows"`
@@ -73,8 +76,8 @@ func (p *Policy) Validate() error {
 	if p.Name == "" || len(p.Name) > 64 {
 		return fmt.Errorf("%w: name must be 1-64 characters", ErrInvalidInput)
 	}
-	if p.GroupID == "" {
-		return fmt.Errorf("%w: group_id required", ErrInvalidInput)
+	if (p.GroupID == "") == (p.UserID == "") {
+		return fmt.Errorf("%w: exactly one of group_id or user_id is required", ErrInvalidInput)
 	}
 	if p.Selector.Empty() {
 		return fmt.Errorf("%w: target_selector must name targets, asgs or tags", ErrInvalidInput)
