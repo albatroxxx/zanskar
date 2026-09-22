@@ -146,6 +146,33 @@ database backup first. Rolling updates keep at least one pod (PodDisruptionBudge
 
 ## Backups and key custody
 
+For the single-node SQLite deployment (the v1.0 default), `zanskar backup` writes a
+consistent snapshot without stopping the service. It reads the same `ZANSKAR_*`
+environment as the server:
+
+```
+zanskar backup --out /secure/zanskar-$(date +%F).tar.gz
+```
+
+It snapshots the database with SQLite's `VACUUM INTO` — a single transactional copy that
+is safe to take while the gateway is running — and includes the local recordings
+directory. When recordings live in S3 the archive records the backend instead of copying
+them; the object store is their backup. The **master key is never written to the
+archive**, only a fingerprint of it, so restore can warn on a mismatch.
+
+Restore into a stopped service, then start it:
+
+```
+systemctl stop zanskar
+zanskar restore --in /secure/zanskar-2026-09-22.tar.gz --force
+systemctl start zanskar
+```
+
+Restore refuses to overwrite an existing database without `--force`, and warns when the
+archive was sealed under a different `ZANSKAR_MASTER_KEY` — its stored credentials would
+be undecryptable. Restore the original key first if you have it. For PostgreSQL, use the
+tooling below rather than `zanskar backup`.
+
 - **PostgreSQL**: regular dumps or PITR. The audit chain, recordings index and every
   sealed secret live here.
 - **Recordings**: back up the volume or bucket; the database rows reference them by URI
