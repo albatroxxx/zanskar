@@ -5,6 +5,7 @@ import { FitAddon } from '@xterm/addon-fit'
 import '@xterm/xterm/css/xterm.css'
 import { fmtSeconds } from '../../api/format'
 import { Modal } from '../../components/ui'
+import { terminalTheme } from '../../styles/theme'
 
 /**
  * Shadow is the read-only live view an admin or auditor opens on a running
@@ -34,7 +35,7 @@ export function Shadow() {
     let cleanup = () => {}
 
     if (!isDesktop) {
-      const term = new XTerm({ disableStdin: true, cursorBlink: false, fontFamily: 'ui-monospace, SF Mono, Menlo, Consolas, monospace', fontSize: 13, theme: { background: '#0a1a2c' }, scrollback: 10000 })
+      const term = new XTerm({ disableStdin: true, cursorBlink: false, fontFamily: 'ui-monospace, SF Mono, Menlo, Consolas, monospace', fontSize: 13, theme: terminalTheme(), scrollback: 10000 })
       const fit = new FitAddon()
       term.loadAddon(fit)
       term.open(el)

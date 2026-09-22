@@ -135,7 +135,9 @@ export interface Policy {
   name: string
   description: string
   enabled: boolean
-  group_id: string
+  /** Exactly one of group_id and user_id is set: the policy applies to a whole group or to one user. */
+  group_id?: string
+  user_id?: string
   target_selector: Selector
   protocols: Protocol[]
   time_windows: TimeWindow[]
@@ -171,6 +173,8 @@ export interface Session {
 export interface Recording {
   id: string
   session_id: string
+  /** The session this recording belongs to, with user and target names resolved. */
+  session?: Session
   format: 'asciicast' | 'guac'
   size_bytes: number
   sha256?: string
@@ -184,6 +188,10 @@ export interface AuditEvent {
   id: number
   ts: string
   actor_user_id: string
+  /** Resolved at read time; absent when the actor was the gateway itself or a deleted user. */
+  actor_username?: string
+  /** Resolved at read time: a target or user name, or "user → target (PROTO)" for sessions. */
+  object_name?: string
   actor_ip: string
   action: string
   object_type: string
@@ -249,4 +257,10 @@ export interface AsgInstance {
   last_seen_at: string
   terminated_at?: string
   healthy: boolean
+}
+
+/** Values the audit filter can offer, taken from what the log contains. */
+export interface AuditFacets {
+  actions: string[]
+  object_types: string[]
 }
