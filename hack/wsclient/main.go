@@ -40,7 +40,7 @@ func main() {
 	if err != nil {
 		fmt.Println("dial error:", err)
 		cancel()
-		os.Exit(1) //nolint:gocritic // cancel called explicitly above
+		os.Exit(1) // cancel is called above because os.Exit skips defers
 	}
 	defer ws.CloseNow()
 	var out strings.Builder
