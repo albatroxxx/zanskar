@@ -8,6 +8,7 @@ import { fmtSeconds } from '../../api/format'
 import { Modal } from '../../components/ui'
 import { FailoverDialog } from './Failover'
 import type { ConnectResponse } from '../../api/types'
+import { terminalTheme } from '../../styles/theme'
 
 interface TerminalState {
   ticket: string
@@ -50,7 +51,7 @@ function TerminalSession({ state }: { state: TerminalState }) {
 
   useEffect(() => {
     if (!host.current) return
-    const term = new XTerm({ cursorBlink: true, fontFamily: 'ui-monospace, SF Mono, Menlo, Consolas, monospace', fontSize: 13, theme: { background: '#0a1a2c' }, scrollback: 5000 })
+    const term = new XTerm({ cursorBlink: true, fontFamily: 'ui-monospace, SF Mono, Menlo, Consolas, monospace', fontSize: 13, theme: terminalTheme(), scrollback: 5000 })
     const fit = new FitAddon()
     term.loadAddon(fit)
     term.loadAddon(new WebLinksAddon())

@@ -32,6 +32,13 @@ spec:
             readOnlyRootFilesystem: true
             capabilities:
               drop: ["ALL"]
+          env:
+            # FreeRDP writes a certificate store under $HOME/.config/freerdp
+            # before each RDP connection; with a read-only root filesystem the
+            # default home is not writable and the RDP security negotiation
+            # aborts. Point HOME at the writable /tmp volume mounted below.
+            - name: HOME
+              value: /tmp
           ports:
             - name: guacd
               containerPort: 4822

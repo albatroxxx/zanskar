@@ -80,6 +80,12 @@ func (l *Log) Record(ctx context.Context, e Event) (Event, error) {
 	} else {
 		e.Timestamp = e.Timestamp.UTC()
 	}
+	// PostgreSQL's TIMESTAMPTZ keeps only microseconds, so a nanosecond-precision
+	// timestamp read back after insert differs from the one that was hashed and
+	// the chain fails verification. Truncate before hashing so the hash covers
+	// exactly what the column will return. (SQLite stores full-precision text and
+	// is unaffected, but truncating on both keeps the chain portable.)
+	e.Timestamp = e.Timestamp.Truncate(time.Microsecond)
 	if e.Outcome == "" {
 		return Event{}, errors.New("audit: outcome is required")
 	}
@@ -148,8 +154,13 @@ type Filter struct {
 	ObjectType  string
 	ObjectID    string
 	From, To    time.Time
-	Cursor      string
-	Limit       int
+	// Exclude drops routine events from a listing without touching the log.
+	// Each entry is an action ("audit.read") or action:outcome
+	// ("session.connect:success"), so a reader can hide the successful
+	// ticket issue that precedes every session while still seeing refusals.
+	Exclude []string
+	Cursor  string
+	Limit   int
 }
 
 // List returns events newest first. The second return value is the cursor for
@@ -180,6 +191,14 @@ func (l *Log) List(ctx context.Context, f Filter) ([]Event, string, error) {
 	}
 	if f.ObjectID != "" {
 		add("object_id = ?", f.ObjectID)
+	}
+	for _, ex := range f.Exclude {
+		if action, outcome, ok := strings.Cut(ex, ":"); ok {
+			where = append(where, "NOT (action = ? AND outcome = ?)")
+			args = append(args, action, outcome)
+		} else {
+			add("action <> ?", ex)
+		}
 	}
 	if !f.From.IsZero() {
 		add("ts >= ?", l.tsArg(f.From.UTC()))
@@ -296,6 +315,170 @@ func (l *Log) fetchBatch(ctx context.Context, q string, afterID int64) ([]Event,
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("audit: verify: %w", err)
+	}
+	return batch, nil
+}
+
+// maxFacetValues bounds a facet list. The vocabularies are small by design; the
+// cap only stops a pathological log from building an unusable filter.
+const maxFacetValues = 200
+
+// Facets are the values a reviewer can pick from when filtering. Only values the
+// log actually contains are listed, so the filter never offers a choice that
+// would return nothing.
+type Facets struct {
+	Actions     []string `json:"actions"`
+	ObjectTypes []string `json:"object_types"`
+}
+
+// Facets reads the distinct action and object_type values in the log.
+func (l *Log) Facets(ctx context.Context) (Facets, error) {
+	var f Facets
+	var err error
+	if f.Actions, err = l.distinct(ctx, "action"); err != nil {
+		return Facets{}, err
+	}
+	if f.ObjectTypes, err = l.distinct(ctx, "object_type"); err != nil {
+		return Facets{}, err
+	}
+	return f, nil
+}
+
+// distinct lists the values held in one column. The column is named by a
+// caller-supplied literal and never by request input, so interpolating it into
+// the statement cannot be turned into an injection. Each result set is drained
+// before returning, because SQLite runs on a single connection.
+func (l *Log) distinct(ctx context.Context, column string) ([]string, error) {
+	q := `SELECT DISTINCT ` + column + ` FROM audit_events WHERE ` + column + ` IS NOT NULL AND ` + column + ` <> '' ORDER BY 1`
+	rows, err := l.db.QueryContext(ctx, q)
+	if err != nil {
+		return nil, fmt.Errorf("audit: facets: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	out := make([]string, 0, 32)
+	for rows.Next() {
+		var v string
+		if err := rows.Scan(&v); err != nil {
+			return nil, fmt.Errorf("audit: facets: %w", err)
+		}
+		if len(out) >= maxFacetValues {
+			break
+		}
+		out = append(out, v)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("audit: facets: %w", err)
+	}
+	return out, nil
+}
+
+// ResealResult reports what Reseal changed.
+type ResealResult struct {
+	Scanned   int64
+	Rewritten int64
+	// FirstID and LastID bound the rows whose stored hash was replaced. Both are
+	// zero when nothing needed rewriting.
+	FirstID int64
+	LastID  int64
+	Head    string
+}
+
+// Reseal relinks and rehashes the log, rewriting every row whose stored hash
+// does not match its content.
+//
+// This is a last-resort recovery, not maintenance. When a chain is broken by a
+// hash-computation bug the original hashes cannot be reproduced, because the
+// input they covered is gone: a pre-fix build hashed nanosecond timestamps that
+// PostgreSQL's TIMESTAMPTZ then truncated to microseconds, so those rows can
+// never satisfy Verify again. Reseal makes the log verifiable at a real cost —
+// it permanently destroys the chain's evidence that the rewritten rows were not
+// altered, because a reseal and a tampering are indistinguishable after the
+// fact. Run it only when the break is understood, and record why: the CLI
+// writes an audit.reseal event describing the rewrite.
+//
+// Rewriting starts at the first mismatch and necessarily continues to the head,
+// because each hash covers the previous row's hash.
+func (l *Log) Reseal(ctx context.Context) (ResealResult, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	var res ResealResult
+	tx, err := l.db.BeginTx(ctx, nil)
+	if err != nil {
+		return res, fmt.Errorf("audit: begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	if l.db.Driver == config.DriverPostgres {
+		if _, err := tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock($1)`, advisoryLockID); err != nil {
+			return res, fmt.Errorf("audit: advisory lock: %w", err)
+		}
+	}
+
+	selQ := l.db.Rebind(selectColumns + " WHERE id > ? ORDER BY id ASC LIMIT ?")
+	updQ := l.db.Rebind(`UPDATE audit_events SET prev_hash = ?, hash = ? WHERE id = ?`)
+
+	prev := GenesisHash
+	var afterID int64
+	for {
+		// Drain each batch before issuing updates: SQLite runs on one connection
+		// and deadlocks if a second statement starts while a cursor is open.
+		batch, err := fetchBatchTx(ctx, tx, selQ, afterID)
+		if err != nil {
+			return res, err
+		}
+		if len(batch) == 0 {
+			break
+		}
+		for _, e := range batch {
+			storedHash, storedPrev := e.Hash, e.PrevHash
+			e.PrevHash = prev
+			want, err := ComputeHash(e)
+			if err != nil {
+				return res, fmt.Errorf("audit: reseal event %d: %w", e.ID, err)
+			}
+			if want != storedHash || prev != storedPrev {
+				if _, err := tx.ExecContext(ctx, updQ, prev, want, e.ID); err != nil {
+					return res, fmt.Errorf("audit: reseal event %d: %w", e.ID, err)
+				}
+				res.Rewritten++
+				if res.FirstID == 0 {
+					res.FirstID = e.ID
+				}
+				res.LastID = e.ID
+			}
+			prev = want
+			res.Scanned++
+			afterID = e.ID
+		}
+		if len(batch) < verifyBatchSize {
+			break
+		}
+	}
+	res.Head = prev
+	if err := tx.Commit(); err != nil {
+		return res, fmt.Errorf("audit: commit: %w", err)
+	}
+	return res, nil
+}
+
+// fetchBatchTx is fetchBatch bound to a transaction.
+func fetchBatchTx(ctx context.Context, tx *sql.Tx, q string, afterID int64) ([]Event, error) {
+	rows, err := tx.QueryContext(ctx, q, afterID, verifyBatchSize)
+	if err != nil {
+		return nil, fmt.Errorf("audit: reseal: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	batch := make([]Event, 0, verifyBatchSize)
+	for rows.Next() {
+		e, err := scanEvent(rows)
+		if err != nil {
+			return nil, err
+		}
+		batch = append(batch, e)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("audit: reseal: %w", err)
 	}
 	return batch, nil
 }

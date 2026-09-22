@@ -138,7 +138,9 @@ function DesktopSession({ state }: { state: DesktopState }) {
     setStatus(null)
     fs.requestInputStream(dir, (stream: InputStream, mimetype: string) => {
       if (mimetype !== G.Object.STREAM_INDEX_MIMETYPE) {
+        stream.sendAck('Not a directory', 0x0100)
         setStatus({ text: 'not a directory', err: true })
+        setEntries([])
         return
       }
       const reader = new G.JSONReader(stream)
@@ -153,6 +155,10 @@ function DesktopSession({ state }: { state: DesktopState }) {
         setEntries(out)
         setCwd(dir)
       }
+      // guacd sends the index only once the body is acknowledged, and the
+      // readers in guacamole-common-js ack only after a blob arrives. Without
+      // this readiness ack neither side moves and the panel waits forever.
+      stream.sendAck('Ready', 0x0000)
     })
   }, [])
 
@@ -169,6 +175,8 @@ function DesktopSession({ state }: { state: DesktopState }) {
       const reader = new G.ArrayBufferReader(stream)
       const parts: ArrayBuffer[] = []
       let total = 0
+      // Acknowledged below, once the handlers are wired: guacd waits for it
+      // before sending the first chunk.
       reader.ondata = (buf) => {
         parts.push(buf)
         total += buf.byteLength
@@ -183,6 +191,7 @@ function DesktopSession({ state }: { state: DesktopState }) {
         setTimeout(() => URL.revokeObjectURL(a.href), 10_000)
         setStatus({ text: `downloaded ${e.name} (${fmtBytes(total)})` })
       }
+      stream.sendAck('Ready', 0x0000)
     })
   }
 
@@ -278,7 +287,7 @@ function DesktopSession({ state }: { state: DesktopState }) {
               <div className="hint">The drive appears once the desktop session has started. Inside the session it is the "Zanskar" drive; files placed there show up here.</div>
             ) : (
               <div className="list">
-                <div className="entry dir" style={{ color: '#9fb6c9' }}>{cwd}</div>
+                <div className="entry dir">{cwd}</div>
                 {parent !== null && (
                   <div className="entry dir" onClick={() => list(parent)}>..</div>
                 )}

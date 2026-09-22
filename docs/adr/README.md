@@ -30,4 +30,5 @@ and update the status of the old one.
 | [0009](0009-agentless-only-ssm-out-of-scope.md) | Agentless only, SSM out of scope | Accepted |
 | [0010](0010-frontend-react-typescript-vite.md) | Frontend: React, TypeScript, Vite | Accepted |
 | [0011](0011-autoscaling-health-model.md) | Autoscaling health model | Accepted |
-- [0012. RDP and VNC trust through guacd](0012-rdp-certificate-pinning.md)
+| [0012](0012-rdp-certificate-pinning.md) | RDP and VNC trust through guacd | Accepted |
+| [0013](0013-policy-subject-group-or-user.md) | Access policies bind to a group or to a single user | Accepted |

@@ -96,8 +96,14 @@ func TestSPAFallbackAndCSP(t *testing.T) {
 		if rr.Code != http.StatusOK || !strings.Contains(rr.Body.String(), "<title>Zanskar</title>") {
 			t.Fatalf("%s: %d %q", p, rr.Code, rr.Body.String()[:40])
 		}
-		if csp := rr.Header().Get("Content-Security-Policy"); !strings.Contains(csp, "script-src 'self'") {
+		csp := rr.Header().Get("Content-Security-Policy")
+		if !strings.Contains(csp, "script-src 'self'") {
 			t.Fatalf("%s: ui csp missing: %q", p, csp)
+		}
+		// The recording player's WebAssembly terminal emulator needs this, or
+		// playback is blank. It allows WASM, not JavaScript eval.
+		if !strings.Contains(csp, "'wasm-unsafe-eval'") {
+			t.Fatalf("%s: ui csp must allow wasm: %q", p, csp)
 		}
 	}
 	rr := httptest.NewRecorder()

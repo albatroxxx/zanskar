@@ -1,61 +1,88 @@
-/* Zanskar design tokens. Palette from docs/assets/README.md, neutrals biased
-   toward the brand blue. Light is the default; dark follows the OS. */
+/* Zanskar design tokens. Palette from docs/assets/README.md: warm stone
+   neutrals with one ultramarine accent, so colour means something when it is
+   used. Light is the default; dark follows the OS and stays charcoal, never a
+   tinted black. Every colour in the UI resolves to a token here. */
 :root {
-  --night: #0a1a2c;
-  --slate: #16395c;
-  --glacier: #2dd4bf;
-  --frost: #8ff5e6;
-  --teal: #0e9f8e;
-  --snow: #e6f6f9;
+  /* brand */
+  --ink: #121318;
+  --charcoal: #2a2d36;
+  --ultramarine: #3d4fe0;
+  --indigo: #2f3fbf;
+  --periwinkle: #a9b4ff;
+  --bone: #f2eee6;
+  --paper: #f4f2ec;
 
-  --bg: #f3f6f8;
-  --bg-raised: #ffffff;
-  --bg-sunken: #e8eef2;
-  --fg: #0f1e2e;
-  --fg-muted: #52657a;
-  --fg-faint: #8a9bab;
-  --line: #d5dee6;
-  --line-strong: #b9c7d3;
-  --accent: var(--teal);
+  /* surfaces and text */
+  --bg: var(--paper);
+  --bg-raised: #fffdf8;
+  --bg-sunken: #ebe7dd;
+  --fg: #1d1b17;
+  --fg-muted: #5b574d;
+  --fg-faint: #7a7466;
+  --line: #dad5c8;
+  --line-strong: #bdb6a6;
+
+  /* accent: buttons, links, active states */
+  --accent: var(--indigo);
+  --accent-hover: #2634a3;
   --accent-fg: #ffffff;
-  --accent-soft: #d9f4ef;
-  --danger: #b42318;
-  --danger-soft: #fde8e6;
-  --warn: #9a6700;
-  --warn-soft: #fff4d6;
-  --ok: #067647;
-  --ok-soft: #dcf5e7;
-  --focus: #2dd4bf;
-  --terminal-bg: #0a1a2c;
+  --accent-soft: #e6e8f8;
+  --focus: var(--ultramarine);
+
+  /* status */
+  --danger: #b3261e;
+  --danger-soft: #f9e2df;
+  --warn: #8a5200;
+  --warn-soft: #f8ecd2;
+  --ok: #1e7a45;
+  --ok-soft: #dff2e5;
+
+  /* the terminal and desktop pages are always dark, whatever the theme */
+  --terminal-bg: #181a1f;
+  --term-bar-bg: #22252c;
+  --term-line: #33373f;
+  --term-fg: #e8e4da;
+  --term-fg-muted: #a19c90;
+  --term-btn-bg: #2c3038;
+  --term-btn-line: #454a55;
+  --term-btn-hover: #363b45;
+  --term-danger: #ff9a8f;
+  --term-danger-line: #a8453d;
+  --term-link: var(--periwinkle);
+
+  --backdrop: rgba(22, 20, 15, 0.55);
 
   --font: "Cantarell", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
   --mono: ui-monospace, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
 
   --radius: 6px;
   --radius-lg: 10px;
-  --shadow: 0 1px 2px rgba(10, 26, 44, 0.08), 0 4px 16px rgba(10, 26, 44, 0.06);
+  --shadow: 0 1px 2px rgba(29, 27, 23, 0.06), 0 8px 24px rgba(29, 27, 23, 0.1);
   --sidebar-w: 224px;
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --bg: #0b141f;
-    --bg-raised: #111c29;
-    --bg-sunken: #08111a;
-    --fg: #e6eef4;
-    --fg-muted: #93a6b8;
-    --fg-faint: #5f7387;
-    --line: #22303f;
-    --line-strong: #34465a;
-    --accent: var(--glacier);
-    --accent-fg: #0a1a2c;
-    --accent-soft: #123b3a;
-    --danger: #f97066;
-    --danger-soft: #3b1512;
-    --warn: #fdb022;
-    --warn-soft: #3a2a08;
-    --ok: #47cd89;
-    --ok-soft: #0c2e1f;
-    --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 4px 16px rgba(0, 0, 0, 0.3);
+    --bg: #15161a;
+    --bg-raised: #1d1f24;
+    --bg-sunken: #0f1013;
+    --fg: #ece8df;
+    --fg-muted: #a7a297;
+    --fg-faint: #7b766b;
+    --line: #2a2d34;
+    --line-strong: #3c404a;
+    --accent: #8e9dff;
+    --accent-hover: #a3afff;
+    --accent-fg: #0f1013;
+    --accent-soft: #252a48;
+    --focus: #8e9dff;
+    --danger: #f4776d;
+    --danger-soft: #3a1613;
+    --warn: #e5b04a;
+    --warn-soft: #34260a;
+    --ok: #5fcf85;
+    --ok-soft: #10301f;
+    --backdrop: rgba(0, 0, 0, 0.62);
+    --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 8px 24px rgba(0, 0, 0, 0.35);
   }
 }

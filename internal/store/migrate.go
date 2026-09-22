@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/albatroxxx/zanskar/internal/config"
 	"github.com/albatroxxx/zanskar/migrations"
 )
 
@@ -48,12 +49,46 @@ func Migrate(ctx context.Context, db *DB) ([]string, error) {
 		if err != nil {
 			return ran, fmt.Errorf("migrate: read %s: %w", name, err)
 		}
-		if err := applyOne(ctx, db, version, string(body)); err != nil {
+		if err := applyWithDirectives(ctx, db, version, string(body)); err != nil {
 			return ran, err
 		}
 		ran = append(ran, version)
 	}
 	return ran, nil
+}
+
+// fkOffDirective, on the first line of a SQLite migration, asks for foreign
+// keys to be off while it runs. SQLite cannot alter a column in place, so such
+// a migration rebuilds a table; with foreign keys on, its DROP TABLE would
+// cascade into every row that references the table. The pragma cannot change
+// inside a transaction, so it is toggled around the migration's own
+// transaction on the single connection SQLite uses, and the schema is checked
+// for dangling references before foreign keys are enabled again.
+const fkOffDirective = "-- migrate: foreign_keys=off"
+
+func applyWithDirectives(ctx context.Context, db *DB, version, body string) error {
+	if db.Driver != config.DriverSQLite || !strings.HasPrefix(body, fkOffDirective) {
+		return applyOne(ctx, db, version, body)
+	}
+	if _, err := db.ExecContext(ctx, `PRAGMA foreign_keys=OFF`); err != nil {
+		return fmt.Errorf("migrate %s: foreign_keys off: %w", version, err)
+	}
+	err := applyOne(ctx, db, version, body)
+	if _, e := db.ExecContext(ctx, `PRAGMA foreign_keys=ON`); e != nil && err == nil {
+		err = fmt.Errorf("migrate %s: foreign_keys on: %w", version, e)
+	}
+	if err != nil {
+		return err
+	}
+	rows, err := db.QueryContext(ctx, `PRAGMA foreign_key_check`)
+	if err != nil {
+		return fmt.Errorf("migrate %s: foreign_key_check: %w", version, err)
+	}
+	defer func() { _ = rows.Close() }()
+	if rows.Next() {
+		return fmt.Errorf("migrate %s: rebuild left dangling foreign keys", version)
+	}
+	return rows.Err()
 }
 
 // Pending reports the migration versions not yet applied.

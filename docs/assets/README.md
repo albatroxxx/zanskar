@@ -19,14 +19,23 @@ and at 16 px, where it would be a single pixel.
 
 ## Palette
 
+Warm stone neutrals and one ultramarine accent. The neutrals carry the interface;
+the accent is reserved for the mark, actions, links and active states, so colour
+means something when it appears. Status colours (green, amber, red) are the only
+other hues and are used for status alone.
+
 | Name | Hex | Role |
 |---|---|---|
-| Night | `#0A1A2C` | Deep background, badge label, gradient bottom |
-| Slate | `#16395C` | Wordmark on light, gradient top |
-| Glacier | `#2DD4BF` | Chevron gradient end, accent |
-| Frost | `#8FF5E6` | Chevron gradient start |
-| Teal | `#0E9F8E` | Badge value, links on light |
-| Snow | `#E6F6F9` | Cursor, snow cap, wordmark on dark |
+| Ink | `#121318` | Mark gradient bottom, badge label, deepest surface |
+| Charcoal | `#2A2D36` | Mark gradient top, wordmark on light |
+| Ultramarine | `#3D4FE0` | Chevron gradient end, focus ring |
+| Periwinkle | `#A9B4FF` | Chevron gradient start, links and cursor on dark surfaces |
+| Indigo | `#2F3FBF` | Buttons and links on light, badge value |
+| Bone | `#F2EEE6` | Cursor, snow cap, wordmark on dark |
+| Paper | `#F4F2EC` | Interface background (light) |
+
+The UI tokens in `web/src/styles/tokens.css` derive from this table. Dark mode keeps
+the same accent family on charcoal surfaces rather than tinting the neutrals.
 
 The wordmark and tagline in the lockups are Cantarell outlines (Bold 700 and Medium 500), so the
 SVGs render identically everywhere and depend on no installed font. Cantarell is also the UI

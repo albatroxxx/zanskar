@@ -1,6 +1,7 @@
 import { lazy, Suspense } from 'react'
 import { Navigate, Route, Routes, useLocation } from 'react-router-dom'
 import { useAuth } from './auth/AuthContext'
+import { SessionExpired } from './auth/SessionExpired'
 import { Empty } from './components/ui'
 import { Shell } from './components/Shell'
 import type { Role } from './api/types'
@@ -26,7 +27,11 @@ function Guard({ roles, children }: { roles?: Role[]; children: React.ReactNode 
 
 export default function App() {
   return (
-    <Routes>
+    <>
+      {/* Mounted outside the routes so an expired session is announced once,
+          whichever page the user is on. */}
+      <SessionExpired />
+      <Routes>
       <Route path="/login" element={<Login />} />
       <Route
         path="/terminal"
@@ -114,6 +119,7 @@ export default function App() {
         {auditRoutes}
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
-    </Routes>
+      </Routes>
+    </>
   )
 }

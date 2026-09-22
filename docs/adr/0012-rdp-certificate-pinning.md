@@ -50,3 +50,22 @@ the CA and hostname checks are replaced by a SHA-256 match, which is what self-s
 listener certificates need. A mismatch at connect time is refused and audited as
 `target.tls.mismatch`. WinRM over plain HTTP (5985) is refused outright: the Go client has
 no WS-Management message encryption, so command output would cross the network in clear.
+
+## Addendum 2026-09-21: the gateway enforces the RDP pin, not guacd
+
+Real-box testing showed guacd's own certificate pinning (the `cert-fingerprints`
+parameter) does not work for Zanskar's targets. Targets are dialled by IP, while a
+Windows self-signed RDP certificate carries the hostname as its Common Name. FreeRDP 3.x
+in guacd 1.6.0 does not suppress that name mismatch even when the pinned fingerprint
+matches exactly, so it refuses the session: the connection is accepted and then torn down
+before a desktop is drawn, leaving a blank screen. A standalone FreeRDP client (2.x and
+3.x) and guacd with the certificate check disabled both render the same host correctly, so
+the fault is specifically the `cert-fingerprints` path.
+
+Decision: the gateway enforces the pin itself. Immediately before a desktop connection it
+re-probes the target's RDP TLS certificate (the same probe used at enrolment) and refuses
+unless the SHA-256 matches the stored `tls_fingerprint`; only then does guacd connect, with
+`ignore-cert` set so it does not re-run the checks that fail. The security property of this
+ADR is unchanged: a connection proceeds only against the exact pinned certificate, verified
+on the same host and network path microseconds earlier. guacd never decides certificate
+trust for RDP.

@@ -44,6 +44,9 @@ type Handler struct {
 	Audit       *audit.Log
 	Log         *slog.Logger
 	MFAEnrolled func(ctx context.Context, userID string) (bool, error)
+	// Prober re-verifies a target's pinned TLS certificate just before a
+	// desktop connection (ADR 0012); the gateway enforces the RDP pin itself.
+	Prober      *target.Prober
 	DialTimeout time.Duration
 	// GuacdAddr enables RDP and VNC; empty disables desktop sessions.
 	GuacdAddr string
@@ -372,9 +375,50 @@ func (h *Handler) terminal(w http.ResponseWriter, r *http.Request) {
 	// Resolve credential material before upgrading, so a vault failure is a
 	// plain HTTP error rather than a broken socket.
 	a := sshgw.Auth{Username: g.Username}
-	if len(g.UserSecret) > 0 {
+	switch {
+	case len(g.UserSecret) > 0:
 		a.Password = string(g.UserSecret)
-	} else {
+	default:
+		// Decide on the credential's type before touching the vault: EC2
+		// Instance Connect stores no secret, so Vault.Open would fail with
+		// ErrNoSecret and the key-push flow below would never run.
+		cred, err := h.Vault.Get(r.Context(), g.CredentialID)
+		if err != nil {
+			h.Log.Error("open credential", "id", g.CredentialID, "err", err)
+			httpx.WriteError(w, http.StatusConflict, "credential_unavailable", "credential could not be opened")
+			return
+		}
+		if cred.Type == credential.TypeEC2InstanceConnect {
+			// Push a one-minute public key through the cloud API; nothing is
+			// stored anywhere. Requires the ec2-instance-connect package on
+			// the instance, which stock Amazon Linux and Ubuntu AMIs ship.
+			if ep.Group == nil || h.Cloud == nil {
+				httpx.WriteError(w, http.StatusConflict, "credential_unavailable", "instance connect needs an autoscaling instance")
+				return
+			}
+			provider, err := h.Cloud(r.Context(), ep.Group)
+			if err != nil {
+				h.Log.Error("cloud provider", "asg", ep.Group.Name, "err", err)
+				httpx.WriteError(w, http.StatusConflict, "credential_unavailable", "cloud access failed")
+				return
+			}
+			pubLine, privPEM, err := ephemeralSSHKey()
+			if err != nil {
+				h.fail(w, r, err)
+				return
+			}
+			osUser := cred.Username
+			if osUser == "" {
+				osUser = "ec2-user"
+			}
+			if err := provider.SendSSHPublicKey(r.Context(), ep.CloudInstanceID, ep.AvailabilityZone, osUser, []byte(pubLine)); err != nil {
+				h.Log.Warn("instance connect push failed", "instance", ep.CloudInstanceID, "err", err)
+				httpx.WriteError(w, http.StatusConflict, "credential_unavailable", "instance connect refused the key; check the role's permissions")
+				return
+			}
+			a.Username, a.PrivateKey = osUser, privPEM
+			break
+		}
 		opened, err := h.Vault.Open(r.Context(), g.CredentialID)
 		if err != nil {
 			h.Log.Error("open credential", "id", g.CredentialID, "err", err)
@@ -399,35 +443,6 @@ func (h *Handler) terminal(w http.ResponseWriter, r *http.Request) {
 			a.Username = loginUser
 			a.PrivateKey = []byte(keyPEM)
 			a.Certificate = []byte(certLine)
-		case credential.TypeEC2InstanceConnect:
-			// Push a one-minute public key through the cloud API; nothing is
-			// stored anywhere. Requires the ec2-instance-connect package on
-			// the instance, which stock Amazon Linux and Ubuntu AMIs ship.
-			if ep.Group == nil || h.Cloud == nil {
-				httpx.WriteError(w, http.StatusConflict, "credential_unavailable", "instance connect needs an autoscaling instance")
-				return
-			}
-			provider, err := h.Cloud(r.Context(), ep.Group)
-			if err != nil {
-				h.Log.Error("cloud provider", "asg", ep.Group.Name, "err", err)
-				httpx.WriteError(w, http.StatusConflict, "credential_unavailable", "cloud access failed")
-				return
-			}
-			pubLine, privPEM, err := ephemeralSSHKey()
-			if err != nil {
-				h.fail(w, r, err)
-				return
-			}
-			osUser := opened.Username
-			if osUser == "" {
-				osUser = "ec2-user"
-			}
-			if err := provider.SendSSHPublicKey(r.Context(), ep.CloudInstanceID, ep.AvailabilityZone, osUser, []byte(pubLine)); err != nil {
-				h.Log.Warn("instance connect push failed", "instance", ep.CloudInstanceID, "err", err)
-				httpx.WriteError(w, http.StatusConflict, "credential_unavailable", "instance connect refused the key; check the role's permissions")
-				return
-			}
-			a.Username, a.PrivateKey = osUser, privPEM
 		default:
 			a.Username, a.Password, a.PrivateKey = opened.Username, opened.Password, opened.PrivateKey
 		}
