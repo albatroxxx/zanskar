@@ -4,6 +4,7 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"crypto/rand"
 	"crypto/tls"
 	"encoding/base64"
@@ -202,7 +203,8 @@ func checkPrereqs(a initAnswers) []string {
 		w = append(w, fmt.Sprintf("data directory %s is not creatable: %v", a.DataDir, err))
 	}
 	if a.GuacdAddr != "" {
-		c, err := net.DialTimeout("tcp", a.GuacdAddr, 3*time.Second)
+		d := net.Dialer{Timeout: 3 * time.Second}
+		c, err := d.DialContext(context.Background(), "tcp", a.GuacdAddr)
 		if err != nil {
 			w = append(w, fmt.Sprintf("guacd at %s is not reachable now (%v); RDP and VNC will fail until it is", a.GuacdAddr, err))
 		} else {
@@ -280,7 +282,7 @@ func newMasterKey() (string, error) {
 // if none. Best-effort: a read error means "no key found", and the caller then
 // generates one.
 func masterKeyFrom(path string) string {
-	f, err := os.Open(path)
+	f, err := os.Open(path) //nosec G304 -- path is the operator-specified env file being (re)written; reading it back preserves the master key
 	if err != nil {
 		return ""
 	}
@@ -299,7 +301,7 @@ func masterKeyFrom(path string) string {
 // a crash never leaves a half-written env file (which could lose the key line).
 func writeFileAtomic(path string, data []byte, mode os.FileMode) error {
 	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, 0o750); err != nil {
 		return err
 	}
 	tmp, err := os.CreateTemp(dir, ".zanskar-env-*")

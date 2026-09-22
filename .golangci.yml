@@ -40,6 +40,11 @@ linters:
     rules:
       - path: _test\.go
         linters: [noctx, gosec]
+      # `zanskar init` reads the operator-specified env file back to preserve its
+      # master key; the variable path is the point, not a vulnerability.
+      - path: cmd/zanskar/init\.go
+        linters: [gosec]
+        text: "G304"
 formatters:
   enable:
     - gofmt
