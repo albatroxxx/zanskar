@@ -59,6 +59,8 @@ func main() {
 		err = runServe()
 	case "migrate":
 		err = runMigrate()
+	case "init":
+		err = runInit(os.Args[2:])
 	case "keygen":
 		err = runKeygen()
 	case "version":
@@ -80,7 +82,7 @@ func main() {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: zanskar <serve|migrate|keygen|admin create|admin reset-mfa|audit verify|audit reseal|version>")
+	fmt.Fprintln(os.Stderr, "usage: zanskar <init|serve|migrate|keygen|admin create|admin reset-mfa|audit verify|audit reseal|version>")
 }
 
 func newLogger(cfg *config.Config) *slog.Logger {
