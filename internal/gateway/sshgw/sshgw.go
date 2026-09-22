@@ -223,6 +223,13 @@ func Bridge(ctx context.Context, log *slog.Logger, client *ssh.Client, ws *webso
 	}
 	sendCtrl(control{T: "ready", SessionID: lim.SessionID})
 
+	// Submitted command lines become markers on the recording so a reviewer
+	// can list them; input the remote did not echo is recorded as hidden.
+	var cmds *commandLog
+	if rec != nil {
+		cmds = newCommandLog(func(label string) { _ = rec.Marker(label) })
+	}
+
 	// target -> browser (+ recording)
 	go func() {
 		defer close(outDone)
@@ -236,6 +243,9 @@ func Bridge(ctx context.Context, log *slog.Logger, client *ssh.Client, ws *webso
 						setEnd("error")
 						return
 					}
+				}
+				if cmds != nil {
+					cmds.output(buf[:n])
 				}
 				if lim.Tap != nil {
 					lim.Tap.Write(buf[:n])
@@ -265,6 +275,9 @@ func Bridge(ctx context.Context, log *slog.Logger, client *ssh.Client, ws *webso
 			lastIn = time.Now()
 			mu.Unlock()
 			if typ == websocket.MessageBinary {
+				if cmds != nil {
+					cmds.input(data)
+				}
 				if _, err := stdin.Write(data); err != nil {
 					return
 				}
@@ -276,6 +289,9 @@ func Bridge(ctx context.Context, log *slog.Logger, client *ssh.Client, ws *webso
 			}
 			switch f.T {
 			case "i":
+				if cmds != nil {
+					cmds.input([]byte(f.D))
+				}
 				if rec != nil {
 					_ = rec.Input([]byte(f.D))
 				}

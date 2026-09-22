@@ -1,7 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 // wsclient: drives a Zanskar terminal WebSocket for smoke tests.
-// usage: wsclient <ws-url>  ; sends "hello", waits for HELLO, sends exit, prints the end frame.
+// usage: wsclient <ws-url> [prompt] [command] [expect]
+// Waits for the prompt (default "$ "), sends the command (default "hello"), waits for expect
+// (default "HELLO"), sends exit, and prints the end frame. Real shells use for example
+// `wsclient <url> '$ ' 'echo HEL""LO' HELLO` and PowerShell `wsclient <url> '> ' 'echo HEL""LO' HELLO`.
 package main
 
 import (
@@ -16,8 +19,23 @@ import (
 )
 
 func main() {
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
 	defer cancel()
+	if len(os.Args) < 2 {
+		fmt.Println("usage: wsclient <ws-url> [prompt] [command] [expect]")
+		cancel()
+		os.Exit(2) //nolint:gocritic // cancel called explicitly above
+	}
+	prompt, command, expect := "$ ", "hello", "HELLO"
+	if len(os.Args) > 2 {
+		prompt = os.Args[2]
+	}
+	if len(os.Args) > 3 {
+		command = os.Args[3]
+	}
+	if len(os.Args) > 4 {
+		expect = os.Args[4]
+	}
 	ws, _, err := websocket.Dial(ctx, os.Args[1], nil)
 	if err != nil {
 		fmt.Println("dial error:", err)
@@ -39,11 +57,11 @@ func main() {
 		}
 		if typ == websocket.MessageBinary {
 			out.Write(data)
-			if !sentHello && strings.Contains(out.String(), "$ ") {
+			if !sentHello && strings.Contains(out.String(), prompt) {
 				sentHello = true
-				send(map[string]any{"t": "i", "d": "hello\r"})
+				send(map[string]any{"t": "i", "d": command + "\r"})
 			}
-			if sentHello && !sentExit && strings.Contains(out.String(), "HELLO") {
+			if sentHello && !sentExit && strings.Contains(out.String(), expect) {
 				sentExit = true
 				send(map[string]any{"t": "i", "d": "exit\r"})
 			}
@@ -54,5 +72,5 @@ func main() {
 			break
 		}
 	}
-	fmt.Printf("terminal output (%d bytes) contains HELLO: %v\n", out.Len(), strings.Contains(out.String(), "HELLO"))
+	fmt.Printf("terminal output (%d bytes) contains %s: %v\n", out.Len(), expect, strings.Contains(out.String(), expect))
 }

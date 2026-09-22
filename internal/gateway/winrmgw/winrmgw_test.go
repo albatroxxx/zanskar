@@ -4,6 +4,7 @@ package winrmgw
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -214,6 +215,37 @@ func TestBridgeBrowserClose(t *testing.T) {
 	}
 	if !sh.wasClosed() {
 		t.Fatal("shell was not closed on browser close")
+	}
+}
+
+func TestBridgeCommandErrorKeepsSession(t *testing.T) {
+	// A command that fails (not a transport loss) must show its error and leave
+	// the console open at a fresh prompt, not tear the session down.
+	sh := &fakeShell{runErr: errors.New("thecmd : The term 'thecmd' is not recognized")}
+	srv, reasonCh := serve(t, sh, Limits{Idle: time.Minute, tick: 50 * time.Millisecond})
+	ws, ctx, cancel := dial(t, srv)
+	defer cancel()
+	defer ws.CloseNow()
+	readReady(t, ctx, ws)
+	readUntil(t, ctx, ws, "PS> ")
+
+	sendText(t, ctx, ws, `{"t":"i","d":"thecmd\r"}`)
+	if got := readUntil(t, ctx, ws, "not recognized"); !strings.Contains(got, "not recognized") {
+		t.Fatalf("expected the command error to be shown, got %q", got)
+	}
+	readUntil(t, ctx, ws, "PS> ") // console returns to a prompt instead of ending
+
+	sendText(t, ctx, ws, `{"t":"i","d":"exit\r"}`)
+	if end := readEnd(t, ctx, ws); !strings.Contains(end, "user_exit") {
+		t.Fatalf("end frame: %s", end)
+	}
+	select {
+	case r := <-reasonCh:
+		if r != "user_exit" {
+			t.Fatalf("reason %q", r)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("bridge did not end")
 	}
 }
 

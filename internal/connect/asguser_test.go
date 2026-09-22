@@ -40,6 +40,7 @@ type asgEnv struct {
 	users    *user.Repo
 	user     *user.User
 	group    *asg.Group
+	fake     *cloud.Fake
 }
 
 func newASGEnv(t *testing.T) *asgEnv {
@@ -89,14 +90,50 @@ func newASGEnv(t *testing.T) *asgEnv {
 	if err != nil {
 		t.Fatal(err)
 	}
+	fake := cloud.NewFake()
 	h := &Handler{Targets: target.NewRepo(db), Policies: policy.NewRepo(db), Vault: vault, Sessions: session.NewRepo(db), Tickets: ticket.NewStore(),
 		Audit: audit.NewLog(db), Log: log, ASGs: asgs, MFAEnrolled: func(context.Context, string) (bool, error) { return true, nil },
-		Cloud: func(context.Context, *asg.Group) (cloud.Provider, error) { return cloud.NewFake(), nil }}
+		Cloud: func(context.Context, *asg.Group) (cloud.Provider, error) { return fake, nil }}
 	mux := http.NewServeMux()
 	h.Register(mux)
 	mw := &auth.Middleware{Sessions: sessions, Users: users, Log: log}
 	return &asgEnv{srv: mw.Authenticate(mw.CSRF(mux)), cookie: &http.Cookie{Name: auth.CookieName, Value: tok}, csrf: sessions.CSRFToken(sess.ID),
-		h: h, asgs: asgs, sessions: session.NewRepo(db), users: users, user: u, group: ag}
+		h: h, asgs: asgs, sessions: session.NewRepo(db), users: users, user: u, group: ag, fake: fake}
+}
+
+// TestASGInstanceConnectPushesKey covers the SSH terminal handler's credential
+// path for an EC2 Instance Connect credential, which stores no secret. A
+// regression guard: opening the vault for it fails with ErrNoSecret, so the
+// handler must decide on the type first and push an ephemeral key instead.
+func TestASGInstanceConnectPushesKey(t *testing.T) {
+	e := newASGEnv(t)
+	ctx := context.Background()
+	launched := time.Now()
+	in, _, err := e.asgs.UpsertInstance(ctx, &asg.Instance{GroupID: e.group.ID, InstanceID: "i-9", PrivateIP: "10.0.0.9", AvailabilityZone: "ap-south-1c",
+		LifecycleState: "InService", ProbeHealth: "healthy", HostKeyFingerprint: "SHA256:xyz", HostKeySource: "console", LaunchedAt: &launched})
+	if err != nil {
+		t.Fatal(err)
+	}
+	code, out := e.do("POST", "/api/v1/connect", map[string]any{"asg_instance_id": in.ID, "protocol": "ssh"})
+	if code != 200 || out["ticket"] == nil {
+		t.Fatalf("connect: %d %v", code, out)
+	}
+	ticketStr, _ := out["ticket"].(string)
+
+	// Redeem at the terminal endpoint. Without WebSocket upgrade headers the
+	// handshake fails, but only after credential material is resolved, so the
+	// key push must already have happened and the error must not be a 409
+	// credential failure.
+	code, out = e.do("GET", "/ws/terminal?ticket="+ticketStr+"&cols=80&rows=24", nil)
+	if code == http.StatusConflict && out["code"] == "credential_unavailable" {
+		t.Fatalf("instance connect credential wrongly opened as a secret: %d %v", code, out)
+	}
+	if len(e.fake.SentKeys) != 1 {
+		t.Fatalf("expected one SendSSHPublicKey call, got %d", len(e.fake.SentKeys))
+	}
+	if e.fake.SentKeys[0].InstanceID != "i-9" || e.fake.SentKeys[0].OSUser != "ec2-user" {
+		t.Fatalf("unexpected key push: %+v", e.fake.SentKeys[0])
+	}
 }
 
 func (e *asgEnv) do(method, path string, body any) (int, map[string]any) {

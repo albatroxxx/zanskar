@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"strings"
 	"sync"
 	"time"
@@ -148,6 +149,34 @@ type winrmShell struct {
 
 func (s *winrmShell) Run(ctx context.Context, line string, stdout, stderr io.Writer) (int, error) {
 	return s.wc.RunWithContext(ctx, winrm.Powershell(line), stdout, stderr)
+}
+
+// commandFailureEndsSession reports whether an error from running a single
+// command means the target connection is gone (end the session) rather than
+// just that the command itself failed (show it and stay at the prompt). A
+// dropped connection or refused dial ends the session; an output-poll timeout
+// or a command-level fault does not.
+func commandFailureEndsSession(err error) bool {
+	if err == nil {
+		return false
+	}
+	var ne net.Error
+	if errors.As(err, &ne) && ne.Timeout() {
+		return false
+	}
+	if errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, io.EOF) {
+		return true
+	}
+	msg := strings.ToLower(err.Error())
+	if strings.Contains(msg, "operationtimeout") {
+		return false
+	}
+	for _, s := range []string{"eof", "connection refused", "connection reset", "no route to host", "network is unreachable", "broken pipe", "no such host"} {
+		if strings.Contains(msg, s) {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *winrmShell) Close() error { return nil }
@@ -329,11 +358,23 @@ func Bridge(ctx context.Context, log *slog.Logger, sh Shell, ws *websocket.Conn,
 					setEnd("user_exit")
 					return
 				}
+				// Every submitted line is a command here (local echo, no hidden
+				// prompts), so record it as a marker for the reviewer's list.
+				if rec != nil {
+					_ = rec.Marker(trimmed)
+				}
 				if _, err := sh.Run(ctx, trimmed, sw, sw); err != nil {
-					if ctx.Err() == nil {
-						setEnd("target_lost")
+					if ctx.Err() != nil {
+						return
 					}
-					return
+					if commandFailureEndsSession(err) {
+						setEnd("target_lost")
+						return
+					}
+					// A single command failing is not a lost target: surface the
+					// error and keep the console open at a fresh prompt.
+					log.Warn("winrm command error", "err", err)
+					out([]byte("\r\n" + cleanCommandError(err) + "\r\n"))
 				}
 				out([]byte("\r\n" + prompt))
 			}
@@ -383,6 +424,21 @@ func Bridge(ctx context.Context, log *slog.Logger, sh Shell, ws *websocket.Conn,
 			}
 		}
 	}
+}
+
+// cleanCommandError turns a command-run error into a short line for the
+// console. WinRM reports a command fault as an HTTP 500 carrying a SOAP
+// envelope; showing that raw XML is useless, so collapse it to a plain message.
+func cleanCommandError(err error) string {
+	msg := strings.TrimSpace(err.Error())
+	if i := strings.IndexByte(msg, '<'); i >= 0 { // strip any SOAP/XML body
+		msg = strings.TrimSpace(msg[:i])
+	}
+	lower := strings.ToLower(msg)
+	if msg == "" || strings.Contains(lower, "http 500") || strings.Contains(lower, "operationtimeout") {
+		return "the command could not be run on the target"
+	}
+	return msg
 }
 
 func msgFor(reason string) string {

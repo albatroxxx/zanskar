@@ -21,10 +21,15 @@ services:
     image: guacamole/guacd:1.6.0
     # guacd only needs to be reachable from zanskar; never publish it on a host port.
     read_only: true
-    # /tmp holds the per-session drive directories used for RDP file transfer
-    # (drive-path=/tmp/drives/<session>). It is memory-backed and size-capped:
-    # uploaded files exist only for the life of the container and are never
-    # written to disk. Raise the size if users move large files.
+    # FreeRDP writes a certificate store under $HOME/.config/freerdp before each
+    # RDP connection; on a read-only container the default home is not writable
+    # and the RDP security negotiation aborts. Point HOME at the writable tmpfs.
+    environment:
+      HOME: /tmp
+    # /tmp holds FreeRDP's cert store and the per-session drive directories used
+    # for RDP file transfer (drive-path=/tmp/zanskar-drive-<session>). It is
+    # memory-backed and size-capped: files exist only for the life of the
+    # container and are never written to disk. Raise the size for large files.
     tmpfs:
       - /tmp:size=512m,mode=1777
 

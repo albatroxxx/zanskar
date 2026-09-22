@@ -57,6 +57,15 @@ func Bridge(ctx context.Context, log *slog.Logger, c *Conn, ws *websocket.Conn, 
 			mu.Unlock()
 		}
 		current = func() string { mu.Lock(); defer mu.Unlock(); return reason }
+		// coder/websocket permits only one concurrent writer. The guacd->browser
+		// goroutine, the idle heartbeat and the final disconnect all write to the
+		// browser, so every write is serialized through wsMu.
+		wsMu    sync.Mutex
+		wsWrite = func(wctx context.Context, raw string) error {
+			wsMu.Lock()
+			defer wsMu.Unlock()
+			return ws.Write(wctx, websocket.MessageText, []byte(raw))
+		}
 	)
 
 	// guacd -> browser
@@ -73,6 +82,12 @@ func Bridge(ctx context.Context, log *slog.Logger, c *Conn, ws *websocket.Conn, 
 			op := Opcode(raw)
 			switch op {
 			case "nop":
+				// guacd's keepalive. Forward it so the browser's tunnel
+				// receiveTimeout (15s without any server message) does not fire on
+				// an idle, unchanging desktop, but do not record it.
+				if err := wsWrite(ctx, raw); err != nil {
+					return
+				}
 				continue
 			case "clipboard":
 				if !lim.AllowClipboard {
@@ -92,7 +107,7 @@ func Bridge(ctx context.Context, log *slog.Logger, c *Conn, ws *websocket.Conn, 
 					return
 				}
 			}
-			if err := ws.Write(ctx, websocket.MessageText, []byte(raw)); err != nil {
+			if err := wsWrite(ctx, raw); err != nil {
 				return
 			}
 			if op == "disconnect" || op == "error" {
@@ -145,9 +160,9 @@ func Bridge(ctx context.Context, log *slog.Logger, c *Conn, ws *websocket.Conn, 
 		wctx, wcancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer wcancel()
 		if msg != "" {
-			_ = ws.Write(wctx, websocket.MessageText, []byte(ErrorInstruction(msg, 519)))
+			_ = wsWrite(wctx, ErrorInstruction(msg, 519))
 		}
-		_ = ws.Write(wctx, websocket.MessageText, []byte(Encode("disconnect")))
+		_ = wsWrite(wctx, Encode("disconnect"))
 		_ = c.Send("disconnect")
 		cancel()
 		return r, nil
@@ -170,6 +185,13 @@ func Bridge(ctx context.Context, log *slog.Logger, c *Conn, ws *websocket.Conn, 
 			}
 			return finish("user_exit", "")
 		case now := <-ticker.C:
+			// Heartbeat: a static desktop produces no frames, and guacd may go
+			// quiet for longer than the browser tunnel's 15s receiveTimeout, which
+			// would drop the session as "target lost". A periodic nop keeps the
+			// tunnel alive; the browser ignores its content.
+			if err := wsWrite(ctx, Encode("nop")); err != nil {
+				return current(), nil
+			}
 			mu.Lock()
 			idle := now.Sub(lastIn)
 			mu.Unlock()

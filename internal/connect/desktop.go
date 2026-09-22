@@ -5,6 +5,7 @@ package connect
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -58,13 +59,36 @@ func desktopParams(t *target.Target, proto target.Protocol, a *credential.Opened
 		}
 		args["username"] = username
 		args["password"] = password
-		args["security"] = "any"
-		args["ignore-cert"] = "false"
-		args["cert-fingerprints"] = strings.ToLower(strings.ReplaceAll(*t.TLSFingerprint, ":", ""))
+		// Windows enforces Network Level Authentication (CredSSP) by default, and
+		// guacd's auto-negotiate ("any") fails against such hosts with "security
+		// negotiation failed". Require NLA explicitly.
+		args["security"] = "nla"
+		// The gateway verifies the pinned certificate itself immediately before
+		// this connection (verifyPinnedCert). guacd's own cert-fingerprints
+		// pinning is not used: FreeRDP refuses the session when the target is
+		// dialled by IP while the self-signed certificate's CN is the hostname,
+		// which is the normal case for these targets, and the desktop stays
+		// blank. ignore-cert lets guacd proceed after the gateway has already
+		// confirmed the exact certificate the server presents.
+		args["ignore-cert"] = "true"
 		args["resize-method"] = "display-update"
-		args["enable-wallpaper"] = "false"
+		// Modern Windows (Server 2019/2022) composes the desktop at 32-bit. guacd
+		// defaults to 16-bit, which paints the simple logon screen but leaves the
+		// composed desktop black. Request 32-bit so the desktop itself renders.
+		args["color-depth"] = "32"
+		// A visible wallpaper makes a working desktop obvious rather than a bare
+		// black background that reads as "not rendering".
+		args["enable-wallpaper"] = "true"
 		args["disable-audio"] = "true"
 		args["enable-printing"] = "false"
+		// Disable the RDP Graphics Pipeline (EGFX). This guacd build negotiates
+		// the RDPGFX channel with recent Windows but then unloads it ("RDPGFX
+		// channel support unloaded") because its FreeRDP lacks the AVC/H.264
+		// codec, so the composed desktop never arrives and stays black. Forcing
+		// EGFX off makes Windows fall back to the bitmap/surface path guacd can
+		// render. The target must also use the legacy display driver
+		// (fEnableWddmDriver=0) for the desktop to paint via that path.
+		args["disable-gfx"] = "true"
 		if allowFiles {
 			args["enable-drive"] = "true"
 			args["drive-name"] = "Zanskar"
@@ -127,6 +151,15 @@ func (h *Handler) desktop(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		httpx.WriteError(w, http.StatusConflict, "target_unavailable", err.Error())
 		return
+	}
+	// Enforce the certificate pin at the gateway before handing off to guacd,
+	// which connects with cert checks disabled (see desktopParams).
+	if proto == target.RDP {
+		if err := h.verifyPinnedCert(r.Context(), t); err != nil {
+			h.Log.Warn("rdp certificate pin check failed", "target", t.ID, "err", err)
+			httpx.WriteError(w, http.StatusConflict, "certificate_mismatch", "the target's certificate does not match the pinned fingerprint")
+			return
+		}
 	}
 	params.Width, _ = strconv.Atoi(r.URL.Query().Get("width"))
 	params.Height, _ = strconv.Atoi(r.URL.Query().Get("height"))
@@ -218,11 +251,43 @@ func (h *Handler) desktop(w http.ResponseWriter, r *http.Request) {
 	_ = ws.Close(websocket.StatusNormalClosure, reason)
 }
 
+// verifyPinnedCert reconnects to the target's RDP TLS listener and confirms it
+// still presents the pinned certificate, immediately before guacd connects. The
+// gateway enforces the pin (ADR 0012) because guacd's fingerprint pinning does
+// not work for IP-dialled, self-signed certificates; guacd is then told to
+// ignore the certificate it has already been vouched for.
+func (h *Handler) verifyPinnedCert(ctx context.Context, t *target.Target) error {
+	if h.Prober == nil {
+		return errors.New("certificate verification is unavailable")
+	}
+	if t.TLSFingerprint == nil || *t.TLSFingerprint == "" {
+		return errors.New("target has no pinned certificate; probe it first")
+	}
+	want := strings.ToLower(strings.ReplaceAll(*t.TLSFingerprint, ":", ""))
+	timeout := h.DialTimeout
+	if timeout <= 0 {
+		timeout = 10 * time.Second
+	}
+	res, err := h.Prober.Probe(ctx, t.Address, map[target.Protocol]int{target.RDP: t.Port(target.RDP)}, timeout)
+	if err != nil {
+		return err
+	}
+	if res.TLS == nil {
+		return errors.New("target presented no certificate")
+	}
+	if got := strings.ToLower(strings.ReplaceAll(res.TLS.Fingerprint, ":", "")); got != want {
+		return fmt.Errorf("certificate fingerprint %s does not match pinned %s", got, want)
+	}
+	return nil
+}
+
 // drivePathFor is the per-session directory guacd exposes as the mapped drive.
-// It sits under guacd's tmpfs (see deploy/docker-compose.yml) and is never
-// visible to the gateway process itself.
+// It sits directly under guacd's tmpfs root (see deploy/docker-compose.yml) so
+// the parent always exists: guacd's create-drive-path is not recursive, and a
+// nested path like /tmp/drives/<id> fails when /tmp/drives is absent, which it
+// is on a fresh tmpfs. The directory is never visible to the gateway process.
 func drivePathFor(sessionID string) string {
-	return "/tmp/drives/" + sessionID
+	return "/tmp/zanskar-drive-" + sessionID
 }
 
 // FlagsInstruction encodes policy flags for the browser as a custom
