@@ -86,8 +86,10 @@ func desktopParams(t *target.Target, proto target.Protocol, a *credential.Opened
 		// channel support unloaded") because its FreeRDP lacks the AVC/H.264
 		// codec, so the composed desktop never arrives and stays black. Forcing
 		// EGFX off makes Windows fall back to the bitmap/surface path guacd can
-		// render. The target must also use the legacy display driver
-		// (fEnableWddmDriver=0) for the desktop to paint via that path.
+		// render. Verified against a stock Windows Server 2022 target with the
+		// default WDDM display driver: the target needs no configuration of its
+		// own for the desktop to paint, which is the point of an agentless
+		// gateway.
 		args["disable-gfx"] = "true"
 		if allowFiles {
 			args["enable-drive"] = "true"
