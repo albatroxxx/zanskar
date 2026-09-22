@@ -22,7 +22,7 @@ body {
 a { color: var(--accent); text-decoration: none; }
 a:hover { text-decoration: underline; }
 h1, h2, h3 { margin: 0; font-weight: 600; letter-spacing: -0.01em; text-wrap: balance; }
-h1 { font-size: 1.35rem; }
+h1 { font-size: 1.45rem; font-weight: 700; letter-spacing: -0.02em; }
 h2 { font-size: 1.05rem; }
 code, .mono { font-family: var(--mono); font-size: 0.86em; }
 button, input, select, textarea { font: inherit; color: inherit; }
@@ -36,7 +36,7 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .sidebar .brand small { display: block; font-weight: 500; letter-spacing: 0.04em; color: var(--fg-muted); font-size: 0.66rem; }
 .sidebar nav a { display: block; padding: 7px 10px; border-radius: var(--radius); color: var(--fg); }
 .sidebar nav a:hover { background: var(--bg-sunken); text-decoration: none; }
-.sidebar nav a.active { background: var(--accent-soft); color: var(--fg); font-weight: 500; }
+.sidebar nav a.active { background: var(--accent-soft); color: var(--accent); font-weight: 600; box-shadow: inset 3px 0 0 var(--accent); }
 .sidebar .spacer { flex: 1; }
 .sidebar .me { border-top: 1px solid var(--line); padding-top: 12px; font-size: 0.86rem; color: var(--fg-muted); display: flex; flex-direction: column; gap: 6px; }
 .sidebar .me strong { color: var(--fg); font-weight: 500; }
@@ -75,6 +75,7 @@ td .muted, .muted { color: var(--fg-muted); }
 .btn:hover { border-color: var(--fg-faint); }
 .btn:disabled { opacity: 0.5; cursor: not-allowed; }
 .btn.primary { background: var(--accent); color: var(--accent-fg); border-color: transparent; font-weight: 500; }
+.btn.primary:hover { background: var(--accent-hover); border-color: transparent; }
 .btn.danger { color: var(--danger); border-color: var(--danger); }
 .btn.sm { padding: 4px 9px; font-size: 0.82rem; }
 .btn.ghost { border-color: transparent; background: transparent; }
@@ -90,7 +91,7 @@ td .muted, .muted { color: var(--fg-muted); }
 .badge.ok { background: var(--ok-soft); color: var(--ok); }
 .badge.warn { background: var(--warn-soft); color: var(--warn); }
 .badge.danger { background: var(--danger-soft); color: var(--danger); }
-.badge.accent { background: var(--accent-soft); color: var(--fg); }
+.badge.accent { background: var(--accent-soft); color: var(--accent); }
 .alert { padding: 10px 12px; border-radius: var(--radius); border: 1px solid var(--line); background: var(--bg-sunken); margin-bottom: 12px; }
 .alert.danger { background: var(--danger-soft); border-color: var(--danger); color: var(--danger); }
 .alert.ok { background: var(--ok-soft); border-color: var(--ok); color: var(--ok); }
@@ -100,12 +101,30 @@ td .muted, .muted { color: var(--fg-muted); }
 .kv dd { margin: 0; word-break: break-all; }
 .tag { display: inline-block; font-family: var(--mono); font-size: 0.74rem; background: var(--bg-sunken); border-radius: 4px; padding: 1px 6px; margin-right: 4px; }
 
-/* modal */
-.modal-backdrop { position: fixed; inset: 0; background: rgba(10, 26, 44, 0.55); display: grid; place-items: center; padding: 16px; z-index: 50; }
-.modal { background: var(--bg-raised); color: var(--fg); border-radius: var(--radius-lg); border: 1px solid var(--line); box-shadow: var(--shadow); width: min(520px, 100%); padding: 22px 24px; }
+/* modal
+   The dialog never exceeds the viewport: the title stays put, the body scrolls,
+   and the trailing action row sticks to the bottom edge so Save and Cancel are
+   reachable however long the form is. Scroll shadows on the body signal that
+   more content is above or below. */
+.modal-backdrop { position: fixed; inset: 0; background: var(--backdrop); display: grid; place-items: center; padding: 16px; z-index: 50; overflow-y: auto; }
+.modal { display: flex; flex-direction: column; background: var(--bg-raised); color: var(--fg); border-radius: var(--radius-lg); border: 1px solid var(--line); box-shadow: var(--shadow); width: min(520px, 100%); max-height: calc(100vh - 32px); max-height: calc(100dvh - 32px); min-width: 0; }
+.modal:focus { outline: none; }
+.modal-head { flex: none; padding: 20px 24px 8px; }
+.modal-head h2 { margin: 0; }
+.modal-body {
+  flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 4px 24px 20px;
+  background:
+    linear-gradient(var(--bg-raised) 40%, transparent) center top / 100% 28px no-repeat local,
+    linear-gradient(transparent, var(--bg-raised) 60%) center bottom / 100% 28px no-repeat local,
+    radial-gradient(farthest-side at 50% 0, rgba(0, 0, 0, 0.16), transparent) center top / 100% 12px no-repeat scroll,
+    radial-gradient(farthest-side at 50% 100%, rgba(0, 0, 0, 0.16), transparent) center bottom / 100% 12px no-repeat scroll;
+}
 .modal p { margin: 0 0 10px; }
 .modal h2 { margin-bottom: 8px; }
 .modal .actions { justify-content: flex-end; margin-top: 18px; }
+.modal-body > .actions:last-child, .modal-body > form > .actions:last-child {
+  position: sticky; bottom: 0; z-index: 1; margin: 18px -24px 0; padding: 12px 24px; background: var(--bg-raised); border-top: 1px solid var(--line);
+}
 
 /* login */
 .login-wrap { min-height: 100%; display: grid; place-items: center; padding: 24px 16px; }
@@ -118,33 +137,39 @@ td .muted, .muted { color: var(--fg-muted); }
 .recovery-codes { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; font-family: var(--mono); background: var(--bg-sunken); padding: 12px; border-radius: var(--radius); }
 
 /* terminal */
-.term-page { display: flex; flex-direction: column; height: 100vh; background: var(--terminal-bg); color: var(--snow); }
-.term-bar { display: flex; align-items: center; gap: 16px; padding: 8px 14px; background: #10263d; border-bottom: 1px solid #1f3a55; font-size: 0.86rem; }
+.term-page { display: flex; flex-direction: column; height: 100vh; background: var(--terminal-bg); color: var(--term-fg); }
+.term-bar { display: flex; align-items: center; gap: 16px; padding: 8px 14px; background: var(--term-bar-bg); border-bottom: 1px solid var(--term-line); font-size: 0.86rem; }
 .term-bar .name { font-weight: 600; }
-.term-bar .stat { color: #9fb6c9; font-variant-numeric: tabular-nums; }
+.term-bar .stat { color: var(--term-fg-muted); font-variant-numeric: tabular-nums; }
 .term-bar .stat.warn { color: var(--warn); }
 .term-bar .grow { flex: 1; }
 /* The bar is always dark, whatever the theme, so its controls carry their own colours. */
-.term-bar .btn { background: #1a3a58; color: var(--snow); border-color: #2f5f88; }
-.term-bar .btn:hover { background: #24507a; border-color: #4a7fae; }
-.term-bar .btn.danger { color: #ffb4ab; border-color: #a4443c; }
-.term-host { flex: 1; min-height: 0; padding: 6px; }
+.term-bar .btn { background: var(--term-btn-bg); color: var(--term-fg); border-color: var(--term-btn-line); }
+.term-bar .btn:hover { background: var(--term-btn-hover); border-color: var(--term-fg-muted); }
+.term-bar .btn.danger { color: var(--term-danger); border-color: var(--term-danger-line); }
+/* guacamole-common-js gives the desktop's default layer `z-index: -1`. Without a
+   stacking context here that canvas paints in the root stacking context, behind
+   .term-page's opaque background, so the desktop is invisible while the cursor
+   layer (non-negative z-index) still shows. Establishing a stacking context on
+   the host scopes the negative z-index so the desktop paints above the page
+   background, keeping the cursor-above-desktop order intact. */
+.term-host { flex: 1; min-height: 0; padding: 6px; position: relative; z-index: 0; }
 .term-host .xterm { height: 100%; }
 
 /* desktop file transfer panel */
 .desk-body { flex: 1; min-height: 0; display: flex; }
 .desk-body .term-host { flex: 1; }
-.files-panel { width: 300px; flex: none; background: #10263d; border-left: 1px solid #1f3a55; color: var(--snow); display: flex; flex-direction: column; font-size: 0.86rem; }
-.files-panel header { display: flex; align-items: center; gap: 8px; padding: 10px 12px; border-bottom: 1px solid #1f3a55; font-weight: 600; }
+.files-panel { width: 300px; flex: none; background: var(--term-bar-bg); border-left: 1px solid var(--term-line); color: var(--term-fg); display: flex; flex-direction: column; font-size: 0.86rem; }
+.files-panel header { display: flex; align-items: center; gap: 8px; padding: 10px 12px; border-bottom: 1px solid var(--term-line); font-weight: 600; }
 .files-panel header .grow { flex: 1; }
 .files-panel .list { flex: 1; overflow: auto; padding: 6px 0; }
 .files-panel .entry { display: flex; align-items: center; gap: 8px; padding: 6px 12px; cursor: pointer; }
-.files-panel .entry:hover { background: #1a3a58; }
-.files-panel .entry .size { margin-left: auto; color: #9fb6c9; font-variant-numeric: tabular-nums; font-size: 0.78rem; }
-.files-panel .entry.dir { color: #9fdbd0; }
-.files-panel .hint { padding: 12px; color: #9fb6c9; }
-.files-panel .status { padding: 8px 12px; border-top: 1px solid #1f3a55; color: #9fb6c9; font-size: 0.78rem; min-height: 32px; }
-.files-panel .status.err { color: #ffb4ab; }
+.files-panel .entry:hover { background: var(--term-btn-bg); }
+.files-panel .entry .size { margin-left: auto; color: var(--term-fg-muted); font-variant-numeric: tabular-nums; font-size: 0.78rem; }
+.files-panel .entry.dir { color: var(--term-link); }
+.files-panel .hint { padding: 12px; color: var(--term-fg-muted); }
+.files-panel .status { padding: 8px 12px; border-top: 1px solid var(--term-line); color: var(--term-fg-muted); font-size: 0.78rem; min-height: 32px; }
+.files-panel .status.err { color: var(--term-danger); }
 .files-panel progress { width: 100%; height: 6px; }
 @media (max-width: 760px) { .files-panel { width: 220px; } }
 
@@ -152,4 +177,30 @@ td .muted, .muted { color: var(--fg-muted); }
 .failover-list { display: flex; flex-direction: column; border: 1px solid var(--line); border-radius: var(--radius); margin: 12px 0; max-height: 40vh; overflow-y: auto; }
 .failover-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 12px; border-bottom: 1px solid var(--line); }
 .failover-row:last-child { border-bottom: 0; }
-.term-bar .stat.switched { color: var(--glacier); }
+.term-bar .stat.switched { color: var(--term-link); }
+
+/* audit: events read as sentences, recordings carry a command list */
+.event-who { display: flex; flex-direction: column; gap: 1px; white-space: nowrap; }
+.event-who .name { font-weight: 500; }
+.event-who .ip { font-size: 0.76rem; color: var(--fg-faint); font-family: var(--mono); }
+.event-what .name { font-weight: 500; }
+.event-what details { margin-top: 4px; }
+.event-what summary { cursor: pointer; font-size: 0.78rem; color: var(--fg-muted); user-select: none; }
+.event-meta { display: grid; grid-template-columns: auto 1fr; gap: 2px 10px; margin: 6px 0 0; font-size: 0.78rem; }
+.event-meta dt { color: var(--fg-faint); }
+.event-meta dd { margin: 0; color: var(--fg-muted); }
+.event-what pre { margin: 6px 0 0; white-space: pre-wrap; word-break: break-all; max-width: 560px; font-size: 0.78rem; background: var(--bg-sunken); padding: 8px 10px; border-radius: var(--radius); }
+.commands { list-style: none; margin: 0; padding: 0; border: 1px solid var(--line); border-radius: var(--radius); max-height: 340px; overflow-y: auto; }
+.commands li { display: grid; grid-template-columns: 72px 1fr; gap: 10px; padding: 6px 10px; border-bottom: 1px solid var(--line); font-family: var(--mono); font-size: 0.82rem; cursor: pointer; }
+.commands li:last-child { border-bottom: 0; }
+.commands li:hover { background: var(--bg-sunken); }
+.commands li .t { color: var(--fg-muted); font-variant-numeric: tabular-nums; }
+.commands li .hidden { color: var(--fg-faint); font-style: italic; }
+.player-host { margin-top: 12px; }
+/* Same stacking-context requirement as .term-host: the replayed desktop's default
+   layer carries z-index:-1, so without a stacking context here it would paint
+   behind this container's own background and show nothing. */
+.desk-player { background: var(--terminal-bg); border-radius: var(--radius); overflow: hidden; display: grid; place-items: center; min-height: 240px; position: relative; z-index: 0; }
+.transport { display: flex; align-items: center; gap: 10px; margin-top: 10px; }
+.transport input[type=range] { flex: 1; min-width: 0; }
+.transport .t { font-variant-numeric: tabular-nums; font-size: 0.86rem; color: var(--fg-muted); white-space: nowrap; }

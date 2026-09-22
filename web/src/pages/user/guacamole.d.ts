@@ -7,8 +7,43 @@ declare module 'guacamole-common-js' {
     onerror: ((status: Status) => void) | null
     oninstruction: ((opcode: string, args: string[]) => void) | null
   }
+  /** Streams a stored recording over HTTP, parsing instructions as they arrive.
+   *  SessionRecording's Blob source is unusable upstream (it parses an
+   *  uninitialised blob), so playback feeds it one of these instead. */
+  export class StaticHTTPTunnel {
+    constructor(url: string, crossDomain?: boolean, extraHeaders?: Record<string, string>)
+    onerror: ((status: Status) => void) | null
+    oninstruction: ((opcode: string, args: string[]) => void) | null
+    connect(data?: string): void
+    disconnect(): void
+  }
   export class Display {
     getElement(): HTMLElement
+    getWidth(): number
+    getHeight(): number
+    getScale(): number
+    scale(scale: number): void
+    onresize: ((width: number, height: number) => void) | null
+  }
+  /** Replays a stored guacd instruction stream through a Display. */
+  export class SessionRecording {
+    constructor(source: Blob | WebSocketTunnel | StaticHTTPTunnel)
+    connect(): void
+    disconnect(): void
+    getDisplay(): Display
+    getDuration(): number
+    getPosition(): number
+    isPlaying(): boolean
+    play(): void
+    pause(): void
+    seek(position: number, callback?: () => void): void
+    onload: (() => void) | null
+    onerror: ((message: string) => void) | null
+    onabort: (() => void) | null
+    onprogress: ((duration: number, parsed: number) => void) | null
+    onplay: (() => void) | null
+    onpause: (() => void) | null
+    onseek: ((position: number, current: number, total: number) => void) | null
   }
   export class InputStream {
     index: number
@@ -73,6 +108,7 @@ declare module 'guacamole-common-js' {
   }
   const Guacamole: {
     WebSocketTunnel: typeof WebSocketTunnel
+    StaticHTTPTunnel: typeof StaticHTTPTunnel
     Client: typeof Client
     Mouse: typeof Mouse
     Keyboard: typeof Keyboard
@@ -80,6 +116,7 @@ declare module 'guacamole-common-js' {
     ArrayBufferWriter: typeof ArrayBufferWriter
     JSONReader: typeof JSONReader
     Object: typeof GuacObject
+    SessionRecording: typeof SessionRecording
   }
   export default Guacamole
 }
