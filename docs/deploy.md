@@ -41,20 +41,33 @@ The rest of this guide sets the same variables by hand, for Docker Compose and K
 
 ## Single node with Docker Compose
 
-`deploy/docker-compose.yml` runs PostgreSQL, guacd and the gateway. It publishes the
-gateway on `127.0.0.1:8443` for a local trial. For anything reachable by other machines,
-give the gateway a certificate: mount `tls.crt`/`tls.key` and set `ZANSKAR_TLS_CERT` and
-`ZANSKAR_TLS_KEY`. The gateway refuses plain HTTP on a non-loopback address, so
-`ZANSKAR_LISTEN_ADDR: 0.0.0.0:8443` in the compose file only works once TLS is
-configured there (a note worth fixing in the compose file itself).
+`deploy/docker-compose.yml` is the single-instance stack: the gateway on SQLite with a
+persistent volume, `guacd` for RDP/VNC, and Caddy terminating TLS in front. The gateway
+port is never published — only Caddy's 80/443 are — so plaintext flows only on the
+private Docker network between them. A one-shot `zanskar-migrate` service applies pending
+migrations before the gateway starts (`serve` refuses to run with migrations pending).
 
 ```sh
-export ZANSKAR_MASTER_KEY=$(go run ./cmd/zanskar keygen)   # keep this safe
-docker compose -f deploy/docker-compose.yml up -d
-docker compose -f deploy/docker-compose.yml exec zanskar /zanskar migrate
-docker compose -f deploy/docker-compose.yml exec -e ZANSKAR_ADMIN_PASSWORD=... zanskar \
-  /zanskar admin create --username admin --name "Your Name"
+cp deploy/.env.example deploy/.env    # then set ZANSKAR_MASTER_KEY (openssl rand -base64 32)
+docker compose -f deploy/docker-compose.yml up -d --build
+docker compose -f deploy/docker-compose.yml exec -e ZANSKAR_ADMIN_PASSWORD=... \
+  zanskar /zanskar admin create --username admin --name "Your Name"
 ```
+
+By default Caddy serves `https://localhost/` with a self-signed certificate from its
+internal CA (a browser warning, fine for a trial). For a real certificate, set
+`ZANSKAR_SITE_ADDRESS` to a public hostname in `deploy/.env` and make ports 80 and 443
+reachable with DNS pointing at the host; Caddy fetches one from Let's Encrypt
+automatically. The gateway trusts Caddy's `X-Forwarded-*` headers — so the audit log
+records real client IPs — via `ZANSKAR_TRUST_PROXY_TLS` and the pinned `172.28.0.0/16`
+network in `ZANSKAR_TRUSTED_PROXIES`; if that subnet collides with an existing network,
+change it in both places in the compose file.
+
+The SQLite database and local recordings live in the `zanskar_data` volume; back them up
+with `zanskar backup` (see [Backups and key custody](#backups-and-key-custody)) or by
+snapshotting the volume. To exercise the PostgreSQL path instead, use
+`deploy/docker-compose.dev.yml` — a plaintext-on-loopback development stack, not for
+production.
 
 ## Kubernetes with the Helm chart
 

@@ -62,7 +62,9 @@ the next login enrolls a new one.
 
 Requires Go 1.27+ and Node 22+ to build.
 
-For PostgreSQL and guacd: `docker compose -f deploy/docker-compose.yml up`.
+Run the single-instance stack (gateway on SQLite, guacd, Caddy TLS) on one box:
+`docker compose -f deploy/docker-compose.yml up -d --build`. For a Postgres-backed
+development stack instead, use `deploy/docker-compose.dev.yml`.
 
 ## Layout
 
@@ -71,7 +73,7 @@ cmd/zanskar/      entrypoint
 internal/         application code (not importable by other modules)
 migrations/       SQL migrations, one set per database driver
 docs/             threat model, ADRs, API spec, wireframes, roadmap
-deploy/           Dockerfile, docker-compose, Helm (later)
+deploy/           Dockerfile, docker-compose, Helm chart
 web/              React + TypeScript frontend, embedded into the binary at build time
 ```
 

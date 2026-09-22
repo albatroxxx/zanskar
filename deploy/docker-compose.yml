@@ -1,24 +1,64 @@
-# Development stack: PostgreSQL + guacd + Zanskar.
-# Do not use these credentials outside a local machine.
+# Single-instance Zanskar (the v1.0 deployment model): SQLite on a persistent
+# volume, guacd for RDP/VNC, and Caddy terminating TLS in front. The gateway
+# itself is never published — only Caddy's 80/443 are — so plaintext flows only
+# on the private Docker network between Caddy and the gateway.
+#
+# Quick start (from the repo root):
+#   cp deploy/.env.example deploy/.env      # then set ZANSKAR_MASTER_KEY
+#   docker compose -f deploy/docker-compose.yml up -d --build
+#   docker compose -f deploy/docker-compose.yml exec -e ZANSKAR_ADMIN_PASSWORD=... \
+#     zanskar /zanskar admin create --username admin --name "Your Name"
+# Then open https://localhost/ (self-signed by default — see deploy/.env.example
+# to serve a real certificate for a public hostname).
+
+# Shared gateway configuration, aliased into both the migrate and serve services
+# so they stay in lock-step. See docs/deploy.md for every ZANSKAR_* knob.
+x-zanskar-env: &zanskar-env
+  ZANSKAR_DB_DRIVER: sqlite
+  ZANSKAR_DB_DSN: "file:/var/lib/zanskar/zanskar.db?_pragma=journal_mode(WAL)&_pragma=foreign_keys(1)&_pragma=busy_timeout(5000)"
+  ZANSKAR_RECORDINGS_DIR: /var/lib/zanskar/recordings
+  ZANSKAR_GUACD_ADDR: guacd:4822
+  ZANSKAR_LISTEN_ADDR: 0.0.0.0:8443
+  # TLS is terminated at Caddy; the gateway speaks plain HTTP only on the private
+  # network below and is never published, so this does not expose plaintext.
+  ZANSKAR_ALLOW_PLAIN_HTTP: "true"
+  ZANSKAR_TRUST_PROXY_TLS: "true"
+  # Trust X-Forwarded-* only from the pinned internal subnet (Caddy). This is
+  # what lets the audit log record each client's real IP instead of Caddy's.
+  # If 172.28.0.0/16 collides with an existing network, change it here and in
+  # the `networks` block below together.
+  ZANSKAR_TRUSTED_PROXIES: "172.28.0.0/16,127.0.0.1/32,::1/128"
+  ZANSKAR_LOG_FORMAT: json
+  ZANSKAR_MASTER_KEY: "${ZANSKAR_MASTER_KEY:?set ZANSKAR_MASTER_KEY in deploy/.env — generate one with openssl rand -base64 32}"
+
 services:
-  postgres:
-    image: postgres:16-alpine
-    environment:
-      POSTGRES_USER: zanskar
-      POSTGRES_PASSWORD: zanskar
-      POSTGRES_DB: zanskar
-    volumes:
-      - pgdata:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U zanskar"]
-      interval: 5s
-      timeout: 5s
-      retries: 10
+  caddy:
+    image: caddy:2.8-alpine
+    restart: unless-stopped
+    depends_on:
+      zanskar:
+        condition: service_started
     ports:
-      - "127.0.0.1:5432:5432"
+      - "80:80"
+      - "443:443"
+      - "443:443/udp" # HTTP/3
+    environment:
+      # Leave unset to serve https://localhost/ with a self-signed certificate
+      # from Caddy's internal CA (a browser warning, fine for a trial). Set to a
+      # public hostname to have Caddy fetch a real certificate from Let's Encrypt
+      # (needs 80/443 reachable and DNS pointing here).
+      ZANSKAR_SITE_ADDRESS: ${ZANSKAR_SITE_ADDRESS:-localhost}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data # issued certificates — must persist
+      - caddy_config:/config
+    networks: [zanskar]
+    security_opt:
+      - no-new-privileges:true
 
   guacd:
     image: guacamole/guacd:1.6.0
+    restart: unless-stopped
     # guacd only needs to be reachable from zanskar; never publish it on a host port.
     read_only: true
     # FreeRDP writes a certificate store under $HOME/.config/freerdp before each
@@ -32,32 +72,59 @@ services:
     # container and are never written to disk. Raise the size for large files.
     tmpfs:
       - /tmp:size=512m,mode=1777
+    networks: [zanskar]
+    security_opt:
+      - no-new-privileges:true
+
+  # One-shot: apply pending migrations, then exit. `serve` refuses to start with
+  # migrations pending, so the gateway waits for this to complete successfully.
+  zanskar-migrate:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    image: zanskar:local
+    command: ["migrate"]
+    restart: "no"
+    environment: *zanskar-env
+    volumes:
+      - zanskar_data:/var/lib/zanskar
+    networks: [zanskar]
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
 
   zanskar:
     build:
       context: ..
       dockerfile: deploy/Dockerfile
+    image: zanskar:local
+    restart: unless-stopped
     depends_on:
-      postgres:
-        condition: service_healthy
+      zanskar-migrate:
+        condition: service_completed_successfully
       guacd:
         condition: service_started
-    environment:
-      ZANSKAR_LISTEN_ADDR: 0.0.0.0:8443
-      # The compose stack is a development environment reached over the
-      # loopback-published port; production must terminate TLS (see docs/deploy.md).
-      ZANSKAR_ALLOW_PLAIN_HTTP: "true"
-      ZANSKAR_DB_DRIVER: postgres
-      ZANSKAR_DB_DSN: postgres://zanskar:zanskar@postgres:5432/zanskar?sslmode=disable
-      ZANSKAR_GUACD_ADDR: guacd:4822
-      ZANSKAR_MASTER_KEY: ${ZANSKAR_MASTER_KEY:?run 'zanskar keygen' and export ZANSKAR_MASTER_KEY}
-      ZANSKAR_LOG_FORMAT: json
-    ports:
-      - "127.0.0.1:8443:8443"
+    environment: *zanskar-env
+    volumes:
+      - zanskar_data:/var/lib/zanskar
+    # Not published: reachable only through Caddy on the network below.
+    networks: [zanskar]
     read_only: true
+    tmpfs: [/tmp]
     cap_drop: [ALL]
     security_opt:
       - no-new-privileges:true
 
+networks:
+  zanskar:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.28.0.0/16
+
 volumes:
-  pgdata:
+  zanskar_data: # SQLite database + local recordings
+  caddy_data: # issued TLS certificates
+  caddy_config:
