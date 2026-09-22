@@ -1,0 +1,14 @@
+# Caddy terminates TLS for the single-instance stack and reverse-proxies to the
+# gateway on the private Docker network. docker-compose.yml sets
+# ZANSKAR_SITE_ADDRESS to either a public hostname (Caddy fetches a Let's Encrypt
+# certificate) or "localhost" (Caddy serves a self-signed certificate from its
+# internal CA — a browser warning, fine for a local trial).
+{$ZANSKAR_SITE_ADDRESS} {
+	encode zstd gzip
+
+	# The gateway serves plain HTTP on the internal network. Caddy adds
+	# X-Forwarded-For / X-Forwarded-Proto, which the gateway trusts because
+	# ZANSKAR_TRUST_PROXY_TLS=true and this network is in ZANSKAR_TRUSTED_PROXIES.
+	# reverse_proxy transparently upgrades the terminal/desktop WebSockets.
+	reverse_proxy zanskar:8443
+}

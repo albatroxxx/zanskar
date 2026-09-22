@@ -1,0 +1,36 @@
+# Keep secrets, local state and bulk out of the build context and image layers.
+# The Docker build needs only Go sources, migrations, and web/ (its own stage
+# runs `npm ci` and produces web/dist).
+
+.git
+.github
+.claude
+
+# Dependencies and build artifacts (rebuilt inside the image)
+**/node_modules
+web/dist
+bin/
+dist/
+/zanskar
+*.exe
+*.test
+*.out
+coverage.html
+
+# Local config, secrets and data — must never enter an image (see .gitignore)
+**/.env
+**/.env.*
+data/
+*.pem
+*.key
+
+# Terraform state and vars may contain secrets
+**/.terraform
+*.tfstate
+*.tfstate.*
+*.tfvars
+
+# Editor / OS cruft
+.idea
+.vscode
+.DS_Store
