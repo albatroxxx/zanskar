@@ -39,7 +39,8 @@ a switch to another healthy instance instead of a dead terminal.
 
 ## Status
 
-Phase 0 (foundations). See [docs/roadmap.md](docs/roadmap.md), the
+Phases 0–3 are complete; work is now on the first release, v1.0, for
+single-instance deployment. See [docs/roadmap.md](docs/roadmap.md), the
 [threat model](docs/threat-model.md) and the [architecture decision records](docs/adr/).
 
 ## Quick start (development)

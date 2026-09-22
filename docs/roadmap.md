@@ -10,6 +10,20 @@ Approved 2026-09-20. Durations are estimates for a small team; the order matters
 | 3. Autoscaling | 6 weeks | AWS ASG enrollment with cross-account IAM role, healthy pool tracking, failover modal, EC2 Instance Connect credential mode, HA gateway deployment, Helm chart, SIEM export | done |
 | 4. Enterprise | ongoing | Just-in-time access approvals, live session shadowing and termination, credential rotation, SAML and SCIM, GCP managed instance groups, Azure scale sets, WebAuthn | |
 
+## v1.0 release
+
+Phases 0–3 are done, so the current feature set is packaged as the first tagged
+release, v1.0, for a **single-instance** deployment: one gateway, embedded
+SQLite, and a guacd sidecar for RDP and VNC. Multi-replica HA and the Helm chart
+ship in a later release — the cross-pod control channel (admin terminate and
+auditor shadowing across replicas, noted below) is the first Phase 4 item and
+gates any HA claim.
+
+Release-prep items tracked before tagging: recording retention (a single disk
+fills), a backup command and a rehearsed restore, an install/configuration path,
+packaging (deb/rpm, container, checksums, the third-party notices now generated
+by `hack/gen-notices.sh`), and a docs-only install validation on a clean VM.
+
 ## Phase 0 checklist
 
 - [x] Threat model (`docs/threat-model.md`)
