@@ -60,6 +60,13 @@ func (f *fakeS3) GetObject(_ context.Context, in *s3.GetObjectInput, _ ...func(*
 	return &s3.GetObjectOutput{Body: io.NopCloser(bytes.NewReader(o.body))}, nil
 }
 
+func (f *fakeS3) DeleteObject(_ context.Context, in *s3.DeleteObjectInput, _ ...func(*s3.Options)) (*s3.DeleteObjectOutput, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	delete(f.objects, aws.ToString(in.Bucket)+"/"+aws.ToString(in.Key))
+	return &s3.DeleteObjectOutput{}, nil
+}
+
 func TestS3StorageRoundTrip(t *testing.T) {
 	ctx := context.Background()
 	fake := &fakeS3{}

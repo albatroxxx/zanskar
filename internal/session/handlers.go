@@ -48,6 +48,9 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.Handle("GET /api/v1/audit/events", reviewer(http.HandlerFunc(h.auditEvents)))
 	mux.Handle("GET /api/v1/audit/verify", reviewer(http.HandlerFunc(h.auditVerify)))
 	mux.Handle("GET /api/v1/audit/facets", reviewer(http.HandlerFunc(h.auditFacets)))
+
+	mux.Handle("GET /api/v1/admin/retention", admin(http.HandlerFunc(h.getRetention)))
+	mux.Handle("PUT /api/v1/admin/retention", admin(http.HandlerFunc(h.setRetention)))
 }
 
 func (h *Handler) mySessions(w http.ResponseWriter, r *http.Request) {
@@ -145,6 +148,10 @@ func (h *Handler) streamRecording(w http.ResponseWriter, r *http.Request) {
 	rec, err := h.Repo.GetRecording(r.Context(), r.PathValue("id"))
 	if err != nil {
 		h.fail(w, r, err)
+		return
+	}
+	if rec.PurgedAt != nil {
+		httpx.WriteError(w, http.StatusGone, "purged", "this recording was deleted by the retention policy")
 		return
 	}
 	p, _ := auth.FromContext(r.Context())
@@ -313,4 +320,40 @@ func (h *Handler) fail(w http.ResponseWriter, r *http.Request, err error) {
 	}
 	h.Log.Error("session handler", "path", r.URL.Path, "err", err)
 	httpx.WriteError(w, http.StatusInternalServerError, "internal", "internal error")
+}
+
+// getRetention returns the current recording-retention policy (admin only).
+func (h *Handler) getRetention(w http.ResponseWriter, r *http.Request) {
+	p, err := h.Repo.GetRetentionPolicy(r.Context())
+	if err != nil {
+		h.fail(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, p)
+}
+
+// setRetention updates the retention policy (admin only) and audits the change.
+func (h *Handler) setRetention(w http.ResponseWriter, r *http.Request) {
+	var in RetentionPolicy
+	if err := httpx.DecodeJSON(r, &in); err != nil {
+		httpx.BadRequest(w, err.Error())
+		return
+	}
+	if in.MaxAgeDays < 0 || in.MaxTotalBytes < 0 {
+		httpx.BadRequest(w, "retention values must not be negative")
+		return
+	}
+	p, _ := auth.FromContext(r.Context())
+	if err := h.Repo.SetRetentionPolicy(r.Context(), in, p.User.ID); err != nil {
+		h.fail(w, r, err)
+		return
+	}
+	h.record(r, audit.Actor{UserID: p.User.ID, IP: auth.ClientIP(r)}.Event("retention.policy.update", "retention_policy", retentionPolicyID, audit.Success,
+		map[string]any{"max_age_days": in.MaxAgeDays, "max_total_bytes": in.MaxTotalBytes}))
+	saved, err := h.Repo.GetRetentionPolicy(r.Context())
+	if err != nil {
+		h.fail(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, saved)
 }

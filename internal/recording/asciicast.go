@@ -28,6 +28,9 @@ type Storage interface {
 	Create(ctx context.Context, name string) (io.WriteCloser, string, error)
 	// Open reads a blob back.
 	Open(ctx context.Context, uri string) (io.ReadCloser, error)
+	// Delete removes a blob. Removing one that is already gone is not an error,
+	// so retention sweeps are idempotent.
+	Delete(ctx context.Context, uri string) error
 }
 
 // LocalStorage keeps recordings under a directory. Files are created with
@@ -67,6 +70,27 @@ func (l *LocalStorage) Open(_ context.Context, uri string) (io.ReadCloser, error
 		return nil, errors.New("recording: uri outside storage directory")
 	}
 	return os.Open(abs) // #nosec G304 -- confined to the storage directory above
+}
+
+// Delete implements Storage. It confines removal to the storage directory and
+// treats an already-absent file as success, so a retention sweep is idempotent.
+func (l *LocalStorage) Delete(_ context.Context, uri string) error {
+	path := strings.TrimPrefix(uri, "file://")
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return err
+	}
+	root, err := filepath.Abs(l.Dir)
+	if err != nil {
+		return err
+	}
+	if !strings.HasPrefix(abs, root+string(filepath.Separator)) {
+		return errors.New("recording: uri outside storage directory")
+	}
+	if err := os.Remove(abs); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	return nil
 }
 
 // Header is the asciicast v2 header line.

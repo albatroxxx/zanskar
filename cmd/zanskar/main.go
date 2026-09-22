@@ -201,6 +201,11 @@ func runServe() error {
 	// Autoscaling: keep instance membership and health current (ADR 0011).
 	go syncer.Run(ctx)
 
+	// Recording retention: delete recordings past the admin-configured policy
+	// (ADR 0015). Off until an admin sets a policy in the console.
+	retention := &session.RetentionSweeper{Repo: sessionRepo, Storage: storage, Audit: auditLog, Log: log}
+	go retention.Run(ctx, time.Hour)
+
 	// SIEM export: ship the audit chain to the configured sinks.
 	var sinks []audit.Sink
 	if cfg.SIEMSyslogAddr != "" {
