@@ -1675,6 +1675,60 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
 
+  # ------------------------------------------------------------------ admin: retention
+  /admin/retention:
+    get:
+      tags: [admin]
+      summary: Get the recording-retention policy
+      description: >
+        Returns the current policy. When none has been set both limits are `0`
+        (recordings are kept indefinitely) and `updated_at`/`updated_by` are absent.
+      responses:
+        "200":
+          description: The current retention policy.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RetentionPolicy"
+    put:
+      tags: [admin]
+      summary: Set the recording-retention policy
+      description: >
+        Sets how long finished recordings are kept. `max_age_days` deletes
+        recordings older than that many days; `max_total_bytes` is a backstop
+        that deletes the oldest early when the kept total would exceed it. `0`
+        disables that dimension, and both `0` keeps everything. The gateway
+        sweeps hourly and audits each deletion as `recording.purge`; the
+        recording's metadata row is retained so the audit trail still resolves.
+        Changing the policy is itself audited as `retention.policy.update`.
+        Values must not be negative.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [max_age_days, max_total_bytes]
+              properties:
+                max_age_days:
+                  type: integer
+                  minimum: 0
+                  description: Days to keep recordings; 0 keeps them indefinitely by age.
+                max_total_bytes:
+                  type: integer
+                  format: int64
+                  minimum: 0
+                  description: Total-size backstop in bytes; 0 means no cap.
+      responses:
+        "200":
+          description: The updated policy.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RetentionPolicy"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+
 # ====================================================================== components
 components:
   securitySchemes:
@@ -2896,6 +2950,24 @@ components:
           type: string
         viewed_at:
           $ref: "#/components/schemas/Timestamp"
+    RetentionPolicy:
+      type: object
+      required: [max_age_days, max_total_bytes]
+      properties:
+        max_age_days:
+          type: integer
+          minimum: 0
+          description: Days to keep recordings; 0 keeps them indefinitely by age.
+        max_total_bytes:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Total-size backstop in bytes; 0 means no cap.
+        updated_at:
+          $ref: "#/components/schemas/Timestamp"
+        updated_by:
+          type: string
+          description: User id that last changed the policy; absent until first set.
 
     # ---------------------------------------------------------------- audit
     AuditEvent:
