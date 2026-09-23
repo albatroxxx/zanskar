@@ -32,6 +32,10 @@ type Config struct {
 	TLSCert         string
 	TLSKey          string
 	GuacdAddr       string
+	// DockerPath is the container CLI used to spawn ephemeral database session
+	// containers (ADR 0017); empty defaults to "docker" on PATH. Set it to an
+	// absolute path or to "podman" for alternate runtimes.
+	DockerPath string
 	// TrustProxyTLS marks cookies Secure when TLS terminates in front of a
 	// loopback-bound Zanskar. Never set it when clients reach Zanskar over
 	// plain HTTP.
@@ -93,7 +97,8 @@ func Load(opts Options) (*Config, error) {
 		DBDSN:                envOr("ZANSKAR_DB_DSN", "file:zanskar.db?_pragma=journal_mode(WAL)&_pragma=foreign_keys(1)&_pragma=busy_timeout(5000)"),
 		TLSCert:              os.Getenv("ZANSKAR_TLS_CERT"),
 		TLSKey:               os.Getenv("ZANSKAR_TLS_KEY"),
-		GuacdAddr:            os.Getenv("ZANSKAR_GUACD_ADDR"), // empty disables RDP and VNC
+		GuacdAddr:            os.Getenv("ZANSKAR_GUACD_ADDR"),  // empty disables RDP and VNC
+		DockerPath:           os.Getenv("ZANSKAR_DOCKER_PATH"), // empty defaults to "docker" on PATH
 		TrustProxyTLS:        os.Getenv("ZANSKAR_TRUST_PROXY_TLS") == "true",
 		Issuer:               envOr("ZANSKAR_ISSUER", "Zanskar"),
 		RequireMFA:           envOr("ZANSKAR_REQUIRE_MFA", "true") != "false",

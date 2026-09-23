@@ -92,6 +92,7 @@ type reachableTarget struct {
 	Capabilities []target.Protocol `json:"capabilities"`
 	Allowed      []string          `json:"allowed_protocols"`
 	HostKeyReady bool              `json:"host_key_ready"`
+	Engine       string            `json:"engine,omitempty"` // database targets (ADR 0017)
 	HealthyCount int               `json:"healthy_count,omitempty"`
 	InstanceCnt  int               `json:"instance_count,omitempty"`
 }
@@ -127,12 +128,17 @@ func (h *Handler) myTargets(w http.ResponseWriter, r *http.Request) {
 					allowed = append(allowed, string(proto))
 				}
 			}
+			// database is not in target.Protocols (it is not probed); offer it
+			// for database targets the policy permits (ADR 0017).
+			if t.IsDatabase() && policy.Evaluate(pols, ref, string(target.Database), now).Allowed {
+				allowed = append(allowed, string(target.Database))
+			}
 			if len(allowed) == 0 {
 				continue
 			}
 			out = append(out, reachableTarget{
 				Kind: "target", ID: t.ID, Name: t.Name, OSFamily: t.OSFamily, Tags: t.Tags, Capabilities: t.Capabilities,
-				Allowed: allowed, HostKeyReady: t.HostKeyStatus == target.HostKeyTrusted,
+				Allowed: allowed, HostKeyReady: t.HostKeyStatus == target.HostKeyTrusted, Engine: t.Engine,
 			})
 		}
 		if next == "" {
