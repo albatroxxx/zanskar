@@ -7,7 +7,7 @@ import { formatTags, hostKeyBadge, parseTags, protocols, useList, type ProbeWire
 
 interface ProbeResponse { target: Target; probe: ProbeWire; host_key_status: string; host_key_fingerprint: string | null; host_key_changed_from?: string | null }
 
-const emptyForm = { name: '', address: '', os_family: 'linux' as OSFamily, ssh: '', rdp: '', vnc: '', winrm: '', tags: '', notes: '' }
+const emptyForm = { name: '', address: '', os_family: 'linux' as OSFamily, engine: '', engine_version: '', ssh: '', rdp: '', vnc: '', winrm: '', database: '', tags: '', notes: '' }
 
 export function Targets() {
   const { items, err, setErr, reload } = useList<Target>('/targets')
@@ -99,10 +99,13 @@ function TargetForm({ initial, onClose, onSaved }: { initial?: Target; onClose: 
           name: initial.name,
           address: initial.address,
           os_family: initial.os_family,
+          engine: initial.engine ?? '',
+          engine_version: initial.engine_version ?? '',
           ssh: initial.ports.ssh ? String(initial.ports.ssh) : '',
           rdp: initial.ports.rdp ? String(initial.ports.rdp) : '',
           vnc: initial.ports.vnc ? String(initial.ports.vnc) : '',
           winrm: initial.ports.winrm ? String(initial.ports.winrm) : '',
+          database: initial.ports.database ? String(initial.ports.database) : '',
           tags: formatTags(initial.tags),
           notes: initial.notes,
         }
@@ -131,6 +134,14 @@ function TargetForm({ initial, onClose, onSaved }: { initial?: Target; onClose: 
         ports[p] = n
       }
     }
+    if (f.database.trim()) {
+      const n = Number(f.database.trim())
+      if (!Number.isInteger(n) || n < 1 || n > 65535) {
+        setErr('database port must be 1-65535')
+        return
+      }
+      ports.database = n
+    }
     setBusy(true)
     setErr('')
     try {
@@ -138,6 +149,8 @@ function TargetForm({ initial, onClose, onSaved }: { initial?: Target; onClose: 
         name: f.name.trim(),
         address: f.address.trim(),
         os_family: f.os_family,
+        engine: f.engine.trim(),
+        engine_version: f.engine_version.trim(),
         ports,
         capabilities: initial?.capabilities ?? [],
         tags,
@@ -172,6 +185,14 @@ function TargetForm({ initial, onClose, onSaved }: { initial?: Target; onClose: 
               <option value="other">Other</option>
             </select>
           </Field>
+          <Field label="Database engine" hint="Set only for a PaaS database target (ADR 0017)">
+            <select id="t-engine" value={f.engine} onChange={set('engine')}>
+              <option value="">— not a database —</option>
+              <option value="postgres">PostgreSQL</option>
+              <option value="mysql">MySQL</option>
+              <option value="mariadb">MariaDB</option>
+            </select>
+          </Field>
         </div>
         <div className="form-grid">
           {protocols.map((p) => (
@@ -179,6 +200,16 @@ function TargetForm({ initial, onClose, onSaved }: { initial?: Target; onClose: 
               <input id={`t-port-${p}`} inputMode="numeric" value={f[p]} onChange={set(p)} placeholder={{ ssh: '22', rdp: '3389', vnc: '5900', winrm: '5986' }[p]} />
             </Field>
           ))}
+          {f.engine && (
+            <>
+              <Field label="Engine version" hint="e.g. 16 — selects the client image">
+                <input id="t-engine-version" value={f.engine_version} onChange={set('engine_version')} placeholder="16" />
+              </Field>
+              <Field label="Database port" hint="blank = engine default">
+                <input id="t-port-database" inputMode="numeric" value={f.database} onChange={set('database')} placeholder={({ postgres: '5432', mysql: '3306', mariadb: '3306' } as Record<string, string>)[f.engine] ?? ''} />
+              </Field>
+            </>
+          )}
         </div>
         <Field label="Tags" hint="One key=value per line; policies select targets by tag">
           <textarea id="t-tags" value={f.tags} onChange={set('tags')} placeholder={'env=prod\nteam=ops'} />

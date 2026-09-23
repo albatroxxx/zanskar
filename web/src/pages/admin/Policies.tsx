@@ -2,7 +2,7 @@ import { useState, type FormEvent } from 'react'
 import { api, errorMessage } from '../../api/client'
 import type { Group, Policy, Protocol, Target, TimeWindow, AutoscalingGroup, User } from '../../api/types'
 import { Alert, Badge, Confirm, Empty, Field, Modal, PageHead } from '../../components/ui'
-import { formatTags, parseTags, protocols, useList } from './lib'
+import { formatTags, parseTags, policyProtocols, useList } from './lib'
 
 const days = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun']
 
@@ -281,7 +281,7 @@ function PolicyForm({ initial, groups, users, targets, asgs, onClose, onSaved }:
         </div>
         <Field label="Protocols">
           <div className="actions">
-            {protocols.map((p) => (
+            {policyProtocols.map((p) => (
               <span key={p} className="field inline" style={{ margin: 0 }}>
                 <input id={`p-proto-${p}`} type="checkbox" checked={f.protocols.includes(p)} onChange={() => toggleProto(p)} />
                 <label htmlFor={`p-proto-${p}`}>{p.toUpperCase()}</label>

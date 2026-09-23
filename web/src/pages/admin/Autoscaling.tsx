@@ -3,13 +3,13 @@ import { api, errorMessage } from '../../api/client'
 import { fmtTime } from '../../api/format'
 import type { AsgInstance, AutoscalingGroup, Credential, OSFamily, Protocol } from '../../api/types'
 import { Alert, Badge, Confirm, Empty, Field, Modal, PageHead, Tags } from '../../components/ui'
-import { formatTags, parseTags, protocols, useList } from './lib'
+import { formatTags, parseTags, protocols, useList, type PortProtocol } from './lib'
 
 interface IAMDocs { external_id: string; trust_policy: string; permissions_policy: string; gateway_principal: string }
 interface SyncSummary { Seen: number; Healthy: number; Joined: number; Left: number; Retired: number; HostKeyMismatches: number }
 interface SyncResponse { summary: SyncSummary; group: AutoscalingGroup; error?: string }
 
-const defaultPorts: Record<Protocol, number> = { ssh: 22, rdp: 3389, vnc: 5900, winrm: 5986 }
+const defaultPorts: Record<PortProtocol, number> = { ssh: 22, rdp: 3389, vnc: 5900, winrm: 5986 }
 
 export function Autoscaling() {
   const { items, err, setErr, reload } = useList<AutoscalingGroup>('/autoscaling-groups')

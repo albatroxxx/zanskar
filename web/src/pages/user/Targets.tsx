@@ -7,6 +7,7 @@ import { fmtAgo } from './Failover'
 
 const terminalProtocols: Protocol[] = ['ssh', 'winrm']
 const desktopProtocols: Protocol[] = ['rdp', 'vnc']
+const databaseProtocols: Protocol[] = ['database']
 
 function pick(t: ReachableTarget, family: Protocol[]): Protocol | null {
   for (const p of family) if (t.allowed_protocols.includes(p) && (t.capabilities.length === 0 || t.capabilities.includes(p))) return p
@@ -89,6 +90,7 @@ export function Targets() {
   const protoButtons = (t: ReachableTarget, onPick: (p: Protocol) => void) => {
     const term = pick(t, terminalProtocols)
     const desk = pick(t, desktopProtocols)
+    const db = pick(t, databaseProtocols)
     const notReady = !t.host_key_ready && term === 'ssh'
     return (
       <>
@@ -100,6 +102,11 @@ export function Targets() {
         <td>
           <button className="btn sm" disabled={!desk || busy === t.id + desk} onClick={() => desk && onPick(desk)} title={desk ? desk.toUpperCase() : 'no desktop protocol allowed'}>
             {desk ? desk.toUpperCase() : '—'}
+          </button>
+        </td>
+        <td>
+          <button className="btn sm" disabled={!db || busy === t.id + db} onClick={() => db && onPick(db)} title={db ? (t.engine ? t.engine + ' database' : 'database') : 'no database access allowed'}>
+            {db ? (t.engine || 'database').toUpperCase() : '—'}
           </button>
         </td>
       </>
@@ -130,6 +137,7 @@ export function Targets() {
                   <th>Tags</th>
                   <th>Terminal</th>
                   <th>Desktop</th>
+                  <th>Database</th>
                 </tr>
               </thead>
               <tbody>
@@ -174,6 +182,7 @@ export function Targets() {
                   <th>Healthy</th>
                   <th>Terminal</th>
                   <th>Desktop</th>
+                  <th>Database</th>
                 </tr>
               </thead>
               <tbody>

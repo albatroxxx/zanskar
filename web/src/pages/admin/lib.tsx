@@ -3,7 +3,11 @@ import { api, errorMessage, query } from '../../api/client'
 import type { HostKeyStatus, Page, Protocol } from '../../api/types'
 import { Badge } from '../../components/ui'
 
-export const protocols: Protocol[] = ['ssh', 'rdp', 'vnc', 'winrm']
+/** Protocols that carry a single TCP port and apply to VM targets and ASGs. */
+export type PortProtocol = 'ssh' | 'rdp' | 'vnc' | 'winrm'
+export const protocols: PortProtocol[] = ['ssh', 'rdp', 'vnc', 'winrm']
+/** Protocols a policy may grant: the port protocols plus brokered database access (ADR 0017). */
+export const policyProtocols: Protocol[] = [...protocols, 'database']
 
 /** useList fetches a paged collection and exposes reload. */
 export function useList<T>(path: string, params: Record<string, string | number | boolean | undefined> = {}) {
