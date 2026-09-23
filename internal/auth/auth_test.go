@@ -228,8 +228,8 @@ func TestTOTPFlow(t *testing.T) {
 		t.Fatalf("expected mfa_required with csrf, got %v", r.body)
 	}
 	hdr = map[string]string{"X-CSRF-Token": r.body["csrf_token"].(string)}
-	if me := e.do("GET", "/api/v1/auth/me", nil, r.cookie, nil); me.code != 401 || me.body["code"] != "mfa_required" {
-		t.Fatalf("partial session must not pass RequireAuth: %d %v", me.code, me.body)
+	if me := e.do("GET", "/api/v1/auth/me", nil, r.cookie, nil); me.code != 200 || me.body["pending"] != "verify" || me.body["csrf_token"] == nil || me.body["user"] != nil {
+		t.Fatalf("partial session /auth/me should resume verify without a profile: %d %v", me.code, me.body)
 	}
 	if v := e.do("POST", "/api/v1/auth/mfa/totp/verify", map[string]string{"code": "123456"}, r.cookie, hdr); v.code != 401 {
 		t.Fatalf("wrong code: %d", v.code)
@@ -301,8 +301,8 @@ func TestMFAEnrollmentRequired(t *testing.T) {
 		t.Fatalf("expected enrollment required, got %v", r.body)
 	}
 	hdr := map[string]string{"X-CSRF-Token": r.body["csrf_token"].(string)}
-	if me := e.do("GET", "/api/v1/auth/me", nil, r.cookie, nil); me.code != 401 {
-		t.Fatalf("partial session must be blocked, got %d", me.code)
+	if me := e.do("GET", "/api/v1/auth/me", nil, r.cookie, nil); me.code != 200 || me.body["pending"] != "enroll" || me.body["csrf_token"] == nil || me.body["user"] != nil {
+		t.Fatalf("partial session /auth/me should resume enroll without a profile: %d %v", me.code, me.body)
 	}
 	enr := e.do("POST", "/api/v1/auth/mfa/totp/enroll", nil, r.cookie, hdr)
 	if enr.code != 200 {

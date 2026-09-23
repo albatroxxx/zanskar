@@ -1,5 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
-import { api, ApiError, setCsrf } from '../api/client'
+import { api, setCsrf } from '../api/client'
 import type { LoginResponse, Me, Role, User } from '../api/types'
 
 /**
@@ -36,14 +36,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     try {
       const me = await api.get<Me>('/auth/me')
       setCsrf(me.csrf_token)
-      setState({ status: 'full', user: me.user, mfaEnrolled: me.mfa_enrolled, pending: null })
-    } catch (err) {
-      if (err instanceof ApiError && err.code === 'mfa_required') {
-        // A partial session survives a reload; we do not know whether the
-        // account has an authenticator, so the login page asks the server.
-        setState((s) => ({ ...s, status: 'partial', pending: s.pending ?? 'verify' }))
-        return
+      if (me.pending) {
+        // A partial session (second factor still owed) survived a reload: resume
+        // the correct step — enroll or verify — with its CSRF token restored,
+        // rather than bouncing to a login the stale session would reject.
+        setState({ status: 'partial', user: null, mfaEnrolled: me.mfa_enrolled, pending: me.pending })
+      } else {
+        setState({ status: 'full', user: me.user ?? null, mfaEnrolled: me.mfa_enrolled, pending: null })
       }
+    } catch {
       setCsrf('')
       setState({ status: 'anonymous', user: null, mfaEnrolled: false, pending: null })
     }

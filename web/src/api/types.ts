@@ -16,10 +16,13 @@ export interface User {
 }
 
 export interface Me {
-  user: User
   csrf_token: string
   mfa_enrolled: boolean
-  session: { id: string; created_at: string; expires_at: string }
+  // Set on a partial (MFA-incomplete) session so a reload can resume the right
+  // step; null/absent on a full session, where user and session are present.
+  pending?: 'verify' | 'enroll' | null
+  user?: User
+  session?: { id: string; created_at: string; expires_at: string }
 }
 
 export type LoginStatus = 'ok' | 'mfa_required' | 'mfa_enrollment_required'
