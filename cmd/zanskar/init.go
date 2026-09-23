@@ -13,9 +13,11 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"os/user"
 	"path/filepath"
 	"regexp"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -351,15 +353,50 @@ func printNextSteps(a initAnswers, out string, freshKey bool) {
 		fmt.Println("master key makes every stored credential unrecoverable.")
 		fmt.Println()
 	}
+	// The migrate and admin-create commands write the database. When a dedicated
+	// service user owns the data directory (the package install), they must run
+	// as that user, or the SQLite files end up root-owned and the service cannot
+	// write them. Wrap those commands in runuser when that is the case.
+	svcUser, useRunuser := dataDirServiceUser(a.DataDir)
+	pfx := ""
 	fmt.Println("Next steps (load the env, then run each command):")
 	fmt.Printf("     set -a; . %s; set +a\n", out)
-	fmt.Println("  1. Apply migrations:   zanskar migrate   (or let the unit's ExecStartPre do it)")
-	fmt.Println("  2. Create the admin:   ZANSKAR_ADMIN_PASSWORD=... zanskar admin create --username admin --name \"Your Name\"")
+	if useRunuser {
+		pfx = "runuser -u " + svcUser + " -- "
+		fmt.Printf("  (run the database commands as %q, which owns %s, so it owns the files)\n", svcUser, a.DataDir)
+	}
+	fmt.Printf("  1. Apply migrations:   %szanskar migrate   (or let the unit's ExecStartPre do it)\n", pfx)
+	fmt.Printf("  2. Create the admin:   ZANSKAR_ADMIN_PASSWORD=... %szanskar admin create --username admin --name \"Your Name\"\n", pfx)
 	fmt.Println("  3. Start the service:  sudo systemctl enable --now zanskar")
 	fmt.Println()
 	fmt.Println("Log destinations: application logs go to the service's stderr (journald under")
 	fmt.Println("systemd); the audit log lives in the database and is exported via SIEM, not a")
 	fmt.Printf("file; session recordings are written under %s.\n", filepath.Join(a.DataDir, "recordings"))
+}
+
+// dataDirServiceUser reports the username that owns dir when init runs as root
+// and that owner is a different, non-root user — the packaged-install case,
+// where the database-writing commands must run as that service user or the
+// SQLite files end up root-owned and the service cannot write them. It returns
+// ("", false) for a manual install (not root, or the owner is the current
+// user), where those commands run as-is.
+func dataDirServiceUser(dir string) (string, bool) {
+	if os.Geteuid() != 0 {
+		return "", false
+	}
+	fi, err := os.Stat(dir)
+	if err != nil {
+		return "", false
+	}
+	st, ok := fi.Sys().(*syscall.Stat_t)
+	if !ok || st.Uid == 0 {
+		return "", false
+	}
+	u, err := user.LookupId(fmt.Sprintf("%d", st.Uid))
+	if err != nil {
+		return "", false
+	}
+	return u.Username, true
 }
 
 // promptAnswers fills a by asking on the terminal, showing current values as

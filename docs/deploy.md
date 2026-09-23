@@ -37,10 +37,20 @@ sudo apt install ./zanskar_<version>_linux_amd64.deb
 # RHEL / Fedora / SUSE
 sudo rpm -i zanskar_<version>_linux_amd64.rpm
 
-sudo zanskar init                     # writes /etc/zanskar/env (see below)
+sudo zanskar init          # writes /etc/zanskar/env and prints the exact next commands
+
+# Create the first admin as the service user so it owns the SQLite database —
+# `zanskar init` prints this line with your paths filled in:
+sudo bash -c 'set -a; . /etc/zanskar/env; set +a; \
+  runuser -u zanskar -- zanskar migrate && \
+  ZANSKAR_ADMIN_PASSWORD=<pick-one> runuser -u zanskar -- zanskar admin create \
+    --username admin --name "Your Name"'
+
 sudo systemctl enable --now zanskar
 ```
 
+Run the database commands as the `zanskar` service user (the `runuser` wrapper above):
+with the default SQLite backend, files created by root would be unwritable by the service.
 Verify a download before installing: `sha256sum -c SHA256SUMS --ignore-missing`. Put a
 TLS-terminating reverse proxy in front — the unit binds loopback by default. Upgrades keep
 `/var/lib/zanskar` (database and recordings) and your `/etc/zanskar/env`; removal leaves
