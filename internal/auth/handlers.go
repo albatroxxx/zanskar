@@ -85,7 +85,10 @@ func NewHandler(users *user.Repo, sessions *Sessions, totp *TOTP, auditLog *audi
 func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/auth/login", h.login)
 	mux.Handle("POST /api/v1/auth/logout", RequirePartialAuth(http.HandlerFunc(h.logout)))
-	mux.Handle("GET /api/v1/auth/me", RequireAuth(http.HandlerFunc(h.me)))
+	// /auth/me admits a partial (MFA-incomplete) session so a page reload during
+	// second-factor setup can recover the pending step and CSRF token instead of
+	// stranding the session; the handler withholds the profile until MFA is done.
+	mux.Handle("GET /api/v1/auth/me", RequirePartialAuth(http.HandlerFunc(h.me)))
 	mux.Handle("POST /api/v1/auth/mfa/totp/verify", RequirePartialAuth(http.HandlerFunc(h.totpVerify)))
 	// Enroll and confirm accept a partial session so a deployment that
 	// requires MFA can make enrollment the first thing a new user does.
@@ -248,10 +251,26 @@ func (h *Handler) me(w http.ResponseWriter, r *http.Request) {
 		h.serverError(w, r, err)
 		return
 	}
+	// A partial (MFA-incomplete) session gets only what the login page needs to
+	// resume the second factor after a reload — the pending step and a CSRF
+	// token — never the profile or session, which stay behind MFA.
+	if !p.Session.MFAVerified {
+		pending := "verify"
+		if !enrolled {
+			pending = "enroll"
+		}
+		WriteJSON(w, http.StatusOK, map[string]any{
+			"pending":      pending,
+			"mfa_enrolled": enrolled,
+			"csrf_token":   h.Sessions.CSRFToken(p.Session.ID),
+		})
+		return
+	}
 	WriteJSON(w, http.StatusOK, map[string]any{
 		"user":         p.User,
 		"csrf_token":   h.Sessions.CSRFToken(p.Session.ID),
 		"mfa_enrolled": enrolled,
+		"pending":      nil,
 		"session": map[string]any{
 			"id": p.Session.ID, "created_at": p.Session.CreatedAt, "expires_at": p.Session.ExpiresAt,
 		},
