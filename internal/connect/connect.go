@@ -53,16 +53,26 @@ type Handler struct {
 	// ASGs and Cloud enable autoscaling-group targets and EC2 Instance Connect.
 	ASGs  *asg.Repo
 	Cloud asg.ProviderFactory
+	// Files holds live SSH sessions that permit SFTP file transfer (ADR 0016);
+	// initialised in Register.
+	Files *fileRegistry
 }
 
 // Register mounts the routes. The WebSocket route sits outside the CSRF
 // middleware's mutating-method check because it is a GET; the ticket is its
 // only credential.
 func (h *Handler) Register(mux *http.ServeMux) {
+	if h.Files == nil {
+		h.Files = newFileRegistry()
+	}
 	mux.Handle("GET /api/v1/me/targets", auth.RequireAuth(http.HandlerFunc(h.myTargets)))
 	mux.Handle("POST /api/v1/connect", auth.RequireAuth(http.HandlerFunc(h.connect)))
 	mux.Handle("GET /api/v1/me/autoscaling-groups/{id}/instances", auth.RequireAuth(http.HandlerFunc(h.myInstances)))
 	mux.Handle("POST /api/v1/sessions/{id}/failover", auth.RequireAuth(http.HandlerFunc(h.failover)))
+	// SSH file transfer over the terminal session's SFTP channel (ADR 0016).
+	mux.Handle("GET /api/v1/sessions/{id}/files", auth.RequireAuth(http.HandlerFunc(h.listFiles)))
+	mux.Handle("GET /api/v1/sessions/{id}/files/content", auth.RequireAuth(http.HandlerFunc(h.downloadFile)))
+	mux.Handle("POST /api/v1/sessions/{id}/files/content", auth.RequireAuth(http.HandlerFunc(h.uploadFile)))
 	mux.HandleFunc("GET /ws/terminal", h.terminal)
 	mux.HandleFunc("GET /ws/desktop", h.desktop)
 	mux.HandleFunc("GET /ws/winrm", h.winrm)
@@ -496,6 +506,13 @@ func (h *Handler) terminal(w http.ResponseWriter, r *http.Request) {
 	}
 	defer func() { _ = client.Close() }()
 
+	// Expose this session's SSH connection for SFTP file transfer while it is
+	// open, when the policy allows it (ADR 0016).
+	if g.AllowFileTransfer {
+		h.Files.add(s.ID, &fileSession{client: client, userID: g.UserID, targetKey: ep.LiveKey})
+		defer h.Files.remove(s.ID)
+	}
+
 	rec, uri, err := recording.NewAsciicast(r.Context(), h.Storage, s.ID+".cast", recording.Header{Width: cols, Height: rows, Title: sessionLabel(ep),
 		Env: map[string]string{"ZANSKAR_SESSION": s.ID}})
 	if err != nil {
@@ -515,7 +532,7 @@ func (h *Handler) terminal(w http.ResponseWriter, r *http.Request) {
 	ctx := h.Registry.Add(r.Context(), gateway.Live{SessionID: s.ID, UserID: g.UserID, TargetID: ep.LiveKey, Protocol: g.Protocol})
 	defer h.Registry.Remove(s.ID)
 
-	reason, berr := sshgw.Bridge(ctx, h.Log, client, ws, rec, cols, rows, sshgw.Limits{Idle: g.IdleTimeout, Max: g.MaxSession, SessionID: s.ID})
+	reason, berr := sshgw.Bridge(ctx, h.Log, client, ws, rec, cols, rows, sshgw.Limits{Idle: g.IdleTimeout, Max: g.MaxSession, SessionID: s.ID, AllowFiles: g.AllowFileTransfer})
 	size, sum, cerr := rec.Close()
 	if cerr != nil {
 		h.Log.Error("close recording", "session", s.ID, "err", cerr)

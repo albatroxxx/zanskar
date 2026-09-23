@@ -74,12 +74,59 @@ async function request<T>(method: Method, path: string, body?: unknown): Promise
   return parsed as T
 }
 
+function raise(res: Response, parsed: unknown, path: string): never {
+  const err = new ApiError(res.status, parsed as ApiErrorBody | null, `${res.status} ${res.statusText}`)
+  if (res.status === 401 && !path.startsWith('/auth/')) {
+    err.sessionEnded = true
+    onSessionEnded?.()
+  }
+  throw err
+}
+
+/** download fetches a binary resource as a Blob, authenticated by the session
+ *  cookie. Used for SSH/SFTP file downloads, which are not JSON. */
+async function download(path: string): Promise<Blob> {
+  const res = await fetch('/api/v1' + path, { method: 'GET', credentials: 'same-origin' })
+  if (!res.ok) {
+    const text = await res.text().catch(() => '')
+    let parsed: unknown = null
+    try {
+      parsed = text ? JSON.parse(text) : null
+    } catch {
+      parsed = null
+    }
+    raise(res, parsed, path)
+  }
+  return res.blob()
+}
+
+/** upload sends a raw body (e.g. a File) with the CSRF header and returns the
+ *  parsed JSON reply. Used for SSH/SFTP file uploads. */
+async function upload<T>(path: string, body: BodyInit, contentType = 'application/octet-stream'): Promise<T> {
+  const headers: Record<string, string> = { Accept: 'application/json', 'Content-Type': contentType }
+  if (csrfToken) headers['X-CSRF-Token'] = csrfToken
+  const res = await fetch('/api/v1' + path, { method: 'POST', headers, credentials: 'same-origin', body })
+  const text = await res.text()
+  let parsed: unknown = null
+  if (text) {
+    try {
+      parsed = JSON.parse(text)
+    } catch {
+      parsed = null
+    }
+  }
+  if (!res.ok) raise(res, parsed, path)
+  return parsed as T
+}
+
 export const api = {
   get: <T>(path: string) => request<T>('GET', path),
   post: <T>(path: string, body?: unknown) => request<T>('POST', path, body ?? {}),
   put: <T>(path: string, body?: unknown) => request<T>('PUT', path, body ?? {}),
   patch: <T>(path: string, body?: unknown) => request<T>('PATCH', path, body ?? {}),
   del: <T>(path: string, body?: unknown) => request<T>('DELETE', path, body),
+  download,
+  upload,
 }
 
 /** query builds a query string from defined, non-empty values. */
