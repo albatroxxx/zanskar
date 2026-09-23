@@ -20,21 +20,36 @@ type Protocol string
 
 // Protocols.
 const (
-	SSH   Protocol = "ssh"
-	RDP   Protocol = "rdp"
-	VNC   Protocol = "vnc"
-	WinRM Protocol = "winrm"
+	SSH      Protocol = "ssh"
+	RDP      Protocol = "rdp"
+	VNC      Protocol = "vnc"
+	WinRM    Protocol = "winrm"
+	Database Protocol = "database" // managed/PaaS database access (ADR 0017)
 )
 
-// Protocols lists every protocol in a stable order.
+// Protocols lists the host protocols probed in a stable order. Database is not
+// probed (it is a managed endpoint, not a host), so it is not included here.
 var Protocols = []Protocol{SSH, RDP, VNC, WinRM}
 
 // DefaultPorts are used when a target does not override a port.
 var DefaultPorts = map[Protocol]int{SSH: 22, RDP: 3389, VNC: 5900, WinRM: 5986}
 
+// EngineDefaultPorts maps a database engine to its default port; a database
+// target's port defaults from its engine (ADR 0017).
+var EngineDefaultPorts = map[string]int{"postgres": 5432, "mysql": 3306, "mariadb": 3306}
+
 // ValidProtocol reports whether p is known.
 func ValidProtocol(p Protocol) bool {
+	if p == Database {
+		return true
+	}
 	_, ok := DefaultPorts[p]
+	return ok
+}
+
+// ValidEngine reports whether e is a supported database engine.
+func ValidEngine(e string) bool {
+	_, ok := EngineDefaultPorts[e]
 	return ok
 }
 
@@ -75,9 +90,13 @@ const (
 
 // Target is an enrolled machine.
 type Target struct {
-	ID                  string              `json:"id"`
-	Name                string              `json:"name"`
-	Address             string              `json:"address"`
+	ID      string `json:"id"`
+	Name    string `json:"name"`
+	Address string `json:"address"`
+	// Engine and EngineVersion are set for database targets (ADR 0017); the
+	// engine sets the default port and, at connect time, the client image.
+	Engine              string              `json:"engine,omitempty"`
+	EngineVersion       string              `json:"engine_version,omitempty"`
 	OSFamily            OSFamily            `json:"os_family"`
 	Ports               map[Protocol]int    `json:"ports"`
 	Capabilities        []Protocol          `json:"capabilities"`
@@ -97,6 +116,12 @@ type Target struct {
 
 // Port returns the effective port for p.
 func (t *Target) Port(p Protocol) int {
+	if p == Database {
+		if n, ok := t.Ports[p]; ok && n > 0 {
+			return n
+		}
+		return EngineDefaultPorts[t.Engine]
+	}
 	if n, ok := t.Ports[p]; ok && n > 0 {
 		return n
 	}
@@ -155,6 +180,19 @@ func (t *Target) Validate() error {
 	}
 	if !ValidAddress(t.Address) {
 		return fmt.Errorf("%w: address must be a hostname or IP without scheme or port", ErrInvalid)
+	}
+	// A database target (ADR 0017) is a managed endpoint, not a host: it is
+	// identified by its engine, and its os_family defaults to "other" since the
+	// host-oriented notions (SSH host key, RDP/WinRM certificate) do not apply.
+	if t.Engine != "" {
+		t.Engine = strings.ToLower(strings.TrimSpace(t.Engine))
+		if !ValidEngine(t.Engine) {
+			return fmt.Errorf("%w: engine must be one of postgres, mysql, mariadb", ErrInvalid)
+		}
+		t.EngineVersion = strings.TrimSpace(t.EngineVersion)
+		if t.OSFamily == "" {
+			t.OSFamily = OtherOS
+		}
 	}
 	switch t.OSFamily {
 	case Linux, Windows, OtherOS:
@@ -220,6 +258,9 @@ func (t *Target) Validate() error {
 	}
 	return nil
 }
+
+// IsDatabase reports whether the target is a managed database endpoint (ADR 0017).
+func (t *Target) IsDatabase() bool { return t.Engine != "" }
 
 // MatchesTags reports whether every key in want is present with the same value.
 func (t *Target) MatchesTags(want map[string]string) bool {
