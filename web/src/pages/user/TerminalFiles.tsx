@@ -74,6 +74,7 @@ export function TerminalFiles({ sessionId }: { sessionId: string }) {
       <header>
         <span>Files</span>
         <span className="grow" />
+        <button className="btn sm" title="Refresh" aria-label="Refresh" disabled={!cwd || entries === null} onClick={() => void list(cwd)}>↻</button>
         <input ref={fileInput} type="file" hidden onChange={(e) => { const f = e.target.files?.[0]; if (f) void upload(f); e.target.value = '' }} />
         <button className="btn sm" disabled={busy || !cwd} onClick={() => fileInput.current?.click()}>Upload</button>
       </header>
