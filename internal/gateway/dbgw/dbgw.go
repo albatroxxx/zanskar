@@ -1,17 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
 
-// Package dbgw brokers access to a managed/PaaS database (ADR 0017). On connect
-// it launches an ephemeral, hardened container running the version-matched
-// client (psql, mysql, ...) connected to the target, and bridges the client's
-// interactive terminal to the browser over WebSocket. One container per
-// session; it is removed when the session ends.
-//
-// Broker phase: the container connects directly to the database. The credential
-// is injected into the container's environment (never placed on the host
-// command line), but a determined user could still read it from inside the
-// session via a client shell escape. Prefer short-lived credentials (e.g. RDS
-// IAM auth tokens); the later protocol-proxy phase removes the credential from
-// the container entirely.
+// Package dbgw brokers access to a managed/PaaS database (ADR 0017) with no
+// credential leak. Per session it creates a private Docker network, starts a
+// proxy sidecar (pgbouncer) that holds the vaulted credential and authenticates
+// upstream, and runs the version-matched client (psql) connected to the sidecar
+// with no password over that private network. The client container never holds
+// a credential, so a shell escape inside the session reveals nothing; access is
+// proxied, recorded and torn down when the session ends. The client's terminal
+// is bridged to the browser over the same protocol as sshgw.
 package dbgw
 
 import (
@@ -32,22 +28,19 @@ import (
 	"github.com/albatroxxx/zanskar/internal/recording"
 )
 
-// Spec describes the database connection a session container should open.
+// Spec describes the upstream database connection for a session.
 type Spec struct {
-	Engine    string // postgres | mysql | mariadb
+	Engine    string // postgres (mysql/mariadb: follow-up)
 	Version   string // optional; selects the client image tag
-	Host      string
+	Host      string // upstream database host
 	Port      int
-	Database  string // optional database name to open
+	Database  string
 	Username  string
-	Password  string // static password or a short-lived token; never logged
+	Password  string // upstream credential; goes to the sidecar only, never the client
 	SessionID string
-	Network   string // docker network the container joins to reach the database
 }
 
-// ClientImage returns the container image that carries the version-matched
-// client for the engine, or "" if the engine is unsupported. The client CLIs
-// ship in the official engine images.
+// ClientImage returns the image carrying the version-matched client CLI.
 func ClientImage(engine, version string) string {
 	switch engine {
 	case "postgres":
@@ -70,65 +63,78 @@ func ClientImage(engine, version string) string {
 	}
 }
 
-// runArgs builds the `docker run` arguments and the environment the docker
-// process must carry. The password is passed by name (-e PGPASSWORD) and set in
-// the docker process's own environment, so it never appears in the host process
-// list or in the argument vector. It is pure, so the hardening flags and the
-// connection arguments are unit-tested.
-func runArgs(s Spec) (args []string, env []string, err error) {
-	image := ClientImage(s.Engine, s.Version)
-	if image == "" {
-		return nil, nil, fmt.Errorf("dbgw: unsupported engine %q", s.Engine)
+// proxyImage returns the credential-holding proxy sidecar image for the engine.
+func proxyImage(engine string) string {
+	switch engine {
+	case "postgres":
+		return "edoburu/pgbouncer:v1.23.1-p3"
+	default:
+		return "" // mysql/mariadb (ProxySQL) is a follow-up
+	}
+}
+
+// names returns the per-session Docker object names.
+func names(sessionID string) (network, proxy, client string) {
+	return "zanskar-net-" + sessionID, "zanskar-dbproxy-" + sessionID, "zanskar-dbcli-" + sessionID
+}
+
+const proxyPort = 6432 // pgbouncer's default listen port
+
+// proxyArgs builds the detached `docker run` for the sidecar and the environment
+// carrying the upstream credential by name — so it never appears in the host
+// argument vector. The credential lands only in the sidecar's environment
+// (isolated, ephemeral, not reachable by the user's client container).
+func proxyArgs(s Spec, network, name string) (args []string, env []string, err error) {
+	img := proxyImage(s.Engine)
+	if img == "" {
+		return nil, nil, fmt.Errorf("dbgw: no proxy sidecar for engine %q", s.Engine)
 	}
 	if s.Host == "" || s.Port <= 0 || s.Username == "" {
 		return nil, nil, fmt.Errorf("dbgw: host, port and username are required")
 	}
-	network := s.Network
-	if network == "" {
-		network = "bridge"
-	}
-	// Hardened, ephemeral container. Egress should additionally be confined to
-	// the database endpoint; that network policy is applied by the deployment
-	// and tracked as a hardening follow-up (ADR 0017).
+	// edoburu/pgbouncer takes the upstream connection (with the credential) in
+	// DATABASE_URL and, with AUTH_TYPE=trust, accepts the client with no
+	// password. DATABASE_URL is passed by name; its value is set in the docker
+	// process environment below.
 	args = []string{
-		"run", "--rm", "-i", "-t",
-		"--name", "zanskar-db-" + s.SessionID,
-		"--network", network,
-		"--security-opt", "no-new-privileges",
-		"--cap-drop", "ALL",
-		"--read-only",
-		"--pids-limit", "256",
-		"--memory", "512m",
-		"--cpus", "1",
+		"run", "-d", "--rm", "--name", name, "--network", network,
+		"--security-opt", "no-new-privileges", "--cap-drop", "ALL",
+		"--pids-limit", "64", "--memory", "128m",
+		"-e", "DATABASE_URL", "-e", "AUTH_TYPE=trust", "-e", "POOL_MODE=session",
+		img,
 	}
-	var client []string
-	switch s.Engine {
-	case "postgres":
-		args = append(args, "-e", "PGPASSWORD", "-e", "PGCONNECT_TIMEOUT=10")
-		env = append(env, "PGPASSWORD="+s.Password)
-		client = []string{"psql", "-h", s.Host, "-p", strconv.Itoa(s.Port), "-U", s.Username, "-w"}
-		if s.Database != "" {
-			client = append(client, "-d", s.Database)
-		}
-	case "mysql", "mariadb":
-		args = append(args, "-e", "MYSQL_PWD")
-		env = append(env, "MYSQL_PWD="+s.Password)
-		client = []string{"mysql", "--protocol=TCP", "-h", s.Host, "-P", strconv.Itoa(s.Port), "-u", s.Username}
-		if s.Database != "" {
-			client = append(client, s.Database)
-		}
-	default:
-		return nil, nil, fmt.Errorf("dbgw: unsupported engine %q", s.Engine)
-	}
-	args = append(args, image)
-	args = append(args, client...)
+	url := fmt.Sprintf("postgresql://%s:%s@%s:%d/%s", s.Username, s.Password, s.Host, s.Port, s.Database)
+	env = []string{"DATABASE_URL=" + url}
 	return args, env, nil
 }
 
+// clientArgs builds the interactive `docker run` for the client, pointed at the
+// sidecar with no credential. Run under a pty and bridged to the browser.
+func clientArgs(s Spec, network, name, proxyHost string) ([]string, error) {
+	img := ClientImage(s.Engine, s.Version)
+	if img == "" {
+		return nil, fmt.Errorf("dbgw: unsupported engine %q", s.Engine)
+	}
+	args := []string{
+		"run", "--rm", "-i", "-t", "--name", name, "--network", network,
+		"--security-opt", "no-new-privileges", "--cap-drop", "ALL", "--read-only",
+		"--pids-limit", "256", "--memory", "512m", "--cpus", "1",
+		img,
+	}
+	switch s.Engine {
+	case "postgres":
+		args = append(args, "psql", "-h", proxyHost, "-p", strconv.Itoa(proxyPort), "-U", s.Username, "-w")
+		if s.Database != "" {
+			args = append(args, "-d", s.Database)
+		}
+	default:
+		return nil, fmt.Errorf("dbgw: unsupported engine %q", s.Engine)
+	}
+	return args, nil
+}
+
 // clientFrame and control mirror the sshgw terminal protocol so the browser's
-// terminal page drives a database session with no changes: binary frames carry
-// output, text frames carry input ("i") and resize ("r"), and control frames
-// announce "ready" and "end".
+// terminal page drives a database session unchanged.
 type clientFrame struct {
 	T    string `json:"t"`
 	D    string `json:"d,omitempty"`
@@ -146,21 +152,34 @@ type control struct {
 // Limits bound a live session, taken from the policy decision.
 type Limits struct {
 	SessionID string
-	Idle      time.Duration // ends the session after this long without input
-	Max       time.Duration // absolute cap from start; zero means none
-	tick      time.Duration // how often limits are checked; tests shorten it
+	Idle      time.Duration
+	Max       time.Duration
+	tick      time.Duration
 }
 
-// Bridge launches the client container under a pty and pumps it to the
-// WebSocket until one side ends, returning the end reason for the
-// access_sessions row. docker is the path to the docker CLI; rec may be nil.
+// dockerRun runs a short docker command (network create, container start,
+// teardown) with an optional extra environment and a bounded timeout.
+func dockerRun(ctx context.Context, docker string, env []string, args ...string) error {
+	cmd := exec.CommandContext(ctx, docker, args...) // #nosec G204 -- args built from fixed literals + validated fields
+	if len(env) > 0 {
+		cmd.Env = append(os.Environ(), env...)
+	}
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("docker %s: %w: %s", args[0], err, string(out))
+	}
+	return nil
+}
+
+// Bridge sets up the per-session network + proxy sidecar, runs the client under
+// a pty, and pumps it to the WebSocket until one side ends, returning the end
+// reason. docker is the path to the docker CLI; rec may be nil.
 func Bridge(ctx context.Context, log *slog.Logger, docker string, spec Spec, ws *websocket.Conn, rec *recording.Asciicast, cols, rows int, lim Limits) (string, error) {
 	if log == nil {
 		log = slog.Default()
 	}
-	args, env, err := runArgs(spec)
-	if err != nil {
-		return "error", err
+	if docker == "" {
+		docker = "docker"
 	}
 	if cols <= 0 || cols > 1000 {
 		cols = 80
@@ -168,23 +187,49 @@ func Bridge(ctx context.Context, log *slog.Logger, docker string, spec Spec, ws 
 	if rows <= 0 || rows > 500 {
 		rows = 24
 	}
-	if docker == "" {
-		docker = "docker"
-	}
+	network, proxy, client := names(spec.SessionID)
 
-	cmd := exec.CommandContext(ctx, docker, args...)                                       // #nosec G204 -- args are built by runArgs from validated fields, no shell
-	cmd.Env = append(os.Environ(), env...)                                                 // carries the password by name, never in argv
+	// Set-up context is independent of the session context so teardown still
+	// runs after the session's context is cancelled.
+	suCtx, suCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer suCancel()
+
+	if err := dockerRun(suCtx, docker, nil, "network", "create", network); err != nil {
+		return "error", err
+	}
+	defer func() {
+		tdCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		_ = dockerRun(tdCtx, docker, nil, "network", "rm", network)
+	}()
+
+	pargs, penv, err := proxyArgs(spec, network, proxy)
+	if err != nil {
+		return "error", err
+	}
+	if err := dockerRun(suCtx, docker, penv, pargs...); err != nil {
+		return "error", fmt.Errorf("dbgw: start proxy: %w", err)
+	}
+	defer func() {
+		tdCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		_ = dockerRun(tdCtx, docker, nil, "rm", "-f", proxy)
+	}()
+
+	cargs, err := clientArgs(spec, network, client, proxy)
+	if err != nil {
+		return "error", err
+	}
+	cmd := exec.CommandContext(ctx, docker, cargs...)                                      // #nosec G204 -- args built by clientArgs from validated fields, no shell
 	f, err := pty.StartWithSize(cmd, &pty.Winsize{Cols: uint16(cols), Rows: uint16(rows)}) //nolint:gosec // bounded above
 	if err != nil {
 		return "error", fmt.Errorf("dbgw: start client: %w", err)
 	}
 	defer func() { _ = f.Close() }()
-	// Belt-and-suspenders teardown: --rm removes the container on a clean exit,
-	// and this removes it if the process was killed before docker cleaned up.
 	defer func() {
-		rmCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		tdCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
-		_ = exec.CommandContext(rmCtx, docker, "rm", "-f", "zanskar-db-"+spec.SessionID).Run() // #nosec G204 -- fixed name
+		_ = dockerRun(tdCtx, docker, nil, "rm", "-f", client)
 	}()
 
 	ctx, cancel := context.WithCancel(ctx)
@@ -213,7 +258,6 @@ func Bridge(ctx context.Context, log *slog.Logger, docker string, spec Spec, ws 
 	}
 	sendCtrl(control{T: "ready", SessionID: lim.SessionID})
 
-	// client -> browser (+ recording)
 	go func() {
 		defer close(outDone)
 		buf := make([]byte, 32<<10)
@@ -232,12 +276,11 @@ func Bridge(ctx context.Context, log *slog.Logger, docker string, spec Spec, ws 
 				}
 			}
 			if rerr != nil {
-				return // pty closed: the client exited
+				return
 			}
 		}
 	}()
 
-	// browser -> client
 	go func() {
 		defer close(inDone)
 		for {
@@ -302,7 +345,7 @@ func Bridge(ctx context.Context, log *slog.Logger, docker string, spec Spec, ws 
 			cancel()
 			return r, nil
 		case <-waitDone:
-			<-outDone // drain remaining output before the end frame
+			<-outDone
 			return finish("user_exit", "")
 		case <-outDone:
 			if r := current(); r != "user_exit" {

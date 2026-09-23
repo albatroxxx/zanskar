@@ -84,3 +84,28 @@ that runs the version-matched client.
   the proxy phase or a dedicated path can address that later.
 - GCP Cloud SQL and Azure Database fit the same target model behind the credential/auth
   abstraction when we add those providers.
+
+## Addendum 2026-09-23: no credential leak — the client never authenticates
+
+Implementation exposed a flaw in the broker-first plan above. If the session container runs
+the client (`psql`/`mysql`) connected **directly** to the database, the credential has to be
+in that container for the client to authenticate — and a client shell escape (`psql`/`mysql`
+`\!`) lets the user read it back from the environment. Whatever the client authenticates
+with, the user can extract. That breaks the "credentials ... never shown to the user"
+guarantee, so the direct-connection broker is **not** used.
+
+**Decision: the client never holds a credential.** A per-session proxy holds the credential
+and authenticates to the database; the client container connects to the proxy over a private,
+trusted channel with no password.
+
+- **Mechanism:** a per-session **proxy sidecar** — pgbouncer (PostgreSQL), ProxySQL (MySQL) —
+  on a private per-session Docker network, configured with the upstream credential and
+  `trust` auth for the client. This reuses proven auth (SCRAM, caching_sha2) instead of
+  hand-rolled protocol crypto. The client container has no credential and no network route to
+  the database except through the proxy.
+- **Phasing:** the proxy is therefore the *starting point* for database access, not a later
+  add-on. Per-query audit and read-only enforcement still layer on afterwards — the proxy
+  already sees the wire bytes. **PostgreSQL (pgbouncer) ships first; MySQL follows.**
+- The session container still records its terminal (asciicast) and audits session start/end;
+  the credential stays only on Zanskar's side, in the sidecar (isolated, ephemeral, not
+  user-reachable), never in the client the user drives.

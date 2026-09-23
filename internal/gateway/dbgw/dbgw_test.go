@@ -23,61 +23,65 @@ func TestClientImage(t *testing.T) {
 	}
 }
 
-func TestRunArgsSecurity(t *testing.T) {
-	s := Spec{Engine: "postgres", Version: "16", Host: "db.internal", Port: 5432, Database: "app", Username: "svc", Password: "s3cret", SessionID: "sess1", Network: "zanskar"}
-	args, env, err := runArgs(s)
+func TestProxyArgsHoldsCredential(t *testing.T) {
+	s := Spec{Engine: "postgres", Host: "db.internal", Port: 5432, Database: "app", Username: "svc", Password: "s3cret", SessionID: "sess1"}
+	args, env, err := proxyArgs(s, "zanskar-net-sess1", "zanskar-dbproxy-sess1")
 	if err != nil {
 		t.Fatal(err)
 	}
-	// The password must never appear in the argument vector (host `ps`).
+	// The credential must never be in the argv (host `ps`).
 	for _, a := range args {
 		if strings.Contains(a, "s3cret") {
-			t.Fatalf("password leaked into argv: %q", a)
+			t.Fatalf("credential leaked into proxy argv: %q", a)
 		}
 	}
-	// It rides the process environment instead, referenced by name in argv.
-	if !slices.Contains(env, "PGPASSWORD=s3cret") {
-		t.Fatalf("password not carried in env: %v", env)
+	// It rides the sidecar's environment via DATABASE_URL (by name in argv).
+	if !slices.Contains(args, "DATABASE_URL") || !slices.Contains(args, "AUTH_TYPE=trust") {
+		t.Fatalf("expected -e DATABASE_URL and AUTH_TYPE=trust, got %v", args)
 	}
-	if !slices.Contains(args, "PGPASSWORD") {
-		t.Fatal("expected -e PGPASSWORD (name only) in args")
+	found := false
+	for _, e := range env {
+		if strings.HasPrefix(e, "DATABASE_URL=") && strings.Contains(e, "s3cret") && strings.Contains(e, "db.internal") {
+			found = true
+		}
 	}
-	// Hardening flags.
-	for _, want := range []string{"--rm", "no-new-privileges", "ALL", "--read-only"} {
+	if !found {
+		t.Fatalf("upstream credential not carried in the sidecar env: %v", env)
+	}
+	for _, want := range []string{"no-new-privileges", "ALL", "edoburu/pgbouncer:v1.23.1-p3"} {
 		if !slices.Contains(args, want) {
-			t.Errorf("missing hardening flag %q", want)
+			t.Errorf("proxy missing %q", want)
 		}
 	}
-	// Image and connection arguments.
-	if !slices.Contains(args, "postgres:16-alpine") {
-		t.Error("client image missing")
-	}
-	if j := strings.Join(args, " "); !strings.Contains(j, "psql -h db.internal -p 5432 -U svc") {
-		t.Errorf("psql connection args wrong: %s", j)
-	}
-	if !slices.Contains(args, "-d") || !slices.Contains(args, "app") {
-		t.Error("database name missing")
-	}
-	if !slices.Contains(args, "zanskar") {
-		t.Error("network missing")
+	// mysql has no sidecar yet.
+	if _, _, err := proxyArgs(Spec{Engine: "mysql", Host: "h", Port: 3306, Username: "u"}, "n", "p"); err == nil {
+		t.Fatal("expected no-proxy error for mysql")
 	}
 }
 
-func TestRunArgsMySQLAndErrors(t *testing.T) {
-	a, env, err := runArgs(Spec{Engine: "mysql", Host: "h", Port: 3306, Username: "u", Password: "p", SessionID: "s"})
+func TestClientArgsHasNoCredential(t *testing.T) {
+	s := Spec{Engine: "postgres", Version: "16", Host: "db.internal", Port: 5432, Database: "app", Username: "svc", Password: "s3cret", SessionID: "sess1"}
+	args, err := clientArgs(s, "zanskar-net-sess1", "zanskar-dbcli-sess1", "zanskar-dbproxy-sess1")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !slices.Contains(env, "MYSQL_PWD=p") || !slices.Contains(a, "MYSQL_PWD") {
-		t.Fatalf("mysql password env: %v / %v", a, env)
+	// The client container must carry NO credential anywhere — not the password,
+	// not the upstream host. It only talks to the proxy.
+	for _, a := range args {
+		if strings.Contains(a, "s3cret") || strings.Contains(a, "db.internal") {
+			t.Fatalf("client must not see the credential or upstream host: %q", a)
+		}
 	}
-	if j := strings.Join(a, " "); !strings.Contains(j, "mysql --protocol=TCP -h h -P 3306 -u u") {
-		t.Errorf("mysql connection args wrong: %s", j)
+	j := strings.Join(args, " ")
+	if !strings.Contains(j, "psql -h zanskar-dbproxy-sess1 -p 6432 -U svc") {
+		t.Errorf("client should target the proxy: %s", j)
 	}
-	if _, _, err := runArgs(Spec{Engine: "oracle", Host: "h", Port: 1, Username: "u"}); err == nil {
-		t.Fatal("expected an unsupported-engine error")
+	if !slices.Contains(args, "-d") || !slices.Contains(args, "app") {
+		t.Error("database name missing from client args")
 	}
-	if _, _, err := runArgs(Spec{Engine: "postgres", Port: 5432, Username: "u"}); err == nil {
-		t.Fatal("expected a missing-host error")
+	for _, want := range []string{"--read-only", "no-new-privileges", "postgres:16-alpine"} {
+		if !slices.Contains(args, want) {
+			t.Errorf("client missing hardening/image %q", want)
+		}
 	}
 }
