@@ -1872,7 +1872,7 @@ components:
       enum: [linux, windows, other]
     Protocol:
       type: string
-      enum: [ssh, rdp, vnc, winrm]
+      enum: [ssh, rdp, vnc, winrm, database]
     CredentialType:
       type: string
       enum: [password, ssh_key, ssh_ca, domain, ec2_instance_connect]
@@ -2313,6 +2313,12 @@ components:
           type: string
         address:
           type: string
+        engine:
+          type: string
+          description: Database engine for a database target (ADR 0017); empty for a host target.
+        engine_version:
+          type: string
+          description: Optional database engine version for a database target.
         os_family:
           $ref: "#/components/schemas/OsFamily"
         ports:
@@ -2359,6 +2365,14 @@ components:
         address:
           type: string
           description: Hostname or IP. Loopback, link-local, and the gateway's own addresses are rejected.
+        engine:
+          type: string
+          description: >
+            Set to make this a database target (ADR 0017), one of postgres, mysql, mariadb.
+            os_family then defaults to "other" and host-oriented fields do not apply.
+        engine_version:
+          type: string
+          description: Optional database engine version.
         os_family:
           $ref: "#/components/schemas/OsFamily"
         ports:

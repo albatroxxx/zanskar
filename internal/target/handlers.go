@@ -42,19 +42,22 @@ func (h *AdminHandler) Register(mux *http.ServeMux) {
 
 // Write is the request body for create and update.
 type Write struct {
-	Name         string              `json:"name"`
-	Address      string              `json:"address"`
-	OSFamily     OSFamily            `json:"os_family"`
-	Ports        map[Protocol]int    `json:"ports"`
-	Capabilities []Protocol          `json:"capabilities"`
-	Tags         map[string]string   `json:"tags"`
-	Status       string              `json:"status"`
-	Notes        string              `json:"notes"`
-	Credentials  map[Protocol]string `json:"credentials"`
+	Name          string              `json:"name"`
+	Address       string              `json:"address"`
+	Engine        string              `json:"engine"`         // database targets (ADR 0017)
+	EngineVersion string              `json:"engine_version"` // database targets
+	OSFamily      OSFamily            `json:"os_family"`
+	Ports         map[Protocol]int    `json:"ports"`
+	Capabilities  []Protocol          `json:"capabilities"`
+	Tags          map[string]string   `json:"tags"`
+	Status        string              `json:"status"`
+	Notes         string              `json:"notes"`
+	Credentials   map[Protocol]string `json:"credentials"`
 }
 
 func (w Write) apply(t *Target) {
 	t.Name, t.Address, t.OSFamily = w.Name, w.Address, w.OSFamily
+	t.Engine, t.EngineVersion = w.Engine, w.EngineVersion
 	t.Ports, t.Capabilities, t.Tags = w.Ports, w.Capabilities, w.Tags
 	t.Status, t.Notes, t.Credentials = w.Status, w.Notes, w.Credentials
 }
