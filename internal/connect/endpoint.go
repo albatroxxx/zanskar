@@ -31,6 +31,9 @@ type endpoint struct {
 	TLSFingerprint      string // RDP listener
 	WinRMTLSFingerprint string
 	Active              bool
+	// Engine and EngineVersion identify a database target (ADR 0017).
+	Engine        string
+	EngineVersion string
 
 	// Exactly one of TargetID or (ASGID, ASGInstanceID) is set.
 	TargetID      string
@@ -53,6 +56,9 @@ func (e *endpoint) port(p target.Protocol) int {
 	if n, ok := e.Ports[p]; ok && n > 0 {
 		return n
 	}
+	if p == target.Database {
+		return target.EngineDefaultPorts[e.Engine]
+	}
 	return target.DefaultPorts[p]
 }
 
@@ -62,7 +68,8 @@ func (e *endpoint) policyRef() (id, asgID string, tags map[string]string) {
 
 func fromTarget(t *target.Target) *endpoint {
 	e := &endpoint{Name: t.Name, Address: t.Address, Ports: t.Ports, Tags: t.Tags, Credentials: t.Credentials,
-		HostKeyTrusted: t.HostKeyStatus == target.HostKeyTrusted, Active: t.Status == "active", TargetID: t.ID, LiveKey: t.ID}
+		HostKeyTrusted: t.HostKeyStatus == target.HostKeyTrusted, Active: t.Status == "active", TargetID: t.ID, LiveKey: t.ID,
+		Engine: t.Engine, EngineVersion: t.EngineVersion}
 	if t.HostKeyFingerprint != nil {
 		e.HostKeyFingerprint = *t.HostKeyFingerprint
 	}

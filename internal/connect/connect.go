@@ -50,6 +50,9 @@ type Handler struct {
 	DialTimeout time.Duration
 	// GuacdAddr enables RDP and VNC; empty disables desktop sessions.
 	GuacdAddr string
+	// DockerPath is the docker CLI used to spawn database session containers
+	// (ADR 0017); empty means "docker" on PATH.
+	DockerPath string
 	// ASGs and Cloud enable autoscaling-group targets and EC2 Instance Connect.
 	ASGs  *asg.Repo
 	Cloud asg.ProviderFactory
@@ -76,6 +79,7 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /ws/terminal", h.terminal)
 	mux.HandleFunc("GET /ws/desktop", h.desktop)
 	mux.HandleFunc("GET /ws/winrm", h.winrm)
+	mux.HandleFunc("GET /ws/database", h.database)
 }
 
 // reachableTarget is what a user sees in their target list.
@@ -309,6 +313,10 @@ func (h *Handler) issueTicket(ctx context.Context, p *auth.Principal, ip string,
 		}
 		if ep.WinRMTLSFingerprint == "" {
 			return nil, "certificate_unpinned", "the target's WinRM certificate has not been captured; probe it first", nil
+		}
+	case target.Database:
+		if ep.Engine == "" {
+			return nil, "not_a_database", "target is not a database", nil
 		}
 	}
 	credID := ep.Credentials[proto]
