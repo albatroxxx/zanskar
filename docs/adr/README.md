@@ -34,5 +34,5 @@ and update the status of the old one.
 | [0013](0013-policy-subject-group-or-user.md) | Access policies bind to a group or to a single user | Accepted |
 | [0014](0014-guided-install-writes-env-file.md) | Guided install writes the environment file | Accepted |
 | [0015](0015-recording-retention-policy.md) | Recording retention is admin-editable runtime policy | Accepted |
-| [0016](0016-ssh-file-transfer-over-sftp.md) | SSH file transfer over SFTP | Proposed |
-| [0017](0017-database-access-ephemeral-client-container.md) | Database access via an ephemeral per-session client container | Proposed |
+| [0016](0016-ssh-file-transfer-over-sftp.md) | SSH file transfer over SFTP | Accepted |
+| [0017](0017-database-access-ephemeral-client-container.md) | Database access via an ephemeral per-session client container | Accepted |
