@@ -115,10 +115,21 @@ function DesktopSession({ state }: { state: DesktopState }) {
         inner?.(opcode, args)
       }
       disconnectRef.current = () => client.disconnect()
-      const onResize = () => client.sendSize(el.clientWidth, el.clientHeight)
-      window.addEventListener('resize', onResize)
+      // Resize the remote desktop to match the pane on every change — a window
+      // resize and the files panel opening or closing alike. The previous
+      // window-only listener missed the panel toggle, leaving the desktop at
+      // its old size with dead space around it. guacd's RDP dynamic resize
+      // re-renders at the new size 1:1, so no client-side scaling (and no mouse
+      // remapping) is needed. Debounced so a drag-resize does not spam guacd.
+      let sizeTimer: ReturnType<typeof setTimeout> | undefined
+      const ro = new ResizeObserver(() => {
+        clearTimeout(sizeTimer)
+        sizeTimer = setTimeout(() => client.sendSize(el.clientWidth, el.clientHeight), 200)
+      })
+      ro.observe(el)
       return () => {
-        window.removeEventListener('resize', onResize)
+        ro.disconnect()
+        clearTimeout(sizeTimer)
         keyboard.onkeydown = keyboard.onkeyup = null
       }
     })
