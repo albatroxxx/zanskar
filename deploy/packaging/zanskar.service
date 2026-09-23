@@ -1,0 +1,39 @@
+[Unit]
+Description=Zanskar access gateway
+Documentation=https://github.com/albatroxxx/zanskar
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=zanskar
+Group=zanskar
+EnvironmentFile=/etc/zanskar/env
+WorkingDirectory=/var/lib/zanskar
+# Migrations are an explicit step; serve refuses to start with any pending.
+ExecStartPre=/usr/bin/zanskar migrate
+ExecStart=/usr/bin/zanskar serve
+Restart=always
+RestartSec=3
+
+# Hardening. The service only ever writes under its state directory.
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/zanskar
+PrivateTmp=true
+PrivateDevices=true
+ProtectControlGroups=true
+ProtectKernelModules=true
+ProtectKernelTunables=true
+ProtectKernelLogs=true
+ProtectClock=true
+ProtectHostname=true
+RestrictNamespaces=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+SystemCallArchitectures=native
+
+[Install]
+WantedBy=multi-user.target

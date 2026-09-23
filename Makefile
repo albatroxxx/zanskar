@@ -3,7 +3,7 @@ MODULE   := github.com/albatroxxx/zanskar
 VERSION  ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 LDFLAGS  := -s -w -X $(MODULE)/internal/version.Version=$(VERSION)
 
-.PHONY: all build build-api web web-dev dist-linux notices run test lint vet vuln sec tidy clean migrate-check
+.PHONY: all build build-api web web-dev dist-linux packages release-check notices run test lint vet vuln sec tidy clean migrate-check
 
 all: lint test build
 
@@ -64,3 +64,14 @@ dist-linux: web
 	tar -C dist/stage -czf dist/$(STAGE).tar.gz $(STAGE)
 	rm -rf dist/stage
 	cd dist && (sha256sum $(STAGE).tar.gz 2>/dev/null || shasum -a 256 $(STAGE).tar.gz) > $(STAGE).tar.gz.sha256
+
+# packages builds the full release set — linux amd64/arm64 binaries, tar.gz
+# archives, deb and rpm packages (goreleaser's built-in nfpm; no Docker) and
+# SHA256SUMS — into dist/. This is the snapshot (unversioned) build; a git tag
+# push runs the same via .github/workflows/release.yml. Requires goreleaser.
+packages:
+	goreleaser release --snapshot --clean
+
+# release-check validates .goreleaser.yaml without building.
+release-check:
+	goreleaser check

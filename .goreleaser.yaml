@@ -1,0 +1,108 @@
+# goreleaser v2 — builds the release binaries, tar.gz archives, deb/rpm packages
+# and SHA256SUMS. deb/rpm are produced by goreleaser's built-in nfpm (pure Go,
+# no Docker). Build+validate locally with:
+#   goreleaser release --snapshot --clean
+# A tag push runs the same via .github/workflows/release.yml.
+version: 2
+
+project_name: zanskar
+
+# The web bundle is embedded via -tags webui, so it must exist before the Go
+# build. `make web` runs `npm ci --ignore-scripts && npm run build`.
+before:
+  hooks:
+    - make web
+
+builds:
+  - id: zanskar
+    main: ./cmd/zanskar
+    binary: zanskar
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+    goarch:
+      - amd64
+      - arm64
+    flags:
+      - -trimpath
+      - -tags=webui
+    ldflags:
+      - -s -w -X github.com/albatroxxx/zanskar/internal/version.Version={{ .Version }}
+    mod_timestamp: "{{ .CommitTimestamp }}"
+
+archives:
+  - id: default
+    formats:
+      - tar.gz
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    files:
+      - LICENSE
+      - THIRD_PARTY_LICENSES.md
+      - THIRD_PARTY_NOTICES.md
+      - src: deploy/packaging/zanskar.service
+        dst: systemd/zanskar.service
+      - src: deploy/packaging/env.example
+        dst: env.example
+
+nfpms:
+  - id: packages
+    package_name: zanskar
+    vendor: Zanskar
+    homepage: https://github.com/albatroxxx/zanskar
+    maintainer: Zanskar maintainers <noreply@github.com>
+    description: |-
+      Agentless VM access gateway.
+      Browser-based SSH terminal and RDP/VNC desktop sessions with per-session
+      recording, an append-only audit log, and role-based access — no agent on
+      the target hosts.
+    license: Apache-2.0
+    formats:
+      - deb
+      - rpm
+    bindir: /usr/bin
+    section: admin
+    priority: optional
+    contents:
+      - src: deploy/packaging/zanskar.service
+        dst: /usr/lib/systemd/system/zanskar.service
+      - src: deploy/packaging/env.example
+        dst: /etc/zanskar/env.example
+      - src: LICENSE
+        dst: /usr/share/doc/zanskar/LICENSE
+      - src: THIRD_PARTY_NOTICES.md
+        dst: /usr/share/doc/zanskar/THIRD_PARTY_NOTICES.md
+    scripts:
+      preinstall: deploy/packaging/scripts/preinstall.sh
+      postinstall: deploy/packaging/scripts/postinstall.sh
+      preremove: deploy/packaging/scripts/preremove.sh
+      postremove: deploy/packaging/scripts/postremove.sh
+    rpm:
+      group: Applications/System
+    deb:
+      fields:
+        Bugs: https://github.com/albatroxxx/zanskar/issues
+
+checksum:
+  name_template: SHA256SUMS
+  algorithm: sha256
+
+snapshot:
+  version_template: "{{ incpatch .Version }}-snapshot"
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
+      - Merge pull request
+      - Merge branch
+
+release:
+  github:
+    owner: albatroxxx
+    name: zanskar
+  draft: true
+  prerelease: auto

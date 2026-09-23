@@ -1,0 +1,39 @@
+name: release
+
+# Tag a version (e.g. v1.0.0) to build the release. goreleaser cross-compiles
+# the binaries, builds tar.gz archives, deb/rpm packages (built-in nfpm) and
+# SHA256SUMS, and attaches them to a GitHub release (created as a draft to
+# review before publishing).
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write # create the GitHub release and upload artifacts
+
+jobs:
+  goreleaser:
+    name: goreleaser
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0 # goreleaser needs full history and tags
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      # THIRD_PARTY_NOTICES.md currency is enforced by the CI 'notices' job on
+      # every push to main, so a tag cut from main already carries a current
+      # file; goreleaser bundles it into the archives.
+      - uses: goreleaser/goreleaser-action@v6
+        with:
+          version: "~> v2"
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
