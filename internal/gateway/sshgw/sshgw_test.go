@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
+	"github.com/pkg/sftp"
 	"golang.org/x/crypto/ssh"
 
 	"github.com/albatroxxx/zanskar/internal/recording"
@@ -98,6 +99,23 @@ func serveConn(nc net.Conn, cfg *ssh.ServerConfig) {
 					}
 					if r.Type == "shell" {
 						go shell(ch)
+					}
+				case "subsystem":
+					name := ""
+					if len(r.Payload) >= 4 {
+						name = string(r.Payload[4:])
+					}
+					ok := name == "sftp"
+					if r.WantReply {
+						_ = r.Reply(ok, nil)
+					}
+					if ok {
+						go func() {
+							if srv, err := sftp.NewServer(ch); err == nil {
+								_ = srv.Serve()
+							}
+							_ = ch.Close()
+						}()
 					}
 				default:
 					if r.WantReply {

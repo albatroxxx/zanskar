@@ -133,10 +133,13 @@ func authMethods(a Auth) ([]ssh.AuthMethod, error) {
 // Limits bound a live session, taken from the policy decision.
 type Limits struct {
 	// SessionID is echoed in the ready frame so the browser can address the
-	// session later (failover, shadowing).
+	// session later (failover, shadowing, file transfer).
 	SessionID string
-	Idle      time.Duration // ends the session after this long without input
-	Max       time.Duration // absolute cap from start; zero means none
+	// AllowFiles is echoed in the ready frame so the terminal shows the files
+	// panel only when the policy permits SFTP transfer (ADR 0016).
+	AllowFiles bool
+	Idle       time.Duration // ends the session after this long without input
+	Max        time.Duration // absolute cap from start; zero means none
 	// Tap, when set, receives every output chunk after it is recorded, so
 	// auditors can shadow the session live. Writes must never block.
 	Tap  interface{ Write([]byte) }
@@ -156,6 +159,7 @@ type clientFrame struct {
 type control struct {
 	T         string `json:"t"` // "ready", "end"
 	SessionID string `json:"session_id,omitempty"`
+	Files     bool   `json:"files,omitempty"` // file transfer allowed (ADR 0016)
 	Reason    string `json:"reason,omitempty"`
 	Msg       string `json:"msg,omitempty"`
 }
@@ -221,7 +225,7 @@ func Bridge(ctx context.Context, log *slog.Logger, client *ssh.Client, ws *webso
 		defer wcancel()
 		_ = ws.Write(wctx, websocket.MessageText, b)
 	}
-	sendCtrl(control{T: "ready", SessionID: lim.SessionID})
+	sendCtrl(control{T: "ready", SessionID: lim.SessionID, Files: lim.AllowFiles})
 
 	// Submitted command lines become markers on the recording so a reviewer
 	// can list them; input the remote did not echo is recorded as hidden.

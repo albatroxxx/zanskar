@@ -7,6 +7,7 @@ import '@xterm/xterm/css/xterm.css'
 import { fmtSeconds } from '../../api/format'
 import { Modal } from '../../components/ui'
 import { FailoverDialog } from './Failover'
+import { TerminalFiles } from './TerminalFiles'
 import type { ConnectResponse } from '../../api/types'
 import { terminalTheme } from '../../styles/theme'
 
@@ -47,6 +48,8 @@ function TerminalSession({ state }: { state: TerminalState }) {
   const [idle, setIdle] = useState(0)
   const [ended, setEnded] = useState<{ reason: string; msg?: string } | null>(null)
   const [status, setStatus] = useState<'connecting' | 'live'>('connecting')
+  const [filesAllowed, setFilesAllowed] = useState(false)
+  const [panelOpen, setPanelOpen] = useState(false)
   const wsRef = useRef<WebSocket | null>(null)
 
   useEffect(() => {
@@ -73,10 +76,11 @@ function TerminalSession({ state }: { state: TerminalState }) {
         return
       }
       try {
-        const c = JSON.parse(ev.data as string) as { t: string; reason?: string; msg?: string; session_id?: string }
+        const c = JSON.parse(ev.data as string) as { t: string; reason?: string; msg?: string; session_id?: string; files?: boolean }
         if (c.t === 'ready') {
           setStatus('live')
           if (c.session_id) setSessionId(c.session_id)
+          if (c.files) setFilesAllowed(true)
         }
         if (c.t === 'end') setEnded({ reason: c.reason ?? 'user_exit', msg: c.msg })
       } catch {
@@ -95,8 +99,10 @@ function TerminalSession({ state }: { state: TerminalState }) {
     const resize = term.onResize(({ cols, rows }) => {
       if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ t: 'r', c: cols, r: rows }))
     })
-    const onWin = () => fit.fit()
-    window.addEventListener('resize', onWin)
+    // Re-fit whenever the terminal pane changes size — a window resize and the
+    // files panel opening or closing alike — so the terminal always fills it.
+    const ro = new ResizeObserver(() => { try { fit.fit() } catch { /* terminal detached */ } })
+    ro.observe(host.current)
     term.focus()
 
     const tick = setInterval(() => {
@@ -106,7 +112,7 @@ function TerminalSession({ state }: { state: TerminalState }) {
 
     return () => {
       clearInterval(tick)
-      window.removeEventListener('resize', onWin)
+      ro.disconnect()
       sub.dispose()
       resize.dispose()
       ws.close()
@@ -143,9 +149,17 @@ function TerminalSession({ state }: { state: TerminalState }) {
         <span className={'stat' + (idle > 600 ? ' warn' : '')}>idle {fmtSeconds(idle)}</span>
         <span className="grow" />
         <span className="stat">recorded</span>
+        {filesAllowed && (
+          <button className="btn sm" onClick={() => setPanelOpen((o) => !o)} aria-pressed={panelOpen}>
+            {panelOpen ? 'Hide files' : 'Files'}
+          </button>
+        )}
         <button className="btn sm" onClick={() => wsRef.current?.close(1000, 'user_exit')}>Disconnect</button>
       </div>
-      <div className="term-host" ref={host} />
+      <div className="desk-body">
+        <div className="term-host" ref={host} />
+        {filesAllowed && panelOpen && sessionId && <TerminalFiles sessionId={sessionId} />}
+      </div>
       {ended && failover && (
         <FailoverDialog sessionId={sessionId} asgId={state.asg_id!} protocol={state.protocol} lostLabel={state.instance_label} onExit={() => nav('/')} onSwitched={onSwitched} />
       )}
