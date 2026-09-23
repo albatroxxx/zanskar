@@ -23,6 +23,29 @@ and a highly available Kubernetes deployment with the Helm chart in `deploy/helm
   gateways, or object storage (the S3 backend is being added; the chart already wires
   `ZANSKAR_RECORDINGS_S3_BUCKET`).
 
+## Packages (deb / rpm)
+
+Tagged releases publish `.deb` and `.rpm` packages plus `linux/amd64` and `linux/arm64`
+tarballs, each listed in `SHA256SUMS`, on the GitHub releases page. The package installs
+the `zanskar` binary to `/usr/bin`, a hardened systemd unit, and `/etc/zanskar/env.example`;
+it creates the `zanskar` service user and `/var/lib/zanskar` but does **not** start the
+service, since it has no configuration yet.
+
+```sh
+# Debian / Ubuntu
+sudo apt install ./zanskar_<version>_linux_amd64.deb
+# RHEL / Fedora / SUSE
+sudo rpm -i zanskar_<version>_linux_amd64.rpm
+
+sudo zanskar init                     # writes /etc/zanskar/env (see below)
+sudo systemctl enable --now zanskar
+```
+
+Verify a download before installing: `sha256sum -c SHA256SUMS --ignore-missing`. Put a
+TLS-terminating reverse proxy in front — the unit binds loopback by default. Upgrades keep
+`/var/lib/zanskar` (database and recordings) and your `/etc/zanskar/env`; removal leaves
+them in place. Build the packages locally with `make packages` (needs goreleaser).
+
 ## Guided single-node install
 
 For a single instance, `zanskar init` writes the environment file the server reads
