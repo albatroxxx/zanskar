@@ -140,6 +140,7 @@ interface FormState {
   allow_clipboard: boolean
   allow_file_transfer: boolean
   require_mfa: boolean
+  require_approval: boolean
 }
 
 function PolicyForm({ initial, groups, users, targets, asgs, onClose, onSaved }: { initial?: Policy; groups: Group[]; users: User[]; targets: Target[]; asgs: AutoscalingGroup[]; onClose: () => void; onSaved: () => void }) {
@@ -160,6 +161,7 @@ function PolicyForm({ initial, groups, users, targets, asgs, onClose, onSaved }:
     allow_clipboard: initial?.allow_clipboard ?? false,
     allow_file_transfer: initial?.allow_file_transfer ?? false,
     require_mfa: initial?.require_mfa ?? true,
+    require_approval: initial?.require_approval ?? false,
   })
   const [err, setErr] = useState('')
   const [busy, setBusy] = useState(false)
@@ -197,6 +199,7 @@ function PolicyForm({ initial, groups, users, targets, asgs, onClose, onSaved }:
         allow_clipboard: f.allow_clipboard,
         allow_file_transfer: f.allow_file_transfer,
         require_mfa: f.require_mfa,
+        require_approval: f.require_approval,
       }
       if (initial) await api.put(`/access-policies/${initial.id}`, body)
       else await api.post('/access-policies', body)
@@ -320,6 +323,7 @@ function PolicyForm({ initial, groups, users, targets, asgs, onClose, onSaved }:
               ['allow_clipboard', 'Allow clipboard'],
               ['allow_file_transfer', 'Allow file transfer'],
               ['require_mfa', 'Require an enrolled authenticator'],
+              ['require_approval', 'Require approval (just-in-time access)'],
               ['enabled', 'Enabled'],
             ] as const
           ).map(([k, label]) => (

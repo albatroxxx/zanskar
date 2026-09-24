@@ -87,6 +87,8 @@ export interface ReachableTarget {
   tags: Record<string, string>
   capabilities: Protocol[]
   allowed_protocols: Protocol[]
+  /** Allowed protocols that are approval-gated (ADR 0018): request access, don't connect directly. */
+  requires_approval?: Protocol[]
   host_key_ready: boolean
   /** Private (RFC1918/ULA) IP when the target has one; withheld for public addresses/hostnames. */
   private_ip?: string
@@ -96,6 +98,27 @@ export interface ReachableTarget {
   kind?: 'target' | 'asg'
   healthy_count?: number
   instance_count?: number
+}
+
+export type AccessStatus = 'pending' | 'approved' | 'denied' | 'expired' | 'revoked'
+
+/** A just-in-time access request and, once approved, the time-bounded grant (ADR 0018). */
+export interface AccessRequest {
+  id: string
+  user_id: string
+  policy_id?: string
+  target_id?: string
+  asg_id?: string
+  protocol: Protocol
+  reason: string
+  requested_minutes: number
+  status: AccessStatus
+  approver_user_id?: string
+  decision_note?: string
+  decided_at?: string
+  expires_at?: string
+  created_at: string
+  updated_at: string
 }
 
 /** A healthy autoscaling instance a user may connect to. No addresses are exposed. */
@@ -156,6 +179,8 @@ export interface Policy {
   allow_clipboard: boolean
   allow_file_transfer: boolean
   require_mfa: boolean
+  /** When true the policy grants eligibility only; access needs an approved request (ADR 0018). */
+  require_approval?: boolean
   created_at: string
   updated_at: string
 }

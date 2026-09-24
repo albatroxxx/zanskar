@@ -1,7 +1,7 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, type FormEvent } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { api, ApiError, errorMessage } from '../../api/client'
-import type { ConnectResponse, Page, Protocol, ReachableInstance, ReachableTarget } from '../../api/types'
+import type { AccessRequest, ConnectResponse, Page, Protocol, ReachableInstance, ReachableTarget } from '../../api/types'
 import { Alert, Badge, Empty, Field, Modal, PageHead, Tags } from '../../components/ui'
 import { fmtAgo } from './Failover'
 
@@ -27,18 +27,35 @@ export function Targets() {
   const nav = useNavigate()
   const [items, setItems] = useState<ReachableTarget[] | null>(null)
   const [err, setErr] = useState('')
+  const [notice, setNotice] = useState('')
   const [tab, setTab] = useState<'static' | 'asg'>('static')
   const [prompt, setPrompt] = useState<{ target: ReachableTarget; protocol: Protocol; body: ConnectBody } | null>(null)
   const [chooser, setChooser] = useState<{ group: ReachableTarget; protocol: Protocol; instances: ReachableInstance[] | null } | null>(null)
   const [cred, setCred] = useState({ username: '', password: '' })
+  // Active grants, as a set of "targetId:protocol", so a gated protocol the user
+  // already holds a grant for shows Connect rather than Request.
+  const [grants, setGrants] = useState<Set<string>>(new Set())
+  const [reqModal, setReqModal] = useState<{ target: ReachableTarget; protocol: Protocol } | null>(null)
+  const [reqForm, setReqForm] = useState({ reason: '', minutes: 60 })
   const [busy, setBusy] = useState('')
+
+  const loadGrants = () =>
+    api
+      .get<Page<AccessRequest>>('/me/access')
+      .then((p) => setGrants(new Set(p.items.map((g) => `${g.target_id ?? g.asg_id}:${g.protocol}`))))
+      .catch(() => {})
 
   useEffect(() => {
     api
       .get<Page<ReachableTarget>>('/me/targets')
       .then((p) => setItems(p.items))
       .catch((e) => setErr(errorMessage(e)))
+    void loadGrants()
   }, [])
+
+  // A protocol is gated when the policy requires approval and the user holds no
+  // active grant for it yet.
+  const gated = (t: ReachableTarget, p: Protocol) => (t.requires_approval ?? []).includes(p) && !grants.has(`${t.id}:${p}`)
 
   const connect = async (target: ReachableTarget, body: ConnectBody) => {
     setBusy(target.id + body.protocol)
@@ -61,12 +78,39 @@ export function Targets() {
     } catch (e) {
       if (e instanceof ApiError && e.code === 'credential_required') {
         setPrompt({ target, protocol: body.protocol, body })
+      } else if (e instanceof ApiError && e.code === 'approval_required') {
+        // The grant lapsed between listing and connecting; fall back to a request.
+        void loadGrants()
+        setReqModal({ target, protocol: body.protocol })
       } else if (e instanceof ApiError && (e.code === 'no_healthy_instances' || e.code === 'instance_unhealthy')) {
         setErr(e.message)
         if (chooser) void loadInstances(chooser.group, chooser.protocol)
       } else {
         setErr(errorMessage(e))
       }
+    } finally {
+      setBusy('')
+    }
+  }
+
+  const submitRequest = async (e: FormEvent) => {
+    e.preventDefault()
+    if (!reqModal) return
+    setBusy('request')
+    setErr('')
+    try {
+      await api.post<AccessRequest>('/me/access-requests', {
+        target_id: reqModal.target.id,
+        protocol: reqModal.protocol,
+        reason: reqForm.reason,
+        minutes: Number(reqForm.minutes),
+      })
+      setNotice(`Requested ${reqModal.protocol.toUpperCase()} access to ${reqModal.target.name}. An administrator must approve it — track it under My access.`)
+      setReqModal(null)
+      setReqForm({ reason: '', minutes: 60 })
+      void loadGrants()
+    } catch (e) {
+      setErr(errorMessage(e))
     } finally {
       setBusy('')
     }
@@ -87,36 +131,41 @@ export function Targets() {
   const statics = items?.filter((t) => kindOf(t) === 'target') ?? null
   const groups = items?.filter((t) => kindOf(t) === 'asg') ?? null
 
-  const protoButtons = (t: ReachableTarget, onPick: (p: Protocol) => void) => {
+  // protoButtons renders one cell per protocol family. onRequest, when given
+  // (static targets), turns a gated protocol into a Request button.
+  const protoButtons = (t: ReachableTarget, onPick: (p: Protocol) => void, onRequest?: (p: Protocol) => void) => {
     const term = pick(t, terminalProtocols)
     const desk = pick(t, desktopProtocols)
     const db = pick(t, databaseProtocols)
     const notReady = !t.host_key_ready && term === 'ssh'
+    const cell = (p: Protocol | null, colorClass: string, label: string, blocked: boolean) => {
+      if (p && onRequest && gated(t, p)) {
+        return (
+          <button className="btn sm" onClick={() => onRequest(p)} title={`request ${label.toLowerCase()} access`}>
+            Request
+          </button>
+        )
+      }
+      return (
+        <button className={'btn sm' + (p ? colorClass : '')} disabled={!p || blocked || busy === t.id + p} onClick={() => p && onPick(p)} title={p ? label : 'not allowed'}>
+          {p ? label : '—'}
+        </button>
+      )
+    }
     return (
       <>
-        <td>
-          <button className={'btn sm' + (term ? ' proto-terminal' : '')} disabled={!term || notReady || busy === t.id + term} onClick={() => term && onPick(term)} title={term ? term.toUpperCase() : 'no terminal protocol allowed'}>
-            {term ? term.toUpperCase() : '—'}
-          </button>
-        </td>
-        <td>
-          <button className={'btn sm' + (desk ? ' proto-desktop' : '')} disabled={!desk || busy === t.id + desk} onClick={() => desk && onPick(desk)} title={desk ? desk.toUpperCase() : 'no desktop protocol allowed'}>
-            {desk ? desk.toUpperCase() : '—'}
-          </button>
-        </td>
-        <td>
-          <button className={'btn sm' + (db ? ' proto-database' : '')} disabled={!db || busy === t.id + db} onClick={() => db && onPick(db)} title={db ? (t.engine ? t.engine + ' database' : 'database') : 'no database access allowed'}>
-            {db ? (t.engine || 'database').toUpperCase() : '—'}
-          </button>
-        </td>
+        <td>{cell(term, ' proto-terminal', term ? term.toUpperCase() : '', notReady)}</td>
+        <td>{cell(desk, ' proto-desktop', desk ? desk.toUpperCase() : '', false)}</td>
+        <td>{cell(db, ' proto-database', db ? (t.engine || 'database').toUpperCase() : '', false)}</td>
       </>
     )
   }
 
   return (
     <>
-      <PageHead title="Targets" lead="Machines your access policies let you reach. Terminal opens SSH or PowerShell; Desktop opens RDP or VNC when the machine offers it." />
+      <PageHead title="Targets" lead="Machines your access policies let you reach. Terminal opens SSH or PowerShell; Desktop opens RDP or VNC when the machine offers it. Request marks a machine that needs approval before you can connect." />
       {err && <Alert tone="danger">{err}</Alert>}
+      {notice && <Alert tone="ok">{notice}</Alert>}
       <div className="tabs">
         <button className={tab === 'static' ? 'active' : ''} onClick={() => setTab('static')}>Static</button>
         <button className={tab === 'asg' ? 'active' : ''} onClick={() => setTab('asg')}>Autoscaling</button>
@@ -158,7 +207,7 @@ export function Targets() {
                       <td>{t.os_family}</td>
                       <td className="mono">{t.private_ip ?? '—'}</td>
                       <td><Tags tags={t.tags} /></td>
-                      {protoButtons(t, (p) => void connect(t, { target_id: t.id, protocol: p }))}
+                      {protoButtons(t, (p) => void connect(t, { target_id: t.id, protocol: p }), (p) => setReqModal({ target: t, protocol: p }))}
                     </tr>
                   )
                 })}
@@ -246,6 +295,24 @@ export function Targets() {
               </button>
             </span>
           </div>
+        </Modal>
+      )}
+
+      {reqModal && (
+        <Modal title={`Request access to ${reqModal.target.name}`} onClose={() => setReqModal(null)}>
+          <p className="muted">This machine requires approval for {reqModal.protocol.toUpperCase()}. Say why and for how long; an administrator approves before you can connect.</p>
+          <form onSubmit={(e) => void submitRequest(e)}>
+            <Field label="Reason">
+              <textarea id="req-reason" autoFocus value={reqForm.reason} onChange={(e) => setReqForm({ ...reqForm, reason: e.target.value })} required placeholder="What you need to do" />
+            </Field>
+            <Field label="Duration (minutes)" hint="Capped by the policy">
+              <input id="req-minutes" type="number" min={1} value={reqForm.minutes} onChange={(e) => setReqForm({ ...reqForm, minutes: Number(e.target.value) })} required />
+            </Field>
+            <div className="actions">
+              <button type="button" className="btn" onClick={() => setReqModal(null)}>Cancel</button>
+              <button className="btn primary" disabled={busy === 'request'}>Request access</button>
+            </div>
+          </form>
         </Modal>
       )}
 
