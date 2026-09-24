@@ -3,8 +3,9 @@
 // Package connect is where a user's request to reach a target is decided
 // and, if allowed, turned into a live bridge. POST /connect evaluates policy
 // and issues a ticket; GET /ws/terminal redeems the ticket and runs the
-// session. Nothing about the target (address, credential) ever reaches the
-// browser.
+// session. The credential never reaches the browser, and a public address or
+// hostname is withheld too; only a private (RFC1918/ULA) IP is surfaced, to
+// help users identify a machine (see myTargets).
 package connect
 
 import (
@@ -12,6 +13,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"net/netip"
 	"strconv"
 	"time"
 
@@ -50,6 +52,9 @@ type Handler struct {
 	DialTimeout time.Duration
 	// GuacdAddr enables RDP and VNC; empty disables desktop sessions.
 	GuacdAddr string
+	// DockerPath is the docker CLI used to spawn database session containers
+	// (ADR 0017); empty means "docker" on PATH.
+	DockerPath string
 	// ASGs and Cloud enable autoscaling-group targets and EC2 Instance Connect.
 	ASGs  *asg.Repo
 	Cloud asg.ProviderFactory
@@ -76,6 +81,7 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /ws/terminal", h.terminal)
 	mux.HandleFunc("GET /ws/desktop", h.desktop)
 	mux.HandleFunc("GET /ws/winrm", h.winrm)
+	mux.HandleFunc("GET /ws/database", h.database)
 }
 
 // reachableTarget is what a user sees in their target list.
@@ -88,8 +94,13 @@ type reachableTarget struct {
 	Capabilities []target.Protocol `json:"capabilities"`
 	Allowed      []string          `json:"allowed_protocols"`
 	HostKeyReady bool              `json:"host_key_ready"`
-	HealthyCount int               `json:"healthy_count,omitempty"`
-	InstanceCnt  int               `json:"instance_count,omitempty"`
+	// PrivateIP is shown only when the target's address is a private (RFC1918 /
+	// ULA) IP, to help users tell their machines apart. A public address or a
+	// hostname is never surfaced to users; empty then.
+	PrivateIP    string `json:"private_ip,omitempty"`
+	Engine       string `json:"engine,omitempty"` // database targets (ADR 0017)
+	HealthyCount int    `json:"healthy_count,omitempty"`
+	InstanceCnt  int    `json:"instance_count,omitempty"`
 }
 
 func (h *Handler) myTargets(w http.ResponseWriter, r *http.Request) {
@@ -123,12 +134,24 @@ func (h *Handler) myTargets(w http.ResponseWriter, r *http.Request) {
 					allowed = append(allowed, string(proto))
 				}
 			}
+			// database is not in target.Protocols (it is not probed); offer it
+			// for database targets the policy permits (ADR 0017).
+			if t.IsDatabase() && policy.Evaluate(pols, ref, string(target.Database), now).Allowed {
+				allowed = append(allowed, string(target.Database))
+			}
 			if len(allowed) == 0 {
 				continue
 			}
+			// A private IP is safe to show (not routable from where users sit, so
+			// it cannot be used to bypass the gateway) and helps users identify a
+			// machine; a public address or hostname is withheld.
+			privateIP := ""
+			if a, err := netip.ParseAddr(t.Address); err == nil && a.IsPrivate() {
+				privateIP = t.Address
+			}
 			out = append(out, reachableTarget{
 				Kind: "target", ID: t.ID, Name: t.Name, OSFamily: t.OSFamily, Tags: t.Tags, Capabilities: t.Capabilities,
-				Allowed: allowed, HostKeyReady: t.HostKeyStatus == target.HostKeyTrusted,
+				Allowed: allowed, HostKeyReady: t.HostKeyStatus == target.HostKeyTrusted, PrivateIP: privateIP, Engine: t.Engine,
 			})
 		}
 		if next == "" {
@@ -215,7 +238,9 @@ func (h *Handler) connect(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	switch proto {
-	case target.SSH, target.WinRM:
+	case target.SSH, target.WinRM, target.Database:
+		// database sessions are brokered through an ephemeral container (ADR 0017);
+		// like SSH, reachability is resolved when the ticket is redeemed.
 	case target.RDP, target.VNC:
 		if h.GuacdAddr == "" {
 			deny(http.StatusNotImplemented, "protocol_unavailable", "desktop sessions are not configured on this gateway")
@@ -309,6 +334,10 @@ func (h *Handler) issueTicket(ctx context.Context, p *auth.Principal, ip string,
 		}
 		if ep.WinRMTLSFingerprint == "" {
 			return nil, "certificate_unpinned", "the target's WinRM certificate has not been captured; probe it first", nil
+		}
+	case target.Database:
+		if ep.Engine == "" {
+			return nil, "not_a_database", "target is not a database", nil
 		}
 	}
 	credID := ep.Credentials[proto]

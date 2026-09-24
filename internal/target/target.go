@@ -31,6 +31,11 @@ const (
 // probed (it is a managed endpoint, not a host), so it is not included here.
 var Protocols = []Protocol{SSH, RDP, VNC, WinRM}
 
+// CredentialProtocols are the protocols a target may bind a vaulted credential
+// to, in a stable order: the probed host protocols plus database (ADR 0017),
+// which is not probed but still authenticates through a stored credential.
+var CredentialProtocols = []Protocol{SSH, RDP, VNC, WinRM, Database}
+
 // DefaultPorts are used when a target does not override a port.
 var DefaultPorts = map[Protocol]int{SSH: 22, RDP: 3389, VNC: 5900, WinRM: 5986}
 

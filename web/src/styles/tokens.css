@@ -36,6 +36,14 @@
   --warn-soft: #f8ecd2;
   --ok: #1e7a45;
   --ok-soft: #dff2e5;
+  /* Protocol buttons on the targets list: soft tinted chips (badge weight) so a
+     dense grid of them stays calm, each protocol a distinct hue that deepens to
+     a solid fill only on hover. Terminal reuses the ultramarine accent; desktop
+     is a muted sibling violet, database a warm bronze. */
+  --proto-desk: #574bb5;
+  --proto-desk-soft: #eae8f7;
+  --proto-db: #8a5a24;
+  --proto-db-soft: #f3ecdd;
 
   /* the terminal and desktop pages are always dark, whatever the theme */
   --terminal-bg: #181a1f;
@@ -82,6 +90,10 @@
     --warn-soft: #34260a;
     --ok: #5fcf85;
     --ok-soft: #10301f;
+    --proto-desk: #b3a7f2;
+    --proto-desk-soft: #24213f;
+    --proto-db: #d9a85f;
+    --proto-db-soft: #2c2413;
     --backdrop: rgba(0, 0, 0, 0.62);
     --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 8px 24px rgba(0, 0, 0, 0.35);
   }

@@ -242,3 +242,19 @@ func TestRepoUserScopedPolicy(t *testing.T) {
 		t.Fatalf("bob unaffected by alice's policies: %v", names(bob))
 	}
 }
+
+func TestValidateProtocols(t *testing.T) {
+	base := func(protos ...string) *Policy {
+		return &Policy{Name: "p", UserID: "u1", Selector: Selector{Targets: []string{"t1"}},
+			Protocols: protos, IdleTimeoutMinutes: 30}
+	}
+	// database is a first-class protocol a policy may grant (ADR 0017).
+	for _, protos := range [][]string{{"database"}, {"ssh", "database"}} {
+		if err := base(protos...).Validate(); err != nil {
+			t.Fatalf("protocols %v should validate, got %v", protos, err)
+		}
+	}
+	if err := base("mysqlx").Validate(); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("unknown protocol should be rejected, got %v", err)
+	}
+}

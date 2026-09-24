@@ -32,7 +32,7 @@ export interface Page<T> { items: T[]; next_cursor?: string }
 
 export interface ApiErrorBody { code: string; message: string; request_id?: string }
 
-export type Protocol = 'ssh' | 'rdp' | 'vnc' | 'winrm'
+export type Protocol = 'ssh' | 'rdp' | 'vnc' | 'winrm' | 'database'
 export type OSFamily = 'linux' | 'windows' | 'other'
 export type HostKeyStatus = 'unknown' | 'pending' | 'trusted' | 'changed'
 
@@ -41,6 +41,9 @@ export interface Target {
   name: string
   address: string
   os_family: OSFamily
+  /** Database engine and version for database targets (ADR 0017); empty for VM targets. */
+  engine?: string
+  engine_version?: string
   ports: Partial<Record<Protocol, number>>
   capabilities: Protocol[]
   host_key_fingerprint: string | null
@@ -85,6 +88,10 @@ export interface ReachableTarget {
   capabilities: Protocol[]
   allowed_protocols: Protocol[]
   host_key_ready: boolean
+  /** Private (RFC1918/ULA) IP when the target has one; withheld for public addresses/hostnames. */
+  private_ip?: string
+  /** database engine when this is a database target (ADR 0017). */
+  engine?: string
   /** "target" for a static machine, "asg" for an autoscaling group; missing means "target". */
   kind?: 'target' | 'asg'
   healthy_count?: number

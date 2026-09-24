@@ -7,6 +7,7 @@ import { fmtAgo } from './Failover'
 
 const terminalProtocols: Protocol[] = ['ssh', 'winrm']
 const desktopProtocols: Protocol[] = ['rdp', 'vnc']
+const databaseProtocols: Protocol[] = ['database']
 
 function pick(t: ReachableTarget, family: Protocol[]): Protocol | null {
   for (const p of family) if (t.allowed_protocols.includes(p) && (t.capabilities.length === 0 || t.capabilities.includes(p))) return p
@@ -89,17 +90,23 @@ export function Targets() {
   const protoButtons = (t: ReachableTarget, onPick: (p: Protocol) => void) => {
     const term = pick(t, terminalProtocols)
     const desk = pick(t, desktopProtocols)
+    const db = pick(t, databaseProtocols)
     const notReady = !t.host_key_ready && term === 'ssh'
     return (
       <>
         <td>
-          <button className="btn sm primary" disabled={!term || notReady || busy === t.id + term} onClick={() => term && onPick(term)} title={term ? term.toUpperCase() : 'no terminal protocol allowed'}>
+          <button className={'btn sm' + (term ? ' proto-terminal' : '')} disabled={!term || notReady || busy === t.id + term} onClick={() => term && onPick(term)} title={term ? term.toUpperCase() : 'no terminal protocol allowed'}>
             {term ? term.toUpperCase() : '—'}
           </button>
         </td>
         <td>
-          <button className="btn sm" disabled={!desk || busy === t.id + desk} onClick={() => desk && onPick(desk)} title={desk ? desk.toUpperCase() : 'no desktop protocol allowed'}>
+          <button className={'btn sm' + (desk ? ' proto-desktop' : '')} disabled={!desk || busy === t.id + desk} onClick={() => desk && onPick(desk)} title={desk ? desk.toUpperCase() : 'no desktop protocol allowed'}>
             {desk ? desk.toUpperCase() : '—'}
+          </button>
+        </td>
+        <td>
+          <button className={'btn sm' + (db ? ' proto-database' : '')} disabled={!db || busy === t.id + db} onClick={() => db && onPick(db)} title={db ? (t.engine ? t.engine + ' database' : 'database') : 'no database access allowed'}>
+            {db ? (t.engine || 'database').toUpperCase() : '—'}
           </button>
         </td>
       </>
@@ -127,9 +134,11 @@ export function Targets() {
                 <tr>
                   <th>Name</th>
                   <th>OS</th>
+                  <th>IP</th>
                   <th>Tags</th>
                   <th>Terminal</th>
                   <th>Desktop</th>
+                  <th>Database</th>
                 </tr>
               </thead>
               <tbody>
@@ -147,6 +156,7 @@ export function Targets() {
                         )}
                       </td>
                       <td>{t.os_family}</td>
+                      <td className="mono">{t.private_ip ?? '—'}</td>
                       <td><Tags tags={t.tags} /></td>
                       {protoButtons(t, (p) => void connect(t, { target_id: t.id, protocol: p }))}
                     </tr>
@@ -174,6 +184,7 @@ export function Targets() {
                   <th>Healthy</th>
                   <th>Terminal</th>
                   <th>Desktop</th>
+                  <th>Database</th>
                 </tr>
               </thead>
               <tbody>

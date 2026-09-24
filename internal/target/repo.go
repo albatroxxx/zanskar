@@ -354,7 +354,7 @@ func replaceCredentialsTx(ctx context.Context, tx *sql.Tx, db *store.DB, id stri
 	if _, err := tx.ExecContext(ctx, db.Rebind(`DELETE FROM target_credentials WHERE target_id = ?`), id); err != nil {
 		return err
 	}
-	for _, p := range Protocols { // stable order keeps errors deterministic
+	for _, p := range CredentialProtocols { // stable order keeps errors deterministic
 		c, ok := creds[p]
 		if !ok {
 			continue

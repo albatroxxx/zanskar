@@ -311,6 +311,8 @@ func ticketPathFor(p target.Protocol) string {
 		return "/ws/desktop"
 	case target.WinRM:
 		return "/ws/winrm"
+	case target.Database:
+		return "/ws/database"
 	default:
 		return "/ws/terminal"
 	}

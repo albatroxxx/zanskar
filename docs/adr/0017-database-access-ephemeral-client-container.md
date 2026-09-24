@@ -84,3 +84,55 @@ that runs the version-matched client.
   the proxy phase or a dedicated path can address that later.
 - GCP Cloud SQL and Azure Database fit the same target model behind the credential/auth
   abstraction when we add those providers.
+
+## Addendum 2026-09-23: no credential leak — the client never authenticates
+
+Implementation exposed a flaw in the broker-first plan above. If the session container runs
+the client (`psql`/`mysql`) connected **directly** to the database, the credential has to be
+in that container for the client to authenticate — and a client shell escape (`psql`/`mysql`
+`\!`) lets the user read it back from the environment. Whatever the client authenticates
+with, the user can extract. That breaks the "credentials ... never shown to the user"
+guarantee, so the direct-connection broker is **not** used.
+
+**Decision: the client never holds a credential.** A per-session proxy holds the credential
+and authenticates to the database; the client container connects to the proxy over a private,
+trusted channel with no password.
+
+- **Mechanism:** a per-session **proxy sidecar** — pgbouncer (PostgreSQL), ProxySQL (MySQL) —
+  on a private per-session Docker network, configured with the upstream credential and
+  `trust` auth for the client. This reuses proven auth (SCRAM, caching_sha2) instead of
+  hand-rolled protocol crypto. The client container has no credential and no network route to
+  the database except through the proxy.
+- **Phasing:** the proxy is therefore the *starting point* for database access, not a later
+  add-on. Per-query audit and read-only enforcement still layer on afterwards — the proxy
+  already sees the wire bytes. **PostgreSQL (pgbouncer) ships first; MySQL follows.**
+- The session container still records its terminal (asciicast) and audits session start/end;
+  the credential stays only on Zanskar's side, in the sidecar (isolated, ephemeral, not
+  user-reachable), never in the client the user drives.
+
+## Addendum 2026-09-24: pgbouncer auth mechanics and the Docker-access requirement
+
+Live verification against a real PostgreSQL 16 (`scram-sha-256`) upstream settled two details
+the sidecar decision above left implicit.
+
+- **The proxy needs the plaintext password for the upstream, and `trust` for the client.**
+  A `trust` client presents no password, so pgbouncer has nothing to forward and must
+  authenticate to the server itself. With a modern (`scram-sha-256`) upstream this only works
+  if pgbouncer holds the **plaintext** password — an md5/scram hash yields
+  `cannot do SCRAM authentication: wrong password type`. So the `[databases]` entry carries an
+  inline `user=/password=` (plaintext), `[pgbouncer] auth_type=trust`, and a `userlist.txt`
+  that merely lists the client user (its password is ignored under trust but the user must
+  exist).
+- **The credential stays out of the host argument vector.** The pgbouncer config (with the
+  password) is passed to the sidecar in an environment variable and written to
+  `/etc/pgbouncer/pgbouncer.ini` by an in-container start-up snippet, then pgbouncer is exec'd.
+  `docker inspect`/`ps` on the host show no secret in argv; it lives only in the sidecar's
+  environment. The client container still receives neither the password nor the upstream host
+  — verified by inspecting a live session's containers.
+- **Operational requirement:** brokering spawns containers, so the gateway process needs access
+  to the Docker daemon socket, which is root-equivalent on a stock Docker install. The hardened
+  systemd unit grants it narrowly via `SupplementaryGroups=docker` (the service otherwise keeps
+  `NoNewPrivileges`, `ProtectSystem=strict`, `ProtectHome`). Operators who do not use database
+  access need not grant it. A rootless-Docker or socket-proxy posture is a future hardening.
+- **Follow-ups unchanged:** MySQL (ProxySQL) next; per-query audit and read-only enforcement
+  layer on at the proxy afterwards.
