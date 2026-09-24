@@ -228,9 +228,15 @@ export function Player() {
               ) : (
                 <>
                   <p className="muted" style={{ marginTop: 0 }}>Each line the user submitted, in order. Click one to jump the playback to it. Input the remote did not echo, such as a password, is marked hidden and was never stored.</p>
+                  {/* Seek by marker INDEX, not the command's original timestamp:
+                      the player compresses idle gaps (idleTimeLimit), so its
+                      timeline no longer matches recording time and a raw-seconds
+                      seek lands in the wrong place. The i-th command is the i-th
+                      marker the player read from the cast, and it resolves that to
+                      the correct spot on the compressed timeline. */}
                   <ol className="commands">
                     {commands.map((c, i) => (
-                      <li key={i} onClick={() => term.current?.seek(c.t)} title="Jump to this point">
+                      <li key={i} onClick={() => term.current?.seek({ marker: i })} title="Jump to this point">
                         <span className="t">{fmtSeconds(Math.floor(c.t))}</span>
                         {c.text === '(hidden input)' ? <span className="hidden">{c.text}</span> : <span>{c.text}</span>}
                       </li>
