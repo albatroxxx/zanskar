@@ -3,8 +3,9 @@
 // Package connect is where a user's request to reach a target is decided
 // and, if allowed, turned into a live bridge. POST /connect evaluates policy
 // and issues a ticket; GET /ws/terminal redeems the ticket and runs the
-// session. Nothing about the target (address, credential) ever reaches the
-// browser.
+// session. The credential never reaches the browser, and a public address or
+// hostname is withheld too; only a private (RFC1918/ULA) IP is surfaced, to
+// help users identify a machine (see myTargets).
 package connect
 
 import (
@@ -12,6 +13,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"net/netip"
 	"strconv"
 	"time"
 
@@ -92,9 +94,13 @@ type reachableTarget struct {
 	Capabilities []target.Protocol `json:"capabilities"`
 	Allowed      []string          `json:"allowed_protocols"`
 	HostKeyReady bool              `json:"host_key_ready"`
-	Engine       string            `json:"engine,omitempty"` // database targets (ADR 0017)
-	HealthyCount int               `json:"healthy_count,omitempty"`
-	InstanceCnt  int               `json:"instance_count,omitempty"`
+	// PrivateIP is shown only when the target's address is a private (RFC1918 /
+	// ULA) IP, to help users tell their machines apart. A public address or a
+	// hostname is never surfaced to users; empty then.
+	PrivateIP    string `json:"private_ip,omitempty"`
+	Engine       string `json:"engine,omitempty"` // database targets (ADR 0017)
+	HealthyCount int    `json:"healthy_count,omitempty"`
+	InstanceCnt  int    `json:"instance_count,omitempty"`
 }
 
 func (h *Handler) myTargets(w http.ResponseWriter, r *http.Request) {
@@ -136,9 +142,16 @@ func (h *Handler) myTargets(w http.ResponseWriter, r *http.Request) {
 			if len(allowed) == 0 {
 				continue
 			}
+			// A private IP is safe to show (not routable from where users sit, so
+			// it cannot be used to bypass the gateway) and helps users identify a
+			// machine; a public address or hostname is withheld.
+			privateIP := ""
+			if a, err := netip.ParseAddr(t.Address); err == nil && a.IsPrivate() {
+				privateIP = t.Address
+			}
 			out = append(out, reachableTarget{
 				Kind: "target", ID: t.ID, Name: t.Name, OSFamily: t.OSFamily, Tags: t.Tags, Capabilities: t.Capabilities,
-				Allowed: allowed, HostKeyReady: t.HostKeyStatus == target.HostKeyTrusted, Engine: t.Engine,
+				Allowed: allowed, HostKeyReady: t.HostKeyStatus == target.HostKeyTrusted, PrivateIP: privateIP, Engine: t.Engine,
 			})
 		}
 		if next == "" {

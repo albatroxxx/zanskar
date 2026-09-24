@@ -134,6 +134,7 @@ export function Targets() {
                 <tr>
                   <th>Name</th>
                   <th>OS</th>
+                  <th>IP</th>
                   <th>Tags</th>
                   <th>Terminal</th>
                   <th>Desktop</th>
@@ -155,6 +156,7 @@ export function Targets() {
                         )}
                       </td>
                       <td>{t.os_family}</td>
+                      <td className="mono">{t.private_ip ?? '—'}</td>
                       <td><Tags tags={t.tags} /></td>
                       {protoButtons(t, (p) => void connect(t, { target_id: t.id, protocol: p }))}
                     </tr>

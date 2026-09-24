@@ -88,6 +88,8 @@ export interface ReachableTarget {
   capabilities: Protocol[]
   allowed_protocols: Protocol[]
   host_key_ready: boolean
+  /** Private (RFC1918/ULA) IP when the target has one; withheld for public addresses/hostnames. */
+  private_ip?: string
   /** database engine when this is a database target (ADR 0017). */
   engine?: string
   /** "target" for a static machine, "asg" for an autoscaling group; missing means "target". */
