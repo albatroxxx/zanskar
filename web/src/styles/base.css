@@ -76,6 +76,10 @@ td .muted, .muted { color: var(--fg-muted); }
 .btn:disabled { opacity: 0.5; cursor: not-allowed; }
 .btn.primary { background: var(--accent); color: var(--accent-fg); border-color: transparent; font-weight: 500; }
 .btn.primary:hover { background: var(--accent-hover); border-color: transparent; }
+.btn.proto-desktop { background: var(--proto-desktop); color: var(--accent-fg); border-color: transparent; font-weight: 500; }
+.btn.proto-desktop:hover { background: var(--proto-desktop-hover); border-color: transparent; }
+.btn.proto-database { background: var(--proto-database); color: var(--accent-fg); border-color: transparent; font-weight: 500; }
+.btn.proto-database:hover { background: var(--proto-database-hover); border-color: transparent; }
 .btn.danger { color: var(--danger); border-color: var(--danger); }
 .btn.sm { padding: 4px 9px; font-size: 0.82rem; }
 .btn.ghost { border-color: transparent; background: transparent; }

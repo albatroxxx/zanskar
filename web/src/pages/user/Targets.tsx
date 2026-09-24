@@ -100,12 +100,12 @@ export function Targets() {
           </button>
         </td>
         <td>
-          <button className="btn sm" disabled={!desk || busy === t.id + desk} onClick={() => desk && onPick(desk)} title={desk ? desk.toUpperCase() : 'no desktop protocol allowed'}>
+          <button className="btn sm proto-desktop" disabled={!desk || busy === t.id + desk} onClick={() => desk && onPick(desk)} title={desk ? desk.toUpperCase() : 'no desktop protocol allowed'}>
             {desk ? desk.toUpperCase() : '—'}
           </button>
         </td>
         <td>
-          <button className="btn sm" disabled={!db || busy === t.id + db} onClick={() => db && onPick(db)} title={db ? (t.engine ? t.engine + ' database' : 'database') : 'no database access allowed'}>
+          <button className="btn sm proto-database" disabled={!db || busy === t.id + db} onClick={() => db && onPick(db)} title={db ? (t.engine ? t.engine + ' database' : 'database') : 'no database access allowed'}>
             {db ? (t.engine || 'database').toUpperCase() : '—'}
           </button>
         </td>
