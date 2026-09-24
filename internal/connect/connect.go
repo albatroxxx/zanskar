@@ -225,7 +225,9 @@ func (h *Handler) connect(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	switch proto {
-	case target.SSH, target.WinRM:
+	case target.SSH, target.WinRM, target.Database:
+		// database sessions are brokered through an ephemeral container (ADR 0017);
+		// like SSH, reachability is resolved when the ticket is redeemed.
 	case target.RDP, target.VNC:
 		if h.GuacdAddr == "" {
 			deny(http.StatusNotImplemented, "protocol_unavailable", "desktop sessions are not configured on this gateway")
