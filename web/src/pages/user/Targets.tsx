@@ -95,17 +95,17 @@ export function Targets() {
     return (
       <>
         <td>
-          <button className="btn sm primary" disabled={!term || notReady || busy === t.id + term} onClick={() => term && onPick(term)} title={term ? term.toUpperCase() : 'no terminal protocol allowed'}>
+          <button className={'btn sm' + (term ? ' proto-terminal' : '')} disabled={!term || notReady || busy === t.id + term} onClick={() => term && onPick(term)} title={term ? term.toUpperCase() : 'no terminal protocol allowed'}>
             {term ? term.toUpperCase() : '—'}
           </button>
         </td>
         <td>
-          <button className="btn sm proto-desktop" disabled={!desk || busy === t.id + desk} onClick={() => desk && onPick(desk)} title={desk ? desk.toUpperCase() : 'no desktop protocol allowed'}>
+          <button className={'btn sm' + (desk ? ' proto-desktop' : '')} disabled={!desk || busy === t.id + desk} onClick={() => desk && onPick(desk)} title={desk ? desk.toUpperCase() : 'no desktop protocol allowed'}>
             {desk ? desk.toUpperCase() : '—'}
           </button>
         </td>
         <td>
-          <button className="btn sm proto-database" disabled={!db || busy === t.id + db} onClick={() => db && onPick(db)} title={db ? (t.engine ? t.engine + ' database' : 'database') : 'no database access allowed'}>
+          <button className={'btn sm' + (db ? ' proto-database' : '')} disabled={!db || busy === t.id + db} onClick={() => db && onPick(db)} title={db ? (t.engine ? t.engine + ' database' : 'database') : 'no database access allowed'}>
             {db ? (t.engine || 'database').toUpperCase() : '—'}
           </button>
         </td>
