@@ -21,6 +21,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/albatroxxx/zanskar/internal/access"
 	"github.com/albatroxxx/zanskar/internal/asg"
 	"github.com/albatroxxx/zanskar/internal/audit"
 	"github.com/albatroxxx/zanskar/internal/auth"
@@ -160,6 +161,7 @@ func runServe() error {
 	vault := credential.NewVault(db, ring)
 	targets := target.NewRepo(db)
 	policies := policy.NewRepo(db)
+	accessReqs := access.NewRepo(db)
 	sessionRepo := session.NewRepo(db)
 	registry := gateway.NewRegistry()
 	var storage recording.Storage = &recording.LocalStorage{Dir: cfg.RecordingsDir}
@@ -190,6 +192,7 @@ func runServe() error {
 			&credential.AdminHandler{Vault: vault, Audit: auditLog, Log: log},
 			&target.AdminHandler{Repo: targets, Prober: &target.Prober{}, Audit: auditLog, Log: log},
 			&policy.AdminHandler{Repo: policies, Audit: auditLog, Log: log},
+			&access.Handler{Requests: accessReqs, Policies: policies, Targets: targets, Audit: auditLog, Log: log},
 			&asg.AdminHandler{Repo: asgRepo, Sync: syncer.SyncGroup, GatewayPrincipal: cfg.AWSGatewayPrincipal, Audit: auditLog, Log: log},
 			&session.Handler{Repo: sessionRepo, Audit: auditLog, Registry: registry, Storage: storage, Log: log},
 			&connect.Handler{Targets: targets, Policies: policies, Vault: vault, Sessions: sessionRepo, Tickets: ticket.NewStore(),
