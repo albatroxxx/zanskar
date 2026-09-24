@@ -35,18 +35,20 @@ func TestProxyArgsHoldsCredential(t *testing.T) {
 			t.Fatalf("credential leaked into proxy argv: %q", a)
 		}
 	}
-	// It rides the sidecar's environment via DATABASE_URL (by name in argv).
-	if !slices.Contains(args, "DATABASE_URL") || !slices.Contains(args, "AUTH_TYPE=trust") {
-		t.Fatalf("expected -e DATABASE_URL and AUTH_TYPE=trust, got %v", args)
+	// It rides the sidecar's environment via PGB_INI (passed by name in argv),
+	// and the config is materialised in-container by the entrypoint override.
+	if !slices.Contains(args, "PGB_INI") || !slices.Contains(args, "--entrypoint") {
+		t.Fatalf("expected -e PGB_INI and an entrypoint override, got %v", args)
 	}
 	found := false
 	for _, e := range env {
-		if strings.HasPrefix(e, "DATABASE_URL=") && strings.Contains(e, "s3cret") && strings.Contains(e, "db.internal") {
+		if strings.HasPrefix(e, "PGB_INI=") && strings.Contains(e, "s3cret") &&
+			strings.Contains(e, "db.internal") && strings.Contains(e, "auth_type=trust") {
 			found = true
 		}
 	}
 	if !found {
-		t.Fatalf("upstream credential not carried in the sidecar env: %v", env)
+		t.Fatalf("upstream credential/config not carried in the sidecar env: %v", env)
 	}
 	for _, want := range []string{"no-new-privileges", "ALL", "edoburu/pgbouncer:v1.23.1-p3"} {
 		if !slices.Contains(args, want) {

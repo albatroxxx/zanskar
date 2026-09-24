@@ -109,3 +109,30 @@ trusted channel with no password.
 - The session container still records its terminal (asciicast) and audits session start/end;
   the credential stays only on Zanskar's side, in the sidecar (isolated, ephemeral, not
   user-reachable), never in the client the user drives.
+
+## Addendum 2026-09-24: pgbouncer auth mechanics and the Docker-access requirement
+
+Live verification against a real PostgreSQL 16 (`scram-sha-256`) upstream settled two details
+the sidecar decision above left implicit.
+
+- **The proxy needs the plaintext password for the upstream, and `trust` for the client.**
+  A `trust` client presents no password, so pgbouncer has nothing to forward and must
+  authenticate to the server itself. With a modern (`scram-sha-256`) upstream this only works
+  if pgbouncer holds the **plaintext** password — an md5/scram hash yields
+  `cannot do SCRAM authentication: wrong password type`. So the `[databases]` entry carries an
+  inline `user=/password=` (plaintext), `[pgbouncer] auth_type=trust`, and a `userlist.txt`
+  that merely lists the client user (its password is ignored under trust but the user must
+  exist).
+- **The credential stays out of the host argument vector.** The pgbouncer config (with the
+  password) is passed to the sidecar in an environment variable and written to
+  `/etc/pgbouncer/pgbouncer.ini` by an in-container start-up snippet, then pgbouncer is exec'd.
+  `docker inspect`/`ps` on the host show no secret in argv; it lives only in the sidecar's
+  environment. The client container still receives neither the password nor the upstream host
+  — verified by inspecting a live session's containers.
+- **Operational requirement:** brokering spawns containers, so the gateway process needs access
+  to the Docker daemon socket, which is root-equivalent on a stock Docker install. The hardened
+  systemd unit grants it narrowly via `SupplementaryGroups=docker` (the service otherwise keeps
+  `NoNewPrivileges`, `ProtectSystem=strict`, `ProtectHome`). Operators who do not use database
+  access need not grant it. A rootless-Docker or socket-proxy posture is a future hardening.
+- **Follow-ups unchanged:** MySQL (ProxySQL) next; per-query audit and read-only enforcement
+  layer on at the proxy afterwards.

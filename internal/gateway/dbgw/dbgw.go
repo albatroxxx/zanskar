@@ -18,6 +18,7 @@ import (
 	"os"
 	"os/exec"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -78,7 +79,21 @@ func names(sessionID string) (network, proxy, client string) {
 	return "zanskar-net-" + sessionID, "zanskar-dbproxy-" + sessionID, "zanskar-dbcli-" + sessionID
 }
 
-const proxyPort = 6432 // pgbouncer's default listen port
+const proxyPort = 6432 // port pgbouncer is configured to listen on
+
+// proxyScript materialises the pgbouncer config from the sidecar's own
+// environment and execs pgbouncer. Writing the config in-container keeps the
+// upstream credential out of the host argument vector (it rides PGB_INI in the
+// environment) while the client container never receives it at all.
+const proxyScript = `umask 077; printf %s "$PGB_INI" > /etc/pgbouncer/pgbouncer.ini; printf %s "$PGB_USERLIST" > /etc/pgbouncer/userlist.txt; exec /usr/bin/pgbouncer /etc/pgbouncer/pgbouncer.ini`
+
+// connQuote single-quotes a libpq/pgbouncer connection-string value so spaces
+// or metacharacters in a credential cannot break the generated config.
+func connQuote(s string) string {
+	s = strings.ReplaceAll(s, `\`, `\\`)
+	s = strings.ReplaceAll(s, `'`, `\'`)
+	return "'" + s + "'"
+}
 
 // proxyArgs builds the detached `docker run` for the sidecar and the environment
 // carrying the upstream credential by name — so it never appears in the host
@@ -92,19 +107,37 @@ func proxyArgs(s Spec, network, name string) (args []string, env []string, err e
 	if s.Host == "" || s.Port <= 0 || s.Username == "" {
 		return nil, nil, fmt.Errorf("dbgw: host, port and username are required")
 	}
-	// edoburu/pgbouncer takes the upstream connection (with the credential) in
-	// DATABASE_URL and, with AUTH_TYPE=trust, accepts the client with no
-	// password. DATABASE_URL is passed by name; its value is set in the docker
-	// process environment below.
+	// pgbouncer authenticates to the upstream — commonly scram-sha-256, as on
+	// RDS — with the plaintext password, and accepts the credential-less client
+	// with auth_type=trust. An inline server password is required because trust
+	// clients present no password for pgbouncer to forward. The config is built
+	// from the sidecar's own environment at start-up (proxyScript), so the
+	// credential never enters the host argument vector and never reaches the
+	// client container. ADR 0017.
+	ini := "[databases]\n" +
+		s.Database + " = host=" + s.Host + " port=" + strconv.Itoa(s.Port) +
+		" dbname=" + connQuote(s.Database) + " user=" + connQuote(s.Username) +
+		" password=" + connQuote(s.Password) + "\n" +
+		"[pgbouncer]\n" +
+		"listen_addr=0.0.0.0\n" +
+		"listen_port=" + strconv.Itoa(proxyPort) + "\n" +
+		"auth_type=trust\n" +
+		"auth_file=/etc/pgbouncer/userlist.txt\n" +
+		"pool_mode=session\n" +
+		"ignore_startup_parameters=extra_float_digits\n" +
+		"max_client_conn=50\n" +
+		"admin_users=" + s.Username + "\n"
+	// Trust ignores the client password, but the connecting user must be listed.
+	userlist := fmt.Sprintf("%q %q\n", s.Username, "x")
 	args = []string{
 		"run", "-d", "--rm", "--name", name, "--network", network,
 		"--security-opt", "no-new-privileges", "--cap-drop", "ALL",
 		"--pids-limit", "64", "--memory", "128m",
-		"-e", "DATABASE_URL", "-e", "AUTH_TYPE=trust", "-e", "POOL_MODE=session",
-		img,
+		"-e", "PGB_INI", "-e", "PGB_USERLIST",
+		"--entrypoint", "sh", img,
+		"-c", proxyScript,
 	}
-	url := fmt.Sprintf("postgresql://%s:%s@%s:%d/%s", s.Username, s.Password, s.Host, s.Port, s.Database)
-	env = []string{"DATABASE_URL=" + url}
+	env = []string{"PGB_INI=" + ini, "PGB_USERLIST=" + userlist}
 	return args, env, nil
 }
 
