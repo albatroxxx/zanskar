@@ -8,6 +8,7 @@ import type { Role } from './api/types'
 import { Login } from './pages/Login'
 import { Targets } from './pages/user/Targets'
 import { MySessions } from './pages/user/MySessions'
+import { MyAccess } from './pages/user/MyAccess'
 
 // The terminal pulls in xterm; load it only when a session opens.
 const Terminal = lazy(() => import('./pages/user/Terminal').then((m) => ({ default: m.Terminal })))
@@ -71,6 +72,7 @@ export default function App() {
               portal="user"
               items={[
                 { to: '/', label: 'Targets', end: true },
+                { to: '/access', label: 'My access' },
                 { to: '/sessions', label: 'My sessions' },
               ]}
             />
@@ -78,6 +80,7 @@ export default function App() {
         }
       >
         <Route index element={<Targets />} />
+        <Route path="access" element={<MyAccess />} />
         <Route path="sessions" element={<MySessions />} />
       </Route>
       <Route
@@ -91,6 +94,7 @@ export default function App() {
                 { to: '/admin/autoscaling', label: 'Autoscaling' },
                 { to: '/admin/credentials', label: 'Credentials' },
                 { to: '/admin/policies', label: 'Policies' },
+                { to: '/admin/approvals', label: 'Approvals' },
                 { to: '/admin/users', label: 'Users & groups' },
                 { to: '/admin/identity-providers', label: 'Identity providers' },
                 { to: '/admin/sessions', label: 'Sessions' },

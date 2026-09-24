@@ -97,7 +97,10 @@ type reachableTarget struct {
 	Tags         map[string]string `json:"tags"`
 	Capabilities []target.Protocol `json:"capabilities"`
 	Allowed      []string          `json:"allowed_protocols"`
-	HostKeyReady bool              `json:"host_key_ready"`
+	// RequiresApproval lists the allowed protocols that are approval-gated
+	// (ADR 0018): the user requests access rather than connecting directly.
+	RequiresApproval []string `json:"requires_approval,omitempty"`
+	HostKeyReady     bool     `json:"host_key_ready"`
 	// PrivateIP is shown only when the target's address is a private (RFC1918 /
 	// ULA) IP, to help users tell their machines apart. A public address or a
 	// hostname is never surfaced to users; empty then.
@@ -132,16 +135,24 @@ func (h *Handler) myTargets(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 			ref := policy.TargetRef{ID: t.ID, Tags: t.Tags}
-			var allowed []string
-			for _, proto := range target.Protocols {
-				if policy.Evaluate(pols, ref, string(proto), now).Allowed {
-					allowed = append(allowed, string(proto))
+			var allowed, needApproval []string
+			consider := func(proto target.Protocol) {
+				d := policy.Evaluate(pols, ref, string(proto), now)
+				if !d.Allowed {
+					return
 				}
+				allowed = append(allowed, string(proto))
+				if d.RequireApproval {
+					needApproval = append(needApproval, string(proto))
+				}
+			}
+			for _, proto := range target.Protocols {
+				consider(proto)
 			}
 			// database is not in target.Protocols (it is not probed); offer it
 			// for database targets the policy permits (ADR 0017).
-			if t.IsDatabase() && policy.Evaluate(pols, ref, string(target.Database), now).Allowed {
-				allowed = append(allowed, string(target.Database))
+			if t.IsDatabase() {
+				consider(target.Database)
 			}
 			if len(allowed) == 0 {
 				continue
@@ -155,7 +166,7 @@ func (h *Handler) myTargets(w http.ResponseWriter, r *http.Request) {
 			}
 			out = append(out, reachableTarget{
 				Kind: "target", ID: t.ID, Name: t.Name, OSFamily: t.OSFamily, Tags: t.Tags, Capabilities: t.Capabilities,
-				Allowed: allowed, HostKeyReady: t.HostKeyStatus == target.HostKeyTrusted, PrivateIP: privateIP, Engine: t.Engine,
+				Allowed: allowed, RequiresApproval: needApproval, HostKeyReady: t.HostKeyStatus == target.HostKeyTrusted, PrivateIP: privateIP, Engine: t.Engine,
 			})
 		}
 		if next == "" {
