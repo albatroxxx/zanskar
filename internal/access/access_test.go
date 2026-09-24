@@ -132,3 +132,38 @@ func TestEligiblePolicy(t *testing.T) {
 		t.Error("an approval-gated policy should confer eligibility")
 	}
 }
+
+func TestHasActiveGrant(t *testing.T) {
+	ctx, r := setup(t)
+	now := func() time.Time { return time.Now().UTC() }
+
+	req := &Request{UserID: "u1", TargetID: "t1", Protocol: "ssh", Reason: "x", RequestedMinutes: 60}
+	if err := r.Create(ctx, req); err != nil {
+		t.Fatal(err)
+	}
+	if ok, _ := r.HasActiveGrant(ctx, "u1", "t1", "", "ssh", now()); ok {
+		t.Fatal("a pending request is not an active grant")
+	}
+	exp := now().Add(time.Hour)
+	if _, err := r.Decide(ctx, req.ID, "u2", StatusApproved, "", &exp); err != nil {
+		t.Fatal(err)
+	}
+	if ok, err := r.HasActiveGrant(ctx, "u1", "t1", "", "ssh", now()); err != nil || !ok {
+		t.Fatalf("approved grant should be active: ok=%v err=%v", ok, err)
+	}
+	for _, c := range []struct{ user, tgt, proto, why string }{
+		{"u1", "t1", "rdp", "wrong protocol"},
+		{"u1", "other", "ssh", "wrong target"},
+		{"u2", "t1", "ssh", "wrong user"},
+	} {
+		if ok, _ := r.HasActiveGrant(ctx, c.user, c.tgt, "", c.proto, now()); ok {
+			t.Errorf("%s should not match a grant", c.why)
+		}
+	}
+	if _, err := r.Revoke(ctx, req.ID, "done"); err != nil {
+		t.Fatal(err)
+	}
+	if ok, _ := r.HasActiveGrant(ctx, "u1", "t1", "", "ssh", now()); ok {
+		t.Fatal("a revoked grant is not active")
+	}
+}

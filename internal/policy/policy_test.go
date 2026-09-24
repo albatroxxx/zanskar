@@ -258,3 +258,21 @@ func TestValidateProtocols(t *testing.T) {
 		t.Fatalf("unknown protocol should be rejected, got %v", err)
 	}
 }
+
+func TestEvaluateRequireApproval(t *testing.T) {
+	ref := TargetRef{ID: "t1"}
+	now := time.Now()
+	appr := &Policy{Enabled: true, RequireApproval: true, Selector: Selector{Targets: []string{"t1"}}, Protocols: []string{"ssh"}, IdleTimeoutMinutes: 30}
+	stand := &Policy{Enabled: true, Selector: Selector{Targets: []string{"t1"}}, Protocols: []string{"ssh"}, IdleTimeoutMinutes: 20}
+
+	if d := Evaluate([]*Policy{appr}, ref, "ssh", now); !d.Allowed || !d.RequireApproval {
+		t.Fatalf("approval-only should be allowed and require approval: %+v", d)
+	}
+	if d := Evaluate([]*Policy{stand}, ref, "ssh", now); !d.Allowed || d.RequireApproval {
+		t.Fatalf("standing should be allowed without approval: %+v", d)
+	}
+	// A standing policy alongside an approval-gated one is standing access.
+	if d := Evaluate([]*Policy{appr, stand}, ref, "ssh", now); !d.Allowed || d.RequireApproval {
+		t.Fatalf("standing must win over approval-gated: %+v", d)
+	}
+}
