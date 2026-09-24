@@ -111,6 +111,14 @@ func (r *Repo) Revoke(ctx context.Context, id, note string) (*Request, error) {
 	return r.Get(ctx, id)
 }
 
+// DueForExpiry returns approved grants whose window has passed (as of now), so
+// the sweeper can audit each before flipping them with ExpireDue under the same
+// cutoff.
+func (r *Repo) DueForExpiry(ctx context.Context, now time.Time) ([]*Request, error) {
+	return r.query(ctx, `WHERE status = ? AND expires_at <= ? ORDER BY expires_at`,
+		string(StatusApproved), store.TimeArg(now))
+}
+
 // ExpireDue transitions approved grants whose window has passed to expired and
 // returns how many changed. Used by the expiry sweeper (ADR 0018).
 func (r *Repo) ExpireDue(ctx context.Context, now time.Time) (int64, error) {

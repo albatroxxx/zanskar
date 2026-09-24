@@ -213,6 +213,10 @@ func runServe() error {
 	retention := &session.RetentionSweeper{Repo: sessionRepo, Storage: storage, Audit: auditLog, Log: log}
 	go retention.Run(ctx, time.Hour)
 
+	// Expire lapsed just-in-time access grants and audit each (ADR 0018).
+	grantSweeper := &access.Sweeper{Repo: accessReqs, Audit: auditLog, Log: log}
+	go grantSweeper.Run(ctx, time.Minute)
+
 	// SIEM export: ship the audit chain to the configured sinks.
 	var sinks []audit.Sink
 	if cfg.SIEMSyslogAddr != "" {

@@ -5,6 +5,8 @@ package access
 import (
 	"context"
 	"errors"
+	"io"
+	"log/slog"
 	"testing"
 	"time"
 
@@ -165,5 +167,42 @@ func TestHasActiveGrant(t *testing.T) {
 	}
 	if ok, _ := r.HasActiveGrant(ctx, "u1", "t1", "", "ssh", now()); ok {
 		t.Fatal("a revoked grant is not active")
+	}
+}
+
+func TestSweeper(t *testing.T) {
+	ctx, r := setup(t)
+	// A grant already past its window.
+	lapsed := &Request{UserID: "u1", TargetID: "t1", Protocol: "ssh", Reason: "x", RequestedMinutes: 1}
+	if err := r.Create(ctx, lapsed); err != nil {
+		t.Fatal(err)
+	}
+	past := time.Now().UTC().Add(-time.Minute)
+	if _, err := r.Decide(ctx, lapsed.ID, "u2", StatusApproved, "", &past); err != nil {
+		t.Fatal(err)
+	}
+	// A still-active grant that must survive the sweep.
+	active := &Request{UserID: "u1", TargetID: "t1", Protocol: "ssh", Reason: "y", RequestedMinutes: 60}
+	if err := r.Create(ctx, active); err != nil {
+		t.Fatal(err)
+	}
+	future := time.Now().UTC().Add(time.Hour)
+	if _, err := r.Decide(ctx, active.ID, "u2", StatusApproved, "", &future); err != nil {
+		t.Fatal(err)
+	}
+
+	sw := &Sweeper{Repo: r, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	n, err := sw.Sweep(ctx)
+	if err != nil || n != 1 {
+		t.Fatalf("sweep should expire exactly the lapsed grant: n=%d err=%v", n, err)
+	}
+	if g, _ := r.Get(ctx, lapsed.ID); g.Status != StatusExpired {
+		t.Fatalf("lapsed grant should be expired, got %s", g.Status)
+	}
+	if g, _ := r.Get(ctx, active.ID); g.Status != StatusApproved {
+		t.Fatalf("active grant should survive, got %s", g.Status)
+	}
+	if n, _ := sw.Sweep(ctx); n != 0 {
+		t.Fatalf("a second sweep should expire nothing, got %d", n)
 	}
 }
