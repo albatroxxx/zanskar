@@ -23,7 +23,7 @@ type Repo struct {
 func NewRepo(db *store.DB) *Repo { return &Repo{db: db} }
 
 const cols = `id, name, description, enabled, group_id, user_id, target_selector, protocols, time_windows,
-	max_session_minutes, idle_timeout_minutes, allow_clipboard, allow_file_transfer, require_mfa,
+	max_session_minutes, idle_timeout_minutes, allow_clipboard, allow_file_transfer, require_mfa, require_approval,
 	created_by, created_at, updated_at`
 
 // Create validates and inserts p, setting ID and timestamps.
@@ -38,9 +38,9 @@ func (r *Repo) Create(ctx context.Context, p *Policy) error {
 		return err
 	}
 	_, err = r.db.ExecContext(ctx, r.db.Rebind(`INSERT INTO access_policies (`+cols+`)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`),
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`),
 		p.ID, p.Name, p.Description, p.Enabled, nullStr(p.GroupID), nullStr(p.UserID), sel, protos, wins,
-		nullInt(p.MaxSessionMinutes), p.IdleTimeoutMinutes, p.AllowClipboard, p.AllowFileTransfer, p.RequireMFA,
+		nullInt(p.MaxSessionMinutes), p.IdleTimeoutMinutes, p.AllowClipboard, p.AllowFileTransfer, p.RequireMFA, p.RequireApproval,
 		nullStr(p.CreatedBy), store.TimeArg(now), store.TimeArg(now))
 	if err != nil {
 		return mapErr(err)
@@ -60,9 +60,9 @@ func (r *Repo) Update(ctx context.Context, p *Policy) error {
 	p.UpdatedAt = time.Now().UTC()
 	res, err := r.db.ExecContext(ctx, r.db.Rebind(`UPDATE access_policies SET name = ?, description = ?, enabled = ?, group_id = ?, user_id = ?,
 		target_selector = ?, protocols = ?, time_windows = ?, max_session_minutes = ?, idle_timeout_minutes = ?,
-		allow_clipboard = ?, allow_file_transfer = ?, require_mfa = ?, updated_at = ? WHERE id = ?`),
+		allow_clipboard = ?, allow_file_transfer = ?, require_mfa = ?, require_approval = ?, updated_at = ? WHERE id = ?`),
 		p.Name, p.Description, p.Enabled, nullStr(p.GroupID), nullStr(p.UserID), sel, protos, wins, nullInt(p.MaxSessionMinutes), p.IdleTimeoutMinutes,
-		p.AllowClipboard, p.AllowFileTransfer, p.RequireMFA, store.TimeArg(p.UpdatedAt), p.ID)
+		p.AllowClipboard, p.AllowFileTransfer, p.RequireMFA, p.RequireApproval, store.TimeArg(p.UpdatedAt), p.ID)
 	if err != nil {
 		return mapErr(err)
 	}
@@ -145,7 +145,7 @@ func scan(s scanner) (*Policy, error) {
 		created, updated  store.NullTime
 	)
 	err := s.Scan(&p.ID, &p.Name, &p.Description, &p.Enabled, &groupID, &userID, &sel, &protos, &wins,
-		&maxSession, &p.IdleTimeoutMinutes, &p.AllowClipboard, &p.AllowFileTransfer, &p.RequireMFA,
+		&maxSession, &p.IdleTimeoutMinutes, &p.AllowClipboard, &p.AllowFileTransfer, &p.RequireMFA, &p.RequireApproval,
 		&createdBy, &created, &updated)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {

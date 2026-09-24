@@ -57,9 +57,13 @@ type Policy struct {
 	AllowClipboard     bool         `json:"allow_clipboard"`
 	AllowFileTransfer  bool         `json:"allow_file_transfer"`
 	RequireMFA         bool         `json:"require_mfa"`
-	CreatedBy          string       `json:"created_by,omitempty"`
-	CreatedAt          time.Time    `json:"created_at"`
-	UpdatedAt          time.Time    `json:"updated_at"`
+	// RequireApproval makes this policy grant eligibility, not standing access:
+	// the user must request access and be approved before connect is permitted
+	// (just-in-time / PIM, ADR 0018).
+	RequireApproval bool      `json:"require_approval"`
+	CreatedBy       string    `json:"created_by,omitempty"`
+	CreatedAt       time.Time `json:"created_at"`
+	UpdatedAt       time.Time `json:"updated_at"`
 }
 
 // Errors.

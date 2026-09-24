@@ -45,6 +45,7 @@ type input struct {
 	AllowClipboard     *bool        `json:"allow_clipboard"`
 	AllowFileTransfer  *bool        `json:"allow_file_transfer"`
 	RequireMFA         *bool        `json:"require_mfa"`
+	RequireApproval    *bool        `json:"require_approval"`
 }
 
 func (in *input) apply(p *Policy) {
@@ -58,6 +59,7 @@ func (in *input) apply(p *Policy) {
 	p.AllowClipboard = in.AllowClipboard != nil && *in.AllowClipboard
 	p.AllowFileTransfer = in.AllowFileTransfer != nil && *in.AllowFileTransfer
 	p.RequireMFA = in.RequireMFA == nil || *in.RequireMFA
+	p.RequireApproval = in.RequireApproval != nil && *in.RequireApproval
 }
 
 func (h *AdminHandler) list(w http.ResponseWriter, r *http.Request) {
