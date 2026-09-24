@@ -403,6 +403,79 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+  /me/access-requests:
+    post:
+      tags: [user]
+      summary: Request just-in-time access to a target
+      description: |
+        Ask for time-bounded access to a target the caller is *eligible* for — one matched by an
+        enabled policy with `require_approval` set (ADR 0018). The request starts `pending` until
+        an admin approves or denies it. Standing access needs no request: a user who already has
+        it connects directly through `/connect`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AccessRequestCreate"
+      responses:
+        "201":
+          description: Request created, pending approval.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AccessRequest"
+        "400":
+          description: Missing field, `minutes` below 1, or `duration_too_long` (over the policy maximum).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: The caller is not eligible — no approval-gated policy covers this target and protocol (`not_eligible`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    get:
+      tags: [user]
+      summary: List the caller's own access requests
+      description: Every request the caller has made, in any state, newest first.
+      responses:
+        "200":
+          description: The caller's requests.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/PagedResponse"
+                  - type: object
+                    properties:
+                      items:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/AccessRequest"
+  /me/access:
+    get:
+      tags: [user]
+      summary: The caller's active grants
+      description: Approved, unexpired access requests — the grants that currently let the caller connect.
+      responses:
+        "200":
+          description: Active grants.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/PagedResponse"
+                  - type: object
+                    properties:
+                      items:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/AccessRequest"
   /connect:
     post:
       tags: [user]
@@ -412,7 +485,10 @@ paths:
         protocol, time window, and MFA requirement. On success an `access_sessions` row is created
         and a one-time ticket is returned. The ticket must be presented to `/ws/terminal` or
         `/ws/desktop` within `expires_at` (30 seconds) and is invalid after first use. Credentials
-        supplied in the body are held in memory only for the life of the ticket.
+        supplied in the body are held in memory only for the life of the ticket. When every
+        policy that grants the caller this target is approval-gated (ADR 0018), the caller needs
+        an active grant: without one the request is refused with `403 approval_required` and the
+        UI offers to request access instead.
       requestBody:
         required: true
         content:
@@ -429,7 +505,14 @@ paths:
         "400":
           $ref: "#/components/responses/BadRequest"
         "403":
-          $ref: "#/components/responses/Forbidden"
+          description: >-
+            Denied by role, policy, time window, or CSRF check; or, when the target is reachable
+            only through an approval-gated policy and the caller holds no active grant,
+            `approval_required` (ADR 0018).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
         "404":
           $ref: "#/components/responses/NotFound"
         "409":
@@ -1254,6 +1337,120 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
 
+  /access-requests:
+    get:
+      tags: [admin]
+      summary: List access requests
+      description: The approval queue and its history. Filter by `status` to show, for example, only what is pending.
+      parameters:
+        - name: status
+          in: query
+          description: Restrict to one lifecycle state.
+          schema:
+            $ref: "#/components/schemas/AccessRequestStatus"
+      responses:
+        "200":
+          description: Access requests, newest first (up to 500).
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/PagedResponse"
+                  - type: object
+                    properties:
+                      items:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/AccessRequest"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+  /access-requests/{id}/approve:
+    parameters:
+      - $ref: "#/components/parameters/Id"
+    post:
+      tags: [admin]
+      summary: Approve a pending request
+      description: >-
+        Turns a pending request into a time-bounded grant. The grant expires `requested_minutes`
+        after approval; a background sweeper then marks it `expired` and `/connect` stops issuing
+        tickets for it (a session already open runs to its own session and idle limits).
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AccessDecision"
+      responses:
+        "200":
+          description: Approved; `status` is `approved` and `expires_at` is set.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AccessRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: The request is not pending.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /access-requests/{id}/deny:
+    parameters:
+      - $ref: "#/components/parameters/Id"
+    post:
+      tags: [admin]
+      summary: Deny a pending request
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AccessDecision"
+      responses:
+        "200":
+          description: Denied.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AccessRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: The request is not pending.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /access-requests/{id}/revoke:
+    parameters:
+      - $ref: "#/components/parameters/Id"
+    post:
+      tags: [admin]
+      summary: Revoke an active grant
+      description: Ends an approved grant early. `/connect` stops issuing tickets for it at once; a live session runs to its own limits.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AccessDecision"
+      responses:
+        "200":
+          description: Revoked.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AccessRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: The request is not an approved grant.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
   # ------------------------------------------------------------------ admin: autoscaling groups
   /autoscaling-groups:
     get:
@@ -1828,7 +2025,7 @@ components:
       properties:
         code:
           type: string
-          description: Stable machine-readable code, for example `validation_failed`, `csrf_invalid`, `policy_denied`, `host_key_untrusted`, `instance_unhealthy`.
+          description: Stable machine-readable code, for example `validation_failed`, `csrf_invalid`, `policy_denied`, `host_key_untrusted`, `instance_unhealthy`, `approval_required`, `not_eligible`, `duration_too_long`.
         message:
           type: string
         request_id:
@@ -2466,7 +2663,7 @@ components:
         One access rule. It applies to every member of a group (`group_id`) or to a single
         user (`user_id`); exactly one of the two is set. A user's effective access is the union
         of the policies bound to them and to any group they belong to.
-      required: [id, name, description, enabled, target_selector, protocols, time_windows, idle_timeout_minutes, allow_clipboard, allow_file_transfer, require_mfa, created_at, updated_at]
+      required: [id, name, description, enabled, target_selector, protocols, time_windows, idle_timeout_minutes, allow_clipboard, allow_file_transfer, require_mfa, require_approval, created_at, updated_at]
       properties:
         id:
           type: string
@@ -2502,6 +2699,13 @@ components:
           type: boolean
         require_mfa:
           type: boolean
+        require_approval:
+          type: boolean
+          description: >-
+            When true this policy grants eligibility only, not standing access. A user matched
+            solely by approval-gated policies must request access and hold an active, unexpired
+            grant before `/connect` will issue a ticket. A single standing (non-approval) policy
+            for the same target wins and gives immediate access.
         created_by:
           type: [string, "null"]
         created_at:
@@ -2556,7 +2760,78 @@ components:
         require_mfa:
           type: boolean
           default: true
+        require_approval:
+          type: boolean
+          default: false
+          description: Grant eligibility only, gated by just-in-time approval. Defaults to standing (immediate) access.
 
+    AccessRequestStatus:
+      type: string
+      enum: [pending, approved, denied, expired, revoked]
+    AccessRequest:
+      type: object
+      description: >-
+        An access request and, once approved, the time-bounded grant it becomes (ADR 0018).
+        `requested_minutes` is the duration asked for; on approval `expires_at` is set that many
+        minutes ahead and the grant lets `/connect` issue tickets until then. Exactly one of
+        `target_id` and `asg_id` is set.
+      required: [id, user_id, protocol, reason, requested_minutes, status, created_at, updated_at]
+      properties:
+        id:
+          type: string
+        user_id:
+          type: string
+        policy_id:
+          type: string
+          description: The eligibility policy that justified the request.
+        target_id:
+          type: string
+        asg_id:
+          type: string
+        protocol:
+          $ref: "#/components/schemas/Protocol"
+        reason:
+          type: string
+        requested_minutes:
+          type: integer
+        status:
+          $ref: "#/components/schemas/AccessRequestStatus"
+        approver_user_id:
+          type: string
+          description: The admin who approved or denied the request.
+        decision_note:
+          type: string
+          description: Optional note the approver left with the decision.
+        decided_at:
+          $ref: "#/components/schemas/Timestamp"
+        expires_at:
+          $ref: "#/components/schemas/Timestamp"
+        created_at:
+          $ref: "#/components/schemas/Timestamp"
+        updated_at:
+          $ref: "#/components/schemas/Timestamp"
+    AccessRequestCreate:
+      type: object
+      required: [target_id, protocol, reason, minutes]
+      properties:
+        target_id:
+          type: string
+        protocol:
+          $ref: "#/components/schemas/Protocol"
+        reason:
+          type: string
+          minLength: 1
+          description: Why access is needed; recorded on the request and in the audit log.
+        minutes:
+          type: integer
+          minimum: 1
+          description: Requested grant duration. Capped at the policy's `max_session_minutes`, or 480 when the policy sets none.
+    AccessDecision:
+      type: object
+      description: Optional note carried with an approve, deny, or revoke.
+      properties:
+        note:
+          type: string
     # ---------------------------------------------------------------- autoscaling
     AutoscalingGroup:
       type: object
@@ -2782,6 +3057,21 @@ components:
         blocked_reason:
           type: [string, "null"]
           description: Set when the target is visible but not connectable right now, for example `outside_time_window` or `host_key_changed`.
+        requires_approval:
+          type: array
+          description: >-
+            Protocols the caller may reach only through just-in-time approval (ADR 0018) — the
+            target is matched for them by approval-gated policies alone. The UI shows a Request
+            button rather than Connect. Absent or empty when every allowed protocol has standing
+            access.
+          items:
+            $ref: "#/components/schemas/Protocol"
+        private_ip:
+          type: [string, "null"]
+          description: The target's RFC1918 private address when it has one, shown to help users identify their assigned machine. Public addresses are never returned here.
+        engine:
+          type: [string, "null"]
+          description: For a database target, the engine name (for example `postgres`). Absent for non-database targets.
     UserSuppliedCredential:
       type: object
       description: Sent only when the target's credential for that protocol has `mode=user_supplied`. Never stored.
