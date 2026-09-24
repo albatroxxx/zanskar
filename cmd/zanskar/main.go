@@ -195,7 +195,7 @@ func runServe() error {
 			&access.Handler{Requests: accessReqs, Policies: policies, Targets: targets, Audit: auditLog, Log: log},
 			&asg.AdminHandler{Repo: asgRepo, Sync: syncer.SyncGroup, GatewayPrincipal: cfg.AWSGatewayPrincipal, Audit: auditLog, Log: log},
 			&session.Handler{Repo: sessionRepo, Audit: auditLog, Registry: registry, Storage: storage, Log: log},
-			&connect.Handler{Targets: targets, Policies: policies, Vault: vault, Sessions: sessionRepo, Tickets: ticket.NewStore(),
+			&connect.Handler{Targets: targets, Policies: policies, Access: accessReqs, Vault: vault, Sessions: sessionRepo, Tickets: ticket.NewStore(),
 				Registry: registry, Storage: storage, Audit: auditLog, Log: log, MFAEnrolled: totp.Enrolled, GuacdAddr: cfg.GuacdAddr,
 				DockerPath: cfg.DockerPath, Prober: &target.Prober{}, ASGs: asgRepo, Cloud: cloudProviders},
 			&connect.ShadowHandler{Registry: registry, Audit: auditLog, Log: log, GuacdAddr: cfg.GuacdAddr},

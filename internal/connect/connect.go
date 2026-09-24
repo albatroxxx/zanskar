@@ -19,6 +19,7 @@ import (
 
 	"github.com/coder/websocket"
 
+	"github.com/albatroxxx/zanskar/internal/access"
 	"github.com/albatroxxx/zanskar/internal/asg"
 	"github.com/albatroxxx/zanskar/internal/audit"
 	"github.com/albatroxxx/zanskar/internal/auth"
@@ -36,8 +37,11 @@ import (
 
 // Handler wires the connect flow.
 type Handler struct {
-	Targets     *target.Repo
-	Policies    *policy.Repo
+	Targets  *target.Repo
+	Policies *policy.Repo
+	// Access holds the just-in-time grants that gate approval-required policies
+	// (ADR 0018); nil leaves every policy standing.
+	Access      *access.Repo
 	Vault       *credential.Vault
 	Sessions    *session.Repo
 	Tickets     *ticket.Store
@@ -307,6 +311,17 @@ func (h *Handler) issueTicket(ctx context.Context, p *auth.Principal, ip string,
 	if !d.Allowed {
 		return nil, "policy_denied", d.Reason, nil
 	}
+	// Approval-gated access needs a live grant (ADR 0018); a standing policy
+	// covering the same target would have set RequireApproval false above.
+	if d.RequireApproval && h.Access != nil {
+		granted, err := h.Access.HasActiveGrant(ctx, p.User.ID, ep.TargetID, ep.ASGID, string(proto), time.Now())
+		if err != nil {
+			return nil, "", "", err
+		}
+		if !granted {
+			return nil, "approval_required", "access to this target requires an approved request", nil
+		}
+	}
 	if d.RequireMFA && h.MFAEnrolled != nil {
 		enrolled, err := h.MFAEnrolled(ctx, p.User.ID)
 		if err != nil {
@@ -380,7 +395,7 @@ func (h *Handler) issueTicket(ctx context.Context, p *auth.Principal, ip string,
 
 func codeStatus(code string) int {
 	switch code {
-	case "policy_denied", "mfa_required_by_policy":
+	case "policy_denied", "mfa_required_by_policy", "approval_required":
 		return http.StatusForbidden
 	case "credential_required":
 		return http.StatusUnprocessableEntity

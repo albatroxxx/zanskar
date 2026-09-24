@@ -60,6 +60,23 @@ func (r *Repo) ActiveForUser(ctx context.Context, userID string, now time.Time) 
 		userID, string(StatusApproved), store.TimeArg(now))
 }
 
+// HasActiveGrant reports whether the user holds an approved, unexpired grant
+// for the given target (or ASG) and protocol. The connect gate uses it to admit
+// an approval-gated session (ADR 0018). Exactly one of targetID / asgID is set.
+func (r *Repo) HasActiveGrant(ctx context.Context, userID, targetID, asgID, protocol string, now time.Time) (bool, error) {
+	var one int
+	err := r.db.QueryRowContext(ctx, r.db.Rebind(`SELECT 1 FROM access_requests
+		WHERE user_id = ? AND protocol = ? AND status = ? AND expires_at > ? AND (target_id = ? OR asg_id = ?) LIMIT 1`),
+		userID, protocol, string(StatusApproved), store.TimeArg(now), nullStr(targetID), nullStr(asgID)).Scan(&one)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
 // Decide moves a pending request to approved or denied. expiresAt is set on
 // approval (nil on denial). It fails with ErrState if the request is no longer
 // pending, ErrNotFound if it does not exist.
