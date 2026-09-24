@@ -5,6 +5,7 @@ import { fmtBytes, fmtSeconds } from '../../api/format'
 import { Modal } from '../../components/ui'
 import { FailoverDialog } from './Failover'
 import { useFullscreen } from './fullscreen'
+import { FullscreenButton } from './FullscreenButton'
 import type { ConnectResponse } from '../../api/types'
 
 interface DesktopState {
@@ -282,9 +283,7 @@ function DesktopSession({ state }: { state: DesktopState }) {
         <span className="stat">elapsed {fmtSeconds(elapsed)}</span>
         <span className="grow" />
         <span className="stat">recorded</span>
-        <button className="btn sm" onClick={toggleFull} aria-pressed={isFull} title={isFull ? 'Exit full screen' : 'Full screen'}>
-          {isFull ? 'Exit full screen' : 'Full screen'}
-        </button>
+        <FullscreenButton isFull={isFull} onClick={toggleFull} />
         {flags.files && (
           <button className="btn sm" onClick={() => setPanelOpen((o) => !o)} aria-pressed={panelOpen}>
             {panelOpen ? 'Hide files' : 'Files'}

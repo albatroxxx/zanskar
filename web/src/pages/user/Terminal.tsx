@@ -9,6 +9,7 @@ import { Modal } from '../../components/ui'
 import { FailoverDialog } from './Failover'
 import { TerminalFiles } from './TerminalFiles'
 import { useFullscreen } from './fullscreen'
+import { FullscreenButton } from './FullscreenButton'
 import type { ConnectResponse } from '../../api/types'
 import { terminalTheme } from '../../styles/theme'
 
@@ -155,9 +156,7 @@ function TerminalSession({ state }: { state: TerminalState }) {
         <span className={'stat' + (idle > 600 ? ' warn' : '')}>idle {fmtSeconds(idle)}</span>
         <span className="grow" />
         <span className="stat">recorded</span>
-        <button className="btn sm" onClick={toggleFull} aria-pressed={isFull} title={isFull ? 'Exit full screen' : 'Full screen'}>
-          {isFull ? 'Exit full screen' : 'Full screen'}
-        </button>
+        <FullscreenButton isFull={isFull} onClick={toggleFull} />
         {filesAllowed && (
           <button className="btn sm" onClick={() => setPanelOpen((o) => !o)} aria-pressed={panelOpen}>
             {panelOpen ? 'Hide files' : 'Files'}
