@@ -43,7 +43,8 @@ func TestProxyArgsHoldsCredential(t *testing.T) {
 	found := false
 	for _, e := range env {
 		if strings.HasPrefix(e, "PGB_INI=") && strings.Contains(e, "s3cret") &&
-			strings.Contains(e, "db.internal") && strings.Contains(e, "auth_type=trust") {
+			strings.Contains(e, "db.internal") && strings.Contains(e, "auth_type=trust") &&
+			strings.Contains(e, "server_tls_sslmode=prefer") {
 			found = true
 		}
 	}

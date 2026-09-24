@@ -124,6 +124,11 @@ func proxyArgs(s Spec, network, name string) (args []string, env []string, err e
 		"auth_type=trust\n" +
 		"auth_file=/etc/pgbouncer/userlist.txt\n" +
 		"pool_mode=session\n" +
+		// prefer: use TLS to the upstream when it offers/requires it (RDS forces
+		// SSL) and fall back to plaintext for a server without TLS (a local
+		// container). Encrypts without verifying the server certificate;
+		// verify-full with the provider CA is a later hardening step.
+		"server_tls_sslmode=prefer\n" +
 		"ignore_startup_parameters=extra_float_digits\n" +
 		"max_client_conn=50\n" +
 		"admin_users=" + s.Username + "\n"
