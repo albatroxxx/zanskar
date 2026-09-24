@@ -1,0 +1,28 @@
+name: Feature request
+description: Suggest an idea or an improvement.
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem are you trying to solve?
+      description: Describe the use case or pain point, not only the solution you have in mind.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What would you like to see?
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives you've considered
+    validations:
+      required: false
+  - type: markdown
+    attributes:
+      value: |
+        Substantial changes to how Zanskar works are captured as architecture decision records —
+        see [docs/adr/](https://github.com/albatroxxx/zanskar/tree/main/docs/adr).

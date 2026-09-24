@@ -1,0 +1,70 @@
+name: Bug report
+description: Something isn't working the way it should.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to file a bug. **Do not** report security vulnerabilities here —
+        follow [SECURITY.md](https://github.com/albatroxxx/zanskar/blob/main/SECURITY.md) instead.
+        Redact any secrets, tokens, or internal hostnames before posting.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What did you do, and what went wrong? Include steps to reproduce if you can.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect to happen?
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Zanskar version
+      description: Output of `zanskar version`, or the image tag / release you installed.
+    validations:
+      required: true
+  - type: dropdown
+    id: deployment
+    attributes:
+      label: How are you running it?
+      options:
+        - Docker Compose (single node)
+        - Kubernetes (Helm chart)
+        - deb / rpm package
+        - Built from source
+        - Other
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Which area?
+      options:
+        - SSH terminal
+        - WinRM terminal
+        - RDP / VNC desktop
+        - Database (PostgreSQL)
+        - Autoscaling groups / failover
+        - Access policies / just-in-time approvals
+        - Recording / audit
+        - Identity / sign-in (OIDC, LDAP, MFA)
+        - Install / deploy
+        - Other / not sure
+    validations:
+      required: false
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs
+      description: Gateway logs around the failure. Secrets and internal hostnames redacted.
+      render: text
+  - type: input
+    id: environment
+    attributes:
+      label: Environment
+      description: OS, browser, and (for database targets) the engine and version, as relevant.
