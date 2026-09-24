@@ -3016,19 +3016,23 @@ components:
     # ---------------------------------------------------------------- user-facing targets and connect
     ReachableTarget:
       type: object
-      required: [kind, id, name, os_family, capabilities, allowed_protocols, tags]
+      description: A target or autoscaling group the caller may reach, as returned by `GET /me/targets`.
+      required: [kind, id, name, os_family, tags, capabilities, allowed_protocols, host_key_ready]
       properties:
         kind:
           type: string
-          enum: [target, autoscaling_group]
+          enum: [target, asg]
         id:
           type: string
         name:
           type: string
         os_family:
           $ref: "#/components/schemas/OsFamily"
+        tags:
+          $ref: "#/components/schemas/Tags"
         capabilities:
           type: array
+          description: Protocols the target's probe found it actually offers.
           items:
             $ref: "#/components/schemas/Protocol"
         allowed_protocols:
@@ -3036,27 +3040,6 @@ components:
           description: Intersection of policy protocols and capabilities. The UI enables a button only for protocols listed here.
           items:
             $ref: "#/components/schemas/Protocol"
-        credential_prompts:
-          type: object
-          description: Per protocol, whether the user must supply a credential at connect time.
-          additionalProperties:
-            type: object
-            required: [mode]
-            properties:
-              mode:
-                $ref: "#/components/schemas/CredentialMode"
-              type:
-                $ref: "#/components/schemas/CredentialType"
-        tags:
-          $ref: "#/components/schemas/Tags"
-        host_key_status:
-          $ref: "#/components/schemas/HostKeyStatus"
-        healthy_count:
-          type: integer
-          description: For `autoscaling_group` only.
-        blocked_reason:
-          type: [string, "null"]
-          description: Set when the target is visible but not connectable right now, for example `outside_time_window` or `host_key_changed`.
         requires_approval:
           type: array
           description: >-
@@ -3066,12 +3049,25 @@ components:
             access.
           items:
             $ref: "#/components/schemas/Protocol"
+        host_key_ready:
+          type: boolean
+          description: >-
+            True once the target's SSH host key is trusted. While false (key untrusted, or changed
+            and awaiting re-trust) the UI blocks an SSH connect; non-SSH protocols are unaffected.
         private_ip:
           type: [string, "null"]
-          description: The target's RFC1918 private address when it has one, shown to help users identify their assigned machine. Public addresses are never returned here.
+          description: >-
+            The target's private (RFC1918 / ULA) address when it has one, shown to help users tell
+            their assigned machines apart. A public address or a hostname is never surfaced here.
         engine:
           type: [string, "null"]
           description: For a database target, the engine name (for example `postgres`). Absent for non-database targets.
+        healthy_count:
+          type: integer
+          description: Healthy instances in the group. Present only for autoscaling-group rows (`kind` is `asg`).
+        instance_count:
+          type: integer
+          description: Total instances in the group. Present only for autoscaling-group rows (`kind` is `asg`).
     UserSuppliedCredential:
       type: object
       description: Sent only when the target's credential for that protocol has `mode=user_supplied`. Never stored.

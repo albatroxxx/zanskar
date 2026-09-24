@@ -27,6 +27,17 @@ Zanskar is an access gateway, so we treat the following as security issues:
 
 Until 1.0, only the latest minor release receives security fixes.
 
+## Dependency advisories
+
+`govulncheck` runs in CI on every push and the build fails on any vulnerability our code
+actually calls. Advisories that reach only code paths we do not use are triaged here:
+
+- **GO-2026-5932** — `golang.org/x/crypto/openpgp` is unmaintained. Zanskar does not import
+  that package, and `govulncheck` confirms it is never called. The advisory has no fixed
+  version, so there is nothing to upgrade to; `golang.org/x/crypto` is otherwise current and
+  is required for SSH, Argon2id, and related primitives. No action needed — re-triage if an
+  OpenPGP dependency is ever introduced.
+
 ## Design references
 
 - [Threat model](docs/threat-model.md)
