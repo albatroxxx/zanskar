@@ -220,8 +220,8 @@ func Bridge(ctx context.Context, log *slog.Logger, docker string, spec Spec, ws 
 	if err != nil {
 		return "error", err
 	}
-	cmd := exec.CommandContext(ctx, docker, cargs...)                                      // #nosec G204 -- args built by clientArgs from validated fields, no shell
-	f, err := pty.StartWithSize(cmd, &pty.Winsize{Cols: uint16(cols), Rows: uint16(rows)}) //nolint:gosec // bounded above
+	cmd := exec.CommandContext(ctx, docker, cargs...) // #nosec G204 -- args built by clientArgs from validated fields, no shell
+	f, err := pty.StartWithSize(cmd, &pty.Winsize{Cols: uint16(cols), Rows: uint16(rows)})
 	if err != nil {
 		return "error", fmt.Errorf("dbgw: start client: %w", err)
 	}
@@ -311,7 +311,7 @@ func Bridge(ctx context.Context, log *slog.Logger, docker string, spec Spec, ws 
 				}
 			case "r":
 				if fr.Cols > 0 && fr.Rows > 0 && fr.Cols <= 1000 && fr.Rows <= 500 {
-					_ = pty.Setsize(f, &pty.Winsize{Cols: uint16(fr.Cols), Rows: uint16(fr.Rows)}) //nolint:gosec // bounded above
+					_ = pty.Setsize(f, &pty.Winsize{Cols: uint16(fr.Cols), Rows: uint16(fr.Rows)})
 					if rec != nil {
 						_ = rec.Resize(fr.Cols, fr.Rows)
 					}
