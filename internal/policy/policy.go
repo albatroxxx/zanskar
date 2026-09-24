@@ -233,6 +233,10 @@ type Decision struct {
 	AllowClipboard    bool          `json:"allow_clipboard"`
 	AllowFileTransfer bool          `json:"allow_file_transfer"`
 	RequireMFA        bool          `json:"require_mfa"`
+	// RequireApproval is true when every policy granting this access is
+	// approval-gated, so the caller holds no standing access and needs an active
+	// grant to connect (ADR 0018). False when any standing policy also grants it.
+	RequireApproval bool `json:"require_approval"`
 }
 
 // Evaluate picks the first enabled policy among the caller's policies that
@@ -243,6 +247,7 @@ type Decision struct {
 // timeout is chosen so overlap never widens access.
 func Evaluate(policies []*Policy, t TargetRef, protocol string, now time.Time) Decision {
 	var best *Policy
+	sawStanding := false
 	reason := "no policy grants access to this target"
 	for _, p := range policies {
 		if !p.Enabled || !p.Selector.Matches(t) {
@@ -265,6 +270,11 @@ func Evaluate(policies []*Policy, t TargetRef, protocol string, now time.Time) D
 				continue
 			}
 		}
+		// A qualifying standing policy means no approval is needed; access is the
+		// union, so any standing grant wins over an approval-gated one.
+		if !p.RequireApproval {
+			sawStanding = true
+		}
 		if best == nil || p.IdleTimeoutMinutes < best.IdleTimeoutMinutes {
 			best = p
 		}
@@ -279,6 +289,7 @@ func Evaluate(policies []*Policy, t TargetRef, protocol string, now time.Time) D
 		AllowClipboard:    best.AllowClipboard,
 		AllowFileTransfer: best.AllowFileTransfer,
 		RequireMFA:        best.RequireMFA,
+		RequireApproval:   !sawStanding,
 	}
 	if best.MaxSessionMinutes != nil {
 		d.MaxSession = time.Duration(*best.MaxSessionMinutes) * time.Minute
