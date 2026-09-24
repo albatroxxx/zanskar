@@ -8,6 +8,7 @@ import { fmtSeconds } from '../../api/format'
 import { Modal } from '../../components/ui'
 import { FailoverDialog } from './Failover'
 import { TerminalFiles } from './TerminalFiles'
+import { useFullscreen } from './fullscreen'
 import type { ConnectResponse } from '../../api/types'
 import { terminalTheme } from '../../styles/theme'
 
@@ -43,6 +44,8 @@ export function Terminal() {
 function TerminalSession({ state }: { state: TerminalState }) {
   const nav = useNavigate()
   const host = useRef<HTMLDivElement>(null)
+  const pageRef = useRef<HTMLDivElement>(null)
+  const { isFull, toggle: toggleFull, exit: exitFull } = useFullscreen(pageRef)
   const [sessionId, setSessionId] = useState('')
   const [elapsed, setElapsed] = useState(0)
   const [idle, setIdle] = useState(0)
@@ -137,9 +140,12 @@ function TerminalSession({ state }: { state: TerminalState }) {
     })
   }
   const failover = ended?.reason === 'target_lost' && !!state.asg_id && !!sessionId
+  // Drop out of full screen when the session ends so the dialog and the return
+  // to the target list happen in the normal page.
+  useEffect(() => { if (ended) exitFull() }, [ended, exitFull])
 
   return (
-    <div className="term-page">
+    <div className="term-page" ref={pageRef}>
       <div className="term-bar">
         <span className="name">{state.target}</span>
         {state.instance_label && <span className="stat mono">{state.instance_label}</span>}
@@ -149,6 +155,9 @@ function TerminalSession({ state }: { state: TerminalState }) {
         <span className={'stat' + (idle > 600 ? ' warn' : '')}>idle {fmtSeconds(idle)}</span>
         <span className="grow" />
         <span className="stat">recorded</span>
+        <button className="btn sm" onClick={toggleFull} aria-pressed={isFull} title={isFull ? 'Exit full screen' : 'Full screen'}>
+          {isFull ? 'Exit full screen' : 'Full screen'}
+        </button>
         {filesAllowed && (
           <button className="btn sm" onClick={() => setPanelOpen((o) => !o)} aria-pressed={panelOpen}>
             {panelOpen ? 'Hide files' : 'Files'}

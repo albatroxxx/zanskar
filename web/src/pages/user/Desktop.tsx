@@ -4,6 +4,7 @@ import type { GuacObject, InputStream } from 'guacamole-common-js'
 import { fmtBytes, fmtSeconds } from '../../api/format'
 import { Modal } from '../../components/ui'
 import { FailoverDialog } from './Failover'
+import { useFullscreen } from './fullscreen'
 import type { ConnectResponse } from '../../api/types'
 
 interface DesktopState {
@@ -44,6 +45,8 @@ export function Desktop() {
 function DesktopSession({ state }: { state: DesktopState }) {
   const nav = useNavigate()
   const host = useRef<HTMLDivElement>(null)
+  const pageRef = useRef<HTMLDivElement>(null)
+  const { isFull, toggle: toggleFull, exit: exitFull } = useFullscreen(pageRef)
   const [sessionId, setSessionId] = useState('')
   const [elapsed, setElapsed] = useState(0)
   const [ended, setEnded] = useState<{ reason: string; msg?: string } | null>(null)
@@ -267,8 +270,10 @@ function DesktopSession({ state }: { state: DesktopState }) {
     })
   }
   const failover = ended?.reason === 'target_lost' && !!state.asg_id && !!sessionId
+  // Drop out of full screen when the session ends so the dialog shows normally.
+  useEffect(() => { if (ended) exitFull() }, [ended, exitFull])
   return (
-    <div className="term-page">
+    <div className="term-page" ref={pageRef}>
       <div className="term-bar">
         <span className="name">{state.target}</span>
         {state.instance_label && <span className="stat mono">{state.instance_label}</span>}
@@ -277,6 +282,9 @@ function DesktopSession({ state }: { state: DesktopState }) {
         <span className="stat">elapsed {fmtSeconds(elapsed)}</span>
         <span className="grow" />
         <span className="stat">recorded</span>
+        <button className="btn sm" onClick={toggleFull} aria-pressed={isFull} title={isFull ? 'Exit full screen' : 'Full screen'}>
+          {isFull ? 'Exit full screen' : 'Full screen'}
+        </button>
         {flags.files && (
           <button className="btn sm" onClick={() => setPanelOpen((o) => !o)} aria-pressed={panelOpen}>
             {panelOpen ? 'Hide files' : 'Files'}
