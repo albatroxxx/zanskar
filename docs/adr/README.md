@@ -36,3 +36,4 @@ and update the status of the old one.
 | [0015](0015-recording-retention-policy.md) | Recording retention is admin-editable runtime policy | Accepted |
 | [0016](0016-ssh-file-transfer-over-sftp.md) | SSH file transfer over SFTP | Accepted |
 | [0017](0017-database-access-ephemeral-client-container.md) | Database access via an ephemeral per-session client container | Accepted |
+| [0018](0018-just-in-time-access-approvals.md) | Just-in-time access approvals (PIM) | Proposed |
