@@ -145,6 +145,10 @@ td .muted, .muted { color: var(--fg-muted); }
 
 /* terminal */
 .term-page { display: flex; flex-direction: column; height: 100vh; background: var(--terminal-bg); color: var(--term-fg); }
+/* When the session is fullscreened the bar stays and the host fills the rest;
+   the ResizeObserver on the host re-fits the terminal / resizes the desktop. */
+.term-page:fullscreen { width: 100vw; height: 100vh; }
+.term-page:-webkit-full-screen { width: 100vw; height: 100vh; }
 .term-bar { display: flex; align-items: center; gap: 16px; padding: 8px 14px; background: var(--term-bar-bg); border-bottom: 1px solid var(--term-line); font-size: 0.86rem; }
 .term-bar .name { font-weight: 600; }
 .term-bar .stat { color: var(--term-fg-muted); font-variant-numeric: tabular-nums; }
@@ -154,6 +158,8 @@ td .muted, .muted { color: var(--fg-muted); }
 .term-bar .btn { background: var(--term-btn-bg); color: var(--term-fg); border-color: var(--term-btn-line); }
 .term-bar .btn:hover { background: var(--term-btn-hover); border-color: var(--term-fg-muted); }
 .term-bar .btn.danger { color: var(--term-danger); border-color: var(--term-danger-line); }
+.term-bar .btn.icon { padding: 4px 7px; }
+.term-bar .btn.icon svg { display: block; }
 /* guacamole-common-js gives the desktop's default layer `z-index: -1`. Without a
    stacking context here that canvas paints in the root stacking context, behind
    .term-page's opaque background, so the desktop is invisible while the cursor
