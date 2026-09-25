@@ -13,6 +13,9 @@ import { FullscreenButton } from './FullscreenButton'
 import type { ConnectResponse } from '../../api/types'
 import { terminalTheme } from '../../styles/theme'
 
+/** Access-session ids are 16 random bytes, hex-encoded. */
+const SESSION_ID = /^[0-9a-f]{32}$/
+
 interface TerminalState {
   ticket: string
   ws_path: string
@@ -83,7 +86,9 @@ function TerminalSession({ state }: { state: TerminalState }) {
         const c = JSON.parse(ev.data as string) as { t: string; reason?: string; msg?: string; session_id?: string; files?: boolean }
         if (c.t === 'ready') {
           setStatus('live')
-          if (c.session_id) setSessionId(c.session_id)
+          // The id addresses the file-transfer endpoints, so accept only the
+          // shape the gateway generates (store.NewID: 32 hex chars).
+          if (c.session_id && SESSION_ID.test(c.session_id)) setSessionId(c.session_id)
           if (c.files) setFilesAllowed(true)
         }
         if (c.t === 'end') setEnded({ reason: c.reason ?? 'user_exit', msg: c.msg })
