@@ -22,7 +22,7 @@ export function TerminalFiles({ sessionId }: { sessionId: string }) {
     setEntries(null)
     setStatus(null)
     try {
-      const res = await api.get<{ path: string; entries: Entry[] }>(`/sessions/${sessionId}/files${query({ path: dir })}`)
+      const res = await api.get<{ path: string; entries: Entry[] }>(`/sessions/${encodeURIComponent(sessionId)}/files${query({ path: dir })}`)
       setCwd(res.path)
       setEntries(res.entries ?? [])
     } catch (e) {
@@ -42,7 +42,7 @@ export function TerminalFiles({ sessionId }: { sessionId: string }) {
   const download = async (e: Entry) => {
     setStatus({ text: `downloading ${e.name}…` })
     try {
-      const blob = await api.download(`/sessions/${sessionId}/files/content?path=${encodeURIComponent(e.path)}`)
+      const blob = await api.download(`/sessions/${encodeURIComponent(sessionId)}/files/content?path=${encodeURIComponent(e.path)}`)
       const a = document.createElement('a')
       a.href = URL.createObjectURL(blob)
       a.download = e.name
@@ -59,7 +59,7 @@ export function TerminalFiles({ sessionId }: { sessionId: string }) {
     setStatus({ text: `uploading ${file.name}…` })
     const dest = (cwd === '/' ? '' : cwd) + '/' + file.name
     try {
-      const res = await api.upload<{ bytes: number }>(`/sessions/${sessionId}/files/content?path=${encodeURIComponent(dest)}`, file, file.type || 'application/octet-stream')
+      const res = await api.upload<{ bytes: number }>(`/sessions/${encodeURIComponent(sessionId)}/files/content?path=${encodeURIComponent(dest)}`, file, file.type || 'application/octet-stream')
       setStatus({ text: `uploaded ${file.name} (${fmtBytes(res.bytes)})` })
       await list(cwd)
     } catch (err) {
