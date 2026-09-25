@@ -75,3 +75,23 @@ packages:
 # release-check validates .goreleaser.yaml without building.
 release-check:
 	goreleaser check
+
+# Fuzz targets (Go native fuzzing). Each runs for FUZZTIME; CI uses a short
+# budget on every push, run longer locally when touching a parser.
+FUZZTIME ?= 10s
+FUZZ_TARGETS := \
+	internal/gateway/guac:FuzzEncodeParse \
+	internal/gateway/guac:FuzzParseRaw \
+	internal/user:FuzzParsePHC \
+	internal/user:FuzzVerifyPassword \
+	internal/audit:FuzzChain \
+	internal/audit:FuzzVerifySignature \
+	internal/policy:FuzzParseClock \
+	internal/cloud:FuzzParseConsoleHostKeys \
+	internal/auth:FuzzParseAddr
+
+.PHONY: fuzz
+fuzz:
+	@set -e; for t in $(FUZZ_TARGETS); do pkg=$${t%%:*}; name=$${t##*:}; \
+	  echo "== $$pkg $$name ($(FUZZTIME))"; \
+	  go test -run='^$$' -fuzz="^$$name$$$$" -fuzztime=$(FUZZTIME) ./$$pkg; done
