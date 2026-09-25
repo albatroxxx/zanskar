@@ -91,7 +91,7 @@ func (s *Server) ListenAndServe(ctx context.Context) error {
 			s.log.Info("listening", "addr", s.cfg.ListenAddr, "tls", true)
 			err = s.http.ListenAndServeTLS(s.cfg.TLSCert, s.cfg.TLSKey)
 		} else {
-			s.log.Warn("listening without TLS; acceptable only behind a TLS-terminating proxy on loopback", "addr", s.cfg.ListenAddr)
+			s.log.Warn("listening without TLS; acceptable only behind a TLS-terminating proxy on loopback or a private container network", "addr", s.cfg.ListenAddr)
 			err = s.http.ListenAndServe()
 		}
 		if !errors.Is(err, http.ErrServerClosed) {

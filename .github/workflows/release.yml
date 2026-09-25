@@ -50,3 +50,19 @@ jobs:
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      # Hand-written highlights for this tag, if the repo carries them, go
+      # above goreleaser's generated install block and commit list. The
+      # generated changelog only covers commits since the previous tag, which
+      # is the wrong story for a first release.
+      - name: Prepend release highlights (docs/releases/<tag>.md)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          f="docs/releases/${TAG}.md"
+          if [ ! -f "$f" ]; then echo "no $f; keeping generated notes"; exit 0; fi
+          gh release view "$TAG" --json body -q .body > generated.md
+          { cat "$f"; echo; cat generated.md; } > notes.md
+          gh release edit "$TAG" --notes-file notes.md
+          echo "prepended $f"
