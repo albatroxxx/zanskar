@@ -44,6 +44,11 @@ jobs:
         env:
           ZANSKAR_TEST_POSTGRES_DSN: postgres://zanskar:zanskar@localhost:5432/zanskar_test?sslmode=disable
         run: go test -race -coverprofile=coverage.out ./...
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: coverage
+          path: coverage.out
+          retention-days: 7
       - name: Migration sets match
         run: diff <(ls migrations/postgres) <(ls migrations/sqlite)
 
@@ -131,3 +136,53 @@ jobs:
             git --no-pager diff --stat THIRD_PARTY_NOTICES.md
             exit 1
           fi
+
+  coverage-badge:
+    # Publishes the total statement coverage as a shields.io endpoint JSON on
+    # the orphan `badges` branch (README reads it). Runs only on pushes to
+    # main; the write token is scoped to this job alone.
+    name: Coverage badge
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: build-test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # push coverage.json to the badges branch
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: coverage
+      - name: Compute total coverage
+        id: cov
+        run: |
+          pct=$(awk 'NR>1 { s+=$2; if ($3>0) c+=$2 } END { printf "%.1f", 100*c/s }' coverage.out)
+          echo "pct=$pct" >> "$GITHUB_OUTPUT"
+          echo "total statement coverage: $pct%" >> "$GITHUB_STEP_SUMMARY"
+      - name: Publish badge JSON
+        env:
+          PCT: ${{ steps.cov.outputs.pct }}
+        run: |
+          set -euo pipefail
+          color=red
+          awk -v p="$PCT" 'BEGIN { exit !(p >= 40) }' && color=orange
+          awk -v p="$PCT" 'BEGIN { exit !(p >= 50) }' && color=yellow
+          awk -v p="$PCT" 'BEGIN { exit !(p >= 60) }' && color=yellowgreen
+          awk -v p="$PCT" 'BEGIN { exit !(p >= 70) }' && color=green
+          awk -v p="$PCT" 'BEGIN { exit !(p >= 80) }' && color=brightgreen
+          json=$(printf '{"schemaVersion":1,"label":"coverage","message":"%s%%","color":"%s"}\n' "$PCT" "$color")
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if git fetch --depth=1 origin badges:refs/remotes/origin/badges 2>/dev/null; then
+            git checkout -q -B badges origin/badges
+          else
+            git checkout -q --orphan badges
+            git rm -rfq . >/dev/null 2>&1 || true
+          fi
+          printf '%s' "$json" > coverage.json
+          if git diff --quiet -- coverage.json 2>/dev/null && [ -n "$(git ls-files coverage.json)" ]; then
+            echo "coverage unchanged ($PCT%)"; exit 0
+          fi
+          git add coverage.json
+          git commit -qm "coverage: $PCT% (${GITHUB_SHA::7})"
+          git push -q origin badges
+

@@ -7,8 +7,12 @@
 
 <p align="center">
   <img alt="Zanskar: agentless access" src="docs/assets/badge.svg">
+  <a href="https://github.com/albatroxxx/zanskar/actions/workflows/ci.yml?query=branch%3Amain"><img alt="CI" src="https://github.com/albatroxxx/zanskar/actions/workflows/ci.yml/badge.svg?branch=main"></a>
+  <a href="https://github.com/albatroxxx/zanskar/security/code-scanning"><img alt="CodeQL" src="https://github.com/albatroxxx/zanskar/actions/workflows/codeql.yml/badge.svg?branch=main"></a>
+  <a href="https://scorecard.dev/viewer/?uri=github.com/albatroxxx/zanskar"><img alt="OpenSSF Scorecard" src="https://api.scorecard.dev/projects/github.com/albatroxxx/zanskar/badge"></a>
+  <a href="https://github.com/albatroxxx/zanskar/actions/workflows/ci.yml?query=branch%3Amain"><img alt="Test coverage" src="https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Falbatroxxx%2Fzanskar%2Fbadges%2Fcoverage.json"></a>
+  <a href="go.mod"><img alt="Go version" src="https://img.shields.io/github/go-mod/go-version/albatroxxx/zanskar?logo=go&color=0A1A2C"></a>
   <a href="LICENSE"><img alt="License: Apache 2.0" src="https://img.shields.io/badge/license-Apache%202.0-0E9F8E.svg"></a>
-  <img alt="Go" src="https://img.shields.io/badge/go-1.27-0A1A2C.svg?logo=go">
 </p>
 
 # Zanskar
@@ -98,6 +102,20 @@ docs/             threat model, API spec, design decisions (ADRs), wireframes
 deploy/           Dockerfile, docker-compose, Helm chart
 web/              React + TypeScript frontend, embedded into the binary at build time
 ```
+
+## Quality and security signals
+
+Every badge above is computed from this repository by an open-source tool and links to its evidence.
+
+| Badge | What it measures | Source |
+|---|---|---|
+| CI | Build, `go vet`, race tests on SQLite and PostgreSQL, golangci-lint, govulncheck, gosec, gitleaks, Trivy, third-party-notice check, all on every push and PR | [`ci.yml`](.github/workflows/ci.yml) |
+| CodeQL | Static analysis of the Go server and TypeScript UI with the `security-extended` query suite; alerts appear in the Security tab | [`codeql.yml`](.github/workflows/codeql.yml) |
+| OpenSSF Scorecard | Supply-chain hygiene scored 0 to 10 by the [OpenSSF](https://scorecard.dev): pinned dependencies, token permissions, branch protection, SAST, vulnerability status, and more. Weekly and on every push to main | [`scorecard.yml`](.github/workflows/scorecard.yml) |
+| Test coverage | Total statement coverage from the CI test run, written to the `badges` branch after each push to main | [`ci.yml`](.github/workflows/ci.yml) |
+| Go version | Read from `go.mod` | shields.io |
+
+Vulnerability handling and the current advisory triage are in [SECURITY.md](SECURITY.md).
 
 ## Contributing
 
