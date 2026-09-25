@@ -149,12 +149,14 @@ signs:
     cmd: cosign
     artifacts: checksum
     output: true
-    certificate: "${artifact}.pem"
+    # cosign v3 writes a single Sigstore bundle (signature + certificate +
+    # transparency-log entry); the older --output-signature/--output-certificate
+    # flags are ignored and the run fails without --bundle.
+    signature: "${artifact}.sigstore.json"
     args:
       - sign-blob
       - --yes
-      - --output-certificate=${certificate}
-      - --output-signature=${signature}
+      - --bundle=${signature}
       - ${artifact}
 
 docker_signs:
@@ -202,7 +204,7 @@ release:
 
     ```sh
     sha256sum -c SHA256SUMS --ignore-missing
-    cosign verify-blob --certificate SHA256SUMS.pem --signature SHA256SUMS.sig \
+    cosign verify-blob --bundle SHA256SUMS.sigstore.json \
       --certificate-identity-regexp '^https://github.com/albatroxxx/zanskar/.github/workflows/release.yml@refs/tags/v{{ .Version }}$' \
       --certificate-oidc-issuer https://token.actions.githubusercontent.com SHA256SUMS
     cosign verify ghcr.io/albatroxxx/zanskar:{{ .Version }} \
