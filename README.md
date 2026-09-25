@@ -7,6 +7,7 @@
 
 <p align="center">
   <img alt="Zanskar: agentless access" src="docs/assets/badge.svg">
+  <a href="https://github.com/albatroxxx/zanskar/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/albatroxxx/zanskar?sort=semver&color=2B3A8C"></a>
   <a href="https://github.com/albatroxxx/zanskar/actions/workflows/ci.yml?query=branch%3Amain"><img alt="CI" src="https://github.com/albatroxxx/zanskar/actions/workflows/ci.yml/badge.svg?branch=main"></a>
   <a href="https://github.com/albatroxxx/zanskar/security/code-scanning"><img alt="CodeQL" src="https://github.com/albatroxxx/zanskar/actions/workflows/codeql.yml/badge.svg?branch=main"></a>
   <a href="https://scorecard.dev/viewer/?uri=github.com/albatroxxx/zanskar"><img alt="OpenSSF Scorecard" src="https://api.scorecard.dev/projects/github.com/albatroxxx/zanskar/badge"></a>

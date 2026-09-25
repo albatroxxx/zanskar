@@ -12,15 +12,14 @@ Approved 2026-09-20. Durations are estimates for a small team; the order matters
 | 3.6 PIM | done | Just-in-time, approved, time-bounded access (ADR 0018) — pulled into v1.0 | done |
 | 4. Enterprise | ongoing | Access reviews and delegated/multi-step approvers, live session shadowing and termination, credential rotation, SAML and SCIM, GCP managed instance groups, Azure scale sets, WebAuthn | |
 
-## v1.0 release — scope complete, tag pending sign-off (updated 2026-09-24)
+## v1.0 release — shipped (v1.0.0 tagged 2026-09-25)
 
 The single-instance release engineering is done (below), and the scope pulled in ahead of
 the tag has now landed. Phase 3.5 (protocol expansion — ADR 0016 SSH file transfer, ADR 0017
 database access) shipped and was verified against real AWS, including RDS. **PIM** (ADR 0018 —
 just-in-time, approved, time-bounded access), pulled in from Phase 4 so 1.0 ships with
 least-standing-privilege as a first-class capability, has now landed too: live-verified
-end-to-end and documented in the OpenAPI spec. The release pipeline stays ready; cutting the
-v1.0.0 tag is the one remaining sign-off step.
+end-to-end and documented in the OpenAPI spec. The v1.0.0 tag is cut and verified; the GitHub release is published from the draft.
 
 v1.0 remains a **single-instance** deployment: one gateway, embedded SQLite, and a
 guacd sidecar for RDP and VNC. Multi-replica HA and the Helm chart ship later — the
@@ -37,7 +36,7 @@ Release engineering completed:
 - [x] Clean-VM install validation — deb installed and started on a throwaway Ubuntu 24.04 box (#20).
 - [x] Phase 3.5 protocol expansion — SSH file transfer (#25, ADR 0016) and database/PaaS access (#27, ADR 0017), the latter verified live against RDS.
 - [x] PIM — just-in-time, approved, time-bounded access (ADR 0018): `require_approval` eligibility, request/approve/deny/revoke lifecycle, connect gate on an active grant, expiry sweeper, lifecycle audit, request + approvals UI (#31, #34, #35, #36); OpenAPI documented (#30); live-verified end-to-end against RDS.
-- [ ] Tag v1.0.0 — all pre-tag scope has landed and signed off; awaiting the go-ahead to cut the tag.
+- [x] Tag v1.0.0 — cut 2026-09-25 after two release candidates: rc.1 caught a cosign v3 signing break before anything was published; rc.2 passed pipeline verification and a clean-machine install test of both documented paths (deb + `zanskar init`, Compose pulling the signed ghcr image). Artifacts: deb/rpm/tar.gz for amd64 and arm64, SHA256SUMS with a Sigstore bundle, multi-arch image `ghcr.io/albatroxxx/zanskar:1.0.0` (also `latest`), all keyless-signed.
 
 ## Phase 0 checklist
 
