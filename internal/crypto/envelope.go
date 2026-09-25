@@ -22,11 +22,19 @@ import (
 const (
 	keySize   = 32
 	nonceSize = 12
+
+	// MaxPlaintext bounds a single sealed value. Every real secret (a key,
+	// a password, a provider config) is kilobytes; the ceiling makes the
+	// allocation in seal provably bounded instead of relying on callers.
+	MaxPlaintext = 16 << 20
 )
 
 // ErrInvalidCiphertext is returned when decryption fails for any reason. The
 // reason is deliberately not distinguished to avoid oracle behaviour.
 var ErrInvalidCiphertext = errors.New("crypto: invalid ciphertext")
+
+// ErrPlaintextTooLarge is returned when a value exceeds MaxPlaintext.
+var ErrPlaintextTooLarge = errors.New("crypto: plaintext exceeds MaxPlaintext")
 
 // KEKProvider wraps and unwraps data-encryption keys.
 type KEKProvider interface {
@@ -114,6 +122,9 @@ func newAEAD(key []byte) (cipher.AEAD, error) {
 
 // seal output layout: nonce || ciphertext || tag.
 func seal(aead cipher.AEAD, plaintext, aad []byte) ([]byte, error) {
+	if len(plaintext) > MaxPlaintext {
+		return nil, ErrPlaintextTooLarge
+	}
 	nonce := make([]byte, nonceSize)
 	if _, err := rand.Read(nonce); err != nil {
 		return nil, fmt.Errorf("crypto: nonce: %w", err)

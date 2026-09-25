@@ -62,3 +62,17 @@ func TestNoncesDiffer(t *testing.T) {
 		t.Fatal("two encryptions of the same plaintext must differ")
 	}
 }
+
+func TestRejectsOversizedPlaintext(t *testing.T) {
+	dek, err := NewDEK()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Encrypt(dek, make([]byte, MaxPlaintext+1), nil); !errors.Is(err, ErrPlaintextTooLarge) {
+		t.Fatalf("Encrypt over the ceiling: got %v, want ErrPlaintextTooLarge", err)
+	}
+	// Exactly at the ceiling is fine.
+	if _, err := Encrypt(dek, make([]byte, MaxPlaintext), nil); err != nil {
+		t.Fatalf("Encrypt at the ceiling: %v", err)
+	}
+}
