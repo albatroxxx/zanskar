@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Zanskar | Agentless access gateway for SSH, RDP, VNC, WinRM and databases</title>
+  <meta name="description" content="Browser-based SSH, RDP, VNC, WinRM and database sessions to machines you already run, with vaulted credentials, approvals, recording and a tamper-evident audit log.">
+  <link rel="canonical" href="https://albatroxxx.github.io/zanskar/">
+  <meta name="robots" content="index,follow">
+  <meta property="og:type" content="website">
+  <meta property="og:title" content="Zanskar | Agentless access gateway">
+  <meta property="og:description" content="Sessions to the machines you already run, without an agent on them. Recorded, approved, audited.">
+  <meta property="og:url" content="https://albatroxxx.github.io/zanskar/">
+  <meta property="og:image" content="https://albatroxxx.github.io/zanskar/assets/admin-targets-1.0.0.jpg">
+  <meta property="og:image:alt" content="Zanskar admin console listing Linux, Windows and database targets with host-key trust and tags">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="theme-color" content="#2F3FBF">
+  <link rel="icon" href="assets/logo.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="assets/apple-touch-icon.png">
+  <link rel="stylesheet" href="assets/site.css">
+  <script type="application/ld+json">{"@context":"https://schema.org","@type":"SoftwareApplication","name":"Zanskar","url":"https://albatroxxx.github.io/zanskar/","applicationCategory":"SecurityApplication","operatingSystem":"Linux","softwareVersion":"1.0.0","description":"Agentless access gateway: browser SSH, RDP, VNC, WinRM and database sessions with vaulted credentials, policies, just-in-time approvals, recording and a hash-chained audit log.","downloadUrl":"https://github.com/albatroxxx/zanskar/releases/latest","license":"https://github.com/albatroxxx/zanskar/blob/main/LICENSE","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+  <script src="assets/site.js" defer></script>
+</head>
+<body>
+  <a class="skip" href="#main">Skip to content</a>
+  <header class="site-header"><a class="brand" href="./"><img src="assets/logo.svg" alt="" width="32" height="32">Zanskar</a><nav aria-label="Main"><a href="docs/">Get started</a><a href="guide/">How-to guide</a><a href="releases/">v1.0.0</a><a href="https://github.com/albatroxxx/zanskar">GitHub <span aria-hidden="true">&#8599;</span></a></nav></header>
+  <main id="main">
+    <section class="hero" aria-labelledby="title">
+      <div class="hero-copy"><p class="eyebrow">AGENTLESS ACCESS GATEWAY</p><h1 id="title">Zanskar</h1><p class="lead">Browser sessions to the machines you already run. Nothing to install on them.</p><div class="actions"><a class="button primary" href="docs/#install">Install v1.0.0</a><a class="button" href="guide/">How-to guide</a></div></div>
+      <a class="hero-media" href="assets/admin-targets-1.0.0.jpg" aria-label="View the full Zanskar admin console screenshot"><img src="assets/admin-targets-1.0.0.jpg" width="1568" height="636" alt="Zanskar admin console: the Targets page lists Linux, Windows and PostgreSQL targets with capabilities, host-key trust state, tags and last probe time" fetchpriority="high"></a>
+    </section>
+    <section class="intro band"><div><p class="eyebrow">ONE GATEWAY, EVERY PROTOCOL</p><h2>Reach targets over SSH, RDP, VNC, WinRM or SQL. Only the gateway ever touches them.</h2></div><p>Users sign in once to Zanskar and open sessions in the browser. Zanskar authenticates to each target with a vaulted credential the user never sees, records the session, and writes every step to a hash-chained audit log. Targets need no agent and no inbound internet exposure.</p></section>
+    <section class="band" aria-labelledby="features-title">
+      <p class="eyebrow">WHAT YOU GET IN 1.0</p><h2 id="features-title">Everything that ships today.</h2>
+      <div class="feature-list">
+        <article><span class="index">01</span><h3>Terminals</h3><p>SSH to Linux and PowerShell over WinRM to Windows, streamed to the browser over WebSocket and recorded as asciicast. Full-screen toggle, live resize.</p></article>
+        <article><span class="index">02</span><h3>Desktops</h3><p>RDP and VNC through a guacd sidecar, with session recording and live shadowing by auditors. Clipboard and drive redirection are policy switches.</p></article>
+        <article><span class="index">03</span><h3>Managed databases</h3><p>A <code>psql</code> session to PostgreSQL, Amazon RDS or self-managed, through an ephemeral per-session client container. The database credential lives in a proxy sidecar and never reaches the user's client, not even from a shell escape.</p></article>
+        <article><span class="index">04</span><h3>File transfer</h3><p>SFTP upload and download beside the SSH terminal, drive redirection for RDP, each gated per policy and audited with path and size, never recorded.</p></article>
+        <article><span class="index">05</span><h3>Just-in-time access</h3><p>A policy can grant eligibility instead of standing access. Users request a target with a reason and a duration, an admin approves or denies, and the grant expires on its own.</p></article>
+        <article><span class="index">06</span><h3>Autoscaling groups</h3><p>Enroll an AWS Auto Scaling group through a cross-account IAM role. Zanskar tracks the healthy pool, uses EC2 Instance Connect credentials, and offers failover when your instance goes away.</p></article>
+        <article><span class="index">07</span><h3>Identity, kept separate</h3><p>Local accounts with Argon2id and mandatory TOTP, or OIDC and LDAP/Active Directory sign-in with audited group-to-role mapping. Three roles: admin, auditor, user.</p></article>
+        <article><span class="index">08</span><h3>Credentials and pinning</h3><p>Vaulted passwords, SSH keys and an SSH certificate-authority mode, sealed with envelope encryption under a versioned master key. Host keys and TLS certificates are pinned at enrollment and any change blocks connections.</p></article>
+        <article><span class="index">09</span><h3>Recorded and audited</h3><p>Every session is recorded, every recording view is itself audited. The audit log is hash-chained with a <code>verify</code> command and streams to a SIEM over syslog/CEF or a signed webhook.</p></article>
+        <article><span class="index">10</span><h3>Operations</h3><p>One static binary with the web UI embedded. <code>zanskar init</code> writes the configuration, <code>backup</code> and <code>restore</code> snapshot the database and recordings, retention sweeps old recordings by age and size.</p></article>
+      </div>
+      <figure><img src="assets/approvals-1.0.0.jpg" width="1568" height="636" alt="Zanskar Approvals page with two pending just-in-time requests from alice for a bastion and a database, each with reason, duration and Approve or Deny buttons" loading="lazy"><figcaption>Just-in-time requests wait in the Approvals queue; an approved grant is time-boxed and expires by itself.</figcaption></figure>
+    </section>
+    <section class="principles band"><div><p class="eyebrow">HOW IT IS BUILT</p><h2>Secure by default.</h2><p>Zanskar is designed for compliance-driven environments: least standing privilege, separated authentication, and evidence for everything.</p><p>Read the <a href="https://github.com/albatroxxx/zanskar/blob/main/docs/threat-model.md">threat model</a> and the <a href="https://github.com/albatroxxx/zanskar/tree/main/docs/adr">architecture decision records</a>.</p></div><dl><div><dt>Two authentications, kept apart</dt><dd>Who you are to Zanskar (local, OIDC, LDAP/AD, MFA) is separate from how Zanskar authenticates to a target (password, key, certificate, domain credential).</dd></div><div><dt>Least standing privilege</dt><dd>Sensitive targets can be made eligible-only, so access exists only as a time-boxed, approved, audited grant.</dd></div><div><dt>Evidence for everything</dt><dd>Hash-chained audit log, recorded sessions, audited reads, SIEM export, signed releases with Sigstore.</dd></div><div><dt>Single instance, on purpose</dt><dd>1.0 is one gateway with embedded SQLite and a guacd sidecar. Multi-replica HA and the Helm chart arrive with Phase 4.</dd></div></dl></section>
+    <section class="start band"><div><p class="eyebrow">START ON ONE SERVER</p><h2>Install the package. Run <code>zanskar init</code>.</h2><p>Signed deb/rpm packages for amd64 and arm64, or a signed container image with Docker Compose.</p></div><a class="button primary" href="docs/">Installation guide <span aria-hidden="true">&#8594;</span></a></section>
+  </main>
+  <footer class="site-footer"><span>Zanskar by <a href="https://github.com/albatroxxx">albatroxxx</a></span><nav aria-label="Footer"><a href="https://github.com/albatroxxx/zanskar/blob/main/LICENSE">Apache 2.0</a><a href="docs/#security">Security</a><a href="https://github.com/albatroxxx/zanskar/issues">Feedback</a></nav></footer>
+</body>
+</html>

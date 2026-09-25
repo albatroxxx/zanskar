@@ -90,6 +90,9 @@ development stack instead, use `deploy/docker-compose.dev.yml`.
 
 ## Deploying
 
+The product site at <https://albatroxxx.github.io/zanskar/> has the installation guide,
+the how-to guide and release notes in one place.
+
 Zanskar v1.0 is a **single-instance** deployment: one gateway, embedded SQLite, and a guacd
 sidecar for RDP/VNC. Two supported install paths, both from the
 [releases page](https://github.com/albatroxxx/zanskar/releases):
