@@ -35,3 +35,6 @@ web/node_modules/
 *.tfstate
 *.tfstate.*
 *.tfvars
+
+# Python bytecode (hack/check-site.py)
+__pycache__/
