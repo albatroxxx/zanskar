@@ -79,10 +79,7 @@ services:
   # One-shot: apply pending migrations, then exit. `serve` refuses to start with
   # migrations pending, so the gateway waits for this to complete successfully.
   zanskar-migrate:
-    build:
-      context: ..
-      dockerfile: deploy/Dockerfile
-    image: zanskar:local
+    image: ghcr.io/albatroxxx/zanskar:${ZANSKAR_VERSION:-latest}
     command: ["migrate"]
     restart: "no"
     environment: *zanskar-env
@@ -96,10 +93,7 @@ services:
       - no-new-privileges:true
 
   zanskar:
-    build:
-      context: ..
-      dockerfile: deploy/Dockerfile
-    image: zanskar:local
+    image: ghcr.io/albatroxxx/zanskar:${ZANSKAR_VERSION:-latest}
     restart: unless-stopped
     depends_on:
       zanskar-migrate:

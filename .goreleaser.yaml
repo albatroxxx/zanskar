@@ -1,8 +1,9 @@
-# goreleaser v2 — builds the release binaries, tar.gz archives, deb/rpm packages
-# and SHA256SUMS. deb/rpm are produced by goreleaser's built-in nfpm (pure Go,
-# no Docker). Build+validate locally with:
-#   goreleaser release --snapshot --clean
-# A tag push runs the same via .github/workflows/release.yml.
+# goreleaser v2 — builds the release binaries, tar.gz archives, deb/rpm packages,
+# SHA256SUMS, the multi-arch container image on ghcr.io, and keyless cosign
+# signatures for the checksums and the image. deb/rpm are produced by
+# goreleaser's built-in nfpm (pure Go). Build+validate locally with:
+#   goreleaser release --snapshot --clean --skip=docker,sign,publish
+# A tag push runs the full thing via .github/workflows/release.yml.
 version: 2
 
 project_name: zanskar
@@ -83,9 +84,88 @@ nfpms:
       fields:
         Bugs: https://github.com/albatroxxx/zanskar/issues
 
+# Container image: one image per arch from the prebuilt binary (no source build
+# inside Docker), then a multi-arch manifest. `latest` is only moved by a
+# non-prerelease tag; release candidates get their version tag alone.
+dockers:
+  - id: amd64
+    use: buildx
+    goos: linux
+    goarch: amd64
+    dockerfile: deploy/Dockerfile.release
+    image_templates:
+      - "ghcr.io/albatroxxx/zanskar:{{ .Version }}-amd64"
+    extra_files:
+      - deploy/docker/data/.keep
+    build_flag_templates:
+      - --platform=linux/amd64
+      - --label=org.opencontainers.image.title={{ .ProjectName }}
+      - --label=org.opencontainers.image.description=Agentless VM access gateway
+      - --label=org.opencontainers.image.source=https://github.com/albatroxxx/zanskar
+      - --label=org.opencontainers.image.url=https://github.com/albatroxxx/zanskar
+      - --label=org.opencontainers.image.version={{ .Version }}
+      - --label=org.opencontainers.image.revision={{ .FullCommit }}
+      - --label=org.opencontainers.image.created={{ .Date }}
+      - --label=org.opencontainers.image.licenses=Apache-2.0
+  - id: arm64
+    use: buildx
+    goos: linux
+    goarch: arm64
+    dockerfile: deploy/Dockerfile.release
+    image_templates:
+      - "ghcr.io/albatroxxx/zanskar:{{ .Version }}-arm64"
+    extra_files:
+      - deploy/docker/data/.keep
+    build_flag_templates:
+      - --platform=linux/arm64
+      - --label=org.opencontainers.image.title={{ .ProjectName }}
+      - --label=org.opencontainers.image.description=Agentless VM access gateway
+      - --label=org.opencontainers.image.source=https://github.com/albatroxxx/zanskar
+      - --label=org.opencontainers.image.url=https://github.com/albatroxxx/zanskar
+      - --label=org.opencontainers.image.version={{ .Version }}
+      - --label=org.opencontainers.image.revision={{ .FullCommit }}
+      - --label=org.opencontainers.image.created={{ .Date }}
+      - --label=org.opencontainers.image.licenses=Apache-2.0
+
+docker_manifests:
+  - name_template: "ghcr.io/albatroxxx/zanskar:{{ .Version }}"
+    image_templates:
+      - "ghcr.io/albatroxxx/zanskar:{{ .Version }}-amd64"
+      - "ghcr.io/albatroxxx/zanskar:{{ .Version }}-arm64"
+  - name_template: "ghcr.io/albatroxxx/zanskar:latest"
+    skip_push: auto # never move `latest` for a prerelease (rc) tag
+    image_templates:
+      - "ghcr.io/albatroxxx/zanskar:{{ .Version }}-amd64"
+      - "ghcr.io/albatroxxx/zanskar:{{ .Version }}-arm64"
+
 checksum:
   name_template: SHA256SUMS
   algorithm: sha256
+
+# Keyless (Sigstore) signatures via the workflow's OIDC identity: no key to
+# manage. Verify with the commands in the release notes.
+signs:
+  - id: checksums
+    cmd: cosign
+    artifacts: checksum
+    output: true
+    certificate: "${artifact}.pem"
+    args:
+      - sign-blob
+      - --yes
+      - --output-certificate=${certificate}
+      - --output-signature=${signature}
+      - ${artifact}
+
+docker_signs:
+  - id: images
+    cmd: cosign
+    artifacts: manifests
+    output: true
+    args:
+      - sign
+      - --yes
+      - ${artifact}@${digest}
 
 snapshot:
   version_template: "{{ incpatch .Version }}-snapshot"
@@ -106,3 +186,28 @@ release:
     name: zanskar
   draft: true
   prerelease: auto
+  header: |
+    ## Install
+
+    **Packages (recommended for a single server)** — Debian/Ubuntu and RHEL/Fedora/SUSE, amd64 and arm64:
+
+    ```sh
+    sudo apt install ./zanskar_{{ .Version }}_linux_amd64.deb     # or: sudo rpm -i zanskar_{{ .Version }}_linux_amd64.rpm
+    sudo zanskar init                                       # writes /etc/zanskar/env and prints the next steps
+    ```
+
+    **Container image** — `ghcr.io/albatroxxx/zanskar:{{ .Version }}` (linux/amd64, linux/arm64). Single-node stack with TLS: `deploy/docker-compose.yml` with `ZANSKAR_VERSION={{ .Version }}`.
+
+    **Verify** — checksums and the image are signed with Sigstore (keyless, GitHub Actions identity):
+
+    ```sh
+    sha256sum -c SHA256SUMS --ignore-missing
+    cosign verify-blob --certificate SHA256SUMS.pem --signature SHA256SUMS.sig \
+      --certificate-identity-regexp '^https://github.com/albatroxxx/zanskar/.github/workflows/release.yml@refs/tags/v{{ .Version }}$' \
+      --certificate-oidc-issuer https://token.actions.githubusercontent.com SHA256SUMS
+    cosign verify ghcr.io/albatroxxx/zanskar:{{ .Version }} \
+      --certificate-identity-regexp '^https://github.com/albatroxxx/zanskar/.github/workflows/release.yml@refs/tags/v{{ .Version }}$' \
+      --certificate-oidc-issuer https://token.actions.githubusercontent.com
+    ```
+
+    Full guide: [docs/deploy.md](https://github.com/albatroxxx/zanskar/blob/v{{ .Version }}/docs/deploy.md).
