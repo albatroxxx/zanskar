@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en"><head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Zanskar Releases</title>
+  <meta name="description" content="Zanskar 1.0.0 is the first stable release: browser SSH, RDP, VNC, WinRM and database sessions, just-in-time access, recording and audit. Read what shipped.">
+  <link rel="canonical" href="https://albatroxxx.github.io/zanskar/releases/">
+  <meta name="robots" content="index,follow"><meta property="og:type" content="website">
+  <meta property="og:title" content="Zanskar Releases"><meta property="og:description" content="Release notes for Zanskar, the agentless access gateway.">
+  <meta property="og:url" content="https://albatroxxx.github.io/zanskar/releases/"><meta property="og:image" content="https://albatroxxx.github.io/zanskar/assets/approvals-1.0.0.jpg"><meta name="twitter:card" content="summary_large_image">
+  <link rel="icon" href="../assets/logo.svg" type="image/svg+xml"><link rel="stylesheet" href="../assets/site.css">
+</head><body>
+  <a class="skip" href="#main">Skip to content</a>
+  <header class="site-header"><a class="brand" href="../"><img src="../assets/logo.svg" alt="" width="32" height="32">Zanskar</a><nav aria-label="Main"><a href="../docs/">Get started</a><a href="../guide/">How-to guide</a><a href="./" aria-current="page">v1.0.0</a><a href="https://github.com/albatroxxx/zanskar">GitHub &#8599;</a></nav></header>
+  <main id="main" class="docs-layout"><nav class="docs-nav" aria-label="Release navigation"><a href="#v1">v1.0.0</a><a href="#limits">Known limitations</a><a href="#next">What comes next</a><a href="../docs/">Installation</a><a href="https://github.com/albatroxxx/zanskar/releases">All releases</a></nav><article class="prose">
+    <p class="eyebrow">RELEASE NOTES</p><h1 id="v1">Zanskar v1.0.0</h1><p class="release-date">Latest release, 25 September 2026</p>
+    <p>The first stable release. Zanskar reached it after two release candidates: rc.1 caught a signing break in the release pipeline before anything was published, and rc.2 passed pipeline verification and a clean-machine install test on both documented paths.</p>
+    <ul><li><strong>Sessions</strong>: SSH and WinRM terminals, RDP and VNC desktops through guacd, PostgreSQL through a credential-isolating proxy sidecar, SFTP file transfer beside the terminal.</li><li><strong>Access control</strong>: users, groups and three roles; local accounts with Argon2id and mandatory TOTP, or OIDC and LDAP/AD; tag-based policies with time windows, session limits and clipboard/file switches; host-key and certificate pinning with admin approval.</li><li><strong>Just-in-time access</strong>: approval-required policies, time-boxed grants, an Approvals queue, automatic expiry, full audit trail.</li><li><strong>Autoscaling</strong>: AWS Auto Scaling groups via a cross-account role and EC2 Instance Connect, with failover when an instance disappears.</li><li><strong>Audit</strong>: recorded sessions with command-seek playback, live shadowing and terminate, hash-chained audit log with <code>verify</code>, SIEM export, recording retention.</li><li><strong>Operations</strong>: <code>zanskar init</code>, hardened systemd unit in deb/rpm packages, Docker Compose stack with Caddy TLS, <code>backup</code> and <code>restore</code>.</li><li><strong>Supply chain</strong>: every artifact checksummed and keyless-signed with Sigstore, multi-arch image on ghcr.io, pinned CI, OpenSSF Scorecard and Best Practices badges, CodeQL clean.</li></ul>
+    <p><a class="button primary" href="../docs/#install">Install v1.0.0</a> <a class="button" href="https://github.com/albatroxxx/zanskar/releases/tag/v1.0.0">GitHub release</a></p>
+    <figure><a href="../assets/approvals-1.0.0.jpg"><img src="../assets/approvals-1.0.0.jpg" width="1568" height="636" alt="Zanskar 1.0 Approvals page with pending just-in-time requests and an empty active-grants list" loading="lazy"></a><figcaption>Just-in-time access shipped in 1.0 so the first release carries least standing privilege as a first-class capability.</figcaption></figure>
+    <h2 id="limits">Known limitations in 1.0</h2>
+    <ul><li>Single instance only. More than one replica breaks cross-pod admin terminate and auditor shadowing; the Helm chart is a preview until that control channel lands.</li><li>Database access supports PostgreSQL. MySQL and MariaDB through ProxySQL are next.</li><li>Database sessions need Docker or Podman on the gateway host and are not available inside the Compose stack.</li><li>No SAML, SCIM, WebAuthn or automatic credential rotation yet.</li></ul>
+    <h2 id="next">What comes next</h2>
+    <p>Phase 4: the cross-pod control channel that unlocks high availability and makes the Helm chart a supported path, MySQL via ProxySQL, SAML and SCIM, WebAuthn, delegated and multi-step approvers, access reviews, credential rotation, and GCP and Azure scale sets. Follow the <a href="https://github.com/albatroxxx/zanskar/blob/main/docs/roadmap.md">roadmap</a>.</p>
+    <p class="note">Upgrading from a release candidate: 1.0.0-rc.1 and rc.2 share the schema with 1.0.0. Install the new package, or set <code>ZANSKAR_VERSION=1.0.0</code> and pull; migrations are a no-op.</p>
+  </article></main>
+  <footer class="site-footer"><span>Zanskar by <a href="https://github.com/albatroxxx">albatroxxx</a></span><nav aria-label="Footer"><a href="../">Overview</a><a href="../docs/#security">Security</a></nav></footer>
+</body></html>

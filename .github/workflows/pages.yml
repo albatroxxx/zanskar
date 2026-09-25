@@ -1,0 +1,64 @@
+name: Pages
+
+# Publishes site/ to https://albatroxxx.github.io/zanskar/. Deploys only while a
+# stable (non-draft, non-prerelease) release matching the chart appVersion is
+# published, so the site never advertises an install that does not exist.
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: ["site/**", "hack/check-site.py", ".github/workflows/pages.yml", "deploy/helm/zanskar/Chart.yaml"]
+  workflow_run:
+    workflows: [release]
+    types: [completed]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    outputs:
+      ready: ${{ steps.release.outputs.ready }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+      - name: Wait for a published stable release before advertising installation
+        id: release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          v=$(sed -nE 's/^appVersion: *"?([^"]+)"?/\1/p' deploy/helm/zanskar/Chart.yaml)
+          if gh release view "v$v" --json isDraft,isPrerelease | jq -e '.isDraft == false and .isPrerelease == false' >/dev/null; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "v$v is not a published stable release yet; site deployment deferred."
+          fi
+      - run: python3 hack/check-site.py
+      - uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0
+        if: steps.release.outputs.ready == 'true'
+      - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+        if: steps.release.outputs.ready == 'true'
+        with:
+          path: site
+
+  deploy:
+    needs: build
+    if: needs.build.outputs.ready == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy
+        id: deployment
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1

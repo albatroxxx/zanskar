@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>How-to guide | Zanskar Docs</title>
+  <meta name="description" content="Step by step: sign in with MFA, add users and groups, store credentials, enroll SSH, Windows, database and autoscaling targets, write policies, connect, approve access.">
+  <link rel="canonical" href="https://albatroxxx.github.io/zanskar/guide/">
+  <meta name="robots" content="index,follow">
+  <meta property="og:title" content="Zanskar how-to guide">
+  <meta property="og:description" content="From first sign-in to approved, recorded sessions: every admin and user task in Zanskar 1.0.">
+  <meta property="og:type" content="website"><meta property="og:url" content="https://albatroxxx.github.io/zanskar/guide/">
+  <meta property="og:image" content="https://albatroxxx.github.io/zanskar/assets/policies-1.0.0.jpg"><meta name="twitter:card" content="summary_large_image">
+  <link rel="icon" href="../assets/logo.svg" type="image/svg+xml"><link rel="stylesheet" href="../assets/site.css"><script src="../assets/site.js" defer></script>
+</head>
+<body>
+  <a class="skip" href="#main">Skip to content</a>
+  <header class="site-header"><a class="brand" href="../"><img src="../assets/logo.svg" alt="" width="32" height="32">Zanskar</a><nav aria-label="Main"><a href="../docs/">Get started</a><a href="./" aria-current="page">How-to guide</a><a href="../releases/">v1.0.0</a><a href="https://github.com/albatroxxx/zanskar">GitHub &#8599;</a></nav></header>
+  <main id="main" class="docs-layout"><nav class="docs-nav" aria-label="On this page"><a href="#concepts">Concepts</a><a href="#sign-in">Sign in and MFA</a><a href="#users">Users and groups</a><a href="#credentials">Credentials</a><a href="#targets">Targets</a><a href="#policies">Policies</a><a href="#connect">Connect</a><a href="#jit">Just-in-time access</a><a href="#audit">Recordings and audit</a><a href="#backup">Backups and retention</a><a href="#cli">CLI reference</a></nav><article class="prose">
+    <p class="eyebrow">HOW-TO GUIDE</p><h1>Run Zanskar day to day</h1><p>Every task an administrator, auditor or user performs in Zanskar 1.0, in the order you meet them. It assumes the gateway is <a href="../docs/">installed</a> and you have signed in as the first admin.</p>
+
+    <h2 id="concepts">Concepts in one minute</h2>
+    <dl><div><dt>Target</dt><dd>A machine or database Zanskar can reach: a Linux or Windows host, a PostgreSQL endpoint, or an AWS Auto Scaling group whose healthy instances become targets.</dd></div><div><dt>Credential</dt><dd>How Zanskar authenticates <em>to a target</em>: a vaulted password, an SSH private key, an SSH certificate authority, or a Windows domain credential. Users never see it.</dd></div><div><dt>Policy</dt><dd>Who may reach which targets, over which protocols, when, with which session limits, and whether clipboard and file transfer are allowed. A policy can also require approval for each session.</dd></div><div><dt>Roles</dt><dd><strong>admin</strong> configures and reviews, <strong>auditor</strong> reviews only, <strong>user</strong> connects. The UI has three portals to match: Admin, Audit and the user portal. Links to switch between them sit under your name in the sidebar.</dd></div></dl>
+
+    <h2 id="sign-in">Sign in and enroll MFA</h2>
+    <ol><li>Open the gateway URL and enter your username and password.</li><li>On first sign-in Zanskar shows a QR code. Scan it with any TOTP app (1Password, Google Authenticator, Aegis) and enter the six-digit code. Enrollment completes only after a valid code, and the step survives a page refresh.</li><li>Every later sign-in asks for password then code. Sign out from the sidebar; sessions also expire on idle.</li></ol>
+    <p>Signing in through your identity provider instead? An admin adds it under <strong>Identity providers</strong> (OIDC or LDAP/Active Directory) and maps provider groups to Zanskar roles. Provider users still enroll TOTP unless the provider handles MFA and the admin sets the mapping accordingly.</p>
+
+    <h2 id="users">Add users and groups</h2>
+    <ol><li><strong>Users &amp; groups</strong> in the admin sidebar. Create a user with a username, display name, initial password and one or more roles. The user changes the password and enrolls MFA at first sign-in.</li><li>Create a group, then add members. Policies are written against groups (or a single user), so a sensible starting set is one group per team that needs access, plus one for approvers.</li><li>Disable a user to block sign-in without deleting history; revoke their sessions from the same page if they are connected right now.</li></ol>
+
+    <h2 id="credentials">Store a credential</h2>
+    <p><strong>Credentials</strong> in the admin sidebar. Give it a name, choose the type, and paste the secret once. It is sealed with envelope encryption under the master key and the API never returns it again, only its metadata.</p>
+    <table><thead><tr><th scope="col">Type</th><th scope="col">Use it for</th></tr></thead><tbody>
+    <tr><td>Password</td><td>SSH password login, WinRM and RDP domain or local accounts, PostgreSQL users. Username plus password.</td></tr>
+    <tr><td>SSH key</td><td>SSH with a private key. Paste an existing key or let Zanskar generate an Ed25519 key and copy the public half into the target's <code>authorized_keys</code>.</td></tr>
+    <tr><td>SSH certificate authority</td><td>Keyless SSH: Zanskar mints a short-lived certificate per session. Install the CA public key as a <code>TrustedUserCAKeys</code> on targets.</td></tr>
+    <tr><td>EC2 Instance Connect</td><td>Autoscaling groups. No stored secret; Zanskar pushes a one-time key through the AWS API using the cross-account role.</td></tr>
+    </tbody></table>
+    <p>Credentials can be rotated in place. A rotation keeps the credential's id, so every target bound to it picks up the new secret immediately.</p>
+
+    <h2 id="targets">Enroll targets</h2>
+    <p><strong>Targets</strong> in the admin sidebar, then <strong>Add target</strong>. A name, an address and an OS family are enough to start; tags such as <code>env=prod</code> or <code>role=db</code> are what policies select on, so tag consistently from day one.</p>
+    <h3 id="target-linux">Linux over SSH</h3>
+    <ol><li>Add the target with OS family <em>linux</em> and the SSH port if it is not 22.</li><li>Open the target and bind a credential to the SSH protocol.</li><li><strong>Probe</strong>. Zanskar connects, learns which protocols the host offers, and captures the host key fingerprint. The key is shown as <em>unknown</em> until you trust it.</li><li>Compare the fingerprint with the host out of band, then <strong>Trust</strong> it. From now on a changed host key blocks every connection to that target until an admin re-approves it.</li></ol>
+    <h3 id="target-windows">Windows over RDP and WinRM</h3>
+    <p>Same flow with OS family <em>windows</em>. The probe captures the RDP and WinRM listener certificate fingerprints instead of an SSH key, and pins those. Bind a domain or local credential to each protocol you want to offer. RDP needs <code>guacd</code> configured on the gateway; WinRM terminals do not.</p>
+    <h3 id="database">PostgreSQL, including Amazon RDS</h3>
+    <ol><li>Add the target with engine <em>postgres</em>, the endpoint hostname and port 5432. Optionally record the engine version so the matching <code>psql</code> client is used.</li><li>Bind a password credential holding the database user.</li><li>Ensure Docker or Podman is available on the gateway host. Each session starts a client container connected to a credential-holding proxy sidecar on a private per-session network; the container the user types into never receives the password.</li></ol>
+    <h3 id="target-asg">AWS Auto Scaling groups</h3>
+    <ol><li>Create an IAM role in the target account that the gateway's principal can assume, with permission to describe the group and send EC2 Instance Connect keys. The gateway's principal is shown under <strong>Autoscaling</strong>.</li><li>Add the group with region, name and role ARN, then <strong>Sync</strong>. Healthy instances appear to users under the <em>Autoscaling</em> tab of their Targets page.</li><li>When the instance a user is on is terminated, their session shows a failover prompt to reconnect to another healthy instance.</li></ol>
+    <figure><img src="../assets/user-targets-1.0.0.jpg" width="1568" height="636" alt="Zanskar user portal Targets page: bastion-eu1 shows Request because it needs approval, web-01 and web-02 show an SSH button" loading="lazy"><figcaption>What a user sees: one button per protocol the policy allows, and <em>Request</em> where approval is required.</figcaption></figure>
+
+    <h2 id="policies">Write an access policy</h2>
+    <p><strong>Policies</strong>, then <strong>Add policy</strong>. A policy binds one group or one user to a set of targets chosen by tag, over the protocols you tick.</p>
+    <ul><li><strong>Targets by tag</strong>: <code>env=staging</code> selects every target carrying that tag now and in the future.</li><li><strong>Time windows</strong>: optional; for example weekdays 08:00 to 20:00 in a named time zone. Outside the window the target is not listed.</li><li><strong>Idle and maximum session</strong>: a session ends after the idle timeout or the maximum duration, whichever comes first. When several policies apply, the shortest idle timeout wins.</li><li><strong>Clipboard and file transfer</strong>: off unless enabled. File transfer switches on the SFTP panel for SSH and drive redirection for RDP.</li><li><strong>Require MFA</strong>: demand a fresh TOTP code at connect time, not just at sign-in.</li><li><strong>Require approval</strong>: turns the policy into eligibility. Members can request access but cannot connect until an admin approves. See <a href="#jit">just-in-time access</a>.</li></ul>
+    <figure><img src="../assets/policies-1.0.0.jpg" width="1568" height="636" alt="Zanskar Access policies page listing a standing SSH policy for staging and two approval-gated policies for the production bastion and database" loading="lazy"><figcaption>Standing access for staging; eligibility-only for production. The shortest idle timeout wins when policies overlap.</figcaption></figure>
+
+    <h2 id="connect">Connect to a target</h2>
+    <ol><li>In the user portal, <strong>Targets</strong> lists everything your policies allow, with one button per protocol. Click <strong>SSH</strong> or <strong>PowerShell</strong> for a terminal, <strong>RDP</strong> or <strong>VNC</strong> for a desktop, <strong>psql</strong> for a database.</li><li>The session opens in a new tab. A header shows the target, protocol, elapsed and idle time, and a <em>recorded</em> marker. The full-screen button hides everything but the session.</li><li>For SSH targets whose policy allows file transfer, <strong>Files</strong> opens a panel beside the terminal: browse the remote home directory, download a file, or upload one. Transfers are audited with path and size and are not part of the recording.</li><li><strong>Disconnect</strong> ends the session. Idle and maximum limits end it for you; the recording is finalised either way.</li></ol>
+    <p><strong>My sessions</strong> shows your own active and past sessions. If the host key of a target changed since it was trusted, the connection is refused and the target shows <em>awaiting host key trust</em> until an admin reviews it.</p>
+
+    <h2 id="jit">Just-in-time access: request, approve, revoke</h2>
+    <p>Approval-gated targets show <strong>Request</strong> instead of a connect button.</p>
+    <ol><li><strong>User:</strong> click Request, write the reason (it is recorded on the request and in the audit log) and choose a duration up to the policy's maximum. The request appears under <strong>My access</strong> as <em>pending</em>.</li><li><strong>Admin:</strong> <strong>Approvals</strong> lists pending requests with user, target, protocol, reason and duration. <strong>Approve</strong> starts the clock; <strong>Deny</strong> records a decision without access.</li><li><strong>User:</strong> the target's button becomes active for the granted window. Connect as many times as needed until it expires. Expiry ends the grant automatically, and the sweeper marks it <em>expired</em> within a minute.</li><li><strong>Admin:</strong> <strong>Revoke</strong> an active grant from the same page to end it early. Standing access from other policies is unaffected.</li></ol>
+    <p>Every step is an audit event: <code>access.request.create</code>, <code>approve</code>, <code>deny</code>, <code>revoke</code>, <code>expire</code>. Together with the recorded session this is the evidence trail auditors ask for.</p>
+
+    <h2 id="audit">Review recordings and the audit log</h2>
+    <p>The <strong>Audit</strong> portal is available to admins and auditors. Reading anything here is itself audited.</p>
+    <ul><li><strong>Events</strong>: who signed in, who opened which target, what changed, who reviewed what. Filter by user, action, object type and time. The header shows <em>chain intact</em> when the hash chain verifies.</li><li><strong>Recordings</strong>: every session with user, target, protocol, duration and how it ended. <strong>Review</strong> plays a terminal recording with a command list you can click to seek, or a desktop recording as video-style playback.</li><li><strong>Live</strong>: from the admin <strong>Sessions</strong> page an admin can terminate a session with a reason; an auditor can shadow it read-only while it runs.</li></ul>
+    <figure><img src="../assets/audit-events-1.0.0.jpg" width="1568" height="636" alt="Zanskar Audit events page with filters for user, action, object type and time, a chain-intact indicator, and a list of sign-in, session and access-request events" loading="lazy"><figcaption>The audit log is hash-chained; the <em>chain intact</em> badge is the live result of verifying it.</figcaption></figure>
+    <p>For your SIEM, set <code>ZANSKAR_SIEM_SYSLOG_ADDR</code> (syslog/CEF) or <code>ZANSKAR_SIEM_WEBHOOK_URL</code> plus <code>ZANSKAR_SIEM_WEBHOOK_SECRET</code> (signed JSON). Verify the chain from the command line on a schedule:</p>
+    <div class="code-block"><button type="button" class="copy" aria-label="Copy audit verify command">Copy</button><pre><code>sudo bash -c 'set -a; . /etc/zanskar/env; set +a; runuser -u zanskar -- zanskar audit verify'</code></pre></div>
+
+    <h2 id="backup">Backups and retention</h2>
+    <p><code>zanskar backup</code> writes a consistent snapshot of the SQLite database plus the recordings directory while the service runs. The master key is never included; keep it escrowed separately. <a href="../docs/#restore">Restore</a> stops the service first.</p>
+    <div class="code-block"><button type="button" class="copy" aria-label="Copy backup command">Copy</button><pre><code>sudo bash -c 'set -a; . /etc/zanskar/env; set +a; runuser -u zanskar -- zanskar backup --out /secure/zanskar-$(date +%F).tar.gz'</code></pre></div>
+    <p><strong>Retention</strong> in the admin sidebar sets a maximum age and a maximum total size for recordings. An hourly sweep deletes the oldest recordings beyond either limit and audits each deletion. Set it to match your compliance obligations before the disk does it for you.</p>
+
+    <h2 id="cli">CLI reference</h2>
+    <p>All commands read the same <code>ZANSKAR_*</code> environment as the server. On the package install, wrap them as shown above so they run as the <code>zanskar</code> user with <code>/etc/zanskar/env</code> loaded.</p>
+    <table><thead><tr><th scope="col">Command</th><th scope="col">What it does</th></tr></thead><tbody>
+    <tr><td><code>zanskar serve</code></td><td>Run the gateway. Refuses to start with migrations pending.</td></tr>
+    <tr><td><code>zanskar init</code></td><td>Write the environment file interactively or from flags; generates the master key.</td></tr>
+    <tr><td><code>zanskar migrate</code></td><td>Apply pending schema migrations. Forward-only.</td></tr>
+    <tr><td><code>zanskar admin create</code></td><td>Create an admin user; password from <code>ZANSKAR_ADMIN_PASSWORD</code>.</td></tr>
+    <tr><td><code>zanskar admin reset-mfa</code></td><td>Clear a user's authenticator so they re-enroll; audited.</td></tr>
+    <tr><td><code>zanskar audit verify</code></td><td>Recompute and verify the audit hash chain.</td></tr>
+    <tr><td><code>zanskar backup</code> / <code>restore</code></td><td>Snapshot or restore the database and recordings. Key never archived.</td></tr>
+    <tr><td><code>zanskar keygen</code></td><td>Print a fresh master key.</td></tr>
+    <tr><td><code>zanskar version</code></td><td>Print the running version.</td></tr>
+    </tbody></table>
+    <p>The HTTP API behind the UI is documented in <a href="https://github.com/albatroxxx/zanskar/blob/main/docs/api/openapi.yaml">OpenAPI 3.1</a>; everything the console does can be scripted against it.</p>
+  </article></main>
+  <footer class="site-footer"><span>Zanskar by <a href="https://github.com/albatroxxx">albatroxxx</a></span><nav aria-label="Footer"><a href="../">Overview</a><a href="../docs/">Install</a><a href="https://github.com/albatroxxx/zanskar/issues">Feedback</a></nav></footer>
+</body></html>
