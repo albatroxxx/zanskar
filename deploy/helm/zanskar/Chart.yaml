@@ -3,7 +3,7 @@ name: zanskar
 description: Agentless VM access gateway (SSH, RDP, VNC, WinRM in the browser) with policy, recording and audit
 type: application
 version: 0.1.0
-appVersion: "0.1.0"
+appVersion: "1.0.0-rc.1"
 home: https://github.com/albatroxxx/zanskar
 sources:
   - https://github.com/albatroxxx/zanskar

@@ -80,12 +80,20 @@ port is never published — only Caddy's 80/443 are — so plaintext flows only 
 private Docker network between them. A one-shot `zanskar-migrate` service applies pending
 migrations before the gateway starts (`serve` refuses to run with migrations pending).
 
+The stack pulls the published image `ghcr.io/albatroxxx/zanskar:${ZANSKAR_VERSION:-latest}`
+(linux/amd64 and linux/arm64, signed with Sigstore — verification commands are in each
+release's notes). `latest` only ever points at a stable release; to run a release candidate
+set `ZANSKAR_VERSION` explicitly in `deploy/.env`.
+
 ```sh
 cp deploy/.env.example deploy/.env    # then set ZANSKAR_MASTER_KEY (openssl rand -base64 32)
-docker compose -f deploy/docker-compose.yml up -d --build
+docker compose -f deploy/docker-compose.yml up -d
 docker compose -f deploy/docker-compose.yml exec -e ZANSKAR_ADMIN_PASSWORD=... \
   zanskar /zanskar admin create --username admin --name "Your Name"
 ```
+
+To build the image from a checkout instead (contributors, unreleased changes), add the
+override file: `docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.build.yml up -d --build`.
 
 By default Caddy serves `https://localhost/` with a self-signed certificate from its
 internal CA (a browser warning, fine for a trial). For a real certificate, set
@@ -103,6 +111,12 @@ snapshotting the volume. To exercise the PostgreSQL path instead, use
 production.
 
 ## Kubernetes with the Helm chart
+
+> **Preview.** The chart installs and runs, but v1.0 is a single-instance release: the
+> cross-pod control channel that admin terminate and auditor shadowing need with more than
+> one replica is Phase 4 work. Run it with `replicaCount: 1` and treat it as an evaluation
+> path until HA is announced. `image.tag` defaults to the chart's `appVersion`, which tracks
+> the current release tag.
 
 Prerequisites: a PostgreSQL 14+ database, a `kubernetes.io/tls` certificate for the
 pods (cert-manager is the easy path), an ingress controller that supports WebSockets

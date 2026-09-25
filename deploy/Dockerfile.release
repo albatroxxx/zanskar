@@ -1,0 +1,15 @@
+# syntax=docker/dockerfile:1.7
+# Release image built by goreleaser (.goreleaser.yaml `dockers`): the binary is
+# prebuilt and dropped into the build context, so this file only copies. No RUN
+# steps — distroless has no shell, and any RUN would force QEMU emulation for
+# the arm64 build. For a from-source build use deploy/Dockerfile.
+FROM gcr.io/distroless/static-debian12:nonroot@sha256:afa5c872c891853ca7fcf1f12c3edb23f7eeef36189728842dd51042ff57f7ab
+COPY zanskar /zanskar
+# Pre-own the data directory so an empty named volume mounted here inherits
+# uid 65532 and the nonroot process can create the SQLite database and the
+# recordings directory (the server creates recordings/ itself).
+COPY --chown=65532:65532 deploy/docker/data/ /var/lib/zanskar/
+USER nonroot:nonroot
+EXPOSE 8443
+ENTRYPOINT ["/zanskar"]
+CMD ["serve"]

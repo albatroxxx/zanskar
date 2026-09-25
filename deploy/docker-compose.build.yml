@@ -1,0 +1,14 @@
+# Override: build the gateway image from this checkout instead of pulling the
+# published one. For contributors and unreleased changes only.
+#   docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.build.yml up -d --build
+services:
+  zanskar-migrate:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    image: zanskar:local
+  zanskar:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    image: zanskar:local

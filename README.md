@@ -84,14 +84,24 @@ the next login enrolls a new one.
 Requires Go 1.27+ and Node 22+ to build.
 
 Run the single-instance stack (gateway on SQLite, guacd, Caddy TLS) on one box:
-`docker compose -f deploy/docker-compose.yml up -d --build`. For a Postgres-backed
+`docker compose -f deploy/docker-compose.yml up -d`. For a Postgres-backed
 development stack instead, use `deploy/docker-compose.dev.yml`.
 
 ## Deploying
 
-Single node: `deploy/docker-compose.yml`. Kubernetes: the Helm chart in
-`deploy/helm/zanskar`. Topology, high availability, upgrades, backups and the security
-checklist are in [docs/deploy.md](docs/deploy.md).
+Zanskar v1.0 is a **single-instance** deployment: one gateway, embedded SQLite, and a guacd
+sidecar for RDP/VNC. Two supported install paths, both from the
+[releases page](https://github.com/albatroxxx/zanskar/releases):
+
+- **Packages** (recommended): `.deb` / `.rpm` for amd64 and arm64, then `sudo zanskar init`
+  writes the configuration and prints the next steps. Plain tarballs are there too.
+- **Container**: `ghcr.io/albatroxxx/zanskar:<version>` with `deploy/docker-compose.yml`
+  (gateway + guacd + Caddy TLS). Set `ZANSKAR_VERSION` in `deploy/.env`.
+
+Checksums and the image are signed with Sigstore; the release notes carry the `cosign verify`
+commands. The Helm chart in `deploy/helm/zanskar` is a **preview**: it deploys, but multi-replica
+HA (cross-pod terminate and shadowing) is Phase 4 work and not supported in 1.0. Topology,
+upgrades, backups and the security checklist are in [docs/deploy.md](docs/deploy.md).
 
 ## Layout
 
