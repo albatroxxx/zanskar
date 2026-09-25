@@ -9,21 +9,23 @@ on:
     tags: ["v*"]
 
 permissions:
-  contents: write # create the GitHub release and upload artifacts
+  contents: read
 
 jobs:
   goreleaser:
     name: goreleaser
     runs-on: ubuntu-latest
+    permissions:
+      contents: write # create the GitHub release and upload artifacts
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0 # goreleaser needs full history and tags
-      - uses: actions/setup-go@v7
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
           cache: true
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 22
           cache: npm
@@ -31,7 +33,7 @@ jobs:
       # THIRD_PARTY_NOTICES.md currency is enforced by the CI 'notices' job on
       # every push to main, so a tag cut from main already carries a current
       # file; goreleaser bundles it into the archives.
-      - uses: goreleaser/goreleaser-action@v6
+      - uses: goreleaser/goreleaser-action@e435ccd777264be153ace6237001ef4d979d3a7a # v6.4.0
         with:
           version: "~> v2"
           args: release --clean
