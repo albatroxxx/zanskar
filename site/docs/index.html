@@ -64,7 +64,12 @@ sudo zanskar init -non-interactive -listen 0.0.0.0:8443 \
     --username admin --name "Your Name"'
 
 sudo systemctl enable --now zanskar
-curl -k https://localhost:8443/readyz        # {"status":"ready"}</code></pre></div>
+
+# readiness check: pick the line that matches the mode you chose in init
+curl http://127.0.0.1:8443/readyz            # behind-proxy mode (plain HTTP on loopback)
+curl -k https://localhost:8443/readyz        # own-certificate mode
+# either way: {"status":"ready"}</code></pre></div>
+    <p>In behind-proxy mode the gateway speaks plain HTTP on loopback and expects your proxy to terminate TLS on 443; probing it with <code>https://</code> fails with an OpenSSL <em>wrong version number</em> error, which is expected, not a fault. <code>journalctl -u zanskar -n 5</code> shows the listener and whether TLS is on. To switch modes later, re-run <code>zanskar init -force</code> with the new flags; the existing master key is kept.</p>
     <p>Logs go to journald: <code>journalctl -u zanskar -f</code>. Then continue with <a href="#first-sign-in">first sign-in</a>.</p>
 
     <h2 id="compose">2. Install with Docker Compose</h2>
