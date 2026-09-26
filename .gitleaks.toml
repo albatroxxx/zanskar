@@ -1,0 +1,42 @@
+# gitleaks configuration: the default rule set plus rules for Zanskar's own
+# secret shapes, so a master key or an admin password is caught
+# deterministically rather than by a generic heuristic. Used by the
+# pre-commit hook (.githooks/pre-commit) and by the CI "Secret scan" job.
+title = "zanskar"
+
+[extend]
+useDefault = true
+
+[[rules]]
+id = "zanskar-master-key"
+description = "Zanskar master key (32 random bytes, base64) assigned to ZANSKAR_MASTER_KEY"
+regex = '''(?i)ZANSKAR_MASTER_KEY\s*[=:]\s*["']?([A-Za-z0-9+/]{43}=)'''
+secretGroup = 1
+keywords = ["ZANSKAR_MASTER_KEY"]
+
+[[rules]]
+id = "zanskar-admin-password"
+description = "Zanskar admin password assigned inline to ZANSKAR_ADMIN_PASSWORD"
+regex = '''ZANSKAR_ADMIN_PASSWORD\s*=\s*(?:"([^"]{6,})"|'([^']{6,})'|([^\s"'<&$.#][^\s"']{5,}))'''
+keywords = ["ZANSKAR_ADMIN_PASSWORD"]
+[rules.allowlist]
+# Documentation placeholders and the throwaway smoke-test passphrase.
+regexes = [
+  '''(?i)(<|&lt;)[a-z-]+(>|&gt;)''',
+  '''bootstrap passphrase 2026''',
+]
+
+[allowlist]
+description = "Public values and paths that never hold real secrets"
+regexTarget = "line"
+regexes = [
+  '''SHA256:[A-Za-z0-9+/]{43}''',   # SSH host-key / certificate fingerprints are public identifiers
+  '''build-api:''',                 # Makefile target name, not a key
+]
+paths = [
+  '''(^|/)\.env\.example$''',
+  '''(^|/)env\.example$''',
+  '''^THIRD_PARTY_(LICENSES|NOTICES)\.md$''',
+  '''^web/package-lock\.json$''',
+  '''^site/assets/.*\.(woff2|jpg|png|svg)$''',
+]

@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+# Zanskar pre-push hook: a vulnerable dependency or a gosec finding should not
+# reach origin. Both tools finish in well under a minute on this repo.
+# Skip once with: ZANSKAR_SKIP_PREPUSH=1 git push
+set -euo pipefail
+[ "${ZANSKAR_SKIP_PREPUSH:-}" = "1" ] && exit 0
+
+fail() { printf '\npre-push: %s\n' "$*" >&2; exit 1; }
+have() { command -v "$1" >/dev/null 2>&1 || [ -x "$HOME/go/bin/$1" ]; }
+run()  { if command -v "$1" >/dev/null 2>&1; then "$@"; else "$HOME/go/bin/$@"; fi; }
+
+if have govulncheck; then
+  run govulncheck ./... >/dev/null || fail "govulncheck found a reachable vulnerability. Run: govulncheck ./..."
+else
+  printf 'pre-push: govulncheck not installed; skipping. Install: go install golang.org/x/vuln/cmd/govulncheck@latest\n' >&2
+fi
+if have gosec; then
+  run gosec -quiet ./... >/dev/null || fail "gosec reported findings. Run: gosec ./..."
+else
+  printf 'pre-push: gosec not installed; skipping. Install: go install github.com/securego/gosec/v2/cmd/gosec@latest\n' >&2
+fi

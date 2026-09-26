@@ -19,6 +19,7 @@ to report it privately.
 You need **Go 1.27+** and **Node 22+**.
 
 ```sh
+make setup            # once per clone: activates the git hooks in .githooks/ and lists any missing tools
 cp .env.example .env
 export ZANSKAR_MASTER_KEY=$(go run ./cmd/zanskar keygen)
 go run ./cmd/zanskar migrate
@@ -34,6 +35,14 @@ built binary — a good end-to-end check. Build the helpers first:
 `go build -o bin/fakessh ./hack/fakessh && go build -o bin/wsclient ./hack/wsclient`.
 
 ## Before you open a pull request
+
+The repo ships git hooks in `.githooks/`, activated by `make setup`. **pre-commit** refuses a
+commit that contains a secret (gitleaks with `.gitleaks.toml`, which knows Zanskar's own
+`ZANSKAR_MASTER_KEY` / `ZANSKAR_ADMIN_PASSWORD` shapes), unformatted Go, or a file that looks
+like an env file or private key. **pre-push** runs govulncheck and gosec. CI runs the same
+scanners and blocks the merge regardless, but a secret that reaches a public branch is already
+exposed, so the hooks are the layer that actually protects you. `git commit --no-verify` and
+`ZANSKAR_SKIP_PREPUSH=1` exist for a genuine false positive; fix `.gitleaks.toml` afterwards.
 
 Run the same checks CI runs, and make sure they pass:
 
