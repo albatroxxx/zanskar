@@ -3,9 +3,18 @@ MODULE   := github.com/albatroxxx/zanskar
 VERSION  ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 LDFLAGS  := -s -w -X $(MODULE)/internal/version.Version=$(VERSION)
 
-.PHONY: all build build-api web web-dev dist-linux packages release-check notices run test lint vet vuln sec tidy clean migrate-check
+.PHONY: all setup build build-api web web-dev dist-linux packages release-check notices run test lint vet vuln sec tidy clean migrate-check
 
 all: lint test build
+
+# setup activates the repo's git hooks (.githooks/) for this clone and checks
+# the tools they call. Run once after cloning.
+setup:
+	git config core.hooksPath .githooks
+	@echo "git hooks: .githooks/pre-commit (gitleaks, gofmt, secret-file guard), .githooks/pre-push (govulncheck, gosec)"
+	@command -v gitleaks    >/dev/null 2>&1 || echo "  missing: gitleaks     -> brew install gitleaks   (https://github.com/gitleaks/gitleaks#installing)"
+	@{ command -v govulncheck >/dev/null 2>&1 || [ -x "$$HOME/go/bin/govulncheck" ]; } || echo "  missing: govulncheck  -> go install golang.org/x/vuln/cmd/govulncheck@latest"
+	@{ command -v gosec       >/dev/null 2>&1 || [ -x "$$HOME/go/bin/gosec" ]; }       || echo "  missing: gosec        -> go install github.com/securego/gosec/v2/cmd/gosec@latest"
 
 build: web
 	CGO_ENABLED=0 go build -trimpath -tags webui -ldflags '$(LDFLAGS)' -o bin/$(BINARY) ./cmd/zanskar

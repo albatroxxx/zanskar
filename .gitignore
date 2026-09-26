@@ -19,6 +19,10 @@ zanskar.db-*
 # local-only notes and scratch (never publish brainstorm material)
 /prompts
 /scratch/
+/temp
+/tmp/
+*.tmp
+*.scratch
 *.local.md
 
 # tooling

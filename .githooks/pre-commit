@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+# Zanskar pre-commit hook: refuse a commit that contains a secret or
+# unformatted Go. Installed by `make setup` (git config core.hooksPath .githooks).
+# Bypass for a genuine false positive with: git commit --no-verify
+set -euo pipefail
+
+fail() { printf '\npre-commit: %s\n' "$*" >&2; exit 1; }
+
+# 1. Secrets in the staged diff (gitleaks, with the repo's .gitleaks.toml).
+if command -v gitleaks >/dev/null 2>&1; then
+  if ! gitleaks git --pre-commit --staged --redact --no-banner --exit-code 1 >/tmp/zanskar-gitleaks.$$ 2>&1; then
+    cat /tmp/zanskar-gitleaks.$$ >&2; rm -f /tmp/zanskar-gitleaks.$$
+    fail "gitleaks found a secret in the staged changes. Remove it (and rotate it if it is real) before committing."
+  fi
+  rm -f /tmp/zanskar-gitleaks.$$
+else
+  printf 'pre-commit: gitleaks is not installed; skipping the secret scan. Install: brew install gitleaks  (CI will still block the PR.)\n' >&2
+fi
+
+# 2. Staged Go files must be gofmt-clean.
+staged_go=$(git diff --cached --name-only --diff-filter=ACMR -- '*.go' || true)
+if [ -n "$staged_go" ]; then
+  unformatted=$(printf '%s\n' "$staged_go" | xargs gofmt -l 2>/dev/null || true)
+  [ -z "$unformatted" ] || fail "gofmt needed:\n$unformatted"
+fi
+
+# 3. Never commit an environment file or a private key, whatever it is named.
+blocked=$(git diff --cached --name-only --diff-filter=ACMR | grep -E '(^|/)\.env(\..+)?$|\.(pem|key|p12|pfx)$|(^|/)env$' | grep -v -E '\.example$' || true)
+[ -z "$blocked" ] || fail "refusing to commit what looks like a secret file:\n$blocked"
