@@ -6,6 +6,7 @@
 package asg
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"database/sql"
@@ -188,8 +189,7 @@ func (g *Group) TrustPolicy(gatewayPrincipal string) string {
 			"Condition": map[string]any{"StringEquals": map[string]any{"sts:ExternalId": g.ExternalID}},
 		}},
 	}
-	b, _ := json.MarshalIndent(doc, "", "  ")
-	return string(b)
+	return renderPolicy(doc)
 }
 
 // PermissionsPolicy renders the least-privilege permissions the role needs.
@@ -221,8 +221,22 @@ func (g *Group) PermissionsPolicy() string {
 			},
 		},
 	}
-	b, _ := json.MarshalIndent(doc, "", "  ")
-	return string(b)
+	return renderPolicy(doc)
+}
+
+// renderPolicy encodes an IAM document for display. Encoding goes through a
+// json.Encoder with HTML escaping off so that literal "<" and ">" (used in
+// placeholders such as <GATEWAY-ACCOUNT-ID>) survive instead of becoming
+// \u003c / \u003e, which admins were pasting into IAM verbatim.
+func renderPolicy(doc any) string {
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	enc.SetIndent("", "  ")
+	if err := enc.Encode(doc); err != nil {
+		return ""
+	}
+	return strings.TrimRight(buf.String(), "\n")
 }
 
 // Repo persists groups and instances.

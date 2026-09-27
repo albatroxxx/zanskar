@@ -138,3 +138,15 @@ func TestRepoGroupsInstancesAndHealth(t *testing.T) {
 		t.Fatal("expected not found after delete")
 	}
 }
+
+func TestPolicyTemplatesAreNotHTMLEscaped(t *testing.T) {
+	g := &Group{ExternalID: "ext", Region: "us-east-1", ExternalName: "web-asg"}
+	for _, p := range []string{g.TrustPolicy(""), g.PermissionsPolicy()} {
+		if strings.Contains(p, `\u003c`) || strings.Contains(p, `\u003e`) || strings.Contains(p, `\u0026`) {
+			t.Fatalf("policy was HTML-escaped:\n%s", p)
+		}
+	}
+	if p := g.TrustPolicy(""); !strings.Contains(p, "<GATEWAY-ACCOUNT-ID>") {
+		t.Fatalf("placeholder missing or mangled:\n%s", p)
+	}
+}
