@@ -65,6 +65,9 @@ func newEnv(t *testing.T) *env {
 	mux.Handle("POST /api/v1/mutate", RequireAuth(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		WriteJSON(w, 200, map[string]string{"ok": "mutated"})
 	})))
+	mux.Handle("GET /api/v1/connect-only", RequireConnect(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		WriteJSON(w, 200, map[string]string{"ok": "connect"})
+	})))
 	mw := &Middleware{Sessions: e.sessions, Users: e.users, Log: log}
 	e.srv = mw.Authenticate(mw.CSRF(mux))
 	return e
@@ -314,5 +317,42 @@ func TestMFAEnrollmentRequired(t *testing.T) {
 	}
 	if me := e.do("GET", "/api/v1/auth/me", nil, r.cookie, nil); me.code != 200 {
 		t.Fatalf("session should be full after confirm, got %d", me.code)
+	}
+}
+
+// TestRequireConnect covers the review-only rule of ADR 0006: an account that
+// holds only auditor is refused where users reach targets, while user, admin
+// and an admin who also audits all pass. Sessions are created directly so the
+// mandatory-MFA login steps for admin and auditor do not get in the way.
+func TestRequireConnect(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	cases := []struct {
+		name  string
+		roles []user.Role
+		want  int
+	}{
+		{"plainuser", []user.Role{user.RoleUser}, 200},
+		{"pureadmin", []user.Role{user.RoleAdmin}, 200},
+		{"reviewer", []user.Role{user.RoleAuditor}, 403},
+		{"adminreviewer", []user.Role{user.RoleAdmin, user.RoleAuditor}, 200},
+	}
+	for _, c := range cases {
+		u := e.createUser(t, c.name, "a strong enough passphrase", c.roles...)
+		tok, _, err := e.sessions.Create(ctx, u.ID, "203.0.113.5", "test", true)
+		if err != nil {
+			t.Fatal(err)
+		}
+		r := e.do("GET", "/api/v1/connect-only", nil, &http.Cookie{Name: CookieName, Value: tok}, nil)
+		if r.code != c.want {
+			t.Errorf("%s: got %d %v, want %d", c.name, r.code, r.body, c.want)
+		}
+		if c.want == 403 && r.body["code"] != "review_only" {
+			t.Errorf("%s: want code review_only, got %v", c.name, r.body)
+		}
+	}
+	// Review-only is about roles, not authentication: anonymous stays 401.
+	if r := e.do("GET", "/api/v1/connect-only", nil, nil, nil); r.code != 401 {
+		t.Errorf("anonymous: got %d, want 401", r.code)
 	}
 }

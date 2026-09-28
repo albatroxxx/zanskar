@@ -38,6 +38,13 @@ Role assignment is done by an admin. An admin cannot remove the last admin. Gran
 Amended 2026-09-20: the first draft withheld recordings and the audit log from `admin`. The
 project owner decided admins keep read access alongside designated auditors.
 
+Amended 2026-09-28: seeing targets, requesting access and opening sessions require the `user` or
+`admin` role. An account holding only `auditor` is review-only: the target, connect, access-request
+and own-session routes refuse it with `403 review_only` even when a policy names it, a user-scoped
+policy cannot be written for it (`422 review_only_subject`), and the UI gives it the audit portal
+alone. Before this, an auditor named in a policy could connect from the user portal, which
+defeated the separation of duties the role exists for.
+
 ## Consequences
 
 - Small teams can run with admins only and still have a complete, tamper-evident record.

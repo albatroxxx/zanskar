@@ -191,7 +191,7 @@ func runServe() error {
 			&oidc.Handler{Providers: idpRepo, Provisioner: provisioner, Sessions: sessions, Audit: auditLog, Log: log, StateKey: stateKey, MFAEnrolled: totp.Enrolled, RequireMFA: cfg.RequireMFA},
 			&credential.AdminHandler{Vault: vault, Audit: auditLog, Log: log},
 			&target.AdminHandler{Repo: targets, Prober: &target.Prober{}, Audit: auditLog, Log: log},
-			&policy.AdminHandler{Repo: policies, Audit: auditLog, Log: log},
+			&policy.AdminHandler{Repo: policies, Users: users, Audit: auditLog, Log: log},
 			&access.Handler{Requests: accessReqs, Policies: policies, Targets: targets, Audit: auditLog, Log: log},
 			&asg.AdminHandler{Repo: asgRepo, Sync: syncer.SyncGroup, GatewayPrincipal: cfg.AWSGatewayPrincipal, Audit: auditLog, Log: log},
 			&session.Handler{Repo: sessionRepo, Audit: auditLog, Registry: registry, Storage: storage, Log: log},

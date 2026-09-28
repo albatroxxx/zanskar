@@ -1,5 +1,6 @@
 import { useState, type FormEvent } from 'react'
 import { api, errorMessage } from '../../api/client'
+import { canConnect } from '../../auth/home'
 import type { Group, Policy, Protocol, Target, TimeWindow, AutoscalingGroup, User } from '../../api/types'
 import { Alert, Badge, Confirm, Empty, Field, Modal, PageHead } from '../../components/ui'
 import { formatTags, parseTags, policyProtocols, useList } from './lib'
@@ -150,7 +151,7 @@ function PolicyForm({ initial, groups, users, targets, asgs, onClose, onSaved }:
     enabled: initial?.enabled ?? true,
     subject: initial?.user_id ? 'user' : 'group',
     group_id: initial?.group_id ?? groups[0]?.id ?? '',
-    user_id: initial?.user_id ?? users[0]?.id ?? '',
+    user_id: initial?.user_id ?? users.find(canConnect)?.id ?? '',
     tags: formatTags(initial?.target_selector.tags),
     targets: initial?.target_selector.targets ?? [],
     asgs: initial?.target_selector.asgs ?? [],
@@ -165,6 +166,8 @@ function PolicyForm({ initial, groups, users, targets, asgs, onClose, onSaved }:
   })
   const [err, setErr] = useState('')
   const [busy, setBusy] = useState(false)
+  // The server refuses a review-only subject (422); the picker leaves it out.
+  const subjects = users.filter(canConnect)
   const up = (patch: Partial<FormState>) => setF({ ...f, ...patch })
   const toggleProto = (p: Protocol) => up({ protocols: f.protocols.includes(p) ? f.protocols.filter((x) => x !== p) : [...f.protocols, p] })
   const toggleTarget = (id: string) => up({ targets: f.targets.includes(id) ? f.targets.filter((x) => x !== id) : [...f.targets, id] })
@@ -245,10 +248,10 @@ function PolicyForm({ initial, groups, users, targets, asgs, onClose, onSaved }:
             </select>
           </Field>
         ) : (
-          <Field label="User">
+          <Field label="User" hint="Accounts that hold only the auditor role are review-only and are not listed; grant them the user role first.">
             <select id="p-user" value={f.user_id} onChange={(e) => up({ user_id: e.target.value })} required>
-              {users.length === 0 && <option value="">no users yet</option>}
-              {users.map((u) => (
+              {subjects.length === 0 && <option value="">no users can be granted access yet</option>}
+              {subjects.map((u) => (
                 <option key={u.id} value={u.id}>{u.username}{u.display_name && u.display_name !== u.username ? ` (${u.display_name})` : ''}</option>
               ))}
             </select>

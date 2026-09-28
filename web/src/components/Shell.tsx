@@ -1,5 +1,7 @@
+import { Fragment } from 'react'
 import { NavLink, Outlet } from 'react-router-dom'
 import { useAuth } from '../auth/AuthContext'
+import { canConnect } from '../auth/home'
 
 export interface NavItem { to: string; label: string; end?: boolean }
 
@@ -7,6 +9,12 @@ export interface NavItem { to: string; label: string; end?: boolean }
 export function Shell({ portal, items }: { portal: 'user' | 'admin' | 'audit'; items: NavItem[] }) {
   const { user, logout, hasRole } = useAuth()
   const sub = portal === 'user' ? 'access' : portal === 'admin' ? 'admin' : 'audit'
+  // Links to the other portals this account may enter. A review-only account
+  // (auditor without user) has no user portal to switch to.
+  const others: { to: string; label: string }[] = []
+  if (portal !== 'user' && canConnect(user)) others.push({ to: '/', label: 'User portal' })
+  if (portal !== 'admin' && hasRole('admin')) others.push({ to: '/admin', label: 'Admin' })
+  if (portal !== 'audit' && hasRole('admin', 'auditor')) others.push({ to: '/audit', label: 'Audit' })
   return (
     <div className="shell">
       <aside className="sidebar">
@@ -32,19 +40,12 @@ export function Shell({ portal, items }: { portal: 'user' | 'admin' | 'audit'; i
             <span className="mono">{user?.username}</span>
           </div>
           <div className="switch">
-            {portal !== 'user' && <NavLink to="/">User portal</NavLink>}
-            {portal !== 'admin' && hasRole('admin') && (
-              <>
-                {portal !== 'user' && ' · '}
-                <NavLink to="/admin">Admin</NavLink>
-              </>
-            )}
-            {portal !== 'audit' && hasRole('admin', 'auditor') && (
-              <>
-                {' · '}
-                <NavLink to="/audit">Audit</NavLink>
-              </>
-            )}
+            {others.map((o, i) => (
+              <Fragment key={o.to}>
+                {i > 0 && ' · '}
+                <NavLink to={o.to}>{o.label}</NavLink>
+              </Fragment>
+            ))}
           </div>
           <button className="btn sm ghost" onClick={() => void logout()} style={{ alignSelf: 'flex-start' }}>
             Sign out
