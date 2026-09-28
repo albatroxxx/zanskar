@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Navigate, useLocation, useNavigate } from 'react-router-dom'
-import type { GuacObject, InputStream } from 'guacamole-common-js'
+import type { Client, GuacObject, InputStream, Keyboard } from 'guacamole-common-js'
 import { fmtBytes, fmtSeconds } from '../../api/format'
 import { Modal } from '../../components/ui'
 import { FailoverDialog } from './Failover'
@@ -23,6 +23,15 @@ type GuacModule = typeof import('guacamole-common-js')['default']
 
 interface Entry { name: string; path: string; dir: boolean }
 
+/** typingInField reports whether keyboard focus is in a text field on this
+ *  page (the clipboard panel, for one) rather than on the desktop, in which
+ *  case keystrokes must not be forwarded to the remote machine. */
+function typingInField(): boolean {
+  const el = document.activeElement
+  if (!(el instanceof HTMLElement)) return false
+  return el instanceof HTMLTextAreaElement || el instanceof HTMLInputElement || el.isContentEditable
+}
+
 /**
  * Desktop renders an RDP or VNC session. The heavy lifting is done by
  * guacamole-common-js, loaded lazily; this page owns the tunnel URL, the top
@@ -34,6 +43,14 @@ interface Entry { name: string; path: string; dir: boolean }
  * streams. The gateway announces whether the policy allows it with a custom
  * "zanskar" instruction right after the tunnel opens; without it the panel is
  * never shown and the bridge drops the drive protocol anyway.
+ *
+ * The clipboard, when the policy allows it, is synced both ways: text copied
+ * inside the desktop arrives through the client's clipboard stream and is
+ * written to the browser clipboard; text copied in the browser is read
+ * whenever the window regains focus and sent to the desktop, so a plain
+ * Ctrl+V inside the session pastes it. Browsers may refuse either half
+ * (permission not granted, Firefox without a user gesture), so a clipboard
+ * panel with a text box is the fallback in both directions.
  */
 export function Desktop() {
   const loc = useLocation()
@@ -57,10 +74,46 @@ function DesktopSession({ state }: { state: DesktopState }) {
   const [cwd, setCwd] = useState('/')
   const [entries, setEntries] = useState<Entry[] | null>(null)
   const [status, setStatus] = useState<{ text: string; err?: boolean; progress?: number } | null>(null)
+  const [clipOpen, setClipOpen] = useState(false)
+  const [clipText, setClipText] = useState('')
+  const [clipNote, setClipNote] = useState<string | null>(null)
   const disconnectRef = useRef<() => void>(() => {})
   const guacRef = useRef<GuacModule | null>(null)
+  const clientRef = useRef<Client | null>(null)
   const fsRef = useRef<GuacObject | null>(null)
   const fileInput = useRef<HTMLInputElement>(null)
+  // Mirrors of state the window focus listener (registered once) must read.
+  const clipAllowedRef = useRef(false)
+  // The last text both sides agree on, so a focus sync does not echo back
+  // what the desktop just sent, and unchanged text is not resent.
+  const lastClipRef = useRef('')
+
+  // pushClipboard sends text to the desktop's clipboard through a Guacamole
+  // clipboard stream. The bridge drops the instruction when the policy
+  // forbids it, but the flag is checked here too so nothing is attempted.
+  const pushClipboard = useCallback((text: string) => {
+    const client = clientRef.current
+    const G = guacRef.current
+    if (!client || !G || !clipAllowedRef.current || text === lastClipRef.current) return
+    lastClipRef.current = text
+    const writer = new G.StringWriter(client.createClipboardStream('text/plain'))
+    writer.sendText(text)
+    writer.sendEnd()
+  }, [])
+
+  // pullBrowserClipboard reads the browser clipboard and pushes it to the
+  // desktop. It runs on window focus, the moment the user comes back from
+  // copying something elsewhere. Reading needs a permission the browser may
+  // not grant; then the panel is the way in.
+  const pullBrowserClipboard = useCallback(async () => {
+    if (!clipAllowedRef.current || !navigator.clipboard?.readText) return
+    try {
+      const text = await navigator.clipboard.readText()
+      if (text) pushClipboard(text)
+    } catch {
+      setClipNote('The browser did not allow reading your clipboard. Paste into the panel and send it to the session instead.')
+    }
+  }, [pushClipboard])
 
   useEffect(() => {
     if (!host.current) return
@@ -68,6 +121,16 @@ function DesktopSession({ state }: { state: DesktopState }) {
     const start = Date.now()
     const tick = setInterval(() => setElapsed(Math.floor((Date.now() - start) / 1000)), 1000)
     const el = host.current
+    // Assigned once the library has loaded; released by the effect cleanup
+    // below. Guacamole.Keyboard listens on the document itself and calls
+    // preventDefault on every key it handles, so leaving its handlers set
+    // after the session left every form field on the site deaf (the login
+    // page included) until a full reload. The library has no detach call:
+    // nulling the handlers is how it is told to stop intercepting.
+    let keyboard: Keyboard | null = null
+    let ro: ResizeObserver | null = null
+    let sizeTimer: ReturnType<typeof setTimeout> | undefined
+    const onFocus = () => { void pullBrowserClipboard() }
     void import('guacamole-common-js').then((mod) => {
       if (disposed) return
       const Guacamole = mod.default
@@ -94,12 +157,47 @@ function DesktopSession({ state }: { state: DesktopState }) {
         }
         setFsReady(true)
       }
+      clientRef.current = client
+      // Text the desktop copied: hand it to the browser clipboard, and keep it
+      // in the panel in case the browser refuses (it may, unless the page is
+      // focused and the permission is granted).
+      client.onclipboard = (stream, mimetype) => {
+        const reader = new Guacamole.StringReader(stream)
+        let text = ''
+        reader.ontext = (t) => { text += t }
+        reader.onend = () => {
+          if (!mimetype.startsWith('text/')) return
+          lastClipRef.current = text
+          setClipText(text)
+          const write = navigator.clipboard?.writeText?.(text)
+          if (!write) {
+            setClipNote('Copied in the session; this browser cannot write your clipboard, so it is in the panel.')
+            setClipOpen(true)
+            return
+          }
+          write.then(() => setClipNote(null)).catch(() => {
+            setClipNote('Copied in the session; the browser did not allow writing your clipboard, so it is in the panel.')
+            setClipOpen(true)
+          })
+        }
+      }
       const mouse = new Guacamole.Mouse(client.getDisplay().getElement())
       const send = (m: unknown) => client.sendMouseState(m as never)
       mouse.onmousedown = mouse.onmouseup = mouse.onmousemove = send
-      const keyboard = new Guacamole.Keyboard(document)
-      keyboard.onkeydown = (k: number) => client.sendKeyEvent(1, k)
-      keyboard.onkeyup = (k: number) => client.sendKeyEvent(0, k)
+      keyboard = new Guacamole.Keyboard(document)
+      // Keys typed into the clipboard panel (or any other field on this page)
+      // belong to that field, not to the desktop: returning true tells the
+      // library to leave the browser's default alone instead of preventing it.
+      keyboard.onkeydown = (k: number) => {
+        if (typingInField()) return true
+        client.sendKeyEvent(1, k)
+        return false
+      }
+      keyboard.onkeyup = (k: number) => {
+        if (typingInField()) return
+        client.sendKeyEvent(0, k)
+      }
+      window.addEventListener('focus', onFocus)
       client.connect('')
       // connect() installs the client's instruction handler; wrap it so the
       // Zanskar flags instruction is read here and everything else passes on.
@@ -125,21 +223,25 @@ function DesktopSession({ state }: { state: DesktopState }) {
       // its old size with dead space around it. guacd's RDP dynamic resize
       // re-renders at the new size 1:1, so no client-side scaling (and no mouse
       // remapping) is needed. Debounced so a drag-resize does not spam guacd.
-      let sizeTimer: ReturnType<typeof setTimeout> | undefined
-      const ro = new ResizeObserver(() => {
+      ro = new ResizeObserver(() => {
         clearTimeout(sizeTimer)
         sizeTimer = setTimeout(() => client.sendSize(el.clientWidth, el.clientHeight), 200)
       })
       ro.observe(el)
-      return () => {
-        ro.disconnect()
-        clearTimeout(sizeTimer)
-        keyboard.onkeydown = keyboard.onkeyup = null
-      }
     })
     return () => {
       disposed = true
       clearInterval(tick)
+      clearTimeout(sizeTimer)
+      ro?.disconnect()
+      window.removeEventListener('focus', onFocus)
+      if (keyboard) {
+        // Release anything still held (sends the key-ups while the client is
+        // connected), then stop intercepting the document's key events.
+        keyboard.reset()
+        keyboard.onkeydown = keyboard.onkeyup = null
+      }
+      clientRef.current = null
       disconnectRef.current()
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -180,6 +282,14 @@ function DesktopSession({ state }: { state: DesktopState }) {
   useEffect(() => {
     if (panelOpen && fsReady) list('/')
   }, [panelOpen, fsReady, list])
+
+  // Once the gateway says the policy allows the clipboard, seed the desktop
+  // with whatever the browser holds, provided the page is focused (reading
+  // an unfocused document's clipboard is refused outright).
+  useEffect(() => {
+    clipAllowedRef.current = flags.clipboard
+    if (flags.clipboard && document.hasFocus()) void pullBrowserClipboard()
+  }, [flags.clipboard, pullBrowserClipboard])
 
   const download = (e: Entry) => {
     const fs = fsRef.current
@@ -282,8 +392,13 @@ function DesktopSession({ state }: { state: DesktopState }) {
         <span className="stat">{state.protocol.toUpperCase()}</span>
         <span className="stat">elapsed {fmtSeconds(elapsed)}</span>
         <span className="grow" />
-        <span className="stat">recorded</span>
+        <span className="stat rec" title="This session is being recorded"><i className="rec-dot" aria-hidden="true" />Recording</span>
         <FullscreenButton isFull={isFull} onClick={toggleFull} />
+        {flags.clipboard && (
+          <button className="btn sm" onClick={() => setClipOpen((o) => !o)} aria-pressed={clipOpen}>
+            {clipOpen ? 'Hide clipboard' : 'Clipboard'}
+          </button>
+        )}
         {flags.files && (
           <button className="btn sm" onClick={() => setPanelOpen((o) => !o)} aria-pressed={panelOpen}>
             {panelOpen ? 'Hide files' : 'Files'}
@@ -293,6 +408,22 @@ function DesktopSession({ state }: { state: DesktopState }) {
       </div>
       <div className="desk-body">
         <div className="term-host" ref={host} style={{ overflow: 'hidden' }} />
+        {flags.clipboard && clipOpen && (
+          <aside className="files-panel clip-panel" aria-label="Session clipboard">
+            <header>
+              <span>Clipboard</span>
+              <span className="grow" />
+              <button className="btn sm" onClick={() => setClipOpen(false)}>Close</button>
+            </header>
+            <div className="hint">Text copied inside the session shows up here. Paste text below and send it to make it available inside the session; it syncs on its own when the browser allows.</div>
+            <textarea value={clipText} onChange={(e) => setClipText(e.target.value)} spellCheck={false} aria-label="Clipboard text" />
+            <div className="row">
+              <button className="btn sm primary" disabled={!clipText} onClick={() => pushClipboard(clipText)}>Send to session</button>
+              <button className="btn sm" disabled={!clipText} onClick={() => { void navigator.clipboard?.writeText(clipText).then(() => setClipNote('Copied to your clipboard.')).catch(() => setClipNote('The browser did not allow writing your clipboard; select the text and copy it.')) }}>Copy</button>
+            </div>
+            <div className={'status' + (clipNote ? '' : ' quiet')}>{clipNote}</div>
+          </aside>
+        )}
         {flags.files && panelOpen && (
           <aside className="files-panel" aria-label="Session files">
             <header>

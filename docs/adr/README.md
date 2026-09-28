@@ -37,3 +37,4 @@ and update the status of the old one.
 | [0016](0016-ssh-file-transfer-over-sftp.md) | SSH file transfer over SFTP | Accepted |
 | [0017](0017-database-access-ephemeral-client-container.md) | Database access via an ephemeral per-session client container | Accepted |
 | [0018](0018-just-in-time-access-approvals.md) | Just-in-time access approvals (PIM) | Accepted |
+| [0019](0019-retire-targets-keep-history.md) | Targets and autoscaling groups are retired, not erased | Accepted |

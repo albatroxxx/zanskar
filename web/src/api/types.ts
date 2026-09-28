@@ -114,6 +114,15 @@ export interface AccessRequest {
   requested_minutes: number
   status: AccessStatus
   approver_user_id?: string
+  /** What the approver granted; may differ from requested_minutes. Zero until decided. */
+  approved_minutes?: number
+  /** The active grant this request asks to extend; the new grant runs on from its expiry. */
+  extends_request_id?: string
+  /** Resolved at read time. */
+  username?: string
+  approver_username?: string
+  target_name?: string
+  asg_name?: string
   decision_note?: string
   decided_at?: string
   expires_at?: string
@@ -163,6 +172,9 @@ export interface GroupMember { user_id: string; username: string; display_name: 
 export interface TimeWindow { days: string[]; from: string; to: string; tz: string }
 export interface Selector { targets?: string[]; asgs?: string[]; tags?: Record<string, string> }
 
+/** One extra selector/protocol pair a policy grants beyond its base; it shares the policy's windows, limits and flags. */
+export interface PolicyRule { target_selector: Selector; protocols: Protocol[] }
+
 export interface Policy {
   id: string
   name: string
@@ -173,6 +185,8 @@ export interface Policy {
   user_id?: string
   target_selector: Selector
   protocols: Protocol[]
+  /** Further selector/protocol pairs; the base may be empty when these carry everything. */
+  rules?: PolicyRule[]
   time_windows: TimeWindow[]
   max_session_minutes?: number | null
   idle_timeout_minutes: number
@@ -190,6 +204,9 @@ export interface Session {
   user_id: string
   username?: string
   target_name?: string
+  /** For a session on an autoscaling instance: the group's name and the cloud instance id. */
+  asg_name?: string
+  instance_id?: string
   policy_id?: string
   target_id?: string
   asg_id?: string
@@ -208,6 +225,8 @@ export interface Session {
 export interface Recording {
   id: string
   session_id: string
+  /** Set once retention deleted the blob; the row stays so audit events resolve. */
+  purged_at?: string
   /** The session this recording belongs to, with user and target names resolved. */
   session?: Session
   format: 'asciicast' | 'guac'
@@ -227,6 +246,8 @@ export interface AuditEvent {
   actor_username?: string
   /** Resolved at read time: a target or user name, or "user → target (PROTO)" for sessions. */
   object_name?: string
+  /** Names for the ids inside details, keyed by the detail key ("target_id" → "web-1"). */
+  details_names?: Record<string, string>
   actor_ip: string
   action: string
   object_type: string
@@ -301,6 +322,14 @@ export interface AuditFacets {
 }
 
 /** Recording retention policy (admin-editable). Mirrors internal/session. */
+/** One runtime setting, as the admin API returns it. */
+export interface Setting {
+  key: string
+  value: string
+  updated_at?: string
+  updated_by?: string
+}
+
 export interface RetentionPolicy {
   max_age_days: number
   max_total_bytes: number

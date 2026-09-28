@@ -31,16 +31,29 @@ const DefaultMaxGrantMinutes = 480 // 8 hours
 // Request is an access request and, once approved, the time-bounded grant it
 // becomes. Exactly one of TargetID and ASGID is set.
 type Request struct {
-	ID               string     `json:"id"`
-	UserID           string     `json:"user_id"`
-	PolicyID         string     `json:"policy_id,omitempty"`
-	TargetID         string     `json:"target_id,omitempty"`
-	ASGID            string     `json:"asg_id,omitempty"`
-	Protocol         string     `json:"protocol"`
-	Reason           string     `json:"reason"`
-	RequestedMinutes int        `json:"requested_minutes"`
-	Status           Status     `json:"status"`
-	ApproverUserID   string     `json:"approver_user_id,omitempty"`
+	ID               string `json:"id"`
+	UserID           string `json:"user_id"`
+	PolicyID         string `json:"policy_id,omitempty"`
+	TargetID         string `json:"target_id,omitempty"`
+	ASGID            string `json:"asg_id,omitempty"`
+	Protocol         string `json:"protocol"`
+	Reason           string `json:"reason"`
+	RequestedMinutes int    `json:"requested_minutes"`
+	// ApprovedMinutes is what the approver granted, which may differ from
+	// what was asked; zero until a decision.
+	ApprovedMinutes int `json:"approved_minutes,omitempty"`
+	// ExtendsRequestID names the active grant this request asks to extend.
+	// On approval the new grant runs on from that grant's expiry rather than
+	// from the decision, so back-to-back grants leave no gap.
+	ExtendsRequestID string `json:"extends_request_id,omitempty"`
+	Status           Status `json:"status"`
+	ApproverUserID   string `json:"approver_user_id,omitempty"`
+	// Names resolved at read time so every list reads as people and machines
+	// rather than ids; a retired target or group still labels its requests.
+	Username         string     `json:"username,omitempty"`
+	ApproverUsername string     `json:"approver_username,omitempty"`
+	TargetName       string     `json:"target_name,omitempty"`
+	ASGName          string     `json:"asg_name,omitempty"`
 	DecisionNote     string     `json:"decision_note,omitempty"`
 	DecidedAt        *time.Time `json:"decided_at,omitempty"`
 	ExpiresAt        *time.Time `json:"expires_at,omitempty"`
@@ -58,4 +71,7 @@ var (
 	ErrNotFound = errors.New("access: request not found")
 	ErrInvalid  = errors.New("access: invalid input")
 	ErrState    = errors.New("access: request is not in a state for this action")
+	// ErrDuplicate: the user already has a pending request for the same
+	// target and protocol.
+	ErrDuplicate = errors.New("access: a request for this target and protocol is already pending")
 )

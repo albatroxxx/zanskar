@@ -67,21 +67,23 @@ type Handler struct {
 	Files *fileRegistry
 }
 
-// Register mounts the routes. The WebSocket route sits outside the CSRF
-// middleware's mutating-method check because it is a GET; the ticket is its
-// only credential.
+// Register mounts the routes. Every REST route here is for accounts that may
+// connect (user or admin); an auditor-only account is review-only and gets
+// 403 before any policy is consulted (ADR 0006). The WebSocket routes sit
+// outside the CSRF middleware's mutating-method check because they are GETs;
+// the ticket, which only POST /connect issues, is their only credential.
 func (h *Handler) Register(mux *http.ServeMux) {
 	if h.Files == nil {
 		h.Files = newFileRegistry()
 	}
-	mux.Handle("GET /api/v1/me/targets", auth.RequireAuth(http.HandlerFunc(h.myTargets)))
-	mux.Handle("POST /api/v1/connect", auth.RequireAuth(http.HandlerFunc(h.connect)))
-	mux.Handle("GET /api/v1/me/autoscaling-groups/{id}/instances", auth.RequireAuth(http.HandlerFunc(h.myInstances)))
-	mux.Handle("POST /api/v1/sessions/{id}/failover", auth.RequireAuth(http.HandlerFunc(h.failover)))
+	mux.Handle("GET /api/v1/me/targets", auth.RequireConnect(http.HandlerFunc(h.myTargets)))
+	mux.Handle("POST /api/v1/connect", auth.RequireConnect(http.HandlerFunc(h.connect)))
+	mux.Handle("GET /api/v1/me/autoscaling-groups/{id}/instances", auth.RequireConnect(http.HandlerFunc(h.myInstances)))
+	mux.Handle("POST /api/v1/sessions/{id}/failover", auth.RequireConnect(http.HandlerFunc(h.failover)))
 	// SSH file transfer over the terminal session's SFTP channel (ADR 0016).
-	mux.Handle("GET /api/v1/sessions/{id}/files", auth.RequireAuth(http.HandlerFunc(h.listFiles)))
-	mux.Handle("GET /api/v1/sessions/{id}/files/content", auth.RequireAuth(http.HandlerFunc(h.downloadFile)))
-	mux.Handle("POST /api/v1/sessions/{id}/files/content", auth.RequireAuth(http.HandlerFunc(h.uploadFile)))
+	mux.Handle("GET /api/v1/sessions/{id}/files", auth.RequireConnect(http.HandlerFunc(h.listFiles)))
+	mux.Handle("GET /api/v1/sessions/{id}/files/content", auth.RequireConnect(http.HandlerFunc(h.downloadFile)))
+	mux.Handle("POST /api/v1/sessions/{id}/files/content", auth.RequireConnect(http.HandlerFunc(h.uploadFile)))
 	mux.HandleFunc("GET /ws/terminal", h.terminal)
 	mux.HandleFunc("GET /ws/desktop", h.desktop)
 	mux.HandleFunc("GET /ws/winrm", h.winrm)
@@ -150,8 +152,9 @@ func (h *Handler) myTargets(w http.ResponseWriter, r *http.Request) {
 				consider(proto)
 			}
 			// database is not in target.Protocols (it is not probed); offer it
-			// for database targets the policy permits (ADR 0017).
-			if t.IsDatabase() {
+			// for database targets the policy permits (ADR 0017), and only
+			// when the gateway can actually broker that engine.
+			if t.IsDatabase() && target.ServableEngine(t.Engine) {
 				consider(target.Database)
 			}
 			if len(allowed) == 0 {
@@ -365,6 +368,9 @@ func (h *Handler) issueTicket(ctx context.Context, p *auth.Principal, ip string,
 		if ep.Engine == "" {
 			return nil, "not_a_database", "target is not a database", nil
 		}
+		if !target.ServableEngine(ep.Engine) {
+			return nil, "engine_unavailable", ep.Engine + " database access ships in a later release", nil
+		}
 	}
 	credID := ep.Credentials[proto]
 	if credID == "" {
@@ -410,7 +416,7 @@ func codeStatus(code string) int {
 		return http.StatusForbidden
 	case "credential_required":
 		return http.StatusUnprocessableEntity
-	case "protocol_unavailable", "credential_mode_unavailable":
+	case "protocol_unavailable", "credential_mode_unavailable", "engine_unavailable":
 		return http.StatusNotImplemented
 	case "not_found":
 		return http.StatusNotFound

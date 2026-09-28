@@ -10,7 +10,9 @@ import (
 
 	"github.com/albatroxxx/zanskar/internal/audit"
 	"github.com/albatroxxx/zanskar/internal/auth"
+	"github.com/albatroxxx/zanskar/internal/gateway"
 	"github.com/albatroxxx/zanskar/internal/httpx"
+	"github.com/albatroxxx/zanskar/internal/policy"
 	"github.com/albatroxxx/zanskar/internal/target"
 	"github.com/albatroxxx/zanskar/internal/user"
 )
@@ -24,8 +26,12 @@ type AdminHandler struct {
 	// GatewayPrincipal is the ARN the gateway runs as, rendered into the
 	// trust policy shown to admins. Empty leaves a placeholder.
 	GatewayPrincipal string
-	Audit            *audit.Log
-	Log              *slog.Logger
+	// Policies and Live let delete refuse a group that a policy still names
+	// by id or whose instances have sessions open (ADR 0019); nil skips it.
+	Policies *policy.Repo
+	Live     *gateway.Registry
+	Audit    *audit.Log
+	Log      *slog.Logger
 }
 
 // Register mounts the routes; every one requires the admin role.
@@ -163,12 +169,52 @@ func (h *AdminHandler) delete(w http.ResponseWriter, r *http.Request) {
 		h.fail(w, r, err)
 		return
 	}
+	blocked, err := h.deleteBlockedBy(r.Context(), g)
+	if err != nil {
+		h.serverError(w, r, err)
+		return
+	}
+	if blocked != "" {
+		h.record(r, "asg.delete", g, audit.Failure, map[string]any{"reason": "in_use"})
+		httpx.WriteError(w, http.StatusConflict, "in_use", blocked)
+		return
+	}
 	if err := h.Repo.Delete(r.Context(), g.ID); err != nil {
 		h.fail(w, r, err)
 		return
 	}
 	h.record(r, "asg.delete", g, audit.Success, nil)
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// deleteBlockedBy explains why the group cannot be retired yet: policies that
+// name it by id and sessions still open on its instances (the registry keys
+// those by instance row id). Empty means it may go.
+func (h *AdminHandler) deleteBlockedBy(ctx context.Context, g *Group) (string, error) {
+	var policies []string
+	if h.Policies != nil {
+		var err error
+		if policies, err = h.Policies.Referencing(ctx, "", g.ID); err != nil {
+			return "", err
+		}
+	}
+	open := 0
+	if h.Live != nil {
+		instances, err := h.Repo.Instances(ctx, g.ID, false)
+		if err != nil {
+			return "", err
+		}
+		ids := make(map[string]bool, len(instances))
+		for _, in := range instances {
+			ids[in.ID] = true
+		}
+		for _, l := range h.Live.List() {
+			if ids[l.TargetID] {
+				open++
+			}
+		}
+	}
+	return target.InUseMessage("autoscaling group", policies, open), nil
 }
 
 func (h *AdminHandler) instances(w http.ResponseWriter, r *http.Request) {

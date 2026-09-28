@@ -35,7 +35,8 @@ info:
     - `user`: sees the targets their groups' policies grant and opens sessions to them.
 
     Endpoints are tagged by the role that may call them. A caller holding several roles may call
-    any endpoint tagged with one of them.
+    any endpoint tagged with one of them. `user`-tagged endpoints also admit `admin`; an account
+    holding only `auditor` is review-only and receives `403` with code `review_only` from them.
 
     ## Pagination
 
@@ -69,7 +70,7 @@ tags:
   - name: auth
     description: Login, MFA, and session endpoints for any authenticated user.
   - name: user
-    description: Endpoints for the `user` role.
+    description: Endpoints for the `user` role, also callable by `admin`. Refused with `403 review_only` for accounts that hold only `auditor`.
   - name: admin
     description: Endpoints for the `admin` role.
   - name: auditor
@@ -439,6 +440,15 @@ paths:
                 $ref: "#/components/schemas/Error"
         "404":
           $ref: "#/components/responses/NotFound"
+        "409":
+          description: >-
+            One open request per user, target and protocol: `duplicate_request` (a request is
+            already pending), `already_granted` (a grant is active; extend it instead), or
+            `not_extendable` (`extends_request_id` is not the caller's active grant).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
     get:
       tags: [user]
       summary: List the caller's own access requests
@@ -1175,12 +1185,18 @@ paths:
     delete:
       tags: [admin]
       summary: Delete a target
-      description: Open sessions to the target are terminated with `end_reason=admin_terminated`.
+      description: |
+        Retires the target (ADR 0019): it leaves every listing and lookup and its credential
+        bindings are dropped, but the row stays so past sessions, recordings and audit events
+        keep its name. Refused with `409 in_use` while a policy names the target by id or a
+        session is open on it; the message lists the policies and counts the sessions.
       responses:
         "204":
-          description: Deleted.
+          description: Retired.
         "404":
           $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
   /targets/{id}/probe:
     post:
       tags: [admin]
@@ -1382,11 +1398,19 @@ paths:
               $ref: "#/components/schemas/AccessDecision"
       responses:
         "200":
-          description: Approved; `status` is `approved` and `expires_at` is set.
+          description: >-
+            Approved; `status` is `approved`, `approved_minutes` and `expires_at` are set. An
+            extension's `expires_at` runs on from the grant it extends while that grant is active.
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/AccessRequest"
+        "400":
+          description: `minutes` below 1 or over the policy maximum (`duration_too_long`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
         "404":
           $ref: "#/components/responses/NotFound"
         "409":
@@ -1539,12 +1563,18 @@ paths:
     delete:
       tags: [admin]
       summary: Un-enroll an autoscaling group
-      description: Open sessions to its instances are terminated with `end_reason=admin_terminated`.
+      description: |
+        Retires the group (ADR 0019): it leaves every listing and the sync loop and its
+        credential bindings are dropped, but the group and its instance rows stay so past
+        sessions keep their names. Refused with `409 in_use` while a policy names the group by
+        id or a session is open on one of its instances.
       responses:
         "204":
-          description: Deleted.
+          description: Retired.
         "404":
           $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
   /autoscaling-groups/{id}/sync:
     post:
       tags: [admin]
@@ -1608,6 +1638,11 @@ paths:
         - $ref: "#/components/parameters/Cursor"
         - name: user_id
           in: query
+          schema:
+            type: string
+        - name: username
+          in: query
+          description: Narrow to one account by username (case-insensitive).
           schema:
             type: string
         - name: target_id
@@ -1843,6 +1878,48 @@ paths:
           $ref: "#/components/responses/NotFound"
         "409":
           description: Recording is still in progress.
+  /recordings/{id}/download:
+    get:
+      tags: [auditor]
+      summary: Download the recording file
+      description: |
+        The same bytes as `stream`, sent as an attachment named after the user, the machine and
+        the recording's short id (`alice-web-1-3fa2b1c0.cast` or `.guac`). Inserts a
+        `recording_views` row and audits `recording.download` with `kind: raw` before the first
+        byte, so an evidence download is as traceable as a playback.
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: The recording, with `Content-Disposition: attachment`.
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "410":
+          description: Deleted by the retention policy (`purged`).
+  /recordings/{id}/transcript:
+    get:
+      tags: [auditor]
+      summary: Download the command transcript of a terminal recording
+      description: |
+        Plain text: a short header (who, where, when, recording id and SHA-256), then one line per
+        command the user submitted, `HH:MM:SS  command`, taken from the recording's markers.
+        Input the remote did not echo appears as `(hidden input)`; it was never stored. Audits
+        `recording.download` with `kind: transcript` and inserts a `recording_views` row.
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: The transcript as `text/plain`, with `Content-Disposition: attachment`.
+          content:
+            text/plain:
+              schema:
+                type: string
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: Not a terminal recording (`not_a_terminal_recording`); download the desktop recording instead.
+        "410":
+          description: Deleted by the retention policy (`purged`).
           content:
             application/json:
               schema:
@@ -1873,6 +1950,68 @@ paths:
           $ref: "#/components/responses/NotFound"
 
   # ------------------------------------------------------------------ admin: retention
+  /system/banner:
+    get:
+      tags: [system]
+      summary: The login banner
+      description: >
+        The system-use notification an administrator configured for the sign-in page, read
+        before any credential is entered, so no session is required. Empty `text` means none
+        is set. Never cached.
+      security: []
+      responses:
+        "200":
+          description: The banner text.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [text]
+                properties:
+                  text:
+                    type: string
+  /admin/settings/login-banner:
+    get:
+      tags: [admin]
+      summary: Get the login banner setting
+      responses:
+        "200":
+          description: The setting, with who last changed it.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Setting"
+    put:
+      tags: [admin]
+      summary: Set the login banner
+      description: >
+        Plain text shown above the sign-in form (a system-use notification, NIST AC-8). Trimmed,
+        line endings unified, at most 4000 characters; empty hides the banner. Applied at once,
+        no restart. Audited as `settings.update` with the previous and the new text.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [value]
+              properties:
+                value:
+                  type: string
+                  maxLength: 4000
+      responses:
+        "200":
+          description: The stored setting.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Setting"
+        "400":
+          description: Too long or not valid UTF-8.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
   /admin/retention:
     get:
       tags: [admin]
@@ -2566,7 +2705,9 @@ components:
           type: string
           description: >
             Set to make this a database target (ADR 0017), one of postgres, mysql, mariadb.
-            os_family then defaults to "other" and host-oriented fields do not apply.
+            os_family then defaults to "other" and host-oriented fields do not apply. Only
+            postgres can be enrolled in this release; mysql and mariadb answer
+            `422 engine_unavailable` until their credential-holding proxy sidecar ships.
         engine_version:
           type: string
           description: Optional database engine version.
@@ -2657,12 +2798,28 @@ components:
             type: string
         tags:
           $ref: "#/components/schemas/Tags"
+    PolicyRule:
+      type: object
+      description: >-
+        One further selector/protocol pair a policy grants beyond its base `target_selector`
+        and `protocols`. Every rule shares the policy's time windows, session limits and flags.
+      required: [target_selector, protocols]
+      properties:
+        target_selector:
+          $ref: "#/components/schemas/TargetSelector"
+        protocols:
+          type: array
+          minItems: 1
+          items:
+            $ref: "#/components/schemas/Protocol"
     AccessPolicy:
       type: object
       description: >-
         One access rule. It applies to every member of a group (`group_id`) or to a single
         user (`user_id`); exactly one of the two is set. A user's effective access is the union
-        of the policies bound to them and to any group they belong to.
+        of the policies bound to them and to any group they belong to. The base
+        `target_selector` and `protocols` are the policy's first rule; `rules` adds more pairs,
+        and the base may be empty when `rules` carry everything.
       required: [id, name, description, enabled, target_selector, protocols, time_windows, idle_timeout_minutes, allow_clipboard, allow_file_transfer, require_mfa, require_approval, created_at, updated_at]
       properties:
         id:
@@ -2685,6 +2842,12 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/Protocol"
+        rules:
+          type: array
+          maxItems: 32
+          description: Further selector/protocol pairs; see PolicyRule.
+          items:
+            $ref: "#/components/schemas/PolicyRule"
         time_windows:
           type: array
           items:
@@ -2737,9 +2900,15 @@ components:
           $ref: "#/components/schemas/TargetSelector"
         protocols:
           type: array
-          minItems: 1
+          description: May be empty when `rules` carry every grant; otherwise at least one.
           items:
             $ref: "#/components/schemas/Protocol"
+        rules:
+          type: array
+          maxItems: 32
+          description: Further selector/protocol pairs; see PolicyRule.
+          items:
+            $ref: "#/components/schemas/PolicyRule"
         time_windows:
           type: array
           items:
@@ -2781,13 +2950,31 @@ components:
           type: string
         user_id:
           type: string
+        username:
+          type: string
+          description: Resolved at read time.
+        approver_username:
+          type: string
+          description: Resolved at read time; present once decided.
         policy_id:
           type: string
           description: The eligibility policy that justified the request.
         target_id:
           type: string
+        target_name:
+          type: string
+          description: Resolved at read time; a retired target still labels its requests.
         asg_id:
           type: string
+        asg_name:
+          type: string
+          description: Resolved at read time.
+        approved_minutes:
+          type: integer
+          description: What the approver granted; may differ from `requested_minutes`. Absent until decided.
+        extends_request_id:
+          type: string
+          description: The active grant this request asked to extend, when it is an extension.
         protocol:
           $ref: "#/components/schemas/Protocol"
         reason:
@@ -2826,12 +3013,24 @@ components:
           type: integer
           minimum: 1
           description: Requested grant duration. Capped at the policy's `max_session_minutes`, or 480 when the policy sets none.
+        extends_request_id:
+          type: string
+          description: >-
+            Ask to extend the caller's active grant of this id for the same target and protocol.
+            Once approved, the new grant runs on from that grant's expiry. Refused with
+            `409 not_extendable` when the id is not the caller's active grant.
     AccessDecision:
       type: object
-      description: Optional note carried with an approve, deny, or revoke.
+      description: Optional note carried with an approve, deny, or revoke; on approve, optionally the granted duration.
       properties:
         note:
           type: string
+        minutes:
+          type: integer
+          minimum: 1
+          description: >-
+            Approve only: grant this many minutes instead of `requested_minutes`. Must not exceed
+            the policy's maximum (`400 duration_too_long`). The requested figure stays on the record.
     # ---------------------------------------------------------------- autoscaling
     AutoscalingGroup:
       type: object
@@ -3165,6 +3364,9 @@ components:
         instance_id:
           type: [string, "null"]
           description: The cloud instance id when the session was against an autoscaling instance.
+        asg_name:
+          type: [string, "null"]
+          description: The autoscaling group's name when the session was against one of its instances. Resolved at read time; a retired group still labels its past sessions.
         started_at:
           $ref: "#/components/schemas/Timestamp"
         ended_at:
@@ -3250,6 +3452,19 @@ components:
           type: string
         viewed_at:
           $ref: "#/components/schemas/Timestamp"
+    Setting:
+      type: object
+      required: [key, value]
+      properties:
+        key:
+          type: string
+        value:
+          type: string
+        updated_at:
+          $ref: "#/components/schemas/Timestamp"
+        updated_by:
+          type: string
+          description: User id of the administrator who last changed it.
     RetentionPolicy:
       type: object
       required: [max_age_days, max_total_bytes]
@@ -3284,6 +3499,13 @@ components:
         actor_username:
           type: [string, "null"]
           description: Resolved at read time; null when the user no longer exists.
+        details_names:
+          type: object
+          additionalProperties:
+            type: string
+          description: >
+            Names for the ids inside `details`, keyed by the detail key (`target_id` → `web-1`).
+            Read-time decoration only; the stored details and the hashed fields are untouched.
         actor_ip:
           type: string
         action:

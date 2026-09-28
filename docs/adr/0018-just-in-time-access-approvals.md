@@ -54,6 +54,17 @@ each grant least-privilege. Its lifecycle:
 - `approved` is *active* while `now < expires_at`; it becomes `expired` after, or `revoked` if
   an approver ends it early.
 
+**One open request per (user, target, protocol); extensions chain grants.** Amended
+2026-09-28 after the manual QA round. A second pending request for the same tuple is refused
+(`409 duplicate_request`): it would only put the same decision in front of the approver twice.
+While a grant is active, a new request must name it as the grant it extends
+(`extends_request_id`, else `409 already_granted`); an extension of anything but the caller's
+active grant is refused (`409 not_extendable`). An approved extension's `expires_at` runs on from
+the grant it extends while that grant is active, so back-to-back grants leave no gap, and the
+user is told ten minutes before a grant ends so they can ask in time. The approver may grant a
+different duration than was asked (`minutes` on approve, capped by the policy); the requested
+figure stays on the record beside the granted one, and the requester is told what was granted.
+
 **Approver model (v1): any admin.** Approve / deny / revoke are admin-only; auditors may view.
 Designated per-target or per-policy approvers, and multi-step chains, are deferred.
 

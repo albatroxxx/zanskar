@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { api, errorMessage, query } from '../../api/client'
 import { fmtDuration, fmtTime } from '../../api/format'
+import { sessionTarget } from '../../api/labels'
 import type { Page, Session } from '../../api/types'
 import { Alert, Empty, PageHead, reasonBadge } from '../../components/ui'
 
@@ -46,7 +47,7 @@ export function MySessions() {
               {items.map((s) => (
                 <tr key={s.id}>
                   <td>{fmtTime(s.started_at)}</td>
-                  <td>{s.target_name ?? <span className="mono">{s.target_id ?? s.asg_instance_id}</span>}</td>
+                  <td title={s.target_id ?? s.asg_instance_id}>{sessionTarget(s)}</td>
                   <td>{s.protocol}</td>
                   <td>{fmtDuration(s.started_at, s.ended_at)}</td>
                   <td>{reasonBadge(s.end_reason)}</td>
