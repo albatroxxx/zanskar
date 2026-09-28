@@ -1623,6 +1623,11 @@ paths:
           in: query
           schema:
             type: string
+        - name: username
+          in: query
+          description: Narrow to one account by username (case-insensitive).
+          schema:
+            type: string
         - name: target_id
           in: query
           schema:
@@ -2796,13 +2801,25 @@ components:
           type: string
         user_id:
           type: string
+        username:
+          type: string
+          description: Resolved at read time.
+        approver_username:
+          type: string
+          description: Resolved at read time; present once decided.
         policy_id:
           type: string
           description: The eligibility policy that justified the request.
         target_id:
           type: string
+        target_name:
+          type: string
+          description: Resolved at read time; a retired target still labels its requests.
         asg_id:
           type: string
+        asg_name:
+          type: string
+          description: Resolved at read time.
         protocol:
           $ref: "#/components/schemas/Protocol"
         reason:
@@ -3180,6 +3197,9 @@ components:
         instance_id:
           type: [string, "null"]
           description: The cloud instance id when the session was against an autoscaling instance.
+        asg_name:
+          type: [string, "null"]
+          description: The autoscaling group's name when the session was against one of its instances. Resolved at read time; a retired group still labels its past sessions.
         started_at:
           $ref: "#/components/schemas/Timestamp"
         ended_at:
@@ -3299,6 +3319,13 @@ components:
         actor_username:
           type: [string, "null"]
           description: Resolved at read time; null when the user no longer exists.
+        details_names:
+          type: object
+          additionalProperties:
+            type: string
+          description: >
+            Names for the ids inside `details`, keyed by the detail key (`target_id` → `web-1`).
+            Read-time decoration only; the stored details and the hashed fields are untouched.
         actor_ip:
           type: string
         action:

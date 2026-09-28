@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { api, errorMessage, query } from '../../api/client'
-import { fmtDuration, fmtTime, shortId } from '../../api/format'
+import { fmtDuration, fmtTime } from '../../api/format'
+import { sessionTarget, sessionUser } from '../../api/labels'
 import type { Page, Session } from '../../api/types'
 import { Alert, Empty, PageHead, reasonBadge } from '../../components/ui'
 
@@ -75,8 +76,8 @@ export function Recordings() {
               {visible.map((s) => (
                 <tr key={s.id}>
                   <td style={{ whiteSpace: 'nowrap' }}>{fmtTime(s.started_at)}</td>
-                  <td title={s.user_id}>{s.username ? <strong>{s.username}</strong> : <span className="mono muted">{shortId(s.user_id)}…</span>}</td>
-                  <td title={s.target_id ?? s.asg_instance_id}>{s.target_name ?? (s.asg_instance_id ? <span className="mono">{shortId(s.asg_instance_id)}…</span> : <span className="muted">—</span>)}</td>
+                  <td title={s.user_id}><strong>{sessionUser(s)}</strong></td>
+                  <td title={s.target_id ?? s.asg_instance_id}>{sessionTarget(s)}</td>
                   <td>{s.protocol.toUpperCase()}</td>
                   <td>{fmtDuration(s.started_at, s.ended_at)}</td>
                   <td>{reasonBadge(s.end_reason)}</td>

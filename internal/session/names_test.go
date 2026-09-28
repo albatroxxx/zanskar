@@ -4,9 +4,11 @@ package session
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 	"time"
 
+	"github.com/albatroxxx/zanskar/internal/audit"
 	"github.com/albatroxxx/zanskar/internal/config"
 	"github.com/albatroxxx/zanskar/internal/store"
 )
@@ -71,5 +73,39 @@ func TestResolveNames(t *testing.T) {
 	id, err = r.UserIDByUsername(ctx, "nobody")
 	if err != nil || id != "" {
 		t.Fatalf("unknown username must be empty, got %q %v", id, err)
+	}
+}
+
+// TestDetailIDs covers the read-time labelling of ids inside audit details:
+// known keys are collected per kind, target_id is tried as a target and as an
+// autoscaling instance, and malformed or non-string details are skipped.
+func TestDetailIDs(t *testing.T) {
+	items := []audit.Event{
+		{Details: json.RawMessage(`{"target_id":"t1","policy_id":"p1","protocol":"ssh","n":3}`)},
+		{Details: json.RawMessage(`not json`)},
+		{Details: nil},
+		{Details: json.RawMessage(`{"target_id":"i1","user_id":"","recording_id":"r1"}`)},
+	}
+	byKind, perEvent := detailIDs(items)
+	if got := byKind["target"]; len(got) != 2 || got[0] != "t1" || got[1] != "i1" {
+		t.Fatalf("target ids: %v", got)
+	}
+	if got := byKind["asg_instance"]; len(got) != 2 {
+		t.Fatalf("target_id must also be tried as an instance: %v", got)
+	}
+	if got := byKind["access_policy"]; len(got) != 1 || got[0] != "p1" {
+		t.Fatalf("policy ids: %v", got)
+	}
+	if _, ok := byKind["user"]; ok {
+		t.Fatal("an empty id must not be collected")
+	}
+	if perEvent[0]["target_id"] != "t1" || perEvent[0]["policy_id"] != "p1" || perEvent[0]["protocol"] != "" {
+		t.Fatalf("per-event pairs: %v", perEvent[0])
+	}
+	if perEvent[1] != nil || perEvent[2] != nil {
+		t.Fatalf("malformed and empty details must yield nothing: %v %v", perEvent[1], perEvent[2])
+	}
+	if perEvent[3]["recording_id"] != "r1" {
+		t.Fatalf("recording id: %v", perEvent[3])
 	}
 }

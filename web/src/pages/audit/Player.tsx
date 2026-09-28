@@ -3,7 +3,8 @@ import { Link, useParams } from 'react-router-dom'
 import * as AsciinemaPlayer from 'asciinema-player'
 import 'asciinema-player/dist/bundle/asciinema-player.css'
 import { api, errorMessage } from '../../api/client'
-import { fmtBytes, fmtDuration, fmtSeconds, fmtTime, shortId } from '../../api/format'
+import { fmtBytes, fmtDuration, fmtSeconds, fmtTime } from '../../api/format'
+import { sessionTarget, sessionUser } from '../../api/labels'
 import type { Recording } from '../../api/types'
 import { Alert, Badge, Empty, PageHead, reasonBadge } from '../../components/ui'
 
@@ -143,8 +144,8 @@ export function Player() {
   }
 
   const s = rec?.session
-  const who = s?.username ?? (s ? shortId(s.user_id) + '…' : '')
-  const where = s?.target_name ?? (s?.asg_instance_id ? shortId(s.asg_instance_id) + '…' : '')
+  const who = s ? sessionUser(s) : ''
+  const where = s ? sessionTarget(s) : ''
   const proto = s?.protocol.toUpperCase() ?? rec?.format
   const title = s ? `${who} on ${where}` : 'Recording'
 
