@@ -208,6 +208,21 @@ func RequireRole(roles ...user.Role) func(http.Handler) http.Handler {
 	}
 }
 
+// RequireConnect admits callers who may see targets and open sessions (the
+// user and admin roles). It implies RequireAuth. An auditor-only account is
+// review-only (ADR 0006): it is refused here so that a policy naming it, or a
+// ticket it might otherwise obtain, never turns into a session.
+func RequireConnect(next http.Handler) http.Handler {
+	return RequireAuth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		p, _ := FromContext(r.Context())
+		if !p.User.CanConnect() {
+			WriteError(w, http.StatusForbidden, "review_only", "this account is review-only; the user role is required to reach targets")
+			return
+		}
+		next.ServeHTTP(w, r)
+	}))
+}
+
 // CSRF guards every mutating request. Two independent checks: the Origin (or
 // Sec-Fetch-Site) header must be same-origin, and an authenticated call must
 // carry the session-bound X-CSRF-Token header. Unauthenticated mutating calls

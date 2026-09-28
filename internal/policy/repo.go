@@ -24,7 +24,7 @@ func NewRepo(db *store.DB) *Repo { return &Repo{db: db} }
 
 const cols = `id, name, description, enabled, group_id, user_id, target_selector, protocols, time_windows,
 	max_session_minutes, idle_timeout_minutes, allow_clipboard, allow_file_transfer, require_mfa, require_approval,
-	created_by, created_at, updated_at`
+	created_by, created_at, updated_at, rules`
 
 // Create validates and inserts p, setting ID and timestamps.
 func (r *Repo) Create(ctx context.Context, p *Policy) error {
@@ -33,15 +33,15 @@ func (r *Repo) Create(ctx context.Context, p *Policy) error {
 	}
 	now := time.Now().UTC()
 	p.ID, p.CreatedAt, p.UpdatedAt = store.NewID(), now, now
-	sel, protos, wins, err := encode(p)
+	sel, protos, wins, rules, err := encode(p)
 	if err != nil {
 		return err
 	}
 	_, err = r.db.ExecContext(ctx, r.db.Rebind(`INSERT INTO access_policies (`+cols+`)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`),
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`),
 		p.ID, p.Name, p.Description, p.Enabled, nullStr(p.GroupID), nullStr(p.UserID), sel, protos, wins,
 		nullInt(p.MaxSessionMinutes), p.IdleTimeoutMinutes, p.AllowClipboard, p.AllowFileTransfer, p.RequireMFA, p.RequireApproval,
-		nullStr(p.CreatedBy), store.TimeArg(now), store.TimeArg(now))
+		nullStr(p.CreatedBy), store.TimeArg(now), store.TimeArg(now), rules)
 	if err != nil {
 		return mapErr(err)
 	}
@@ -53,16 +53,16 @@ func (r *Repo) Update(ctx context.Context, p *Policy) error {
 	if err := p.Validate(); err != nil {
 		return err
 	}
-	sel, protos, wins, err := encode(p)
+	sel, protos, wins, rules, err := encode(p)
 	if err != nil {
 		return err
 	}
 	p.UpdatedAt = time.Now().UTC()
 	res, err := r.db.ExecContext(ctx, r.db.Rebind(`UPDATE access_policies SET name = ?, description = ?, enabled = ?, group_id = ?, user_id = ?,
 		target_selector = ?, protocols = ?, time_windows = ?, max_session_minutes = ?, idle_timeout_minutes = ?,
-		allow_clipboard = ?, allow_file_transfer = ?, require_mfa = ?, require_approval = ?, updated_at = ? WHERE id = ?`),
+		allow_clipboard = ?, allow_file_transfer = ?, require_mfa = ?, require_approval = ?, rules = ?, updated_at = ? WHERE id = ?`),
 		p.Name, p.Description, p.Enabled, nullStr(p.GroupID), nullStr(p.UserID), sel, protos, wins, nullInt(p.MaxSessionMinutes), p.IdleTimeoutMinutes,
-		p.AllowClipboard, p.AllowFileTransfer, p.RequireMFA, p.RequireApproval, store.TimeArg(p.UpdatedAt), p.ID)
+		p.AllowClipboard, p.AllowFileTransfer, p.RequireMFA, p.RequireApproval, rules, store.TimeArg(p.UpdatedAt), p.ID)
 	if err != nil {
 		return mapErr(err)
 	}
@@ -97,6 +97,31 @@ func (r *Repo) List(ctx context.Context, afterName string, limit int) ([]*Policy
 	return out, next, nil
 }
 
+// Referencing returns, in name order, the names of policies whose selector
+// lists the target or the autoscaling group by id. Tag selectors are not
+// references: they match whatever carries the tags, so retiring one target
+// leaves them intact. Admin delete flows refuse while this is non-empty, so a
+// machine a policy still points at is never removed underneath it.
+func (r *Repo) Referencing(ctx context.Context, targetID, asgID string) ([]string, error) {
+	var names []string
+	after := ""
+	for {
+		batch, next, err := r.List(ctx, after, 500)
+		if err != nil {
+			return nil, err
+		}
+		for _, p := range batch {
+			if p.References(targetID, asgID) {
+				names = append(names, p.Name)
+			}
+		}
+		if next == "" {
+			return names, nil
+		}
+		after = next
+	}
+}
+
 // Delete removes a policy. Open sessions referencing it keep a NULL policy_id.
 func (r *Repo) Delete(ctx context.Context, id string) error {
 	res, err := r.db.ExecContext(ctx, r.db.Rebind(`DELETE FROM access_policies WHERE id = ?`), id)
@@ -122,14 +147,23 @@ func (r *Repo) ForUser(ctx context.Context, userID string) ([]*Policy, error) {
 
 // ---- helpers
 
-func encode(p *Policy) (sel, protos, wins []byte, err error) {
+func encode(p *Policy) (sel, protos, wins, rules []byte, err error) {
 	if sel, err = json.Marshal(p.Selector); err != nil {
 		return
+	}
+	if p.Protocols == nil {
+		p.Protocols = []string{}
 	}
 	if protos, err = json.Marshal(p.Protocols); err != nil {
 		return
 	}
-	wins, err = json.Marshal(p.TimeWindows)
+	if wins, err = json.Marshal(p.TimeWindows); err != nil {
+		return
+	}
+	if p.Rules == nil {
+		p.Rules = []Rule{}
+	}
+	rules, err = json.Marshal(p.Rules)
 	return
 }
 
@@ -137,16 +171,16 @@ type scanner interface{ Scan(dest ...any) error }
 
 func scan(s scanner) (*Policy, error) {
 	var (
-		p                 Policy
-		sel, protos, wins []byte
-		maxSession        sql.NullInt64
-		groupID, userID   sql.NullString
-		createdBy         sql.NullString
-		created, updated  store.NullTime
+		p                        Policy
+		sel, protos, wins, rules []byte
+		maxSession               sql.NullInt64
+		groupID, userID          sql.NullString
+		createdBy                sql.NullString
+		created, updated         store.NullTime
 	)
 	err := s.Scan(&p.ID, &p.Name, &p.Description, &p.Enabled, &groupID, &userID, &sel, &protos, &wins,
 		&maxSession, &p.IdleTimeoutMinutes, &p.AllowClipboard, &p.AllowFileTransfer, &p.RequireMFA, &p.RequireApproval,
-		&createdBy, &created, &updated)
+		&createdBy, &created, &updated, &rules)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound
@@ -164,6 +198,17 @@ func scan(s scanner) (*Policy, error) {
 	}
 	if p.TimeWindows == nil {
 		p.TimeWindows = []TimeWindow{}
+	}
+	if len(rules) > 0 {
+		if err := json.Unmarshal(rules, &p.Rules); err != nil {
+			return nil, fmt.Errorf("policy %s: bad rules: %w", p.ID, err)
+		}
+	}
+	if p.Rules == nil {
+		p.Rules = []Rule{}
+	}
+	if p.Protocols == nil {
+		p.Protocols = []string{}
 	}
 	if maxSession.Valid {
 		v := int(maxSession.Int64)

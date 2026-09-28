@@ -5,6 +5,9 @@ import { SessionExpired } from './auth/SessionExpired'
 import { Empty } from './components/ui'
 import { Shell } from './components/Shell'
 import type { Role } from './api/types'
+import { homeFor } from './auth/home'
+import { api } from './api/client'
+import type { AccessRequest, Page } from './api/types'
 import { Login } from './pages/Login'
 import { Targets } from './pages/user/Targets'
 import { MySessions } from './pages/user/MySessions'
@@ -22,9 +25,40 @@ function Guard({ roles, children }: { roles?: Role[]; children: React.ReactNode 
   const loc = useLocation()
   if (auth.status === 'loading') return <div className="empty">Loading…</div>
   if (auth.status !== 'full') return <Navigate to="/login" state={{ from: loc.pathname }} replace />
-  if (roles && !auth.hasRole(...roles)) return <Navigate to="/" replace />
+  if (roles && !auth.hasRole(...roles)) {
+    // Send the account to the portal it does have. An account with no role at
+    // all (which the API refuses to create) would otherwise bounce forever.
+    const home = homeFor(auth.user)
+    if (home === loc.pathname || !auth.user?.roles.length) return <NoPortal />
+    return <Navigate to={home} replace />
+  }
   return <>{children}</>
 }
+
+function NoPortal() {
+  const { logout } = useAuth()
+  return (
+    <div className="empty">
+      <p>This account has no role that opens a portal. Ask an administrator to grant one.</p>
+      <button className="btn sm ghost" onClick={() => void logout()}>Sign out</button>
+    </div>
+  )
+}
+
+// Home resolves "/" and unknown paths to the portal the account may enter.
+function Home() {
+  const auth = useAuth()
+  if (auth.status !== 'full') return <Navigate to="/" replace />
+  return <Navigate to={homeFor(auth.user)} replace />
+}
+
+// pendingApprovals feeds the Approvals badge: how many requests await a decision.
+const pendingApprovals = () => api.get<Page<AccessRequest>>('/access-requests?status=pending').then((p) => (p.items ?? []).length)
+
+// The user portal and the session pages are for accounts that can connect
+// (ADR 0006); the API refuses auditor-only accounts on every route behind
+// them, so the UI hides what would only fail.
+const connectRoles: Role[] = ['user', 'admin']
 
 export default function App() {
   return (
@@ -37,7 +71,7 @@ export default function App() {
       <Route
         path="/terminal"
         element={
-          <Guard>
+          <Guard roles={connectRoles}>
             <Suspense fallback={<Empty>Loading terminal</Empty>}>
               <Terminal />
             </Suspense>
@@ -47,7 +81,7 @@ export default function App() {
       <Route
         path="/desktop"
         element={
-          <Guard>
+          <Guard roles={connectRoles}>
             <Suspense fallback={<Empty>Loading desktop</Empty>}>
               <Desktop />
             </Suspense>
@@ -67,7 +101,7 @@ export default function App() {
       <Route
         path="/"
         element={
-          <Guard>
+          <Guard roles={connectRoles}>
             <Shell
               portal="user"
               items={[
@@ -94,11 +128,12 @@ export default function App() {
                 { to: '/admin/autoscaling', label: 'Autoscaling' },
                 { to: '/admin/credentials', label: 'Credentials' },
                 { to: '/admin/policies', label: 'Policies' },
-                { to: '/admin/approvals', label: 'Approvals' },
+                { to: '/admin/approvals', label: 'Approvals', badge: pendingApprovals },
                 { to: '/admin/users', label: 'Users & groups' },
                 { to: '/admin/identity-providers', label: 'Identity providers' },
                 { to: '/admin/sessions', label: 'Sessions' },
                 { to: '/admin/retention', label: 'Retention' },
+                { to: '/admin/settings', label: 'Settings' },
                 { to: '/audit', label: 'Audit & recordings' },
               ]}
             />
@@ -123,7 +158,7 @@ export default function App() {
       >
         {auditRoutes}
       </Route>
-      <Route path="*" element={<Navigate to="/" replace />} />
+      <Route path="*" element={<Home />} />
       </Routes>
     </>
   )

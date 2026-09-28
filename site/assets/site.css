@@ -104,3 +104,11 @@ pre { font-size: 12px; line-height: 1.8; margin: 0; padding: 48px 18px 18px; ove
 .prose h2 + .eyebrow { margin-top: -8px; }
 .arch { width: 100%; height: auto; display: block; }
 @media (max-width: 720px) { .feature-list { grid-template-columns: 1fr; gap: 18px; } }
+
+/* per-OS tabs (install page) */
+.tabs { margin: 20px 0; }
+.tab-list { display: flex; gap: 4px; border-bottom: 1px solid var(--line); }
+.tab-list [role=tab] { border: 1px solid transparent; border-bottom: 0; border-radius: 5px 5px 0 0; background: transparent; color: var(--muted); font: inherit; font-size: 14px; padding: 8px 14px; cursor: pointer; margin-bottom: -1px; }
+.tab-list [role=tab][aria-selected=true] { color: var(--ink, inherit); background: #F7F5F0; border-color: var(--line); }
+.tabs .code-block { margin-top: 0; border-top-left-radius: 0; }
+.tabs [data-panel][hidden] { display: none; }

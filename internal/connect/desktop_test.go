@@ -13,6 +13,8 @@ import (
 	"crypto/x509/pkix"
 	"encoding/hex"
 	"encoding/pem"
+	"errors"
+	"fmt"
 	"io"
 	"math/big"
 	"net"
@@ -20,6 +22,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/albatroxxx/zanskar/internal/gateway/guac"
 	"github.com/albatroxxx/zanskar/internal/target"
 )
 
@@ -162,4 +165,14 @@ func atoiOr(s string, def int) int {
 		return def
 	}
 	return n
+}
+
+func TestDesktopDialMessage(t *testing.T) {
+	down := fmt.Errorf("%w at 127.0.0.1:4822: connect: connection refused", guac.ErrGuacdUnreachable)
+	if msg := desktopDialMessage(down); !strings.Contains(msg, "desktop service (guacd)") || !strings.Contains(msg, "administrator") {
+		t.Fatalf("guacd down must be named as such, got %q", msg)
+	}
+	if msg := desktopDialMessage(errors.New("guac: expected ready, got error")); strings.Contains(msg, "guacd) is not running") || !strings.Contains(msg, "machine") {
+		t.Fatalf("a target-side failure must not blame guacd, got %q", msg)
+	}
 }

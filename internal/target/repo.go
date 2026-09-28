@@ -67,8 +67,10 @@ func (r *Repo) GetByName(ctx context.Context, name string) (*Target, error) {
 	return r.getWhere(ctx, "name = ?", name)
 }
 
+// Retired targets (ADR 0019) are invisible to every lookup and listing; only
+// the history queries in package session read past deleted_at.
 func (r *Repo) getWhere(ctx context.Context, where string, arg any) (*Target, error) {
-	row := r.db.QueryRowContext(ctx, r.db.Rebind(`SELECT `+cols+` FROM targets WHERE `+where), arg)
+	row := r.db.QueryRowContext(ctx, r.db.Rebind(`SELECT `+cols+` FROM targets WHERE deleted_at IS NULL AND `+where), arg)
 	t, err := scanTarget(row)
 	if err != nil {
 		return nil, err
@@ -85,7 +87,7 @@ func (r *Repo) List(ctx context.Context, afterName string, limit int, tags map[s
 	if limit <= 0 || limit > 500 {
 		limit = 50
 	}
-	out, err := r.scanAll(ctx, r.db.Rebind(`SELECT `+cols+` FROM targets WHERE name > ? ORDER BY name`), tags, limit+1, afterName)
+	out, err := r.scanAll(ctx, r.db.Rebind(`SELECT `+cols+` FROM targets WHERE deleted_at IS NULL AND name > ? ORDER BY name`), tags, limit+1, afterName)
 	if err != nil {
 		return nil, "", err
 	}
@@ -107,7 +109,7 @@ func (r *Repo) List(ctx context.Context, afterName string, limit int, tags map[s
 
 // ListByTags returns every active target carrying all of tags. Policies use it.
 func (r *Repo) ListByTags(ctx context.Context, tags map[string]string) ([]*Target, error) {
-	out, err := r.scanAll(ctx, `SELECT `+cols+` FROM targets WHERE status = 'active' ORDER BY name`, tags, 0)
+	out, err := r.scanAll(ctx, `SELECT `+cols+` FROM targets WHERE deleted_at IS NULL AND status = 'active' ORDER BY name`, tags, 0)
 	if err != nil {
 		return nil, err
 	}
@@ -132,7 +134,7 @@ func (r *Repo) Update(ctx context.Context, t *Target) error {
 	}
 	defer tx.Rollback() //nolint:errcheck
 	res, err := tx.ExecContext(ctx, r.db.Rebind(`UPDATE targets SET name = ?, address = ?, os_family = ?, ports = ?, capabilities = ?,
-		tags = ?, status = ?, notes = ?, engine = ?, engine_version = ?, updated_at = ? WHERE id = ?`),
+		tags = ?, status = ?, notes = ?, engine = ?, engine_version = ?, updated_at = ? WHERE id = ? AND deleted_at IS NULL`),
 		t.Name, t.Address, string(t.OSFamily), mustJSON(t.Ports), mustJSON(t.Capabilities), mustJSON(t.Tags), t.Status, t.Notes,
 		t.Engine, t.EngineVersion, store.TimeArg(now), t.ID)
 	if err != nil {
@@ -148,13 +150,30 @@ func (r *Repo) Update(ctx context.Context, t *Target) error {
 	return tx.Commit()
 }
 
-// Delete removes the target and its credential mapping.
+// Delete retires the target (ADR 0019). The row stays so past sessions,
+// recordings and audit events keep resolving to its name, but it leaves every
+// listing and lookup, its credential bindings are dropped so the credentials
+// themselves can later be deleted, and its name is free to enrol again.
+// Whether anything still depends on it (policies naming it, open sessions) is
+// the handler's decision; the repository only retires.
 func (r *Repo) Delete(ctx context.Context, id string) error {
-	res, err := r.db.ExecContext(ctx, r.db.Rebind(`DELETE FROM targets WHERE id = ?`), id)
+	now := store.TimeArg(time.Now().UTC())
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback() //nolint:errcheck
+	res, err := tx.ExecContext(ctx, r.db.Rebind(`UPDATE targets SET deleted_at = ?, status = 'disabled', updated_at = ? WHERE id = ? AND deleted_at IS NULL`), now, now, id)
 	if err != nil {
 		return mapErr(err)
 	}
-	return affected(res)
+	if err := affected(res); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, r.db.Rebind(`DELETE FROM target_credentials WHERE target_id = ?`), id); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // SetCredential maps a credential to one protocol.

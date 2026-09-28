@@ -159,3 +159,65 @@ func TestClose(t *testing.T) {
 		t.Fatalf("rotate after close: %v", err)
 	}
 }
+
+// TestRewrap covers master-key rotation: after Rewrap every version opens
+// with the new key and none with the old, secret ciphertext sealed before
+// and after is unchanged and still readable, and rewrapping onto the key
+// already in use is refused.
+func TestRewrap(t *testing.T) {
+	ctx := context.Background()
+	db := newDB(t)
+	r, err := Open(ctx, db, kek(t, 1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	aad := AAD("credentials", "c1")
+	ct1, v1, err := r.Encrypt(aad, []byte("first"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.Rotate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	ct2, v2, err := r.Encrypt(aad, []byte("second"))
+	if err != nil || v2 != 2 {
+		t.Fatalf("encrypt under v2: %v %d", err, v2)
+	}
+
+	if _, err := r.Rewrap(ctx, kek(t, 1)); !errors.Is(err, ErrSameKEK) {
+		t.Fatalf("rewrap onto the same key must be refused, got %v", err)
+	}
+	n, err := r.Rewrap(ctx, kek(t, 9))
+	if err != nil || n != 2 {
+		t.Fatalf("rewrap: n=%d err=%v", n, err)
+	}
+	// The live ring keeps working, and the ciphertext did not change.
+	for _, c := range []struct {
+		ct   []byte
+		v    int
+		want string
+	}{{ct1, v1, "first"}, {ct2, v2, "second"}} {
+		if pt, err := r.Decrypt(aad, c.ct, c.v); err != nil || string(pt) != c.want {
+			t.Fatalf("decrypt after rewrap (v%d): %v %q", c.v, err, pt)
+		}
+	}
+	// A new key encrypts under the active version as before.
+	if _, v3, err := r.Encrypt(aad, []byte("third")); err != nil || v3 != 2 {
+		t.Fatalf("encrypt after rewrap: %v %d", err, v3)
+	}
+	// Reopening: the new key opens both versions, the old key opens nothing.
+	r2, err := Open(ctx, db, kek(t, 9))
+	if err != nil {
+		t.Fatalf("reopen with the new key: %v", err)
+	}
+	if pt, err := r2.Decrypt(aad, ct1, v1); err != nil || string(pt) != "first" {
+		t.Fatalf("new key must read old ciphertext: %v %q", err, pt)
+	}
+	if _, err := Open(ctx, db, kek(t, 1)); err == nil || !strings.Contains(err.Error(), "cannot unwrap key version") {
+		t.Fatalf("old key must no longer open the ring, got %v", err)
+	}
+	var rotated string
+	if err := db.QueryRowContext(ctx, `SELECT rotated_at FROM key_versions WHERE id = 1`).Scan(&rotated); err != nil || rotated == "" {
+		t.Fatalf("rotated_at should record the rewrap: %q %v", rotated, err)
+	}
+}

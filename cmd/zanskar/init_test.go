@@ -152,3 +152,20 @@ func TestIsLoopbackAddr(t *testing.T) {
 		}
 	}
 }
+
+func TestGuacdRunHint(t *testing.T) {
+	lines := guacdRunHint("127.0.0.1:4822")
+	if len(lines) != 2 || !strings.Contains(lines[0], "-p 127.0.0.1:4822:4822") || !strings.Contains(lines[1], "guacamole/guacd:1.6.0") {
+		t.Fatalf("loopback hint: %q", lines)
+	}
+	if lines := guacdRunHint("localhost:5000"); !strings.Contains(lines[0], "-p 127.0.0.1:5000:4822") {
+		t.Fatalf("custom loopback port: %q", lines)
+	}
+	lines = guacdRunHint("10.0.0.9:4822")
+	if len(lines) != 3 || !strings.Contains(lines[0], "10.0.0.9") || !strings.Contains(lines[1], "-p 4822:4822") {
+		t.Fatalf("remote host hint: %q", lines)
+	}
+	if !strings.Contains(strings.Join(lines, "\n"), "HOME=/tmp") {
+		t.Fatalf("HOME must be set for the image's user: %q", lines)
+	}
+}

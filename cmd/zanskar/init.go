@@ -208,7 +208,7 @@ func checkPrereqs(a initAnswers) []string {
 		d := net.Dialer{Timeout: 3 * time.Second}
 		c, err := d.DialContext(context.Background(), "tcp", a.GuacdAddr)
 		if err != nil {
-			w = append(w, fmt.Sprintf("guacd at %s is not reachable now (%v); RDP and VNC will fail until it is", a.GuacdAddr, err))
+			w = append(w, fmt.Sprintf("guacd at %s is not reachable now (%v); RDP and VNC will fail until it is (the next steps below show how to start it)", a.GuacdAddr, err))
 		} else {
 			_ = c.Close()
 		}
@@ -368,10 +368,42 @@ func printNextSteps(a initAnswers, out string, freshKey bool) {
 	fmt.Printf("  1. Apply migrations:   %szanskar migrate   (or let the unit's ExecStartPre do it)\n", pfx)
 	fmt.Printf("  2. Create the admin:   ZANSKAR_ADMIN_PASSWORD=... %szanskar admin create --username admin --name \"Your Name\"\n", pfx)
 	fmt.Println("  3. Start the service:  sudo systemctl enable --now zanskar")
+	if a.GuacdAddr != "" {
+		fmt.Printf("  4. Desktops (RDP/VNC): guacd must be listening at %s. The package does not\n", a.GuacdAddr)
+		fmt.Println("     install it; the supported way is the official container, bound to loopback only:")
+		for _, line := range guacdRunHint(a.GuacdAddr) {
+			fmt.Println("       " + line)
+		}
+		fmt.Println("     Users see \"the desktop service (guacd) is not running\" until it is.")
+	}
 	fmt.Println()
 	fmt.Println("Log destinations: application logs go to the service's stderr (journald under")
 	fmt.Println("systemd); the audit log lives in the database and is exported via SIEM, not a")
 	fmt.Printf("file; session recordings are written under %s.\n", filepath.Join(a.DataDir, "recordings"))
+}
+
+// guacdRunHint is the docker command that starts guacd the way the package
+// install expects it: the official image, published on loopback at the port
+// init was given (guacd speaks an unauthenticated protocol and must never be
+// reachable from anywhere but the gateway), HOME set because the image's
+// user has none, read-only with a tmpfs for drive redirection. The address
+// given to init decides the port; a non-loopback host is left to the
+// operator with a note, since the container must then run on that host.
+func guacdRunHint(addr string) []string {
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil || port == "" {
+		port = "4822"
+	}
+	publish := "127.0.0.1:" + port + ":4822"
+	var lines []string
+	if err == nil && !isLoopbackAddr(addr) {
+		lines = append(lines, fmt.Sprintf("# on the host that answers %s, publishing 4822 only to the gateway:", host))
+		publish = port + ":4822"
+	}
+	return append(lines,
+		"docker run -d --name guacd --restart unless-stopped -p "+publish+" \\",
+		"  -e HOME=/tmp --read-only --tmpfs /tmp:size=512m,mode=1777 guacamole/guacd:1.6.0",
+	)
 }
 
 // dataDirServiceUser reports the username that owns dir when init runs as root

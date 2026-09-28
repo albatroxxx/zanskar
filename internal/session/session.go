@@ -9,6 +9,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/albatroxxx/zanskar/internal/store"
@@ -28,10 +29,16 @@ const (
 
 // Session is one connection from a user to a target.
 type Session struct {
-	ID                    string     `json:"id"`
-	UserID                string     `json:"user_id"`
-	Username              string     `json:"username,omitempty"`
-	TargetName            string     `json:"target_name,omitempty"`
+	ID         string `json:"id"`
+	UserID     string `json:"user_id"`
+	Username   string `json:"username,omitempty"`
+	TargetName string `json:"target_name,omitempty"`
+	// ASGName and InstanceID label a session on an autoscaling instance the
+	// way TargetName labels one on a static target: the group's name and the
+	// cloud instance id. Resolved at read time from rows that outlive deletion
+	// (ADR 0019), so history never degrades to bare ids.
+	ASGName               string     `json:"asg_name,omitempty"`
+	InstanceID            string     `json:"instance_id,omitempty"`
 	PolicyID              string     `json:"policy_id,omitempty"`
 	TargetID              string     `json:"target_id,omitempty"`
 	ASGID                 string     `json:"asg_id,omitempty"`
@@ -102,7 +109,10 @@ func (r *Repo) Get(ctx context.Context, id string) (*Session, error) {
 
 // Filter narrows List.
 type Filter struct {
-	UserID   string
+	UserID string
+	// Username narrows to one account by name, which is what an admin has in
+	// front of them; matched case-insensitively (usernames are stored lower).
+	Username string
 	TargetID string
 	OpenOnly bool
 	Limit    int
@@ -119,6 +129,10 @@ func (r *Repo) List(ctx context.Context, f Filter) ([]*Session, string, error) {
 	if f.UserID != "" {
 		q += ` AND s.user_id = ?`
 		args = append(args, f.UserID)
+	}
+	if f.Username != "" {
+		q += ` AND u.username = ?`
+		args = append(args, strings.ToLower(strings.TrimSpace(f.Username)))
 	}
 	if f.TargetID != "" {
 		q += ` AND s.target_id = ?`
@@ -205,23 +219,29 @@ func (r *Repo) RecordView(ctx context.Context, recordingID, userID, ip string) e
 	return err
 }
 
+// selectSessions joins the names a reader wants next to every session. The
+// joins deliberately ignore deleted_at: a retired target or group still
+// labels its past sessions (ADR 0019).
 const selectSessions = `SELECT s.id, s.user_id, s.policy_id, s.target_id, s.asg_id, s.asg_instance_id, s.protocol, s.credential_id,
-	s.client_ip, s.user_agent, s.started_at, s.ended_at, s.end_reason, s.failover_from_session_id, rec.id, u.username, t.name
+	s.client_ip, s.user_agent, s.started_at, s.ended_at, s.end_reason, s.failover_from_session_id, rec.id, u.username, t.name,
+	g.name, ai.instance_id
 	FROM access_sessions s
 	LEFT JOIN recordings rec ON rec.session_id = s.id
 	LEFT JOIN users u ON u.id = s.user_id
-	LEFT JOIN targets t ON t.id = s.target_id`
+	LEFT JOIN targets t ON t.id = s.target_id
+	LEFT JOIN autoscaling_groups g ON g.id = s.asg_id
+	LEFT JOIN asg_instances ai ON ai.id = s.asg_instance_id`
 
 type scanner interface{ Scan(dest ...any) error }
 
 func scanSession(sc scanner) (*Session, error) {
 	var (
-		s                                                                         Session
-		policy, target, asg, inst, cred, reason, failover, recID, username, tname sql.NullString
-		started, ended                                                            store.NullTime
+		s                                                                                     Session
+		policy, target, asg, inst, cred, reason, failover, recID, username, tname, gname, iid sql.NullString
+		started, ended                                                                        store.NullTime
 	)
 	err := sc.Scan(&s.ID, &s.UserID, &policy, &target, &asg, &inst, &s.Protocol, &cred, &s.ClientIP, &s.UserAgent,
-		&started, &ended, &reason, &failover, &recID, &username, &tname)
+		&started, &ended, &reason, &failover, &recID, &username, &tname, &gname, &iid)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound
@@ -230,7 +250,7 @@ func scanSession(sc scanner) (*Session, error) {
 	}
 	s.PolicyID, s.TargetID, s.ASGID, s.ASGInstanceID, s.CredentialID = policy.String, target.String, asg.String, inst.String, cred.String
 	s.EndReason, s.FailoverFromSessionID, s.RecordingID = reason.String, failover.String, recID.String
-	s.Username, s.TargetName = username.String, tname.String
+	s.Username, s.TargetName, s.ASGName, s.InstanceID = username.String, tname.String, gname.String, iid.String
 	s.StartedAt, s.EndedAt = started.Time, ended.Ptr()
 	return &s, nil
 }
