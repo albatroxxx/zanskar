@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -47,6 +48,11 @@ func (h *Handler) Register(mux *http.ServeMux) {
 
 	mux.Handle("GET /api/v1/recordings/{id}", reviewer(http.HandlerFunc(h.getRecording)))
 	mux.Handle("GET /api/v1/recordings/{id}/stream", reviewer(http.HandlerFunc(h.streamRecording)))
+	// Downloads for evidence handling: the raw recording, and for terminal
+	// sessions the command transcript. Each is a recorded view and an audit
+	// event naming the downloader, like a playback (ADR 0006).
+	mux.Handle("GET /api/v1/recordings/{id}/download", reviewer(http.HandlerFunc(h.downloadRecording)))
+	mux.Handle("GET /api/v1/recordings/{id}/transcript", reviewer(http.HandlerFunc(h.downloadTranscript)))
 
 	mux.Handle("GET /api/v1/audit/events", reviewer(http.HandlerFunc(h.auditEvents)))
 	mux.Handle("GET /api/v1/audit/verify", reviewer(http.HandlerFunc(h.auditVerify)))
@@ -182,6 +188,149 @@ func (h *Handler) streamRecording(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Length", strconv.FormatInt(rec.SizeBytes, 10))
 	}
 	_, _ = io.Copy(w, rc)
+}
+
+// openForReview loads a recording for a reviewer, refuses one that retention
+// purged, records the view and writes the audit event with the given action
+// and details. It returns the recording, its session (nil when unknown) and
+// whether the caller may go on; on false the response is already written.
+func (h *Handler) openForReview(w http.ResponseWriter, r *http.Request, action string, details map[string]any) (*Recording, *Session, bool) {
+	rec, err := h.Repo.GetRecording(r.Context(), r.PathValue("id"))
+	if err != nil {
+		h.fail(w, r, err)
+		return nil, nil, false
+	}
+	if rec.PurgedAt != nil {
+		httpx.WriteError(w, http.StatusGone, "purged", "this recording was deleted by the retention policy")
+		return nil, nil, false
+	}
+	sess, err := h.Repo.Get(r.Context(), rec.SessionID)
+	if err != nil && !errors.Is(err, ErrNotFound) {
+		h.fail(w, r, err)
+		return nil, nil, false
+	}
+	p, _ := auth.FromContext(r.Context())
+	ip := auth.ClientIP(r)
+	if err := h.Repo.RecordView(r.Context(), rec.ID, p.User.ID, ip); err != nil {
+		h.fail(w, r, err)
+		return nil, nil, false
+	}
+	d := map[string]any{"session_id": rec.SessionID, "format": rec.Format}
+	for k, v := range details {
+		d[k] = v
+	}
+	h.record(r, audit.Actor{UserID: p.User.ID, IP: ip}.Event(action, "recording", rec.ID, audit.Success, d))
+	return rec, sess, true
+}
+
+// downloadName builds the attachment file name from what a reviewer knows
+// the session as: user, machine and the recording's short id, in characters
+// every filesystem accepts.
+func downloadName(rec *Recording, sess *Session, ext string) string {
+	parts := []string{}
+	if sess != nil {
+		if sess.Username != "" {
+			parts = append(parts, sess.Username)
+		}
+		switch {
+		case sess.TargetName != "":
+			parts = append(parts, sess.TargetName)
+		case sess.InstanceID != "":
+			parts = append(parts, sess.InstanceID)
+		case sess.ASGName != "":
+			parts = append(parts, sess.ASGName)
+		}
+	}
+	id := rec.ID
+	if len(id) > 8 {
+		id = id[:8]
+	}
+	parts = append(parts, id)
+	safe := func(s string) string {
+		return strings.Map(func(r rune) rune {
+			switch {
+			case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '-', r == '_', r == '.':
+				return r
+			}
+			return '_'
+		}, s)
+	}
+	for i := range parts {
+		parts[i] = safe(parts[i])
+	}
+	return strings.Join(parts, "-") + ext
+}
+
+// downloadRecording sends the raw recording as an attachment: the asciicast
+// file for a terminal session, the guacd instruction stream for a desktop.
+func (h *Handler) downloadRecording(w http.ResponseWriter, r *http.Request) {
+	rec, sess, ok := h.openForReview(w, r, "recording.download", map[string]any{"kind": "raw"})
+	if !ok {
+		return
+	}
+	rc, err := h.Storage.Open(r.Context(), rec.StorageURI)
+	if err != nil {
+		h.Log.Error("open recording", "id", rec.ID, "err", err)
+		httpx.WriteError(w, http.StatusNotFound, "not_found", "recording data unavailable")
+		return
+	}
+	defer func() { _ = rc.Close() }()
+	ct, ext := "application/octet-stream", ".guac"
+	if rec.Format == "asciicast" {
+		ct, ext = "application/x-asciicast; charset=utf-8", ".cast"
+	}
+	w.Header().Set("Content-Type", ct)
+	w.Header().Set("Content-Disposition", `attachment; filename="`+downloadName(rec, sess, ext)+`"`)
+	w.Header().Set("X-Recording-SHA256", rec.SHA256)
+	if rec.SizeBytes > 0 && rec.FinishedAt != nil {
+		w.Header().Set("Content-Length", strconv.FormatInt(rec.SizeBytes, 10))
+	}
+	_, _ = io.Copy(w, rc)
+}
+
+// downloadTranscript sends the command lines of a terminal recording as
+// plain text: what an auditor hands to someone who will never open the
+// player. Input the remote did not echo appears as "(hidden input)", which
+// is all that was ever stored of it.
+func (h *Handler) downloadTranscript(w http.ResponseWriter, r *http.Request) {
+	rec, err := h.Repo.GetRecording(r.Context(), r.PathValue("id"))
+	if err != nil {
+		h.fail(w, r, err)
+		return
+	}
+	if rec.Format != "asciicast" {
+		httpx.WriteError(w, http.StatusConflict, "not_a_terminal_recording", "a command transcript exists for terminal sessions only; download the desktop recording instead")
+		return
+	}
+	rec, sess, ok := h.openForReview(w, r, "recording.download", map[string]any{"kind": "transcript"})
+	if !ok {
+		return
+	}
+	rc, err := h.Storage.Open(r.Context(), rec.StorageURI)
+	if err != nil {
+		h.Log.Error("open recording", "id", rec.ID, "err", err)
+		httpx.WriteError(w, http.StatusNotFound, "not_found", "recording data unavailable")
+		return
+	}
+	markers, err := recording.Markers(rc)
+	_ = rc.Close()
+	if err != nil {
+		h.fail(w, r, err)
+		return
+	}
+	var header []string
+	if sess != nil {
+		where := sess.TargetName
+		if where == "" {
+			where = strings.TrimSpace(sess.ASGName + " " + sess.InstanceID)
+		}
+		header = append(header, fmt.Sprintf("%s on %s (%s)", sess.Username, where, strings.ToUpper(sess.Protocol)))
+		header = append(header, "started "+sess.StartedAt.UTC().Format(time.RFC3339))
+	}
+	header = append(header, "recording "+rec.ID, "sha256 "+rec.SHA256, "commands the user submitted; input the remote did not echo is (hidden input) and was never stored")
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.Header().Set("Content-Disposition", `attachment; filename="`+downloadName(rec, sess, "-commands.txt")+`"`)
+	_ = recording.WriteTranscript(w, header, markers)
 }
 
 // auditRow is an audit event as the review UI receives it: the stored record

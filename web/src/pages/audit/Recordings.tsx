@@ -82,7 +82,12 @@ export function Recordings() {
                   <td>{fmtDuration(s.started_at, s.ended_at)}</td>
                   <td>{reasonBadge(s.end_reason)}</td>
                   <td>
-                    <Link className="btn sm" to={`/audit/recordings/${s.recording_id}`}>Review</Link>
+                    <Link className="btn sm" to={`/audit/recordings/${s.recording_id}`}>Review</Link>{' '}
+                    {/* Downloads are recorded views and audit events, like playback. */}
+                    <a className="btn sm ghost" href={`/api/v1/recordings/${s.recording_id}/download`} download title="Download the recording file (audited)">Download</a>
+                    {s.protocol !== 'rdp' && s.protocol !== 'vnc' && (
+                      <>{' '}<a className="btn sm ghost" href={`/api/v1/recordings/${s.recording_id}/transcript`} download title="Download the command lines as text (audited)">Transcript</a></>
+                    )}
                   </td>
                 </tr>
               ))}
