@@ -327,3 +327,101 @@ func TestReferencing(t *testing.T) {
 		}
 	}
 }
+
+// TestRulesCoverAndValidate: a rule grants exactly its own selector and
+// protocols, alongside the base; a rules-only policy is legal; the shapes
+// that grant nothing or are half-specified are refused; the deletion guard
+// sees ids named inside rules.
+func TestRulesCoverAndValidate(t *testing.T) {
+	p := &Policy{Name: "mixed", GroupID: "g1", Enabled: true, IdleTimeoutMinutes: 15,
+		Selector: Selector{Targets: []string{"t1"}}, Protocols: []string{"ssh"},
+		Rules: []Rule{{Selector: Selector{Targets: []string{"t2"}}, Protocols: []string{"rdp"}}, {Selector: Selector{Tags: map[string]string{"role": "db"}}, Protocols: []string{"database"}}}}
+	if err := p.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	cases := []struct {
+		ref   TargetRef
+		proto string
+		want  bool
+	}{
+		{TargetRef{ID: "t1"}, "ssh", true},
+		{TargetRef{ID: "t1"}, "rdp", false},
+		{TargetRef{ID: "t2"}, "rdp", true},
+		{TargetRef{ID: "t2"}, "ssh", false},
+		{TargetRef{ID: "t9", Tags: map[string]string{"role": "db"}}, "database", true},
+		{TargetRef{ID: "t9", Tags: map[string]string{"role": "db"}}, "ssh", false},
+	}
+	for _, c := range cases {
+		if got := p.Covers(c.ref, c.proto); got != c.want {
+			t.Errorf("Covers(%+v, %s) = %v, want %v", c.ref, c.proto, got, c.want)
+		}
+	}
+	now := time.Now()
+	if d := Evaluate([]*Policy{p}, TargetRef{ID: "t2"}, "rdp", now); !d.Allowed || d.Policy != p {
+		t.Fatalf("evaluate through a rule: %+v", d)
+	}
+	if d := Evaluate([]*Policy{p}, TargetRef{ID: "t2"}, "ssh", now); d.Allowed || d.Reason != "protocol not allowed by policy" {
+		t.Fatalf("rule target, wrong protocol: %+v", d)
+	}
+	if !p.References("t2", "") || p.References("t3", "") || !p.References("t1", "") {
+		t.Fatal("References must see ids in the base and in rules")
+	}
+
+	only := &Policy{Name: "rules-only", GroupID: "g1", Enabled: true, IdleTimeoutMinutes: 15,
+		Rules: []Rule{{Selector: Selector{ASGs: []string{"a1"}}, Protocols: []string{"ssh"}}}}
+	if err := only.Validate(); err != nil {
+		t.Fatalf("rules-only policy must be valid: %v", err)
+	}
+	if !only.Covers(TargetRef{ASGID: "a1"}, "ssh") || only.Covers(TargetRef{ID: "t1"}, "ssh") {
+		t.Fatal("rules-only coverage")
+	}
+	bad := []*Policy{
+		{Name: "nothing", GroupID: "g1", IdleTimeoutMinutes: 15},
+		{Name: "half", GroupID: "g1", IdleTimeoutMinutes: 15, Selector: Selector{Targets: []string{"t1"}}},
+		{Name: "half2", GroupID: "g1", IdleTimeoutMinutes: 15, Protocols: []string{"ssh"}, Rules: []Rule{{Selector: Selector{Targets: []string{"t1"}}, Protocols: []string{"ssh"}}}},
+		{Name: "empty-rule", GroupID: "g1", IdleTimeoutMinutes: 15, Rules: []Rule{{Protocols: []string{"ssh"}}}},
+		{Name: "no-proto-rule", GroupID: "g1", IdleTimeoutMinutes: 15, Rules: []Rule{{Selector: Selector{Targets: []string{"t1"}}}}},
+		{Name: "dup-rule", GroupID: "g1", IdleTimeoutMinutes: 15, Rules: []Rule{{Selector: Selector{Targets: []string{"t1"}}, Protocols: []string{"ssh", "ssh"}}}},
+	}
+	for _, b := range bad {
+		if err := b.Validate(); !errors.Is(err, ErrInvalidInput) {
+			t.Errorf("%s: want ErrInvalidInput, got %v", b.Name, err)
+		}
+	}
+}
+
+func TestRepoRulesRoundTrip(t *testing.T) {
+	ctx := context.Background()
+	db, err := store.Open(ctx, config.DriverSQLite, "file::memory:?_pragma=foreign_keys(1)")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	if _, err := store.Migrate(ctx, db); err != nil {
+		t.Fatal(err)
+	}
+	now := store.TimeArg(time.Now())
+	if _, err := db.ExecContext(ctx, db.Rebind(`INSERT INTO groups (id, name, created_at, updated_at) VALUES ('g1', 'ops', ?, ?)`), now, now); err != nil {
+		t.Fatal(err)
+	}
+	r := NewRepo(db)
+	p := &Policy{Name: "fleet", GroupID: "g1", Enabled: true, IdleTimeoutMinutes: 15,
+		Rules: []Rule{{Selector: Selector{Tags: map[string]string{"os": "linux"}}, Protocols: []string{"ssh"}}, {Selector: Selector{Targets: []string{"jump-1"}}, Protocols: []string{"rdp", "winrm"}}}}
+	if err := r.Create(ctx, p); err != nil {
+		t.Fatal(err)
+	}
+	got, err := r.Get(ctx, p.ID)
+	if err != nil || len(got.Rules) != 2 || got.Rules[1].Protocols[1] != "winrm" || got.Rules[0].Selector.Tags["os"] != "linux" || len(got.Protocols) != 0 {
+		t.Fatalf("round trip: %+v %v", got, err)
+	}
+	if names, err := r.Referencing(ctx, "jump-1", ""); err != nil || len(names) != 1 || names[0] != "fleet" {
+		t.Fatalf("Referencing through a rule: %v %v", names, err)
+	}
+	got.Rules = got.Rules[:1]
+	if err := r.Update(ctx, got); err != nil {
+		t.Fatal(err)
+	}
+	if again, _ := r.Get(ctx, p.ID); len(again.Rules) != 1 {
+		t.Fatalf("update rules: %+v", again.Rules)
+	}
+}

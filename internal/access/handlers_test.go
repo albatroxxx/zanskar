@@ -68,8 +68,10 @@ func newEnv(t *testing.T) *env {
 		}
 		if name == "alice" {
 			max := 120
+			// Eligibility comes through a rule, not the base, so the request
+			// path is proven to use Policy.Covers like the connect gate.
 			pol := &policy.Policy{Name: "prod-ssh-jit", UserID: u.ID, Enabled: true, RequireApproval: true, MaxSessionMinutes: &max,
-				Selector: policy.Selector{Tags: map[string]string{"env": "prod"}}, Protocols: []string{"ssh"}, IdleTimeoutMinutes: 15}
+				Rules: []policy.Rule{{Selector: policy.Selector{Tags: map[string]string{"env": "prod"}}, Protocols: []string{"ssh"}}}, IdleTimeoutMinutes: 15}
 			if err := policies.Create(ctx, pol); err != nil {
 				t.Fatal(err)
 			}

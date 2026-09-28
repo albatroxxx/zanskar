@@ -172,6 +172,9 @@ export interface GroupMember { user_id: string; username: string; display_name: 
 export interface TimeWindow { days: string[]; from: string; to: string; tz: string }
 export interface Selector { targets?: string[]; asgs?: string[]; tags?: Record<string, string> }
 
+/** One extra selector/protocol pair a policy grants beyond its base; it shares the policy's windows, limits and flags. */
+export interface PolicyRule { target_selector: Selector; protocols: Protocol[] }
+
 export interface Policy {
   id: string
   name: string
@@ -182,6 +185,8 @@ export interface Policy {
   user_id?: string
   target_selector: Selector
   protocols: Protocol[]
+  /** Further selector/protocol pairs; the base may be empty when these carry everything. */
+  rules?: PolicyRule[]
   time_windows: TimeWindow[]
   max_session_minutes?: number | null
   idle_timeout_minutes: number
