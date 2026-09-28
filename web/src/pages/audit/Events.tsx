@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState, type FormEvent } from 'react'
+import { Link } from 'react-router-dom'
 import { api, errorMessage, query } from '../../api/client'
 import { fmtTime, shortId } from '../../api/format'
 import type { AuditEvent, AuditFacets, AuditVerify, Page } from '../../api/types'
@@ -125,6 +126,34 @@ function describe(ev: AuditEvent): string {
       return `${fail ? 'failed to ' + (verbs[parts[parts.length - 1]] ? parts[parts.length - 1] : verb) : verb} ${type}${name ? ' ' + name : ''}`
     }
   }
+}
+
+/** DetailRow renders one key of an event's details for a reader: ids that
+ *  the API could name show the name with the id behind a hover, a recording
+ *  links to its player, nested values are shown compactly, and nothing is
+ *  dropped, because this is the audit log. */
+function DetailRow({ k, v, name }: { k: string; v: unknown; name?: string }) {
+  const id = typeof v === 'string' ? v : ''
+  let body: React.ReactNode
+  if (k === 'recording_id' && id) {
+    body = <Link to={`/audit/recordings/${id}`} title={id}>{name ?? 'play'}</Link>
+  } else if (name) {
+    body = <span title={id}><strong>{name}</strong> <span className="mono muted">{shortId(id)}</span></span>
+  } else if (v === null || v === undefined || v === '') {
+    body = <span className="muted">—</span>
+  } else if (typeof v === 'object') {
+    body = <code className="mono">{JSON.stringify(v)}</code>
+  } else if (k.endsWith('_id') && id) {
+    body = <span className="mono" title={id}>{shortId(id)}</span>
+  } else {
+    body = <span>{String(v)}</span>
+  }
+  return (
+    <>
+      <dt>{words(k)}</dt>
+      <dd>{body}</dd>
+    </>
+  )
 }
 
 function who(ev: AuditEvent): { name: string; system: boolean } {
@@ -327,11 +356,24 @@ export function Events() {
                             {ev.object_id && (
                               <>
                                 <dt>Object</dt>
-                                <dd className="mono">{typeLabel[ev.object_type] ?? ev.object_type} {shortId(ev.object_id)}</dd>
+                                <dd title={ev.object_id}>
+                                  {typeLabel[ev.object_type] ?? ev.object_type} {ev.object_name ? <strong>{ev.object_name}</strong> : null}{' '}
+                                  <span className="mono muted">{shortId(ev.object_id)}</span>
+                                </dd>
                               </>
                             )}
+                            {Object.entries(ev.details ?? {}).map(([k, v]) => (
+                              <DetailRow key={k} k={k} v={v} name={ev.details_names?.[k]} />
+                            ))}
                           </dl>
-                          {raw && <pre className="mono">{JSON.stringify(ev.details, null, 2)}</pre>}
+                          {/* The stored JSON is the evidence; everything above is a
+                              reading of it. Keep it one click away, never gone. */}
+                          {raw && (
+                            <details>
+                              <summary>raw</summary>
+                              <pre className="mono">{JSON.stringify(ev.details, null, 2)}</pre>
+                            </details>
+                          )}
                         </details>
                       </div>
                     </td>

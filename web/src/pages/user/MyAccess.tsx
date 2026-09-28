@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { api, errorMessage } from '../../api/client'
 import { fmtTime } from '../../api/format'
-import type { AccessRequest, AccessStatus, Page, ReachableTarget } from '../../api/types'
+import type { AccessRequest, AccessStatus, Page } from '../../api/types'
 import { Alert, Badge, Empty, PageHead } from '../../components/ui'
 
 const tone: Record<AccessStatus, 'ok' | 'warn' | 'danger' | undefined> = {
@@ -15,7 +15,6 @@ const tone: Record<AccessStatus, 'ok' | 'warn' | 'danger' | undefined> = {
 /** MyAccess lists the caller's just-in-time access requests and active grants (ADR 0018). */
 export function MyAccess() {
   const [reqs, setReqs] = useState<AccessRequest[] | null>(null)
-  const [names, setNames] = useState<Record<string, string>>({})
   const [err, setErr] = useState('')
 
   useEffect(() => {
@@ -23,17 +22,10 @@ export function MyAccess() {
       .get<Page<AccessRequest>>('/me/access-requests')
       .then((p) => setReqs(p.items))
       .catch((e) => setErr(errorMessage(e)))
-    // Resolve target names from the reachable list; ids are all we store.
-    api
-      .get<Page<ReachableTarget>>('/me/targets')
-      .then((p) => setNames(Object.fromEntries(p.items.map((t) => [t.id, t.name]))))
-      .catch(() => {})
   }, [])
 
-  const name = (r: AccessRequest) => {
-    const id = r.target_id ?? r.asg_id ?? ''
-    return names[id] ?? id ?? '—'
-  }
+  // Names arrive with the request; the id is the last resort.
+  const name = (r: AccessRequest) => r.target_name || r.asg_name || r.target_id || r.asg_id || '—'
 
   return (
     <>

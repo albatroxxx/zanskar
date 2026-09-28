@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { api, errorMessage } from '../../api/client'
 import { fmtTime } from '../../api/format'
-import type { AccessRequest, Page, Target, User } from '../../api/types'
+import type { AccessRequest, Page } from '../../api/types'
 import { Alert, Empty, PageHead } from '../../components/ui'
 
 /** Approvals is the admin queue for just-in-time access requests (ADR 0018):
@@ -9,8 +9,6 @@ import { Alert, Empty, PageHead } from '../../components/ui'
 export function Approvals() {
   const [pending, setPending] = useState<AccessRequest[] | null>(null)
   const [active, setActive] = useState<AccessRequest[]>([])
-  const [tname, setTname] = useState<Record<string, string>>({})
-  const [uname, setUname] = useState<Record<string, string>>({})
   const [err, setErr] = useState('')
   const [busy, setBusy] = useState('')
 
@@ -20,8 +18,6 @@ export function Approvals() {
   }
   useEffect(() => {
     load()
-    api.get<Page<Target>>('/targets').then((p) => setTname(Object.fromEntries(p.items.map((t) => [t.id, t.name])))).catch(() => {})
-    api.get<Page<User>>('/users').then((p) => setUname(Object.fromEntries(p.items.map((u) => [u.id, u.username])))).catch(() => {})
   }, [])
 
   const act = async (id: string, action: 'approve' | 'deny' | 'revoke') => {
@@ -36,11 +32,10 @@ export function Approvals() {
       setBusy('')
     }
   }
-  const who = (r: AccessRequest) => uname[r.user_id] ?? r.user_id
-  const what = (r: AccessRequest) => {
-    const id = r.target_id ?? r.asg_id ?? ''
-    return tname[id] ?? id ?? '—'
-  }
+  // The API resolves names at read time, for autoscaling groups too, and a
+  // retired target still labels its old requests; the id is the last resort.
+  const who = (r: AccessRequest) => r.username || r.user_id
+  const what = (r: AccessRequest) => r.target_name || r.asg_name || r.target_id || r.asg_id || '—'
 
   return (
     <>

@@ -206,3 +206,41 @@ func TestSweeper(t *testing.T) {
 		t.Fatalf("a second sweep should expire nothing, got %d", n)
 	}
 }
+
+// TestRequestCarriesNames covers the read-time names every list shows: the
+// requester, the approver once decided, and the target or the autoscaling
+// group the request is for.
+func TestRequestCarriesNames(t *testing.T) {
+	ctx, r := setup(t)
+	now := store.TimeArg(time.Now())
+	if _, err := r.db.ExecContext(ctx, r.db.Rebind(`INSERT INTO autoscaling_groups (id, name, provider, region, external_name, role_arn, external_id, os_family, created_at, updated_at) VALUES ('a1', 'fleet', 'aws', 'ap-south-1', 'fleet-asg', 'arn:aws:iam::1:role/r', 'ext', 'linux', ?, ?)`), now, now); err != nil {
+		t.Fatal(err)
+	}
+	onTarget := &Request{UserID: "u1", TargetID: "t1", Protocol: "ssh", Reason: "deploy", RequestedMinutes: 30}
+	onGroup := &Request{UserID: "u2", ASGID: "a1", Protocol: "ssh", Reason: "debug", RequestedMinutes: 30}
+	for _, req := range []*Request{onTarget, onGroup} {
+		if err := r.Create(ctx, req); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got, err := r.Get(ctx, onTarget.ID)
+	if err != nil || got.Username != "alice" || got.TargetName != "web1" || got.ASGName != "" || got.ApproverUsername != "" {
+		t.Fatalf("target request names: %+v %v", got, err)
+	}
+	expires := time.Now().Add(time.Hour)
+	if got, err = r.Decide(ctx, onTarget.ID, "u2", StatusApproved, "ok", &expires); err != nil || got.ApproverUsername != "bob" {
+		t.Fatalf("approver name: %+v %v", got, err)
+	}
+	list, err := r.List(ctx, "")
+	if err != nil || len(list) != 2 {
+		t.Fatalf("list: %d %v", len(list), err)
+	}
+	for _, req := range list {
+		if req.ID == onGroup.ID && (req.Username != "bob" || req.ASGName != "fleet" || req.TargetName != "") {
+			t.Fatalf("group request names: %+v", req)
+		}
+	}
+	if active, err := r.ActiveForUser(ctx, "u1", time.Now()); err != nil || len(active) != 1 || active[0].TargetName != "web1" {
+		t.Fatalf("active grant names: %v %v", active, err)
+	}
+}

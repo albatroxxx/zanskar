@@ -114,6 +114,11 @@ export interface AccessRequest {
   requested_minutes: number
   status: AccessStatus
   approver_user_id?: string
+  /** Resolved at read time. */
+  username?: string
+  approver_username?: string
+  target_name?: string
+  asg_name?: string
   decision_note?: string
   decided_at?: string
   expires_at?: string
@@ -190,6 +195,9 @@ export interface Session {
   user_id: string
   username?: string
   target_name?: string
+  /** For a session on an autoscaling instance: the group's name and the cloud instance id. */
+  asg_name?: string
+  instance_id?: string
   policy_id?: string
   target_id?: string
   asg_id?: string
@@ -227,6 +235,8 @@ export interface AuditEvent {
   actor_username?: string
   /** Resolved at read time: a target or user name, or "user → target (PROTO)" for sessions. */
   object_name?: string
+  /** Names for the ids inside details, keyed by the detail key ("target_id" → "web-1"). */
+  details_names?: Record<string, string>
   actor_ip: string
   action: string
   object_type: string

@@ -4,6 +4,7 @@ package session
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"log/slog"
@@ -73,7 +74,7 @@ func (h *Handler) mySessions(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) listSessions(w http.ResponseWriter, r *http.Request) {
 	limit, cursor := httpx.Paging(r, 50, 500)
 	q := r.URL.Query()
-	f := Filter{UserID: q.Get("user_id"), TargetID: q.Get("target_id"), OpenOnly: q.Get("open") == "true", Limit: limit, Cursor: cursor}
+	f := Filter{UserID: q.Get("user_id"), Username: q.Get("username"), TargetID: q.Get("target_id"), OpenOnly: q.Get("open") == "true", Limit: limit, Cursor: cursor}
 	items, next, err := h.Repo.List(r.Context(), f)
 	if err != nil {
 		h.fail(w, r, err)
@@ -190,6 +191,60 @@ type auditRow struct {
 	audit.Event
 	ActorUsername string `json:"actor_username,omitempty"`
 	ObjectName    string `json:"object_name,omitempty"`
+	// DetailsNames labels the ids inside Details, keyed by the detail key
+	// ("target_id" → "web-1"). Read-time decoration only: the stored details
+	// and every hashed field stay exactly as written (ADR 0008).
+	DetailsNames map[string]string `json:"details_names,omitempty"`
+}
+
+// detailNameKinds maps the id-bearing keys audit details use to the object
+// kinds ResolveNames knows, tried in order. target_id is tried as a target
+// and then as an autoscaling instance, because connect events record the
+// live key, which is the instance row id for autoscaling sessions.
+var detailNameKinds = map[string][]string{
+	"target_id":        {"target", "asg_instance"},
+	"asg_id":           {"autoscaling_group"},
+	"asg_instance_id":  {"asg_instance"},
+	"policy_id":        {"access_policy"},
+	"credential_id":    {"credential"},
+	"user_id":          {"user"},
+	"approver_user_id": {"user"},
+	"group_id":         {"group"},
+	"recording_id":     {"recording"},
+	"session_id":       {"access_session"},
+}
+
+// detailIDs collects, per object kind, the ids found under known keys of each
+// event's details, and per event the key→id pairs to label afterwards. Details
+// are whatever the writer stored; anything that is not an object of string
+// values is skipped rather than refused, because the log is never rejected
+// for what a row carries.
+func detailIDs(items []audit.Event) (map[string][]string, []map[string]string) {
+	byKind := map[string][]string{}
+	perEvent := make([]map[string]string, len(items))
+	for i, e := range items {
+		if len(e.Details) == 0 {
+			continue
+		}
+		var d map[string]any
+		if err := json.Unmarshal(e.Details, &d); err != nil {
+			continue
+		}
+		for key, kinds := range detailNameKinds {
+			id, ok := d[key].(string)
+			if !ok || id == "" {
+				continue
+			}
+			if perEvent[i] == nil {
+				perEvent[i] = map[string]string{}
+			}
+			perEvent[i][key] = id
+			for _, kind := range kinds {
+				byKind[kind] = append(byKind[kind], id)
+			}
+		}
+	}
+	return byKind, perEvent
 }
 
 var excludeToken = regexp.MustCompile(`^[a-z0-9_.]{1,64}(:(success|failure))?$`)
@@ -264,6 +319,13 @@ func (h *Handler) decorate(ctx context.Context, items []audit.Event) ([]auditRow
 	if err != nil {
 		return nil, err
 	}
+	// Ids named inside details (target_id, policy_id, ...) are resolved with
+	// the same per-kind lookups, so a row reads "policy prod-ssh" rather than
+	// a hex id even in its expanded form.
+	detailKinds, perEvent := detailIDs(items)
+	for kind, ids := range detailKinds {
+		byType[kind] = append(byType[kind], ids...)
+	}
 	names := map[string]map[string]string{}
 	for kind, ids := range byType {
 		m, err := h.Repo.ResolveNames(ctx, kind, ids)
@@ -275,6 +337,17 @@ func (h *Handler) decorate(ctx context.Context, items []audit.Event) ([]auditRow
 	rows := make([]auditRow, len(items))
 	for i, e := range items {
 		rows[i] = auditRow{Event: e, ActorUsername: actors[e.ActorUserID], ObjectName: names[e.ObjectType][e.ObjectID]}
+		for key, id := range perEvent[i] {
+			for _, kind := range detailNameKinds[key] {
+				if name, ok := names[kind][id]; ok {
+					if rows[i].DetailsNames == nil {
+						rows[i].DetailsNames = map[string]string{}
+					}
+					rows[i].DetailsNames[key] = name
+					break
+				}
+			}
+		}
 	}
 	return rows, nil
 }

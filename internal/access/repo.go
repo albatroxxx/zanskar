@@ -22,6 +22,18 @@ func NewRepo(db *store.DB) *Repo { return &Repo{db: db} }
 const cols = `id, user_id, policy_id, target_id, asg_id, protocol, reason, requested_minutes,
 	status, approver_user_id, decision_note, decided_at, expires_at, created_at, updated_at`
 
+// selectRequests reads a request with the names beside it. Every WHERE that
+// follows it must qualify columns with r., since the joined tables share
+// names such as status and created_at.
+const selectRequests = `SELECT r.id, r.user_id, r.policy_id, r.target_id, r.asg_id, r.protocol, r.reason, r.requested_minutes,
+	r.status, r.approver_user_id, r.decision_note, r.decided_at, r.expires_at, r.created_at, r.updated_at,
+	u.username, a.username, t.name, g.name
+	FROM access_requests r
+	LEFT JOIN users u ON u.id = r.user_id
+	LEFT JOIN users a ON a.id = r.approver_user_id
+	LEFT JOIN targets t ON t.id = r.target_id
+	LEFT JOIN autoscaling_groups g ON g.id = r.asg_id`
+
 // Create inserts req as a pending request, setting ID, status and timestamps.
 func (r *Repo) Create(ctx context.Context, req *Request) error {
 	now := time.Now().UTC()
@@ -37,26 +49,26 @@ func (r *Repo) Create(ctx context.Context, req *Request) error {
 
 // Get returns one request by id.
 func (r *Repo) Get(ctx context.Context, id string) (*Request, error) {
-	row := r.db.QueryRowContext(ctx, r.db.Rebind(`SELECT `+cols+` FROM access_requests WHERE id = ?`), id)
+	row := r.db.QueryRowContext(ctx, r.db.Rebind(selectRequests+` WHERE r.id = ?`), id)
 	return scan(row)
 }
 
 // ListByUser returns a user's own requests, newest first.
 func (r *Repo) ListByUser(ctx context.Context, userID string) ([]*Request, error) {
-	return r.query(ctx, `WHERE user_id = ? ORDER BY created_at DESC LIMIT 500`, userID)
+	return r.query(ctx, `WHERE r.user_id = ? ORDER BY r.created_at DESC LIMIT 500`, userID)
 }
 
 // List returns requests for the admin queue, newest first; status "" means all.
 func (r *Repo) List(ctx context.Context, status Status) ([]*Request, error) {
 	if status == "" {
-		return r.query(ctx, `ORDER BY created_at DESC LIMIT 500`)
+		return r.query(ctx, `ORDER BY r.created_at DESC LIMIT 500`)
 	}
-	return r.query(ctx, `WHERE status = ? ORDER BY created_at DESC LIMIT 500`, string(status))
+	return r.query(ctx, `WHERE r.status = ? ORDER BY r.created_at DESC LIMIT 500`, string(status))
 }
 
 // ActiveForUser returns a user's approved, unexpired grants.
 func (r *Repo) ActiveForUser(ctx context.Context, userID string, now time.Time) ([]*Request, error) {
-	return r.query(ctx, `WHERE user_id = ? AND status = ? AND expires_at > ? ORDER BY expires_at`,
+	return r.query(ctx, `WHERE r.user_id = ? AND r.status = ? AND r.expires_at > ? ORDER BY r.expires_at`,
 		userID, string(StatusApproved), store.TimeArg(now))
 }
 
@@ -115,7 +127,7 @@ func (r *Repo) Revoke(ctx context.Context, id, note string) (*Request, error) {
 // the sweeper can audit each before flipping them with ExpireDue under the same
 // cutoff.
 func (r *Repo) DueForExpiry(ctx context.Context, now time.Time) ([]*Request, error) {
-	return r.query(ctx, `WHERE status = ? AND expires_at <= ? ORDER BY expires_at`,
+	return r.query(ctx, `WHERE r.status = ? AND r.expires_at <= ? ORDER BY r.expires_at`,
 		string(StatusApproved), store.TimeArg(now))
 }
 
@@ -141,7 +153,7 @@ func (r *Repo) missOrState(ctx context.Context, id string) error {
 }
 
 func (r *Repo) query(ctx context.Context, where string, args ...any) ([]*Request, error) {
-	rows, err := r.db.QueryContext(ctx, r.db.Rebind(`SELECT `+cols+` FROM access_requests `+where), args...)
+	rows, err := r.db.QueryContext(ctx, r.db.Rebind(selectRequests+` `+where), args...)
 	if err != nil {
 		return nil, err
 	}
@@ -164,10 +176,11 @@ func scan(s scanner) (*Request, error) {
 		req                                 Request
 		status                              string
 		policyID, targetID, asgID, approver sql.NullString
+		uname, aname, tname, gname          sql.NullString
 		decided, expires, created, updated  store.NullTime
 	)
 	err := s.Scan(&req.ID, &req.UserID, &policyID, &targetID, &asgID, &req.Protocol, &req.Reason, &req.RequestedMinutes,
-		&status, &approver, &req.DecisionNote, &decided, &expires, &created, &updated)
+		&status, &approver, &req.DecisionNote, &decided, &expires, &created, &updated, &uname, &aname, &tname, &gname)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound
@@ -175,6 +188,7 @@ func scan(s scanner) (*Request, error) {
 		return nil, err
 	}
 	req.PolicyID, req.TargetID, req.ASGID, req.ApproverUserID = policyID.String, targetID.String, asgID.String, approver.String
+	req.Username, req.ApproverUsername, req.TargetName, req.ASGName = uname.String, aname.String, tname.String, gname.String
 	req.Status = Status(status)
 	req.DecidedAt, req.ExpiresAt = decided.Ptr(), expires.Ptr()
 	req.CreatedAt, req.UpdatedAt = created.Time, updated.Time
