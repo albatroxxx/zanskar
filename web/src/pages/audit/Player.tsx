@@ -312,6 +312,13 @@ export function Player() {
   return (
     <>
       <PageHead title={title} lead={s ? `${proto} session, ${fmtTime(s.started_at)}` : undefined}>
+        {rec && !rec.purged_at && (
+          <>
+            {/* Downloads are recorded views and audit events, like pressing Play. */}
+            <a className="btn" href={`/api/v1/recordings/${rec.id}/download`} download title="Download the recording file (audited)">Download recording</a>
+            {rec.format !== 'guac' && <a className="btn" href={`/api/v1/recordings/${rec.id}/transcript`} download title="Download the command lines as text (audited)">Download transcript</a>}
+          </>
+        )}
         <Link className="btn" to="/audit/recordings">Back to recordings</Link>
       </PageHead>
       {err && <Alert tone="danger">{err}</Alert>}

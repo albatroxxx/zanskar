@@ -220,6 +220,8 @@ export interface Session {
 export interface Recording {
   id: string
   session_id: string
+  /** Set once retention deleted the blob; the row stays so audit events resolve. */
+  purged_at?: string
   /** The session this recording belongs to, with user and target names resolved. */
   session?: Session
   format: 'asciicast' | 'guac'

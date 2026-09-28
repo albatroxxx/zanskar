@@ -1878,6 +1878,48 @@ paths:
           $ref: "#/components/responses/NotFound"
         "409":
           description: Recording is still in progress.
+  /recordings/{id}/download:
+    get:
+      tags: [auditor]
+      summary: Download the recording file
+      description: |
+        The same bytes as `stream`, sent as an attachment named after the user, the machine and
+        the recording's short id (`alice-web-1-3fa2b1c0.cast` or `.guac`). Inserts a
+        `recording_views` row and audits `recording.download` with `kind: raw` before the first
+        byte, so an evidence download is as traceable as a playback.
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: The recording, with `Content-Disposition: attachment`.
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "410":
+          description: Deleted by the retention policy (`purged`).
+  /recordings/{id}/transcript:
+    get:
+      tags: [auditor]
+      summary: Download the command transcript of a terminal recording
+      description: |
+        Plain text: a short header (who, where, when, recording id and SHA-256), then one line per
+        command the user submitted, `HH:MM:SS  command`, taken from the recording's markers.
+        Input the remote did not echo appears as `(hidden input)`; it was never stored. Audits
+        `recording.download` with `kind: transcript` and inserts a `recording_views` row.
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: The transcript as `text/plain`, with `Content-Disposition: attachment`.
+          content:
+            text/plain:
+              schema:
+                type: string
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: Not a terminal recording (`not_a_terminal_recording`); download the desktop recording instead.
+        "410":
+          description: Deleted by the retention policy (`purged`).
           content:
             application/json:
               schema:
