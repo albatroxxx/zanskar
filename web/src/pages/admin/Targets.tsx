@@ -411,7 +411,7 @@ function TargetDetail({ target, credentials, onClose, onChanged, onDeleted, onEr
       {confirm === 'delete' && (
         <Confirm
           title={`Delete ${t.name}?`}
-          body="Policies that selected this target by id stop matching it. Past sessions keep their records."
+          body="The target leaves every list and its credential bindings are removed; past sessions, recordings and audit events keep its name. Deletion is refused while a policy names it by id or a session is open on it."
           confirmLabel="Delete"
           danger
           onClose={() => setConfirm(null)}

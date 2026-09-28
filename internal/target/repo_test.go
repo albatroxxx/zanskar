@@ -250,3 +250,69 @@ func TestRecordProbeStoresWinRMFingerprint(t *testing.T) {
 		t.Fatalf("fingerprints not stored separately: rdp=%v winrm=%v", got.TLSFingerprint, got.WinRMTLSFingerprint)
 	}
 }
+
+// TestDeleteRetiresTarget pins the retirement model of ADR 0019. Deleting a
+// target that past sessions point at used to fail on the sessions table's
+// CHECK constraint (target_id or asg_instance_id must be set), which the API
+// surfaced as an internal error. Now the row stays for the history and
+// vanishes from every lookup, its credential bindings go, and its name can
+// be enrolled again.
+func TestDeleteRetiresTarget(t *testing.T) {
+	db := testDB(t)
+	r := NewRepo(db)
+	ctx := context.Background()
+	insertCredential(t, db, "c1")
+	tg := &Target{Name: "web-1", Address: "10.0.0.5", OSFamily: Linux, Tags: map[string]string{"env": "prod"}, Credentials: map[Protocol]string{SSH: "c1"}}
+	if err := r.Create(ctx, tg); err != nil {
+		t.Fatal(err)
+	}
+	now := store.TimeArg(time.Now())
+	for _, q := range []string{
+		`INSERT INTO users (id, username, display_name, created_at, updated_at) VALUES ('u1', 'alice', 'Alice', ?, ?)`,
+		`INSERT INTO access_sessions (id, user_id, target_id, protocol, client_ip, started_at, ended_at, end_reason) VALUES ('s1', 'u1', '` + tg.ID + `', 'ssh', '10.0.0.1', ?, ?, 'user_exit')`,
+	} {
+		if _, err := db.ExecContext(ctx, db.Rebind(q), now, now); err != nil {
+			t.Fatalf("%s: %v", q[:30], err)
+		}
+	}
+
+	if err := r.Delete(ctx, tg.ID); err != nil {
+		t.Fatalf("delete with session history: %v", err)
+	}
+	if _, err := r.Get(ctx, tg.ID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("Get after retire: %v", err)
+	}
+	if _, err := r.GetByName(ctx, "web-1"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("GetByName after retire: %v", err)
+	}
+	if list, _, err := r.List(ctx, "", 50, nil); err != nil || len(list) != 0 {
+		t.Fatalf("List after retire: %d %v", len(list), err)
+	}
+	if list, err := r.ListByTags(ctx, map[string]string{"env": "prod"}); err != nil || len(list) != 0 {
+		t.Fatalf("ListByTags after retire: %d %v", len(list), err)
+	}
+	if err := r.Update(ctx, tg); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("Update of a retired target must be not found, got %v", err)
+	}
+
+	// The history still resolves to the machine's name.
+	var name string
+	if err := db.QueryRowContext(ctx, `SELECT t.name FROM access_sessions s JOIN targets t ON t.id = s.target_id WHERE s.id = 's1'`).Scan(&name); err != nil || name != "web-1" {
+		t.Fatalf("session lost its target name: %q %v", name, err)
+	}
+	var bindings int
+	if err := db.QueryRowContext(ctx, db.Rebind(`SELECT COUNT(*) FROM target_credentials WHERE target_id = ?`), tg.ID).Scan(&bindings); err != nil || bindings != 0 {
+		t.Fatalf("credential bindings should be dropped, got %d %v", bindings, err)
+	}
+	// The name is free again, under a new id.
+	again := &Target{Name: "web-1", Address: "10.0.0.6", OSFamily: Linux}
+	if err := r.Create(ctx, again); err != nil {
+		t.Fatalf("re-enrol retired name: %v", err)
+	}
+	if again.ID == tg.ID {
+		t.Fatal("re-enrolment must not reuse the retired id")
+	}
+	if err := r.Create(ctx, &Target{Name: "web-1", Address: "10.0.0.7", OSFamily: Linux}); !errors.Is(err, ErrDuplicate) {
+		t.Fatalf("a live name must still be unique, got %v", err)
+	}
+}
