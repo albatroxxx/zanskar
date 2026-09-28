@@ -68,6 +68,8 @@ func main() {
 		err = runRestore(os.Args[2:])
 	case "keygen":
 		err = runKeygen()
+	case "key":
+		err = runKey(os.Args[2:])
 	case "version":
 		fmt.Println(version.Version)
 	case "admin":
@@ -87,7 +89,7 @@ func main() {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: zanskar <init|serve|migrate|backup|restore|keygen|admin create|admin reset-mfa|audit verify|audit reseal|version>")
+	fmt.Fprintln(os.Stderr, "usage: zanskar <init|serve|migrate|backup|restore|keygen|key status|key rotate|key rotate-master|admin create|admin reset-mfa|audit verify|audit reseal|version>")
 }
 
 func newLogger(cfg *config.Config) *slog.Logger {

@@ -92,7 +92,10 @@ netsh advfirewall firewall add rule name="WinRM HTTPS" dir=in action=allow proto
     <tr><td><code>zanskar serve</code></td><td>Run the gateway. Refuses to start with migrations pending.</td></tr>
     <tr><td><code>zanskar init</code></td><td>Write the environment file interactively or from flags; generates the master key.</td></tr>
     <tr><td><code>zanskar migrate</code></td><td>Apply pending schema migrations. Forward-only.</td></tr>
-    <tr><td><code>zanskar admin create</code></td><td>Create an admin user; password from <code>ZANSKAR_ADMIN_PASSWORD</code>.</td></tr>
+    <tr><td><code>zanskar admin create</code></td><td>Create an admin user; the password is prompted twice without echo, or read from <code>ZANSKAR_ADMIN_PASSWORD</code> for scripts.</td></tr>
+    <tr><td><code>zanskar key status</code></td><td>List the data-key versions and how many sealed rows each still protects.</td></tr>
+    <tr><td><code>zanskar key rotate</code></td><td>Start a new data-key version for everything sealed from now on. Restart the service afterwards.</td></tr>
+    <tr><td><code>zanskar key rotate-master</code></td><td>Re-wrap every data key under a new master key (from <code>ZANSKAR_NEW_MASTER_KEY</code>, <code>-generate</code>, or a prompt) and, with <code>-env-file /etc/zanskar/env</code>, rewrite the key line in place. Restart the service afterwards; the old key then opens nothing. See <a href="../concepts/#master-key">the master key</a>.</td></tr>
     <tr><td><code>zanskar admin reset-mfa</code></td><td>Clear a user's authenticator so they re-enroll; audited.</td></tr>
     <tr><td><code>zanskar audit verify</code></td><td>Recompute and verify the audit hash chain.</td></tr>
     <tr><td><code>zanskar backup</code> / <code>restore</code></td><td>Snapshot or restore the database and recordings. Key never archived.</td></tr>
