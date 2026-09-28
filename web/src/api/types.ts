@@ -114,6 +114,10 @@ export interface AccessRequest {
   requested_minutes: number
   status: AccessStatus
   approver_user_id?: string
+  /** What the approver granted; may differ from requested_minutes. Zero until decided. */
+  approved_minutes?: number
+  /** The active grant this request asks to extend; the new grant runs on from its expiry. */
+  extends_request_id?: string
   /** Resolved at read time. */
   username?: string
   approver_username?: string

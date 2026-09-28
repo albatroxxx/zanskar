@@ -39,6 +39,13 @@ type Request struct {
 	Protocol         string `json:"protocol"`
 	Reason           string `json:"reason"`
 	RequestedMinutes int    `json:"requested_minutes"`
+	// ApprovedMinutes is what the approver granted, which may differ from
+	// what was asked; zero until a decision.
+	ApprovedMinutes int `json:"approved_minutes,omitempty"`
+	// ExtendsRequestID names the active grant this request asks to extend.
+	// On approval the new grant runs on from that grant's expiry rather than
+	// from the decision, so back-to-back grants leave no gap.
+	ExtendsRequestID string `json:"extends_request_id,omitempty"`
 	Status           Status `json:"status"`
 	ApproverUserID   string `json:"approver_user_id,omitempty"`
 	// Names resolved at read time so every list reads as people and machines
@@ -64,4 +71,7 @@ var (
 	ErrNotFound = errors.New("access: request not found")
 	ErrInvalid  = errors.New("access: invalid input")
 	ErrState    = errors.New("access: request is not in a state for this action")
+	// ErrDuplicate: the user already has a pending request for the same
+	// target and protocol.
+	ErrDuplicate = errors.New("access: a request for this target and protocol is already pending")
 )
