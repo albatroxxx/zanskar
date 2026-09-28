@@ -4,6 +4,7 @@ import { fmtTime } from '../../api/format'
 import type { AsgInstance, AutoscalingGroup, Credential, OSFamily, Protocol } from '../../api/types'
 import { Alert, Badge, Confirm, Empty, Field, Modal, PageHead, Tags } from '../../components/ui'
 import { formatTags, parseTags, protocols, useList, type PortProtocol } from './lib'
+import { CredentialBindings, type BindingChange } from './Bindings'
 
 interface IAMDocs { external_id: string; trust_policy: string; permissions_policy: string; gateway_principal: string }
 interface SyncSummary { Seen: number; Healthy: number; Joined: number; Left: number; Retired: number; HostKeyMismatches: number }
@@ -391,16 +392,20 @@ function GroupDetail({ group, credentials, onClose, onChanged, onDeleted, onErro
     }
   }
 
-  const setCredential = async (p: Protocol, id: string) => {
-    try {
-      if (id) update(await api.put<AutoscalingGroup>(`/autoscaling-groups/${g.id}/credentials/${p}`, { credential_id: id }))
-      else {
-        await api.del(`/autoscaling-groups/${g.id}/credentials/${p}`)
-        update(await api.get<AutoscalingGroup>(`/autoscaling-groups/${g.id}`))
+  // Applied on Save only, one protocol at a time so each change leaves its
+  // own audit event; the drawer shows the group as the API last returned it.
+  const saveBindings = async (changes: BindingChange[]) => {
+    setErr('')
+    let latest = g
+    for (const { protocol, credential_id } of changes) {
+      if (credential_id) {
+        latest = await api.put<AutoscalingGroup>(`/autoscaling-groups/${g.id}/credentials/${protocol}`, { credential_id })
+      } else {
+        await api.del(`/autoscaling-groups/${g.id}/credentials/${protocol}`)
+        latest = await api.get<AutoscalingGroup>(`/autoscaling-groups/${g.id}`)
       }
-    } catch (e) {
-      setErr(errorMessage(e))
     }
+    update(latest)
   }
 
   return (
@@ -412,6 +417,7 @@ function GroupDetail({ group, credentials, onClose, onChanged, onDeleted, onErro
         <button className="btn" onClick={() => setIam(true)}>IAM setup</button>
         <button className="btn" onClick={() => setConfirmRotate(true)}>Rotate ExternalId</button>
         <button className="btn" onClick={() => void toggleStatus()}>{g.status === 'active' ? 'Disable' : 'Enable'}</button>
+        <button className="btn ghost" onClick={onClose}>Close</button>
         <button className="btn danger" onClick={() => setConfirmDelete(true)}>Delete</button>
       </div>
       {summary && (
@@ -433,20 +439,13 @@ function GroupDetail({ group, credentials, onClose, onChanged, onDeleted, onErro
         <dt>Last synced</dt><dd>{g.last_synced_at ? fmtTime(g.last_synced_at) : 'never'}{g.last_error && <> · <Badge tone="danger">{g.last_error}</Badge></>}</dd>
       </dl>
       <h2 style={{ marginTop: 18 }}>Credentials per protocol</h2>
-      <div className="form-grid">
-        {g.capabilities.map((p) => (
-          <Field key={p} label={p.toUpperCase()}>
-            <select id={`asg-detail-cred-${p}`} value={g.credentials[p] ?? ''} onChange={(e) => void setCredential(p, e.target.value)}>
-              <option value="">none</option>
-              {credentials.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.name} ({c.type}, {c.mode})
-                </option>
-              ))}
-            </select>
-          </Field>
-        ))}
-      </div>
+      <CredentialBindings
+        slots={g.capabilities.map((p) => ({ protocol: p, label: p.toUpperCase() }))}
+        current={g.credentials}
+        credentials={credentials}
+        onSave={saveBindings}
+        onError={setErr}
+      />
       <div className="page-head" style={{ marginTop: 18, marginBottom: 8 }}>
         <h2>Instances</h2>
         <div className="field inline" style={{ margin: 0 }}>

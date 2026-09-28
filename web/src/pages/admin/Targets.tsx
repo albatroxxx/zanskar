@@ -4,6 +4,7 @@ import { fmtTime } from '../../api/format'
 import type { Credential, OSFamily, Protocol, Target } from '../../api/types'
 import { Alert, Badge, Confirm, Empty, Field, Modal, PageHead, Tags } from '../../components/ui'
 import { formatTags, hostKeyBadge, parseTags, protocols, useList, type ProbeWire } from './lib'
+import { CredentialBindings, type BindingChange } from './Bindings'
 
 interface ProbeResponse { target: Target; probe: ProbeWire; host_key_status: string; host_key_fingerprint: string | null; host_key_changed_from?: string | null }
 
@@ -255,15 +256,24 @@ function TargetDetail({ target, credentials, onClose, onChanged, onDeleted, onEr
       }
     })
 
-  const setCredential = (p: Protocol, id: string) =>
-    run(async () => {
-      const updated = id ? await api.put<Target>(`/targets/${t.id}/credentials/${p}`, { credential_id: id }) : await api.del<Target>(`/targets/${t.id}/credentials/${p}`)
-      onChanged(updated ?? (await api.get<Target>(`/targets/${t.id}`)))
-    })
+  // Bindings are applied one protocol at a time so each change leaves its own
+  // audit event (target.credential.set / unset); the drawer shows the target
+  // as the API last returned it.
+  const saveBindings = async (changes: BindingChange[]) => {
+    setErr('')
+    let latest = t
+    for (const { protocol, credential_id } of changes) {
+      const updated = credential_id ? await api.put<Target>(`/targets/${t.id}/credentials/${protocol}`, { credential_id }) : await api.del<Target>(`/targets/${t.id}/credentials/${protocol}`)
+      latest = updated ?? (await api.get<Target>(`/targets/${t.id}`))
+    }
+    onChanged(latest)
+  }
 
   const toggleStatus = () =>
     run(async () => {
-      const body = { name: t.name, address: t.address, os_family: t.os_family, ports: t.ports, capabilities: t.capabilities, tags: t.tags, status: t.status === 'active' ? 'disabled' : 'active', notes: t.notes, credentials: t.credentials }
+      // The update body replaces every editable field, so the engine fields
+      // must travel too or a database target silently turns into a host.
+      const body = { name: t.name, address: t.address, os_family: t.os_family, engine: t.engine ?? '', engine_version: t.engine_version ?? '', ports: t.ports, capabilities: t.capabilities, tags: t.tags, status: t.status === 'active' ? 'disabled' : 'active', notes: t.notes, credentials: t.credentials }
       onChanged(await api.put<Target>(`/targets/${t.id}`, body))
     })
 
@@ -318,22 +328,15 @@ function TargetDetail({ target, credentials, onClose, onChanged, onDeleted, onEr
       </dl>
 
       <h2 style={{ marginTop: 18 }}>{t.engine ? 'Database credential' : 'Credentials per protocol'}</h2>
-      <div className="form-grid">
-        {/* A database target has one slot, the brokered "database" protocol;
-            the host slots (ssh, rdp, vnc, winrm) do not apply to it. */}
-        {(t.engine ? (['database'] as Protocol[]) : protocols).map((p) => (
-          <Field key={p} label={p === 'database' ? `Database (${t.engine})` : p.toUpperCase()}>
-            <select id={`cred-${p}`} value={t.credentials[p] ?? ''} onChange={(e) => void setCredential(p, e.target.value)}>
-              <option value="">— none —</option>
-              {credentials.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.name} ({c.type}, {c.mode})
-                </option>
-              ))}
-            </select>
-          </Field>
-        ))}
-      </div>
+      {/* A database target has one slot, the brokered "database" protocol;
+          the host slots (ssh, rdp, vnc, winrm) do not apply to it. */}
+      <CredentialBindings
+        slots={(t.engine ? (['database'] as Protocol[]) : protocols).map((p) => ({ protocol: p, label: p === 'database' ? `Database (${t.engine})` : p.toUpperCase() }))}
+        current={t.credentials}
+        credentials={credentials}
+        onSave={saveBindings}
+        onError={setErr}
+      />
 
       {probe && (
         <>
@@ -385,6 +388,7 @@ function TargetDetail({ target, credentials, onClose, onChanged, onDeleted, onEr
           )}
           <button className="btn" onClick={() => setEditing(true)}>Edit</button>
           <button className="btn" onClick={() => void toggleStatus()}>{t.status === 'active' ? 'Disable' : 'Enable'}</button>
+          <button className="btn ghost" onClick={onClose}>Close</button>
         </div>
         <button className="btn danger" onClick={() => setConfirm('delete')}>Delete</button>
       </div>
