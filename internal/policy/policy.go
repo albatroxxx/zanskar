@@ -31,6 +31,19 @@ func (s Selector) Empty() bool {
 	return len(s.Targets) == 0 && len(s.ASGs) == 0 && len(s.Tags) == 0
 }
 
+// Rule pairs a selector with the protocols it grants. A policy's own
+// target_selector and protocols form its first rule; Rules adds more, so one
+// policy can say "ssh to the Linux fleet, rdp to the two jump hosts" without
+// a second policy for the same people and limits. Every rule shares the
+// policy's windows, limits and flags.
+type Rule struct {
+	Selector  Selector `json:"target_selector"`
+	Protocols []string `json:"protocols"`
+}
+
+// MaxRules bounds the extra rules on one policy.
+const MaxRules = 32
+
 // TimeWindow is a recurring weekly window in a named zone.
 type TimeWindow struct {
 	Days []string `json:"days"` // mon..sun
@@ -47,10 +60,14 @@ type Policy struct {
 	Enabled     bool   `json:"enabled"`
 	// Exactly one of GroupID and UserID is set: a policy applies to every
 	// member of a group, or to one user directly (ADR 0013).
-	GroupID            string       `json:"group_id,omitempty"`
-	UserID             string       `json:"user_id,omitempty"`
-	Selector           Selector     `json:"target_selector"`
-	Protocols          []string     `json:"protocols"`
+	GroupID   string   `json:"group_id,omitempty"`
+	UserID    string   `json:"user_id,omitempty"`
+	Selector  Selector `json:"target_selector"`
+	Protocols []string `json:"protocols"`
+	// Rules are further selector/protocol pairs granted by this policy, on
+	// top of the base Selector and Protocols (which may be empty when Rules
+	// carry everything).
+	Rules              []Rule       `json:"rules"`
 	TimeWindows        []TimeWindow `json:"time_windows"`
 	MaxSessionMinutes  *int         `json:"max_session_minutes,omitempty"`
 	IdleTimeoutMinutes int          `json:"idle_timeout_minutes"`
@@ -84,29 +101,41 @@ func (p *Policy) Validate() error {
 	if (p.GroupID == "") == (p.UserID == "") {
 		return fmt.Errorf("%w: exactly one of group_id or user_id is required", ErrInvalidInput)
 	}
-	if p.Selector.Empty() {
+	// The base selector and protocols may be empty only when rules carry the
+	// grants; a policy that grants nothing anywhere is a mistake, not a policy.
+	if p.Selector.Empty() != (len(p.Protocols) == 0) {
+		return fmt.Errorf("%w: target_selector and protocols go together; give both or neither", ErrInvalidInput)
+	}
+	if p.Selector.Empty() && len(p.Rules) == 0 {
 		return fmt.Errorf("%w: target_selector must name targets, asgs or tags", ErrInvalidInput)
 	}
-	if len(p.Selector.Tags) > 32 {
-		return fmt.Errorf("%w: at most 32 selector tags", ErrInvalidInput)
-	}
-	for k, v := range p.Selector.Tags {
-		if k == "" || len(k) > 64 || len(v) > 64 {
-			return fmt.Errorf("%w: tag keys and values must be 1-64 characters", ErrInvalidInput)
+	if !p.Selector.Empty() {
+		if err := validateSelector(p.Selector); err != nil {
+			return err
+		}
+		if err := validateProtocols(p.Protocols); err != nil {
+			return err
 		}
 	}
-	if len(p.Protocols) == 0 {
-		return fmt.Errorf("%w: at least one protocol", ErrInvalidInput)
+	if len(p.Rules) > MaxRules {
+		return fmt.Errorf("%w: at most %d rules", ErrInvalidInput, MaxRules)
 	}
-	seen := map[string]bool{}
-	for _, proto := range p.Protocols {
-		if !validProtocols[proto] {
-			return fmt.Errorf("%w: unknown protocol %q", ErrInvalidInput, proto)
+	for i, rule := range p.Rules {
+		if rule.Selector.Empty() {
+			return fmt.Errorf("%w: rule %d must name targets, asgs or tags", ErrInvalidInput, i+1)
 		}
-		if seen[proto] {
-			return fmt.Errorf("%w: duplicate protocol %q", ErrInvalidInput, proto)
+		if err := validateSelector(rule.Selector); err != nil {
+			return fmt.Errorf("rule %d: %w", i+1, err)
 		}
-		seen[proto] = true
+		if len(rule.Protocols) == 0 {
+			return fmt.Errorf("%w: rule %d needs at least one protocol", ErrInvalidInput, i+1)
+		}
+		if err := validateProtocols(rule.Protocols); err != nil {
+			return fmt.Errorf("rule %d: %w", i+1, err)
+		}
+	}
+	if p.Rules == nil {
+		p.Rules = []Rule{}
 	}
 	if p.IdleTimeoutMinutes <= 0 || p.IdleTimeoutMinutes > 24*60 {
 		return fmt.Errorf("%w: idle_timeout_minutes must be 1-1440", ErrInvalidInput)
@@ -123,6 +152,64 @@ func (p *Policy) Validate() error {
 		p.TimeWindows = []TimeWindow{}
 	}
 	return nil
+}
+
+func validateSelector(s Selector) error {
+	if len(s.Tags) > 32 {
+		return fmt.Errorf("%w: at most 32 selector tags", ErrInvalidInput)
+	}
+	for k, v := range s.Tags {
+		if k == "" || len(k) > 64 || len(v) > 64 {
+			return fmt.Errorf("%w: tag keys and values must be 1-64 characters", ErrInvalidInput)
+		}
+	}
+	return nil
+}
+
+func validateProtocols(protocols []string) error {
+	seen := map[string]bool{}
+	for _, proto := range protocols {
+		if !validProtocols[proto] {
+			return fmt.Errorf("%w: unknown protocol %q", ErrInvalidInput, proto)
+		}
+		if seen[proto] {
+			return fmt.Errorf("%w: duplicate protocol %q", ErrInvalidInput, proto)
+		}
+		seen[proto] = true
+	}
+	return nil
+}
+
+// Covers reports whether the policy grants protocol on the target: through
+// its base selector and protocols, or through any of its rules. Every
+// caller that decides access must use this and nothing looser, or a rule
+// would grant in one place and be ignored in another.
+func (p *Policy) Covers(t TargetRef, protocol string) bool {
+	if p.Selector.Matches(t) && contains(p.Protocols, protocol) {
+		return true
+	}
+	for _, r := range p.Rules {
+		if r.Selector.Matches(t) && contains(r.Protocols, protocol) {
+			return true
+		}
+	}
+	return false
+}
+
+// References reports whether the policy names the target or the autoscaling
+// group by id anywhere: the base selector or any rule. Tag selectors are not
+// references.
+func (p *Policy) References(targetID, asgID string) bool {
+	sels := []Selector{p.Selector}
+	for _, r := range p.Rules {
+		sels = append(sels, r.Selector)
+	}
+	for _, s := range sels {
+		if (targetID != "" && contains(s.Targets, targetID)) || (asgID != "" && contains(s.ASGs, asgID)) {
+			return true
+		}
+	}
+	return false
 }
 
 func (w *TimeWindow) validate() error {
@@ -250,11 +337,15 @@ func Evaluate(policies []*Policy, t TargetRef, protocol string, now time.Time) D
 	sawStanding := false
 	reason := "no policy grants access to this target"
 	for _, p := range policies {
-		if !p.Enabled || !p.Selector.Matches(t) {
+		if !p.Enabled {
 			continue
 		}
-		if !contains(p.Protocols, protocol) {
-			reason = "protocol not allowed by policy"
+		if !p.Covers(t, protocol) {
+			// Tell a protocol refusal from a target the policy never covers,
+			// since the user sees the reason.
+			if p.Selector.Matches(t) || p.matchesAnyRule(t) {
+				reason = "protocol not allowed by policy"
+			}
 			continue
 		}
 		if len(p.TimeWindows) > 0 {
@@ -295,6 +386,15 @@ func Evaluate(policies []*Policy, t TargetRef, protocol string, now time.Time) D
 		d.MaxSession = time.Duration(*best.MaxSessionMinutes) * time.Minute
 	}
 	return d
+}
+
+func (p *Policy) matchesAnyRule(t TargetRef) bool {
+	for _, r := range p.Rules {
+		if r.Selector.Matches(t) {
+			return true
+		}
+	}
+	return false
 }
 
 func contains(list []string, s string) bool {

@@ -281,20 +281,11 @@ func (h *Handler) note(_ http.ResponseWriter, r *http.Request) string {
 
 func eligiblePolicy(pols []*policy.Policy, ref policy.TargetRef, protocol string) *policy.Policy {
 	for _, p := range pols {
-		if p.Enabled && p.RequireApproval && p.Selector.Matches(ref) && containsStr(p.Protocols, protocol) {
+		if p.Enabled && p.RequireApproval && p.Covers(ref, protocol) {
 			return p
 		}
 	}
 	return nil
-}
-
-func containsStr(xs []string, s string) bool {
-	for _, x := range xs {
-		if x == s {
-			return true
-		}
-	}
-	return false
 }
 
 func (h *Handler) record(r *http.Request, action string, req *Request, extra map[string]any) {

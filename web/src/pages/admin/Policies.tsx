@@ -1,7 +1,7 @@
 import { useState, type FormEvent } from 'react'
 import { api, errorMessage } from '../../api/client'
 import { canConnect } from '../../auth/home'
-import type { Group, Policy, Protocol, Target, TimeWindow, AutoscalingGroup, User } from '../../api/types'
+import type { Group, Policy, PolicyRule, Protocol, Target, TimeWindow, AutoscalingGroup, User } from '../../api/types'
 import { Alert, Badge, Confirm, Empty, Field, Modal, PageHead } from '../../components/ui'
 import { formatTags, parseTags, policyProtocols, useList } from './lib'
 
@@ -71,8 +71,8 @@ export function Policies() {
                       </>
                     )}
                   </td>
-                  <td>{p.protocols.map((x) => <Badge key={x} tone="accent">{x}</Badge>)}</td>
-                  <td>{selectorSummary(p, targets.items ?? [], asgs.items ?? [])}</td>
+                  <td>{p.protocols.map((x) => <Badge key={x} tone="accent">{x}</Badge>)}{(p.rules?.length ?? 0) > 0 && <div className="muted">+ {p.rules!.length} {p.rules!.length === 1 ? 'rule' : 'rules'}</div>}</td>
+                  <td>{selectorSummary(p, targets.items ?? [], asgs.items ?? [])}{(p.rules?.length ?? 0) > 0 && <div className="muted">{p.rules!.map((r, i) => <span key={i}>{i > 0 ? '; ' : ''}{ruleSummary(r, targets.items ?? [], asgs.items ?? [])}</span>)}</div>}</td>
                   <td>{p.time_windows.length === 0 ? <span className="muted">always</span> : p.time_windows.length}</td>
                   <td>{p.idle_timeout_minutes} m / {p.max_session_minutes ? `${p.max_session_minutes} m` : '∞'}</td>
                   <td>{p.enabled ? <Badge tone="ok">on</Badge> : <Badge>off</Badge>}</td>
@@ -124,6 +124,23 @@ export function Policies() {
 
 type Subject = 'group' | 'user'
 
+/** A rule as edited: tags as text, ids as lists, like the base fields. */
+interface RuleDraft { tags: string; targets: string[]; asgs: string[]; protocols: Protocol[] }
+
+function toggleIn<T>(list: T[], v: T): T[] {
+  return list.includes(v) ? list.filter((x) => x !== v) : [...list, v]
+}
+
+/** ruleSummary reads one rule for the list: its protocols, then what it selects. */
+function ruleSummary(r: PolicyRule, targets: Target[], asgs: AutoscalingGroup[]): string {
+  const sel = r.target_selector
+  const parts: string[] = []
+  if (sel.tags && Object.keys(sel.tags).length) parts.push(Object.entries(sel.tags).map(([k, v]) => `${k}=${v}`).join(' '))
+  if (sel.targets?.length) parts.push(sel.targets.map((id) => targets.find((t) => t.id === id)?.name ?? id.slice(0, 8)).join(', '))
+  if (sel.asgs?.length) parts.push(sel.asgs.map((id) => asgs.find((g) => g.id === id)?.name ?? id.slice(0, 8)).join(', '))
+  return `${r.protocols.join('/')} → ${parts.join(' · ')}`
+}
+
 interface FormState {
   name: string
   description: string
@@ -135,6 +152,8 @@ interface FormState {
   targets: string[]
   asgs: string[]
   protocols: Protocol[]
+  /** Extra rules, edited with the same pickers as the base; tags as text like the base. */
+  rules: RuleDraft[]
   windows: TimeWindow[]
   idle: string
   max: string
@@ -155,7 +174,8 @@ function PolicyForm({ initial, groups, users, targets, asgs, onClose, onSaved }:
     tags: formatTags(initial?.target_selector.tags),
     targets: initial?.target_selector.targets ?? [],
     asgs: initial?.target_selector.asgs ?? [],
-    protocols: initial?.protocols ?? ['ssh'],
+    protocols: initial?.protocols ?? (initial?.rules?.length ? [] : ['ssh']),
+    rules: (initial?.rules ?? []).map((r) => ({ tags: formatTags(r.target_selector.tags), targets: r.target_selector.targets ?? [], asgs: r.target_selector.asgs ?? [], protocols: r.protocols })),
     windows: initial?.time_windows ?? [],
     idle: String(initial?.idle_timeout_minutes ?? 15),
     max: initial?.max_session_minutes ? String(initial.max_session_minutes) : '',
@@ -173,6 +193,7 @@ function PolicyForm({ initial, groups, users, targets, asgs, onClose, onSaved }:
   const toggleTarget = (id: string) => up({ targets: f.targets.includes(id) ? f.targets.filter((x) => x !== id) : [...f.targets, id] })
   const toggleAsg = (id: string) => up({ asgs: f.asgs.includes(id) ? f.asgs.filter((x) => x !== id) : [...f.asgs, id] })
   const setWindow = (i: number, patch: Partial<TimeWindow>) => up({ windows: f.windows.map((w, j) => (j === i ? { ...w, ...patch } : w)) })
+  const setRule = (i: number, patch: Partial<RuleDraft>) => up({ rules: f.rules.map((r, j) => (j === i ? { ...r, ...patch } : r)) })
 
   const submit = async (e: FormEvent) => {
     e.preventDefault()
@@ -180,8 +201,18 @@ function PolicyForm({ initial, groups, users, targets, asgs, onClose, onSaved }:
     if (error) return setErr(error)
     if (f.subject === 'group' && !f.group_id) return setErr('choose a group')
     if (f.subject === 'user' && !f.user_id) return setErr('choose a user')
-    if (f.protocols.length === 0) return setErr('choose at least one protocol')
-    if (Object.keys(tags).length === 0 && f.targets.length === 0 && f.asgs.length === 0) return setErr('select targets by tag, by name, or an autoscaling group')
+    const baseEmpty = Object.keys(tags).length === 0 && f.targets.length === 0 && f.asgs.length === 0
+    if (baseEmpty !== (f.protocols.length === 0)) return setErr(baseEmpty ? 'the main rule has protocols but no targets: pick targets, or clear its protocols and use rules only' : 'the main rule has targets but no protocol')
+    if (baseEmpty && f.rules.length === 0) return setErr('select targets by tag, by name, or an autoscaling group, or add a rule')
+    const rules: PolicyRule[] = []
+    for (const [i, r] of f.rules.entries()) {
+      const parsed = parseTags(r.tags)
+      if (parsed.error) return setErr(`rule ${i + 1}: ${parsed.error}`)
+      const empty = Object.keys(parsed.tags).length === 0 && r.targets.length === 0 && r.asgs.length === 0
+      if (empty) return setErr(`rule ${i + 1}: select targets by tag, by name, or an autoscaling group`)
+      if (r.protocols.length === 0) return setErr(`rule ${i + 1}: choose at least one protocol`)
+      rules.push({ target_selector: { ...(Object.keys(parsed.tags).length ? { tags: parsed.tags } : {}), ...(r.targets.length ? { targets: r.targets } : {}), ...(r.asgs.length ? { asgs: r.asgs } : {}) }, protocols: r.protocols })
+    }
     const idle = Number(f.idle)
     if (!Number.isInteger(idle) || idle < 1) return setErr('idle timeout must be a whole number of minutes')
     const max = f.max.trim() ? Number(f.max) : null
@@ -196,6 +227,7 @@ function PolicyForm({ initial, groups, users, targets, asgs, onClose, onSaved }:
         ...(f.subject === 'group' ? { group_id: f.group_id } : { user_id: f.user_id }),
         target_selector: { ...(Object.keys(tags).length ? { tags } : {}), ...(f.targets.length ? { targets: f.targets } : {}), ...(f.asgs.length ? { asgs: f.asgs } : {}) },
         protocols: f.protocols,
+        rules,
         time_windows: f.windows.map((w) => ({ ...w, tz: w.tz || 'UTC' })),
         idle_timeout_minutes: idle,
         max_session_minutes: max,
@@ -295,7 +327,52 @@ function PolicyForm({ initial, groups, users, targets, asgs, onClose, onSaved }:
             ))}
           </div>
         </Field>
-        <h2>Time windows <span className="muted" style={{ fontWeight: 400, fontSize: '0.85rem' }}>(none = always)</span></h2>
+        <h2>More rules <span className="muted" style={{ fontWeight: 400, fontSize: '0.85rem' }}>(optional)</span></h2>
+        <p className="muted">Each rule grants its own protocols on its own targets, under this policy's windows, limits and flags. Use them when the same people need different protocols on different machines: ssh to the Linux fleet, rdp to the two jump hosts, one policy. The targets and protocols above are the first rule and may be left empty when rules carry everything.</p>
+        {f.rules.map((r, i) => (
+          <div key={i} className="card" style={{ padding: 12, marginBottom: 8 }}>
+            <div className="form-grid">
+              <Field label="By tag" hint="key=value per line; all must match">
+                <textarea id={`p-r${i}-tags`} value={r.tags} onChange={(e) => setRule(i, { tags: e.target.value })} placeholder="env=prod" />
+              </Field>
+              <Field label="By name">
+                <div style={{ maxHeight: 120, overflowY: 'auto', border: '1px solid var(--line)', borderRadius: 6, padding: 6 }}>
+                  {targets.length === 0 && <span className="muted">no targets defined</span>}
+                  {targets.map((t) => (
+                    <div key={t.id} className="field inline" style={{ margin: '2px 0' }}>
+                      <input id={`p-r${i}-target-${t.id}`} type="checkbox" checked={r.targets.includes(t.id)} onChange={() => setRule(i, { targets: toggleIn(r.targets, t.id) })} />
+                      <label htmlFor={`p-r${i}-target-${t.id}`}>{t.name}</label>
+                    </div>
+                  ))}
+                </div>
+              </Field>
+              <Field label="Autoscaling groups">
+                <div style={{ maxHeight: 120, overflowY: 'auto', border: '1px solid var(--line)', borderRadius: 6, padding: 6 }}>
+                  {asgs.length === 0 && <span className="muted">no autoscaling groups enrolled</span>}
+                  {asgs.map((g) => (
+                    <div key={g.id} className="field inline" style={{ margin: '2px 0' }}>
+                      <input id={`p-r${i}-asg-${g.id}`} type="checkbox" checked={r.asgs.includes(g.id)} onChange={() => setRule(i, { asgs: toggleIn(r.asgs, g.id) })} />
+                      <label htmlFor={`p-r${i}-asg-${g.id}`}>{g.name}</label>
+                    </div>
+                  ))}
+                </div>
+              </Field>
+            </div>
+            <Field label="Protocols">
+              <div className="actions">
+                {policyProtocols.map((p) => (
+                  <span key={p} className="field inline" style={{ margin: 0 }}>
+                    <input id={`p-r${i}-proto-${p}`} type="checkbox" checked={r.protocols.includes(p)} onChange={() => setRule(i, { protocols: toggleIn(r.protocols, p) })} />
+                    <label htmlFor={`p-r${i}-proto-${p}`}>{p.toUpperCase()}</label>
+                  </span>
+                ))}
+              </div>
+            </Field>
+            <button type="button" className="btn sm" onClick={() => up({ rules: f.rules.filter((_, j) => j !== i) })}>Remove rule</button>
+          </div>
+        ))}
+        <button type="button" className="btn sm" onClick={() => up({ rules: [...f.rules, { tags: '', targets: [], asgs: [], protocols: [] }] })}>Add rule</button>
+        <h2 style={{ marginTop: 16 }}>Time windows <span className="muted" style={{ fontWeight: 400, fontSize: '0.85rem' }}>(none = always)</span></h2>
         {f.windows.map((w, i) => (
           <div key={i} className="card" style={{ padding: 12, marginBottom: 8 }}>
             <div className="actions" style={{ marginBottom: 8 }}>
