@@ -99,6 +99,8 @@ func (h *Handler) fail(w http.ResponseWriter, r *http.Request, err error) {
 		httpx.BadRequest(w, strings.TrimPrefix(err.Error(), "settings: invalid value: "))
 		return
 	}
-	h.Log.Error("settings handler", "path", r.URL.Path, "err", err)
+	// The matched route pattern names the handler without echoing the
+	// request's own path into the log.
+	h.Log.Error("settings handler", "route", r.Method+" "+r.Pattern, "err", err)
 	httpx.WriteError(w, http.StatusInternalServerError, "internal", "internal error")
 }
