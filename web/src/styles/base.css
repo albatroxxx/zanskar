@@ -230,3 +230,9 @@ td .muted, .muted { color: var(--fg-muted); }
 .transport { display: flex; align-items: center; gap: 10px; margin-top: 10px; }
 .transport input[type=range] { flex: 1; min-width: 0; }
 .transport .t { font-variant-numeric: tabular-nums; font-size: 0.86rem; color: var(--fg-muted); white-space: nowrap; }
+.transport .grow { flex: 1; }
+.transport .speed { padding: 4px 8px; border: 1px solid var(--line-strong); border-radius: var(--radius); background: var(--bg-raised); font-size: 0.86rem; }
+.player-hint { margin: 8px 0 0; font-size: 0.78rem; }
+/* The replayed desktop is scaled to fit; the container hugs the scaled
+   height so the transport sits right under the picture. */
+.desk-player { scroll-margin-top: 12px; }
