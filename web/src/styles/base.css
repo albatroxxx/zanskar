@@ -36,6 +36,11 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .sidebar .brand small { display: block; font-weight: 500; letter-spacing: 0.04em; color: var(--fg-muted); font-size: 0.66rem; }
 .sidebar nav a { display: block; padding: 7px 10px; border-radius: var(--radius); color: var(--fg); }
 .sidebar nav a:hover { background: var(--bg-sunken); text-decoration: none; }
+.sidebar nav a { display: flex; align-items: center; gap: 8px; }
+.sidebar nav a .nav-badge { margin-left: auto; min-width: 20px; padding: 1px 6px; border-radius: 999px; background: var(--accent); color: #fff; font-size: 0.72rem; font-weight: 600; text-align: center; line-height: 1.5; }
+.access-notices { display: flex; flex-direction: column; gap: 8px; margin-bottom: 12px; }
+.access-notices .alert { display: flex; align-items: center; gap: 12px; margin-bottom: 0; }
+.access-notices .grow { flex: 1; }
 .sidebar nav a.active { background: var(--accent-soft); color: var(--accent); font-weight: 600; box-shadow: inset 3px 0 0 var(--accent); }
 .sidebar .spacer { flex: 1; }
 .sidebar .me { border-top: 1px solid var(--line); padding-top: 12px; font-size: 0.86rem; color: var(--fg-muted); display: flex; flex-direction: column; gap: 6px; }
@@ -140,6 +145,8 @@ td .muted, .muted { color: var(--fg-muted); }
 .login .brand img { width: 56px; height: 56px; border-radius: 12px; }
 .login .brand h1 { letter-spacing: 0.14em; font-size: 1.2rem; }
 .login .brand span { color: var(--fg-muted); font-size: 0.78rem; letter-spacing: 0.1em; text-transform: uppercase; }
+/* system-use notification: plain text, line breaks kept, set apart from the form */
+.login-banner { white-space: pre-wrap; margin: 0 0 18px; padding: 12px 14px; border: 1px solid var(--line-strong); border-left: 3px solid var(--warn); border-radius: var(--radius); background: var(--bg-sunken); font-size: 0.86rem; line-height: 1.45; max-height: 40vh; overflow: auto; }
 .login .foot { text-align: center; color: var(--fg-faint); font-size: 0.78rem; margin-top: 16px; }
 .recovery-codes { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; font-family: var(--mono); background: var(--bg-sunken); padding: 12px; border-radius: var(--radius); }
 
@@ -153,6 +160,12 @@ td .muted, .muted { color: var(--fg-muted); }
 .term-bar .name { font-weight: 600; }
 .term-bar .stat { color: var(--term-fg-muted); font-variant-numeric: tabular-nums; }
 .term-bar .stat.warn { color: var(--warn); }
+/* "Recording" with a pulsing dot: the one thing in the bar a user must never
+   miss. The pulse is dropped for people who asked for reduced motion. */
+.term-bar .stat.rec { display: inline-flex; align-items: center; gap: 6px; color: var(--term-fg); }
+.term-bar .rec-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--ok); box-shadow: 0 0 0 0 color-mix(in srgb, var(--ok) 55%, transparent); animation: rec-pulse 1.6s ease-out infinite; }
+@keyframes rec-pulse { 0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--ok) 55%, transparent); } 70% { box-shadow: 0 0 0 6px transparent; } 100% { box-shadow: 0 0 0 0 transparent; } }
+@media (prefers-reduced-motion: reduce) { .term-bar .rec-dot { animation: none; } }
 .term-bar .grow { flex: 1; }
 /* The bar is always dark, whatever the theme, so its controls carry their own colours. */
 .term-bar .btn { background: var(--term-btn-bg); color: var(--term-fg); border-color: var(--term-btn-line); }
@@ -185,6 +198,13 @@ td .muted, .muted { color: var(--fg-muted); }
 .files-panel .status.err { color: var(--term-danger); }
 .files-panel progress { width: 100%; height: 6px; }
 @media (max-width: 760px) { .files-panel { width: 220px; } }
+/* clipboard panel: same shell as the files panel, with a text box */
+.clip-panel textarea { flex: 1; min-height: 120px; margin: 0 12px; padding: 8px; resize: none; font: inherit; font-size: 0.86rem; color: var(--term-fg); background: var(--term-btn-bg); border: 1px solid var(--term-btn-line); border-radius: 6px; }
+.clip-panel textarea:focus { outline: none; border-color: var(--term-fg-muted); }
+.clip-panel .row { display: flex; gap: 8px; padding: 10px 12px; }
+.clip-panel .btn { background: var(--term-btn-bg); color: var(--term-fg); border-color: var(--term-btn-line); }
+.clip-panel .btn.primary { background: var(--accent); color: #fff; border-color: transparent; }
+.clip-panel .status.quiet { min-height: 0; padding: 0; border-top: 0; }
 
 /* failover dialog */
 .failover-list { display: flex; flex-direction: column; border: 1px solid var(--line); border-radius: var(--radius); margin: 12px 0; max-height: 40vh; overflow-y: auto; }
@@ -217,3 +237,9 @@ td .muted, .muted { color: var(--fg-muted); }
 .transport { display: flex; align-items: center; gap: 10px; margin-top: 10px; }
 .transport input[type=range] { flex: 1; min-width: 0; }
 .transport .t { font-variant-numeric: tabular-nums; font-size: 0.86rem; color: var(--fg-muted); white-space: nowrap; }
+.transport .grow { flex: 1; }
+.transport .speed { padding: 4px 8px; border: 1px solid var(--line-strong); border-radius: var(--radius); background: var(--bg-raised); font-size: 0.86rem; }
+.player-hint { margin: 8px 0 0; font-size: 0.78rem; }
+/* The replayed desktop is scaled to fit; the container hugs the scaled
+   height so the transport sits right under the picture. */
+.desk-player { scroll-margin-top: 12px; }

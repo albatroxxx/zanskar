@@ -150,3 +150,47 @@ func TestPolicyTemplatesAreNotHTMLEscaped(t *testing.T) {
 		t.Fatalf("placeholder missing or mangled:\n%s", p)
 	}
 }
+
+// TestDeleteRetiresGroup pins ADR 0019 for autoscaling groups: the group and
+// its instance rows stay for session history, it leaves Get and List (and so
+// the sync loop), its credential bindings go, and its name is free again.
+func TestDeleteRetiresGroup(t *testing.T) {
+	ctx := context.Background()
+	db := testDB(t)
+	r := NewRepo(db)
+	now := store.TimeArg(time.Now())
+	if _, err := db.ExecContext(ctx, db.Rebind(`INSERT INTO credentials (id, name, type, mode, username, created_at, updated_at) VALUES ('c1', 'key', 'ssh_key', 'vaulted', 'ec2-user', ?, ?)`), now, now); err != nil {
+		t.Fatal(err)
+	}
+	g := sample()
+	g.Credentials = map[target.Protocol]string{target.SSH: "c1"}
+	if err := r.Create(ctx, g); err != nil {
+		t.Fatal(err)
+	}
+	in, _, err := r.UpsertInstance(ctx, &Instance{GroupID: g.ID, InstanceID: "i-1", PrivateIP: "10.0.0.5", LifecycleState: "InService", ProbeHealth: "healthy"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := r.Delete(ctx, g.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.Get(ctx, g.ID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("Get after retire: %v", err)
+	}
+	if list, err := r.List(ctx, false); err != nil || len(list) != 0 {
+		t.Fatalf("List after retire: %d %v", len(list), err)
+	}
+	if got, err := r.GetInstance(ctx, in.ID); err != nil || got.InstanceID != "i-1" {
+		t.Fatalf("instance rows must survive for session history: %+v %v", got, err)
+	}
+	var bindings int
+	if err := db.QueryRowContext(ctx, db.Rebind(`SELECT COUNT(*) FROM asg_credentials WHERE asg_id = ?`), g.ID).Scan(&bindings); err != nil || bindings != 0 {
+		t.Fatalf("credential bindings should be dropped, got %d %v", bindings, err)
+	}
+	if err := r.Create(ctx, sample()); err != nil {
+		t.Fatalf("re-enrol retired name: %v", err)
+	}
+	if err := r.Delete(ctx, g.ID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("double delete must be not found, got %v", err)
+	}
+}

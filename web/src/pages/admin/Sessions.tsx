@@ -1,16 +1,17 @@
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { api, errorMessage } from '../../api/client'
-import { fmtDuration, fmtTime, shortId } from '../../api/format'
+import { fmtDuration, fmtTime } from '../../api/format'
+import { sessionTarget, sessionUser } from '../../api/labels'
 import type { Session } from '../../api/types'
 import { Alert, Confirm, Empty, Field, PageHead, reasonBadge } from '../../components/ui'
 import { useList } from './lib'
 
 export function Sessions() {
   const [openOnly, setOpenOnly] = useState(false)
-  const [userId, setUserId] = useState('')
+  const [username, setUsername] = useState('')
   const [applied, setApplied] = useState('')
-  const { items, err, setErr, reload } = useList<Session>('/sessions', { open: openOnly ? 'true' : undefined, user_id: applied || undefined })
+  const { items, err, setErr, reload } = useList<Session>('/sessions', { open: openOnly ? 'true' : undefined, username: applied || undefined })
   const [terminating, setTerminating] = useState<Session | null>(null)
   const [reason, setReason] = useState('')
 
@@ -21,8 +22,8 @@ export function Sessions() {
           <input id="s-open" type="checkbox" checked={openOnly} onChange={(e) => setOpenOnly(e.target.checked)} />
           <label htmlFor="s-open">Live only</label>
         </span>
-        <input id="s-user" placeholder="filter by user id" value={userId} onChange={(e) => setUserId(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && setApplied(userId.trim())} style={{ padding: '6px 10px', border: '1px solid var(--line-strong)', borderRadius: 6, background: 'var(--bg-raised)' }} />
-        <button className="btn sm" onClick={() => setApplied(userId.trim())}>Filter</button>
+        <input id="s-user" placeholder="filter by username" value={username} onChange={(e) => setUsername(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && setApplied(username.trim())} style={{ padding: '6px 10px', border: '1px solid var(--line-strong)', borderRadius: 6, background: 'var(--bg-raised)' }} />
+        <button className="btn sm" onClick={() => setApplied(username.trim())}>Filter</button>
         <button className="btn sm" onClick={() => void reload()}>Refresh</button>
       </PageHead>
       {err && <Alert tone="danger">{err}</Alert>}
@@ -50,8 +51,8 @@ export function Sessions() {
               {items.map((s) => (
                 <tr key={s.id}>
                   <td>{fmtTime(s.started_at)}</td>
-                  <td className="mono" title={s.user_id}>{shortId(s.user_id)}</td>
-                  <td className="mono" title={s.target_id ?? s.asg_instance_id}>{shortId(s.target_id ?? s.asg_instance_id)}</td>
+                  <td title={s.user_id}><strong>{sessionUser(s)}</strong></td>
+                  <td title={s.target_id ?? s.asg_instance_id}>{sessionTarget(s)}</td>
                   <td>{s.protocol}</td>
                   <td className="mono muted">{s.client_ip}</td>
                   <td>{fmtDuration(s.started_at, s.ended_at)}</td>
@@ -60,7 +61,7 @@ export function Sessions() {
                   <td>
                     {!s.ended_at && (
                       <span className="actions">
-                        <Link className="btn sm" to={`/audit/shadow/${s.id}?protocol=${s.protocol}&target=${encodeURIComponent(s.target_name ?? s.target_id ?? '')}`} title="Watch live, read-only; the view is audited">
+                        <Link className="btn sm" to={`/audit/shadow/${s.id}?protocol=${s.protocol}&target=${encodeURIComponent(sessionTarget(s))}`} title="Watch live, read-only; the view is audited">
                           Watch
                         </Link>
                         <button className="btn sm danger" onClick={() => setTerminating(s)}>Terminate</button>

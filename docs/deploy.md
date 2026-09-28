@@ -33,20 +33,47 @@ service, since it has no configuration yet.
 
 ```sh
 # Debian / Ubuntu
-sudo apt install ./zanskar_<version>_linux_amd64.deb
+sudo apt update && sudo apt install ./zanskar_<version>_linux_amd64.deb
 # RHEL / Fedora / SUSE
-sudo rpm -i zanskar_<version>_linux_amd64.rpm
+sudo dnf makecache && sudo rpm -i zanskar_<version>_linux_amd64.rpm
 
 sudo zanskar init          # writes /etc/zanskar/env and prints the exact next commands
 
 # Create the first admin as the service user so it owns the SQLite database —
-# `zanskar init` prints this line with your paths filled in:
+# `zanskar init` prints this line with your paths filled in. admin create
+# prompts for the password twice without echo; keep it off the command line
+# (shell history). Scripts can export ZANSKAR_ADMIN_PASSWORD from `read -rs`.
 sudo bash -c 'set -a; . /etc/zanskar/env; set +a; \
   runuser -u zanskar -- zanskar migrate && \
-  ZANSKAR_ADMIN_PASSWORD=<pick-one> runuser -u zanskar -- zanskar admin create \
-    --username admin --name "Your Name"'
+  runuser -u zanskar -- zanskar admin create --username admin --name "Your Name"'
 
 sudo systemctl enable --now zanskar
+```
+
+**RDP and VNC need guacd, which the package does not install.** Start the official
+container on loopback only (guacd is unauthenticated; never publish it wider), then set
+`ZANSKAR_GUACD_ADDR=127.0.0.1:4822` (or pass `-guacd` to `init`) and restart:
+
+```sh
+sudo docker run -d --name guacd --restart unless-stopped -p 127.0.0.1:4822:4822 \
+  -e HOME=/tmp --read-only --tmpfs /tmp:size=512m,mode=1777 guacamole/guacd:1.6.0
+```
+
+**TLS without a certificate.** The gateway refuses plain HTTP on a non-loopback address.
+On a host with a public IP and 80/443 open, Caddy plus a `<ip-with-dashes>.sslip.io` name
+gives a real Let's Encrypt certificate with no domain of your own (the AWS reference
+deployment does exactly this):
+
+```sh
+IP=$(curl -s https://api.ipify.org); HOST=${IP//./-}.sslip.io
+sudo tee /etc/caddy/Caddyfile >/dev/null <<CADDY
+$HOST {
+  encode zstd gzip
+  reverse_proxy 127.0.0.1:8443
+}
+CADDY
+sudo systemctl enable --now caddy
+sudo zanskar init -non-interactive -behind-proxy -guacd 127.0.0.1:4822
 ```
 
 Run the database commands as the `zanskar` service user (the `runuser` wrapper above):
