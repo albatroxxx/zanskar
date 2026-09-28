@@ -185,12 +185,12 @@ function TargetForm({ initial, onClose, onSaved }: { initial?: Target; onClose: 
               <option value="other">Other</option>
             </select>
           </Field>
-          <Field label="Database engine" hint="Set only for a PaaS database target (ADR 0017)">
+          <Field label="Database engine" hint="Set only for a PaaS database target (ADR 0017). MySQL and MariaDB arrive with their proxy sidecar in a later release.">
             <select id="t-engine" value={f.engine} onChange={set('engine')}>
               <option value="">— not a database —</option>
               <option value="postgres">PostgreSQL</option>
-              <option value="mysql">MySQL</option>
-              <option value="mariadb">MariaDB</option>
+              <option value="mysql" disabled>MySQL (later release)</option>
+              <option value="mariadb" disabled>MariaDB (later release)</option>
             </select>
           </Field>
         </div>
@@ -283,7 +283,15 @@ function TargetDetail({ target, credentials, onClose, onChanged, onDeleted, onEr
       )}
       <dl className="kv">
         <dt>Address</dt><dd className="mono">{t.address}</dd>
-        <dt>OS</dt><dd>{t.os_family}</dd>
+        {t.engine ? (
+          <>
+            <dt>Engine</dt><dd>{t.engine}{t.engine_version ? ` ${t.engine_version}` : ''}</dd>
+          </>
+        ) : (
+          <>
+            <dt>OS</dt><dd>{t.os_family}</dd>
+          </>
+        )}
         <dt>Status</dt><dd>{t.status}</dd>
         <dt>Capabilities</dt><dd>{t.capabilities.length ? t.capabilities.join(', ') : <span className="muted">unprobed</span>}</dd>
         <dt>Host key</dt>
@@ -309,10 +317,12 @@ function TargetDetail({ target, credentials, onClose, onChanged, onDeleted, onEr
         )}
       </dl>
 
-      <h2 style={{ marginTop: 18 }}>Credentials per protocol</h2>
+      <h2 style={{ marginTop: 18 }}>{t.engine ? 'Database credential' : 'Credentials per protocol'}</h2>
       <div className="form-grid">
-        {protocols.map((p) => (
-          <Field key={p} label={p.toUpperCase()}>
+        {/* A database target has one slot, the brokered "database" protocol;
+            the host slots (ssh, rdp, vnc, winrm) do not apply to it. */}
+        {(t.engine ? (['database'] as Protocol[]) : protocols).map((p) => (
+          <Field key={p} label={p === 'database' ? `Database (${t.engine})` : p.toUpperCase()}>
             <select id={`cred-${p}`} value={t.credentials[p] ?? ''} onChange={(e) => void setCredential(p, e.target.value)}>
               <option value="">— none —</option>
               {credentials.map((c) => (

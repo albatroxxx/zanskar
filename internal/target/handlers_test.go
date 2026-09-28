@@ -242,3 +242,27 @@ func TestDeleteRefusedWhileInUse(t *testing.T) {
 		t.Fatalf("retired target must be gone from the API: %d", code)
 	}
 }
+
+// TestUnservableEngineRefused pins the rule that the gateway never advertises
+// an engine it cannot serve: MySQL and MariaDB targets are refused at
+// enrolment (and on update) with 422 engine_unavailable until their proxy
+// sidecar ships, while PostgreSQL enrols normally.
+func TestUnservableEngineRefused(t *testing.T) {
+	e := newEnv(t)
+	body := func(engine string) map[string]any {
+		return map[string]any{"name": "db-" + engine, "address": "10.0.1.10", "os_family": "other", "engine": engine, "engine_version": "16"}
+	}
+	for _, engine := range []string{"mysql", "mariadb", "MariaDB"} {
+		if code, out := e.do("POST", "/api/v1/targets", body(engine), e.admin); code != 422 || out["code"] != "engine_unavailable" {
+			t.Fatalf("%s: got %d %v, want 422 engine_unavailable", engine, code, out)
+		}
+	}
+	code, out := e.do("POST", "/api/v1/targets", body("postgres"), e.admin)
+	if code != 201 {
+		t.Fatalf("postgres: got %d %v", code, out)
+	}
+	id := out["id"].(string)
+	if code, out = e.do("PUT", "/api/v1/targets/"+id, body("mysql"), e.admin); code != 422 || out["code"] != "engine_unavailable" {
+		t.Fatalf("update to mysql: got %d %v, want 422", code, out)
+	}
+}
