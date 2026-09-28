@@ -69,7 +69,7 @@ pages = {
     for path in SITE.rglob("*.html")
     if not re.fullmatch(r"google[a-f0-9]+\.html", path.name)
 }
-assert len(pages) == 5, "Update the expected site page count when adding a page"
+assert len(pages) == 7, "Update the expected site page count when adding a page"
 titles = set()
 canonicals = set()
 for path, page in pages.items():

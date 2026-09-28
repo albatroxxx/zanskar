@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Troubleshooting | Zanskar Docs</title>
+  <meta name="description" content="Where Zanskar logs, what its log lines and error codes mean, and the fix for each: guacd down, host key mismatch, wrong version number, invalid ticket, approval required.">
+  <link rel="canonical" href="https://albatroxxx.github.io/zanskar/troubleshooting/">
+  <meta name="robots" content="index,follow">
+  <meta property="og:title" content="Troubleshooting">
+  <meta property="og:description" content="Where Zanskar logs, what its log lines and error codes mean, and the fix for each: guacd down, host key mismatch, wrong version number, invalid ticket, approval required.">
+  <meta property="og:type" content="website"><meta property="og:url" content="https://albatroxxx.github.io/zanskar/troubleshooting/">
+  <meta property="og:image" content="https://albatroxxx.github.io/zanskar/assets/policies-1.0.0.jpg"><meta name="twitter:card" content="summary_large_image">
+  <link rel="icon" href="../assets/logo.svg" type="image/svg+xml"><link rel="stylesheet" href="../assets/site.css"><script src="../assets/site.js" defer></script>
+</head>
+<body>
+  <a class="skip" href="#main">Skip to content</a>
+  <header class="site-header"><a class="brand" href="../"><img src="../assets/logo.svg" alt="" width="32" height="32">Zanskar</a><nav aria-label="Main"><a href="../docs/">Get started</a><a href="../guide/">How-to guide</a><a href="../concepts/">Concepts</a><a href="../troubleshooting/" aria-current="page">Troubleshooting</a><a href="../releases/">v1.0.0</a><a href="https://github.com/albatroxxx/zanskar">GitHub &#8599;</a></nav></header>
+  <main id="main" class="docs-layout"><nav class="docs-nav" aria-label="On this page"><a href="#logs">Where the logs are</a><a href="#journal">Journal lines</a><a href="#codes">Error codes</a><a href="#install">Install and startup</a><a href="#desktop">RDP, VNC and guacd</a><a href="#windows">WinRM</a><a href="#database">Database sessions</a></nav><article class="prose">
+    <p class="eyebrow">TROUBLESHOOTING</p><h1>When something does not connect</h1><p>Start with the journal, then match the line or the error code you see against the tables below. Every entry says who can fix it: the gateway operator, the target's owner, or the user.</p>
+
+    <h2 id="logs">Where the logs are</h2>
+    <p>The gateway logs to stderr, which systemd collects. The audit log is not a file: it lives in the database, hash-chained, and is read from the <em>Audit &amp; recordings</em> portal or exported to your SIEM. Recordings are files under the data directory.</p>
+    <div class="code-block"><button type="button" class="copy" aria-label="Copy journal commands">Copy</button><pre><code>sudo journalctl -u zanskar -n 200 --no-pager     # the last 200 lines
+sudo journalctl -u zanskar -f                    # follow live while you reproduce a problem
+sudo journalctl -u zanskar --since "10 min ago" -p warning   # warnings and errors only
+sudo journalctl -u zanskar -o cat | grep request_id=&lt;id&gt;     # one request, when a user reports an error id
+sudo docker logs guacd --tail 100                # the desktop relay, if RDP/VNC misbehave
+ls -la /var/lib/zanskar/recordings | tail        # recordings land here as sessions end</code></pre></div>
+    <p>Compose: <code>docker compose -f deploy/docker-compose.yml logs -f zanskar</code> and <code>... logs guacd</code>. Set <code>ZANSKAR_LOG_LEVEL=debug</code> and restart for more detail; go back to <code>info</code> afterwards.</p>
+
+    <h2 id="journal">Journal lines and what they mean</h2>
+    <table><thead><tr><th scope="col">Line</th><th scope="col">Meaning</th><th scope="col">Fix</th></tr></thead><tbody>
+    <tr><td><code>listening without TLS; acceptable only behind a TLS-terminating proxy on loopback</code></td><td>Behind-proxy mode: the gateway speaks plain HTTP on loopback and expects your proxy on 443.</td><td>Expected. If you meant the gateway to serve TLS itself, re-run <code>zanskar init -force</code> with <code>-tls-cert</code> and <code>-tls-key</code>.</td></tr>
+    <tr><td><code>no admin user exists; create one with `zanskar admin create`</code></td><td>Migrations ran but the first admin was never created.</td><td>Run the <code>admin create</code> line from the install page as the service user.</td></tr>
+    <tr><td><code>guacd dial failed ... connection refused</code></td><td>The desktop relay is not running at <code>ZANSKAR_GUACD_ADDR</code>. The package does not install it. Users see <em>the desktop service (guacd) is not running</em>.</td><td><a href="../docs/#guacd">Start guacd</a>, check the address in <code>/etc/zanskar/env</code>, restart the gateway.</td></tr>
+    <tr><td><code>guacd dial failed ... expected ready</code> (or an <code>error</code> from guacd)</td><td>guacd answered but could not reach the machine: RDP or VNC disabled, port closed from the gateway, or the certificate pin no longer matches. Users see <em>could not open a connection to the machine</em>.</td><td>Open 3389 or 5900 from the gateway host, confirm the service on the target, probe the target again after a certificate change; read <code>docker logs guacd</code> for the underlying reason.</td></tr>
+    <tr><td><code>ssh dial failed ... host key mismatch</code></td><td>The target's SSH host key changed after it was trusted. An audit event <code>target.hostkey.changed</code> was written.</td><td>Verify the new fingerprint with the machine's owner, then probe and trust it again in the target drawer. Do not trust an unexpected change without investigating.</td></tr>
+    <tr><td><code>ssh dial failed ... authentication</code></td><td>The bound credential is wrong for this host, or the login user does not exist there.</td><td>Check the credential's username and material; for SSH-CA mode, that the host trusts the CA.</td></tr>
+    <tr><td><code>open credential ... could not be opened</code></td><td>A stored secret failed to decrypt: the master key in the environment is not the one that sealed it.</td><td>Restore the original <code>ZANSKAR_MASTER_KEY</code> from escrow. If it is gone, re-enter the credentials.</td></tr>
+    <tr><td><code>instance connect push failed</code></td><td>EC2 Instance Connect refused the one-time key: the role lacks <code>ec2-instance-connect:SendSSHPublicKey</code>, or the instance has no <code>ec2-instance-connect</code> package.</td><td>Fix the role's permissions policy (the IAM setup panel shows it) or the instance's packages.</td></tr>
+    <tr><td><code>recording could not be started</code></td><td>The recordings directory or bucket is not writable; the session is refused rather than run unrecorded.</td><td>Check <code>ZANSKAR_RECORDINGS_DIR</code> ownership (the service user) or the S3 credentials.</td></tr>
+    <tr><td><code>audit chain broken at event N</code></td><td>An audit row was altered or removed after it was written, or written by a build whose hashing differed.</td><td>Treat as an incident: restore from a backup taken before N and compare, and review database access.</td></tr>
+    </tbody></table>
+
+    <h2 id="codes">Error codes the browser or API returns</h2>
+    <table><thead><tr><th scope="col">Code</th><th scope="col">Meaning</th><th scope="col">Fix</th></tr></thead><tbody>
+    <tr><td><code>wrong version number</code> (from curl or a browser, not the gateway)</td><td>You spoke TLS to a plain-HTTP listener: the gateway is in behind-proxy mode.</td><td>Use <code>http://127.0.0.1:8443/readyz</code> on the host, and your proxy's <code>https://</code> address from outside.</td></tr>
+    <tr><td><code>csrf_invalid</code></td><td>A state-changing request without the session's <code>X-CSRF-Token</code>, or whose <code>Origin</code> does not match the gateway's host, typically a reverse proxy rewriting <code>Host</code>.</td><td>Make the proxy pass the original <code>Host</code> (Caddy and nginx <code>proxy_set_header Host $host</code> do); reload the page to refresh the token.</td></tr>
+    <tr><td><code>mfa_required</code>, <code>mfa_required_by_policy</code></td><td>The sign-in still owes a second factor, or the policy demands an enrolled authenticator.</td><td>Finish enrolment; admins can reset a lost authenticator with <code>zanskar admin reset-mfa</code>.</td></tr>
+    <tr><td><code>review_only</code></td><td>The account holds only the auditor role, which cannot see or connect to targets.</td><td>Grant the user role as well if this person should connect; auditors review only.</td></tr>
+    <tr><td><code>policy_denied</code></td><td>No enabled policy grants this user this protocol on this target right now (selector, protocol list or time window).</td><td>Check the policy's targets or tags, protocols and time windows, and the user's group membership.</td></tr>
+    <tr><td><code>approval_required</code></td><td>The only policy covering this target requires approval and there is no active grant.</td><td>Request access from the Targets page; an administrator approves under Approvals.</td></tr>
+    <tr><td><code>duplicate_request</code>, <code>already_granted</code>, <code>not_extendable</code></td><td>One open request per target and protocol: one is pending, a grant is already active (extend it instead), or the extension names something that is not your active grant.</td><td>Wait for the decision, or use <em>Extend</em> on My access.</td></tr>
+    <tr><td><code>host_key_untrusted</code>, <code>host_key_unverified</code></td><td>The SSH host key has not been trusted yet (or, for an autoscaling instance, not yet captured).</td><td>Probe and trust in the target drawer; for instances, wait for the next sync.</td></tr>
+    <tr><td><code>certificate_unpinned</code></td><td>The RDP or WinRM certificate has never been captured.</td><td>Probe the target once; the fingerprint is pinned from then on.</td></tr>
+    <tr><td><code>tls_required</code></td><td>WinRM was configured on 5985 (plain HTTP), which Zanskar never uses.</td><td>Create the HTTPS listener on 5986 (<a href="../guide/#winrm-listener">guide</a>) and set the port to 5986.</td></tr>
+    <tr><td><code>invalid or expired ticket</code></td><td>The WebSocket came too late, was reused, or came from a different address than the connect request.</td><td>Reload and connect again. If it repeats behind a proxy, make sure the proxy forwards a consistent client address (<code>ZANSKAR_TRUSTED_PROXIES</code>).</td></tr>
+    <tr><td><code>no_credential</code>, <code>credential_required</code></td><td>No credential is bound to this protocol on the target, or the target uses your own account and you did not supply it.</td><td>Bind a credential in the target drawer, or enter your username and password when asked.</td></tr>
+    <tr><td><code>engine_unavailable</code></td><td>The database engine (MySQL, MariaDB) cannot be served by this release.</td><td>Only PostgreSQL targets can be enrolled today.</td></tr>
+    <tr><td><code>in_use</code> (on delete)</td><td>A policy still names the target or group by id, or a session is open on it.</td><td>Remove it from those policies and end the sessions, then delete again. History is kept either way.</td></tr>
+    <tr><td><code>address_forbidden</code></td><td>The target address is loopback, link-local or the gateway's own, which the probe refuses.</td><td>Enrol the machine's real address.</td></tr>
+    <tr><td><code>no_healthy_instances</code></td><td>The autoscaling group has no instance that is in service, passing its checks and pinned.</td><td>Sync the group and read its instance list for the reason per instance.</td></tr>
+    </tbody></table>
+
+    <h2 id="install">Install and startup</h2>
+    <ul><li><strong>The service starts and stops at once:</strong> <code>journalctl -u zanskar -n 50</code>. The usual causes are a missing <code>ZANSKAR_MASTER_KEY</code>, a database file owned by root (run <code>migrate</code> and <code>admin create</code> as the service user, or <code>chown -R zanskar:zanskar /var/lib/zanskar</code>), or plain HTTP on a non-loopback address (choose a TLS mode with <code>init</code>).</li><li><strong><code>readyz</code> fails:</strong> pick the line for your mode on the install page; <code>curl -k https://</code> against behind-proxy mode gives <em>wrong version number</em>.</li><li><strong>Browser says the site is unsafe:</strong> a self-signed certificate. Use Caddy with sslip.io or your own certificate; see <a href="../docs/#tls-without-cert">TLS without a certificate</a>.</li><li><strong>Audit log shows the proxy's address for every user:</strong> set <code>ZANSKAR_TRUSTED_PROXIES</code> to the proxy's address so <code>X-Forwarded-For</code> is believed; <code>init -behind-proxy</code> does this for a same-host proxy.</li></ul>
+
+    <h2 id="desktop">RDP, VNC and guacd</h2>
+    <ul><li><strong>"the desktop service (guacd) is not running":</strong> start it (<a href="../docs/#guacd">install page</a>) and check <code>ZANSKAR_GUACD_ADDR</code>.</li><li><strong>"could not open a connection to the machine":</strong> guacd is up; the machine did not answer. Open 3389 (RDP) or 5900 (VNC) from the gateway host, confirm the service is enabled, and re-probe after any certificate change. <code>docker logs guacd</code> names the reason.</li><li><strong>Black screen or immediate disconnect on Windows:</strong> NLA must stay on, and the account needs the <em>Remote Desktop Users</em> right; a domain credential needs the domain set on the credential.</li><li><strong>Copy and paste does nothing:</strong> the policy's clipboard switch is off, or the browser refused clipboard access; the session bar's <em>Clipboard</em> panel works either way.</li></ul>
+
+    <h2 id="windows">WinRM</h2>
+    <ul><li><strong>No PowerShell button in the user portal:</strong> the probe did not mark WinRM reachable (no HTTPS listener on 5986, or 5986 closed from the gateway), or no policy grants <em>winrm</em>. Create the listener, open the port, probe again, bind a credential.</li><li><strong>Pin mismatch after a certificate renewal:</strong> probe again to pin the new certificate.</li></ul>
+
+    <h2 id="database">Database sessions</h2>
+    <ul><li><strong>"docker: command not found" or a permission error in the journal:</strong> database sessions run in containers; install Docker or Podman on the gateway host and let the service user reach it (<code>ZANSKAR_DOCKER_PATH</code> for a non-default binary).</li><li><strong>First session is slow:</strong> the client and proxy images are pulled on first use; pull <code>postgres:16-alpine</code> and the pgbouncer image ahead of time.</li><li><strong>Not available inside the Compose stack:</strong> use the package install for database targets in 1.0.</li></ul>
+  </article></main>
+  <footer class="site-footer"><span>Zanskar by <a href="https://github.com/albatroxxx">albatroxxx</a></span><nav aria-label="Footer"><a href="../">Overview</a><a href="../docs/">Install</a><a href="../guide/">How-to guide</a><a href="https://github.com/albatroxxx/zanskar/issues">Feedback</a></nav></footer>
+</body>
+</html>
