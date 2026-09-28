@@ -169,3 +169,23 @@ func TestLockout(t *testing.T) {
 		t.Fatal("disabled accounts count as locked")
 	}
 }
+
+func TestCanConnect(t *testing.T) {
+	cases := []struct {
+		roles []Role
+		want  bool
+	}{
+		{[]Role{RoleUser}, true},
+		{[]Role{RoleAdmin}, true},
+		{[]Role{RoleAuditor}, false},
+		{[]Role{RoleAuditor, RoleUser}, true},
+		{[]Role{RoleAuditor, RoleAdmin}, true},
+		{nil, false},
+	}
+	for _, c := range cases {
+		u := &User{Roles: c.roles}
+		if got := u.CanConnect(); got != c.want {
+			t.Errorf("roles %v: CanConnect = %v, want %v", c.roles, got, c.want)
+		}
+	}
+}

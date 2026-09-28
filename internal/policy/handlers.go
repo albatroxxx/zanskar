@@ -15,7 +15,10 @@ import (
 
 // AdminHandler serves /api/v1/access-policies for admins.
 type AdminHandler struct {
-	Repo  *Repo
+	Repo *Repo
+	// Users lets create and update refuse a review-only subject; nil skips
+	// the check (the connect routes refuse such accounts regardless).
+	Users *user.Repo
 	Audit *audit.Log
 	Log   *slog.Logger
 }
@@ -90,6 +93,9 @@ func (h *AdminHandler) create(w http.ResponseWriter, r *http.Request) {
 	pr, _ := auth.FromContext(r.Context())
 	p := &Policy{CreatedBy: pr.User.ID}
 	in.apply(p)
+	if !h.subjectMayConnect(w, r, p) {
+		return
+	}
 	if err := h.Repo.Create(r.Context(), p); err != nil {
 		h.fail(w, r, err)
 		return
@@ -110,12 +116,42 @@ func (h *AdminHandler) update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	in.apply(p)
+	if !h.subjectMayConnect(w, r, p) {
+		return
+	}
 	if err := h.Repo.Update(r.Context(), p); err != nil {
 		h.fail(w, r, err)
 		return
 	}
 	h.record(r, "policy.update", p)
 	httpx.WriteJSON(w, http.StatusOK, p)
+}
+
+// subjectMayConnect refuses a user-scoped policy whose subject is an
+// auditor-only account, writing the error itself. Such an account is
+// review-only (ADR 0006): the connect routes would refuse it anyway, so a
+// policy naming it could only mislead the admin into thinking access was
+// granted. Group subjects are not inspected; a review-only member of a group
+// is still refused at connect time. Returns true when the policy may proceed.
+func (h *AdminHandler) subjectMayConnect(w http.ResponseWriter, r *http.Request, p *Policy) bool {
+	if h.Users == nil || p.UserID == "" {
+		return true
+	}
+	u, err := h.Users.GetByID(r.Context(), p.UserID)
+	if err != nil {
+		if errors.Is(err, user.ErrNotFound) {
+			httpx.WriteError(w, http.StatusUnprocessableEntity, "invalid_subject", "user not found")
+			return false
+		}
+		h.fail(w, r, err)
+		return false
+	}
+	if !u.CanConnect() {
+		httpx.WriteError(w, http.StatusUnprocessableEntity, "review_only_subject",
+			"that account holds only the auditor role and is review-only; grant it the user role before writing a policy for it")
+		return false
+	}
+	return true
 }
 
 func (h *AdminHandler) del(w http.ResponseWriter, r *http.Request) {

@@ -28,13 +28,14 @@ type Handler struct {
 	Log      *slog.Logger
 }
 
-// Register mounts the routes. Creating and viewing one's own requests needs only
-// authentication; approving, denying and revoking need the admin role.
+// Register mounts the routes. Creating and viewing one's own requests needs an
+// account that may connect (user or admin; auditor-only accounts are
+// review-only); approving, denying and revoking need the admin role.
 func (h *Handler) Register(mux *http.ServeMux) {
 	admin := auth.RequireRole(user.RoleAdmin)
-	mux.Handle("POST /api/v1/me/access-requests", auth.RequireAuth(http.HandlerFunc(h.create)))
-	mux.Handle("GET /api/v1/me/access-requests", auth.RequireAuth(http.HandlerFunc(h.myList)))
-	mux.Handle("GET /api/v1/me/access", auth.RequireAuth(http.HandlerFunc(h.myActive)))
+	mux.Handle("POST /api/v1/me/access-requests", auth.RequireConnect(http.HandlerFunc(h.create)))
+	mux.Handle("GET /api/v1/me/access-requests", auth.RequireConnect(http.HandlerFunc(h.myList)))
+	mux.Handle("GET /api/v1/me/access", auth.RequireConnect(http.HandlerFunc(h.myActive)))
 	mux.Handle("GET /api/v1/access-requests", admin(http.HandlerFunc(h.adminList)))
 	mux.Handle("POST /api/v1/access-requests/{id}/approve", admin(http.HandlerFunc(h.approve)))
 	mux.Handle("POST /api/v1/access-requests/{id}/deny", admin(http.HandlerFunc(h.deny)))

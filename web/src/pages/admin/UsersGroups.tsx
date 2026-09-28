@@ -257,7 +257,7 @@ function RolesForm({ user, onClose, onSaved }: { user: User; onClose: () => void
         }}
       >
         <RoleChecks value={r} onChange={setR} prefix={`er-${user.id}`} />
-        <p className="muted">Granting admin or auditor is recorded in the audit log.</p>
+        <p className="muted">Granting admin or auditor is recorded in the audit log. An account with only auditor is review-only: it sees the audit portal and nothing else, and cannot be granted access to targets.</p>
         <div className="actions">
           <button type="button" className="btn" onClick={onClose}>Cancel</button>
           <button className="btn primary" disabled={busy}>Save</button>

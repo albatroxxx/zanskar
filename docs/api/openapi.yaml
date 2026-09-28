@@ -35,7 +35,8 @@ info:
     - `user`: sees the targets their groups' policies grant and opens sessions to them.
 
     Endpoints are tagged by the role that may call them. A caller holding several roles may call
-    any endpoint tagged with one of them.
+    any endpoint tagged with one of them. `user`-tagged endpoints also admit `admin`; an account
+    holding only `auditor` is review-only and receives `403` with code `review_only` from them.
 
     ## Pagination
 
@@ -69,7 +70,7 @@ tags:
   - name: auth
     description: Login, MFA, and session endpoints for any authenticated user.
   - name: user
-    description: Endpoints for the `user` role.
+    description: Endpoints for the `user` role, also callable by `admin`. Refused with `403 review_only` for accounts that hold only `auditor`.
   - name: admin
     description: Endpoints for the `admin` role.
   - name: auditor
