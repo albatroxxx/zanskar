@@ -1950,6 +1950,68 @@ paths:
           $ref: "#/components/responses/NotFound"
 
   # ------------------------------------------------------------------ admin: retention
+  /system/banner:
+    get:
+      tags: [system]
+      summary: The login banner
+      description: >
+        The system-use notification an administrator configured for the sign-in page, read
+        before any credential is entered, so no session is required. Empty `text` means none
+        is set. Never cached.
+      security: []
+      responses:
+        "200":
+          description: The banner text.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [text]
+                properties:
+                  text:
+                    type: string
+  /admin/settings/login-banner:
+    get:
+      tags: [admin]
+      summary: Get the login banner setting
+      responses:
+        "200":
+          description: The setting, with who last changed it.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Setting"
+    put:
+      tags: [admin]
+      summary: Set the login banner
+      description: >
+        Plain text shown above the sign-in form (a system-use notification, NIST AC-8). Trimmed,
+        line endings unified, at most 4000 characters; empty hides the banner. Applied at once,
+        no restart. Audited as `settings.update` with the previous and the new text.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [value]
+              properties:
+                value:
+                  type: string
+                  maxLength: 4000
+      responses:
+        "200":
+          description: The stored setting.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Setting"
+        "400":
+          description: Too long or not valid UTF-8.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
   /admin/retention:
     get:
       tags: [admin]
@@ -3362,6 +3424,19 @@ components:
           type: string
         viewed_at:
           $ref: "#/components/schemas/Timestamp"
+    Setting:
+      type: object
+      required: [key, value]
+      properties:
+        key:
+          type: string
+        value:
+          type: string
+        updated_at:
+          $ref: "#/components/schemas/Timestamp"
+        updated_by:
+          type: string
+          description: User id of the administrator who last changed it.
     RetentionPolicy:
       type: object
       required: [max_age_days, max_total_bytes]

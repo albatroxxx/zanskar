@@ -22,6 +22,9 @@ export function Login() {
   const [busy, setBusy] = useState(false)
   const [enroll, setEnroll] = useState<{ secret: string; otpauth_url: string; qr: string } | null>(null)
   const [providers, setProviders] = useState<{ id: string; name: string; type: string }[]>([])
+  // The system-use notification an admin configured, shown before any
+  // credential is entered. Read without a session; empty means none.
+  const [banner, setBanner] = useState('')
   const [recovery, setRecovery] = useState<string[]>([])
 
   // A partial session that survived a reload lands on the right step.
@@ -30,6 +33,9 @@ export function Login() {
   useEffect(() => {
     api.get<{ items: { id: string; name: string; type: string }[] }>('/auth/providers')
       .then((r) => setProviders(r.items ?? []))
+      .catch(() => {})
+    api.get<{ text: string }>('/system/banner')
+      .then((b) => setBanner(b.text ?? ''))
       .catch(() => {})
   }, [])
 
@@ -98,6 +104,9 @@ export function Login() {
           <h1>ZANSKAR</h1>
           <span>agentless access gateway</span>
         </div>
+        {banner && (
+          <div className="login-banner" role="note" aria-label="System use notification">{banner}</div>
+        )}
         <div className="card">
           {err && <Alert tone="danger">{err}</Alert>}
 

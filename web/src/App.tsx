@@ -133,6 +133,7 @@ export default function App() {
                 { to: '/admin/identity-providers', label: 'Identity providers' },
                 { to: '/admin/sessions', label: 'Sessions' },
                 { to: '/admin/retention', label: 'Retention' },
+                { to: '/admin/settings', label: 'Settings' },
                 { to: '/audit', label: 'Audit & recordings' },
               ]}
             />

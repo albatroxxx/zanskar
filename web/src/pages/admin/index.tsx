@@ -8,6 +8,7 @@ import { UsersGroups } from './UsersGroups'
 import { IdentityProviders } from './IdentityProviders'
 import { Sessions } from './Sessions'
 import { Retention } from './Retention'
+import { Settings } from './Settings'
 
 // Admin pages, one per file. Paths match the sidebar in App.tsx.
 export const adminRoutes = (
@@ -21,5 +22,6 @@ export const adminRoutes = (
     <Route path="identity-providers" element={<IdentityProviders />} />
     <Route path="sessions" element={<Sessions />} />
     <Route path="retention" element={<Retention />} />
+    <Route path="settings" element={<Settings />} />
   </>
 )
