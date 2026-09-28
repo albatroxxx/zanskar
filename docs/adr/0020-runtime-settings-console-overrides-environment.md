@@ -73,6 +73,31 @@ for runtime ones; the database holds only what an administrator changed afterwar
 - Adding a runtime setting is one registry entry plus a consumer that reads through the
   service; the panel, the API, validation and audit come for free. Anything that needs a
   restart to change is added to the boot list, not the registry.
-- Not in this decision: detecting that the env file changed under a running process,
-  and restarting the gateway from the console with a drain of live sessions. Both are
-  natural follow-ups on the same split.
+
+## Amendment (2026-09-29): the console tells when a restart is due, and performs it
+
+The split above leaves one gap: a boot setting edited in the env file does nothing
+until someone restarts the service, and nothing told the administrator so. Two
+additions close it, on the same rule (the process does not apply boot settings; it
+notices and restarts).
+
+- **Drift detection.** `serve` snapshots its `ZANSKAR_*` environment before reading
+  anything else and compares it, on each status poll, with the environment file it was
+  started from (`ZANSKAR_ENV_FILE`, else `/etc/zanskar/env` when it exists; containers
+  usually have none and the check is simply off). The file is parsed with systemd's
+  `EnvironmentFile=` rules. The console reports the *names* of the variables that
+  differ, never a value: the file holds the master key and the database credentials.
+  A changed `ZANSKAR_MASTER_KEY` is called out separately, because a restart after a
+  hand edit orphans every stored secret, while one after `zanskar key rotate-master` is
+  exactly right. So the running process can read the file, `init` writes it
+  `root:zanskar 0640` when the service group exists; the process already holds every
+  value in its environment, so this widens nothing.
+- **Restart with a drain.** An administrator asks for a restart from the banner; the
+  request is audited with the changed names and the live-session count. The gateway
+  then refuses new sessions and ticket redemptions (503 `restarting`), waits for live
+  sessions to end up to the chosen limit (default 15 minutes, at most 4 hours; zero ends
+  them now), ends any that remain with the reason `gateway_restart`, and stops serving.
+  It exits 0 and leaves starting the next process to the supervisor: `Restart=always`
+  under systemd, the container's restart policy under Docker and Kubernetes. Without a
+  supervisor the gateway simply stops; the console says which case it detected. A drain
+  can be cancelled until the last moment.

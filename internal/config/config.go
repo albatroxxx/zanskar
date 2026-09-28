@@ -79,7 +79,15 @@ type Config struct {
 	LogLevel            string
 	LogFormat           string
 	ShutdownTimeout     time.Duration
+	// EnvFile is the environment file the process was started from, when
+	// there is one, so the console can tell an operator it changed and a
+	// restart is due (ADR 0020). ZANSKAR_ENV_FILE names it; otherwise the
+	// packaged path is used when it exists. Containers usually have none.
+	EnvFile string
 }
+
+// DefaultEnvFile is where the package and `zanskar init` put the file.
+const DefaultEnvFile = "/etc/zanskar/env"
 
 // Options tunes what Load requires.
 type Options struct {
@@ -120,6 +128,12 @@ func Load(opts Options) (*Config, error) {
 		LogLevel:             strings.ToLower(envOr("ZANSKAR_LOG_LEVEL", "info")),
 		LogFormat:            strings.ToLower(envOr("ZANSKAR_LOG_FORMAT", "json")),
 		ShutdownTimeout:      20 * time.Second,
+		EnvFile:              os.Getenv("ZANSKAR_ENV_FILE"),
+	}
+	if c.EnvFile == "" {
+		if _, err := os.Stat(DefaultEnvFile); err == nil {
+			c.EnvFile = DefaultEnvFile
+		}
 	}
 
 	var errs []error

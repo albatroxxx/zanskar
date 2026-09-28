@@ -151,6 +151,7 @@ docker compose -f deploy/docker-compose.yml exec -it \
     <tr><td><code>ZANSKAR_REQUIRE_MFA</code></td><td>Default <code>true</code>. Only set <code>false</code> for throwaway installs. Install-time default; the console's Settings page can override it live, audited.</td></tr>
     <tr><td><code>ZANSKAR_ISSUER</code></td><td>Name shown in authenticator apps. Default <code>Zanskar</code>.</td></tr>
     <tr><td><code>ZANSKAR_SIEM_SYSLOG_ADDR</code>, <code>ZANSKAR_SIEM_WEBHOOK_URL</code>, <code>ZANSKAR_SIEM_WEBHOOK_SECRET</code></td><td>Stream the audit log to a SIEM over syslog/CEF or as signed JSON to a webhook.</td></tr>
+    <tr><td><code>ZANSKAR_ENV_FILE</code></td><td>Path of this file when it is not <code>/etc/zanskar/env</code>, so the console can show <em>Restart required</em> after an edit and restart the gateway with a drain of live sessions.</td></tr>
     <tr><td><code>ZANSKAR_LOG_FORMAT</code>, <code>ZANSKAR_LOG_LEVEL</code></td><td><code>json</code> or <code>text</code>; <code>debug</code>, <code>info</code>, <code>warn</code>, <code>error</code>. The level is an install-time default the console's Settings page can raise live.</td></tr>
     </tbody></table>
     <p>The full reference with every variable is <a href="https://github.com/albatroxxx/zanskar/blob/main/docs/deploy.md">docs/deploy.md</a> in the repository.</p>

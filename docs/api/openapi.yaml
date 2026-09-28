@@ -2110,6 +2110,76 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
+  /admin/system/status:
+    get:
+      tags: [admin]
+      summary: Process status
+      description: >
+        What the console needs to know about the running process: version, start time,
+        live-session count, whether the environment file changed since start (names of the
+        variables only, never values) and so a restart is required, and any restart in
+        progress. Never cached.
+      responses:
+        "200":
+          description: The status.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SystemStatus"
+  /admin/system/restart:
+    post:
+      tags: [admin]
+      summary: Restart the gateway after draining live sessions
+      description: >
+        Refuses new sessions at once (503 `restarting` on connect and on ticket redemption),
+        waits up to `wait_minutes` for live sessions to end, ends any that remain with the
+        reason `gateway_restart`, then stops serving and exits 0 for the supervisor to
+        start a fresh process that reads the environment file again. A second call while a
+        drain is in progress replaces its deadline. Audited as `system.restart` with the
+        wait, the live-session count and the names of the changed variables.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                wait_minutes:
+                  type: integer
+                  minimum: 0
+                  maximum: 240
+                  default: 15
+                  description: How long to let live sessions finish; 0 ends them now.
+      responses:
+        "202":
+          description: The drain has started; the status shows it.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SystemStatus"
+        "400":
+          description: wait_minutes out of range.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+    delete:
+      tags: [admin]
+      summary: Cancel a restart in progress
+      description: Sessions may start again. Audited as `system.restart_cancel`.
+      responses:
+        "200":
+          description: The drain was abandoned.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SystemStatus"
+        "409":
+          description: No restart is in progress; `code` is `not_draining`.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
   /admin/retention:
     get:
       tags: [admin]
@@ -3608,6 +3678,65 @@ components:
           description: Masked where it is a secret.
         description:
           type: string
+    EnvFileReport:
+      type: object
+      description: The environment file compared with what the process started with. Names only, never values.
+      required: [state, checked_at]
+      properties:
+        path:
+          type: string
+        state:
+          type: string
+          enum: [unchanged, changed, missing, unreadable, none]
+          description: >
+            `changed` means a restart is required; `missing` and `none` mean there is no file to
+            compare (containers); `unreadable` names the permission problem in `error`.
+        changed:
+          type: array
+          items:
+            type: string
+          description: Variables whose value differs, including ones added or removed, sorted.
+        error:
+          type: string
+        mod_time:
+          $ref: "#/components/schemas/Timestamp"
+        checked_at:
+          $ref: "#/components/schemas/Timestamp"
+    SystemStatus:
+      type: object
+      required: [version, started_at, uptime_seconds, supervisor, live_sessions, env_file, restart_required, draining]
+      properties:
+        version:
+          type: string
+        started_at:
+          $ref: "#/components/schemas/Timestamp"
+        uptime_seconds:
+          type: integer
+        supervisor:
+          type: string
+          enum: [systemd, kubernetes, unknown]
+          description: What starts the process again after a restart, when it can be told.
+        live_sessions:
+          type: integer
+        env_file:
+          $ref: "#/components/schemas/EnvFileReport"
+        restart_required:
+          type: boolean
+        draining:
+          type: boolean
+        drain:
+          type: object
+          description: The restart in progress, when there is one.
+          properties:
+            requested_at:
+              $ref: "#/components/schemas/Timestamp"
+            requested_by:
+              type: string
+              description: User id of the administrator.
+            deadline:
+              $ref: "#/components/schemas/Timestamp"
+            wait_minutes:
+              type: integer
     RetentionPolicy:
       type: object
       required: [max_age_days, max_total_bytes]

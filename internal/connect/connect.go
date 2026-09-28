@@ -54,6 +54,9 @@ type Handler struct {
 	// desktop connection (ADR 0012); the gateway enforces the RDP pin itself.
 	Prober      *target.Prober
 	DialTimeout time.Duration
+	// Draining reports that the gateway is about to restart: no new session
+	// starts, live ones run on until the drain ends them.
+	Draining func() bool
 	// GuacdAddr returns the guacd host:port that relays RDP and VNC; empty
 	// (or nil) disables desktop sessions. A function so the runtime setting
 	// applies to the next session without a restart.
@@ -252,6 +255,10 @@ func (h *Handler) connect(w http.ResponseWriter, r *http.Request) {
 		h.record(r, actor.Event("session.connect", "target", req.TargetID, audit.Failure, map[string]string{"protocol": req.Protocol, "reason": code}))
 		httpx.WriteError(w, status, code, msg)
 	}
+	if h.draining() {
+		deny(http.StatusServiceUnavailable, "restarting", restartingMsg)
+		return
+	}
 	proto := target.Protocol(req.Protocol)
 	if !target.ValidProtocol(proto) {
 		httpx.BadRequest(w, "unknown protocol")
@@ -309,6 +316,9 @@ func (h *Handler) connect(w http.ResponseWriter, r *http.Request) {
 // issueTicket runs policy, pinning and credential checks for an endpoint and
 // issues a connect ticket. A non-empty code is a user-facing refusal.
 func (h *Handler) issueTicket(ctx context.Context, p *auth.Principal, ip string, ep *endpoint, proto target.Protocol, uc *userCredential, failoverFrom string) (*connectResponse, string, string, error) {
+	if h.draining() {
+		return nil, "restarting", restartingMsg, nil
+	}
 	if !ep.Active {
 		if ep.ASGInstanceID != "" {
 			return nil, "instance_unhealthy", "the instance is no longer healthy", nil
@@ -430,9 +440,8 @@ func codeStatus(code string) int {
 // terminal redeems a ticket and runs the SSH bridge for its lifetime.
 func (h *Handler) terminal(w http.ResponseWriter, r *http.Request) {
 	ip := auth.ClientIP(r)
-	g, err := h.Tickets.Redeem(r.URL.Query().Get("ticket"), ip)
-	if err != nil {
-		httpx.WriteError(w, http.StatusUnauthorized, "invalid_ticket", "invalid or expired ticket")
+	g, ok := h.redeem(w, r)
+	if !ok {
 		return
 	}
 	defer zero(g.UserSecret)
@@ -611,6 +620,27 @@ func (h *Handler) terminal(w http.ResponseWriter, r *http.Request) {
 	}
 	endWith(reason, "")
 	_ = ws.Close(websocket.StatusNormalClosure, reason)
+}
+
+const restartingMsg = "the gateway is restarting to apply a configuration change; try again in a minute"
+
+// draining reports whether a restart is in progress.
+func (h *Handler) draining() bool { return h.Draining != nil && h.Draining() }
+
+// redeem turns a ticket into its grant for a bridge, refusing while the
+// gateway drains: a ticket issued just before the drain began must not start
+// a session the drain would miss.
+func (h *Handler) redeem(w http.ResponseWriter, r *http.Request) (*ticket.Grant, bool) {
+	if h.draining() {
+		httpx.WriteError(w, http.StatusServiceUnavailable, "restarting", restartingMsg)
+		return nil, false
+	}
+	g, err := h.Tickets.Redeem(r.URL.Query().Get("ticket"), auth.ClientIP(r))
+	if err != nil {
+		httpx.WriteError(w, http.StatusUnauthorized, "invalid_ticket", "invalid or expired ticket")
+		return nil, false
+	}
+	return g, true
 }
 
 // guacd is the effective guacd address, empty when desktops are off.

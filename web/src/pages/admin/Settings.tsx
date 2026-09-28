@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { api, errorMessage } from '../../api/client'
 import { fmtTime } from '../../api/format'
-import type { BootSetting, RuntimeSetting, SettingsListing } from '../../api/types'
+import type { BootSetting, RuntimeSetting, SettingsListing, SystemStatus } from '../../api/types'
 import { Alert, Badge, Empty, Field, PageHead } from '../../components/ui'
 
 /**
@@ -14,6 +14,7 @@ import { Alert, Badge, Empty, Field, PageHead } from '../../components/ui'
  */
 export function Settings() {
   const [listing, setListing] = useState<SettingsListing | null>(null)
+  const [changed, setChanged] = useState<string[]>([])
   const [err, setErr] = useState('')
 
   const load = () =>
@@ -23,6 +24,10 @@ export function Settings() {
       .catch((e) => setErr(errorMessage(e)))
   useEffect(() => {
     void load()
+    api
+      .get<SystemStatus>('/admin/system/status')
+      .then((s) => setChanged(s.env_file.changed ?? []))
+      .catch(() => {})
   }, [])
 
   if (!listing && !err) return <Empty>Loading…</Empty>
@@ -42,7 +47,7 @@ export function Settings() {
             .map((s) => <SettingRow key={s.key} setting={s} onChange={replace} />)}
         </div>
       ))}
-      {listing && <BootTable boot={listing.boot} />}
+      {listing && <BootTable boot={listing.boot} changed={changed} />}
     </>
   )
 }
@@ -147,11 +152,16 @@ function SettingRow({ setting, onChange }: { setting: RuntimeSetting; onChange: 
   )
 }
 
-function BootTable({ boot }: { boot: BootSetting[] }) {
+/** changedIn: a boot row lists its variables as "A, B" or a family "ZANSKAR_X_*"; match either. */
+function changedIn(envVar: string, changed: string[]) {
+  return envVar.split(',').map((v) => v.trim()).some((v) => (v.endsWith('*') ? changed.some((c) => c.startsWith(v.slice(0, -1))) : changed.includes(v)))
+}
+
+function BootTable({ boot, changed }: { boot: BootSetting[]; changed: string[] }) {
   return (
     <div className="card table-wrap">
       <h2>Set at install</h2>
-      <p className="muted">Read once when the gateway starts, from the environment file (usually <code>/etc/zanskar/env</code>). To change one, edit the variable and restart the service. Secrets are not shown.</p>
+      <p className="muted">Read once when the gateway starts, from the environment file (usually <code>/etc/zanskar/env</code>). To change one, edit the variable and restart the service; the banner above offers the restart once the file differs. Secrets are not shown.</p>
       <table>
         <thead>
           <tr>
@@ -167,7 +177,15 @@ function BootTable({ boot }: { boot: BootSetting[] }) {
                 <strong>{b.title}</strong>
                 {b.description && <div className="muted">{b.description}</div>}
               </td>
-              <td className="mono">{b.value}</td>
+              <td className="mono">
+                {b.value}
+                {changedIn(b.env_var, changed) && (
+                  <>
+                    {' '}
+                    <Badge tone="warn">changed in file</Badge>
+                  </>
+                )}
+              </td>
               <td className="mono muted">{b.env_var}</td>
             </tr>
           ))}

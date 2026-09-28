@@ -31,9 +31,8 @@ func actorFor(userID, ip string) audit.Actor { return audit.Actor{UserID: userID
 // probe (mirroring RDP, ADR 0012); plain-HTTP WinRM is refused outright.
 func (h *Handler) winrm(w http.ResponseWriter, r *http.Request) {
 	ip := auth.ClientIP(r)
-	g, err := h.Tickets.Redeem(r.URL.Query().Get("ticket"), ip)
-	if err != nil {
-		httpx.WriteError(w, http.StatusUnauthorized, "invalid_ticket", "invalid or expired ticket")
+	g, ok := h.redeem(w, r)
+	if !ok {
 		return
 	}
 	defer zero(g.UserSecret)

@@ -153,3 +153,64 @@ func TestGuacdAddressIsReadLive(t *testing.T) {
 		t.Fatalf("desktops on, the request goes on to the target lookup: %d %v", code, out)
 	}
 }
+
+// TestDrainingRefusesNewSessions: while a restart drains, connect answers
+// 503 restarting before any target lookup; once the drain is cancelled the
+// request proceeds as before.
+func TestDrainingRefusesNewSessions(t *testing.T) {
+	ctx := context.Background()
+	db, err := store.Open(ctx, config.DriverSQLite, "file::memory:?_pragma=foreign_keys(1)")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	if _, err := store.Migrate(ctx, db); err != nil {
+		t.Fatal(err)
+	}
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	users := user.NewRepo(db)
+	sessions := auth.NewSessions(db, bytes.Repeat([]byte{8}, 32), false)
+	draining := true
+	h := &Handler{Targets: target.NewRepo(db), Policies: policy.NewRepo(db), Log: log, Draining: func() bool { return draining }}
+	mux := http.NewServeMux()
+	h.Register(mux)
+	mw := &auth.Middleware{Sessions: sessions, Users: users, Log: log}
+	srv := mw.Authenticate(mw.CSRF(mux))
+	u := &user.User{Username: "bob", DisplayName: "bob", Roles: []user.Role{user.RoleUser}}
+	if err := users.Create(ctx, u); err != nil {
+		t.Fatal(err)
+	}
+	tok, sess, err := sessions.Create(ctx, u.ID, "203.0.113.9", "test", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	connect := func() (int, map[string]any) {
+		var buf bytes.Buffer
+		_ = json.NewEncoder(&buf).Encode(map[string]any{"target_id": "missing", "protocol": "ssh"})
+		req := httptest.NewRequest("POST", "/api/v1/connect", &buf)
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("X-CSRF-Token", sessions.CSRFToken(sess.ID))
+		req.RemoteAddr = "203.0.113.9:4321"
+		req.AddCookie(&http.Cookie{Name: auth.CookieName, Value: tok})
+		rr := httptest.NewRecorder()
+		srv.ServeHTTP(rr, req)
+		var out map[string]any
+		_ = json.Unmarshal(rr.Body.Bytes(), &out)
+		return rr.Code, out
+	}
+	if code, out := connect(); code != 503 || out["code"] != "restarting" {
+		t.Fatalf("draining: %d %v", code, out)
+	}
+	draining = false
+	if code, out := connect(); code != 404 || out["code"] != "not_found" {
+		t.Fatalf("after cancel: %d %v", code, out)
+	}
+	// A ticket cannot be redeemed during a drain either.
+	draining = true
+	req := httptest.NewRequest("GET", "/ws/terminal?ticket=whatever", nil)
+	rr := httptest.NewRecorder()
+	srv.ServeHTTP(rr, req)
+	if rr.Code != 503 {
+		t.Fatalf("redeem while draining: %d %s", rr.Code, rr.Body.String())
+	}
+}

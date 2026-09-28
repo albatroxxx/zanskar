@@ -447,6 +447,8 @@ func msgFor(reason string) string {
 		return "connection to the target was lost"
 	case "admin_terminated":
 		return "session ended by an administrator"
+	case "gateway_restart":
+		return "the gateway is restarting to apply a configuration change; reconnect in a moment"
 	default:
 		return ""
 	}
