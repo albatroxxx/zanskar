@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Navigate, useLocation, useNavigate } from 'react-router-dom'
-import type { GuacObject, InputStream } from 'guacamole-common-js'
+import type { GuacObject, InputStream, Keyboard } from 'guacamole-common-js'
 import { fmtBytes, fmtSeconds } from '../../api/format'
 import { Modal } from '../../components/ui'
 import { FailoverDialog } from './Failover'
@@ -68,6 +68,15 @@ function DesktopSession({ state }: { state: DesktopState }) {
     const start = Date.now()
     const tick = setInterval(() => setElapsed(Math.floor((Date.now() - start) / 1000)), 1000)
     const el = host.current
+    // Assigned once the library has loaded; released by the effect cleanup
+    // below. Guacamole.Keyboard listens on the document itself and calls
+    // preventDefault on every key it handles, so leaving its handlers set
+    // after the session left every form field on the site deaf (the login
+    // page included) until a full reload. The library has no detach call:
+    // nulling the handlers is how it is told to stop intercepting.
+    let keyboard: Keyboard | null = null
+    let ro: ResizeObserver | null = null
+    let sizeTimer: ReturnType<typeof setTimeout> | undefined
     void import('guacamole-common-js').then((mod) => {
       if (disposed) return
       const Guacamole = mod.default
@@ -97,7 +106,7 @@ function DesktopSession({ state }: { state: DesktopState }) {
       const mouse = new Guacamole.Mouse(client.getDisplay().getElement())
       const send = (m: unknown) => client.sendMouseState(m as never)
       mouse.onmousedown = mouse.onmouseup = mouse.onmousemove = send
-      const keyboard = new Guacamole.Keyboard(document)
+      keyboard = new Guacamole.Keyboard(document)
       keyboard.onkeydown = (k: number) => client.sendKeyEvent(1, k)
       keyboard.onkeyup = (k: number) => client.sendKeyEvent(0, k)
       client.connect('')
@@ -125,21 +134,23 @@ function DesktopSession({ state }: { state: DesktopState }) {
       // its old size with dead space around it. guacd's RDP dynamic resize
       // re-renders at the new size 1:1, so no client-side scaling (and no mouse
       // remapping) is needed. Debounced so a drag-resize does not spam guacd.
-      let sizeTimer: ReturnType<typeof setTimeout> | undefined
-      const ro = new ResizeObserver(() => {
+      ro = new ResizeObserver(() => {
         clearTimeout(sizeTimer)
         sizeTimer = setTimeout(() => client.sendSize(el.clientWidth, el.clientHeight), 200)
       })
       ro.observe(el)
-      return () => {
-        ro.disconnect()
-        clearTimeout(sizeTimer)
-        keyboard.onkeydown = keyboard.onkeyup = null
-      }
     })
     return () => {
       disposed = true
       clearInterval(tick)
+      clearTimeout(sizeTimer)
+      ro?.disconnect()
+      if (keyboard) {
+        // Release anything still held (sends the key-ups while the client is
+        // connected), then stop intercepting the document's key events.
+        keyboard.reset()
+        keyboard.onkeydown = keyboard.onkeyup = null
+      }
       disconnectRef.current()
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps

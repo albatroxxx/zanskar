@@ -105,6 +105,8 @@ declare module 'guacamole-common-js' {
     constructor(element: Document | HTMLElement)
     onkeydown: ((keysym: number) => boolean | void) | null
     onkeyup: ((keysym: number) => void) | null
+    /** Releases every key currently held, firing onkeyup for each. */
+    reset(): void
   }
   const Guacamole: {
     WebSocketTunnel: typeof WebSocketTunnel
