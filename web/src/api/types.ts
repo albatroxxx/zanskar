@@ -317,6 +317,14 @@ export interface AuditFacets {
 }
 
 /** Recording retention policy (admin-editable). Mirrors internal/session. */
+/** One runtime setting, as the admin API returns it. */
+export interface Setting {
+  key: string
+  value: string
+  updated_at?: string
+  updated_by?: string
+}
+
 export interface RetentionPolicy {
   max_age_days: number
   max_total_bytes: number
