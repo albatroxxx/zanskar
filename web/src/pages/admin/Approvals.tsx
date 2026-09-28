@@ -125,7 +125,7 @@ export function Approvals() {
 
       {approving && (
         <Modal title={`Approve ${who(approving)} on ${what(approving)}`} onClose={() => setApproving(null)}>
-          <p className="muted">{approving.protocol.toUpperCase()} · asked for {approving.requested_minutes} minutes: “{approving.reason}”{approving.extends_request_id ? ' — an extension; it runs on from the current grant.' : ''}</p>
+          <p className="muted">{approving.protocol.toUpperCase()} · asked for {approving.requested_minutes} minutes: “{approving.reason}”{approving.extends_request_id ? ' — an extension: it runs on from the current grant while that is still active, otherwise from now.' : ''}</p>
           <form
             onSubmit={(e) => {
               e.preventDefault()

@@ -121,7 +121,7 @@ export function MyAccess() {
 
       {extending && (
         <Modal title={`Extend access to ${name(extending)}`} onClose={() => setExtending(null)}>
-          <p className="muted">Your current {extending.protocol.toUpperCase()} grant runs until {extending.expires_at ? fmtTime(extending.expires_at) : '—'}. If an administrator approves, the extension starts when it ends, so there is no gap.</p>
+          <p className="muted">Your current {extending.protocol.toUpperCase()} grant runs until {extending.expires_at ? fmtTime(extending.expires_at) : '—'}. If an administrator approves while this grant is still active, the extension starts when it ends, so there is no gap; approved after it has ended, the extension starts at approval.</p>
           <form onSubmit={(e) => void submitExtend(e)}>
             <Field label="Extend by (minutes)" hint="Capped by the policy">
               <input id="ext-minutes" type="number" min={1} value={ext.minutes} autoFocus onChange={(e) => setExt({ ...ext, minutes: Number(e.target.value) })} required />
