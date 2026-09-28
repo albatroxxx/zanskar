@@ -259,9 +259,11 @@ func renderEnv(a initAnswers) string {
 		p("# Desktop access (RDP/VNC) is disabled; set ZANSKAR_GUACD_ADDR to enable it.\n\n")
 	}
 
+	p("# Install-time values for settings the admin console can change while the\n")
+	p("# gateway runs (Settings page); a console value overrides these until reset.\n")
 	p("ZANSKAR_REQUIRE_MFA=%t\n", a.RequireMFA)
+	p("ZANSKAR_LOG_LEVEL=%s\n\n", a.LogLevel)
 	p("ZANSKAR_ISSUER=%s\n", a.Issuer)
-	p("ZANSKAR_LOG_LEVEL=%s\n", a.LogLevel)
 	p("ZANSKAR_LOG_FORMAT=%s\n\n", a.LogFormat)
 
 	p("# Sealing key for all stored secrets. Back it up: losing it makes every\n")

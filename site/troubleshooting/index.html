@@ -26,7 +26,7 @@ sudo journalctl -u zanskar --since "10 min ago" -p warning   # warnings and erro
 sudo journalctl -u zanskar -o cat | grep request_id=&lt;id&gt;     # one request, when a user reports an error id
 sudo docker logs guacd --tail 100                # the desktop relay, if RDP/VNC misbehave
 ls -la /var/lib/zanskar/recordings | tail        # recordings land here as sessions end</code></pre></div>
-    <p>Compose: <code>docker compose -f deploy/docker-compose.yml logs -f zanskar</code> and <code>... logs guacd</code>. Set <code>ZANSKAR_LOG_LEVEL=debug</code> and restart for more detail; go back to <code>info</code> afterwards.</p>
+    <p>Compose: <code>docker compose -f deploy/docker-compose.yml logs -f zanskar</code> and <code>... logs guacd</code>. For more detail set the log level to <code>debug</code> on the console's Settings page (applies at once, no restart; Reset afterwards), or <code>ZANSKAR_LOG_LEVEL=debug</code> in the env file and restart.</p>
 
     <h2 id="journal">Journal lines and what they mean</h2>
     <table><thead><tr><th scope="col">Line</th><th scope="col">Meaning</th><th scope="col">Fix</th></tr></thead><tbody>

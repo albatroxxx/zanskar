@@ -322,12 +322,34 @@ export interface AuditFacets {
 }
 
 /** Recording retention policy (admin-editable). Mirrors internal/session. */
-/** One runtime setting, as the admin API returns it. */
-export interface Setting {
+/** One runtime setting resolved with its precedence (ADR 0020). Mirrors internal/settings.Value. */
+export interface RuntimeSetting {
   key: string
+  category: string
+  title: string
+  description: string
+  type: 'string' | 'text' | 'bool' | 'enum' | 'hostport'
+  default: string
+  env_var?: string
+  enum?: string[]
   value: string
+  source: 'default' | 'environment' | 'console'
   updated_at?: string
   updated_by?: string
+}
+
+/** A setting fixed at install from the environment, read-only; secrets masked. */
+export interface BootSetting {
+  key: string
+  title: string
+  env_var: string
+  value: string
+  description: string
+}
+
+export interface SettingsListing {
+  runtime: RuntimeSetting[]
+  boot: BootSetting[]
 }
 
 export interface RetentionPolicy {

@@ -140,7 +140,8 @@ func (h *Handler) desktop(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, http.StatusBadRequest, "bad_request", "ticket is not for a desktop protocol")
 		return
 	}
-	if h.GuacdAddr == "" {
+	guacdAddr := h.guacd()
+	if guacdAddr == "" {
 		httpx.WriteError(w, http.StatusNotImplemented, "protocol_unavailable", "desktop sessions are not configured on this gateway")
 		return
 	}
@@ -215,9 +216,9 @@ func (h *Handler) desktop(w http.ResponseWriter, r *http.Request) {
 	if timeout <= 0 {
 		timeout = 10 * time.Second
 	}
-	gc, err := guac.Dial(r.Context(), h.GuacdAddr, params, timeout)
+	gc, err := guac.Dial(r.Context(), guacdAddr, params, timeout)
 	if err != nil {
-		h.Log.Warn("guacd dial failed", "target", t.ID, "guacd", h.GuacdAddr, "err", err)
+		h.Log.Warn("guacd dial failed", "target", t.ID, "guacd", guacdAddr, "err", err)
 		endWith(session.EndError, desktopDialMessage(err))
 		return
 	}

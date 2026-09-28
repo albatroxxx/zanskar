@@ -54,8 +54,10 @@ type Handler struct {
 	// desktop connection (ADR 0012); the gateway enforces the RDP pin itself.
 	Prober      *target.Prober
 	DialTimeout time.Duration
-	// GuacdAddr enables RDP and VNC; empty disables desktop sessions.
-	GuacdAddr string
+	// GuacdAddr returns the guacd host:port that relays RDP and VNC; empty
+	// (or nil) disables desktop sessions. A function so the runtime setting
+	// applies to the next session without a restart.
+	GuacdAddr func() string
 	// DockerPath is the docker CLI used to spawn database session containers
 	// (ADR 0017); empty means "docker" on PATH.
 	DockerPath string
@@ -260,7 +262,7 @@ func (h *Handler) connect(w http.ResponseWriter, r *http.Request) {
 		// database sessions are brokered through an ephemeral container (ADR 0017);
 		// like SSH, reachability is resolved when the ticket is redeemed.
 	case target.RDP, target.VNC:
-		if h.GuacdAddr == "" {
+		if h.guacd() == "" {
 			deny(http.StatusNotImplemented, "protocol_unavailable", "desktop sessions are not configured on this gateway")
 			return
 		}
@@ -609,6 +611,14 @@ func (h *Handler) terminal(w http.ResponseWriter, r *http.Request) {
 	}
 	endWith(reason, "")
 	_ = ws.Close(websocket.StatusNormalClosure, reason)
+}
+
+// guacd is the effective guacd address, empty when desktops are off.
+func (h *Handler) guacd() string {
+	if h.GuacdAddr == nil {
+		return ""
+	}
+	return h.GuacdAddr()
 }
 
 func (h *Handler) record(r *http.Request, e audit.Event) {

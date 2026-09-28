@@ -25,10 +25,12 @@ import (
 // a scrollback replay; desktop sessions join the guacd connection in
 // read-only mode. Every watch is audited with the watcher and the owner.
 type ShadowHandler struct {
-	Registry  *gateway.Registry
-	Audit     *audit.Log
-	Log       *slog.Logger
-	GuacdAddr string
+	Registry *gateway.Registry
+	Audit    *audit.Log
+	Log      *slog.Logger
+	// GuacdAddr returns the guacd address; a function so the runtime
+	// setting applies live. Nil or empty means desktops are off.
+	GuacdAddr func() string
 	// DialTimeout bounds the guacd join.
 	DialTimeout time.Duration
 }
@@ -126,7 +128,11 @@ func (h *ShadowHandler) shadowTerminal(w http.ResponseWriter, r *http.Request, l
 }
 
 func (h *ShadowHandler) shadowDesktop(w http.ResponseWriter, r *http.Request, live gateway.Live, actor audit.Actor, details map[string]string) {
-	if h.GuacdAddr == "" || live.GuacID == "" {
+	guacdAddr := ""
+	if h.GuacdAddr != nil {
+		guacdAddr = h.GuacdAddr()
+	}
+	if guacdAddr == "" || live.GuacID == "" {
 		httpx.WriteError(w, http.StatusNotFound, "not_live", "desktop session cannot be joined")
 		return
 	}
@@ -136,7 +142,7 @@ func (h *ShadowHandler) shadowDesktop(w http.ResponseWriter, r *http.Request, li
 	if timeout <= 0 {
 		timeout = 10 * time.Second
 	}
-	gc, err := guac.Join(r.Context(), h.GuacdAddr, live.GuacID, width, height, timeout)
+	gc, err := guac.Join(r.Context(), guacdAddr, live.GuacID, width, height, timeout)
 	if err != nil {
 		h.Log.Warn("guacd join failed", "session", live.SessionID, "err", err)
 		httpx.WriteError(w, http.StatusConflict, "join_failed", "could not join the desktop session")

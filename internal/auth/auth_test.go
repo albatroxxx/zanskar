@@ -297,7 +297,8 @@ func TestSessionExpiry(t *testing.T) {
 
 func TestMFAEnrollmentRequired(t *testing.T) {
 	e := newEnv(t)
-	e.handler.RequireMFA = true
+	required := true
+	e.handler.RequireMFA = func() bool { return required }
 	e.createUser(t, "fay", "fay has a long passphrase", user.RoleUser)
 	r := e.do("POST", "/api/v1/auth/login", map[string]string{"username": "fay", "password": "fay has a long passphrase"}, nil, nil)
 	if r.body["status"] != "mfa_enrollment_required" {
@@ -317,6 +318,13 @@ func TestMFAEnrollmentRequired(t *testing.T) {
 	}
 	if me := e.do("GET", "/api/v1/auth/me", nil, r.cookie, nil); me.code != 200 {
 		t.Fatalf("session should be full after confirm, got %d", me.code)
+	}
+	// The requirement is a runtime setting: flipping it applies to the next
+	// sign-in without a restart.
+	required = false
+	e.createUser(t, "gus", "gus has a long passphrase", user.RoleUser)
+	if r := e.do("POST", "/api/v1/auth/login", map[string]string{"username": "gus", "password": "gus has a long passphrase"}, nil, nil); r.body["status"] != "ok" {
+		t.Fatalf("with the requirement off, a password sign-in completes: %v", r.body)
 	}
 }
 

@@ -94,13 +94,20 @@ func usage() {
 }
 
 func newLogger(cfg *config.Config) *slog.Logger {
-	var level slog.Level
+	log, _ := newLeveledLogger(cfg)
+	return log
+}
+
+// newLeveledLogger builds the logger with a level that can change while the
+// process runs; serve binds it to the log.level runtime setting.
+func newLeveledLogger(cfg *config.Config) (*slog.Logger, *slog.LevelVar) {
+	level := new(slog.LevelVar)
 	_ = level.UnmarshalText([]byte(cfg.LogLevel))
 	opts := &slog.HandlerOptions{Level: level}
 	if cfg.LogFormat == "text" {
-		return slog.New(slog.NewTextHandler(os.Stderr, opts))
+		return slog.New(slog.NewTextHandler(os.Stderr, opts)), level
 	}
-	return slog.New(slog.NewJSONHandler(os.Stderr, opts))
+	return slog.New(slog.NewJSONHandler(os.Stderr, opts)), level
 }
 
 func runServe() error {
@@ -108,7 +115,7 @@ func runServe() error {
 	if err != nil {
 		return err
 	}
-	log := newLogger(cfg)
+	log, logLevel := newLeveledLogger(cfg)
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
@@ -137,6 +144,23 @@ func runServe() error {
 	}
 	defer ring.Close()
 
+	// Runtime settings (ADR 0020): the environment gives install-time values,
+	// the console overrides them live. Bind the ones this process applies.
+	runtime := settings.NewService(settings.NewRepo(db), settings.EnvValues(), bootSettings(cfg, ring.ActiveVersion()))
+	if err := runtime.Load(ctx); err != nil {
+		return fmt.Errorf("settings: %w", err)
+	}
+	applyLevel := func(v string) {
+		var lvl slog.Level
+		if err := lvl.UnmarshalText([]byte(v)); err == nil {
+			logLevel.Set(lvl)
+		}
+	}
+	applyLevel(runtime.String(settings.KeyLogLevel))
+	runtime.Subscribe(settings.KeyLogLevel, applyLevel)
+	requireMFA := func() bool { return runtime.Bool(settings.KeyRequireMFA) }
+	guacdAddr := func() string { return runtime.String(settings.KeyGuacdAddr) }
+
 	csrfKey, err := crypto.DeriveKey(cfg.MasterKey, "zanskar/csrf")
 	if err != nil {
 		return err
@@ -149,9 +173,9 @@ func runServe() error {
 	auditLog := audit.NewLog(db)
 	totp := auth.NewTOTP(db, ring, cfg.Issuer)
 	authHandler := auth.NewHandler(users, sessions, totp, auditLog, log)
-	authHandler.RequireMFA = cfg.RequireMFA
-	if !cfg.RequireMFA {
-		log.Warn("ZANSKAR_REQUIRE_MFA=false: password-only logins are allowed")
+	authHandler.RequireMFA = requireMFA
+	if !requireMFA() {
+		log.Warn("authenticator not required: password-only logins are allowed (auth.require_mfa)")
 	}
 	groups := group.NewRepo(db)
 	idpRepo := idp.NewRepo(db, ring)
@@ -191,18 +215,18 @@ func runServe() error {
 			&adminapi.AdminHandler{Users: users, Sessions: sessions, TOTP: totp, Audit: auditLog, Log: log},
 			&group.AdminHandler{Groups: groups, Audit: auditLog, Log: log},
 			&idpadmin.AdminHandler{Providers: idpRepo, Audit: auditLog, Log: log, LDAPTester: &ldap.Authenticator{}},
-			&oidc.Handler{Providers: idpRepo, Provisioner: provisioner, Sessions: sessions, Audit: auditLog, Log: log, StateKey: stateKey, MFAEnrolled: totp.Enrolled, RequireMFA: cfg.RequireMFA},
+			&oidc.Handler{Providers: idpRepo, Provisioner: provisioner, Sessions: sessions, Audit: auditLog, Log: log, StateKey: stateKey, MFAEnrolled: totp.Enrolled, RequireMFA: requireMFA},
 			&credential.AdminHandler{Vault: vault, Audit: auditLog, Log: log},
 			&target.AdminHandler{Repo: targets, Prober: &target.Prober{}, Policies: policies, Live: registry, Audit: auditLog, Log: log},
 			&policy.AdminHandler{Repo: policies, Users: users, Audit: auditLog, Log: log},
 			&access.Handler{Requests: accessReqs, Policies: policies, Targets: targets, Audit: auditLog, Log: log},
 			&asg.AdminHandler{Repo: asgRepo, Sync: syncer.SyncGroup, GatewayPrincipal: cfg.AWSGatewayPrincipal, Policies: policies, Live: registry, Audit: auditLog, Log: log},
 			&session.Handler{Repo: sessionRepo, Audit: auditLog, Registry: registry, Storage: storage, Log: log},
-			&settings.Handler{Repo: settings.NewRepo(db), Audit: auditLog, Log: log},
+			&settings.Handler{Service: runtime, Audit: auditLog, Log: log},
 			&connect.Handler{Targets: targets, Policies: policies, Access: accessReqs, Vault: vault, Sessions: sessionRepo, Tickets: ticket.NewStore(),
-				Registry: registry, Storage: storage, Audit: auditLog, Log: log, MFAEnrolled: totp.Enrolled, GuacdAddr: cfg.GuacdAddr,
+				Registry: registry, Storage: storage, Audit: auditLog, Log: log, MFAEnrolled: totp.Enrolled, GuacdAddr: guacdAddr,
 				DockerPath: cfg.DockerPath, Prober: &target.Prober{}, ASGs: asgRepo, Cloud: cloudProviders},
-			&connect.ShadowHandler{Registry: registry, Audit: auditLog, Log: log, GuacdAddr: cfg.GuacdAddr},
+			&connect.ShadowHandler{Registry: registry, Audit: auditLog, Log: log, GuacdAddr: guacdAddr},
 		},
 	}
 	if n, err := users.CountAdmins(ctx); err == nil && n == 0 {

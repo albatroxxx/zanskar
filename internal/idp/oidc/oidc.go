@@ -50,8 +50,9 @@ type Handler struct {
 	BaseURL string
 	// MFAEnrolled reports whether the user has a confirmed authenticator.
 	MFAEnrolled func(ctx context.Context, userID string) (bool, error)
-	// RequireMFA mirrors the deployment setting.
-	RequireMFA bool
+	// RequireMFA mirrors the runtime setting, read at every sign-in; nil
+	// means not required.
+	RequireMFA func() bool
 	// HTTPClient is used for discovery and token exchange; defaults to a
 	// 10 second timeout client.
 	HTTPClient *http.Client
@@ -209,7 +210,7 @@ func (h *Handler) callback(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case enrolled:
 			verified, mfa = false, "totp_pending"
-		case h.RequireMFA:
+		case h.RequireMFA != nil && h.RequireMFA():
 			verified, mfa = false, "totp_enrollment"
 		default:
 			mfa = "none"
