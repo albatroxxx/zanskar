@@ -152,8 +152,9 @@ func (h *Handler) myTargets(w http.ResponseWriter, r *http.Request) {
 				consider(proto)
 			}
 			// database is not in target.Protocols (it is not probed); offer it
-			// for database targets the policy permits (ADR 0017).
-			if t.IsDatabase() {
+			// for database targets the policy permits (ADR 0017), and only
+			// when the gateway can actually broker that engine.
+			if t.IsDatabase() && target.ServableEngine(t.Engine) {
 				consider(target.Database)
 			}
 			if len(allowed) == 0 {
@@ -367,6 +368,9 @@ func (h *Handler) issueTicket(ctx context.Context, p *auth.Principal, ip string,
 		if ep.Engine == "" {
 			return nil, "not_a_database", "target is not a database", nil
 		}
+		if !target.ServableEngine(ep.Engine) {
+			return nil, "engine_unavailable", ep.Engine + " database access ships in a later release", nil
+		}
 	}
 	credID := ep.Credentials[proto]
 	if credID == "" {
@@ -412,7 +416,7 @@ func codeStatus(code string) int {
 		return http.StatusForbidden
 	case "credential_required":
 		return http.StatusUnprocessableEntity
-	case "protocol_unavailable", "credential_mode_unavailable":
+	case "protocol_unavailable", "credential_mode_unavailable", "engine_unavailable":
 		return http.StatusNotImplemented
 	case "not_found":
 		return http.StatusNotFound
