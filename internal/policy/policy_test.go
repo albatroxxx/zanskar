@@ -276,3 +276,54 @@ func TestEvaluateRequireApproval(t *testing.T) {
 		t.Fatalf("standing must win over approval-gated: %+v", d)
 	}
 }
+
+func TestReferencing(t *testing.T) {
+	ctx := context.Background()
+	db, err := store.Open(ctx, config.DriverSQLite, "file::memory:?_pragma=foreign_keys(1)")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	if _, err := store.Migrate(ctx, db); err != nil {
+		t.Fatal(err)
+	}
+	now := store.TimeArg(time.Now())
+	if _, err := db.ExecContext(ctx, db.Rebind(`INSERT INTO groups (id, name, created_at, updated_at) VALUES ('g1', 'ops', ?, ?)`), now, now); err != nil {
+		t.Fatal(err)
+	}
+	r := NewRepo(db)
+	for _, p := range []*Policy{
+		{Name: "by-id", GroupID: "g1", Selector: Selector{Targets: []string{"t1", "t2"}}, Protocols: []string{"ssh"}, IdleTimeoutMinutes: 15},
+		{Name: "by-asg", GroupID: "g1", Selector: Selector{ASGs: []string{"a1"}}, Protocols: []string{"ssh"}, IdleTimeoutMinutes: 15},
+		{Name: "by-tag", GroupID: "g1", Selector: Selector{Tags: map[string]string{"env": "prod"}}, Protocols: []string{"ssh"}, IdleTimeoutMinutes: 15},
+		{Name: "also-t1", GroupID: "g1", Enabled: false, Selector: Selector{Targets: []string{"t1"}}, Protocols: []string{"rdp"}, IdleTimeoutMinutes: 15},
+	} {
+		if err := r.Create(ctx, p); err != nil {
+			t.Fatal(err)
+		}
+	}
+	cases := []struct {
+		target, asg string
+		want        []string
+	}{
+		{"t1", "", []string{"also-t1", "by-id"}}, // disabled policies count too: they can be re-enabled
+		{"t2", "", []string{"by-id"}},
+		{"t9", "", nil},
+		{"", "a1", []string{"by-asg"}},
+		{"", "a9", nil},
+	}
+	for _, c := range cases {
+		got, err := r.Referencing(ctx, c.target, c.asg)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(got) != len(c.want) {
+			t.Fatalf("%q/%q: got %v want %v", c.target, c.asg, got, c.want)
+		}
+		for i := range got {
+			if got[i] != c.want[i] {
+				t.Fatalf("%q/%q: got %v want %v", c.target, c.asg, got, c.want)
+			}
+		}
+	}
+}

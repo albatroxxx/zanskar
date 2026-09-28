@@ -12,19 +12,25 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"strings"
+
 	"github.com/albatroxxx/zanskar/internal/audit"
 	"github.com/albatroxxx/zanskar/internal/auth"
+	"github.com/albatroxxx/zanskar/internal/gateway"
+	"github.com/albatroxxx/zanskar/internal/policy"
 	"github.com/albatroxxx/zanskar/internal/store"
 	"github.com/albatroxxx/zanskar/internal/user"
 )
 
 type env struct {
-	srv   http.Handler
-	db    *store.DB
-	audit *audit.Log
-	admin *http.Cookie
-	csrf  string
-	user  *http.Cookie
+	srv      http.Handler
+	db       *store.DB
+	audit    *audit.Log
+	policies *policy.Repo
+	live     *gateway.Registry
+	admin    *http.Cookie
+	csrf     string
+	user     *http.Cookie
 }
 
 func newEnv(t *testing.T) *env {
@@ -36,11 +42,12 @@ func newEnv(t *testing.T) *env {
 	sessions := auth.NewSessions(db, bytes.Repeat([]byte{2}, 32), false)
 	auditLog := audit.NewLog(db)
 
-	h := &AdminHandler{Repo: NewRepo(db), Prober: &Prober{AllowLoopback: true}, Audit: auditLog, Log: log}
+	policies, live := policy.NewRepo(db), gateway.NewRegistry()
+	h := &AdminHandler{Repo: NewRepo(db), Prober: &Prober{AllowLoopback: true}, Policies: policies, Live: live, Audit: auditLog, Log: log}
 	mux := http.NewServeMux()
 	h.Register(mux)
 	mw := &auth.Middleware{Sessions: sessions, Users: users, Log: log}
-	e := &env{srv: mw.Authenticate(mw.CSRF(mux)), db: db, audit: auditLog}
+	e := &env{srv: mw.Authenticate(mw.CSRF(mux)), db: db, audit: auditLog, policies: policies, live: live}
 
 	adminUser := &user.User{Username: "admin", DisplayName: "Admin", Roles: []user.Role{user.RoleAdmin}}
 	if err := users.Create(ctx, adminUser); err != nil {
@@ -187,5 +194,51 @@ func TestProbeForbiddenAddressIs422(t *testing.T) {
 	}
 	if code, body := e.do("POST", "/api/v1/targets/"+body["id"].(string)+"/probe", nil, e.admin); code != 422 || body["code"] != "address_forbidden" {
 		t.Fatalf("expected 422 address_forbidden, got %d %v", code, body)
+	}
+}
+
+// TestDeleteRefusedWhileInUse covers the admin-facing half of ADR 0019: a
+// target that a policy names by id, or that has a session open, answers
+// delete with 409 in_use and a message naming the blockers; a tag selector
+// is not a reference; once nothing depends on it, delete retires it.
+func TestDeleteRefusedWhileInUse(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	code, out := e.do("POST", "/api/v1/targets", map[string]any{"name": "web-1", "address": "10.0.0.5", "os_family": "linux"}, e.admin)
+	if code != 201 {
+		t.Fatalf("create: %d %v", code, out)
+	}
+	id := out["id"].(string)
+	alice := &user.User{Username: "alice", DisplayName: "Alice", Roles: []user.Role{user.RoleUser}}
+	if err := user.NewRepo(e.db).Create(ctx, alice); err != nil {
+		t.Fatal(err)
+	}
+	pol := &policy.Policy{Name: "ops-ssh", UserID: alice.ID, Enabled: true, Selector: policy.Selector{Targets: []string{id}}, Protocols: []string{"ssh"}, IdleTimeoutMinutes: 15}
+	if err := e.policies.Create(ctx, pol); err != nil {
+		t.Fatal(err)
+	}
+
+	code, out = e.do("DELETE", "/api/v1/targets/"+id, nil, e.admin)
+	if code != 409 || out["code"] != "in_use" || !strings.Contains(out["message"].(string), "policy ops-ssh names it") {
+		t.Fatalf("delete while a policy names it: %d %v", code, out)
+	}
+
+	// A tag selector matches by tags, not by id, so it does not pin the target.
+	pol.Selector = policy.Selector{Tags: map[string]string{"env": "prod"}}
+	if err := e.policies.Update(ctx, pol); err != nil {
+		t.Fatal(err)
+	}
+	e.live.Add(ctx, gateway.Live{SessionID: "s1", UserID: alice.ID, TargetID: id, Protocol: "ssh"})
+	code, out = e.do("DELETE", "/api/v1/targets/"+id, nil, e.admin)
+	if code != 409 || !strings.Contains(out["message"].(string), "1 session is open on it") {
+		t.Fatalf("delete while a session is open: %d %v", code, out)
+	}
+	e.live.Remove("s1")
+
+	if code, out = e.do("DELETE", "/api/v1/targets/"+id, nil, e.admin); code != 204 {
+		t.Fatalf("delete once free: %d %v", code, out)
+	}
+	if code, _ = e.do("GET", "/api/v1/targets/"+id, nil, e.admin); code != 404 {
+		t.Fatalf("retired target must be gone from the API: %d", code)
 	}
 }

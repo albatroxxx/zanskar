@@ -16,19 +16,23 @@ import (
 
 	"github.com/albatroxxx/zanskar/internal/audit"
 	"github.com/albatroxxx/zanskar/internal/auth"
+	"github.com/albatroxxx/zanskar/internal/gateway"
+	"github.com/albatroxxx/zanskar/internal/policy"
 	"github.com/albatroxxx/zanskar/internal/store"
 	"github.com/albatroxxx/zanskar/internal/target"
 	"github.com/albatroxxx/zanskar/internal/user"
 )
 
 type env struct {
-	srv   http.Handler
-	db    *store.DB
-	repo  *Repo
-	audit *audit.Log
-	admin *http.Cookie
-	csrf  string
-	user  *http.Cookie
+	srv      http.Handler
+	db       *store.DB
+	repo     *Repo
+	audit    *audit.Log
+	policies *policy.Repo
+	live     *gateway.Registry
+	admin    *http.Cookie
+	csrf     string
+	user     *http.Cookie
 }
 
 func newEnv(t *testing.T) *env {
@@ -55,11 +59,12 @@ func newEnv(t *testing.T) *env {
 		return Summary{Seen: 2, Healthy: 1, Joined: 2}, nil
 	}
 
-	h := &AdminHandler{Repo: repo, Sync: syncFn, GatewayPrincipal: "arn:aws:iam::111111111111:role/zanskar-gateway", Audit: auditLog, Log: log}
+	policies, live := policy.NewRepo(db), gateway.NewRegistry()
+	h := &AdminHandler{Repo: repo, Sync: syncFn, GatewayPrincipal: "arn:aws:iam::111111111111:role/zanskar-gateway", Policies: policies, Live: live, Audit: auditLog, Log: log}
 	mux := http.NewServeMux()
 	h.Register(mux)
 	mw := &auth.Middleware{Sessions: sessions, Users: users, Log: log}
-	e := &env{srv: mw.Authenticate(mw.CSRF(mux)), db: db, repo: repo, audit: auditLog}
+	e := &env{srv: mw.Authenticate(mw.CSRF(mux)), db: db, repo: repo, audit: auditLog, policies: policies, live: live}
 
 	adminUser := &user.User{Username: "admin", DisplayName: "Admin", Roles: []user.Role{user.RoleAdmin}}
 	if err := users.Create(ctx, adminUser); err != nil {
@@ -239,5 +244,55 @@ func TestCreateGetListSyncIAMRotateDelete(t *testing.T) {
 	}
 	if code, _ := e.do("GET", "/api/v1/autoscaling-groups/"+id, nil, e.admin); code != 404 {
 		t.Fatalf("after delete: %d", code)
+	}
+}
+
+// TestDeleteRefusedWhileInUse covers ADR 0019 for groups: a policy naming
+// the group by id, or a session open on one of its instances, makes delete
+// answer 409 in_use with the blockers named; once free, delete retires it.
+func TestDeleteRefusedWhileInUse(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	code, out := e.do("POST", "/api/v1/autoscaling-groups", writeBody(), e.admin)
+	if code != 201 {
+		t.Fatalf("create: %d %v", code, out)
+	}
+	id := out["id"].(string)
+	if code, out = e.do("POST", "/api/v1/autoscaling-groups/"+id+"/sync", nil, e.admin); code != 200 {
+		t.Fatalf("sync: %d %v", code, out)
+	}
+	alice := &user.User{Username: "alice", DisplayName: "Alice", Roles: []user.Role{user.RoleUser}}
+	if err := user.NewRepo(e.db).Create(ctx, alice); err != nil {
+		t.Fatal(err)
+	}
+	pol := &policy.Policy{Name: "fleet-ssh", UserID: alice.ID, Enabled: true, Selector: policy.Selector{ASGs: []string{id}}, Protocols: []string{"ssh"}, IdleTimeoutMinutes: 15}
+	if err := e.policies.Create(ctx, pol); err != nil {
+		t.Fatal(err)
+	}
+	code, out = e.do("DELETE", "/api/v1/autoscaling-groups/"+id, nil, e.admin)
+	if code != 409 || out["code"] != "in_use" || !strings.Contains(out["message"].(string), "policy fleet-ssh names it") {
+		t.Fatalf("delete while a policy names it: %d %v", code, out)
+	}
+	if err := e.policies.Delete(ctx, pol.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	// Sessions on instances are keyed by the instance row id in the registry.
+	instances, err := e.repo.Instances(ctx, id, false)
+	if err != nil || len(instances) == 0 {
+		t.Fatalf("instances: %d %v", len(instances), err)
+	}
+	e.live.Add(ctx, gateway.Live{SessionID: "s1", UserID: alice.ID, TargetID: instances[0].ID, Protocol: "ssh"})
+	code, out = e.do("DELETE", "/api/v1/autoscaling-groups/"+id, nil, e.admin)
+	if code != 409 || !strings.Contains(out["message"].(string), "1 session is open on it") {
+		t.Fatalf("delete while a session is open: %d %v", code, out)
+	}
+	e.live.Remove("s1")
+
+	if code, out = e.do("DELETE", "/api/v1/autoscaling-groups/"+id, nil, e.admin); code != 204 {
+		t.Fatalf("delete once free: %d %v", code, out)
+	}
+	if code, _ = e.do("GET", "/api/v1/autoscaling-groups/"+id, nil, e.admin); code != 404 {
+		t.Fatalf("retired group must be gone from the API: %d", code)
 	}
 }

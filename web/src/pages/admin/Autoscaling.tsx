@@ -523,7 +523,7 @@ function GroupDetail({ group, credentials, onClose, onChanged, onDeleted, onErro
       {confirmDelete && (
         <Confirm
           title={`Delete ${g.name}?`}
-          body={<p>Instances and credential mappings for this group are removed. Sessions already open stay open until they end.</p>}
+          body={<p>The group leaves every list and the sync loop and its credential mappings are removed; past sessions keep the group and instance names. Deletion is refused while a policy names it by id or a session is open on one of its instances.</p>}
           confirmLabel="Delete"
           danger
           onClose={() => setConfirmDelete(false)}

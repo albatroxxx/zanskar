@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -95,6 +96,32 @@ func (r *Repo) List(ctx context.Context, afterName string, limit int) ([]*Policy
 		next = out[len(out)-1].Name
 	}
 	return out, next, nil
+}
+
+// Referencing returns, in name order, the names of policies whose selector
+// lists the target or the autoscaling group by id. Tag selectors are not
+// references: they match whatever carries the tags, so retiring one target
+// leaves them intact. Admin delete flows refuse while this is non-empty, so a
+// machine a policy still points at is never removed underneath it.
+func (r *Repo) Referencing(ctx context.Context, targetID, asgID string) ([]string, error) {
+	var names []string
+	after := ""
+	for {
+		batch, next, err := r.List(ctx, after, 500)
+		if err != nil {
+			return nil, err
+		}
+		for _, p := range batch {
+			if (targetID != "" && slices.Contains(p.Selector.Targets, targetID)) ||
+				(asgID != "" && slices.Contains(p.Selector.ASGs, asgID)) {
+				names = append(names, p.Name)
+			}
+		}
+		if next == "" {
+			return names, nil
+		}
+		after = next
+	}
 }
 
 // Delete removes a policy. Open sessions referencing it keep a NULL policy_id.

@@ -1176,12 +1176,18 @@ paths:
     delete:
       tags: [admin]
       summary: Delete a target
-      description: Open sessions to the target are terminated with `end_reason=admin_terminated`.
+      description: |
+        Retires the target (ADR 0019): it leaves every listing and lookup and its credential
+        bindings are dropped, but the row stays so past sessions, recordings and audit events
+        keep its name. Refused with `409 in_use` while a policy names the target by id or a
+        session is open on it; the message lists the policies and counts the sessions.
       responses:
         "204":
-          description: Deleted.
+          description: Retired.
         "404":
           $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
   /targets/{id}/probe:
     post:
       tags: [admin]
@@ -1540,12 +1546,18 @@ paths:
     delete:
       tags: [admin]
       summary: Un-enroll an autoscaling group
-      description: Open sessions to its instances are terminated with `end_reason=admin_terminated`.
+      description: |
+        Retires the group (ADR 0019): it leaves every listing and the sync loop and its
+        credential bindings are dropped, but the group and its instance rows stay so past
+        sessions keep their names. Refused with `409 in_use` while a policy names the group by
+        id or a session is open on one of its instances.
       responses:
         "204":
-          description: Deleted.
+          description: Retired.
         "404":
           $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
   /autoscaling-groups/{id}/sync:
     post:
       tags: [admin]

@@ -287,7 +287,7 @@ func (r *Repo) Update(ctx context.Context, g *Group) error {
 	}
 	defer tx.Rollback() //nolint:errcheck
 	res, err := tx.ExecContext(ctx, r.db.Rebind(`UPDATE autoscaling_groups SET name = ?, region = ?, external_name = ?, role_arn = ?, external_id = ?,
-		os_family = ?, ports = ?, capabilities = ?, address_preference = ?, poll_interval_seconds = ?, tags = ?, status = ?, updated_at = ? WHERE id = ?`),
+		os_family = ?, ports = ?, capabilities = ?, address_preference = ?, poll_interval_seconds = ?, tags = ?, status = ?, updated_at = ? WHERE id = ? AND deleted_at IS NULL`),
 		g.Name, g.Region, g.ExternalName, g.RoleARN, g.ExternalID, string(g.OSFamily), mustJSON(g.Ports), mustJSON(g.Capabilities),
 		g.AddressPreference, g.PollIntervalSeconds, mustJSON(g.Tags), g.Status, store.TimeArg(g.UpdatedAt), g.ID)
 	if err != nil {
@@ -302,9 +302,10 @@ func (r *Repo) Update(ctx context.Context, g *Group) error {
 	return tx.Commit()
 }
 
-// Get returns one group with its credentials.
+// Get returns one group with its credentials. Retired groups (ADR 0019) are
+// invisible here and in List; their instance rows stay for session history.
 func (r *Repo) Get(ctx context.Context, id string) (*Group, error) {
-	row := r.db.QueryRowContext(ctx, r.db.Rebind(`SELECT `+groupCols+` FROM autoscaling_groups WHERE id = ?`), id)
+	row := r.db.QueryRowContext(ctx, r.db.Rebind(`SELECT `+groupCols+` FROM autoscaling_groups WHERE id = ? AND deleted_at IS NULL`), id)
 	g, err := scanGroup(row)
 	if err != nil {
 		return nil, err
@@ -315,9 +316,9 @@ func (r *Repo) Get(ctx context.Context, id string) (*Group, error) {
 
 // List returns groups ordered by name. onlyActive filters disabled groups.
 func (r *Repo) List(ctx context.Context, onlyActive bool) ([]*Group, error) {
-	q := `SELECT ` + groupCols + ` FROM autoscaling_groups`
+	q := `SELECT ` + groupCols + ` FROM autoscaling_groups WHERE deleted_at IS NULL`
 	if onlyActive {
-		q += ` WHERE status = 'active'`
+		q += ` AND status = 'active'`
 	}
 	rows, err := r.db.QueryContext(ctx, q+` ORDER BY name`)
 	if err != nil {
@@ -348,13 +349,29 @@ func (r *Repo) List(ctx context.Context, onlyActive bool) ([]*Group, error) {
 	return out, nil
 }
 
-// Delete removes a group; its instances cascade.
+// Delete retires a group (ADR 0019): the row and its instance rows stay so
+// past sessions keep resolving to the group and instance names, the group
+// leaves every listing and the sync loop, its credential bindings are
+// dropped, and its name is free to enrol again. Whether anything still
+// depends on it is the handler's decision.
 func (r *Repo) Delete(ctx context.Context, id string) error {
-	res, err := r.db.ExecContext(ctx, r.db.Rebind(`DELETE FROM autoscaling_groups WHERE id = ?`), id)
+	now := store.TimeArg(time.Now().UTC())
+	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
-	return affected(res)
+	defer tx.Rollback() //nolint:errcheck
+	res, err := tx.ExecContext(ctx, r.db.Rebind(`UPDATE autoscaling_groups SET deleted_at = ?, status = 'disabled', updated_at = ? WHERE id = ? AND deleted_at IS NULL`), now, now, id)
+	if err != nil {
+		return err
+	}
+	if err := affected(res); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, r.db.Rebind(`DELETE FROM asg_credentials WHERE asg_id = ?`), id); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // RecordSync stores the outcome of a poll.
