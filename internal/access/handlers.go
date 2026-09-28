@@ -47,6 +47,9 @@ type createInput struct {
 	Protocol string `json:"protocol"`
 	Reason   string `json:"reason"`
 	Minutes  int    `json:"minutes"`
+	// ExtendsRequestID asks to extend the caller's active grant of that id;
+	// the new grant, once approved, runs on from the old one's expiry.
+	ExtendsRequestID string `json:"extends_request_id"`
 }
 
 func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
@@ -92,24 +95,52 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 			"no approval-gated policy makes you eligible for this target and protocol")
 		return
 	}
-	max := DefaultMaxGrantMinutes
-	if elig.MaxSessionMinutes != nil && *elig.MaxSessionMinutes > 0 {
-		max = *elig.MaxSessionMinutes
-	}
+	max := maxMinutes(elig)
 	if in.Minutes > max {
 		httpx.WriteError(w, http.StatusBadRequest, "duration_too_long",
 			fmt.Sprintf("requested duration exceeds the policy maximum of %d minutes", max))
 		return
 	}
+	// One open request per (user, target, protocol): a second pending one
+	// would only put the same decision in front of the approver twice, and a
+	// request while a grant is active is an extension or nothing.
+	now := time.Now().UTC()
+	open, err := h.Requests.Open(r.Context(), pr.User.ID, tgt.ID, "", in.Protocol, now)
+	if err != nil && !errors.Is(err, ErrNotFound) {
+		h.fail(w, r, err)
+		return
+	}
+	switch {
+	case open != nil && open.Status == StatusPending:
+		httpx.WriteError(w, http.StatusConflict, "duplicate_request",
+			"you already have a pending request for this target and protocol; wait for the decision")
+		return
+	case open != nil && in.ExtendsRequestID == "":
+		httpx.WriteError(w, http.StatusConflict, "already_granted",
+			fmt.Sprintf("you already hold access to this target until %s; extend that grant instead", open.ExpiresAt.UTC().Format(time.RFC3339)))
+		return
+	case in.ExtendsRequestID != "" && (open == nil || open.ID != in.ExtendsRequestID):
+		httpx.WriteError(w, http.StatusConflict, "not_extendable",
+			"that grant is not active for this target and protocol; request access afresh")
+		return
+	}
 
 	req := &Request{UserID: pr.User.ID, PolicyID: elig.ID, TargetID: tgt.ID,
-		Protocol: in.Protocol, Reason: in.Reason, RequestedMinutes: in.Minutes}
+		Protocol: in.Protocol, Reason: in.Reason, RequestedMinutes: in.Minutes, ExtendsRequestID: in.ExtendsRequestID}
 	if err := h.Requests.Create(r.Context(), req); err != nil {
 		h.fail(w, r, err)
 		return
 	}
-	h.record(r, "access.request.create", req, nil)
+	h.record(r, "access.request.create", req, map[string]any{"extends_request_id": req.ExtendsRequestID})
 	httpx.WriteJSON(w, http.StatusCreated, req)
+}
+
+// maxMinutes is the longest grant a policy allows.
+func maxMinutes(p *policy.Policy) int {
+	if p != nil && p.MaxSessionMinutes != nil && *p.MaxSessionMinutes > 0 {
+		return *p.MaxSessionMinutes
+	}
+	return DefaultMaxGrantMinutes
 }
 
 func (h *Handler) myList(w http.ResponseWriter, r *http.Request) {
@@ -159,19 +190,51 @@ func (h *Handler) approve(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, http.StatusConflict, "conflict", "request is not pending")
 		return
 	}
-	expires := time.Now().UTC().Add(time.Duration(cur.RequestedMinutes) * time.Minute)
-	req, err := h.Requests.Decide(r.Context(), cur.ID, pr.User.ID, StatusApproved, h.note(w, r), &expires)
+	d := h.decision(r)
+	// The approver may grant less or more than was asked, inside the policy's
+	// maximum; the requested figure stays on the record beside the granted one.
+	minutes := cur.RequestedMinutes
+	if d.Minutes != 0 {
+		if d.Minutes < 1 {
+			httpx.BadRequest(w, "minutes must be at least 1")
+			return
+		}
+		var pol *policy.Policy
+		if cur.PolicyID != "" {
+			if pol, err = h.Policies.Get(r.Context(), cur.PolicyID); err != nil && !errors.Is(err, policy.ErrNotFound) {
+				h.fail(w, r, err)
+				return
+			}
+		}
+		if max := maxMinutes(pol); d.Minutes > max {
+			httpx.WriteError(w, http.StatusBadRequest, "duration_too_long",
+				fmt.Sprintf("granted duration exceeds the policy maximum of %d minutes", max))
+			return
+		}
+		minutes = d.Minutes
+	}
+	// An extension runs on from the grant it extends while that grant is
+	// still active, so back-to-back grants leave no gap; otherwise from now.
+	now := time.Now().UTC()
+	base := now
+	if cur.ExtendsRequestID != "" {
+		if prev, err := h.Requests.Get(r.Context(), cur.ExtendsRequestID); err == nil && prev.Active(now) {
+			base = prev.ExpiresAt.UTC()
+		}
+	}
+	expires := base.Add(time.Duration(minutes) * time.Minute)
+	req, err := h.Requests.Decide(r.Context(), cur.ID, pr.User.ID, StatusApproved, d.Note, &expires, minutes)
 	if err != nil {
 		h.fail(w, r, err)
 		return
 	}
-	h.record(r, "access.request.approve", req, map[string]any{"expires_at": req.ExpiresAt})
+	h.record(r, "access.request.approve", req, map[string]any{"expires_at": req.ExpiresAt, "approved_minutes": minutes, "extends_request_id": req.ExtendsRequestID})
 	httpx.WriteJSON(w, http.StatusOK, req)
 }
 
 func (h *Handler) deny(w http.ResponseWriter, r *http.Request) {
 	pr, _ := auth.FromContext(r.Context())
-	req, err := h.Requests.Decide(r.Context(), r.PathValue("id"), pr.User.ID, StatusDenied, h.note(w, r), nil)
+	req, err := h.Requests.Decide(r.Context(), r.PathValue("id"), pr.User.ID, StatusDenied, h.note(w, r), nil, 0)
 	if err != nil {
 		h.fail(w, r, err)
 		return
@@ -190,18 +253,30 @@ func (h *Handler) revoke(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, req)
 }
 
-// note reads an optional {"note": "..."} body; absent body is fine.
-func (h *Handler) note(_ http.ResponseWriter, r *http.Request) string {
+// decisionInput is the optional body of approve, deny and revoke.
+type decisionInput struct {
+	Note string `json:"note"`
+	// Minutes overrides the requested duration on approve; zero keeps it.
+	Minutes int `json:"minutes"`
+}
+
+// decision reads the optional decision body; an absent or malformed body
+// counts as empty.
+func (h *Handler) decision(r *http.Request) decisionInput {
+	var body decisionInput
 	if r.ContentLength == 0 {
-		return ""
-	}
-	var body struct {
-		Note string `json:"note"`
+		return body
 	}
 	if err := httpx.DecodeJSON(r, &body); err != nil {
-		return ""
+		return decisionInput{}
 	}
-	return strings.TrimSpace(body.Note)
+	body.Note = strings.TrimSpace(body.Note)
+	return body
+}
+
+// note reads an optional {"note": "..."} body; absent body is fine.
+func (h *Handler) note(_ http.ResponseWriter, r *http.Request) string {
+	return h.decision(r).Note
 }
 
 func eligiblePolicy(pols []*policy.Policy, ref policy.TargetRef, protocol string) *policy.Policy {
@@ -231,6 +306,9 @@ func (h *Handler) record(r *http.Request, action string, req *Request, extra map
 	details := map[string]any{"target_id": req.TargetID, "asg_id": req.ASGID, "protocol": req.Protocol,
 		"requested_minutes": req.RequestedMinutes, "status": req.Status}
 	for k, v := range extra {
+		if s, ok := v.(string); ok && s == "" {
+			continue
+		}
 		details[k] = v
 	}
 	if _, err := h.Audit.Record(r.Context(), actor.Event(action, "access_request", req.ID, audit.Success, details)); err != nil {
@@ -244,6 +322,8 @@ func (h *Handler) fail(w http.ResponseWriter, r *http.Request, err error) {
 		httpx.WriteError(w, http.StatusNotFound, "not_found", "access request not found")
 	case errors.Is(err, ErrState):
 		httpx.WriteError(w, http.StatusConflict, "conflict", "request is not in a state for that action")
+	case errors.Is(err, ErrDuplicate):
+		httpx.WriteError(w, http.StatusConflict, "duplicate_request", err.Error())
 	case errors.Is(err, ErrInvalid):
 		httpx.BadRequest(w, err.Error())
 	default:

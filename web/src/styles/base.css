@@ -36,6 +36,11 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .sidebar .brand small { display: block; font-weight: 500; letter-spacing: 0.04em; color: var(--fg-muted); font-size: 0.66rem; }
 .sidebar nav a { display: block; padding: 7px 10px; border-radius: var(--radius); color: var(--fg); }
 .sidebar nav a:hover { background: var(--bg-sunken); text-decoration: none; }
+.sidebar nav a { display: flex; align-items: center; gap: 8px; }
+.sidebar nav a .nav-badge { margin-left: auto; min-width: 20px; padding: 1px 6px; border-radius: 999px; background: var(--accent); color: #fff; font-size: 0.72rem; font-weight: 600; text-align: center; line-height: 1.5; }
+.access-notices { display: flex; flex-direction: column; gap: 8px; margin-bottom: 12px; }
+.access-notices .alert { display: flex; align-items: center; gap: 12px; margin-bottom: 0; }
+.access-notices .grow { flex: 1; }
 .sidebar nav a.active { background: var(--accent-soft); color: var(--accent); font-weight: 600; box-shadow: inset 3px 0 0 var(--accent); }
 .sidebar .spacer { flex: 1; }
 .sidebar .me { border-top: 1px solid var(--line); padding-top: 12px; font-size: 0.86rem; color: var(--fg-muted); display: flex; flex-direction: column; gap: 6px; }

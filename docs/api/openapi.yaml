@@ -440,6 +440,15 @@ paths:
                 $ref: "#/components/schemas/Error"
         "404":
           $ref: "#/components/responses/NotFound"
+        "409":
+          description: >-
+            One open request per user, target and protocol: `duplicate_request` (a request is
+            already pending), `already_granted` (a grant is active; extend it instead), or
+            `not_extendable` (`extends_request_id` is not the caller's active grant).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
     get:
       tags: [user]
       summary: List the caller's own access requests
@@ -1389,11 +1398,19 @@ paths:
               $ref: "#/components/schemas/AccessDecision"
       responses:
         "200":
-          description: Approved; `status` is `approved` and `expires_at` is set.
+          description: >-
+            Approved; `status` is `approved`, `approved_minutes` and `expires_at` are set. An
+            extension's `expires_at` runs on from the grant it extends while that grant is active.
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/AccessRequest"
+        "400":
+          description: `minutes` below 1 or over the policy maximum (`duration_too_long`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
         "404":
           $ref: "#/components/responses/NotFound"
         "409":
@@ -2820,6 +2837,12 @@ components:
         asg_name:
           type: string
           description: Resolved at read time.
+        approved_minutes:
+          type: integer
+          description: What the approver granted; may differ from `requested_minutes`. Absent until decided.
+        extends_request_id:
+          type: string
+          description: The active grant this request asked to extend, when it is an extension.
         protocol:
           $ref: "#/components/schemas/Protocol"
         reason:
@@ -2858,12 +2881,24 @@ components:
           type: integer
           minimum: 1
           description: Requested grant duration. Capped at the policy's `max_session_minutes`, or 480 when the policy sets none.
+        extends_request_id:
+          type: string
+          description: >-
+            Ask to extend the caller's active grant of this id for the same target and protocol.
+            Once approved, the new grant runs on from that grant's expiry. Refused with
+            `409 not_extendable` when the id is not the caller's active grant.
     AccessDecision:
       type: object
-      description: Optional note carried with an approve, deny, or revoke.
+      description: Optional note carried with an approve, deny, or revoke; on approve, optionally the granted duration.
       properties:
         note:
           type: string
+        minutes:
+          type: integer
+          minimum: 1
+          description: >-
+            Approve only: grant this many minutes instead of `requested_minutes`. Must not exceed
+            the policy's maximum (`400 duration_too_long`). The requested figure stays on the record.
     # ---------------------------------------------------------------- autoscaling
     AutoscalingGroup:
       type: object

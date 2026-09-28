@@ -6,6 +6,8 @@ import { Empty } from './components/ui'
 import { Shell } from './components/Shell'
 import type { Role } from './api/types'
 import { homeFor } from './auth/home'
+import { api } from './api/client'
+import type { AccessRequest, Page } from './api/types'
 import { Login } from './pages/Login'
 import { Targets } from './pages/user/Targets'
 import { MySessions } from './pages/user/MySessions'
@@ -49,6 +51,9 @@ function Home() {
   if (auth.status !== 'full') return <Navigate to="/" replace />
   return <Navigate to={homeFor(auth.user)} replace />
 }
+
+// pendingApprovals feeds the Approvals badge: how many requests await a decision.
+const pendingApprovals = () => api.get<Page<AccessRequest>>('/access-requests?status=pending').then((p) => (p.items ?? []).length)
 
 // The user portal and the session pages are for accounts that can connect
 // (ADR 0006); the API refuses auditor-only accounts on every route behind
@@ -123,7 +128,7 @@ export default function App() {
                 { to: '/admin/autoscaling', label: 'Autoscaling' },
                 { to: '/admin/credentials', label: 'Credentials' },
                 { to: '/admin/policies', label: 'Policies' },
-                { to: '/admin/approvals', label: 'Approvals' },
+                { to: '/admin/approvals', label: 'Approvals', badge: pendingApprovals },
                 { to: '/admin/users', label: 'Users & groups' },
                 { to: '/admin/identity-providers', label: 'Identity providers' },
                 { to: '/admin/sessions', label: 'Sessions' },

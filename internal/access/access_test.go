@@ -51,7 +51,7 @@ func TestRequestLifecycle(t *testing.T) {
 	}
 
 	exp := time.Now().UTC().Add(time.Hour)
-	got, err := r.Decide(ctx, req.ID, "u2", StatusApproved, "ok", &exp)
+	got, err := r.Decide(ctx, req.ID, "u2", StatusApproved, "ok", &exp, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -63,7 +63,7 @@ func TestRequestLifecycle(t *testing.T) {
 	}
 
 	// A second decision on a non-pending request is rejected.
-	if _, err := r.Decide(ctx, req.ID, "u2", StatusApproved, "", &exp); !errors.Is(err, ErrState) {
+	if _, err := r.Decide(ctx, req.ID, "u2", StatusApproved, "", &exp, 0); !errors.Is(err, ErrState) {
 		t.Fatalf("re-decide should be ErrState, got %v", err)
 	}
 	if act, err := r.ActiveForUser(ctx, "u1", time.Now().UTC()); err != nil || len(act) != 1 {
@@ -90,7 +90,7 @@ func TestRequestLifecycle(t *testing.T) {
 	if err := r.Create(ctx, d); err != nil {
 		t.Fatal(err)
 	}
-	dd, err := r.Decide(ctx, d.ID, "u2", StatusDenied, "no", nil)
+	dd, err := r.Decide(ctx, d.ID, "u2", StatusDenied, "no", nil, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -104,7 +104,7 @@ func TestRequestLifecycle(t *testing.T) {
 		t.Fatal(err)
 	}
 	past := time.Now().UTC().Add(-time.Minute)
-	if _, err := r.Decide(ctx, e.ID, "u2", StatusApproved, "", &past); err != nil {
+	if _, err := r.Decide(ctx, e.ID, "u2", StatusApproved, "", &past, 0); err != nil {
 		t.Fatal(err)
 	}
 	if n, err := r.ExpireDue(ctx, time.Now().UTC()); err != nil || n < 1 {
@@ -147,7 +147,7 @@ func TestHasActiveGrant(t *testing.T) {
 		t.Fatal("a pending request is not an active grant")
 	}
 	exp := now().Add(time.Hour)
-	if _, err := r.Decide(ctx, req.ID, "u2", StatusApproved, "", &exp); err != nil {
+	if _, err := r.Decide(ctx, req.ID, "u2", StatusApproved, "", &exp, 0); err != nil {
 		t.Fatal(err)
 	}
 	if ok, err := r.HasActiveGrant(ctx, "u1", "t1", "", "ssh", now()); err != nil || !ok {
@@ -178,7 +178,7 @@ func TestSweeper(t *testing.T) {
 		t.Fatal(err)
 	}
 	past := time.Now().UTC().Add(-time.Minute)
-	if _, err := r.Decide(ctx, lapsed.ID, "u2", StatusApproved, "", &past); err != nil {
+	if _, err := r.Decide(ctx, lapsed.ID, "u2", StatusApproved, "", &past, 0); err != nil {
 		t.Fatal(err)
 	}
 	// A still-active grant that must survive the sweep.
@@ -187,7 +187,7 @@ func TestSweeper(t *testing.T) {
 		t.Fatal(err)
 	}
 	future := time.Now().UTC().Add(time.Hour)
-	if _, err := r.Decide(ctx, active.ID, "u2", StatusApproved, "", &future); err != nil {
+	if _, err := r.Decide(ctx, active.ID, "u2", StatusApproved, "", &future, 0); err != nil {
 		t.Fatal(err)
 	}
 
@@ -228,7 +228,7 @@ func TestRequestCarriesNames(t *testing.T) {
 		t.Fatalf("target request names: %+v %v", got, err)
 	}
 	expires := time.Now().Add(time.Hour)
-	if got, err = r.Decide(ctx, onTarget.ID, "u2", StatusApproved, "ok", &expires); err != nil || got.ApproverUsername != "bob" {
+	if got, err = r.Decide(ctx, onTarget.ID, "u2", StatusApproved, "ok", &expires, 0); err != nil || got.ApproverUsername != "bob" {
 		t.Fatalf("approver name: %+v %v", got, err)
 	}
 	list, err := r.List(ctx, "")
@@ -242,5 +242,47 @@ func TestRequestCarriesNames(t *testing.T) {
 	}
 	if active, err := r.ActiveForUser(ctx, "u1", time.Now()); err != nil || len(active) != 1 || active[0].TargetName != "web1" {
 		t.Fatalf("active grant names: %v %v", active, err)
+	}
+}
+
+// TestOpenAndDecideMinutes covers the two repository pieces behind the
+// approvals round-two rules: Open finds the request that occupies a
+// (user, target, protocol) tuple, pending or still-active, and nothing else;
+// Decide stores the granted minutes beside the requested ones.
+func TestOpenAndDecideMinutes(t *testing.T) {
+	ctx, r := setup(t)
+	now := time.Now()
+	if _, err := r.Open(ctx, "u1", "t1", "", "ssh", now); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("free tuple must be not found, got %v", err)
+	}
+	req := &Request{UserID: "u1", TargetID: "t1", Protocol: "ssh", Reason: "deploy", RequestedMinutes: 60}
+	if err := r.Create(ctx, req); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := r.Open(ctx, "u1", "t1", "", "ssh", now); err != nil || got.ID != req.ID || got.Status != StatusPending {
+		t.Fatalf("pending request must occupy the tuple: %+v %v", got, err)
+	}
+	if _, err := r.Open(ctx, "u1", "t1", "", "rdp", now); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("another protocol is a different tuple, got %v", err)
+	}
+	if _, err := r.Open(ctx, "u2", "t1", "", "ssh", now); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("another user is a different tuple, got %v", err)
+	}
+	expires := now.Add(45 * time.Minute)
+	got, err := r.Decide(ctx, req.ID, "u2", StatusApproved, "shorter", &expires, 45)
+	if err != nil || got.ApprovedMinutes != 45 || got.RequestedMinutes != 60 {
+		t.Fatalf("approved minutes: %+v %v", got, err)
+	}
+	if got, err := r.Open(ctx, "u1", "t1", "", "ssh", now); err != nil || got.ID != req.ID || got.Status != StatusApproved {
+		t.Fatalf("active grant must occupy the tuple: %+v %v", got, err)
+	}
+	if _, err := r.Open(ctx, "u1", "t1", "", "ssh", now.Add(time.Hour)); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("an expired grant frees the tuple, got %v", err)
+	}
+	if _, err := r.Revoke(ctx, req.ID, "done"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.Open(ctx, "u1", "t1", "", "ssh", now); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("a revoked grant frees the tuple, got %v", err)
 	}
 }
