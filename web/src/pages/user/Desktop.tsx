@@ -392,7 +392,7 @@ function DesktopSession({ state }: { state: DesktopState }) {
         <span className="stat">{state.protocol.toUpperCase()}</span>
         <span className="stat">elapsed {fmtSeconds(elapsed)}</span>
         <span className="grow" />
-        <span className="stat">recorded</span>
+        <span className="stat rec" title="This session is being recorded"><i className="rec-dot" aria-hidden="true" />Recording</span>
         <FullscreenButton isFull={isFull} onClick={toggleFull} />
         {flags.clipboard && (
           <button className="btn sm" onClick={() => setClipOpen((o) => !o)} aria-pressed={clipOpen}>

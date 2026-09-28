@@ -160,7 +160,7 @@ function TerminalSession({ state }: { state: TerminalState }) {
         <span className="stat">{status === 'connecting' ? 'connecting…' : 'elapsed ' + fmtSeconds(elapsed)}</span>
         <span className={'stat' + (idle > 600 ? ' warn' : '')}>idle {fmtSeconds(idle)}</span>
         <span className="grow" />
-        <span className="stat">recorded</span>
+        <span className="stat rec" title="This session is being recorded"><i className="rec-dot" aria-hidden="true" />Recording</span>
         <FullscreenButton isFull={isFull} onClick={toggleFull} />
         {filesAllowed && (
           <button className="btn sm" onClick={() => setPanelOpen((o) => !o)} aria-pressed={panelOpen}>

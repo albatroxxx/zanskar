@@ -153,6 +153,12 @@ td .muted, .muted { color: var(--fg-muted); }
 .term-bar .name { font-weight: 600; }
 .term-bar .stat { color: var(--term-fg-muted); font-variant-numeric: tabular-nums; }
 .term-bar .stat.warn { color: var(--warn); }
+/* "Recording" with a pulsing dot: the one thing in the bar a user must never
+   miss. The pulse is dropped for people who asked for reduced motion. */
+.term-bar .stat.rec { display: inline-flex; align-items: center; gap: 6px; color: var(--term-fg); }
+.term-bar .rec-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--ok, #2f9e5f); box-shadow: 0 0 0 0 rgba(47, 158, 95, 0.5); animation: rec-pulse 1.6s ease-out infinite; }
+@keyframes rec-pulse { 0% { box-shadow: 0 0 0 0 rgba(47, 158, 95, 0.55); } 70% { box-shadow: 0 0 0 6px rgba(47, 158, 95, 0); } 100% { box-shadow: 0 0 0 0 rgba(47, 158, 95, 0); } }
+@media (prefers-reduced-motion: reduce) { .term-bar .rec-dot { animation: none; } }
 .term-bar .grow { flex: 1; }
 /* The bar is always dark, whatever the theme, so its controls carry their own colours. */
 .term-bar .btn { background: var(--term-btn-bg); color: var(--term-fg); border-color: var(--term-btn-line); }
