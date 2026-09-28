@@ -40,6 +40,27 @@ Every wrapped DEK references the KEK version that wrapped it. Rotation creates a
 re-wraps each DEK under it in the background; the secret ciphertext is untouched. Old versions are
 retained until no DEK references them, then marked retired.
 
+Amended 2026-09-28, to match what shipped and to add the rotation the first manual install round
+found missing. As built, `key_versions` holds **DEK versions**, each wrapped under the single
+configured KEK (the `local` master key today), and every secret row carries the DEK version that
+sealed it. Two rotations exist, both as CLI commands:
+
+- `zanskar key rotate` creates a new DEK version and makes it active. Secrets stored from then on
+  are sealed under it; earlier rows stay under their version, which stays loaded for decryption.
+  `zanskar key status` shows how many rows each version still protects.
+- `zanskar key rotate-master` re-wraps every non-retired DEK under a new master key in one
+  transaction, verifying each new wrapping before commit, and optionally rewrites the
+  `ZANSKAR_MASTER_KEY` line of the service's environment file. Secret ciphertext is untouched, so
+  the operation is a handful of rows however many secrets exist. A master key that leaked on its
+  own is useless once this has run. A database that leaked together with the key is a different
+  incident: the DEKs, and so the secrets, were exposed, and only rotating those secrets at their
+  targets remedies it; the command says so.
+
+The CSRF and OIDC-state keys are derived from the master key, so a rotation invalidates open
+browser tabs' CSRF tokens (a reload recovers) and sign-ins in flight; user sessions are database
+rows and survive. Background re-wrapping and automatic retirement of unreferenced versions remain
+future work.
+
 The GCM additional authenticated data for each secret is its table name and row ID, so a
 ciphertext moved to another row fails to decrypt.
 
