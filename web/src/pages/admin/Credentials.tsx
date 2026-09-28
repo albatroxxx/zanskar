@@ -126,7 +126,35 @@ export function Credentials() {
   )
 }
 
-function SecretFields({ type, f, set }: { type: CredentialType; f: Record<string, string>; set: (k: string) => (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => void }) {
+/** Private keys larger than this are not keys; refuse before reading further. */
+const MAX_KEY_FILE = 64 * 1024
+
+function SecretFields({ type, f, set, put }: { type: CredentialType; f: Record<string, string>; set: (k: string) => (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => void; put: (k: string, v: string) => void }) {
+  const [fileNote, setFileNote] = useState<{ text: string; err?: boolean } | null>(null)
+  // A key file is read in the browser and lands in the same field a pasted
+  // key would; it travels sealed in the same request, nothing is uploaded on
+  // its own (manual QA finding R6).
+  const readKeyFile = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    e.target.value = ''
+    if (!file) return
+    if (file.size > MAX_KEY_FILE) {
+      setFileNote({ text: `${file.name} is ${Math.round(file.size / 1024)} KB; a private key is a few KB. Choose the key file, not a certificate bundle or archive.`, err: true })
+      return
+    }
+    file
+      .text()
+      .then((text) => {
+        const trimmed = text.trim()
+        if (!trimmed.startsWith('-----BEGIN')) {
+          setFileNote({ text: `${file.name} does not look like a PEM key (no -----BEGIN line). PuTTY .ppk files must be exported as OpenSSH first (puttygen, Conversions).`, err: true })
+          return
+        }
+        put('private_key', trimmed + '\n')
+        setFileNote({ text: `Loaded ${file.name}${/ENCRYPTED|Proc-Type: 4,ENCRYPTED|aes|bcrypt/i.test(trimmed) ? '; it looks encrypted, enter the passphrase below' : ''}.` })
+      })
+      .catch(() => setFileNote({ text: `Could not read ${file.name}.`, err: true }))
+  }
   if (type === 'password' || type === 'domain') {
     return (
       <Field label="Password">
@@ -137,8 +165,13 @@ function SecretFields({ type, f, set }: { type: CredentialType; f: Record<string
   if (type === 'ssh_key' || type === 'ssh_ca') {
     return (
       <>
-        <Field label={type === 'ssh_ca' ? 'CA private key (PEM)' : 'Private key (PEM)'} hint="OpenSSH, PKCS#8 or PKCS#1; encrypted keys need the passphrase below">
+        <Field label={type === 'ssh_ca' ? 'CA private key (PEM)' : 'Private key (PEM)'} hint="OpenSSH, PKCS#8 or PKCS#1; encrypted keys need the passphrase below. Paste it, or choose the file.">
           <textarea id="c-private-key" value={f.private_key} onChange={set('private_key')} required placeholder="-----BEGIN OPENSSH PRIVATE KEY-----" />
+          <div className="actions" style={{ marginTop: 6 }}>
+            <input id="c-private-key-file" type="file" accept=".pem,.key,.pub,.txt,application/x-pem-file,text/plain" hidden onChange={readKeyFile} />
+            <label htmlFor="c-private-key-file" className="btn sm" role="button" tabIndex={0} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); document.getElementById('c-private-key-file')?.click() } }}>Choose key file…</label>
+            {fileNote && <span className={fileNote.err ? 'muted' : 'muted'} style={fileNote.err ? { color: 'var(--danger)' } : undefined}>{fileNote.text}</span>}
+          </div>
         </Field>
         <Field label="Passphrase (if the key is encrypted)">
           <input id="c-passphrase" type="password" autoComplete="off" value={f.passphrase} onChange={set('passphrase')} />
@@ -155,6 +188,7 @@ function CredentialForm({ onClose, onSaved }: { onClose: () => void; onSaved: (c
   const [err, setErr] = useState('')
   const [busy, setBusy] = useState(false)
   const set = (k: string) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => setF({ ...f, [k]: e.target.value })
+  const put = (k: string, v: string) => setF({ ...f, [k]: v })
   const type = f.type as CredentialType
   const mode = f.mode as CredentialMode
   const needsSecret = mode === 'vaulted' && type !== 'ec2_instance_connect'
@@ -230,7 +264,7 @@ function CredentialForm({ onClose, onSaved }: { onClose: () => void; onSaved: (c
             <label htmlFor="c-generate">Generate an ed25519 key for me (you will only see the public half)</label>
           </div>
         )}
-        {needsSecret && !(type === 'ssh_key' && generate) && <SecretFields type={type} f={f} set={set} />}
+        {needsSecret && !(type === 'ssh_key' && generate) && <SecretFields type={type} f={f} set={set} put={put} />}
         {mode === 'passthrough' && <Alert tone="warn">Passthrough is planned for the identity provider phase; this credential cannot be used to connect yet.</Alert>}
         <div className="actions">
           <button type="button" className="btn" onClick={onClose}>Cancel</button>
@@ -246,6 +280,7 @@ function RotateForm({ credential, onClose, onSaved }: { credential: Credential; 
   const [err, setErr] = useState('')
   const [busy, setBusy] = useState(false)
   const set = (k: string) => (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => setF({ ...f, [k]: e.target.value })
+  const put = (k: string, v: string) => setF({ ...f, [k]: v })
   const submit = async (e: FormEvent) => {
     e.preventDefault()
     setBusy(true)
@@ -270,7 +305,7 @@ function RotateForm({ credential, onClose, onSaved }: { credential: Credential; 
       {err && <Alert tone="danger">{err}</Alert>}
       <p className="muted" style={{ marginTop: 0 }}>The new secret replaces the old one immediately for every target using this credential.</p>
       <form onSubmit={submit}>
-        <SecretFields type={credential.type} f={f} set={set} />
+        <SecretFields type={credential.type} f={f} set={set} put={put} />
         <div className="actions">
           <button type="button" className="btn" onClick={onClose}>Cancel</button>
           <button className="btn primary" disabled={busy}>Rotate</button>

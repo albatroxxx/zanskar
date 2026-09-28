@@ -74,3 +74,22 @@ func TestDatabaseTargetRoundTrip(t *testing.T) {
 		t.Fatalf("round-tripped target is not a postgres database: %+v", got)
 	}
 }
+
+func TestServableEngine(t *testing.T) {
+	cases := []struct {
+		engine string
+		want   bool
+	}{
+		{"postgres", true},
+		{" Postgres ", true}, // trimmed and lower-cased like Validate does
+		{"mysql", false},
+		{"mariadb", false},
+		{"", false},
+		{"oracle", false},
+	}
+	for _, c := range cases {
+		if got := ServableEngine(c.engine); got != c.want {
+			t.Errorf("ServableEngine(%q) = %v, want %v", c.engine, got, c.want)
+		}
+	}
+}

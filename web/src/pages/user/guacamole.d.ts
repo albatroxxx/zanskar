@@ -75,6 +75,18 @@ declare module 'guacamole-common-js' {
     onend: (() => void) | null
     getJSON(): unknown
   }
+  /** Decodes a UTF-8 text stream (clipboard contents, for one). */
+  export class StringReader {
+    constructor(stream: InputStream)
+    ontext: ((text: string) => void) | null
+    onend: (() => void) | null
+  }
+  export class StringWriter {
+    constructor(stream: OutputStream)
+    onack: ((status: Status) => void) | null
+    sendText(text: string): void
+    sendEnd(): void
+  }
   export class GuacObject {
     static ROOT_STREAM: string
     static STREAM_INDEX_MIMETYPE: string
@@ -91,9 +103,13 @@ declare module 'guacamole-common-js' {
     sendMouseState(state: unknown): void
     sendKeyEvent(pressed: number, keysym: number): void
     sendSize(width: number, height: number): void
+    /** Opens a stream that sets the remote clipboard; write with StringWriter. */
+    createClipboardStream(mimetype: string): OutputStream
     onerror: ((status: Status) => void) | null
     onstatechange: ((state: number) => void) | null
     onfilesystem: ((object: GuacObject, name: string) => void) | null
+    /** Fired when the remote clipboard changes; read the stream with StringReader. */
+    onclipboard: ((stream: InputStream, mimetype: string) => void) | null
   }
   export class Mouse {
     constructor(element: HTMLElement)
@@ -105,6 +121,8 @@ declare module 'guacamole-common-js' {
     constructor(element: Document | HTMLElement)
     onkeydown: ((keysym: number) => boolean | void) | null
     onkeyup: ((keysym: number) => void) | null
+    /** Releases every key currently held, firing onkeyup for each. */
+    reset(): void
   }
   const Guacamole: {
     WebSocketTunnel: typeof WebSocketTunnel
@@ -115,6 +133,8 @@ declare module 'guacamole-common-js' {
     ArrayBufferReader: typeof ArrayBufferReader
     ArrayBufferWriter: typeof ArrayBufferWriter
     JSONReader: typeof JSONReader
+    StringReader: typeof StringReader
+    StringWriter: typeof StringWriter
     Object: typeof GuacObject
     SessionRecording: typeof SessionRecording
   }

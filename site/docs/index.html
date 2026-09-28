@@ -10,12 +10,12 @@
   <meta property="og:description" content="Prerequisites, installation, configuration, upgrade and removal for Zanskar 1.0.">
   <meta property="og:type" content="website"><meta property="og:url" content="https://albatroxxx.github.io/zanskar/docs/">
   <meta property="og:image" content="https://albatroxxx.github.io/zanskar/assets/admin-targets-1.0.0.jpg"><meta name="twitter:card" content="summary_large_image">
-  <link rel="icon" href="../assets/logo.svg" type="image/svg+xml"><link rel="stylesheet" href="../assets/site.css"><script src="../assets/site.js" defer></script>
+  <link rel="icon" href="../assets/logo.svg" type="image/svg+xml"><link rel="stylesheet" href="../assets/site.css"><script src="../assets/site.js" defer></script><script src="../assets/tabs.js" defer></script>
 </head>
 <body>
   <a class="skip" href="#main">Skip to content</a>
-  <header class="site-header"><a class="brand" href="../"><img src="../assets/logo.svg" alt="" width="32" height="32">Zanskar</a><nav aria-label="Main"><a href="./" aria-current="page">Get started</a><a href="../guide/">How-to guide</a><a href="../releases/">v1.0.0</a><a href="https://github.com/albatroxxx/zanskar">GitHub &#8599;</a></nav></header>
-  <main id="main" class="docs-layout"><nav class="docs-nav" aria-label="On this page"><a href="#prerequisites">Prerequisites</a><a href="#install">Install: packages</a><a href="#compose">Install: Docker Compose</a><a href="#first-sign-in">First sign-in</a><a href="#configuration">Configuration</a><a href="#update">Update</a><a href="#remove">Remove</a><a href="#security">Security</a></nav><article class="prose">
+  <header class="site-header"><a class="brand" href="../"><img src="../assets/logo.svg" alt="" width="32" height="32">Zanskar</a><nav aria-label="Main"><a href="./" aria-current="page">Get started</a><a href="../guide/">How-to guide</a><a href="../concepts/">Concepts</a><a href="../troubleshooting/">Troubleshooting</a><a href="../releases/">v1.0.0</a><a href="https://github.com/albatroxxx/zanskar">GitHub &#8599;</a></nav></header>
+  <main id="main" class="docs-layout"><nav class="docs-nav" aria-label="On this page"><a href="#prerequisites">Prerequisites</a><a href="#install">Install: packages</a><a href="#guacd">Start guacd</a><a href="#tls-without-cert">TLS without a certificate</a><a href="#compose">Install: Docker Compose</a><a href="#first-sign-in">First sign-in</a><a href="#configuration">Configuration</a><a href="#update">Update</a><a href="#remove">Remove</a><a href="#security">Security</a></nav><article class="prose">
     <p class="eyebrow">GET STARTED</p><h1>Install Zanskar</h1><p>Zanskar 1.0 runs as a <strong>single instance</strong>: one gateway with an embedded SQLite database, plus a <code>guacd</code> sidecar if you want RDP or VNC desktops. Two supported install paths: the <strong>deb/rpm package</strong> on a Linux server, or the <strong>signed container image</strong> with Docker Compose. Both were exercised on a clean Ubuntu 24.04 machine before this release was cut.</p>
 
     <h2 id="prerequisites">Prerequisites</h2>
@@ -23,27 +23,37 @@
     <tr><td>Host</td><td>Linux, amd64 or arm64, systemd. Debian/Ubuntu (<code>.deb</code>) or RHEL/Fedora/SUSE (<code>.rpm</code>). 1 vCPU / 1 GB is enough to start.</td><td>Any Linux host with Docker Engine 24+ and the Compose v2 plugin.</td></tr>
     <tr><td>Network</td><td>Users reach the gateway on 443 (or 8443). The gateway reaches targets on 22 (SSH), 3389 (RDP), 5900 (VNC), 5986 (WinRM), 5432 (PostgreSQL). Targets need no inbound internet exposure.</td><td>Same, plus ports 80 and 443 on the host for Caddy.</td></tr>
     <tr><td>TLS</td><td>A certificate for the gateway, or a TLS-terminating reverse proxy on the same host. Zanskar refuses plain HTTP on a non-loopback address.</td><td>Handled by Caddy: self-signed for <code>localhost</code>, or Let's Encrypt when you set a public hostname.</td></tr>
-    <tr><td>Desktops (optional)</td><td><code>guacd</code> 1.6+ reachable from the gateway, for example the <code>guacamole/guacd</code> container. SSH, WinRM and database sessions do not need it.</td><td>Included in the stack.</td></tr>
+    <tr><td>Desktops (optional)</td><td><code>guacd</code> 1.6+ reachable from the gateway. <strong>The package does not install it</strong>; the official container, started as shown in <a href="#guacd">Start guacd</a>, is the supported way. SSH, WinRM and database sessions do not need it.</td><td>Included in the stack.</td></tr>
     <tr><td>Databases (optional)</td><td>Docker or Podman on the gateway host: database sessions run in ephemeral containers. See <a href="../guide/#database">the guide</a>.</td><td>Not available inside the Compose stack in 1.0; use the package path for database targets.</td></tr>
     <tr><td>Verification (recommended)</td><td colspan="2"><a href="https://docs.sigstore.dev/cosign/system_config/installation/">cosign</a> to verify the release signatures. <code>sha256sum</code> is on every Linux host already.</td></tr>
     </tbody></table>
 
     <h2 id="install">1. Install from the package</h2>
-    <p>Download the package for your architecture, the checksums and the signature bundle from the <a href="https://github.com/albatroxxx/zanskar/releases/latest">latest release</a>. The commands below use amd64 and the <code>.deb</code>; swap <code>arm64</code> or <code>.rpm</code> as needed.</p>
-    <div class="code-block"><button type="button" class="copy" aria-label="Copy download commands">Copy</button><pre><code>V=1.0.0
+    <p>Download the package for your architecture, the checksums and the signature bundle from the <a href="https://github.com/albatroxxx/zanskar/releases/latest">latest release</a>. Pick your distribution once; every block on this page follows. The commands use amd64; swap <code>arm64</code> as needed.</p>
+    <div class="tabs" data-tabs><div class="tab-list" role="tablist"><button type="button" role="tab" aria-selected="true" data-tab="deb">Debian / Ubuntu (.deb)</button><button type="button" role="tab" aria-selected="false" data-tab="rpm">RHEL / Fedora / SUSE (.rpm)</button></div>
+    <div data-panel="deb"><div class="code-block"><button type="button" class="copy" aria-label="Copy download commands (deb)">Copy</button><pre><code>sudo apt update &amp;&amp; sudo apt install -y curl
+V=1.0.0
 B=https://github.com/albatroxxx/zanskar/releases/download/v$V
 curl -LO $B/zanskar_${V}_linux_amd64.deb
 curl -LO $B/SHA256SUMS
-curl -LO $B/SHA256SUMS.sigstore.json</code></pre></div>
+curl -LO $B/SHA256SUMS.sigstore.json</code></pre></div></div>
+    <div data-panel="rpm" hidden><div class="code-block"><button type="button" class="copy" aria-label="Copy download commands (rpm)">Copy</button><pre><code>sudo dnf makecache &amp;&amp; sudo dnf install -y curl
+V=1.0.0
+B=https://github.com/albatroxxx/zanskar/releases/download/v$V
+curl -LO $B/zanskar_${V}_linux_amd64.rpm
+curl -LO $B/SHA256SUMS
+curl -LO $B/SHA256SUMS.sigstore.json</code></pre></div></div></div>
     <p>Verify integrity and origin. The signature is keyless Sigstore; the identity must be this repository's release workflow at this tag.</p>
     <div class="code-block"><button type="button" class="copy" aria-label="Copy verification commands">Copy</button><pre><code>sha256sum -c SHA256SUMS --ignore-missing
 cosign verify-blob --bundle SHA256SUMS.sigstore.json \
   --certificate-identity-regexp "^https://github.com/albatroxxx/zanskar/.github/workflows/release.yml@refs/tags/v$V\$" \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com SHA256SUMS</code></pre></div>
     <p>Install. The package creates the <code>zanskar</code> service user, <code>/var/lib/zanskar</code> for the database and recordings, a hardened systemd unit, and an example environment file. It does <strong>not</strong> start the service, because there is no configuration yet.</p>
-    <div class="code-block"><button type="button" class="copy" aria-label="Copy package install commands">Copy</button><pre><code>sudo apt install ./zanskar_${V}_linux_amd64.deb      # Debian / Ubuntu
-# sudo rpm -i zanskar_${V}_linux_amd64.rpm           # RHEL / Fedora / SUSE
-zanskar version</code></pre></div>
+    <div class="tabs" data-tabs><div class="tab-list" role="tablist"><button type="button" role="tab" aria-selected="true" data-tab="deb">Debian / Ubuntu (.deb)</button><button type="button" role="tab" aria-selected="false" data-tab="rpm">RHEL / Fedora / SUSE (.rpm)</button></div>
+    <div data-panel="deb"><div class="code-block"><button type="button" class="copy" aria-label="Copy package install commands (deb)">Copy</button><pre><code>sudo apt install ./zanskar_${V}_linux_amd64.deb
+zanskar version</code></pre></div></div>
+    <div data-panel="rpm" hidden><div class="code-block"><button type="button" class="copy" aria-label="Copy package install commands (rpm)">Copy</button><pre><code>sudo rpm -i zanskar_${V}_linux_amd64.rpm
+zanskar version</code></pre></div></div></div>
     <h3 id="init">Configure with <code>zanskar init</code></h3>
     <p><code>zanskar init</code> writes <code>/etc/zanskar/env</code> (mode 0600), generates the master key, and prints the exact next commands with your paths filled in. Interactively it asks for the listen address, TLS mode, data directory, guacd, MFA and logging. Non-interactively it takes flags, which suits cloud-init and Ansible.</p>
     <div class="code-block"><button type="button" class="copy" aria-label="Copy init commands">Copy</button><pre><code>sudo zanskar init                                   # interactive
@@ -57,11 +67,11 @@ sudo zanskar init -non-interactive -listen 0.0.0.0:8443 \
   -guacd 127.0.0.1:4822</code></pre></div>
     <p class="note"><strong>Back up <code>/etc/zanskar/env</code> now.</strong> It holds <code>ZANSKAR_MASTER_KEY</code>, which seals every stored credential. It is never written to the database or to <code>zanskar backup</code> archives. Losing it makes every vaulted credential unrecoverable.</p>
     <h3 id="migrate">Apply migrations, create the first admin, start</h3>
-    <p>Run the database commands <strong>as the service user</strong> so it owns the SQLite files it will write to. <code>init</code> prints this block for you.</p>
+    <p>Run the database commands <strong>as the service user</strong> so it owns the SQLite files it will write to. <code>init</code> prints this block for you. <code>admin create</code> asks for the password twice on the terminal without echo; do not put it on the command line, where it would land in your shell history.</p>
     <div class="code-block"><button type="button" class="copy" aria-label="Copy migrate, admin create and start commands">Copy</button><pre><code>sudo bash -c 'set -a; . /etc/zanskar/env; set +a; \
   runuser -u zanskar -- zanskar migrate && \
-  ZANSKAR_ADMIN_PASSWORD=&lt;choose-one&gt; runuser -u zanskar -- zanskar admin create \
-    --username admin --name "Your Name"'
+  runuser -u zanskar -- zanskar admin create --username admin --name "Your Name"'
+# Password: ...        (typed at the prompt, never echoed, never in history)
 
 sudo systemctl enable --now zanskar
 
@@ -70,6 +80,37 @@ curl http://127.0.0.1:8443/readyz            # behind-proxy mode (plain HTTP on 
 curl -k https://localhost:8443/readyz        # own-certificate mode
 # either way: {"status":"ready"}</code></pre></div>
     <p>In behind-proxy mode the gateway speaks plain HTTP on loopback and expects your proxy to terminate TLS on 443; probing it with <code>https://</code> fails with an OpenSSL <em>wrong version number</em> error, which is expected, not a fault. <code>journalctl -u zanskar -n 5</code> shows the listener and whether TLS is on. To switch modes later, re-run <code>zanskar init -force</code> with the new flags; the existing master key is kept.</p>
+    <p class="note"><strong>Scripting the admin password.</strong> For cloud-init or Ansible, <code>admin create</code> also reads <code>ZANSKAR_ADMIN_PASSWORD</code>. Feed it from a prompt or a secrets manager, not a literal: <code>read -rs ZANSKAR_ADMIN_PASSWORD &amp;&amp; export ZANSKAR_ADMIN_PASSWORD</code>, then run the command. If you did type a password into a shell, remove that line from history (<code>history -d &lt;n&gt;</code> or delete it from <code>~/.bash_history</code>) and change the password after first sign-in.</p>
+
+    <h3 id="guacd">Start guacd, for RDP and VNC</h3>
+    <p>Desktop sessions are relayed by <code>guacd</code>, which the package does <strong>not</strong> install. Without it, RDP and VNC targets fail with <em>the desktop service (guacd) is not running</em>, and the journal shows <code>guacd dial failed</code>. <code>zanskar init</code> checks the address you give it and prints this step when nothing is listening. The supported way is the official container, published on loopback only: guacd speaks an unauthenticated protocol and must never be reachable from anywhere but the gateway.</p>
+    <div class="code-block"><button type="button" class="copy" aria-label="Copy the guacd start command">Copy</button><pre><code>sudo docker run -d --name guacd --restart unless-stopped -p 127.0.0.1:4822:4822 \
+  -e HOME=/tmp --read-only --tmpfs /tmp:size=512m,mode=1777 guacamole/guacd:1.6.0
+# then make sure /etc/zanskar/env has ZANSKAR_GUACD_ADDR=127.0.0.1:4822 (init -guacd sets it)
+sudo systemctl restart zanskar</code></pre></div>
+    <p><code>HOME=/tmp</code> matters: the image's user has no home directory and guacd's RDP client needs one for its certificate store. The read-only root and the tmpfs are the hardening the Compose stack and the AWS reference deployment use. Install Docker first if the host has none (<code>apt install docker.io</code> or <code>dnf install docker</code>, then <code>systemctl enable --now docker</code>); Podman works the same with <code>podman run</code>.</p>
+
+    <h3 id="tls-without-cert">TLS without a certificate: Caddy and sslip.io</h3>
+    <p>Zanskar refuses plain HTTP on a non-loopback address, so a server with no certificate needs one of two things: a reverse proxy that terminates TLS, or a certificate of its own. If the host has a public IP and ports 80 and 443 reachable from the internet, you can have a real Let's Encrypt certificate in a minute without owning a domain: <a href="https://sslip.io">sslip.io</a> resolves <code>203-0-113-10.sslip.io</code> to <code>203.0.113.10</code>, and Caddy obtains and renews the certificate for that name automatically. This is what the AWS reference deployment does.</p>
+    <div class="tabs" data-tabs><div class="tab-list" role="tablist"><button type="button" role="tab" aria-selected="true" data-tab="deb">Debian / Ubuntu (.deb)</button><button type="button" role="tab" aria-selected="false" data-tab="rpm">RHEL / Fedora / SUSE (.rpm)</button></div>
+    <div data-panel="deb"><div class="code-block"><button type="button" class="copy" aria-label="Copy Caddy install (deb)">Copy</button><pre><code>sudo apt update &amp;&amp; sudo apt install -y caddy</code></pre></div></div>
+    <div data-panel="rpm" hidden><div class="code-block"><button type="button" class="copy" aria-label="Copy Caddy install (rpm)">Copy</button><pre><code>sudo dnf makecache &amp;&amp; sudo dnf install -y 'dnf-command(copr)' &amp;&amp; sudo dnf copr enable -y @caddy/caddy &amp;&amp; sudo dnf install -y caddy</code></pre></div></div></div>
+    <div class="code-block"><button type="button" class="copy" aria-label="Copy the Caddyfile and proxy setup">Copy</button><pre><code># 1. your public IP, dashes instead of dots, becomes the hostname
+IP=$(curl -s https://api.ipify.org); HOST=${IP//./-}.sslip.io; echo $HOST
+
+# 2. Caddy terminates TLS and proxies to the gateway on loopback
+sudo tee /etc/caddy/Caddyfile &gt;/dev/null &lt;&lt;CADDY
+$HOST {
+  encode zstd gzip
+  reverse_proxy 127.0.0.1:8443
+}
+CADDY
+sudo systemctl enable --now caddy
+
+# 3. the gateway runs in behind-proxy mode (plain HTTP on loopback, trusts Caddy)
+sudo zanskar init -non-interactive -behind-proxy -guacd 127.0.0.1:4822
+# ... then migrate, admin create, enable the service as above, and open https://$HOST/</code></pre></div>
+    <p>Open TCP 80 and 443 to the world in your firewall or security group (80 is needed for the certificate challenge), and keep 8443 closed: the gateway listens on loopback only in this mode. The audit log records real client addresses because <code>init -behind-proxy</code> tells the gateway to trust Caddy's <code>X-Forwarded-For</code>. To use your own domain instead, point a DNS record at the host and put that name in the Caddyfile; nothing else changes.</p>
     <p>Logs go to journald: <code>journalctl -u zanskar -f</code>. Then continue with <a href="#first-sign-in">first sign-in</a>.</p>
 
     <h2 id="compose">2. Install with Docker Compose</h2>
@@ -83,8 +124,9 @@ cp deploy/.env.example deploy/.env
 #   ZANSKAR_SITE_ADDRESS=    -> optional public hostname for Let's Encrypt
 
 docker compose -f deploy/docker-compose.yml up -d
-docker compose -f deploy/docker-compose.yml exec -e ZANSKAR_ADMIN_PASSWORD=&lt;choose-one&gt; \
-  zanskar /zanskar admin create --username admin --name "Your Name"</code></pre></div>
+docker compose -f deploy/docker-compose.yml exec -it \
+  zanskar /zanskar admin create --username admin --name "Your Name"
+# Password: ...   (prompted twice, no echo; -it gives the command a terminal)</code></pre></div>
     <p>The image is <code>ghcr.io/albatroxxx/zanskar</code>, built for linux/amd64 and linux/arm64, running as a non-root user on a distroless base. Verify its signature the same way as the checksums:</p>
     <div class="code-block"><button type="button" class="copy" aria-label="Copy image verification command">Copy</button><pre><code>cosign verify ghcr.io/albatroxxx/zanskar:1.0.0 \
   --certificate-identity-regexp '^https://github.com/albatroxxx/zanskar/.github/workflows/release.yml@refs/tags/v1.0.0$' \
@@ -132,7 +174,9 @@ sudo systemctl start zanskar</code></pre></div>
 
     <h2 id="remove">Remove Zanskar</h2>
     <p>Removing the package stops and disables the service and removes the binary and unit. It <strong>deliberately keeps</strong> the database, recordings, configuration and the <code>zanskar</code> user so a reinstall finds your data.</p>
-    <div class="code-block"><button type="button" class="copy" aria-label="Copy package removal commands">Copy</button><pre><code>sudo apt remove zanskar        # or: sudo rpm -e zanskar</code></pre></div>
+    <div class="tabs" data-tabs><div class="tab-list" role="tablist"><button type="button" role="tab" aria-selected="true" data-tab="deb">Debian / Ubuntu (.deb)</button><button type="button" role="tab" aria-selected="false" data-tab="rpm">RHEL / Fedora / SUSE (.rpm)</button></div>
+    <div data-panel="deb"><div class="code-block"><button type="button" class="copy" aria-label="Copy package removal command (deb)">Copy</button><pre><code>sudo apt remove zanskar</code></pre></div></div>
+    <div data-panel="rpm" hidden><div class="code-block"><button type="button" class="copy" aria-label="Copy package removal command (rpm)">Copy</button><pre><code>sudo rpm -e zanskar</code></pre></div></div></div>
     <p>To purge everything, including every vaulted credential and every recording, run the following as well. This is irreversible; take a final <code>zanskar backup</code> first if there is any chance you will need the audit history.</p>
     <div class="code-block"><button type="button" class="copy" aria-label="Copy purge commands">Copy</button><pre><code>sudo rm -rf /var/lib/zanskar /etc/zanskar
 sudo userdel zanskar</code></pre></div>

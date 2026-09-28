@@ -40,6 +40,7 @@ import (
 	"github.com/albatroxxx/zanskar/internal/recording"
 	"github.com/albatroxxx/zanskar/internal/server"
 	"github.com/albatroxxx/zanskar/internal/session"
+	"github.com/albatroxxx/zanskar/internal/settings"
 	"github.com/albatroxxx/zanskar/internal/store"
 	"github.com/albatroxxx/zanskar/internal/target"
 	"github.com/albatroxxx/zanskar/internal/ticket"
@@ -68,6 +69,8 @@ func main() {
 		err = runRestore(os.Args[2:])
 	case "keygen":
 		err = runKeygen()
+	case "key":
+		err = runKey(os.Args[2:])
 	case "version":
 		fmt.Println(version.Version)
 	case "admin":
@@ -87,7 +90,7 @@ func main() {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: zanskar <init|serve|migrate|backup|restore|keygen|admin create|admin reset-mfa|audit verify|audit reseal|version>")
+	fmt.Fprintln(os.Stderr, "usage: zanskar <init|serve|migrate|backup|restore|keygen|key status|key rotate|key rotate-master|admin create|admin reset-mfa|audit verify|audit reseal|version>")
 }
 
 func newLogger(cfg *config.Config) *slog.Logger {
@@ -190,11 +193,12 @@ func runServe() error {
 			&idpadmin.AdminHandler{Providers: idpRepo, Audit: auditLog, Log: log, LDAPTester: &ldap.Authenticator{}},
 			&oidc.Handler{Providers: idpRepo, Provisioner: provisioner, Sessions: sessions, Audit: auditLog, Log: log, StateKey: stateKey, MFAEnrolled: totp.Enrolled, RequireMFA: cfg.RequireMFA},
 			&credential.AdminHandler{Vault: vault, Audit: auditLog, Log: log},
-			&target.AdminHandler{Repo: targets, Prober: &target.Prober{}, Audit: auditLog, Log: log},
-			&policy.AdminHandler{Repo: policies, Audit: auditLog, Log: log},
+			&target.AdminHandler{Repo: targets, Prober: &target.Prober{}, Policies: policies, Live: registry, Audit: auditLog, Log: log},
+			&policy.AdminHandler{Repo: policies, Users: users, Audit: auditLog, Log: log},
 			&access.Handler{Requests: accessReqs, Policies: policies, Targets: targets, Audit: auditLog, Log: log},
-			&asg.AdminHandler{Repo: asgRepo, Sync: syncer.SyncGroup, GatewayPrincipal: cfg.AWSGatewayPrincipal, Audit: auditLog, Log: log},
+			&asg.AdminHandler{Repo: asgRepo, Sync: syncer.SyncGroup, GatewayPrincipal: cfg.AWSGatewayPrincipal, Policies: policies, Live: registry, Audit: auditLog, Log: log},
 			&session.Handler{Repo: sessionRepo, Audit: auditLog, Registry: registry, Storage: storage, Log: log},
+			&settings.Handler{Repo: settings.NewRepo(db), Audit: auditLog, Log: log},
 			&connect.Handler{Targets: targets, Policies: policies, Access: accessReqs, Vault: vault, Sessions: sessionRepo, Tickets: ticket.NewStore(),
 				Registry: registry, Storage: storage, Audit: auditLog, Log: log, MFAEnrolled: totp.Enrolled, GuacdAddr: cfg.GuacdAddr,
 				DockerPath: cfg.DockerPath, Prober: &target.Prober{}, ASGs: asgRepo, Cloud: cloudProviders},

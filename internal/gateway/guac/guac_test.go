@@ -4,6 +4,7 @@ package guac
 
 import (
 	"context"
+	"errors"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -272,5 +273,26 @@ func TestBridgeFileTransferPolicy(t *testing.T) {
 	send(Encode("trigger-fs"))
 	if got := read(); got != Encode("filesystem", "0", "Zanskar") {
 		t.Fatalf("filesystem should pass when allowed, got %q", got)
+	}
+}
+
+// TestDialUnreachableIsSentinel: a guacd that does not answer at all is
+// reported through ErrGuacdUnreachable, so the desktop handler can tell the
+// user "the desktop service is down" rather than "could not connect to the
+// target".
+func TestDialUnreachableIsSentinel(t *testing.T) {
+	// A closed loopback port: nothing listens, the dial is refused at once.
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr := l.Addr().String()
+	_ = l.Close()
+	_, err = Dial(context.Background(), addr, Params{Protocol: "rdp"}, 2*time.Second)
+	if !errors.Is(err, ErrGuacdUnreachable) {
+		t.Fatalf("want ErrGuacdUnreachable, got %v", err)
+	}
+	if !strings.Contains(err.Error(), addr) {
+		t.Fatalf("the address tried should be in the error for the journal: %v", err)
 	}
 }

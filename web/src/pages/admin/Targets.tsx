@@ -4,6 +4,7 @@ import { fmtTime } from '../../api/format'
 import type { Credential, OSFamily, Protocol, Target } from '../../api/types'
 import { Alert, Badge, Confirm, Empty, Field, Modal, PageHead, Tags } from '../../components/ui'
 import { formatTags, hostKeyBadge, parseTags, protocols, useList, type ProbeWire } from './lib'
+import { CredentialBindings, type BindingChange } from './Bindings'
 
 interface ProbeResponse { target: Target; probe: ProbeWire; host_key_status: string; host_key_fingerprint: string | null; host_key_changed_from?: string | null }
 
@@ -185,12 +186,12 @@ function TargetForm({ initial, onClose, onSaved }: { initial?: Target; onClose: 
               <option value="other">Other</option>
             </select>
           </Field>
-          <Field label="Database engine" hint="Set only for a PaaS database target (ADR 0017)">
+          <Field label="Database engine" hint="Set only for a PaaS database target (ADR 0017). MySQL and MariaDB arrive with their proxy sidecar in a later release.">
             <select id="t-engine" value={f.engine} onChange={set('engine')}>
               <option value="">— not a database —</option>
               <option value="postgres">PostgreSQL</option>
-              <option value="mysql">MySQL</option>
-              <option value="mariadb">MariaDB</option>
+              <option value="mysql" disabled>MySQL (later release)</option>
+              <option value="mariadb" disabled>MariaDB (later release)</option>
             </select>
           </Field>
         </div>
@@ -255,15 +256,24 @@ function TargetDetail({ target, credentials, onClose, onChanged, onDeleted, onEr
       }
     })
 
-  const setCredential = (p: Protocol, id: string) =>
-    run(async () => {
-      const updated = id ? await api.put<Target>(`/targets/${t.id}/credentials/${p}`, { credential_id: id }) : await api.del<Target>(`/targets/${t.id}/credentials/${p}`)
-      onChanged(updated ?? (await api.get<Target>(`/targets/${t.id}`)))
-    })
+  // Bindings are applied one protocol at a time so each change leaves its own
+  // audit event (target.credential.set / unset); the drawer shows the target
+  // as the API last returned it.
+  const saveBindings = async (changes: BindingChange[]) => {
+    setErr('')
+    let latest = t
+    for (const { protocol, credential_id } of changes) {
+      const updated = credential_id ? await api.put<Target>(`/targets/${t.id}/credentials/${protocol}`, { credential_id }) : await api.del<Target>(`/targets/${t.id}/credentials/${protocol}`)
+      latest = updated ?? (await api.get<Target>(`/targets/${t.id}`))
+    }
+    onChanged(latest)
+  }
 
   const toggleStatus = () =>
     run(async () => {
-      const body = { name: t.name, address: t.address, os_family: t.os_family, ports: t.ports, capabilities: t.capabilities, tags: t.tags, status: t.status === 'active' ? 'disabled' : 'active', notes: t.notes, credentials: t.credentials }
+      // The update body replaces every editable field, so the engine fields
+      // must travel too or a database target silently turns into a host.
+      const body = { name: t.name, address: t.address, os_family: t.os_family, engine: t.engine ?? '', engine_version: t.engine_version ?? '', ports: t.ports, capabilities: t.capabilities, tags: t.tags, status: t.status === 'active' ? 'disabled' : 'active', notes: t.notes, credentials: t.credentials }
       onChanged(await api.put<Target>(`/targets/${t.id}`, body))
     })
 
@@ -283,7 +293,15 @@ function TargetDetail({ target, credentials, onClose, onChanged, onDeleted, onEr
       )}
       <dl className="kv">
         <dt>Address</dt><dd className="mono">{t.address}</dd>
-        <dt>OS</dt><dd>{t.os_family}</dd>
+        {t.engine ? (
+          <>
+            <dt>Engine</dt><dd>{t.engine}{t.engine_version ? ` ${t.engine_version}` : ''}</dd>
+          </>
+        ) : (
+          <>
+            <dt>OS</dt><dd>{t.os_family}</dd>
+          </>
+        )}
         <dt>Status</dt><dd>{t.status}</dd>
         <dt>Capabilities</dt><dd>{t.capabilities.length ? t.capabilities.join(', ') : <span className="muted">unprobed</span>}</dd>
         <dt>Host key</dt>
@@ -309,21 +327,16 @@ function TargetDetail({ target, credentials, onClose, onChanged, onDeleted, onEr
         )}
       </dl>
 
-      <h2 style={{ marginTop: 18 }}>Credentials per protocol</h2>
-      <div className="form-grid">
-        {protocols.map((p) => (
-          <Field key={p} label={p.toUpperCase()}>
-            <select id={`cred-${p}`} value={t.credentials[p] ?? ''} onChange={(e) => void setCredential(p, e.target.value)}>
-              <option value="">— none —</option>
-              {credentials.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.name} ({c.type}, {c.mode})
-                </option>
-              ))}
-            </select>
-          </Field>
-        ))}
-      </div>
+      <h2 style={{ marginTop: 18 }}>{t.engine ? 'Database credential' : 'Credentials per protocol'}</h2>
+      {/* A database target has one slot, the brokered "database" protocol;
+          the host slots (ssh, rdp, vnc, winrm) do not apply to it. */}
+      <CredentialBindings
+        slots={(t.engine ? (['database'] as Protocol[]) : protocols).map((p) => ({ protocol: p, label: p === 'database' ? `Database (${t.engine})` : p.toUpperCase() }))}
+        current={t.credentials}
+        credentials={credentials}
+        onSave={saveBindings}
+        onError={setErr}
+      />
 
       {probe && (
         <>
@@ -375,6 +388,7 @@ function TargetDetail({ target, credentials, onClose, onChanged, onDeleted, onEr
           )}
           <button className="btn" onClick={() => setEditing(true)}>Edit</button>
           <button className="btn" onClick={() => void toggleStatus()}>{t.status === 'active' ? 'Disable' : 'Enable'}</button>
+          <button className="btn ghost" onClick={onClose}>Close</button>
         </div>
         <button className="btn danger" onClick={() => setConfirm('delete')}>Delete</button>
       </div>
@@ -411,7 +425,7 @@ function TargetDetail({ target, credentials, onClose, onChanged, onDeleted, onEr
       {confirm === 'delete' && (
         <Confirm
           title={`Delete ${t.name}?`}
-          body="Policies that selected this target by id stop matching it. Past sessions keep their records."
+          body="The target leaves every list and its credential bindings are removed; past sessions, recordings and audit events keep its name. Deletion is refused while a policy names it by id or a session is open on it."
           confirmLabel="Delete"
           danger
           onClose={() => setConfirm(null)}

@@ -112,6 +112,19 @@ func desktopParams(t *target.Target, proto target.Protocol, a *credential.Opened
 	return guac.Params{Protocol: string(proto), Args: args, Image: []string{"image/png", "image/jpeg", "image/webp"}}, nil
 }
 
+// desktopDialMessage words a failed desktop connection for the user. From the
+// browser the two failures look alike, but they need different people: guacd
+// not answering is the gateway operator's problem (it is not installed by the
+// package and has to be started), while guacd answering and then failing to
+// reach the machine is the target's. One message used to cover both
+// (manual QA finding 4).
+func desktopDialMessage(err error) string {
+	if errors.Is(err, guac.ErrGuacdUnreachable) {
+		return "the desktop service (guacd) is not running or not reachable from the gateway; an administrator must start it (the gateway journal names the address it tried)"
+	}
+	return "the desktop service could not open a connection to the machine: check that RDP or VNC is enabled, that its port is open from the gateway, and that the pinned certificate still matches"
+}
+
 // desktop redeems a ticket and runs the guacd bridge for its lifetime.
 // Route: GET /ws/desktop?ticket=...&width=&height=&dpi=
 func (h *Handler) desktop(w http.ResponseWriter, r *http.Request) {
@@ -204,8 +217,8 @@ func (h *Handler) desktop(w http.ResponseWriter, r *http.Request) {
 	}
 	gc, err := guac.Dial(r.Context(), h.GuacdAddr, params, timeout)
 	if err != nil {
-		h.Log.Warn("guacd dial failed", "target", t.ID, "err", err)
-		endWith(session.EndError, "could not connect to the target")
+		h.Log.Warn("guacd dial failed", "target", t.ID, "guacd", h.GuacdAddr, "err", err)
+		endWith(session.EndError, desktopDialMessage(err))
 		return
 	}
 	defer func() { _ = gc.Close() }()

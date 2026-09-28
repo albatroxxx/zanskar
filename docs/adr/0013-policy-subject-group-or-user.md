@@ -29,6 +29,17 @@ Nothing else about a policy changes: selectors, protocols, time windows and sess
 are the same for both subjects, and a policy can be moved between a group and a user by
 editing it.
 
+Amended 2026-09-29: a policy's protocols applied to all of its targets, so "ssh to the fleet,
+rdp to the two jump hosts" for one team took two policies with the same windows, limits and
+flags to keep in step (manual QA finding R13). A policy now carries optional **rules**, each a
+`target_selector` plus `protocols`, evaluated alongside the base pair; the base is the first
+rule and may be empty when rules carry everything. A rule inherits the policy's windows, limits
+and flags; there are no per-rule limits, by design: one policy is one set of conditions for one
+subject, and rules only say which protocols on which machines. `Policy.Covers` is the single
+decision every caller uses (the connect gate, the target list, the approval eligibility check),
+and `Policy.References` is what the deletion guard scans, so a machine named only inside a rule
+is still protected from deletion.
+
 ## Consequences
 
 - One-off grants no longer widen a group. A user with no group memberships can still be

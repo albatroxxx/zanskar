@@ -3,7 +3,9 @@
 package target
 
 import (
+	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -11,7 +13,9 @@ import (
 
 	"github.com/albatroxxx/zanskar/internal/audit"
 	"github.com/albatroxxx/zanskar/internal/auth"
+	"github.com/albatroxxx/zanskar/internal/gateway"
 	"github.com/albatroxxx/zanskar/internal/httpx"
+	"github.com/albatroxxx/zanskar/internal/policy"
 	"github.com/albatroxxx/zanskar/internal/user"
 )
 
@@ -22,8 +26,12 @@ const ProbeTimeout = 5 * time.Second
 type AdminHandler struct {
 	Repo   *Repo
 	Prober *Prober
-	Audit  *audit.Log
-	Log    *slog.Logger
+	// Policies and Live let delete refuse a target that a policy still names
+	// by id or that has sessions open (ADR 0019); nil skips that check.
+	Policies *policy.Repo
+	Live     *gateway.Registry
+	Audit    *audit.Log
+	Log      *slog.Logger
 }
 
 // Register mounts the routes; every one requires the admin role.
@@ -87,6 +95,9 @@ func (h *AdminHandler) create(w http.ResponseWriter, r *http.Request) {
 		httpx.BadRequest(w, err.Error())
 		return
 	}
+	if !engineServable(w, body.Engine) {
+		return
+	}
 	p, _ := auth.FromContext(r.Context())
 	t := &Target{CreatedBy: &p.User.ID}
 	body.apply(t)
@@ -113,6 +124,9 @@ func (h *AdminHandler) update(w http.ResponseWriter, r *http.Request) {
 		httpx.BadRequest(w, err.Error())
 		return
 	}
+	if !engineServable(w, body.Engine) {
+		return
+	}
 	t, err := h.Repo.Get(r.Context(), r.PathValue("id"))
 	if err != nil {
 		h.writeErr(w, r, err)
@@ -134,12 +148,67 @@ func (h *AdminHandler) delete(w http.ResponseWriter, r *http.Request) {
 		h.writeErr(w, r, err)
 		return
 	}
+	blocked, err := h.deleteBlockedBy(r.Context(), t.ID)
+	if err != nil {
+		h.serverError(w, r, err)
+		return
+	}
+	if blocked != "" {
+		h.record(r, "target.delete", t.ID, audit.Failure, map[string]any{"name": t.Name, "reason": "in_use"})
+		httpx.WriteError(w, http.StatusConflict, "in_use", blocked)
+		return
+	}
 	if err := h.Repo.Delete(r.Context(), t.ID); err != nil {
 		h.writeErr(w, r, err)
 		return
 	}
 	h.record(r, "target.delete", t.ID, audit.Success, map[string]any{"name": t.Name, "address": t.Address})
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// deleteBlockedBy explains why the target cannot be retired yet: policies that
+// name it by id and sessions still open on it. Empty means it may go.
+func (h *AdminHandler) deleteBlockedBy(ctx context.Context, id string) (string, error) {
+	var policies []string
+	if h.Policies != nil {
+		var err error
+		if policies, err = h.Policies.Referencing(ctx, id, ""); err != nil {
+			return "", err
+		}
+	}
+	open := 0
+	if h.Live != nil {
+		for _, l := range h.Live.List() {
+			if l.TargetID == id {
+				open++
+			}
+		}
+	}
+	return InUseMessage("target", policies, open), nil
+}
+
+// InUseMessage words the 409 an admin sees when a target or autoscaling
+// group cannot be deleted: which policies name it by id and how many sessions
+// are open on it. Empty when nothing stands in the way. Autoscaling groups
+// share it so both dialogs read the same.
+func InUseMessage(kind string, policies []string, openSessions int) string {
+	var parts []string
+	switch n := len(policies); {
+	case n == 1:
+		parts = append(parts, "policy "+policies[0]+" names it")
+	case n > 1:
+		parts = append(parts, "policies "+strings.Join(policies, ", ")+" name it")
+	}
+	switch {
+	case openSessions == 1:
+		parts = append(parts, "1 session is open on it")
+	case openSessions > 1:
+		parts = append(parts, fmt.Sprintf("%d sessions are open on it", openSessions))
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return fmt.Sprintf("the %s is still in use: %s. Remove it from those policies and end the sessions, then delete again.", kind, strings.Join(parts, "; "))
 }
 
 // ProbeResponse pairs the refreshed target with what the probe saw.
@@ -251,6 +320,19 @@ func (h *AdminHandler) unsetCredential(w http.ResponseWriter, r *http.Request) {
 }
 
 // ---- helpers
+
+// engineServable refuses a database target whose engine the gateway cannot
+// serve yet, writing the 422 itself. The model accepts every known engine so
+// the schema is ready; the gateway advertises only what it can deliver.
+func engineServable(w http.ResponseWriter, engine string) bool {
+	engine = strings.ToLower(strings.TrimSpace(engine))
+	if engine == "" || ServableEngine(engine) {
+		return true
+	}
+	httpx.WriteError(w, http.StatusUnprocessableEntity, "engine_unavailable",
+		engine+" database access ships in a later release; only postgres targets can be enrolled today")
+	return false
+}
 
 func (h *AdminHandler) record(r *http.Request, action, id string, outcome audit.Outcome, details any) {
 	if h.Audit == nil {

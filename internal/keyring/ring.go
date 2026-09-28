@@ -38,6 +38,9 @@ const (
 // ErrClosed is returned after Close.
 var ErrClosed = errors.New("keyring: closed")
 
+// ErrSameKEK is returned by Rewrap when the new master key is the current one.
+var ErrSameKEK = errors.New("keyring: the new master key is the one already in use")
+
 // AAD builds the additional authenticated data for a row: "<table>:<id>".
 func AAD(table, id string) string {
 	return table + ":" + id
@@ -225,6 +228,112 @@ func (r *Ring) Rotate(ctx context.Context) (int, error) {
 		return 0, err
 	}
 	return id, nil
+}
+
+// Rewrap re-seals every non-retired DEK under newKEK in one transaction and
+// switches the ring to it. This is master-key rotation (ADR 0007, amended
+// 2026-09-28): secrets are sealed under DEKs, never under the master key, so
+// their ciphertext is untouched and the operation is a handful of small rows
+// however many secrets there are. Once every DEK a leaked master key could
+// open has been rewrapped, that key opens nothing in this database. A
+// database that leaked together with the key is a different incident: the
+// DEKs, and so the secrets, were exposed, and only rotating those secrets at
+// their targets remedies it.
+//
+// Each new wrapping is verified by unwrapping it before anything is
+// committed, and the whole set is one transaction, so the table is never
+// left half under one key and half under another. Returns the number of
+// versions rewrapped.
+func (r *Ring) Rewrap(ctx context.Context, newKEK crypto.KEKProvider) (int, error) {
+	r.mu.RLock()
+	closed, oldKEK := r.closed, r.kek
+	r.mu.RUnlock()
+	if closed {
+		return 0, ErrClosed
+	}
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, fmt.Errorf("keyring: begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	if r.db.Driver == config.DriverPostgres {
+		if _, err := tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock($1)`, bootstrapLockID); err != nil {
+			return 0, fmt.Errorf("keyring: advisory lock: %w", err)
+		}
+	}
+	// Read the whole set first and close the cursor: SQLite runs on one
+	// connection and the updates below would otherwise deadlock behind it.
+	type row struct {
+		id      int
+		wrapped []byte
+	}
+	rows, err := tx.QueryContext(ctx, `SELECT id, wrapped_dek FROM key_versions WHERE retired_at IS NULL ORDER BY id`)
+	if err != nil {
+		return 0, fmt.Errorf("keyring: read key_versions: %w", err)
+	}
+	var set []row
+	for rows.Next() {
+		var rw row
+		if err := rows.Scan(&rw.id, &rw.wrapped); err != nil {
+			_ = rows.Close() //nolint:sqlclosecheck // explicit close on SQLite's single connection; updates follow
+			return 0, fmt.Errorf("keyring: scan key_versions: %w", err)
+		}
+		set = append(set, rw)
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return 0, fmt.Errorf("keyring: iterate key_versions: %w", err)
+	}
+	_ = rows.Close() // SQLite single connection: close before the updates below
+	if len(set) == 0 {
+		return 0, errors.New("keyring: no key versions to rewrap")
+	}
+	now := time.Now().UTC().Format(time.RFC3339)
+	for _, rw := range set {
+		aad := []byte(AAD("key_versions", strconv.Itoa(rw.id)))
+		// If the new key already opens the old wrapping it is the same key,
+		// and "rotating" to it would only look like a rotation.
+		if probe, err := newKEK.Unwrap(ctx, rw.wrapped, aad); err == nil {
+			crypto.Zero(probe)
+			return 0, ErrSameKEK
+		}
+		dek, err := oldKEK.Unwrap(ctx, rw.wrapped, aad)
+		if err != nil {
+			return 0, fmt.Errorf("keyring: cannot unwrap key version %d with the current master key: %w", rw.id, err)
+		}
+		wrapped, err := newKEK.Wrap(ctx, dek, aad)
+		if err != nil {
+			crypto.Zero(dek)
+			return 0, fmt.Errorf("keyring: wrap key version %d: %w", rw.id, err)
+		}
+		check, err := newKEK.Unwrap(ctx, wrapped, aad)
+		same := err == nil && len(check) == len(dek) && subtleEqual(check, dek)
+		crypto.Zero(check)
+		crypto.Zero(dek)
+		if !same {
+			return 0, fmt.Errorf("keyring: verification of rewrapped key version %d failed; nothing was changed", rw.id)
+		}
+		if _, err := tx.ExecContext(ctx, r.db.Rebind(`UPDATE key_versions SET wrapped_dek = ?, kek_source = ?, kek_ref = NULL, rotated_at = ? WHERE id = ?`),
+			wrapped, newKEK.Source(), now, rw.id); err != nil {
+			return 0, fmt.Errorf("keyring: update key version %d: %w", rw.id, err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, fmt.Errorf("keyring: commit: %w", err)
+	}
+	r.mu.Lock()
+	r.kek = newKEK
+	r.mu.Unlock()
+	return len(set), nil
+}
+
+// subtleEqual compares two DEKs without leaking where they differ.
+func subtleEqual(a, b []byte) bool {
+	var v byte
+	for i := range a {
+		v |= a[i] ^ b[i]
+	}
+	return v == 0
 }
 
 // Close zeroes every DEK held in memory. The Ring is unusable afterwards.

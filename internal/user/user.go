@@ -64,6 +64,13 @@ func (u *User) HasRole(r Role) bool {
 	return false
 }
 
+// CanConnect reports whether the account may see targets, request access and
+// open sessions: it holds user or admin. An account holding only auditor is
+// review-only (ADR 0006) and is refused even when a policy names it.
+func (u *User) CanConnect() bool {
+	return u.HasRole(RoleUser) || u.HasRole(RoleAdmin)
+}
+
 // Errors returned by the repository.
 var (
 	ErrNotFound      = errors.New("user: not found")

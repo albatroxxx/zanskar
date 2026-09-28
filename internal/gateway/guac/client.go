@@ -4,6 +4,7 @@ package guac
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"strings"
@@ -34,6 +35,11 @@ type Conn struct {
 	reader *Reader
 }
 
+// ErrGuacdUnreachable wraps a failure to open the TCP connection to guacd
+// itself, as opposed to guacd answering and then failing to reach the target.
+// The two need different people: the first is the gateway operator's to fix.
+var ErrGuacdUnreachable = errors.New("guac: guacd unreachable")
+
 // Dial connects to guacd and performs the handshake:
 //
 //	client: select <protocol>
@@ -49,7 +55,7 @@ func Dial(ctx context.Context, addr string, p Params, timeout time.Duration) (*C
 	d := net.Dialer{Timeout: timeout}
 	nc, err := d.DialContext(ctx, "tcp", addr)
 	if err != nil {
-		return nil, fmt.Errorf("guac: dial guacd: %w", err)
+		return nil, fmt.Errorf("%w at %s: %w", ErrGuacdUnreachable, addr, err)
 	}
 	if err := nc.SetDeadline(time.Now().Add(timeout)); err != nil {
 		_ = nc.Close()
