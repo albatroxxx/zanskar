@@ -291,7 +291,7 @@ SOFTWARE.
 
 ### github.com/aws/aws-sdk-go-v2/config
 
-* Version: `v1.33.5`
+* Version: `v1.33.6`
 
 ```
 
@@ -502,7 +502,7 @@ SOFTWARE.
 
 ### github.com/aws/aws-sdk-go-v2/credentials
 
-* Version: `v1.20.5`
+* Version: `v1.20.6`
 
 ```
 
@@ -713,7 +713,7 @@ SOFTWARE.
 
 ### github.com/aws/aws-sdk-go-v2/feature/ec2/imds
 
-* Version: `v1.20.0`
+* Version: `v1.20.1`
 
 ```
 
@@ -924,7 +924,7 @@ SOFTWARE.
 
 ### github.com/aws/aws-sdk-go-v2/internal/configsources
 
-* Version: `v1.5.3`
+* Version: `v1.5.4`
 
 ```
 
@@ -1135,7 +1135,7 @@ SOFTWARE.
 
 ### github.com/aws/aws-sdk-go-v2/internal/endpoints/v2
 
-* Version: `v2.8.3`
+* Version: `v2.8.4`
 
 ```
 
@@ -1346,7 +1346,7 @@ SOFTWARE.
 
 ### github.com/aws/aws-sdk-go-v2/internal/v4a
 
-* Version: `v1.5.3`
+* Version: `v1.5.4`
 
 ```
 
@@ -1557,7 +1557,7 @@ SOFTWARE.
 
 ### github.com/aws/aws-sdk-go-v2/service/autoscaling
 
-* Version: `v1.78.0`
+* Version: `v1.78.1`
 
 ```
 
@@ -1768,7 +1768,7 @@ SOFTWARE.
 
 ### github.com/aws/aws-sdk-go-v2/service/ec2instanceconnect
 
-* Version: `v1.40.0`
+* Version: `v1.42.0`
 
 ```
 
@@ -1979,7 +1979,7 @@ SOFTWARE.
 
 ### github.com/aws/aws-sdk-go-v2/service/ec2
 
-* Version: `v1.335.0`
+* Version: `v1.336.1`
 
 ```
 
@@ -2190,7 +2190,7 @@ SOFTWARE.
 
 ### github.com/aws/aws-sdk-go-v2/service/elasticloadbalancingv2
 
-* Version: `v1.63.0`
+* Version: `v1.63.1`
 
 ```
 
@@ -2612,7 +2612,7 @@ SOFTWARE.
 
 ### github.com/aws/aws-sdk-go-v2/service/internal/checksum
 
-* Version: `v1.11.3`
+* Version: `v1.11.5`
 
 ```
 
@@ -2823,7 +2823,7 @@ SOFTWARE.
 
 ### github.com/aws/aws-sdk-go-v2/service/internal/presigned-url
 
-* Version: `v1.14.3`
+* Version: `v1.14.4`
 
 ```
 
@@ -3034,7 +3034,7 @@ SOFTWARE.
 
 ### github.com/aws/aws-sdk-go-v2/service/internal/s3shared
 
-* Version: `v1.20.3`
+* Version: `v1.20.4`
 
 ```
 
@@ -3245,7 +3245,7 @@ SOFTWARE.
 
 ### github.com/aws/aws-sdk-go-v2/service/s3
 
-* Version: `v1.113.1`
+* Version: `v1.113.4`
 
 ```
 
@@ -3456,7 +3456,7 @@ SOFTWARE.
 
 ### github.com/aws/aws-sdk-go-v2/service/signin
 
-* Version: `v1.10.0`
+* Version: `v1.10.1`
 
 ```
 
@@ -3667,7 +3667,7 @@ SOFTWARE.
 
 ### github.com/aws/aws-sdk-go-v2/service/ssooidc
 
-* Version: `v1.43.0`
+* Version: `v1.43.1`
 
 ```
 
@@ -3878,7 +3878,7 @@ SOFTWARE.
 
 ### github.com/aws/aws-sdk-go-v2/service/sso
 
-* Version: `v1.38.0`
+* Version: `v1.38.1`
 
 ```
 
@@ -4089,7 +4089,7 @@ SOFTWARE.
 
 ### github.com/aws/aws-sdk-go-v2/service/sts
 
-* Version: `v1.51.0`
+* Version: `v1.51.1`
 
 ```
 
@@ -4300,7 +4300,7 @@ SOFTWARE.
 
 ### github.com/aws/aws-sdk-go-v2
 
-* Version: `v1.47.0`
+* Version: `v1.47.1`
 
 ```
 
@@ -8084,7 +8084,7 @@ limitations under the License.
 
 ### github.com/pkg/sftp
 
-* Version: `v1.13.9`
+* Version: `v1.13.11`
 
 ```
 Copyright (c) 2013, Dave Cheney
