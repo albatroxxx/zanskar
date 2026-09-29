@@ -574,10 +574,15 @@ func promptAnswers(a *initAnswers) error {
 			a.TLSCert = ask(r, "  TLS certificate path", a.TLSCert)
 			a.TLSKey = ask(r, "  TLS private key path", a.TLSKey)
 		}
-		if a.RedirectAddr == "" {
-			a.RedirectAddr = defaultRedirect(*a)
+		def := defaultRedirect(*a)
+		if askBool(r, "  Redirect plain HTTP to HTTPS as well?", def != "" || a.RedirectAddr != "") {
+			if def == "" {
+				def = ":80"
+			}
+			a.RedirectAddr = ask(r, "  Redirect listener address", def)
+		} else {
+			a.RedirectAddr = ""
 		}
-		a.RedirectAddr = ask(r, "  Redirect plain HTTP to HTTPS from (blank for none)", a.RedirectAddr)
 	} else {
 		a.TLSMode = tlsModeProxy
 		a.RedirectAddr = ""

@@ -90,7 +90,11 @@ func New(cfg *config.Config, db *store.DB, log *slog.Logger, deps Deps) *Server 
 		s.http.TLSConfig = &tls.Config{GetCertificate: deps.TLS.GetCertificate, MinVersion: tls.VersionTLS12}
 	}
 	if cfg.ServesTLS() && cfg.RedirectAddr != "" {
-		s.redirect = newRedirectServer(cfg.RedirectAddr, cfg.ListenAddr)
+		var covered func() []string
+		if deps.TLS != nil {
+			covered = func() []string { return deps.TLS.Active().Hosts }
+		}
+		s.redirect = newRedirectServer(cfg.RedirectAddr, cfg.ListenAddr, covered)
 	}
 	return s
 }

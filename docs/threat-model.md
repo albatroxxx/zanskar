@@ -221,4 +221,5 @@ certificate'`) and shows it on the Settings page, and the operator compares it b
 accepting the warning. Uploading a certificate from a CA the users' browsers trust ends the
 warnings and the exposure; HSTS then takes effect from the first clean visit. Until then no
 session should be treated as private from an on-path attacker who was present at the first
-visit, which is why the install page puts the upload before the first user account.
+visit, which is why the install page puts the fingerprint check and the upload before users
+are invited.

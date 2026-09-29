@@ -80,12 +80,15 @@ sudo zanskar init -non-interactive -listen 0.0.0.0:443 \
 sudo systemctl enable --now zanskar
 
 # readiness check: pick the line that matches the mode you chose in init
+curl -k https://localhost/readyz             # default: managed TLS on 443 (-k: self-signed until you upload one)
 curl http://127.0.0.1:8443/readyz            # behind-proxy mode (plain HTTP on loopback)
-curl -k https://localhost:8443/readyz        # own-certificate mode
+curl -k https://localhost:8443/readyz        # own-certificate mode on 8443
 # either way: {"status":"ready"}</code></pre></div>
     <p>In behind-proxy mode the gateway speaks plain HTTP on loopback and expects your proxy to terminate TLS on 443; probing it with <code>https://</code> fails with an OpenSSL <em>wrong version number</em> error, which is expected, not a fault. <code>journalctl -u zanskar -n 5</code> shows the listener and whether TLS is on. To switch modes later, re-run <code>zanskar init -force</code> with the new flags; the existing master key is kept.</p>
     <p class="note"><strong>Scripting the admin password.</strong> For cloud-init or Ansible, <code>admin create</code> also reads <code>ZANSKAR_ADMIN_PASSWORD</code>. Feed it from a prompt or a secrets manager, not a literal: <code>read -rs ZANSKAR_ADMIN_PASSWORD &amp;&amp; export ZANSKAR_ADMIN_PASSWORD</code>, then run the command. If you did type a password into a shell, remove that line from history (<code>history -d &lt;n&gt;</code> or delete it from <code>~/.bash_history</code>) and change the password after first sign-in.</p>
 
+    <h3 id="first-visit">First visit: check the certificate, then upload yours</h3>
+    <p>A default install serves HTTPS with a self-signed certificate, so the browser warns on the first visit. Before accepting, compare the SHA-256 it shows with the one the gateway logged at start (<code>journalctl -u zanskar | grep 'tls certificate'</code>). Then sign in as the admin, open <strong>Settings → TLS certificate</strong> and upload a certificate your users' browsers trust (PEM chain and unencrypted key; it applies at once). Do this before inviting users: until then an on-path attacker present at someone's first visit could impersonate the gateway. Behind a proxy (<code>init -behind-proxy</code>) the proxy's certificate is what users see.</p>
     <h3 id="guacd">Start guacd, for RDP and VNC</h3>
     <p>Desktop sessions are relayed by <code>guacd</code>, which the package does <strong>not</strong> install. Without it, RDP and VNC targets fail with <em>the desktop service (guacd) is not running</em>, and the journal shows <code>guacd dial failed</code>. <code>zanskar init</code> checks the address you give it and prints this step when nothing is listening. The supported way is the official container, published on loopback only: guacd speaks an unauthenticated protocol and must never be reachable from anywhere but the gateway.</p>
     <div class="code-block"><button type="button" class="copy" aria-label="Copy the guacd start command">Copy</button><pre><code>sudo docker run -d --name guacd --restart unless-stopped -p 127.0.0.1:4822:4822 \
