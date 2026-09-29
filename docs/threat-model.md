@@ -210,3 +210,15 @@ an attestation.
   control changed.
 - The STRIDE tables are re-walked at every phase boundary of the roadmap.
 - Findings from external testing are recorded in section 6 until resolved.
+
+## Self-signed certificate on a fresh install (ADR 0021)
+
+A default install serves HTTPS with a certificate the gateway generated for itself, so the
+first visit to the console is an on-path attacker's one opportunity: the browser warns and
+cannot tell a self-signed gateway from an impostor. The trust step is out of band: the
+gateway logs the certificate's SHA-256 at start (`journalctl -u zanskar | grep 'tls
+certificate'`) and shows it on the Settings page, and the operator compares it before
+accepting the warning. Uploading a certificate from a CA the users' browsers trust ends the
+warnings and the exposure; HSTS then takes effect from the first clean visit. Until then no
+session should be treated as private from an on-path attacker who was present at the first
+visit, which is why the install page puts the upload before the first user account.

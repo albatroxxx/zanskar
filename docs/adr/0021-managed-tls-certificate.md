@@ -55,6 +55,21 @@ served, its fingerprint and expiry, and takes uploads.
 - Certificate rotation is a console action, not a maintenance window.
 - In `file` mode a console upload takes precedence over the file, consistent with ADR
   0020's console-over-environment rule; the Settings card says which is serving.
-- Not decided here: the install default (managed on 443 with an HTTP redirect) and the
-  redirect listener itself; those change what `init` writes and what the unit may bind,
-  and follow separately.
+
+## Amendment (2026-09-29): the install default, and the redirect listener
+
+With the certificate manager in place the first hour of an install can be HTTPS with
+nothing else installed, so that becomes the default `zanskar init` writes: managed TLS on
+`0.0.0.0:443`, and `ZANSKAR_HTTP_REDIRECT_ADDR=:80`, a plain-HTTP listener whose only
+handler answers with a permanent redirect to the same path on the HTTPS listener (the
+client's Host, validated as a host name or IP and stripped of its port, else the listen
+host; the TLS port added when it is not 443). `-behind-proxy` keeps the previous shape,
+loopback 8443 behind a proxy, and the container images stay behind Caddy on 8443.
+
+The packaged unit grants `CAP_NET_BIND_SERVICE` (ambient and bounding set) so the
+unprivileged service can bind the two ports; `NoNewPrivileges` stays on, which systemd
+allows for ambient capabilities. A refused bind on a port below 1024 names the drop-in.
+
+HSTS is sent whenever the gateway serves TLS. Browsers ignore it on a connection with
+certificate errors, so the self-signed default pins nothing; once a real certificate is
+uploaded, the two-year `max-age` applies from the first clean visit.

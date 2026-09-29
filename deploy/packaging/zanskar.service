@@ -15,6 +15,11 @@ ExecStart=/usr/bin/zanskar serve
 Restart=always
 RestartSec=3
 
+# The default install serves HTTPS on 443 and redirects 80; these two lines
+# let the unprivileged service bind them. Harmless on a proxy-mode install.
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+
 # Hardening. The service only ever writes under its state directory.
 NoNewPrivileges=true
 ProtectSystem=strict

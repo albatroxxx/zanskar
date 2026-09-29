@@ -93,6 +93,7 @@ func bootSettings(cfg *config.Config, keyVersion int) []settings.Boot {
 		{Key: "tls", Title: "TLS", EnvVar: "ZANSKAR_TLS_MODE, ZANSKAR_TLS_CERT, ZANSKAR_TLS_KEY", Value: map[string]string{
 			config.TLSFile: "own certificate file: " + cfg.TLSCert, config.TLSManaged: "managed in the console (Settings, TLS certificate)", config.TLSProxy: "terminated by a proxy (plain HTTP on loopback)",
 		}[cfg.TLSMode], Description: "Serve TLS with a managed or a file certificate, or trust a proxy in front."},
+		{Key: "http_redirect", Title: "HTTP redirect", EnvVar: "ZANSKAR_HTTP_REDIRECT_ADDR", Value: set(cfg.RedirectAddr), Description: "Plain-HTTP listener that redirects to HTTPS."},
 		{Key: "trust_proxy_tls", Title: "Trust proxy TLS", EnvVar: "ZANSKAR_TRUST_PROXY_TLS", Value: yesno(cfg.TrustProxyTLS), Description: "Cookies are marked Secure because TLS terminates in front."},
 		{Key: "trusted_proxies", Title: "Trusted proxies", EnvVar: "ZANSKAR_TRUSTED_PROXIES", Value: strings.Join(proxies, ", "), Description: "Networks whose X-Forwarded-For is believed."},
 		{Key: "allow_plain_http", Title: "Allow plain HTTP", EnvVar: "ZANSKAR_ALLOW_PLAIN_HTTP", Value: yesno(cfg.AllowPlainHTTP), Description: "Development only."},

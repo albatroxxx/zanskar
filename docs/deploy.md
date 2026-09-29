@@ -296,6 +296,16 @@ tooling below rather than `zanskar backup`.
 Unset, the mode is `file` when a certificate is configured and `proxy` otherwise, so an
 existing install keeps its behaviour.
 
+**The default install is managed TLS on `0.0.0.0:443` with `ZANSKAR_HTTP_REDIRECT_ADDR=:80`**:
+a plain-HTTP listener that answers every request with a redirect to the HTTPS listener
+(the same path, the TLS port added when it is not 443). `zanskar init -behind-proxy` keeps
+the old shape, loopback 8443 behind a proxy. The packaged unit grants
+`CAP_NET_BIND_SERVICE` so the unprivileged service can bind 443 and 80; a hand-written unit
+needs `AmbientCapabilities=CAP_NET_BIND_SERVICE` and `CapabilityBoundingSet=CAP_NET_BIND_SERVICE`,
+and the gateway says so when a bind on a port below 1024 is refused. HSTS is sent whenever
+the gateway serves TLS; browsers ignore it on a connection with certificate errors, so the
+self-signed default pins nothing until a real certificate is uploaded.
+
 ## Changing boot settings and restarting
 
 Listen address, TLS files, database, master key, recordings storage and the other
