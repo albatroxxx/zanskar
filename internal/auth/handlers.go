@@ -269,12 +269,20 @@ func (h *Handler) changePassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	actor := h.actor(r)
-	// Only the session that owes the change, or a fully signed-in user, may
-	// change the password: a password-only session of an account with an
-	// authenticator could otherwise lock its owner out.
-	if !p.Session.MFAVerified && !p.User.MustChangePassword {
-		WriteError(w, http.StatusUnauthorized, "mfa_required", "second factor required")
-		return
+	// Only a fully signed-in user, or the session of an account without an
+	// authenticator that owes the change, may change the password: a
+	// password-only session of an account with an authenticator could
+	// otherwise lock its owner out.
+	if !p.Session.MFAVerified {
+		enrolled, err := h.TOTP.Enrolled(r.Context(), p.User.ID)
+		if err != nil {
+			h.serverError(w, r, err)
+			return
+		}
+		if enrolled || !p.User.MustChangePassword {
+			WriteError(w, http.StatusUnauthorized, "mfa_required", "second factor required")
+			return
+		}
 	}
 	if p.User.PasswordHash == "" || !user.VerifyPassword(p.User.PasswordHash, req.CurrentPassword) {
 		h.record(r, actor.Event("user.password.change", "user", p.User.ID, audit.Failure, map[string]string{"reason": "current_password_wrong"}))
