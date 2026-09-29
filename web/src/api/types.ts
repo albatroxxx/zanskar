@@ -378,6 +378,28 @@ export interface LogsPage {
   seen: number
 }
 
+/** A TLS certificate as the console sees it; never the key. Mirrors internal/tlscert.Info. */
+export interface TLSCertInfo {
+  source: 'uploaded' | 'file' | 'generated'
+  subject: string
+  issuer: string
+  hosts: string[]
+  not_before: string
+  not_after: string
+  fingerprint: string
+  self_signed: boolean
+  cert_pem?: string
+}
+
+/** GET /admin/tls. */
+export interface TLSStatus {
+  mode: 'file' | 'managed' | 'proxy'
+  active?: TLSCertInfo
+  uploaded?: TLSCertInfo
+  generated?: TLSCertInfo
+  file_hint?: string
+}
+
 /** GET /admin/system/status. Mirrors internal/lifecycle.Status. */
 export interface SystemStatus {
   version: string

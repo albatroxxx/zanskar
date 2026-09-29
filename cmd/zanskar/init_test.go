@@ -169,3 +169,23 @@ func TestGuacdRunHint(t *testing.T) {
 		t.Fatalf("HOME must be set for the image's user: %q", lines)
 	}
 }
+
+// TestRenderEnvManagedMode: managed TLS writes the mode and no certificate
+// files, and a public bind is accepted for it.
+func TestRenderEnvManagedMode(t *testing.T) {
+	a := validAnswers()
+	a.TLSMode = tlsModeManaged
+	a.ListenAddr = "0.0.0.0:443"
+	if err := validateAnswers(a); err != nil {
+		t.Fatal(err)
+	}
+	out := renderEnv(a)
+	if !strings.Contains(out, "ZANSKAR_TLS_MODE=managed\n") {
+		t.Errorf("managed env missing the mode: %s", out)
+	}
+	for _, no := range []string{"ZANSKAR_TLS_CERT", "ZANSKAR_TLS_KEY", "ZANSKAR_TRUST_PROXY_TLS"} {
+		if strings.Contains(out, no) {
+			t.Errorf("managed env must not set %s", no)
+		}
+	}
+}

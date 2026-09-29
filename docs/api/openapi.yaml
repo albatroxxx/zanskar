@@ -2221,6 +2221,103 @@ paths:
             application/x-ndjson:
               schema:
                 type: string
+  /admin/tls:
+    get:
+      tags: [admin]
+      summary: The certificate the gateway serves
+      description: >
+        Mode (file, managed, proxy) and, when the gateway terminates TLS, the certificate
+        being served plus the uploaded and generated ones on record (ADR 0021). Never a key.
+      responses:
+        "200":
+          description: The status.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TLSStatus"
+    put:
+      tags: [admin]
+      summary: Upload a certificate
+      description: >
+        PEM certificate chain and unencrypted private key. Validated (key matches, leaf in
+        its validity period, server authentication allowed), stored with the key sealed, and
+        served on the next connection. Audited as `tls.certificate.upload` with subject,
+        names, expiry and SHA-256.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [cert_pem, key_pem]
+              properties:
+                cert_pem:
+                  type: string
+                key_pem:
+                  type: string
+      responses:
+        "200":
+          description: The status after the upload.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TLSStatus"
+        "400":
+          description: The certificate or key was refused; the message says why.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: Proxy mode, nothing to manage; `code` is `tls_proxy`.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+    delete:
+      tags: [admin]
+      summary: Remove the uploaded certificate
+      description: The file certificate or the self-signed one serves again. Audited as `tls.certificate.reset`.
+      responses:
+        "200":
+          description: The status after the removal.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TLSStatus"
+        "409":
+          description: Proxy mode; `code` is `tls_proxy`.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /admin/tls/self-signed:
+    post:
+      tags: [admin]
+      summary: Regenerate the self-signed certificate
+      description: >
+        Makes a new self-signed certificate for the given names (default: the names the
+        gateway detected at start). It serves only while no uploaded or file certificate
+        takes precedence. Audited as `tls.certificate.regenerate`.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                hosts:
+                  type: array
+                  maxItems: 32
+                  items:
+                    type: string
+      responses:
+        "200":
+          description: The status after regeneration.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TLSStatus"
   /admin/system/status:
     get:
       tags: [admin]
@@ -3836,6 +3933,48 @@ components:
           $ref: "#/components/schemas/Timestamp"
         checked_at:
           $ref: "#/components/schemas/Timestamp"
+    TLSCertInfo:
+      type: object
+      required: [source, subject, issuer, hosts, not_before, not_after, fingerprint, self_signed]
+      properties:
+        source:
+          type: string
+          enum: [uploaded, file, generated]
+        subject:
+          type: string
+        issuer:
+          type: string
+        hosts:
+          type: array
+          items:
+            type: string
+        not_before:
+          $ref: "#/components/schemas/Timestamp"
+        not_after:
+          $ref: "#/components/schemas/Timestamp"
+        fingerprint:
+          type: string
+          description: SHA-256 of the leaf certificate, hex.
+        self_signed:
+          type: boolean
+        cert_pem:
+          type: string
+    TLSStatus:
+      type: object
+      required: [mode]
+      properties:
+        mode:
+          type: string
+          enum: [file, managed, proxy]
+        active:
+          $ref: "#/components/schemas/TLSCertInfo"
+        uploaded:
+          $ref: "#/components/schemas/TLSCertInfo"
+        generated:
+          $ref: "#/components/schemas/TLSCertInfo"
+        file_hint:
+          type: string
+          description: Names the environment variables when a file certificate is in use.
     SystemStatus:
       type: object
       required: [version, started_at, uptime_seconds, supervisor, live_sessions, env_file, restart_required, draining]

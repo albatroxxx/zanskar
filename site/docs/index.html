@@ -142,7 +142,8 @@ docker compose -f deploy/docker-compose.yml exec -it \
     <table><thead><tr><th scope="col">Variable</th><th scope="col">Purpose</th></tr></thead><tbody>
     <tr><td><code>ZANSKAR_MASTER_KEY</code></td><td><strong>Required.</strong> 32-byte base64 key that seals every stored secret. Generate with <code>openssl rand -base64 32</code> or <code>zanskar keygen</code>.</td></tr>
     <tr><td><code>ZANSKAR_LISTEN_ADDR</code></td><td>Listen address. Default <code>127.0.0.1:8443</code>. Plain HTTP is refused on non-loopback addresses.</td></tr>
-    <tr><td><code>ZANSKAR_TLS_CERT</code>, <code>ZANSKAR_TLS_KEY</code></td><td>Serve TLS directly. HSTS is sent automatically.</td></tr>
+    <tr><td><code>ZANSKAR_TLS_MODE</code></td><td><code>managed</code> (Zanskar serves TLS with a certificate it manages: self-signed at first start, replaced from Settings without a restart), <code>file</code>, or <code>proxy</code>. Unset: <code>file</code> when a certificate is set, else <code>proxy</code>.</td></tr>
+    <tr><td><code>ZANSKAR_TLS_CERT</code>, <code>ZANSKAR_TLS_KEY</code></td><td>Serve TLS directly from files. HSTS is sent automatically.</td></tr>
     <tr><td><code>ZANSKAR_TRUST_PROXY_TLS</code>, <code>ZANSKAR_TRUSTED_PROXIES</code></td><td>Behind a reverse proxy: honour <code>X-Forwarded-*</code> from the listed CIDRs so the audit log records real client IPs.</td></tr>
     <tr><td><code>ZANSKAR_DB_DRIVER</code>, <code>ZANSKAR_DB_DSN</code></td><td><code>sqlite</code> (default) or <code>postgres</code> with a connection string.</td></tr>
     <tr><td><code>ZANSKAR_RECORDINGS_DIR</code></td><td>Where session recordings are written. S3 storage is configured with the <code>ZANSKAR_RECORDINGS_S3_*</code> variables described in <code>docs/deploy.md</code>.</td></tr>

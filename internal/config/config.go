@@ -31,7 +31,14 @@ type Config struct {
 	MasterKey       []byte // 32 bytes; nil only when explicitly allowed (e.g. `migrate`)
 	TLSCert         string
 	TLSKey          string
-	GuacdAddr       string
+	// TLSMode is how the listener is protected: TLSFile serves the
+	// certificate in TLSCert/TLSKey, TLSManaged serves the certificate the
+	// console manages (self-signed until one is uploaded, ADR 0021), and
+	// TLSProxy speaks plain HTTP for a TLS-terminating proxy in front.
+	// Derived from the other variables when ZANSKAR_TLS_MODE is unset, so
+	// an existing install keeps its behaviour.
+	TLSMode   string
+	GuacdAddr string
 	// DockerPath is the container CLI used to spawn ephemeral database session
 	// containers (ADR 0017); empty defaults to "docker" on PATH. Set it to an
 	// absolute path or to "podman" for alternate runtimes.
@@ -89,6 +96,18 @@ type Config struct {
 // DefaultEnvFile is where the package and `zanskar init` put the file.
 const DefaultEnvFile = "/etc/zanskar/env"
 
+// TLS modes.
+const (
+	TLSFile    = "file"
+	TLSManaged = "managed"
+	TLSProxy   = "proxy"
+)
+
+// ServesTLS reports whether the gateway terminates TLS itself.
+func (c *Config) ServesTLS() bool {
+	return c.TLSMode == TLSFile || c.TLSMode == TLSManaged
+}
+
 // Options tunes what Load requires.
 type Options struct {
 	// RequireMasterKey makes a missing ZANSKAR_MASTER_KEY fatal. `serve` sets it;
@@ -129,6 +148,14 @@ func Load(opts Options) (*Config, error) {
 		LogFormat:            strings.ToLower(envOr("ZANSKAR_LOG_FORMAT", "json")),
 		ShutdownTimeout:      20 * time.Second,
 		EnvFile:              os.Getenv("ZANSKAR_ENV_FILE"),
+		TLSMode:              strings.ToLower(os.Getenv("ZANSKAR_TLS_MODE")),
+	}
+	if c.TLSMode == "" {
+		if c.TLSCert != "" {
+			c.TLSMode = TLSFile
+		} else {
+			c.TLSMode = TLSProxy
+		}
 	}
 	if c.EnvFile == "" {
 		if _, err := os.Stat(DefaultEnvFile); err == nil {
@@ -181,7 +208,16 @@ func Load(opts Options) (*Config, error) {
 	if (c.TLSCert == "") != (c.TLSKey == "") {
 		errs = append(errs, errors.New("ZANSKAR_TLS_CERT and ZANSKAR_TLS_KEY must be set together"))
 	}
-	if c.TLSCert == "" && !isLoopback(c.ListenAddr) && !c.AllowPlainHTTP {
+	switch c.TLSMode {
+	case TLSFile:
+		if c.TLSCert == "" {
+			errs = append(errs, errors.New("ZANSKAR_TLS_MODE=file needs ZANSKAR_TLS_CERT and ZANSKAR_TLS_KEY"))
+		}
+	case TLSManaged, TLSProxy:
+	default:
+		errs = append(errs, fmt.Errorf("ZANSKAR_TLS_MODE %q is not file, managed or proxy", c.TLSMode))
+	}
+	if !c.ServesTLS() && !isLoopback(c.ListenAddr) && !c.AllowPlainHTTP {
 		errs = append(errs, errors.New("refusing to serve plain HTTP on a non-loopback address; set ZANSKAR_TLS_CERT/ZANSKAR_TLS_KEY, bind to loopback behind a TLS proxy, or set ZANSKAR_ALLOW_PLAIN_HTTP=true for development only"))
 	}
 	if c.SIEMSyslogAddr != "" && !strings.HasPrefix(c.SIEMSyslogAddr, "tcp://") && !strings.HasPrefix(c.SIEMSyslogAddr, "tls://") {
@@ -236,7 +272,7 @@ func Load(opts Options) (*Config, error) {
 
 // SecureCookies reports whether browser cookies should carry the Secure flag.
 func (c *Config) SecureCookies() bool {
-	return c.TLSCert != "" || c.TrustProxyTLS
+	return c.ServesTLS() || c.TrustProxyTLS
 }
 
 func envOr(key, def string) string {

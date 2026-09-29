@@ -35,6 +35,7 @@ func runInit(args []string) error {
 	nonInteractive := fs.Bool("non-interactive", false, "never prompt; take values from flags and defaults")
 	listen := fs.String("listen", "", "listen address (default 127.0.0.1:8443)")
 	behindProxy := fs.Bool("behind-proxy", false, "a TLS proxy terminates in front on loopback (no cert needed)")
+	managedTLS := fs.Bool("managed-tls", false, "Zanskar serves TLS with a certificate it manages: self-signed at first start, replaced from the console (ADR 0021)")
 	tlsCert := fs.String("tls-cert", "", "path to the TLS certificate (own-certificate mode)")
 	tlsKey := fs.String("tls-key", "", "path to the TLS private key (own-certificate mode)")
 	dataDir := fs.String("data-dir", "", "directory for the database and recordings (default /var/lib/zanskar)")
@@ -64,6 +65,9 @@ func runInit(args []string) error {
 	// Flags override defaults; interactive mode fills the rest by prompting.
 	if *listen != "" {
 		a.ListenAddr = *listen
+	}
+	if *managedTLS {
+		a.TLSMode = tlsModeManaged
 	}
 	if *behindProxy {
 		a.TLSMode = tlsModeProxy
@@ -160,14 +164,15 @@ func serviceGID() int {
 
 // tls modes
 const (
-	tlsModeCert  = "cert"
-	tlsModeProxy = "proxy"
+	tlsModeCert    = "cert"
+	tlsModeManaged = "managed"
+	tlsModeProxy   = "proxy"
 )
 
 // initAnswers is the full set of inputs the env file is built from.
 type initAnswers struct {
 	ListenAddr string
-	TLSMode    string // cert | proxy
+	TLSMode    string // cert | proxy | managed
 	TLSCert    string
 	TLSKey     string
 	RequireMFA bool
@@ -209,11 +214,12 @@ func validateAnswers(a initAnswers) error {
 		if a.TLSCert == "" || a.TLSKey == "" {
 			return errors.New("own-certificate mode needs both --tls-cert and --tls-key")
 		}
+	case tlsModeManaged:
 	case tlsModeProxy:
 		// A loopback bind is what makes plain HTTP acceptable behind a proxy;
 		// refuse a non-loopback bind with no certificate, matching the server.
 		if !isLoopbackAddr(a.ListenAddr) {
-			return errors.New("behind-proxy mode must bind to loopback (e.g. 127.0.0.1:8443); use own-certificate mode to bind a public address")
+			return errors.New("behind-proxy mode must bind to loopback (e.g. 127.0.0.1:8443); use own-certificate or managed-TLS mode to bind a public address")
 		}
 	default:
 		return fmt.Errorf("unknown TLS mode %q", a.TLSMode)
@@ -270,6 +276,10 @@ func renderEnv(a initAnswers) string {
 
 	p("ZANSKAR_LISTEN_ADDR=%s\n", a.ListenAddr)
 	switch a.TLSMode {
+	case tlsModeManaged:
+		p("# TLS terminates in Zanskar with a certificate it manages: self-signed at\n")
+		p("# first start, replaced from the console (Settings, TLS certificate).\n")
+		p("ZANSKAR_TLS_MODE=managed\n")
 	case tlsModeCert:
 		p("# TLS terminates in Zanskar.\n")
 		p("ZANSKAR_TLS_CERT=%s\n", a.TLSCert)
@@ -494,11 +504,15 @@ func promptAnswers(a *initAnswers) error {
 	fmt.Println()
 
 	a.ListenAddr = ask(r, "Listen address", a.ListenAddr)
-	fmt.Println("TLS: [1] Zanskar terminates TLS (needs a cert)   [2] behind a TLS proxy on loopback")
-	if askBool(r, "Terminate TLS in Zanskar?", a.TLSMode == tlsModeCert) {
-		a.TLSMode = tlsModeCert
-		a.TLSCert = ask(r, "  TLS certificate path", a.TLSCert)
-		a.TLSKey = ask(r, "  TLS private key path", a.TLSKey)
+	fmt.Println("TLS: [1] Zanskar terminates TLS (a managed certificate, or your own files)   [2] behind a TLS proxy on loopback")
+	if askBool(r, "Terminate TLS in Zanskar?", a.TLSMode != tlsModeProxy) {
+		if askBool(r, "  Use a managed certificate (self-signed now; upload a real one in Settings)?", a.TLSMode != tlsModeCert) {
+			a.TLSMode = tlsModeManaged
+		} else {
+			a.TLSMode = tlsModeCert
+			a.TLSCert = ask(r, "  TLS certificate path", a.TLSCert)
+			a.TLSKey = ask(r, "  TLS private key path", a.TLSKey)
+		}
 	} else {
 		a.TLSMode = tlsModeProxy
 		if !isLoopbackAddr(a.ListenAddr) {

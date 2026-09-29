@@ -278,6 +278,24 @@ tooling below rather than `zanskar backup`.
 - `ZANSKAR_REQUIRE_MFA=true` (default). Do not turn it off outside throwaway installs.
   The console's Settings page can override it; the change is audited and shows its source.
 
+## TLS certificate
+
+`ZANSKAR_TLS_MODE` picks how the listener is protected (ADR 0021):
+
+- `managed`: Zanskar serves TLS itself with a certificate it manages. At first start it
+  makes a self-signed one for the listen host, the machine's host name and its addresses;
+  browsers warn until a real certificate is uploaded on the console's Settings page (PEM
+  certificate chain and unencrypted key). The upload applies to the next connection, no
+  restart, and can be removed again. The SHA-256 the gateway logs at start and shows in
+  Settings is what to check on the first visit. `zanskar init -managed-tls` writes this mode.
+- `file`: the certificate in `ZANSKAR_TLS_CERT` / `ZANSKAR_TLS_KEY`. A console upload takes
+  precedence over the file while it is set.
+- `proxy`: plain HTTP on loopback behind a TLS-terminating proxy; the certificate is the
+  proxy's business and the Settings card says so.
+
+Unset, the mode is `file` when a certificate is configured and `proxy` otherwise, so an
+existing install keeps its behaviour.
+
 ## Changing boot settings and restarting
 
 Listen address, TLS files, database, master key, recordings storage and the other
