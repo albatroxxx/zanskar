@@ -179,7 +179,7 @@ func (r *Relay) handle(ctx context.Context, conn net.Conn) {
 	}
 	auth := &trustAuth{user: r.User, upstreamErr: upErr, upCaps: upCaps}
 	srv := server.NewServer(version, mysql.DEFAULT_COLLATION_ID, mysql.AUTH_NATIVE_PASSWORD, nil, nil)
-	fc, err := srv.NewCustomizedConn(front, auth, server.EmptyHandler{})
+	fc, err := srv.NewCustomizedConn(front, auth, quietHandler{})
 	if err != nil {
 		r.Log.Warn("client sign-in refused", "err", err)
 		return
@@ -319,13 +319,30 @@ func (a *trustAuth) GetCredential(username string) (server.Credential, bool, err
 }
 
 func (a *trustAuth) OnAuthSuccess(c *server.Conn) error {
-	if diff := (c.Capability() ^ a.upCaps) & framingMask; diff != 0 {
-		return mysql.NewError(mysql.ER_NOT_SUPPORTED_YET, fmt.Sprintf("client and server disagree on protocol capabilities (%s); use a client that follows the server's offer", capNames(diff)))
+	if diff := framingMismatch(c.Capability(), a.upCaps); diff != 0 {
+		return mysql.NewError(mysql.ER_NOT_SUPPORTED_YET, fmt.Sprintf("client and server disagree on protocol capabilities (%s)", capNames(diff)))
 	}
 	return nil
 }
 
+// framingMismatch reports the framing flags on which the client-facing and
+// the upstream connection would disagree. A client's flags are taken as
+// sent, but what it can actually use is limited to what the server offered
+// (libmysqlclient echoes bits like DEPRECATE_EOF regardless and then frames
+// by the server's offer), so the effective client set is the intersection
+// with the relay's offer.
+func framingMismatch(clientFlags, upstream uint32) uint32 {
+	return ((clientFlags & requested) ^ upstream) & framingMask
+}
+
 func (a *trustAuth) OnAuthFailure(*server.Conn, error) {}
+
+// quietHandler is the command handler the relay never uses (commands are
+// relayed raw); go-mysql's EmptyHandler prints USE to stdout, which would
+// end up in the sidecar's log.
+type quietHandler struct{ server.EmptyHandler }
+
+func (quietHandler) UseDB(string) error { return nil }
 
 func capNames(flags uint32) string {
 	var names []string

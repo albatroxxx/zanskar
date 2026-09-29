@@ -185,10 +185,29 @@ func TestRelayRefusals(t *testing.T) {
 	if _, err := cli(relay, "root"); err == nil || !strings.Contains(err.Error(), "signs in as 'svc'") {
 		t.Fatalf("other user: %v", err)
 	}
+	// A client that echoes flags the relay never offered (go-mysql's client
+	// sends DEPRECATE_EOF and QUERY_ATTRIBUTES unasked, as libmysqlclient
+	// does) is fine: it can only use what was offered. One that lacks a
+	// framing flag the upstream has, here multi-results, is refused.
 	var my *mysql.MyError
 	if _, err := client.Connect(relay, "svc", "", ""); err == nil || !errors.As(err, &my) || my.Code != mysql.ER_NOT_SUPPORTED_YET {
-		t.Fatalf("flag mismatch must be refused as not supported: %v", err)
+		t.Fatalf("client without multi-results must be refused as not supported: %v", err)
 	}
+	c, err := client.Connect(relay, "svc", "", "", func(c *client.Conn) error {
+		for _, f := range []uint32{mysql.CLIENT_SESSION_TRACK, mysql.CLIENT_MULTI_RESULTS, mysql.CLIENT_PS_MULTI_RESULTS} {
+			if err := c.SetCapability(f); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("client echoing unoffered flags must still connect: %v", err)
+	}
+	if _, err := c.Execute("SELECT 1"); err != nil {
+		t.Fatalf("select through such a client: %v", err)
+	}
+	_ = c.Close()
 
 	bad := startRelay(t, Config{Upstream: Upstream{Addr: upstream, User: "svc", Password: "wrong"}})
 	if _, err := cli(bad, "svc"); err == nil || !errors.As(err, &my) || my.Code != mysql.ER_ACCESS_DENIED_ERROR {
@@ -196,7 +215,7 @@ func TestRelayRefusals(t *testing.T) {
 	}
 
 	down := startRelay(t, Config{Upstream: Upstream{Addr: "127.0.0.1:1", User: "svc", Password: "s3cret"}, DialTimeout: 2 * time.Second})
-	_, err := cli(down, "svc")
+	_, err = cli(down, "svc")
 	if err == nil || !strings.Contains(err.Error(), "did not accept the connection") || strings.Contains(err.Error(), "127.0.0.1:1") {
 		t.Fatalf("unreachable upstream must be a clean error without the address: %v", err)
 	}
@@ -254,6 +273,21 @@ func TestPacedRead(t *testing.T) {
 	n, _ = io.ReadFull(r, buf[:5])
 	if n != 5 || !bytes.Equal(buf[:5], p2[1:]) {
 		t.Fatalf("rest of second packet %q", buf[:n])
+	}
+}
+
+// TestFramingMismatch: the predicate ignores bits the relay never offered
+// and flags a framing capability that only one side holds.
+func TestFramingMismatch(t *testing.T) {
+	up := requested
+	if d := framingMismatch(requested|mysql.CLIENT_DEPRECATE_EOF|mysql.CLIENT_QUERY_ATTRIBUTES, up); d != 0 {
+		t.Fatalf("unoffered bits must not count: %s", capNames(d))
+	}
+	if d := framingMismatch(requested, up&^mysql.CLIENT_SESSION_TRACK); d != mysql.CLIENT_SESSION_TRACK {
+		t.Fatalf("upstream without session track: %s", capNames(d))
+	}
+	if d := framingMismatch(requested&^mysql.CLIENT_MULTI_RESULTS, up); d != mysql.CLIENT_MULTI_RESULTS {
+		t.Fatalf("client without multi results: %s", capNames(d))
 	}
 }
 
