@@ -13,6 +13,7 @@ import (
 	"crypto/x509/pkix"
 	"encoding/json"
 	"encoding/pem"
+	"errors"
 	"io"
 	"log/slog"
 	"math/big"
@@ -224,6 +225,9 @@ func TestRoutes(t *testing.T) {
 	if code, out, _ := do(srv, "POST", "/api/v1/admin/tls/self-signed", map[string]any{"hosts": []string{"gw.example.test"}}, admin, aCSRF); code != 200 || out["active"].(map[string]any)["source"] != SourceUploaded {
 		t.Fatalf("regenerate keeps the upload active: %d %v", code, out)
 	}
+	if code, out, _ := do(srv, "POST", "/api/v1/admin/tls/self-signed", map[string]any{"hosts": []string{"not a host"}}, admin, aCSRF); code != 400 {
+		t.Fatalf("bad host: %d %v", code, out)
+	}
 	if code, out, _ := do(srv, "DELETE", "/api/v1/admin/tls", nil, admin, aCSRF); code != 200 || out["active"].(map[string]any)["source"] != SourceGenerated {
 		t.Fatalf("reset: %d %v", code, out)
 	}
@@ -294,5 +298,26 @@ func TestListenerSwapsWithoutRestart(t *testing.T) {
 	}
 	if cn := leafCN(); cn != "Zanskar gateway" {
 		t.Fatalf("after reset: %q", cn)
+	}
+}
+
+// TestExpiredUploadIsDropped: an upload that expired while the gateway was
+// down is removed at load, with the generated certificate serving again.
+func TestExpiredUploadIsDropped(t *testing.T) {
+	ctx := context.Background()
+	repo, _ := newRepo(t)
+	expired, key := certFor(t, "old", time.Now().Add(-48*time.Hour), time.Now().Add(-time.Hour), nil)
+	if err := repo.Put(ctx, SourceUploaded, expired, key, ""); err != nil {
+		t.Fatal(err)
+	}
+	m := &Manager{Repo: repo, Log: slog.New(slog.NewTextHandler(io.Discard, nil)), Hosts: []string{"gw"}}
+	if err := m.Load(ctx); err != nil || m.Active().Source != SourceGenerated {
+		t.Fatalf("load: %+v %v", m.Active(), err)
+	}
+	if _, _, err := repo.Get(ctx, SourceUploaded); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("expired upload must be removed: %v", err)
+	}
+	if _, _, err := SelfSign([]string{"bad host"}); err == nil {
+		t.Fatal("SelfSign must refuse a bad host")
 	}
 }

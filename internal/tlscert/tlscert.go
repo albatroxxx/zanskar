@@ -28,6 +28,7 @@ import (
 	"math/big"
 	"net"
 	"os"
+	"regexp"
 	"sort"
 	"strings"
 	"sync/atomic"
@@ -138,13 +139,15 @@ func SelfSign(hosts []string) (certPEM, keyPEM string, err error) {
 		Subject:      pkix.Name{CommonName: "Zanskar gateway", Organization: []string{"Zanskar self-signed"}},
 		NotBefore:    now.Add(-time.Hour),
 		NotAfter:     now.AddDate(2, 0, 0),
-		KeyUsage:     x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
+		KeyUsage:     x509.KeyUsageDigitalSignature,
 		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
 	}
 	for _, h := range dedupe(hosts) {
 		if ip := net.ParseIP(h); ip != nil {
 			tmpl.IPAddresses = append(tmpl.IPAddresses, ip)
-		} else if h != "" {
+		} else if err := ValidHost(h); err != nil {
+			return "", "", err
+		} else {
 			tmpl.DNSNames = append(tmpl.DNSNames, strings.ToLower(h))
 		}
 	}
@@ -158,6 +161,19 @@ func SelfSign(hosts []string) (certPEM, keyPEM string, err error) {
 	}
 	return string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})),
 		string(pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: keyDER})), nil
+}
+
+var hostRe = regexp.MustCompile(`^[A-Za-z0-9]([A-Za-z0-9-]{0,62}[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]{0,62}[A-Za-z0-9])?)*$`)
+
+// ValidHost accepts an IP address or a DNS name of at most 253 characters.
+func ValidHost(h string) error {
+	if net.ParseIP(h) != nil {
+		return nil
+	}
+	if len(h) > 253 || !hostRe.MatchString(h) {
+		return fmt.Errorf("%w: %q is not a host name or IP address", ErrInvalid, h)
+	}
+	return nil
 }
 
 // LocalHosts guesses the names a self-signed certificate should carry: the
@@ -269,11 +285,16 @@ func (m *Manager) Load(ctx context.Context) error {
 		m.Log = slog.Default()
 	}
 	if certPEM, keyPEM, err := m.Repo.Get(ctx, SourceUploaded); err == nil {
-		if cert, leaf, err := Parse(certPEM, keyPEM); err == nil {
+		cert, leaf, perr := Parse(certPEM, keyPEM)
+		if perr == nil {
 			m.set(SourceUploaded, cert, leaf, certPEM)
 			return nil
-		} else {
-			m.Log.Warn("uploaded TLS certificate no longer valid; falling back", "err", err)
+		}
+		// An upload that expired while the gateway was down would hide from
+		// the card and could never be removed; drop it and say so.
+		m.Log.Warn("uploaded TLS certificate no longer valid; removed, falling back", "err", perr)
+		if err := m.Repo.Delete(ctx, SourceUploaded); err != nil {
+			return err
 		}
 	} else if !errors.Is(err, ErrNotFound) {
 		return err

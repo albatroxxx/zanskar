@@ -136,6 +136,12 @@ func (h *Handler) regenerate(w http.ResponseWriter, r *http.Request) {
 		httpx.BadRequest(w, "at most 32 hosts")
 		return
 	}
+	for _, host := range hosts {
+		if err := ValidHost(host); err != nil {
+			h.fail(w, r, err)
+			return
+		}
+	}
 	p, _ := auth.FromContext(r.Context())
 	if err := h.Manager.Regenerate(r.Context(), hosts, p.User.ID); err != nil {
 		h.fail(w, r, err)

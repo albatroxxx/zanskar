@@ -170,7 +170,7 @@ func runServe() error {
 	var tlsMgr *tlscert.Manager
 	if cfg.ServesTLS() {
 		tlsMgr = &tlscert.Manager{Repo: tlscert.NewRepo(db, ring), Log: log, Hosts: tlscert.LocalHosts(cfg.ListenAddr)}
-		if cfg.TLSMode == config.TLSFile {
+		if cfg.TLSCert != "" {
 			cert, err := tls.LoadX509KeyPair(cfg.TLSCert, cfg.TLSKey)
 			if err != nil {
 				return fmt.Errorf("ZANSKAR_TLS_CERT/ZANSKAR_TLS_KEY: %w", err)
