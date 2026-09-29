@@ -3,10 +3,12 @@
 package recstorage
 
 import (
+	"context"
 	"errors"
 	"log/slog"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/albatroxxx/zanskar/internal/audit"
 	"github.com/albatroxxx/zanskar/internal/auth"
@@ -80,12 +82,6 @@ func (h *Handler) test(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if c.Auth == AuthKeys && c.SecretAccessKey == "" {
-		// A test of the stored configuration with its stored secret.
-		if cur, err := h.Manager.Repo.Get(r.Context()); err == nil && cur != nil && cur.AccessKeyID == strings.TrimSpace(c.AccessKeyID) {
-			c.SecretAccessKey = cur.SecretAccessKey
-		}
-	}
 	if err := h.Manager.Test(r.Context(), c); err != nil {
 		h.fail(w, r, err)
 		return
@@ -122,12 +118,18 @@ func (h *Handler) reset(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) move(w http.ResponseWriter, r *http.Request) {
 	p, _ := auth.FromContext(r.Context())
 	actor := audit.Actor{UserID: p.User.ID, IP: auth.ClientIP(r)}
-	err := h.Manager.StartMove(r.Context(), func(final Move) {
+	err := h.Manager.StartMove(func(final Move) {
 		if h.Audit == nil {
 			return
 		}
-		_, _ = h.Audit.Record(r.Context(), actor.Event("recording.storage.move", "recording_storage", "gateway", audit.Success,
-			map[string]any{"moved": final.Moved, "failed": final.Failed, "total": final.Total}))
+		// The request is long gone when the move ends; the audit row gets
+		// its own context.
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if _, err := h.Audit.Record(ctx, actor.Event("recording.storage.move", "recording_storage", "gateway", audit.Success,
+			map[string]any{"moved": final.Moved, "failed": final.Failed, "total": final.Total, "last_error": final.LastError})); err != nil {
+			h.Log.Error("audit record failed", "action", "recording.storage.move", "err", err)
+		}
 	})
 	if err != nil {
 		if errors.Is(err, ErrBusy) {

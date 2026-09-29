@@ -204,17 +204,32 @@ type Manager struct {
 	Build func(ctx context.Context, o recording.S3Options) (*recording.S3Storage, error)
 	Log   *slog.Logger
 
-	mu     sync.Mutex
-	source string
-	active *Config
-	move   Move
+	mu         sync.Mutex
+	source     string
+	active     *Config
+	move       Move
+	moveCancel context.CancelFunc
 }
 
 func (m *Manager) build(ctx context.Context, c Config) (*recording.S3Storage, error) {
-	if m.Build == nil {
-		m.Build = recording.NewS3Storage
-	}
 	return m.Build(ctx, c.options(m.SpoolDir))
+}
+
+// carryForward fills a keys-auth request that left the access key id and
+// secret blank (the console never learns them back) from the stored row,
+// so a prefix or region change does not demand the credentials again.
+func (m *Manager) carryForward(ctx context.Context, c *Config) {
+	if c.Auth != AuthKeys || c.SecretAccessKey != "" {
+		return
+	}
+	cur, err := m.Repo.Get(ctx)
+	if err != nil || cur == nil || cur.Auth != AuthKeys {
+		return
+	}
+	id := strings.TrimSpace(c.AccessKeyID)
+	if id == "" || id == cur.AccessKeyID {
+		c.AccessKeyID, c.SecretAccessKey = cur.AccessKeyID, cur.SecretAccessKey
+	}
 }
 
 // Load resolves the backend at start. A console or environment
@@ -223,6 +238,9 @@ func (m *Manager) build(ctx context.Context, c Config) (*recording.S3Storage, er
 func (m *Manager) Load(ctx context.Context) error {
 	if m.Log == nil {
 		m.Log = slog.Default()
+	}
+	if m.Build == nil {
+		m.Build = recording.NewS3Storage
 	}
 	c, err := m.Repo.Get(ctx)
 	if err != nil {
@@ -307,6 +325,7 @@ func probe(ctx context.Context, s recording.Storage) error {
 
 // Test builds a backend from c and probes it, saving nothing.
 func (m *Manager) Test(ctx context.Context, c Config) error {
+	m.carryForward(ctx, &c)
 	if err := c.Validate(); err != nil {
 		return err
 	}
@@ -321,13 +340,9 @@ func (m *Manager) Test(ctx context.Context, c Config) error {
 }
 
 // Apply validates, probes, stores and activates c. When c keeps auth keys
-// but sends no secret, the stored secret is kept.
+// but sends no credentials, the stored ones are kept.
 func (m *Manager) Apply(ctx context.Context, c Config, by string) error {
-	if c.Auth == AuthKeys && c.SecretAccessKey == "" {
-		if cur, err := m.Repo.Get(ctx); err == nil && cur != nil && cur.AccessKeyID == strings.TrimSpace(c.AccessKeyID) {
-			c.SecretAccessKey = cur.SecretAccessKey
-		}
-	}
+	m.carryForward(ctx, &c)
 	if err := c.Validate(); err != nil {
 		return err
 	}
@@ -346,12 +361,27 @@ func (m *Manager) Apply(ctx context.Context, c Config, by string) error {
 }
 
 // Reset removes the console configuration; the environment's or the local
-// directory serves again.
+// directory serves again. The fallback is built before the row goes, so a
+// fallback that cannot be built leaves everything as it was.
 func (m *Manager) Reset(ctx context.Context) error {
+	var next *recording.S3Storage
+	source := SourceLocal
+	if m.Env != nil {
+		s, err := m.build(ctx, *m.Env)
+		if err != nil {
+			return fmt.Errorf("%w: the environment's bucket cannot be used: %w", ErrInvalid, err)
+		}
+		next, source = s, SourceEnvironment
+	}
 	if err := m.Repo.Delete(ctx); err != nil {
 		return err
 	}
-	return m.Load(ctx)
+	var cfg *Config
+	if source == SourceEnvironment {
+		cfg = m.Env
+	}
+	m.set(source, cfg, next)
+	return nil
 }
 
 // MoveState reports the move in progress or last finished.
@@ -363,9 +393,10 @@ func (m *Manager) MoveState() Move {
 
 // StartMove copies every finished local recording to the active bucket in
 // the background, verifying each copy's digest against the recording's
-// before switching the row and deleting the local file. One move at a
-// time; done reports the final state.
-func (m *Manager) StartMove(ctx context.Context, done func(Move)) error {
+// before switching the row and deleting the local file. It runs on its own
+// context, not the request's, which ends when the response is written;
+// StopMove cancels it. One move at a time; done reports the final state.
+func (m *Manager) StartMove(done func(Move)) error {
 	s := m.Router.S3()
 	if s == nil {
 		return fmt.Errorf("%w: no bucket is active", ErrInvalid)
@@ -377,14 +408,26 @@ func (m *Manager) StartMove(ctx context.Context, done func(Move)) error {
 	}
 	now := time.Now().UTC()
 	m.move = Move{Running: true, StartedAt: &now}
+	ctx, cancel := context.WithCancel(context.Background())
+	m.moveCancel = cancel
 	m.mu.Unlock()
 	go func() {
+		defer cancel()
 		final := m.run(ctx, s)
 		if done != nil {
 			done(final)
 		}
 	}()
 	return nil
+}
+
+// StopMove cancels a move in progress; the next batch is not started.
+func (m *Manager) StopMove() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.moveCancel != nil {
+		m.moveCancel()
+	}
 }
 
 func (m *Manager) run(ctx context.Context, s *recording.S3Storage) Move {

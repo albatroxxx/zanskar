@@ -161,9 +161,17 @@ func TestApplyProbeAndPrecedence(t *testing.T) {
 	if c, _ := h.repo.Get(ctx); c.SecretAccessKey != "s3cret" {
 		t.Fatal("sealed secret must round-trip")
 	}
-	// Keeping the keys without resending the secret keeps the stored one.
+	// Keeping the keys without resending the secret keeps the stored one,
+	// and so does leaving both the id and the secret blank, which is what
+	// the console sends when only the layout changes.
 	if err := m.Apply(ctx, Config{Bucket: "recs", Prefix: "gw2", Auth: AuthKeys, AccessKeyID: "AKIAEXAMPLE1234"}, ""); err != nil {
 		t.Fatalf("apply without secret: %v", err)
+	}
+	if err := m.Apply(ctx, Config{Bucket: "recs", Prefix: "gw3", Auth: AuthKeys}, ""); err != nil {
+		t.Fatalf("apply with blank credentials: %v", err)
+	}
+	if c, _ := h.repo.Get(ctx); c.AccessKeyID != "AKIAEXAMPLE1234" || c.SecretAccessKey != "s3cret" || c.Prefix != "gw3/" {
+		t.Fatalf("carried forward: %+v", c)
 	}
 
 	env := &Config{Bucket: "envbucket", Prefix: "recordings/", Auth: AuthRole}
@@ -249,10 +257,10 @@ func TestMoveLocalRecordings(t *testing.T) {
 		t.Fatal(err)
 	}
 	final := make(chan Move, 1)
-	if err := m.StartMove(ctx, func(mv Move) { final <- mv }); err != nil {
+	if err := m.StartMove(func(mv Move) { final <- mv }); err != nil {
 		t.Fatal(err)
 	}
-	if err := m.StartMove(ctx, nil); err != nil && !errors.Is(err, ErrBusy) {
+	if err := m.StartMove(nil); err != nil && !errors.Is(err, ErrBusy) {
 		t.Fatalf("second move: %v", err)
 	}
 	var mv Move
@@ -357,8 +365,55 @@ func TestRoutes(t *testing.T) {
 	if code != 200 || out["source"] != SourceConsole || strings.Contains(raw, "topsecret") || strings.Contains(raw, "AKIAEXAMPLE9999") {
 		t.Fatalf("save: %d %s", code, raw)
 	}
-	if code, out, _ := do("POST", "/api/v1/admin/storage/move", nil, admin, aCSRF); code != 202 || out["move"].(map[string]any)["running"] != true && out["move"].(map[string]any)["finished_at"] == nil {
+	// A local recording moves through the handler: the move outlives the
+	// request and is audited when done.
+	owner := &user.User{Username: "bob", DisplayName: "bob", Roles: []user.Role{user.RoleUser}}
+	if err := users.Create(ctx, owner); err != nil {
+		t.Fatal(err)
+	}
+	tgt := &target.Target{Name: "web-02", Address: "10.0.1.11", OSFamily: target.Linux}
+	if err := target.NewRepo(h.db).Create(ctx, tgt); err != nil {
+		t.Fatal(err)
+	}
+	lw, luri, err := h.router.Local.Create(ctx, "old.cast")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _ = io.WriteString(lw, "old recording")
+	_ = lw.Close()
+	sess := &session.Session{UserID: owner.ID, TargetID: tgt.ID, Protocol: "ssh", ClientIP: "203.0.113.9"}
+	if err := h.sessions.Start(ctx, sess); err != nil {
+		t.Fatal(err)
+	}
+	rec := &session.Recording{SessionID: sess.ID, Format: "asciicast", StorageURI: luri}
+	if err := h.sessions.CreateRecording(ctx, rec); err != nil {
+		t.Fatal(err)
+	}
+	sum := sha256.Sum256([]byte("old recording"))
+	if err := h.sessions.FinishRecording(ctx, rec.ID, 13, hex.EncodeToString(sum[:])); err != nil {
+		t.Fatal(err)
+	}
+	if code, out, _ := do("POST", "/api/v1/admin/storage/move", nil, admin, aCSRF); code != 202 {
 		t.Fatalf("move: %d %v", code, out)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		_, out, _ := do("GET", "/api/v1/admin/storage", nil, admin, aCSRF)
+		mv := out["move"].(map[string]any)
+		if mv["running"] == false && mv["finished_at"] != nil {
+			if mv["moved"] != float64(1) || mv["failed"] != float64(0) {
+				t.Fatalf("move result: %v", mv)
+			}
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("move did not finish: %v", mv)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	moveEvents, _, _ := auditLog.List(ctx, audit.Filter{Action: "recording.storage.move"})
+	if len(moveEvents) != 1 {
+		t.Fatalf("move must be audited once, got %d", len(moveEvents))
 	}
 	if code, out, _ := do("DELETE", "/api/v1/admin/storage", nil, admin, aCSRF); code != 200 || out["source"] != SourceLocal {
 		t.Fatalf("reset: %d %v", code, out)

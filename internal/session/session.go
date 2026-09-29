@@ -278,7 +278,7 @@ func (r *Repo) ListRecordingsByURIPrefix(ctx context.Context, prefix, afterID st
 		limit = 100
 	}
 	rows, err := r.db.QueryContext(ctx, r.db.Rebind(`SELECT id, session_id, format, storage_uri, size_bytes, sha256, started_at, finished_at, retention_until, created_at, purged_at
-		FROM recordings WHERE storage_uri LIKE ? AND finished_at IS NOT NULL AND purged_at IS NULL AND id > ? ORDER BY id LIMIT ?`),
+		FROM recordings WHERE storage_uri LIKE ? ESCAPE '\' AND finished_at IS NOT NULL AND purged_at IS NULL AND id > ? ORDER BY id LIMIT ?`),
 		strings.NewReplacer(`\`, `\\`, "%", `\%`, "_", `\_`).Replace(prefix)+"%", afterID, limit)
 	if err != nil {
 		return nil, err

@@ -318,7 +318,9 @@ checking each digest, and removes the local files. The `ZANSKAR_RECORDINGS_S3_*`
 remain the install-time default; a console setting overrides them and can be removed again.
 Recordings are always read from where they were written, so changing the prefix is safe;
 changing the bucket leaves earlier recordings unreachable until that bucket is configured
-again, and the card says so.
+again, and the card says so. The gateway refuses to start when a stored storage
+configuration cannot be built or its secret unsealed (recordings must not quietly go
+elsewhere); the way out is `DELETE FROM recording_storage;` in the database, then start.
 
 ## Changing boot settings and restarting
 

@@ -102,7 +102,7 @@ export function StorageCard() {
         </Field>
         {f.auth === 'keys' && (
           <>
-            <Field label="Access key ID"><input id="st-akid" value={f.access_key_id ?? ''} onChange={set('access_key_id')} autoComplete="off" /></Field>
+            <Field label="Access key ID" hint={status.source === 'console' && status.active?.auth === 'keys' ? 'blank keeps the stored key' : undefined}><input id="st-akid" value={f.access_key_id ?? ''} onChange={set('access_key_id')} autoComplete="off" placeholder={status.source === 'console' ? status.active?.access_key_id : undefined} /></Field>
             <Field label="Secret access key" hint={status.active?.secret_set && status.source === 'console' ? 'blank keeps the stored secret' : undefined}><input id="st-secret" type="password" value={f.secret_access_key ?? ''} onChange={set('secret_access_key')} autoComplete="new-password" /></Field>
           </>
         )}
