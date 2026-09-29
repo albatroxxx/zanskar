@@ -127,9 +127,19 @@ func (c *Controller) run(ctx context.Context, d Drain) {
 		c.Log.Warn("restarting on an administrator's request", "requested_by", d.RequestedBy, "sessions_ended", ended, "supervisor", Supervisor())
 	}
 	// Give the bridges a moment to record how their sessions ended before
-	// the listener goes away.
+	// the listener goes away, then sweep once more for a bridge that
+	// redeemed its ticket before the drain began and registered after the
+	// first pass, so it too ends with a recorded reason.
 	if ended > 0 {
 		time.Sleep(2 * poll)
+	}
+	for _, l := range c.Registry.List() {
+		if c.Registry.TerminateWithCause(l.SessionID, gateway.ErrGatewayRestart) {
+			ended++
+		}
+	}
+	if ended > 0 {
+		time.Sleep(poll)
 	}
 	c.Exit()
 }

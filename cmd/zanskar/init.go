@@ -265,7 +265,8 @@ func renderEnv(a initAnswers) string {
 	p := func(format string, args ...any) { fmt.Fprintf(&b, format, args...) }
 	p("# Zanskar configuration, written by `zanskar init`.\n")
 	p("# The server reads these variables from the environment (ADR 0014); this\n")
-	p("# file is loaded by the systemd unit. Mode 0600: it holds the master key.\n\n")
+	p("# file is loaded by the systemd unit. It holds the master key: mode 0600, or 0640\n")
+	p("# with the zanskar group so the running service can tell when it changed.\n\n")
 
 	p("ZANSKAR_LISTEN_ADDR=%s\n", a.ListenAddr)
 	switch a.TLSMode {
@@ -344,6 +345,8 @@ func masterKeyFrom(path string) string {
 
 // writeFileAtomic writes via a temp file in the same directory then renames, so
 // a crash never leaves a half-written env file (which could lose the key line).
+// A file being replaced keeps its owner and group: the service group must go
+// on reading it after a key rotation rewrites it.
 func writeFileAtomic(path string, data []byte, mode os.FileMode) error {
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0o750); err != nil {
@@ -358,6 +361,15 @@ func writeFileAtomic(path string, data []byte, mode os.FileMode) error {
 	if err := tmp.Chmod(mode); err != nil {
 		_ = tmp.Close()
 		return err
+	}
+	if info, err := os.Stat(path); err == nil {
+		if st, ok := info.Sys().(*syscall.Stat_t); ok {
+			// Not root: the file is already ours, chown would only fail.
+			if err := tmp.Chown(int(st.Uid), int(st.Gid)); err != nil && os.Geteuid() == 0 {
+				_ = tmp.Close()
+				return err
+			}
+		}
 	}
 	if _, err := tmp.Write(data); err != nil {
 		_ = tmp.Close()

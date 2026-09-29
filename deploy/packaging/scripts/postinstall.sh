@@ -8,6 +8,12 @@ set -e
 install -d -o zanskar -g zanskar -m 0750 /var/lib/zanskar
 install -d -o zanskar -g zanskar -m 0750 /var/lib/zanskar/recordings
 install -d -m 0755 /etc/zanskar
+# The running service reads the env file back to tell the console when it
+# changed (a restart is then due), so an existing file becomes group-readable.
+if [ -f /etc/zanskar/env ]; then
+	chown root:zanskar /etc/zanskar/env 2>/dev/null || true
+	chmod 0640 /etc/zanskar/env 2>/dev/null || true
+fi
 
 systemctl daemon-reload >/dev/null 2>&1 || true
 

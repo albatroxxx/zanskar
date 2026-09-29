@@ -41,7 +41,10 @@ export function RestartNotice() {
         .get<SystemStatus>('/admin/system/status')
         .then((s) => {
           if (cancelled) return
-          if (gone && s.started_at !== gone) {
+          // A different start time is the fresh process: reload for its
+          // bundle. Seen either after the server was away, or straight away
+          // when the restart was quick enough to fall between two polls.
+          if ((gone && s.started_at !== gone) || (status?.draining && s.started_at !== status.started_at)) {
             window.location.reload()
             return
           }
@@ -52,7 +55,7 @@ export function RestartNotice() {
           if (!cancelled && status?.draining) setGone(status.started_at)
         })
     tick()
-    const t = setInterval(tick, gone ? RECONNECT_MS : POLL_MS)
+    const t = setInterval(tick, gone || status?.draining ? RECONNECT_MS : POLL_MS)
     return () => {
       cancelled = true
       clearInterval(t)
