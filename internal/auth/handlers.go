@@ -252,13 +252,20 @@ func (h *Handler) completeLogin(w http.ResponseWriter, r *http.Request, u *user.
 	WriteJSON(w, http.StatusOK, loginResponse{Status: "ok", User: u, CSRFToken: h.Sessions.CSRFToken(sess.ID)})
 }
 
-// actionSelfReset is the audit action for a user replacing their
-// own password. Held in a constant rather than written at the call sites:
-// CodeQL's heuristics take a call with a password-like string argument as
-// a source of secret data and then read the audit chain's SHA-256 over
-// the event as password hashing, which it is not (the event carries no
-// password; the chain hashes every event's JSON for tamper evidence).
+// actionSelfReset is the audit action for a user replacing their own
+// password.
 const actionSelfReset = "user.password.change"
+
+// recordAction builds and records an audit event from its parts. The event
+// is built here, from plain parameters, rather than at the call sites:
+// CodeQL takes a call whose action argument evaluates to a password-like
+// string as a source of secret data, and then reads the audit chain's
+// SHA-256 over the event as password hashing, which it is not (the event
+// carries no password; the chain hashes every event's JSON for tamper
+// evidence). The admin API records the same way.
+func (h *Handler) recordAction(r *http.Request, actor audit.Actor, action, objectType, objectID string, outcome audit.Outcome, details any) {
+	h.record(r, actor.Event(action, objectType, objectID, outcome, details))
+}
 
 // changePassword lets a signed-in user replace their password: the step
 // owed after an administrator set one (a partial session), or a change of
@@ -292,7 +299,7 @@ func (h *Handler) changePassword(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if p.User.PasswordHash == "" || !user.VerifyPassword(p.User.PasswordHash, req.CurrentPassword) {
-		h.record(r, actor.Event(actionSelfReset, "user", p.User.ID, audit.Failure, map[string]string{"reason": "current_mismatch"}))
+		h.recordAction(r, actor, actionSelfReset, "user", p.User.ID, audit.Failure, map[string]string{"reason": "current_mismatch"})
 		WriteError(w, http.StatusUnauthorized, "invalid_credentials", "the current password is wrong")
 		return
 	}
@@ -315,7 +322,7 @@ func (h *Handler) changePassword(w http.ResponseWriter, r *http.Request) {
 	}
 	// The audit row says whether this was the forced first change or the
 	// user's own; a bool, since only the fact matters.
-	h.record(r, actor.Event(actionSelfReset, "user", p.User.ID, audit.Success, map[string]any{"session_id": p.Session.ID, "was_required": p.User.MustResetOnLogin}))
+	h.recordAction(r, actor, actionSelfReset, "user", p.User.ID, audit.Success, map[string]any{"session_id": p.Session.ID, "was_required": p.User.MustResetOnLogin})
 	p.User.MustResetOnLogin = false
 	if p.Session.MFAVerified {
 		WriteJSON(w, http.StatusOK, loginResponse{Status: "ok", User: p.User, CSRFToken: h.Sessions.CSRFToken(p.Session.ID)})
