@@ -16,6 +16,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"golang.org/x/crypto/ssh"
 
@@ -357,5 +358,81 @@ func TestHandlersNeverReturnSecrets(t *testing.T) {
 	}
 	if code, _ = e.do("POST", "/api/v1/credentials", map[string]any{"name": "bad", "type": "password", "mode": "vaulted"}); code != 400 {
 		t.Fatalf("validation error should be 400, got %d", code)
+	}
+}
+
+// TestCertificateAuthoritySettings: the lifetime and the principal allowlist
+// of an ssh_ca credential round-trip, are validated, and are refused on
+// every other type (ADR 0022).
+func TestCertificateAuthoritySettings(t *testing.T) {
+	ctx := context.Background()
+	v, _ := testVault(t)
+	caPEM, err := GenerateSSHKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := &Credential{Name: "ca", Type: TypeSSHCA, Mode: ModeVaulted, CertificateTTLSeconds: 120, CertificatePrincipals: []string{" deploy ", "ops", "deploy", ""}}
+	if err := v.Create(ctx, c, &Secret{PrivateKey: caPEM}, ""); err != nil {
+		t.Fatal(err)
+	}
+	got, err := v.Get(ctx, c.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.CertificateTTLSeconds != 120 || len(got.CertificatePrincipals) != 2 || got.CertificatePrincipals[0] != "deploy" || got.CertificatePrincipals[1] != "ops" {
+		t.Fatalf("round trip: ttl=%d principals=%v", got.CertificateTTLSeconds, got.CertificatePrincipals)
+	}
+	if got.CertificateTTL() != 120*time.Second || !got.PermitsPrincipal("ops") || got.PermitsPrincipal("root") {
+		t.Fatalf("helpers: ttl=%s ops=%v root=%v", got.CertificateTTL(), got.PermitsPrincipal("ops"), got.PermitsPrincipal("root"))
+	}
+	// Defaults: unset lifetime reads as the default, empty list permits anyone.
+	if _, err := v.Update(ctx, c.ID, Metadata{Name: "ca"}); err != nil {
+		t.Fatal(err)
+	}
+	got, _ = v.Get(ctx, c.ID)
+	if got.CertificateTTLSeconds != 0 || got.CertificateTTL() != DefaultCertificateTTL*time.Second || len(got.CertificatePrincipals) != 0 || !got.PermitsPrincipal("anyone") {
+		t.Fatalf("defaults: %+v", got)
+	}
+	for _, bad := range []Metadata{
+		{Name: "ca", CertificateTTLSeconds: 30},
+		{Name: "ca", CertificateTTLSeconds: 7200},
+		{Name: "ca", CertificatePrincipals: []string{"has space"}},
+		{Name: "ca", CertificatePrincipals: []string{strings.Repeat("x", 65)}},
+	} {
+		if _, err := v.Update(ctx, c.ID, bad); !errors.Is(err, ErrInvalid) {
+			t.Errorf("%+v must be refused, got %v", bad, err)
+		}
+	}
+	pw := &Credential{Name: "pw", Type: TypePassword, Mode: ModeVaulted, Username: "root", CertificateTTLSeconds: 300}
+	if err := v.Create(ctx, pw, &Secret{Password: "hunter2hunter2"}, ""); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("certificate settings on a password credential must be refused, got %v", err)
+	}
+}
+
+// TestCertificateAuthorityHandlerFields: the API creates a CA with a
+// generated key and the settings, never returns the key, and an update can
+// clear the fixed username so each user logs in as themselves.
+func TestCertificateAuthorityHandlerFields(t *testing.T) {
+	e := newHandlerEnv(t)
+	code, body := e.do("POST", "/api/v1/credentials", map[string]any{"name": "ca", "type": "ssh_ca", "mode": "vaulted", "username": "deploy",
+		"certificate_ttl_seconds": 600, "certificate_principals": []string{"deploy"}})
+	if code != 201 || !strings.Contains(body, "ssh-ed25519 ") || !strings.Contains(body, `"certificate_ttl_seconds":600`) || !strings.Contains(body, `"certificate_principals":["deploy"]`) {
+		t.Fatalf("create ca: %d %s", code, body)
+	}
+	assertNoSecrets(t, body)
+	var created Credential
+	_ = json.Unmarshal([]byte(body), &created)
+
+	code, body = e.do("PATCH", "/api/v1/credentials/"+created.ID, map[string]any{"username": "", "certificate_principals": []string{}})
+	if code != 200 || strings.Contains(body, `"username"`) || strings.Contains(body, `"certificate_principals"`) || !strings.Contains(body, `"certificate_ttl_seconds":600`) {
+		t.Fatalf("clearing username and principals keeps the ttl: %d %s", code, body)
+	}
+	code, body = e.do("PATCH", "/api/v1/credentials/"+created.ID, map[string]any{"name": "ca-renamed"})
+	if code != 200 || !strings.Contains(body, `"certificate_ttl_seconds":600`) {
+		t.Fatalf("a body without the settings leaves them alone: %d %s", code, body)
+	}
+	code, body = e.do("PATCH", "/api/v1/credentials/"+created.ID, map[string]any{"certificate_ttl_seconds": 10})
+	if code != 400 {
+		t.Fatalf("ttl below the minimum: %d %s", code, body)
 	}
 }

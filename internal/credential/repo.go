@@ -5,6 +5,7 @@ package credential
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -29,7 +30,7 @@ func NewVault(db *store.DB, ring *keyring.Ring) *Vault {
 }
 
 const cols = `id, name, type, mode, username, domain, public_key, key_version, created_by,
-	created_at, updated_at, rotated_at, secret_enc IS NOT NULL,
+	created_at, updated_at, rotated_at, secret_enc IS NOT NULL, certificate_ttl_seconds, certificate_principals,
 	(SELECT COUNT(*) FROM target_credentials tc WHERE tc.credential_id = credentials.id),
 	(SELECT COUNT(*) FROM asg_credentials ac WHERE ac.credential_id = credentials.id)`
 
@@ -56,10 +57,12 @@ func (v *Vault) Create(ctx context.Context, c *Credential, s *Secret, createdBy 
 		c.KeyVersion, c.HasSecret = ver, true
 	}
 	_, err = v.db.ExecContext(ctx, v.db.Rebind(`INSERT INTO credentials
-		(id, name, type, mode, username, domain, secret_enc, public_key, key_version, created_by, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`),
+		(id, name, type, mode, username, domain, secret_enc, public_key, key_version, created_by, created_at, updated_at,
+		 certificate_ttl_seconds, certificate_principals)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`),
 		c.ID, c.Name, string(c.Type), string(c.Mode), nullStr(c.Username), nullStr(c.Domain),
-		sealed, nullStr(c.PublicKey), keyVersion, nullStr(createdBy), store.TimeArg(now), store.TimeArg(now))
+		sealed, nullStr(c.PublicKey), keyVersion, nullStr(createdBy), store.TimeArg(now), store.TimeArg(now),
+		nullInt(c.CertificateTTLSeconds), principalsJSON(c.CertificatePrincipals))
 	if err != nil {
 		if isUnique(err) {
 			return ErrDuplicate
@@ -107,14 +110,27 @@ func (v *Vault) List(ctx context.Context, afterName string, limit int) ([]*Crede
 	return out, next, nil
 }
 
-// Update changes metadata only. Type and mode are immutable; use Rotate for
-// the secret.
-func (v *Vault) Update(ctx context.Context, id, name, username, domain string) (*Credential, error) {
+// Metadata is what Update may change. Type and mode are immutable; use
+// Rotate for the secret.
+type Metadata struct {
+	Name, Username, Domain string
+	// CertificateTTLSeconds and CertificatePrincipals apply to ssh_ca only.
+	CertificateTTLSeconds int
+	CertificatePrincipals []string
+}
+
+// Update changes metadata only.
+func (v *Vault) Update(ctx context.Context, id string, m Metadata) (*Credential, error) {
 	c, err := v.Get(ctx, id)
 	if err != nil {
 		return nil, err
 	}
+	name, username, domain := m.Name, m.Username, m.Domain
 	c.Name, c.Username, c.Domain = name, username, domain
+	c.CertificateTTLSeconds, c.CertificatePrincipals = m.CertificateTTLSeconds, m.CertificatePrincipals
+	if err := validateCertificateSettings(c); err != nil {
+		return nil, err
+	}
 	// Re-run the type rules against the current secret state: a vaulted
 	// password credential must keep a username, and so on.
 	if c.Mode == ModeVaulted && c.Type != TypeSSHCA && strings.TrimSpace(username) == "" {
@@ -129,8 +145,10 @@ func (v *Vault) Update(ctx context.Context, id, name, username, domain string) (
 	if c.Mode != ModeVaulted {
 		username = ""
 	}
-	res, err := v.db.ExecContext(ctx, v.db.Rebind(`UPDATE credentials SET name = ?, username = ?, domain = ?, updated_at = ? WHERE id = ?`),
-		strings.TrimSpace(name), nullStr(strings.TrimSpace(username)), nullStr(strings.TrimSpace(domain)), store.TimeArg(time.Now()), id)
+	res, err := v.db.ExecContext(ctx, v.db.Rebind(`UPDATE credentials SET name = ?, username = ?, domain = ?,
+		certificate_ttl_seconds = ?, certificate_principals = ?, updated_at = ? WHERE id = ?`),
+		strings.TrimSpace(name), nullStr(strings.TrimSpace(username)), nullStr(strings.TrimSpace(domain)),
+		nullInt(c.CertificateTTLSeconds), principalsJSON(c.CertificatePrincipals), store.TimeArg(time.Now()), id)
 	if err != nil {
 		if isUnique(err) {
 			return nil, ErrDuplicate
@@ -247,12 +265,13 @@ func scan(s scanner) (*Credential, error) {
 		c                         Credential
 		typ, mode                 string
 		username, domain, pub, by sql.NullString
-		keyVersion                sql.NullInt64
+		keyVersion, certTTL       sql.NullInt64
+		principals                []byte
 		created, updated, rotated store.NullTime
 		hasSecret                 bool
 	)
 	err := s.Scan(&c.ID, &c.Name, &typ, &mode, &username, &domain, &pub, &keyVersion, &by,
-		&created, &updated, &rotated, &hasSecret, &c.InUseBy.Targets, &c.InUseBy.AutoscalingGroups)
+		&created, &updated, &rotated, &hasSecret, &certTTL, &principals, &c.InUseBy.Targets, &c.InUseBy.AutoscalingGroups)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound
@@ -262,6 +281,10 @@ func scan(s scanner) (*Credential, error) {
 	c.Type, c.Mode = Type(typ), Mode(mode)
 	c.Username, c.Domain, c.PublicKey, c.CreatedBy = username.String, domain.String, pub.String, by.String
 	c.KeyVersion, c.HasSecret = int(keyVersion.Int64), hasSecret
+	c.CertificateTTLSeconds = int(certTTL.Int64)
+	if len(principals) > 0 {
+		_ = json.Unmarshal(principals, &c.CertificatePrincipals)
+	}
 	c.CreatedAt, c.UpdatedAt, c.RotatedAt = created.Time, updated.Time, rotated.Ptr()
 	return &c, nil
 }
@@ -319,4 +342,22 @@ func (v *Vault) EnsureUserSupplied(ctx context.Context, createdBy string) (strin
 		return "", err
 	}
 	return c.ID, nil
+}
+
+// nullInt stores zero as NULL so an unset lifetime reads back as the default.
+func nullInt(n int) any {
+	if n == 0 {
+		return nil
+	}
+	return n
+}
+
+// principalsJSON encodes the allowlist for the TEXT/JSONB column; nil and
+// empty both become "[]".
+func principalsJSON(p []string) string {
+	if len(p) == 0 {
+		return "[]"
+	}
+	b, _ := json.Marshal(p)
+	return string(b)
 }

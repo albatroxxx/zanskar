@@ -33,7 +33,7 @@
     <table><thead><tr><th scope="col">Type</th><th scope="col">Use it for</th></tr></thead><tbody>
     <tr><td>Password</td><td>SSH password login, WinRM and RDP domain or local accounts, PostgreSQL users. Username plus password.</td></tr>
     <tr><td>SSH key</td><td>SSH with a private key. Paste an existing key or let Zanskar generate an Ed25519 key and copy the public half into the target's <code>authorized_keys</code>.</td></tr>
-    <tr><td>SSH certificate authority</td><td>Keyless SSH: Zanskar mints a short-lived certificate per session. Install the CA public key as a <code>TrustedUserCAKeys</code> on targets.</td></tr>
+    <tr><td>SSH certificate authority</td><td><strong>Recommended for Linux.</strong> Keyless SSH: Zanskar generates the authority, mints a minutes-long certificate per session, and the console prints the <code>TrustedUserCAKeys</code> commands for each target. Optionally limit which login users it issues for; the target's auth log names the Zanskar user on every login.</td></tr>
     <tr><td>EC2 Instance Connect</td><td>Autoscaling groups. No stored secret; Zanskar pushes a one-time key through the AWS API using the cross-account role.</td></tr>
     </tbody></table>
     <p>Credentials can be rotated in place. A rotation keeps the credential's id, so every target bound to it picks up the new secret immediately.</p>

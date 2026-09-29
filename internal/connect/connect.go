@@ -409,6 +409,17 @@ func (h *Handler) issueTicket(ctx context.Context, p *auth.Principal, ip string,
 		if cred.Type == credential.TypeEC2InstanceConnect && (ep.ASGID == "" || h.Cloud == nil) {
 			return nil, "credential_mode_unavailable", "ec2 instance connect only applies to autoscaling instances", nil
 		}
+		if cred.Type == credential.TypeSSHCA {
+			// A certificate authority may be limited to named login users
+			// (ADR 0022). Decide here, before a ticket exists, so the user
+			// gets a plain answer rather than a broken socket.
+			// The caller audits the refusal as session.connect with this
+			// reason, like every other code.
+			loginUser := caLoginUser(cred, p.User.Username)
+			if !cred.PermitsPrincipal(loginUser) {
+				return nil, "login_user_not_permitted", "this certificate authority does not issue certificates for login user " + loginUser, nil
+			}
+		}
 	case credential.ModeUserSupplied:
 		if uc == nil || uc.Username == "" || uc.Password == "" {
 			return nil, "credential_required", "this target needs your username and password", nil
@@ -428,7 +439,7 @@ func (h *Handler) issueTicket(ctx context.Context, p *auth.Principal, ip string,
 
 func codeStatus(code string) int {
 	switch code {
-	case "policy_denied", "mfa_required_by_policy", "approval_required":
+	case "policy_denied", "mfa_required_by_policy", "approval_required", "login_user_not_permitted":
 		return http.StatusForbidden
 	case "credential_required":
 		return http.StatusUnprocessableEntity
@@ -516,11 +527,16 @@ func (h *Handler) terminal(w http.ResponseWriter, r *http.Request) {
 		case credential.TypeSSHCA:
 			// Certificate authority mode: mint a fresh, minutes-long user
 			// certificate for this session. The gateway stores no user key.
-			loginUser := opened.Username
-			if loginUser == "" {
-				loginUser = g.Username
+			// The allowlist was checked when the ticket was issued; the
+			// certificate carries that one principal and a key id naming
+			// the Zanskar user, which sshd logs on the target (ADR 0022).
+			loginUser := caLoginUser(&opened.Credential, g.Username)
+			if !opened.PermitsPrincipal(loginUser) {
+				httpx.WriteError(w, http.StatusForbidden, "login_user_not_permitted", "this certificate authority does not issue certificates for login user "+loginUser)
+				return
 			}
-			certLine, keyPEM, err := sshca.IssueForSession(opened.PrivateKey, loginUser, 5*time.Minute)
+			certLine, keyPEM, err := sshca.IssueForSession(opened.PrivateKey, sshca.CertParams{
+				Principals: []string{loginUser}, Validity: opened.CertificateTTL(), KeyID: sshca.SessionKeyID(g.Username, loginUser)})
 			if err != nil {
 				h.Log.Error("mint ssh certificate", "id", g.CredentialID, "err", err)
 				httpx.WriteError(w, http.StatusConflict, "credential_unavailable", "could not issue a session certificate")
@@ -692,4 +708,14 @@ func zero(b []byte) {
 	for i := range b {
 		b[i] = 0
 	}
+}
+
+// caLoginUser is the login user a certificate authority signs for: the
+// credential's username when it names one, otherwise the Zanskar username,
+// so each person reaches the target as themselves.
+func caLoginUser(c *credential.Credential, zanskarUser string) string {
+	if c.Username != "" {
+		return c.Username
+	}
+	return zanskarUser
 }

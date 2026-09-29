@@ -36,14 +36,19 @@ func (h *AdminHandler) Register(mux *http.ServeMux) {
 
 // writeRequest is the write-only body. Secret fields are never echoed back.
 type writeRequest struct {
-	Name                 string `json:"name"`
-	Type                 Type   `json:"type,omitempty"`
-	Mode                 Mode   `json:"mode,omitempty"`
-	Username             string `json:"username,omitempty"`
-	Domain               string `json:"domain,omitempty"`
-	Password             string `json:"password,omitempty"`
-	PrivateKey           string `json:"private_key,omitempty"`
-	PrivateKeyPassphrase string `json:"private_key_passphrase,omitempty"`
+	Name string `json:"name"`
+	Type Type   `json:"type,omitempty"`
+	Mode Mode   `json:"mode,omitempty"`
+	// Username is a pointer so an update can clear it: for ssh_ca an empty
+	// username means "each user logs in as their own Zanskar username".
+	Username             *string `json:"username,omitempty"`
+	Domain               string  `json:"domain,omitempty"`
+	Password             string  `json:"password,omitempty"`
+	PrivateKey           string  `json:"private_key,omitempty"`
+	PrivateKeyPassphrase string  `json:"private_key_passphrase,omitempty"`
+	// ssh_ca only (ADR 0022). Pointers so an update body can leave them alone.
+	CertificateTTLSeconds *int      `json:"certificate_ttl_seconds,omitempty"`
+	CertificatePrincipals *[]string `json:"certificate_principals,omitempty"`
 }
 
 func (r *writeRequest) secret() *Secret {
@@ -66,7 +71,16 @@ func (h *AdminHandler) create(w http.ResponseWriter, r *http.Request) {
 		httpx.BadRequest(w, err.Error())
 		return
 	}
-	c := &Credential{Name: req.Name, Type: req.Type, Mode: req.Mode, Username: req.Username, Domain: req.Domain}
+	c := &Credential{Name: req.Name, Type: req.Type, Mode: req.Mode, Domain: req.Domain}
+	if req.Username != nil {
+		c.Username = *req.Username
+	}
+	if req.CertificateTTLSeconds != nil {
+		c.CertificateTTLSeconds = *req.CertificateTTLSeconds
+	}
+	if req.CertificatePrincipals != nil {
+		c.CertificatePrincipals = *req.CertificatePrincipals
+	}
 	s := req.secret()
 	generated := false
 	// Per the API spec, omitting the key for a vaulted ssh_key or ssh_ca means
@@ -84,7 +98,7 @@ func (h *AdminHandler) create(w http.ResponseWriter, r *http.Request) {
 		h.writeErr(w, r, err)
 		return
 	}
-	h.record(r, "credential.create", c, map[string]any{"type": c.Type, "mode": c.Mode, "name": c.Name, "generated_key": generated})
+	h.record(r, "credential.create", c, map[string]any{"type": c.Type, "mode": c.Mode, "name": c.Name, "generated_key": generated, "certificate_principals": len(c.CertificatePrincipals)})
 	httpx.WriteJSON(w, http.StatusCreated, c)
 }
 
@@ -142,13 +156,22 @@ func (h *AdminHandler) update(w http.ResponseWriter, r *http.Request) {
 	if req.Name == "" {
 		req.Name = existing.Name
 	}
-	if req.Username == "" {
-		req.Username = existing.Username
+	username := existing.Username
+	if req.Username != nil {
+		username = *req.Username
 	}
 	if req.Domain == "" {
 		req.Domain = existing.Domain
 	}
-	c, err := h.Vault.Update(r.Context(), id, req.Name, req.Username, req.Domain)
+	m := Metadata{Name: req.Name, Username: username, Domain: req.Domain,
+		CertificateTTLSeconds: existing.CertificateTTLSeconds, CertificatePrincipals: existing.CertificatePrincipals}
+	if req.CertificateTTLSeconds != nil {
+		m.CertificateTTLSeconds = *req.CertificateTTLSeconds
+	}
+	if req.CertificatePrincipals != nil {
+		m.CertificatePrincipals = *req.CertificatePrincipals
+	}
+	c, err := h.Vault.Update(r.Context(), id, m)
 	if err != nil {
 		h.writeErr(w, r, err)
 		return
@@ -161,7 +184,7 @@ func (h *AdminHandler) update(w http.ResponseWriter, r *http.Request) {
 		}
 		h.record(r, "credential.rotate", c, map[string]any{"type": c.Type, "mode": c.Mode, "name": c.Name})
 	}
-	h.record(r, "credential.update", c, map[string]any{"type": c.Type, "mode": c.Mode, "name": c.Name})
+	h.record(r, "credential.update", c, map[string]any{"type": c.Type, "mode": c.Mode, "name": c.Name, "certificate_principals": len(c.CertificatePrincipals)})
 	httpx.WriteJSON(w, http.StatusOK, c)
 }
 

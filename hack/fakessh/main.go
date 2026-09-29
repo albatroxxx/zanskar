@@ -1,11 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
 
 // Command fakessh is a throwaway SSH server for local development and the
-// smoke test. It accepts password auth (test / pw), gives every session a
-// toy shell that upper-cases each line, and exits on "exit". It is not a
-// real shell: no processes are spawned, nothing touches the host.
+// smoke test. It accepts password auth (test / pw) and, with -ca-pub, user
+// certificates signed by that authority, the way sshd does with
+// TrustedUserCAKeys. Every session gets a toy shell that upper-cases each
+// line and exits on "exit". It is not a real shell: no processes are
+// spawned, nothing touches the host.
 //
-//	go run ./hack/fakessh [-hostkey path] [listen-addr]   (default 0.0.0.0:2222)
+//	go run ./hack/fakessh [-hostkey path] [-ca-pub path] [listen-addr]   (default 0.0.0.0:2222)
 //
 // With -hostkey the host key is loaded from, or generated and saved to, that
 // file so restarts keep the same fingerprint and pinned targets stay valid.
@@ -30,6 +32,7 @@ import (
 
 func main() {
 	keyPath := flag.String("hostkey", "", "path to persist the host key (generated if missing)")
+	caPath := flag.String("ca-pub", "", "authorized_keys line of a CA whose user certificates are accepted (like TrustedUserCAKeys)")
 	flag.Parse()
 	signer, err := hostKey(*keyPath)
 	if err != nil {
@@ -41,6 +44,31 @@ func main() {
 		}
 		return nil, errors.New("denied")
 	}}
+	if *caPath != "" {
+		raw, err := os.ReadFile(*caPath) // #nosec G304 -- operator-chosen dev path
+		if err != nil {
+			panic(err)
+		}
+		caPub, _, _, _, err := ssh.ParseAuthorizedKey(raw)
+		if err != nil {
+			panic(fmt.Errorf("ca-pub: %w", err))
+		}
+		// CertChecker verifies the signature, the validity window and that the
+		// login user is among the certificate's principals, as sshd does.
+		checker := &ssh.CertChecker{IsUserAuthority: func(k ssh.PublicKey) bool { return bytes.Equal(k.Marshal(), caPub.Marshal()) }}
+		cfg.PublicKeyCallback = func(c ssh.ConnMetadata, key ssh.PublicKey) (*ssh.Permissions, error) {
+			perms, err := checker.Authenticate(c, key)
+			if err != nil {
+				fmt.Println("certificate refused for", c.User()+":", err)
+				return nil, err
+			}
+			if cert, ok := key.(*ssh.Certificate); ok {
+				fmt.Println("accepted certificate for", c.User(), "key id", cert.KeyId)
+			}
+			return perms, nil
+		}
+		fmt.Println("trusting user certificates from", ssh.FingerprintSHA256(caPub))
+	}
 	cfg.AddHostKey(signer)
 	addr := "0.0.0.0:2222"
 	if flag.NArg() > 0 {

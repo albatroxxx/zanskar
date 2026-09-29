@@ -1064,7 +1064,9 @@ paths:
       description: |
         For `ssh_key` and `ssh_ca` with `mode=vaulted`, either send `private_key` or omit it to
         have Zanskar generate an ed25519 key. The public half is returned in `public_key`. For
-        `ec2_instance_connect` no secret is stored; the instance's IAM role is used.
+        `ec2_instance_connect` no secret is stored; the instance's IAM role is used. For
+        `ssh_ca` the username is optional: blank means each user logs in as their own Zanskar
+        username (ADR 0022).
       requestBody:
         required: true
         content:
@@ -1100,7 +1102,10 @@ paths:
     patch:
       tags: [admin]
       summary: Update a credential
-      description: Sending a new secret sets `rotated_at`. `type` and `mode` are immutable.
+      description: >
+        Sending a new secret sets `rotated_at`. `type` and `mode` are immutable. Fields left
+        out keep their value; for `ssh_ca`, `username: ""` clears the fixed login user and
+        `certificate_principals: []` clears the allowlist.
       requestBody:
         required: true
         content:
@@ -2697,7 +2702,7 @@ components:
       properties:
         code:
           type: string
-          description: Stable machine-readable code, for example `validation_failed`, `csrf_invalid`, `policy_denied`, `host_key_untrusted`, `instance_unhealthy`, `approval_required`, `not_eligible`, `duration_too_long`.
+          description: Stable machine-readable code, for example `validation_failed`, `csrf_invalid`, `policy_denied`, `host_key_untrusted`, `instance_unhealthy`, `approval_required`, `not_eligible`, `duration_too_long`, `login_user_not_permitted`.
         message:
           type: string
         request_id:
@@ -3153,6 +3158,14 @@ components:
               type: integer
             autoscaling_groups:
               type: integer
+        certificate_ttl_seconds:
+          type: integer
+          description: "`ssh_ca` only; absent means the default of 300."
+        certificate_principals:
+          type: array
+          items:
+            type: string
+          description: "`ssh_ca` only; absent means any login user."
     CredentialWrite:
       type: object
       required: [name, type, mode]
@@ -3167,7 +3180,9 @@ components:
           $ref: "#/components/schemas/CredentialMode"
         username:
           type: string
-          description: Required for `vaulted`. Ignored for `user_supplied` and `passthrough`.
+          description: >
+            Required for `vaulted` except `ssh_ca`, where blank means each user logs in as
+            their own Zanskar username. Ignored for `user_supplied` and `passthrough`.
         domain:
           type: string
           description: For `type=domain`.
@@ -3185,14 +3200,21 @@ components:
         certificate_ttl_seconds:
           type: integer
           minimum: 60
-          maximum: 86400
-          default: 900
-          description: For `ssh_ca`. Lifetime of certificates minted per session.
+          maximum: 3600
+          default: 300
+          description: >
+            For `ssh_ca` (ADR 0022). Lifetime of each certificate minted for a session; it only
+            has to outlive the handshake. Zero or absent means the default.
         certificate_principals:
           type: array
+          maxItems: 64
           items:
             type: string
-          description: For `ssh_ca`. Principals written into minted certificates. Defaults to the target username.
+          description: >
+            For `ssh_ca` (ADR 0022). Allowlist of login users the authority issues certificates
+            for. Each certificate carries exactly one principal, the session's login user
+            (`username`, else the Zanskar username); a connect for a login user not listed is
+            refused with `login_user_not_permitted`. Empty means any login user.
 
     # ---------------------------------------------------------------- targets
     Target:
