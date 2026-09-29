@@ -32,7 +32,7 @@ const enginePorts: Record<string, string> = { postgres: '5432', mysql: '3306', m
 const tlsModes = [
   { v: 'prefer', label: 'Prefer', hint: 'TLS when the database offers it, unverified (default)' },
   { v: 'require', label: 'Require', hint: 'TLS or refuse; the certificate is not verified' },
-  { v: 'verify-full', label: 'Verify full', hint: 'TLS, certificate chain and host name verified against the CA bundle below or the sidecar image’s roots' },
+  { v: 'verify-full', label: 'Verify full', hint: 'TLS, certificate chain and host name verified against the CA bundle below' },
   { v: 'disable', label: 'Disable', hint: 'never TLS; only for a database on a private network' },
 ]
 
@@ -125,7 +125,7 @@ export function TargetForm({ initial, kind, onClose, onSaved }: { initial?: Targ
         engine_version: database ? f.engine_version.trim() : '',
         database_name: database ? f.database_name.trim() : '',
         tls_mode: database ? f.tls_mode : '',
-        tls_ca: database && f.tls_mode === 'verify-full' ? f.tls_ca.trim() : '',
+        tls_ca: database ? f.tls_ca.trim() : '',
         retention_days: retention,
         ports,
         capabilities: initial?.capabilities ?? [],
@@ -220,8 +220,8 @@ export function TargetForm({ initial, kind, onClose, onSaved }: { initial?: Targ
                 </Field>
               </div>
               {f.tls_mode === 'verify-full' && (
-                <Field label="CA bundle (PEM)" hint="Optional: the certificate authority that signs the database's certificate, e.g. the provider's bundle. Leave blank to trust public roots.">
-                  <textarea id="t-tls-ca" value={f.tls_ca} onChange={set('tls_ca')} placeholder="-----BEGIN CERTIFICATE-----" />
+                <Field label="CA bundle (PEM)" hint="The certificate authority that signs the database's certificate, e.g. the provider's bundle (for RDS, the region's rds-ca bundle). Kept if you switch modes later.">
+                  <textarea id="t-tls-ca" value={f.tls_ca} onChange={set('tls_ca')} placeholder="-----BEGIN CERTIFICATE-----" required />
                 </Field>
               )}
             </>

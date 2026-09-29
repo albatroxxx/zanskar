@@ -145,6 +145,7 @@ func TestDatabaseTargetSettings(t *testing.T) {
 	}
 	for _, bad := range []Target{
 		{Name: "d", Address: "db", Engine: "postgres", TLSMode: "maybe"},
+		{Name: "d", Address: "db", Engine: "postgres", TLSMode: "verify-full"},
 		{Name: "d", Address: "db", Engine: "postgres", DatabaseName: "app; drop"},
 		{Name: "d", Address: "db", Engine: "postgres", TLSCA: "not pem"},
 	} {

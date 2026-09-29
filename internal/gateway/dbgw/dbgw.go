@@ -112,8 +112,8 @@ func names(sessionID string) (network, proxy, client string) {
 const proxyScript = `umask 077; printf %s "$PGB_INI" > /etc/pgbouncer/pgbouncer.ini; printf %s "$PGB_USERLIST" > /etc/pgbouncer/userlist.txt; [ -n "$PGB_CA" ] && printf %s "$PGB_CA" > /etc/pgbouncer/ca.pem; exec /usr/bin/pgbouncer /etc/pgbouncer/pgbouncer.ini`
 
 // sslMode maps the target's TLS mode onto pgbouncer's server_tls_sslmode.
-// verify-full without a CA bundle trusts the system roots pgbouncer's image
-// carries, which covers public providers.
+// verify-full always comes with a CA bundle (the target refuses it without
+// one), which pgbouncer validates against and nothing else.
 func sslMode(mode string) string {
 	switch mode {
 	case "disable", "require", "verify-full":
@@ -171,7 +171,7 @@ func proxyArgs(s Spec, network, name string) (args []string, env []string, err e
 		"ignore_startup_parameters=extra_float_digits\n" +
 		"max_client_conn=50\n" +
 		"admin_users=" + s.Username + "\n"
-	if s.TLSMode == "verify-full" && s.TLSCA != "" {
+	if s.TLSMode == "verify-full" {
 		ini += "server_tls_ca_file=/etc/pgbouncer/ca.pem\n"
 	}
 	// Trust ignores the client password, but the connecting user must be listed.

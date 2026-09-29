@@ -40,12 +40,19 @@ export function CredentialBindings(props: Props) {
   // A save (or an external refresh) hands down new bindings; the editor is
   // remounted on them so its draft starts from what is actually stored,
   // rather than being patched in an effect.
-  return <BindingsEditor key={JSON.stringify(props.current)} {...props} />
+  // The credential list arrives separately and decides how a binding is
+  // shown (a user_supplied row reads as that state), so it is part of the key.
+  return <BindingsEditor key={JSON.stringify(props.current) + ':' + props.credentials.length} {...props} />
 }
 
 /** CredentialSelect is the tri-state control, shared with the autoscaling form. */
 export function CredentialSelect({ id, protocol, value, credentials, disabled, onChange }: { id: string; protocol: Protocol; value: string; credentials: Credential[]; disabled?: boolean; onChange: (v: string) => void }) {
-  const vaulted = credentials.filter((c) => c.mode === 'vaulted' && suitable[protocol].includes(c.type))
+  const fits = (c: Credential) => suitable[protocol].includes(c.type)
+  const vaulted = credentials.filter((c) => c.mode === 'vaulted' && fits(c))
+  // A credential bound before the suitability rule, or of a type the rule
+  // does not list, stays visible as what it is rather than reading as none.
+  const bound = value && value !== USER_SUPPLIED ? credentials.find((c) => c.id === value) : undefined
+  const extra = bound && !vaulted.includes(bound) ? bound : undefined
   return (
     <select id={id} value={value} disabled={disabled} onChange={(e) => onChange(e.target.value)}>
       <option value="">— none —</option>
@@ -55,6 +62,12 @@ export function CredentialSelect({ id, protocol, value, credentials, disabled, o
           {c.name} ({c.type.replace(/_/g, ' ')}{c.username ? `, ${c.username}` : ''})
         </option>
       ))}
+      {extra && (
+        <option value={extra.id}>
+          {extra.name} ({extra.type.replace(/_/g, ' ')}; not usual for {protocol})
+        </option>
+      )}
+      {value && !bound && value !== USER_SUPPLIED && <option value={value}>bound credential (loading…)</option>}
     </select>
   )
 }

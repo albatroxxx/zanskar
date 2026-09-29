@@ -265,6 +265,12 @@ func (t *Target) Validate() error {
 				return fmt.Errorf("%w: tls_ca must hold at least one PEM certificate", ErrInvalid)
 			}
 		}
+		// Both sidecars verify against the bundle and nothing else (pgbouncer
+		// has no default roots for server_tls_ca_file), so verify-full
+		// without one would fail at every session start.
+		if t.TLSMode == TLSVerifyFull && t.TLSCA == "" {
+			return fmt.Errorf("%w: tls_mode verify-full needs tls_ca, the CA bundle that signs the database's certificate", ErrInvalid)
+		}
 	} else {
 		t.DatabaseName, t.TLSMode, t.TLSCA = "", "", ""
 	}

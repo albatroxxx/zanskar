@@ -306,11 +306,15 @@ func (v *Vault) EnsureUserSupplied(ctx context.Context, createdBy string) (strin
 	if !errors.Is(err, sql.ErrNoRows) {
 		return "", err
 	}
-	c := &Credential{Name: "User supplied", Type: TypePassword, Mode: ModeUserSupplied}
+	c := &Credential{Name: "User supplied (prompt at connect)", Type: TypePassword, Mode: ModeUserSupplied}
 	if err := v.Create(ctx, c, &Secret{}, createdBy); err != nil {
 		if errors.Is(err, ErrDuplicate) {
-			// Raced with another admin; the row exists now.
-			return v.EnsureUserSupplied(ctx, createdBy)
+			// Either another admin made it just now, or a vaulted credential
+			// took the name; look once more and give up rather than loop.
+			if err2 := v.db.QueryRowContext(ctx, v.db.Rebind(`SELECT id FROM credentials WHERE mode = ? ORDER BY created_at LIMIT 1`), string(ModeUserSupplied)).Scan(&id); err2 == nil {
+				return id, nil
+			}
+			return "", fmt.Errorf("%w: a credential named %q exists but is not the user-supplied one; rename it", ErrInvalid, c.Name)
 		}
 		return "", err
 	}

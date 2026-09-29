@@ -379,4 +379,7 @@ func TestRelayVerifyFull(t *testing.T) {
 	if _, err := Parse([]byte(`{"upstream":{"addr":"db:3306","user":"svc","tls":"verify-full","ca":"not a cert"}}`)); err == nil {
 		t.Fatal("a CA that is not PEM must be refused")
 	}
+	if _, err := Parse([]byte(`{"upstream":{"addr":"db:3306","user":"svc","tls":"verify-full"}}`)); err == nil {
+		t.Fatal("verify-full without a CA must be refused")
+	}
 }

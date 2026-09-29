@@ -63,8 +63,8 @@ type Upstream struct {
 	Password string  `json:"password"`
 	Database string  `json:"database,omitempty"`
 	TLS      TLSMode `json:"tls,omitempty"` // default prefer
-	// CA is a PEM bundle trusted for verify-full; empty means the system
-	// roots.
+	// CA is the PEM bundle trusted for verify-full (required for it; the
+	// target refuses verify-full without one, so the two sidecars agree).
 	CA string `json:"ca,omitempty"`
 }
 
@@ -108,6 +108,9 @@ func (c *Config) Validate() error {
 	}
 	if c.Upstream.CA != "" && !x509.NewCertPool().AppendCertsFromPEM([]byte(c.Upstream.CA)) {
 		return errors.New("dbproxy config: ca holds no PEM certificate")
+	}
+	if c.Upstream.TLS == TLSVerifyFull && c.Upstream.CA == "" {
+		return errors.New("dbproxy config: verify-full needs ca")
 	}
 	if _, _, err := net.SplitHostPort(c.Upstream.Addr); err != nil {
 		return fmt.Errorf("dbproxy config: upstream addr must be host:port")
@@ -284,20 +287,16 @@ func (r *Relay) connect(ctx context.Context, useTLS bool) (*client.Conn, error) 
 }
 
 // tlsConfig is the upstream TLS policy: verify-full checks the chain against
-// the target's CA bundle (or the system roots) and the host name; the other
-// modes encrypt without verifying, like pgbouncer's prefer and require.
+// the target's CA bundle and the host name; the other modes encrypt without
+// verifying, like pgbouncer's prefer and require.
 func (r *Relay) tlsConfig() *tls.Config {
 	if r.Upstream.TLS != TLSVerifyFull {
 		return unverifiedTLS()
 	}
 	host, _, _ := net.SplitHostPort(r.Upstream.Addr)
-	cfg := &tls.Config{ServerName: host, MinVersion: tls.VersionTLS12}
-	if r.Upstream.CA != "" {
-		pool := x509.NewCertPool()
-		pool.AppendCertsFromPEM([]byte(r.Upstream.CA))
-		cfg.RootCAs = pool
-	}
-	return cfg
+	pool := x509.NewCertPool()
+	pool.AppendCertsFromPEM([]byte(r.Upstream.CA))
+	return &tls.Config{ServerName: host, MinVersion: tls.VersionTLS12, RootCAs: pool}
 }
 
 // unverifiedTLS encrypts the upstream connection without verifying the
