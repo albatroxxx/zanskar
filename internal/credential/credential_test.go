@@ -436,3 +436,139 @@ func TestCertificateAuthorityHandlerFields(t *testing.T) {
 		t.Fatalf("ttl below the minimum: %d %s", code, body)
 	}
 }
+
+// TestCertificateAuthorityRotation: prepare seals a next key beside the
+// signing key under its own scope, cut over swaps and keeps the old public
+// key as retired, cancel and retire clear their halves, and in-place rotate
+// is refused for an authority (ADR 0022).
+func TestCertificateAuthorityRotation(t *testing.T) {
+	ctx := context.Background()
+	v, db := testVault(t)
+	first, _ := GenerateSSHKey()
+	next, _ := GenerateSSHKey()
+	c := &Credential{Name: "ca", Type: TypeSSHCA, Mode: ModeVaulted}
+	if err := v.Create(ctx, c, &Secret{PrivateKey: first}, ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := v.Rotate(ctx, c.ID, &Secret{PrivateKey: next}); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("in-place rotate of an authority must be refused, got %v", err)
+	}
+	if _, err := v.CutOver(ctx, c.ID); !errors.Is(err, ErrNoRotation) {
+		t.Fatalf("cut over without a prepared key: %v", err)
+	}
+	if _, err := v.PrepareRotation(ctx, c.ID, &Secret{PrivateKey: first}); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("the next key must differ from the current one, got %v", err)
+	}
+	got, err := v.PrepareRotation(ctx, c.ID, &Secret{PrivateKey: next})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Rotation == nil || got.Rotation.PendingPublicKey == "" || got.Rotation.PendingSince == nil || got.Rotation.PendingPublicKey == got.PublicKey {
+		t.Fatalf("prepared: %+v", got.Rotation)
+	}
+	if _, err := v.PrepareRotation(ctx, c.ID, &Secret{PrivateKey: next}); !errors.Is(err, ErrRotationPending) {
+		t.Fatalf("second prepare must be refused, got %v", err)
+	}
+	// The signing key is untouched; the pending key opens separately and is
+	// bound to its own column: moved into secret_enc it does not unseal.
+	cur, err := v.Open(ctx, c.ID)
+	if err != nil || cur.PublicKey != got.PublicKey {
+		t.Fatalf("open current: %v", err)
+	}
+	cur.Close()
+	pend, err := v.OpenPending(ctx, c.ID)
+	if err != nil || pend.PublicKey != got.Rotation.PendingPublicKey {
+		t.Fatalf("open pending: %v", err)
+	}
+	pend.Close()
+	if _, err := db.ExecContext(ctx, db.Rebind(`UPDATE credentials SET secret_enc = pending_secret_enc, key_version = pending_key_version WHERE id = ?`), c.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := v.Open(ctx, c.ID); err == nil {
+		t.Fatal("a pending ciphertext moved into the signing column must not unseal")
+	}
+	if _, err := v.CancelRotation(ctx, c.ID); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ = v.Get(ctx, c.ID); got.Rotation != nil {
+		t.Fatalf("cancel should clear the pending half: %+v", got.Rotation)
+	}
+	// Restore the signing key and run the full cycle.
+	if _, err := db.ExecContext(ctx, db.Rebind(`DELETE FROM credentials WHERE id = ?`), c.ID); err != nil {
+		t.Fatal(err)
+	}
+	c = &Credential{Name: "ca2", Type: TypeSSHCA, Mode: ModeVaulted}
+	if err := v.Create(ctx, c, &Secret{PrivateKey: first}, ""); err != nil {
+		t.Fatal(err)
+	}
+	oldPub := c.PublicKey
+	if _, err := v.PrepareRotation(ctx, c.ID, &Secret{PrivateKey: next}); err != nil {
+		t.Fatal(err)
+	}
+	got, err = v.CutOver(ctx, c.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.PublicKey == oldPub || got.Rotation == nil || got.Rotation.PendingPublicKey != "" || got.Rotation.RetiredPublicKey != oldPub || got.RotatedAt == nil {
+		t.Fatalf("cut over: pub=%q rotation=%+v rotated=%v", got.PublicKey[:20], got.Rotation, got.RotatedAt)
+	}
+	opened, err := v.Open(ctx, c.ID)
+	if err != nil || opened.PublicKey != got.PublicKey {
+		t.Fatalf("the new key signs after cut over: %v", err)
+	}
+	opened.Close()
+	if _, err := v.OpenPending(ctx, c.ID); !errors.Is(err, ErrNoRotation) {
+		t.Fatalf("nothing pending after cut over, got %v", err)
+	}
+	if got, err = v.Retire(ctx, c.ID); err != nil || got.Rotation != nil {
+		t.Fatalf("retire: %v %+v", err, got.Rotation)
+	}
+	if _, err := v.Retire(ctx, c.ID); !errors.Is(err, ErrNoRotation) {
+		t.Fatalf("second retire: %v", err)
+	}
+}
+
+// TestCertificateAuthorityRotationRoutes: the rotate route prepares (and
+// generates) for an authority, an update body with a key is refused, and
+// the cut-over, cancel and retire routes drive the state; keys never leak.
+func TestCertificateAuthorityRotationRoutes(t *testing.T) {
+	e := newHandlerEnv(t)
+	code, body := e.do("POST", "/api/v1/credentials", map[string]any{"name": "ca", "type": "ssh_ca", "mode": "vaulted"})
+	if code != 201 {
+		t.Fatalf("create: %d %s", code, body)
+	}
+	var c Credential
+	_ = json.Unmarshal([]byte(body), &c)
+	code, body = e.do("PATCH", "/api/v1/credentials/"+c.ID, map[string]any{"private_key": "-----BEGIN OPENSSH PRIVATE KEY-----\nAAAA\n-----END OPENSSH PRIVATE KEY-----"})
+	if code != 400 {
+		t.Fatalf("a key in an update body must be refused for an authority: %d %s", code, body)
+	}
+	code, body = e.do("POST", "/api/v1/credentials/"+c.ID+"/rotate", map[string]any{})
+	if code != 200 || !strings.Contains(body, `"pending_public_key":"ssh-ed25519 `) || !strings.Contains(body, `"pending_since"`) {
+		t.Fatalf("prepare with a generated key: %d %s", code, body)
+	}
+	assertNoSecrets(t, body)
+	if code, body = e.do("POST", "/api/v1/credentials/"+c.ID+"/rotate", map[string]any{}); code != 409 || !strings.Contains(body, "rotation_pending") {
+		t.Fatalf("second prepare: %d %s", code, body)
+	}
+	if code, body = e.do("DELETE", "/api/v1/credentials/"+c.ID+"/rotate", nil); code != 200 || strings.Contains(body, "pending_public_key") {
+		t.Fatalf("cancel: %d %s", code, body)
+	}
+	if code, body = e.do("POST", "/api/v1/credentials/"+c.ID+"/rotate/cut-over", nil); code != 409 || !strings.Contains(body, "no_rotation") {
+		t.Fatalf("cut over with nothing prepared: %d %s", code, body)
+	}
+	if code, body = e.do("POST", "/api/v1/credentials/"+c.ID+"/rotate", map[string]any{}); code != 200 {
+		t.Fatalf("prepare again: %d %s", code, body)
+	}
+	code, body = e.do("POST", "/api/v1/credentials/"+c.ID+"/rotate/cut-over", nil)
+	if code != 200 || strings.Contains(body, "pending_public_key") || !strings.Contains(body, `"retired_public_key":"`+c.PublicKey+`"`) || !strings.Contains(body, `"rotated_at"`) {
+		t.Fatalf("cut over: %d %s", code, body)
+	}
+	assertNoSecrets(t, body)
+	if code, body = e.do("POST", "/api/v1/credentials/"+c.ID+"/rotate/retire", nil); code != 200 || strings.Contains(body, "retired_public_key") {
+		t.Fatalf("retire: %d %s", code, body)
+	}
+	if code, body = e.do("POST", "/api/v1/credentials/"+c.ID+"/rotate/retire", nil); code != 409 {
+		t.Fatalf("retire twice: %d %s", code, body)
+	}
+}

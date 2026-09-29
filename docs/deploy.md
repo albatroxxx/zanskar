@@ -383,10 +383,15 @@ account. The credential's **Allowed login users** list limits which login users 
 issue for; a connect for anyone else is refused with `login_user_not_permitted` before a
 certificate exists, and audited.
 
-Rotating the authority itself is a two-step console operation (prepare the next key, install
-both public keys on targets, cut over, then remove the old one); it never breaks a session on
-a host that has not yet learned the new key. Windows and database passwords are not rotated
-by Zanskar; leave that to the system that owns the account.
+**Rotating the authority** is two steps in the credential's Setup panel, so no session
+breaks on a host that has not learned the new key yet: *Prepare next key* generates and
+seals a second key, and the install commands now write both public keys; **Test** each
+bound target with the next key (a real one-off login, visible in the target's auth log as
+`zanskar-probe:<admin>:<login user>`); *Cut over* once they all pass, after which sessions
+use the new key and the old private key is gone; then remove the old public key from
+targets and confirm. There is no timer: rotate when the key may have been exposed or when
+policy says so. Windows and database passwords are not rotated by Zanskar; leave that to the
+system that owns the account.
 
 ## Changing boot settings and restarting
 

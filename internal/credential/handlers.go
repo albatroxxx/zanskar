@@ -8,6 +8,8 @@ import (
 	"net/http"
 	"strings"
 
+	"golang.org/x/crypto/ssh"
+
 	"github.com/albatroxxx/zanskar/internal/audit"
 	"github.com/albatroxxx/zanskar/internal/auth"
 	"github.com/albatroxxx/zanskar/internal/httpx"
@@ -32,6 +34,10 @@ func (h *AdminHandler) Register(mux *http.ServeMux) {
 	mux.Handle("PATCH /api/v1/credentials/{id}", admin(http.HandlerFunc(h.update)))
 	mux.Handle("DELETE /api/v1/credentials/{id}", admin(http.HandlerFunc(h.delete)))
 	mux.Handle("POST /api/v1/credentials/{id}/rotate", admin(http.HandlerFunc(h.rotate)))
+	// Two-phase rotation of a certificate authority (ADR 0022).
+	mux.Handle("POST /api/v1/credentials/{id}/rotate/cut-over", admin(http.HandlerFunc(h.cutOver)))
+	mux.Handle("DELETE /api/v1/credentials/{id}/rotate", admin(http.HandlerFunc(h.cancelRotation)))
+	mux.Handle("POST /api/v1/credentials/{id}/rotate/retire", admin(http.HandlerFunc(h.retire)))
 }
 
 // writeRequest is the write-only body. Secret fields are never echoed back.
@@ -188,19 +194,108 @@ func (h *AdminHandler) update(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, c)
 }
 
+// rotate replaces the secret in place, except for a certificate authority,
+// where it prepares the next key: targets must trust the new public key
+// before the gateway signs with it (ADR 0022). An omitted key for ssh_key or
+// ssh_ca is generated.
 func (h *AdminHandler) rotate(w http.ResponseWriter, r *http.Request) {
 	var req writeRequest
 	if err := httpx.DecodeJSON(r, &req); err != nil {
 		httpx.BadRequest(w, err.Error())
 		return
 	}
-	c, err := h.Vault.Rotate(r.Context(), r.PathValue("id"), req.secret())
+	id := r.PathValue("id")
+	existing, err := h.Vault.Get(r.Context(), id)
 	if err != nil {
 		h.writeErr(w, r, err)
 		return
 	}
-	h.record(r, "credential.rotate", c, map[string]any{"type": c.Type, "mode": c.Mode, "name": c.Name})
+	s := req.secret()
+	generated := false
+	if existing.Mode == ModeVaulted && (existing.Type == TypeSSHKey || existing.Type == TypeSSHCA) && s.PrivateKey == "" && s.Password == "" {
+		pemText, err := GenerateSSHKey()
+		if err != nil {
+			h.serverError(w, r, err)
+			return
+		}
+		s.PrivateKey, generated = pemText, true
+	}
+	if existing.Type == TypeSSHCA {
+		c, err := h.Vault.PrepareRotation(r.Context(), id, s)
+		if err != nil {
+			h.writeErr(w, r, err)
+			return
+		}
+		h.record(r, "credential.rotate.prepare", c, map[string]any{"type": c.Type, "name": c.Name, "generated_key": generated,
+			"next_fingerprint": fingerprint(c.Rotation.PendingPublicKey)})
+		httpx.WriteJSON(w, http.StatusOK, c)
+		return
+	}
+	c, err := h.Vault.Rotate(r.Context(), id, s)
+	if err != nil {
+		h.writeErr(w, r, err)
+		return
+	}
+	h.record(r, "credential.rotate", c, map[string]any{"type": c.Type, "mode": c.Mode, "name": c.Name, "generated_key": generated})
 	httpx.WriteJSON(w, http.StatusOK, c)
+}
+
+func (h *AdminHandler) cutOver(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	before, err := h.Vault.Get(r.Context(), id)
+	if err != nil {
+		h.writeErr(w, r, err)
+		return
+	}
+	c, err := h.Vault.CutOver(r.Context(), id)
+	if err != nil {
+		h.writeErr(w, r, err)
+		return
+	}
+	h.record(r, "credential.rotate", c, map[string]any{"type": c.Type, "mode": c.Mode, "name": c.Name,
+		"old_fingerprint": fingerprint(before.PublicKey), "new_fingerprint": fingerprint(c.PublicKey)})
+	httpx.WriteJSON(w, http.StatusOK, c)
+}
+
+func (h *AdminHandler) cancelRotation(w http.ResponseWriter, r *http.Request) {
+	c, err := h.Vault.CancelRotation(r.Context(), r.PathValue("id"))
+	if err != nil {
+		h.writeErr(w, r, err)
+		return
+	}
+	h.record(r, "credential.rotate.cancel", c, map[string]any{"type": c.Type, "name": c.Name})
+	httpx.WriteJSON(w, http.StatusOK, c)
+}
+
+func (h *AdminHandler) retire(w http.ResponseWriter, r *http.Request) {
+	before, err := h.Vault.Get(r.Context(), r.PathValue("id"))
+	if err != nil {
+		h.writeErr(w, r, err)
+		return
+	}
+	c, err := h.Vault.Retire(r.Context(), before.ID)
+	if err != nil {
+		h.writeErr(w, r, err)
+		return
+	}
+	retired := ""
+	if before.Rotation != nil {
+		retired = fingerprint(before.Rotation.RetiredPublicKey)
+	}
+	h.record(r, "credential.rotate.retire", c, map[string]any{"type": c.Type, "name": c.Name, "retired_fingerprint": retired})
+	httpx.WriteJSON(w, http.StatusOK, c)
+}
+
+// fingerprint is the SHA-256 fingerprint of an authorized_keys line, or "".
+func fingerprint(authorizedKey string) string {
+	if authorizedKey == "" {
+		return ""
+	}
+	pub, _, _, _, err := ssh.ParseAuthorizedKey([]byte(authorizedKey))
+	if err != nil {
+		return ""
+	}
+	return ssh.FingerprintSHA256(pub)
 }
 
 func (h *AdminHandler) delete(w http.ResponseWriter, r *http.Request) {
@@ -241,6 +336,10 @@ func (h *AdminHandler) writeErr(w http.ResponseWriter, r *http.Request, err erro
 		httpx.WriteError(w, http.StatusConflict, "conflict", "a credential with that name already exists")
 	case errors.Is(err, ErrInUse):
 		httpx.WriteError(w, http.StatusConflict, "in_use", "credential is still referenced by a target or autoscaling group")
+	case errors.Is(err, ErrRotationPending):
+		httpx.WriteError(w, http.StatusConflict, "rotation_pending", "a next key is already prepared; cut over or cancel it first")
+	case errors.Is(err, ErrNoRotation):
+		httpx.WriteError(w, http.StatusConflict, "no_rotation", "no rotation is in progress for this credential")
 	case errors.Is(err, ErrInvalid), errors.Is(err, ErrBadKey), errors.Is(err, ErrPassphrase), errors.Is(err, ErrNoSecret):
 		httpx.BadRequest(w, strings.TrimPrefix(err.Error(), "credential: "))
 	default:

@@ -36,7 +36,7 @@
     <tr><td>SSH certificate authority</td><td><strong>Recommended for Linux.</strong> Keyless SSH: Zanskar generates the authority, mints a minutes-long certificate per session, and the console prints the <code>TrustedUserCAKeys</code> commands for each target. Optionally limit which login users it issues for; the target's auth log names the Zanskar user on every login.</td></tr>
     <tr><td>EC2 Instance Connect</td><td>Autoscaling groups. No stored secret; Zanskar pushes a one-time key through the AWS API using the cross-account role.</td></tr>
     </tbody></table>
-    <p>Credentials can be rotated in place. A rotation keeps the credential's id, so every target bound to it picks up the new secret immediately.</p>
+    <p>Passwords and SSH keys are rotated in place: the credential keeps its id, so every target bound to it picks up the new secret immediately. A certificate authority is rotated in two steps from its Setup panel, prepare then cut over, with a per-target test in between, so no host is left refusing logins.</p>
 
     <h2 id="targets">Enroll targets</h2>
     <p><strong>Targets</strong> in the admin sidebar, then <strong>Add target</strong>. A name, an address and an OS family are enough to start; tags such as <code>env=prod</code> or <code>role=db</code> are what policies select on, so tag consistently from day one.</p>
