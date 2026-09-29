@@ -71,9 +71,13 @@ type Policy struct {
 	TimeWindows        []TimeWindow `json:"time_windows"`
 	MaxSessionMinutes  *int         `json:"max_session_minutes,omitempty"`
 	IdleTimeoutMinutes int          `json:"idle_timeout_minutes"`
-	AllowClipboard     bool         `json:"allow_clipboard"`
-	AllowFileTransfer  bool         `json:"allow_file_transfer"`
-	RequireMFA         bool         `json:"require_mfa"`
+	// RetentionDays keeps this policy's session recordings for that many
+	// days; nil leaves the global retention policy in charge. A target's
+	// own value wins over it.
+	RetentionDays     *int `json:"retention_days,omitempty"`
+	AllowClipboard    bool `json:"allow_clipboard"`
+	AllowFileTransfer bool `json:"allow_file_transfer"`
+	RequireMFA        bool `json:"require_mfa"`
 	// RequireApproval makes this policy grant eligibility, not standing access:
 	// the user must request access and be approved before connect is permitted
 	// (just-in-time / PIM, ADR 0018).
@@ -142,6 +146,9 @@ func (p *Policy) Validate() error {
 	}
 	if p.MaxSessionMinutes != nil && (*p.MaxSessionMinutes <= 0 || *p.MaxSessionMinutes > 7*24*60) {
 		return fmt.Errorf("%w: max_session_minutes must be 1-10080", ErrInvalidInput)
+	}
+	if p.RetentionDays != nil && (*p.RetentionDays <= 0 || *p.RetentionDays > 3650) {
+		return fmt.Errorf("%w: retention_days must be 1-3650", ErrInvalidInput)
 	}
 	for i := range p.TimeWindows {
 		if err := p.TimeWindows[i].validate(); err != nil {
@@ -315,11 +322,14 @@ type Decision struct {
 	Reason  string  `json:"reason,omitempty"` // when denied
 	Policy  *Policy `json:"policy,omitempty"` // the policy that allowed it
 	// Effective constraints, taken from the allowing policy.
-	IdleTimeout       time.Duration `json:"-"`
-	MaxSession        time.Duration `json:"-"`
-	AllowClipboard    bool          `json:"allow_clipboard"`
-	AllowFileTransfer bool          `json:"allow_file_transfer"`
-	RequireMFA        bool          `json:"require_mfa"`
+	IdleTimeout time.Duration `json:"-"`
+	MaxSession  time.Duration `json:"-"`
+	// RetentionDays is the allowing policy's recording retention; 0 means
+	// the global policy.
+	RetentionDays     int  `json:"-"`
+	AllowClipboard    bool `json:"allow_clipboard"`
+	AllowFileTransfer bool `json:"allow_file_transfer"`
+	RequireMFA        bool `json:"require_mfa"`
 	// RequireApproval is true when every policy granting this access is
 	// approval-gated, so the caller holds no standing access and needs an active
 	// grant to connect (ADR 0018). False when any standing policy also grants it.
@@ -384,6 +394,9 @@ func Evaluate(policies []*Policy, t TargetRef, protocol string, now time.Time) D
 	}
 	if best.MaxSessionMinutes != nil {
 		d.MaxSession = time.Duration(*best.MaxSessionMinutes) * time.Minute
+	}
+	if best.RetentionDays != nil {
+		d.RetentionDays = *best.RetentionDays
 	}
 	return d
 }

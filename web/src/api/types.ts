@@ -46,6 +46,8 @@ export interface Target {
   /** Database engine and version for database targets (ADR 0017); empty for VM targets. */
   engine?: string
   engine_version?: string
+  /** Recording retention override in days; null defers to the policy or the global policy. */
+  retention_days?: number | null
   ports: Partial<Record<Protocol, number>>
   capabilities: Protocol[]
   host_key_fingerprint: string | null
@@ -192,6 +194,8 @@ export interface Policy {
   time_windows: TimeWindow[]
   max_session_minutes?: number | null
   idle_timeout_minutes: number
+  /** Recording retention for this policy's sessions, in days; null defers to the global policy. */
+  retention_days?: number | null
   allow_clipboard: boolean
   allow_file_transfer: boolean
   require_mfa: boolean

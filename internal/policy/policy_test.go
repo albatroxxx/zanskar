@@ -10,6 +10,7 @@ import (
 
 	"github.com/albatroxxx/zanskar/internal/config"
 	"github.com/albatroxxx/zanskar/internal/store"
+	"github.com/albatroxxx/zanskar/internal/user"
 )
 
 func TestSelectorMatches(t *testing.T) {
@@ -423,5 +424,41 @@ func TestRepoRulesRoundTrip(t *testing.T) {
 	}
 	if again, _ := r.Get(ctx, p.ID); len(again.Rules) != 1 {
 		t.Fatalf("update rules: %+v", again.Rules)
+	}
+}
+
+// TestRetentionDays: the per-policy retention is validated, stored and
+// carried into the decision.
+func TestRetentionDays(t *testing.T) {
+	ctx := context.Background()
+	db, err := store.Open(ctx, config.DriverSQLite, "file::memory:?_pragma=foreign_keys(1)")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	if _, err := store.Migrate(ctx, db); err != nil {
+		t.Fatal(err)
+	}
+	repo := NewRepo(db)
+	u := &user.User{Username: "uma", DisplayName: "Uma", Roles: []user.Role{user.RoleUser}}
+	if err := user.NewRepo(db).Create(ctx, u); err != nil {
+		t.Fatal(err)
+	}
+	days := 90
+	p := &Policy{Name: "p", Enabled: true, UserID: u.ID, Selector: Selector{Tags: map[string]string{"env": "prod"}}, Protocols: []string{"ssh"}, IdleTimeoutMinutes: 15, RetentionDays: &days}
+	if err := repo.Create(ctx, p); err != nil {
+		t.Fatal(err)
+	}
+	got, err := repo.Get(ctx, p.ID)
+	if err != nil || got.RetentionDays == nil || *got.RetentionDays != 90 {
+		t.Fatalf("round trip: %+v %v", got, err)
+	}
+	d := Evaluate([]*Policy{got}, TargetRef{Tags: map[string]string{"env": "prod"}}, "ssh", time.Now())
+	if !d.Allowed || d.RetentionDays != 90 {
+		t.Fatalf("decision: %+v", d)
+	}
+	bad := 0
+	if err := (&Policy{Name: "b", UserID: u.ID, Protocols: []string{"ssh"}, IdleTimeoutMinutes: 15, RetentionDays: &bad}).Validate(); err == nil {
+		t.Fatal("0 days must be refused")
 	}
 }

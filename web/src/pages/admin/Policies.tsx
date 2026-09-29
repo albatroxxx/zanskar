@@ -157,6 +157,7 @@ interface FormState {
   windows: TimeWindow[]
   idle: string
   max: string
+  retention: string
   allow_clipboard: boolean
   allow_file_transfer: boolean
   require_mfa: boolean
@@ -179,6 +180,7 @@ function PolicyForm({ initial, groups, users, targets, asgs, onClose, onSaved }:
     windows: initial?.time_windows ?? [],
     idle: String(initial?.idle_timeout_minutes ?? 15),
     max: initial?.max_session_minutes ? String(initial.max_session_minutes) : '',
+    retention: initial?.retention_days ? String(initial.retention_days) : '',
     allow_clipboard: initial?.allow_clipboard ?? false,
     allow_file_transfer: initial?.allow_file_transfer ?? false,
     require_mfa: initial?.require_mfa ?? true,
@@ -216,6 +218,11 @@ function PolicyForm({ initial, groups, users, targets, asgs, onClose, onSaved }:
     const idle = Number(f.idle)
     if (!Number.isInteger(idle) || idle < 1) return setErr('idle timeout must be a whole number of minutes')
     const max = f.max.trim() ? Number(f.max) : null
+    const retention = f.retention.trim() ? Number(f.retention) : null
+    if (retention !== null && (!Number.isInteger(retention) || retention < 1 || retention > 3650)) {
+      setErr('retention must be 1-3650 days')
+      return
+    }
     if (max !== null && (!Number.isInteger(max) || max < 1)) return setErr('max session must be a whole number of minutes')
     setBusy(true)
     setErr('')
@@ -231,6 +238,7 @@ function PolicyForm({ initial, groups, users, targets, asgs, onClose, onSaved }:
         time_windows: f.windows.map((w) => ({ ...w, tz: w.tz || 'UTC' })),
         idle_timeout_minutes: idle,
         max_session_minutes: max,
+        retention_days: retention,
         allow_clipboard: f.allow_clipboard,
         allow_file_transfer: f.allow_file_transfer,
         require_mfa: f.require_mfa,
@@ -396,6 +404,7 @@ function PolicyForm({ initial, groups, users, targets, asgs, onClose, onSaved }:
         <div className="form-grid">
           <Field label="Idle timeout (minutes)"><input id="p-idle" inputMode="numeric" value={f.idle} onChange={(e) => up({ idle: e.target.value })} required /></Field>
           <Field label="Max session (minutes, blank = none)"><input id="p-max" inputMode="numeric" value={f.max} onChange={(e) => up({ max: e.target.value })} /></Field>
+          <Field label="Keep recordings (days, blank = global policy)" hint="A target's own value wins over this"><input id="p-retention" inputMode="numeric" value={f.retention} onChange={(e) => up({ retention: e.target.value })} /></Field>
         </div>
         <div className="actions">
           {(

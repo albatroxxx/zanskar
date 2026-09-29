@@ -8,7 +8,7 @@ import { CredentialBindings, type BindingChange } from './Bindings'
 
 interface ProbeResponse { target: Target; probe: ProbeWire; host_key_status: string; host_key_fingerprint: string | null; host_key_changed_from?: string | null }
 
-const emptyForm = { name: '', address: '', os_family: 'linux' as OSFamily, engine: '', engine_version: '', ssh: '', rdp: '', vnc: '', winrm: '', database: '', tags: '', notes: '' }
+const emptyForm = { name: '', address: '', os_family: 'linux' as OSFamily, engine: '', engine_version: '', ssh: '', rdp: '', vnc: '', winrm: '', database: '', tags: '', notes: '', retention: '' }
 
 export function Targets() {
   const { items, err, setErr, reload } = useList<Target>('/targets')
@@ -109,6 +109,7 @@ function TargetForm({ initial, onClose, onSaved }: { initial?: Target; onClose: 
           database: initial.ports.database ? String(initial.ports.database) : '',
           tags: formatTags(initial.tags),
           notes: initial.notes,
+          retention: initial.retention_days ? String(initial.retention_days) : '',
         }
       : emptyForm,
   )
@@ -143,6 +144,11 @@ function TargetForm({ initial, onClose, onSaved }: { initial?: Target; onClose: 
       }
       ports.database = n
     }
+    const retention = f.retention.trim() ? Number(f.retention) : null
+    if (retention !== null && (!Number.isInteger(retention) || retention < 1 || retention > 3650)) {
+      setErr('retention must be 1-3650 days')
+      return
+    }
     setBusy(true)
     setErr('')
     try {
@@ -152,6 +158,7 @@ function TargetForm({ initial, onClose, onSaved }: { initial?: Target; onClose: 
         os_family: f.os_family,
         engine: f.engine.trim(),
         engine_version: f.engine_version.trim(),
+        retention_days: retention,
         ports,
         capabilities: initial?.capabilities ?? [],
         tags,
@@ -212,6 +219,9 @@ function TargetForm({ initial, onClose, onSaved }: { initial?: Target; onClose: 
             </>
           )}
         </div>
+        <Field label="Keep recordings (days, blank = policy's or global)" hint="Overrides the policy's retention for this target's sessions">
+          <input id="t-retention" inputMode="numeric" value={f.retention} onChange={set('retention')} />
+        </Field>
         <Field label="Tags" hint="One key=value per line; policies select targets by tag">
           <textarea id="t-tags" value={f.tags} onChange={set('tags')} placeholder={'env=prod\nteam=ops'} />
         </Field>
@@ -273,7 +283,7 @@ function TargetDetail({ target, credentials, onClose, onChanged, onDeleted, onEr
     run(async () => {
       // The update body replaces every editable field, so the engine fields
       // must travel too or a database target silently turns into a host.
-      const body = { name: t.name, address: t.address, os_family: t.os_family, engine: t.engine ?? '', engine_version: t.engine_version ?? '', ports: t.ports, capabilities: t.capabilities, tags: t.tags, status: t.status === 'active' ? 'disabled' : 'active', notes: t.notes, credentials: t.credentials }
+      const body = { name: t.name, address: t.address, os_family: t.os_family, engine: t.engine ?? '', engine_version: t.engine_version ?? '', retention_days: t.retention_days ?? null, ports: t.ports, capabilities: t.capabilities, tags: t.tags, status: t.status === 'active' ? 'disabled' : 'active', notes: t.notes, credentials: t.credentials }
       onChanged(await api.put<Target>(`/targets/${t.id}`, body))
     })
 

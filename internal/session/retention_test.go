@@ -186,3 +186,21 @@ func TestSweepDeletesAndMarks(t *testing.T) {
 		t.Fatalf("no further deletes expected, got %v", fake.deleted)
 	}
 }
+
+// TestSelectForPurgeHonoursOwnRetention: a recording with its own retention
+// is kept past the global age until that date and purged after it even
+// when younger than the global age; the size cap still applies to all.
+func TestSelectForPurgeHonoursOwnRetention(t *testing.T) {
+	now := time.Now()
+	past, future := now.Add(-time.Hour), now.Add(24*time.Hour)
+	cands := []purgeCandidate{
+		{id: "old-global", finished: now.AddDate(0, 0, -40), size: 1},
+		{id: "old-kept", finished: now.AddDate(0, 0, -40), size: 1, until: &future},
+		{id: "young-expired", finished: now.AddDate(0, 0, -1), size: 1, until: &past},
+		{id: "young-global", finished: now.AddDate(0, 0, -1), size: 1},
+	}
+	got := selectForPurge(cands, RetentionPolicy{MaxAgeDays: 30}, now)
+	if got["old-global"] != "age" || got["young-expired"] != "age" || got["old-kept"] != "" || got["young-global"] != "" {
+		t.Fatalf("selection: %v", got)
+	}
+}

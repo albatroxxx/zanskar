@@ -63,7 +63,7 @@ export function Retention() {
     <>
       <PageHead
         title="Recording retention"
-        lead="How long session recordings are kept. The gateway deletes recordings past this policy every hour and records each deletion in the audit log; the recording's metadata stays so the audit trail still resolves."
+        lead="How long session recordings are kept by default. A policy can set its own number of days for the sessions it grants, and a target can override that for its own sessions; each recording's retention is fixed when its session starts. The gateway deletes recordings past their retention every hour and records each deletion in the audit log; the recording's metadata stays so the audit trail still resolves. The size cap applies to every recording."
       />
       {err && <Alert tone="danger">{err}</Alert>}
       {saved && <Alert tone="ok">Retention policy saved.</Alert>}

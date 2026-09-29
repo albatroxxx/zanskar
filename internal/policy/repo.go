@@ -24,7 +24,7 @@ func NewRepo(db *store.DB) *Repo { return &Repo{db: db} }
 
 const cols = `id, name, description, enabled, group_id, user_id, target_selector, protocols, time_windows,
 	max_session_minutes, idle_timeout_minutes, allow_clipboard, allow_file_transfer, require_mfa, require_approval,
-	created_by, created_at, updated_at, rules`
+	created_by, created_at, updated_at, rules, retention_days`
 
 // Create validates and inserts p, setting ID and timestamps.
 func (r *Repo) Create(ctx context.Context, p *Policy) error {
@@ -38,10 +38,10 @@ func (r *Repo) Create(ctx context.Context, p *Policy) error {
 		return err
 	}
 	_, err = r.db.ExecContext(ctx, r.db.Rebind(`INSERT INTO access_policies (`+cols+`)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`),
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`),
 		p.ID, p.Name, p.Description, p.Enabled, nullStr(p.GroupID), nullStr(p.UserID), sel, protos, wins,
 		nullInt(p.MaxSessionMinutes), p.IdleTimeoutMinutes, p.AllowClipboard, p.AllowFileTransfer, p.RequireMFA, p.RequireApproval,
-		nullStr(p.CreatedBy), store.TimeArg(now), store.TimeArg(now), rules)
+		nullStr(p.CreatedBy), store.TimeArg(now), store.TimeArg(now), rules, nullInt(p.RetentionDays))
 	if err != nil {
 		return mapErr(err)
 	}
@@ -60,9 +60,9 @@ func (r *Repo) Update(ctx context.Context, p *Policy) error {
 	p.UpdatedAt = time.Now().UTC()
 	res, err := r.db.ExecContext(ctx, r.db.Rebind(`UPDATE access_policies SET name = ?, description = ?, enabled = ?, group_id = ?, user_id = ?,
 		target_selector = ?, protocols = ?, time_windows = ?, max_session_minutes = ?, idle_timeout_minutes = ?,
-		allow_clipboard = ?, allow_file_transfer = ?, require_mfa = ?, require_approval = ?, rules = ?, updated_at = ? WHERE id = ?`),
+		allow_clipboard = ?, allow_file_transfer = ?, require_mfa = ?, require_approval = ?, rules = ?, retention_days = ?, updated_at = ? WHERE id = ?`),
 		p.Name, p.Description, p.Enabled, nullStr(p.GroupID), nullStr(p.UserID), sel, protos, wins, nullInt(p.MaxSessionMinutes), p.IdleTimeoutMinutes,
-		p.AllowClipboard, p.AllowFileTransfer, p.RequireMFA, p.RequireApproval, rules, store.TimeArg(p.UpdatedAt), p.ID)
+		p.AllowClipboard, p.AllowFileTransfer, p.RequireMFA, p.RequireApproval, rules, nullInt(p.RetentionDays), store.TimeArg(p.UpdatedAt), p.ID)
 	if err != nil {
 		return mapErr(err)
 	}
@@ -173,14 +173,14 @@ func scan(s scanner) (*Policy, error) {
 	var (
 		p                        Policy
 		sel, protos, wins, rules []byte
-		maxSession               sql.NullInt64
+		maxSession, retention    sql.NullInt64
 		groupID, userID          sql.NullString
 		createdBy                sql.NullString
 		created, updated         store.NullTime
 	)
 	err := s.Scan(&p.ID, &p.Name, &p.Description, &p.Enabled, &groupID, &userID, &sel, &protos, &wins,
 		&maxSession, &p.IdleTimeoutMinutes, &p.AllowClipboard, &p.AllowFileTransfer, &p.RequireMFA, &p.RequireApproval,
-		&createdBy, &created, &updated, &rules)
+		&createdBy, &created, &updated, &rules, &retention)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound
@@ -213,6 +213,10 @@ func scan(s scanner) (*Policy, error) {
 	if maxSession.Valid {
 		v := int(maxSession.Int64)
 		p.MaxSessionMinutes = &v
+	}
+	if retention.Valid {
+		v := int(retention.Int64)
+		p.RetentionDays = &v
 	}
 	p.GroupID, p.UserID = groupID.String, userID.String
 	p.CreatedBy = createdBy.String

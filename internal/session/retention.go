@@ -67,13 +67,16 @@ type purgeCandidate struct {
 	uri      string
 	size     int64
 	finished time.Time
+	// until is the retention fixed on the recording at session start (a
+	// policy's or target's own retention); nil means the global age rule.
+	until *time.Time
 }
 
 // listPurgeCandidates returns finished recordings whose blob still exists,
 // oldest first. The whole set is read before any delete runs, which the
 // single-connection SQLite setup requires.
 func (r *Repo) listPurgeCandidates(ctx context.Context) ([]purgeCandidate, error) {
-	rows, err := r.db.QueryContext(ctx, r.db.Rebind(`SELECT id, storage_uri, size_bytes, finished_at
+	rows, err := r.db.QueryContext(ctx, r.db.Rebind(`SELECT id, storage_uri, size_bytes, finished_at, retention_until
 		FROM recordings WHERE purged_at IS NULL AND finished_at IS NOT NULL ORDER BY finished_at ASC`))
 	if err != nil {
 		return nil, err
@@ -82,13 +85,13 @@ func (r *Repo) listPurgeCandidates(ctx context.Context) ([]purgeCandidate, error
 	var out []purgeCandidate
 	for rows.Next() {
 		var (
-			c        purgeCandidate
-			finished store.NullTime
+			c               purgeCandidate
+			finished, until store.NullTime
 		)
-		if err := rows.Scan(&c.id, &c.uri, &c.size, &finished); err != nil {
+		if err := rows.Scan(&c.id, &c.uri, &c.size, &finished, &until); err != nil {
 			return nil, err
 		}
-		c.finished = finished.Time
+		c.finished, c.until = finished.Time, until.Ptr()
 		out = append(out, c)
 	}
 	return out, rows.Err()
@@ -112,7 +115,14 @@ func selectForPurge(cands []purgeCandidate, p RetentionPolicy, now time.Time) ma
 	// Oldest first (as queried); age-expired go, the rest are provisionally kept.
 	var survivors []purgeCandidate
 	for _, c := range cands {
-		if p.MaxAgeDays > 0 && c.finished.Before(cutoff) {
+		// A recording with its own retention follows it, longer or shorter
+		// than the global age; the others follow the global age rule.
+		if c.until != nil {
+			if now.After(*c.until) {
+				reason[c.id] = "age"
+				continue
+			}
+		} else if p.MaxAgeDays > 0 && c.finished.Before(cutoff) {
 			reason[c.id] = "age"
 			continue
 		}
