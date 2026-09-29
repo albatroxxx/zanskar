@@ -414,9 +414,15 @@ func (m *Manager) StartMove(done func(Move)) error {
 	go func() {
 		defer cancel()
 		final := m.run(ctx, s)
+		// The caller's done (the audit event) runs before the finished state
+		// is visible, so anyone who sees the move finished also finds it
+		// audited; the console polls the state and the tests rely on it.
 		if done != nil {
 			done(final)
 		}
+		m.mu.Lock()
+		m.move = final
+		m.mu.Unlock()
 	}()
 	return nil
 }
@@ -460,9 +466,9 @@ func (m *Manager) run(ctx context.Context, s *recording.S3Storage) Move {
 	}
 	end := time.Now().UTC()
 	m.mu.Lock()
-	m.move.Running, m.move.FinishedAt, m.move.Moved, m.move.Failed, m.move.Total, m.move.LastError = false, &end, moved, failed, total, lastErr
 	final := m.move
 	m.mu.Unlock()
+	final.Running, final.FinishedAt, final.Moved, final.Failed, final.Total, final.LastError = false, &end, moved, failed, total, lastErr
 	return final
 }
 
