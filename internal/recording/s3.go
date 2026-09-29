@@ -26,6 +26,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	s3types "github.com/aws/aws-sdk-go-v2/service/s3/types"
 )
@@ -37,6 +38,10 @@ type s3API interface {
 	GetObject(ctx context.Context, in *s3.GetObjectInput, opts ...func(*s3.Options)) (*s3.GetObjectOutput, error)
 	DeleteObject(ctx context.Context, in *s3.DeleteObjectInput, opts ...func(*s3.Options)) (*s3.DeleteObjectOutput, error)
 }
+
+// S3API is the slice of the S3 client the storage uses; tests hand in a
+// fake through NewS3StorageWithClient.
+type S3API = s3API
 
 // S3Options configures NewS3Storage.
 type S3Options struct {
@@ -50,6 +55,10 @@ type S3Options struct {
 	KMSKeyID string
 	// SpoolDir holds in-progress recordings; default os.TempDir()/zanskar-spool.
 	SpoolDir string
+	// AccessKeyID and SecretAccessKey, when set, are used instead of the
+	// SDK's default chain (instance role, environment, shared config).
+	AccessKeyID     string
+	SecretAccessKey string
 }
 
 // S3Storage implements Storage over a bucket.
@@ -71,6 +80,9 @@ func NewS3Storage(ctx context.Context, o S3Options) (*S3Storage, error) {
 	if o.Region != "" {
 		loadOpts = append(loadOpts, awsconfig.WithRegion(o.Region))
 	}
+	if o.AccessKeyID != "" {
+		loadOpts = append(loadOpts, awsconfig.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(o.AccessKeyID, o.SecretAccessKey, "")))
+	}
 	cfg, err := awsconfig.LoadDefaultConfig(ctx, loadOpts...)
 	if err != nil {
 		return nil, fmt.Errorf("recording: aws config: %w", err)
@@ -83,6 +95,9 @@ func NewS3Storage(ctx context.Context, o S3Options) (*S3Storage, error) {
 	})
 	return newS3Storage(client, o), nil
 }
+
+// NewS3StorageWithClient builds the storage over an existing client.
+func NewS3StorageWithClient(client S3API, o S3Options) *S3Storage { return newS3Storage(client, o) }
 
 func newS3Storage(client s3API, o S3Options) *S3Storage {
 	prefix := o.Prefix
@@ -121,11 +136,12 @@ func (s *S3Storage) Create(_ context.Context, name string) (io.WriteCloser, stri
 	return &s3Spool{f: f, storage: s, key: key, contentType: contentTypeFor(name)}, "s3://" + s.Bucket + "/" + key, nil
 }
 
-// Open implements Storage. Only URIs inside this bucket and prefix are read.
+// Open implements Storage. Only URIs inside this bucket are read; the
+// prefix is a layout choice an administrator may change, not a boundary,
+// so recordings written under an earlier prefix stay readable.
 func (s *S3Storage) Open(ctx context.Context, uri string) (io.ReadCloser, error) {
-	want := "s3://" + s.Bucket + "/" + s.Prefix
-	if !strings.HasPrefix(uri, want) {
-		return nil, errors.New("recording: uri outside the configured bucket and prefix")
+	if !strings.HasPrefix(uri, "s3://"+s.Bucket+"/") {
+		return nil, errors.New("recording: uri outside the configured bucket")
 	}
 	key := strings.TrimPrefix(uri, "s3://"+s.Bucket+"/")
 	if path.Clean("/"+key) != "/"+key || strings.Contains(key, "..") {
@@ -141,9 +157,8 @@ func (s *S3Storage) Open(ctx context.Context, uri string) (io.ReadCloser, error)
 // Delete implements Storage. Only objects inside this bucket and prefix are
 // removed; S3 treats deleting an absent key as success, so sweeps are idempotent.
 func (s *S3Storage) Delete(ctx context.Context, uri string) error {
-	want := "s3://" + s.Bucket + "/" + s.Prefix
-	if !strings.HasPrefix(uri, want) {
-		return errors.New("recording: uri outside the configured bucket and prefix")
+	if !strings.HasPrefix(uri, "s3://"+s.Bucket+"/") {
+		return errors.New("recording: uri outside the configured bucket")
 	}
 	key := strings.TrimPrefix(uri, "s3://"+s.Bucket+"/")
 	if path.Clean("/"+key) != "/"+key || strings.Contains(key, "..") {

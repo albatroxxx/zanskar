@@ -41,6 +41,7 @@ import (
 	"github.com/albatroxxx/zanskar/internal/logring"
 	"github.com/albatroxxx/zanskar/internal/policy"
 	"github.com/albatroxxx/zanskar/internal/recording"
+	"github.com/albatroxxx/zanskar/internal/recstorage"
 	"github.com/albatroxxx/zanskar/internal/server"
 	"github.com/albatroxxx/zanskar/internal/session"
 	"github.com/albatroxxx/zanskar/internal/settings"
@@ -233,20 +234,27 @@ func runServe() error {
 	registry := gateway.NewRegistry()
 	restarter := &lifecycle.Controller{Registry: registry, Log: log, Exit: exit}
 	drift := &lifecycle.Drift{Path: cfg.EnvFile, Started: startedEnv}
-	var storage recording.Storage = &recording.LocalStorage{Dir: cfg.RecordingsDir}
+	// Recording storage (QA finding R18): the router hands new recordings to
+	// the bucket configured in the console, else the environment's, else the
+	// local directory, and reads every recording by its own URI.
+	router := &recording.Router{Local: &recording.LocalStorage{Dir: cfg.RecordingsDir}}
+	var envStorage *recstorage.Config
 	if cfg.RecordingsS3Bucket != "" {
-		s3store, err := recording.NewS3Storage(ctx, recording.S3Options{
-			Bucket: cfg.RecordingsS3Bucket, Prefix: cfg.RecordingsS3Prefix, Region: cfg.RecordingsS3Region,
-			Endpoint: cfg.RecordingsS3Endpoint, KMSKeyID: cfg.RecordingsS3KMSKey, SpoolDir: cfg.RecordingsSpoolDir,
-		})
-		if err != nil {
-			return fmt.Errorf("recordings storage: %w", err)
+		envStorage = &recstorage.Config{Bucket: cfg.RecordingsS3Bucket, Prefix: cfg.RecordingsS3Prefix, Region: cfg.RecordingsS3Region, Endpoint: cfg.RecordingsS3Endpoint, KMSKeyID: cfg.RecordingsS3KMSKey, Auth: recstorage.AuthRole}
+		if err := envStorage.Validate(); err != nil {
+			return fmt.Errorf("ZANSKAR_RECORDINGS_S3_*: %w", err)
 		}
-		storage = s3store
-		log.Info("recordings storage", "backend", "s3", "bucket", cfg.RecordingsS3Bucket, "prefix", cfg.RecordingsS3Prefix, "kms", cfg.RecordingsS3KMSKey != "")
+	}
+	storageMgr := &recstorage.Manager{Repo: recstorage.NewRepo(db, ring), Router: router, Sessions: sessionRepo, Env: envStorage, SpoolDir: cfg.RecordingsSpoolDir, Log: log}
+	if err := storageMgr.Load(ctx); err != nil {
+		return fmt.Errorf("recordings storage: %w", err)
+	}
+	if a := storageMgr.Active(); a != nil {
+		log.Info("recordings storage", "backend", "s3", "source", storageMgr.Source(), "bucket", a.Bucket, "prefix", a.Prefix, "kms", a.KMSKeyID != "")
 	} else {
 		log.Info("recordings storage", "backend", "local", "dir", cfg.RecordingsDir)
 	}
+	var storage recording.Storage = router
 	asgRepo := asg.NewRepo(db)
 	cloudProviders := asg.AWSProviders()
 	syncer := &asg.Syncer{Repo: asgRepo, Providers: cloudProviders, Prober: &target.Prober{}, Registry: registry, Audit: auditLog, Log: log}
@@ -266,6 +274,7 @@ func runServe() error {
 			&asg.AdminHandler{Repo: asgRepo, Sync: syncer.SyncGroup, GatewayPrincipal: cfg.AWSGatewayPrincipal, Policies: policies, Live: registry, Audit: auditLog, Log: log},
 			&session.Handler{Repo: sessionRepo, Audit: auditLog, Registry: registry, Storage: storage, Log: log},
 			&settings.Handler{Service: runtime, Audit: auditLog, Log: log},
+			&recstorage.Handler{Manager: storageMgr, Audit: auditLog, Log: log},
 			&lifecycle.Handler{Drift: drift, Controller: restarter, Audit: auditLog, Log: log, StartedAt: startedAt},
 			&logring.API{Ring: logs, Audit: auditLog, Log: log},
 			&tlscert.Handler{Manager: tlsMgr, Mode: cfg.TLSMode, Audit: auditLog, Log: log},

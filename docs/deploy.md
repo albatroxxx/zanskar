@@ -306,6 +306,20 @@ and the gateway says so when a bind on a port below 1024 is refused. HSTS is sen
 the gateway serves TLS; browsers ignore it on a connection with certificate errors, so the
 self-signed default pins nothing until a real certificate is uploaded.
 
+## Recording storage
+
+Recordings go to the local directory by default. To keep them in an S3-compatible bucket,
+open the console's **Settings → Recording storage** card: bucket, key prefix, region,
+endpoint (MinIO, Ceph), KMS key and either the instance role or a static access key (the
+secret is sealed by the master key). **Test** writes, reads back and deletes a probe object;
+**Save and use** does the same and then makes the bucket active for the next session, no
+restart. **Move** copies existing local recordings into the bucket in the background,
+checking each digest, and removes the local files. The `ZANSKAR_RECORDINGS_S3_*` variables
+remain the install-time default; a console setting overrides them and can be removed again.
+Recordings are always read from where they were written, so changing the prefix is safe;
+changing the bucket leaves earlier recordings unreachable until that bucket is configured
+again, and the card says so.
+
 ## Changing boot settings and restarting
 
 Listen address, TLS files, database, master key, recordings storage and the other

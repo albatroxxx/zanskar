@@ -74,6 +74,18 @@ for runtime ones; the database holds only what an administrator changed afterwar
   service; the panel, the API, validation and audit come for free. Anything that needs a
   restart to change is added to the boot list, not the registry.
 
+## Amendment (2026-09-29): settings with a secret
+
+Recording storage is the first runtime setting that carries a secret (a static S3 access
+key). It follows the same precedence (console over the `ZANSKAR_RECORDINGS_S3_*` install-time
+values over the local directory) but lives in its own sealed row rather than the plain
+`settings` table, and is only saved after a probe wrote, read back and deleted an object
+with it, because a session whose upload fails still leaves a recording row behind. The
+active backend is swapped on a router that reads every recording by its own URI, so a
+change applies to the next session and earlier recordings stay reachable; a move of local
+recordings into the bucket is offered from the same card. The gateway's TLS certificate
+(ADR 0021) takes the same shape.
+
 ## Amendment (2026-09-29): the console tells when a restart is due, and performs it
 
 The split above leaves one gap: a boot setting edited in the env file does nothing

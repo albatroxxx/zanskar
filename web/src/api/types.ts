@@ -400,6 +400,28 @@ export interface TLSStatus {
   file_hint?: string
 }
 
+/** Recording storage as the console edits it; the secret is write-only. Mirrors internal/recstorage.Config. */
+export interface StorageConfig {
+  bucket: string
+  prefix: string
+  region?: string
+  endpoint?: string
+  kms_key_id?: string
+  auth: 'role' | 'keys'
+  access_key_id?: string
+  secret_access_key?: string
+  secret_set?: boolean
+}
+
+/** GET /admin/storage. */
+export interface StorageStatus {
+  source: 'console' | 'environment' | 'local'
+  active?: StorageConfig
+  environment?: StorageConfig
+  counts: Record<string, number>
+  move: { running: boolean; started_at?: string; finished_at?: string; moved: number; failed: number; total: number; last_error?: string }
+}
+
 /** GET /admin/system/status. Mirrors internal/lifecycle.Status. */
 export interface SystemStatus {
   version: string

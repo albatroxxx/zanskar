@@ -2318,6 +2318,105 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/TLSStatus"
+  /admin/storage:
+    get:
+      tags: [admin]
+      summary: Recording storage in use
+      description: >
+        Where new recordings go (a console-configured bucket, the environment's bucket, or the
+        local directory), how many recordings each store holds, and the state of the last move
+        of local recordings. Never a secret.
+      responses:
+        "200":
+          description: The status.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StorageStatus"
+    put:
+      tags: [admin]
+      summary: Store new recordings in an S3-compatible bucket
+      description: >
+        Validated, then probed (an object is written, read back and deleted with the given
+        settings), then saved with the secret sealed and made active for the next session, no
+        restart. Sending auth `keys` without a secret keeps the stored one. Audited as
+        `recording.storage.update` without the secret.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/StorageConfig"
+      responses:
+        "200":
+          description: The status after the change.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StorageStatus"
+        "400":
+          description: Invalid settings or a failed probe; the message says why.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+    delete:
+      tags: [admin]
+      summary: Remove the console storage setting
+      description: The environment's bucket or the local directory serves again. Audited as `recording.storage.reset`.
+      responses:
+        "200":
+          description: The status after the removal.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StorageStatus"
+  /admin/storage/test:
+    post:
+      tags: [admin]
+      summary: Probe a bucket without saving
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/StorageConfig"
+      responses:
+        "200":
+          description: The probe passed.
+        "400":
+          description: The probe failed; the message says why.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /admin/storage/move:
+    post:
+      tags: [admin]
+      summary: Move local recordings to the active bucket
+      description: >
+        Starts a background move of every finished local recording: copied, digest checked,
+        record repointed, local file removed. Recordings of running sessions are skipped. One
+        move at a time; progress is in the status. Audited as `recording.storage.move` when done.
+      responses:
+        "202":
+          description: The move started; the status shows it.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StorageStatus"
+        "400":
+          description: No bucket is active.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: A move is already running; `code` is `move_running`.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
   /admin/system/status:
     get:
       tags: [admin]
@@ -3975,6 +4074,70 @@ components:
         file_hint:
           type: string
           description: Names the environment variables when a file certificate is in use.
+    StorageConfig:
+      type: object
+      description: An S3-compatible bucket for recordings. The secret is write-only.
+      required: [bucket, auth]
+      properties:
+        bucket:
+          type: string
+        prefix:
+          type: string
+          description: Key prefix inside the bucket; default recordings/.
+        region:
+          type: string
+        endpoint:
+          type: string
+          description: For S3-compatible services; path-style addressing is used when set.
+        kms_key_id:
+          type: string
+          description: Server-side encryption with this KMS key; empty uses AES-256.
+        auth:
+          type: string
+          enum: [role, keys]
+          description: The SDK's default chain (instance role, environment) or a static access key.
+        access_key_id:
+          type: string
+          description: In responses, only its last four characters.
+        secret_access_key:
+          type: string
+          description: Requests only; sealed by the key ring, never returned.
+        secret_set:
+          type: boolean
+          description: Responses only.
+    StorageStatus:
+      type: object
+      required: [source, counts, move]
+      properties:
+        source:
+          type: string
+          enum: [console, environment, local]
+        active:
+          $ref: "#/components/schemas/StorageConfig"
+        environment:
+          $ref: "#/components/schemas/StorageConfig"
+        counts:
+          type: object
+          additionalProperties:
+            type: integer
+          description: Recordings per store, keyed local or s3://bucket.
+        move:
+          type: object
+          properties:
+            running:
+              type: boolean
+            started_at:
+              $ref: "#/components/schemas/Timestamp"
+            finished_at:
+              $ref: "#/components/schemas/Timestamp"
+            moved:
+              type: integer
+            failed:
+              type: integer
+            total:
+              type: integer
+            last_error:
+              type: string
     SystemStatus:
       type: object
       required: [version, started_at, uptime_seconds, supervisor, live_sessions, env_file, restart_required, draining]
