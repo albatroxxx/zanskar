@@ -37,6 +37,7 @@ import (
 	"github.com/albatroxxx/zanskar/internal/idp/oidc"
 	"github.com/albatroxxx/zanskar/internal/keyring"
 	"github.com/albatroxxx/zanskar/internal/lifecycle"
+	"github.com/albatroxxx/zanskar/internal/logring"
 	"github.com/albatroxxx/zanskar/internal/policy"
 	"github.com/albatroxxx/zanskar/internal/recording"
 	"github.com/albatroxxx/zanskar/internal/server"
@@ -95,20 +96,28 @@ func usage() {
 }
 
 func newLogger(cfg *config.Config) *slog.Logger {
-	log, _ := newLeveledLogger(cfg)
+	log, _, _ := newLeveledLogger(cfg)
 	return log
 }
 
+// logRingSize is how many recent log records the console can show.
+const logRingSize = 2000
+
 // newLeveledLogger builds the logger with a level that can change while the
-// process runs; serve binds it to the log.level runtime setting.
-func newLeveledLogger(cfg *config.Config) (*slog.Logger, *slog.LevelVar) {
+// process runs (serve binds it to the log.level runtime setting) and a ring
+// of the most recent records for the console's log viewer.
+func newLeveledLogger(cfg *config.Config) (*slog.Logger, *slog.LevelVar, *logring.Ring) {
 	level := new(slog.LevelVar)
 	_ = level.UnmarshalText([]byte(cfg.LogLevel))
 	opts := &slog.HandlerOptions{Level: level}
+	var base slog.Handler
 	if cfg.LogFormat == "text" {
-		return slog.New(slog.NewTextHandler(os.Stderr, opts)), level
+		base = slog.NewTextHandler(os.Stderr, opts)
+	} else {
+		base = slog.NewJSONHandler(os.Stderr, opts)
 	}
-	return slog.New(slog.NewJSONHandler(os.Stderr, opts)), level
+	ring := logring.New(logRingSize)
+	return slog.New(ring.Wrap(base)), level, ring
 }
 
 func runServe() error {
@@ -120,7 +129,7 @@ func runServe() error {
 	if err != nil {
 		return err
 	}
-	log, logLevel := newLeveledLogger(cfg)
+	log, logLevel, logs := newLeveledLogger(cfg)
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 	// A console-requested restart cancels this context once live sessions
@@ -236,6 +245,7 @@ func runServe() error {
 			&session.Handler{Repo: sessionRepo, Audit: auditLog, Registry: registry, Storage: storage, Log: log},
 			&settings.Handler{Service: runtime, Audit: auditLog, Log: log},
 			&lifecycle.Handler{Drift: drift, Controller: restarter, Audit: auditLog, Log: log, StartedAt: startedAt},
+			&logring.API{Ring: logs, Audit: auditLog, Log: log},
 			&connect.Handler{Targets: targets, Policies: policies, Access: accessReqs, Vault: vault, Sessions: sessionRepo, Tickets: ticket.NewStore(),
 				Registry: registry, Storage: storage, Audit: auditLog, Log: log, MFAEnrolled: totp.Enrolled, GuacdAddr: guacdAddr, Draining: restarter.Draining,
 				DockerPath: cfg.DockerPath, Prober: &target.Prober{}, ASGs: asgRepo, Cloud: cloudProviders},
