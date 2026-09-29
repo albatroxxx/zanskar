@@ -97,9 +97,6 @@ func (h *AdminHandler) create(w http.ResponseWriter, r *http.Request) {
 		httpx.BadRequest(w, err.Error())
 		return
 	}
-	if !engineServable(w, body.Engine) {
-		return
-	}
 	p, _ := auth.FromContext(r.Context())
 	t := &Target{CreatedBy: &p.User.ID}
 	body.apply(t)
@@ -124,9 +121,6 @@ func (h *AdminHandler) update(w http.ResponseWriter, r *http.Request) {
 	var body Write
 	if err := httpx.DecodeJSON(r, &body); err != nil {
 		httpx.BadRequest(w, err.Error())
-		return
-	}
-	if !engineServable(w, body.Engine) {
 		return
 	}
 	t, err := h.Repo.Get(r.Context(), r.PathValue("id"))
@@ -322,19 +316,6 @@ func (h *AdminHandler) unsetCredential(w http.ResponseWriter, r *http.Request) {
 }
 
 // ---- helpers
-
-// engineServable refuses a database target whose engine the gateway cannot
-// serve yet, writing the 422 itself. The model accepts every known engine so
-// the schema is ready; the gateway advertises only what it can deliver.
-func engineServable(w http.ResponseWriter, engine string) bool {
-	engine = strings.ToLower(strings.TrimSpace(engine))
-	if engine == "" || ServableEngine(engine) {
-		return true
-	}
-	httpx.WriteError(w, http.StatusUnprocessableEntity, "engine_unavailable",
-		engine+" database access ships in a later release; only postgres targets can be enrolled today")
-	return false
-}
 
 func (h *AdminHandler) record(r *http.Request, action, id string, outcome audit.Outcome, details any) {
 	if h.Audit == nil {

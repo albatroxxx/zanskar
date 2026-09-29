@@ -58,12 +58,12 @@ func ValidEngine(e string) bool {
 	return ok
 }
 
-// ServableEngines lists the engines the gateway can broker a session for
-// today: PostgreSQL through the pgbouncer sidecar (ADR 0017). MySQL and
-// MariaDB are valid engines with client images mapped, but their
-// credential-holding proxy (ProxySQL) has not shipped, so enrolment and
-// connection refuse them rather than advertise access that cannot work.
-var ServableEngines = map[string]bool{"postgres": true}
+// ServableEngines lists the engines the gateway can broker a session for:
+// PostgreSQL through the pgbouncer sidecar, MySQL and MariaDB through the
+// gateway's own relay sidecar (ADR 0017). An engine is listed here only
+// once its credential-holding proxy exists, so the console never
+// advertises access that cannot work.
+var ServableEngines = map[string]bool{"postgres": true, "mysql": true, "mariadb": true}
 
 // ServableEngine reports whether the gateway can open sessions to engine.
 func ServableEngine(e string) bool {

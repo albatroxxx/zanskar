@@ -82,8 +82,9 @@ func TestServableEngine(t *testing.T) {
 	}{
 		{"postgres", true},
 		{" Postgres ", true}, // trimmed and lower-cased like Validate does
-		{"mysql", false},
-		{"mariadb", false},
+		{"mysql", true},
+		{"mariadb", true},
+		{"MariaDB", true},
 		{"", false},
 		{"oracle", false},
 	}

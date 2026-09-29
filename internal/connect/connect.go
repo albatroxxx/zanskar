@@ -64,6 +64,10 @@ type Handler struct {
 	// DockerPath is the docker CLI used to spawn database session containers
 	// (ADR 0017); empty means "docker" on PATH.
 	DockerPath string
+	// DBProxyImage returns the image run as the MySQL/MariaDB relay sidecar,
+	// normally the gateway's own; a function so the runtime setting applies
+	// to the next session.
+	DBProxyImage func() string
 	// ASGs and Cloud enable autoscaling-group targets and EC2 Instance Connect.
 	ASGs  *asg.Repo
 	Cloud asg.ProviderFactory

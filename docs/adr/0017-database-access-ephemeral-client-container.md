@@ -136,3 +136,43 @@ the sidecar decision above left implicit.
   access need not grant it. A rootless-Docker or socket-proxy posture is a future hardening.
 - **Follow-ups unchanged:** MySQL (ProxySQL) next; per-query audit and read-only enforcement
   layer on at the proxy afterwards.
+
+## Addendum (2026-09-29): MySQL and MariaDB through the gateway's own relay, not ProxySQL
+
+The sidecar decision named ProxySQL for MySQL. It cannot play that part. ProxySQL's
+`mysql_users` row carries one `password` used both to check the client signing in to
+ProxySQL and to sign in to the backend, and its documentation states: *"Note, currently
+all users need both 'frontend' and 'backend' set to 1."* A client that holds no
+credential therefore cannot get past ProxySQL at all; a client that can get past it holds
+the very credential the addendum above forbids it to see.
+
+What replaces it keeps the topology and the guarantees:
+
+- The sidecar is **the gateway's own release image** running `zanskar dbproxy`, a MySQL
+  wire-protocol relay in `internal/gateway/mysqlrelay`. It signs in upstream with the
+  vaulted credential using go-mysql's client, whose `mysql_native_password`,
+  `caching_sha2_password`, `sha256_password` and MariaDB `ed25519` implementations are
+  the proven code the original decision asked for; nothing in Zanskar touches a password
+  hash. The client container signs in to the relay as the session user with no password
+  (go-mysql's server half, trust for that one username), exactly as with pgbouncer.
+- Once both sides are past authentication the relay copies bytes. For that to be sound
+  the two connections must agree on every capability flag that changes how packets are
+  framed (`DEPRECATE_EOF`, `QUERY_ATTRIBUTES`, `SESSION_TRACK`, multi-results,
+  compression, `LOCAL_FILES`, optional result-set metadata). The relay negotiates the
+  classic set on the upstream leg, offers the same set to the client, and refuses the
+  session if the client insists on anything else, rather than risk a misread result set.
+- `COM_CHANGE_USER` is answered by the relay and never forwarded, so a program in the
+  client container cannot use the session to try credentials against the database.
+- The relay's whole configuration, credential included, is one JSON document in the
+  sidecar's environment, passed by name, as with pgbouncer's `PGB_INI`. The image is
+  distroless, so there is no shell in the sidecar either.
+- One image for the gateway and the sidecar means no second artifact to build, sign or
+  scan; the image reference is the `database.proxy_image` runtime setting, defaulting to
+  the running version, so a mirror or a local build can be pointed at without a restart.
+- Upstream TLS is `prefer` (encrypt when offered, no verification), matching the
+  pgbouncer sidecar; verification arrives with the target's TLS settings.
+
+Not changed: the operational requirement that the service user can use the container
+runtime. The packaged unit does not add `SupplementaryGroups=docker` by itself, since an
+unconditional grant fails the unit on hosts without a docker group; `docs/deploy.md`
+shows the drop-in.
