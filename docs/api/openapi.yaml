@@ -2154,6 +2154,73 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
+  /admin/logs:
+    get:
+      tags: [admin]
+      summary: Recent log lines
+      description: >
+        The gateway's most recent log records from an in-memory ring (the last 2000 at the
+        running log level), newest first. What the journal shows, without shell access.
+      parameters:
+        - name: level
+          in: query
+          schema:
+            type: string
+            enum: [debug, info, warn, error]
+          description: Lowest level to return; default debug (everything captured).
+        - name: q
+          in: query
+          schema:
+            type: string
+          description: Case-insensitive text to match in the message or attributes.
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+          description: Default 200, at most the ring's capacity.
+      responses:
+        "200":
+          description: The lines.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, capacity, seen]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      required: [time, level, msg]
+                      properties:
+                        time:
+                          $ref: "#/components/schemas/Timestamp"
+                        level:
+                          type: string
+                        msg:
+                          type: string
+                        attrs:
+                          type: object
+                          additionalProperties:
+                            type: string
+                  capacity:
+                    type: integer
+                  seen:
+                    type: integer
+                    description: Records logged since start.
+  /admin/logs/download:
+    get:
+      tags: [admin]
+      summary: Download the recent log lines
+      description: The whole ring, oldest first, one JSON object per line. Audited as `logs.download`.
+      responses:
+        "200":
+          description: The lines.
+          content:
+            application/x-ndjson:
+              schema:
+                type: string
   /admin/system/status:
     get:
       tags: [admin]

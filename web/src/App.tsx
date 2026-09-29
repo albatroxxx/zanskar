@@ -134,6 +134,7 @@ export default function App() {
                 { to: '/admin/sessions', label: 'Sessions' },
                 { to: '/admin/retention', label: 'Retention' },
                 { to: '/admin/settings', label: 'Settings' },
+                { to: '/admin/logs', label: 'Logs' },
                 { to: '/audit', label: 'Audit & recordings' },
               ]}
             />

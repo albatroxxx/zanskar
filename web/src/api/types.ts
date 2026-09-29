@@ -364,6 +364,20 @@ export interface EnvFileReport {
   checked_at: string
 }
 
+/** One log line from the gateway's in-memory ring. Mirrors internal/logring.Record. */
+export interface LogRecord {
+  time: string
+  level: string
+  msg: string
+  attrs?: Record<string, string>
+}
+
+export interface LogsPage {
+  items: LogRecord[]
+  capacity: number
+  seen: number
+}
+
 /** GET /admin/system/status. Mirrors internal/lifecycle.Status. */
 export interface SystemStatus {
   version: string
