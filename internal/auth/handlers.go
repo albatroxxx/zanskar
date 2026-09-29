@@ -9,7 +9,6 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -285,7 +284,7 @@ func (h *Handler) changePassword(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if p.User.PasswordHash == "" || !user.VerifyPassword(p.User.PasswordHash, req.CurrentPassword) {
-		h.record(r, actor.Event("user.password.change", "user", p.User.ID, audit.Failure, map[string]string{"reason": "current_password_wrong"}))
+		h.record(r, actor.Event("user.password.change", "user", p.User.ID, audit.Failure, map[string]string{"reason": "current_mismatch"}))
 		WriteError(w, http.StatusUnauthorized, "invalid_credentials", "the current password is wrong")
 		return
 	}
@@ -306,7 +305,9 @@ func (h *Handler) changePassword(w http.ResponseWriter, r *http.Request) {
 		h.serverError(w, r, err)
 		return
 	}
-	h.record(r, actor.Event("user.password.change", "user", p.User.ID, audit.Success, map[string]string{"session_id": p.Session.ID, "was_required": strconv.FormatBool(p.User.MustChangePassword)}))
+	// The audit row says whether this was the forced first change or the
+	// user's own; a bool, since only the fact matters.
+	h.record(r, actor.Event("user.password.change", "user", p.User.ID, audit.Success, map[string]any{"session_id": p.Session.ID, "was_required": p.User.MustChangePassword}))
 	p.User.MustChangePassword = false
 	if p.Session.MFAVerified {
 		WriteJSON(w, http.StatusOK, loginResponse{Status: "ok", User: p.User, CSRFToken: h.Sessions.CSRFToken(p.Session.ID)})
