@@ -24,7 +24,14 @@ func TestValidateAnswers(t *testing.T) {
 		{"default proxy is valid", func(*initAnswers) {}, true},
 		{"cert mode with both files", func(a *initAnswers) { a.TLSMode = tlsModeCert; a.TLSCert = "/c"; a.TLSKey = "/k" }, true},
 		{"cert mode missing key", func(a *initAnswers) { a.TLSMode = tlsModeCert; a.TLSCert = "/c" }, false},
-		{"proxy mode with public bind is rejected", func(a *initAnswers) { a.ListenAddr = "0.0.0.0:8443" }, false},
+		{"proxy mode with public bind is rejected", func(a *initAnswers) { a.TLSMode = tlsModeProxy; a.RedirectAddr = ""; a.ListenAddr = "0.0.0.0:8443" }, false},
+		{"managed mode on 443 with the redirect (the default)", func(*initAnswers) {}, true},
+		{"redirect in proxy mode is rejected", func(a *initAnswers) {
+			a.TLSMode = tlsModeProxy
+			a.ListenAddr = "127.0.0.1:8443"
+			a.RedirectAddr = ":80"
+		}, false},
+		{"redirect equal to the listen address is rejected", func(a *initAnswers) { a.RedirectAddr = "0.0.0.0:443" }, false},
 		{"cert mode allows public bind", func(a *initAnswers) {
 			a.TLSMode = tlsModeCert
 			a.TLSCert = "/c"
@@ -55,6 +62,7 @@ func TestValidateAnswers(t *testing.T) {
 
 func TestRenderEnvProxyMode(t *testing.T) {
 	a := validAnswers()
+	a.TLSMode, a.ListenAddr, a.RedirectAddr = tlsModeProxy, "127.0.0.1:8443", ""
 	a.GuacdAddr = "127.0.0.1:4822"
 	out := renderEnv(a)
 	for _, want := range []string{
@@ -180,8 +188,13 @@ func TestRenderEnvManagedMode(t *testing.T) {
 		t.Fatal(err)
 	}
 	out := renderEnv(a)
-	if !strings.Contains(out, "ZANSKAR_TLS_MODE=managed\n") {
-		t.Errorf("managed env missing the mode: %s", out)
+	for _, want := range []string{"ZANSKAR_TLS_MODE=managed\n", "ZANSKAR_LISTEN_ADDR=0.0.0.0:443\n", "ZANSKAR_HTTP_REDIRECT_ADDR=:80\n"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("managed env missing %q: %s", want, out)
+		}
+	}
+	if d := defaultAnswers(); d.TLSMode != tlsModeManaged || d.ListenAddr != "0.0.0.0:443" || d.RedirectAddr != ":80" {
+		t.Fatalf("defaults: %+v", d)
 	}
 	for _, no := range []string{"ZANSKAR_TLS_CERT", "ZANSKAR_TLS_KEY", "ZANSKAR_TRUST_PROXY_TLS"} {
 		if strings.Contains(out, no) {

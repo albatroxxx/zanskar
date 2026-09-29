@@ -28,10 +28,11 @@ import (
 
 // Server owns the listener and the router.
 type Server struct {
-	cfg  *config.Config
-	db   *store.DB
-	log  *slog.Logger
-	http *http.Server
+	cfg      *config.Config
+	db       *store.DB
+	log      *slog.Logger
+	http     *http.Server
+	redirect *http.Server // plain HTTP to HTTPS, when configured
 }
 
 // Registrar is anything that mounts routes on the mux. Every domain handler
@@ -88,6 +89,13 @@ func New(cfg *config.Config, db *store.DB, log *slog.Logger, deps Deps) *Server 
 	if cfg.ServesTLS() && deps.TLS != nil {
 		s.http.TLSConfig = &tls.Config{GetCertificate: deps.TLS.GetCertificate, MinVersion: tls.VersionTLS12}
 	}
+	if cfg.ServesTLS() && cfg.RedirectAddr != "" {
+		var covered func() []string
+		if deps.TLS != nil {
+			covered = func() []string { return deps.TLS.Active().Hosts }
+		}
+		s.redirect = newRedirectServer(cfg.RedirectAddr, cfg.ListenAddr, covered)
+	}
 	return s
 }
 
@@ -108,18 +116,39 @@ func (s *Server) ListenAndServe(ctx context.Context) error {
 			err = s.http.ListenAndServe()
 		}
 		if !errors.Is(err, http.ErrServerClosed) {
-			errCh <- err
+			errCh <- bindHint(err, s.cfg.ListenAddr)
 		}
 		close(errCh)
 	}()
+	redirectErr := make(chan error, 1)
+	if s.redirect != nil {
+		go func() {
+			s.log.Info("redirecting plain HTTP to HTTPS", "addr", s.cfg.RedirectAddr)
+			if err := s.redirect.ListenAndServe(); !errors.Is(err, http.ErrServerClosed) {
+				redirectErr <- bindHint(err, s.cfg.RedirectAddr)
+			}
+		}()
+	}
 
-	select {
-	case err := <-errCh:
-		return err
-	case <-ctx.Done():
+	shutdown := func() error {
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), s.cfg.ShutdownTimeout)
 		defer cancel()
+		if s.redirect != nil {
+			_ = s.redirect.Shutdown(shutdownCtx)
+		}
 		return s.http.Shutdown(shutdownCtx)
+	}
+	select {
+	case err := <-errCh:
+		if s.redirect != nil {
+			_ = s.redirect.Close()
+		}
+		return err
+	case err := <-redirectErr:
+		_ = s.http.Close()
+		return err
+	case <-ctx.Done():
+		return shutdown()
 	}
 }
 

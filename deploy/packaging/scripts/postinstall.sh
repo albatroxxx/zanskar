@@ -34,9 +34,11 @@ Zanskar is installed but not started. To configure and start it:
   sudo zanskar init                      # writes /etc/zanskar/env (master key, TLS, paths)
   sudo systemctl enable --now zanskar
 
-Or copy /etc/zanskar/env.example to /etc/zanskar/env, edit it, then enable the
-service. Put a TLS-terminating reverse proxy (Caddy/nginx) in front. See
-/usr/share/doc/zanskar or https://github.com/albatroxxx/zanskar.
+By default the gateway then serves HTTPS on 443 with a self-signed certificate
+(port 80 redirects there); upload a real certificate in Settings, or run
+`zanskar init -behind-proxy` to sit behind Caddy/nginx instead. Or copy
+/etc/zanskar/env.example to /etc/zanskar/env, edit it, then enable the service.
+See /usr/share/doc/zanskar or https://github.com/albatroxxx/zanskar.
 
 MSG
 fi

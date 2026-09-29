@@ -35,7 +35,8 @@ func runInit(args []string) error {
 	nonInteractive := fs.Bool("non-interactive", false, "never prompt; take values from flags and defaults")
 	listen := fs.String("listen", "", "listen address (default 127.0.0.1:8443)")
 	behindProxy := fs.Bool("behind-proxy", false, "a TLS proxy terminates in front on loopback (no cert needed)")
-	managedTLS := fs.Bool("managed-tls", false, "Zanskar serves TLS with a certificate it manages: self-signed at first start, replaced from the console (ADR 0021)")
+	managedTLS := fs.Bool("managed-tls", false, "Zanskar serves TLS with a certificate it manages: self-signed at first start, replaced from the console (the default; ADR 0021)")
+	redirect := fs.String("redirect", "", "plain-HTTP address that redirects to HTTPS when Zanskar serves TLS (default :80 when listening on 443; \"off\" disables)")
 	tlsCert := fs.String("tls-cert", "", "path to the TLS certificate (own-certificate mode)")
 	tlsKey := fs.String("tls-key", "", "path to the TLS private key (own-certificate mode)")
 	dataDir := fs.String("data-dir", "", "directory for the database and recordings (default /var/lib/zanskar)")
@@ -71,10 +72,21 @@ func runInit(args []string) error {
 	}
 	if *behindProxy {
 		a.TLSMode = tlsModeProxy
+		if *listen == "" {
+			a.ListenAddr = "127.0.0.1:8443"
+		}
 	}
 	if *tlsCert != "" || *tlsKey != "" {
 		a.TLSMode = tlsModeCert
 		a.TLSCert, a.TLSKey = *tlsCert, *tlsKey
+	}
+	switch {
+	case *redirect == "off":
+		a.RedirectAddr = ""
+	case *redirect != "":
+		a.RedirectAddr = *redirect
+	default:
+		a.RedirectAddr = defaultRedirect(a)
 	}
 	if *dataDir != "" {
 		a.DataDir = *dataDir
@@ -175,25 +187,31 @@ type initAnswers struct {
 	TLSMode    string // cert | proxy | managed
 	TLSCert    string
 	TLSKey     string
-	RequireMFA bool
-	GuacdAddr  string // empty disables desktop access
-	EnvFile    string // written only when the file is not at the packaged path
-	DataDir    string
-	Issuer     string
-	LogLevel   string
-	LogFormat  string
-	MasterKey  string // base64, 32 bytes
+	// RedirectAddr is the plain-HTTP listener that redirects to HTTPS;
+	// empty means none.
+	RedirectAddr string
+	RequireMFA   bool
+	GuacdAddr    string // empty disables desktop access
+	EnvFile      string // written only when the file is not at the packaged path
+	DataDir      string
+	Issuer       string
+	LogLevel     string
+	LogFormat    string
+	MasterKey    string // base64, 32 bytes
 }
 
 func defaultAnswers() initAnswers {
 	return initAnswers{
-		ListenAddr: "127.0.0.1:8443",
-		TLSMode:    tlsModeProxy,
-		RequireMFA: true,
-		DataDir:    "/var/lib/zanskar",
-		Issuer:     "Zanskar",
-		LogLevel:   "info",
-		LogFormat:  "json",
+		// Reachable over HTTPS with nothing else installed (ADR 0021): a
+		// self-signed certificate on 443, plain HTTP on 80 redirected there.
+		ListenAddr:   "0.0.0.0:443",
+		TLSMode:      tlsModeManaged,
+		RedirectAddr: ":80",
+		RequireMFA:   true,
+		DataDir:      "/var/lib/zanskar",
+		Issuer:       "Zanskar",
+		LogLevel:     "info",
+		LogFormat:    "json",
 	}
 }
 
@@ -202,6 +220,18 @@ var (
 	logFormats = map[string]bool{"json": true, "text": true}
 	hostPortRe = regexp.MustCompile(`^.+:\d+$`)
 )
+
+// defaultRedirect is ":80" when Zanskar serves TLS on 443, the case where
+// a user typing the bare host name would otherwise get nothing.
+func defaultRedirect(a initAnswers) string {
+	if a.TLSMode == tlsModeProxy {
+		return ""
+	}
+	if _, port, err := net.SplitHostPort(a.ListenAddr); err == nil && port == "443" {
+		return ":80"
+	}
+	return ""
+}
 
 // validateAnswers rejects inputs that would produce an env file the server
 // refuses, so a bad choice fails here rather than at first start.
@@ -216,6 +246,9 @@ func validateAnswers(a initAnswers) error {
 		}
 	case tlsModeManaged:
 	case tlsModeProxy:
+		if a.RedirectAddr != "" {
+			return errors.New("the HTTP redirect listener needs Zanskar to serve TLS; drop -redirect in behind-proxy mode")
+		}
 		// A loopback bind is what makes plain HTTP acceptable behind a proxy;
 		// refuse a non-loopback bind with no certificate, matching the server.
 		if !isLoopbackAddr(a.ListenAddr) {
@@ -223,6 +256,14 @@ func validateAnswers(a initAnswers) error {
 		}
 	default:
 		return fmt.Errorf("unknown TLS mode %q", a.TLSMode)
+	}
+	if a.RedirectAddr != "" {
+		if _, _, err := net.SplitHostPort(a.RedirectAddr); err != nil {
+			return fmt.Errorf("redirect address %q must be host:port or :port", a.RedirectAddr)
+		}
+		if a.RedirectAddr == a.ListenAddr {
+			return errors.New("the redirect address must differ from the listen address")
+		}
 	}
 	if a.DataDir == "" || !filepath.IsAbs(a.DataDir) {
 		return fmt.Errorf("data directory %q must be an absolute path", a.DataDir)
@@ -280,10 +321,17 @@ func renderEnv(a initAnswers) string {
 		p("# TLS terminates in Zanskar with a certificate it manages: self-signed at\n")
 		p("# first start, replaced from the console (Settings, TLS certificate).\n")
 		p("ZANSKAR_TLS_MODE=managed\n")
+		if a.RedirectAddr != "" {
+			p("# Plain HTTP here answers with a redirect to the HTTPS listener.\n")
+			p("ZANSKAR_HTTP_REDIRECT_ADDR=%s\n", a.RedirectAddr)
+		}
 	case tlsModeCert:
 		p("# TLS terminates in Zanskar.\n")
 		p("ZANSKAR_TLS_CERT=%s\n", a.TLSCert)
 		p("ZANSKAR_TLS_KEY=%s\n", a.TLSKey)
+		if a.RedirectAddr != "" {
+			p("ZANSKAR_HTTP_REDIRECT_ADDR=%s\n", a.RedirectAddr)
+		}
 	case tlsModeProxy:
 		p("# A TLS proxy terminates in front on loopback; cookies stay Secure and\n")
 		p("# the real client address is read from the proxy.\n")
@@ -433,6 +481,11 @@ func printNextSteps(a initAnswers, out string, mode os.FileMode, freshKey bool) 
 	fmt.Printf("  1. Apply migrations:   %szanskar migrate   (or let the unit's ExecStartPre do it)\n", pfx)
 	fmt.Printf("  2. Create the admin:   ZANSKAR_ADMIN_PASSWORD=... %szanskar admin create --username admin --name \"Your Name\"\n", pfx)
 	fmt.Println("  3. Start the service:  sudo systemctl enable --now zanskar")
+	if a.TLSMode == tlsModeManaged {
+		fmt.Printf("     Then open https://<this host>%s/ . The certificate is self-signed until you upload\n", listenPortSuffix(a.ListenAddr))
+		fmt.Println("     one in Settings; check its SHA-256 against `journalctl -u zanskar | grep 'tls certificate'`")
+		fmt.Println("     before accepting the browser warning.")
+	}
 	if a.GuacdAddr != "" {
 		fmt.Printf("  4. Desktops (RDP/VNC): guacd must be listening at %s. The package does not\n", a.GuacdAddr)
 		fmt.Println("     install it; the supported way is the official container, bound to loopback only:")
@@ -445,6 +498,14 @@ func printNextSteps(a initAnswers, out string, mode os.FileMode, freshKey bool) 
 	fmt.Println("Log destinations: application logs go to the service's stderr (journald under")
 	fmt.Println("systemd); the audit log lives in the database and is exported via SIEM, not a")
 	fmt.Printf("file; session recordings are written under %s.\n", filepath.Join(a.DataDir, "recordings"))
+}
+
+// listenPortSuffix is ":port" for a non-443 listen address, else empty.
+func listenPortSuffix(addr string) string {
+	if _, port, err := net.SplitHostPort(addr); err == nil && port != "443" {
+		return ":" + port
+	}
+	return ""
 }
 
 // guacdRunHint is the docker command that starts guacd the way the package
@@ -513,8 +574,18 @@ func promptAnswers(a *initAnswers) error {
 			a.TLSCert = ask(r, "  TLS certificate path", a.TLSCert)
 			a.TLSKey = ask(r, "  TLS private key path", a.TLSKey)
 		}
+		def := defaultRedirect(*a)
+		if askBool(r, "  Redirect plain HTTP to HTTPS as well?", def != "" || a.RedirectAddr != "") {
+			if def == "" {
+				def = ":80"
+			}
+			a.RedirectAddr = ask(r, "  Redirect listener address", def)
+		} else {
+			a.RedirectAddr = ""
+		}
 	} else {
 		a.TLSMode = tlsModeProxy
+		a.RedirectAddr = ""
 		if !isLoopbackAddr(a.ListenAddr) {
 			a.ListenAddr = "127.0.0.1:8443"
 			fmt.Printf("  (bind set to %s for proxy mode)\n", a.ListenAddr)

@@ -37,8 +37,12 @@ type Config struct {
 	// TLSProxy speaks plain HTTP for a TLS-terminating proxy in front.
 	// Derived from the other variables when ZANSKAR_TLS_MODE is unset, so
 	// an existing install keeps its behaviour.
-	TLSMode   string
-	GuacdAddr string
+	TLSMode string
+	// RedirectAddr, when set, is a plain-HTTP listener that answers every
+	// request with a redirect to the HTTPS listener (":80" on a default
+	// install). Only meaningful when the gateway serves TLS.
+	RedirectAddr string
+	GuacdAddr    string
 	// DockerPath is the container CLI used to spawn ephemeral database session
 	// containers (ADR 0017); empty defaults to "docker" on PATH. Set it to an
 	// absolute path or to "podman" for alternate runtimes.
@@ -149,6 +153,7 @@ func Load(opts Options) (*Config, error) {
 		ShutdownTimeout:      20 * time.Second,
 		EnvFile:              os.Getenv("ZANSKAR_ENV_FILE"),
 		TLSMode:              strings.ToLower(os.Getenv("ZANSKAR_TLS_MODE")),
+		RedirectAddr:         os.Getenv("ZANSKAR_HTTP_REDIRECT_ADDR"),
 	}
 	if c.TLSMode == "" {
 		if c.TLSCert != "" {
@@ -216,6 +221,15 @@ func Load(opts Options) (*Config, error) {
 	case TLSManaged, TLSProxy:
 	default:
 		errs = append(errs, fmt.Errorf("ZANSKAR_TLS_MODE %q is not file, managed or proxy", c.TLSMode))
+	}
+	if c.RedirectAddr != "" {
+		if _, _, err := net.SplitHostPort(c.RedirectAddr); err != nil {
+			errs = append(errs, fmt.Errorf("ZANSKAR_HTTP_REDIRECT_ADDR: %w", err))
+		} else if !c.ServesTLS() {
+			errs = append(errs, errors.New("ZANSKAR_HTTP_REDIRECT_ADDR needs the gateway to serve TLS (ZANSKAR_TLS_MODE=managed or a certificate)"))
+		} else if c.RedirectAddr == c.ListenAddr {
+			errs = append(errs, errors.New("ZANSKAR_HTTP_REDIRECT_ADDR must differ from ZANSKAR_LISTEN_ADDR"))
+		}
 	}
 	if !c.ServesTLS() && !isLoopback(c.ListenAddr) && !c.AllowPlainHTTP {
 		errs = append(errs, errors.New("refusing to serve plain HTTP on a non-loopback address; set ZANSKAR_TLS_CERT/ZANSKAR_TLS_KEY, bind to loopback behind a TLS proxy, or set ZANSKAR_ALLOW_PLAIN_HTTP=true for development only"))

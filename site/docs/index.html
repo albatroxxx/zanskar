@@ -21,8 +21,8 @@
     <h2 id="prerequisites">Prerequisites</h2>
     <table><thead><tr><th scope="col">Need</th><th scope="col">Package path</th><th scope="col">Compose path</th></tr></thead><tbody>
     <tr><td>Host</td><td>Linux, amd64 or arm64, systemd. Debian/Ubuntu (<code>.deb</code>) or RHEL/Fedora/SUSE (<code>.rpm</code>). 1 vCPU / 1 GB is enough to start.</td><td>Any Linux host with Docker Engine 24+ and the Compose v2 plugin.</td></tr>
-    <tr><td>Network</td><td>Users reach the gateway on 443 (or 8443). The gateway reaches targets on 22 (SSH), 3389 (RDP), 5900 (VNC), 5986 (WinRM), 5432 (PostgreSQL). Targets need no inbound internet exposure.</td><td>Same, plus ports 80 and 443 on the host for Caddy.</td></tr>
-    <tr><td>TLS</td><td>A certificate for the gateway, or a TLS-terminating reverse proxy on the same host. Zanskar refuses plain HTTP on a non-loopback address.</td><td>Handled by Caddy: self-signed for <code>localhost</code>, or Let's Encrypt when you set a public hostname.</td></tr>
+    <tr><td>Network</td><td>Users reach the gateway on 443 (80 redirects there). The gateway reaches targets on 22 (SSH), 3389 (RDP), 5900 (VNC), 5986 (WinRM), 5432 (PostgreSQL), 3306 (MySQL, MariaDB). Targets need no inbound internet exposure.</td><td>Same, plus ports 80 and 443 on the host for Caddy.</td></tr>
+    <tr><td>TLS</td><td>Nothing to prepare: the gateway serves HTTPS with a self-signed certificate until you upload a real one on the Settings page (no restart). Or put a TLS-terminating proxy in front with <code>init -behind-proxy</code>. Zanskar never serves plain HTTP off loopback.</td><td>Handled by Caddy: self-signed for <code>localhost</code>, or Let's Encrypt when you set a public hostname.</td></tr>
     <tr><td>Desktops (optional)</td><td><code>guacd</code> 1.6+ reachable from the gateway. <strong>The package does not install it</strong>; the official container, started as shown in <a href="#guacd">Start guacd</a>, is the supported way. SSH, WinRM and database sessions do not need it.</td><td>Included in the stack.</td></tr>
     <tr><td>Databases (optional)</td><td>Docker or Podman on the gateway host: database sessions run in ephemeral containers. See <a href="../guide/#database">the guide</a>.</td><td>Not available inside the Compose stack in 1.0; use the package path for database targets.</td></tr>
     <tr><td>Verification (recommended)</td><td colspan="2"><a href="https://docs.sigstore.dev/cosign/system_config/installation/">cosign</a> to verify the release signatures. <code>sha256sum</code> is on every Linux host already.</td></tr>
@@ -58,11 +58,15 @@ zanskar version</code></pre></div></div></div>
     <p><code>zanskar init</code> writes <code>/etc/zanskar/env</code> (mode 0600), generates the master key, and prints the exact next commands with your paths filled in. Interactively it asks for the listen address, TLS mode, data directory, guacd, MFA and logging. Non-interactively it takes flags, which suits cloud-init and Ansible.</p>
     <div class="code-block"><button type="button" class="copy" aria-label="Copy init commands">Copy</button><pre><code>sudo zanskar init                                   # interactive
 
+# the default: HTTPS on 443 with a managed certificate (self-signed until you
+# upload one in Settings), plain HTTP on 80 redirected there:
+sudo zanskar init -non-interactive
+
 # behind a TLS proxy (Caddy, nginx) on the same host:
 sudo zanskar init -non-interactive -behind-proxy
 
-# serving TLS itself, reachable on the network:
-sudo zanskar init -non-interactive -listen 0.0.0.0:8443 \
+# serving TLS from your own certificate files:
+sudo zanskar init -non-interactive -listen 0.0.0.0:443 \
   -tls-cert /etc/zanskar/tls/cert.pem -tls-key /etc/zanskar/tls/key.pem \
   -guacd 127.0.0.1:4822</code></pre></div>
     <p class="note"><strong>Back up <code>/etc/zanskar/env</code> now.</strong> It holds <code>ZANSKAR_MASTER_KEY</code>, which seals every stored credential. It is never written to the database or to <code>zanskar backup</code> archives. Losing it makes every vaulted credential unrecoverable.</p>
@@ -76,12 +80,15 @@ sudo zanskar init -non-interactive -listen 0.0.0.0:8443 \
 sudo systemctl enable --now zanskar
 
 # readiness check: pick the line that matches the mode you chose in init
+curl -k https://localhost/readyz             # default: managed TLS on 443 (-k: self-signed until you upload one)
 curl http://127.0.0.1:8443/readyz            # behind-proxy mode (plain HTTP on loopback)
-curl -k https://localhost:8443/readyz        # own-certificate mode
+curl -k https://localhost:8443/readyz        # own-certificate mode on 8443
 # either way: {"status":"ready"}</code></pre></div>
     <p>In behind-proxy mode the gateway speaks plain HTTP on loopback and expects your proxy to terminate TLS on 443; probing it with <code>https://</code> fails with an OpenSSL <em>wrong version number</em> error, which is expected, not a fault. <code>journalctl -u zanskar -n 5</code> shows the listener and whether TLS is on. To switch modes later, re-run <code>zanskar init -force</code> with the new flags; the existing master key is kept.</p>
     <p class="note"><strong>Scripting the admin password.</strong> For cloud-init or Ansible, <code>admin create</code> also reads <code>ZANSKAR_ADMIN_PASSWORD</code>. Feed it from a prompt or a secrets manager, not a literal: <code>read -rs ZANSKAR_ADMIN_PASSWORD &amp;&amp; export ZANSKAR_ADMIN_PASSWORD</code>, then run the command. If you did type a password into a shell, remove that line from history (<code>history -d &lt;n&gt;</code> or delete it from <code>~/.bash_history</code>) and change the password after first sign-in.</p>
 
+    <h3 id="first-visit">First visit: check the certificate, then upload yours</h3>
+    <p>A default install serves HTTPS with a self-signed certificate, so the browser warns on the first visit. Before accepting, compare the SHA-256 it shows with the one the gateway logged at start (<code>journalctl -u zanskar | grep 'tls certificate'</code>). Then sign in as the admin, open <strong>Settings → TLS certificate</strong> and upload a certificate your users' browsers trust (PEM chain and unencrypted key; it applies at once). Do this before inviting users: until then an on-path attacker present at someone's first visit could impersonate the gateway. Behind a proxy (<code>init -behind-proxy</code>) the proxy's certificate is what users see.</p>
     <h3 id="guacd">Start guacd, for RDP and VNC</h3>
     <p>Desktop sessions are relayed by <code>guacd</code>, which the package does <strong>not</strong> install. Without it, RDP and VNC targets fail with <em>the desktop service (guacd) is not running</em>, and the journal shows <code>guacd dial failed</code>. <code>zanskar init</code> checks the address you give it and prints this step when nothing is listening. The supported way is the official container, published on loopback only: guacd speaks an unauthenticated protocol and must never be reachable from anywhere but the gateway.</p>
     <div class="code-block"><button type="button" class="copy" aria-label="Copy the guacd start command">Copy</button><pre><code>sudo docker run -d --name guacd --restart unless-stopped -p 127.0.0.1:4822:4822 \
