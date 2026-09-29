@@ -170,6 +170,7 @@ func (h *Handler) fail(w http.ResponseWriter, r *http.Request, err error) {
 		httpx.BadRequest(w, strings.TrimPrefix(err.Error(), "tlscert: invalid certificate: "))
 		return
 	}
-	h.Log.Error("tls handler", "route", r.Method+" "+r.Pattern, "err", err)
+	// The error can carry text derived from the upload; one line of it.
+	h.Log.Error("tls handler", "route", r.Pattern, "err", strings.NewReplacer("\n", " ", "\r", " ").Replace(err.Error()))
 	httpx.WriteError(w, http.StatusInternalServerError, "internal", "internal error")
 }

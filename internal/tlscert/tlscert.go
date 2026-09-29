@@ -389,7 +389,9 @@ func (m *Manager) Regenerate(ctx context.Context, hosts []string, by string) err
 		return err
 	}
 	m.set(SourceGenerated, cert, leaf, certPEM)
-	m.Log.Info("serving a self-signed TLS certificate; upload a real one in Settings", "hosts", hosts, "sha256", m.Active().Fingerprint)
+	// The names came from an administrator's request; the fingerprint and
+	// count identify the certificate without echoing them into the log.
+	m.Log.Info("serving a self-signed TLS certificate; upload a real one in Settings", "host_count", len(hosts), "sha256", m.Active().Fingerprint)
 	return nil
 }
 
