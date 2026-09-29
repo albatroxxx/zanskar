@@ -1508,7 +1508,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/AccessRequest"
         "400":
-          description: `minutes` below 1 or over the policy maximum (`duration_too_long`).
+          description: "`minutes` below 1 or over the policy maximum (`duration_too_long`)."
           content:
             application/json:
               schema:
@@ -1993,7 +1993,7 @@ paths:
         - $ref: "#/components/parameters/Id"
       responses:
         "200":
-          description: The recording, with `Content-Disposition: attachment`.
+          description: "The recording, with `Content-Disposition: attachment`."
         "404":
           $ref: "#/components/responses/NotFound"
         "410":
@@ -2011,7 +2011,7 @@ paths:
         - $ref: "#/components/parameters/Id"
       responses:
         "200":
-          description: The transcript as `text/plain`, with `Content-Disposition: attachment`.
+          description: "The transcript as `text/plain`, with `Content-Disposition: attachment`."
           content:
             text/plain:
               schema:
@@ -3940,16 +3940,7 @@ components:
           description: Effective limits the UI should display.
           required: [idle_timeout_minutes, allow_clipboard, allow_file_transfer]
           properties:
-            retention_days:
-          type: integer
-          nullable: true
-          minimum: 1
-          maximum: 3650
-          description: >
-            Keep this policy's session recordings for that many days; null defers to the global
-            retention policy. A target's own retention_days wins over it. Fixed on each recording
-            when its session starts.
-        idle_timeout_minutes:
+            idle_timeout_minutes:
               type: integer
             max_session_minutes:
               type: [integer, "null"]
