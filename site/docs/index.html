@@ -146,12 +146,12 @@ docker compose -f deploy/docker-compose.yml exec -it \
     <tr><td><code>ZANSKAR_TRUST_PROXY_TLS</code>, <code>ZANSKAR_TRUSTED_PROXIES</code></td><td>Behind a reverse proxy: honour <code>X-Forwarded-*</code> from the listed CIDRs so the audit log records real client IPs.</td></tr>
     <tr><td><code>ZANSKAR_DB_DRIVER</code>, <code>ZANSKAR_DB_DSN</code></td><td><code>sqlite</code> (default) or <code>postgres</code> with a connection string.</td></tr>
     <tr><td><code>ZANSKAR_RECORDINGS_DIR</code></td><td>Where session recordings are written. S3 storage is configured with the <code>ZANSKAR_RECORDINGS_S3_*</code> variables described in <code>docs/deploy.md</code>.</td></tr>
-    <tr><td><code>ZANSKAR_GUACD_ADDR</code></td><td>guacd host:port. Unset disables RDP and VNC.</td></tr>
+    <tr><td><code>ZANSKAR_GUACD_ADDR</code></td><td>guacd host:port. Unset disables RDP and VNC. Install-time default; the console's Settings page can change it without a restart.</td></tr>
     <tr><td><code>ZANSKAR_DOCKER_PATH</code></td><td>Container CLI for database sessions. Defaults to <code>docker</code> on PATH; set an absolute path or <code>podman</code>.</td></tr>
-    <tr><td><code>ZANSKAR_REQUIRE_MFA</code></td><td>Default <code>true</code>. Only set <code>false</code> for throwaway installs.</td></tr>
+    <tr><td><code>ZANSKAR_REQUIRE_MFA</code></td><td>Default <code>true</code>. Only set <code>false</code> for throwaway installs. Install-time default; the console's Settings page can override it live, audited.</td></tr>
     <tr><td><code>ZANSKAR_ISSUER</code></td><td>Name shown in authenticator apps. Default <code>Zanskar</code>.</td></tr>
     <tr><td><code>ZANSKAR_SIEM_SYSLOG_ADDR</code>, <code>ZANSKAR_SIEM_WEBHOOK_URL</code>, <code>ZANSKAR_SIEM_WEBHOOK_SECRET</code></td><td>Stream the audit log to a SIEM over syslog/CEF or as signed JSON to a webhook.</td></tr>
-    <tr><td><code>ZANSKAR_LOG_FORMAT</code>, <code>ZANSKAR_LOG_LEVEL</code></td><td><code>json</code> or <code>text</code>; <code>debug</code>, <code>info</code>, <code>warn</code>, <code>error</code>.</td></tr>
+    <tr><td><code>ZANSKAR_LOG_FORMAT</code>, <code>ZANSKAR_LOG_LEVEL</code></td><td><code>json</code> or <code>text</code>; <code>debug</code>, <code>info</code>, <code>warn</code>, <code>error</code>. The level is an install-time default the console's Settings page can raise live.</td></tr>
     </tbody></table>
     <p>The full reference with every variable is <a href="https://github.com/albatroxxx/zanskar/blob/main/docs/deploy.md">docs/deploy.md</a> in the repository.</p>
 

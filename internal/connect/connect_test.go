@@ -100,3 +100,56 @@ func TestReviewOnlyAccountsCannotReachTargets(t *testing.T) {
 		t.Fatalf("user with no policies should see an empty list, got %v", out)
 	}
 }
+
+// TestGuacdAddressIsReadLive: desktop sessions are refused while the guacd
+// setting is empty and offered as soon as it is set, without rebuilding the
+// handler, because the address is read through a function at connect time.
+func TestGuacdAddressIsReadLive(t *testing.T) {
+	ctx := context.Background()
+	db, err := store.Open(ctx, config.DriverSQLite, "file::memory:?_pragma=foreign_keys(1)")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	if _, err := store.Migrate(ctx, db); err != nil {
+		t.Fatal(err)
+	}
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	users := user.NewRepo(db)
+	sessions := auth.NewSessions(db, bytes.Repeat([]byte{8}, 32), false)
+	guacd := ""
+	h := &Handler{Targets: target.NewRepo(db), Policies: policy.NewRepo(db), Log: log, GuacdAddr: func() string { return guacd }}
+	mux := http.NewServeMux()
+	h.Register(mux)
+	mw := &auth.Middleware{Sessions: sessions, Users: users, Log: log}
+	srv := mw.Authenticate(mw.CSRF(mux))
+	u := &user.User{Username: "alice", DisplayName: "alice", Roles: []user.Role{user.RoleUser}}
+	if err := users.Create(ctx, u); err != nil {
+		t.Fatal(err)
+	}
+	tok, sess, err := sessions.Create(ctx, u.ID, "203.0.113.9", "test", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	connect := func() (int, map[string]any) {
+		var buf bytes.Buffer
+		_ = json.NewEncoder(&buf).Encode(map[string]any{"target_id": "missing", "protocol": "rdp"})
+		req := httptest.NewRequest("POST", "/api/v1/connect", &buf)
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("X-CSRF-Token", sessions.CSRFToken(sess.ID))
+		req.RemoteAddr = "203.0.113.9:4321"
+		req.AddCookie(&http.Cookie{Name: auth.CookieName, Value: tok})
+		rr := httptest.NewRecorder()
+		srv.ServeHTTP(rr, req)
+		var out map[string]any
+		_ = json.Unmarshal(rr.Body.Bytes(), &out)
+		return rr.Code, out
+	}
+	if code, out := connect(); code != 501 || out["code"] != "protocol_unavailable" {
+		t.Fatalf("desktops off: %d %v", code, out)
+	}
+	guacd = "127.0.0.1:4822"
+	if code, out := connect(); code != 404 || out["code"] != "not_found" {
+		t.Fatalf("desktops on, the request goes on to the target lookup: %d %v", code, out)
+	}
+}

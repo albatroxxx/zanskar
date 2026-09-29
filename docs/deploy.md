@@ -52,7 +52,8 @@ sudo systemctl enable --now zanskar
 
 **RDP and VNC need guacd, which the package does not install.** Start the official
 container on loopback only (guacd is unauthenticated; never publish it wider), then set
-`ZANSKAR_GUACD_ADDR=127.0.0.1:4822` (or pass `-guacd` to `init`) and restart:
+`ZANSKAR_GUACD_ADDR=127.0.0.1:4822` (or pass `-guacd` to `init`) and restart, or set the
+guacd address on the console's Settings page, which applies without a restart:
 
 ```sh
 sudo docker run -d --name guacd --restart unless-stopped -p 127.0.0.1:4822:4822 \
@@ -275,6 +276,7 @@ tooling below rather than `zanskar backup`.
   the gateway serves TLS.
 - guacd isolated by the NetworkPolicy the chart installs; never expose port 4822.
 - `ZANSKAR_REQUIRE_MFA=true` (default). Do not turn it off outside throwaway installs.
+  The console's Settings page can override it; the change is audited and shows its source.
 - Cookies are `Secure`, `HttpOnly`, `SameSite=Strict` when TLS is on; do not set
   `ZANSKAR_TRUST_PROXY_TLS` in the in-pod TLS mode.
 - Recordings volume: only the gateway identity can read it; the API records every view.

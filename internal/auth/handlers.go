@@ -42,7 +42,9 @@ type Handler struct {
 	// MFAAttempts wrong codes end the pending session.
 	MFAAttempts int
 	// RequireMFA keeps a session partial until an authenticator is enrolled.
-	RequireMFA bool
+	// It is read at every sign-in so the runtime setting applies live; nil
+	// means not required.
+	RequireMFA func() bool
 	// ExternalLogin, when set, authenticates users against LDAP providers
 	// after local password authentication does not apply.
 	ExternalLogin ExternalAuthenticator
@@ -212,14 +214,15 @@ func (h *Handler) completeLogin(w http.ResponseWriter, r *http.Request, u *user.
 		h.serverError(w, r, err)
 		return
 	}
-	full := enrolled || !h.RequireMFA
+	require := h.RequireMFA != nil && h.RequireMFA()
+	full := enrolled || !require
 	token, sess, err := h.Sessions.Create(r.Context(), u.ID, ip, r.UserAgent(), full && !enrolled)
 	if err != nil {
 		h.serverError(w, r, err)
 		return
 	}
 	h.Sessions.SetCookie(w, token)
-	if !enrolled && h.RequireMFA {
+	if !enrolled && require {
 		h.record(r, actor.Event("user.login", "user", u.ID, audit.Success, map[string]string{"stage": "password", "next": "mfa_enrollment", "session_id": sess.ID}))
 		WriteJSON(w, http.StatusOK, loginResponse{Status: "mfa_enrollment_required", CSRFToken: h.Sessions.CSRFToken(sess.ID)})
 		return
