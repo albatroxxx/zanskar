@@ -7,6 +7,7 @@
 package target
 
 import (
+	"crypto/x509"
 	"errors"
 	"fmt"
 	"net"
@@ -50,6 +51,28 @@ func ValidProtocol(p Protocol) bool {
 	}
 	_, ok := DefaultPorts[p]
 	return ok
+}
+
+// TLS modes for a database target's upstream connection, named as libpq
+// names them so operators recognise them.
+const (
+	TLSDisable    = "disable"     // never TLS
+	TLSPrefer     = "prefer"      // TLS when offered, no verification (default)
+	TLSRequire    = "require"     // TLS or refuse, no verification
+	TLSVerifyFull = "verify-full" // TLS, certificate chain and host name verified
+)
+
+// TLSModes lists the accepted values in order of strictness.
+var TLSModes = []string{TLSDisable, TLSPrefer, TLSRequire, TLSVerifyFull}
+
+// ValidTLSMode reports whether m is a known mode.
+func ValidTLSMode(m string) bool {
+	for _, x := range TLSModes {
+		if x == m {
+			return true
+		}
+	}
+	return false
 }
 
 // ValidEngine reports whether e is a supported database engine.
@@ -117,7 +140,15 @@ type Target struct {
 	// RetentionDays keeps this target's session recordings for that many
 	// days, over the policy's value; nil defers to the policy or the global
 	// retention policy.
-	RetentionDays       *int                `json:"retention_days,omitempty"`
+	RetentionDays *int `json:"retention_days,omitempty"`
+	// DatabaseName is the database the session opens; empty means the
+	// engine's convention (PostgreSQL: a database named after the role;
+	// MySQL and MariaDB: none selected).
+	DatabaseName string `json:"database_name,omitempty"`
+	// TLSMode says how the sidecar protects its connection to the
+	// database; TLSCA is an optional PEM bundle for verify-full.
+	TLSMode             string              `json:"tls_mode,omitempty"`
+	TLSCA               string              `json:"tls_ca,omitempty"`
 	OSFamily            OSFamily            `json:"os_family"`
 	Ports               map[Protocol]int    `json:"ports"`
 	Capabilities        []Protocol          `json:"capabilities"`
@@ -214,6 +245,28 @@ func (t *Target) Validate() error {
 		if t.OSFamily == "" {
 			t.OSFamily = OtherOS
 		}
+		t.DatabaseName = strings.TrimSpace(t.DatabaseName)
+		if len(t.DatabaseName) > 128 || strings.ContainsAny(t.DatabaseName, " \t\n\r'\"`;\\/") {
+			return fmt.Errorf("%w: database_name must be a plain identifier of at most 128 characters", ErrInvalid)
+		}
+		t.TLSMode = strings.ToLower(strings.TrimSpace(t.TLSMode))
+		if t.TLSMode == "" {
+			t.TLSMode = TLSPrefer
+		}
+		if !ValidTLSMode(t.TLSMode) {
+			return fmt.Errorf("%w: tls_mode must be one of %s", ErrInvalid, strings.Join(TLSModes, ", "))
+		}
+		t.TLSCA = strings.TrimSpace(t.TLSCA)
+		if t.TLSCA != "" {
+			if len(t.TLSCA) > 64<<10 {
+				return fmt.Errorf("%w: tls_ca is too large", ErrInvalid)
+			}
+			if !x509.NewCertPool().AppendCertsFromPEM([]byte(t.TLSCA)) {
+				return fmt.Errorf("%w: tls_ca must hold at least one PEM certificate", ErrInvalid)
+			}
+		}
+	} else {
+		t.DatabaseName, t.TLSMode, t.TLSCA = "", "", ""
 	}
 	if t.RetentionDays != nil && (*t.RetentionDays <= 0 || *t.RetentionDays > 3650) {
 		return fmt.Errorf("%w: retention_days must be 1-3650", ErrInvalid)

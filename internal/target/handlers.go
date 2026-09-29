@@ -55,6 +55,9 @@ type Write struct {
 	Engine        string              `json:"engine"`         // database targets (ADR 0017)
 	EngineVersion string              `json:"engine_version"` // database targets
 	RetentionDays *int                `json:"retention_days"` // recording retention override; null defers
+	DatabaseName  string              `json:"database_name"`  // database targets
+	TLSMode       string              `json:"tls_mode"`       // database targets
+	TLSCA         string              `json:"tls_ca"`         // database targets
 	OSFamily      OSFamily            `json:"os_family"`
 	Ports         map[Protocol]int    `json:"ports"`
 	Capabilities  []Protocol          `json:"capabilities"`
@@ -68,6 +71,7 @@ func (w Write) apply(t *Target) {
 	t.Name, t.Address, t.OSFamily = w.Name, w.Address, w.OSFamily
 	t.Engine, t.EngineVersion = w.Engine, w.EngineVersion
 	t.RetentionDays = w.RetentionDays
+	t.DatabaseName, t.TLSMode, t.TLSCA = w.DatabaseName, w.TLSMode, w.TLSCA
 	t.Ports, t.Capabilities, t.Tags = w.Ports, w.Capabilities, w.Tags
 	t.Status, t.Notes, t.Credentials = w.Status, w.Notes, w.Credentials
 }

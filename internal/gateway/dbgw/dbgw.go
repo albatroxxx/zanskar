@@ -41,6 +41,11 @@ type Spec struct {
 	Username  string
 	Password  string // upstream credential; goes to the sidecar only, never the client
 	SessionID string
+	// TLSMode is how the sidecar protects its upstream connection (target
+	// TLSDisable/Prefer/Require/VerifyFull; empty means prefer); TLSCA is
+	// an optional PEM bundle trusted for verify-full.
+	TLSMode string
+	TLSCA   string
 	// ProxyImage is the sidecar image for mysql and mariadb: the gateway's
 	// own release image, which runs `zanskar dbproxy` (ADR 0017). Set from
 	// the database.proxy_image runtime setting.
@@ -104,7 +109,19 @@ func names(sessionID string) (network, proxy, client string) {
 // environment and execs pgbouncer. Writing the config in-container keeps the
 // upstream credential out of the host argument vector (it rides PGB_INI in the
 // environment) while the client container never receives it at all.
-const proxyScript = `umask 077; printf %s "$PGB_INI" > /etc/pgbouncer/pgbouncer.ini; printf %s "$PGB_USERLIST" > /etc/pgbouncer/userlist.txt; exec /usr/bin/pgbouncer /etc/pgbouncer/pgbouncer.ini`
+const proxyScript = `umask 077; printf %s "$PGB_INI" > /etc/pgbouncer/pgbouncer.ini; printf %s "$PGB_USERLIST" > /etc/pgbouncer/userlist.txt; [ -n "$PGB_CA" ] && printf %s "$PGB_CA" > /etc/pgbouncer/ca.pem; exec /usr/bin/pgbouncer /etc/pgbouncer/pgbouncer.ini`
+
+// sslMode maps the target's TLS mode onto pgbouncer's server_tls_sslmode.
+// verify-full without a CA bundle trusts the system roots pgbouncer's image
+// carries, which covers public providers.
+func sslMode(mode string) string {
+	switch mode {
+	case "disable", "require", "verify-full":
+		return mode
+	default:
+		return "prefer"
+	}
+}
 
 // connQuote single-quotes a libpq/pgbouncer connection-string value so spaces
 // or metacharacters in a credential cannot break the generated config.
@@ -146,25 +163,28 @@ func proxyArgs(s Spec, network, name string) (args []string, env []string, err e
 		"auth_type=trust\n" +
 		"auth_file=/etc/pgbouncer/userlist.txt\n" +
 		"pool_mode=session\n" +
-		// prefer: use TLS to the upstream when it offers/requires it (RDS forces
-		// SSL) and fall back to plaintext for a server without TLS (a local
-		// container). Encrypts without verifying the server certificate;
-		// verify-full with the provider CA is a later hardening step.
-		"server_tls_sslmode=prefer\n" +
+		// The target's TLS mode. prefer (the default) uses TLS when the
+		// server offers it (RDS forces SSL) and falls back to plain for a
+		// server without it, verifying nothing; verify-full checks the
+		// chain and the host name against tls_ca or the image's roots.
+		"server_tls_sslmode=" + sslMode(s.TLSMode) + "\n" +
 		"ignore_startup_parameters=extra_float_digits\n" +
 		"max_client_conn=50\n" +
 		"admin_users=" + s.Username + "\n"
+	if s.TLSMode == "verify-full" && s.TLSCA != "" {
+		ini += "server_tls_ca_file=/etc/pgbouncer/ca.pem\n"
+	}
 	// Trust ignores the client password, but the connecting user must be listed.
 	userlist := fmt.Sprintf("%q %q\n", s.Username, "x")
 	args = []string{
 		"run", "-d", "--rm", "--name", name, "--network", network,
 		"--security-opt", "no-new-privileges", "--cap-drop", "ALL",
 		"--pids-limit", "64", "--memory", "128m",
-		"-e", "PGB_INI", "-e", "PGB_USERLIST",
+		"-e", "PGB_INI", "-e", "PGB_USERLIST", "-e", "PGB_CA",
 		"--entrypoint", "sh", img,
 		"-c", proxyScript,
 	}
-	env = []string{"PGB_INI=" + ini, "PGB_USERLIST=" + userlist}
+	env = []string{"PGB_INI=" + ini, "PGB_USERLIST=" + userlist, "PGB_CA=" + s.TLSCA}
 	return args, env, nil
 }
 
@@ -178,7 +198,7 @@ func mysqlProxyArgs(s Spec, img, network, name string) (args []string, env []str
 		User:   s.Username,
 		Upstream: mysqlrelay.Upstream{
 			Addr: net.JoinHostPort(s.Host, strconv.Itoa(s.Port)), User: s.Username, Password: s.Password,
-			Database: s.Database, TLS: mysqlrelay.TLSPrefer,
+			Database: s.Database, TLS: mysqlrelay.TLSMode(sslMode(s.TLSMode)), CA: s.TLSCA,
 		},
 	}
 	raw, err := json.Marshal(cfg)

@@ -42,7 +42,8 @@ func (h *Handler) database(w http.ResponseWriter, r *http.Request) {
 	// Resolve the upstream credential before upgrading, so a vault failure is a
 	// plain HTTP error rather than a broken socket. It is handed only to the
 	// proxy sidecar, never to the client the user drives.
-	spec := dbgw.Spec{Engine: ep.Engine, Version: ep.EngineVersion, Host: ep.Address, Port: ep.port(target.Database)}
+	spec := dbgw.Spec{Engine: ep.Engine, Version: ep.EngineVersion, Host: ep.Address, Port: ep.port(target.Database),
+		TLSMode: ep.TLSMode, TLSCA: ep.TLSCA}
 	switch {
 	case len(g.UserSecret) > 0:
 		spec.Username, spec.Password = g.Username, string(g.UserSecret)
@@ -56,10 +57,11 @@ func (h *Handler) database(w http.ResponseWriter, r *http.Request) {
 		defer opened.Close()
 		spec.Username, spec.Password = opened.Username, opened.Password
 	}
-	// PostgreSQL needs a database to connect to and, by convention, one named
-	// after the role exists; MySQL and MariaDB open a session with no schema
-	// selected and the user picks one with USE.
-	if spec.Engine == "postgres" {
+	// The target names the database to open; without one, PostgreSQL gets
+	// the convention of a database named after the role, while MySQL and
+	// MariaDB open with no schema selected and the user picks one with USE.
+	spec.Database = ep.DatabaseName
+	if spec.Database == "" && spec.Engine == "postgres" {
 		spec.Database = spec.Username
 	}
 	if h.DBProxyImage != nil {

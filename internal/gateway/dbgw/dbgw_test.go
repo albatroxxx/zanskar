@@ -3,9 +3,17 @@
 package dbgw
 
 import (
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/pem"
+	"math/big"
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/albatroxxx/zanskar/internal/gateway/mysqlrelay"
 )
@@ -140,4 +148,46 @@ func TestClientArgsHasNoCredential(t *testing.T) {
 			t.Errorf("client missing hardening/image %q", want)
 		}
 	}
+}
+
+// TestSidecarTLSModes: the target's TLS mode reaches pgbouncer as its
+// sslmode (with the CA file only for verify-full) and the MySQL relay as
+// its tls setting with the CA bundle.
+func TestSidecarTLSModes(t *testing.T) {
+	ca := testCertPEM()
+	for mode, want := range map[string]string{"": "prefer", "prefer": "prefer", "require": "require", "verify-full": "verify-full", "disable": "disable"} {
+		s := Spec{Engine: "postgres", Host: "db", Port: 5432, Database: "app", Username: "svc", Password: "x", TLSMode: mode, TLSCA: ca}
+		_, env, err := proxyArgs(s, "n", "p")
+		if err != nil {
+			t.Fatal(err)
+		}
+		ini := env[0]
+		if !strings.Contains(ini, "server_tls_sslmode="+want+"\n") {
+			t.Errorf("mode %q: %s", mode, ini)
+		}
+		if strings.Contains(ini, "server_tls_ca_file") != (mode == "verify-full") {
+			t.Errorf("mode %q: ca file line presence wrong: %s", mode, ini)
+		}
+		if !slices.Contains(env, "PGB_CA="+ca) {
+			t.Errorf("mode %q: CA not passed in env", mode)
+		}
+		m := Spec{Engine: "mysql", Host: "db", Port: 3306, Username: "svc", Password: "x", TLSMode: mode, TLSCA: ca, ProxyImage: "img"}
+		_, env, err = proxyArgs(m, "n", "p")
+		if err != nil {
+			t.Fatal(err)
+		}
+		cfg, err := mysqlrelay.Parse([]byte(strings.TrimPrefix(env[0], "ZANSKAR_DBPROXY=")))
+		if err != nil || string(cfg.Upstream.TLS) != want || cfg.Upstream.CA != ca {
+			t.Errorf("mode %q: relay config %+v %v", mode, cfg.Upstream, err)
+		}
+	}
+}
+
+// testCertPEM is a self-signed certificate, since the relay refuses a CA
+// bundle that does not parse.
+func testCertPEM() string {
+	key, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	tmpl := &x509.Certificate{SerialNumber: big.NewInt(1), Subject: pkix.Name{CommonName: "test CA"}, NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(time.Hour), IsCA: true, BasicConstraintsValid: true}
+	der, _ := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
+	return string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}))
 }

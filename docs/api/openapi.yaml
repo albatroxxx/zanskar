@@ -3153,6 +3153,13 @@ components:
         engine_version:
           type: string
           description: Optional database engine version for a database target.
+        database_name:
+          type: string
+        tls_mode:
+          type: string
+          enum: [disable, prefer, require, verify-full]
+        tls_ca:
+          type: string
         os_family:
           $ref: "#/components/schemas/OsFamily"
         ports:
@@ -3216,6 +3223,23 @@ components:
           minimum: 1
           maximum: 3650
           description: Recording retention for this target's sessions, over the policy's; null defers.
+        database_name:
+          type: string
+          maxLength: 128
+          description: >
+            Database the session opens (database targets). Empty means the engine's
+            convention: PostgreSQL opens a database named after the role, MySQL and MariaDB
+            open with no schema selected.
+        tls_mode:
+          type: string
+          enum: [disable, prefer, require, verify-full]
+          description: >
+            How the credential-holding sidecar protects its connection to the database
+            (database targets). Default prefer: TLS when offered, unverified. verify-full
+            checks the chain against tls_ca (or the sidecar image's roots) and the host name.
+        tls_ca:
+          type: string
+          description: Optional PEM bundle trusted for verify-full, for example the provider's CA.
         os_family:
           $ref: "#/components/schemas/OsFamily"
         ports:
