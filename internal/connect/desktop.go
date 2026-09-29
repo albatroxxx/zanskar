@@ -129,9 +129,8 @@ func desktopDialMessage(err error) string {
 // Route: GET /ws/desktop?ticket=...&width=&height=&dpi=
 func (h *Handler) desktop(w http.ResponseWriter, r *http.Request) {
 	ip := auth.ClientIP(r)
-	g, err := h.Tickets.Redeem(r.URL.Query().Get("ticket"), ip)
-	if err != nil {
-		httpx.WriteError(w, http.StatusUnauthorized, "invalid_ticket", "invalid or expired ticket")
+	g, ok := h.redeem(w, r)
+	if !ok {
 		return
 	}
 	defer zero(g.UserSecret)

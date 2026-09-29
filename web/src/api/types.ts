@@ -352,6 +352,29 @@ export interface SettingsListing {
   boot: BootSetting[]
 }
 
+/** The environment file compared with what the process started with; names only, never values. */
+export interface EnvFileReport {
+  path?: string
+  state: 'unchanged' | 'changed' | 'missing' | 'unreadable' | 'none'
+  changed?: string[]
+  error?: string
+  mod_time?: string
+  checked_at: string
+}
+
+/** GET /admin/system/status. Mirrors internal/lifecycle.Status. */
+export interface SystemStatus {
+  version: string
+  started_at: string
+  uptime_seconds: number
+  supervisor: 'systemd' | 'kubernetes' | 'unknown'
+  live_sessions: number
+  env_file: EnvFileReport
+  restart_required: boolean
+  draining: boolean
+  drain?: { requested_at: string; requested_by: string; deadline: string; wait_minutes: number }
+}
+
 export interface RetentionPolicy {
   max_age_days: number
   max_total_bytes: number

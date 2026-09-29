@@ -3,6 +3,7 @@ import { NavLink, Outlet } from 'react-router-dom'
 import { useAuth } from '../auth/AuthContext'
 import { canConnect } from '../auth/home'
 import { AccessNotices } from './AccessNotices'
+import { RestartNotice } from './RestartNotice'
 
 export interface NavItem {
   to: string
@@ -75,6 +76,7 @@ export function Shell({ portal, items }: { portal: 'user' | 'admin' | 'audit'; i
       </aside>
       <main className="main">
         {portal === 'user' && <AccessNotices />}
+        {portal === 'admin' && <RestartNotice />}
         <Outlet />
       </main>
     </div>

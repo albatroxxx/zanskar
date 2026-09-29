@@ -277,6 +277,27 @@ tooling below rather than `zanskar backup`.
 - guacd isolated by the NetworkPolicy the chart installs; never expose port 4822.
 - `ZANSKAR_REQUIRE_MFA=true` (default). Do not turn it off outside throwaway installs.
   The console's Settings page can override it; the change is audited and shows its source.
+
+## Changing boot settings and restarting
+
+Listen address, TLS files, database, master key, recordings storage and the other
+install-time variables are read once at start. Edit `/etc/zanskar/env`, and the admin
+console shows a **Restart required** banner naming the variables that changed (never
+their values) with the number of live sessions. Restart from the banner: the gateway
+stops taking new sessions, waits for live ones to end (up to the minutes you choose, or
+ends them at once), then exits 0. What starts it again:
+
+- **systemd** (deb/rpm): the unit has `Restart=always`; the service is back within seconds.
+- **Docker Compose**: `restart: unless-stopped` in the shipped compose file.
+- **Kubernetes**: the pod's restart policy.
+- **Anything else**: make sure your process manager restarts the service, or use
+  `systemctl restart zanskar` by hand instead.
+
+The check needs the running service to read the env file: `zanskar init` writes it
+`root:zanskar 0640`. A file created by hand as `0600 root` shows "cannot check" in the
+console; fix with `chgrp zanskar /etc/zanskar/env && chmod 0640 /etc/zanskar/env`. If the
+file lives elsewhere, set `ZANSKAR_ENV_FILE=<path>` in it. Containers normally have no
+file and the check is off.
 - Cookies are `Secure`, `HttpOnly`, `SameSite=Strict` when TLS is on; do not set
   `ZANSKAR_TRUST_PROXY_TLS` in the in-pod TLS mode.
 - Recordings volume: only the gateway identity can read it; the API records every view.

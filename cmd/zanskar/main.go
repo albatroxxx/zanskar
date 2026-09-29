@@ -36,6 +36,7 @@ import (
 	"github.com/albatroxxx/zanskar/internal/idp/ldap"
 	"github.com/albatroxxx/zanskar/internal/idp/oidc"
 	"github.com/albatroxxx/zanskar/internal/keyring"
+	"github.com/albatroxxx/zanskar/internal/lifecycle"
 	"github.com/albatroxxx/zanskar/internal/policy"
 	"github.com/albatroxxx/zanskar/internal/recording"
 	"github.com/albatroxxx/zanskar/internal/server"
@@ -111,6 +112,10 @@ func newLeveledLogger(cfg *config.Config) (*slog.Logger, *slog.LevelVar) {
 }
 
 func runServe() error {
+	startedAt := time.Now().UTC()
+	// Taken before anything else reads or touches the environment: it is
+	// what the environment file is later compared against (ADR 0020).
+	startedEnv := lifecycle.SnapshotEnv()
 	cfg, err := config.Load(config.Options{RequireMasterKey: true})
 	if err != nil {
 		return err
@@ -118,6 +123,11 @@ func runServe() error {
 	log, logLevel := newLeveledLogger(cfg)
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
+	// A console-requested restart cancels this context once live sessions
+	// have drained; serve then returns nil and the supervisor starts a fresh
+	// process that reads the environment file again.
+	ctx, exit := context.WithCancel(ctx)
+	defer exit()
 
 	db, err := store.Open(ctx, cfg.DBDriver, cfg.DBDSN)
 	if err != nil {
@@ -191,6 +201,8 @@ func runServe() error {
 	accessReqs := access.NewRepo(db)
 	sessionRepo := session.NewRepo(db)
 	registry := gateway.NewRegistry()
+	restarter := &lifecycle.Controller{Registry: registry, Log: log, Exit: exit}
+	drift := &lifecycle.Drift{Path: cfg.EnvFile, Started: startedEnv}
 	var storage recording.Storage = &recording.LocalStorage{Dir: cfg.RecordingsDir}
 	if cfg.RecordingsS3Bucket != "" {
 		s3store, err := recording.NewS3Storage(ctx, recording.S3Options{
@@ -223,8 +235,9 @@ func runServe() error {
 			&asg.AdminHandler{Repo: asgRepo, Sync: syncer.SyncGroup, GatewayPrincipal: cfg.AWSGatewayPrincipal, Policies: policies, Live: registry, Audit: auditLog, Log: log},
 			&session.Handler{Repo: sessionRepo, Audit: auditLog, Registry: registry, Storage: storage, Log: log},
 			&settings.Handler{Service: runtime, Audit: auditLog, Log: log},
+			&lifecycle.Handler{Drift: drift, Controller: restarter, Audit: auditLog, Log: log, StartedAt: startedAt},
 			&connect.Handler{Targets: targets, Policies: policies, Access: accessReqs, Vault: vault, Sessions: sessionRepo, Tickets: ticket.NewStore(),
-				Registry: registry, Storage: storage, Audit: auditLog, Log: log, MFAEnrolled: totp.Enrolled, GuacdAddr: guacdAddr,
+				Registry: registry, Storage: storage, Audit: auditLog, Log: log, MFAEnrolled: totp.Enrolled, GuacdAddr: guacdAddr, Draining: restarter.Draining,
 				DockerPath: cfg.DockerPath, Prober: &target.Prober{}, ASGs: asgRepo, Cloud: cloudProviders},
 			&connect.ShadowHandler{Registry: registry, Audit: auditLog, Log: log, GuacdAddr: guacdAddr},
 		},
@@ -280,8 +293,12 @@ func runServe() error {
 		}
 	}()
 
-	log.Info("starting zanskar", "version", version.Version, "db_driver", cfg.DBDriver, "key_version", ring.ActiveVersion(), "web_ui", web.Enabled)
-	return server.New(cfg, db, log, deps).ListenAndServe(ctx)
+	log.Info("starting zanskar", "version", version.Version, "db_driver", cfg.DBDriver, "key_version", ring.ActiveVersion(), "web_ui", web.Enabled, "env_file", cfg.EnvFile)
+	err = server.New(cfg, db, log, deps).ListenAndServe(ctx)
+	if err == nil && restarter.Draining() {
+		log.Info("stopped for a restart; the supervisor starts the next process", "supervisor", lifecycle.Supervisor())
+	}
+	return err
 }
 
 // ldapExternalAuth adapts the LDAP login helper to auth.ExternalAuthenticator,

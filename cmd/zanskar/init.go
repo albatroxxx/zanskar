@@ -16,9 +16,12 @@ import (
 	"os/user"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/albatroxxx/zanskar/internal/config"
 )
 
 // runInit handles `zanskar init`: it gathers configuration and writes the
@@ -110,16 +113,49 @@ func runInit(args []string) error {
 		fmt.Fprintln(os.Stderr, "warning:", w)
 	}
 
+	if *out != config.DefaultEnvFile {
+		a.EnvFile = *out
+	}
 	content := renderEnv(a)
 	if *stdout {
 		fmt.Print(content)
 		return nil
 	}
-	if err := writeFileAtomic(*out, []byte(content), 0o600); err != nil {
+	mode := os.FileMode(0o600)
+	// Owned by root, readable by the service group: the gateway reads the
+	// file back to tell the console when it changed (ADR 0020), and the
+	// same process already holds every value in its environment.
+	gid := serviceGID()
+	if gid >= 0 {
+		mode = 0o640
+	}
+	if err := writeFileAtomic(*out, []byte(content), mode); err != nil {
 		return err
 	}
-	printNextSteps(a, *out, existingKey == "")
+	if gid >= 0 {
+		if err := os.Chown(*out, 0, gid); err != nil && !errors.Is(err, os.ErrPermission) {
+			fmt.Fprintln(os.Stderr, "warning: could not set the file's group:", err)
+		}
+	}
+	printNextSteps(a, *out, mode, existingKey == "")
 	return nil
+}
+
+// serviceGID is the gid of the zanskar group the package creates, or -1
+// when there is none (a hand install running as another user).
+func serviceGID() int {
+	if os.Geteuid() != 0 {
+		return -1
+	}
+	g, err := user.LookupGroup("zanskar")
+	if err != nil {
+		return -1
+	}
+	gid, err := strconv.Atoi(g.Gid)
+	if err != nil {
+		return -1
+	}
+	return gid
 }
 
 // tls modes
@@ -136,6 +172,7 @@ type initAnswers struct {
 	TLSKey     string
 	RequireMFA bool
 	GuacdAddr  string // empty disables desktop access
+	EnvFile    string // written only when the file is not at the packaged path
 	DataDir    string
 	Issuer     string
 	LogLevel   string
@@ -228,7 +265,8 @@ func renderEnv(a initAnswers) string {
 	p := func(format string, args ...any) { fmt.Fprintf(&b, format, args...) }
 	p("# Zanskar configuration, written by `zanskar init`.\n")
 	p("# The server reads these variables from the environment (ADR 0014); this\n")
-	p("# file is loaded by the systemd unit. Mode 0600: it holds the master key.\n\n")
+	p("# file is loaded by the systemd unit. It holds the master key: mode 0600, or 0640\n")
+	p("# with the zanskar group so the running service can tell when it changed.\n\n")
 
 	p("ZANSKAR_LISTEN_ADDR=%s\n", a.ListenAddr)
 	switch a.TLSMode {
@@ -265,6 +303,10 @@ func renderEnv(a initAnswers) string {
 	p("ZANSKAR_LOG_LEVEL=%s\n\n", a.LogLevel)
 	p("ZANSKAR_ISSUER=%s\n", a.Issuer)
 	p("ZANSKAR_LOG_FORMAT=%s\n\n", a.LogFormat)
+	if a.EnvFile != "" {
+		p("# Where this file lives, so the running gateway can tell the console when it changed.\n")
+		p("ZANSKAR_ENV_FILE=%s\n\n", a.EnvFile)
+	}
 
 	p("# Sealing key for all stored secrets. Back it up: losing it makes every\n")
 	p("# stored credential unrecoverable. Never change it on an existing install.\n")
@@ -303,6 +345,8 @@ func masterKeyFrom(path string) string {
 
 // writeFileAtomic writes via a temp file in the same directory then renames, so
 // a crash never leaves a half-written env file (which could lose the key line).
+// A file being replaced keeps its owner and group: the service group must go
+// on reading it after a key rotation rewrites it.
 func writeFileAtomic(path string, data []byte, mode os.FileMode) error {
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0o750); err != nil {
@@ -317,6 +361,15 @@ func writeFileAtomic(path string, data []byte, mode os.FileMode) error {
 	if err := tmp.Chmod(mode); err != nil {
 		_ = tmp.Close()
 		return err
+	}
+	if info, err := os.Stat(path); err == nil {
+		if st, ok := info.Sys().(*syscall.Stat_t); ok {
+			// Not root: the file is already ours, chown would only fail.
+			if err := tmp.Chown(int(st.Uid), int(st.Gid)); err != nil && os.Geteuid() == 0 {
+				_ = tmp.Close()
+				return err
+			}
+		}
 	}
 	if _, err := tmp.Write(data); err != nil {
 		_ = tmp.Close()
@@ -348,8 +401,8 @@ func isTerminal() bool {
 	return info.Mode()&os.ModeCharDevice != 0
 }
 
-func printNextSteps(a initAnswers, out string, freshKey bool) {
-	fmt.Printf("\nWrote %s (mode 0600).\n\n", out)
+func printNextSteps(a initAnswers, out string, mode os.FileMode, freshKey bool) {
+	fmt.Printf("\nWrote %s (mode %04o).\n\n", out, mode)
 	if freshKey {
 		fmt.Println("A new master key was generated. Back up this file now — losing the")
 		fmt.Println("master key makes every stored credential unrecoverable.")

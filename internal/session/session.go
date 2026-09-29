@@ -25,6 +25,7 @@ const (
 	EndFailover        = "failover"
 	EndError           = "error"
 	EndPolicyRevoked   = "policy_revoked"
+	EndGatewayRestart  = "gateway_restart"
 )
 
 // Session is one connection from a user to a target.

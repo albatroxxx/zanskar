@@ -34,6 +34,7 @@ var (
 	ErrAdminTerminated = errors.New("session terminated by an administrator")
 	ErrTargetLost      = errors.New("target left the healthy pool")
 	ErrPolicyRevoked   = errors.New("access policy no longer grants this session")
+	ErrGatewayRestart  = errors.New("gateway restarting")
 )
 
 // CancelReason maps a registry cancellation to an access_sessions end reason
@@ -44,6 +45,8 @@ func CancelReason(ctx context.Context) (reason, msg string) {
 		return "target_lost", "the instance left the healthy pool"
 	case errors.Is(cause, ErrPolicyRevoked):
 		return "policy_revoked", "your access policy changed"
+	case errors.Is(cause, ErrGatewayRestart):
+		return "gateway_restart", "the gateway is restarting to apply a configuration change; reconnect in a moment"
 	default:
 		return "admin_terminated", "session ended by an administrator"
 	}
