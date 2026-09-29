@@ -457,6 +457,14 @@ func TestRetentionDays(t *testing.T) {
 	if !d.Allowed || d.RetentionDays != 90 {
 		t.Fatalf("decision: %+v", d)
 	}
+	// Several policies granting the same access: the longest retention
+	// applies even when a shorter-idle policy sets the session limits.
+	longer := 365
+	other := &Policy{Name: "auditors", Enabled: true, UserID: u.ID, Selector: Selector{Tags: map[string]string{"env": "prod"}}, Protocols: []string{"ssh"}, IdleTimeoutMinutes: 60, RetentionDays: &longer}
+	d = Evaluate([]*Policy{got, other}, TargetRef{Tags: map[string]string{"env": "prod"}}, "ssh", time.Now())
+	if !d.Allowed || d.Policy.ID != got.ID || d.RetentionDays != 365 {
+		t.Fatalf("longest retention must win: %+v (policy %s)", d, d.Policy.Name)
+	}
 	bad := 0
 	if err := (&Policy{Name: "b", UserID: u.ID, Protocols: []string{"ssh"}, IdleTimeoutMinutes: 15, RetentionDays: &bad}).Validate(); err == nil {
 		t.Fatal("0 days must be refused")

@@ -344,6 +344,7 @@ type Decision struct {
 // timeout is chosen so overlap never widens access.
 func Evaluate(policies []*Policy, t TargetRef, protocol string, now time.Time) Decision {
 	var best *Policy
+	retention := 0
 	sawStanding := false
 	reason := "no policy grants access to this target"
 	for _, p := range policies {
@@ -376,6 +377,12 @@ func Evaluate(policies []*Policy, t TargetRef, protocol string, now time.Time) D
 		if !p.RequireApproval {
 			sawStanding = true
 		}
+		// Retention is an evidence-keeping obligation: the longest among the
+		// policies that grant this access applies, whichever one is picked
+		// for the session limits below.
+		if p.RetentionDays != nil && *p.RetentionDays > retention {
+			retention = *p.RetentionDays
+		}
 		if best == nil || p.IdleTimeoutMinutes < best.IdleTimeoutMinutes {
 			best = p
 		}
@@ -395,9 +402,7 @@ func Evaluate(policies []*Policy, t TargetRef, protocol string, now time.Time) D
 	if best.MaxSessionMinutes != nil {
 		d.MaxSession = time.Duration(*best.MaxSessionMinutes) * time.Minute
 	}
-	if best.RetentionDays != nil {
-		d.RetentionDays = *best.RetentionDays
-	}
+	d.RetentionDays = retention
 	return d
 }
 
