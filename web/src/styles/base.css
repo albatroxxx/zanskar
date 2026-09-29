@@ -135,8 +135,15 @@ td .muted, .muted { color: var(--fg-muted); }
 .modal h2 { margin-bottom: 8px; }
 .modal .actions { justify-content: flex-end; margin-top: 18px; }
 .modal-body > .actions:last-child, .modal-body > form > .actions:last-child {
-  position: sticky; bottom: 0; z-index: 1; margin: 18px -24px 0; padding: 12px 24px; background: var(--bg-raised); border-top: 1px solid var(--line);
+  position: sticky; bottom: 0; z-index: 1; margin: 18px -24px 0; padding: 12px 24px 16px; background: var(--bg-raised); border-top: 1px solid var(--line);
 }
+/* A sticky bottom:0 element is anchored to the scroll container's content
+   edge, so the body's bottom padding would become a strip under the bar
+   through which the form scrolls past (manual QA finding R14). When the
+   body ends in a sticky action row, the row carries the bottom spacing
+   itself and the body has none; the rounded corners clip the row. */
+.modal-body:has(> .actions:last-child), .modal-body:has(> form > .actions:last-child) { padding-bottom: 0; }
+.modal-body { border-radius: 0 0 var(--radius-lg) var(--radius-lg); }
 
 /* login */
 .login-wrap { min-height: 100%; display: grid; place-items: center; padding: 24px 16px; }
