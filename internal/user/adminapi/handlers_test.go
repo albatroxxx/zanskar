@@ -223,3 +223,39 @@ func TestNonAdminForbidden(t *testing.T) {
 		t.Fatalf("expected 403, got %d", r.code)
 	}
 }
+
+// TestOnboardingPasswords: creating a local user without a password
+// returns a generated one-time password exactly once and marks the user as
+// having to change it; an admin-set password does too; a password-less
+// account gets neither; a reset can generate one as well.
+func TestOnboardingPasswords(t *testing.T) {
+	e := newEnv(t)
+	r := e.do("POST", "/api/v1/users", map[string]any{"username": "newbie", "display_name": "New Person", "roles": []string{"user"}})
+	if r.code != 201 {
+		t.Fatalf("create: %d %v", r.code, r.body)
+	}
+	pw, _ := r.body["initial_password"].(string)
+	if len(pw) != 20 || r.body["must_change_password"] != true {
+		t.Fatalf("generated one-time password expected: %v", r.body)
+	}
+	if g := e.do("GET", "/api/v1/users/"+r.body["id"].(string), nil); g.body["initial_password"] != nil || g.body["must_change_password"] != true {
+		t.Fatalf("the password is returned once only: %v", g.body)
+	}
+	r = e.do("POST", "/api/v1/users", map[string]any{"username": "chosen", "display_name": "Chosen", "roles": []string{"user"}, "password": "a long passphrase here"})
+	if r.code != 201 || r.body["initial_password"] != nil || r.body["must_change_password"] != true {
+		t.Fatalf("admin-set password: %d %v", r.code, r.body)
+	}
+	r = e.do("POST", "/api/v1/users", map[string]any{"username": "external", "display_name": "External", "roles": []string{"user"}, "password_less": true})
+	if r.code != 201 || r.body["initial_password"] != nil || r.body["must_change_password"] != false {
+		t.Fatalf("password-less: %d %v", r.code, r.body)
+	}
+	id := r.body["id"].(string)
+	r = e.do("PUT", "/api/v1/users/"+id+"/password", map[string]any{"generate": true})
+	if r.code != 200 || len(r.body["initial_password"].(string)) != 20 || r.body["must_change_password"] != true {
+		t.Fatalf("generated reset: %d %v", r.code, r.body)
+	}
+	r = e.do("PUT", "/api/v1/users/"+id+"/password", map[string]any{"password": "another long passphrase", "must_change_password": false})
+	if r.code != 200 || r.body["initial_password"] != nil || r.body["must_change_password"] != false {
+		t.Fatalf("reset without change: %d %v", r.code, r.body)
+	}
+}

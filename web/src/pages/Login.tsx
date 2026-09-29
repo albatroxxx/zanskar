@@ -5,7 +5,7 @@ import { useAuth } from '../auth/AuthContext'
 import { api, errorMessage } from '../api/client'
 import { Alert, Field } from '../components/ui'
 
-type Step = 'password' | 'verify' | 'enroll' | 'recovery'
+type Step = 'password' | 'change' | 'verify' | 'enroll' | 'recovery'
 
 export function Login() {
   const auth = useAuth()
@@ -26,9 +26,11 @@ export function Login() {
   // credential is entered. Read without a session; empty means none.
   const [banner, setBanner] = useState('')
   const [recovery, setRecovery] = useState<string[]>([])
+  const [newPw, setNewPw] = useState('')
+  const [confirmPw, setConfirmPw] = useState('')
 
   // A partial session that survived a reload lands on the right step.
-  const effectiveStep: Step = step === 'password' && auth.status === 'partial' ? (auth.pending === 'enroll' ? 'enroll' : 'verify') : step
+  const effectiveStep: Step = step === 'password' && auth.status === 'partial' ? (auth.pending === 'enroll' ? 'enroll' : auth.pending === 'password' ? 'change' : 'verify') : step
 
   useEffect(() => {
     api.get<{ items: { id: string; name: string; type: string }[] }>('/auth/providers')
@@ -56,9 +58,37 @@ export function Login() {
     setErr('')
     try {
       const res = await auth.login(username.trim(), password)
+      if (res.status === 'password_change_required') {
+        // Keep the password typed: it is the "current" one the change asks for.
+        setStep('change')
+        return
+      }
       setPassword('')
       if (res.status === 'mfa_required') setStep('verify')
       else if (res.status === 'mfa_enrollment_required') setStep('enroll')
+    } catch (e) {
+      setErr(errorMessage(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const submitChange = async (e: FormEvent) => {
+    e.preventDefault()
+    if (newPw !== confirmPw) {
+      setErr('The new passwords do not match.')
+      return
+    }
+    setBusy(true)
+    setErr('')
+    try {
+      const res = await auth.changePassword(password, newPw)
+      setPassword('')
+      setNewPw('')
+      setConfirmPw('')
+      if (res.status === 'mfa_required') setStep('verify')
+      else if (res.status === 'mfa_enrollment_required') setStep('enroll')
+      else setStep('password')
     } catch (e) {
       setErr(errorMessage(e))
     } finally {
@@ -132,6 +162,27 @@ export function Login() {
                   ))}
                 </div>
               )}
+            </form>
+          )}
+
+          {effectiveStep === 'change' && (
+            <form onSubmit={submitChange}>
+              <p className="muted" style={{ marginTop: 0 }}>The password you signed in with was set by an administrator. Choose your own before continuing; it is never shown to anyone else.</p>
+              {!password && (
+                <Field label="Current password">
+                  <input id="current-password" type="password" autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} required />
+                </Field>
+              )}
+              <Field label="New password" hint="At least 12 characters">
+                <input id="new-password" type="password" autoFocus autoComplete="new-password" value={newPw} onChange={(e) => setNewPw(e.target.value)} required minLength={12} />
+              </Field>
+              <Field label="New password again">
+                <input id="new-password-2" type="password" autoComplete="new-password" value={confirmPw} onChange={(e) => setConfirmPw(e.target.value)} required />
+              </Field>
+              <div className="actions" style={{ justifyContent: 'space-between' }}>
+                <button type="button" className="btn ghost" onClick={() => void auth.logout().then(() => setStep('password'))}>Cancel</button>
+                <button className="btn primary" disabled={busy}>Set password and continue</button>
+              </div>
             </form>
           )}
 

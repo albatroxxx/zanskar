@@ -193,6 +193,50 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "429":
           $ref: "#/components/responses/RateLimited"
+  /auth/password:
+    post:
+      tags: [auth]
+      summary: Replace the caller's password
+      description: |
+        The step owed when an administrator set the password (`password_change_required` at
+        sign-in, `pending: password` on `/auth/me`), or a change of the caller's own from a
+        full session. The current password is required either way. Afterwards the sign-in
+        continues where it would have: the response is a LoginResponse whose status is
+        `mfa_required`, `mfa_enrollment_required` or `ok`. Audited as `user.password.change`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [current_password, new_password]
+              properties:
+                current_password:
+                  type: string
+                  writeOnly: true
+                new_password:
+                  type: string
+                  minLength: 12
+                  writeOnly: true
+      responses:
+        "200":
+          description: The password was replaced; the status says what is owed next.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LoginResponse"
+        "400":
+          description: The new password fails the policy or repeats the current one.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: The current password is wrong.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
   /auth/mfa/totp/enroll:
     post:
       tags: [auth]
@@ -2443,8 +2487,8 @@ components:
       properties:
         status:
           type: string
-          enum: [ok, mfa_required, mfa_enrollment_required]
-          description: "`ok` means the session is fully usable. `mfa_required` means call `/auth/mfa/totp/verify`. `mfa_enrollment_required` means the deployment requires MFA and the account has none; call `/auth/mfa/totp/enroll`."
+          enum: [ok, mfa_required, mfa_enrollment_required, password_change_required]
+          description: "`ok` means the session is fully usable. `mfa_required` means call `/auth/mfa/totp/verify`. `mfa_enrollment_required` means the deployment requires MFA and the account has none; call `/auth/mfa/totp/enroll`. `password_change_required` means an administrator set the password; call `/auth/password` first, whose response says what is owed next."
         csrf_token:
           type: string
         user:
@@ -2500,6 +2544,13 @@ components:
       type: object
       required: [id, username, display_name, status, roles, created_at, updated_at]
       properties:
+        must_change_password:
+          type: boolean
+          description: An administrator set the password; the user replaces it at their next sign-in.
+        initial_password:
+          type: string
+          readOnly: true
+          description: Only in the `POST /users` response when a one-time password was generated; shown once, never stored in clear.
         id:
           type: string
         username:
@@ -2537,7 +2588,7 @@ components:
             - type: "null"
     UserCreate:
       type: object
-      required: [username, display_name, password, roles]
+      required: [username, display_name, roles]
       properties:
         username:
           type: string
@@ -2555,7 +2606,14 @@ components:
           type: string
           minLength: 12
           writeOnly: true
-          description: Checked against a breached-password list and hashed with Argon2id.
+          description: >
+            Checked against a breached-password list and hashed with Argon2id. Omitted, a
+            one-time password is generated and returned once as `initial_password` (unless
+            `password_less`).
+        password_less:
+          type: boolean
+          default: false
+          description: Create the account with no password at all, for one that signs in through an identity provider.
         roles:
           type: array
           minItems: 1
@@ -2564,6 +2622,7 @@ components:
         must_change_password:
           type: boolean
           default: true
+          description: The user must replace the password at their next sign-in, before the second factor (QA finding R25).
     UserUpdate:
       type: object
       properties:
@@ -2584,6 +2643,14 @@ components:
           minLength: 12
           writeOnly: true
           description: Setting a password revokes all of the user's login sessions.
+        generate:
+          type: boolean
+          default: false
+          description: Generate a one-time password instead; the response carries it once as `initial_password`.
+        must_change_password:
+          type: boolean
+          default: true
+          description: The user must replace the password at their next sign-in.
     Group:
       type: object
       required: [id, name, description, member_count, created_at, updated_at]

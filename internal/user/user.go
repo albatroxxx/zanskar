@@ -50,6 +50,10 @@ type User struct {
 	CreatedAt    time.Time  `json:"created_at"`
 	UpdatedAt    time.Time  `json:"updated_at"`
 	LastLoginAt  *time.Time `json:"last_login_at,omitempty"`
+	// MustChangePassword is set when an administrator set or generated the
+	// password: the user replaces it at their next sign-in before anything
+	// else (QA finding R25).
+	MustChangePassword bool `json:"must_change_password"`
 
 	PasswordHash string `json:"-"`
 }

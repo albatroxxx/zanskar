@@ -9,6 +9,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -91,6 +92,7 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	// second-factor setup can recover the pending step and CSRF token instead of
 	// stranding the session; the handler withholds the profile until MFA is done.
 	mux.Handle("GET /api/v1/auth/me", RequirePartialAuth(http.HandlerFunc(h.me)))
+	mux.Handle("POST /api/v1/auth/password", RequirePartialAuth(http.HandlerFunc(h.changePassword)))
 	mux.Handle("POST /api/v1/auth/mfa/totp/verify", RequirePartialAuth(http.HandlerFunc(h.totpVerify)))
 	// Enroll and confirm accept a partial session so a deployment that
 	// requires MFA can make enrollment the first thing a new user does.
@@ -176,7 +178,7 @@ func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
 		}
 		if user.NeedsRehash(u.PasswordHash) {
 			if nh, err := user.HashPassword(req.Password); err == nil {
-				_ = h.Users.SetPasswordHash(r.Context(), u.ID, nh)
+				_ = h.Users.SetPasswordHash(r.Context(), u.ID, nh, u.MustChangePassword)
 			}
 		}
 		if err := h.Users.RecordLoginSuccess(r.Context(), u.ID); err != nil {
@@ -216,12 +218,23 @@ func (h *Handler) completeLogin(w http.ResponseWriter, r *http.Request, u *user.
 	}
 	require := h.RequireMFA != nil && h.RequireMFA()
 	full := enrolled || !require
+	// A password an administrator chose must be replaced before the second
+	// factor and before anything else: the session stays partial until the
+	// change is done (QA finding R25).
+	if u.MustChangePassword {
+		full = false
+	}
 	token, sess, err := h.Sessions.Create(r.Context(), u.ID, ip, r.UserAgent(), full && !enrolled)
 	if err != nil {
 		h.serverError(w, r, err)
 		return
 	}
 	h.Sessions.SetCookie(w, token)
+	if u.MustChangePassword {
+		h.record(r, actor.Event("user.login", "user", u.ID, audit.Success, map[string]string{"stage": "password", "next": "password_change", "session_id": sess.ID}))
+		WriteJSON(w, http.StatusOK, loginResponse{Status: "password_change_required", CSRFToken: h.Sessions.CSRFToken(sess.ID)})
+		return
+	}
 	if !enrolled && require {
 		h.record(r, actor.Event("user.login", "user", u.ID, audit.Success, map[string]string{"stage": "password", "next": "mfa_enrollment", "session_id": sess.ID}))
 		WriteJSON(w, http.StatusOK, loginResponse{Status: "mfa_enrollment_required", CSRFToken: h.Sessions.CSRFToken(sess.ID)})
@@ -234,6 +247,70 @@ func (h *Handler) completeLogin(w http.ResponseWriter, r *http.Request, u *user.
 	}
 	h.record(r, actor.Event("user.login", "user", u.ID, audit.Success, map[string]string{"stage": "complete", "mfa": "none", "session_id": sess.ID}))
 	WriteJSON(w, http.StatusOK, loginResponse{Status: "ok", User: u, CSRFToken: h.Sessions.CSRFToken(sess.ID)})
+}
+
+// changePassword lets a signed-in user replace their password: the step
+// owed after an administrator set one (a partial session), or a change of
+// their own (a full session). The current password is required either
+// way. Afterwards the sign-in continues where it would have: a second
+// factor to verify or enroll, or straight in.
+func (h *Handler) changePassword(w http.ResponseWriter, r *http.Request) {
+	p, _ := FromContext(r.Context())
+	var req struct {
+		CurrentPassword string `json:"current_password"`
+		NewPassword     string `json:"new_password"`
+	}
+	if err := decodeJSON(r, &req); err != nil {
+		WriteError(w, http.StatusBadRequest, "bad_request", err.Error())
+		return
+	}
+	actor := h.actor(r)
+	if p.User.PasswordHash == "" || !user.VerifyPassword(p.User.PasswordHash, req.CurrentPassword) {
+		h.record(r, actor.Event("user.password.change", "user", p.User.ID, audit.Failure, map[string]string{"reason": "current_password_wrong"}))
+		WriteError(w, http.StatusUnauthorized, "invalid_credentials", "the current password is wrong")
+		return
+	}
+	if req.NewPassword == req.CurrentPassword {
+		WriteError(w, http.StatusBadRequest, "bad_request", "choose a password you have not used just now")
+		return
+	}
+	if err := user.CheckPasswordPolicy(req.NewPassword); err != nil {
+		WriteError(w, http.StatusBadRequest, "bad_request", err.Error())
+		return
+	}
+	hash, err := user.HashPassword(req.NewPassword)
+	if err != nil {
+		h.serverError(w, r, err)
+		return
+	}
+	if err := h.Users.SetPasswordHash(r.Context(), p.User.ID, hash, false); err != nil {
+		h.serverError(w, r, err)
+		return
+	}
+	h.record(r, actor.Event("user.password.change", "user", p.User.ID, audit.Success, map[string]string{"session_id": p.Session.ID, "was_required": strconv.FormatBool(p.User.MustChangePassword)}))
+	if p.Session.MFAVerified {
+		WriteJSON(w, http.StatusOK, loginResponse{Status: "ok", User: p.User, CSRFToken: h.Sessions.CSRFToken(p.Session.ID)})
+		return
+	}
+	enrolled, err := h.TOTP.Enrolled(r.Context(), p.User.ID)
+	if err != nil {
+		h.serverError(w, r, err)
+		return
+	}
+	require := h.RequireMFA != nil && h.RequireMFA()
+	switch {
+	case enrolled:
+		WriteJSON(w, http.StatusOK, loginResponse{Status: "mfa_required", CSRFToken: h.Sessions.CSRFToken(p.Session.ID)})
+	case require:
+		WriteJSON(w, http.StatusOK, loginResponse{Status: "mfa_enrollment_required", CSRFToken: h.Sessions.CSRFToken(p.Session.ID)})
+	default:
+		if err := h.Sessions.MarkMFAVerified(r.Context(), p.Session.ID); err != nil {
+			h.serverError(w, r, err)
+			return
+		}
+		p.User.MustChangePassword = false
+		WriteJSON(w, http.StatusOK, loginResponse{Status: "ok", User: p.User, CSRFToken: h.Sessions.CSRFToken(p.Session.ID)})
+	}
 }
 
 func (h *Handler) logout(w http.ResponseWriter, r *http.Request) {
@@ -254,13 +331,16 @@ func (h *Handler) me(w http.ResponseWriter, r *http.Request) {
 		h.serverError(w, r, err)
 		return
 	}
-	// A partial (MFA-incomplete) session gets only what the login page needs to
-	// resume the second factor after a reload — the pending step and a CSRF
-	// token — never the profile or session, which stay behind MFA.
+	// A partial session gets only what the login page needs to resume the
+	// owed step after a reload — the pending step and a CSRF token — never
+	// the profile or session, which stay behind MFA.
 	if !p.Session.MFAVerified {
 		pending := "verify"
 		if !enrolled {
 			pending = "enroll"
+		}
+		if p.User.MustChangePassword {
+			pending = "password"
 		}
 		WriteJSON(w, http.StatusOK, map[string]any{
 			"pending":      pending,
@@ -284,8 +364,21 @@ type codeRequest struct {
 	Code string `json:"code"`
 }
 
+// passwordChangeOwed refuses the second-factor steps while a password an
+// administrator chose is still in place: the change comes first.
+func (h *Handler) passwordChangeOwed(w http.ResponseWriter, p *Principal) bool {
+	if p.User.MustChangePassword {
+		WriteError(w, http.StatusConflict, "password_change_required", "replace the password you were given first")
+		return true
+	}
+	return false
+}
+
 func (h *Handler) totpVerify(w http.ResponseWriter, r *http.Request) {
 	p, _ := FromContext(r.Context())
+	if h.passwordChangeOwed(w, p) {
+		return
+	}
 	if p.Session.MFAVerified {
 		WriteJSON(w, http.StatusOK, loginResponse{Status: "ok", User: p.User, CSRFToken: h.Sessions.CSRFToken(p.Session.ID)})
 		return
@@ -326,6 +419,9 @@ func (h *Handler) totpVerify(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) totpEnroll(w http.ResponseWriter, r *http.Request) {
 	p, _ := FromContext(r.Context())
+	if h.passwordChangeOwed(w, p) {
+		return
+	}
 	enr, err := h.TOTP.Enroll(r.Context(), p.User.ID, p.User.Username)
 	if err != nil {
 		if errors.Is(err, ErrTOTPBadCode) || strings.Contains(err.Error(), "already") {
@@ -341,6 +437,9 @@ func (h *Handler) totpEnroll(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) totpConfirm(w http.ResponseWriter, r *http.Request) {
 	p, _ := FromContext(r.Context())
+	if h.passwordChangeOwed(w, p) {
+		return
+	}
 	var req codeRequest
 	if err := decodeJSON(r, &req); err != nil {
 		WriteError(w, http.StatusBadRequest, "bad_request", err.Error())

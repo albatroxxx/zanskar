@@ -58,6 +58,10 @@ type createRequest struct {
 	Roles              []user.Role `json:"roles"`
 	Password           string      `json:"password"`
 	MustChangePassword *bool       `json:"must_change_password"`
+	// PasswordLess creates an account with no password at all, for one
+	// that signs in through an identity provider. Otherwise a one-time
+	// password is generated when none is given.
+	PasswordLess bool `json:"password_less"`
 }
 
 type updateRequest struct {
@@ -72,6 +76,18 @@ type rolesRequest struct {
 
 type passwordRequest struct {
 	Password string `json:"password"`
+	// Generate makes a one-time password instead; it is returned once.
+	Generate bool `json:"generate"`
+	// MustChangePassword defaults to true: the user replaces an
+	// administrator's password at their next sign-in.
+	MustChangePassword *bool `json:"must_change_password"`
+}
+
+// createResponse is the user plus, when one was generated, the one-time
+// password. It is returned exactly once and never stored in clear.
+type createResponse struct {
+	*user.User
+	InitialPassword string `json:"initial_password,omitempty"`
 }
 
 func (h *AdminHandler) list(w http.ResponseWriter, r *http.Request) {
@@ -103,28 +119,50 @@ func (h *AdminHandler) create(w http.ResponseWriter, r *http.Request) {
 		Email:       req.Email,
 		Roles:       req.Roles,
 	}
-	if req.Password != "" {
+	// A local account gets a password: the administrator's, or a generated
+	// one-time password returned once. Either way the user replaces it at
+	// their first sign-in unless the request says otherwise (QA finding
+	// R25). An account that will sign in through an identity provider is
+	// created with password_less: false.
+	initial, source := "", "none"
+	switch {
+	case req.Password != "":
 		if err := user.CheckPasswordPolicy(req.Password); err != nil {
 			httpx.BadRequest(w, err.Error())
 			return
 		}
-		hash, err := user.HashPassword(req.Password)
+		initial, source = req.Password, "set"
+	case !req.PasswordLess:
+		pw, err := user.GeneratePassword()
+		if err != nil {
+			h.serverError(w, r, err)
+			return
+		}
+		initial, source = pw, "generated"
+	}
+	if initial != "" {
+		hash, err := user.HashPassword(initial)
 		if err != nil {
 			h.serverError(w, r, err)
 			return
 		}
 		u.PasswordHash = hash
+		u.MustChangePassword = req.MustChangePassword == nil || *req.MustChangePassword
 	}
 	if err := h.Users.Create(r.Context(), u); err != nil {
 		h.writeUserError(w, r, err)
 		return
 	}
-	details := map[string]any{"username": u.Username, "roles": u.Roles, "has_password": u.PasswordHash != ""}
+	details := map[string]any{"username": u.Username, "roles": u.Roles, "has_password": u.PasswordHash != "", "initial_password": source, "must_change_password": u.MustChangePassword}
 	if granted := privileged(u.Roles); len(granted) > 0 {
 		details["roles_granted"] = granted
 	}
 	h.record(r, "user.create", u.ID, audit.Success, details)
-	httpx.WriteJSON(w, http.StatusCreated, u)
+	out := createResponse{User: u}
+	if source == "generated" {
+		out.InitialPassword = initial
+	}
+	httpx.WriteJSON(w, http.StatusCreated, out)
 }
 
 func (h *AdminHandler) get(w http.ResponseWriter, r *http.Request) {
@@ -224,16 +262,26 @@ func (h *AdminHandler) setPassword(w http.ResponseWriter, r *http.Request) {
 		httpx.BadRequest(w, err.Error())
 		return
 	}
-	if err := user.CheckPasswordPolicy(req.Password); err != nil {
+	pw, source := req.Password, "set"
+	if req.Generate {
+		var err error
+		if pw, err = user.GeneratePassword(); err != nil {
+			h.serverError(w, r, err)
+			return
+		}
+		source = "generated"
+	}
+	if err := user.CheckPasswordPolicy(pw); err != nil {
 		httpx.BadRequest(w, err.Error())
 		return
 	}
-	hash, err := user.HashPassword(req.Password)
+	hash, err := user.HashPassword(pw)
 	if err != nil {
 		h.serverError(w, r, err)
 		return
 	}
-	if err := h.Users.SetPasswordHash(r.Context(), id, hash); err != nil {
+	mustChange := req.MustChangePassword == nil || *req.MustChangePassword
+	if err := h.Users.SetPasswordHash(r.Context(), id, hash, mustChange); err != nil {
 		h.writeUserError(w, r, err)
 		return
 	}
@@ -241,8 +289,12 @@ func (h *AdminHandler) setPassword(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		h.Log.Error("revoke sessions after password reset", "user_id", id, "err", err)
 	}
-	h.record(r, "user.password.reset", id, audit.Success, map[string]any{"sessions_revoked": n})
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{"status": "ok", "sessions_revoked": n})
+	h.record(r, "user.password.reset", id, audit.Success, map[string]any{"sessions_revoked": n, "password": source, "must_change_password": mustChange})
+	out := map[string]any{"status": "ok", "sessions_revoked": n, "must_change_password": mustChange}
+	if req.Generate {
+		out["initial_password"] = pw
+	}
+	httpx.WriteJSON(w, http.StatusOK, out)
 }
 
 func (h *AdminHandler) revokeSessions(w http.ResponseWriter, r *http.Request) {

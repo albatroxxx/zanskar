@@ -364,3 +364,67 @@ func TestRequireConnect(t *testing.T) {
 		t.Errorf("anonymous: got %d, want 401", r.code)
 	}
 }
+
+// TestPasswordChangeRequiredFirst: a user whose password an administrator
+// set is held at a partial session until they replace it: the second
+// factor steps are refused meanwhile, the wrong current password is
+// refused, and after the change sign-in continues to authenticator
+// enrollment; the next sign-in with the new password owes no change.
+func TestPasswordChangeRequiredFirst(t *testing.T) {
+	e := newEnv(t)
+	e.handler.RequireMFA = func() bool { return true }
+	u := e.createUser(t, "hana", "hana temporary passphrase", user.RoleUser)
+	if err := e.users.SetPasswordHash(context.Background(), u.ID, u.PasswordHash, true); err != nil {
+		t.Fatal(err)
+	}
+	r := e.do("POST", "/api/v1/auth/login", map[string]string{"username": "hana", "password": "hana temporary passphrase"}, nil, nil)
+	if r.code != 200 || r.body["status"] != "password_change_required" {
+		t.Fatalf("login: %d %v", r.code, r.body)
+	}
+	csrf := map[string]string{"X-CSRF-Token": r.body["csrf_token"].(string)}
+	if me := e.do("GET", "/api/v1/auth/me", nil, r.cookie, nil); me.body["pending"] != "password" {
+		t.Fatalf("me must say the change is owed: %v", me.body)
+	}
+	if x := e.do("POST", "/api/v1/auth/mfa/totp/enroll", nil, r.cookie, csrf); x.code != 409 || x.body["code"] != "password_change_required" {
+		t.Fatalf("enrollment before the change: %d %v", x.code, x.body)
+	}
+	if me := e.do("GET", "/api/v1/auth/me", nil, r.cookie, nil); me.body["user"] != nil || me.body["session"] != nil {
+		t.Fatalf("a partial session gets no profile: %v", me.body)
+	}
+	if x := e.do("POST", "/api/v1/auth/password", map[string]string{"current_password": "wrong", "new_password": "hana chosen passphrase"}, r.cookie, csrf); x.code != 401 {
+		t.Fatalf("wrong current password: %d %v", x.code, x.body)
+	}
+	if x := e.do("POST", "/api/v1/auth/password", map[string]string{"current_password": "hana temporary passphrase", "new_password": "short"}, r.cookie, csrf); x.code != 400 {
+		t.Fatalf("policy still applies: %d %v", x.code, x.body)
+	}
+	x := e.do("POST", "/api/v1/auth/password", map[string]string{"current_password": "hana temporary passphrase", "new_password": "hana chosen passphrase"}, r.cookie, csrf)
+	if x.code != 200 || x.body["status"] != "mfa_enrollment_required" {
+		t.Fatalf("change: %d %v", x.code, x.body)
+	}
+	if me := e.do("GET", "/api/v1/auth/me", nil, r.cookie, nil); me.body["pending"] != "enroll" {
+		t.Fatalf("after the change enrollment is owed: %v", me.body)
+	}
+	if x := e.do("POST", "/api/v1/auth/mfa/totp/enroll", nil, r.cookie, csrf); x.code != 200 {
+		t.Fatalf("enrollment after the change: %d %v", x.code, x.body)
+	}
+	if again := e.do("POST", "/api/v1/auth/login", map[string]string{"username": "hana", "password": "hana chosen passphrase"}, nil, nil); again.body["status"] != "mfa_enrollment_required" {
+		t.Fatalf("next sign-in owes no change: %v", again.body)
+	}
+	if old := e.do("POST", "/api/v1/auth/login", map[string]string{"username": "hana", "password": "hana temporary passphrase"}, nil, nil); old.code != 401 {
+		t.Fatalf("the temporary password is gone: %d", old.code)
+	}
+
+	// Without an MFA requirement the change completes the session.
+	e.handler.RequireMFA = func() bool { return false }
+	v := e.createUser(t, "vic", "vic temporary passphrase", user.RoleUser)
+	_ = e.users.SetPasswordHash(context.Background(), v.ID, v.PasswordHash, true)
+	r = e.do("POST", "/api/v1/auth/login", map[string]string{"username": "vic", "password": "vic temporary passphrase"}, nil, nil)
+	csrf = map[string]string{"X-CSRF-Token": r.body["csrf_token"].(string)}
+	x = e.do("POST", "/api/v1/auth/password", map[string]string{"current_password": "vic temporary passphrase", "new_password": "vic chosen passphrase"}, r.cookie, csrf)
+	if x.code != 200 || x.body["status"] != "ok" {
+		t.Fatalf("change without MFA: %d %v", x.code, x.body)
+	}
+	if me := e.do("GET", "/api/v1/auth/me", nil, r.cookie, nil); me.body["pending"] != nil || me.body["user"] == nil {
+		t.Fatalf("session is full after the change: %v", me.body)
+	}
+}
