@@ -47,7 +47,7 @@ Release engineering completed:
 - [x] Wireframes (`docs/wireframes.md`)
 - [x] Repo scaffold: Makefile, CI with lint, govulncheck, gosec, gitleaks, Trivy, Dependabot
 - [x] Runnable skeleton: `serve`, `migrate`, `keygen`, health and readiness, security headers, envelope crypto, audit hash chain
-- [ ] Frontend scaffold (needs Node on the dev machine; moved to Phase 1)
+- [x] Frontend scaffold (`web/`, Vite + React; landed in Phase 1)
 - [ ] Sign-off review of threat model and ADRs
 
 ## Phase 2 status
