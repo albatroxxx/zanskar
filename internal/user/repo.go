@@ -59,7 +59,7 @@ func (r *Repo) Create(ctx context.Context, u *User) error {
 		(id, username, email, display_name, password_hash, status, idp_id, external_id, failed_logins, created_at, updated_at, must_change_password)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?)`),
 		u.ID, u.Username, nullStr(u.Email), u.DisplayName, nullStr(u.PasswordHash), string(u.Status),
-		nullStr(u.IdPID), nullStr(u.ExternalID), store.TimeArg(now), store.TimeArg(now), u.MustChangePassword)
+		nullStr(u.IdPID), nullStr(u.ExternalID), store.TimeArg(now), store.TimeArg(now), u.MustResetOnLogin)
 	if err != nil {
 		if isUnique(err) {
 			return ErrDuplicate
@@ -323,7 +323,7 @@ func scanUser(s scanner) (*User, error) {
 		lockedUntil, created, updated, last store.NullTime
 	)
 	err := s.Scan(&u.ID, &u.Username, &email, &u.DisplayName, &hash, &status, &idp, &ext,
-		&u.FailedLogins, &lockedUntil, &created, &updated, &last, &u.MustChangePassword)
+		&u.FailedLogins, &lockedUntil, &created, &updated, &last, &u.MustResetOnLogin)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound

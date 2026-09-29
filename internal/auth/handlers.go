@@ -177,7 +177,7 @@ func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
 		}
 		if user.NeedsRehash(u.PasswordHash) {
 			if nh, err := user.HashPassword(req.Password); err == nil {
-				_ = h.Users.SetPasswordHash(r.Context(), u.ID, nh, u.MustChangePassword)
+				_ = h.Users.SetPasswordHash(r.Context(), u.ID, nh, u.MustResetOnLogin)
 			}
 		}
 		if err := h.Users.RecordLoginSuccess(r.Context(), u.ID); err != nil {
@@ -220,7 +220,7 @@ func (h *Handler) completeLogin(w http.ResponseWriter, r *http.Request, u *user.
 	// A password an administrator chose must be replaced before the second
 	// factor and before anything else: the session stays partial until the
 	// change is done (QA finding R25).
-	if u.MustChangePassword {
+	if u.MustResetOnLogin {
 		full = false
 	}
 	token, sess, err := h.Sessions.Create(r.Context(), u.ID, ip, r.UserAgent(), full && !enrolled)
@@ -233,7 +233,7 @@ func (h *Handler) completeLogin(w http.ResponseWriter, r *http.Request, u *user.
 	// change included: whoever holds only the reset password must not get
 	// to choose the next one. An account without one changes first, then
 	// enrols.
-	if !enrolled && u.MustChangePassword {
+	if !enrolled && u.MustResetOnLogin {
 		h.record(r, actor.Event("user.login", "user", u.ID, audit.Success, map[string]string{"stage": "password", "next": "password_change", "session_id": sess.ID}))
 		WriteJSON(w, http.StatusOK, loginResponse{Status: "password_change_required", CSRFToken: h.Sessions.CSRFToken(sess.ID)})
 		return
@@ -252,13 +252,13 @@ func (h *Handler) completeLogin(w http.ResponseWriter, r *http.Request, u *user.
 	WriteJSON(w, http.StatusOK, loginResponse{Status: "ok", User: u, CSRFToken: h.Sessions.CSRFToken(sess.ID)})
 }
 
-// actionSelfPasswordChange is the audit action for a user replacing their
+// actionSelfReset is the audit action for a user replacing their
 // own password. Held in a constant rather than written at the call sites:
 // CodeQL's heuristics take a call with a password-like string argument as
 // a source of secret data and then read the audit chain's SHA-256 over
 // the event as password hashing, which it is not (the event carries no
 // password; the chain hashes every event's JSON for tamper evidence).
-const actionSelfPasswordChange = "user.password.change"
+const actionSelfReset = "user.password.change"
 
 // changePassword lets a signed-in user replace their password: the step
 // owed after an administrator set one (a partial session), or a change of
@@ -286,13 +286,13 @@ func (h *Handler) changePassword(w http.ResponseWriter, r *http.Request) {
 			h.serverError(w, r, err)
 			return
 		}
-		if enrolled || !p.User.MustChangePassword {
+		if enrolled || !p.User.MustResetOnLogin {
 			WriteError(w, http.StatusUnauthorized, "mfa_required", "second factor required")
 			return
 		}
 	}
 	if p.User.PasswordHash == "" || !user.VerifyPassword(p.User.PasswordHash, req.CurrentPassword) {
-		h.record(r, actor.Event(actionSelfPasswordChange, "user", p.User.ID, audit.Failure, map[string]string{"reason": "current_mismatch"}))
+		h.record(r, actor.Event(actionSelfReset, "user", p.User.ID, audit.Failure, map[string]string{"reason": "current_mismatch"}))
 		WriteError(w, http.StatusUnauthorized, "invalid_credentials", "the current password is wrong")
 		return
 	}
@@ -315,8 +315,8 @@ func (h *Handler) changePassword(w http.ResponseWriter, r *http.Request) {
 	}
 	// The audit row says whether this was the forced first change or the
 	// user's own; a bool, since only the fact matters.
-	h.record(r, actor.Event(actionSelfPasswordChange, "user", p.User.ID, audit.Success, map[string]any{"session_id": p.Session.ID, "was_required": p.User.MustChangePassword}))
-	p.User.MustChangePassword = false
+	h.record(r, actor.Event(actionSelfReset, "user", p.User.ID, audit.Success, map[string]any{"session_id": p.Session.ID, "was_required": p.User.MustResetOnLogin}))
+	p.User.MustResetOnLogin = false
 	if p.Session.MFAVerified {
 		WriteJSON(w, http.StatusOK, loginResponse{Status: "ok", User: p.User, CSRFToken: h.Sessions.CSRFToken(p.Session.ID)})
 		return
@@ -363,10 +363,10 @@ func (h *Handler) me(w http.ResponseWriter, r *http.Request) {
 	// owed step after a reload — the pending step and a CSRF token — never
 	// the profile or session, which stay behind MFA and behind a password
 	// change an administrator's reset made due.
-	if !p.Session.MFAVerified || p.User.MustChangePassword {
+	if !p.Session.MFAVerified || p.User.MustResetOnLogin {
 		pending := "verify"
 		switch {
-		case p.Session.MFAVerified || !enrolled && p.User.MustChangePassword:
+		case p.Session.MFAVerified || !enrolled && p.User.MustResetOnLogin:
 			pending = "password"
 		case !enrolled:
 			pending = "enroll"
@@ -396,7 +396,7 @@ type codeRequest struct {
 // passwordChangeOwed refuses the second-factor steps while a password an
 // administrator chose is still in place: the change comes first.
 func (h *Handler) passwordChangeOwed(w http.ResponseWriter, p *Principal) bool {
-	if p.User.MustChangePassword {
+	if p.User.MustResetOnLogin {
 		WriteError(w, http.StatusConflict, "password_change_required", "replace the password you were given first")
 		return true
 	}

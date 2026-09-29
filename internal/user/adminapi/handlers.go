@@ -52,12 +52,12 @@ func (h *AdminHandler) Register(mux *http.ServeMux) {
 }
 
 type createRequest struct {
-	Username           string      `json:"username"`
-	DisplayName        string      `json:"display_name"`
-	Email              string      `json:"email"`
-	Roles              []user.Role `json:"roles"`
-	Password           string      `json:"password"`
-	MustChangePassword *bool       `json:"must_change_password"`
+	Username         string      `json:"username"`
+	DisplayName      string      `json:"display_name"`
+	Email            string      `json:"email"`
+	Roles            []user.Role `json:"roles"`
+	Password         string      `json:"password"`
+	MustResetOnLogin *bool       `json:"must_change_password"`
 	// PasswordLess creates an account with no password at all, for one
 	// that signs in through an identity provider. Otherwise a one-time
 	// password is generated when none is given.
@@ -78,9 +78,9 @@ type passwordRequest struct {
 	Password string `json:"password"`
 	// Generate makes a one-time password instead; it is returned once.
 	Generate bool `json:"generate"`
-	// MustChangePassword defaults to true: the user replaces an
+	// MustResetOnLogin defaults to true: the user replaces an
 	// administrator's password at their next sign-in.
-	MustChangePassword *bool `json:"must_change_password"`
+	MustResetOnLogin *bool `json:"must_change_password"`
 }
 
 // createResponse is the user plus, when one was generated, the one-time
@@ -147,13 +147,13 @@ func (h *AdminHandler) create(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		u.PasswordHash = hash
-		u.MustChangePassword = req.MustChangePassword == nil || *req.MustChangePassword
+		u.MustResetOnLogin = req.MustResetOnLogin == nil || *req.MustResetOnLogin
 	}
 	if err := h.Users.Create(r.Context(), u); err != nil {
 		h.writeUserError(w, r, err)
 		return
 	}
-	details := map[string]any{"username": u.Username, "roles": u.Roles, "has_password": u.PasswordHash != "", "initial_password": source, "must_change_password": u.MustChangePassword}
+	details := map[string]any{"username": u.Username, "roles": u.Roles, "has_password": u.PasswordHash != "", "initial_password": source, "must_change_password": u.MustResetOnLogin}
 	if granted := privileged(u.Roles); len(granted) > 0 {
 		details["roles_granted"] = granted
 	}
@@ -280,7 +280,7 @@ func (h *AdminHandler) setPassword(w http.ResponseWriter, r *http.Request) {
 		h.serverError(w, r, err)
 		return
 	}
-	mustChange := req.MustChangePassword == nil || *req.MustChangePassword
+	mustChange := req.MustResetOnLogin == nil || *req.MustResetOnLogin
 	if err := h.Users.SetPasswordHash(r.Context(), id, hash, mustChange); err != nil {
 		h.writeUserError(w, r, err)
 		return

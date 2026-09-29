@@ -70,14 +70,14 @@ func TestClientIPWithoutMiddleware(t *testing.T) {
 // every full-auth route with a code the sign-in page understands.
 func TestRequireAuthRefusesWhilePasswordChangeOwed(t *testing.T) {
 	h := RequireAuth(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(204) }))
-	p := &Principal{Session: &Session{MFAVerified: true}, User: &user.User{ID: "u1", MustChangePassword: true}}
+	p := &Principal{Session: &Session{MFAVerified: true}, User: &user.User{ID: "u1", MustResetOnLogin: true}}
 	req := httptest.NewRequest("GET", "/api/v1/targets", nil).WithContext(context.WithValue(context.Background(), principalKey, p))
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, req)
 	if rr.Code != 401 || !strings.Contains(rr.Body.String(), "password_change_required") {
 		t.Fatalf("got %d %s", rr.Code, rr.Body.String())
 	}
-	p.User.MustChangePassword = false
+	p.User.MustResetOnLogin = false
 	rr = httptest.NewRecorder()
 	h.ServeHTTP(rr, req)
 	if rr.Code != 204 {

@@ -180,7 +180,7 @@ func RequireAuth(next http.Handler) http.Handler {
 		// A password an administrator set has to be replaced before the
 		// account does anything else (QA finding R25); the sign-in page
 		// carries the step, the API only refuses.
-		if p.User.MustChangePassword {
+		if p.User.MustResetOnLogin {
 			WriteError(w, http.StatusUnauthorized, "password_change_required", "replace the password you were given first")
 			return
 		}
