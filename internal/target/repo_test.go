@@ -100,15 +100,15 @@ func TestRepoCRUD(t *testing.T) {
 	if err := r.Create(ctx, &Target{Name: "win-1", Address: "10.0.0.9", OSFamily: Windows, Tags: map[string]string{"env": "dev"}}); err != nil {
 		t.Fatal(err)
 	}
-	page, next, err := r.List(ctx, "", 2, nil)
+	page, next, err := r.List(ctx, "", 2, ListFilter{})
 	if err != nil || len(page) != 2 || next != "web-1" {
 		t.Fatalf("page1: n=%d next=%q err=%v", len(page), next, err)
 	}
-	page, next, err = r.List(ctx, next, 2, nil)
+	page, next, err = r.List(ctx, next, 2, ListFilter{})
 	if err != nil || len(page) != 2 || next != "" {
 		t.Fatalf("page2: n=%d next=%q err=%v", len(page), next, err)
 	}
-	prod, _, err := r.List(ctx, "", 50, map[string]string{"env": "prod"})
+	prod, _, err := r.List(ctx, "", 50, ListFilter{Tags: map[string]string{"env": "prod"}})
 	if err != nil || len(prod) != 3 {
 		t.Fatalf("tag filter: n=%d err=%v", len(prod), err)
 	}
@@ -285,7 +285,7 @@ func TestDeleteRetiresTarget(t *testing.T) {
 	if _, err := r.GetByName(ctx, "web-1"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("GetByName after retire: %v", err)
 	}
-	if list, _, err := r.List(ctx, "", 50, nil); err != nil || len(list) != 0 {
+	if list, _, err := r.List(ctx, "", 50, ListFilter{}); err != nil || len(list) != 0 {
 		t.Fatalf("List after retire: %d %v", len(list), err)
 	}
 	if list, err := r.ListByTags(ctx, map[string]string{"env": "prod"}); err != nil || len(list) != 0 {

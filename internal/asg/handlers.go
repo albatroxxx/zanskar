@@ -10,6 +10,7 @@ import (
 
 	"github.com/albatroxxx/zanskar/internal/audit"
 	"github.com/albatroxxx/zanskar/internal/auth"
+	"github.com/albatroxxx/zanskar/internal/credential"
 	"github.com/albatroxxx/zanskar/internal/gateway"
 	"github.com/albatroxxx/zanskar/internal/httpx"
 	"github.com/albatroxxx/zanskar/internal/policy"
@@ -32,6 +33,9 @@ type AdminHandler struct {
 	Live     *gateway.Registry
 	Audit    *audit.Log
 	Log      *slog.Logger
+	// Vault resolves the user_supplied sentinel when a slot is set to
+	// prompt; nil disables the sentinel.
+	Vault *credential.Vault
 }
 
 // Register mounts the routes; every one requires the admin role.
@@ -301,6 +305,15 @@ func (h *AdminHandler) setCredential(w http.ResponseWriter, r *http.Request) {
 	if err := httpx.DecodeJSON(r, &body); err != nil {
 		httpx.BadRequest(w, err.Error())
 		return
+	}
+	if body.CredentialID == credential.UserSuppliedSentinel && h.Vault != nil {
+		p, _ := auth.FromContext(r.Context())
+		cid, err := h.Vault.EnsureUserSupplied(r.Context(), p.User.ID)
+		if err != nil {
+			h.fail(w, r, err)
+			return
+		}
+		body.CredentialID = cid
 	}
 	if body.CredentialID == "" {
 		httpx.BadRequest(w, "credential_id required")

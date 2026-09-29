@@ -10,9 +10,12 @@ const desktopProtocols: Protocol[] = ['rdp', 'vnc']
 const databaseProtocols: Protocol[] = ['database']
 
 function pick(t: ReachableTarget, family: Protocol[]): Protocol | null {
-  for (const p of family) if (t.allowed_protocols.includes(p) && (t.capabilities.length === 0 || t.capabilities.includes(p))) return p
+  // database is brokered, never probed, so it is not a capability.
+  for (const p of family) if (t.allowed_protocols.includes(p) && (p === 'database' || t.capabilities.length === 0 || t.capabilities.includes(p))) return p
   return null
 }
+
+const engineNames: Record<string, string> = { postgres: 'PostgreSQL', mysql: 'MySQL', mariadb: 'MariaDB' }
 
 /** Body of POST /connect: exactly one of target_id, asg_id, asg_instance_id. */
 interface ConnectBody {
@@ -28,7 +31,7 @@ export function Targets() {
   const [items, setItems] = useState<ReachableTarget[] | null>(null)
   const [err, setErr] = useState('')
   const [notice, setNotice] = useState('')
-  const [tab, setTab] = useState<'static' | 'asg'>('static')
+  const [tab, setTab] = useState<'static' | 'database' | 'asg'>('static')
   const [prompt, setPrompt] = useState<{ target: ReachableTarget; protocol: Protocol; body: ConnectBody } | null>(null)
   const [chooser, setChooser] = useState<{ group: ReachableTarget; protocol: Protocol; instances: ReachableInstance[] | null } | null>(null)
   const [cred, setCred] = useState({ username: '', password: '' })
@@ -127,8 +130,9 @@ export function Targets() {
     }
   }
 
-  const kindOf = (t: ReachableTarget) => t.kind ?? 'target'
+  const kindOf = (t: ReachableTarget) => (t.kind === 'asg' ? 'asg' : t.engine ? 'database' : 'target')
   const statics = items?.filter((t) => kindOf(t) === 'target') ?? null
+  const databases = items?.filter((t) => kindOf(t) === 'database') ?? null
   const groups = items?.filter((t) => kindOf(t) === 'asg') ?? null
 
   // protoButtons renders one cell per protocol family. onRequest, when given
@@ -136,7 +140,6 @@ export function Targets() {
   const protoButtons = (t: ReachableTarget, onPick: (p: Protocol) => void, onRequest?: (p: Protocol) => void) => {
     const term = pick(t, terminalProtocols)
     const desk = pick(t, desktopProtocols)
-    const db = pick(t, databaseProtocols)
     const notReady = !t.host_key_ready && term === 'ssh'
     const cell = (p: Protocol | null, colorClass: string, label: string, blocked: boolean) => {
       if (p && onRequest && gated(t, p)) {
@@ -156,20 +159,62 @@ export function Targets() {
       <>
         <td>{cell(term, ' proto-terminal', term ? term.toUpperCase() : '', notReady)}</td>
         <td>{cell(desk, ' proto-desktop', desk ? desk.toUpperCase() : '', false)}</td>
-        <td>{cell(db, ' proto-database', db ? (t.engine || 'database').toUpperCase() : '', false)}</td>
       </>
     )
   }
 
   return (
     <>
-      <PageHead title="Targets" lead="Machines your access policies let you reach. Terminal opens SSH or PowerShell; Desktop opens RDP or VNC when the machine offers it. Request marks a machine that needs approval before you can connect." />
+      <PageHead title="Targets" lead="What your access policies let you reach. Terminal opens SSH or PowerShell; Desktop opens RDP or VNC when the machine offers it; a database opens its SQL client. Request marks one that needs approval before you can connect." />
       {err && <Alert tone="danger">{err}</Alert>}
       {notice && <Alert tone="ok">{notice}</Alert>}
       <div className="tabs">
-        <button className={tab === 'static' ? 'active' : ''} onClick={() => setTab('static')}>Static</button>
+        <button className={tab === 'static' ? 'active' : ''} onClick={() => setTab('static')}>Hosts</button>
+        <button className={tab === 'database' ? 'active' : ''} onClick={() => setTab('database')}>Databases{databases && databases.length > 0 ? ` (${databases.length})` : ''}</button>
         <button className={tab === 'asg' ? 'active' : ''} onClick={() => setTab('asg')}>Autoscaling</button>
       </div>
+
+      {tab === 'database' && (
+        <div className="card table-wrap">
+          {databases === null ? (
+            <Empty>Loading…</Empty>
+          ) : databases.length === 0 ? (
+            <Empty>No databases are assigned to you. Ask an administrator for access.</Empty>
+          ) : (
+            <table>
+              <thead>
+                <tr>
+                  <th>Name</th>
+                  <th>Engine</th>
+                  <th>Tags</th>
+                  <th>Connect</th>
+                </tr>
+              </thead>
+              <tbody>
+                {databases.map((t) => {
+                  const p = pick(t, databaseProtocols)
+                  return (
+                    <tr key={t.id}>
+                      <td><strong>{t.name}</strong></td>
+                      <td>{engineNames[t.engine ?? ''] ?? t.engine}</td>
+                      <td><Tags tags={t.tags} /></td>
+                      <td>
+                        {p && gated(t, p) ? (
+                          <button className="btn sm" onClick={() => setReqModal({ target: t, protocol: p })} title="request database access">Request</button>
+                        ) : (
+                          <button className={'btn sm' + (p ? ' proto-database' : '')} disabled={!p || busy === t.id + p} onClick={() => p && void connect(t, { target_id: t.id, protocol: p })} title={p ? 'open the SQL client' : 'not allowed'}>
+                            {p ? 'SQL client' : '—'}
+                          </button>
+                        )}
+                      </td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          )}
+        </div>
+      )}
 
       {tab === 'static' && (
         <div className="card table-wrap">
@@ -187,7 +232,6 @@ export function Targets() {
                   <th>Tags</th>
                   <th>Terminal</th>
                   <th>Desktop</th>
-                  <th>Database</th>
                 </tr>
               </thead>
               <tbody>
@@ -233,7 +277,6 @@ export function Targets() {
                   <th>Healthy</th>
                   <th>Terminal</th>
                   <th>Desktop</th>
-                  <th>Database</th>
                 </tr>
               </thead>
               <tbody>

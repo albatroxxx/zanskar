@@ -136,7 +136,7 @@ func (h *Handler) myTargets(w http.ResponseWriter, r *http.Request) {
 	now := time.Now()
 	after := ""
 	for {
-		batch, next, err := h.Targets.List(r.Context(), after, 500, nil)
+		batch, next, err := h.Targets.List(r.Context(), after, 500, target.ListFilter{})
 		if err != nil {
 			h.fail(w, r, err)
 			return

@@ -1138,6 +1138,12 @@ paths:
       parameters:
         - $ref: "#/components/parameters/Limit"
         - $ref: "#/components/parameters/Cursor"
+        - name: kind
+          in: query
+          schema:
+            type: string
+            enum: [host, database]
+          description: Only hosts (no engine) or only database targets (ADR 0017).
         - name: os_family
           in: query
           schema:
@@ -1241,6 +1247,58 @@ paths:
           $ref: "#/components/responses/NotFound"
         "409":
           $ref: "#/components/responses/Conflict"
+  /targets/{id}/credentials/{protocol}:
+    parameters:
+      - $ref: "#/components/parameters/Id"
+      - name: protocol
+        in: path
+        required: true
+        schema:
+          $ref: "#/components/schemas/Protocol"
+    put:
+      tags: [admin]
+      summary: Bind a credential to one protocol slot
+      description: >
+        Sets what the target presents for the protocol. Audited as `target.credential.set`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [credential_id]
+              properties:
+                credential_id:
+                  type: string
+                  description: >
+                    A vaulted credential's id, or `user_supplied` to have the user asked for
+                    their own username and password at connect time (ADR 0005 user_supplied
+                    mode). The shared prompt credential is created on first use and its id is
+                    what the target then carries.
+      responses:
+        "200":
+          description: The target with its bindings.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Target"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          description: The credential does not exist; `code` is `invalid_credential`.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+    delete:
+      tags: [admin]
+      summary: Clear a protocol slot
+      description: Audited as `target.credential.unset`.
+      responses:
+        "204":
+          description: Cleared.
+        "404":
+          $ref: "#/components/responses/NotFound"
   /targets/{id}/probe:
     post:
       tags: [admin]

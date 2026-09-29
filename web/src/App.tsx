@@ -124,7 +124,8 @@ export default function App() {
             <Shell
               portal="admin"
               items={[
-                { to: '/admin', label: 'Targets', end: true },
+                { to: '/admin', label: 'Hosts', end: true },
+                { to: '/admin/databases', label: 'Databases' },
                 { to: '/admin/autoscaling', label: 'Autoscaling' },
                 { to: '/admin/credentials', label: 'Credentials' },
                 { to: '/admin/policies', label: 'Policies' },

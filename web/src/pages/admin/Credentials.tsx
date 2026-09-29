@@ -1,7 +1,7 @@
 import { useState, type FormEvent } from 'react'
 import { api, errorMessage } from '../../api/client'
 import { fmtTime } from '../../api/format'
-import type { Credential, CredentialMode, CredentialType } from '../../api/types'
+import type { Credential, CredentialType } from '../../api/types'
 import { Alert, Badge, Confirm, Empty, Field, Modal, PageHead } from '../../components/ui'
 import { useList } from './lib'
 
@@ -12,14 +12,8 @@ const types: { v: CredentialType; label: string }[] = [
   { v: 'domain', label: 'Windows domain account' },
   { v: 'ec2_instance_connect', label: 'EC2 Instance Connect' },
 ]
-const modes: { v: CredentialMode; label: string; hint: string }[] = [
-  { v: 'vaulted', label: 'Vaulted', hint: 'Zanskar stores the secret; users never see it' },
-  { v: 'user_supplied', label: 'User supplied', hint: 'the user types their own credentials at connect time' },
-  { v: 'passthrough', label: 'Passthrough', hint: 'forward the user’s directory login (not yet available)' },
-]
-
 function inUse(c: Credential) {
-  return (c.in_use_by?.targets?.length ?? 0) + (c.in_use_by?.autoscaling_groups?.length ?? 0)
+  return (c.in_use_by?.targets ?? 0) + (c.in_use_by?.autoscaling_groups ?? 0)
 }
 
 export function Credentials() {
@@ -66,7 +60,7 @@ export function Credentials() {
                 <tr key={c.id}>
                   <td><strong>{c.name}</strong></td>
                   <td>{c.type}</td>
-                  <td>{c.mode}</td>
+                  <td>{c.mode.replace(/_/g, ' ')}</td>
                   <td className="mono">{c.domain ? `${c.domain}\\` : ''}{c.username ?? <span className="muted">—</span>}</td>
                   <td className="mono muted" title={c.public_key}>{c.public_key ? c.public_key.slice(0, 28) + '…' : '—'}</td>
                   <td>{c.has_secret ? <Badge tone="ok">secret stored</Badge> : <Badge>none</Badge>}</td>
@@ -183,23 +177,26 @@ function SecretFields({ type, f, set, put }: { type: CredentialType; f: Record<s
 }
 
 function CredentialForm({ onClose, onSaved }: { onClose: () => void; onSaved: (c: Credential, generated: boolean) => void }) {
-  const [f, setF] = useState<Record<string, string>>({ name: '', type: 'password', mode: 'vaulted', username: '', domain: '', password: '', private_key: '', passphrase: '' })
+  const [f, setF] = useState<Record<string, string>>({ name: '', type: 'password', username: '', domain: '', password: '', private_key: '', passphrase: '' })
   const [generate, setGenerate] = useState(false)
   const [err, setErr] = useState('')
   const [busy, setBusy] = useState(false)
   const set = (k: string) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => setF({ ...f, [k]: e.target.value })
   const put = (k: string, v: string) => setF({ ...f, [k]: v })
+  // Every credential created here is vaulted: Zanskar holds the secret and
+  // users never see it. "User supplied" is not a credential but a choice on
+  // a target's slot (manual QA finding R35).
   const type = f.type as CredentialType
-  const mode = f.mode as CredentialMode
-  const needsSecret = mode === 'vaulted' && type !== 'ec2_instance_connect'
-  const needsUser = mode === 'vaulted' && type !== 'ssh_ca'
+  const mode = 'vaulted'
+  const needsSecret = type !== 'ec2_instance_connect'
+  const needsUser = type !== 'ssh_ca'
 
   const submit = async (e: FormEvent) => {
     e.preventDefault()
     setBusy(true)
     setErr('')
     try {
-      if (type === 'ssh_key' && mode === 'vaulted' && generate) {
+      if (type === 'ssh_key' && generate) {
         const c = await api.post<Credential>('/credentials/generate-ssh-key', { name: f.name.trim(), username: f.username.trim() })
         onSaved(c, true)
         return
@@ -231,17 +228,10 @@ function CredentialForm({ onClose, onSaved }: { onClose: () => void; onSaved: (c
           <input id="c-name" value={f.name} onChange={set('name')} required autoFocus />
         </Field>
         <div className="form-grid">
-          <Field label="Type">
+          <Field label="Type" hint="Zanskar stores the secret; users never see it. To let users type their own login instead, choose “User supplied” on the target's credential slot.">
             <select id="c-type" value={f.type} onChange={set('type')}>
               {types.map((t) => (
                 <option key={t.v} value={t.v}>{t.label}</option>
-              ))}
-            </select>
-          </Field>
-          <Field label="Mode" hint={modes.find((m) => m.v === mode)?.hint}>
-            <select id="c-mode" value={f.mode} onChange={set('mode')} disabled={type === 'ec2_instance_connect'}>
-              {modes.map((m) => (
-                <option key={m.v} value={m.v}>{m.label}</option>
               ))}
             </select>
           </Field>
@@ -258,14 +248,13 @@ function CredentialForm({ onClose, onSaved }: { onClose: () => void; onSaved: (c
             )}
           </div>
         )}
-        {type === 'ssh_key' && mode === 'vaulted' && (
+        {type === 'ssh_key' && (
           <div className="field inline">
             <input id="c-generate" type="checkbox" checked={generate} onChange={(e) => setGenerate(e.target.checked)} />
             <label htmlFor="c-generate">Generate an ed25519 key for me (you will only see the public half)</label>
           </div>
         )}
         {needsSecret && !(type === 'ssh_key' && generate) && <SecretFields type={type} f={f} set={set} put={put} />}
-        {mode === 'passthrough' && <Alert tone="warn">Passthrough is planned for the identity provider phase; this credential cannot be used to connect yet.</Alert>}
         <div className="actions">
           <button type="button" className="btn" onClick={onClose}>Cancel</button>
           <button className="btn primary" disabled={busy}>Create</button>

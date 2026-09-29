@@ -13,6 +13,7 @@ import (
 
 	"github.com/albatroxxx/zanskar/internal/audit"
 	"github.com/albatroxxx/zanskar/internal/auth"
+	"github.com/albatroxxx/zanskar/internal/credential"
 	"github.com/albatroxxx/zanskar/internal/gateway"
 	"github.com/albatroxxx/zanskar/internal/httpx"
 	"github.com/albatroxxx/zanskar/internal/policy"
@@ -30,8 +31,11 @@ type AdminHandler struct {
 	// by id or that has sessions open (ADR 0019); nil skips that check.
 	Policies *policy.Repo
 	Live     *gateway.Registry
-	Audit    *audit.Log
-	Log      *slog.Logger
+	// Vault resolves the user_supplied sentinel when a slot is set to
+	// prompt; nil disables the sentinel.
+	Vault *credential.Vault
+	Audit *audit.Log
+	Log   *slog.Logger
 }
 
 // Register mounts the routes; every one requires the admin role.
@@ -87,7 +91,21 @@ func (h *AdminHandler) list(w http.ResponseWriter, r *http.Request) {
 		}
 		tags[k] = v
 	}
-	items, next, err := h.Repo.List(r.Context(), cursor, limit, tags)
+	f := ListFilter{Tags: tags, Kind: r.URL.Query().Get("kind"), Status: r.URL.Query().Get("status"),
+		OSFamily: r.URL.Query().Get("os_family"), Query: r.URL.Query().Get("q")}
+	switch f.Kind {
+	case "", "host", "database":
+	default:
+		httpx.BadRequest(w, "kind must be host or database")
+		return
+	}
+	switch f.Status {
+	case "", "active", "disabled":
+	default:
+		httpx.BadRequest(w, "status must be active or disabled")
+		return
+	}
+	items, next, err := h.Repo.List(r.Context(), cursor, limit, f)
 	if err != nil {
 		h.serverError(w, r, err)
 		return
@@ -292,6 +310,15 @@ func (h *AdminHandler) setCredential(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id, proto := r.PathValue("id"), Protocol(r.PathValue("protocol"))
+	if body.CredentialID == credential.UserSuppliedSentinel && h.Vault != nil {
+		p, _ := auth.FromContext(r.Context())
+		cid, err := h.Vault.EnsureUserSupplied(r.Context(), p.User.ID)
+		if err != nil {
+			h.serverError(w, r, err)
+			return
+		}
+		body.CredentialID = cid
+	}
 	if err := h.Repo.SetCredential(r.Context(), id, proto, body.CredentialID); err != nil {
 		h.writeErr(w, r, err)
 		return

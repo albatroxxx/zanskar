@@ -288,3 +288,31 @@ func isUnique(err error) bool {
 	msg := strings.ToLower(err.Error())
 	return strings.Contains(msg, "unique") || strings.Contains(msg, "duplicate key")
 }
+
+// UserSuppliedSentinel is the credential_id an admin binds to a slot to mean
+// "prompt the user for their own username and password at connect time"
+// (ADR 0005 user_supplied mode). There is nothing to store for it, so one
+// shared row serves every slot; EnsureUserSupplied finds or makes it.
+const UserSuppliedSentinel = "user_supplied"
+
+// EnsureUserSupplied returns the id of the shared user_supplied credential,
+// creating it the first time a slot is set to prompt.
+func (v *Vault) EnsureUserSupplied(ctx context.Context, createdBy string) (string, error) {
+	var id string
+	err := v.db.QueryRowContext(ctx, v.db.Rebind(`SELECT id FROM credentials WHERE mode = ? ORDER BY created_at LIMIT 1`), string(ModeUserSupplied)).Scan(&id)
+	if err == nil {
+		return id, nil
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return "", err
+	}
+	c := &Credential{Name: "User supplied", Type: TypePassword, Mode: ModeUserSupplied}
+	if err := v.Create(ctx, c, &Secret{}, createdBy); err != nil {
+		if errors.Is(err, ErrDuplicate) {
+			// Raced with another admin; the row exists now.
+			return v.EnsureUserSupplied(ctx, createdBy)
+		}
+		return "", err
+	}
+	return c.ID, nil
+}
