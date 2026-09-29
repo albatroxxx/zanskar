@@ -39,6 +39,10 @@ type GroupSnapshot struct {
 
 // Provider is implemented per cloud.
 type Provider interface {
+	// Check proves the access works before a group is saved (ADR 0023): the
+	// role is assumed with the ExternalId and the group described. A nil
+	// error means the role was assumed; the group's state is in the result.
+	Check(ctx context.Context, groupName string) (*AccessCheck, error)
 	// DescribeGroup returns the group's instances with lifecycle state,
 	// addresses and (when the group is behind a load balancer) LB health.
 	DescribeGroup(ctx context.Context, groupName string) (*GroupSnapshot, error)
@@ -51,8 +55,22 @@ type Provider interface {
 	SendSSHPublicKey(ctx context.Context, instanceID, availabilityZone, osUser string, publicKey []byte) error
 }
 
+// AccessCheck is the outcome of Provider.Check once the role was assumed.
+type AccessCheck struct {
+	AssumedARN    string `json:"assumed_arn,omitempty"`
+	GroupFound    bool   `json:"group_found"`
+	InstanceCount int    `json:"instance_count"`
+	// DescribeError is set when the role was assumed but describing the
+	// group failed for a reason other than "no such group": the permissions
+	// policy is missing or incomplete.
+	DescribeError string `json:"describe_error,omitempty"`
+}
+
 // Errors.
 var (
+	// ErrAssumeRole: STS refused the role. The trust policy does not name
+	// the gateway's principal, or the ExternalId differs.
+	ErrAssumeRole    = errors.New("cloud: the role could not be assumed; check that its trust policy names the gateway principal and this ExternalId")
 	ErrGroupNotFound = errors.New("cloud: autoscaling group not found")
 	ErrNoConsoleKeys = errors.New("cloud: no host key fingerprints on the console")
 	ErrNotSupported  = errors.New("cloud: operation not supported by this provider")

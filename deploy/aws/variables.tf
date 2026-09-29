@@ -11,6 +11,9 @@ variable "linux_instance_type" { default = "t3.micro" }
 variable "windows_instance_type" { default = "t3.medium" }
 variable "asg_instance_type" { default = "t3.micro" }
 variable "asg_size" { default = 2 }
+# ADR 0023: the gateway detects its own principal from STS. Leave this off to
+# verify detection; turn it on to verify the ZANSKAR_AWS_GATEWAY_PRINCIPAL override.
+variable "gateway_principal_override" { default = false }
 
 # Hostname for TLS. Empty = <eip>.sslip.io (Let's Encrypt via Caddy).
 variable "hostname" { default = "" }

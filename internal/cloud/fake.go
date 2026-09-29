@@ -4,6 +4,7 @@ package cloud
 
 import (
 	"context"
+	"fmt"
 	"sync"
 )
 
@@ -32,6 +33,23 @@ func (f *Fake) Set(name string, instances ...Instance) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.Groups[name] = &GroupSnapshot{Name: name, Instances: instances, DesiredCapacity: len(instances)}
+}
+
+// Check implements Provider: Err fails the assume step; a missing group is
+// reported as not found.
+func (f *Fake) Check(ctx context.Context, name string) (*AccessCheck, error) {
+	f.mu.Lock()
+	err := f.Err
+	f.mu.Unlock()
+	if err != nil {
+		return nil, fmt.Errorf("%w: %w", ErrAssumeRole, err)
+	}
+	out := &AccessCheck{AssumedARN: "arn:aws:sts::123456789012:assumed-role/fake/zanskar-gateway"}
+	snap, err := f.DescribeGroup(ctx, name)
+	if err == nil {
+		out.GroupFound, out.InstanceCount = true, len(snap.Instances)
+	}
+	return out, nil
 }
 
 // DescribeGroup implements Provider.

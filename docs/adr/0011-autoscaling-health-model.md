@@ -90,3 +90,10 @@ credential profile. The old session is closed with end reason `target_lost`.
 - **Scope.** Autoscaling groups support SSH in this release. RDP and WinRM to dynamic
   Windows instances need per-instance certificate pinning, which the console does not
   publish; that is a follow-up.
+
+## Amendment (2026-09-29)
+
+ADR 0023 makes the gateway detect its own principal and guides the role creation with an
+access test before the group is saved. The permissions list above mentions
+`autoscaling:DescribeAutoScalingInstances`; the gateway never calls it and the shipped
+permissions policy does not grant it.

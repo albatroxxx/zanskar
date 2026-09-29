@@ -1837,6 +1837,135 @@ paths:
           $ref: "#/components/responses/NotFound"
         "409":
           $ref: "#/components/responses/Conflict"
+  /autoscaling-groups/iam-preview:
+    post:
+      tags: [admin]
+      summary: IAM documents for a group before it is saved
+      description: >
+        Mints the ExternalId (or reuses one sent back) and renders everything the customer
+        needs to create the cross-account role: the trust policy with this gateway's real
+        principal, the permissions policy, a paste-ready AWS CLI script and a CloudFormation
+        template (ADR 0023). When the gateway's principal is unknown the trust policy and the
+        scripts are absent, never a placeholder; `principal_source` says why. Send the
+        `external_id` back on create.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [region, external_name]
+              properties:
+                region:
+                  type: string
+                external_name:
+                  type: string
+                external_id:
+                  type: string
+                  description: One minted by an earlier preview, to render the same documents again.
+      responses:
+        "200":
+          description: The documents.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AsgIAMDocs"
+  /autoscaling-groups/test:
+    post:
+      tags: [admin]
+      summary: Test a role before enrolling
+      description: >
+        Assumes the role with the ExternalId and describes the group, changing nothing. The
+        answer names the failing stage: `assume` (trust policy principal or ExternalId),
+        `describe` (permissions policy), `group` (no such group in that region). Audited as
+        `asg.test`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [region, external_name, role_arn, external_id]
+              properties:
+                region:
+                  type: string
+                external_name:
+                  type: string
+                role_arn:
+                  type: string
+                external_id:
+                  type: string
+      responses:
+        "200":
+          description: "The outcome; `ok: false` with a `stage` is an answer, not an error."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AsgAccessTest"
+        "501":
+          description: No cloud provider is configured (`test_unavailable`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /autoscaling-groups/{id}/test:
+    post:
+      tags: [admin]
+      summary: Test a saved group's role
+      description: The same test as `/autoscaling-groups/test` for a saved group.
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: The outcome.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AsgAccessTest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /autoscaling-groups/{id}/iam:
+    get:
+      tags: [admin]
+      summary: IAM documents for a saved group
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: The documents, as for the preview.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AsgIAMDocs"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /admin/aws/identity:
+    get:
+      tags: [admin]
+      summary: The AWS principal this gateway runs as
+      description: >
+        Detected once at start through STS GetCallerIdentity and cached, unless
+        ZANSKAR_AWS_GATEWAY_PRINCIPAL overrides it (ADR 0023). An assumed-role session ARN is
+        converted to the role ARN a trust policy must name.
+      responses:
+        "200":
+          description: The identity, or source `none` with the reason.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AwsIdentity"
+  /admin/aws/identity/refresh:
+    post:
+      tags: [admin]
+      summary: Detect the gateway's AWS principal again
+      description: For a gateway that was given a role after it started. Audited as `aws.identity.refresh`.
+      responses:
+        "200":
+          description: The identity after detection.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AwsIdentity"
   /autoscaling-groups/{id}/sync:
     post:
       tags: [admin]
@@ -3912,6 +4041,10 @@ components:
           examples: [ap-south-1]
         external_name:
           type: string
+        external_id:
+          type: string
+          pattern: "^zanskar-[0-9a-f]{32}$"
+          description: On create only, the ExternalId an IAM preview minted, so the saved group matches the role created with it (ADR 0023). Omitted, a new one is minted.
         role_arn:
           type: string
           pattern: "^arn:aws(-[a-z]+)?:iam::[0-9]{12}:role/.+$"
@@ -3942,6 +4075,70 @@ components:
           description: Credential id per protocol. One credential profile serves every instance.
           additionalProperties:
             type: string
+    AwsIdentity:
+      type: object
+      required: [source, checked_at]
+      properties:
+        principal:
+          type: string
+          description: The role ARN to name in trust policies.
+        source:
+          type: string
+          enum: [environment, detected, none]
+        account_id:
+          type: string
+        raw_arn:
+          type: string
+          description: What STS reported, before conversion.
+        checked_at:
+          $ref: "#/components/schemas/Timestamp"
+        error:
+          type: string
+    AsgIAMDocs:
+      type: object
+      required: [external_id, principal_source, role_name, permissions_policy]
+      properties:
+        external_id:
+          type: string
+        gateway_principal:
+          type: string
+        principal_source:
+          type: string
+          enum: [environment, detected, none]
+        principal_error:
+          type: string
+        role_name:
+          type: string
+          description: The suggested role name, used by the script and the template.
+        trust_policy:
+          type: string
+          description: JSON document; absent when the principal is unknown.
+        permissions_policy:
+          type: string
+          description: JSON document.
+        cli:
+          type: string
+          description: AWS CLI script creating the role; absent when the principal is unknown.
+        cloudformation:
+          type: string
+          description: CloudFormation template for the role; absent when the principal is unknown.
+    AsgAccessTest:
+      type: object
+      required: [ok, group_found, instance_count]
+      properties:
+        ok:
+          type: boolean
+        stage:
+          type: string
+          enum: [assume, describe, group]
+        error:
+          type: string
+        assumed_arn:
+          type: string
+        group_found:
+          type: boolean
+        instance_count:
+          type: integer
     AsgInstance:
       type: object
       required: [id, asg_id, instance_id, lifecycle_state, probe_health, healthy, first_seen_at, last_seen_at]

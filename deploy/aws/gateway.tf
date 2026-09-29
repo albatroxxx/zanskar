@@ -38,6 +38,8 @@ resource "aws_iam_role" "gateway" {
   })
 }
 
+data "aws_caller_identity" "current" {}
+
 resource "aws_iam_role_policy" "gateway" {
   name = "zanskar-gateway"
   role = aws_iam_role.gateway.id
@@ -45,7 +47,10 @@ resource "aws_iam_role_policy" "gateway" {
     Version = "2012-10-17"
     Statement = [
       { Sid = "Bucket", Effect = "Allow", Action = ["s3:GetObject", "s3:PutObject", "s3:ListBucket"], Resource = [aws_s3_bucket.zanskar.arn, "${aws_s3_bucket.zanskar.arn}/*"] },
-      { Sid = "AssumeASGRole", Effect = "Allow", Action = "sts:AssumeRole", Resource = aws_iam_role.asg_access.arn },
+      # The gateway's own half of the cross-account handshake: it may assume
+      # the terraform-made role and any role the console's guided enrolment
+      # creates (named zanskar-<group>), ADR 0023.
+      { Sid = "AssumeASGRole", Effect = "Allow", Action = "sts:AssumeRole", Resource = [aws_iam_role.asg_access.arn, "arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/zanskar-*"] },
     ]
   })
 }
@@ -79,9 +84,10 @@ resource "aws_instance" "gateway" {
     encrypted   = true
   }
   user_data = templatefile("${path.module}/userdata/gateway.sh.tftpl", {
-    bucket   = aws_s3_bucket.zanskar.bucket
-    region   = var.region
-    hostname = local.hostname
+    bucket             = aws_s3_bucket.zanskar.bucket
+    region             = var.region
+    hostname           = local.hostname
+    principal_override = var.gateway_principal_override
   })
   user_data_replace_on_change = true
   tags                        = { Name = "${var.name}-gateway" }

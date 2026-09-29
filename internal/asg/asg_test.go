@@ -42,8 +42,11 @@ func TestValidateAndDocuments(t *testing.T) {
 	if g.PollIntervalSeconds != 30 || g.AddressPreference != "private" || len(g.Capabilities) != 1 || g.Capabilities[0] != target.SSH {
 		t.Fatalf("defaults: %+v", g)
 	}
-	if !strings.Contains(g.TrustPolicy(""), g.ExternalID) || !strings.Contains(g.TrustPolicy("arn:aws:iam::1:role/gw"), "arn:aws:iam::1:role/gw") {
+	if tp := g.TrustPolicy("arn:aws:iam::1:role/gw"); !strings.Contains(tp, g.ExternalID) || !strings.Contains(tp, "arn:aws:iam::1:role/gw") {
 		t.Fatal("trust policy must carry the ExternalId and principal")
+	}
+	if g.TrustPolicy("") != "" {
+		t.Fatal("no principal, no trust policy: never a placeholder (ADR 0023)")
 	}
 	if p := g.PermissionsPolicy(); !strings.Contains(p, "autoscaling:DescribeAutoScalingGroups") || !strings.Contains(p, "ec2-instance-connect:SendSSHPublicKey") || !strings.Contains(p, "web-asg") {
 		t.Fatalf("permissions policy: %s", p)
@@ -141,13 +144,19 @@ func TestRepoGroupsInstancesAndHealth(t *testing.T) {
 
 func TestPolicyTemplatesAreNotHTMLEscaped(t *testing.T) {
 	g := &Group{ExternalID: "ext", Region: "us-east-1", ExternalName: "web-asg"}
-	for _, p := range []string{g.TrustPolicy(""), g.PermissionsPolicy()} {
+	for _, p := range []string{g.TrustPolicy("arn:aws:iam::1:role/gw"), g.PermissionsPolicy(), g.RoleCLI("zanskar-web", g.TrustPolicy("arn:aws:iam::1:role/gw")), g.RoleCloudFormation("zanskar-web", g.TrustPolicy("arn:aws:iam::1:role/gw"))} {
 		if strings.Contains(p, `\u003c`) || strings.Contains(p, `\u003e`) || strings.Contains(p, `\u0026`) {
 			t.Fatalf("policy was HTML-escaped:\n%s", p)
 		}
 	}
-	if p := g.TrustPolicy(""); !strings.Contains(p, "<GATEWAY-ACCOUNT-ID>") {
-		t.Fatalf("placeholder missing or mangled:\n%s", p)
+	if cli := g.RoleCLI("zanskar-web", g.TrustPolicy("arn:aws:iam::1:role/gw")); !strings.Contains(cli, "aws iam create-role --role-name zanskar-web") || !strings.Contains(cli, "put-role-policy") || !strings.Contains(cli, "arn:aws:iam::1:role/gw") {
+		t.Fatalf("cli script:\n%s", cli)
+	}
+	if cf := g.RoleCloudFormation("zanskar-web", g.TrustPolicy("arn:aws:iam::1:role/gw")); !strings.Contains(cf, "Type: AWS::IAM::Role") || !strings.Contains(cf, "        \"Version\": \"2012-10-17\"") || !strings.Contains(cf, "!GetAtt ZanskarRole.Arn") {
+		t.Fatalf("cloudformation:\n%s", cf)
+	}
+	if n := (&Group{ExternalName: "web/asg prod!"}).SuggestedRoleName(); n != "zanskar-web-asg-prod-" && n != "zanskar-web-asg-prod" {
+		t.Fatalf("suggested role name: %q", n)
 	}
 }
 

@@ -79,6 +79,7 @@ CATICKET=$(api -X POST $B/connect -d "{\"target_id\":\"$CATID\",\"protocol\":\"s
 ./bin/wsclient "ws://127.0.0.1:18443/ws/terminal?ticket=$CATICKET&cols=80&rows=24" | grep -c 'contains HELLO: true' | sed 's/^/ca session after cut over: /'
 echo "ca retire: $(api -X POST $B/credentials/$CAID/rotate/retire | jget '"cleared" if "rotation" not in d else d["rotation"]')"
 echo "ca rotation audited: $(api "$B/audit/events?action=credential.rotate" | jget 'len(d["items"])') cut-over, $(api "$B/audit/events?action=credential.rotate.prepare" | jget 'len(d["items"])') prepare, $(api "$B/audit/events?action=target.probe.certificate" | jget 'len(d["items"])') probes"
+echo "aws identity off aws: $(api $B/admin/aws/identity | jget 'd["source"]') iam preview withholds trust policy: $(api -X POST $B/autoscaling-groups/iam-preview -d '{"region":"eu-west-2","external_name":"web"}' | jget '"trust_policy" not in d and d["external_id"].startswith("zanskar-")')"
 echo "spa /: $(curl -s -o /dev/null -w '%{http_code} %{content_type}' http://127.0.0.1:18443/)  /admin/targets: $(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:18443/admin/targets)  title: $(curl -s http://127.0.0.1:18443/login | grep -o '<title>[^<]*')"
 echo "spa csp: $(curl -s -D - -o /dev/null http://127.0.0.1:18443/ | grep -i content-security | cut -c1-70)"
 echo "asset cache: $(curl -s -D - -o /dev/null http://127.0.0.1:18443$(curl -s http://127.0.0.1:18443/ | grep -o '/assets/index-[^"]*\.js' | head -1) | grep -i cache-control)"

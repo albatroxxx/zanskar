@@ -105,6 +105,6 @@ func bootSettings(cfg *config.Config, keyVersion int) []settings.Boot {
 		{Key: "issuer", Title: "Authenticator issuer", EnvVar: "ZANSKAR_ISSUER", Value: cfg.Issuer, Description: "Name shown in authenticator apps; baked into enrolled authenticators."},
 		{Key: "siem", Title: "SIEM export", EnvVar: "ZANSKAR_SIEM_*", Value: map[bool]string{true: "configured", false: "(not set)"}[cfg.SIEMSyslogAddr != "" || cfg.SIEMWebhookURL != ""], Description: "Where audit events are shipped."},
 		{Key: "log_format", Title: "Log format", EnvVar: "ZANSKAR_LOG_FORMAT", Value: cfg.LogFormat, Description: "json or text."},
-		{Key: "aws_gateway_principal", Title: "AWS gateway principal", EnvVar: "ZANSKAR_AWS_GATEWAY_PRINCIPAL", Value: set(cfg.AWSGatewayPrincipal), Description: "The ARN rendered into autoscaling trust policies."},
+		{Key: "aws_gateway_principal", Title: "AWS gateway principal", EnvVar: "ZANSKAR_AWS_GATEWAY_PRINCIPAL", Value: set(cfg.AWSGatewayPrincipal), Description: "Override for the principal rendered into autoscaling trust policies; normally unset, the gateway detects it (see Autoscaling groups)."},
 	}
 }

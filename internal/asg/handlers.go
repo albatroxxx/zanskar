@@ -7,9 +7,12 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"strings"
+	"time"
 
 	"github.com/albatroxxx/zanskar/internal/audit"
 	"github.com/albatroxxx/zanskar/internal/auth"
+	"github.com/albatroxxx/zanskar/internal/cloud"
 	"github.com/albatroxxx/zanskar/internal/credential"
 	"github.com/albatroxxx/zanskar/internal/gateway"
 	"github.com/albatroxxx/zanskar/internal/httpx"
@@ -24,9 +27,13 @@ type AdminHandler struct {
 	// Sync performs one poll of a group (Syncer.SyncGroup). Nil disables
 	// the sync endpoint.
 	Sync func(ctx context.Context, g *Group) (Summary, error)
-	// GatewayPrincipal is the ARN the gateway runs as, rendered into the
-	// trust policy shown to admins. Empty leaves a placeholder.
-	GatewayPrincipal string
+	// Identity resolves the ARN the gateway runs as, rendered into the trust
+	// policy shown to admins (ADR 0023). Nil means unknown: the trust policy
+	// is withheld rather than rendered with a placeholder.
+	Identity *cloud.GatewayIdentity
+	// Providers builds a cloud client for a group, for the access test. Nil
+	// disables the test endpoints.
+	Providers ProviderFactory
 	// Policies and Live let delete refuse a group that a policy still names
 	// by id or whose instances have sessions open (ADR 0019); nil skips it.
 	Policies *policy.Repo
@@ -49,6 +56,14 @@ func (h *AdminHandler) Register(mux *http.ServeMux) {
 	mux.Handle("GET /api/v1/autoscaling-groups/{id}/instances", admin(http.HandlerFunc(h.instances)))
 	mux.Handle("POST /api/v1/autoscaling-groups/{id}/sync", admin(http.HandlerFunc(h.sync)))
 	mux.Handle("GET /api/v1/autoscaling-groups/{id}/iam", admin(http.HandlerFunc(h.iam)))
+	// Guided enrolment (ADR 0023): the IAM documents before a group exists,
+	// an access test before and after it is saved, and the gateway's own
+	// identity.
+	mux.Handle("POST /api/v1/autoscaling-groups/iam-preview", admin(http.HandlerFunc(h.iamPreview)))
+	mux.Handle("POST /api/v1/autoscaling-groups/test", admin(http.HandlerFunc(h.testAccess)))
+	mux.Handle("POST /api/v1/autoscaling-groups/{id}/test", admin(http.HandlerFunc(h.testAccess)))
+	mux.Handle("GET /api/v1/admin/aws/identity", admin(http.HandlerFunc(h.identity)))
+	mux.Handle("POST /api/v1/admin/aws/identity/refresh", admin(http.HandlerFunc(h.identityRefresh)))
 	mux.Handle("PUT /api/v1/autoscaling-groups/{id}/credentials/{protocol}", admin(http.HandlerFunc(h.setCredential)))
 	mux.Handle("DELETE /api/v1/autoscaling-groups/{id}/credentials/{protocol}", admin(http.HandlerFunc(h.unsetCredential)))
 }
@@ -70,6 +85,9 @@ type Write struct {
 	// RotateExternalID generates a fresh ExternalId on update, invalidating
 	// the role's current trust policy until the admin updates it.
 	RotateExternalID bool `json:"rotate_external_id"`
+	// ExternalID, on create only, is the one an IAM preview minted, so the
+	// saved group matches the role the customer already created with it.
+	ExternalID string `json:"external_id,omitempty"`
 }
 
 func (w Write) apply(g *Group) {
@@ -116,7 +134,7 @@ func (h *AdminHandler) create(w http.ResponseWriter, r *http.Request) {
 		httpx.BadRequest(w, err.Error())
 		return
 	}
-	g := &Group{}
+	g := &Group{ExternalID: strings.TrimSpace(body.ExternalID)}
 	body.apply(g)
 	if p, ok := auth.FromContext(r.Context()); ok {
 		g.CreatedBy = p.User.ID
@@ -284,12 +302,159 @@ func (h *AdminHandler) iam(w http.ResponseWriter, r *http.Request) {
 		h.fail(w, r, err)
 		return
 	}
-	httpx.WriteJSON(w, http.StatusOK, map[string]string{
-		"external_id":        g.ExternalID,
-		"trust_policy":       g.TrustPolicy(h.GatewayPrincipal),
-		"permissions_policy": g.PermissionsPolicy(),
-		"gateway_principal":  h.GatewayPrincipal,
-	})
+	httpx.WriteJSON(w, http.StatusOK, h.iamDocs(r.Context(), g))
+}
+
+// previewRequest names the group the IAM documents are for, before it is
+// saved. external_id is optional: absent, a new one is minted.
+type previewRequest struct {
+	Region       string `json:"region"`
+	ExternalName string `json:"external_name"`
+	ExternalID   string `json:"external_id"`
+}
+
+// iamPreview renders the IAM documents for a group that does not exist yet,
+// minting the ExternalId the customer's role must carry. The client sends
+// that ExternalId back on create.
+func (h *AdminHandler) iamPreview(w http.ResponseWriter, r *http.Request) {
+	var body previewRequest
+	if err := httpx.DecodeJSON(r, &body); err != nil {
+		httpx.BadRequest(w, err.Error())
+		return
+	}
+	g := &Group{Name: "preview", Region: strings.TrimSpace(body.Region), ExternalName: strings.TrimSpace(body.ExternalName),
+		RoleARN: "arn:aws:iam::000000000000:role/preview", ExternalID: strings.TrimSpace(body.ExternalID), OSFamily: target.Linux}
+	if err := g.Validate(); err != nil {
+		h.fail(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, h.iamDocs(r.Context(), g))
+}
+
+// AccessTest is the result of an access test (ADR 0023).
+type AccessTest struct {
+	OK bool `json:"ok"`
+	// Stage that failed: assume (trust policy or ExternalId), describe
+	// (permissions policy), group (no such group in that region); "" when OK.
+	Stage         string `json:"stage,omitempty"`
+	Error         string `json:"error,omitempty"`
+	AssumedARN    string `json:"assumed_arn,omitempty"`
+	GroupFound    bool   `json:"group_found"`
+	InstanceCount int    `json:"instance_count"`
+}
+
+// testAccess assumes the role with the ExternalId and describes the group,
+// for a saved group ({id}) or for one about to be saved (body). It changes
+// nothing and is audited as asg.test.
+func (h *AdminHandler) testAccess(w http.ResponseWriter, r *http.Request) {
+	if h.Providers == nil {
+		httpx.WriteError(w, http.StatusNotImplemented, "test_unavailable", "no cloud provider is configured")
+		return
+	}
+	var g *Group
+	if id := r.PathValue("id"); id != "" {
+		var err error
+		if g, err = h.Repo.Get(r.Context(), id); err != nil {
+			h.fail(w, r, err)
+			return
+		}
+	} else {
+		var body Write
+		if err := httpx.DecodeJSON(r, &body); err != nil {
+			httpx.BadRequest(w, err.Error())
+			return
+		}
+		g = &Group{ID: "test", Name: "test", Region: strings.TrimSpace(body.Region), ExternalName: strings.TrimSpace(body.ExternalName),
+			RoleARN: strings.TrimSpace(body.RoleARN), ExternalID: strings.TrimSpace(body.ExternalID), OSFamily: target.Linux}
+		if g.ExternalID == "" {
+			httpx.BadRequest(w, "external_id required: the one from the IAM preview the role was created with")
+			return
+		}
+		if err := g.Validate(); err != nil {
+			h.fail(w, r, err)
+			return
+		}
+	}
+	res := AccessTest{}
+	ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
+	defer cancel()
+	provider, err := h.Providers(ctx, g)
+	if err != nil {
+		res.Stage, res.Error = "assume", err.Error()
+	} else if chk, err := provider.Check(ctx, g.ExternalName); err != nil {
+		res.Stage, res.Error = "assume", err.Error()
+	} else {
+		res.AssumedARN, res.GroupFound, res.InstanceCount = chk.AssumedARN, chk.GroupFound, chk.InstanceCount
+		switch {
+		case chk.DescribeError != "":
+			res.Stage, res.Error = "describe", chk.DescribeError
+		case !chk.GroupFound:
+			res.Stage, res.Error = "group", "the role works, but no autoscaling group named "+g.ExternalName+" exists in "+g.Region
+		default:
+			res.OK = true
+		}
+	}
+	outcome := audit.Success
+	if !res.OK {
+		outcome = audit.Failure
+	}
+	h.record(r, "asg.test", g, outcome, map[string]any{"role_arn": g.RoleARN, "stage": res.Stage, "group_found": res.GroupFound, "instances": res.InstanceCount})
+	httpx.WriteJSON(w, http.StatusOK, res)
+}
+
+func (h *AdminHandler) identity(w http.ResponseWriter, r *http.Request) {
+	httpx.WriteJSON(w, http.StatusOK, h.gatewayIdentity(r.Context()))
+}
+
+func (h *AdminHandler) identityRefresh(w http.ResponseWriter, r *http.Request) {
+	id := cloud.Identity{Source: cloud.SourceNone}
+	if h.Identity != nil {
+		id = h.Identity.Refresh(r.Context())
+	}
+	if h.Audit != nil {
+		a := audit.Actor{IP: auth.ClientIP(r)}
+		if p, ok := auth.FromContext(r.Context()); ok {
+			a.UserID = p.User.ID
+		}
+		if _, err := h.Audit.Record(r.Context(), a.Event("aws.identity.refresh", "gateway", "aws", audit.Success, map[string]string{"source": id.Source, "principal": id.Principal})); err != nil {
+			h.Log.Error("audit record failed", "action", "aws.identity.refresh", "err", err)
+		}
+	}
+	httpx.WriteJSON(w, http.StatusOK, id)
+}
+
+func (h *AdminHandler) gatewayIdentity(ctx context.Context) cloud.Identity {
+	if h.Identity == nil {
+		return cloud.Identity{Source: cloud.SourceNone, CheckedAt: time.Now().UTC()}
+	}
+	return h.Identity.Get(ctx)
+}
+
+// IAMDocs is everything the customer needs to create the role, with the
+// real gateway principal or nothing: never a placeholder (ADR 0023).
+type IAMDocs struct {
+	ExternalID        string `json:"external_id"`
+	GatewayPrincipal  string `json:"gateway_principal,omitempty"`
+	PrincipalSource   string `json:"principal_source"`
+	PrincipalError    string `json:"principal_error,omitempty"`
+	RoleName          string `json:"role_name"`
+	TrustPolicy       string `json:"trust_policy,omitempty"`
+	PermissionsPolicy string `json:"permissions_policy"`
+	CLI               string `json:"cli,omitempty"`
+	CloudFormation    string `json:"cloudformation,omitempty"`
+}
+
+func (h *AdminHandler) iamDocs(ctx context.Context, g *Group) IAMDocs {
+	id := h.gatewayIdentity(ctx)
+	docs := IAMDocs{ExternalID: g.ExternalID, GatewayPrincipal: id.Principal, PrincipalSource: id.Source, PrincipalError: id.Error,
+		RoleName: g.SuggestedRoleName(), PermissionsPolicy: g.PermissionsPolicy()}
+	if id.Principal == "" {
+		return docs
+	}
+	docs.TrustPolicy = g.TrustPolicy(id.Principal)
+	docs.CLI = g.RoleCLI(docs.RoleName, docs.TrustPolicy)
+	docs.CloudFormation = g.RoleCloudFormation(docs.RoleName, docs.TrustPolicy)
+	return docs
 }
 
 func (h *AdminHandler) setCredential(w http.ResponseWriter, r *http.Request) {

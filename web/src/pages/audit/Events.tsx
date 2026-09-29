@@ -109,6 +109,12 @@ function describe(ev: AuditEvent): string {
     case 'asg.credential.set': return `set a credential on autoscaling group ${name}`
     case 'asg.credential.unset': return `removed a credential from autoscaling group ${name}`
     case 'asg.external_id.rotate': return `rotated the ExternalId of autoscaling group ${name}`
+    case 'asg.test': return `tested the role of autoscaling group ${name}`
+    case 'aws.identity.refresh': return 'checked the AWS principal of the gateway'
+    case 'target.probe.certificate': return `tested a certificate login on target ${name}`
+    case 'credential.rotate.prepare': return `prepared the next key of authority ${name}`
+    case 'credential.rotate.cancel': return `discarded the prepared key of authority ${name}`
+    case 'credential.rotate.retire': return `confirmed the retired key of authority ${name} is removed from targets`
     case 'asg.instance.joined': return `instance ${name} joined autoscaling group ${str(d.name)}`
     case 'asg.instance.left': return `instance ${name} left autoscaling group ${str(d.name)}`
     case 'asg.instance.unhealthy': return `instance ${name} became unhealthy in autoscaling group ${str(d.name)}`

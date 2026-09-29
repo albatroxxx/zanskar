@@ -16,6 +16,7 @@ import (
 
 	"github.com/albatroxxx/zanskar/internal/audit"
 	"github.com/albatroxxx/zanskar/internal/auth"
+	"github.com/albatroxxx/zanskar/internal/cloud"
 	"github.com/albatroxxx/zanskar/internal/gateway"
 	"github.com/albatroxxx/zanskar/internal/policy"
 	"github.com/albatroxxx/zanskar/internal/store"
@@ -33,6 +34,7 @@ type env struct {
 	admin    *http.Cookie
 	csrf     string
 	user     *http.Cookie
+	fake     *cloud.Fake
 }
 
 func newEnv(t *testing.T) *env {
@@ -60,11 +62,12 @@ func newEnv(t *testing.T) *env {
 	}
 
 	policies, live := policy.NewRepo(db), gateway.NewRegistry()
-	h := &AdminHandler{Repo: repo, Sync: syncFn, GatewayPrincipal: "arn:aws:iam::111111111111:role/zanskar-gateway", Policies: policies, Live: live, Audit: auditLog, Log: log}
+	fake := cloud.NewFake()
+	h := &AdminHandler{Repo: repo, Sync: syncFn, Identity: cloud.NewGatewayIdentity("arn:aws:iam::111111111111:role/zanskar-gateway"), Providers: func(context.Context, *Group) (cloud.Provider, error) { return fake, nil }, Policies: policies, Live: live, Audit: auditLog, Log: log}
 	mux := http.NewServeMux()
 	h.Register(mux)
 	mw := &auth.Middleware{Sessions: sessions, Users: users, Log: log}
-	e := &env{srv: mw.Authenticate(mw.CSRF(mux)), db: db, repo: repo, audit: auditLog, policies: policies, live: live}
+	e := &env{srv: mw.Authenticate(mw.CSRF(mux)), db: db, repo: repo, audit: auditLog, policies: policies, live: live, fake: fake}
 
 	adminUser := &user.User{Username: "admin", DisplayName: "Admin", Roles: []user.Role{user.RoleAdmin}}
 	if err := users.Create(ctx, adminUser); err != nil {
