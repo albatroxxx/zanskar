@@ -165,6 +165,9 @@ export interface Credential {
   rotated_at?: string | null
   /** Counts of targets and autoscaling groups bound to it. */
   in_use_by?: { targets?: number; autoscaling_groups?: number }
+  /** ssh_ca only (ADR 0022): lifetime of each session certificate (default 300 s) and the login users the authority issues for (empty = any). */
+  certificate_ttl_seconds?: number
+  certificate_principals?: string[]
 }
 
 export interface Group {

@@ -352,6 +352,42 @@ password.
   verification arrives with the target's TLS settings.
 - Not available inside the Compose stack; use the package install for database targets.
 
+## SSH without stored keys: the certificate authority
+
+The recommended way to reach Linux targets is an **SSH certificate authority** credential
+(ADR 0022). Zanskar holds one CA key, sealed by the master key, and mints a certificate per
+session that lives for minutes; the person connecting never sees it and the target stores
+nothing per gateway. Static SSH keys keep working and remain the fallback.
+
+1. **Credentials → Add credential → SSH certificate authority.** Leave the key blank and
+   Zanskar generates an ed25519 authority. Leave *Login user* blank so each person logs in as
+   their own Zanskar username, or set one account (say `deploy`) for everyone.
+2. **Install the trust on each target**, as root. The console prints these with the real key:
+
+   ```sh
+   echo 'ssh-ed25519 AAAA... zanskar-ca' > /etc/ssh/zanskar_ca.pub
+   echo 'TrustedUserCAKeys /etc/ssh/zanskar_ca.pub' > /etc/ssh/sshd_config.d/zanskar.conf
+   systemctl reload ssh 2>/dev/null || systemctl reload sshd
+   ```
+
+   An sshd without `sshd_config.d` takes the `TrustedUserCAKeys` line in
+   `/etc/ssh/sshd_config`. For autoscaling groups put the same lines in the launch
+   template's user data.
+3. **Bind the credential** to the target's SSH slot, probe and trust the host key as usual.
+
+Each certificate is valid for exactly one login user, permits a PTY and nothing else, lives
+`certificate_ttl_seconds` (default 300, at most 3600; it only has to outlive the handshake),
+and carries the key id `zanskar:<zanskar user>:<login user>:<time>`. sshd logs that id on
+every accepted login, so the target's own auth log names the Zanskar user behind a shared
+account. The credential's **Allowed login users** list limits which login users it will
+issue for; a connect for anyone else is refused with `login_user_not_permitted` before a
+certificate exists, and audited.
+
+Rotating the authority itself is a two-step console operation (prepare the next key, install
+both public keys on targets, cut over, then remove the old one); it never breaks a session on
+a host that has not yet learned the new key. Windows and database passwords are not rotated
+by Zanskar; leave that to the system that owns the account.
+
 ## Changing boot settings and restarting
 
 Listen address, TLS files, database, master key, recordings storage and the other

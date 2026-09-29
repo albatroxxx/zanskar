@@ -4,6 +4,7 @@ import { fmtTime } from '../../api/format'
 import type { Credential, CredentialType } from '../../api/types'
 import { Alert, Badge, Confirm, Empty, Field, Modal, PageHead } from '../../components/ui'
 import { useList } from './lib'
+import { CAInstall, CASetup, DEFAULT_CERT_TTL, parsePrincipals } from './SSHCA'
 
 const types: { v: CredentialType; label: string }[] = [
   { v: 'password', label: 'Password' },
@@ -22,6 +23,7 @@ export function Credentials() {
   const [rotating, setRotating] = useState<Credential | null>(null)
   const [deleting, setDeleting] = useState<Credential | null>(null)
   const [generated, setGenerated] = useState<Credential | null>(null)
+  const [ca, setCa] = useState<Credential | null>(null)
 
   return (
     <>
@@ -29,7 +31,13 @@ export function Credentials() {
         <button className="btn primary" onClick={() => setAdding(true)}>Add credential</button>
       </PageHead>
       {err && <Alert tone="danger">{err}</Alert>}
-      {generated && (
+      {generated && generated.type === 'ssh_ca' && (
+        <Alert tone="ok">
+          Certificate authority <strong>{generated.name}</strong> created; the private key is sealed and never shown. Targets trust it with:
+          <div style={{ marginTop: 8 }}><CAInstall credential={generated} /></div>
+        </Alert>
+      )}
+      {generated && generated.type !== 'ssh_ca' && (
         <Alert tone="ok">
           Key pair created for <strong>{generated.name}</strong>. Add this public key to the target's <code>authorized_keys</code>:
           <pre className="mono" style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-all', margin: '8px 0 0' }}>{generated.public_key}</pre>
@@ -59,7 +67,7 @@ export function Credentials() {
               {items.map((c) => (
                 <tr key={c.id}>
                   <td><strong>{c.name}</strong></td>
-                  <td>{c.type}</td>
+                  <td>{c.type === 'ssh_ca' ? 'ssh certificate authority' : c.type}</td>
                   <td>{c.mode.replace(/_/g, ' ')}</td>
                   <td className="mono">{c.domain ? `${c.domain}\\` : ''}{c.username ?? <span className="muted">—</span>}</td>
                   <td className="mono muted" title={c.public_key}>{c.public_key ? c.public_key.slice(0, 28) + '…' : '—'}</td>
@@ -67,6 +75,9 @@ export function Credentials() {
                   <td className="muted">{c.rotated_at ? fmtTime(c.rotated_at) : 'never'}</td>
                   <td>{inUse(c)}</td>
                   <td className="actions">
+                    {c.type === 'ssh_ca' && (
+                      <button className="btn sm" onClick={() => setCa(c)}>Setup</button>
+                    )}
                     {c.mode === 'vaulted' && c.type !== 'ec2_instance_connect' && (
                       <button className="btn sm" onClick={() => setRotating(c)}>Rotate</button>
                     )}
@@ -84,6 +95,16 @@ export function Credentials() {
           onSaved={(c, gen) => {
             setAdding(false)
             if (gen) setGenerated(c)
+            void reload()
+          }}
+        />
+      )}
+      {ca && (
+        <CASetup
+          credential={ca}
+          onClose={() => setCa(null)}
+          onSaved={(c) => {
+            setCa(c)
             void reload()
           }}
         />
@@ -177,8 +198,11 @@ function SecretFields({ type, f, set, put }: { type: CredentialType; f: Record<s
 }
 
 function CredentialForm({ onClose, onSaved }: { onClose: () => void; onSaved: (c: Credential, generated: boolean) => void }) {
-  const [f, setF] = useState<Record<string, string>>({ name: '', type: 'password', username: '', domain: '', password: '', private_key: '', passphrase: '' })
+  const [f, setF] = useState<Record<string, string>>({ name: '', type: 'password', username: '', domain: '', password: '', private_key: '', passphrase: '', ttl: '', principals: '' })
   const [generate, setGenerate] = useState(false)
+  // A certificate authority is normally generated here; pasting an existing
+  // CA key is the exception.
+  const [generateCA, setGenerateCA] = useState(true)
   const [err, setErr] = useState('')
   const [busy, setBusy] = useState(false)
   const set = (k: string) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => setF({ ...f, [k]: e.target.value })
@@ -190,6 +214,7 @@ function CredentialForm({ onClose, onSaved }: { onClose: () => void; onSaved: (c
   const mode = 'vaulted'
   const needsSecret = type !== 'ec2_instance_connect'
   const needsUser = type !== 'ssh_ca'
+  const isCA = type === 'ssh_ca'
 
   const submit = async (e: FormEvent) => {
     e.preventDefault()
@@ -201,10 +226,20 @@ function CredentialForm({ onClose, onSaved }: { onClose: () => void; onSaved: (c
         onSaved(c, true)
         return
       }
-      const body: Record<string, string> = { name: f.name.trim(), type, mode }
-      if (needsUser) body.username = f.username.trim()
+      const body: Record<string, unknown> = { name: f.name.trim(), type, mode }
+      if (needsUser || (isCA && f.username.trim())) body.username = f.username.trim()
       if (type === 'domain') body.domain = f.domain.trim()
-      if (needsSecret) {
+      if (isCA) {
+        const n = f.ttl.trim() ? Number(f.ttl) : 0
+        if (f.ttl.trim() && (!Number.isInteger(n) || n < 60 || n > 3600)) {
+          setErr('certificate lifetime must be 60-3600 seconds, or blank for the default')
+          return
+        }
+        if (n) body.certificate_ttl_seconds = n
+        const principals = parsePrincipals(f.principals)
+        if (principals.length) body.certificate_principals = principals
+      }
+      if (needsSecret && !(isCA && generateCA)) {
         if (type === 'password' || type === 'domain') body.password = f.password
         else {
           body.private_key = f.private_key
@@ -212,7 +247,7 @@ function CredentialForm({ onClose, onSaved }: { onClose: () => void; onSaved: (c
         }
       }
       const c = await api.post<Credential>('/credentials', body)
-      onSaved(c, false)
+      onSaved(c, isCA && generateCA)
     } catch (e) {
       setErr(errorMessage(e))
     } finally {
@@ -254,7 +289,29 @@ function CredentialForm({ onClose, onSaved }: { onClose: () => void; onSaved: (c
             <label htmlFor="c-generate">Generate an ed25519 key for me (you will only see the public half)</label>
           </div>
         )}
-        {needsSecret && !(type === 'ssh_key' && generate) && <SecretFields type={type} f={f} set={set} put={put} />}
+        {isCA && (
+          <>
+            <p className="muted" style={{ marginTop: 0 }}>
+              Keyless SSH: each session gets a certificate signed by this authority, valid for minutes, and targets trust one public key instead of holding a key per gateway. The recommended way to reach Linux targets.
+            </p>
+            <div className="form-grid">
+              <Field label="Login user" hint="Blank: each person logs in as their own Zanskar username. Set it to make everyone use one account, e.g. deploy.">
+                <input id="c-username" value={f.username} onChange={set('username')} placeholder="(each user as themselves)" />
+              </Field>
+              <Field label="Certificate lifetime (seconds)" hint={`Blank = ${DEFAULT_CERT_TTL}; 60-3600.`}>
+                <input id="c-ttl" inputMode="numeric" value={f.ttl} onChange={set('ttl')} placeholder={String(DEFAULT_CERT_TTL)} />
+              </Field>
+            </div>
+            <Field label="Allowed login users" hint="One per line. Blank = any login user.">
+              <textarea id="c-principals" value={f.principals} onChange={set('principals')} placeholder={'deploy\nops'} style={{ minHeight: 50 }} />
+            </Field>
+            <div className="field inline">
+              <input id="c-generate-ca" type="checkbox" checked={generateCA} onChange={(e) => setGenerateCA(e.target.checked)} />
+              <label htmlFor="c-generate-ca">Generate an ed25519 authority key for me (the private key is sealed and never shown)</label>
+            </div>
+          </>
+        )}
+        {needsSecret && !(type === 'ssh_key' && generate) && !(isCA && generateCA) && <SecretFields type={type} f={f} set={set} put={put} />}
         <div className="actions">
           <button type="button" className="btn" onClick={onClose}>Cancel</button>
           <button className="btn primary" disabled={busy}>Create</button>

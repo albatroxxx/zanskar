@@ -7,6 +7,7 @@ import (
 	"crypto/rand"
 	"encoding/pem"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -114,7 +115,7 @@ func TestIssueForSession(t *testing.T) {
 	caBlock, _ := ssh.MarshalPrivateKey(caPriv, "")
 	caPEM := pemOf(caBlock)
 
-	certLine, keyPEM, err := IssueForSession(caPEM, "operator", 3*time.Minute)
+	certLine, keyPEM, err := IssueForSession(caPEM, CertParams{Principals: []string{"operator"}, Validity: 3 * time.Minute, KeyID: SessionKeyID("alice", "operator")})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -142,6 +143,12 @@ func TestIssueForSession(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("principal operator missing: %v", cert.ValidPrincipals)
+	}
+	if len(cert.ValidPrincipals) != 1 {
+		t.Fatalf("a session certificate carries exactly one principal: %v", cert.ValidPrincipals)
+	}
+	if !strings.HasPrefix(cert.KeyId, "zanskar:alice:operator:") {
+		t.Fatalf("key id should name the Zanskar user and the login user: %q", cert.KeyId)
 	}
 	// It verifies against the CA.
 	s, _ := NewSigner(caPEM)

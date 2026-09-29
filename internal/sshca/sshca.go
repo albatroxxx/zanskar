@@ -136,10 +136,13 @@ func (s *Signer) Issue(userPub ssh.PublicKey, p CertParams) (*ssh.Certificate, e
 }
 
 // IssueForSession generates a throwaway ed25519 user key, signs a certificate
-// for loginUser, and returns the certificate in authorized_keys form together
-// with the private key in OpenSSH PEM form. The gateway hands both to the SSH
-// client and keeps neither: the key never touches disk or the database.
-func IssueForSession(caPrivatePEM []byte, loginUser string, validity time.Duration) (certAuthorizedKey string, privateKeyPEM string, err error) {
+// with p, and returns the certificate in authorized_keys form together with
+// the private key in OpenSSH PEM form. The gateway hands both to the SSH
+// client and keeps neither: the key never touches disk or the database. This
+// is the only issuance path; p.Principals should hold exactly the login user
+// of the session, and p.KeyID should name the Zanskar user so the target's
+// auth log ties the login to an identity.
+func IssueForSession(caPrivatePEM []byte, p CertParams) (certAuthorizedKey string, privateKeyPEM string, err error) {
 	signer, err := NewSigner(caPrivatePEM)
 	if err != nil {
 		return "", "", err
@@ -159,11 +162,7 @@ func IssueForSession(caPrivatePEM []byte, loginUser string, validity time.Durati
 	}
 	_ = pub
 
-	cert, err := signer.Issue(userSigner.PublicKey(), CertParams{
-		Principals: []string{loginUser},
-		Validity:   validity,
-		KeyID:      fmt.Sprintf("zanskar:%s:%d", loginUser, time.Now().Unix()),
-	})
+	cert, err := signer.Issue(userSigner.PublicKey(), p)
 	if err != nil {
 		return "", "", err
 	}
@@ -176,6 +175,12 @@ func IssueForSession(caPrivatePEM []byte, loginUser string, validity time.Durati
 
 	certLine := strings.TrimSpace(string(ssh.MarshalAuthorizedKey(cert)))
 	return certLine, string(pemBytes), nil
+}
+
+// SessionKeyID is the certificate key id for a session: it names the Zanskar
+// user and the login user, and sshd prints it on every accepted login.
+func SessionKeyID(zanskarUser, loginUser string) string {
+	return fmt.Sprintf("zanskar:%s:%s:%d", zanskarUser, loginUser, time.Now().Unix())
 }
 
 func randUint64() (uint64, error) {

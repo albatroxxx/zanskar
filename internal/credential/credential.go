@@ -69,6 +69,44 @@ type Credential struct {
 	UpdatedAt  time.Time  `json:"updated_at"`
 	RotatedAt  *time.Time `json:"rotated_at,omitempty"`
 	InUseBy    InUseBy    `json:"in_use_by"`
+	// CertificateTTLSeconds and CertificatePrincipals apply to ssh_ca only
+	// (ADR 0022). The TTL is the lifetime of each certificate minted for a
+	// session; zero means DefaultCertificateTTL. Principals is an allowlist
+	// of login users the authority issues certificates for; empty means any.
+	CertificateTTLSeconds int      `json:"certificate_ttl_seconds,omitempty"`
+	CertificatePrincipals []string `json:"certificate_principals,omitempty"`
+}
+
+// Certificate lifetimes for ssh_ca credentials, in seconds. A certificate
+// only has to outlive the connect handshake, so the default is short and the
+// ceiling matches sshca.MaxValidity.
+const (
+	DefaultCertificateTTL = 300
+	MinCertificateTTL     = 60
+	MaxCertificateTTL     = 3600
+)
+
+// CertificateTTL returns the lifetime certificates minted by this authority
+// get, applying the default.
+func (c *Credential) CertificateTTL() time.Duration {
+	if c.CertificateTTLSeconds <= 0 {
+		return DefaultCertificateTTL * time.Second
+	}
+	return time.Duration(c.CertificateTTLSeconds) * time.Second
+}
+
+// PermitsPrincipal reports whether this authority may issue a certificate for
+// loginUser: always when the allowlist is empty, otherwise only when listed.
+func (c *Credential) PermitsPrincipal(loginUser string) bool {
+	if len(c.CertificatePrincipals) == 0 {
+		return true
+	}
+	for _, p := range c.CertificatePrincipals {
+		if p == loginUser {
+			return true
+		}
+	}
+	return false
 }
 
 // InUseBy counts the references that block deletion.
@@ -123,6 +161,9 @@ func validateAndPrepare(c *Credential, s *Secret) (*prepared, error) {
 	if c.Type == TypeEC2InstanceConnect && c.Mode != ModeVaulted {
 		return nil, fmt.Errorf("%w: ec2_instance_connect is always vaulted (there is no secret to supply)", ErrInvalid)
 	}
+	if err := validateCertificateSettings(c); err != nil {
+		return nil, err
+	}
 	if c.Mode != ModeVaulted {
 		// Nothing is stored; the user supplies or forwards the secret later.
 		if s.Password != "" || s.PrivateKey != "" {
@@ -175,6 +216,52 @@ func validateAndPrepare(c *Credential, s *Secret) (*prepared, error) {
 		return &prepared{}, nil
 	}
 	return nil, ErrInvalid
+}
+
+// validateCertificateSettings normalises the ssh_ca-only fields and refuses
+// them on every other type, so a stray value can never look meaningful.
+func validateCertificateSettings(c *Credential) error {
+	if c.Type != TypeSSHCA {
+		if c.CertificateTTLSeconds != 0 || len(c.CertificatePrincipals) != 0 {
+			return fmt.Errorf("%w: certificate settings apply to ssh_ca only", ErrInvalid)
+		}
+		return nil
+	}
+	if c.CertificateTTLSeconds != 0 && (c.CertificateTTLSeconds < MinCertificateTTL || c.CertificateTTLSeconds > MaxCertificateTTL) {
+		return fmt.Errorf("%w: certificate_ttl_seconds must be %d-%d", ErrInvalid, MinCertificateTTL, MaxCertificateTTL)
+	}
+	seen := map[string]bool{}
+	out := make([]string, 0, len(c.CertificatePrincipals))
+	for _, p := range c.CertificatePrincipals {
+		p = strings.TrimSpace(p)
+		if p == "" || seen[p] {
+			continue
+		}
+		if !validPrincipal(p) {
+			return fmt.Errorf("%w: principal %q is not a login name (1-64 printable characters, no spaces)", ErrInvalid, p)
+		}
+		seen[p] = true
+		out = append(out, p)
+	}
+	if len(out) > 64 {
+		return fmt.Errorf("%w: at most 64 principals", ErrInvalid)
+	}
+	c.CertificatePrincipals = out
+	return nil
+}
+
+// validPrincipal accepts what sshd accepts as a login name on the platforms
+// Zanskar targets: printable ASCII without whitespace, up to 64 bytes.
+func validPrincipal(p string) bool {
+	if len(p) > 64 {
+		return false
+	}
+	for i := 0; i < len(p); i++ {
+		if p[i] <= ' ' || p[i] >= 0x7f {
+			return false
+		}
+	}
+	return true
 }
 
 // normalisePrivateKey parses a PEM (OpenSSH, PKCS#1, PKCS#8, EC) private key,

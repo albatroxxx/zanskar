@@ -40,3 +40,4 @@ and update the status of the old one.
 | [0019](0019-retire-targets-keep-history.md) | Targets and autoscaling groups are retired, not erased | Accepted |
 | [0020](0020-runtime-settings-console-overrides-environment.md) | Runtime settings: the console overrides install-time environment values | Accepted |
 | [0021](0021-managed-tls-certificate.md) | The gateway manages its own TLS certificate, self-signed until one is uploaded | Accepted |
+| [0022](0022-ssh-certificate-authority-recommended.md) | SSH certificate authority is the recommended way to reach Linux targets | Accepted |
