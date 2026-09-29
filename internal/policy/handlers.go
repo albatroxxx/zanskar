@@ -42,8 +42,10 @@ type input struct {
 	UserID             string       `json:"user_id"`
 	Selector           Selector     `json:"target_selector"`
 	Protocols          []string     `json:"protocols"`
+	Rules              []Rule       `json:"rules"`
 	TimeWindows        []TimeWindow `json:"time_windows"`
 	MaxSessionMinutes  *int         `json:"max_session_minutes"`
+	RetentionDays      *int         `json:"retention_days"`
 	IdleTimeoutMinutes *int         `json:"idle_timeout_minutes"`
 	AllowClipboard     *bool        `json:"allow_clipboard"`
 	AllowFileTransfer  *bool        `json:"allow_file_transfer"`
@@ -54,6 +56,7 @@ type input struct {
 func (in *input) apply(p *Policy) {
 	p.Name, p.Description, p.GroupID, p.UserID = in.Name, in.Description, in.GroupID, in.UserID
 	p.Selector, p.Protocols, p.TimeWindows, p.MaxSessionMinutes = in.Selector, in.Protocols, in.TimeWindows, in.MaxSessionMinutes
+	p.Rules, p.RetentionDays = in.Rules, in.RetentionDays
 	p.Enabled = in.Enabled == nil || *in.Enabled
 	p.IdleTimeoutMinutes = 15
 	if in.IdleTimeoutMinutes != nil {
