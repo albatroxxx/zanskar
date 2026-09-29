@@ -65,6 +65,20 @@ CATICKET=$(api -X POST $B/connect -d "{\"target_id\":\"$CATID\",\"protocol\":\"s
 echo "ca target log: $(grep -c 'accepted certificate for test key id zanskar:root:test:' $S/fakessh-ca.log)"
 api -X PATCH $B/credentials/$CAID -d '{"certificate_principals":["nobody"]}' > /dev/null
 code=$(api -X POST $B/connect -d "{\"target_id\":\"$CATID\",\"protocol\":\"ssh\"}" | jget 'd["code"]'); echo "ca allowlist: $code"
+api -X PATCH $B/credentials/$CAID -d '{"certificate_principals":[]}' > /dev/null
+# Two-phase rotation: prepare the next key, the target rejects it until its
+# TrustedUserCAKeys lists it, then accepts it; cut over; the session works with
+# the new key; retire the old public key.
+echo "ca probe current: $(api -X POST $B/targets/$CATID/probe-certificate -d '{"key":"current"}' | jget 'd["accepted"]')"
+NEXT=$(api -X POST $B/credentials/$CAID/rotate -d '{}' | jget 'd["rotation"]["pending_public_key"]')
+echo "ca prepared: $(echo $NEXT | grep -c ssh-ed25519) pending probe before trust: $(api -X POST $B/targets/$CATID/probe-certificate -d '{"key":"pending"}' | jget 'd["accepted"], d.get("reason")')"
+echo $NEXT >> $S/ca.pub
+echo "ca pending probe after trust: $(api -X POST $B/targets/$CATID/probe-certificate -d '{"key":"pending"}' | jget 'd["accepted"]')"
+echo "ca cut over: $(api -X POST $B/credentials/$CAID/rotate/cut-over | jget '"retired" if d["rotation"].get("retired_public_key") else "no-retired", "pending" if d["rotation"].get("pending_public_key") else "no-pending"')"
+CATICKET=$(api -X POST $B/connect -d "{\"target_id\":\"$CATID\",\"protocol\":\"ssh\"}" | jget 'd["ticket"]')
+./bin/wsclient "ws://127.0.0.1:18443/ws/terminal?ticket=$CATICKET&cols=80&rows=24" | grep -c 'contains HELLO: true' | sed 's/^/ca session after cut over: /'
+echo "ca retire: $(api -X POST $B/credentials/$CAID/rotate/retire | jget '"cleared" if "rotation" not in d else d["rotation"]')"
+echo "ca rotation audited: $(api "$B/audit/events?action=credential.rotate" | jget 'len(d["items"])') cut-over, $(api "$B/audit/events?action=credential.rotate.prepare" | jget 'len(d["items"])') prepare, $(api "$B/audit/events?action=target.probe.certificate" | jget 'len(d["items"])') probes"
 echo "spa /: $(curl -s -o /dev/null -w '%{http_code} %{content_type}' http://127.0.0.1:18443/)  /admin/targets: $(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:18443/admin/targets)  title: $(curl -s http://127.0.0.1:18443/login | grep -o '<title>[^<]*')"
 echo "spa csp: $(curl -s -D - -o /dev/null http://127.0.0.1:18443/ | grep -i content-security | cut -c1-70)"
 echo "asset cache: $(curl -s -D - -o /dev/null http://127.0.0.1:18443$(curl -s http://127.0.0.1:18443/ | grep -o '/assets/index-[^"]*\.js' | head -1) | grep -i cache-control)"

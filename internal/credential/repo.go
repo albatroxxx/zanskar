@@ -31,6 +31,7 @@ func NewVault(db *store.DB, ring *keyring.Ring) *Vault {
 
 const cols = `id, name, type, mode, username, domain, public_key, key_version, created_by,
 	created_at, updated_at, rotated_at, secret_enc IS NOT NULL, certificate_ttl_seconds, certificate_principals,
+	pending_public_key, pending_created_at, retired_public_key, retired_at,
 	(SELECT COUNT(*) FROM target_credentials tc WHERE tc.credential_id = credentials.id),
 	(SELECT COUNT(*) FROM asg_credentials ac WHERE ac.credential_id = credentials.id)`
 
@@ -170,6 +171,11 @@ func (v *Vault) Rotate(ctx context.Context, id string, s *Secret) (*Credential, 
 	if c.Mode != ModeVaulted || c.Type == TypeEC2InstanceConnect {
 		return nil, fmt.Errorf("%w: nothing to rotate for %s/%s", ErrInvalid, c.Type, c.Mode)
 	}
+	if c.Type == TypeSSHCA {
+		// Overwriting the authority in place breaks every session on a
+		// host that has not learned the new key yet (ADR 0022).
+		return nil, fmt.Errorf("%w: a certificate authority is rotated in two steps: prepare the next key, then cut over", ErrInvalid)
+	}
 	p, err := validateAndPrepare(c, s)
 	if err != nil {
 		return nil, err
@@ -235,17 +241,9 @@ func (v *Vault) Open(ctx context.Context, id string) (*Opened, error) {
 	if !c.HasSecret {
 		return nil, ErrNoSecret
 	}
-	var sealed []byte
-	var ver sql.NullInt64
-	if err := v.db.QueryRowContext(ctx, v.db.Rebind(`SELECT secret_enc, key_version FROM credentials WHERE id = ?`), id).Scan(&sealed, &ver); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return nil, ErrNotFound
-		}
-		return nil, err
-	}
-	plain, err := v.ring.Decrypt(keyring.AAD(table, id), sealed, int(ver.Int64))
+	plain, err := v.unseal(ctx, id, false)
 	if err != nil {
-		return nil, fmt.Errorf("credential %s: unseal: %w", id, err)
+		return nil, err
 	}
 	o := &Opened{Credential: *c}
 	switch c.Type {
@@ -256,6 +254,171 @@ func (v *Vault) Open(ctx context.Context, id string) (*Opened, error) {
 		crypto.Zero(plain)
 	}
 	return o, nil
+}
+
+// pendingTable is the AAD scope of the prepared key, distinct from the
+// signing key's so the two ciphertexts can never be swapped in the database.
+const pendingTable = "credentials.pending"
+
+// PrepareRotation seals s as the authority's next key (ADR 0022). The signing
+// key is untouched; targets should be told to trust both public keys before
+// CutOver. Refused while another next key is prepared.
+func (v *Vault) PrepareRotation(ctx context.Context, id string, s *Secret) (*Credential, error) {
+	c, err := v.Get(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if c.Type != TypeSSHCA || c.Mode != ModeVaulted {
+		return nil, fmt.Errorf("%w: only a certificate authority is rotated in two steps", ErrInvalid)
+	}
+	if c.Rotation != nil && c.Rotation.PendingPublicKey != "" {
+		return nil, ErrRotationPending
+	}
+	if s == nil || s.PrivateKey == "" {
+		return nil, fmt.Errorf("%w: private_key required", ErrInvalid)
+	}
+	pemBytes, pub, err := normalisePrivateKey(s.PrivateKey, s.Passphrase)
+	if err != nil {
+		return nil, err
+	}
+	defer crypto.Zero(pemBytes)
+	if pub == c.PublicKey {
+		return nil, fmt.Errorf("%w: the next key must differ from the current one", ErrInvalid)
+	}
+	sealed, ver, err := v.ring.Encrypt(keyring.AAD(pendingTable, id), pemBytes)
+	if err != nil {
+		return nil, err
+	}
+	now := store.TimeArg(time.Now())
+	res, err := v.db.ExecContext(ctx, v.db.Rebind(`UPDATE credentials SET pending_secret_enc = ?, pending_public_key = ?, pending_key_version = ?,
+		pending_created_at = ?, updated_at = ? WHERE id = ?`), sealed, pub, ver, now, now, id)
+	if err != nil {
+		return nil, err
+	}
+	if err := affected(res); err != nil {
+		return nil, err
+	}
+	return v.Get(ctx, id)
+}
+
+// CutOver makes the prepared key the signing key. The old public key is kept
+// as retired so the console can remind the administrator to remove it from
+// targets; the old private key is gone.
+func (v *Vault) CutOver(ctx context.Context, id string) (*Credential, error) {
+	c, err := v.Get(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if c.Rotation == nil || c.Rotation.PendingPublicKey == "" {
+		return nil, ErrNoRotation
+	}
+	plain, err := v.unseal(ctx, id, true)
+	if err != nil {
+		return nil, err
+	}
+	defer crypto.Zero(plain)
+	// Re-seal under the signing key's scope: the ciphertext is bound to the
+	// column it lives in.
+	sealed, ver, err := v.ring.Encrypt(keyring.AAD(table, id), plain)
+	if err != nil {
+		return nil, err
+	}
+	now := store.TimeArg(time.Now())
+	res, err := v.db.ExecContext(ctx, v.db.Rebind(`UPDATE credentials SET secret_enc = ?, key_version = ?, public_key = pending_public_key,
+		retired_public_key = public_key, retired_at = ?, rotated_at = ?, updated_at = ?,
+		pending_secret_enc = NULL, pending_public_key = NULL, pending_key_version = NULL, pending_created_at = NULL WHERE id = ?`),
+		sealed, ver, now, now, now, id)
+	if err != nil {
+		return nil, err
+	}
+	if err := affected(res); err != nil {
+		return nil, err
+	}
+	return v.Get(ctx, id)
+}
+
+// CancelRotation discards a prepared next key.
+func (v *Vault) CancelRotation(ctx context.Context, id string) (*Credential, error) {
+	c, err := v.Get(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if c.Rotation == nil || c.Rotation.PendingPublicKey == "" {
+		return nil, ErrNoRotation
+	}
+	res, err := v.db.ExecContext(ctx, v.db.Rebind(`UPDATE credentials SET pending_secret_enc = NULL, pending_public_key = NULL,
+		pending_key_version = NULL, pending_created_at = NULL, updated_at = ? WHERE id = ?`), store.TimeArg(time.Now()), id)
+	if err != nil {
+		return nil, err
+	}
+	if err := affected(res); err != nil {
+		return nil, err
+	}
+	return v.Get(ctx, id)
+}
+
+// Retire clears the retired public key once the administrator has removed it
+// from targets.
+func (v *Vault) Retire(ctx context.Context, id string) (*Credential, error) {
+	c, err := v.Get(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if c.Rotation == nil || c.Rotation.RetiredPublicKey == "" {
+		return nil, ErrNoRotation
+	}
+	res, err := v.db.ExecContext(ctx, v.db.Rebind(`UPDATE credentials SET retired_public_key = NULL, retired_at = NULL, updated_at = ? WHERE id = ?`),
+		store.TimeArg(time.Now()), id)
+	if err != nil {
+		return nil, err
+	}
+	if err := affected(res); err != nil {
+		return nil, err
+	}
+	return v.Get(ctx, id)
+}
+
+// OpenPending unseals the prepared next key of a certificate authority, for
+// a probe that checks a target already trusts it. Nothing else signs with it.
+func (v *Vault) OpenPending(ctx context.Context, id string) (*Opened, error) {
+	c, err := v.Get(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if c.Rotation == nil || c.Rotation.PendingPublicKey == "" {
+		return nil, ErrNoRotation
+	}
+	plain, err := v.unseal(ctx, id, true)
+	if err != nil {
+		return nil, err
+	}
+	o := &Opened{Credential: *c, PrivateKey: plain}
+	o.PublicKey = c.Rotation.PendingPublicKey
+	return o, nil
+}
+
+// unseal reads and decrypts the signing key or, with pending, the prepared one.
+func (v *Vault) unseal(ctx context.Context, id string, pending bool) ([]byte, error) {
+	col, aad := "secret_enc, key_version", keyring.AAD(table, id)
+	if pending {
+		col, aad = "pending_secret_enc, pending_key_version", keyring.AAD(pendingTable, id)
+	}
+	var sealed []byte
+	var ver sql.NullInt64
+	if err := v.db.QueryRowContext(ctx, v.db.Rebind(`SELECT `+col+` FROM credentials WHERE id = ?`), id).Scan(&sealed, &ver); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, ErrNotFound
+		}
+		return nil, err
+	}
+	if len(sealed) == 0 {
+		return nil, ErrNoSecret
+	}
+	plain, err := v.ring.Decrypt(aad, sealed, int(ver.Int64))
+	if err != nil {
+		return nil, fmt.Errorf("credential %s: unseal: %w", id, err)
+	}
+	return plain, nil
 }
 
 type scanner interface{ Scan(dest ...any) error }
@@ -269,9 +432,12 @@ func scan(s scanner) (*Credential, error) {
 		principals                []byte
 		created, updated, rotated store.NullTime
 		hasSecret                 bool
+		pendingPub, retiredPub    sql.NullString
+		pendingAt, retiredAt      store.NullTime
 	)
 	err := s.Scan(&c.ID, &c.Name, &typ, &mode, &username, &domain, &pub, &keyVersion, &by,
-		&created, &updated, &rotated, &hasSecret, &certTTL, &principals, &c.InUseBy.Targets, &c.InUseBy.AutoscalingGroups)
+		&created, &updated, &rotated, &hasSecret, &certTTL, &principals,
+		&pendingPub, &pendingAt, &retiredPub, &retiredAt, &c.InUseBy.Targets, &c.InUseBy.AutoscalingGroups)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound
@@ -284,6 +450,9 @@ func scan(s scanner) (*Credential, error) {
 	c.CertificateTTLSeconds = int(certTTL.Int64)
 	if len(principals) > 0 {
 		_ = json.Unmarshal(principals, &c.CertificatePrincipals)
+	}
+	if pendingPub.Valid || retiredPub.Valid {
+		c.Rotation = &Rotation{PendingPublicKey: pendingPub.String, PendingSince: pendingAt.Ptr(), RetiredPublicKey: retiredPub.String, RetiredAt: retiredAt.Ptr()}
 	}
 	c.CreatedAt, c.UpdatedAt, c.RotatedAt = created.Time, updated.Time, rotated.Ptr()
 	return &c, nil

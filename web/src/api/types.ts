@@ -168,6 +168,17 @@ export interface Credential {
   /** ssh_ca only (ADR 0022): lifetime of each session certificate (default 300 s) and the login users the authority issues for (empty = any). */
   certificate_ttl_seconds?: number
   certificate_principals?: string[]
+  /** ssh_ca only: a prepared next key and/or a retired public key still to remove from targets (two-phase rotation, ADR 0022). */
+  rotation?: { pending_public_key?: string; pending_since?: string; retired_public_key?: string; retired_at?: string }
+}
+
+/** POST /targets/{id}/probe-certificate: one real login with a certificate from the bound authority, then disconnect. */
+export interface CertificateProbe {
+  accepted: boolean
+  key: 'current' | 'pending'
+  login_user: string
+  reason?: 'certificate_rejected' | 'host_key_mismatch' | 'unreachable'
+  error?: string
 }
 
 export interface Group {

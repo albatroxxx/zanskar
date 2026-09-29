@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { api, errorMessage } from '../../api/client'
 import { fmtTime } from '../../api/format'
-import type { Credential, Protocol, Target } from '../../api/types'
+import type { CertificateProbe, Credential, Protocol, Target } from '../../api/types'
 import { Alert, Badge, Confirm, Modal, Tags } from '../../components/ui'
 import { hostKeyBadge, protocols, type ProbeWire } from './lib'
 import { CredentialBindings, type BindingChange } from './Bindings'
@@ -19,6 +19,8 @@ export function TargetDetail({ target, credentials, onClose, onChanged, onDelete
   const [editing, setEditing] = useState(false)
   const [probe, setProbe] = useState<ProbeResponse | null>(null)
   const [probing, setProbing] = useState(false)
+  const [certProbe, setCertProbe] = useState<CertificateProbe | null>(null)
+  const [certProbing, setCertProbing] = useState(false)
   const [confirm, setConfirm] = useState<'trust' | 'delete' | null>(null)
   const [err, setErr] = useState('')
   const t = target
@@ -59,6 +61,20 @@ export function TargetDetail({ target, credentials, onClose, onChanged, onDelete
   }
 
   const toggleStatus = () => run(async () => onChanged(await api.put<Target>(`/targets/${t.id}`, targetBody(t, { status: t.status === 'active' ? 'disabled' : 'active' }))))
+
+  // A certificate login test applies when the SSH slot holds an authority
+  // and the host key is trusted; it is a real login, so it is a button, not
+  // part of the ordinary probe.
+  const sshCA = !database && t.credentials?.ssh ? credentials.find((c) => c.id === t.credentials.ssh && c.type === 'ssh_ca') : undefined
+  const testCertificate = () =>
+    run(async () => {
+      setCertProbing(true)
+      try {
+        setCertProbe(await api.post<CertificateProbe>(`/targets/${t.id}/probe-certificate`, { key: 'current' }))
+      } finally {
+        setCertProbing(false)
+      }
+    })
 
   const fp = probe?.host_key_fingerprint ?? t.host_key_fingerprint
   const canTrust = !database && (t.host_key_status === 'pending' || t.host_key_status === 'changed') && !!fp
@@ -136,6 +152,11 @@ export function TargetDetail({ target, credentials, onClose, onChanged, onDelete
         onError={setErr}
       />
 
+      {certProbe && (
+        <Alert tone={certProbe.accepted ? 'ok' : 'danger'}>
+          {certProbe.accepted ? `The target accepted a certificate from ${sshCA?.name ?? 'the authority'} for login user ${certProbe.login_user}.` : `${certProbe.error ?? 'certificate login failed'} (login user ${certProbe.login_user}).`}
+        </Alert>
+      )}
       {probe && (
         <>
           <h2>Probe result</h2>
@@ -185,6 +206,9 @@ export function TargetDetail({ target, credentials, onClose, onChanged, onDelete
           )}
           {canTrust && (
             <button className="btn primary" onClick={() => setConfirm('trust')}>Trust host key</button>
+          )}
+          {sshCA && t.host_key_status === 'trusted' && (
+            <button className="btn" onClick={() => void testCertificate()} disabled={certProbing} title="Signs in once with a certificate from the bound authority, then disconnects">{certProbing ? 'Testing…' : 'Test certificate login'}</button>
           )}
           <button className="btn" onClick={() => setEditing(true)}>Edit</button>
           <button className="btn" onClick={() => void toggleStatus()}>{t.status === 'active' ? 'Disable' : 'Enable'}</button>

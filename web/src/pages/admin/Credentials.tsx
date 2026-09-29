@@ -78,7 +78,8 @@ export function Credentials() {
                     {c.type === 'ssh_ca' && (
                       <button className="btn sm" onClick={() => setCa(c)}>Setup</button>
                     )}
-                    {c.mode === 'vaulted' && c.type !== 'ec2_instance_connect' && (
+                    {/* An authority is rotated in two steps from its Setup panel (ADR 0022); the in-place form does not apply. */}
+                    {c.mode === 'vaulted' && c.type !== 'ec2_instance_connect' && c.type !== 'ssh_ca' && (
                       <button className="btn sm" onClick={() => setRotating(c)}>Rotate</button>
                     )}
                     <button className="btn sm danger" onClick={() => setDeleting(c)} disabled={inUse(c) > 0} title={inUse(c) > 0 ? 'unassign it from targets first' : ''}>Delete</button>

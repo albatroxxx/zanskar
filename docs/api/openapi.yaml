@@ -1103,9 +1103,11 @@ paths:
       tags: [admin]
       summary: Update a credential
       description: >
-        Sending a new secret sets `rotated_at`. `type` and `mode` are immutable. Fields left
-        out keep their value; for `ssh_ca`, `username: ""` clears the fixed login user and
-        `certificate_principals: []` clears the allowlist.
+        Sending a new secret sets `rotated_at`, except for `ssh_ca`, where a key in the body
+        is refused: an authority is rotated through `/credentials/{id}/rotate` in two steps.
+        `type` and `mode` are immutable. Fields left out keep their value; for `ssh_ca`,
+        `username: ""` clears the fixed login user and `certificate_principals: []` clears the
+        allowlist.
       requestBody:
         required: true
         content:
@@ -1304,6 +1306,102 @@ paths:
           description: Cleared.
         "404":
           $ref: "#/components/responses/NotFound"
+  /credentials/{id}/rotate:
+    post:
+      tags: [admin]
+      summary: Rotate a credential
+      description: >
+        Replaces the secret in place for passwords, domain accounts and SSH keys (omit the key
+        for `ssh_key` to have one generated). For an `ssh_ca` credential this **prepares the
+        next authority key** instead (ADR 0022): it is generated unless `private_key` is sent,
+        sealed beside the signing key, and returned as `rotation.pending_public_key` so targets
+        can be told to trust both. Sessions keep using the current key until the cut-over.
+        Audited as `credential.rotate` or `credential.rotate.prepare`.
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CredentialWrite"
+      responses:
+        "200":
+          description: The credential; for an authority, with `rotation` set.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Credential"
+        "409":
+          description: A next key is already prepared (`rotation_pending`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+    delete:
+      tags: [admin]
+      summary: Discard a prepared authority key
+      description: Destroys the prepared next key of an `ssh_ca` credential. Audited as `credential.rotate.cancel`.
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: The credential.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Credential"
+        "409":
+          description: Nothing is prepared (`no_rotation`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /credentials/{id}/rotate/cut-over:
+    post:
+      tags: [admin]
+      summary: Cut over to the prepared authority key
+      description: >
+        The prepared key becomes the signing key for every session from now on; the old
+        private key is destroyed and its public key is kept as `rotation.retired_public_key`
+        until the administrator confirms it was removed from targets. A target that does not
+        trust the new key yet refuses logins, so test bound targets first. Audited as
+        `credential.rotate` with both fingerprints.
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: The credential after the cut-over.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Credential"
+        "409":
+          description: Nothing is prepared (`no_rotation`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /credentials/{id}/rotate/retire:
+    post:
+      tags: [admin]
+      summary: Confirm the retired authority key was removed from targets
+      description: Clears `rotation.retired_public_key`. Zanskar cannot verify the removal. Audited as `credential.rotate.retire`.
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: The credential.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Credential"
+        "409":
+          description: Nothing is retired (`no_rotation`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
   /targets/{id}/probe:
     post:
       tags: [admin]
@@ -1326,6 +1424,63 @@ paths:
           $ref: "#/components/responses/NotFound"
         "504":
           description: Gateway could not reach the address on any port.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /targets/{id}/probe-certificate:
+    post:
+      tags: [admin]
+      summary: Test a certificate login
+      description: >
+        Signs in to the target once with a certificate minted by the authority bound to its
+        SSH slot, then disconnects: does the target trust that authority? With `key=pending`
+        the prepared next key is used, to check targets before a cut-over. It is a real login
+        (the target's auth log shows the key id `zanskar-probe:<admin>:<login user>`), so it
+        needs a trusted host key, an `ssh_ca` credential on the slot, and a login user the
+        authority permits. Audited as `target.probe.certificate`.
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                key:
+                  type: string
+                  enum: [current, pending]
+                  default: current
+      responses:
+        "200":
+          description: "The outcome; `accepted: false` with a `reason` is an answer, not an error."
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [accepted, key, login_user]
+                properties:
+                  accepted:
+                    type: boolean
+                  key:
+                    type: string
+                    enum: [current, pending]
+                  login_user:
+                    type: string
+                  reason:
+                    type: string
+                    enum: [certificate_rejected, host_key_mismatch, unreachable]
+                  error:
+                    type: string
+        "403":
+          description: The authority does not issue for the login user (`login_user_not_permitted`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: "`host_key_untrusted`, `no_credential`, `not_certificate_authority` or `no_rotation`."
           content:
             application/json:
               schema:
@@ -3166,6 +3321,18 @@ components:
           items:
             type: string
           description: "`ssh_ca` only; absent means any login user."
+        rotation:
+          type: object
+          description: "`ssh_ca` only; present while a next key is prepared or a retired key is left to remove from targets (ADR 0022)."
+          properties:
+            pending_public_key:
+              type: string
+            pending_since:
+              $ref: "#/components/schemas/Timestamp"
+            retired_public_key:
+              type: string
+            retired_at:
+              $ref: "#/components/schemas/Timestamp"
     CredentialWrite:
       type: object
       required: [name, type, mode]

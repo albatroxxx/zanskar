@@ -75,6 +75,20 @@ type Credential struct {
 	// of login users the authority issues certificates for; empty means any.
 	CertificateTTLSeconds int      `json:"certificate_ttl_seconds,omitempty"`
 	CertificatePrincipals []string `json:"certificate_principals,omitempty"`
+	// Rotation is the state of a two-phase authority rotation; nil when no
+	// next key is prepared and no retired key is left to remove.
+	Rotation *Rotation `json:"rotation,omitempty"`
+}
+
+// Rotation is a certificate authority's two-phase key rotation (ADR 0022).
+// A prepared next key is sealed beside the signing key so targets can be
+// told to trust both; cutting over makes it the signing key and keeps the
+// old public key until an administrator confirms targets no longer list it.
+type Rotation struct {
+	PendingPublicKey string     `json:"pending_public_key,omitempty"`
+	PendingSince     *time.Time `json:"pending_since,omitempty"`
+	RetiredPublicKey string     `json:"retired_public_key,omitempty"`
+	RetiredAt        *time.Time `json:"retired_at,omitempty"`
 }
 
 // Certificate lifetimes for ssh_ca credentials, in seconds. A certificate
@@ -133,6 +147,10 @@ var (
 	ErrNoSecret   = errors.New("credential: no secret stored")
 	ErrBadKey     = errors.New("credential: private key could not be parsed")
 	ErrPassphrase = errors.New("credential: private key is encrypted; passphrase missing or wrong")
+	// ErrRotationPending: a next key is already prepared; cut over or cancel first.
+	ErrRotationPending = errors.New("credential: a rotation is already prepared")
+	// ErrNoRotation: nothing is prepared or retired for this credential.
+	ErrNoRotation = errors.New("credential: no rotation in progress")
 )
 
 // prepared is the validated, normalised form ready for storage.

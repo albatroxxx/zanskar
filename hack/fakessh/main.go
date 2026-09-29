@@ -45,17 +45,26 @@ func main() {
 		return nil, errors.New("denied")
 	}}
 	if *caPath != "" {
-		raw, err := os.ReadFile(*caPath) // #nosec G304 -- operator-chosen dev path
-		if err != nil {
+		if _, err := trustedAuthorities(*caPath); err != nil {
 			panic(err)
 		}
-		caPub, _, _, _, err := ssh.ParseAuthorizedKey(raw)
-		if err != nil {
-			panic(fmt.Errorf("ca-pub: %w", err))
-		}
-		// CertChecker verifies the signature, the validity window and that the
-		// login user is among the certificate's principals, as sshd does.
-		checker := &ssh.CertChecker{IsUserAuthority: func(k ssh.PublicKey) bool { return bytes.Equal(k.Marshal(), caPub.Marshal()) }}
+		// The file is re-read on every attempt and may hold several keys, so
+		// a rotation can be rehearsed by appending the next key, as an
+		// operator would edit TrustedUserCAKeys. CertChecker verifies the
+		// signature, the validity window and that the login user is among the
+		// certificate's principals, as sshd does.
+		checker := &ssh.CertChecker{IsUserAuthority: func(k ssh.PublicKey) bool {
+			cas, err := trustedAuthorities(*caPath)
+			if err != nil {
+				return false
+			}
+			for _, ca := range cas {
+				if bytes.Equal(k.Marshal(), ca.Marshal()) {
+					return true
+				}
+			}
+			return false
+		}}
 		cfg.PublicKeyCallback = func(c ssh.ConnMetadata, key ssh.PublicKey) (*ssh.Permissions, error) {
 			perms, err := checker.Authenticate(c, key)
 			if err != nil {
@@ -67,7 +76,7 @@ func main() {
 			}
 			return perms, nil
 		}
-		fmt.Println("trusting user certificates from", ssh.FingerprintSHA256(caPub))
+		fmt.Println("trusting user certificates from", *caPath)
 	}
 	cfg.AddHostKey(signer)
 	addr := "0.0.0.0:2222"
@@ -88,6 +97,29 @@ func main() {
 		}
 		go serve(c, cfg)
 	}
+}
+
+// trustedAuthorities parses every authorized_keys line in the file.
+func trustedAuthorities(path string) ([]ssh.PublicKey, error) {
+	raw, err := os.ReadFile(path) // #nosec G304 -- operator-chosen dev path
+	if err != nil {
+		return nil, err
+	}
+	var out []ssh.PublicKey
+	for _, line := range strings.Split(string(raw), "\n") {
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		pub, _, _, _, err := ssh.ParseAuthorizedKey([]byte(line))
+		if err != nil {
+			return nil, fmt.Errorf("ca-pub: %w", err)
+		}
+		out = append(out, pub)
+	}
+	if len(out) == 0 {
+		return nil, errors.New("ca-pub: no keys in file")
+	}
+	return out, nil
 }
 
 func hostKey(path string) (ssh.Signer, error) {
