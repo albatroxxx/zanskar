@@ -31,11 +31,15 @@ type endpoint struct {
 	TLSFingerprint      string // RDP listener
 	WinRMTLSFingerprint string
 	Active              bool
-	// Engine and EngineVersion identify a database target (ADR 0017).
+	// Engine and EngineVersion identify a database target (ADR 0017);
+	// DatabaseName, TLSMode and TLSCA say what the sidecar opens and how.
 	Engine        string
 	EngineVersion string
 	// RetentionDays is the target's recording retention override (0: none).
 	RetentionDays int
+	DatabaseName  string
+	TLSMode       string
+	TLSCA         string
 
 	// Exactly one of TargetID or (ASGID, ASGInstanceID) is set.
 	TargetID      string
@@ -71,7 +75,7 @@ func (e *endpoint) policyRef() (id, asgID string, tags map[string]string) {
 func fromTarget(t *target.Target) *endpoint {
 	e := &endpoint{Name: t.Name, Address: t.Address, Ports: t.Ports, Tags: t.Tags, Credentials: t.Credentials,
 		HostKeyTrusted: t.HostKeyStatus == target.HostKeyTrusted, Active: t.Status == "active", TargetID: t.ID, LiveKey: t.ID,
-		Engine: t.Engine, EngineVersion: t.EngineVersion}
+		Engine: t.Engine, EngineVersion: t.EngineVersion, DatabaseName: t.DatabaseName, TLSMode: t.TLSMode, TLSCA: t.TLSCA}
 	if t.RetentionDays != nil {
 		e.RetentionDays = *t.RetentionDays
 	}

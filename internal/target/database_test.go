@@ -4,7 +4,16 @@ package target
 
 import (
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/pem"
+	"math/big"
+	"strings"
 	"testing"
+	"time"
 )
 
 func TestDatabaseTargetValidate(t *testing.T) {
@@ -113,3 +122,47 @@ func TestTargetRetentionDays(t *testing.T) {
 		t.Fatal("4000 days must be refused")
 	}
 }
+
+// TestDatabaseTargetSettings: database name, TLS mode and CA are validated
+// and stored; a host keeps none of them.
+func TestDatabaseTargetSettings(t *testing.T) {
+	ctx := context.Background()
+	db := testDB(t)
+	repo := NewRepo(db)
+	tgt := &Target{Name: "orders", Address: "db.internal", Engine: "MySQL", DatabaseName: " orders ", TLSMode: "Verify-Full", TLSCA: testCAPEM}
+	if err := repo.Create(ctx, tgt); err != nil {
+		t.Fatal(err)
+	}
+	got, err := repo.Get(ctx, tgt.ID)
+	if err != nil || got.DatabaseName != "orders" || got.TLSMode != TLSVerifyFull || got.TLSCA != strings.TrimSpace(testCAPEM) {
+		t.Fatalf("round trip: %+v %v", got, err)
+	}
+	if err := (&Target{Name: "d", Address: "db", Engine: "postgres"}).Validate(); err != nil {
+		t.Fatal(err)
+	}
+	if d := (&Target{Name: "d", Address: "db", Engine: "postgres"}); d.Validate() == nil && d.TLSMode != TLSPrefer {
+		t.Fatalf("default tls mode: %q", d.TLSMode)
+	}
+	for _, bad := range []Target{
+		{Name: "d", Address: "db", Engine: "postgres", TLSMode: "maybe"},
+		{Name: "d", Address: "db", Engine: "postgres", TLSMode: "verify-full"},
+		{Name: "d", Address: "db", Engine: "postgres", DatabaseName: "app; drop"},
+		{Name: "d", Address: "db", Engine: "postgres", TLSCA: "not pem"},
+	} {
+		if err := bad.Validate(); err == nil {
+			t.Errorf("%+v must be refused", bad)
+		}
+	}
+	host := &Target{Name: "h", Address: "10.0.0.5", OSFamily: Linux, DatabaseName: "x", TLSMode: "require", TLSCA: testCAPEM}
+	if err := host.Validate(); err != nil || host.DatabaseName != "" || host.TLSMode != "" || host.TLSCA != "" {
+		t.Fatalf("a host keeps no database settings: %+v %v", host, err)
+	}
+}
+
+// testCAPEM is a self-signed certificate generated for the test run.
+var testCAPEM = func() string {
+	key, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	tmpl := &x509.Certificate{SerialNumber: big.NewInt(1), Subject: pkix.Name{CommonName: "test CA"}, NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(time.Hour), IsCA: true, BasicConstraintsValid: true}
+	der, _ := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
+	return string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}))
+}()

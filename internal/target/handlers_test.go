@@ -16,7 +16,10 @@ import (
 
 	"github.com/albatroxxx/zanskar/internal/audit"
 	"github.com/albatroxxx/zanskar/internal/auth"
+	"github.com/albatroxxx/zanskar/internal/credential"
+	"github.com/albatroxxx/zanskar/internal/crypto"
 	"github.com/albatroxxx/zanskar/internal/gateway"
+	"github.com/albatroxxx/zanskar/internal/keyring"
 	"github.com/albatroxxx/zanskar/internal/policy"
 	"github.com/albatroxxx/zanskar/internal/store"
 	"github.com/albatroxxx/zanskar/internal/user"
@@ -28,6 +31,7 @@ type env struct {
 	audit    *audit.Log
 	policies *policy.Repo
 	live     *gateway.Registry
+	vault    *credential.Vault
 	admin    *http.Cookie
 	csrf     string
 	user     *http.Cookie
@@ -43,11 +47,21 @@ func newEnv(t *testing.T) *env {
 	auditLog := audit.NewLog(db)
 
 	policies, live := policy.NewRepo(db), gateway.NewRegistry()
-	h := &AdminHandler{Repo: NewRepo(db), Prober: &Prober{AllowLoopback: true}, Policies: policies, Live: live, Audit: auditLog, Log: log}
+	kek, err := crypto.NewLocalKEK(bytes.Repeat([]byte{3}, 32))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ring, err := keyring.Open(ctx, db, kek)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(ring.Close)
+	vault := credential.NewVault(db, ring)
+	h := &AdminHandler{Repo: NewRepo(db), Prober: &Prober{AllowLoopback: true}, Policies: policies, Live: live, Vault: vault, Audit: auditLog, Log: log}
 	mux := http.NewServeMux()
 	h.Register(mux)
 	mw := &auth.Middleware{Sessions: sessions, Users: users, Log: log}
-	e := &env{srv: mw.Authenticate(mw.CSRF(mux)), db: db, audit: auditLog, policies: policies, live: live}
+	e := &env{srv: mw.Authenticate(mw.CSRF(mux)), db: db, audit: auditLog, policies: policies, live: live, vault: vault}
 
 	adminUser := &user.User{Username: "admin", DisplayName: "Admin", Roles: []user.Role{user.RoleAdmin}}
 	if err := users.Create(ctx, adminUser); err != nil {
@@ -259,5 +273,67 @@ func TestDatabaseEnginesEnrol(t *testing.T) {
 	}
 	if code, out := e.do("POST", "/api/v1/targets", body("oracle"), e.admin); code != 400 {
 		t.Fatalf("oracle: got %d %v, want 400", code, out)
+	}
+}
+
+// TestListFiltersAndUserSuppliedSlot: the list narrows by kind, status and
+// a name/address substring; binding the user_supplied sentinel makes (once)
+// and reuses the shared prompt credential.
+func TestListFiltersAndUserSuppliedSlot(t *testing.T) {
+	e := newEnv(t)
+	mk := func(body map[string]any) string {
+		code, out := e.do("POST", "/api/v1/targets", body, e.admin)
+		if code != 201 {
+			t.Fatalf("create %v: %d %v", body, code, out)
+		}
+		return out["id"].(string)
+	}
+	host := mk(map[string]any{"name": "web-01", "address": "10.0.1.10", "os_family": "linux"})
+	mk(map[string]any{"name": "win-01", "address": "10.0.1.11", "os_family": "windows", "status": "disabled"})
+	db := mk(map[string]any{"name": "orders-db", "address": "orders.db.internal", "os_family": "other", "engine": "postgres"})
+	names := func(query string) []string {
+		code, out := e.do("GET", "/api/v1/targets"+query, nil, e.admin)
+		if code != 200 {
+			t.Fatalf("list %s: %d %v", query, code, out)
+		}
+		var ns []string
+		for _, it := range out["items"].([]any) {
+			ns = append(ns, it.(map[string]any)["name"].(string))
+		}
+		return ns
+	}
+	if got := names("?kind=database"); len(got) != 1 || got[0] != "orders-db" {
+		t.Fatalf("kind=database: %v", got)
+	}
+	if got := names("?kind=host"); len(got) != 2 {
+		t.Fatalf("kind=host: %v", got)
+	}
+	if got := names("?kind=host&status=active"); len(got) != 1 || got[0] != "web-01" {
+		t.Fatalf("active hosts: %v", got)
+	}
+	if got := names("?q=ORDERS"); len(got) != 1 || got[0] != "orders-db" {
+		t.Fatalf("q: %v", got)
+	}
+	if got := names("?q=10.0.1"); len(got) != 2 {
+		t.Fatalf("q by address: %v", got)
+	}
+	if code, _ := e.do("GET", "/api/v1/targets?kind=printer", nil, e.admin); code != 400 {
+		t.Fatalf("bad kind: %d", code)
+	}
+
+	code, out := e.do("PUT", "/api/v1/targets/"+db+"/credentials/database", map[string]string{"credential_id": "user_supplied"}, e.admin)
+	if code != 200 {
+		t.Fatalf("sentinel bind: %d %v", code, out)
+	}
+	first := out["credentials"].(map[string]any)["database"].(string)
+	if first == "" || first == "user_supplied" {
+		t.Fatalf("sentinel must resolve to a credential id, got %q", first)
+	}
+	code, out = e.do("PUT", "/api/v1/targets/"+host+"/credentials/ssh", map[string]string{"credential_id": "user_supplied"}, e.admin)
+	if code != 200 || out["credentials"].(map[string]any)["ssh"] != first {
+		t.Fatalf("sentinel must reuse the shared credential: %d %v", code, out)
+	}
+	if c, err := e.vault.Get(context.Background(), first); err != nil || c.Mode != credential.ModeUserSupplied {
+		t.Fatalf("shared credential: %+v %v", c, err)
 	}
 }

@@ -20,6 +20,7 @@ package mysqlrelay
 import (
 	"context"
 	"crypto/tls"
+	"crypto/x509"
 	"encoding/binary"
 	"encoding/json"
 	"errors"
@@ -50,6 +51,9 @@ const (
 	TLSRequire TLSMode = "require"
 	// TLSDisable never negotiates TLS.
 	TLSDisable TLSMode = "disable"
+	// TLSVerifyFull requires TLS and verifies the chain against CA (or the
+	// system roots when CA is empty) and the host name.
+	TLSVerifyFull TLSMode = "verify-full"
 )
 
 // Upstream is the database the relay signs in to.
@@ -59,6 +63,9 @@ type Upstream struct {
 	Password string  `json:"password"`
 	Database string  `json:"database,omitempty"`
 	TLS      TLSMode `json:"tls,omitempty"` // default prefer
+	// CA is the PEM bundle trusted for verify-full (required for it; the
+	// target refuses verify-full without one, so the two sidecars agree).
+	CA string `json:"ca,omitempty"`
 }
 
 // Config is what the sidecar is started with: one JSON document in the
@@ -95,9 +102,15 @@ func (c *Config) Validate() error {
 		c.Upstream.TLS = TLSPrefer
 	}
 	switch c.Upstream.TLS {
-	case TLSPrefer, TLSRequire, TLSDisable:
+	case TLSPrefer, TLSRequire, TLSDisable, TLSVerifyFull:
 	default:
-		return fmt.Errorf("dbproxy config: tls must be prefer, require or disable")
+		return fmt.Errorf("dbproxy config: tls must be prefer, require, verify-full or disable")
+	}
+	if c.Upstream.CA != "" && !x509.NewCertPool().AppendCertsFromPEM([]byte(c.Upstream.CA)) {
+		return errors.New("dbproxy config: ca holds no PEM certificate")
+	}
+	if c.Upstream.TLS == TLSVerifyFull && c.Upstream.CA == "" {
+		return errors.New("dbproxy config: verify-full needs ca")
 	}
 	if _, _, err := net.SplitHostPort(c.Upstream.Addr); err != nil {
 		return fmt.Errorf("dbproxy config: upstream addr must be host:port")
@@ -214,7 +227,7 @@ func (r *Relay) dial(ctx context.Context) (*client.Conn, error) {
 	switch r.Upstream.TLS {
 	case TLSDisable:
 		return r.connect(ctx, false)
-	case TLSRequire:
+	case TLSRequire, TLSVerifyFull:
 		return r.connect(ctx, true)
 	default:
 		c, err := r.connect(ctx, true)
@@ -255,7 +268,7 @@ func (r *Relay) connect(ctx context.Context, useTLS bool) (*client.Conn, error) 
 			}
 		}
 		if useTLS {
-			c.SetTLSConfig(unverifiedTLS())
+			c.SetTLSConfig(r.tlsConfig())
 		}
 		return nil
 	}
@@ -273,11 +286,23 @@ func (r *Relay) connect(ctx context.Context, useTLS bool) (*client.Conn, error) 
 	return up, nil
 }
 
+// tlsConfig is the upstream TLS policy: verify-full checks the chain against
+// the target's CA bundle and the host name; the other modes encrypt without
+// verifying, like pgbouncer's prefer and require.
+func (r *Relay) tlsConfig() *tls.Config {
+	if r.Upstream.TLS != TLSVerifyFull {
+		return unverifiedTLS()
+	}
+	host, _, _ := net.SplitHostPort(r.Upstream.Addr)
+	pool := x509.NewCertPool()
+	pool.AppendCertsFromPEM([]byte(r.Upstream.CA))
+	return &tls.Config{ServerName: host, MinVersion: tls.VersionTLS12, RootCAs: pool}
+}
+
 // unverifiedTLS encrypts the upstream connection without verifying the
-// server's certificate: the pgbouncer sidecar's server_tls_sslmode=prefer
-// for MySQL, and what the target's prefer and require modes mean. It
-// defeats a passive listener, not an on-path one; verify-full is the mode
-// for that, and arrives with the target's TLS settings.
+// server's certificate: what the target's prefer and require modes mean,
+// and what the pgbouncer sidecar does for those modes. It defeats a
+// passive listener, not an on-path one; verify-full is the mode for that.
 func unverifiedTLS() *tls.Config {
 	return &tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS12} // #nosec G402 -- by the target's TLS mode; see the doc comment
 }

@@ -43,11 +43,15 @@ export interface Target {
   name: string
   address: string
   os_family: OSFamily
-  /** Database engine and version for database targets (ADR 0017); empty for VM targets. */
+  /** Database engine and version for database targets (ADR 0017); empty for hosts. */
   engine?: string
   engine_version?: string
   /** Recording retention override in days; null defers to the policy or the global policy. */
   retention_days?: number | null
+  /** Database targets only: the database to open, and how the sidecar protects its upstream connection. */
+  database_name?: string
+  tls_mode?: 'disable' | 'prefer' | 'require' | 'verify-full'
+  tls_ca?: string
   ports: Partial<Record<Protocol, number>>
   capabilities: Protocol[]
   host_key_fingerprint: string | null
@@ -159,7 +163,8 @@ export interface Credential {
   created_at: string
   updated_at: string
   rotated_at?: string | null
-  in_use_by?: { targets?: string[]; autoscaling_groups?: string[] }
+  /** Counts of targets and autoscaling groups bound to it. */
+  in_use_by?: { targets?: number; autoscaling_groups?: number }
 }
 
 export interface Group {

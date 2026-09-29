@@ -24,7 +24,7 @@ func NewRepo(db *store.DB) *Repo { return &Repo{db: db} }
 
 const cols = `id, name, address, os_family, ports, capabilities, host_key_fingerprint, host_key_status,
 	tls_fingerprint, tags, status, notes, created_by, created_at, updated_at, last_probed_at, winrm_tls_fingerprint,
-	engine, engine_version, retention_days`
+	engine, engine_version, retention_days, database_name, tls_mode, tls_ca`
 
 // Create validates and inserts t, including its credential mapping.
 func (r *Repo) Create(ctx context.Context, t *Target) error {
@@ -44,10 +44,10 @@ func (r *Repo) Create(ctx context.Context, t *Target) error {
 	}
 	defer tx.Rollback() //nolint:errcheck
 	_, err = tx.ExecContext(ctx, r.db.Rebind(`INSERT INTO targets
-		(id, name, address, os_family, ports, capabilities, host_key_status, tags, status, notes, created_by, created_at, updated_at, engine, engine_version, retention_days)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`),
+		(id, name, address, os_family, ports, capabilities, host_key_status, tags, status, notes, created_by, created_at, updated_at, engine, engine_version, retention_days, database_name, tls_mode, tls_ca)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`),
 		t.ID, t.Name, t.Address, string(t.OSFamily), ports, capsJSON, string(HostKeyUnknown), tags, t.Status, t.Notes,
-		nullStr(t.CreatedBy), store.TimeArg(now), store.TimeArg(now), t.Engine, t.EngineVersion, nullInt(t.RetentionDays))
+		nullStr(t.CreatedBy), store.TimeArg(now), store.TimeArg(now), t.Engine, t.EngineVersion, nullInt(t.RetentionDays), t.DatabaseName, t.TLSMode, t.TLSCA)
 	if err != nil {
 		return mapErr(err)
 	}
@@ -81,13 +81,42 @@ func (r *Repo) getWhere(ctx context.Context, where string, arg any) (*Target, er
 	return t, nil
 }
 
-// List returns targets ordered by name after the cursor. tags, when given,
-// keeps only targets carrying every listed tag.
-func (r *Repo) List(ctx context.Context, afterName string, limit int, tags map[string]string) ([]*Target, string, error) {
+// ListFilter narrows List. Zero values match everything.
+type ListFilter struct {
+	Tags     map[string]string
+	Kind     string // "host" | "database"
+	Status   string // "active" | "disabled"
+	OSFamily string
+	Query    string // case-insensitive substring of name or address
+}
+
+// List returns targets ordered by name after the cursor, narrowed by f.
+func (r *Repo) List(ctx context.Context, afterName string, limit int, f ListFilter) ([]*Target, string, error) {
 	if limit <= 0 || limit > 500 {
 		limit = 50
 	}
-	out, err := r.scanAll(ctx, r.db.Rebind(`SELECT `+cols+` FROM targets WHERE deleted_at IS NULL AND name > ? ORDER BY name`), tags, limit+1, afterName)
+	q := `SELECT ` + cols + ` FROM targets WHERE deleted_at IS NULL AND name > ?`
+	args := []any{afterName}
+	switch f.Kind {
+	case "host":
+		q += ` AND COALESCE(engine, '') = ''`
+	case "database":
+		q += ` AND COALESCE(engine, '') <> ''`
+	}
+	if f.Status != "" {
+		q += ` AND status = ?`
+		args = append(args, f.Status)
+	}
+	if f.OSFamily != "" {
+		q += ` AND os_family = ?`
+		args = append(args, f.OSFamily)
+	}
+	if s := strings.ToLower(strings.TrimSpace(f.Query)); s != "" {
+		like := "%" + strings.NewReplacer(`\`, `\\`, "%", `\%`, "_", `\_`).Replace(s) + "%"
+		q += ` AND (LOWER(name) LIKE ? ESCAPE '\' OR LOWER(address) LIKE ? ESCAPE '\')`
+		args = append(args, like, like)
+	}
+	out, err := r.scanAll(ctx, r.db.Rebind(q+` ORDER BY name`), f.Tags, limit+1, args...)
 	if err != nil {
 		return nil, "", err
 	}
@@ -134,9 +163,9 @@ func (r *Repo) Update(ctx context.Context, t *Target) error {
 	}
 	defer tx.Rollback() //nolint:errcheck
 	res, err := tx.ExecContext(ctx, r.db.Rebind(`UPDATE targets SET name = ?, address = ?, os_family = ?, ports = ?, capabilities = ?,
-		tags = ?, status = ?, notes = ?, engine = ?, engine_version = ?, retention_days = ?, updated_at = ? WHERE id = ? AND deleted_at IS NULL`),
+		tags = ?, status = ?, notes = ?, engine = ?, engine_version = ?, retention_days = ?, database_name = ?, tls_mode = ?, tls_ca = ?, updated_at = ? WHERE id = ? AND deleted_at IS NULL`),
 		t.Name, t.Address, string(t.OSFamily), mustJSON(t.Ports), mustJSON(t.Capabilities), mustJSON(t.Tags), t.Status, t.Notes,
-		t.Engine, t.EngineVersion, nullInt(t.RetentionDays), store.TimeArg(now), t.ID)
+		t.Engine, t.EngineVersion, nullInt(t.RetentionDays), t.DatabaseName, t.TLSMode, t.TLSCA, store.TimeArg(now), t.ID)
 	if err != nil {
 		return mapErr(err)
 	}
@@ -397,10 +426,11 @@ func scanTarget(s scanner) (*Target, error) {
 		winrmFP                 sql.NullString
 		engine, engineVer       sql.NullString
 		retention               sql.NullInt64
+		dbName, tlsMode, tlsCA  sql.NullString
 		created, updated, probe store.NullTime
 	)
 	err := s.Scan(&t.ID, &t.Name, &t.Address, &osFamily, &ports, &capsRaw, &hk, &hkStatus, &tlsFP, &tagsRaw,
-		&t.Status, &t.Notes, &createdBy, &created, &updated, &probe, &winrmFP, &engine, &engineVer, &retention)
+		&t.Status, &t.Notes, &createdBy, &created, &updated, &probe, &winrmFP, &engine, &engineVer, &retention, &dbName, &tlsMode, &tlsCA)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound
@@ -413,6 +443,7 @@ func scanTarget(s scanner) (*Target, error) {
 		v := int(retention.Int64)
 		t.RetentionDays = &v
 	}
+	t.DatabaseName, t.TLSMode, t.TLSCA = dbName.String, tlsMode.String, tlsCA.String
 	t.Ports, t.Capabilities, t.Tags = map[Protocol]int{}, []Protocol{}, map[string]string{}
 	if len(ports) > 0 {
 		_ = json.Unmarshal(ports, &t.Ports)

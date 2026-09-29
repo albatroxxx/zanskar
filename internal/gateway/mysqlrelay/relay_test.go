@@ -5,9 +5,17 @@ package mysqlrelay
 import (
 	"bytes"
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/tls"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/pem"
 	"errors"
 	"io"
 	"log/slog"
+	"math/big"
 	"net"
 	"strings"
 	"testing"
@@ -301,5 +309,77 @@ func TestParse(t *testing.T) {
 		if _, err := Parse([]byte(bad)); err == nil {
 			t.Fatalf("%s must be refused", bad)
 		}
+	}
+}
+
+// testCA makes a CA and a server certificate for 127.0.0.1 signed by it.
+func testCA(t *testing.T) (caPEM string, serverCert tls.Certificate) {
+	t.Helper()
+	caKey, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	caTmpl := &x509.Certificate{SerialNumber: big.NewInt(1), Subject: pkix.Name{CommonName: "test CA"}, NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(time.Hour),
+		IsCA: true, BasicConstraintsValid: true, KeyUsage: x509.KeyUsageCertSign}
+	caDER, err := x509.CreateCertificate(rand.Reader, caTmpl, caTmpl, &caKey.PublicKey, caKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	caCert, _ := x509.ParseCertificate(caDER)
+	srvKey, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	srvTmpl := &x509.Certificate{SerialNumber: big.NewInt(2), Subject: pkix.Name{CommonName: "db"}, NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(time.Hour),
+		IPAddresses: []net.IP{net.ParseIP("127.0.0.1")}, KeyUsage: x509.KeyUsageDigitalSignature, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}}
+	srvDER, err := x509.CreateCertificate(rand.Reader, srvTmpl, caCert, &srvKey.PublicKey, caKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: caDER})), tls.Certificate{Certificate: [][]byte{srvDER}, PrivateKey: srvKey}
+}
+
+// TestRelayVerifyFull: with the server's CA the chain and host name verify
+// and the session works; with another CA the upstream is refused and the
+// client gets a clean error, never a plaintext fallback.
+func TestRelayVerifyFull(t *testing.T) {
+	caPEM, cert := testCA(t)
+	otherCA, _ := testCA(t)
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = ln.Close() })
+	srv := server.NewServer("8.0.99-tls", mysql.DEFAULT_COLLATION_ID, mysql.AUTH_NATIVE_PASSWORD, nil, &tls.Config{Certificates: []tls.Certificate{cert}, MinVersion: tls.VersionTLS12})
+	auth := server.NewInMemoryAuthenticationHandler(mysql.AUTH_NATIVE_PASSWORD)
+	_ = auth.AddUser("svc", "s3cret")
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			go func() {
+				conn, err := srv.NewCustomizedConn(c, auth, fakeDB{})
+				if err != nil {
+					return
+				}
+				for conn.HandleCommand() == nil {
+				}
+			}()
+		}
+	}()
+	good := startRelay(t, Config{Upstream: Upstream{Addr: ln.Addr().String(), User: "svc", Password: "s3cret", TLS: TLSVerifyFull, CA: caPEM}})
+	c, err := cli(good, "svc")
+	if err != nil {
+		t.Fatalf("verify-full with the right CA: %v", err)
+	}
+	if _, err := c.Execute("SELECT 1"); err != nil {
+		t.Fatal(err)
+	}
+	_ = c.Close()
+	bad := startRelay(t, Config{Upstream: Upstream{Addr: ln.Addr().String(), User: "svc", Password: "s3cret", TLS: TLSVerifyFull, CA: otherCA}, DialTimeout: 3 * time.Second})
+	if _, err := cli(bad, "svc"); err == nil || !strings.Contains(err.Error(), "did not accept") {
+		t.Fatalf("verify-full with the wrong CA must fail closed: %v", err)
+	}
+	if _, err := Parse([]byte(`{"upstream":{"addr":"db:3306","user":"svc","tls":"verify-full","ca":"not a cert"}}`)); err == nil {
+		t.Fatal("a CA that is not PEM must be refused")
+	}
+	if _, err := Parse([]byte(`{"upstream":{"addr":"db:3306","user":"svc","tls":"verify-full"}}`)); err == nil {
+		t.Fatal("verify-full without a CA must be refused")
 	}
 }

@@ -1138,6 +1138,12 @@ paths:
       parameters:
         - $ref: "#/components/parameters/Limit"
         - $ref: "#/components/parameters/Cursor"
+        - name: kind
+          in: query
+          schema:
+            type: string
+            enum: [host, database]
+          description: Only hosts (no engine) or only database targets (ADR 0017).
         - name: os_family
           in: query
           schema:
@@ -1241,6 +1247,58 @@ paths:
           $ref: "#/components/responses/NotFound"
         "409":
           $ref: "#/components/responses/Conflict"
+  /targets/{id}/credentials/{protocol}:
+    parameters:
+      - $ref: "#/components/parameters/Id"
+      - name: protocol
+        in: path
+        required: true
+        schema:
+          $ref: "#/components/schemas/Protocol"
+    put:
+      tags: [admin]
+      summary: Bind a credential to one protocol slot
+      description: >
+        Sets what the target presents for the protocol. Audited as `target.credential.set`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [credential_id]
+              properties:
+                credential_id:
+                  type: string
+                  description: >
+                    A vaulted credential's id, or `user_supplied` to have the user asked for
+                    their own username and password at connect time (ADR 0005 user_supplied
+                    mode). The shared prompt credential is created on first use and its id is
+                    what the target then carries.
+      responses:
+        "200":
+          description: The target with its bindings.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Target"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          description: The credential does not exist; `code` is `invalid_credential`.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+    delete:
+      tags: [admin]
+      summary: Clear a protocol slot
+      description: Audited as `target.credential.unset`.
+      responses:
+        "204":
+          description: Cleared.
+        "404":
+          $ref: "#/components/responses/NotFound"
   /targets/{id}/probe:
     post:
       tags: [admin]
@@ -3153,6 +3211,13 @@ components:
         engine_version:
           type: string
           description: Optional database engine version for a database target.
+        database_name:
+          type: string
+        tls_mode:
+          type: string
+          enum: [disable, prefer, require, verify-full]
+        tls_ca:
+          type: string
         os_family:
           $ref: "#/components/schemas/OsFamily"
         ports:
@@ -3216,6 +3281,23 @@ components:
           minimum: 1
           maximum: 3650
           description: Recording retention for this target's sessions, over the policy's; null defers.
+        database_name:
+          type: string
+          maxLength: 128
+          description: >
+            Database the session opens (database targets). Empty means the engine's
+            convention: PostgreSQL opens a database named after the role, MySQL and MariaDB
+            open with no schema selected.
+        tls_mode:
+          type: string
+          enum: [disable, prefer, require, verify-full]
+          description: >
+            How the credential-holding sidecar protects its connection to the database
+            (database targets). Default prefer: TLS when offered, unverified. verify-full
+            checks the chain against tls_ca and the host name, and requires tls_ca.
+        tls_ca:
+          type: string
+          description: PEM bundle trusted for verify-full, for example the provider's CA; required for that mode.
         os_family:
           $ref: "#/components/schemas/OsFamily"
         ports:
