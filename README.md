@@ -21,8 +21,8 @@
 
 Zanskar is an open-source, **agentless** access gateway for machines and managed databases. Users open
 a browser, pick a target, and get a terminal (SSH, WinRM), a desktop (RDP, VNC), or a database session
-(managed PostgreSQL) — without installing anything on the target. Every session is policy-controlled,
-recorded, and audited, and access can be standing or granted just-in-time on approval.
+(PostgreSQL, MySQL, MariaDB) — without installing anything on the target. Every session is
+policy-controlled, recorded, and audited, and access can be standing or granted just-in-time on approval.
 
 Zanskar is named after the [Zanskar Valley](https://en.wikipedia.org/wiki/Zanskar) in Ladakh, in the
 Himalayas of northern India. The logo is a shell prompt redrawn as a summit and a cursor.
@@ -38,19 +38,32 @@ a switch to another healthy instance instead of a dead terminal.
 
 - **Terminals** — SSH and Windows (WinRM), streamed to the browser over WebSocket and recorded as asciicast.
 - **Desktops** — RDP and VNC through a guacd sidecar, with session recording and live shadowing.
-- **Managed databases** — a `psql` session to PostgreSQL (Amazon RDS or self-managed) through an
-  ephemeral, per-session client container. The database credential is held by a sidecar and **never
-  reaches the user's client**.
-- **Autoscaling groups as targets** — enroll an AWS Auto Scaling group; Zanskar tracks the healthy pool
-  and offers failover when the instance you are on goes away.
+- **Managed databases** — `psql`, `mysql` or `mariadb` sessions to PostgreSQL, MySQL and MariaDB (Amazon
+  RDS or self-managed) through an ephemeral, per-session client container. The database credential is
+  held by a sidecar (pgbouncer, or the gateway's own relay) and **never reaches the user's client**; TLS
+  to the database is per target, up to `verify-full` with your CA bundle.
+- **Autoscaling groups as targets** — enroll an AWS Auto Scaling group with a read-only cross-account
+  role. The gateway knows its own AWS principal, prints the CLI script or CloudFormation template that
+  creates the role, and tests the role before saving. Zanskar then tracks the healthy pool and offers
+  failover when the instance you are on goes away.
 - **Just-in-time access** — a policy can grant *eligibility* instead of standing access: a user requests
-  a target with a reason and a duration, an administrator approves, and the grant is time-boxed and
-  expires on its own.
+  a target with a reason and a duration, an administrator approves, and the grant is time-boxed, can be
+  extended, and expires on its own. Policies carry per-target protocol rules, session limits and a
+  recording retention of their own.
 - **File transfer and clipboard** — SFTP for SSH and drive redirection for RDP, each gated by policy.
-- **Identity, kept separate** — local accounts (Argon2id + TOTP), OIDC and LDAP/AD sign-in, and an
-  SSH certificate-authority mode for keyless SSH.
-- **Recorded and audited** — every session is recorded; the audit log is hash-chained with a `verify`
-  command, and can be streamed to a SIEM.
+- **Keyless SSH** — an SSH certificate authority is the recommended way to reach Linux targets: Zanskar
+  generates the authority, prints the one `TrustedUserCAKeys` line each target needs, mints a
+  minutes-long certificate per session naming the Zanskar user in the target's auth log, and rotates the
+  authority in two steps without breaking a host that has not learned the new key yet.
+- **Identity, kept separate** — local accounts (Argon2id + TOTP, onboarding with a one-time password
+  replaced at first sign-in), OIDC and LDAP/AD sign-in.
+- **Recorded and audited** — every session is recorded; recordings and command transcripts can be
+  downloaded, with every view and download audited; the audit log is hash-chained with a `verify`
+  command and can be streamed to a SIEM.
+- **Operated from the console** — HTTPS out of the box with a gateway-managed certificate you replace
+  on the Settings page, runtime settings applied live, a restart-required banner when the environment
+  file drifts, recording storage moved to an S3-compatible bucket without a restart, and the gateway's
+  recent log lines on a Logs page.
 
 ## Principles
 
@@ -80,7 +93,9 @@ Open http://127.0.0.1:8443, sign in, and enroll your authenticator when prompted
 `make web-dev` (Vite on :5173, proxying to the API) beside `make run`. `zanskar audit verify`
 checks the audit chain from the command line. If the only admin loses their authenticator,
 `zanskar admin reset-mfa --username <name>` on the gateway host clears it and audits the reset;
-the next login enrolls a new one.
+the next login enrolls a new one. `zanskar key status`, `key rotate` and `key rotate-master`
+manage the key ring and the master key; `zanskar dbproxy` is the MySQL/MariaDB relay the gateway
+runs beside a database session, not something to start by hand.
 
 Requires Go 1.27+ and Node 22+ to build.
 
@@ -93,19 +108,23 @@ development stack instead, use `deploy/docker-compose.dev.yml`.
 The product site at <https://albatroxxx.github.io/zanskar/> has the installation guide,
 the how-to guide and release notes in one place.
 
-Zanskar v1.0 is a **single-instance** deployment: one gateway, embedded SQLite, and a guacd
-sidecar for RDP/VNC. Two supported install paths, both from the
+Zanskar 1.2 is a **single-instance** deployment: one gateway, embedded SQLite or PostgreSQL, and a
+guacd sidecar for RDP/VNC. Two supported install paths, both from the
 [releases page](https://github.com/albatroxxx/zanskar/releases):
 
 - **Packages** (recommended): `.deb` / `.rpm` for amd64 and arm64, then `sudo zanskar init`
-  writes the configuration and prints the next steps. Plain tarballs are there too.
+  writes the configuration, serves HTTPS on 443 with a certificate it manages (upload yours on the
+  Settings page), and prints the next steps. `zanskar init -behind-proxy` keeps the gateway on
+  loopback behind your own TLS proxy. Plain tarballs are there too.
 - **Container**: `ghcr.io/albatroxxx/zanskar:<version>` with `deploy/docker-compose.yml`
-  (gateway + guacd + Caddy TLS). Set `ZANSKAR_VERSION` in `deploy/.env`.
+  (gateway + guacd + Caddy TLS). Set `ZANSKAR_VERSION` in `deploy/.env`. The same image is the
+  MySQL/MariaDB relay sidecar, so a gateway that serves database targets needs Docker or Podman.
 
 Checksums and the image are signed with Sigstore; the release notes carry the `cosign verify`
 commands. The Helm chart in `deploy/helm/zanskar` is a **preview**: it deploys, but multi-replica
-HA (cross-pod terminate and shadowing) is Phase 4 work and not supported in 1.0. Topology,
-upgrades, backups and the security checklist are in [docs/deploy.md](docs/deploy.md).
+HA (cross-pod terminate and shadowing) is Phase 4 work and not supported in 1.2. Topology,
+upgrades, backups, TLS, recording storage, database access, AWS enrolment, the certificate
+authority and the security checklist are in [docs/deploy.md](docs/deploy.md).
 
 ## Layout
 

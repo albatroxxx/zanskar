@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Zanskar API
-  version: 0.1.0
+  version: 1.2.0
   summary: Agentless VM access gateway
   description: |
     Zanskar exposes a JSON API under `/api/v1` and two WebSocket endpoints under `/ws`.

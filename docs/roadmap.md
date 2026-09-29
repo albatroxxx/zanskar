@@ -38,6 +38,31 @@ Release engineering completed:
 - [x] PIM — just-in-time, approved, time-bounded access (ADR 0018): `require_approval` eligibility, request/approve/deny/revoke lifecycle, connect gate on an active grant, expiry sweeper, lifecycle audit, request + approvals UI (#31, #34, #35, #36); OpenAPI documented (#30); live-verified end-to-end against RDS.
 - [x] Tag v1.0.0 — cut 2026-09-25 after two release candidates: rc.1 caught a cosign v3 signing break before anything was published; rc.2 passed pipeline verification and a clean-machine install test of both documented paths (deb + `zanskar init`, Compose pulling the signed ghcr image). Artifacts: deb/rpm/tar.gz for amd64 and arm64, SHA256SUMS with a Sigstore bundle, multi-arch image `ghcr.io/albatroxxx/zanskar:1.0.0` (also `latest`), all keyless-signed.
 
+## v1.2 release — staging (v1.2.0-rc.1 cut 2026-09-29)
+
+Everything the 1.0 manual QA round asked for, plus the three product decisions that closed it:
+
+- HTTPS out of the box: managed certificate on 443 with an HTTP redirect (ADR 0021), uploaded
+  from the console and swapped live.
+- MySQL and MariaDB through the gateway's own relay sidecar (`zanskar dbproxy`), a Databases
+  page, per-target TLS mode (ADR 0017 extended).
+- SSH certificate authority as the recommended Linux path: generated in the console, printed
+  `TrustedUserCAKeys` commands, principal allowlist, two-phase rotation with a certificate
+  login probe (ADR 0022).
+- Guided AWS enrolment: the gateway detects its own principal, IAM preview with CLI script and
+  CloudFormation template, access test before saving, roles only (ADR 0023).
+- Runtime settings applied live with install-time settings read-only (ADR 0020), a
+  restart-required banner and a restart with a drain, recording storage in S3 from the
+  console, a Logs page, retention per policy and per target.
+- Onboarding with a one-time password, per-target policy rules, just-in-time extensions and
+  notices, recording and transcript download, targets retired not erased (ADR 0019).
+- `zanskar key status | rotate | rotate-master`, Go fuzz targets, local git hooks, the product
+  site.
+
+Deferred by decision: a multi-pane workspace (browser tabs suffice), rotation of static SSH
+keys and of Windows or database passwords (the certificate authority and the owning systems
+do that). Still Phase 4: HA, SAML/SCIM, WebAuthn.
+
 ## Phase 0 checklist
 
 - [x] Threat model (`docs/threat-model.md`)
