@@ -255,10 +255,7 @@ func (r *Relay) connect(ctx context.Context, useTLS bool) (*client.Conn, error) 
 			}
 		}
 		if useTLS {
-			// Encrypt without verifying, like the pgbouncer sidecar's
-			// server_tls_sslmode=prefer; verification comes with the
-			// target's TLS settings.
-			c.SetTLSConfig(&tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS12}) // #nosec G402 -- prefer mode, see above
+			c.SetTLSConfig(unverifiedTLS())
 		}
 		return nil
 	}
@@ -274,6 +271,15 @@ func (r *Relay) connect(ctx context.Context, useTLS bool) (*client.Conn, error) 
 		return nil, fmt.Errorf("upstream ping after sign-in: %w", err)
 	}
 	return up, nil
+}
+
+// unverifiedTLS encrypts the upstream connection without verifying the
+// server's certificate: the pgbouncer sidecar's server_tls_sslmode=prefer
+// for MySQL, and what the target's prefer and require modes mean. It
+// defeats a passive listener, not an on-path one; verify-full is the mode
+// for that, and arrives with the target's TLS settings.
+func unverifiedTLS() *tls.Config {
+	return &tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS12} // #nosec G402 -- by the target's TLS mode; see the doc comment
 }
 
 // negotiated computes the framing flags in force upstream: what the relay
