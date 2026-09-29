@@ -293,8 +293,11 @@ func probe(ctx context.Context, s recording.Storage) error {
 	}
 	b, err := io.ReadAll(rc)
 	_ = rc.Close()
-	if err != nil || string(b) != "zanskar probe\n" {
-		return fmt.Errorf("read back: content differs (%v)", err)
+	if err != nil {
+		return fmt.Errorf("read back: %w", err)
+	}
+	if string(b) != "zanskar probe\n" {
+		return errors.New("read back: content differs")
 	}
 	if err := s.Delete(ctx, uri); err != nil {
 		return fmt.Errorf("delete: %w", err)
