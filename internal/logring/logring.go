@@ -73,12 +73,12 @@ func (r *Ring) Snapshot(minLevel slog.Level, q string, limit int) []Record {
 		n = len(r.buf)
 	}
 	q = strings.ToLower(strings.TrimSpace(q))
-	// limit is a request parameter; the ring's capacity bounds it here so
-	// the allocation cannot follow the caller.
+	// limit is a request parameter; it only stops the walk early. The
+	// allocation follows the ring's own size, never the caller's number.
 	if limit <= 0 || limit > len(r.buf) {
 		limit = len(r.buf)
 	}
-	out := make([]Record, 0, min(limit, n))
+	out := make([]Record, 0, n)
 	for i := 1; i <= n && len(out) < limit; i++ {
 		idx := (r.next - i + len(r.buf)) % len(r.buf)
 		rec := r.buf[idx]
