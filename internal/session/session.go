@@ -269,3 +269,75 @@ func derefTime(t *time.Time) time.Time {
 	}
 	return *t
 }
+
+// ListRecordingsByURIPrefix pages, by id, over finished, unpurged recordings
+// whose storage URI starts with prefix (for example "file://"). The move to
+// S3 walks the local ones with it.
+func (r *Repo) ListRecordingsByURIPrefix(ctx context.Context, prefix, afterID string, limit int) ([]*Recording, error) {
+	if limit <= 0 || limit > 500 {
+		limit = 100
+	}
+	rows, err := r.db.QueryContext(ctx, r.db.Rebind(`SELECT id, session_id, format, storage_uri, size_bytes, sha256, started_at, finished_at, retention_until, created_at, purged_at
+		FROM recordings WHERE storage_uri LIKE ? ESCAPE '\' AND finished_at IS NOT NULL AND purged_at IS NULL AND id > ? ORDER BY id LIMIT ?`),
+		strings.NewReplacer(`\`, `\\`, "%", `\%`, "_", `\_`).Replace(prefix)+"%", afterID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	var out []*Recording
+	for rows.Next() {
+		var (
+			rec                                        Recording
+			sha                                        sql.NullString
+			started, finished, retain, created, purged store.NullTime
+		)
+		if err := rows.Scan(&rec.ID, &rec.SessionID, &rec.Format, &rec.StorageURI, &rec.SizeBytes, &sha, &started, &finished, &retain, &created, &purged); err != nil {
+			return nil, err
+		}
+		rec.SHA256 = sha.String
+		rec.StartedAt, rec.FinishedAt, rec.RetentionUntil, rec.CreatedAt, rec.PurgedAt = started.Time, finished.Ptr(), retain.Ptr(), created.Time, purged.Ptr()
+		out = append(out, &rec)
+	}
+	return out, rows.Err()
+}
+
+// UpdateRecordingURI points a recording at its new blob. It refuses when
+// the row no longer holds the URI the caller moved from, so a concurrent
+// purge is not undone.
+func (r *Repo) UpdateRecordingURI(ctx context.Context, id, from, to string) error {
+	res, err := r.db.ExecContext(ctx, r.db.Rebind(`UPDATE recordings SET storage_uri = ? WHERE id = ? AND storage_uri = ? AND purged_at IS NULL`), to, id, from)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// CountRecordingsByStore counts unpurged recordings per store: "local" for
+// the directory, "s3://bucket" for each bucket seen.
+func (r *Repo) CountRecordingsByStore(ctx context.Context) (map[string]int, error) {
+	rows, err := r.db.QueryContext(ctx, `SELECT storage_uri FROM recordings WHERE purged_at IS NULL`)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	out := map[string]int{}
+	for rows.Next() {
+		var uri string
+		if err := rows.Scan(&uri); err != nil {
+			return nil, err
+		}
+		key := "local"
+		if strings.HasPrefix(uri, "s3://") {
+			rest := strings.TrimPrefix(uri, "s3://")
+			if i := strings.IndexByte(rest, '/'); i >= 0 {
+				rest = rest[:i]
+			}
+			key = "s3://" + rest
+		}
+		out[key]++
+	}
+	return out, rows.Err()
+}

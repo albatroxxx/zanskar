@@ -4,6 +4,7 @@ import { fmtTime } from '../../api/format'
 import type { BootSetting, RuntimeSetting, SettingsListing, SystemStatus } from '../../api/types'
 import { Alert, Badge, Empty, Field, PageHead } from '../../components/ui'
 import { TLSCard } from './TLSCard'
+import { StorageCard } from './StorageCard'
 
 /**
  * Settings holds the two kinds of configuration (ADR 0020): runtime settings
@@ -49,6 +50,7 @@ export function Settings() {
         </div>
       ))}
       <TLSCard />
+      <StorageCard />
       {listing && <BootTable boot={listing.boot} changed={changed} />}
     </>
   )
