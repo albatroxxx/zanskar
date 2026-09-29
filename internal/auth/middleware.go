@@ -177,6 +177,13 @@ func RequireAuth(next http.Handler) http.Handler {
 			WriteError(w, http.StatusUnauthorized, "mfa_required", "second factor required")
 			return
 		}
+		// A password an administrator set has to be replaced before the
+		// account does anything else (QA finding R25); the sign-in page
+		// carries the step, the API only refuses.
+		if p.User.MustChangePassword {
+			WriteError(w, http.StatusUnauthorized, "password_change_required", "replace the password you were given first")
+			return
+		}
 		next.ServeHTTP(w, r)
 	})
 }

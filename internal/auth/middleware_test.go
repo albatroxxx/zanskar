@@ -3,10 +3,14 @@
 package auth
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
+	"strings"
 	"testing"
+
+	"github.com/albatroxxx/zanskar/internal/user"
 )
 
 // TestRealIPTrustBoundary pins the rule that decides which address the audit
@@ -58,5 +62,25 @@ func TestClientIPWithoutMiddleware(t *testing.T) {
 	req.Header.Set("X-Forwarded-For", "203.0.113.9")
 	if got := ClientIP(req); got != "198.51.100.7" {
 		t.Fatalf("ClientIP = %q, want the peer address", got)
+	}
+}
+
+// TestRequireAuthRefusesWhilePasswordChangeOwed: a verified session whose
+// account still has to replace an administrator's password is refused by
+// every full-auth route with a code the sign-in page understands.
+func TestRequireAuthRefusesWhilePasswordChangeOwed(t *testing.T) {
+	h := RequireAuth(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(204) }))
+	p := &Principal{Session: &Session{MFAVerified: true}, User: &user.User{ID: "u1", MustChangePassword: true}}
+	req := httptest.NewRequest("GET", "/api/v1/targets", nil).WithContext(context.WithValue(context.Background(), principalKey, p))
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	if rr.Code != 401 || !strings.Contains(rr.Body.String(), "password_change_required") {
+		t.Fatalf("got %d %s", rr.Code, rr.Body.String())
+	}
+	p.User.MustChangePassword = false
+	rr = httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	if rr.Code != 204 {
+		t.Fatalf("after the change: %d", rr.Code)
 	}
 }
