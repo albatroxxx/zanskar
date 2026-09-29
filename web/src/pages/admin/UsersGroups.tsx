@@ -28,6 +28,7 @@ function Users() {
   const me = useAuth().user
   const { items, err, setErr, reload } = useList<User>('/users')
   const [adding, setAdding] = useState(false)
+  const [showOnce, setShowOnce] = useState<{ username: string; password: string } | null>(null)
   const [action, setAction] = useState<{ u: User; a: UserAction } | null>(null)
   const [notice, setNotice] = useState('')
 
@@ -66,7 +67,17 @@ function Users() {
                       {u.email && <div className="muted">{u.email}</div>}
                     </td>
                     <td>{u.roles.map((r) => <Badge key={r} tone={r === 'admin' ? 'accent' : undefined}>{r}</Badge>)}</td>
-                    <td>{u.status === 'active' ? <Badge tone="ok">active</Badge> : <Badge tone="warn">{u.status}</Badge>}</td>
+                    <td>
+                      {u.status === 'active' ? <Badge tone="ok">active</Badge> : <Badge tone="warn">{u.status}</Badge>}
+                      {u.must_change_password && (
+                        <>
+                          {' '}
+                          <span title="Signs in with a password an administrator set; must replace it first">
+                            <Badge>password change due</Badge>
+                          </span>
+                        </>
+                      )}
+                    </td>
                     <td className="muted">{u.last_login_at ? fmtTime(u.last_login_at) : 'never'}</td>
                     <td>
                       <select id={`u-action-${u.id}`} value="" onChange={(e) => e.target.value && setAction({ u, a: e.target.value as UserAction })} aria-label={`actions for ${u.username}`}>
@@ -89,12 +100,14 @@ function Users() {
       {adding && (
         <UserForm
           onClose={() => setAdding(false)}
-          onSaved={() => {
+          onSaved={(oneTime) => {
             setAdding(false)
+            if (oneTime) setShowOnce(oneTime)
             void reload()
           }}
         />
       )}
+      {showOnce && <OneTimePassword username={showOnce.username} password={showOnce.password} onClose={() => setShowOnce(null)} />}
       {action?.a === 'roles' && (
         <RolesForm
           user={action.u}
@@ -109,9 +122,11 @@ function Users() {
         <PasswordForm
           user={action.u}
           onClose={() => setAction(null)}
-          onSaved={() => {
+          onSaved={(oneTime) => {
             setAction(null)
-            setNotice(`Password for ${action.u.username} replaced; their sessions were signed out.`)
+            if (oneTime) setShowOnce(oneTime)
+            else setNotice(`Password for ${action.u.username} replaced; their sessions were signed out. They must change it at their next sign-in.`)
+            void reload()
           }}
         />
       )}
@@ -195,9 +210,28 @@ function RoleChecks({ value, onChange, prefix }: { value: Role[]; onChange: (r: 
   )
 }
 
-function UserForm({ onClose, onSaved }: { onClose: () => void; onSaved: () => void }) {
+/**
+ * OneTimePassword shows a generated password exactly once, for the admin
+ * to pass on. The user replaces it at their first sign-in (QA finding R25).
+ */
+function OneTimePassword({ username, password, onClose }: { username: string; password: string; onClose: () => void }) {
+  const [copied, setCopied] = useState(false)
+  return (
+    <Modal title={`One-time password for ${username}`} onClose={onClose}>
+      <p>Pass this on now; it is not stored and will not be shown again. They must replace it at their first sign-in, then enrol an authenticator.</p>
+      <p className="mono" style={{ fontSize: '1.2rem', letterSpacing: 1, wordBreak: 'break-all', padding: '10px 12px', background: 'var(--bg-sunken)', borderRadius: 6 }}>{password}</p>
+      <div className="actions">
+        <button className="btn" onClick={() => void navigator.clipboard?.writeText(password).then(() => setCopied(true)).catch(() => {})}>{copied ? 'Copied' : 'Copy'}</button>
+        <button className="btn primary" onClick={onClose}>Done</button>
+      </div>
+    </Modal>
+  )
+}
+
+function UserForm({ onClose, onSaved }: { onClose: () => void; onSaved: (oneTime?: { username: string; password: string }) => void }) {
   const [f, setF] = useState({ username: '', display_name: '', email: '', password: '' })
   const [r, setR] = useState<Role[]>(['user'])
+  const [external, setExternal] = useState(false)
   const [err, setErr] = useState('')
   const [busy, setBusy] = useState(false)
   const set = (k: keyof typeof f) => (e: React.ChangeEvent<HTMLInputElement>) => setF({ ...f, [k]: e.target.value })
@@ -207,9 +241,10 @@ function UserForm({ onClose, onSaved }: { onClose: () => void; onSaved: () => vo
     setErr('')
     try {
       const body: Record<string, unknown> = { username: f.username.trim(), display_name: f.display_name.trim(), email: f.email.trim(), roles: r }
-      if (f.password) body.password = f.password
-      await api.post('/users', body)
-      onSaved()
+      if (external) body.password_less = true
+      else if (f.password) body.password = f.password
+      const created = await api.post<User & { initial_password?: string }>('/users', body)
+      onSaved(created.initial_password ? { username: created.username, password: created.initial_password } : undefined)
     } catch (e) {
       setErr(errorMessage(e))
     } finally {
@@ -223,7 +258,13 @@ function UserForm({ onClose, onSaved }: { onClose: () => void; onSaved: () => vo
         <Field label="Username" hint="2-64 characters: letters, digits, . _ -"><input id="nu-username" value={f.username} onChange={set('username')} required autoFocus /></Field>
         <Field label="Display name"><input id="nu-name" value={f.display_name} onChange={set('display_name')} required /></Field>
         <Field label="Email (optional)"><input id="nu-email" type="email" value={f.email} onChange={set('email')} /></Field>
-        <Field label="Initial password" hint="At least 12 characters. Leave blank for accounts that sign in through an identity provider. Shown nowhere after this."><input id="nu-password" type="password" autoComplete="new-password" value={f.password} onChange={set('password')} /></Field>
+        <div className="field inline">
+          <input id="nu-external" type="checkbox" checked={external} onChange={(e) => setExternal(e.target.checked)} />
+          <label htmlFor="nu-external">Signs in through an identity provider (no password)</label>
+        </div>
+        {!external && (
+          <Field label="Initial password" hint="Leave blank to have a one-time password generated and shown once. Either way they must replace it at their first sign-in, before enrolling an authenticator."><input id="nu-password" type="password" autoComplete="new-password" value={f.password} onChange={set('password')} minLength={12} /></Field>
+        )}
         <RoleChecks value={r} onChange={setR} prefix="nu" />
         <div className="actions">
           <button type="button" className="btn" onClick={onClose}>Cancel</button>
@@ -267,8 +308,9 @@ function RolesForm({ user, onClose, onSaved }: { user: User; onClose: () => void
   )
 }
 
-function PasswordForm({ user, onClose, onSaved }: { user: User; onClose: () => void; onSaved: () => void }) {
+function PasswordForm({ user, onClose, onSaved }: { user: User; onClose: () => void; onSaved: (oneTime?: { username: string; password: string }) => void }) {
   const [pw, setPw] = useState('')
+  const [generate, setGenerate] = useState(true)
   const [err, setErr] = useState('')
   const [busy, setBusy] = useState(false)
   return (
@@ -280,8 +322,8 @@ function PasswordForm({ user, onClose, onSaved }: { user: User; onClose: () => v
           setBusy(true)
           setErr('')
           try {
-            await api.put(`/users/${user.id}/password`, { password: pw })
-            onSaved()
+            const res = await api.put<{ initial_password?: string }>(`/users/${user.id}/password`, generate ? { generate: true } : { password: pw })
+            onSaved(res.initial_password ? { username: user.username, password: res.initial_password } : undefined)
           } catch (e2) {
             setErr(errorMessage(e2))
           } finally {
@@ -289,10 +331,17 @@ function PasswordForm({ user, onClose, onSaved }: { user: User; onClose: () => v
           }
         }}
       >
-        <Field label="New password" hint="At least 12 characters. Their existing sessions are signed out."><input id={`pw-${user.id}`} type="password" autoComplete="new-password" value={pw} onChange={(e) => setPw(e.target.value)} required autoFocus /></Field>
+        <div className="field inline">
+          <input id={`pw-gen-${user.id}`} type="checkbox" checked={generate} onChange={(e) => setGenerate(e.target.checked)} />
+          <label htmlFor={`pw-gen-${user.id}`}>Generate a one-time password and show it once</label>
+        </div>
+        {!generate && (
+          <Field label="New password" hint="At least 12 characters."><input id={`pw-${user.id}`} type="password" autoComplete="new-password" value={pw} onChange={(e) => setPw(e.target.value)} required autoFocus minLength={12} /></Field>
+        )}
+        <p className="muted">Their existing sessions are signed out, and they must replace this password at their next sign-in.</p>
         <div className="actions">
           <button type="button" className="btn" onClick={onClose}>Cancel</button>
-          <button className="btn primary" disabled={busy}>Set password</button>
+          <button className="btn primary" disabled={busy}>{generate ? 'Generate' : 'Set password'}</button>
         </div>
       </form>
     </Modal>

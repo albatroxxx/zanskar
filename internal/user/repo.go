@@ -22,7 +22,7 @@ type Repo struct {
 func NewRepo(db *store.DB) *Repo { return &Repo{db: db} }
 
 const userCols = `id, username, email, display_name, password_hash, status, idp_id, external_id,
-	failed_logins, locked_until, created_at, updated_at, last_login_at`
+	failed_logins, locked_until, created_at, updated_at, last_login_at, must_change_password`
 
 // Create inserts u with the given roles. u.ID, CreatedAt and UpdatedAt are set.
 // PasswordHash may be empty for externally authenticated users.
@@ -56,10 +56,10 @@ func (r *Repo) Create(ctx context.Context, u *User) error {
 	defer tx.Rollback() //nolint:errcheck // rollback after commit is a no-op
 
 	_, err = tx.ExecContext(ctx, r.db.Rebind(`INSERT INTO users
-		(id, username, email, display_name, password_hash, status, idp_id, external_id, failed_logins, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)`),
+		(id, username, email, display_name, password_hash, status, idp_id, external_id, failed_logins, created_at, updated_at, must_change_password)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?)`),
 		u.ID, u.Username, nullStr(u.Email), u.DisplayName, nullStr(u.PasswordHash), string(u.Status),
-		nullStr(u.IdPID), nullStr(u.ExternalID), store.TimeArg(now), store.TimeArg(now))
+		nullStr(u.IdPID), nullStr(u.ExternalID), store.TimeArg(now), store.TimeArg(now), u.MustResetOnLogin)
 	if err != nil {
 		if isUnique(err) {
 			return ErrDuplicate
@@ -193,9 +193,12 @@ func (r *Repo) SetRoles(ctx context.Context, id string, roles []Role) error {
 }
 
 // SetPasswordHash stores a new hash and clears lockout counters.
-func (r *Repo) SetPasswordHash(ctx context.Context, id, hash string) error {
-	res, err := r.db.ExecContext(ctx, r.db.Rebind(`UPDATE users SET password_hash = ?, failed_logins = 0, locked_until = NULL, updated_at = ? WHERE id = ?`),
-		hash, store.TimeArg(time.Now()), id)
+// SetPasswordHash replaces the password; mustChange says whether the user
+// has to replace it again at their next sign-in (an administrator's choice
+// of password) or not (their own).
+func (r *Repo) SetPasswordHash(ctx context.Context, id, hash string, mustChange bool) error {
+	res, err := r.db.ExecContext(ctx, r.db.Rebind(`UPDATE users SET password_hash = ?, must_change_password = ?, failed_logins = 0, locked_until = NULL, updated_at = ? WHERE id = ?`),
+		hash, mustChange, store.TimeArg(time.Now()), id)
 	if err != nil {
 		return err
 	}
@@ -320,7 +323,7 @@ func scanUser(s scanner) (*User, error) {
 		lockedUntil, created, updated, last store.NullTime
 	)
 	err := s.Scan(&u.ID, &u.Username, &email, &u.DisplayName, &hash, &status, &idp, &ext,
-		&u.FailedLogins, &lockedUntil, &created, &updated, &last)
+		&u.FailedLogins, &lockedUntil, &created, &updated, &last, &u.MustResetOnLogin)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound

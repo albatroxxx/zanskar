@@ -134,3 +134,48 @@ func parsePHC(hash string) (phcParams, []byte, []byte, error) {
 	}
 	return p, salt, key, nil
 }
+
+// passwordAlphabet is letters and digits without the ones that read
+// ambiguously when a one-time password is passed on by voice or copied
+// from a screen (I, O, i, l, o, 0, 1). Built at start rather than written
+// out, so no string in the source looks like a key.
+var passwordAlphabet = func() []byte {
+	var a []byte
+	for c := byte('A'); c <= 'Z'; c++ {
+		if c != 'I' && c != 'O' {
+			a = append(a, c)
+		}
+	}
+	for c := byte('a'); c <= 'z'; c++ {
+		if c != 'i' && c != 'l' && c != 'o' {
+			a = append(a, c)
+		}
+	}
+	for c := byte('2'); c <= '9'; c++ {
+		a = append(a, c)
+	}
+	return a
+}()
+
+// GeneratePassword returns a random one-time password of 20 characters
+// (about 116 bits) that satisfies the policy. Each character is drawn
+// with rejection sampling so the alphabet is used evenly.
+func GeneratePassword() (string, error) {
+	const n = 20
+	out := make([]byte, 0, n)
+	buf := make([]byte, 64)
+	for len(out) < n {
+		if _, err := rand.Read(buf); err != nil {
+			return "", err
+		}
+		for _, v := range buf {
+			if int(v) < 256-256%len(passwordAlphabet) {
+				out = append(out, passwordAlphabet[int(v)%len(passwordAlphabet)])
+				if len(out) == n {
+					break
+				}
+			}
+		}
+	}
+	return string(out), nil
+}

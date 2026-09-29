@@ -9,6 +9,8 @@ export interface User {
   display_name: string
   status: 'active' | 'disabled' | 'locked'
   roles: Role[]
+  /** An administrator set the password; the user replaces it at the next sign-in. */
+  must_change_password?: boolean
   locked_until?: string
   created_at: string
   updated_at: string
@@ -20,12 +22,12 @@ export interface Me {
   mfa_enrolled: boolean
   // Set on a partial (MFA-incomplete) session so a reload can resume the right
   // step; null/absent on a full session, where user and session are present.
-  pending?: 'verify' | 'enroll' | null
+  pending?: 'verify' | 'enroll' | 'password' | null
   user?: User
   session?: { id: string; created_at: string; expires_at: string }
 }
 
-export type LoginStatus = 'ok' | 'mfa_required' | 'mfa_enrollment_required'
+export type LoginStatus = 'ok' | 'mfa_required' | 'mfa_enrollment_required' | 'password_change_required'
 export interface LoginResponse { status: LoginStatus; csrf_token?: string; user?: User }
 
 export interface Page<T> { items: T[]; next_cursor?: string }

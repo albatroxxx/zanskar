@@ -5,7 +5,9 @@ import type { LoginResponse, Me, Role, User } from '../api/types'
 /**
  * Auth state machine:
  *   loading  -> anonymous | partial | full
- *   partial  = password accepted, second factor (verify or enroll) still owed
+ *   partial  = password accepted; a password change (an administrator chose
+ *              the current one), then the second factor (verify or enroll),
+ *              still owed
  */
 export type AuthStatus = 'loading' | 'anonymous' | 'partial' | 'full'
 
@@ -14,11 +16,12 @@ interface AuthState {
   user: User | null
   mfaEnrolled: boolean
   /** which partial step is owed after password login */
-  pending: 'verify' | 'enroll' | null
+  pending: 'verify' | 'enroll' | 'password' | null
 }
 
 interface AuthContextValue extends AuthState {
   login: (username: string, password: string) => Promise<LoginResponse>
+  changePassword: (current: string, next: string) => Promise<LoginResponse>
   verifyTotp: (code: string) => Promise<void>
   enrollTotp: () => Promise<{ secret: string; otpauth_url: string }>
   confirmTotp: (code: string) => Promise<string[]>
@@ -62,6 +65,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setState({ status: 'full', user: res.user ?? null, mfaEnrolled: false, pending: null })
       await refresh()
     } else {
+      setState({ status: 'partial', user: null, mfaEnrolled: res.status === 'mfa_required', pending: res.status === 'mfa_required' ? 'verify' : res.status === 'password_change_required' ? 'password' : 'enroll' })
+    }
+    return res
+  }, [refresh])
+
+  // The step after the change is whatever sign-in would have owed next.
+  const changePassword = useCallback(async (current: string, next: string) => {
+    const res = await api.post<LoginResponse>('/auth/password', { current_password: current, new_password: next })
+    if (res.csrf_token) setCsrf(res.csrf_token)
+    if (res.status === 'ok') {
+      await refresh()
+    } else {
       setState({ status: 'partial', user: null, mfaEnrolled: res.status === 'mfa_required', pending: res.status === 'mfa_required' ? 'verify' : 'enroll' })
     }
     return res
@@ -96,8 +111,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const hasRole = useCallback((...roles: Role[]) => !!state.user && roles.some((r) => state.user!.roles.includes(r)), [state.user])
 
   const value = useMemo<AuthContextValue>(
-    () => ({ ...state, login, verifyTotp, enrollTotp, confirmTotp, logout, refresh, hasRole }),
-    [state, login, verifyTotp, enrollTotp, confirmTotp, logout, refresh, hasRole],
+    () => ({ ...state, login, changePassword, verifyTotp, enrollTotp, confirmTotp, logout, refresh, hasRole }),
+    [state, login, changePassword, verifyTotp, enrollTotp, confirmTotp, logout, refresh, hasRole],
   )
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>
 }
