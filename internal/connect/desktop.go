@@ -229,7 +229,7 @@ func (h *Handler) desktop(w http.ResponseWriter, r *http.Request) {
 		endWith(session.EndError, "recording could not be started; session refused")
 		return
 	}
-	recRow := &session.Recording{SessionID: s.ID, Format: "guac", StorageURI: uri}
+	recRow := &session.Recording{SessionID: s.ID, Format: "guac", StorageURI: uri, RetentionUntil: retentionUntil(g)}
 	if err := h.Sessions.CreateRecording(r.Context(), recRow); err != nil {
 		_, _, _ = rec.Close()
 		endWith(session.EndError, "recording could not be registered; session refused")

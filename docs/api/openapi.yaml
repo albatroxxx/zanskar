@@ -3209,6 +3209,12 @@ components:
         engine_version:
           type: string
           description: Optional database engine version.
+        retention_days:
+          type: integer
+          nullable: true
+          minimum: 1
+          maximum: 3650
+          description: Recording retention for this target's sessions, over the policy's; null defers.
         os_family:
           $ref: "#/components/schemas/OsFamily"
         ports:
@@ -3352,6 +3358,15 @@ components:
             $ref: "#/components/schemas/TimeWindow"
         max_session_minutes:
           type: [integer, "null"]
+        retention_days:
+          type: integer
+          nullable: true
+          minimum: 1
+          maximum: 3650
+          description: >
+            Keep this policy's session recordings for that many days; null defers to the global
+            retention policy. A target's own retention_days wins over it. Fixed on each recording
+            when its session starts.
         idle_timeout_minutes:
           type: integer
         allow_clipboard:
@@ -3414,6 +3429,15 @@ components:
         max_session_minutes:
           type: [integer, "null"]
           minimum: 1
+        retention_days:
+          type: integer
+          nullable: true
+          minimum: 1
+          maximum: 3650
+          description: >
+            Keep this policy's session recordings for that many days; null defers to the global
+            retention policy. A target's own retention_days wins over it. Fixed on each recording
+            when its session starts.
         idle_timeout_minutes:
           type: integer
           minimum: 1
@@ -3833,7 +3857,16 @@ components:
           description: Effective limits the UI should display.
           required: [idle_timeout_minutes, allow_clipboard, allow_file_transfer]
           properties:
-            idle_timeout_minutes:
+            retention_days:
+          type: integer
+          nullable: true
+          minimum: 1
+          maximum: 3650
+          description: >
+            Keep this policy's session recordings for that many days; null defers to the global
+            retention policy. A target's own retention_days wins over it. Fixed on each recording
+            when its session starts.
+        idle_timeout_minutes:
               type: integer
             max_session_minutes:
               type: [integer, "null"]

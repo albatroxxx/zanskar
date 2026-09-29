@@ -93,3 +93,22 @@ func TestServableEngine(t *testing.T) {
 		}
 	}
 }
+
+// TestTargetRetentionDays: the override round-trips and is validated.
+func TestTargetRetentionDays(t *testing.T) {
+	ctx := context.Background()
+	repo := NewRepo(testDB(t))
+	days := 30
+	tgt := &Target{Name: "keep-a-month", Address: "10.0.0.9", OSFamily: Linux, RetentionDays: &days}
+	if err := repo.Create(ctx, tgt); err != nil {
+		t.Fatal(err)
+	}
+	got, err := repo.Get(ctx, tgt.ID)
+	if err != nil || got.RetentionDays == nil || *got.RetentionDays != 30 {
+		t.Fatalf("round trip: %+v %v", got, err)
+	}
+	too := 4000
+	if err := (&Target{Name: "x", Address: "10.0.0.10", OSFamily: Linux, RetentionDays: &too}).Validate(); err == nil {
+		t.Fatal("4000 days must be refused")
+	}
+}

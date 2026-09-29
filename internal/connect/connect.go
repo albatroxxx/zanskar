@@ -396,7 +396,7 @@ func (h *Handler) issueTicket(ctx context.Context, p *auth.Principal, ip string,
 		UserID: p.User.ID, Username: p.User.Username, SessionID: p.Session.ID,
 		TargetID: ep.TargetID, ASGID: ep.ASGID, ASGInstanceID: ep.ASGInstanceID,
 		Protocol: string(proto), CredentialID: credID, PolicyID: d.Policy.ID,
-		IdleTimeout: d.IdleTimeout, MaxSession: d.MaxSession,
+		IdleTimeout: d.IdleTimeout, MaxSession: d.MaxSession, RetentionDays: retentionDays(ep, d),
 		AllowClipboard: d.AllowClipboard, AllowFileTransfer: d.AllowFileTransfer,
 		ClientIP: ip, FailoverFrom: failoverFrom,
 	}
@@ -592,7 +592,7 @@ func (h *Handler) terminal(w http.ResponseWriter, r *http.Request) {
 		endWith(session.EndError, "recording could not be started; session refused")
 		return
 	}
-	recRow := &session.Recording{SessionID: s.ID, Format: "asciicast", StorageURI: uri}
+	recRow := &session.Recording{SessionID: s.ID, Format: "asciicast", StorageURI: uri, RetentionUntil: retentionUntil(g)}
 	if err := h.Sessions.CreateRecording(r.Context(), recRow); err != nil {
 		h.Log.Error("register recording", "err", err)
 		_, _, _ = rec.Close()
@@ -641,6 +641,25 @@ func (h *Handler) redeem(w http.ResponseWriter, r *http.Request) (*ticket.Grant,
 		return nil, false
 	}
 	return g, true
+}
+
+// retentionDays resolves the recording retention for a session: the
+// target's override, else the allowing policy's, else 0 for the global
+// retention policy (QA finding R12).
+func retentionDays(ep *endpoint, d policy.Decision) int {
+	if ep.RetentionDays > 0 {
+		return ep.RetentionDays
+	}
+	return d.RetentionDays
+}
+
+// retentionUntil fixes a new recording's retention from its grant.
+func retentionUntil(g *ticket.Grant) *time.Time {
+	if g.RetentionDays <= 0 {
+		return nil
+	}
+	t := time.Now().UTC().AddDate(0, 0, g.RetentionDays)
+	return &t
 }
 
 // guacd is the effective guacd address, empty when desktops are off.

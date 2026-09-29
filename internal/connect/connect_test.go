@@ -11,12 +11,14 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/albatroxxx/zanskar/internal/auth"
 	"github.com/albatroxxx/zanskar/internal/config"
 	"github.com/albatroxxx/zanskar/internal/policy"
 	"github.com/albatroxxx/zanskar/internal/store"
 	"github.com/albatroxxx/zanskar/internal/target"
+	"github.com/albatroxxx/zanskar/internal/ticket"
 	"github.com/albatroxxx/zanskar/internal/user"
 )
 
@@ -212,5 +214,23 @@ func TestDrainingRefusesNewSessions(t *testing.T) {
 	srv.ServeHTTP(rr, req)
 	if rr.Code != 503 {
 		t.Fatalf("redeem while draining: %d %s", rr.Code, rr.Body.String())
+	}
+}
+
+// TestRetentionResolution: the target's override beats the policy's;
+// without either the recording follows the global policy.
+func TestRetentionResolution(t *testing.T) {
+	if got := retentionDays(&endpoint{RetentionDays: 7}, policy.Decision{RetentionDays: 90}); got != 7 {
+		t.Fatalf("target override: %d", got)
+	}
+	if got := retentionDays(&endpoint{}, policy.Decision{RetentionDays: 90}); got != 90 {
+		t.Fatalf("policy: %d", got)
+	}
+	if retentionUntil(&ticket.Grant{}) != nil {
+		t.Fatal("no retention means nil")
+	}
+	until := retentionUntil(&ticket.Grant{RetentionDays: 3})
+	if until == nil || until.Before(time.Now().Add(71*time.Hour)) || until.After(time.Now().Add(73*time.Hour)) {
+		t.Fatalf("until: %v", until)
 	}
 }

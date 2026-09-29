@@ -121,7 +121,7 @@ func (h *Handler) winrm(w http.ResponseWriter, r *http.Request) {
 		_ = ws.Close(websocket.StatusInternalError, "recording could not be started")
 		return
 	}
-	recRow := &session.Recording{SessionID: s.ID, Format: "asciicast", StorageURI: uri}
+	recRow := &session.Recording{SessionID: s.ID, Format: "asciicast", StorageURI: uri, RetentionUntil: retentionUntil(g)}
 	if err := h.Sessions.CreateRecording(r.Context(), recRow); err != nil {
 		h.Log.Error("register recording", "err", err)
 		_, _, _ = rec.Close()

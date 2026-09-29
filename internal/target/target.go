@@ -112,8 +112,12 @@ type Target struct {
 	Address string `json:"address"`
 	// Engine and EngineVersion are set for database targets (ADR 0017); the
 	// engine sets the default port and, at connect time, the client image.
-	Engine              string              `json:"engine,omitempty"`
-	EngineVersion       string              `json:"engine_version,omitempty"`
+	Engine        string `json:"engine,omitempty"`
+	EngineVersion string `json:"engine_version,omitempty"`
+	// RetentionDays keeps this target's session recordings for that many
+	// days, over the policy's value; nil defers to the policy or the global
+	// retention policy.
+	RetentionDays       *int                `json:"retention_days,omitempty"`
 	OSFamily            OSFamily            `json:"os_family"`
 	Ports               map[Protocol]int    `json:"ports"`
 	Capabilities        []Protocol          `json:"capabilities"`
@@ -210,6 +214,9 @@ func (t *Target) Validate() error {
 		if t.OSFamily == "" {
 			t.OSFamily = OtherOS
 		}
+	}
+	if t.RetentionDays != nil && (*t.RetentionDays <= 0 || *t.RetentionDays > 3650) {
+		return fmt.Errorf("%w: retention_days must be 1-3650", ErrInvalid)
 	}
 	switch t.OSFamily {
 	case Linux, Windows, OtherOS:

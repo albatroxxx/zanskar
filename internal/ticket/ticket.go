@@ -22,17 +22,20 @@ const TTL = 30 * time.Second
 // the connection is decided at issue time, so the WebSocket handler never
 // re-reads client-controlled input.
 type Grant struct {
-	UserID            string
-	Username          string
-	SessionID         string // browser session that requested it
-	TargetID          string
-	ASGID             string
-	ASGInstanceID     string
-	Protocol          string
-	CredentialID      string
-	PolicyID          string
-	IdleTimeout       time.Duration
-	MaxSession        time.Duration
+	UserID        string
+	Username      string
+	SessionID     string // browser session that requested it
+	TargetID      string
+	ASGID         string
+	ASGInstanceID string
+	Protocol      string
+	CredentialID  string
+	PolicyID      string
+	IdleTimeout   time.Duration
+	MaxSession    time.Duration
+	// RetentionDays fixes the recording's retention at session start; 0
+	// leaves the global retention policy in charge.
+	RetentionDays     int
 	AllowClipboard    bool
 	AllowFileTransfer bool
 	ClientIP          string

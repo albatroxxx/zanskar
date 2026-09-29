@@ -34,6 +34,8 @@ type endpoint struct {
 	// Engine and EngineVersion identify a database target (ADR 0017).
 	Engine        string
 	EngineVersion string
+	// RetentionDays is the target's recording retention override (0: none).
+	RetentionDays int
 
 	// Exactly one of TargetID or (ASGID, ASGInstanceID) is set.
 	TargetID      string
@@ -70,6 +72,9 @@ func fromTarget(t *target.Target) *endpoint {
 	e := &endpoint{Name: t.Name, Address: t.Address, Ports: t.Ports, Tags: t.Tags, Credentials: t.Credentials,
 		HostKeyTrusted: t.HostKeyStatus == target.HostKeyTrusted, Active: t.Status == "active", TargetID: t.ID, LiveKey: t.ID,
 		Engine: t.Engine, EngineVersion: t.EngineVersion}
+	if t.RetentionDays != nil {
+		e.RetentionDays = *t.RetentionDays
+	}
 	if t.HostKeyFingerprint != nil {
 		e.HostKeyFingerprint = *t.HostKeyFingerprint
 	}

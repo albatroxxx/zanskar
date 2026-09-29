@@ -24,7 +24,7 @@ func NewRepo(db *store.DB) *Repo { return &Repo{db: db} }
 
 const cols = `id, name, address, os_family, ports, capabilities, host_key_fingerprint, host_key_status,
 	tls_fingerprint, tags, status, notes, created_by, created_at, updated_at, last_probed_at, winrm_tls_fingerprint,
-	engine, engine_version`
+	engine, engine_version, retention_days`
 
 // Create validates and inserts t, including its credential mapping.
 func (r *Repo) Create(ctx context.Context, t *Target) error {
@@ -44,10 +44,10 @@ func (r *Repo) Create(ctx context.Context, t *Target) error {
 	}
 	defer tx.Rollback() //nolint:errcheck
 	_, err = tx.ExecContext(ctx, r.db.Rebind(`INSERT INTO targets
-		(id, name, address, os_family, ports, capabilities, host_key_status, tags, status, notes, created_by, created_at, updated_at, engine, engine_version)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`),
+		(id, name, address, os_family, ports, capabilities, host_key_status, tags, status, notes, created_by, created_at, updated_at, engine, engine_version, retention_days)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`),
 		t.ID, t.Name, t.Address, string(t.OSFamily), ports, capsJSON, string(HostKeyUnknown), tags, t.Status, t.Notes,
-		nullStr(t.CreatedBy), store.TimeArg(now), store.TimeArg(now), t.Engine, t.EngineVersion)
+		nullStr(t.CreatedBy), store.TimeArg(now), store.TimeArg(now), t.Engine, t.EngineVersion, nullInt(t.RetentionDays))
 	if err != nil {
 		return mapErr(err)
 	}
@@ -134,9 +134,9 @@ func (r *Repo) Update(ctx context.Context, t *Target) error {
 	}
 	defer tx.Rollback() //nolint:errcheck
 	res, err := tx.ExecContext(ctx, r.db.Rebind(`UPDATE targets SET name = ?, address = ?, os_family = ?, ports = ?, capabilities = ?,
-		tags = ?, status = ?, notes = ?, engine = ?, engine_version = ?, updated_at = ? WHERE id = ? AND deleted_at IS NULL`),
+		tags = ?, status = ?, notes = ?, engine = ?, engine_version = ?, retention_days = ?, updated_at = ? WHERE id = ? AND deleted_at IS NULL`),
 		t.Name, t.Address, string(t.OSFamily), mustJSON(t.Ports), mustJSON(t.Capabilities), mustJSON(t.Tags), t.Status, t.Notes,
-		t.Engine, t.EngineVersion, store.TimeArg(now), t.ID)
+		t.Engine, t.EngineVersion, nullInt(t.RetentionDays), store.TimeArg(now), t.ID)
 	if err != nil {
 		return mapErr(err)
 	}
@@ -396,10 +396,11 @@ func scanTarget(s scanner) (*Target, error) {
 		hk, tlsFP, createdBy    sql.NullString
 		winrmFP                 sql.NullString
 		engine, engineVer       sql.NullString
+		retention               sql.NullInt64
 		created, updated, probe store.NullTime
 	)
 	err := s.Scan(&t.ID, &t.Name, &t.Address, &osFamily, &ports, &capsRaw, &hk, &hkStatus, &tlsFP, &tagsRaw,
-		&t.Status, &t.Notes, &createdBy, &created, &updated, &probe, &winrmFP, &engine, &engineVer)
+		&t.Status, &t.Notes, &createdBy, &created, &updated, &probe, &winrmFP, &engine, &engineVer, &retention)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound
@@ -408,6 +409,10 @@ func scanTarget(s scanner) (*Target, error) {
 	}
 	t.OSFamily, t.HostKeyStatus = OSFamily(osFamily), HostKeyStatus(hkStatus)
 	t.Engine, t.EngineVersion = engine.String, engineVer.String
+	if retention.Valid {
+		v := int(retention.Int64)
+		t.RetentionDays = &v
+	}
 	t.Ports, t.Capabilities, t.Tags = map[Protocol]int{}, []Protocol{}, map[string]string{}
 	if len(ports) > 0 {
 		_ = json.Unmarshal(ports, &t.Ports)
@@ -470,4 +475,11 @@ func mapErr(err error) error {
 		return ErrDuplicate
 	}
 	return err
+}
+
+func nullInt(v *int) any {
+	if v == nil {
+		return nil
+	}
+	return *v
 }

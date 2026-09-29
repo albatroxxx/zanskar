@@ -91,7 +91,7 @@ func (h *Handler) database(w http.ResponseWriter, r *http.Request) {
 		endWith(session.EndError, "recording could not be started; session refused")
 		return
 	}
-	recRow := &session.Recording{SessionID: s.ID, Format: "asciicast", StorageURI: uri}
+	recRow := &session.Recording{SessionID: s.ID, Format: "asciicast", StorageURI: uri, RetentionUntil: retentionUntil(g)}
 	if err := h.Sessions.CreateRecording(r.Context(), recRow); err != nil {
 		h.Log.Error("register recording", "err", err)
 		_, _, _ = rec.Close()
