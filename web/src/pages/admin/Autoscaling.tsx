@@ -1,12 +1,11 @@
 import { useEffect, useState, type FormEvent } from 'react'
 import { api, errorMessage } from '../../api/client'
 import { fmtTime } from '../../api/format'
-import type { AsgInstance, AutoscalingGroup, Credential, OSFamily, Protocol } from '../../api/types'
+import type { AsgAccessTest, AsgIAMDocs, AsgInstance, AutoscalingGroup, AwsIdentity, Credential, OSFamily, Protocol } from '../../api/types'
 import { Alert, Badge, Confirm, Empty, Field, Modal, PageHead, Tags } from '../../components/ui'
 import { formatTags, parseTags, protocols, useList, type PortProtocol } from './lib'
 import { CredentialBindings, type BindingChange } from './Bindings'
 
-interface IAMDocs { external_id: string; trust_policy: string; permissions_policy: string; gateway_principal: string }
 interface SyncSummary { Seen: number; Healthy: number; Joined: number; Left: number; Retired: number; HostKeyMismatches: number }
 interface SyncResponse { summary: SyncSummary; group: AutoscalingGroup; error?: string }
 
@@ -25,6 +24,7 @@ export function Autoscaling() {
         <button className="btn primary" onClick={() => setAdding(true)}>Enroll group</button>
       </PageHead>
       {err && <Alert tone="danger">{err}</Alert>}
+      <IdentityCard />
       <div className="card table-wrap">
         {items === null ? (
           <Empty>Loading…</Empty>
@@ -166,13 +166,45 @@ function GroupForm({ initial, credentials, onClose, onSaved }: { initial?: Autos
   const [err, setErr] = useState('')
   const [busy, setBusy] = useState(false)
   const up = (patch: Partial<FormState>) => setF((s) => ({ ...s, ...patch }))
+  // Guided enrolment (ADR 0023): the IAM documents are previewed before the
+  // group exists, with an ExternalId minted for it; the role the customer
+  // creates from them is tested before saving; the saved group carries that
+  // same ExternalId.
+  const [docs, setDocs] = useState<AsgIAMDocs | null>(null)
+  const [docsBusy, setDocsBusy] = useState(false)
+  const [test, setTest] = useState<AsgAccessTest | null>(null)
+  const [testing, setTesting] = useState(false)
+  const canPreview = !initial && f.region.trim() !== '' && f.external_name.trim() !== ''
+  const preview = async () => {
+    setErr('')
+    setDocsBusy(true)
+    try {
+      setDocs(await api.post<AsgIAMDocs>('/autoscaling-groups/iam-preview', { region: f.region.trim(), external_name: f.external_name.trim(), external_id: docs?.external_id ?? '' }))
+    } catch (ex) {
+      setErr(errorMessage(ex))
+    } finally {
+      setDocsBusy(false)
+    }
+  }
+  const runTest = async () => {
+    setErr('')
+    setTesting(true)
+    setTest(null)
+    try {
+      setTest(await api.post<AsgAccessTest>('/autoscaling-groups/test', { region: f.region.trim(), external_name: f.external_name.trim(), role_arn: f.role_arn.trim(), external_id: docs?.external_id ?? '' }))
+    } catch (ex) {
+      setErr(errorMessage(ex))
+    } finally {
+      setTesting(false)
+    }
+  }
 
   const submit = async (e: FormEvent) => {
     e.preventDefault()
     setErr('')
     let body: Record<string, unknown>
     try {
-      body = toBody(f, initial?.status ?? 'active')
+      body = toBody(f, initial?.status ?? 'active', docs && !initial ? { external_id: docs.external_id } : {})
     } catch (ex) {
       setErr(errorMessage(ex))
       return
@@ -203,9 +235,11 @@ function GroupForm({ initial, credentials, onClose, onSaved }: { initial?: Autos
           <Field label="Auto Scaling group name" hint="The cloud-side name">
             <input id="asg-external" value={f.external_name} onChange={(e) => up({ external_name: e.target.value })} required />
           </Field>
-          <Field label="Role ARN" hint="Cross-account role Zanskar assumes">
-            <input id="asg-role" className="mono" value={f.role_arn} onChange={(e) => up({ role_arn: e.target.value })} placeholder="arn:aws:iam::123456789012:role/zanskar" required />
-          </Field>
+          {initial && (
+            <Field label="Role ARN" hint="Cross-account role Zanskar assumes">
+              <input id="asg-role" className="mono" value={f.role_arn} onChange={(e) => up({ role_arn: e.target.value })} placeholder="arn:aws:iam::123456789012:role/zanskar" required />
+            </Field>
+          )}
           <Field label="Operating system">
             <select id="asg-os" value={f.os_family} onChange={(e) => up({ os_family: e.target.value as OSFamily })}>
               <option value="linux">Linux</option>
@@ -264,9 +298,33 @@ function GroupForm({ initial, credentials, onClose, onSaved }: { initial?: Autos
         <Field label="Tags" hint="One key=value per line; policies can select groups by tag">
           <textarea id="asg-tags" value={f.tags} onChange={(e) => up({ tags: e.target.value })} placeholder="env=prod" />
         </Field>
+        {!initial && (
+          <>
+            <h2>Access from this gateway</h2>
+            <p className="muted" style={{ marginTop: 0 }}>
+              Zanskar reads the group through a role in your AWS account that only this gateway can assume. Show the IAM setup, create the role with it, paste the role's ARN, and test before enrolling.
+            </p>
+            {!docs ? (
+              <div className="actions">
+                <button type="button" className="btn" disabled={!canPreview || docsBusy} onClick={() => void preview()} title={canPreview ? '' : 'fill in the region and the group name first'}>{docsBusy ? 'Preparing…' : '1. Show IAM setup'}</button>
+              </div>
+            ) : (
+              <IAMDocsView docs={docs} onRefresh={() => void preview()} />
+            )}
+            <div className="form-grid" style={{ marginTop: 12 }}>
+              <Field label="2. Role ARN" hint="The ARN the script or template printed, e.g. arn:aws:iam::123456789012:role/zanskar-web">
+                <input id="asg-role" className="mono" value={f.role_arn} onChange={(e) => up({ role_arn: e.target.value })} placeholder="arn:aws:iam::123456789012:role/zanskar-web" required />
+              </Field>
+            </div>
+            <div className="actions">
+              <button type="button" className="btn" disabled={testing || !docs || !f.role_arn.trim()} onClick={() => void runTest()} title={docs ? '' : 'show the IAM setup first: the test needs its ExternalId'}>{testing ? 'Testing…' : '3. Test access'}</button>
+              {test && <AccessTestResult result={test} />}
+            </div>
+          </>
+        )}
         <div className="actions">
           <button type="button" className="btn" onClick={onClose}>Cancel</button>
-          <button className="btn primary" disabled={busy}>{initial ? 'Save' : 'Enroll'}</button>
+          <button className="btn primary" disabled={busy}>{initial ? 'Save' : test?.ok ? 'Enroll' : 'Enroll without a passing test'}</button>
         </div>
       </form>
     </Modal>
@@ -291,42 +349,130 @@ function CopyButton({ text, label }: { text: string; label: string }) {
   )
 }
 
-function IAMPanel({ group, onClose }: { group: AutoscalingGroup; onClose: () => void }) {
-  const [docs, setDocs] = useState<IAMDocs | null>(null)
-  const [err, setErr] = useState('')
+function sourceLabel(source: AwsIdentity['source']) {
+  return source === 'environment' ? 'from ZANSKAR_AWS_GATEWAY_PRINCIPAL' : source === 'detected' ? 'detected from the role this gateway runs as' : 'unknown'
+}
+
+/**
+ * IdentityCard says which AWS principal this gateway is, since every trust
+ * policy must name it (ADR 0023). Detection happens once at start; Refresh
+ * repeats it, for a gateway that was given a role after it started.
+ */
+function IdentityCard() {
+  const [id, setId] = useState<AwsIdentity | null>(null)
+  const [busy, setBusy] = useState(false)
   useEffect(() => {
-    api
-      .get<IAMDocs>(`/autoscaling-groups/${group.id}/iam`)
-      .then(setDocs)
-      .catch((e) => setErr(errorMessage(e)))
-  }, [group.id])
+    api.get<AwsIdentity>('/admin/aws/identity').then(setId).catch(() => setId(null))
+  }, [])
+  if (!id) return null
+  const refresh = async () => {
+    setBusy(true)
+    try {
+      setId(await api.post<AwsIdentity>('/admin/aws/identity/refresh'))
+    } catch {
+      /* the card keeps what it had */
+    } finally {
+      setBusy(false)
+    }
+  }
   return (
-    <Modal title={`IAM setup for ${group.name}`} onClose={onClose} width={760}>
-      <p className="muted" style={{ marginTop: 0 }}>
-        Paste the trust policy on the role <span className="mono">{group.role_arn}</span>, then attach the permissions policy. The ExternalId ties the role to this Zanskar deployment; anyone without it cannot assume the role even if they know the ARN.
-      </p>
-      {err && <Alert tone="danger">{err}</Alert>}
-      {docs ? (
+    <div className="card" style={{ marginBottom: 12 }}>
+      {id.principal ? (
+        <p style={{ margin: 0 }}>
+          This gateway is <span className="mono">{id.principal}</span> <span className="muted">({sourceLabel(id.source)})</span>. Roles you create for autoscaling groups trust that principal.
+          {id.source === 'detected' && <button type="button" className="btn sm" style={{ marginLeft: 8 }} disabled={busy} onClick={() => void refresh()}>{busy ? 'Checking…' : 'Refresh'}</button>}
+        </p>
+      ) : (
         <>
-          <Field label="ExternalId">
-            <div className="actions">
-              <code style={{ wordBreak: 'break-all' }}>{docs.external_id}</code>
-              <CopyButton text={docs.external_id} label="Copy" />
-            </div>
-          </Field>
-          <Field label="Trust policy (on the role)">
-            <textarea id="iam-trust" readOnly value={docs.trust_policy} style={{ minHeight: 180 }} />
-            <div className="actions"><CopyButton text={docs.trust_policy} label="Copy trust policy" /></div>
-          </Field>
-          <Field label="Permissions policy (attach to the role)">
+          <p style={{ margin: 0 }}>
+            <Badge tone="warn">AWS identity unknown</Badge> This gateway is not running with an AWS role, so it cannot tell you what principal a trust policy should name. Run it on EC2 with an instance profile (or on EKS with IRSA), or set <code>ZANSKAR_AWS_GATEWAY_PRINCIPAL</code> in the environment file to the role ARN it should present, then restart.
+            <button type="button" className="btn sm" style={{ marginLeft: 8 }} disabled={busy} onClick={() => void refresh()}>{busy ? 'Checking…' : 'Check again'}</button>
+          </p>
+          {id.error && <p className="muted mono" style={{ margin: '6px 0 0', fontSize: 12 }}>{id.error}</p>}
+        </>
+      )}
+    </div>
+  )
+}
+
+/** IAMDocsView renders the documents for one group: the real principal or an explanation, never a placeholder. */
+function IAMDocsView({ docs, onRefresh }: { docs: AsgIAMDocs; onRefresh?: () => void }) {
+  return (
+    <>
+      <Field label="ExternalId" hint="Zanskar generated it for this group; the trust policy requires it, so knowing the role's ARN is not enough to assume it.">
+        <div className="actions">
+          <code style={{ wordBreak: 'break-all' }}>{docs.external_id}</code>
+          <CopyButton text={docs.external_id} label="Copy" />
+        </div>
+      </Field>
+      {docs.trust_policy ? (
+        <>
+          <p className="muted" style={{ marginTop: 0 }}>
+            The role trusts <span className="mono">{docs.gateway_principal}</span> ({sourceLabel(docs.principal_source)}). Create it with the script or the template, or paste the two policies by hand.
+          </p>
+          <details open>
+            <summary>Create the role with the AWS CLI</summary>
+            <textarea id="iam-cli" readOnly value={docs.cli ?? ''} className="mono" style={{ minHeight: 220, marginTop: 6 }} />
+            <div className="actions"><CopyButton text={docs.cli ?? ''} label="Copy script" /></div>
+          </details>
+          <details>
+            <summary>…or as a CloudFormation template</summary>
+            <textarea id="iam-cfn" readOnly value={docs.cloudformation ?? ''} className="mono" style={{ minHeight: 220, marginTop: 6 }} />
+            <div className="actions"><CopyButton text={docs.cloudformation ?? ''} label="Copy template" /></div>
+          </details>
+          <details>
+            <summary>…or the two policy documents</summary>
+            <Field label="Trust policy (on the role)">
+              <textarea id="iam-trust" readOnly value={docs.trust_policy} style={{ minHeight: 160 }} />
+              <div className="actions"><CopyButton text={docs.trust_policy} label="Copy trust policy" /></div>
+            </Field>
+            <Field label="Permissions policy (attach to the role)">
+              <textarea id="iam-perms" readOnly value={docs.permissions_policy} style={{ minHeight: 200 }} />
+              <div className="actions"><CopyButton text={docs.permissions_policy} label="Copy permissions policy" /></div>
+            </Field>
+          </details>
+        </>
+      ) : (
+        <>
+          <Alert tone="warn">
+            The trust policy cannot be written yet: this gateway does not know which AWS principal it is, and a policy with a made-up ARN would not work. Run the gateway with an AWS role (an EC2 instance profile or IRSA) or set <code>ZANSKAR_AWS_GATEWAY_PRINCIPAL</code> to the role ARN it presents, restart, then come back here.
+            {docs.principal_error && <div className="mono muted" style={{ marginTop: 6, fontSize: 12 }}>{docs.principal_error}</div>}
+            {onRefresh && <div style={{ marginTop: 6 }}><button type="button" className="btn sm" onClick={onRefresh}>Check again</button></div>}
+          </Alert>
+          <Field label="Permissions policy (attach to the role once it exists)">
             <textarea id="iam-perms" readOnly value={docs.permissions_policy} style={{ minHeight: 200 }} />
             <div className="actions"><CopyButton text={docs.permissions_policy} label="Copy permissions policy" /></div>
           </Field>
-          {!docs.gateway_principal && <Alert tone="warn">The gateway principal is not configured, so the trust policy carries a placeholder. Replace it with the ARN the gateway runs as.</Alert>}
         </>
-      ) : (
-        !err && <Empty>Loading…</Empty>
       )}
+    </>
+  )
+}
+
+/** AccessTestResult names the stage that failed so the fix is obvious. */
+function AccessTestResult({ result }: { result: AsgAccessTest }) {
+  if (result.ok) return <Badge tone="ok">role works: group found, {result.instance_count} instance{result.instance_count === 1 ? '' : 's'}</Badge>
+  const what = result.stage === 'assume' ? "the role could not be assumed: check the trust policy names this gateway and carries this ExternalId, and that the gateway's own role may call sts:AssumeRole on it" : result.stage === 'describe' ? 'the role was assumed but cannot describe the group: attach the permissions policy' : result.stage === 'group' ? 'the role works, but no group by that name exists in that region' : 'test failed'
+  return <span><Badge tone="danger">{what}</Badge>{result.error && <span className="muted" style={{ marginLeft: 6 }}>{result.error}</span>}</span>
+}
+
+function IAMPanel({ group, onClose }: { group: AutoscalingGroup; onClose: () => void }) {
+  const [docs, setDocs] = useState<AsgIAMDocs | null>(null)
+  const [err, setErr] = useState('')
+  const load = () => {
+    api
+      .get<AsgIAMDocs>(`/autoscaling-groups/${group.id}/iam`)
+      .then(setDocs)
+      .catch((e) => setErr(errorMessage(e)))
+  }
+  useEffect(load, [group.id])
+  return (
+    <Modal title={`IAM setup for ${group.name}`} onClose={onClose} width={760}>
+      <p className="muted" style={{ marginTop: 0 }}>
+        For the role <span className="mono">{group.role_arn}</span>. After changing anything here, use <strong>Test access</strong> on the group.
+      </p>
+      {err && <Alert tone="danger">{err}</Alert>}
+      {docs ? <IAMDocsView docs={docs} onRefresh={load} /> : !err && <Empty>Loading…</Empty>}
       <div className="actions">
         <button className="btn primary" onClick={onClose}>Done</button>
       </div>
@@ -348,6 +494,8 @@ function GroupDetail({ group, credentials, onClose, onChanged, onDeleted, onErro
   const [confirmDelete, setConfirmDelete] = useState(false)
   const [confirmRotate, setConfirmRotate] = useState(false)
   const [syncing, setSyncing] = useState(false)
+  const [testing, setTesting] = useState(false)
+  const [accessTest, setAccessTest] = useState<AsgAccessTest | null>(null)
   const [summary, setSummary] = useState<SyncResponse | null>(null)
   const [err, setErr] = useState('')
 
@@ -367,6 +515,18 @@ function GroupDetail({ group, credentials, onClose, onChanged, onDeleted, onErro
     onChanged(next)
   }
 
+  const testAccess = async () => {
+    setErr('')
+    setTesting(true)
+    setAccessTest(null)
+    try {
+      setAccessTest(await api.post<AsgAccessTest>(`/autoscaling-groups/${g.id}/test`))
+    } catch (e) {
+      setErr(errorMessage(e))
+    } finally {
+      setTesting(false)
+    }
+  }
   const sync = async () => {
     setSyncing(true)
     setErr('')
@@ -413,6 +573,7 @@ function GroupDetail({ group, credentials, onClose, onChanged, onDeleted, onErro
       {err && <Alert tone="danger">{err}</Alert>}
       <div className="actions" style={{ marginBottom: 12 }}>
         <button className="btn primary" disabled={syncing} onClick={() => void sync()}>{syncing ? 'Syncing…' : 'Sync now'}</button>
+        <button className="btn" disabled={testing} onClick={() => void testAccess()}>{testing ? 'Testing…' : 'Test access'}</button>
         <button className="btn" onClick={() => setEditing(true)}>Edit</button>
         <button className="btn" onClick={() => setIam(true)}>IAM setup</button>
         <button className="btn" onClick={() => setConfirmRotate(true)}>Rotate ExternalId</button>
@@ -420,6 +581,11 @@ function GroupDetail({ group, credentials, onClose, onChanged, onDeleted, onErro
         <button className="btn ghost" onClick={onClose}>Close</button>
         <button className="btn danger" onClick={() => setConfirmDelete(true)}>Delete</button>
       </div>
+      {accessTest && (
+        <Alert tone={accessTest.ok ? 'ok' : 'danger'}>
+          <AccessTestResult result={accessTest} />
+        </Alert>
+      )}
       {summary && (
         <Alert tone={summary.error ? 'danger' : 'ok'}>
           {summary.error

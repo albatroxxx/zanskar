@@ -47,6 +47,9 @@ type (
 	eicAPI interface {
 		SendSSHPublicKey(context.Context, *ec2instanceconnect.SendSSHPublicKeyInput, ...func(*ec2instanceconnect.Options)) (*ec2instanceconnect.SendSSHPublicKeyOutput, error)
 	}
+	stsAPI interface {
+		GetCallerIdentity(context.Context, *sts.GetCallerIdentityInput, ...func(*sts.Options)) (*sts.GetCallerIdentityOutput, error)
+	}
 )
 
 // AWS implements Provider.
@@ -55,6 +58,7 @@ type AWS struct {
 	ec2 ec2API
 	elb elbAPI
 	eic eicAPI
+	sts stsAPI // with the assumed role's credentials, for Check
 }
 
 // NewAWS builds a provider that assumes the role lazily and caches the
@@ -79,7 +83,28 @@ func NewAWS(ctx context.Context, a AWSAccess) (*AWS, error) {
 		ec2: ec2.NewFromConfig(cfg),
 		elb: elbv2.NewFromConfig(cfg),
 		eic: ec2instanceconnect.NewFromConfig(cfg),
+		sts: sts.NewFromConfig(cfg),
 	}, nil
+}
+
+// Check implements Provider. GetCallerIdentity forces the lazy AssumeRole,
+// so a wrong principal or ExternalId fails here with ErrAssumeRole; then
+// the group is described with the assumed credentials.
+func (p *AWS) Check(ctx context.Context, groupName string) (*AccessCheck, error) {
+	id, err := p.sts.GetCallerIdentity(ctx, &sts.GetCallerIdentityInput{})
+	if err != nil {
+		return nil, fmt.Errorf("%w: %s", ErrAssumeRole, redactARNs(err.Error()))
+	}
+	out := &AccessCheck{AssumedARN: aws.ToString(id.Arn)}
+	snap, err := p.DescribeGroup(ctx, groupName)
+	switch {
+	case err == nil:
+		out.GroupFound, out.InstanceCount = true, len(snap.Instances)
+	case errors.Is(err, ErrGroupNotFound):
+	default:
+		out.DescribeError = redactARNs(err.Error())
+	}
+	return out, nil
 }
 
 // DescribeGroup implements Provider.

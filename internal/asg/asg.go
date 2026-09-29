@@ -14,6 +14,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 
@@ -73,6 +74,10 @@ var (
 	ErrInvalidInput = errors.New("asg: invalid input")
 )
 
+// externalIDRe is the shape NewExternalID produces; an ExternalId supplied
+// on create (from an IAM preview) must match it.
+var externalIDRe = regexp.MustCompile(`^zanskar-[0-9a-f]{32}$`)
+
 // NewExternalID returns a random 32-hex ExternalId for the role trust policy.
 func NewExternalID() string {
 	b := make([]byte, 16)
@@ -102,6 +107,8 @@ func (g *Group) Validate() error {
 	}
 	if g.ExternalID == "" {
 		g.ExternalID = NewExternalID()
+	} else if !externalIDRe.MatchString(g.ExternalID) {
+		return fmt.Errorf("%w: external_id must be one Zanskar generated (zanskar-<32 hex>)", ErrInvalidInput)
 	}
 	switch g.OSFamily {
 	case target.Linux, target.Windows, target.OtherOS:
@@ -173,12 +180,12 @@ func (g *Group) Address(in *Instance) string {
 	return in.PublicIP
 }
 
-// TrustPolicy renders the IAM trust policy for the role, with the
-// ExternalId condition that ties the role to this Zanskar deployment.
-// gatewayPrincipal is the ARN of the identity the gateway runs as.
+// TrustPolicy renders the role's trust policy for the given gateway
+// principal. It returns "" when the principal is unknown: a policy with a
+// placeholder looks finished and is not (ADR 0023).
 func (g *Group) TrustPolicy(gatewayPrincipal string) string {
 	if gatewayPrincipal == "" {
-		gatewayPrincipal = "arn:aws:iam::<GATEWAY-ACCOUNT-ID>:role/<GATEWAY-ROLE>"
+		return ""
 	}
 	doc := map[string]any{
 		"Version": "2012-10-17",
@@ -222,6 +229,52 @@ func (g *Group) PermissionsPolicy() string {
 		},
 	}
 	return renderPolicy(doc)
+}
+
+// SuggestedRoleName is the role name the guided enrolment proposes.
+func (g *Group) SuggestedRoleName() string {
+	name := strings.Map(func(r rune) rune {
+		if r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '-' || r == '_' {
+			return r
+		}
+		return '-'
+	}, g.ExternalName)
+	if len(name) > 48 {
+		name = name[:48]
+	}
+	return "zanskar-" + strings.Trim(name, "-")
+}
+
+// RoleCLI is a paste-ready AWS CLI script that creates the role with the
+// trust and permissions policies and prints its ARN.
+func (g *Group) RoleCLI(roleName, trustPolicy string) string {
+	return "cat > zanskar-trust.json <<'EOF'\n" + trustPolicy + "\nEOF\n" +
+		"cat > zanskar-permissions.json <<'EOF'\n" + g.PermissionsPolicy() + "\nEOF\n" +
+		"aws iam create-role --role-name " + roleName + " --assume-role-policy-document file://zanskar-trust.json \\\n" +
+		"  --description 'Zanskar gateway: read autoscaling group " + g.ExternalName + "'\n" +
+		"aws iam put-role-policy --role-name " + roleName + " --policy-name zanskar --policy-document file://zanskar-permissions.json\n" +
+		"aws iam get-role --role-name " + roleName + " --query Role.Arn --output text\n"
+}
+
+// RoleCloudFormation is the same role as a CloudFormation template; JSON
+// policy documents are valid YAML, so they are embedded as they are.
+func (g *Group) RoleCloudFormation(roleName, trustPolicy string) string {
+	return "AWSTemplateFormatVersion: \"2010-09-09\"\n" +
+		"Description: Zanskar gateway access to autoscaling group " + g.ExternalName + "\n" +
+		"Resources:\n  ZanskarRole:\n    Type: AWS::IAM::Role\n    Properties:\n      RoleName: " + roleName + "\n" +
+		"      AssumeRolePolicyDocument:\n" + indent(trustPolicy, "        ") +
+		"      Policies:\n        - PolicyName: zanskar\n          PolicyDocument:\n" + indent(g.PermissionsPolicy(), "            ") +
+		"Outputs:\n  RoleArn:\n    Value: !GetAtt ZanskarRole.Arn\n"
+}
+
+func indent(text, prefix string) string {
+	var b strings.Builder
+	for _, line := range strings.Split(strings.TrimRight(text, "\n"), "\n") {
+		b.WriteString(prefix)
+		b.WriteString(line)
+		b.WriteByte('\n')
+	}
+	return b.String()
 }
 
 // renderPolicy encodes an IAM document for display. Encoding goes through a

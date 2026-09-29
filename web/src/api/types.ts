@@ -321,6 +321,39 @@ export interface AutoscalingGroup {
   instance_count?: number
 }
 
+/** GET /admin/aws/identity: the principal the gateway runs as, for autoscaling trust policies (ADR 0023). */
+export interface AwsIdentity {
+  principal?: string
+  source: 'environment' | 'detected' | 'none'
+  account_id?: string
+  raw_arn?: string
+  checked_at: string
+  error?: string
+}
+
+/** IAM documents for a group; trust policy and scripts are absent when the principal is unknown (never a placeholder). */
+export interface AsgIAMDocs {
+  external_id: string
+  gateway_principal?: string
+  principal_source: 'environment' | 'detected' | 'none'
+  principal_error?: string
+  role_name: string
+  trust_policy?: string
+  permissions_policy: string
+  cli?: string
+  cloudformation?: string
+}
+
+/** POST /autoscaling-groups/test and /autoscaling-groups/{id}/test. */
+export interface AsgAccessTest {
+  ok: boolean
+  stage?: 'assume' | 'describe' | 'group'
+  error?: string
+  assumed_arn?: string
+  group_found: boolean
+  instance_count: number
+}
+
 export interface AsgInstance {
   id: string
   asg_id: string

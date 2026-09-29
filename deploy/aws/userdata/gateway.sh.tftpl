@@ -30,18 +30,19 @@ docker run -d --name guacd --restart unless-stopped --network zanskar -p 127.0.0
   -e HOME=/tmp --read-only --tmpfs /tmp:size=512m,mode=1777 guacamole/guacd:1.6.0
 
 MASTER_KEY=$(/usr/local/bin/zanskar keygen)
-# The gateway runs under an instance role; the ASG trust policy must name the
-# ROLE ARN, not the instance-profile ARN (an instance profile is not a valid
-# AssumeRole principal). Derive it from the role name and the account id.
+%{ if principal_override ~}
+# Override test (ADR 0023): the gateway would detect its principal itself; this
+# names it explicitly. The trust policy must name the ROLE ARN, not the
+# instance-profile ARN (an instance profile is not a valid AssumeRole principal).
 IMDS_TOKEN=$(curl -s -X PUT http://169.254.169.254/latest/api/token -H 'X-aws-ec2-metadata-token-ttl-seconds: 60')
 IMDS() { curl -s -H "X-aws-ec2-metadata-token: $IMDS_TOKEN" "http://169.254.169.254/latest/$1"; }
 GATEWAY_ROLE_NAME=$(IMDS meta-data/iam/security-credentials/ | head -1)
 GATEWAY_ACCOUNT_ID=$(IMDS dynamic/instance-identity/document | python3 -c 'import sys,json; print(json.load(sys.stdin)["accountId"])' 2>/dev/null || echo "")
-if [ -n "$GATEWAY_ACCOUNT_ID" ] && [ -n "$GATEWAY_ROLE_NAME" ]; then
-  GATEWAY_PRINCIPAL="arn:aws:iam::$GATEWAY_ACCOUNT_ID:role/$GATEWAY_ROLE_NAME"
-else
-  GATEWAY_PRINCIPAL=""
-fi
+GATEWAY_PRINCIPAL="arn:aws:iam::$GATEWAY_ACCOUNT_ID:role/$GATEWAY_ROLE_NAME"
+%{ else ~}
+# ADR 0023: the gateway detects its own principal from STS; nothing to set.
+GATEWAY_PRINCIPAL=""
+%{ endif ~}
 cat > /etc/zanskar/env <<ENV
 ZANSKAR_LISTEN_ADDR=127.0.0.1:8443
 ZANSKAR_TRUST_PROXY_TLS=true

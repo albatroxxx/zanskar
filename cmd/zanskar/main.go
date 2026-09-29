@@ -26,6 +26,7 @@ import (
 	"github.com/albatroxxx/zanskar/internal/asg"
 	"github.com/albatroxxx/zanskar/internal/audit"
 	"github.com/albatroxxx/zanskar/internal/auth"
+	"github.com/albatroxxx/zanskar/internal/cloud"
 	"github.com/albatroxxx/zanskar/internal/config"
 	"github.com/albatroxxx/zanskar/internal/connect"
 	"github.com/albatroxxx/zanskar/internal/credential"
@@ -259,6 +260,18 @@ func runServe() error {
 	var storage recording.Storage = router
 	asgRepo := asg.NewRepo(db)
 	cloudProviders := asg.AWSProviders()
+	// The gateway's own AWS identity, for autoscaling trust policies (ADR
+	// 0023): detected once in the background so the first admin request does
+	// not wait on the instance metadata service.
+	awsIdentity := cloud.NewGatewayIdentity(cfg.AWSGatewayPrincipal)
+	go func() {
+		id := awsIdentity.Get(ctx)
+		if id.Principal != "" {
+			log.Info("aws gateway identity", "source", id.Source, "principal", id.Principal)
+		} else {
+			log.Info("aws gateway identity not available; autoscaling trust policies need ZANSKAR_AWS_GATEWAY_PRINCIPAL", "detail", id.Error)
+		}
+	}()
 	syncer := &asg.Syncer{Repo: asgRepo, Providers: cloudProviders, Prober: &target.Prober{}, Registry: registry, Audit: auditLog, Log: log}
 	deps := server.Deps{
 		TLS:            tlsMgr,
@@ -273,7 +286,7 @@ func runServe() error {
 			&target.AdminHandler{Repo: targets, Prober: &target.Prober{}, Policies: policies, Live: registry, Vault: vault, Audit: auditLog, Log: log},
 			&policy.AdminHandler{Repo: policies, Users: users, Audit: auditLog, Log: log},
 			&access.Handler{Requests: accessReqs, Policies: policies, Targets: targets, Audit: auditLog, Log: log},
-			&asg.AdminHandler{Repo: asgRepo, Sync: syncer.SyncGroup, GatewayPrincipal: cfg.AWSGatewayPrincipal, Policies: policies, Live: registry, Vault: vault, Audit: auditLog, Log: log},
+			&asg.AdminHandler{Repo: asgRepo, Sync: syncer.SyncGroup, Identity: awsIdentity, Providers: cloudProviders, Policies: policies, Live: registry, Vault: vault, Audit: auditLog, Log: log},
 			&session.Handler{Repo: sessionRepo, Audit: auditLog, Registry: registry, Storage: storage, Log: log},
 			&settings.Handler{Service: runtime, Audit: auditLog, Log: log},
 			&recstorage.Handler{Manager: storageMgr, Audit: auditLog, Log: log},

@@ -352,6 +352,39 @@ password.
   verification arrives with the target's TLS settings.
 - Not available inside the Compose stack; use the package install for database targets.
 
+## Autoscaling groups on AWS
+
+Zanskar reads an autoscaling group through a role in your AWS account that only this gateway
+can assume (ADR 0011, 0023). Enrolment is guided from **Autoscaling groups → Enroll group**:
+
+1. **The gateway's identity.** The page shows the principal this gateway runs as. On EC2
+   with an instance profile, or on EKS with IRSA, it is detected at start from STS and
+   converted to the role ARN a trust policy needs. Nothing else is required. A gateway
+   outside AWS, or one that should present a different principal, sets
+   `ZANSKAR_AWS_GATEWAY_PRINCIPAL=arn:aws:iam::<account>:role/<role>` in the environment
+   file; the variable always wins over detection. Until a principal is known, the console
+   says so and withholds the trust policy rather than printing a placeholder.
+2. **Show IAM setup.** With the region and the group's name filled in, the console mints the
+   ExternalId and shows a paste-ready AWS CLI script that creates the role with the trust
+   policy and the read-only permissions policy, the same role as a CloudFormation template,
+   and the two policy documents on their own.
+3. **Test access.** Paste the role's ARN and test: the gateway assumes the role with the
+   ExternalId and describes the group. A failure names the stage: the trust policy (wrong
+   principal or ExternalId), the permissions policy, or no group by that name in that
+   region. The test is audited as `asg.test`.
+4. **Enroll.** The saved group carries the ExternalId the role was created with. A saved
+   group can be tested again from its drawer at any time.
+
+**The gateway's own role needs the other half of the handshake.** Assuming a role takes
+two permissions: the customer's role must trust the gateway's principal (the trust policy
+above), and the gateway's own role must be allowed to call `sts:AssumeRole` on that role
+ARN, through an identity policy on the gateway's instance profile or IRSA role. Without the
+second, the access test fails at the `assume` stage with the same message as a wrong trust
+policy. In the same account this is usually already granted; across accounts it never is.
+
+Zanskar never stores AWS access keys; the gateway's own credentials come from the SDK's
+default chain, and the customer's role is the only thing it assumes.
+
 ## SSH without stored keys: the certificate authority
 
 The recommended way to reach Linux targets is an **SSH certificate authority** credential
