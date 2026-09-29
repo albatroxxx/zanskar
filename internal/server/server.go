@@ -242,13 +242,25 @@ func (r *statusRecorder) Flush() {
 	}
 }
 
+// quietPaths are polled by health checks and by the console itself; at
+// info they would flood the log (and the console's in-memory ring) with
+// their own traffic, so they are logged at debug.
+var quietPaths = map[string]bool{
+	"/healthz": true, "/readyz": true,
+	"/api/v1/admin/logs": true, "/api/v1/admin/system/status": true,
+}
+
 func (s *Server) accessLog(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
 		rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
 		next.ServeHTTP(rec, r)
+		level := slog.LevelInfo
+		if quietPaths[r.URL.Path] && rec.status < 400 {
+			level = slog.LevelDebug
+		}
 		// Query strings are intentionally not logged: connect tickets travel there.
-		s.log.Info("http",
+		s.log.Log(r.Context(), level, "http",
 			"request_id", RequestIDFrom(r.Context()),
 			"method", r.Method,
 			"path", r.URL.Path,

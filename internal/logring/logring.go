@@ -151,8 +151,12 @@ func (h *Handler) Handle(ctx context.Context, rec slog.Record) error {
 func flatten(into map[string]string, prefix string, a slog.Attr) {
 	a.Value = a.Value.Resolve()
 	if a.Value.Kind() == slog.KindGroup {
+		sub := prefix
+		if a.Key != "" { // slog inlines a group with an empty key
+			sub = prefix + a.Key + "."
+		}
 		for _, g := range a.Value.Group() {
-			flatten(into, prefix+a.Key+".", g)
+			flatten(into, sub, g)
 		}
 		return
 	}
