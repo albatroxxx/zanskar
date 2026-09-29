@@ -39,3 +39,4 @@ and update the status of the old one.
 | [0018](0018-just-in-time-access-approvals.md) | Just-in-time access approvals (PIM) | Accepted |
 | [0019](0019-retire-targets-keep-history.md) | Targets and autoscaling groups are retired, not erased | Accepted |
 | [0020](0020-runtime-settings-console-overrides-environment.md) | Runtime settings: the console overrides install-time environment values | Accepted |
+| [0021](0021-managed-tls-certificate.md) | The gateway manages its own TLS certificate, self-signed until one is uploaded | Accepted |

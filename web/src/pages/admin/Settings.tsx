@@ -3,6 +3,7 @@ import { api, errorMessage } from '../../api/client'
 import { fmtTime } from '../../api/format'
 import type { BootSetting, RuntimeSetting, SettingsListing, SystemStatus } from '../../api/types'
 import { Alert, Badge, Empty, Field, PageHead } from '../../components/ui'
+import { TLSCard } from './TLSCard'
 
 /**
  * Settings holds the two kinds of configuration (ADR 0020): runtime settings
@@ -47,6 +48,7 @@ export function Settings() {
             .map((s) => <SettingRow key={s.key} setting={s} onChange={replace} />)}
         </div>
       ))}
+      <TLSCard />
       {listing && <BootTable boot={listing.boot} changed={changed} />}
     </>
   )

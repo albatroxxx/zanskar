@@ -12,6 +12,7 @@ package main
 import (
 	"context"
 	"crypto/rand"
+	"crypto/tls"
 	"encoding/base64"
 	"errors"
 	"fmt"
@@ -46,6 +47,7 @@ import (
 	"github.com/albatroxxx/zanskar/internal/store"
 	"github.com/albatroxxx/zanskar/internal/target"
 	"github.com/albatroxxx/zanskar/internal/ticket"
+	"github.com/albatroxxx/zanskar/internal/tlscert"
 	"github.com/albatroxxx/zanskar/internal/user"
 	"github.com/albatroxxx/zanskar/internal/user/adminapi"
 	"github.com/albatroxxx/zanskar/internal/version"
@@ -163,6 +165,25 @@ func runServe() error {
 	}
 	defer ring.Close()
 
+	// The gateway's own certificate (ADR 0021): uploaded in the console, else
+	// the file from the environment, else self-signed at first start.
+	var tlsMgr *tlscert.Manager
+	if cfg.ServesTLS() {
+		tlsMgr = &tlscert.Manager{Repo: tlscert.NewRepo(db, ring), Log: log, Hosts: tlscert.LocalHosts(cfg.ListenAddr)}
+		if cfg.TLSCert != "" {
+			cert, err := tls.LoadX509KeyPair(cfg.TLSCert, cfg.TLSKey)
+			if err != nil {
+				return fmt.Errorf("ZANSKAR_TLS_CERT/ZANSKAR_TLS_KEY: %w", err)
+			}
+			tlsMgr.File = &cert
+		}
+		if err := tlsMgr.Load(ctx); err != nil {
+			return fmt.Errorf("tls certificate: %w", err)
+		}
+		a := tlsMgr.Active()
+		log.Info("tls certificate", "source", a.Source, "subject", a.Subject, "hosts", a.Hosts, "not_after", a.NotAfter, "sha256", a.Fingerprint)
+	}
+
 	// Runtime settings (ADR 0020): the environment gives install-time values,
 	// the console overrides them live. Bind the ones this process applies.
 	runtime := settings.NewService(settings.NewRepo(db), settings.EnvValues(), bootSettings(cfg, ring.ActiveVersion()))
@@ -230,6 +251,7 @@ func runServe() error {
 	cloudProviders := asg.AWSProviders()
 	syncer := &asg.Syncer{Repo: asgRepo, Providers: cloudProviders, Prober: &target.Prober{}, Registry: registry, Audit: auditLog, Log: log}
 	deps := server.Deps{
+		TLS:            tlsMgr,
 		AuthMiddleware: &auth.Middleware{Sessions: sessions, Users: users, Log: log},
 		Auth:           authHandler,
 		Handlers: []server.Registrar{
@@ -246,6 +268,7 @@ func runServe() error {
 			&settings.Handler{Service: runtime, Audit: auditLog, Log: log},
 			&lifecycle.Handler{Drift: drift, Controller: restarter, Audit: auditLog, Log: log, StartedAt: startedAt},
 			&logring.API{Ring: logs, Audit: auditLog, Log: log},
+			&tlscert.Handler{Manager: tlsMgr, Mode: cfg.TLSMode, Audit: auditLog, Log: log},
 			&connect.Handler{Targets: targets, Policies: policies, Access: accessReqs, Vault: vault, Sessions: sessionRepo, Tickets: ticket.NewStore(),
 				Registry: registry, Storage: storage, Audit: auditLog, Log: log, MFAEnrolled: totp.Enrolled, GuacdAddr: guacdAddr, Draining: restarter.Draining,
 				DockerPath: cfg.DockerPath, Prober: &target.Prober{}, ASGs: asgRepo, Cloud: cloudProviders},
@@ -281,7 +304,7 @@ func runServe() error {
 		go exporter.Run(ctx)
 		log.Info("audit export enabled", "sinks", len(sinks))
 	}
-	if cfg.AllowPlainHTTP && cfg.TLSCert == "" {
+	if cfg.AllowPlainHTTP && !cfg.ServesTLS() {
 		log.Warn("ZANSKAR_ALLOW_PLAIN_HTTP=true: serving without TLS on a non-loopback address; development only")
 	}
 

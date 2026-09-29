@@ -8,6 +8,7 @@ import (
 	"bufio"
 	"context"
 	"crypto/rand"
+	"crypto/tls"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -20,6 +21,7 @@ import (
 	"github.com/albatroxxx/zanskar/internal/auth"
 	"github.com/albatroxxx/zanskar/internal/config"
 	"github.com/albatroxxx/zanskar/internal/store"
+	"github.com/albatroxxx/zanskar/internal/tlscert"
 	"github.com/albatroxxx/zanskar/internal/version"
 	"github.com/albatroxxx/zanskar/web"
 )
@@ -44,6 +46,10 @@ type Deps struct {
 	AuthMiddleware *auth.Middleware
 	Auth           *auth.Handler
 	Handlers       []Registrar
+	// TLS hands the listener its certificate per handshake (ADR 0021), so
+	// an upload in the console applies without a restart. Nil in proxy
+	// mode, or when the file certificate is served the old way.
+	TLS *tlscert.Manager
 }
 
 // New builds a Server with the system routes and the given handlers registered.
@@ -79,6 +85,9 @@ func New(cfg *config.Config, db *store.DB, log *slog.Logger, deps Deps) *Server 
 		IdleTimeout:       120 * time.Second,
 		MaxHeaderBytes:    64 << 10,
 	}
+	if cfg.ServesTLS() && deps.TLS != nil {
+		s.http.TLSConfig = &tls.Config{GetCertificate: deps.TLS.GetCertificate, MinVersion: tls.VersionTLS12}
+	}
 	return s
 }
 
@@ -87,10 +96,14 @@ func (s *Server) ListenAndServe(ctx context.Context) error {
 	errCh := make(chan error, 1)
 	go func() {
 		var err error
-		if s.cfg.TLSCert != "" {
+		switch {
+		case s.cfg.ServesTLS() && s.http.TLSConfig != nil:
+			s.log.Info("listening", "addr", s.cfg.ListenAddr, "tls", true, "tls_mode", s.cfg.TLSMode)
+			err = s.http.ListenAndServeTLS("", "")
+		case s.cfg.ServesTLS():
 			s.log.Info("listening", "addr", s.cfg.ListenAddr, "tls", true)
 			err = s.http.ListenAndServeTLS(s.cfg.TLSCert, s.cfg.TLSKey)
-		} else {
+		default:
 			s.log.Warn("listening without TLS; acceptable only behind a TLS-terminating proxy on loopback or a private container network", "addr", s.cfg.ListenAddr)
 			err = s.http.ListenAndServe()
 		}
@@ -205,7 +218,7 @@ func (s *Server) securityHeaders(next http.Handler) http.Handler {
 		} else {
 			h.Set("Content-Security-Policy", uiCSP)
 		}
-		if s.cfg.TLSCert != "" {
+		if s.cfg.ServesTLS() {
 			h.Set("Strict-Transport-Security", "max-age=63072000; includeSubDomains")
 		}
 		next.ServeHTTP(w, r)

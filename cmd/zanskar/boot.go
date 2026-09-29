@@ -90,7 +90,9 @@ func bootSettings(cfg *config.Config, keyVersion int) []settings.Boot {
 	return []settings.Boot{
 		{Key: "listen_addr", Title: "Listen address", EnvVar: "ZANSKAR_LISTEN_ADDR", Value: cfg.ListenAddr, Description: "Where the gateway accepts connections."},
 		{Key: "admin_listen_addr", Title: "Admin listen address", EnvVar: "ZANSKAR_ADMIN_LISTEN_ADDR", Value: set(cfg.AdminListenAddr), Description: "Separate listener for admin routes; empty shares the main one."},
-		{Key: "tls", Title: "TLS", EnvVar: "ZANSKAR_TLS_CERT, ZANSKAR_TLS_KEY", Value: map[bool]string{true: "own certificate: " + cfg.TLSCert, false: "terminated by a proxy (plain HTTP on loopback)"}[cfg.TLSCert != ""], Description: "Serve TLS directly or trust a proxy in front."},
+		{Key: "tls", Title: "TLS", EnvVar: "ZANSKAR_TLS_MODE, ZANSKAR_TLS_CERT, ZANSKAR_TLS_KEY", Value: map[string]string{
+			config.TLSFile: "own certificate file: " + cfg.TLSCert, config.TLSManaged: "managed in the console (Settings, TLS certificate)", config.TLSProxy: "terminated by a proxy (plain HTTP on loopback)",
+		}[cfg.TLSMode], Description: "Serve TLS with a managed or a file certificate, or trust a proxy in front."},
 		{Key: "trust_proxy_tls", Title: "Trust proxy TLS", EnvVar: "ZANSKAR_TRUST_PROXY_TLS", Value: yesno(cfg.TrustProxyTLS), Description: "Cookies are marked Secure because TLS terminates in front."},
 		{Key: "trusted_proxies", Title: "Trusted proxies", EnvVar: "ZANSKAR_TRUSTED_PROXIES", Value: strings.Join(proxies, ", "), Description: "Networks whose X-Forwarded-For is believed."},
 		{Key: "allow_plain_http", Title: "Allow plain HTTP", EnvVar: "ZANSKAR_ALLOW_PLAIN_HTTP", Value: yesno(cfg.AllowPlainHTTP), Description: "Development only."},
