@@ -6,6 +6,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/albatroxxx/zanskar/internal/gateway/mysqlrelay"
 )
 
 func TestClientImage(t *testing.T) {
@@ -56,9 +58,60 @@ func TestProxyArgsHoldsCredential(t *testing.T) {
 			t.Errorf("proxy missing %q", want)
 		}
 	}
-	// mysql has no sidecar yet.
+	// mysql without a proxy image configured cannot start a sidecar.
 	if _, _, err := proxyArgs(Spec{Engine: "mysql", Host: "h", Port: 3306, Username: "u"}, "n", "p"); err == nil {
-		t.Fatal("expected no-proxy error for mysql")
+		t.Fatal("expected no-proxy error for mysql without an image")
+	}
+}
+
+// TestMySQLProxyArgsHoldsCredential: the MySQL sidecar is the gateway's own
+// image running dbproxy; its configuration rides one environment variable
+// passed by name, so neither the credential nor the upstream host is in argv.
+func TestMySQLProxyArgsHoldsCredential(t *testing.T) {
+	for _, engine := range []string{"mysql", "mariadb"} {
+		s := Spec{Engine: engine, Host: "db.internal", Port: 3306, Database: "app", Username: "svc", Password: "s3cret", SessionID: "sess1", ProxyImage: "ghcr.io/albatroxxx/zanskar:1.2.3"}
+		args, env, err := proxyArgs(s, "zanskar-net-sess1", "zanskar-dbproxy-sess1")
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, a := range args {
+			if strings.Contains(a, "s3cret") || strings.Contains(a, "db.internal") {
+				t.Fatalf("%s: secret or host in proxy argv: %q", engine, a)
+			}
+		}
+		for _, want := range []string{"ZANSKAR_DBPROXY", "ghcr.io/albatroxxx/zanskar:1.2.3", "dbproxy", "no-new-privileges", "--read-only"} {
+			if !slices.Contains(args, want) {
+				t.Errorf("%s: proxy argv missing %q: %v", engine, want, args)
+			}
+		}
+		if len(env) != 1 || !strings.HasPrefix(env[0], "ZANSKAR_DBPROXY={") {
+			t.Fatalf("%s: env %v", engine, env)
+		}
+		cfg, err := mysqlrelay.Parse([]byte(strings.TrimPrefix(env[0], "ZANSKAR_DBPROXY=")))
+		if err != nil || cfg.Upstream.Addr != "db.internal:3306" || cfg.Upstream.Password != "s3cret" || cfg.User != "svc" || cfg.Upstream.Database != "app" || cfg.Listen != ":3306" {
+			t.Fatalf("%s: sidecar config %+v %v", engine, cfg, err)
+		}
+	}
+}
+
+// TestMySQLClientArgs: the client container gets the CLI for its engine,
+// pointed at the sidecar with no password flag and no upstream host.
+func TestMySQLClientArgs(t *testing.T) {
+	for engine, want := range map[string]string{"mysql": "mysql:8 mysql --protocol=TCP -h zanskar-dbproxy-sess1 -P 3306 -u svc app", "mariadb": "mariadb:11 mariadb --protocol=TCP -h zanskar-dbproxy-sess1 -P 3306 -u svc app"} {
+		s := Spec{Engine: engine, Host: "db.internal", Port: 3306, Database: "app", Username: "svc", Password: "s3cret", SessionID: "sess1"}
+		args, err := clientArgs(s, "zanskar-net-sess1", "zanskar-dbcli-sess1", "zanskar-dbproxy-sess1")
+		if err != nil {
+			t.Fatal(err)
+		}
+		j := strings.Join(args, " ")
+		if !strings.HasSuffix(j, want) || strings.Contains(j, "s3cret") || strings.Contains(j, "db.internal") {
+			t.Errorf("%s: client argv %s", engine, j)
+		}
+		for _, a := range args {
+			if a == "-p" || strings.HasPrefix(a, "--password") {
+				t.Errorf("%s: the client must not be given a password flag: %s", engine, j)
+			}
+		}
 	}
 }
 

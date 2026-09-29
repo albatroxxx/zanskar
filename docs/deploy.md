@@ -322,6 +322,36 @@ again, and the card says so. The gateway refuses to start when a stored storage
 configuration cannot be built or its secret unsealed (recordings must not quietly go
 elsewhere); the way out is `DELETE FROM recording_storage;` in the database, then start.
 
+## Database access
+
+Database targets (PostgreSQL, MySQL, MariaDB, including RDS) are reached through an
+ephemeral per-session client container beside a credential-holding sidecar on a private
+per-session network (ADR 0017): pgbouncer for PostgreSQL, the gateway's own image running
+`zanskar dbproxy` for MySQL and MariaDB. The container the user types into never holds the
+password.
+
+- **The gateway host needs Docker or Podman**, and the `zanskar` service user must be able
+  to use it. The packaged unit does not grant this by itself (the Docker socket is
+  root-equivalent, and the unit must keep starting on hosts without Docker). On a host that
+  serves database targets, add a drop-in and restart:
+
+  ```sh
+  sudo systemctl edit zanskar   # opens an override file; add:
+  [Service]
+  SupplementaryGroups=docker
+  ```
+
+  For Podman, point `ZANSKAR_DOCKER_PATH` at the `podman` binary.
+- **Images pulled on first use:** `postgres:<version>-alpine` and `edoburu/pgbouncer` for
+  PostgreSQL; `mysql:<version>` or `mariadb:<version>` and `ghcr.io/albatroxxx/zanskar:<your
+  version>` for MySQL and MariaDB. Pull them ahead of time on an air-gapped host; the relay
+  image can be pointed at a mirror with `ZANSKAR_DBPROXY_IMAGE` or the console's Settings
+  page.
+- **TLS to the database** is negotiated when the server offers it and not verified yet
+  (pgbouncer `server_tls_sslmode=prefer`; the MySQL relay behaves the same). Certificate
+  verification arrives with the target's TLS settings.
+- Not available inside the Compose stack; use the package install for database targets.
+
 ## Changing boot settings and restarting
 
 Listen address, TLS files, database, master key, recordings storage and the other

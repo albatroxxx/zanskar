@@ -76,6 +76,8 @@ func main() {
 		err = runKeygen()
 	case "key":
 		err = runKey(os.Args[2:])
+	case "dbproxy":
+		err = runDBProxy()
 	case "version":
 		fmt.Println(version.Version)
 	case "admin":
@@ -95,7 +97,7 @@ func main() {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: zanskar <init|serve|migrate|backup|restore|keygen|key status|key rotate|key rotate-master|admin create|admin reset-mfa|audit verify|audit reseal|version>")
+	fmt.Fprintln(os.Stderr, "usage: zanskar <init|serve|migrate|backup|restore|keygen|key status|key rotate|key rotate-master|admin create|admin reset-mfa|audit verify|audit reseal|dbproxy|version>")
 }
 
 func newLogger(cfg *config.Config) *slog.Logger {
@@ -280,7 +282,8 @@ func runServe() error {
 			&tlscert.Handler{Manager: tlsMgr, Mode: cfg.TLSMode, Audit: auditLog, Log: log},
 			&connect.Handler{Targets: targets, Policies: policies, Access: accessReqs, Vault: vault, Sessions: sessionRepo, Tickets: ticket.NewStore(),
 				Registry: registry, Storage: storage, Audit: auditLog, Log: log, MFAEnrolled: totp.Enrolled, GuacdAddr: guacdAddr, Draining: restarter.Draining,
-				DockerPath: cfg.DockerPath, Prober: &target.Prober{}, ASGs: asgRepo, Cloud: cloudProviders},
+				DockerPath: cfg.DockerPath, DBProxyImage: func() string { return runtime.String(settings.KeyDBProxyImage) },
+				Prober: &target.Prober{}, ASGs: asgRepo, Cloud: cloudProviders},
 			&connect.ShadowHandler{Registry: registry, Audit: auditLog, Log: log, GuacdAddr: guacdAddr},
 		},
 	}

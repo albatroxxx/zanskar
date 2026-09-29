@@ -56,9 +56,15 @@ func (h *Handler) database(w http.ResponseWriter, r *http.Request) {
 		defer opened.Close()
 		spec.Username, spec.Password = opened.Username, opened.Password
 	}
-	// Default the database name to the login role, the common convention, when
-	// the target does not pin one.
-	spec.Database = spec.Username
+	// PostgreSQL needs a database to connect to and, by convention, one named
+	// after the role exists; MySQL and MariaDB open a session with no schema
+	// selected and the user picks one with USE.
+	if spec.Engine == "postgres" {
+		spec.Database = spec.Username
+	}
+	if h.DBProxyImage != nil {
+		spec.ProxyImage = h.DBProxyImage()
+	}
 
 	ws, err := websocket.Accept(w, r, &websocket.AcceptOptions{CompressionMode: websocket.CompressionDisabled})
 	if err != nil {

@@ -3203,9 +3203,10 @@ components:
           type: string
           description: >
             Set to make this a database target (ADR 0017), one of postgres, mysql, mariadb.
-            os_family then defaults to "other" and host-oriented fields do not apply. Only
-            postgres can be enrolled in this release; mysql and mariadb answer
-            `422 engine_unavailable` until their credential-holding proxy sidecar ships.
+            os_family then defaults to "other" and host-oriented fields do not apply. Each
+            session runs a client container beside a credential-holding sidecar (pgbouncer
+            for postgres, the gateway's own relay for mysql and mariadb); the client never
+            receives the password.
         engine_version:
           type: string
           description: Optional database engine version.

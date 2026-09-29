@@ -243,26 +243,21 @@ func TestDeleteRefusedWhileInUse(t *testing.T) {
 	}
 }
 
-// TestUnservableEngineRefused pins the rule that the gateway never advertises
-// an engine it cannot serve: MySQL and MariaDB targets are refused at
-// enrolment (and on update) with 422 engine_unavailable until their proxy
-// sidecar ships, while PostgreSQL enrols normally.
-func TestUnservableEngineRefused(t *testing.T) {
+// TestDatabaseEnginesEnrol pins the rule that the gateway advertises exactly
+// the engines it can serve: PostgreSQL, MySQL and MariaDB enrol (in any
+// case), an unknown engine is refused by validation.
+func TestDatabaseEnginesEnrol(t *testing.T) {
 	e := newEnv(t)
 	body := func(engine string) map[string]any {
-		return map[string]any{"name": "db-" + engine, "address": "10.0.1.10", "os_family": "other", "engine": engine, "engine_version": "16"}
+		return map[string]any{"name": "db-" + engine, "address": "10.0.1.10", "os_family": "other", "engine": engine, "engine_version": "8"}
 	}
-	for _, engine := range []string{"mysql", "mariadb", "MariaDB"} {
-		if code, out := e.do("POST", "/api/v1/targets", body(engine), e.admin); code != 422 || out["code"] != "engine_unavailable" {
-			t.Fatalf("%s: got %d %v, want 422 engine_unavailable", engine, code, out)
+	for _, engine := range []string{"postgres", "mysql", "mariadb", "MariaDB"} {
+		code, out := e.do("POST", "/api/v1/targets", body(engine), e.admin)
+		if code != 201 || out["engine"] != strings.ToLower(engine) {
+			t.Fatalf("%s: got %d %v, want 201", engine, code, out)
 		}
 	}
-	code, out := e.do("POST", "/api/v1/targets", body("postgres"), e.admin)
-	if code != 201 {
-		t.Fatalf("postgres: got %d %v", code, out)
-	}
-	id := out["id"].(string)
-	if code, out = e.do("PUT", "/api/v1/targets/"+id, body("mysql"), e.admin); code != 422 || out["code"] != "engine_unavailable" {
-		t.Fatalf("update to mysql: got %d %v, want 422", code, out)
+	if code, out := e.do("POST", "/api/v1/targets", body("oracle"), e.admin); code != 400 {
+		t.Fatalf("oracle: got %d %v, want 400", code, out)
 	}
 }

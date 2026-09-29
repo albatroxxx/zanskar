@@ -193,12 +193,12 @@ function TargetForm({ initial, onClose, onSaved }: { initial?: Target; onClose: 
               <option value="other">Other</option>
             </select>
           </Field>
-          <Field label="Database engine" hint="Set only for a PaaS database target (ADR 0017). MySQL and MariaDB arrive with their proxy sidecar in a later release.">
+          <Field label="Database engine" hint="Set only for a PaaS database target (ADR 0017). Each session runs a client container beside a credential-holding sidecar; the user never sees the password.">
             <select id="t-engine" value={f.engine} onChange={set('engine')}>
               <option value="">— not a database —</option>
               <option value="postgres">PostgreSQL</option>
-              <option value="mysql" disabled>MySQL (later release)</option>
-              <option value="mariadb" disabled>MariaDB (later release)</option>
+              <option value="mysql">MySQL</option>
+              <option value="mariadb">MariaDB</option>
             </select>
           </Field>
         </div>

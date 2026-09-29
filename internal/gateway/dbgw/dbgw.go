@@ -15,6 +15,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"net"
 	"os"
 	"os/exec"
 	"strconv"
@@ -26,12 +27,13 @@ import (
 	"github.com/creack/pty"
 
 	"github.com/albatroxxx/zanskar/internal/gateway"
+	"github.com/albatroxxx/zanskar/internal/gateway/mysqlrelay"
 	"github.com/albatroxxx/zanskar/internal/recording"
 )
 
 // Spec describes the upstream database connection for a session.
 type Spec struct {
-	Engine    string // postgres (mysql/mariadb: follow-up)
+	Engine    string // postgres | mysql | mariadb
 	Version   string // optional; selects the client image tag
 	Host      string // upstream database host
 	Port      int
@@ -39,6 +41,10 @@ type Spec struct {
 	Username  string
 	Password  string // upstream credential; goes to the sidecar only, never the client
 	SessionID string
+	// ProxyImage is the sidecar image for mysql and mariadb: the gateway's
+	// own release image, which runs `zanskar dbproxy` (ADR 0017). Set from
+	// the database.proxy_image runtime setting.
+	ProxyImage string
 }
 
 // ClientImage returns the image carrying the version-matched client CLI.
@@ -64,22 +70,35 @@ func ClientImage(engine, version string) string {
 	}
 }
 
-// proxyImage returns the credential-holding proxy sidecar image for the engine.
-func proxyImage(engine string) string {
-	switch engine {
+// proxyImage returns the credential-holding proxy sidecar image for the
+// session: pgbouncer for PostgreSQL; for MySQL and MariaDB the gateway's
+// own image, whose `dbproxy` command is a protocol relay that signs in
+// upstream with the vaulted credential and accepts the client with none
+// (ProxySQL cannot: it holds one password per user for both hops).
+func proxyImage(s Spec) string {
+	switch s.Engine {
 	case "postgres":
 		return "edoburu/pgbouncer:v1.23.1-p3"
+	case "mysql", "mariadb":
+		return s.ProxyImage
 	default:
-		return "" // mysql/mariadb (ProxySQL) is a follow-up
+		return ""
 	}
+}
+
+// proxyPort is where the sidecar listens for the client: pgbouncer on its
+// usual port, the MySQL relay on the engine's own so the CLI's defaults hold.
+func proxyPort(engine string) int {
+	if engine == "postgres" {
+		return 6432
+	}
+	return 3306
 }
 
 // names returns the per-session Docker object names.
 func names(sessionID string) (network, proxy, client string) {
 	return "zanskar-net-" + sessionID, "zanskar-dbproxy-" + sessionID, "zanskar-dbcli-" + sessionID
 }
-
-const proxyPort = 6432 // port pgbouncer is configured to listen on
 
 // proxyScript materialises the pgbouncer config from the sidecar's own
 // environment and execs pgbouncer. Writing the config in-container keeps the
@@ -100,12 +119,15 @@ func connQuote(s string) string {
 // argument vector. The credential lands only in the sidecar's environment
 // (isolated, ephemeral, not reachable by the user's client container).
 func proxyArgs(s Spec, network, name string) (args []string, env []string, err error) {
-	img := proxyImage(s.Engine)
+	img := proxyImage(s)
 	if img == "" {
 		return nil, nil, fmt.Errorf("dbgw: no proxy sidecar for engine %q", s.Engine)
 	}
 	if s.Host == "" || s.Port <= 0 || s.Username == "" {
 		return nil, nil, fmt.Errorf("dbgw: host, port and username are required")
+	}
+	if s.Engine != "postgres" {
+		return mysqlProxyArgs(s, img, network, name)
 	}
 	// pgbouncer authenticates to the upstream — commonly scram-sha-256, as on
 	// RDS — with the plaintext password, and accepts the credential-less client
@@ -120,7 +142,7 @@ func proxyArgs(s Spec, network, name string) (args []string, env []string, err e
 		" password=" + connQuote(s.Password) + "\n" +
 		"[pgbouncer]\n" +
 		"listen_addr=0.0.0.0\n" +
-		"listen_port=" + strconv.Itoa(proxyPort) + "\n" +
+		"listen_port=" + strconv.Itoa(proxyPort(s.Engine)) + "\n" +
 		"auth_type=trust\n" +
 		"auth_file=/etc/pgbouncer/userlist.txt\n" +
 		"pool_mode=session\n" +
@@ -146,6 +168,33 @@ func proxyArgs(s Spec, network, name string) (args []string, env []string, err e
 	return args, env, nil
 }
 
+// mysqlProxyArgs starts the gateway's own image as the relay. Its whole
+// configuration, credential included, is one JSON document passed by name in
+// the environment (the image is distroless: no shell, no file to write), so
+// the host argument vector shows only the variable's name.
+func mysqlProxyArgs(s Spec, img, network, name string) (args []string, env []string, err error) {
+	cfg := mysqlrelay.Config{
+		Listen: ":" + strconv.Itoa(proxyPort(s.Engine)),
+		User:   s.Username,
+		Upstream: mysqlrelay.Upstream{
+			Addr: net.JoinHostPort(s.Host, strconv.Itoa(s.Port)), User: s.Username, Password: s.Password,
+			Database: s.Database, TLS: mysqlrelay.TLSPrefer,
+		},
+	}
+	raw, err := json.Marshal(cfg)
+	if err != nil {
+		return nil, nil, err
+	}
+	args = []string{
+		"run", "-d", "--rm", "--name", name, "--network", network,
+		"--security-opt", "no-new-privileges", "--cap-drop", "ALL", "--read-only",
+		"--pids-limit", "64", "--memory", "128m",
+		"-e", "ZANSKAR_DBPROXY",
+		img, "dbproxy",
+	}
+	return args, []string{"ZANSKAR_DBPROXY=" + string(raw)}, nil
+}
+
 // clientArgs builds the interactive `docker run` for the client, pointed at the
 // sidecar with no credential. Run under a pty and bridged to the browser.
 func clientArgs(s Spec, network, name, proxyHost string) ([]string, error) {
@@ -159,11 +208,24 @@ func clientArgs(s Spec, network, name, proxyHost string) ([]string, error) {
 		"--pids-limit", "256", "--memory", "512m", "--cpus", "1",
 		img,
 	}
+	port := strconv.Itoa(proxyPort(s.Engine))
 	switch s.Engine {
 	case "postgres":
-		args = append(args, "psql", "-h", proxyHost, "-p", strconv.Itoa(proxyPort), "-U", s.Username, "-w")
+		args = append(args, "psql", "-h", proxyHost, "-p", port, "-U", s.Username, "-w")
 		if s.Database != "" {
 			args = append(args, "-d", s.Database)
+		}
+	case "mysql", "mariadb":
+		// No -p: the CLI then sends an empty password, which is what the
+		// relay's trust sign-in expects. The mariadb image ships the client
+		// under its own name; mysql's still answers to mysql.
+		bin := "mysql"
+		if s.Engine == "mariadb" {
+			bin = "mariadb"
+		}
+		args = append(args, bin, "--protocol=TCP", "-h", proxyHost, "-P", port, "-u", s.Username)
+		if s.Database != "" {
+			args = append(args, s.Database)
 		}
 	default:
 		return nil, fmt.Errorf("dbgw: unsupported engine %q", s.Engine)

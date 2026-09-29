@@ -24,6 +24,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/albatroxxx/zanskar/internal/store"
+	"github.com/albatroxxx/zanskar/internal/version"
 )
 
 // Type says how a value is edited and validated.
@@ -58,7 +59,21 @@ const (
 	KeyGuacdAddr = "desktop.guacd_addr"
 	// KeyLogLevel is the gateway's log level.
 	KeyLogLevel = "log.level"
+	// KeyDBProxyImage is the image run as the MySQL/MariaDB relay sidecar;
+	// by default the gateway's own release image at its own version.
+	KeyDBProxyImage = "database.proxy_image"
 )
+
+// DefaultDBProxyImage is the gateway's own image at the running version. A
+// development build has no published tag, so it points at latest and the
+// setting must be overridden to test the relay from a local build.
+func DefaultDBProxyImage() string {
+	v := strings.TrimPrefix(version.Version, "v")
+	if v == "" || v == "dev" {
+		v = "latest"
+	}
+	return "ghcr.io/albatroxxx/zanskar:" + v
+}
 
 // MaxLoginBanner bounds the banner: long enough for a legal notice, short
 // enough that the sign-in form stays on the page.
@@ -86,6 +101,8 @@ var Definitions = []Definition{
 		Description: "host:port of the guacd relay for RDP and VNC. Empty disables desktop sessions. Applies to the next session opened."},
 	{Key: KeyLogLevel, Category: "Logging", Title: "Log level", Type: TypeEnum, Default: "info", EnvVar: "ZANSKAR_LOG_LEVEL", Enum: []string{"debug", "info", "warn", "error"},
 		Description: "Verbosity of the gateway's log. Applies at once; go back to info afterwards."},
+	{Key: KeyDBProxyImage, Category: "Databases", Title: "MySQL relay image", Type: TypeString, Default: DefaultDBProxyImage(), EnvVar: "ZANSKAR_DBPROXY_IMAGE",
+		Description: "Container image started beside each MySQL or MariaDB session to hold the credential and relay the protocol: the gateway's own image, running zanskar dbproxy. Change it only to pin a mirror or test a local build. Applies to the next session."},
 }
 
 // Lookup returns the definition for key.
