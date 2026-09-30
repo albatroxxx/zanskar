@@ -38,7 +38,12 @@ Release engineering completed:
 - [x] PIM — just-in-time, approved, time-bounded access (ADR 0018): `require_approval` eligibility, request/approve/deny/revoke lifecycle, connect gate on an active grant, expiry sweeper, lifecycle audit, request + approvals UI (#31, #34, #35, #36); OpenAPI documented (#30); live-verified end-to-end against RDS.
 - [x] Tag v1.0.0 — cut 2026-09-25 after two release candidates: rc.1 caught a cosign v3 signing break before anything was published; rc.2 passed pipeline verification and a clean-machine install test of both documented paths (deb + `zanskar init`, Compose pulling the signed ghcr image). Artifacts: deb/rpm/tar.gz for amd64 and arm64, SHA256SUMS with a Sigstore bundle, multi-arch image `ghcr.io/albatroxxx/zanskar:1.0.0` (also `latest`), all keyless-signed.
 
-## v1.2 release — staging (v1.2.0-rc.1 cut 2026-09-29)
+## v1.2 release — shipped (v1.2.0 tagged 2026-09-30)
+
+Cut after two release candidates: rc.1 (2026-09-29) was retired because policy saves from the
+console were broken and Windows autoscaling groups could not serve sessions; rc.2 (2026-09-30)
+passed a manual install test on a clean Ubuntu 24.04 instance, whose findings (cosign install
+step, audit labels, admin Events and Recordings, the logo link) landed before the tag.
 
 Everything the 1.0 manual QA round asked for, plus the three product decisions that closed it:
 
@@ -58,6 +63,10 @@ Everything the 1.0 manual QA round asked for, plus the three product decisions t
   notices, recording and transcript download, targets retired not erased (ADR 0019).
 - `zanskar key status | rotate | rotate-master`, Go fuzz targets, local git hooks, the product
   site.
+
+Next, decided 2026-09-30: a **restricted admin CLI** in the console, FortiGate style. It runs
+allow-listed `zanskar` operations inside the service, with no system shell behind it, and
+audits every command; it ships with a reference of every command. An ADR comes first.
 
 Deferred by decision: a multi-pane workspace (browser tabs suffice), rotation of static SSH
 keys and of Windows or database passwords (the certificate authority and the owning systems
