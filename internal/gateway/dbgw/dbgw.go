@@ -113,13 +113,15 @@ const proxyScript = `umask 077; printf %s "$PGB_INI" > /etc/pgbouncer/pgbouncer.
 
 // sslMode maps the target's TLS mode onto pgbouncer's server_tls_sslmode.
 // verify-full always comes with a CA bundle (the target refuses it without
-// one), which pgbouncer validates against and nothing else.
+// one), which pgbouncer validates against and nothing else. A mode that is
+// missing or unknown fails closed to verify-full (ADR 0025): every stored
+// database target names its mode, so this only guards against a gap.
 func sslMode(mode string) string {
 	switch mode {
-	case "disable", "require", "verify-full":
+	case "disable", "prefer", "require", "verify-full":
 		return mode
 	default:
-		return "prefer"
+		return "verify-full"
 	}
 }
 
@@ -163,15 +165,15 @@ func proxyArgs(s Spec, network, name string) (args []string, env []string, err e
 		"auth_type=trust\n" +
 		"auth_file=/etc/pgbouncer/userlist.txt\n" +
 		"pool_mode=session\n" +
-		// The target's TLS mode. prefer (the default) uses TLS when the
-		// server offers it (RDS forces SSL) and falls back to plain for a
-		// server without it, verifying nothing; verify-full checks the
-		// chain and the host name against tls_ca or the image's roots.
+		// The target's TLS mode. verify-full (the default) checks the chain
+		// and the host name against tls_ca; prefer uses TLS when the server
+		// offers it and falls back to plain, verifying nothing; require
+		// insists on TLS, still verifying nothing.
 		"server_tls_sslmode=" + sslMode(s.TLSMode) + "\n" +
 		"ignore_startup_parameters=extra_float_digits\n" +
 		"max_client_conn=50\n" +
 		"admin_users=" + s.Username + "\n"
-	if s.TLSMode == "verify-full" {
+	if sslMode(s.TLSMode) == "verify-full" {
 		ini += "server_tls_ca_file=/etc/pgbouncer/ca.pem\n"
 	}
 	// Trust ignores the client password, but the connecting user must be listed.

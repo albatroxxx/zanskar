@@ -14,11 +14,13 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/albatroxxx/zanskar/internal/store"
 )
 
 func TestDatabaseTargetValidate(t *testing.T) {
 	// A valid engine defaults os_family to "other" and the port to the engine's.
-	pg := &Target{Name: "pg", Address: "db.example.com", Engine: "postgres"}
+	pg := &Target{Name: "pg", Address: "db.example.com", Engine: "postgres", TLSMode: TLSRequire}
 	if err := pg.Validate(); err != nil {
 		t.Fatalf("valid postgres target: %v", err)
 	}
@@ -33,7 +35,7 @@ func TestDatabaseTargetValidate(t *testing.T) {
 	}
 
 	// Engine is trimmed and lower-cased.
-	my := &Target{Name: "my", Address: "db2", Engine: "  MySQL "}
+	my := &Target{Name: "my", Address: "db2", Engine: "  MySQL ", TLSMode: TLSRequire}
 	if err := my.Validate(); err != nil {
 		t.Fatalf("mysql: %v", err)
 	}
@@ -48,7 +50,7 @@ func TestDatabaseTargetValidate(t *testing.T) {
 	}
 
 	// An explicit port override wins over the engine default.
-	over := &Target{Name: "over", Address: "db4", Engine: "postgres", Ports: map[Protocol]int{Database: 6432}}
+	over := &Target{Name: "over", Address: "db4", Engine: "postgres", Ports: map[Protocol]int{Database: 6432}, TLSMode: TLSRequire}
 	if err := over.Validate(); err != nil {
 		t.Fatal(err)
 	}
@@ -68,7 +70,7 @@ func TestDatabaseTargetValidate(t *testing.T) {
 
 func TestDatabaseTargetRoundTrip(t *testing.T) {
 	r := NewRepo(testDB(t))
-	dbt := &Target{Name: "pgtest", Address: "pg.internal", Engine: "postgres", EngineVersion: "16"}
+	dbt := &Target{Name: "pgtest", Address: "pg.internal", Engine: "postgres", EngineVersion: "16", TLSMode: TLSRequire}
 	if err := r.Create(context.Background(), dbt); err != nil {
 		t.Fatalf("create: %v", err)
 	}
@@ -137,11 +139,16 @@ func TestDatabaseTargetSettings(t *testing.T) {
 	if err != nil || got.DatabaseName != "orders" || got.TLSMode != TLSVerifyFull || got.TLSCA != strings.TrimSpace(testCAPEM) {
 		t.Fatalf("round trip: %+v %v", got, err)
 	}
-	if err := (&Target{Name: "d", Address: "db", Engine: "postgres"}).Validate(); err != nil {
-		t.Fatal(err)
+	// Verified by default (ADR 0025): no mode means verify-full, which needs
+	// the CA bundle; with one it is accepted, and prefer stays available.
+	if err := (&Target{Name: "d", Address: "db", Engine: "postgres"}).Validate(); err == nil || !strings.Contains(err.Error(), "verify-full (the default) needs tls_ca") {
+		t.Fatalf("a target without a mode or CA must be refused with the reason, got %v", err)
 	}
-	if d := (&Target{Name: "d", Address: "db", Engine: "postgres"}); d.Validate() == nil && d.TLSMode != TLSPrefer {
+	if d := (&Target{Name: "d", Address: "db", Engine: "postgres", TLSCA: testCAPEM}); d.Validate() != nil || d.TLSMode != TLSVerifyFull {
 		t.Fatalf("default tls mode: %q", d.TLSMode)
+	}
+	if d := (&Target{Name: "d", Address: "db", Engine: "postgres", TLSMode: "prefer"}); d.Validate() != nil || d.TLSMode != TLSPrefer {
+		t.Fatalf("an explicit prefer must be kept: %q", d.TLSMode)
 	}
 	for _, bad := range []Target{
 		{Name: "d", Address: "db", Engine: "postgres", TLSMode: "maybe"},
@@ -166,3 +173,44 @@ var testCAPEM = func() string {
 	der, _ := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
 	return string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}))
 }()
+
+// TestMigrationPinsLegacyTLSMode: database targets stored before the
+// verified default (ADR 0025) with no mode get prefer written into them, so
+// upgrading changes nothing about how they connect; an explicit mode and a
+// host target are left alone.
+func TestMigrationPinsLegacyTLSMode(t *testing.T) {
+	ctx := context.Background()
+	db := testDB(t)
+	r := NewRepo(db)
+	mk := func(tgt *Target) string {
+		t.Helper()
+		if err := r.Create(ctx, tgt); err != nil {
+			t.Fatal(err)
+		}
+		return tgt.ID
+	}
+	legacyNull := mk(&Target{Name: "legacy-null", Address: "db1", Engine: "postgres", TLSMode: TLSRequire})
+	legacyEmpty := mk(&Target{Name: "legacy-empty", Address: "db2", Engine: "mysql", TLSMode: TLSRequire})
+	explicit := mk(&Target{Name: "explicit", Address: "db3", Engine: "postgres", TLSMode: TLSRequire})
+	host := mk(&Target{Name: "host", Address: "10.0.0.9", OSFamily: Linux})
+	// Make the first two look like rows written before modes were stored.
+	if _, err := db.ExecContext(ctx, db.Rebind(`UPDATE targets SET tls_mode = NULL WHERE id = ?`), legacyNull); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, db.Rebind(`UPDATE targets SET tls_mode = '' WHERE id = ?`), legacyEmpty); err != nil {
+		t.Fatal(err)
+	}
+	// Re-run 0025 as an upgrade would.
+	if _, err := db.ExecContext(ctx, `DELETE FROM schema_migrations WHERE version = '0025_database_tls_explicit'`); err != nil {
+		t.Fatal(err)
+	}
+	if ran, err := store.Migrate(ctx, db); err != nil || len(ran) != 1 {
+		t.Fatalf("migrate: %v %v", ran, err)
+	}
+	for id, want := range map[string]string{legacyNull: TLSPrefer, legacyEmpty: TLSPrefer, explicit: TLSRequire, host: ""} {
+		got, err := r.Get(ctx, id)
+		if err != nil || got.TLSMode != want {
+			t.Errorf("%s: tls_mode %q, want %q (%v)", got.Name, got.TLSMode, want, err)
+		}
+	}
+}

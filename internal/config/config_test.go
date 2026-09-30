@@ -4,6 +4,8 @@ package config
 
 import (
 	"encoding/base64"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -79,4 +81,72 @@ func TestTLSModeDerivation(t *testing.T) {
 			t.Fatalf("%v: mode %q serves=%v secure=%v", c.env, cfg.TLSMode, cfg.ServesTLS(), cfg.SecureCookies())
 		}
 	}
+}
+
+// writeKey writes a master key file with the given mode.
+func writeKey(t *testing.T, content string, mode os.FileMode) string {
+	t.Helper()
+	p := filepath.Join(t.TempDir(), "master.key")
+	if err := os.WriteFile(p, []byte(content), mode); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(p, mode); err != nil { // WriteFile's mode is filtered by the umask
+		t.Fatal(err)
+	}
+	return p
+}
+
+func TestLoadMasterKeyFile(t *testing.T) {
+	key := base64.StdEncoding.EncodeToString(bytes32())
+	t.Setenv("ZANSKAR_MASTER_KEY", "")
+	t.Setenv("ZANSKAR_MASTER_KEY_FILE", writeKey(t, key+"\n", 0o400))
+	c, err := Load(Options{RequireMasterKey: true})
+	if err != nil {
+		t.Fatalf("key file: %v", err)
+	}
+	if base64.StdEncoding.EncodeToString(c.MasterKey) != key || c.MasterKeyFile == "" {
+		t.Fatalf("key not loaded from the file: %+v", c.MasterKeyFile)
+	}
+}
+
+func TestLoadMasterKeyFileRefusals(t *testing.T) {
+	key := base64.StdEncoding.EncodeToString(bytes32())
+	cases := []struct {
+		name, env, content, want string
+		mode                     os.FileMode
+	}{
+		{"readable by group", "", key, "only its owner may read it", 0o440},
+		{"readable by others", "", key, "only its owner may read it", 0o404},
+		{"both set", key, key, "not both", 0o400},
+		{"empty", "", "\n", "is empty", 0o600},
+		{"short", "", base64.StdEncoding.EncodeToString(make([]byte, 16)), "32 bytes", 0o600},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("ZANSKAR_MASTER_KEY", tc.env)
+			t.Setenv("ZANSKAR_MASTER_KEY_FILE", writeKey(t, tc.content, tc.mode))
+			_, err := Load(Options{RequireMasterKey: true})
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("want an error containing %q, got %v", tc.want, err)
+			}
+			if strings.Contains(err.Error(), "is required") {
+				t.Fatalf("a named key file's own error must be the only one: %v", err)
+			}
+		})
+	}
+	t.Run("missing file", func(t *testing.T) {
+		t.Setenv("ZANSKAR_MASTER_KEY", "")
+		t.Setenv("ZANSKAR_MASTER_KEY_FILE", filepath.Join(t.TempDir(), "nope"))
+		if _, err := Load(Options{RequireMasterKey: true}); err == nil || !strings.Contains(err.Error(), "ZANSKAR_MASTER_KEY_FILE") {
+			t.Fatalf("want a key-file error, got %v", err)
+		}
+	})
+}
+
+func bytes32() []byte {
+	b := make([]byte, 32)
+	for i := range b {
+		b[i] = byte(i + 1)
+	}
+	return b
 }
