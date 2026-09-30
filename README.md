@@ -123,20 +123,10 @@ guacd sidecar for RDP/VNC. Two supported install paths, both from the
   pins it; it defaults to `latest`. The same image is the MySQL/MariaDB relay sidecar, so a
   gateway that serves database targets needs Docker or Podman.
 
-There is also a one-line path for a quick look, which needs only a Go toolchain:
-
-```sh
-go install github.com/albatroxxx/zanskar/cmd/zanskar@latest
-```
-
-That binary has **no web console** (the console is compiled in behind the `webui` build tag) and
-reports its version as `dev`, because `go install` sets no linker flags. Use it for the CLI, the
-API and trying things out; use a package or the container image for a real deployment.
-
 Checksums and the image are signed with Sigstore; the release notes carry the `cosign verify`
 commands. `cosign` is not in the Ubuntu, Debian or RHEL repositories, so install it from
 [its own release](https://github.com/sigstore/cosign/releases/latest) first (the
-[install page](https://albatroxxx.github.io/zanskar/docs/#install) has the commands). The Helm chart in `deploy/helm/zanskar` is a **preview**: it deploys, but multi-replica
+[install page](https://albatroxxx.github.io/zanskar/docs/#cosign) has the commands). The Helm chart in `deploy/helm/zanskar` is a **preview**: it deploys, but multi-replica
 HA (cross-pod terminate and shadowing) is Phase 4 work and not supported in 1.2. Topology,
 upgrades, backups, TLS, recording storage, database access, AWS enrolment, the certificate
 authority and the security checklist are in [docs/deploy.md](docs/deploy.md).
