@@ -75,13 +75,11 @@ func notAuthorized(err error) bool {
 	if err == nil {
 		return false
 	}
-	msg := err.Error()
-	if !strings.Contains(msg, "http 500") && !strings.Contains(msg, "http 403") {
-		return false
-	}
-	low := strings.ToLower(msg)
-	return strings.Contains(low, "access is denied") || strings.Contains(msg, `Code="5"`) ||
-		strings.Contains(low, "0x80070005") || strings.Contains(low, "authorization")
+	low := strings.ToLower(err.Error())
+	// The transport summarises the fault (see faultSummary), so the code and the
+	// message are both in the error by the time we see it.
+	return strings.Contains(low, "wsman fault 5:") || strings.Contains(low, "access is denied") ||
+		strings.Contains(low, "0x80070005") || strings.Contains(low, "authorization of the user failed")
 }
 
 // Shell runs one command line at a time against the target. It is an
