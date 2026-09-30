@@ -25,7 +25,7 @@
     <tr><td>TLS</td><td>Nothing to prepare: the gateway serves HTTPS with a self-signed certificate until you upload a real one on the Settings page (no restart). Or put a TLS-terminating proxy in front with <code>init -behind-proxy</code>. Zanskar never serves plain HTTP off loopback.</td><td>Handled by Caddy: self-signed for <code>localhost</code>, or Let's Encrypt when you set a public hostname.</td></tr>
     <tr><td>Desktops (optional)</td><td><code>guacd</code> 1.6+ reachable from the gateway. <strong>The package does not install it</strong>; the official container, started as shown in <a href="#guacd">Start guacd</a>, is the supported way. SSH, WinRM and database sessions do not need it.</td><td>Included in the stack.</td></tr>
     <tr><td>Databases (optional)</td><td>Docker or Podman on the gateway host: database sessions run in ephemeral containers. See <a href="../guide/#database">the guide</a>.</td><td>Not available inside the Compose stack in 1.0; use the package path for database targets.</td></tr>
-    <tr><td>Verification (recommended)</td><td colspan="2"><a href="https://docs.sigstore.dev/cosign/system_config/installation/">cosign</a> to verify the release signatures. <code>sha256sum</code> is on every Linux host already.</td></tr>
+    <tr><td>Verification (recommended)</td><td colspan="2"><a href="#install">cosign</a> to verify the release signatures. Not in the distribution repositories; step 1 installs it. <code>sha256sum</code> is on every Linux host already.</td></tr>
     </tbody></table>
 
     <h2 id="go-install">One line, for a look around</h2>
@@ -53,6 +53,17 @@ B=https://github.com/albatroxxx/zanskar/releases/download/v$V
 curl -LO $B/zanskar_${V}_linux_amd64.rpm
 curl -LO $B/SHA256SUMS
 curl -LO $B/SHA256SUMS.sigstore.json</code></pre></div></div></div>
+    <p><strong>Install cosign first.</strong> It is not in the Ubuntu, Debian or RHEL repositories, so a fresh host answers <code>cosign: command not found</code>. Take it from the Sigstore project's own release (it resolves the newest version the same way):</p>
+    <div class="tabs" data-tabs><div class="tab-list" role="tablist"><button type="button" role="tab" aria-selected="true" data-tab="deb">Debian / Ubuntu (.deb)</button><button type="button" role="tab" aria-selected="false" data-tab="rpm">RHEL / Fedora / SUSE (.rpm)</button></div>
+    <div data-panel="deb"><div class="code-block"><button type="button" class="copy" aria-label="Copy cosign install commands (deb)">Copy</button><pre><code>C=$(curl -fsSLI -o /dev/null -w '%{url_effective}' https://github.com/sigstore/cosign/releases/latest | sed 's#.*/v##')
+curl -LO https://github.com/sigstore/cosign/releases/download/v$C/cosign_${C}_amd64.deb
+sudo apt install ./cosign_${C}_amd64.deb
+cosign version</code></pre></div></div>
+    <div data-panel="rpm" hidden><div class="code-block"><button type="button" class="copy" aria-label="Copy cosign install commands (rpm)">Copy</button><pre><code>C=$(curl -fsSLI -o /dev/null -w '%{url_effective}' https://github.com/sigstore/cosign/releases/latest | sed 's#.*/v##')
+curl -LO https://github.com/sigstore/cosign/releases/download/v$C/cosign-${C}-1.x86_64.rpm
+sudo dnf install -y ./cosign-${C}-1.x86_64.rpm
+cosign version</code></pre></div></div></div>
+    <p>On arm64 the files are <code>cosign_${C}_arm64.deb</code> and <code>cosign-${C}-1.aarch64.rpm</code>. Other platforms: <a href="https://docs.sigstore.dev/cosign/system_config/installation/">Sigstore's installation page</a>.</p>
     <p>Verify integrity and origin. The signature is keyless Sigstore; the identity must be this repository's release workflow at this tag.</p>
     <div class="code-block"><button type="button" class="copy" aria-label="Copy verification commands">Copy</button><pre><code>sha256sum -c SHA256SUMS --ignore-missing
 cosign verify-blob --bundle SHA256SUMS.sigstore.json \

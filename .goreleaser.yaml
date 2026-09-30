@@ -200,7 +200,10 @@ release:
 
     **Container image** — `ghcr.io/albatroxxx/zanskar:{{ .Version }}` (linux/amd64, linux/arm64). Single-node stack with TLS: `deploy/docker-compose.yml` with `ZANSKAR_VERSION={{ .Version }}`.
 
-    **Verify** — checksums and the image are signed with Sigstore (keyless, GitHub Actions identity):
+    **Verify** — checksums and the image are signed with Sigstore (keyless, GitHub Actions identity).
+    `cosign` is not in the Ubuntu, Debian or RHEL repositories; install it from
+    [its own release](https://github.com/sigstore/cosign/releases/latest) (`cosign_<ver>_amd64.deb`,
+    `cosign-<ver>-1.x86_64.rpm`) or see [Sigstore's installation page](https://docs.sigstore.dev/cosign/system_config/installation/).
 
     ```sh
     sha256sum -c SHA256SUMS --ignore-missing

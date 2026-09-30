@@ -110,7 +110,8 @@ migrations before the gateway starts (`serve` refuses to run with migrations pen
 
 The stack pulls the published image `ghcr.io/albatroxxx/zanskar:${ZANSKAR_VERSION:-latest}`
 (linux/amd64 and linux/arm64, signed with Sigstore — verification commands are in each
-release's notes). `latest` only ever points at a stable release; to run a release candidate
+release's notes; `cosign` is not in the Ubuntu, Debian or RHEL repositories, so install it from
+[its own release](https://github.com/sigstore/cosign/releases/latest) first). `latest` only ever points at a stable release; to run a release candidate
 set `ZANSKAR_VERSION` explicitly in `deploy/.env`.
 
 ```sh
