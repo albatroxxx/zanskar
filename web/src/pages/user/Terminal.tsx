@@ -28,9 +28,9 @@ interface TerminalState {
 }
 
 const reasonText: Record<string, string> = {
-  user_exit: 'The session ended.',
-  idle_timeout: 'Disconnected after a period without input.',
-  max_duration: 'The session reached its maximum duration.',
+  user_exit: 'You closed the session, or the shell on the target exited.',
+  idle_timeout: 'Disconnected after a period without input, as the access policy requires.',
+  max_duration: 'The session reached the maximum duration the access policy allows.',
   admin_terminated: 'An administrator ended the session.',
   target_lost: 'The connection to the target was lost.',
   error: 'The session ended because of an error.',
@@ -54,6 +54,7 @@ function TerminalSession({ state }: { state: TerminalState }) {
   const [elapsed, setElapsed] = useState(0)
   const [idle, setIdle] = useState(0)
   const [ended, setEnded] = useState<{ reason: string; msg?: string } | null>(null)
+  const endedRef = useRef(false)
   const [status, setStatus] = useState<'connecting' | 'live'>('connecting')
   const [filesAllowed, setFilesAllowed] = useState(false)
   const [panelOpen, setPanelOpen] = useState(false)
@@ -115,6 +116,13 @@ function TerminalSession({ state }: { state: TerminalState }) {
     term.focus()
 
     const tick = setInterval(() => {
+      // Freeze the counters once the session has ended: they are a live
+      // reading, and a running clock on a dead session is a lie (manual QA
+      // finding 4). endedRef, not the ended state, so the effect does not
+      // rebuild the terminal.
+      if (endedRef.current) {
+        return
+      }
       setElapsed(Math.floor((Date.now() - start) / 1000))
       setIdle(Math.floor((Date.now() - lastInput) / 1000))
     }, 1000)
@@ -145,6 +153,7 @@ function TerminalSession({ state }: { state: TerminalState }) {
       } satisfies TerminalState,
     })
   }
+  useEffect(() => { endedRef.current = !!ended }, [ended])
   const failover = ended?.reason === 'target_lost' && !!state.asg_id && !!sessionId
   // Drop out of full screen when the session ends so the dialog and the return
   // to the target list happen in the normal page.
@@ -157,17 +166,21 @@ function TerminalSession({ state }: { state: TerminalState }) {
         {state.instance_label && <span className="stat mono">{state.instance_label}</span>}
         {state.switched_from && <span className="stat switched">switched from {state.switched_from}</span>}
         <span className="stat">{state.protocol.toUpperCase()}</span>
-        <span className="stat">{status === 'connecting' ? 'connecting…' : 'elapsed ' + fmtSeconds(elapsed)}</span>
-        <span className={'stat' + (idle > 600 ? ' warn' : '')}>idle {fmtSeconds(idle)}</span>
+        <span className="stat">{status === 'connecting' ? 'connecting…' : (ended ? 'ran for ' : 'elapsed ') + fmtSeconds(elapsed)}</span>
+        {!ended && <span className={'stat' + (idle > 600 ? ' warn' : '')}>idle {fmtSeconds(idle)}</span>}
         <span className="grow" />
-        <span className="stat rec" title="This session is being recorded"><i className="rec-dot" aria-hidden="true" />Recording</span>
+        {ended ? (
+          <span className="stat">Ended · recording saved</span>
+        ) : (
+          <span className="stat rec" title="This session is being recorded"><i className="rec-dot" aria-hidden="true" />Recording</span>
+        )}
         <FullscreenButton isFull={isFull} onClick={toggleFull} />
         {filesAllowed && (
           <button className="btn sm" onClick={() => setPanelOpen((o) => !o)} aria-pressed={panelOpen}>
             {panelOpen ? 'Hide files' : 'Files'}
           </button>
         )}
-        <button className="btn sm" onClick={() => wsRef.current?.close(1000, 'user_exit')}>Disconnect</button>
+        {!ended && <button className="btn sm" onClick={() => wsRef.current?.close(1000, 'user_exit')}>Disconnect</button>}
       </div>
       <div className="desk-body">
         <div className="term-host" ref={host} />
@@ -178,8 +191,11 @@ function TerminalSession({ state }: { state: TerminalState }) {
       )}
       {ended && !failover && (
         <Modal title="Session ended" onClose={() => nav('/')}>
-          <p>{reasonText[ended.reason] ?? ended.reason}</p>
+          <p>{reasonText[ended.reason] ?? `The session ended: ${ended.reason.replace(/_/g, ' ')}.`}</p>
           {ended.msg && <p className="muted">{ended.msg}</p>}
+          <p className="muted">
+            {state.target} · {state.protocol.toUpperCase()} · ran for {fmtSeconds(elapsed)}. The recording is kept for as long as the retention policy says.
+          </p>
           <div className="actions">
             <button className="btn primary" onClick={() => nav('/')}>Back to targets</button>
           </div>

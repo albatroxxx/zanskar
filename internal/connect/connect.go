@@ -329,8 +329,8 @@ func (h *Handler) issueTicket(ctx context.Context, p *auth.Principal, ip string,
 		}
 		return nil, "target_disabled", "target is disabled", nil
 	}
-	if ep.ASGID != "" && proto != target.SSH {
-		return nil, "protocol_unavailable", "autoscaling groups support ssh in this release", nil
+	if ep.ASGID != "" && proto == target.Database {
+		return nil, "protocol_unavailable", "database access is configured per endpoint, not per autoscaling group", nil
 	}
 	pols, err := h.Policies.ForUser(ctx, p.User.ID)
 	if err != nil {

@@ -1,0 +1,28 @@
+#!/bin/bash
+# Lab Linux member (Amazon Linux 2023): joins the AD domain with SSSD so AD
+# users can log in over SSH with their domain password (Zanskar user-supplied
+# credentials). Waits for the domain controller first.
+set -eux
+dnf install -y realmd sssd oddjob oddjob-mkhomedir adcli samba-common-tools krb5-workstation openldap-clients >/dev/null
+mkdir -p /etc/systemd/resolved.conf.d
+cat > /etc/systemd/resolved.conf.d/zanskar-lab.conf <<CONF
+[Resolve]
+DNS=${dc_ip}
+Domains=${domain}
+CONF
+systemctl restart systemd-resolved
+for i in $(seq 1 90); do (echo > /dev/tcp/${dc_ip}/389) 2>/dev/null && break; sleep 10; done
+for i in $(seq 1 30); do echo '${admin_password}' | realm join --user=Administrator '${domain}' && break; sleep 20; done
+cat > /etc/sssd/conf.d/zanskar-lab.conf <<CONF
+[sssd]
+[domain/${domain}]
+use_fully_qualified_names = False
+fallback_homedir = /home/%u
+CONF
+chmod 600 /etc/sssd/conf.d/zanskar-lab.conf
+systemctl restart sssd
+# AD users sign in with a password; Amazon Linux disables that by default.
+printf 'PasswordAuthentication yes\nKbdInteractiveAuthentication yes\n' > /etc/ssh/sshd_config.d/10-zanskar-lab.conf
+systemctl restart sshd
+id bob || true
+echo "lab join complete"

@@ -4167,6 +4167,14 @@ components:
           description: Derived. True when `lifecycle_state` is `InService`, `lb_health` is healthy or null, and `probe_health` is healthy.
         host_key_fingerprint:
           type: [string, "null"]
+        tls_fingerprint:
+          type: [string, "null"]
+          description: >-
+            SHA-256 of the RDP listener certificate this instance first presented (ADR 0024).
+            Pinned per instance; a later change marks the instance unhealthy instead of re-pinning.
+        winrm_tls_fingerprint:
+          type: [string, "null"]
+          description: SHA-256 of the WinRM HTTPS listener certificate this instance first presented.
         launched_at:
           oneOf:
             - $ref: "#/components/schemas/Timestamp"

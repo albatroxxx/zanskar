@@ -34,10 +34,10 @@ import (
 // mapped drive named "Zanskar", and the browser uploads to and downloads from
 // it through Guacamole object streams. The directory lives in guacd's tmpfs and
 // disappears with the session. VNC has no file transfer.
-func desktopParams(t *target.Target, proto target.Protocol, a *credential.Opened, userSecret []byte, username string, allowFiles bool, drivePath string) (guac.Params, error) {
+func desktopParams(t *endpoint, proto target.Protocol, a *credential.Opened, userSecret []byte, username string, allowFiles bool, drivePath string) (guac.Params, error) {
 	args := map[string]string{
 		"hostname": t.Address,
-		"port":     strconv.Itoa(t.Port(proto)),
+		"port":     strconv.Itoa(t.port(proto)),
 	}
 	password := ""
 	if a != nil {
@@ -54,7 +54,7 @@ func desktopParams(t *target.Target, proto target.Protocol, a *credential.Opened
 	}
 	switch proto {
 	case target.RDP:
-		if t.TLSFingerprint == nil || *t.TLSFingerprint == "" {
+		if t.TLSFingerprint == "" {
 			return guac.Params{}, errors.New("rdp target has no pinned certificate fingerprint; probe it first")
 		}
 		args["username"] = username
@@ -144,8 +144,8 @@ func (h *Handler) desktop(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, http.StatusNotImplemented, "protocol_unavailable", "desktop sessions are not configured on this gateway")
 		return
 	}
-	t, err := h.Targets.Get(r.Context(), g.TargetID)
-	if err != nil || t.Status != "active" {
+	ep, err := h.resolveGrant(r.Context(), g)
+	if err != nil || !ep.Active {
 		httpx.WriteError(w, http.StatusConflict, "target_unavailable", "target is no longer available")
 		return
 	}
@@ -162,7 +162,7 @@ func (h *Handler) desktop(w http.ResponseWriter, r *http.Request) {
 	}
 	// Validate the target and credential before upgrading; the drive path is
 	// filled in once the session id exists.
-	params, err := desktopParams(t, proto, opened, g.UserSecret, g.Username, g.AllowFileTransfer, "")
+	params, err := desktopParams(ep, proto, opened, g.UserSecret, g.Username, g.AllowFileTransfer, "")
 	if err != nil {
 		httpx.WriteError(w, http.StatusConflict, "target_unavailable", err.Error())
 		return
@@ -170,8 +170,8 @@ func (h *Handler) desktop(w http.ResponseWriter, r *http.Request) {
 	// Enforce the certificate pin at the gateway before handing off to guacd,
 	// which connects with cert checks disabled (see desktopParams).
 	if proto == target.RDP {
-		if err := h.verifyPinnedCert(r.Context(), t); err != nil {
-			h.Log.Warn("rdp certificate pin check failed", "target", t.ID, "err", err)
+		if err := h.verifyPinnedCert(r.Context(), ep); err != nil {
+			h.Log.Warn("rdp certificate pin check failed", "target", ep.LiveKey, "err", err)
 			httpx.WriteError(w, http.StatusConflict, "certificate_mismatch", "the target's certificate does not match the pinned fingerprint")
 			return
 		}
@@ -190,7 +190,8 @@ func (h *Handler) desktop(w http.ResponseWriter, r *http.Request) {
 	defer ws.CloseNow()
 	ws.SetReadLimit(4 << 20)
 
-	s := &session.Session{UserID: g.UserID, PolicyID: g.PolicyID, TargetID: t.ID, Protocol: g.Protocol, CredentialID: g.CredentialID, ClientIP: ip, UserAgent: r.UserAgent()}
+	s := &session.Session{UserID: g.UserID, PolicyID: g.PolicyID, TargetID: ep.TargetID, ASGID: ep.ASGID, ASGInstanceID: ep.ASGInstanceID,
+		Protocol: g.Protocol, CredentialID: g.CredentialID, ClientIP: ip, UserAgent: r.UserAgent()}
 	if err := h.Sessions.Start(r.Context(), s); err != nil {
 		h.Log.Error("start session", "err", err)
 		_ = ws.Close(websocket.StatusInternalError, "could not start session")
@@ -199,7 +200,7 @@ func (h *Handler) desktop(w http.ResponseWriter, r *http.Request) {
 	actor := audit.Actor{UserID: g.UserID, IP: ip}
 	endWith := func(reason, msg string) {
 		_ = h.Sessions.End(context.Background(), s.ID, reason)
-		h.record(r, actor.Event("session.end", "access_session", s.ID, audit.Success, map[string]string{"reason": reason, "target_id": t.ID}))
+		h.record(r, actor.Event("session.end", "access_session", s.ID, audit.Success, map[string]string{"reason": reason, "target_id": ep.LiveKey}))
 		if msg != "" {
 			wctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 			_ = ws.Write(wctx, websocket.MessageText, []byte(guac.ErrorInstruction(msg, 519)))
@@ -217,7 +218,7 @@ func (h *Handler) desktop(w http.ResponseWriter, r *http.Request) {
 	}
 	gc, err := guac.Dial(r.Context(), guacdAddr, params, timeout)
 	if err != nil {
-		h.Log.Warn("guacd dial failed", "target", t.ID, "guacd", guacdAddr, "err", err)
+		h.Log.Warn("guacd dial failed", "target", ep.LiveKey, "guacd", guacdAddr, "err", err)
 		endWith(session.EndError, desktopDialMessage(err))
 		return
 	}
@@ -235,7 +236,7 @@ func (h *Handler) desktop(w http.ResponseWriter, r *http.Request) {
 		endWith(session.EndError, "recording could not be registered; session refused")
 		return
 	}
-	h.record(r, actor.Event("session.start", "access_session", s.ID, audit.Success, map[string]any{"target_id": t.ID, "protocol": g.Protocol, "policy_id": g.PolicyID, "recording_id": recRow.ID}))
+	h.record(r, actor.Event("session.start", "access_session", s.ID, audit.Success, map[string]any{"target_id": ep.LiveKey, "protocol": g.Protocol, "policy_id": g.PolicyID, "recording_id": recRow.ID}))
 
 	// guacamole-common-js expects the tunnel's internal opcode with an id first.
 	// It is followed by a Zanskar-specific instruction carrying the policy
@@ -248,7 +249,7 @@ func (h *Handler) desktop(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ctx := h.Registry.Add(r.Context(), gateway.Live{SessionID: s.ID, UserID: g.UserID, TargetID: t.ID, Protocol: g.Protocol})
+	ctx := h.Registry.Add(r.Context(), gateway.Live{SessionID: s.ID, UserID: g.UserID, TargetID: ep.LiveKey, Protocol: g.Protocol})
 	h.Registry.SetGuacID(s.ID, gc.ID) // lets auditors join this desktop via guacd
 	defer h.Registry.Remove(s.ID)
 	reason, berr := guac.Bridge(ctx, h.Log, gc, ws, rec, guac.Limits{Idle: g.IdleTimeout, Max: g.MaxSession, AllowClipboard: g.AllowClipboard, AllowFileTransfer: g.AllowFileTransfer})
@@ -271,19 +272,19 @@ func (h *Handler) desktop(w http.ResponseWriter, r *http.Request) {
 // gateway enforces the pin (ADR 0012) because guacd's fingerprint pinning does
 // not work for IP-dialled, self-signed certificates; guacd is then told to
 // ignore the certificate it has already been vouched for.
-func (h *Handler) verifyPinnedCert(ctx context.Context, t *target.Target) error {
+func (h *Handler) verifyPinnedCert(ctx context.Context, t *endpoint) error {
 	if h.Prober == nil {
 		return errors.New("certificate verification is unavailable")
 	}
-	if t.TLSFingerprint == nil || *t.TLSFingerprint == "" {
+	if t.TLSFingerprint == "" {
 		return errors.New("target has no pinned certificate; probe it first")
 	}
-	want := strings.ToLower(strings.ReplaceAll(*t.TLSFingerprint, ":", ""))
+	want := strings.ToLower(strings.ReplaceAll(t.TLSFingerprint, ":", ""))
 	timeout := h.DialTimeout
 	if timeout <= 0 {
 		timeout = 10 * time.Second
 	}
-	res, err := h.Prober.Probe(ctx, t.Address, map[target.Protocol]int{target.RDP: t.Port(target.RDP)}, timeout)
+	res, err := h.Prober.Probe(ctx, t.Address, map[target.Protocol]int{target.RDP: t.port(target.RDP)}, timeout)
 	if err != nil {
 		return err
 	}

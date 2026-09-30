@@ -1,0 +1,74 @@
+<powershell>
+# Lab domain controller (ADR 0006 QA lab): first boot installs the forest and
+# reboots; the second boot creates the OUs, groups and users. Idempotent via a
+# marker file, so it may run on every boot (EC2Launch persist).
+$ErrorActionPreference = 'Stop'
+$marker = 'C:\zanskar-lab-done'
+if (Test-Path $marker) { exit 0 }
+if (-not (Get-WindowsFeature AD-Domain-Services).Installed) {
+  net user Administrator '${admin_password}'
+  # LDAPS certificate, made before promotion so NTDS finds it at first start:
+  # the future FQDN and the fixed private IP as SANs. Self-signed; its public
+  # half is exported to S3 on the second boot for Zanskar's ca_cert_pem.
+  $fqdn = "$($env:COMPUTERNAME.ToLower()).${domain}"
+  New-SelfSignedCertificate -Subject "CN=$fqdn" -TextExtension @("2.5.29.17={text}DNS=$fqdn&IPAddress=${dc_ip}") -KeyUsage DigitalSignature,KeyEncipherment -Type SSLServerAuthentication -CertStoreLocation Cert:\LocalMachine\My -NotAfter (Get-Date).AddYears(2) -FriendlyName 'zanskar-lab-ldaps' | Out-Null
+  Install-WindowsFeature AD-Domain-Services -IncludeManagementTools | Out-Null
+  Import-Module ADDSDeployment
+  $pw = ConvertTo-SecureString '${admin_password}' -AsPlainText -Force
+  Install-ADDSForest -DomainName '${domain}' -DomainNetbiosName '${netbios}' -SafeModeAdministratorPassword $pw -InstallDns -Force -NoRebootOnCompletion:$false
+  exit 0
+}
+# Second boot: wait for AD DS to answer, then populate.
+$ok = $false
+for ($i = 0; $i -lt 60; $i++) { try { Get-ADDomain | Out-Null; $ok = $true; break } catch { Start-Sleep 10 } }
+if (-not $ok) { throw 'AD DS did not come up' }
+Import-Module ActiveDirectory
+$ou = 'OU=Zanskar,${base_dn}'
+if (-not (Get-ADOrganizationalUnit -Filter "DistinguishedName -eq '$ou'" -ErrorAction SilentlyContinue)) { New-ADOrganizationalUnit -Name Zanskar -Path '${base_dn}' -ProtectedFromAccidentalDeletion $false }
+foreach ($g in @('zanskar-windows', 'zanskar-linux', 'zanskar-admins')) {
+  if (-not (Get-ADGroup -Filter "Name -eq '$g'" -ErrorAction SilentlyContinue)) { New-ADGroup -Name $g -GroupScope Global -Path $ou }
+}
+$users = @(
+  @{ n = 'alice'; p = '${alice_password}'; g = @('zanskar-windows') },
+  @{ n = 'bob';   p = '${bob_password}';   g = @('zanskar-windows', 'zanskar-linux') },
+  @{ n = 'carol'; p = '${carol_password}'; g = @() }
+)
+foreach ($u in $users) {
+  if (-not (Get-ADUser -Filter "SamAccountName -eq '$($u.n)'" -ErrorAction SilentlyContinue)) {
+    New-ADUser -Name $u.n -SamAccountName $u.n -UserPrincipalName "$($u.n)@${domain}" -Path $ou -AccountPassword (ConvertTo-SecureString $u.p -AsPlainText -Force) -Enabled $true -PasswordNeverExpires $true -GivenName $u.n -Surname 'Lab' -DisplayName "$($u.n) Lab" -EmailAddress "$($u.n)@${domain}"
+  }
+  foreach ($g in $u.g) { Add-ADGroupMember -Identity $g -Members $u.n -ErrorAction SilentlyContinue }
+}
+# A service account Zanskar vaults as a domain credential for WinRM and RDP.
+if (-not (Get-ADUser -Filter "SamAccountName -eq 'winops'" -ErrorAction SilentlyContinue)) {
+  New-ADUser -Name 'winops' -SamAccountName 'winops' -UserPrincipalName 'winops@${domain}' -Path $ou -AccountPassword (ConvertTo-SecureString '${winops_password}' -AsPlainText -Force) -Enabled $true -PasswordNeverExpires $true -DisplayName 'Zanskar Windows operator'
+  Add-ADGroupMember -Identity 'zanskar-windows' -Members 'winops' -ErrorAction SilentlyContinue
+}
+# A read-only bind account for Zanskar's LDAP provider.
+if (-not (Get-ADUser -Filter "SamAccountName -eq 'zanskar-bind'" -ErrorAction SilentlyContinue)) {
+  New-ADUser -Name 'zanskar-bind' -SamAccountName 'zanskar-bind' -UserPrincipalName 'zanskar-bind@${domain}' -Path $ou -AccountPassword (ConvertTo-SecureString '${bind_password}' -AsPlainText -Force) -Enabled $true -PasswordNeverExpires $true -Description 'Zanskar LDAP bind (read only)'
+}
+# Allow LDAP simple binds without TLS inside the lab VPC (AD refuses them by
+# default only for certain clients; be explicit) and open the firewall.
+New-NetFirewallRule -DisplayName 'Zanskar lab LDAP' -Direction Inbound -Protocol TCP -LocalPort 389,636,88,464,53,445,135,3268 -Action Allow -ErrorAction SilentlyContinue | Out-Null
+New-NetFirewallRule -DisplayName 'Zanskar lab DNS UDP' -Direction Inbound -Protocol UDP -LocalPort 53,88,464,123 -Action Allow -ErrorAction SilentlyContinue | Out-Null
+# NTDS only binds a certificate whose chain it trusts, and a self-signed one
+# chains to itself, so the certificate is also placed in the machine's trusted
+# root store. Without this, LDAPS listens on 636 but resets every handshake.
+$my = Get-ChildItem Cert:\LocalMachine\My | Where-Object { $_.FriendlyName -eq 'zanskar-lab-ldaps' } | Select-Object -First 1
+$root = New-Object System.Security.Cryptography.X509Certificates.X509Store('Root', 'LocalMachine')
+$root.Open('ReadWrite'); $root.Add($my); $root.Close()
+Restart-Service NTDS -Force
+Start-Sleep -Seconds 20
+
+# Export the LDAPS certificate (PEM) and a readiness marker to the lab bucket.
+$c = Get-ChildItem Cert:\LocalMachine\My | Where-Object { $_.FriendlyName -eq 'zanskar-lab-ldaps' } | Select-Object -First 1
+Export-Certificate -Cert $c -FilePath C:\ldaps.cer | Out-Null
+certutil -encode C:\ldaps.cer C:\ldaps.pem | Out-Null
+Import-Module AWSPowerShell -ErrorAction SilentlyContinue
+Write-S3Object -BucketName '${bucket}' -Key 'lab/ldaps-ca.pem' -File C:\ldaps.pem
+"$($env:COMPUTERNAME.ToLower()).${domain}" | Out-File C:\dc-fqdn.txt -Encoding ascii
+Write-S3Object -BucketName '${bucket}' -Key 'lab/dc-fqdn.txt' -File C:\dc-fqdn.txt
+New-Item -ItemType File -Path $marker | Out-Null
+</powershell>
+<persist>true</persist>

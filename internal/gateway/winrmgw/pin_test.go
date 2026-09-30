@@ -6,10 +6,12 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -69,5 +71,39 @@ func TestPinnedTransportAcceptsOnlyThePinnedCert(t *testing.T) {
 	}
 	if _, err := newPinnedTransport("h", 1, "u", "p", colon, false); err != nil {
 		t.Fatalf("colon form rejected: %v", err)
+	}
+}
+
+// TestFaultSummaryFindsAccessDenied uses the shape Windows Server 2022 returns
+// when a credential authenticates and is then refused a WinRS shell: an HTTP 500
+// carrying a WSManFault, whose code and message sit well past the namespace
+// declarations. Truncating the envelope hid it, so the gateway reported a
+// generic connection failure (manual QA on a domain-joined instance).
+func TestFaultSummaryFindsAccessDenied(t *testing.T) {
+	body := []byte(`<s:Envelope xml:lang="en-US" xmlns:s="http://www.w3.org/2003/05/soap-envelope" ` +
+		`xmlns:a="http://schemas.xmlsoap.org/ws/2004/08/addressing" xmlns:x="http://schemas.xmlsoap.org/ws/2004/09/transfer" ` +
+		`xmlns:e="http://schemas.xmlsoap.org/ws/2004/08/eventing" xmlns:n="http://schemas.xmlsoap.org/ws/2004/09/enumeration" ` +
+		`xmlns:w="http://schemas.dmtf.org/wbem/wsman/1/wsman.xsd" xmlns:p="http://schemas.microsoft.com/wbem/wsman/1/wsman.xsd" ` +
+		`xmlns:f="http://schemas.microsoft.com/wbem/wsman/1/wsmanfault"><s:Body><s:Fault><s:Code>` +
+		`<s:Value>s:Sender</s:Value></s:Code><s:Reason><s:Text xml:lang="">Access is denied.</s:Text></s:Reason>` +
+		`<s:Detail><f:WSManFault xmlns:f="http://schemas.microsoft.com/wbem/wsman/1/wsmanfault" Code="5" Machine="host">` +
+		`<f:Message>Access is denied. </f:Message></f:WSManFault></s:Detail></s:Fault></s:Body></s:Envelope>`)
+	got := faultSummary(body)
+	if !strings.Contains(got, "wsman fault 5") || !strings.Contains(got, "Access is denied") {
+		t.Fatalf("summary lost the fault: %q", got)
+	}
+	if len(body) < 300 {
+		t.Fatal("test body must be long enough that a prefix would hide the fault")
+	}
+	if !notAuthorized(fmt.Errorf("winrmgw: http 500: %s", got)) {
+		t.Fatalf("an access-denied fault must be recognised: %q", got)
+	}
+	// A plain authentication failure must not be mistaken for it.
+	if notAuthorized(errors.New("winrmgw: http 401: ")) {
+		t.Fatal("401 is an authentication failure, not an authorization one")
+	}
+	// A body with no fault at all still produces something readable.
+	if s := faultSummary([]byte("<html>Service Unavailable</html>")); !strings.Contains(s, "Service Unavailable") {
+		t.Fatalf("fallback summary: %q", s)
 	}
 }

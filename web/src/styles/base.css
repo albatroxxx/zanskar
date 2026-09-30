@@ -133,7 +133,15 @@ td .muted, .muted { color: var(--fg-muted); }
 }
 .modal p { margin: 0 0 10px; }
 .modal h2 { margin-bottom: 8px; }
-.modal .actions { justify-content: flex-end; margin-top: 18px; }
+/* Only a dialog's closing row is right-aligned. Every other .actions row in a
+   dialog holds content -- radios, switches, a copy button beside a value -- and
+   reads as misplaced when it drifts to the right (manual QA finding 1). */
+.modal-body > .actions:last-child, .modal-body > form > .actions:last-child { justify-content: flex-end; }
+.modal .actions { margin-top: 18px; }
+.modal .field .actions, .modal details .actions { margin-top: 8px; }
+/* A textarea outside a .field wrapper -- inside a <details>, say -- would fall
+   back to the browser's ~20-character default width. */
+.modal-body textarea { width: 100%; box-sizing: border-box; }
 .modal-body > .actions:last-child, .modal-body > form > .actions:last-child {
   position: sticky; bottom: 0; z-index: 1; margin: 18px -24px 0; padding: 12px 24px 16px; background: var(--bg-raised); border-top: 1px solid var(--line);
 }

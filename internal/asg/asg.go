@@ -48,21 +48,24 @@ type Group struct {
 
 // Instance is one member as last seen by the sync loop.
 type Instance struct {
-	ID                 string     `json:"id"`
-	GroupID            string     `json:"asg_id"`
-	InstanceID         string     `json:"instance_id"`
-	PrivateIP          string     `json:"private_ip,omitempty"`
-	PublicIP           string     `json:"public_ip,omitempty"`
-	AvailabilityZone   string     `json:"availability_zone,omitempty"`
-	LifecycleState     string     `json:"lifecycle_state"`
-	LBHealth           string     `json:"lb_health,omitempty"`
-	ProbeHealth        string     `json:"probe_health"` // unknown | healthy | unhealthy
-	HostKeyFingerprint string     `json:"host_key_fingerprint,omitempty"`
-	HostKeySource      string     `json:"host_key_source,omitempty"` // console | tofu
-	LaunchedAt         *time.Time `json:"launched_at,omitempty"`
-	FirstSeenAt        time.Time  `json:"first_seen_at"`
-	LastSeenAt         time.Time  `json:"last_seen_at"`
-	TerminatedAt       *time.Time `json:"terminated_at,omitempty"`
+	ID                 string `json:"id"`
+	GroupID            string `json:"asg_id"`
+	InstanceID         string `json:"instance_id"`
+	PrivateIP          string `json:"private_ip,omitempty"`
+	PublicIP           string `json:"public_ip,omitempty"`
+	AvailabilityZone   string `json:"availability_zone,omitempty"`
+	LifecycleState     string `json:"lifecycle_state"`
+	LBHealth           string `json:"lb_health,omitempty"`
+	ProbeHealth        string `json:"probe_health"` // unknown | healthy | unhealthy
+	HostKeyFingerprint string `json:"host_key_fingerprint,omitempty"`
+	HostKeySource      string `json:"host_key_source,omitempty"` // console | tofu
+	// Windows listeners are pinned per instance (ADR 0024), first seen wins.
+	TLSFingerprint      string     `json:"tls_fingerprint,omitempty"` // RDP
+	WinRMTLSFingerprint string     `json:"winrm_tls_fingerprint,omitempty"`
+	LaunchedAt          *time.Time `json:"launched_at,omitempty"`
+	FirstSeenAt         time.Time  `json:"first_seen_at"`
+	LastSeenAt          time.Time  `json:"last_seen_at"`
+	TerminatedAt        *time.Time `json:"terminated_at,omitempty"`
 	// Healthy is derived: InService, LB healthy or absent, probe healthy.
 	Healthy bool `json:"healthy"`
 }
@@ -450,10 +453,11 @@ func (r *Repo) UpsertInstance(ctx context.Context, in *Instance) (stored *Instan
 	case errors.Is(err, ErrNotFound):
 		in.ID, in.FirstSeenAt, in.LastSeenAt, in.TerminatedAt = store.NewID(), now, now, nil
 		_, err = r.db.ExecContext(ctx, r.db.Rebind(`INSERT INTO asg_instances
-			(id, asg_id, instance_id, private_ip, public_ip, availability_zone, lifecycle_state, lb_health, probe_health, host_key_fingerprint, host_key_source, launched_at, first_seen_at, last_seen_at)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`),
+			(id, asg_id, instance_id, private_ip, public_ip, availability_zone, lifecycle_state, lb_health, probe_health, host_key_fingerprint, host_key_source, tls_fingerprint, winrm_tls_fingerprint, launched_at, first_seen_at, last_seen_at)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`),
 			in.ID, in.GroupID, in.InstanceID, nullStr(in.PrivateIP), nullStr(in.PublicIP), nullStr(in.AvailabilityZone), in.LifecycleState, nullStr(in.LBHealth),
-			orUnknown(in.ProbeHealth), nullStr(in.HostKeyFingerprint), nullStr(in.HostKeySource), timeOrNil(in.LaunchedAt), store.TimeArg(now), store.TimeArg(now))
+			orUnknown(in.ProbeHealth), nullStr(in.HostKeyFingerprint), nullStr(in.HostKeySource), nullStr(in.TLSFingerprint), nullStr(in.WinRMTLSFingerprint),
+			timeOrNil(in.LaunchedAt), store.TimeArg(now), store.TimeArg(now))
 		if err != nil {
 			return nil, false, err
 		}
@@ -462,15 +466,23 @@ func (r *Repo) UpsertInstance(ctx context.Context, in *Instance) (stored *Instan
 	case err != nil:
 		return nil, false, err
 	}
-	// Keep a pinned host key unless the caller supplies a new one.
+	// Keep a pinned host key or certificate unless the caller supplies a new one.
 	if in.HostKeyFingerprint == "" {
 		in.HostKeyFingerprint, in.HostKeySource = existing.HostKeyFingerprint, existing.HostKeySource
 	}
+	if in.TLSFingerprint == "" {
+		in.TLSFingerprint = existing.TLSFingerprint
+	}
+	if in.WinRMTLSFingerprint == "" {
+		in.WinRMTLSFingerprint = existing.WinRMTLSFingerprint
+	}
 	in.ID, in.FirstSeenAt, in.LastSeenAt, in.TerminatedAt = existing.ID, existing.FirstSeenAt, now, nil
 	_, err = r.db.ExecContext(ctx, r.db.Rebind(`UPDATE asg_instances SET private_ip = ?, public_ip = ?, availability_zone = ?, lifecycle_state = ?, lb_health = ?,
-		probe_health = ?, host_key_fingerprint = ?, host_key_source = ?, launched_at = ?, last_seen_at = ?, terminated_at = NULL WHERE id = ?`),
+		probe_health = ?, host_key_fingerprint = ?, host_key_source = ?, tls_fingerprint = ?, winrm_tls_fingerprint = ?, launched_at = ?, last_seen_at = ?,
+		terminated_at = NULL WHERE id = ?`),
 		nullStr(in.PrivateIP), nullStr(in.PublicIP), nullStr(in.AvailabilityZone), in.LifecycleState, nullStr(in.LBHealth),
-		orUnknown(in.ProbeHealth), nullStr(in.HostKeyFingerprint), nullStr(in.HostKeySource), timeOrNil(in.LaunchedAt), store.TimeArg(now), in.ID)
+		orUnknown(in.ProbeHealth), nullStr(in.HostKeyFingerprint), nullStr(in.HostKeySource), nullStr(in.TLSFingerprint), nullStr(in.WinRMTLSFingerprint),
+		timeOrNil(in.LaunchedAt), store.TimeArg(now), in.ID)
 	if err != nil {
 		return nil, false, err
 	}
@@ -552,7 +564,7 @@ func (r *Repo) SetCredential(ctx context.Context, groupID string, p target.Proto
 // ---- helpers
 
 const instanceCols = `id, asg_id, instance_id, private_ip, public_ip, availability_zone, lifecycle_state, lb_health, probe_health,
-	host_key_fingerprint, host_key_source, launched_at, first_seen_at, last_seen_at, terminated_at`
+	host_key_fingerprint, host_key_source, tls_fingerprint, winrm_tls_fingerprint, launched_at, first_seen_at, last_seen_at, terminated_at`
 
 func derive(in *Instance) bool {
 	if in.TerminatedAt != nil || in.LifecycleState != "InService" || in.ProbeHealth != "healthy" {
@@ -640,11 +652,11 @@ func scanGroup(s scanner) (*Group, error) {
 
 func scanInstance(s scanner) (*Instance, error) {
 	var (
-		in                                Instance
-		priv, pub, az, lb, hk, hks        sql.NullString
-		launched, first, last, terminated store.NullTime
+		in                                  Instance
+		priv, pub, az, lb, hk, hks, tf, wtf sql.NullString
+		launched, first, last, terminated   store.NullTime
 	)
-	err := s.Scan(&in.ID, &in.GroupID, &in.InstanceID, &priv, &pub, &az, &in.LifecycleState, &lb, &in.ProbeHealth, &hk, &hks, &launched, &first, &last, &terminated)
+	err := s.Scan(&in.ID, &in.GroupID, &in.InstanceID, &priv, &pub, &az, &in.LifecycleState, &lb, &in.ProbeHealth, &hk, &hks, &tf, &wtf, &launched, &first, &last, &terminated)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound
@@ -653,6 +665,7 @@ func scanInstance(s scanner) (*Instance, error) {
 	}
 	in.PrivateIP, in.PublicIP, in.AvailabilityZone, in.LBHealth = priv.String, pub.String, az.String, lb.String
 	in.HostKeyFingerprint, in.HostKeySource = hk.String, hks.String
+	in.TLSFingerprint, in.WinRMTLSFingerprint = tf.String, wtf.String
 	in.LaunchedAt, in.FirstSeenAt, in.LastSeenAt, in.TerminatedAt = launched.Ptr(), first.Time, last.Time, terminated.Ptr()
 	in.Healthy = derive(&in)
 	return &in, nil

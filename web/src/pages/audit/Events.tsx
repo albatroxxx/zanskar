@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState, type FormEvent } from 'react'
 import { Link } from 'react-router-dom'
 import { api, errorMessage, query } from '../../api/client'
-import { fmtTime, shortId } from '../../api/format'
+import { fmtPreciseTime, shortId } from '../../api/format'
 import type { AuditEvent, AuditFacets, AuditVerify, Page } from '../../api/types'
 import { Alert, Badge, Empty, PageHead } from '../../components/ui'
 
@@ -339,7 +339,7 @@ export function Events() {
                 const raw = Object.keys(ev.details ?? {}).length > 0
                 return (
                   <tr key={ev.id}>
-                    <td style={{ whiteSpace: 'nowrap' }}>{fmtTime(ev.ts)}</td>
+                    <td style={{ whiteSpace: 'nowrap' }}>{fmtPreciseTime(ev.ts)}</td>
                     <td>
                       <div className="event-who">
                         <span className={'name' + (w.system ? ' muted' : '')} title={ev.actor_user_id || undefined}>{w.name}</span>

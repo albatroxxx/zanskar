@@ -12,6 +12,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"regexp"
 	"strings"
 	"time"
 
@@ -112,7 +113,7 @@ func (p *pinnedTransport) Post(_ *winrm.Client, request *soap.SoapMessage) (stri
 		return "", fmt.Errorf("winrmgw: read response: %w", err)
 	}
 	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("winrmgw: http %d: %s", resp.StatusCode, truncateBody(body))
+		return "", fmt.Errorf("winrmgw: http %d: %s", resp.StatusCode, faultSummary(body))
 	}
 	if !strings.Contains(resp.Header.Get("Content-Type"), "application/soap+xml") {
 		return "", errors.New("winrmgw: unexpected content type from server")
@@ -120,9 +121,50 @@ func (p *pinnedTransport) Post(_ *winrm.Client, request *soap.SoapMessage) (stri
 	return string(body), nil
 }
 
-func truncateBody(b []byte) string {
-	if len(b) > 256 {
-		return string(b[:256]) + "..."
+var (
+	faultCodeRe = regexp.MustCompile(`WSManFault[^>]*\bCode="(-?[0-9]+)"`)
+	faultMsgRe  = regexp.MustCompile(`(?s)<f:Message[^>]*>(.*?)</f:Message>`)
+	faultTextRe = regexp.MustCompile(`(?s)<[a-zA-Z]*:?Text[^>]*>(.*?)</[a-zA-Z]*:?Text>`)
+	tagRe       = regexp.MustCompile(`<[^>]+>`)
+	spaceRe     = regexp.MustCompile(`\s+`)
+)
+
+// faultSummary turns a WS-Management error body into one short line. The useful
+// part of a SOAP fault sits past several hundred bytes of namespace
+// declarations, so printing the first bytes of the envelope says nothing at all
+// and hides, for example, the access-denied fault behind an HTTP 500.
+func faultSummary(b []byte) string {
+	body := string(b)
+	var parts []string
+	if m := faultCodeRe.FindStringSubmatch(body); m != nil {
+		parts = append(parts, "wsman fault "+m[1])
 	}
-	return string(b)
+	msg := ""
+	if m := faultMsgRe.FindStringSubmatch(body); m != nil {
+		msg = m[1]
+	} else if m := faultTextRe.FindStringSubmatch(body); m != nil {
+		msg = m[1]
+	}
+	if msg = collapse(msg); msg != "" {
+		parts = append(parts, msg)
+	}
+	if len(parts) == 0 {
+		return truncate(collapse(body), 256)
+	}
+	return truncate(strings.Join(parts, ": "), 512)
+}
+
+// collapse strips tags and entities from extracted fault text and folds
+// whitespace, so a multi-line Windows message becomes one readable line.
+func collapse(s string) string {
+	s = tagRe.ReplaceAllString(s, " ")
+	s = strings.NewReplacer("&lt;", "<", "&gt;", ">", "&amp;", "&", "&quot;", `"`, "&#39;", "'").Replace(s)
+	return strings.TrimSpace(spaceRe.ReplaceAllString(s, " "))
+}
+
+func truncate(s string, n int) string {
+	if len(s) > n {
+		return s[:n] + "..."
+	}
+	return s
 }

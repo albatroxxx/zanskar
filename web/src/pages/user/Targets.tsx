@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { api, ApiError, errorMessage } from '../../api/client'
 import type { AccessRequest, ConnectResponse, Page, Protocol, ReachableInstance, ReachableTarget } from '../../api/types'
 import { Alert, Badge, Empty, Field, Modal, PageHead, Tags } from '../../components/ui'
+import { engineName } from '../../api/format'
 import { fmtAgo } from './Failover'
 
 const terminalProtocols: Protocol[] = ['ssh', 'winrm']
@@ -14,8 +15,6 @@ function pick(t: ReachableTarget, family: Protocol[]): Protocol | null {
   for (const p of family) if (t.allowed_protocols.includes(p) && (p === 'database' || t.capabilities.length === 0 || t.capabilities.includes(p))) return p
   return null
 }
-
-const engineNames: Record<string, string> = { postgres: 'PostgreSQL', mysql: 'MySQL', mariadb: 'MariaDB' }
 
 /** Body of POST /connect: exactly one of target_id, asg_id, asg_instance_id. */
 interface ConnectBody {
@@ -51,7 +50,17 @@ export function Targets() {
   useEffect(() => {
     api
       .get<Page<ReachableTarget>>('/me/targets')
-      .then((p) => setItems(p.items))
+      .then((p) => {
+        setItems(p.items)
+        // Land on a tab that has something in it. Opening on an empty Hosts
+        // tab while Databases holds entries reads as "you have no access"
+        // (manual QA finding 2).
+        const kind = (t: ReachableTarget) => (t.kind === 'asg' ? 'asg' : t.engine ? 'database' : 'static')
+        if (!p.items.some((t) => kind(t) === 'static')) {
+          const first = (['database', 'asg'] as const).find((k) => p.items.some((t) => kind(t) === k))
+          if (first) setTab(first)
+        }
+      })
       .catch((e) => setErr(errorMessage(e)))
     void loadGrants()
   }, [])
@@ -196,7 +205,7 @@ export function Targets() {
                   return (
                     <tr key={t.id}>
                       <td><strong>{t.name}</strong></td>
-                      <td>{engineNames[t.engine ?? ''] ?? t.engine}</td>
+                      <td>{engineName(t.engine)}</td>
                       <td><Tags tags={t.tags} /></td>
                       <td>
                         {p && gated(t, p) ? (
@@ -221,7 +230,7 @@ export function Targets() {
           {statics === null ? (
             <Empty>Loading…</Empty>
           ) : statics.length === 0 ? (
-            <Empty>No targets are assigned to you yet. Ask an administrator for access.</Empty>
+            <Empty>No hosts are assigned to you yet. Ask an administrator for access.</Empty>
           ) : (
             <table>
               <thead>
