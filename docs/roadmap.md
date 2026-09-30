@@ -12,6 +12,30 @@ Approved 2026-09-20. Durations are estimates for a small team; the order matters
 | 3.6 PIM | done | Just-in-time, approved, time-bounded access (ADR 0018) — pulled into v1.0 | done |
 | 4. Enterprise | ongoing | Access reviews and delegated/multi-step approvers, live session shadowing and termination, credential rotation, SAML and SCIM, GCP managed instance groups, Azure scale sets, WebAuthn | |
 
+## The next twelve months (October 2026 to September 2027)
+
+What the project intends to do, in order. Dates are targets; the order matters more.
+
+1. **A second maintainer and OpenSSF Best Practices Silver** (Q4 2026). Two people with admin,
+   merge and release rights ([GOVERNANCE.md](../GOVERNANCE.md), Continuity), reviewed pull
+   requests, and the Silver criteria tracked in [best-practices.md](best-practices.md).
+2. **1.2.x maintenance** (Q4 2026). SPDX SBOMs, SLSA level 3 provenance and reproducible
+   packages in every release; fixes found in use; test coverage towards 80%.
+3. **Restricted admin CLI** (Q1 2027). A console-side CLI that runs allow-listed `zanskar`
+   operations inside the gateway, never a system shell, with every command audited, and a
+   reference of every command. An ADR comes first.
+4. **Phase 4, enterprise** (2027). The cross-pod control channel that makes high availability and
+   the Helm chart supported; SAML and SCIM; WebAuthn; access reviews and delegated or multi-step
+   approvers; GCP managed instance groups and Azure scale sets.
+
+What the project does **not** intend to do in that time:
+
+- Install anything on targets. Zanskar stays agentless (ADR 0009); AWS SSM is out of scope.
+- Rotate static SSH keys, or Windows and database passwords. The SSH certificate authority removes
+  the first; the systems that own those accounts do the second better.
+- A multi-pane workspace inside the console; browser tabs already do this.
+- Give any shell on the gateway host through the console.
+
 ## v1.0 release — shipped (v1.0.0 tagged 2026-09-25)
 
 The single-instance release engineering is done (below), and the scope pulled in ahead of
