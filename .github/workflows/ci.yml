@@ -124,6 +124,42 @@ jobs:
           exit-code: "1"
           ignore-unfixed: true
 
+  # A second opinion on dependency advisories from the OSV database (Go module
+  # and npm lockfile), with Go call analysis. Unlike the Trivy job it has no
+  # severity filter; triaged advisories are ignored in osv-scanner.toml with the
+  # reason, mirroring SECURITY.md. The action is used directly (pinned) rather
+  # than via the PR-diff reusable workflow, so any open advisory fails the run,
+  # the same rule the Trivy and govulncheck jobs follow.
+  osv:
+    name: OSV-Scanner
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: google/osv-scanner-action/osv-scanner-action@a345acffa64b0eaede81a3d9aae6141214d9c8fc # v2.6.0
+        with:
+          scan-args: |-
+            --recursive
+            ./
+
+  # The container image as shipped: built from deploy/Dockerfile, which ends in
+  # the same distroless base as the release image, then scanned for OS package
+  # and Go binary vulnerabilities. image-scan.yml re-checks the published image
+  # weekly, since new advisories land after a release.
+  image:
+    name: Trivy image scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Build the image
+        run: docker build -f deploy/Dockerfile -t zanskar:ci .
+      - uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: image
+          image-ref: zanskar:ci
+          severity: HIGH,CRITICAL
+          exit-code: "1"
+          ignore-unfixed: true
+
   notices:
     name: Third-party notices
     runs-on: ubuntu-latest
