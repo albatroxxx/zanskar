@@ -142,3 +142,35 @@ func TestPolicySubjectMustBeAbleToConnect(t *testing.T) {
 		t.Fatalf("group policy: got %d %v, want 201", code, out)
 	}
 }
+
+// TestPolicyAPIAcceptsRulesAndRetention: the request body decoder refuses
+// unknown fields, so every field the console sends must be declared. Rules
+// (#78) and retention_days (#88) were on the model but not on the input,
+// and every policy save from the console failed with "unknown field rules".
+func TestPolicyAPIAcceptsRulesAndRetention(t *testing.T) {
+	e := newHandlerEnv(t)
+	body := map[string]any{
+		"name": "web", "group_id": "", "user_id": "", "description": "",
+		"target_selector": map[string]any{"tags": map[string]string{"env": "prod"}},
+		"protocols":       []string{"ssh"},
+		"rules":           []map[string]any{{"target_selector": map[string]any{"tags": map[string]string{"role": "jump"}}, "protocols": []string{"rdp"}}},
+		"time_windows":    []any{}, "max_session_minutes": nil, "idle_timeout_minutes": 15, "retention_days": 45,
+		"allow_clipboard": false, "allow_file_transfer": false, "require_mfa": true, "require_approval": false, "enabled": true,
+	}
+	u := e.createUser(t, "alice", user.RoleUser)
+	body["user_id"] = u.ID
+	code, out := e.do("POST", "/api/v1/access-policies", body)
+	if code != http.StatusCreated {
+		t.Fatalf("create with rules and retention: %d %v", code, out)
+	}
+	rules, _ := out["rules"].([]any)
+	if len(rules) != 1 || out["retention_days"] != float64(45) {
+		t.Fatalf("round trip: rules=%v retention=%v", out["rules"], out["retention_days"])
+	}
+	id := out["id"].(string)
+	body["rules"] = []any{}
+	body["retention_days"] = nil
+	if code, out = e.do("PUT", "/api/v1/access-policies/"+id, body); code != http.StatusOK || len(out["rules"].([]any)) != 0 || out["retention_days"] != nil {
+		t.Fatalf("update clearing them: %d %v", code, out)
+	}
+}
