@@ -3,6 +3,8 @@ name: Pages
 # Publishes site/ to https://albatroxxx.github.io/zanskar/. Deploys only while a
 # stable (non-draft, non-prerelease) release matching the chart appVersion is
 # published, so the site never advertises an install that does not exist.
+# Releases are built as drafts, so the push and release-build runs defer; the
+# `release: published` run is the one that deploys once the draft is published.
 on:
   workflow_dispatch:
   push:
@@ -11,6 +13,8 @@ on:
   workflow_run:
     workflows: [release]
     types: [completed]
+  release:
+    types: [published]
 
 permissions:
   contents: read
