@@ -38,6 +38,10 @@
     <p>Download the package for your architecture, the checksums and the signature bundle from the <a href="https://github.com/albatroxxx/zanskar/releases/latest">latest release</a>. Pick your distribution once; every block on this page follows. The commands use amd64; swap <code>arm64</code> as needed.</p>
     <div class="tabs" data-tabs><div class="tab-list" role="tablist"><button type="button" role="tab" aria-selected="true" data-tab="deb">Debian / Ubuntu (.deb)</button><button type="button" role="tab" aria-selected="false" data-tab="rpm">RHEL / Fedora / SUSE (.rpm)</button></div>
     <div data-panel="deb"><div class="code-block"><button type="button" class="copy" aria-label="Copy download commands (deb)">Copy</button><pre><code>sudo apt update &amp;&amp; sudo apt install -y curl
+# Work in /tmp: apt reads a local .deb as its unprivileged _apt user, which cannot
+# enter a home directory (0750 on Ubuntu 24.04), and would print a "Download is
+# performed unsandboxed as root" notice.
+mkdir -p /tmp/zanskar &amp;&amp; cd /tmp/zanskar
 # Resolve the newest stable release, so these commands keep working.
 V=$(curl -fsSLI -o /dev/null -w '%{url_effective}' https://github.com/albatroxxx/zanskar/releases/latest | sed 's#.*/v##')
 echo "installing $V"
@@ -46,6 +50,8 @@ curl -LO $B/zanskar_${V}_linux_amd64.deb
 curl -LO $B/SHA256SUMS
 curl -LO $B/SHA256SUMS.sigstore.json</code></pre></div></div>
     <div data-panel="rpm" hidden><div class="code-block"><button type="button" class="copy" aria-label="Copy download commands (rpm)">Copy</button><pre><code>sudo dnf makecache &amp;&amp; sudo dnf install -y curl
+# A scratch directory for the downloads.
+mkdir -p /tmp/zanskar &amp;&amp; cd /tmp/zanskar
 # Resolve the newest stable release, so these commands keep working.
 V=$(curl -fsSLI -o /dev/null -w '%{url_effective}' https://github.com/albatroxxx/zanskar/releases/latest | sed 's#.*/v##')
 echo "installing $V"
