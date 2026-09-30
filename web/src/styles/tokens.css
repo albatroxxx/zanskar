@@ -39,11 +39,13 @@
   /* Protocol buttons on the targets list: soft tinted chips (badge weight) so a
      dense grid of them stays calm, each protocol a distinct hue that deepens to
      a solid fill only on hover. Terminal reuses the ultramarine accent; desktop
-     is a muted sibling violet, database a warm bronze. */
+     is a muted sibling violet, database a deep sage. The database chip was a
+     warm bronze and sat within a few degrees of --warn, so a SQL client button
+     read as a warning badge (manual QA finding 3). */
   --proto-desk: #574bb5;
   --proto-desk-soft: #eae8f7;
-  --proto-db: #8a5a24;
-  --proto-db-soft: #f3ecdd;
+  --proto-db: #2c6b52;
+  --proto-db-soft: #e0efe7;
 
   /* the terminal and desktop pages are always dark, whatever the theme */
   --terminal-bg: #181a1f;
@@ -92,8 +94,8 @@
     --ok-soft: #10301f;
     --proto-desk: #b3a7f2;
     --proto-desk-soft: #24213f;
-    --proto-db: #d9a85f;
-    --proto-db-soft: #2c2413;
+    --proto-db: #6fc79b;
+    --proto-db-soft: #132a20;
     --backdrop: rgba(0, 0, 0, 0.62);
     --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 8px 24px rgba(0, 0, 0, 0.35);
   }

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { api, errorMessage, query } from '../../api/client'
-import { fmtTime } from '../../api/format'
+import { fmtPreciseTime } from '../../api/format'
 import type { LogRecord, LogsPage } from '../../api/types'
 import { Alert, Badge, Empty, PageHead } from '../../components/ui'
 
@@ -85,7 +85,7 @@ export function Logs() {
             <tbody>
               {page.items.map((r: LogRecord, i) => (
                 <tr key={r.time + i}>
-                  <td className="muted" style={{ whiteSpace: 'nowrap' }}>{fmtTime(r.time)}</td>
+                  <td className="muted" style={{ whiteSpace: 'nowrap' }}>{fmtPreciseTime(r.time)}</td>
                   <td>{levelBadge(r.level)}</td>
                   <td>{r.msg}</td>
                   <td className="mono muted" style={{ fontSize: '0.78rem' }}>

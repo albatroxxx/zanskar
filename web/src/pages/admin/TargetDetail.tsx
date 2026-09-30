@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { api, errorMessage } from '../../api/client'
-import { fmtTime } from '../../api/format'
+import { engineName, fmtTime } from '../../api/format'
 import type { CertificateProbe, Credential, Protocol, Target } from '../../api/types'
 import { Alert, Badge, Confirm, Modal, Tags } from '../../components/ui'
 import { hostKeyBadge, protocols, type ProbeWire } from './lib'
@@ -94,7 +94,7 @@ export function TargetDetail({ target, credentials, onClose, onChanged, onDelete
       <dl className="kv">
         {database ? (
           <>
-            <dt>Engine</dt><dd>{t.engine}{t.engine_version ? ` ${t.engine_version}` : ''}</dd>
+            <dt>Engine</dt><dd>{engineName(t.engine, t.engine_version)}</dd>
             <dt>Endpoint</dt><dd className="mono">{t.address}{port ? `:${port}` : ''}</dd>
             <dt>Database</dt><dd>{t.database_name || <span className="muted">{t.engine === 'postgres' ? 'named after the login role' : 'none selected; users pick one with USE'}</span>}</dd>
             <dt>TLS</dt>
@@ -145,7 +145,7 @@ export function TargetDetail({ target, credentials, onClose, onChanged, onDelete
       {/* A database target has one slot, the brokered "database" protocol;
           the host slots (ssh, rdp, vnc, winrm) do not apply to it. */}
       <CredentialBindings
-        slots={(database ? (['database'] as Protocol[]) : protocols).map((p) => ({ protocol: p, label: p === 'database' ? `Database (${t.engine})` : p.toUpperCase() }))}
+        slots={(database ? (['database'] as Protocol[]) : protocols).map((p) => ({ protocol: p, label: p === 'database' ? `Database (${engineName(t.engine)})` : p.toUpperCase() }))}
         current={t.credentials}
         credentials={credentials}
         onSave={saveBindings}

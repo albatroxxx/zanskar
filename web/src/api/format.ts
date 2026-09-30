@@ -5,6 +5,18 @@ export function fmtTime(iso?: string | null): string {
   return d.toLocaleString(undefined, { year: 'numeric', month: 'short', day: '2-digit', hour: '2-digit', minute: '2-digit' })
 }
 
+/**
+ * fmtPreciseTime adds seconds. Log and audit lines are read to work out the
+ * order of events, and minute precision collapses a burst of them into one
+ * timestamp (manual QA finding 5).
+ */
+export function fmtPreciseTime(iso?: string | null): string {
+  if (!iso) return ''
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return iso
+  return d.toLocaleString(undefined, { year: 'numeric', month: 'short', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' })
+}
+
 export function fmtDuration(startIso: string, endIso?: string | null): string {
   const start = new Date(startIso).getTime()
   const end = endIso ? new Date(endIso).getTime() : Date.now()
@@ -28,4 +40,17 @@ export function fmtBytes(n: number): string {
 
 export function shortId(id?: string | null, n = 8): string {
   return id ? id.slice(0, n) : ''
+}
+
+/**
+ * engineName is how a database engine is written for people. The drawer used to
+ * print the raw identifier while the table beside it printed the proper name
+ * (manual QA finding 6), so both read from here.
+ */
+const engineNames: Record<string, string> = { postgres: 'PostgreSQL', mysql: 'MySQL', mariadb: 'MariaDB' }
+
+export function engineName(engine?: string | null, version?: string | null): string {
+  if (!engine) return ''
+  const name = engineNames[engine] ?? engine
+  return version ? `${name} ${version}` : name
 }

@@ -1,11 +1,10 @@
 import { useState } from 'react'
+import { engineName } from '../../api/format'
 import type { Credential, Target } from '../../api/types'
 import { Alert, Badge, Empty, PageHead, Tags } from '../../components/ui'
 import { useList } from './lib'
 import { TargetDetail } from './TargetDetail'
 import { TargetForm } from './TargetForm'
-
-const engineNames: Record<string, string> = { postgres: 'PostgreSQL', mysql: 'MySQL', mariadb: 'MariaDB' }
 
 /**
  * Databases lists database targets (ADR 0017): managed endpoints such as RDS,
@@ -57,7 +56,7 @@ export function Databases() {
                   <td>
                     <strong>{t.name}</strong> {t.status === 'disabled' && <Badge>disabled</Badge>}
                   </td>
-                  <td>{engineNames[t.engine ?? ''] ?? t.engine}{t.engine_version ? ` ${t.engine_version}` : ''}</td>
+                  <td>{engineName(t.engine, t.engine_version)}</td>
                   <td className="mono">{t.address}{t.ports.database ? `:${t.ports.database}` : ''}</td>
                   <td>{t.database_name || <span className="muted">—</span>}</td>
                   <td>{t.tls_mode || 'prefer'}</td>
