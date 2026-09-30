@@ -3,7 +3,9 @@
 package server
 
 import (
+	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -38,5 +40,42 @@ func TestRedirectHandler(t *testing.T) {
 	}
 	if srv := newRedirectServer(":80", "0.0.0.0:443", covered); srv.Handler == nil || srv.ReadHeaderTimeout == 0 {
 		t.Fatal("redirect server must have a handler and a header timeout")
+	}
+}
+
+// TestRedirectRefusalExplainsItself covers the case every cloud install hits:
+// the browser asks for a public address that is translated upstream, so it is on
+// no interface, is not in the self-signed certificate, and cannot be guessed.
+// The refusal has to say which name was asked for and how to fix it, because
+// "use https" taught nobody anything (manual QA).
+func TestRedirectRefusalExplainsItself(t *testing.T) {
+	// No fallback host: the listener is on every interface, as `zanskar init`
+	// writes it, and the certificate covers the private address only.
+	h := redirectHandler("443", "", func() []string { return []string{"10.0.0.7", "localhost"} })
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "http://203.0.113.9/login", nil)
+	req.Host = "203.0.113.9"
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", rec.Code)
+	}
+	body := rec.Body.String()
+	for _, want := range []string{"203.0.113.9", "ZANSKAR_TLS_HOSTS", "https://"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("refusal does not mention %q: %s", want, body)
+		}
+	}
+
+	// A covered name still redirects, path and query intact.
+	rec = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodGet, "http://10.0.0.7/login?next=%2Fadmin", nil)
+	req.Host = "10.0.0.7"
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusMovedPermanently {
+		t.Fatalf("status = %d, want 301", rec.Code)
+	}
+	if got := rec.Header().Get("Location"); got != "https://10.0.0.7/login?next=%2Fadmin" {
+		t.Fatalf("Location = %q", got)
 	}
 }

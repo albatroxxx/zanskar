@@ -38,6 +38,12 @@ type Config struct {
 	// Derived from the other variables when ZANSKAR_TLS_MODE is unset, so
 	// an existing install keeps its behaviour.
 	TLSMode string
+	// TLSHosts are extra names or addresses a managed certificate should
+	// cover, beyond the ones the machine can work out for itself. A cloud
+	// instance cannot: its public address is translated upstream and never
+	// appears on an interface, so it has to be named here or the certificate
+	// will not carry it.
+	TLSHosts []string
 	// RedirectAddr, when set, is a plain-HTTP listener that answers every
 	// request with a redirect to the HTTPS listener (":80" on a default
 	// install). Only meaningful when the gateway serves TLS.
@@ -128,6 +134,7 @@ func Load(opts Options) (*Config, error) {
 		DBDSN:                envOr("ZANSKAR_DB_DSN", "file:zanskar.db?_pragma=journal_mode(WAL)&_pragma=foreign_keys(1)&_pragma=busy_timeout(5000)"),
 		TLSCert:              os.Getenv("ZANSKAR_TLS_CERT"),
 		TLSKey:               os.Getenv("ZANSKAR_TLS_KEY"),
+		TLSHosts:             splitList(os.Getenv("ZANSKAR_TLS_HOSTS")),
 		GuacdAddr:            os.Getenv("ZANSKAR_GUACD_ADDR"),  // empty disables RDP and VNC
 		DockerPath:           os.Getenv("ZANSKAR_DOCKER_PATH"), // empty defaults to "docker" on PATH
 		TrustProxyTLS:        os.Getenv("ZANSKAR_TRUST_PROXY_TLS") == "true",
@@ -306,4 +313,15 @@ func isLoopback(addr string) bool {
 	}
 	ip := net.ParseIP(host)
 	return ip != nil && ip.IsLoopback()
+}
+
+// splitList reads a comma-separated environment value, trimming blanks.
+func splitList(v string) []string {
+	var out []string
+	for _, raw := range strings.Split(v, ",") {
+		if t := strings.TrimSpace(raw); t != "" {
+			out = append(out, t)
+		}
+	}
+	return out
 }

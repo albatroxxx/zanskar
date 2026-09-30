@@ -69,6 +69,39 @@ type Info struct {
 // ExpiresWithin reports whether the certificate ends before now+d.
 func (i Info) ExpiresWithin(d time.Duration) bool { return time.Now().Add(d).After(i.NotAfter) }
 
+// missingHosts lists the wanted names the certificate does not carry. Name
+// comparison is case-insensitive; an address is compared as an address, so
+// 10.0.0.7 and 10.00.0.7 are not two different things.
+func missingHosts(leaf *x509.Certificate, want []string) []string {
+	var missing []string
+	for _, w := range want {
+		w = strings.TrimSpace(w)
+		if w == "" {
+			continue
+		}
+		found := false
+		if ip := net.ParseIP(w); ip != nil {
+			for _, have := range leaf.IPAddresses {
+				if have.Equal(ip) {
+					found = true
+					break
+				}
+			}
+		} else {
+			for _, have := range leaf.DNSNames {
+				if strings.EqualFold(have, w) {
+					found = true
+					break
+				}
+			}
+		}
+		if !found {
+			missing = append(missing, w)
+		}
+	}
+	return missing
+}
+
 func describe(source string, leaf *x509.Certificate, certPEM string) Info {
 	sum := sha256.Sum256(leaf.Raw)
 	hosts := append([]string(nil), leaf.DNSNames...)
@@ -179,9 +212,13 @@ func ValidHost(h string) error {
 // LocalHosts guesses the names a self-signed certificate should carry: the
 // listen host when it is a real address, the machine's host name, every
 // non-loopback interface address when bound to all interfaces, and
-// localhost for the operator's own checks.
-func LocalHosts(listenAddr string) []string {
-	hosts := []string{"localhost", "127.0.0.1"}
+// localhost for the operator's own checks. extra is added first, for names
+// the machine cannot work out: a cloud instance's public address is
+// translated upstream and never appears on an interface, so it has to be
+// supplied (ZANSKAR_TLS_HOSTS, or `zanskar init -tls-hosts`).
+func LocalHosts(listenAddr string, extra ...string) []string {
+	hosts := append([]string{}, extra...)
+	hosts = append(hosts, "localhost", "127.0.0.1")
 	if hn, err := os.Hostname(); err == nil && hn != "" {
 		hosts = append(hosts, hn)
 	}
@@ -313,12 +350,25 @@ func (m *Manager) Load(ctx context.Context) error {
 	certPEM, keyPEM, err := m.Repo.Get(ctx, SourceGenerated)
 	if err == nil {
 		if cert, leaf, perr := Parse(certPEM, keyPEM); perr == nil && time.Now().Add(30*24*time.Hour).Before(leaf.NotAfter) {
-			m.set(SourceGenerated, cert, leaf, certPEM)
-			return nil
+			// A name added to the configuration after the first start has to
+			// take effect, or the operator sets ZANSKAR_TLS_HOSTS, restarts,
+			// and nothing happens.
+			if missing := missingHosts(leaf, m.Hosts); len(missing) > 0 {
+				m.Log.Info("regenerating the self-signed certificate for newly configured names", "names", missing)
+			} else {
+				m.set(SourceGenerated, cert, leaf, certPEM)
+				return nil
+			}
 		}
 	} else if !errors.Is(err, ErrNotFound) {
 		return err
 	}
+	// Nothing uploaded and no file certificate applies, or the two branches
+	// above would have returned, so a generated certificate is what serves.
+	// Clear the previous one first: Regenerate leaves an uploaded or file
+	// certificate in place, and after Reset the uploaded one is still the
+	// active entry even though its row is gone.
+	m.active.Store(nil)
 	return m.Regenerate(ctx, m.Hosts, "")
 }
 

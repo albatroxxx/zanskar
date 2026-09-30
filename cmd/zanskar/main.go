@@ -173,7 +173,7 @@ func runServe() error {
 	// the file from the environment, else self-signed at first start.
 	var tlsMgr *tlscert.Manager
 	if cfg.ServesTLS() {
-		tlsMgr = &tlscert.Manager{Repo: tlscert.NewRepo(db, ring), Log: log, Hosts: tlscert.LocalHosts(cfg.ListenAddr)}
+		tlsMgr = &tlscert.Manager{Repo: tlscert.NewRepo(db, ring), Log: log, Hosts: tlscert.LocalHosts(cfg.ListenAddr, cfg.TLSHosts...)}
 		if cfg.TLSCert != "" {
 			cert, err := tls.LoadX509KeyPair(cfg.TLSCert, cfg.TLSKey)
 			if err != nil {

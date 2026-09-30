@@ -321,3 +321,57 @@ func TestExpiredUploadIsDropped(t *testing.T) {
 		t.Fatal("SelfSign must refuse a bad host")
 	}
 }
+
+// TestLoadAddsNewlyConfiguredNames covers the operator who sets
+// ZANSKAR_TLS_HOSTS after the first start, which is what a cloud install needs:
+// the public address is translated upstream, so the machine never found it on
+// its own. Restarting has to pick the name up, or the setting looks ignored.
+func TestLoadAddsNewlyConfiguredNames(t *testing.T) {
+	ctx := context.Background()
+	repo, _ := newRepo(t)
+	m := &Manager{Repo: repo, Hosts: []string{"localhost", "10.0.0.7"}}
+	if err := m.Load(ctx); err != nil {
+		t.Fatal(err)
+	}
+	first := m.Active()
+	if len(missingHosts(mustLeaf(t, first.CertPEM), m.Hosts)) != 0 {
+		t.Fatalf("first certificate should carry the configured names: %v", first.Hosts)
+	}
+
+	// Nothing changed: the same certificate is reused, not replaced.
+	if err := m.Load(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if m.Active().Fingerprint != first.Fingerprint {
+		t.Fatal("an unchanged configuration must not churn the certificate")
+	}
+
+	// A name is added, as an operator would after discovering the public address.
+	m.Hosts = append(m.Hosts, "zanskar.example.test")
+	if err := m.Load(ctx); err != nil {
+		t.Fatal(err)
+	}
+	got := m.Active()
+	if got.Fingerprint == first.Fingerprint {
+		t.Fatal("a newly configured name must regenerate the certificate")
+	}
+	if miss := missingHosts(mustLeaf(t, got.CertPEM), m.Hosts); len(miss) != 0 {
+		t.Fatalf("certificate still misses %v (has %v)", miss, got.Hosts)
+	}
+	if got.Source != SourceGenerated {
+		t.Fatalf("source = %q", got.Source)
+	}
+}
+
+func mustLeaf(t *testing.T, certPEM string) *x509.Certificate {
+	t.Helper()
+	blk, _ := pem.Decode([]byte(certPEM))
+	if blk == nil {
+		t.Fatal("no PEM block")
+	}
+	leaf, err := x509.ParseCertificate(blk.Bytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return leaf
+}
