@@ -1,0 +1,10 @@
+# OSV-Scanner configuration, read by OpenSSF Scorecard's Vulnerabilities check.
+# Every entry needs a reason a reviewer can verify, and is revisited when the
+# dependency changes.
+
+[[IgnoredVulns]]
+id = "GO-2026-5932"
+reason = """golang.org/x/crypto/openpgp is deprecated; the advisory has no fixed \
+version and names every x/crypto release, so no upgrade clears it. Zanskar \
+never imports openpgp or its subpackages (go list -deps ./... | grep openpgp \
+is empty), and govulncheck reports it as not called."""
