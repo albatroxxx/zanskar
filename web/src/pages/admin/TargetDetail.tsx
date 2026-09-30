@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { api, errorMessage } from '../../api/client'
-import { engineName, fmtTime } from '../../api/format'
+import { dbTLS, engineName, fmtTime } from '../../api/format'
 import type { CertificateProbe, Credential, Protocol, Target } from '../../api/types'
 import { Alert, Badge, Confirm, Modal, Tags } from '../../components/ui'
 import { hostKeyBadge, protocols, type ProbeWire } from './lib'
@@ -99,7 +99,7 @@ export function TargetDetail({ target, credentials, onClose, onChanged, onDelete
             <dt>Database</dt><dd>{t.database_name || <span className="muted">{t.engine === 'postgres' ? 'named after the login role' : 'none selected; users pick one with USE'}</span>}</dd>
             <dt>TLS</dt>
             <dd>
-              {t.tls_mode || 'prefer'} {t.tls_mode === 'verify-full' && (t.tls_ca ? <Badge tone="ok">CA bundle set</Badge> : <Badge>public roots</Badge>)}
+              {dbTLS(t.tls_mode).verified ? <Badge tone="ok">{dbTLS(t.tls_mode).label} against the CA bundle</Badge> : <Badge tone="warn">{dbTLS(t.tls_mode).label}</Badge>}
             </dd>
           </>
         ) : (

@@ -270,6 +270,18 @@ tooling below rather than `zanskar backup`.
   vaulted credential, identity-provider secret and authenticator secret is sealed under
   keys wrapped by it (ADR 0007). Without it a restored database is a list of ciphertext.
   Rotating it is supported by the key ring (`key_versions`); losing it is not.
+- **A key file instead** (ADR 0025): to keep the key out of `/etc/zanskar/env`, move it to
+  a file of its own and point `ZANSKAR_MASTER_KEY_FILE` at it. The file must be readable by
+  its owner only, or the gateway refuses to start:
+
+  ```sh
+  sudo install -m 0400 -o zanskar -g zanskar /dev/null /etc/zanskar/master.key
+  sudo sh -c 'grep "^ZANSKAR_MASTER_KEY=" /etc/zanskar/env | cut -d= -f2- > /etc/zanskar/master.key'
+  sudo sed -i 's|^ZANSKAR_MASTER_KEY=.*|ZANSKAR_MASTER_KEY_FILE=/etc/zanskar/master.key|' /etc/zanskar/env
+  sudo systemctl restart zanskar
+  ```
+
+  `zanskar key rotate-master` then rewrites that file, keeping its owner and mode.
 
 ## Security checklist
 
@@ -366,9 +378,12 @@ password.
   version>` for MySQL and MariaDB. Pull them ahead of time on an air-gapped host; the relay
   image can be pointed at a mirror with `ZANSKAR_DBPROXY_IMAGE` or the console's Settings
   page.
-- **TLS to the database** is negotiated when the server offers it and not verified yet
-  (pgbouncer `server_tls_sslmode=prefer`; the MySQL relay behaves the same). Certificate
-  verification arrives with the target's TLS settings.
+- **TLS to the database** is verified by default (ADR 0025): a new database target uses
+  `verify-full` and needs the CA bundle that signs the database's certificate. For Amazon
+  RDS that is your region's bundle,
+  `https://truststore.pki.rds.amazonaws.com/<region>/<region>-bundle.pem` (the global
+  bundle is too large). `require` and `prefer` encrypt without verifying and are marked as
+  such in the console. Targets created before 1.2.1 keep the `prefer` they had.
 - Not available inside the Compose stack; use the package install for database targets.
 
 ## Autoscaling groups on AWS

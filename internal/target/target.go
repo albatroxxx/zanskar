@@ -57,9 +57,9 @@ func ValidProtocol(p Protocol) bool {
 // names them so operators recognise them.
 const (
 	TLSDisable    = "disable"     // never TLS
-	TLSPrefer     = "prefer"      // TLS when offered, no verification (default)
+	TLSPrefer     = "prefer"      // TLS when offered, no verification
 	TLSRequire    = "require"     // TLS or refuse, no verification
-	TLSVerifyFull = "verify-full" // TLS, certificate chain and host name verified
+	TLSVerifyFull = "verify-full" // TLS, certificate chain and host name verified (default, ADR 0025)
 )
 
 // TLSModes lists the accepted values in order of strictness.
@@ -249,9 +249,12 @@ func (t *Target) Validate() error {
 		if len(t.DatabaseName) > 128 || strings.ContainsAny(t.DatabaseName, " \t\n\r'\"`;\\/") {
 			return fmt.Errorf("%w: database_name must be a plain identifier of at most 128 characters", ErrInvalid)
 		}
+		// Verified by default (ADR 0025): a target that says nothing gets
+		// verify-full, and so must carry the CA bundle below. prefer and
+		// require stay available, as an explicit, visible choice.
 		t.TLSMode = strings.ToLower(strings.TrimSpace(t.TLSMode))
 		if t.TLSMode == "" {
-			t.TLSMode = TLSPrefer
+			t.TLSMode = TLSVerifyFull
 		}
 		if !ValidTLSMode(t.TLSMode) {
 			return fmt.Errorf("%w: tls_mode must be one of %s", ErrInvalid, strings.Join(TLSModes, ", "))
@@ -269,7 +272,7 @@ func (t *Target) Validate() error {
 		// has no default roots for server_tls_ca_file), so verify-full
 		// without one would fail at every session start.
 		if t.TLSMode == TLSVerifyFull && t.TLSCA == "" {
-			return fmt.Errorf("%w: tls_mode verify-full needs tls_ca, the CA bundle that signs the database's certificate", ErrInvalid)
+			return fmt.Errorf("%w: tls_mode verify-full (the default) needs tls_ca, the CA bundle that signs the database's certificate; for Amazon RDS, your region's bundle from https://truststore.pki.rds.amazonaws.com/<region>/<region>-bundle.pem. To connect without verifying, set tls_mode to require or prefer", ErrInvalid)
 		}
 	} else {
 		t.DatabaseName, t.TLSMode, t.TLSCA = "", "", ""

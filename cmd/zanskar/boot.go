@@ -99,7 +99,7 @@ func bootSettings(cfg *config.Config, keyVersion int) []settings.Boot {
 		{Key: "trusted_proxies", Title: "Trusted proxies", EnvVar: "ZANSKAR_TRUSTED_PROXIES", Value: strings.Join(proxies, ", "), Description: "Networks whose X-Forwarded-For is believed."},
 		{Key: "allow_plain_http", Title: "Allow plain HTTP", EnvVar: "ZANSKAR_ALLOW_PLAIN_HTTP", Value: yesno(cfg.AllowPlainHTTP), Description: "Development only."},
 		{Key: "db", Title: "Database", EnvVar: "ZANSKAR_DB_DRIVER, ZANSKAR_DB_DSN", Value: describeDSN(cfg.DBDriver, cfg.DBDSN), Description: "Where everything is stored."},
-		{Key: "master_key", Title: "Master key", EnvVar: "ZANSKAR_MASTER_KEY", Value: fmt.Sprintf("set (data-key version %d active)", keyVersion), Description: "Wraps the data keys that seal every secret. Rotate with zanskar key rotate-master."},
+		masterKeySetting(cfg, keyVersion),
 		{Key: "recordings_dir", Title: "Recordings directory", EnvVar: "ZANSKAR_RECORDINGS_DIR", Value: cfg.RecordingsDir, Description: "Local recording storage."},
 		{Key: "recordings_s3", Title: "Recordings in S3", EnvVar: "ZANSKAR_RECORDINGS_S3_*", Value: set(cfg.RecordingsS3Bucket), Description: "Install-time bucket for recordings; the console's Settings page can override it."},
 		{Key: "docker_path", Title: "Container runtime", EnvVar: "ZANSKAR_DOCKER_PATH", Value: map[bool]string{true: cfg.DockerPath, false: "docker (on PATH)"}[cfg.DockerPath != ""], Description: "Spawns database session containers."},
@@ -108,4 +108,16 @@ func bootSettings(cfg *config.Config, keyVersion int) []settings.Boot {
 		{Key: "log_format", Title: "Log format", EnvVar: "ZANSKAR_LOG_FORMAT", Value: cfg.LogFormat, Description: "json or text."},
 		{Key: "aws_gateway_principal", Title: "AWS gateway principal", EnvVar: "ZANSKAR_AWS_GATEWAY_PRINCIPAL", Value: set(cfg.AWSGatewayPrincipal), Description: "Override for the principal rendered into autoscaling trust policies; normally unset, the gateway detects it (see Autoscaling groups)."},
 	}
+}
+
+// masterKeySetting says where the master key came from, never the key itself.
+func masterKeySetting(cfg *config.Config, keyVersion int) settings.Boot {
+	s := settings.Boot{Key: "master_key", Title: "Master key", EnvVar: "ZANSKAR_MASTER_KEY",
+		Value:       fmt.Sprintf("set (data-key version %d active)", keyVersion),
+		Description: "Wraps the data keys that seal every secret. Rotate with zanskar key rotate-master."}
+	if cfg.MasterKeyFile != "" {
+		s.EnvVar = "ZANSKAR_MASTER_KEY_FILE"
+		s.Value = fmt.Sprintf("read from %s (data-key version %d active)", cfg.MasterKeyFile, keyVersion)
+	}
+	return s
 }

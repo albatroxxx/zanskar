@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { engineName } from '../../api/format'
+import { dbTLS, engineName } from '../../api/format'
 import type { Credential, Target } from '../../api/types'
 import { Alert, Badge, Empty, PageHead, Tags } from '../../components/ui'
 import { useList } from './lib'
@@ -59,7 +59,7 @@ export function Databases() {
                   <td>{engineName(t.engine, t.engine_version)}</td>
                   <td className="mono">{t.address}{t.ports.database ? `:${t.ports.database}` : ''}</td>
                   <td>{t.database_name || <span className="muted">—</span>}</td>
-                  <td>{t.tls_mode || 'prefer'}</td>
+                  <td>{dbTLS(t.tls_mode).verified ? dbTLS(t.tls_mode).label : <Badge tone="warn">{dbTLS(t.tls_mode).label}</Badge>}</td>
                   <td>{credentialCell(t)}</td>
                   <td><Tags tags={t.tags} /></td>
                   <td>

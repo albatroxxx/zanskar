@@ -263,7 +263,7 @@ func TestDeleteRefusedWhileInUse(t *testing.T) {
 func TestDatabaseEnginesEnrol(t *testing.T) {
 	e := newEnv(t)
 	body := func(engine string) map[string]any {
-		return map[string]any{"name": "db-" + engine, "address": "10.0.1.10", "os_family": "other", "engine": engine, "engine_version": "8"}
+		return map[string]any{"name": "db-" + engine, "address": "10.0.1.10", "os_family": "other", "engine": engine, "engine_version": "8", "tls_mode": "require"}
 	}
 	for _, engine := range []string{"postgres", "mysql", "mariadb", "MariaDB"} {
 		code, out := e.do("POST", "/api/v1/targets", body(engine), e.admin)
@@ -290,7 +290,7 @@ func TestListFiltersAndUserSuppliedSlot(t *testing.T) {
 	}
 	host := mk(map[string]any{"name": "web-01", "address": "10.0.1.10", "os_family": "linux"})
 	mk(map[string]any{"name": "win-01", "address": "10.0.1.11", "os_family": "windows", "status": "disabled"})
-	db := mk(map[string]any{"name": "orders-db", "address": "orders.db.internal", "os_family": "other", "engine": "postgres"})
+	db := mk(map[string]any{"name": "orders-db", "address": "orders.db.internal", "os_family": "other", "engine": "postgres", "tls_mode": "require"})
 	names := func(query string) []string {
 		code, out := e.do("GET", "/api/v1/targets"+query, nil, e.admin)
 		if code != 200 {

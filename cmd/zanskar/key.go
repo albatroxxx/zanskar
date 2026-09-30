@@ -12,6 +12,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"golang.org/x/term"
@@ -167,7 +168,8 @@ func runKeyRotate() error {
 func runKeyRotateMaster(args []string) error {
 	fs := flag.NewFlagSet("key rotate-master", flag.ContinueOnError)
 	envFile := fs.String("env-file", "", "environment file whose ZANSKAR_MASTER_KEY line is replaced after the rewrap (the one the service loads)")
-	generate := fs.Bool("generate", false, "generate the new key instead of reading it; with -env-file it is written there and never shown")
+	keyFile := fs.String("key-file", "", "master key file replaced after the rewrap; defaults to ZANSKAR_MASTER_KEY_FILE when the key is loaded from one")
+	generate := fs.Bool("generate", false, "generate the new key instead of reading it; with -env-file or -key-file it is written there and never shown")
 	yes := fs.Bool("yes", false, "proceed without the confirmation prompt")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -179,6 +181,30 @@ func runKeyRotateMaster(args []string) error {
 	}
 	defer func() { ring.Close(); _ = db.Close() }()
 
+	// A key loaded from a file is replaced in that file: it is the one the
+	// service reads, and an env-file edit would leave the file holding a key
+	// that opens nothing.
+	if cfg.MasterKeyFile != "" {
+		if *envFile != "" {
+			return fmt.Errorf("the master key is read from %s (ZANSKAR_MASTER_KEY_FILE); drop -env-file", cfg.MasterKeyFile)
+		}
+		if *keyFile == "" {
+			*keyFile = cfg.MasterKeyFile
+		}
+	}
+	if *envFile != "" && *keyFile != "" {
+		return errors.New("pass -env-file or -key-file, not both")
+	}
+	if *keyFile != "" {
+		b, err := os.ReadFile(*keyFile) // #nosec G304 -- the operator names the key file
+		if err != nil {
+			return err
+		}
+		if raw, err := base64.StdEncoding.DecodeString(strings.TrimSpace(string(b))); err != nil || !bytes.Equal(raw, cfg.MasterKey) {
+			return fmt.Errorf("%s holds a different master key than the one this command runs with; pass the file the service actually loads", *keyFile)
+		}
+	}
+
 	// The env file must be the one this process runs with, or the service
 	// would be left with a key that opens nothing.
 	if *envFile != "" {
@@ -188,6 +214,17 @@ func runKeyRotateMaster(args []string) error {
 		}
 		if raw, err := base64.StdEncoding.DecodeString(current); err != nil || !bytes.Equal(raw, cfg.MasterKey) {
 			return fmt.Errorf("%s holds a different master key than the one this command runs with; pass the file the service actually loads", *envFile)
+		}
+	}
+
+	// Prove the file can be replaced before anything is rewrapped: failing
+	// afterwards would leave the database under a key that exists nowhere.
+	for _, f := range []string{*keyFile, *envFile} {
+		if f == "" {
+			continue
+		}
+		if err := checkReplaceable(f); err != nil {
+			return fmt.Errorf("%w (nothing was changed; run as a user that can write %s, usually root)", err, filepath.Dir(f))
 		}
 	}
 
@@ -218,16 +255,25 @@ func runKeyRotateMaster(args []string) error {
 		return fmt.Errorf("%w (nothing was changed)", err)
 	}
 	if _, err := audit.NewLog(db).Record(ctx, audit.Actor{IP: "cli"}.Event("key.rotate_master", "key_versions", "all", audit.Success,
-		map[string]any{"versions_rewrapped": n, "env_file_updated": *envFile != ""})); err != nil {
+		map[string]any{"versions_rewrapped": n, "env_file_updated": *envFile != "", "key_file_updated": *keyFile != ""})); err != nil {
 		fmt.Fprintln(os.Stderr, "warning: the rewrap succeeded but the audit event could not be written:", err)
 	}
 	fmt.Printf("rewrapped %d data-key version(s) under the new master key.\n", n)
 
 	switch {
+	case *keyFile != "":
+		if err := replaceKeyFile(*keyFile, newB64); err != nil {
+			fmt.Fprintln(os.Stderr, "The database is already under the new key, which is not stored anywhere yet. Put it")
+			fmt.Fprintln(os.Stderr, "in the key file the service loads before restarting it:")
+			fmt.Fprintln(os.Stderr, newB64)
+			return fmt.Errorf("updating %s: %w", *keyFile, err)
+		}
+		fmt.Printf("updated the master key in %s.\n", *keyFile)
 	case *envFile != "":
 		if err := replaceEnvMasterKey(*envFile, newB64); err != nil {
-			fmt.Fprintln(os.Stderr, "The database is already under the new key. Set ZANSKAR_MASTER_KEY to the new value in")
-			fmt.Fprintln(os.Stderr, "the environment the service loads before restarting it.")
+			fmt.Fprintln(os.Stderr, "The database is already under the new key, which is not stored anywhere yet. Set")
+			fmt.Fprintln(os.Stderr, "ZANSKAR_MASTER_KEY to it in the environment the service loads before restarting:")
+			fmt.Fprintln(os.Stderr, newB64)
 			return fmt.Errorf("updating %s: %w", *envFile, err)
 		}
 		fmt.Printf("updated ZANSKAR_MASTER_KEY in %s.\n", *envFile)
@@ -312,6 +358,32 @@ func replaceEnvMasterKey(path, newB64 string) error {
 		return errors.New("no ZANSKAR_MASTER_KEY line found")
 	}
 	return writeFileAtomic(path, []byte(strings.Join(out, "\n")+"\n"), info.Mode().Perm())
+}
+
+// checkReplaceable proves a file can be replaced the way writeFileAtomic
+// replaces it: a temporary file created and removed in its directory.
+func checkReplaceable(path string) error {
+	if _, err := os.Stat(path); err != nil {
+		return err
+	}
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".zanskar-check-*")
+	if err != nil {
+		return fmt.Errorf("cannot replace %s: %w", path, err)
+	}
+	name := tmp.Name()
+	_ = tmp.Close()
+	return os.Remove(name)
+}
+
+// replaceKeyFile swaps a master key file's contents for the new key through
+// the same atomic write the env file uses, keeping its owner and mode, so the
+// service user can still read it and nobody else can.
+func replaceKeyFile(path, newB64 string) error {
+	info, err := os.Stat(path)
+	if err != nil {
+		return err
+	}
+	return writeFileAtomic(path, []byte(newB64+"\n"), info.Mode().Perm())
 }
 
 func firstN(s string, n int) string {
