@@ -66,7 +66,7 @@ document or change merges).
 | build_standard_variables | MUST | N/A | Pure Go with CGO disabled; no C compiler or linker is invoked, so CC/CFLAGS/LDFLAGS do not apply. |
 | build_preserve_debug | SHOULD | Met | `go build` keeps debug information by default; only the release build strips it (`-s -w`), which is the standard for distributed binaries. |
 | build_non_recursive | MUST | Met | One `go build` of `./cmd/zanskar` via the Go toolchain's module graph; no recursive make. |
-| build_repeatable | MUST | Pending | Two clean builds of the same commit produce identical bytes for every binary, archive, deb and rpm (`-trimpath`, commit-time mtimes; PR #111). |
+| build_repeatable | MUST | Pending | A tag rebuilds to the same bytes for every binary, archive, deb and rpm: `-trimpath`, the Go toolchain pinned in go.mod, commit-time file times, fixed file owners and rpm build host (PRs #111, #113). Checked across two fresh clones; the next tag is rebuilt locally and compared with the release's SHA256SUMS. |
 | installation_common | MUST | Met | deb and rpm packages installed and removed with apt or dnf; a container image for Docker Compose. |
 | installation_standard_variables | MUST | Met | Installation is by the system package manager (apt, dnf), which owns install locations; the packages follow the FHS (/usr/bin, /etc/zanskar, /var/lib/zanskar). |
 | installation_development_quick | MUST | Met | CONTRIBUTING.md, "Development setup": `make setup`, `make build`, `make all`. |
