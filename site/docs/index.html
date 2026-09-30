@@ -97,6 +97,9 @@ sudo zanskar init -non-interactive -tls-hosts zanskar.example.com
 # behind a TLS proxy (Caddy, nginx) on the same host:
 sudo zanskar init -non-interactive -behind-proxy
 
+# with desktops (RDP, VNC): name guacd here, so the file never needs a hand edit:
+sudo zanskar init -non-interactive -tls-hosts zanskar.example.com -guacd 127.0.0.1:4822
+
 # serving TLS from your own certificate files:
 sudo zanskar init -non-interactive -listen 0.0.0.0:443 \
   -tls-cert /etc/zanskar/tls/cert.pem -tls-key /etc/zanskar/tls/key.pem \
@@ -133,9 +136,15 @@ curl -k https://localhost:8443/readyz        # own-certificate mode on 8443
     <h3 id="guacd">Start guacd, for RDP and VNC</h3>
     <p>Desktop sessions are relayed by <code>guacd</code>, which the package does <strong>not</strong> install. Without it, RDP and VNC targets fail with <em>the desktop service (guacd) is not running</em>, and the journal shows <code>guacd dial failed</code>. <code>zanskar init</code> checks the address you give it and prints this step when nothing is listening. The supported way is the official container, published on loopback only: guacd speaks an unauthenticated protocol and must never be reachable from anywhere but the gateway.</p>
     <div class="code-block"><button type="button" class="copy" aria-label="Copy the guacd start command">Copy</button><pre><code>sudo docker run -d --name guacd --restart unless-stopped -p 127.0.0.1:4822:4822 \
-  -e HOME=/tmp --read-only --tmpfs /tmp:size=512m,mode=1777 guacamole/guacd:1.6.0
-# then make sure /etc/zanskar/env has ZANSKAR_GUACD_ADDR=127.0.0.1:4822 (init -guacd sets it)
-sudo systemctl restart zanskar</code></pre></div>
+  -e HOME=/tmp --read-only --tmpfs /tmp:size=512m,mode=1777 guacamole/guacd:1.6.0</code></pre></div>
+    <p>Then point the gateway at it. <code>init -guacd 127.0.0.1:4822</code> already did if you passed it. Otherwise add the line <strong>after</strong> <code>zanskar init</code>, never before: appending to a file that does not exist yet creates a one-line <code>/etc/zanskar/env</code> with no master key, the service restarts in a loop, and <code>init</code> then refuses to overwrite it. The block below checks first:</p>
+    <div class="code-block"><button type="button" class="copy" aria-label="Copy the guacd address commands">Copy</button><pre><code>if sudo test -f /etc/zanskar/env; then
+  sudo grep -q '^ZANSKAR_GUACD_ADDR=' /etc/zanskar/env \
+    || echo 'ZANSKAR_GUACD_ADDR=127.0.0.1:4822' | sudo tee -a /etc/zanskar/env
+  sudo systemctl restart zanskar
+else
+  echo 'run zanskar init first (add -guacd 127.0.0.1:4822 and it sets this for you)'
+fi</code></pre></div>
     <p><code>HOME=/tmp</code> matters: the image's user has no home directory and guacd's RDP client needs one for its certificate store. The read-only root and the tmpfs are the hardening the Compose stack and the AWS reference deployment use. Install Docker first if the host has none (<code>apt install docker.io</code> or <code>dnf install docker</code>, then <code>systemctl enable --now docker</code>); Podman works the same with <code>podman run</code>.</p>
 
     <h3 id="tls-without-cert">TLS without a certificate: Caddy and sslip.io</h3>
@@ -214,9 +223,10 @@ docker compose -f deploy/docker-compose.yml exec -it \
 
     <h2 id="update">Update to a new version</h2>
     <p>Migrations are forward-only and run automatically when the service starts, so an update is install-and-restart. Take a backup first; it is one command and runs while the service is up.</p>
-    <div class="code-block"><button type="button" class="copy" aria-label="Copy package update commands">Copy</button><pre><code># package path
+    <div class="code-block"><button type="button" class="copy" aria-label="Copy package update commands">Copy</button><pre><code># package path: download and verify the new package into /tmp/zanskar exactly as in step 1, then
 sudo bash -c 'set -a; . /etc/zanskar/env; set +a; runuser -u zanskar -- zanskar backup --out /secure/zanskar-$(date +%F).tar.gz'
-sudo apt install ./zanskar_&lt;new-version&gt;_linux_amd64.deb   # or rpm -U for RPM systems
+cd /tmp/zanskar
+sudo apt install ./zanskar_${V}_linux_amd64.deb   # or: sudo rpm -U zanskar_${V}_linux_amd64.rpm
 sudo systemctl restart zanskar
 zanskar version</code></pre></div>
     <div class="code-block"><button type="button" class="copy" aria-label="Copy Compose update commands">Copy</button><pre><code># Compose path: set ZANSKAR_VERSION to the new release in deploy/.env, then
