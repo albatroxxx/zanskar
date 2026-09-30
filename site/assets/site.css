@@ -64,7 +64,7 @@ dd { margin: 0; color: var(--muted); font-size: 15px; }
 .prose li { margin-bottom: 8px; }
 .prose ul, .prose ol { padding-left: 23px; }
 .prose table { width: 100%; border-collapse: collapse; font-size: 14px; }
-.prose th, .prose td { padding: 12px 8px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; overflow-wrap: anywhere; }
+.prose th, .prose td { padding: 12px 8px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; overflow-wrap: break-word; }
 .code-block { position: relative; margin: 20px 0; border: 1px solid var(--line); border-radius: 5px; background: #F7F5F0; }
 pre { font-size: 12px; line-height: 1.8; margin: 0; padding: 48px 18px 18px; overflow-x: auto; white-space: pre; }
 .copy { position: absolute; top: 9px; right: 10px; border: 1px solid #C9C4B8; border-radius: 4px; background: white; color: var(--green); font: inherit; font-size: 12px; padding: 4px 10px; cursor: pointer; min-width: 64px; }

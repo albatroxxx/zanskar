@@ -167,6 +167,8 @@ const typeLabel: Record<string, string> = {
 const verbs: Record<string, string> = {
   create: 'created', update: 'updated', delete: 'deleted', probe: 'probed', sync: 'synced', rotate: 'rotated',
   set: 'set', unset: 'removed', trust: 'trusted', reset: 'reset', revoke: 'revoked', test: 'tested',
+  change: 'changed', approve: 'approved', deny: 'denied', expire: 'expired', upload: 'uploaded',
+  download: 'downloaded', purge: 'purged', move: 'moved', regenerate: 'regenerated',
 }
 
 /** session splits "user → target (PROTO)" as the API labels sessions and recordings. */
@@ -227,6 +229,7 @@ function describe(ev: AuditEvent): string {
     case 'asg.instance.hostkey.mismatch': return `saw a changed host key on instance ${name}`
     case 'group.members.update': return `updated the members of group ${name}`
     case 'user.roles.update': return `updated the roles of user ${name}`
+    case 'user.password.change': return fail ? 'failed to change their password' : 'changed their password'
     case 'user.password.reset': return `reset the password of user ${name}`
     case 'user.mfa.reset': return `reset the authenticator of user ${name}`
     case 'user.sessions.revoke': return `signed user ${name} out everywhere`
