@@ -15,7 +15,7 @@
 <body>
   <a class="skip" href="#main">Skip to content</a>
   <header class="site-header"><a class="brand" href="../"><img src="../assets/logo.svg" alt="" width="32" height="32">Zanskar</a><nav aria-label="Main"><a href="./" aria-current="page">Get started</a><a href="../guide/">How-to guide</a><a href="../concepts/">Concepts</a><a href="../troubleshooting/">Troubleshooting</a><a href="../releases/">v1.2.0</a><a href="https://github.com/albatroxxx/zanskar">GitHub &#8599;</a></nav></header>
-  <main id="main" class="docs-layout"><nav class="docs-nav" aria-label="On this page"><a href="#prerequisites">Prerequisites</a><a href="#go-install">Install: one line</a><a href="#install">Install: packages</a><a href="#guacd">Start guacd</a><a href="#tls-without-cert">TLS without a certificate</a><a href="#compose">Install: Docker Compose</a><a href="#first-sign-in">First sign-in</a><a href="#configuration">Configuration</a><a href="#update">Update</a><a href="#remove">Remove</a><a href="#security">Security</a></nav><article class="prose">
+  <main id="main" class="docs-layout"><nav class="docs-nav" aria-label="On this page"><a href="#prerequisites">Prerequisites</a><a href="#install">Install: packages</a><a href="#guacd">Start guacd</a><a href="#tls-without-cert">TLS without a certificate</a><a href="#compose">Install: Docker Compose</a><a href="#first-sign-in">First sign-in</a><a href="#configuration">Configuration</a><a href="#update">Update</a><a href="#remove">Remove</a><a href="#security">Security</a></nav><article class="prose">
     <p class="eyebrow">GET STARTED</p><h1>Install Zanskar</h1><p>Zanskar 1.2 runs as a <strong>single instance</strong>: one gateway with an embedded SQLite database (or PostgreSQL), plus a <code>guacd</code> sidecar if you want RDP or VNC desktops. Two supported install paths: the <strong>deb/rpm package</strong> on a Linux server, or the <strong>signed container image</strong> with Docker Compose. Both were exercised on a clean Ubuntu 24.04 machine before this release was cut.</p>
 
     <h2 id="prerequisites">Prerequisites</h2>
@@ -27,12 +27,6 @@
     <tr><td>Databases (optional)</td><td>Docker or Podman on the gateway host: database sessions run in ephemeral containers. See <a href="../guide/#database">the guide</a>.</td><td>Not available inside the Compose stack in 1.0; use the package path for database targets.</td></tr>
     <tr><td>Verification (recommended)</td><td colspan="2"><a href="#install">cosign</a> to verify the release signatures. Not in the distribution repositories; step 1 installs it. <code>sha256sum</code> is on every Linux host already.</td></tr>
     </tbody></table>
-
-    <h2 id="go-install">One line, for a look around</h2>
-    <p>With a Go 1.27+ toolchain on the machine, <code>@latest</code> fetches and builds the newest tagged release:</p>
-    <div class="code-block"><button type="button" class="copy" aria-label="Copy the go install command">Copy</button><pre><code>go install github.com/albatroxxx/zanskar/cmd/zanskar@latest</code></pre></div>
-    <p>That gives you the CLI and the API. It has <strong>no web console</strong>, because the console is compiled in behind a build tag, and it reports its version as <code>dev</code>, because <code>go install</code> passes no linker flags. Good for reading <code>zanskar --help</code>, generating a master key, or driving the API. For anything you intend to keep, take the package or the container image below; both carry the console and a real version.</p>
-    <p>The container image follows the same idea: <code>ghcr.io/albatroxxx/zanskar:latest</code> is the newest stable release, and <code>ZANSKAR_VERSION</code> in <code>deploy/.env</code> pins it when you would rather choose.</p>
 
     <h2 id="install">1. Install from the package</h2>
     <p>Download the package for your architecture, the checksums and the signature bundle from the <a href="https://github.com/albatroxxx/zanskar/releases/latest">latest release</a>. Pick your distribution once; every block on this page follows. The commands use amd64; swap <code>arm64</code> as needed.</p>
