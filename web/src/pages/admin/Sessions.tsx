@@ -57,7 +57,7 @@ export function Sessions() {
                   <td className="mono muted">{s.client_ip}</td>
                   <td>{fmtDuration(s.started_at, s.ended_at)}</td>
                   <td>{reasonBadge(s.end_reason)}</td>
-                  <td>{s.recording_id ? <Link to={`/audit/recordings/${s.recording_id}`}>play</Link> : <span className="muted">—</span>}</td>
+                  <td>{s.recording_id ? <Link to={`/admin/recordings/${s.recording_id}`}>play</Link> : <span className="muted">—</span>}</td>
                   <td>
                     {!s.ended_at && (
                       <span className="actions">

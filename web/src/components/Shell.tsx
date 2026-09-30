@@ -35,7 +35,9 @@ export function Shell({ portal, items }: { portal: 'user' | 'admin' | 'audit'; i
   const others: { to: string; label: string }[] = []
   if (portal !== 'user' && canConnect(user)) others.push({ to: '/', label: 'User portal' })
   if (portal !== 'admin' && hasRole('admin')) others.push({ to: '/admin', label: 'Admin' })
-  if (portal !== 'audit' && hasRole('admin', 'auditor')) others.push({ to: '/audit', label: 'Audit' })
+  // Admins review the log inside their own console (Events, Recordings), so
+  // only a non-admin auditor gets a switch to the audit portal.
+  if (portal !== 'audit' && hasRole('auditor') && !hasRole('admin')) others.push({ to: '/audit', label: 'Audit' })
   return (
     <div className="shell">
       <aside className="sidebar">

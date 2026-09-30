@@ -7,6 +7,7 @@ import { fmtBytes, fmtDuration, fmtSeconds, fmtTime } from '../../api/format'
 import { sessionTarget, sessionUser } from '../../api/labels'
 import type { Recording } from '../../api/types'
 import { Alert, Badge, Empty, PageHead, reasonBadge } from '../../components/ui'
+import { useRecordingsPath } from './paths'
 
 type PlayerHandle = ReturnType<typeof AsciinemaPlayer.create>
 type GuacModule = typeof import('guacamole-common-js').default
@@ -83,6 +84,7 @@ function typingInField(): boolean {
 }
 
 export function Player() {
+  const recordingsPath = useRecordingsPath()
   const { id = '' } = useParams()
   const [rec, setRec] = useState<Recording | null>(null)
   const [err, setErr] = useState('')
@@ -319,7 +321,7 @@ export function Player() {
             {rec.format !== 'guac' && <a className="btn" href={`/api/v1/recordings/${rec.id}/transcript`} download title="Download the command lines as text (audited)">Download transcript</a>}
           </>
         )}
-        <Link className="btn" to="/audit/recordings">Back to recordings</Link>
+        <Link className="btn" to={recordingsPath}>Back to recordings</Link>
       </PageHead>
       {err && <Alert tone="danger">{err}</Alert>}
       {!rec && !err && <Empty>Loading…</Empty>}
