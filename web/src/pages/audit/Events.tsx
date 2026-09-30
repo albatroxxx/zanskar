@@ -4,6 +4,7 @@ import { api, errorMessage, query } from '../../api/client'
 import { fmtPreciseTime, shortId } from '../../api/format'
 import type { AuditEvent, AuditFacets, AuditVerify, Page } from '../../api/types'
 import { Alert, Badge, Empty, PageHead } from '../../components/ui'
+import { useRecordingsPath } from './paths'
 
 interface Filters { actor: string; action: string; object_type: string; range: string; from: string; to: string }
 const emptyFilters: Filters = { actor: '', action: '', object_type: '', range: '', from: '', to: '' }
@@ -243,10 +244,11 @@ function describe(ev: AuditEvent): string {
  *  links to its player, nested values are shown compactly, and nothing is
  *  dropped, because this is the audit log. */
 function DetailRow({ k, v, name }: { k: string; v: unknown; name?: string }) {
+  const recordingsPath = useRecordingsPath()
   const id = typeof v === 'string' ? v : ''
   let body: React.ReactNode
   if (k === 'recording_id' && id) {
-    body = <Link to={`/audit/recordings/${id}`} title={id}>{name ?? 'play'}</Link>
+    body = <Link to={`${recordingsPath}/${id}`} title={id}>{name ?? 'play'}</Link>
   } else if (name) {
     body = <strong title={id}>{name}</strong>
   } else if (v === null || v === undefined || v === '') {

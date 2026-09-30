@@ -18,7 +18,7 @@ const Terminal = lazy(() => import('./pages/user/Terminal').then((m) => ({ defau
 const Desktop = lazy(() => import('./pages/user/Desktop').then((m) => ({ default: m.Desktop })))
 const Shadow = lazy(() => import('./pages/audit/Shadow').then((m) => ({ default: m.Shadow })))
 import { adminRoutes } from './pages/admin'
-import { auditRoutes } from './pages/audit'
+import { adminAuditRoutes, auditRoutes } from './pages/audit'
 
 function Guard({ roles, children }: { roles?: Role[]; children: React.ReactNode }) {
   const auth = useAuth()
@@ -43,6 +43,17 @@ function NoPortal() {
       <button className="btn sm ghost" onClick={() => void logout()}>Sign out</button>
     </div>
   )
+}
+
+// AdminToConsole sends an admin who follows an old /audit link to the same
+// page inside the admin console, which now holds Events and Recordings; the
+// audit portal is for review-only accounts.
+function AdminToConsole({ children }: { children: React.ReactNode }) {
+  const auth = useAuth()
+  const loc = useLocation()
+  if (!auth.hasRole('admin')) return <>{children}</>
+  const rest = loc.pathname.replace(/^\/audit\/?/, '')
+  return <Navigate to={'/admin/' + (rest || 'events') + loc.search} replace />
 }
 
 // Home resolves "/" and unknown paths to the portal the account may enter.
@@ -136,25 +147,29 @@ export default function App() {
                 { to: '/admin/retention', label: 'Retention' },
                 { to: '/admin/settings', label: 'Settings' },
                 { to: '/admin/logs', label: 'Logs' },
-                { to: '/audit', label: 'Audit & recordings' },
+                { to: '/admin/events', label: 'Events' },
+                { to: '/admin/recordings', label: 'Recordings' },
               ]}
             />
           </Guard>
         }
       >
         {adminRoutes}
+        {adminAuditRoutes}
       </Route>
       <Route
         path="/audit"
         element={
           <Guard roles={['admin', 'auditor']}>
-            <Shell
-              portal="audit"
-              items={[
-                { to: '/audit', label: 'Events', end: true },
-                { to: '/audit/recordings', label: 'Recordings' },
-              ]}
-            />
+            <AdminToConsole>
+              <Shell
+                portal="audit"
+                items={[
+                  { to: '/audit', label: 'Events', end: true },
+                  { to: '/audit/recordings', label: 'Recordings' },
+                ]}
+              />
+            </AdminToConsole>
           </Guard>
         }
       >

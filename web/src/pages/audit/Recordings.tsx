@@ -5,8 +5,10 @@ import { fmtDuration, fmtTime } from '../../api/format'
 import { sessionTarget, sessionUser } from '../../api/labels'
 import type { Page, Session } from '../../api/types'
 import { Alert, Empty, PageHead, reasonBadge } from '../../components/ui'
+import { useRecordingsPath } from './paths'
 
 export function Recordings() {
+  const recordingsPath = useRecordingsPath()
   const [items, setItems] = useState<Session[] | null>(null)
   const [next, setNext] = useState('')
   const [err, setErr] = useState('')
@@ -82,7 +84,7 @@ export function Recordings() {
                   <td>{fmtDuration(s.started_at, s.ended_at)}</td>
                   <td>{reasonBadge(s.end_reason)}</td>
                   <td>
-                    <Link className="btn sm" to={`/audit/recordings/${s.recording_id}`}>Review</Link>{' '}
+                    <Link className="btn sm" to={`${recordingsPath}/${s.recording_id}`}>Review</Link>{' '}
                     {/* Downloads are recorded views and audit events, like playback. */}
                     <a className="btn sm ghost" href={`/api/v1/recordings/${s.recording_id}/download`} download title="Download the recording file (audited)">Download</a>
                     {s.protocol !== 'rdp' && s.protocol !== 'vnc' && (
