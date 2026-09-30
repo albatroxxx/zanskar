@@ -159,7 +159,7 @@ threat model update in the same change.
 | Rate limiting and lockout | Per-account and per-IP limits on login, MFA and connect; progressive lockout with admin unlock | A1 |
 | No secrets in logs | Structured logging with a redaction layer; credentials, tokens, and MFA secrets are typed so they cannot be formatted by accident | Log leakage |
 | Memory hygiene | Plaintext credentials held in byte slices that are zeroed after use; no plaintext in long-lived structs | Memory disclosure |
-| Signed releases with SBOM | Binaries and images signed with cosign, SBOM published, dependency scanning in CI, `go mod verify` | A7 |
+| Signed releases with SBOM and provenance | Checksums and images signed with cosign; from 1.2.1 an SPDX SBOM per archive and SLSA level 3 build provenance for every release file (1.0.0 and 1.2.0 were signed but carried neither); dependency scanning in CI, `go mod verify` | A7 |
 
 ## 6. Residual risks
 

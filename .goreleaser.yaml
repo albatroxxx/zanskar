@@ -1,6 +1,8 @@
 # goreleaser v2 — builds the release binaries, tar.gz archives, deb/rpm packages,
-# SHA256SUMS, the multi-arch container image on ghcr.io, and keyless cosign
-# signatures for the checksums and the image. deb/rpm are produced by
+# an SPDX SBOM for each archive and package, SHA256SUMS over all of them, the
+# multi-arch container image on ghcr.io, and keyless cosign signatures for the
+# checksums and the image. SLSA provenance over SHA256SUMS is added by the
+# release workflow's provenance job. deb/rpm are produced by
 # goreleaser's built-in nfpm (pure Go). Build+validate locally with:
 #   goreleaser release --snapshot --clean --skip=docker,sign,publish
 # A tag push runs the full thing via .github/workflows/release.yml.
@@ -49,6 +51,9 @@ archives:
 nfpms:
   - id: packages
     package_name: zanskar
+    # Stamp packages with the commit time, not the build time, so the same tag
+    # rebuilds to the same deb and rpm bytes (the binaries already do).
+    mtime: "{{ .CommitDate }}"
     vendor: Zanskar
     homepage: https://github.com/albatroxxx/zanskar
     maintainer: Zanskar maintainers <noreply@github.com>
@@ -138,6 +143,17 @@ docker_manifests:
       - "ghcr.io/albatroxxx/zanskar:{{ .Version }}-amd64"
       - "ghcr.io/albatroxxx/zanskar:{{ .Version }}-arm64"
 
+# One SPDX JSON software bill of materials per archive, made by syft from the
+# archive itself, so it lists what shipped: the Go modules compiled into the
+# binary, with versions. The deb and rpm carry the same binary for their
+# architecture; syft sees a package file only as one opaque item, so an SBOM
+# of it would look complete and list nothing. SBOMs are checksummed with
+# everything else, so the cosign signature over SHA256SUMS and the SLSA
+# provenance cover them too.
+sboms:
+  - id: archives
+    artifacts: archive
+
 checksum:
   name_template: SHA256SUMS
   algorithm: sha256
@@ -214,5 +230,19 @@ release:
       --certificate-identity-regexp '^https://github.com/albatroxxx/zanskar/.github/workflows/release.yml@refs/tags/v{{ .Version }}$' \
       --certificate-oidc-issuer https://token.actions.githubusercontent.com
     ```
+
+    **Build provenance and SBOM** — `zanskar.intoto.jsonl` is SLSA level 3 provenance for every file
+    in `SHA256SUMS`: which workflow, at which commit, built it. Check a download against it with
+    [slsa-verifier](https://github.com/slsa-framework/slsa-verifier#installation):
+
+    ```sh
+    slsa-verifier verify-artifact zanskar_{{ .Version }}_linux_amd64.deb \
+      --provenance-path zanskar.intoto.jsonl \
+      --source-uri github.com/albatroxxx/zanskar --source-tag v{{ .Version }}
+    ```
+
+    Each `.tar.gz` has an SPDX software bill of materials beside it (`….tar.gz.sbom.json`) listing
+    the Go modules compiled into the binary, with versions. The `.deb` and `.rpm` for an
+    architecture carry the same binary, so its archive's SBOM describes them too.
 
     Full guide: [docs/deploy.md](https://github.com/albatroxxx/zanskar/blob/v{{ .Version }}/docs/deploy.md).
