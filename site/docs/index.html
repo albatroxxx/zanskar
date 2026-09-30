@@ -83,27 +83,21 @@ zanskar version</code></pre></div></div>
 zanskar version</code></pre></div></div></div>
     <h3 id="init">Configure with <code>zanskar init</code></h3>
     <p><code>zanskar init</code> writes <code>/etc/zanskar/env</code> (mode 0600), generates the master key, and prints the exact next commands with your paths filled in. Interactively it asks for the listen address, TLS mode, data directory, guacd, MFA and logging. Non-interactively it takes flags, which suits cloud-init and Ansible.</p>
-    <div class="code-block"><button type="button" class="copy" aria-label="Copy init commands">Copy</button><pre><code>sudo zanskar init                                   # interactive
-
-# the default: HTTPS on 443 with a managed certificate (self-signed until you
-# upload one in Settings), plain HTTP on 80 redirected there:
-sudo zanskar init -non-interactive
-
-# on a cloud instance, name the address people will actually type: it is
-# translated upstream, so the machine cannot find it and the certificate
-# would not cover it (see below):
-sudo zanskar init -non-interactive -tls-hosts zanskar.example.com
-
-# behind a TLS proxy (Caddy, nginx) on the same host:
-sudo zanskar init -non-interactive -behind-proxy
-
-# with desktops (RDP, VNC): name guacd here, so the file never needs a hand edit:
-sudo zanskar init -non-interactive -tls-hosts zanskar.example.com -guacd 127.0.0.1:4822
-
-# serving TLS from your own certificate files:
-sudo zanskar init -non-interactive -listen 0.0.0.0:443 \
+    <p><strong>Interactive.</strong> Answers each question in turn; the defaults are the recommended setup.</p>
+    <div class="code-block"><button type="button" class="copy" aria-label="Copy the interactive init command">Copy</button><pre><code>sudo zanskar init</code></pre></div>
+    <p><strong>The default, non-interactively.</strong> HTTPS on 443 with a managed certificate (self-signed until you upload one in Settings), and plain HTTP on 80 redirected there.</p>
+    <div class="code-block"><button type="button" class="copy" aria-label="Copy the default init command">Copy</button><pre><code>sudo zanskar init -non-interactive</code></pre></div>
+    <p><strong>On a cloud instance.</strong> Name the address people will actually type. It is translated upstream, so the machine cannot find it and the certificate would not cover it (<a href="#cert-names">see below</a>).</p>
+    <div class="code-block"><button type="button" class="copy" aria-label="Copy the cloud init command">Copy</button><pre><code>sudo zanskar init -non-interactive -tls-hosts zanskar.example.com</code></pre></div>
+    <p><strong>With desktops (RDP, VNC).</strong> Name guacd here, so the environment file never needs a hand edit. Start guacd itself as shown in <a href="#guacd">Start guacd</a>.</p>
+    <div class="code-block"><button type="button" class="copy" aria-label="Copy the desktops init command">Copy</button><pre><code>sudo zanskar init -non-interactive -tls-hosts zanskar.example.com -guacd 127.0.0.1:4822</code></pre></div>
+    <p><strong>Behind a TLS proxy</strong> (Caddy, nginx) on the same host.</p>
+    <div class="code-block"><button type="button" class="copy" aria-label="Copy the behind-proxy init command">Copy</button><pre><code>sudo zanskar init -non-interactive -behind-proxy</code></pre></div>
+    <p><strong>With your own certificate files.</strong></p>
+    <div class="code-block"><button type="button" class="copy" aria-label="Copy the own-certificate init command">Copy</button><pre><code>sudo zanskar init -non-interactive -listen 0.0.0.0:443 \
   -tls-cert /etc/zanskar/tls/cert.pem -tls-key /etc/zanskar/tls/key.pem \
   -guacd 127.0.0.1:4822</code></pre></div>
+    <p>The flags combine: add <code>-guacd 127.0.0.1:4822</code> to any of them for desktops, and <code>-tls-hosts</code> to any that uses the managed certificate (it names what that certificate covers, so it has no effect behind a proxy or with your own files).</p>
     <h4 id="cert-names">Name the address people will use</h4>
     <p>The certificate Zanskar generates at first start covers what the machine can work out for itself: <code>localhost</code>, its host name, and the addresses on its network interfaces. On a cloud instance that is the <em>private</em> address. The public address is translated upstream and appears on no interface, so nothing can guess it.</p>
     <p>Reaching a gateway by an address the certificate does not carry gives you two things, neither obvious:</p>
