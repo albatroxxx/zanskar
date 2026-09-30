@@ -1,4 +1,5 @@
-# OSV-Scanner configuration, read by OpenSSF Scorecard's Vulnerabilities check.
+# OSV-Scanner configuration, read by the CI `osv` job and OpenSSF Scorecard's
+# Vulnerabilities check.
 # Every entry needs a reason a reviewer can verify, and is revisited when the
 # dependency changes.
 

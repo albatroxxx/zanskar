@@ -1,0 +1,36 @@
+name: Image scan
+
+# Weekly Trivy scan of the published container image. The image is fixed at
+# release time but advisories keep arriving, so this catches a CVE in the
+# shipped base layer or binary that appeared after the tag. Results go to the
+# repository's Security tab; a failed run also emails the maintainers.
+on:
+  schedule:
+    - cron: "17 4 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  scan:
+    name: Trivy scan of ghcr.io/albatroxxx/zanskar:latest
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write # upload the SARIF to code scanning
+    steps:
+      - uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: image
+          image-ref: ghcr.io/albatroxxx/zanskar:latest
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          format: sarif
+          output: trivy-image.sarif
+          exit-code: "1"
+      - uses: github/codeql-action/upload-sarif@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4.38.2
+        if: always()
+        with:
+          sarif_file: trivy-image.sarif
+          category: trivy-image
