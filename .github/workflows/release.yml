@@ -1,10 +1,12 @@
 name: release
 
 # Tag a version (e.g. v1.0.0) to build the release. goreleaser cross-compiles
-# the binaries, builds tar.gz archives, deb/rpm packages (built-in nfpm) and
-# SHA256SUMS, pushes the multi-arch image to ghcr.io, signs checksums and image
-# with cosign (keyless, this workflow's OIDC identity), and attaches everything
-# to a GitHub release (created as a draft to review before publishing).
+# the binaries, builds tar.gz archives, deb/rpm packages (built-in nfpm), an
+# SPDX SBOM per archive and SHA256SUMS over all of them, pushes the multi-arch
+# image to ghcr.io, signs checksums and image with cosign (keyless, this
+# workflow's OIDC identity), and attaches everything to a GitHub release
+# (created as a draft to review before publishing). The provenance job then
+# adds SLSA build provenance for every file in SHA256SUMS to the same draft.
 on:
   push:
     tags: ["v*"]
@@ -16,6 +18,8 @@ jobs:
   goreleaser:
     name: goreleaser
     runs-on: ubuntu-latest
+    outputs:
+      hashes: ${{ steps.hashes.outputs.hashes }}
     permissions:
       contents: write # create the GitHub release and upload artifacts
       packages: write # push the image to ghcr.io
@@ -44,12 +48,24 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
       - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+      - uses: anchore/sbom-action/download-syft@3ad7283483fc7af8ff2b4ea19663c2d5ca935e26 # v0.24.2
       - uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7.2.3
+        id: goreleaser
         with:
           version: "~> v2"
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      # The provenance subjects are exactly the lines of SHA256SUMS: every
+      # archive, package and SBOM, by name and digest.
+      - name: Hash the release files for provenance
+        id: hashes
+        env:
+          ARTIFACTS: ${{ steps.goreleaser.outputs.artifacts }}
+        run: |
+          set -euo pipefail
+          sums=$(echo "$ARTIFACTS" | jq -r '.[] | select(.type == "Checksum") | .path')
+          echo "hashes=$(base64 -w0 < "$sums")" >> "$GITHUB_OUTPUT"
       # Hand-written highlights for this tag, if the repo carries them, go
       # above goreleaser's generated install block and commit list. The
       # generated changelog only covers commits since the previous tag, which
@@ -66,3 +82,23 @@ jobs:
           { cat "$f"; echo; cat generated.md; } > notes.md
           gh release edit "$TAG" --notes-file notes.md
           echo "prepended $f"
+
+  # SLSA build provenance (level 3) for every file in SHA256SUMS, signed by the
+  # SLSA generator's own reusable workflow and uploaded to the draft release as
+  # zanskar.intoto.jsonl. It is referenced by tag, not digest, because the
+  # generator verifies its own ref and refuses to run from a SHA. Scorecard's
+  # Pinned-Dependencies check counts this one line as unpinned; that is the
+  # accepted cost of level 3 provenance, and the only unpinned reference here.
+  provenance:
+    name: provenance
+    needs: [goreleaser]
+    permissions:
+      actions: read # read the workflow run it attests
+      id-token: write # sign the provenance (Sigstore)
+      contents: write # upload it to the release
+    uses: slsa-framework/slsa-github-generator/.github/workflows/generator_generic_slsa3.yml@v2.1.0
+    with:
+      base64-subjects: "${{ needs.goreleaser.outputs.hashes }}"
+      upload-assets: true
+      draft-release: true
+      provenance-name: zanskar.intoto.jsonl
