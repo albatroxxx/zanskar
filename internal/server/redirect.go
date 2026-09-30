@@ -5,6 +5,7 @@ package server
 import (
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"regexp"
@@ -32,8 +33,12 @@ func redirectHandler(tlsPort, fallbackHost string, covered func() []string) http
 			asked = h
 		}
 		asked = strings.ToLower(strings.Trim(asked, "[]"))
+		// wellFormed gates both the certificate lookup and whether the name is
+		// safe to repeat back: anything else is an arbitrary request header and
+		// is never echoed.
+		wellFormed := net.ParseIP(asked) != nil || (len(asked) <= 253 && hostRe.MatchString(asked))
 		host := ""
-		if covered != nil && (net.ParseIP(asked) != nil || (len(asked) <= 253 && hostRe.MatchString(asked))) {
+		if covered != nil && wellFormed {
 			for _, name := range covered() {
 				if strings.EqualFold(name, asked) {
 					host = name
@@ -45,7 +50,29 @@ func redirectHandler(tlsPort, fallbackHost string, covered func() []string) http
 			host = fallbackHost
 		}
 		if host == "" {
-			http.Error(w, "use https", http.StatusBadRequest)
+			// Refusing rather than guessing: a redirect to a name the served
+			// certificate cannot serve would only move the browser warning one
+			// hop. Say which name was asked for and how to make it work, since
+			// a cloud instance reached by its public address lands here every
+			// time (the address is translated upstream, so it is on no
+			// interface and cannot be guessed).
+			which := "The address you used"
+			if wellFormed {
+				which = strconv.Quote(asked)
+			}
+			w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+			w.Header().Set("X-Content-Type-Options", "nosniff")
+			w.Header().Set("Cache-Control", "no-store")
+			w.WriteHeader(http.StatusBadRequest)
+			// #nosec G705 -- `which` is either a fixed string or a host that
+			// passed hostRe (letters, digits, hyphens and dots) or net.ParseIP,
+			// quoted; it cannot carry markup. The response is text/plain with
+			// nosniff, so there is no document for a script to run in.
+			_, _ = io.WriteString(w, "Zanskar serves HTTPS, and this listener only redirects to a name its certificate covers.\n\n"+
+				which+" is not one of them, so there is nothing safe to redirect you to.\n\n"+
+				"Reach it over https:// directly, or add this name to the certificate: set ZANSKAR_TLS_HOSTS\n"+
+				"in the environment file (zanskar init -tls-hosts), or use Regenerate self-signed on the\n"+
+				"Settings page and list it there.\n")
 			return
 		}
 		if strings.Contains(host, ":") {

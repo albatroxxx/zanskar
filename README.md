@@ -114,7 +114,9 @@ guacd sidecar for RDP/VNC. Two supported install paths, both from the
 
 - **Packages** (recommended): `.deb` / `.rpm` for amd64 and arm64, then `sudo zanskar init`
   writes the configuration, serves HTTPS on 443 with a certificate it manages (upload yours on the
-  Settings page), and prints the next steps. `zanskar init -behind-proxy` keeps the gateway on
+  Settings page), and prints the next steps. It asks which address people will reach the gateway
+  by: a cloud instance's public address is translated upstream, so nothing can guess it, and a
+  certificate without it means a browser warning and no HTTP-to-HTTPS redirect. `zanskar init -behind-proxy` keeps the gateway on
   loopback behind your own TLS proxy. Plain tarballs are there too.
 - **Container**: `ghcr.io/albatroxxx/zanskar:latest`, or a pinned `:<version>`, with
   `deploy/docker-compose.yml` (gateway + guacd + Caddy TLS). `ZANSKAR_VERSION` in `deploy/.env`

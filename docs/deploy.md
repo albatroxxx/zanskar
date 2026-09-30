@@ -306,6 +306,16 @@ and the gateway says so when a bind on a port below 1024 is refused. HSTS is sen
 the gateway serves TLS; browsers ignore it on a connection with certificate errors, so the
 self-signed default pins nothing until a real certificate is uploaded.
 
+**The redirect only targets a name the served certificate covers.** A redirect to a name the
+certificate cannot serve moves the browser warning one hop instead of fixing it, so a request
+whose `Host` is not covered is answered with a short page explaining what to change. The
+generated certificate covers what the machine can work out for itself: `localhost`, its host
+name, and its interface addresses. On a cloud instance the public address is translated
+upstream and is on no interface, so name it with `ZANSKAR_TLS_HOSTS` (comma separated;
+`zanskar init` asks, `-tls-hosts` sets it non-interactively). Adding a name and restarting
+regenerates the self-signed certificate so it carries it; an uploaded or file certificate is
+never touched.
+
 ## Recording storage
 
 Recordings go to the local directory by default. To keep them in an S3-compatible bucket,

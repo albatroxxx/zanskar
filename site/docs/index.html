@@ -72,6 +72,11 @@ zanskar version</code></pre></div></div></div>
 # upload one in Settings), plain HTTP on 80 redirected there:
 sudo zanskar init -non-interactive
 
+# on a cloud instance, name the address people will actually type: it is
+# translated upstream, so the machine cannot find it and the certificate
+# would not cover it (see below):
+sudo zanskar init -non-interactive -tls-hosts zanskar.example.com
+
 # behind a TLS proxy (Caddy, nginx) on the same host:
 sudo zanskar init -non-interactive -behind-proxy
 
@@ -79,6 +84,15 @@ sudo zanskar init -non-interactive -behind-proxy
 sudo zanskar init -non-interactive -listen 0.0.0.0:443 \
   -tls-cert /etc/zanskar/tls/cert.pem -tls-key /etc/zanskar/tls/key.pem \
   -guacd 127.0.0.1:4822</code></pre></div>
+    <h4 id="cert-names">Name the address people will use</h4>
+    <p>The certificate Zanskar generates at first start covers what the machine can work out for itself: <code>localhost</code>, its host name, and the addresses on its network interfaces. On a cloud instance that is the <em>private</em> address. The public address is translated upstream and appears on no interface, so nothing can guess it.</p>
+    <p>Reaching a gateway by an address the certificate does not carry gives you two things, neither obvious:</p>
+    <ul>
+      <li>The browser warns twice over, once that the issuer is unknown and again that the address is not in the certificate.</li>
+      <li><code>http://</code> is <strong>not</strong> redirected to <code>https://</code>. The plain-HTTP listener only redirects to a name the served certificate covers, on the grounds that sending you to a name it cannot serve would move the warning one hop rather than fix it. You get a short page saying so instead.</li>
+    </ul>
+    <p>So name it: the interactive <code>zanskar init</code> asks, <code>-tls-hosts</code> answers it non-interactively, and <code>ZANSKAR_TLS_HOSTS</code> in the environment file does the same afterwards. Several names are comma separated. Adding one and restarting regenerates the self-signed certificate so it carries it; an uploaded certificate is never touched. The <strong>Regenerate self-signed</strong> button on the Settings page does the same from the console.</p>
+    <p>Naming it removes the mismatch warning. The unknown-issuer warning stays until you upload a real certificate, which the same Settings page accepts and applies to the next connection without a restart.</p>
     <p class="note"><strong>Back up <code>/etc/zanskar/env</code> now.</strong> It holds <code>ZANSKAR_MASTER_KEY</code>, which seals every stored credential. It is never written to the database or to <code>zanskar backup</code> archives. Losing it makes every vaulted credential unrecoverable.</p>
     <h3 id="migrate">Apply migrations, create the first admin, start</h3>
     <p>Run the database commands <strong>as the service user</strong> so it owns the SQLite files it will write to. <code>init</code> prints this block for you. <code>admin create</code> asks for the password twice on the terminal without echo; do not put it on the command line, where it would land in your shell history.</p>

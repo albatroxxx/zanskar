@@ -202,3 +202,41 @@ func TestRenderEnvManagedMode(t *testing.T) {
 		}
 	}
 }
+
+// TestInitWritesCertificateNames covers the cloud case: the public address is
+// translated upstream, so the machine cannot find it and it has to be named.
+// Without it the certificate omits the address people use, which shows up as a
+// name-mismatch warning and a plain-HTTP listener that refuses to redirect.
+func TestInitWritesCertificateNames(t *testing.T) {
+	a := defaultAnswers()
+	a.TLSHosts = []string{"zanskar.example.com", "203.0.113.9"}
+	a.MasterKey = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+	if err := validateAnswers(a); err != nil {
+		t.Fatalf("names must be accepted: %v", err)
+	}
+	got := renderEnv(a)
+	if !strings.Contains(got, "ZANSKAR_TLS_HOSTS=zanskar.example.com,203.0.113.9") {
+		t.Fatalf("env file does not carry the names:\n%s", got)
+	}
+
+	// A name that is neither a host name nor an address is refused.
+	bad := a
+	bad.TLSHosts = []string{"https://zanskar.example.com/"}
+	if err := validateAnswers(bad); err == nil {
+		t.Fatal("a URL is not a certificate name")
+	}
+
+	// They belong to a certificate Zanskar serves, not to a proxy in front.
+	proxied := a
+	proxied.TLSMode, proxied.ListenAddr, proxied.RedirectAddr = tlsModeProxy, "127.0.0.1:8443", ""
+	if err := validateAnswers(proxied); err == nil {
+		t.Fatal("certificate names make no sense in behind-proxy mode")
+	}
+
+	// Nothing is written when nothing is named.
+	none := defaultAnswers()
+	none.MasterKey = a.MasterKey
+	if strings.Contains(renderEnv(none), "ZANSKAR_TLS_HOSTS") {
+		t.Fatal("the variable must be absent when no name is given")
+	}
+}

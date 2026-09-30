@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/albatroxxx/zanskar/internal/config"
+	"github.com/albatroxxx/zanskar/internal/tlscert"
 )
 
 // runInit handles `zanskar init`: it gathers configuration and writes the
@@ -36,6 +37,7 @@ func runInit(args []string) error {
 	listen := fs.String("listen", "", "listen address (default 127.0.0.1:8443)")
 	behindProxy := fs.Bool("behind-proxy", false, "a TLS proxy terminates in front on loopback (no cert needed)")
 	managedTLS := fs.Bool("managed-tls", false, "Zanskar serves TLS with a certificate it manages: self-signed at first start, replaced from the console (the default; ADR 0021)")
+	tlsHosts := fs.String("tls-hosts", "", "extra names or addresses the managed certificate must cover, comma separated; a cloud instance needs its public address or DNS name here")
 	redirect := fs.String("redirect", "", "plain-HTTP address that redirects to HTTPS when Zanskar serves TLS (default :80 when listening on 443; \"off\" disables)")
 	tlsCert := fs.String("tls-cert", "", "path to the TLS certificate (own-certificate mode)")
 	tlsKey := fs.String("tls-key", "", "path to the TLS private key (own-certificate mode)")
@@ -87,6 +89,9 @@ func runInit(args []string) error {
 		a.RedirectAddr = *redirect
 	default:
 		a.RedirectAddr = defaultRedirect(a)
+	}
+	if *tlsHosts != "" {
+		a.TLSHosts = splitHosts(*tlsHosts)
 	}
 	if *dataDir != "" {
 		a.DataDir = *dataDir
@@ -190,14 +195,18 @@ type initAnswers struct {
 	// RedirectAddr is the plain-HTTP listener that redirects to HTTPS;
 	// empty means none.
 	RedirectAddr string
-	RequireMFA   bool
-	GuacdAddr    string // empty disables desktop access
-	EnvFile      string // written only when the file is not at the packaged path
-	DataDir      string
-	Issuer       string
-	LogLevel     string
-	LogFormat    string
-	MasterKey    string // base64, 32 bytes
+	// TLSHosts are extra names the managed certificate must cover. The
+	// machine can find its own interface addresses; it cannot find a public
+	// address that is translated upstream, which is every cloud instance.
+	TLSHosts   []string
+	RequireMFA bool
+	GuacdAddr  string // empty disables desktop access
+	EnvFile    string // written only when the file is not at the packaged path
+	DataDir    string
+	Issuer     string
+	LogLevel   string
+	LogFormat  string
+	MasterKey  string // base64, 32 bytes
 }
 
 func defaultAnswers() initAnswers {
@@ -245,7 +254,18 @@ func validateAnswers(a initAnswers) error {
 			return errors.New("own-certificate mode needs both --tls-cert and --tls-key")
 		}
 	case tlsModeManaged:
+		for _, h := range a.TLSHosts {
+			if err := tlscert.ValidHost(h); err != nil {
+				return fmt.Errorf("certificate name %q: it must be a host name or an IP address", h)
+			}
+		}
+		if len(a.TLSHosts) > 32 {
+			return errors.New("at most 32 certificate names")
+		}
 	case tlsModeProxy:
+		if len(a.TLSHosts) > 0 {
+			return errors.New("certificate names apply to a managed certificate; drop -tls-hosts in behind-proxy mode")
+		}
 		if a.RedirectAddr != "" {
 			return errors.New("the HTTP redirect listener needs Zanskar to serve TLS; drop -redirect in behind-proxy mode")
 		}
@@ -321,6 +341,13 @@ func renderEnv(a initAnswers) string {
 		p("# TLS terminates in Zanskar with a certificate it manages: self-signed at\n")
 		p("# first start, replaced from the console (Settings, TLS certificate).\n")
 		p("ZANSKAR_TLS_MODE=managed\n")
+		if len(a.TLSHosts) > 0 {
+			p("# Names the self-signed certificate carries, on top of this machine's own\n")
+			p("# host name and interface addresses. A public address that is translated\n")
+			p("# upstream (any cloud instance) is not on an interface, so it goes here or\n")
+			p("# browsers reaching it see a name mismatch and plain HTTP is not redirected.\n")
+			p("ZANSKAR_TLS_HOSTS=%s\n", strings.Join(a.TLSHosts, ","))
+		}
 		if a.RedirectAddr != "" {
 			p("# Plain HTTP here answers with a redirect to the HTTPS listener.\n")
 			p("ZANSKAR_HTTP_REDIRECT_ADDR=%s\n", a.RedirectAddr)
@@ -569,6 +596,11 @@ func promptAnswers(a *initAnswers) error {
 	if askBool(r, "Terminate TLS in Zanskar?", a.TLSMode != tlsModeProxy) {
 		if askBool(r, "  Use a managed certificate (self-signed now; upload a real one in Settings)?", a.TLSMode != tlsModeCert) {
 			a.TLSMode = tlsModeManaged
+			fmt.Println("  The certificate covers this machine's host name and interface addresses on its own.")
+			fmt.Println("  A cloud instance's public address is not one of those, so name it here if people")
+			fmt.Println("  will reach Zanskar by it; otherwise browsers see a name mismatch and plain HTTP")
+			fmt.Println("  is answered with an error instead of a redirect. Blank is fine for a private network.")
+			a.TLSHosts = splitHosts(ask(r, "  Public address or host name browsers will use", strings.Join(a.TLSHosts, ",")))
 		} else {
 			a.TLSMode = tlsModeCert
 			a.TLSCert = ask(r, "  TLS certificate path", a.TLSCert)
@@ -630,4 +662,16 @@ func askBool(r *bufio.Reader, label string, def bool) bool {
 		return def
 	}
 	return line == "y" || line == "yes"
+}
+
+// splitHosts reads the comma-separated answer to the certificate-names
+// question. Validation happens in validate, with the other answers.
+func splitHosts(v string) []string {
+	var out []string
+	for _, raw := range strings.Split(v, ",") {
+		if t := strings.TrimSpace(raw); t != "" {
+			out = append(out, t)
+		}
+	}
+	return out
 }
