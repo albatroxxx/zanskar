@@ -39,14 +39,26 @@ archives:
     formats:
       - tar.gz
     name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    # Owner and time are fixed, so the archive does not record who built it or
+    # when the repository was checked out: any machine rebuilding a tag gets the
+    # same bytes. (Contents already matched; only this metadata differed.)
+    builds_info:
+      owner: root
+      group: root
+      mtime: "{{ .CommitDate }}"
     files:
-      - LICENSE
-      - THIRD_PARTY_LICENSES.md
-      - THIRD_PARTY_NOTICES.md
+      - src: LICENSE
+        info: &fixed { owner: root, group: root, mtime: "{{ .CommitDate }}" }
+      - src: THIRD_PARTY_LICENSES.md
+        info: *fixed
+      - src: THIRD_PARTY_NOTICES.md
+        info: *fixed
       - src: deploy/packaging/zanskar.service
         dst: systemd/zanskar.service
+        info: *fixed
       - src: deploy/packaging/env.example
         dst: env.example
+        info: *fixed
 
 nfpms:
   - id: packages
@@ -85,6 +97,9 @@ nfpms:
       postremove: deploy/packaging/scripts/postremove.sh
     rpm:
       group: Applications/System
+      # An rpm records the host that built it; a fixed name keeps the bytes
+      # the same whichever machine rebuilds the tag.
+      buildhost: zanskar-release
     deb:
       fields:
         Bugs: https://github.com/albatroxxx/zanskar/issues
