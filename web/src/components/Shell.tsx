@@ -1,5 +1,5 @@
 import { Fragment, useEffect, useState } from 'react'
-import { NavLink, Outlet } from 'react-router-dom'
+import { Link, NavLink, Outlet, useNavigate } from 'react-router-dom'
 import { useAuth } from '../auth/AuthContext'
 import { canConnect } from '../auth/home'
 import { AccessNotices } from './AccessNotices'
@@ -28,8 +28,19 @@ function NavBadge({ load }: { load: () => Promise<number> }) {
 
 /** Shell is the sidebar layout shared by the user, admin and auditor portals. */
 export function Shell({ portal, items }: { portal: 'user' | 'admin' | 'audit'; items: NavItem[] }) {
-  const { user, logout, hasRole } = useAuth()
+  const { user, logout, hasRole, refresh } = useAuth()
+  const nav = useNavigate()
   const sub = portal === 'user' ? 'access' : portal === 'admin' ? 'admin' : 'audit'
+  // The brand goes to the first page of the portal you are in. It asks the
+  // server about the session first: a stale one then lands on sign-in (the
+  // route guard sends it there) instead of on a page whose data 401s.
+  const home = portal === 'user' ? '/' : '/' + portal
+  const goHome = async (e: React.MouseEvent) => {
+    if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return // new tab or window: leave it to the browser
+    e.preventDefault()
+    await refresh()
+    nav(home)
+  }
   // Links to the other portals this account may enter. A review-only account
   // (auditor without user) has no user portal to switch to.
   const others: { to: string; label: string }[] = []
@@ -41,13 +52,13 @@ export function Shell({ portal, items }: { portal: 'user' | 'admin' | 'audit'; i
   return (
     <div className="shell">
       <aside className="sidebar">
-        <div className="brand">
+        <Link className="brand" to={home} onClick={(e) => void goHome(e)} title="Back to the first page">
           <img src="/logo-mark.svg" alt="" />
           <div>
             Zanskar
             <small>{sub}</small>
           </div>
-        </div>
+        </Link>
         <nav>
           {items.map((it) => (
             <NavLink key={it.to} to={it.to} end={it.end}>
