@@ -31,7 +31,9 @@ button, input, select, textarea { font: inherit; color: inherit; }
 /* layout */
 .shell { display: grid; grid-template-columns: var(--sidebar-w) 1fr; min-height: 100%; }
 .sidebar { background: var(--bg-raised); border-right: 1px solid var(--line); padding: 16px 12px; display: flex; flex-direction: column; gap: 4px; position: sticky; top: 0; height: 100vh; }
-.sidebar .brand { display: flex; align-items: center; gap: 10px; padding: 4px 8px 16px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; font-size: 0.8rem; }
+.sidebar .brand { display: flex; align-items: center; gap: 10px; padding: 4px 8px 16px; color: var(--fg); border-radius: var(--radius); font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; font-size: 0.8rem; }
+.sidebar .brand:hover { text-decoration: none; }
+.sidebar .brand:hover img { opacity: 0.85; }
 .sidebar .brand img { width: 28px; height: 28px; border-radius: 6px; }
 .sidebar .brand small { display: block; font-weight: 500; letter-spacing: 0.04em; color: var(--fg-muted); font-size: 0.66rem; }
 .sidebar nav a { display: block; padding: 7px 10px; border-radius: var(--radius); color: var(--fg); }
