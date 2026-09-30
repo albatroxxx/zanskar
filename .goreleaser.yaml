@@ -51,6 +51,9 @@ archives:
 nfpms:
   - id: packages
     package_name: zanskar
+    # Stamp packages with the commit time, not the build time, so the same tag
+    # rebuilds to the same deb and rpm bytes (the binaries already do).
+    mtime: "{{ .CommitDate }}"
     vendor: Zanskar
     homepage: https://github.com/albatroxxx/zanskar
     maintainer: Zanskar maintainers <noreply@github.com>
