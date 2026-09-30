@@ -3,20 +3,20 @@
 <head>
   <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Install Zanskar | Zanskar Docs</title>
-  <meta name="description" content="Prerequisites, package and Docker Compose installation, first sign-in, configuration reference, upgrading and removing Zanskar 1.0 on a single server.">
+  <meta name="description" content="Prerequisites, package and Docker Compose installation, first sign-in, configuration reference, upgrading and removing Zanskar 1.2 on a single server.">
   <link rel="canonical" href="https://albatroxxx.github.io/zanskar/docs/">
   <meta name="robots" content="index,follow">
   <meta property="og:title" content="Install Zanskar">
-  <meta property="og:description" content="Prerequisites, installation, configuration, upgrade and removal for Zanskar 1.0.">
+  <meta property="og:description" content="Prerequisites, installation, configuration, upgrade and removal for Zanskar 1.2.">
   <meta property="og:type" content="website"><meta property="og:url" content="https://albatroxxx.github.io/zanskar/docs/">
   <meta property="og:image" content="https://albatroxxx.github.io/zanskar/assets/admin-targets-1.0.0.jpg"><meta name="twitter:card" content="summary_large_image">
   <link rel="icon" href="../assets/logo.svg" type="image/svg+xml"><link rel="stylesheet" href="../assets/site.css"><script src="../assets/site.js" defer></script><script src="../assets/tabs.js" defer></script>
 </head>
 <body>
   <a class="skip" href="#main">Skip to content</a>
-  <header class="site-header"><a class="brand" href="../"><img src="../assets/logo.svg" alt="" width="32" height="32">Zanskar</a><nav aria-label="Main"><a href="./" aria-current="page">Get started</a><a href="../guide/">How-to guide</a><a href="../concepts/">Concepts</a><a href="../troubleshooting/">Troubleshooting</a><a href="../releases/">v1.0.0</a><a href="https://github.com/albatroxxx/zanskar">GitHub &#8599;</a></nav></header>
+  <header class="site-header"><a class="brand" href="../"><img src="../assets/logo.svg" alt="" width="32" height="32">Zanskar</a><nav aria-label="Main"><a href="./" aria-current="page">Get started</a><a href="../guide/">How-to guide</a><a href="../concepts/">Concepts</a><a href="../troubleshooting/">Troubleshooting</a><a href="../releases/">v1.2.0</a><a href="https://github.com/albatroxxx/zanskar">GitHub &#8599;</a></nav></header>
   <main id="main" class="docs-layout"><nav class="docs-nav" aria-label="On this page"><a href="#prerequisites">Prerequisites</a><a href="#install">Install: packages</a><a href="#guacd">Start guacd</a><a href="#tls-without-cert">TLS without a certificate</a><a href="#compose">Install: Docker Compose</a><a href="#first-sign-in">First sign-in</a><a href="#configuration">Configuration</a><a href="#update">Update</a><a href="#remove">Remove</a><a href="#security">Security</a></nav><article class="prose">
-    <p class="eyebrow">GET STARTED</p><h1>Install Zanskar</h1><p>Zanskar 1.0 runs as a <strong>single instance</strong>: one gateway with an embedded SQLite database, plus a <code>guacd</code> sidecar if you want RDP or VNC desktops. Two supported install paths: the <strong>deb/rpm package</strong> on a Linux server, or the <strong>signed container image</strong> with Docker Compose. Both were exercised on a clean Ubuntu 24.04 machine before this release was cut.</p>
+    <p class="eyebrow">GET STARTED</p><h1>Install Zanskar</h1><p>Zanskar 1.2 runs as a <strong>single instance</strong>: one gateway with an embedded SQLite database (or PostgreSQL), plus a <code>guacd</code> sidecar if you want RDP or VNC desktops. Two supported install paths: the <strong>deb/rpm package</strong> on a Linux server, or the <strong>signed container image</strong> with Docker Compose. Both were exercised on a clean Ubuntu 24.04 machine before this release was cut.</p>
 
     <h2 id="prerequisites">Prerequisites</h2>
     <table><thead><tr><th scope="col">Need</th><th scope="col">Package path</th><th scope="col">Compose path</th></tr></thead><tbody>
@@ -32,13 +32,13 @@
     <p>Download the package for your architecture, the checksums and the signature bundle from the <a href="https://github.com/albatroxxx/zanskar/releases/latest">latest release</a>. Pick your distribution once; every block on this page follows. The commands use amd64; swap <code>arm64</code> as needed.</p>
     <div class="tabs" data-tabs><div class="tab-list" role="tablist"><button type="button" role="tab" aria-selected="true" data-tab="deb">Debian / Ubuntu (.deb)</button><button type="button" role="tab" aria-selected="false" data-tab="rpm">RHEL / Fedora / SUSE (.rpm)</button></div>
     <div data-panel="deb"><div class="code-block"><button type="button" class="copy" aria-label="Copy download commands (deb)">Copy</button><pre><code>sudo apt update &amp;&amp; sudo apt install -y curl
-V=1.0.0
+V=1.2.0
 B=https://github.com/albatroxxx/zanskar/releases/download/v$V
 curl -LO $B/zanskar_${V}_linux_amd64.deb
 curl -LO $B/SHA256SUMS
 curl -LO $B/SHA256SUMS.sigstore.json</code></pre></div></div>
     <div data-panel="rpm" hidden><div class="code-block"><button type="button" class="copy" aria-label="Copy download commands (rpm)">Copy</button><pre><code>sudo dnf makecache &amp;&amp; sudo dnf install -y curl
-V=1.0.0
+V=1.2.0
 B=https://github.com/albatroxxx/zanskar/releases/download/v$V
 curl -LO $B/zanskar_${V}_linux_amd64.rpm
 curl -LO $B/SHA256SUMS
@@ -122,12 +122,12 @@ sudo zanskar init -non-interactive -behind-proxy -guacd 127.0.0.1:4822
 
     <h2 id="compose">2. Install with Docker Compose</h2>
     <p>The single-node stack is the gateway on SQLite with a persistent volume, <code>guacd</code> for desktops, and Caddy terminating TLS in front. The gateway port is never published; only Caddy's 80 and 443 are. A one-shot <code>zanskar-migrate</code> service applies migrations before the gateway starts.</p>
-    <div class="code-block"><button type="button" class="copy" aria-label="Copy Compose setup commands">Copy</button><pre><code>git clone --depth 1 --branch v1.0.0 https://github.com/albatroxxx/zanskar.git
+    <div class="code-block"><button type="button" class="copy" aria-label="Copy Compose setup commands">Copy</button><pre><code>git clone --depth 1 --branch v1.2.0 https://github.com/albatroxxx/zanskar.git
 cd zanskar
 cp deploy/.env.example deploy/.env
 # edit deploy/.env:
 #   ZANSKAR_MASTER_KEY=      -> output of: openssl rand -base64 32
-#   ZANSKAR_VERSION=1.0.0    -> optional; `latest` is the newest stable release
+#   ZANSKAR_VERSION=1.2.0    -> optional; `latest` is the newest stable release
 #   ZANSKAR_SITE_ADDRESS=    -> optional public hostname for Let's Encrypt
 
 docker compose -f deploy/docker-compose.yml up -d
@@ -135,8 +135,8 @@ docker compose -f deploy/docker-compose.yml exec -it \
   zanskar /zanskar admin create --username admin --name "Your Name"
 # Password: ...   (prompted twice, no echo; -it gives the command a terminal)</code></pre></div>
     <p>The image is <code>ghcr.io/albatroxxx/zanskar</code>, built for linux/amd64 and linux/arm64, running as a non-root user on a distroless base. Verify its signature the same way as the checksums:</p>
-    <div class="code-block"><button type="button" class="copy" aria-label="Copy image verification command">Copy</button><pre><code>cosign verify ghcr.io/albatroxxx/zanskar:1.0.0 \
-  --certificate-identity-regexp '^https://github.com/albatroxxx/zanskar/.github/workflows/release.yml@refs/tags/v1.0.0$' \
+    <div class="code-block"><button type="button" class="copy" aria-label="Copy image verification command">Copy</button><pre><code>cosign verify ghcr.io/albatroxxx/zanskar:1.2.0 \
+  --certificate-identity-regexp '^https://github.com/albatroxxx/zanskar/.github/workflows/release.yml@refs/tags/v1.2.0$' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com</code></pre></div>
     <p>Without a site address Caddy serves <code>https://localhost/</code> with a self-signed certificate (a browser warning, fine for a trial). With <code>ZANSKAR_SITE_ADDRESS</code> set and ports 80/443 reachable from the internet, Caddy obtains a Let's Encrypt certificate automatically. Data lives in the <code>zanskar_data</code> volume.</p>
 
@@ -145,20 +145,27 @@ docker compose -f deploy/docker-compose.yml exec -it \
     <p>Lost the only admin's authenticator? On the gateway host: <code>zanskar admin reset-mfa --username admin</code>. The reset is audited and the next sign-in enrolls a new one.</p>
 
     <h2 id="configuration">Configuration reference</h2>
-    <p>Zanskar is configured entirely through environment variables. The package reads <code>/etc/zanskar/env</code>; Compose reads <code>deploy/.env</code>. Restart after changes.</p>
+    <p>Install-time settings are environment variables: the package reads <code>/etc/zanskar/env</code>; Compose reads <code>deploy/.env</code>. After an edit the console shows <em>Restart required</em> and restarts the gateway with a drain. Runtime settings (login banner, the MFA requirement, guacd address, log level, the MySQL relay image), the TLS certificate and the recording storage are changed live on the console's Settings page, which shows the install-time value as read-only.</p>
     <table><thead><tr><th scope="col">Variable</th><th scope="col">Purpose</th></tr></thead><tbody>
     <tr><td><code>ZANSKAR_MASTER_KEY</code></td><td><strong>Required.</strong> 32-byte base64 key that seals every stored secret. Generate with <code>openssl rand -base64 32</code> or <code>zanskar keygen</code>.</td></tr>
     <tr><td><code>ZANSKAR_LISTEN_ADDR</code></td><td>Listen address. Default <code>127.0.0.1:8443</code>. Plain HTTP is refused on non-loopback addresses.</td></tr>
     <tr><td><code>ZANSKAR_TLS_MODE</code></td><td><code>managed</code> (Zanskar serves TLS with a certificate it manages: self-signed at first start, replaced from Settings without a restart), <code>file</code>, or <code>proxy</code>. Unset: <code>file</code> when a certificate is set, else <code>proxy</code>.</td></tr>
     <tr><td><code>ZANSKAR_TLS_CERT</code>, <code>ZANSKAR_TLS_KEY</code></td><td>Serve TLS directly from files. HSTS is sent automatically.</td></tr>
+    <tr><td><code>ZANSKAR_HTTP_REDIRECT_ADDR</code></td><td>A plain-HTTP listener (the default install sets <code>:80</code>) that redirects every request to the HTTPS listener. The packaged unit may bind ports below 1024.</td></tr>
+    <tr><td><code>ZANSKAR_ADMIN_LISTEN_ADDR</code></td><td>Optional second listener for the admin console and API only, for a management network. Empty shares the main listener.</td></tr>
+    <tr><td><code>ZANSKAR_ALLOW_PLAIN_HTTP</code></td><td>Throwaway installs only: allow the main listener without TLS on a non-loopback address.</td></tr>
     <tr><td><code>ZANSKAR_TRUST_PROXY_TLS</code>, <code>ZANSKAR_TRUSTED_PROXIES</code></td><td>Behind a reverse proxy: honour <code>X-Forwarded-*</code> from the listed CIDRs so the audit log records real client IPs.</td></tr>
     <tr><td><code>ZANSKAR_DB_DRIVER</code>, <code>ZANSKAR_DB_DSN</code></td><td><code>sqlite</code> (default) or <code>postgres</code> with a connection string.</td></tr>
-    <tr><td><code>ZANSKAR_RECORDINGS_DIR</code></td><td>Where session recordings are written. S3 storage is configured with the <code>ZANSKAR_RECORDINGS_S3_*</code> variables described in <code>docs/deploy.md</code>.</td></tr>
+    <tr><td><code>ZANSKAR_RECORDINGS_DIR</code></td><td>Where session recordings are written locally.</td></tr>
+    <tr><td><code>ZANSKAR_RECORDINGS_S3_BUCKET</code>, <code>_PREFIX</code>, <code>_REGION</code>, <code>_ENDPOINT</code>, <code>_KMS_KEY</code>, <code>ZANSKAR_RECORDINGS_SPOOL_DIR</code></td><td>Install-time default for an S3-compatible bucket (endpoint for MinIO or Ceph, KMS key for server-side encryption) and the local spool for recordings in progress. The console's Recording storage card can override the bucket, probe it and move existing recordings, without a restart.</td></tr>
     <tr><td><code>ZANSKAR_GUACD_ADDR</code></td><td>guacd host:port. Unset disables RDP and VNC. Install-time default; the console's Settings page can change it without a restart.</td></tr>
     <tr><td><code>ZANSKAR_DOCKER_PATH</code></td><td>Container CLI for database sessions. Defaults to <code>docker</code> on PATH; set an absolute path or <code>podman</code>.</td></tr>
+    <tr><td><code>ZANSKAR_DBPROXY_IMAGE</code></td><td>The image run beside each MySQL or MariaDB session as the credential-holding relay: the gateway's own image at its own version by default. Install-time default; Settings can point it at a mirror.</td></tr>
+    <tr><td><code>ZANSKAR_AWS_GATEWAY_PRINCIPAL</code></td><td>Override for the AWS principal named in autoscaling trust policies. Normally unset: on EC2 or EKS the gateway detects it and shows it on the Autoscaling page.</td></tr>
     <tr><td><code>ZANSKAR_REQUIRE_MFA</code></td><td>Default <code>true</code>. Only set <code>false</code> for throwaway installs. Install-time default; the console's Settings page can override it live, audited.</td></tr>
     <tr><td><code>ZANSKAR_ISSUER</code></td><td>Name shown in authenticator apps. Default <code>Zanskar</code>.</td></tr>
-    <tr><td><code>ZANSKAR_SIEM_SYSLOG_ADDR</code>, <code>ZANSKAR_SIEM_WEBHOOK_URL</code>, <code>ZANSKAR_SIEM_WEBHOOK_SECRET</code></td><td>Stream the audit log to a SIEM over syslog/CEF or as signed JSON to a webhook.</td></tr>
+    <tr><td><code>ZANSKAR_SIEM_SYSLOG_ADDR</code>, <code>ZANSKAR_SIEM_SYSLOG_FORMAT</code>, <code>ZANSKAR_SIEM_SYSLOG_CA</code>, <code>ZANSKAR_SIEM_WEBHOOK_URL</code>, <code>ZANSKAR_SIEM_WEBHOOK_SECRET</code></td><td>Stream the audit log to a SIEM over syslog with TLS (<code>cef</code>, the default, or <code>json</code>; a CA file for a private authority) or as signed JSON to a webhook.</td></tr>
+    <tr><td><code>ZANSKAR_ADMIN_PASSWORD</code>, <code>ZANSKAR_NEW_MASTER_KEY</code></td><td>Command-line only: the password for a scripted <code>zanskar admin create</code>, and the next key for <code>zanskar key rotate-master</code>. Never in the service's environment file.</td></tr>
     <tr><td><code>ZANSKAR_ENV_FILE</code></td><td>Path of this file when it is not <code>/etc/zanskar/env</code>, so the console can show <em>Restart required</em> after an edit and restart the gateway with a drain of live sessions.</td></tr>
     <tr><td><code>ZANSKAR_LOG_FORMAT</code>, <code>ZANSKAR_LOG_LEVEL</code></td><td><code>json</code> or <code>text</code>; <code>debug</code>, <code>info</code>, <code>warn</code>, <code>error</code>. The level is an install-time default the console's Settings page can raise live.</td></tr>
     </tbody></table>

@@ -36,6 +36,13 @@ real test of identity detection. With the environment up and the console reachab
 5. Delete the role the script made (`aws iam delete-role-policy … && aws iam delete-role …`)
    before `terraform destroy`, since terraform does not know about it.
 
+Two things the bootstrap does not do: the first administrator is created over SSH after boot
+(`sudo -i`, then `set -a; . /etc/zanskar/env; set +a; cd /var/lib/zanskar;
+ZANSKAR_ADMIN_PASSWORD=… runuser -u zanskar --preserve-environment -- zanskar admin create
+--username root --name Admin`), and MFA is required by default, so an API-driven walkthrough
+needs `ZANSKAR_REQUIRE_MFA=false` appended to `/etc/zanskar/env` and a restart, or a TOTP
+enrolment first.
+
 The gateway bootstraps itself from S3: Postgres and guacd in Docker, Caddy with a
 Let's Encrypt certificate for `<ip>.sslip.io`, the gateway as a hardened systemd
 service on loopback. The master key is generated on the instance and kept at

@@ -20,8 +20,8 @@ and a highly available Kubernetes deployment with the Helm chart in `deploy/helm
 - **guacd** must only be reachable from gateway pods. It speaks an unauthenticated
   protocol and carries target credentials in flight (threat model, ADR 0002).
 - **Recordings** are append-only files. Use a ReadWriteMany volume shared by all
-  gateways, or object storage (the S3 backend is being added; the chart already wires
-  `ZANSKAR_RECORDINGS_S3_BUCKET`).
+  gateways, or object storage (an S3-compatible bucket, set at install or from the console's Settings
+  page; see Recording storage below).
 
 ## Packages (deb / rpm)
 
@@ -140,7 +140,7 @@ production.
 
 ## Kubernetes with the Helm chart
 
-> **Preview.** The chart installs and runs, but v1.0 is a single-instance release: the
+> **Preview.** The chart installs and runs, but 1.2 is a single-instance release: the
 > cross-pod control channel that admin terminate and auditor shadowing need with more than
 > one replica is Phase 4 work. Run it with `replicaCount: 1` and treat it as an evaluation
 > path until HA is announced. `image.tag` defaults to the chart's `appVersion`, which tracks
@@ -234,7 +234,7 @@ database backup first. Rolling updates keep at least one pod (PodDisruptionBudge
 
 ## Backups and key custody
 
-For the single-node SQLite deployment (the v1.0 default), `zanskar backup` writes a
+For the single-node SQLite deployment (the default), `zanskar backup` writes a
 consistent snapshot without stopping the service. It reads the same `ZANSKAR_*`
 environment as the server:
 
@@ -321,6 +321,14 @@ changing the bucket leaves earlier recordings unreachable until that bucket is c
 again, and the card says so. The gateway refuses to start when a stored storage
 configuration cannot be built or its secret unsealed (recordings must not quietly go
 elsewhere); the way out is `DELETE FROM recording_storage;` in the database, then start.
+
+### Retention
+
+Recordings are deleted by an audited hourly sweep. The global policy on the console's
+**Retention** page sets a maximum age and a total size. A **policy** and a **target** can each
+carry `retention_days` of their own; the longest retention among the policies that granted a
+session applies, and a target's value wins over that. The value is fixed on each recording when
+its session starts, so changing a policy later does not shorten what was already promised.
 
 ## Database access
 
