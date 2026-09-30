@@ -116,9 +116,20 @@ guacd sidecar for RDP/VNC. Two supported install paths, both from the
   writes the configuration, serves HTTPS on 443 with a certificate it manages (upload yours on the
   Settings page), and prints the next steps. `zanskar init -behind-proxy` keeps the gateway on
   loopback behind your own TLS proxy. Plain tarballs are there too.
-- **Container**: `ghcr.io/albatroxxx/zanskar:<version>` with `deploy/docker-compose.yml`
-  (gateway + guacd + Caddy TLS). Set `ZANSKAR_VERSION` in `deploy/.env`. The same image is the
-  MySQL/MariaDB relay sidecar, so a gateway that serves database targets needs Docker or Podman.
+- **Container**: `ghcr.io/albatroxxx/zanskar:latest`, or a pinned `:<version>`, with
+  `deploy/docker-compose.yml` (gateway + guacd + Caddy TLS). `ZANSKAR_VERSION` in `deploy/.env`
+  pins it; it defaults to `latest`. The same image is the MySQL/MariaDB relay sidecar, so a
+  gateway that serves database targets needs Docker or Podman.
+
+There is also a one-line path for a quick look, which needs only a Go toolchain:
+
+```sh
+go install github.com/albatroxxx/zanskar/cmd/zanskar@latest
+```
+
+That binary has **no web console** (the console is compiled in behind the `webui` build tag) and
+reports its version as `dev`, because `go install` sets no linker flags. Use it for the CLI, the
+API and trying things out; use a package or the container image for a real deployment.
 
 Checksums and the image are signed with Sigstore; the release notes carry the `cosign verify`
 commands. The Helm chart in `deploy/helm/zanskar` is a **preview**: it deploys, but multi-replica
