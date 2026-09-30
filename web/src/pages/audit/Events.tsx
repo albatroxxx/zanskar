@@ -27,11 +27,115 @@ function rangeBounds(f: Filters): { from: string; to: string } {
   return { from: new Date(Date.now() - hours * 3600_000).toISOString(), to: '' }
 }
 
-/** humanAction turns an action code into something readable while the code
- *  itself stays the value, so filtering still matches what the log stores. */
-function humanAction(code: string): string {
-  return code.replace(/[._]/g, ' ')
+/** Readable names for the action codes the gateway records. The code stays
+ *  the stored value and the filter key (and what a SIEM correlates on), so it
+ *  is kept one hover away; people read the label. */
+const actionLabels: Record<string, string> = {
+  'access.grant.expire': 'Access grant expired',
+  'access.request.approve': 'Access request approved',
+  'access.request.create': 'Access requested',
+  'access.request.deny': 'Access request denied',
+  'access.request.revoke': 'Access request revoked',
+  'asg.create': 'Autoscaling group created',
+  'asg.update': 'Autoscaling group updated',
+  'asg.delete': 'Autoscaling group deleted',
+  'asg.sync': 'Autoscaling group synced',
+  'asg.test': 'Autoscaling group role tested',
+  'asg.credential.set': 'Autoscaling group credential set',
+  'asg.credential.unset': 'Autoscaling group credential removed',
+  'asg.external_id.rotate': 'Autoscaling group ExternalId rotated',
+  'asg.instance.joined': 'Instance joined autoscaling group',
+  'asg.instance.left': 'Instance left autoscaling group',
+  'asg.instance.unhealthy': 'Instance became unhealthy',
+  'asg.instance.certificate.changed': 'Instance certificate changed',
+  'asg.instance.hostkey.changed': 'Instance host key changed',
+  'asg.instance.hostkey.mismatch': 'Instance host key changed',
+  'audit.read': 'Audit log viewed',
+  'audit.reseal': 'Audit chain resealed',
+  'aws.identity.refresh': 'AWS principal checked',
+  'credential.create': 'Credential created',
+  'credential.update': 'Credential updated',
+  'credential.delete': 'Credential deleted',
+  'credential.rotate': 'Credential rotated',
+  'credential.rotate.prepare': 'Authority next key prepared',
+  'credential.rotate.cancel': 'Authority prepared key discarded',
+  'credential.rotate.retire': 'Authority old key retired',
+  'database.proxy_image': 'Database relay image changed',
+  'file.download': 'File downloaded',
+  'file.upload': 'File uploaded',
+  'group.create': 'Group created',
+  'group.update': 'Group updated',
+  'group.delete': 'Group deleted',
+  'group.members.update': 'Group members updated',
+  'idp.create': 'Identity provider created',
+  'idp.update': 'Identity provider updated',
+  'idp.delete': 'Identity provider deleted',
+  'idp.test': 'Identity provider tested',
+  'key.rotate': 'Encryption key rotated',
+  'key.rotate_master': 'Master key rotated',
+  'logs.download': 'Logs downloaded',
+  'policy.create': 'Policy created',
+  'policy.update': 'Policy updated',
+  'policy.delete': 'Policy deleted',
+  'recording.download': 'Recording downloaded',
+  'recording.purge': 'Recordings purged',
+  'recording.view': 'Recording played',
+  'recording.storage.move': 'Recordings moved to new storage',
+  'recording.storage.update': 'Recording storage changed',
+  'recording.storage.reset': 'Recording storage reset',
+  'retention.policy.update': 'Retention policy updated',
+  'session.connect': 'Session requested',
+  'session.start': 'Session started',
+  'session.end': 'Session ended',
+  'session.terminate': 'Session terminated',
+  'session.failover': 'Session failed over',
+  'session.shadow.start': 'Started watching a session',
+  'session.shadow.end': 'Stopped watching a session',
+  'settings.update': 'Settings updated',
+  'settings.reset': 'Settings reset',
+  'system.start': 'Gateway started',
+  'system.restart': 'Gateway restart requested',
+  'system.restart_cancel': 'Gateway restart cancelled',
+  'target.create': 'Target created',
+  'target.update': 'Target updated',
+  'target.delete': 'Target deleted',
+  'target.credential.set': 'Target credential set',
+  'target.credential.unset': 'Target credential removed',
+  'target.hostkey.trust': 'Target host key trusted',
+  'target.hostkey.changed': 'Target host key changed',
+  'target.hostkey.mismatch': 'Target host key changed',
+  'target.probe': 'Target connection tested',
+  'target.probe.certificate': 'Target certificate login tested',
+  'target.tls.mismatch': 'Target certificate changed',
+  'tls.certificate.upload': 'TLS certificate uploaded',
+  'tls.certificate.regenerate': 'TLS certificate regenerated',
+  'tls.certificate.reset': 'TLS certificate reset',
+  'user.create': 'User created',
+  'user.update': 'User updated',
+  'user.delete': 'User deleted',
+  'user.login': 'Sign-in',
+  'user.logout': 'Sign-out',
+  'user.mfa.enroll': 'Authenticator enrollment started',
+  'user.mfa.confirm': 'Authenticator enrolled',
+  'user.mfa.verify': 'Second factor checked',
+  'user.mfa.reset': 'Authenticator reset',
+  'user.password.change': 'Password changed',
+  'user.password.reset': 'Password reset',
+  'user.roles.update': 'User roles updated',
+  'user.sessions.revoke': 'User signed out everywhere',
 }
+
+const acronyms: Record<string, string> = { mfa: 'MFA', tls: 'TLS', aws: 'AWS', asg: 'autoscaling group', idp: 'identity provider' }
+
+/** humanAction names an action code for people. Codes without a label (a
+ *  newer gateway than this console) still read as words, never as a code. */
+function humanAction(code: string): string {
+  if (actionLabels[code]) return actionLabels[code]
+  const s = code.split(/[._]/).map((w) => acronyms[w] ?? w).join(' ')
+  return s.charAt(0).toUpperCase() + s.slice(1)
+}
+
+const capitalize = (s: string) => s.charAt(0).toUpperCase() + s.slice(1)
 
 /** Routine events are hidden by default: the log's own reads, and the
  *  successful ticket issue that precedes every session (its refusals stay). */
@@ -144,7 +248,7 @@ function DetailRow({ k, v, name }: { k: string; v: unknown; name?: string }) {
   if (k === 'recording_id' && id) {
     body = <Link to={`/audit/recordings/${id}`} title={id}>{name ?? 'play'}</Link>
   } else if (name) {
-    body = <span title={id}><strong>{name}</strong> <span className="mono muted">{shortId(id)}</span></span>
+    body = <strong title={id}>{name}</strong>
   } else if (v === null || v === undefined || v === '') {
     body = <span className="muted">—</span>
   } else if (typeof v === 'object') {
@@ -350,21 +454,21 @@ export function Events() {
                       <div className="event-what">
                         <span>{describe(ev)}</span>
                         {/* The action code and object id are what an auditor
-                            filters and correlates on, so they stay available,
-                            but they are internal identifiers: keeping them
-                            inside the disclosure lets the row read as what
-                            happened rather than as a method name. */}
+                            filters and correlates on, so they stay available
+                            on hover (and in every export), but the row shows
+                            names: an id fragment beside a name tells a reader
+                            nothing. */}
                         <details>
                           <summary>details</summary>
                           <dl className="event-meta">
                             <dt>Action</dt>
-                            <dd className="mono">{ev.action}</dd>
+                            <dd title={ev.action}>{humanAction(ev.action)}</dd>
                             {ev.object_id && (
                               <>
                                 <dt>Object</dt>
                                 <dd title={ev.object_id}>
-                                  {typeLabel[ev.object_type] ?? ev.object_type} {ev.object_name ? <strong>{ev.object_name}</strong> : null}{' '}
-                                  <span className="mono muted">{shortId(ev.object_id)}</span>
+                                  {capitalize(typeLabel[ev.object_type] ?? words(ev.object_type))}{' '}
+                                  {ev.object_name ? <strong>{ev.object_name}</strong> : <span className="mono muted">{shortId(ev.object_id)}</span>}
                                 </dd>
                               </>
                             )}
