@@ -1,0 +1,47 @@
+<powershell>
+# Lab Windows member: WinRM HTTPS as the plain Windows target, then a domain
+# join once the controller answers, then the AD groups Zanskar uses are put in
+# the local RDP and remote-management groups. Idempotent across the reboots.
+$ErrorActionPreference = 'Stop'
+if (-not (Test-Path C:\zanskar-winrm-done)) {
+  $host_name = $env:COMPUTERNAME
+  $cert = New-SelfSignedCertificate -DnsName $host_name -CertStoreLocation Cert:\LocalMachine\My -NotAfter (Get-Date).AddYears(2)
+  winrm quickconfig -q -force
+  Get-ChildItem WSMan:\localhost\Listener | Where-Object { $_.Keys -contains "Transport=HTTPS" } | Remove-Item -Recurse -ErrorAction SilentlyContinue
+  New-Item -Path WSMan:\localhost\Listener -Transport HTTPS -Address * -CertificateThumbPrint $cert.Thumbprint -Force | Out-Null
+  Set-Item WSMan:\localhost\Service\Auth\Basic -Value $true
+  Set-Item WSMan:\localhost\Service\Auth\Negotiate -Value $true
+  Set-Item WSMan:\localhost\Service\AllowUnencrypted -Value $false
+  netsh advfirewall firewall add rule name="WinRM HTTPS" dir=in action=allow protocol=TCP localport=5986
+  Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name UserAuthentication -Value 1
+  New-Item -ItemType File C:\zanskar-winrm-done | Out-Null
+}
+if (-not (Test-Path C:\zanskar-lab-joined)) {
+  $nic = Get-NetAdapter | Where-Object Status -eq Up | Select-Object -First 1
+  Set-DnsClientServerAddress -InterfaceIndex $nic.ifIndex -ServerAddresses '${dc_ip}'
+  $ok = $false
+  for ($i = 0; $i -lt 120; $i++) {
+    if (Test-NetConnection '${dc_ip}' -Port 389 -InformationLevel Quiet -WarningAction SilentlyContinue) {
+      try { Resolve-DnsName '${domain}' -ErrorAction Stop | Out-Null; $ok = $true; break } catch {}
+    }
+    Start-Sleep 10
+  }
+  if (-not $ok) { throw 'domain controller not reachable' }
+  $cred = New-Object System.Management.Automation.PSCredential('${netbios}\Administrator', (ConvertTo-SecureString '${admin_password}' -AsPlainText -Force))
+  Add-Computer -DomainName '${domain}' -Credential $cred -Force
+  New-Item -ItemType File C:\zanskar-lab-joined | Out-Null
+  Restart-Computer -Force
+  exit 0
+}
+if (-not (Test-Path C:\zanskar-lab-groups)) {
+  Start-Sleep 30
+  net localgroup "Remote Desktop Users" "${netbios}\zanskar-windows" /add
+  net localgroup "Remote Management Users" "${netbios}\zanskar-windows" /add
+  # Zanskar opens a WinRS shell, and WinRM's RootSDDL grants that to local
+  # administrators only -- Remote Management Users covers PowerShell session
+  # configurations but not WinRS, so the operator account is made an admin.
+  net localgroup Administrators "${netbios}\winops" /add
+  New-Item -ItemType File C:\zanskar-lab-groups | Out-Null
+}
+</powershell>
+<persist>true</persist>

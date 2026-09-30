@@ -15,6 +15,32 @@ terraform output                             # URL, IPs, the Windows password co
 terraform destroy -var admin_cidr=...        # removes everything, including the bucket
 ```
 
+## The Active Directory lab (`-var lab=true`)
+
+Off by default, because it roughly triples the hourly cost. `lab.tf` adds a Windows domain
+controller for `corp.zanskar.lab`, a domain-joined Windows member, a Linux member joined over
+SSSD, an RDS MySQL instance, a Windows autoscaling group, and a NAT gateway the private subnets
+need to reach AWS. It exists to exercise the paths a single host cannot: directory sign-in,
+per-group access, a real managed database, and Windows instances that scale.
+
+```
+terraform apply -var lab=true -var admin_cidr=...      # the controller takes ~10 minutes to promote
+cat ../../data/ad-lab.txt                              # every lab password, written by terraform
+terraform output lab_dc_ip lab_windows_ip lab_linux_ip lab_rds_endpoint lab_windows_asg
+```
+
+Directory users: `alice` in `zanskar-windows`, `bob` in both groups, `carol` in none, plus a
+`winops` operator account and a read-only `zanskar-bind` account for the LDAP provider. Map the two
+directory groups to Zanskar groups and alice reaches only Windows, bob reaches both, carol nothing.
+
+Two things the templates handle that are easy to get wrong by hand, and both are documented in the
+[guide](https://albatroxxx.github.io/zanskar/guide/): the controller has to trust its own LDAPS
+certificate and restart `NTDS`, or it resets every handshake on 636; and `winops` has to be a local
+administrator on the Windows boxes, because Zanskar opens a WinRS shell.
+
+The Windows boxes carry an instance profile with `AmazonSSMManagedInstanceCore`, so Session Manager
+is the way in when something needs looking at. There is no RDP from outside.
+
 ## Verifying guided autoscaling enrolment (ADR 0023)
 
 The gateway instance is IMDSv2-only and runs under an instance profile, so this is the
