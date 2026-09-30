@@ -49,6 +49,19 @@ export function shortId(id?: string | null, n = 8): string {
  */
 const engineNames: Record<string, string> = { postgres: 'PostgreSQL', mysql: 'MySQL', mariadb: 'MariaDB' }
 
+/** dbTLS says in words what a database target's TLS mode protects against,
+ *  and whether that is the verified default (ADR 0025). A missing mode is
+ *  treated as the gateway treats it: verified. */
+export function dbTLS(mode?: string | null): { label: string; verified: boolean } {
+  switch (mode || 'verify-full') {
+    case 'verify-full': return { label: 'Verified', verified: true }
+    case 'require': return { label: 'Encrypted, not verified', verified: false }
+    case 'prefer': return { label: 'Encrypted if offered, not verified', verified: false }
+    case 'disable': return { label: 'Not encrypted', verified: false }
+    default: return { label: mode ?? '', verified: false }
+  }
+}
+
 export function engineName(engine?: string | null, version?: string | null): string {
   if (!engine) return ''
   const name = engineNames[engine] ?? engine

@@ -170,7 +170,8 @@ What replaces it keeps the topology and the guarantees:
   scan; the image reference is the `database.proxy_image` runtime setting, defaulting to
   the running version, so a mirror or a local build can be pointed at without a restart.
 - Upstream TLS is `prefer` (encrypt when offered, no verification), matching the
-  pgbouncer sidecar; verification arrives with the target's TLS settings.
+  pgbouncer sidecar; verification arrives with the target's TLS settings. *Superseded by
+  0025: new database targets verify by default.*
 
 Not changed: the operational requirement that the service user can use the container
 runtime. The packaged unit does not add `SupplementaryGroups=docker` by itself, since an

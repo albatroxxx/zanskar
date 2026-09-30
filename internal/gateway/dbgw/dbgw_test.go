@@ -34,7 +34,7 @@ func TestClientImage(t *testing.T) {
 }
 
 func TestProxyArgsHoldsCredential(t *testing.T) {
-	s := Spec{Engine: "postgres", Host: "db.internal", Port: 5432, Database: "app", Username: "svc", Password: "s3cret", SessionID: "sess1"}
+	s := Spec{Engine: "postgres", Host: "db.internal", Port: 5432, Database: "app", Username: "svc", Password: "s3cret", SessionID: "sess1", TLSMode: "prefer"}
 	args, env, err := proxyArgs(s, "zanskar-net-sess1", "zanskar-dbproxy-sess1")
 	if err != nil {
 		t.Fatal(err)
@@ -77,7 +77,7 @@ func TestProxyArgsHoldsCredential(t *testing.T) {
 // passed by name, so neither the credential nor the upstream host is in argv.
 func TestMySQLProxyArgsHoldsCredential(t *testing.T) {
 	for _, engine := range []string{"mysql", "mariadb"} {
-		s := Spec{Engine: engine, Host: "db.internal", Port: 3306, Database: "app", Username: "svc", Password: "s3cret", SessionID: "sess1", ProxyImage: "ghcr.io/albatroxxx/zanskar:1.2.3"}
+		s := Spec{Engine: engine, Host: "db.internal", Port: 3306, Database: "app", Username: "svc", Password: "s3cret", SessionID: "sess1", ProxyImage: "ghcr.io/albatroxxx/zanskar:1.2.3", TLSMode: "require"}
 		args, env, err := proxyArgs(s, "zanskar-net-sess1", "zanskar-dbproxy-sess1")
 		if err != nil {
 			t.Fatal(err)
@@ -152,10 +152,10 @@ func TestClientArgsHasNoCredential(t *testing.T) {
 
 // TestSidecarTLSModes: the target's TLS mode reaches pgbouncer as its
 // sslmode (with the CA file only for verify-full) and the MySQL relay as
-// its tls setting with the CA bundle.
+// its tls setting with the CA bundle; no mode at all means verify-full.
 func TestSidecarTLSModes(t *testing.T) {
 	ca := testCertPEM()
-	for mode, want := range map[string]string{"": "prefer", "prefer": "prefer", "require": "require", "verify-full": "verify-full", "disable": "disable"} {
+	for mode, want := range map[string]string{"": "verify-full", "prefer": "prefer", "require": "require", "verify-full": "verify-full", "disable": "disable"} {
 		s := Spec{Engine: "postgres", Host: "db", Port: 5432, Database: "app", Username: "svc", Password: "x", TLSMode: mode, TLSCA: ca}
 		_, env, err := proxyArgs(s, "n", "p")
 		if err != nil {
@@ -165,7 +165,7 @@ func TestSidecarTLSModes(t *testing.T) {
 		if !strings.Contains(ini, "server_tls_sslmode="+want+"\n") {
 			t.Errorf("mode %q: %s", mode, ini)
 		}
-		if strings.Contains(ini, "server_tls_ca_file") != (mode == "verify-full") {
+		if strings.Contains(ini, "server_tls_ca_file") != (want == "verify-full") {
 			t.Errorf("mode %q: ca file line presence wrong: %s", mode, ini)
 		}
 		if !slices.Contains(env, "PGB_CA="+ca) {
@@ -190,4 +190,33 @@ func testCertPEM() string {
 	tmpl := &x509.Certificate{SerialNumber: big.NewInt(1), Subject: pkix.Name{CommonName: "test CA"}, NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(time.Hour), IsCA: true, BasicConstraintsValid: true}
 	der, _ := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
 	return string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}))
+}
+
+// TestSSLModeFailsClosed: a spec with no TLS mode (or one this build does not
+// know) is verified, and pgbouncer is pointed at the CA file (ADR 0025).
+func TestSSLModeFailsClosed(t *testing.T) {
+	for _, m := range []string{"", "bogus"} {
+		if got := sslMode(m); got != "verify-full" {
+			t.Errorf("sslMode(%q)=%q want verify-full", m, got)
+		}
+	}
+	for _, m := range []string{"disable", "prefer", "require", "verify-full"} {
+		if got := sslMode(m); got != m {
+			t.Errorf("sslMode(%q)=%q want it unchanged", m, got)
+		}
+	}
+	s := Spec{Engine: "postgres", Host: "db", Port: 5432, Database: "app", Username: "u", Password: "p", SessionID: "s", TLSCA: "ca"}
+	_, env, err := proxyArgs(s, "n", "p")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ini := ""
+	for _, e := range env {
+		if v, ok := strings.CutPrefix(e, "PGB_INI="); ok {
+			ini = v
+		}
+	}
+	if !strings.Contains(ini, "server_tls_sslmode=verify-full") || !strings.Contains(ini, "server_tls_ca_file=/etc/pgbouncer/ca.pem") {
+		t.Fatalf("an unset mode must verify against the CA file:\n%s", ini)
+	}
 }

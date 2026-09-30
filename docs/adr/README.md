@@ -43,3 +43,4 @@ and update the status of the old one.
 | [0022](0022-ssh-certificate-authority-recommended.md) | SSH certificate authority is the recommended way to reach Linux targets | Accepted |
 | [0023](0023-guided-aws-enrolment.md) | Guided AWS enrolment: the gateway knows its own identity, and roles only | Accepted |
 | [0024](0024-windows-autoscaling-sessions.md) | Windows sessions on autoscaling instances, pinned per instance | Accepted |
+| [0025](0025-database-tls-verified-by-default.md) | Database targets verify TLS by default; the master key can live in its own file | Accepted |

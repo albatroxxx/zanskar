@@ -29,16 +29,18 @@ export function targetBody(t: Target, patch: Partial<Target> = {}) {
 }
 
 const enginePorts: Record<string, string> = { postgres: '5432', mysql: '3306', mariadb: '3306' }
+// Verified is the default (ADR 0025); the others are an explicit choice to
+// connect without checking who answers.
 const tlsModes = [
-  { v: 'prefer', label: 'Prefer', hint: 'TLS when the database offers it, unverified (default)' },
-  { v: 'require', label: 'Require', hint: 'TLS or refuse; the certificate is not verified' },
-  { v: 'verify-full', label: 'Verify full', hint: 'TLS, certificate chain and host name verified against the CA bundle below' },
-  { v: 'disable', label: 'Disable', hint: 'never TLS; only for a database on a private network' },
+  { v: 'verify-full', label: 'Verified (recommended)', hint: 'TLS, with the certificate chain and host name checked against the CA bundle below' },
+  { v: 'require', label: 'Encrypted, not verified', hint: 'TLS or refuse, but anyone who can intercept the connection can impersonate the database' },
+  { v: 'prefer', label: 'Encrypted if offered, not verified', hint: 'TLS when the database offers it, otherwise plain; nothing is verified' },
+  { v: 'disable', label: 'Not encrypted', hint: 'never TLS; only for a database on a private network' },
 ]
 
 const emptyForm = {
   name: '', address: '', os_family: 'linux' as OSFamily,
-  engine: 'postgres', engine_version: '', database_name: '', tls_mode: 'prefer', tls_ca: '',
+  engine: 'postgres', engine_version: '', database_name: '', tls_mode: 'verify-full', tls_ca: '',
   ssh: '', rdp: '', vnc: '', winrm: '', database: '', tags: '', notes: '', retention: '',
 }
 
@@ -60,7 +62,7 @@ export function TargetForm({ initial, kind, onClose, onSaved }: { initial?: Targ
           engine: initial.engine || 'postgres',
           engine_version: initial.engine_version ?? '',
           database_name: initial.database_name ?? '',
-          tls_mode: initial.tls_mode || 'prefer',
+          tls_mode: initial.tls_mode || 'verify-full',
           tls_ca: initial.tls_ca ?? '',
           ssh: initial.ports.ssh ? String(initial.ports.ssh) : '',
           rdp: initial.ports.rdp ? String(initial.ports.rdp) : '',
@@ -220,7 +222,7 @@ export function TargetForm({ initial, kind, onClose, onSaved }: { initial?: Targ
                 </Field>
               </div>
               {f.tls_mode === 'verify-full' && (
-                <Field label="CA bundle (PEM)" hint="The certificate authority that signs the database's certificate, e.g. the provider's bundle (for RDS, the region's rds-ca bundle). Kept if you switch modes later.">
+                <Field label="CA bundle (PEM)" hint="The certificate authority that signs the database's certificate. For Amazon RDS, paste your region's bundle from truststore.pki.rds.amazonaws.com/<region>/<region>-bundle.pem (the global bundle is too large). Kept if you switch modes later.">
                   <textarea id="t-tls-ca" value={f.tls_ca} onChange={set('tls_ca')} placeholder="-----BEGIN CERTIFICATE-----" required />
                 </Field>
               )}

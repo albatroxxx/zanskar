@@ -29,8 +29,11 @@ type Config struct {
 	DBDriver        string
 	DBDSN           string
 	MasterKey       []byte // 32 bytes; nil only when explicitly allowed (e.g. `migrate`)
-	TLSCert         string
-	TLSKey          string
+	// MasterKeyFile is the file the key was read from when it came from
+	// ZANSKAR_MASTER_KEY_FILE rather than the environment itself.
+	MasterKeyFile string
+	TLSCert       string
+	TLSKey        string
 	// TLSMode is how the listener is protected: TLSFile serves the
 	// certificate in TLSCert/TLSKey, TLSManaged serves the certificate the
 	// console manages (self-signed until one is uploaded, ADR 0021), and
@@ -120,7 +123,8 @@ func (c *Config) ServesTLS() bool {
 
 // Options tunes what Load requires.
 type Options struct {
-	// RequireMasterKey makes a missing ZANSKAR_MASTER_KEY fatal. `serve` sets it;
+	// RequireMasterKey makes a missing master key (ZANSKAR_MASTER_KEY or
+	// ZANSKAR_MASTER_KEY_FILE) fatal. `serve` sets it;
 	// `migrate` and `keygen` do not.
 	RequireMasterKey bool
 }
@@ -269,20 +273,35 @@ func Load(opts Options) (*Config, error) {
 		errs = append(errs, fmt.Errorf("ZANSKAR_LOG_FORMAT %q is not json or text", c.LogFormat))
 	}
 
-	raw := os.Getenv("ZANSKAR_MASTER_KEY")
+	// The master key comes from the environment or from a file of its own.
+	// The file keeps it apart from the other settings (and from anything that
+	// prints the environment), and can be replaced without touching them.
+	raw, source := os.Getenv("ZANSKAR_MASTER_KEY"), "ZANSKAR_MASTER_KEY"
+	path := os.Getenv("ZANSKAR_MASTER_KEY_FILE")
+	if path != "" {
+		if raw != "" {
+			errs = append(errs, errors.New("set ZANSKAR_MASTER_KEY or ZANSKAR_MASTER_KEY_FILE, not both"))
+		} else if v, err := readKeyFile(path); err != nil {
+			errs = append(errs, fmt.Errorf("ZANSKAR_MASTER_KEY_FILE: %w", err))
+		} else {
+			raw, source, c.MasterKeyFile = v, "the key in "+path, path
+		}
+	}
 	switch {
-	case raw == "" && opts.RequireMasterKey:
-		errs = append(errs, errors.New("ZANSKAR_MASTER_KEY is required; generate one with `zanskar keygen`"))
+	case raw == "" && opts.RequireMasterKey && path == "": // a named file already said what is wrong with it
+		errs = append(errs, errors.New("ZANSKAR_MASTER_KEY (or ZANSKAR_MASTER_KEY_FILE) is required; generate one with `zanskar keygen`"))
 	case raw != "":
 		key, err := base64.StdEncoding.DecodeString(raw)
 		switch {
 		case err != nil:
-			errs = append(errs, fmt.Errorf("ZANSKAR_MASTER_KEY is not valid base64: %w", err))
+			errs = append(errs, fmt.Errorf("%s is not valid base64: %w", source, err))
 		case len(key) != 32:
-			errs = append(errs, fmt.Errorf("ZANSKAR_MASTER_KEY must decode to 32 bytes, got %d", len(key)))
+			errs = append(errs, fmt.Errorf("%s must decode to 32 bytes, got %d", source, len(key)))
 		default:
 			c.MasterKey = key
 		}
+	case c.MasterKeyFile != "":
+		errs = append(errs, fmt.Errorf("%s is empty", source))
 	}
 
 	if len(errs) > 0 {
@@ -324,4 +343,28 @@ func splitList(v string) []string {
 		}
 	}
 	return out
+}
+
+// readKeyFile reads a master key file. It must be a regular file that only
+// its owner can read or write: a key readable by other local accounts is a
+// key those accounts hold, so the gateway refuses to start rather than use it.
+func readKeyFile(path string) (string, error) {
+	info, err := os.Stat(path) // #nosec G703 -- the operator's own ZANSKAR_MASTER_KEY_FILE, not request input
+	if err != nil {
+		return "", err
+	}
+	if !info.Mode().IsRegular() {
+		return "", fmt.Errorf("%s is not a regular file", path)
+	}
+	if perm := info.Mode().Perm(); perm&0o077 != 0 {
+		return "", fmt.Errorf("%s is mode %04o; only its owner may read it (chmod 0400 %s)", path, perm, path)
+	}
+	if info.Size() > 1024 {
+		return "", fmt.Errorf("%s is %d bytes; a master key file holds one base64 line", path, info.Size())
+	}
+	b, err := os.ReadFile(path) // #nosec G304 G703 -- the operator's own ZANSKAR_MASTER_KEY_FILE, not request input
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(string(b)), nil
 }
