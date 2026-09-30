@@ -95,6 +95,7 @@ func fromInstance(g *asg.Group, in *asg.Instance) *endpoint {
 	return &endpoint{
 		Name: g.Name, Address: g.Address(in), Ports: g.Ports, Tags: g.Tags, Credentials: g.Credentials,
 		HostKeyFingerprint: in.HostKeyFingerprint, HostKeyTrusted: in.HostKeyFingerprint != "",
+		TLSFingerprint: in.TLSFingerprint, WinRMTLSFingerprint: in.WinRMTLSFingerprint,
 		Active: g.Status == "active" && in.Healthy,
 		ASGID:  g.ID, ASGInstanceID: in.ID, LiveKey: in.ID,
 		CloudInstanceID: in.InstanceID, AvailabilityZone: in.AvailabilityZone, Group: g,

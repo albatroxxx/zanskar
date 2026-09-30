@@ -58,7 +58,31 @@ type Auth struct {
 var (
 	ErrAuthFailed = errors.New("winrmgw: authentication to target failed")
 	ErrBadCACert  = errors.New("winrmgw: CA certificate is not valid PEM")
+	// ErrNotAuthorized is the credential being known to the target but not
+	// allowed to open a shell on it. WinRM's RootSDDL grants that to local
+	// administrators only, so being in Remote Management Users is not enough:
+	// that group covers PowerShell session configurations, and Zanskar runs a
+	// WinRS shell. The target logs it as "authorization of the user failed
+	// with error 5".
+	ErrNotAuthorized = errors.New("winrmgw: the credential may not open a shell on the target")
 )
+
+// notAuthorized recognises the target's access-denied answer. WS-Management
+// reports it as a SOAP fault carrying WSManFault code 5 (ERROR_ACCESS_DENIED),
+// returned with HTTP 500 rather than 401, because the credential did
+// authenticate.
+func notAuthorized(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "http 500") && !strings.Contains(msg, "http 403") {
+		return false
+	}
+	low := strings.ToLower(msg)
+	return strings.Contains(low, "access is denied") || strings.Contains(msg, `Code="5"`) ||
+		strings.Contains(low, "0x80070005") || strings.Contains(low, "authorization")
+}
 
 // Shell runs one command line at a time against the target. It is an
 // interface so Bridge can be tested without a Windows host.
@@ -126,6 +150,9 @@ func Dial(ctx context.Context, ep Endpoint, a Auth, timeout time.Duration) (*Cli
 	defer cancel()
 	code, err := wc.RunWithContext(vctx, winrm.Powershell("$Host.Name"), io.Discard, io.Discard)
 	if err != nil {
+		if notAuthorized(err) {
+			return nil, fmt.Errorf("%w: %w", ErrNotAuthorized, err)
+		}
 		return nil, fmt.Errorf("%w: %w", ErrAuthFailed, err)
 	}
 	if code != 0 {

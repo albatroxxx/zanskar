@@ -259,6 +259,14 @@ function GroupForm({ initial, credentials, onClose, onSaved }: { initial?: Autos
         </div>
         <h2>Capabilities</h2>
         <p className="muted" style={{ marginTop: 0 }}>Protocols the instances offer. Each needs a port (blank = default) and a credential shared by every instance.</p>
+        {f.os_family === 'windows' && (
+          <Alert tone="warn">
+            Instances have to arrive ready: nothing configures a machine that may be gone in an hour. Bake the HTTPS WinRM listener on 5986,
+            its firewall rule and the domain join into the image or the launch template&rsquo;s user data. A WinRM credential must be a local
+            administrator on the instances, because Zanskar opens a WinRS shell and WinRM grants that to administrators only. Each instance is
+            pinned to the certificate it first presents; a certificate that changes under us takes that instance out of the pool.
+          </Alert>
+        )}
         <div className="table-wrap">
           <table>
             <thead>

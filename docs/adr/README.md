@@ -42,3 +42,4 @@ and update the status of the old one.
 | [0021](0021-managed-tls-certificate.md) | The gateway manages its own TLS certificate, self-signed until one is uploaded | Accepted |
 | [0022](0022-ssh-certificate-authority-recommended.md) | SSH certificate authority is the recommended way to reach Linux targets | Accepted |
 | [0023](0023-guided-aws-enrolment.md) | Guided AWS enrolment: the gateway knows its own identity, and roles only | Accepted |
+| [0024](0024-windows-autoscaling-sessions.md) | Windows sessions on autoscaling instances, pinned per instance | Accepted |

@@ -43,6 +43,9 @@ type Syncer struct {
 type Summary struct {
 	Seen, Healthy, Joined, Left, Retired int
 	HostKeyMismatches                    int
+	// CertificateMismatches counts instances whose pinned RDP or WinRM
+	// certificate changed under them (ADR 0024).
+	CertificateMismatches int
 }
 
 // SyncGroup performs one poll of g.
@@ -136,7 +139,9 @@ func (s *Syncer) SyncGroup(ctx context.Context, g *Group) (Summary, error) {
 // probe checks reachability of the group's capability ports and pins the
 // SSH host key: verified against the serial console when the cloud publishes
 // it, trust-on-first-use otherwise. A console/observed mismatch is treated
-// as unhealthy and audited; the key is never pinned in that case.
+// as unhealthy and audited; the key is never pinned in that case. The RDP and
+// WinRM certificates are pinned the same way, minus the console cross-check
+// the cloud does not offer for them (ADR 0024).
 func (s *Syncer) probe(ctx context.Context, provider cloud.Provider, g *Group, in, prev *Instance, timeout time.Duration, sum *Summary) {
 	addr := g.Address(in)
 	if addr == "" || s.Prober == nil {
@@ -162,6 +167,7 @@ func (s *Syncer) probe(ctx context.Context, provider cloud.Provider, g *Group, i
 	if healthy {
 		in.ProbeHealth = "healthy"
 	}
+	s.pinCertificates(ctx, g, in, prev, &res, sum)
 	if prev != nil && prev.HostKeyFingerprint != "" {
 		// Already pinned: a different key on the same instance is a red flag.
 		if res.SSHHostKey != nil && res.SSHHostKey.Fingerprint != prev.HostKeyFingerprint {
@@ -192,6 +198,43 @@ func (s *Syncer) probe(ctx context.Context, provider cloud.Provider, g *Group, i
 		s.record(ctx, "asg.instance.hostkey.mismatch", g, in, map[string]any{"console": consoleKeys, "observed": observed})
 	default:
 		in.HostKeyFingerprint, in.HostKeySource = observed, "tofu"
+	}
+}
+
+// pinCertificates keeps the RDP and WinRM certificate a Windows instance was
+// first seen with. A different certificate on the same instance makes it
+// unhealthy and is audited, rather than being trusted quietly.
+func (s *Syncer) pinCertificates(ctx context.Context, g *Group, in, prev *Instance, res *target.ProbeResult, sum *Summary) {
+	pin := func(proto target.Protocol, observed string, pinned string, set func(string)) {
+		switch {
+		case pinned == "":
+			set(observed)
+		case observed == "" || observed == pinned:
+			set(pinned)
+		default:
+			in.ProbeHealth = "unhealthy"
+			sum.CertificateMismatches++
+			set(pinned)
+			s.record(ctx, "asg.instance.certificate.changed", g, in, map[string]any{"protocol": string(proto), "pinned": pinned, "observed": observed})
+		}
+	}
+	var prevTLS, prevWinRM string
+	if prev != nil {
+		prevTLS, prevWinRM = prev.TLSFingerprint, prev.WinRMTLSFingerprint
+	}
+	if res.TLS != nil || prevTLS != "" {
+		observed := ""
+		if res.TLS != nil {
+			observed = res.TLS.Fingerprint
+		}
+		pin(target.RDP, observed, prevTLS, func(v string) { in.TLSFingerprint = v })
+	}
+	if res.WinRMTLS != nil || prevWinRM != "" {
+		observed := ""
+		if res.WinRMTLS != nil {
+			observed = res.WinRMTLS.Fingerprint
+		}
+		pin(target.WinRM, observed, prevWinRM, func(v string) { in.WinRMTLSFingerprint = v })
 	}
 }
 

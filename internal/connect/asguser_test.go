@@ -223,3 +223,74 @@ func TestASGTargetsInstancesConnectAndFailover(t *testing.T) {
 		t.Fatalf("audit: %v", events)
 	}
 }
+
+// TestASGWindowsSessionAllowed is ADR 0024: a Windows autoscaling group may
+// open RDP and WinRM sessions, pinned to the certificate the sync loop
+// captured on that instance. An unpinned instance is refused, and the old
+// blanket "autoscaling groups support ssh" refusal is gone.
+func TestASGWindowsSessionAllowed(t *testing.T) {
+	e := newASGEnv(t)
+	ctx := context.Background()
+
+	// Re-shape the group as Windows with a vaulted domain credential, and let
+	// the policy allow the Windows protocols.
+	cred := &credential.Credential{Name: "winops", Type: credential.TypeDomain, Mode: credential.ModeVaulted, Username: "winops", Domain: "CORP"}
+	if err := e.h.Vault.Create(ctx, cred, &credential.Secret{Password: "pw"}, e.user.ID); err != nil {
+		t.Fatal(err)
+	}
+	g := e.group
+	g.OSFamily = target.Windows
+	g.Capabilities = []target.Protocol{target.RDP, target.WinRM}
+	g.Ports = map[target.Protocol]int{target.RDP: 3389, target.WinRM: 5986}
+	g.Credentials = map[target.Protocol]string{target.RDP: cred.ID, target.WinRM: cred.ID}
+	if err := e.asgs.Update(ctx, g); err != nil {
+		t.Fatal(err)
+	}
+	pols, _, err := e.h.Policies.List(ctx, "", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pols[0].Protocols = []string{"rdp", "winrm"}
+	if err := e.h.Policies.Update(ctx, pols[0]); err != nil {
+		t.Fatal(err)
+	}
+
+	launched := time.Now()
+	unpinned, _, err := e.asgs.UpsertInstance(ctx, &asg.Instance{GroupID: g.ID, InstanceID: "i-w1", PrivateIP: "10.0.0.11", AvailabilityZone: "ap-south-1a",
+		LifecycleState: "InService", ProbeHealth: "healthy", LaunchedAt: &launched})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// No certificate captured yet: refused for the pinning reason, not because
+	// the protocol is unavailable.
+	code, out := e.do("POST", "/api/v1/connect", map[string]any{"asg_instance_id": unpinned.ID, "protocol": "winrm"})
+	if code != 409 || out["code"] != "certificate_unpinned" {
+		t.Fatalf("unpinned winrm: %d %v", code, out)
+	}
+
+	pinned, _, err := e.asgs.UpsertInstance(ctx, &asg.Instance{GroupID: g.ID, InstanceID: "i-w2", PrivateIP: "10.0.0.12", AvailabilityZone: "ap-south-1b",
+		LifecycleState: "InService", ProbeHealth: "healthy", LaunchedAt: &launched,
+		TLSFingerprint: "aa11", WinRMTLSFingerprint: "bb22"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, proto := range []string{"winrm", "rdp"} {
+		code, out := e.do("POST", "/api/v1/connect", map[string]any{"asg_instance_id": pinned.ID, "protocol": proto})
+		if proto == "rdp" && code == 501 {
+			// Desktop sessions need guacd, which this handler has no address for.
+			if out["code"] != "protocol_unavailable" {
+				t.Fatalf("rdp without guacd: %d %v", code, out)
+			}
+			continue
+		}
+		if code != 200 || out["ticket"] == nil {
+			t.Fatalf("%s on a pinned windows instance: %d %v", proto, code, out)
+		}
+	}
+
+	// A database session is still not something a group can serve.
+	code, out = e.do("POST", "/api/v1/connect", map[string]any{"asg_instance_id": pinned.ID, "protocol": "database"})
+	if code == 200 {
+		t.Fatalf("database on an autoscaling group must be refused: %v", out)
+	}
+}

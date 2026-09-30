@@ -31,7 +31,7 @@ import (
 // cert-fingerprints pin is passed (it breaks IP-dialled self-signed certs).
 func TestDesktopParamsRDPPinsAtGateway(t *testing.T) {
 	fp := "abc123"
-	tgt := &target.Target{Address: "10.0.0.5", Ports: map[target.Protocol]int{}, TLSFingerprint: &fp}
+	tgt := &endpoint{Address: "10.0.0.5", Ports: map[target.Protocol]int{}, TLSFingerprint: fp}
 	p, err := desktopParams(tgt, target.RDP, nil, []byte("pw"), "Administrator", false, "")
 	if err != nil {
 		t.Fatal(err)
@@ -46,7 +46,7 @@ func TestDesktopParamsRDPPinsAtGateway(t *testing.T) {
 		t.Fatalf("security = %q, want nla", p.Args["security"])
 	}
 	// An unprobed target (no pinned fingerprint) is refused, not trusted.
-	if _, err := desktopParams(&target.Target{Address: "10.0.0.5", Ports: map[target.Protocol]int{}}, target.RDP, nil, []byte("pw"), "u", false, ""); err == nil {
+	if _, err := desktopParams(&endpoint{Address: "10.0.0.5", Ports: map[target.Protocol]int{}}, target.RDP, nil, []byte("pw"), "u", false, ""); err == nil {
 		t.Fatal("RDP without a pinned certificate must be refused")
 	}
 }
@@ -59,13 +59,13 @@ func TestVerifyPinnedCert(t *testing.T) {
 	port := atoiOr(portStr, 3389)
 	h := &Handler{Prober: &target.Prober{AllowLoopback: true}, DialTimeout: 3 * time.Second}
 
-	match := &target.Target{Address: host, Ports: map[target.Protocol]int{target.RDP: port}, TLSFingerprint: &fp}
+	match := &endpoint{Address: host, Ports: map[target.Protocol]int{target.RDP: port}, TLSFingerprint: fp}
 	if err := h.verifyPinnedCert(context.Background(), match); err != nil {
 		t.Fatalf("matching fingerprint must pass: %v", err)
 	}
 
 	wrong := "0000000000000000000000000000000000000000000000000000000000000000"
-	bad := &target.Target{Address: host, Ports: map[target.Protocol]int{target.RDP: port}, TLSFingerprint: &wrong}
+	bad := &endpoint{Address: host, Ports: map[target.Protocol]int{target.RDP: port}, TLSFingerprint: wrong}
 	if err := h.verifyPinnedCert(context.Background(), bad); err == nil {
 		t.Fatal("a different fingerprint must be rejected")
 	}
@@ -74,7 +74,7 @@ func TestVerifyPinnedCert(t *testing.T) {
 	if err := (&Handler{Prober: nil}).verifyPinnedCert(context.Background(), match); err == nil {
 		t.Fatal("missing prober must error")
 	}
-	if err := h.verifyPinnedCert(context.Background(), &target.Target{Address: host, Ports: map[target.Protocol]int{target.RDP: port}}); err == nil {
+	if err := h.verifyPinnedCert(context.Background(), &endpoint{Address: host, Ports: map[target.Protocol]int{target.RDP: port}}); err == nil {
 		t.Fatal("target without a pinned fingerprint must error")
 	}
 }

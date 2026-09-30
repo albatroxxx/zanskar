@@ -87,9 +87,9 @@ credential profile. The old session is closed with end reason `target_lost`.
   its live sessions with the `target_lost` cause; the browser shows the failover dialog
   only for that reason. Failover is a user action that issues a fresh ticket bound to a
   new session whose `failover_from_session_id` points at the lost one.
-- **Scope.** Autoscaling groups support SSH in this release. RDP and WinRM to dynamic
-  Windows instances need per-instance certificate pinning, which the console does not
-  publish; that is a follow-up.
+- **Scope.** Autoscaling groups supported SSH only when this was written, because RDP and
+  WinRM to dynamic Windows instances need per-instance certificate pinning. ADR 0024
+  added that pinning and lifted the limit; database endpoints remain their own targets.
 
 ## Amendment (2026-09-29)
 

@@ -6,7 +6,14 @@ import (
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
+	"crypto/sha256"
+	"crypto/tls"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/hex"
 	"errors"
+	"io"
+	"math/big"
 	"net"
 	"strconv"
 	"testing"
@@ -174,5 +181,106 @@ func TestSyncRecordsProviderError(t *testing.T) {
 	got, _ := repo.Get(ctx, g.ID)
 	if got.LastError == "" || got.LastSyncedAt == nil {
 		t.Fatalf("error not recorded: %+v", got)
+	}
+}
+
+// winrmHost is a TLS listener standing in for a Windows instance's WinRM
+// endpoint, so the sync loop has a certificate to pin. Each call generates a
+// fresh certificate, so a restart looks like a re-imaged box.
+func winrmHost(t *testing.T) (port int, fingerprint string, restart func() (int, string)) {
+	t.Helper()
+	start := func() (io.Closer, int, string) {
+		_, priv, _ := ed25519.GenerateKey(rand.Reader)
+		tmpl := &x509.Certificate{SerialNumber: big.NewInt(time.Now().UnixNano()), Subject: pkix.Name{CommonName: "winrm-lab"},
+			NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(time.Hour), IPAddresses: []net.IP{net.ParseIP("127.0.0.1")}}
+		der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, priv.Public(), priv)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ln, err := tls.Listen("tcp", "127.0.0.1:0", &tls.Config{MinVersion: tls.VersionTLS12,
+			Certificates: []tls.Certificate{{Certificate: [][]byte{der}, PrivateKey: priv}}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		go func() {
+			for {
+				c, err := ln.Accept()
+				if err != nil {
+					return
+				}
+				go func() {
+					if tc, ok := c.(*tls.Conn); ok {
+						_ = tc.HandshakeContext(context.Background())
+					}
+					_ = c.Close()
+				}()
+			}
+		}()
+		_, p, _ := net.SplitHostPort(ln.Addr().String())
+		n, _ := strconv.Atoi(p)
+		sum := sha256.Sum256(der)
+		return ln, n, hex.EncodeToString(sum[:])
+	}
+	ln, port, fp := start()
+	t.Cleanup(func() { _ = ln.Close() })
+	return port, fp, func() (int, string) {
+		_ = ln.Close()
+		ln2, p2, fp2 := start()
+		t.Cleanup(func() { _ = ln2.Close() })
+		return p2, fp2
+	}
+}
+
+// TestSyncPinsWindowsCertificatePerInstance is ADR 0024: an instance keeps the
+// WinRM certificate it was first seen with, and a different one on the same
+// instance makes it unhealthy instead of being trusted.
+func TestSyncPinsWindowsCertificatePerInstance(t *testing.T) {
+	ctx := context.Background()
+	s, repo, fake, _ := newSyncer(t)
+	port, fp, restart := winrmHost(t)
+	g := sample()
+	g.OSFamily, g.Capabilities = target.Windows, []target.Protocol{target.WinRM}
+	g.Ports = map[target.Protocol]int{target.WinRM: port}
+	if err := repo.Create(ctx, g); err != nil {
+		t.Fatal(err)
+	}
+	fake.Set("web-asg", cloud.Instance{ID: "i-win", PrivateIP: "127.0.0.1", LifecycleState: "InService"})
+	if _, err := s.SyncGroup(ctx, g); err != nil {
+		t.Fatal(err)
+	}
+	all, _ := repo.Instances(ctx, g.ID, false)
+	if len(all) != 1 || all[0].WinRMTLSFingerprint != fp || !all[0].Healthy {
+		t.Fatalf("first sighting must pin and be healthy: %+v", all[0])
+	}
+
+	// Same instance, different certificate: refuse it.
+	newPort, newFP := restart()
+	if newFP == fp {
+		t.Fatal("test setup: the replacement certificate must differ")
+	}
+	g.Ports = map[target.Protocol]int{target.WinRM: newPort}
+	if err := repo.Update(ctx, g); err != nil {
+		t.Fatal(err)
+	}
+	sum, err := s.SyncGroup(ctx, g)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sum.CertificateMismatches != 1 || sum.Healthy != 0 {
+		t.Fatalf("summary: %+v", sum)
+	}
+	all, _ = repo.Instances(ctx, g.ID, false)
+	if all[0].WinRMTLSFingerprint != fp || all[0].Healthy {
+		t.Fatalf("pin must survive and the instance must be unhealthy: %+v", all[0])
+	}
+	events, _, _ := s.Audit.List(ctx, audit.Filter{ObjectType: "asg_instance"})
+	found := false
+	for _, e := range events {
+		if e.Action == "asg.instance.certificate.changed" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("a certificate change must be audited")
 	}
 }
