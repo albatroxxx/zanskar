@@ -14,7 +14,7 @@
 </head>
 <body>
   <a class="skip" href="#main">Skip to content</a>
-  <header class="site-header"><a class="brand" href="../"><img src="../assets/logo.svg" alt="" width="32" height="32">Zanskar</a><nav aria-label="Main"><a href="./" aria-current="page">Get started</a><a href="../guide/">How-to guide</a><a href="../concepts/">Concepts</a><a href="../troubleshooting/">Troubleshooting</a><a href="../releases/">v1.2.1</a><a href="https://github.com/albatroxxx/zanskar">GitHub &#8599;</a></nav></header>
+  <header class="site-header"><a class="brand" href="../"><img src="../assets/logo.svg" alt="" width="32" height="32">Zanskar</a><nav aria-label="Main"><a href="./" aria-current="page">Get started</a><a href="../guide/">How-to guide</a><a href="../concepts/">Concepts</a><a href="../troubleshooting/">Troubleshooting</a><a href="../releases/">Releases</a><a href="https://github.com/albatroxxx/zanskar">GitHub &#8599;</a></nav></header>
   <main id="main" class="docs-layout"><nav class="docs-nav" aria-label="On this page"><a href="#prerequisites">Prerequisites</a><a href="#install">Install: packages</a><a href="#guacd">Start guacd</a><a href="#tls-without-cert">TLS without a certificate</a><a href="#compose">Install: Docker Compose</a><a href="#first-sign-in">First sign-in</a><a href="#configuration">Configuration</a><a href="#update">Update</a><a href="#remove">Remove</a><a href="#security">Security</a></nav><article class="prose">
     <p class="eyebrow">GET STARTED</p><h1>Install Zanskar</h1><p>Zanskar 1.2 runs as a <strong>single instance</strong>: one gateway with an embedded SQLite database (or PostgreSQL), plus a <code>guacd</code> sidecar if you want RDP or VNC desktops. Two supported install paths: the <strong>deb/rpm package</strong> on a Linux server, or the <strong>signed container image</strong> with Docker Compose. Both were exercised on a clean Ubuntu 24.04 machine before this release was cut.</p>
 
@@ -160,7 +160,10 @@ sudo zanskar init -non-interactive -behind-proxy -guacd 127.0.0.1:4822
 
     <h2 id="compose">2. Install with Docker Compose</h2>
     <p>The single-node stack is the gateway on SQLite with a persistent volume, <code>guacd</code> for desktops, and Caddy terminating TLS in front. The gateway port is never published; only Caddy's 80 and 443 are. A one-shot <code>zanskar-migrate</code> service applies migrations before the gateway starts.</p>
-    <div class="code-block"><button type="button" class="copy" aria-label="Copy Compose setup commands">Copy</button><pre><code>git clone --depth 1 --branch v1.2.1 https://github.com/albatroxxx/zanskar.git
+    <div class="code-block"><button type="button" class="copy" aria-label="Copy Compose setup commands">Copy</button><pre><code># Resolve the newest stable release, so these commands keep working.
+V=$(curl -fsSLI -o /dev/null -w '%{url_effective}' https://github.com/albatroxxx/zanskar/releases/latest | sed 's#.*/v##')
+echo "installing $V"
+git clone --depth 1 --branch v$V https://github.com/albatroxxx/zanskar.git
 cd zanskar
 cp deploy/.env.example deploy/.env
 # edit deploy/.env:
@@ -172,9 +175,9 @@ docker compose -f deploy/docker-compose.yml up -d
 docker compose -f deploy/docker-compose.yml exec -it \
   zanskar /zanskar admin create --username admin --name "Your Name"
 # Password: ...   (prompted twice, no echo; -it gives the command a terminal)</code></pre></div>
-    <p>The image is <code>ghcr.io/albatroxxx/zanskar</code>, built for linux/amd64 and linux/arm64, running as a non-root user on a distroless base. Verify its signature the same way as the checksums. cosign is in none of the Ubuntu, Debian or RHEL repositories, so on a fresh host <a href="#cosign">install it first</a> with the commands in step 1; the Compose path needs nothing else from that step.</p>
-    <div class="code-block"><button type="button" class="copy" aria-label="Copy image verification command">Copy</button><pre><code>cosign verify ghcr.io/albatroxxx/zanskar:1.2.1 \
-  --certificate-identity-regexp '^https://github.com/albatroxxx/zanskar/.github/workflows/release.yml@refs/tags/v1.2.1$' \
+    <p>The image is <code>ghcr.io/albatroxxx/zanskar</code>, built for linux/amd64 and linux/arm64, running as a non-root user on a distroless base. Verify its signature the same way as the checksums; <code>$V</code> is the version the clone step resolved. cosign is in none of the Ubuntu, Debian or RHEL repositories, so on a fresh host <a href="#cosign">install it first</a> with the commands in step 1; the Compose path needs nothing else from that step.</p>
+    <div class="code-block"><button type="button" class="copy" aria-label="Copy image verification command">Copy</button><pre><code>cosign verify ghcr.io/albatroxxx/zanskar:$V \
+  --certificate-identity-regexp "^https://github.com/albatroxxx/zanskar/.github/workflows/release.yml@refs/tags/v$V\$" \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com</code></pre></div>
     <p>Without a site address Caddy serves <code>https://localhost/</code> with a self-signed certificate (a browser warning, fine for a trial). With <code>ZANSKAR_SITE_ADDRESS</code> set and ports 80/443 reachable from the internet, Caddy obtains a Let's Encrypt certificate automatically. Data lives in the <code>zanskar_data</code> volume.</p>
 
