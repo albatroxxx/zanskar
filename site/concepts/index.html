@@ -9,12 +9,12 @@
   <meta property="og:title" content="Key concepts">
   <meta property="og:description" content="The master key, ExternalIds, host-key and certificate pins, session cookies, CSRF tokens and connect tickets: what each is, when it changes, how to back it up and rotate it.">
   <meta property="og:type" content="website"><meta property="og:url" content="https://albatroxxx.github.io/zanskar/concepts/">
-  <meta property="og:image" content="https://albatroxxx.github.io/zanskar/assets/policies-1.0.0.jpg"><meta name="twitter:card" content="summary_large_image">
+  <meta property="og:image" content="https://albatroxxx.github.io/zanskar/assets/policies-1.2.1.jpg"><meta name="twitter:card" content="summary_large_image">
   <link rel="icon" href="../assets/logo.svg" type="image/svg+xml"><link rel="stylesheet" href="../assets/site.css"><script src="../assets/site.js" defer></script>
 </head>
 <body>
   <a class="skip" href="#main">Skip to content</a>
-  <header class="site-header"><a class="brand" href="../"><img src="../assets/logo.svg" alt="" width="32" height="32">Zanskar</a><nav aria-label="Main"><a href="../docs/">Get started</a><a href="../guide/">How-to guide</a><a href="../concepts/" aria-current="page">Concepts</a><a href="../troubleshooting/">Troubleshooting</a><a href="../releases/">v1.2.1</a><a href="https://github.com/albatroxxx/zanskar">GitHub &#8599;</a></nav></header>
+  <header class="site-header"><a class="brand" href="../"><img src="../assets/logo.svg" alt="" width="32" height="32">Zanskar</a><nav aria-label="Main"><a href="../docs/">Get started</a><a href="../guide/">How-to guide</a><a href="../concepts/" aria-current="page">Concepts</a><a href="../troubleshooting/">Troubleshooting</a><a href="../releases/">Releases</a><a href="https://github.com/albatroxxx/zanskar">GitHub &#8599;</a></nav></header>
   <main id="main" class="docs-layout"><nav class="docs-nav" aria-label="On this page"><a href="#master-key">Master key</a><a href="#external-id">ExternalId</a><a href="#host-keys">SSH host keys</a><a href="#cert-pins">RDP and WinRM pins</a><a href="#credentials">Vaulted credentials</a><a href="#ssh-ca">The SSH authority key</a><a href="#tls-cert">The TLS certificate</a><a href="#session">Session cookie and CSRF</a><a href="#tickets">Connect tickets</a><a href="#evidence">Recordings and the audit chain</a><a href="#backup">What a backup holds</a></nav><article class="prose">
     <p class="eyebrow">KEY CONCEPTS</p><h1>The keys, pins and tokens that hold Zanskar together</h1><p>Zanskar keeps a small number of secrets and a small number of pins. Each one answers a specific question: who is the gateway, is this the same machine as last time, is this browser really the signed-in user. This page says what each is, where it lives, what happens when it changes, and what to do when it leaks.</p>
 
