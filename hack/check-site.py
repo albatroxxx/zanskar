@@ -86,6 +86,11 @@ for path, page in pages.items():
         canonicals.add(expected)
     else:
         assert "noindex" in page.meta.get("robots", ""), path
+    # Navigation and buttons name no version: they would need an edit every release.
+    html = path.read_text()
+    nav = re.search(r'<nav aria-label="Main">.*?</nav>', html, re.S)
+    assert not re.search(r">Install v\d", html), (path, "versioned Install button")
+    assert not (nav and re.search(r">v\d", nav.group(0))), (path, "versioned header link")
     if page.json_ld:
         structured = json.loads(page.json_ld)
         assert structured["softwareVersion"] == VERSION
