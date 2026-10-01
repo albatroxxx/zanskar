@@ -46,6 +46,6 @@
     <h2 id="backup">What a backup holds</h2>
     <p><code>zanskar backup</code> writes a consistent snapshot of the database and the recordings directory while the service runs. It contains users, groups, targets, policies, sessions, the audit log, recordings that are on local disk, the sealed credentials, the sealed TLS and authority keys, and the wrapped data keys. Recordings in an S3-compatible bucket stay in the bucket; back that up with the bucket's own tooling. It does <strong>not</strong> contain the master key, the TLS certificate, or <code>/etc/zanskar/env</code>. A complete restore therefore needs the archive, the master key, and the environment file. Test a restore on a scratch host before you need one.</p>
   </article></main>
-  <footer class="site-footer"><span>Zanskar by <a href="https://github.com/albatroxxx">albatroxxx</a></span><nav aria-label="Footer"><a href="../">Overview</a><a href="../docs/">Install</a><a href="../guide/">How-to guide</a><a href="https://github.com/albatroxxx/zanskar/issues">Feedback</a></nav></footer>
+  <footer class="site-footer"><span>Zanskar by <a href="https://github.com/albatroxxx">albatroxxx</a></span><nav aria-label="Footer"><a href="../">Overview</a><a href="../docs/">Install</a><a href="../guide/">How-to guide</a><a href="https://github.com/albatroxxx/zanskar/issues">Feedback</a><a href="https://github.com/sponsors/albatroxxx">Sponsor</a></nav></footer>
 </body>
 </html>
