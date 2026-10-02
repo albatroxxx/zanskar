@@ -428,7 +428,7 @@ export function Events() {
           )}
         </div>
         <div className="actions">
-          <button className="btn primary" disabled={busy}>Apply filters</button>
+          <button type="submit" className="btn primary" disabled={busy}>Apply filters</button>
           <button type="button" className="btn ghost" onClick={reset} disabled={busy}>Reset</button>
           <label className="field inline" style={{ margin: '0 0 0 auto' }}>
             <input type="checkbox" checked={showRoutine} onChange={(e) => toggleRoutine(e.target.checked)} />

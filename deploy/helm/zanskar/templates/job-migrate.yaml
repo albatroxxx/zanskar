@@ -32,6 +32,8 @@ spec:
           args: ["migrate"]
           securityContext:
             {{- include "zanskar.containerSecurityContext" . | nindent 12 }}
+          resources:
+            {{- toYaml .Values.migrate.resources | nindent 12 }}
           env:
             # migrate needs only the database; the master key is not required.
             - name: ZANSKAR_DB_DRIVER

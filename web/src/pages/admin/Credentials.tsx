@@ -185,8 +185,8 @@ function SecretFields({ type, f, set, put }: { type: CredentialType; f: Record<s
           <textarea id="c-private-key" value={f.private_key} onChange={set('private_key')} required placeholder="-----BEGIN OPENSSH PRIVATE KEY-----" />
           <div className="actions" style={{ marginTop: 6 }}>
             <input id="c-private-key-file" type="file" accept=".pem,.key,.pub,.txt,application/x-pem-file,text/plain" hidden onChange={readKeyFile} />
-            <label htmlFor="c-private-key-file" className="btn sm" role="button" tabIndex={0} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); document.getElementById('c-private-key-file')?.click() } }}>Choose key file…</label>
-            {fileNote && <span className={fileNote.err ? 'muted' : 'muted'} style={fileNote.err ? { color: 'var(--danger)' } : undefined}>{fileNote.text}</span>}
+            <button type="button" className="btn sm" onClick={() => document.getElementById('c-private-key-file')?.click()}>Choose key file…</button>
+            {fileNote && <span className="muted" style={fileNote.err ? { color: 'var(--danger)' } : undefined}>{fileNote.text}</span>}
           </div>
         </Field>
         <Field label="Passphrase (if the key is encrypted)">
@@ -315,7 +315,7 @@ function CredentialForm({ onClose, onSaved }: { onClose: () => void; onSaved: (c
         {needsSecret && !(type === 'ssh_key' && generate) && !(isCA && generateCA) && <SecretFields type={type} f={f} set={set} put={put} />}
         <div className="actions">
           <button type="button" className="btn" onClick={onClose}>Cancel</button>
-          <button className="btn primary" disabled={busy}>Create</button>
+          <button type="submit" className="btn primary" disabled={busy}>Create</button>
         </div>
       </form>
     </Modal>
@@ -355,7 +355,7 @@ function RotateForm({ credential, onClose, onSaved }: { credential: Credential; 
         <SecretFields type={credential.type} f={f} set={set} put={put} />
         <div className="actions">
           <button type="button" className="btn" onClick={onClose}>Cancel</button>
-          <button className="btn primary" disabled={busy}>Rotate</button>
+          <button type="submit" className="btn primary" disabled={busy}>Rotate</button>
         </div>
       </form>
     </Modal>

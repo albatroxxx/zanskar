@@ -268,7 +268,7 @@ function UserForm({ onClose, onSaved }: { onClose: () => void; onSaved: (oneTime
         <RoleChecks value={r} onChange={setR} prefix="nu" />
         <div className="actions">
           <button type="button" className="btn" onClick={onClose}>Cancel</button>
-          <button className="btn primary" disabled={busy}>Create</button>
+          <button type="submit" className="btn primary" disabled={busy}>Create</button>
         </div>
       </form>
     </Modal>
@@ -301,7 +301,7 @@ function RolesForm({ user, onClose, onSaved }: { user: User; onClose: () => void
         <p className="muted">Granting admin or auditor is recorded in the audit log. An account with only auditor is review-only: it sees the audit portal and nothing else, and cannot be granted access to targets.</p>
         <div className="actions">
           <button type="button" className="btn" onClick={onClose}>Cancel</button>
-          <button className="btn primary" disabled={busy}>Save</button>
+          <button type="submit" className="btn primary" disabled={busy}>Save</button>
         </div>
       </form>
     </Modal>
@@ -341,7 +341,7 @@ function PasswordForm({ user, onClose, onSaved }: { user: User; onClose: () => v
         <p className="muted">Their existing sessions are signed out, and they must replace this password at their next sign-in.</p>
         <div className="actions">
           <button type="button" className="btn" onClick={onClose}>Cancel</button>
-          <button className="btn primary" disabled={busy}>{generate ? 'Generate' : 'Set password'}</button>
+          <button type="submit" className="btn primary" disabled={busy}>{generate ? 'Generate' : 'Set password'}</button>
         </div>
       </form>
     </Modal>
@@ -457,7 +457,7 @@ function GroupForm({ onClose, onSaved }: { onClose: () => void; onSaved: () => v
         <Field label="Description"><input id="g-desc" value={f.description} onChange={(e) => setF({ ...f, description: e.target.value })} /></Field>
         <div className="actions">
           <button type="button" className="btn" onClick={onClose}>Cancel</button>
-          <button className="btn primary" disabled={busy}>Create</button>
+          <button type="submit" className="btn primary" disabled={busy}>Create</button>
         </div>
       </form>
     </Modal>

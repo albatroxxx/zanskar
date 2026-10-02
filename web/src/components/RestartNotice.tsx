@@ -54,7 +54,7 @@ export function RestartNotice() {
           // The server is away: after a restart request that is expected.
           if (!cancelled && status?.draining) setGone(status.started_at)
         })
-    tick()
+    void tick()
     const t = setInterval(tick, gone || status?.draining ? RECONNECT_MS : POLL_MS)
     return () => {
       cancelled = true

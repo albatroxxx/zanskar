@@ -425,7 +425,7 @@ function PolicyForm({ initial, groups, users, targets, asgs, onClose, onSaved }:
         <p className="muted">The clipboard switch syncs text between the browser and RDP or VNC desktops. A terminal's copy and paste is the browser's own and is not gated: pasting into a shell is indistinguishable from typing. File transfer switches on the SFTP panel for SSH and the mapped drive for RDP.</p>
         <div className="actions">
           <button type="button" className="btn" onClick={onClose}>Cancel</button>
-          <button className="btn primary" disabled={busy}>{initial ? 'Save' : 'Create'}</button>
+          <button type="submit" className="btn primary" disabled={busy}>{initial ? 'Save' : 'Create'}</button>
         </div>
       </form>
     </Modal>
