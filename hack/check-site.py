@@ -91,10 +91,19 @@ for path, page in pages.items():
     nav = re.search(r'<nav aria-label="Main">.*?</nav>', html, re.S)
     assert not re.search(r">Install v\d", html), (path, "versioned Install button")
     assert not (nav and re.search(r">v\d", nav.group(0))), (path, "versioned header link")
-    # Roadmap phases are internal planning words; a visitor cannot decode them.
-    # The release notes may name them as history.
+    # Outside the release notes, page text names no Zanskar version ("Zanskar
+    # 1.2 runs...", "in 1.0") and no roadmap phase: each would need an edit
+    # every release, and phases are planning words a visitor cannot decode.
+    # "since 1.2.1" stays allowed: it dates a change and never goes stale.
     if path.parent.name != "releases":
-        assert not re.search(r"\bPhase \d", html), (path, "roadmap phase named outside the release notes")
+        text = re.sub(r"<[^>]+>", " ", html)
+        for pattern, why in [
+            (r"\bPhase \d", "roadmap phase"),
+            (r"\bZanskar v?\d+\.\d", "Zanskar version"),
+            (r"\b(?:in|for|of|with) v?1\.\d+(?:\.\d+)?\b", "Zanskar version"),
+        ]:
+            m = re.search(pattern, text)
+            assert not m, (path, why + " in page text", m and m.group(0))
     if page.json_ld:
         structured = json.loads(page.json_ld)
         assert structured["softwareVersion"] == VERSION
