@@ -7,7 +7,7 @@ decides what, how, and how the project keeps going if any one person stops.
 
 | Role | Who | Responsibilities |
 |---|---|---|
-| **Maintainer** | [@AsysGupta](https://github.com/AsysGupta) | Sets direction and the [roadmap](docs/roadmap.md); approves architecture decision records; reviews and merges pull requests; cuts and publishes releases; triages security reports under [SECURITY.md](SECURITY.md); owns repository settings, branch protection and secrets; enforces the [code of conduct](CODE_OF_CONDUCT.md). |
+| **Maintainer** | [@albatroxxx](https://github.com/albatroxxx), [@Lakshyabh06](https://github.com/Lakshyabh06) | Sets direction and the [roadmap](docs/roadmap.md); approves architecture decision records; reviews and merges pull requests; cuts and publishes releases; triages security reports under [SECURITY.md](SECURITY.md); enforces the [code of conduct](CODE_OF_CONDUCT.md). |
 | **Committer** | none yet | Reviews and merges pull requests in the areas they know; triages issues. Cannot change repository settings or publish releases. |
 | **Contributor** | anyone | Opens issues and pull requests under [CONTRIBUTING.md](CONTRIBUTING.md). |
 
@@ -16,10 +16,8 @@ request like any other, approved by a maintainer.
 
 ## How decisions are made
 
-- **Day-to-day changes** are pull requests. A pull request merges when CI is green (the eight
-  required checks on `main`) and a maintainer or committer has reviewed it. Once the project has
-  two or more people with merge rights, a pull request also needs an approval from someone other
-  than its author.
+- **Day-to-day changes** are pull requests. A pull request merges when CI is green (the required
+  checks on `main`) and a maintainer or committer other than its author has approved it.
 - **Design changes** (a new protocol, security model, storage or trust decision) are proposed as an
   [architecture decision record](docs/adr/) first. A maintainer accepts or rejects it in the pull
   request that adds it; the reasoning stays on the record.
@@ -46,8 +44,12 @@ with each of these, each using two-factor authentication on GitHub:
   no private signing key has to be handed over);
 - the GitHub Pages site, the OpenSSF Best Practices entry and the Scorecard setup.
 
-Today one person holds all of these. Adding a second maintainer is the first open item in the
-[roadmap](docs/roadmap.md).
+Both maintainers can merge pull requests, close issues, and tag and publish releases. The
+repository lives on a personal GitHub account, so its settings, branch protection, secrets, the
+Pages configuration and the Best Practices entry are administered by its owner,
+[@albatroxxx](https://github.com/albatroxxx), alone. Moving the repository to a GitHub
+organisation would let a second person hold those too; until then, that single point is known
+and stated here.
 
 ## Code of conduct
 
