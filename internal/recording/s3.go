@@ -123,6 +123,9 @@ func (s *S3Storage) Create(_ context.Context, name string) (io.WriteCloser, stri
 	if err := os.MkdirAll(s.SpoolDir, 0o700); err != nil {
 		return nil, "", err
 	}
+	if err := checkSpoolDir(s.SpoolDir); err != nil {
+		return nil, "", err
+	}
 	f, err := os.CreateTemp(s.SpoolDir, "rec-*")
 	if err != nil {
 		return nil, "", err

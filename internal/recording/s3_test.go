@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sync"
 	"testing"
 
@@ -168,5 +169,34 @@ func TestS3StorageClosePropagatesUploadError(t *testing.T) {
 	}
 	if left, _ := filepath.Glob(filepath.Join(spool, "rec-*")); len(left) != 0 {
 		t.Fatalf("spool file must be removed even on failure: %v", left)
+	}
+}
+
+// TestS3StorageRefusesSharedSpool: a spool directory someone else could
+// write to, or a symlink planted in its place, is refused rather than used,
+// so a recording cannot be swapped before upload.
+func TestS3StorageRefusesSharedSpool(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("ownership checks are Unix-only")
+	}
+	ctx := context.Background()
+	base := t.TempDir()
+
+	open := filepath.Join(base, "open")
+	if err := os.Mkdir(open, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(open, 0o777); err != nil { // #nosec G302 -- the insecure mode is what the test checks
+		t.Fatal(err)
+	}
+	link := filepath.Join(base, "link")
+	if err := os.Symlink(t.TempDir(), link); err != nil {
+		t.Fatal(err)
+	}
+	for name, dir := range map[string]string{"world-writable": open, "symlink": link} {
+		st := newS3Storage(&fakeS3{}, S3Options{Bucket: "recs", SpoolDir: dir})
+		if _, _, err := st.Create(ctx, "s1.cast"); err == nil {
+			t.Errorf("%s spool accepted", name)
+		}
 	}
 }
