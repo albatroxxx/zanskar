@@ -3,7 +3,13 @@
 package main
 
 import (
+	"io/fs"
+	"net/http"
+	"net/http/httptest"
 	"os"
+	"path/filepath"
+	"regexp"
+	"strings"
 	"testing"
 
 	"gopkg.in/yaml.v3"
@@ -40,6 +46,118 @@ func TestOpenAPIParses(t *testing.T) {
 		props, ok := doc.Components.Schemas[s]["properties"].(map[string]any)
 		if !ok || len(props) == 0 {
 			t.Errorf("openapi.yaml: schema %s has no properties", s)
+		}
+	}
+}
+
+// TestOpenAPIMatchesRoutes: every operation in docs/api/openapi.yaml must reach
+// a route the server registers, with the same method, and every route must be
+// documented. The spec once listed PATCH for six updates the server serves as
+// PUT, and four operations that never existed.
+func TestOpenAPIMatchesRoutes(t *testing.T) {
+	raw, err := os.ReadFile("../../docs/api/openapi.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	type server struct {
+		URL string `yaml:"url"`
+	}
+	var doc struct {
+		Servers []server                  `yaml:"servers"`
+		Paths   map[string]map[string]any `yaml:"paths"`
+	}
+	if err := yaml.Unmarshal(raw, &doc); err != nil {
+		t.Fatalf("openapi.yaml: %v", err)
+	}
+	base := func(srv []server) string {
+		if len(srv) == 0 {
+			return ""
+		}
+		return strings.TrimSuffix(srv[0].URL, "/")
+	}
+	spec := map[string]bool{} // "METHOD /full/path"
+	for p, item := range doc.Paths {
+		prefix := base(doc.Servers)
+		if s, ok := item["servers"]; ok {
+			b, _ := yaml.Marshal(s)
+			var ss []server
+			if err := yaml.Unmarshal(b, &ss); err != nil {
+				t.Fatalf("openapi.yaml: %s servers: %v", p, err)
+			}
+			prefix = base(ss)
+		}
+		for m := range item {
+			switch m {
+			case "get", "post", "put", "patch", "delete":
+				spec[strings.ToUpper(m)+" "+prefix+p] = true
+			}
+		}
+	}
+
+	route := regexp.MustCompile(`"((?:GET|POST|PUT|PATCH|DELETE) /(?:api/v1|healthz|readyz|ws)\b[^"]*)"`)
+	code := map[string]bool{}
+	mux := http.NewServeMux()
+	for _, root := range []string{"../../internal", "."} {
+		err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+			if err != nil || d.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+				return err
+			}
+			src, err := os.ReadFile(path) // #nosec G304 -- walking the repo's own source tree
+			if err != nil {
+				return err
+			}
+			for _, m := range route.FindAllStringSubmatch(string(src), -1) {
+				if !code[m[1]] {
+					code[m[1]] = true
+					mux.Handle(m[1], http.NotFoundHandler())
+				}
+			}
+			return nil
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	if len(code) < 50 {
+		t.Fatalf("found only %d routes in the source; is the pattern still right?", len(code))
+	}
+
+	// Each documented operation must be served. The mux decides, so a
+	// documented literal such as /admin/settings/login-banner may reach a
+	// {key} route, exactly as a client's request would.
+	param := regexp.MustCompile(`\{[^}]+\}`)
+	for op := range spec {
+		method, path, _ := strings.Cut(op, " ")
+		req := httptest.NewRequest(method, param.ReplaceAllString(path, "x"), nil)
+		if _, pattern := mux.Handler(req); pattern == "" {
+			t.Errorf("openapi.yaml documents %s, but the server has no such route", op)
+		}
+	}
+
+	// Routes not yet in the spec. Document one, then delete its line here;
+	// a route added without documentation fails this test.
+	undocumented := map[string]bool{
+		"DELETE /api/v1/autoscaling-groups/{id}/credentials/{protocol}": true,
+		"DELETE /api/v1/users/{id}/mfa":                                 true,
+		"GET /api/v1/audit/facets":                                      true,
+		"GET /api/v1/auth/providers":                                    true,
+		"GET /api/v1/groups/{id}/members":                               true,
+		"GET /api/v1/sessions/{id}":                                     true,
+		"GET /api/v1/sessions/{id}/files":                               true,
+		"GET /api/v1/sessions/{id}/files/content":                       true,
+		"POST /api/v1/credentials/generate-ssh-key":                     true,
+		"POST /api/v1/sessions/{id}/files/content":                      true,
+		"PUT /api/v1/autoscaling-groups/{id}/credentials/{protocol}":    true,
+		"GET /ws/database":                                              true,
+		"GET /ws/shadow/{sessionID}":                                    true,
+		"GET /ws/winrm":                                                 true,
+	}
+	for op := range code {
+		switch {
+		case spec[op] && undocumented[op]:
+			t.Errorf("%s is documented now; remove it from the undocumented list", op)
+		case !spec[op] && !undocumented[op]:
+			t.Errorf("the server registers %s, but openapi.yaml does not document it", op)
 		}
 	}
 }

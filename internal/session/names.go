@@ -25,7 +25,8 @@ var nameSources = map[string]struct{ table, col string }{
 
 // ResolveNames returns display names for audit object ids of one type, so a
 // reviewer sees "aws-linux" and "admin" rather than hex ids. Sessions and
-// recordings resolve to "user → target (protocol)". Unknown types and ids
+// recordings resolve to "user → target (protocol)", and so do access
+// requests, naming the requester and what they asked for. Unknown types and ids
 // are simply absent from the result; the log itself is never touched.
 func (r *Repo) ResolveNames(ctx context.Context, kind string, ids []string) (map[string]string, error) {
 	uniq := dedupe(ids)
@@ -37,6 +38,12 @@ func (r *Repo) ResolveNames(ctx context.Context, kind string, ids []string) (map
 		return r.sessionLabels(ctx, "s.id", "", uniq)
 	case "recording":
 		return r.sessionLabels(ctx, "rec.id", "JOIN recordings rec ON rec.session_id = s.id", uniq)
+	case "access_request":
+		return r.labels(ctx, `SELECT ar.id, u.username, t.name, g.name, ar.protocol FROM access_requests ar
+			LEFT JOIN users u ON u.id = ar.user_id
+			LEFT JOIN targets t ON t.id = ar.target_id
+			LEFT JOIN autoscaling_groups g ON g.id = ar.asg_id
+			WHERE ar.id IN (`+placeholders(len(uniq))+`)`, uniq)
 	}
 	src, ok := nameSources[kind]
 	if !ok {
@@ -65,14 +72,20 @@ func (r *Repo) ResolveNames(ctx context.Context, kind string, ids []string) (map
 // sessionLabels builds "user → target (protocol)" for sessions keyed by the
 // given column; the optional join lets recordings resolve through their session.
 func (r *Repo) sessionLabels(ctx context.Context, keyCol, join string, ids []string) (map[string]string, error) {
-	q := `SELECT ` + keyCol + `, u.username, t.name, ai.instance_id, s.protocol FROM access_sessions s ` + join + `
+	return r.labels(ctx, `SELECT `+keyCol+`, u.username, t.name, ai.instance_id, s.protocol FROM access_sessions s `+join+`
 		LEFT JOIN users u ON u.id = s.user_id
 		LEFT JOIN targets t ON t.id = s.target_id
 		LEFT JOIN asg_instances ai ON ai.id = s.asg_instance_id
-		WHERE ` + keyCol + ` IN (` + placeholders(len(ids)) + `)`
+		WHERE `+keyCol+` IN (`+placeholders(len(ids))+`)`, ids)
+}
+
+// labels runs q, which selects id, username, target name, a fallback name
+// (instance or autoscaling group) and protocol, and formats each row as
+// "user → target (PROTOCOL)".
+func (r *Repo) labels(ctx context.Context, q string, ids []string) (map[string]string, error) {
 	rows, err := r.db.QueryContext(ctx, r.db.Rebind(q), toArgs(ids)...)
 	if err != nil {
-		return nil, fmt.Errorf("session: resolve session labels: %w", err)
+		return nil, fmt.Errorf("session: resolve labels: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
 	out := make(map[string]string, len(ids))

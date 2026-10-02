@@ -159,6 +159,7 @@ const typeLabel: Record<string, string> = {
   autoscaling_group: 'autoscaling group',
   asg_instance: 'instance',
   access_session: 'session',
+  access_request: 'access request',
   session: 'session',
   recording: 'recording',
   audit_log: 'audit log',
@@ -174,7 +175,8 @@ const verbs: Record<string, string> = {
 /** session splits "user → target (PROTO)" as the API labels sessions and recordings. */
 function session(name?: string) {
   const m = /^(.+) → (.+) \((\w+)\)$/.exec(name ?? '')
-  return m ? { user: m[1], target: m[2], proto: m[3] } : null
+  // SSH and RDP read as acronyms; DATABASE would read as a code.
+  return m ? { user: m[1], target: m[2], proto: m[3] === 'DATABASE' ? 'database' : m[3] } : null
 }
 
 const str = (v: unknown) => (typeof v === 'string' ? v : '')
@@ -207,6 +209,14 @@ function describe(ev: AuditEvent): string {
     case 'session.failover': return s ? `moved the ${s.proto} session on ${s.target} to another instance` : `failed over session ${name}`
     case 'recording.view': return s ? `played the recording of ${s.user} on ${s.target} (${s.proto})` : `played recording ${name}`
     case 'audit.read': return 'viewed the audit log'
+    // Access requests resolve to "requester → target (PROTO)", like sessions.
+    // Without a label (the request was deleted with its user) the sentence
+    // still reads as words rather than an id.
+    case 'access.request.create': return s ? `requested ${s.proto} access to ${s.target}` : 'requested access'
+    case 'access.request.approve': return s ? `approved ${s.user}'s request for ${s.proto} access to ${s.target}` : 'approved an access request'
+    case 'access.request.deny': return s ? `denied ${s.user}'s request for ${s.proto} access to ${s.target}` : 'denied an access request'
+    case 'access.request.revoke': return s ? `revoked ${s.user}'s ${s.proto} access to ${s.target}` : 'revoked an access grant'
+    case 'access.grant.expire': return s ? `ended ${s.user}'s ${s.proto} access to ${s.target} (time limit reached)` : 'ended an access grant (time limit reached)'
     case 'target.hostkey.trust': return `trusted the host key of target ${name}`
     case 'target.hostkey.changed':
     case 'target.hostkey.mismatch': return `saw a changed host key on target ${name}`

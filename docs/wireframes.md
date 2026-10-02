@@ -375,8 +375,8 @@ shows (section 4); every view from either portal is itself audited.
 +------------------------------------------------------------------------------+
 ```
 
-Save is a `PATCH /targets/{id}`; changing Address warns that host key trust will reset. The
-probe box is driven by `POST /targets/{id}/probe` and shows one line per protocol from
+Save is a `PUT /targets/{id}` carrying the whole target; changing Address warns that host key
+trust will reset. The probe box is driven by `POST /targets/{id}/probe` and shows one line per protocol from
 `ProbeResult.ports`. Capabilities are derived from the probe and not edited by hand here
 except through a small "Declare manually" link for hosts that block probing. "Trust this key"
 opens a confirmation that repeats the fingerprint and requires typing the last four
@@ -524,8 +524,8 @@ Pressing Play issues the `GET /recordings/{id}/stream` request, which is the mom
 is recorded; opening the page alone is not. The banner says so before the first byte. The
 sha256 badge compares the streamed bytes with `Recording.sha256`. asciicast recordings play in
 an xterm.js-based player with a scrub bar; guac recordings use the guacamole-common-js
-player with the same controls. The view history is `GET /recordings/{id}/views` and updates
-after the current view is inserted.
+player with the same controls. Each view is stored and audited as `recording.view` naming the
+viewer, so the Events page is where to see who watched a recording.
 
 ## 5. UX rules
 

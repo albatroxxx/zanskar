@@ -84,6 +84,8 @@ security:
 paths:
   # ------------------------------------------------------------------ system
   /healthz:
+    servers:
+      - url: /
     get:
       tags: [system]
       summary: Liveness probe
@@ -96,6 +98,8 @@ paths:
               schema:
                 $ref: "#/components/schemas/Health"
   /readyz:
+    servers:
+      - url: /
     get:
       tags: [system]
       summary: Readiness probe
@@ -310,49 +314,36 @@ paths:
                 $ref: "#/components/schemas/Me"
         "401":
           $ref: "#/components/responses/Unauthorized"
-  /auth/oidc/{idp}/start:
+  /auth/oidc/{id}/start:
     get:
       tags: [auth]
-      summary: Begin an OIDC login (stub)
+      summary: Begin an OIDC login
       description: |
-        Redirects the browser to the provider's authorization endpoint with PKCE, `state`, and
-        `nonce`. Phase 2. Until then returns 501.
+        Redirects the browser to the provider's authorization endpoint with PKCE, `state` and
+        `nonce`. The sign-in page links here for each provider listed by `GET /auth/providers`.
+        If the provider cannot be reached, redirects to `/login?error=provider_unavailable`.
       security: []
       parameters:
-        - $ref: "#/components/parameters/IdpName"
+        - $ref: "#/components/parameters/IdpId"
+        - name: next
+          in: query
+          description: A console path to land on after sign-in. Anything that is not a local path is ignored.
+          schema:
+            type: string
       responses:
         "302":
           description: Redirect to the identity provider.
-        "501":
-          $ref: "#/components/responses/NotImplemented"
-    post:
-      tags: [auth]
-      summary: Begin an OIDC login without a redirect (stub)
-      description: Returns the authorization URL for single-page clients that prefer to navigate themselves.
-      security: []
-      parameters:
-        - $ref: "#/components/parameters/IdpName"
-      responses:
-        "200":
-          description: Authorization URL.
-          content:
-            application/json:
-              schema:
-                type: object
-                required: [authorization_url]
-                properties:
-                  authorization_url:
-                    type: string
-                    format: uri
-        "501":
-          $ref: "#/components/responses/NotImplemented"
-  /auth/oidc/{idp}/callback:
+  /auth/oidc/{id}/callback:
     get:
       tags: [auth]
-      summary: OIDC redirect callback (stub)
+      summary: OIDC redirect callback
+      description: |
+        The provider sends the browser back here. On success the session cookie is set and the
+        browser goes to `next` (or the portal). On failure the browser goes to
+        `/login?error=<reason>` and a failed `user.login` is audited.
       security: []
       parameters:
-        - $ref: "#/components/parameters/IdpName"
+        - $ref: "#/components/parameters/IdpId"
         - name: code
           in: query
           schema:
@@ -363,30 +354,7 @@ paths:
             type: string
       responses:
         "302":
-          description: Redirect into the portal with the session cookie set.
-        "501":
-          $ref: "#/components/responses/NotImplemented"
-    post:
-      tags: [auth]
-      summary: OIDC form-post callback (stub)
-      security: []
-      parameters:
-        - $ref: "#/components/parameters/IdpName"
-      requestBody:
-        content:
-          application/x-www-form-urlencoded:
-            schema:
-              type: object
-              properties:
-                code:
-                  type: string
-                state:
-                  type: string
-      responses:
-        "302":
-          description: Redirect into the portal with the session cookie set.
-        "501":
-          $ref: "#/components/responses/NotImplemented"
+          description: Redirect into the console, or back to the sign-in page with an error.
 
   # ------------------------------------------------------------------ user
   /me/targets:
@@ -640,6 +608,8 @@ paths:
 
   # ------------------------------------------------------------------ websocket
   /ws/terminal:
+    servers:
+      - url: /
     get:
       tags: [websocket]
       summary: Terminal transport (SSH, WinRM)
@@ -663,6 +633,8 @@ paths:
         "403":
           description: Origin mismatch.
   /ws/desktop:
+    servers:
+      - url: /
     get:
       tags: [websocket]
       summary: Desktop transport (RDP, VNC)
@@ -752,12 +724,16 @@ paths:
                 $ref: "#/components/schemas/User"
         "404":
           $ref: "#/components/responses/NotFound"
-    patch:
+    put:
       tags: [admin]
       summary: Update a user
       description: |
-        Changing `roles` on your own account to drop `admin` is rejected when you are the last
-        admin. Setting `status` to `active` clears `failed_logins` and `locked_until`.
+        Sets the display name, email and status. A left-out `display_name` or `status` keeps
+        its current value; a left-out `email` clears it. Roles and the password have their own
+        routes: `PUT /users/{id}/roles` and `PUT /users/{id}/password`.
+
+        Setting `status` to `active` clears `failed_logins` and `locked_until`. Disabling or
+        locking a user signs them out everywhere. You cannot disable or lock your own account.
       requestBody:
         required: true
         content:
@@ -792,6 +768,81 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
+  /users/{id}/roles:
+    put:
+      tags: [admin]
+      summary: Set a user's roles
+      description: >
+        Replaces the user's roles with the list sent. Removing `admin` from the last active
+        admin is refused. Granting a privileged role is called out in the audit event.
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UserRolesWrite"
+      responses:
+        "200":
+          description: The user with the new roles.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: This is the last active admin; `code` is `last_admin`.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /users/{id}/password:
+    put:
+      tags: [admin]
+      summary: Reset a user's password
+      description: >
+        Sets a new password, or generates a one-time one. Either way, all of the user's login
+        sessions are revoked, and by default the user must choose their own password at the
+        next sign-in.
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UserPasswordWrite"
+      responses:
+        "200":
+          description: Done.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status, sessions_revoked, must_change_password]
+                properties:
+                  status:
+                    type: string
+                    enum: [ok]
+                  sessions_revoked:
+                    type: integer
+                  must_change_password:
+                    type: boolean
+                  initial_password:
+                    type: string
+                    description: Only when `generate` was true. Shown once; not stored in the clear.
+        "400":
+          description: The password does not meet the password policy.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          $ref: "#/components/responses/NotFound"
   /users/{id}/sessions:
     delete:
       tags: [admin]
@@ -863,9 +914,10 @@ paths:
                 $ref: "#/components/schemas/GroupDetail"
         "404":
           $ref: "#/components/responses/NotFound"
-    patch:
+    put:
       tags: [admin]
       summary: Update a group
+      description: Sets the name and description. A left-out `name` keeps the current one; a left-out `description` clears it.
       requestBody:
         required: true
         content:
@@ -978,10 +1030,13 @@ paths:
                 $ref: "#/components/schemas/IdentityProvider"
         "404":
           $ref: "#/components/responses/NotFound"
-    patch:
+    put:
       tags: [admin]
       summary: Update an identity provider
-      description: Omitting a secret field keeps the stored value. Sending an empty string clears it.
+      description: >
+        Replaces the name and the settings: send the whole provider, as when creating it. The
+        type cannot change. A left-out `enabled` keeps its current value. Omitting a secret
+        field keeps the stored value; sending an empty string clears it.
       requestBody:
         required: true
         content:
@@ -1097,6 +1152,32 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Credential"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    put:
+      tags: [admin]
+      summary: Update a credential (same as PATCH)
+      description: >
+        Sending a new secret sets `rotated_at`, except for `ssh_ca`, where a key in the body
+        is refused: an authority is rotated through `/credentials/{id}/rotate` in two steps.
+        `type` and `mode` are immutable. Fields left out keep their value; for `ssh_ca`,
+        `username: ""` clears the fixed login user and `certificate_principals: []` clears the
+        allowlist.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CredentialWrite"
+      responses:
+        "200":
+          description: Updated.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Credential"
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "404":
           $ref: "#/components/responses/NotFound"
     patch:
@@ -1220,10 +1301,14 @@ paths:
                 $ref: "#/components/schemas/Target"
         "404":
           $ref: "#/components/responses/NotFound"
-    patch:
+    put:
       tags: [admin]
       summary: Update a target
-      description: Changing `address` resets `host_key_status` to `unknown` and clears fingerprints.
+      description: >
+        Replaces the whole target: send every field, as when creating it, including
+        `credentials`. A left-out field is cleared, and a field the write schema does not list
+        (such as `id`) is rejected. Changing `address` resets `host_key_status` to `unknown` and
+        clears fingerprints.
       requestBody:
         required: true
         content:
@@ -1587,10 +1672,15 @@ paths:
                 $ref: "#/components/schemas/AccessPolicy"
         "404":
           $ref: "#/components/responses/NotFound"
-    patch:
+    put:
       tags: [admin]
       summary: Update an access policy
-      description: Open sessions are re-evaluated against the new policy on the next timer tick and terminated if no longer permitted.
+      description: >
+        Replaces the whole policy: read it, change it, and send all of it back. A left-out
+        switch takes its default, not its current value: `enabled` and `require_mfa` on,
+        `allow_clipboard`, `allow_file_transfer` and `require_approval` off, and
+        `idle_timeout_minutes` 15. Open sessions are re-evaluated against the new policy on the
+        next timer tick and terminated if no longer permitted.
       requestBody:
         required: true
         content:
@@ -1803,10 +1893,14 @@ paths:
                 $ref: "#/components/schemas/AutoscalingGroupDetail"
         "404":
           $ref: "#/components/responses/NotFound"
-    patch:
+    put:
       tags: [admin]
       summary: Update an autoscaling group
-      description: "`external_id` cannot be changed; delete and re-enroll to rotate it."
+      description: >
+        Replaces the whole group: send every field, as when creating it. `provider` and
+        `external_id` are ignored here. To issue a new external id, send
+        `rotate_external_id: true`; the gateway cannot assume the role again until its trust
+        policy is updated with the new id.
       requestBody:
         required: true
         content:
@@ -2181,49 +2275,6 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/AuditVerifyResult"
-  /recordings:
-    get:
-      tags: [auditor]
-      summary: List recordings
-      parameters:
-        - $ref: "#/components/parameters/Limit"
-        - $ref: "#/components/parameters/Cursor"
-        - name: user_id
-          in: query
-          schema:
-            type: string
-        - name: session_id
-          in: query
-          schema:
-            type: string
-        - name: format
-          in: query
-          schema:
-            $ref: "#/components/schemas/RecordingFormat"
-        - name: from
-          in: query
-          schema:
-            type: string
-            format: date-time
-        - name: to
-          in: query
-          schema:
-            type: string
-            format: date-time
-      responses:
-        "200":
-          description: Recordings with session metadata.
-          content:
-            application/json:
-              schema:
-                allOf:
-                  - $ref: "#/components/schemas/PagedResponse"
-                  - type: object
-                    properties:
-                      items:
-                        type: array
-                        items:
-                          $ref: "#/components/schemas/Recording"
   /recordings/{id}:
     get:
       tags: [auditor]
@@ -2315,30 +2366,6 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
-  /recordings/{id}/views:
-    get:
-      tags: [auditor]
-      summary: Who viewed this recording
-      parameters:
-        - $ref: "#/components/parameters/Id"
-        - $ref: "#/components/parameters/Limit"
-        - $ref: "#/components/parameters/Cursor"
-      responses:
-        "200":
-          description: Views, newest first.
-          content:
-            application/json:
-              schema:
-                allOf:
-                  - $ref: "#/components/schemas/PagedResponse"
-                  - type: object
-                    properties:
-                      items:
-                        type: array
-                        items:
-                          $ref: "#/components/schemas/RecordingView"
-        "404":
-          $ref: "#/components/responses/NotFound"
 
   # ------------------------------------------------------------------ admin: retention
   /system/banner:
@@ -2903,11 +2930,11 @@ components:
       required: true
       schema:
         type: string
-    IdpName:
-      name: idp
+    IdpId:
+      name: id
       in: path
       required: true
-      description: The identity provider `name`.
+      description: The identity provider `id`.
       schema:
         type: string
     Ticket:
@@ -3235,24 +3262,35 @@ components:
           description: The user must replace the password at their next sign-in, before the second factor (QA finding R25).
     UserUpdate:
       type: object
+      additionalProperties: false
       properties:
         email:
-          type: [string, "null"]
+          type: string
           format: email
+          description: Left out or empty clears the email.
         display_name:
           type: string
         status:
           $ref: "#/components/schemas/UserStatus"
+    UserRolesWrite:
+      type: object
+      additionalProperties: false
+      required: [roles]
+      properties:
         roles:
           type: array
           minItems: 1
           items:
             $ref: "#/components/schemas/Role"
+    UserPasswordWrite:
+      type: object
+      additionalProperties: false
+      properties:
         password:
           type: string
           minLength: 12
           writeOnly: true
-          description: Setting a password revokes all of the user's login sessions.
+          description: The new password. Ignored when `generate` is true.
         generate:
           type: boolean
           default: false
@@ -4076,6 +4114,10 @@ components:
           description: Credential id per protocol. One credential profile serves every instance.
           additionalProperties:
             type: string
+        rotate_external_id:
+          type: boolean
+          default: false
+          description: On update, issue a new external id. The role's trust policy must then be updated with it.
     AwsIdentity:
       type: object
       required: [source, checked_at]
@@ -4436,22 +4478,6 @@ components:
           $ref: "#/components/schemas/AccessSession"
         view_count:
           type: integer
-    RecordingView:
-      type: object
-      required: [id, recording_id, user_id, username, ip, viewed_at]
-      properties:
-        id:
-          type: string
-        recording_id:
-          type: string
-        user_id:
-          type: string
-        username:
-          type: string
-        ip:
-          type: string
-        viewed_at:
-          $ref: "#/components/schemas/Timestamp"
     Setting:
       type: object
       description: A runtime setting resolved with its precedence (ADR 0020).
