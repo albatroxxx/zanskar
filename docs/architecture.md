@@ -70,6 +70,7 @@ behind the `webui` build tag.
 
 - **Package** (deb, rpm): one systemd service, hardened unit, `guacd` as a container beside it.
 - **Container**: the same binary in a distroless image; Docker Compose adds `guacd` and Caddy.
-- **Kubernetes**: a Helm chart, a preview until multi-replica control lands (roadmap Phase 4).
+- **Kubernetes**: a Helm chart, a preview until several replicas can work together.
 
-Zanskar 1.2 is single-instance: one gateway process per installation.
+Zanskar is single-instance: one gateway process per installation. Running several replicas waits
+on ending and watching a live session working across gateways.
