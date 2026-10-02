@@ -4,7 +4,7 @@ Date: 2026-09-20
 
 ## Status
 
-Accepted
+Accepted. Amended by 0026: contributions need no `Signed-off-by` line.
 
 ## Context
 

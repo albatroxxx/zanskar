@@ -64,6 +64,30 @@ If you touched:
 - **the database schema** — add a migration to **both** `migrations/postgres` and `migrations/sqlite`
   with identical file names and portable SQL; `make migrate-check` verifies the two sets match.
 
+## Coding style
+
+Contributions follow these style guides; CI enforces the parts a tool can check, and review covers
+the rest.
+
+- **Go**: [Effective Go](https://go.dev/doc/effective_go) and the
+  [Go Code Review Comments](https://go.dev/wiki/CodeReviewComments). Formatting is `gofmt`
+  (CI fails on any unformatted file); `golangci-lint` runs the linters configured in
+  `.golangci.yml` (gosec among them) and `go vet` runs too, both failing the build.
+- **TypeScript and React** (`web/`): the TypeScript compiler (`tsc -b` fails the build on a type
+  error, an unused local or an unused parameter) and `oxlint` with the rules in
+  `web/.oxlintrc.json`.
+- **Shell** (`hack/`, packaging scripts): POSIX `sh` or `bash` with `set -eu`; quote every
+  expansion.
+
+## Tests are part of the change
+
+- **New functionality comes with tests** in the automated suite (`go test ./...` and the frontend
+  build), in the same pull request. A reviewer asks for them if they are missing.
+- **A bug fix comes with a regression test** that fails before the fix and passes after, unless a
+  test is genuinely impractical; say why in the pull request if so.
+- Security-relevant parsing (protocol frames, tokens, configuration) gets a fuzz target alongside
+  its unit tests; CI runs the fuzz targets briefly on every change.
+
 ## Conventions
 
 - Every Go file starts with `// SPDX-License-Identifier: Apache-2.0`.

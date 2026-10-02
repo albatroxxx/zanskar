@@ -174,6 +174,12 @@ and the project conventions. The short version:
 make all   # runs the linters, the race-detector tests, and builds the UI + binary
 ```
 
+How the project is run, who holds which role and how decisions are made is in
+[GOVERNANCE.md](GOVERNANCE.md); everyone taking part follows the
+[code of conduct](CODE_OF_CONDUCT.md). The high-level design is in
+[docs/architecture.md](docs/architecture.md), and progress towards OpenSSF Best Practices Silver
+is tracked in [docs/best-practices.md](docs/best-practices.md).
+
 ## Security
 
 Zanskar is an access gateway, so security reports matter. See [SECURITY.md](SECURITY.md) for how to
