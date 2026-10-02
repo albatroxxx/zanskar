@@ -22,7 +22,7 @@ and update the status of the old one.
 | [0001](0001-go-single-static-binary.md) | Go, shipped as a single static binary | Accepted |
 | [0002](0002-guacd-sidecar-for-rdp-and-vnc.md) | guacd sidecar for RDP and VNC | Accepted |
 | [0003](0003-postgres-primary-sqlite-embedded.md) | PostgreSQL primary, SQLite embedded | Accepted |
-| [0004](0004-apache-2-license.md) | Apache License 2.0 | Accepted |
+| [0004](0004-apache-2-license.md) | Apache License 2.0 | Accepted, amended by 0026 |
 | [0005](0005-separate-identity-auth-from-target-credentials.md) | Separate identity authentication from target credentials | Accepted |
 | [0006](0006-roles-admin-auditor-user.md) | Roles: admin, auditor, user | Accepted |
 | [0007](0007-envelope-encryption-for-secrets.md) | Envelope encryption for secrets | Accepted |
@@ -44,3 +44,4 @@ and update the status of the old one.
 | [0023](0023-guided-aws-enrolment.md) | Guided AWS enrolment: the gateway knows its own identity, and roles only | Accepted |
 | [0024](0024-windows-autoscaling-sessions.md) | Windows sessions on autoscaling instances, pinned per instance | Accepted |
 | [0025](0025-database-tls-verified-by-default.md) | Database targets verify TLS by default; the master key can live in its own file | Accepted |
+| [0026](0026-no-dco-sign-off.md) | Contributions need no DCO sign-off | Accepted |

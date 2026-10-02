@@ -88,13 +88,6 @@ the rest.
 - Security-relevant parsing (protocol frames, tokens, configuration) gets a fuzz target alongside
   its unit tests; CI runs the fuzz targets briefly on every change.
 
-## Sign your work (DCO)
-
-Every commit carries a `Signed-off-by:` line, certifying the
-[Developer Certificate of Origin](https://developercertificate.org/): that you wrote the change or
-otherwise have the right to submit it under the project's licence. `git commit -s` adds it. Use
-your real name and an address you can be reached at.
-
 ## Conventions
 
 - Every Go file starts with `// SPDX-License-Identifier: Apache-2.0`.

@@ -21,7 +21,7 @@ document or change merges).
 |---|---|---|---|
 | achieve_passing | MUST | Met | Passing badge since September 2026. |
 | contribution_requirements | MUST | Met | CONTRIBUTING.md lists the coding style, the tests required with a change, the checks a PR must pass and the design-change process: https://github.com/albatroxxx/zanskar/blob/main/CONTRIBUTING.md |
-| dco | SHOULD | Pending | Every commit carries a Signed-off-by line certifying the Developer Certificate of Origin (CONTRIBUTING.md, "Sign your work"). Enforce it with the DCO GitHub app once enabled. |
+| dco | SHOULD | Unmet | Not adopted, on purpose (ADR 0026): contributions come in under Apache 2.0 section 5, and the CONTRIBUTING intro says so. Revisit if a foundation or a contributing company asks for DCO. |
 | governance | MUST | Pending | GOVERNANCE.md defines roles, how decisions are made (PRs, ADRs for design, maintainers settle disputes) and how people join: https://github.com/albatroxxx/zanskar/blob/main/GOVERNANCE.md |
 | code_of_conduct | MUST | Pending | Contributor Covenant 2.1 in CODE_OF_CONDUCT.md; reports go to zanskar@techmanship.in. |
 | roles_responsibilities | MUST | Pending | GOVERNANCE.md, "Roles": maintainer, committer and contributor, each with responsibilities, listed by GitHub handle. |
