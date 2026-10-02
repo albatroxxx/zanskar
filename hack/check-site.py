@@ -91,6 +91,10 @@ for path, page in pages.items():
     nav = re.search(r'<nav aria-label="Main">.*?</nav>', html, re.S)
     assert not re.search(r">Install v\d", html), (path, "versioned Install button")
     assert not (nav and re.search(r">v\d", nav.group(0))), (path, "versioned header link")
+    # Roadmap phases are internal planning words; a visitor cannot decode them.
+    # The release notes may name them as history.
+    if path.parent.name != "releases":
+        assert not re.search(r"\bPhase \d", html), (path, "roadmap phase named outside the release notes")
     if page.json_ld:
         structured = json.loads(page.json_ld)
         assert structured["softwareVersion"] == VERSION
