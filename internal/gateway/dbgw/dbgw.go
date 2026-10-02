@@ -311,16 +311,17 @@ func Bridge(ctx context.Context, log *slog.Logger, docker string, spec Spec, ws 
 	}
 	network, proxy, client := names(spec.SessionID)
 
-	// Set-up context is independent of the session context so teardown still
-	// runs after the session's context is cancelled.
-	suCtx, suCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	// Set-up and teardown are detached from the session's cancellation (but
+	// keep its values) so teardown still runs after the session ends.
+	detached := context.WithoutCancel(ctx)
+	suCtx, suCancel := context.WithTimeout(detached, 30*time.Second)
 	defer suCancel()
 
 	if err := dockerRun(suCtx, docker, nil, "network", "create", network); err != nil {
 		return "error", err
 	}
 	defer func() {
-		tdCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		tdCtx, cancel := context.WithTimeout(detached, 15*time.Second)
 		defer cancel()
 		_ = dockerRun(tdCtx, docker, nil, "network", "rm", network)
 	}()
@@ -333,7 +334,7 @@ func Bridge(ctx context.Context, log *slog.Logger, docker string, spec Spec, ws 
 		return "error", fmt.Errorf("dbgw: start proxy: %w", err)
 	}
 	defer func() {
-		tdCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		tdCtx, cancel := context.WithTimeout(detached, 15*time.Second)
 		defer cancel()
 		_ = dockerRun(tdCtx, docker, nil, "rm", "-f", proxy)
 	}()
@@ -349,7 +350,7 @@ func Bridge(ctx context.Context, log *slog.Logger, docker string, spec Spec, ws 
 	}
 	defer func() { _ = f.Close() }()
 	defer func() {
-		tdCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		tdCtx, cancel := context.WithTimeout(detached, 15*time.Second)
 		defer cancel()
 		_ = dockerRun(tdCtx, docker, nil, "rm", "-f", client)
 	}()
@@ -374,7 +375,7 @@ func Bridge(ctx context.Context, log *slog.Logger, docker string, spec Spec, ws 
 	)
 	sendCtrl := func(c control) {
 		b, _ := json.Marshal(c)
-		wctx, wcancel := context.WithTimeout(context.Background(), 2*time.Second)
+		wctx, wcancel := context.WithTimeout(detached, 2*time.Second)
 		defer wcancel()
 		_ = ws.Write(wctx, websocket.MessageText, b)
 	}
