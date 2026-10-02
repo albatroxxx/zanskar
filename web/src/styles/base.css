@@ -75,6 +75,15 @@ th { font-size: 0.74rem; letter-spacing: 0.06em; text-transform: uppercase; colo
 tr:last-child td { border-bottom: 0; }
 td .muted, .muted { color: var(--fg-muted); }
 .table-wrap { overflow-x: auto; }
+/* A row's name never breaks ("orders-" over "db"); a long endpoint or address
+   in a mono cell gives way instead, at any character. */
+td > strong:first-child { white-space: nowrap; }
+td.mono { overflow-wrap: anywhere; }
+/* A flex <td> stops being a table cell: it no longer stretches to the row's
+   height, so its border sits above its neighbours' in a tall row. Row actions
+   stay a real cell and space their buttons with margins. */
+td.actions { display: table-cell; white-space: nowrap; }
+td.actions > * + * { margin-left: 8px; }
 .empty { padding: 32px; text-align: center; color: var(--fg-muted); }
 
 /* controls */

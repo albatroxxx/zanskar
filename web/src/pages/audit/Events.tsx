@@ -175,7 +175,8 @@ const verbs: Record<string, string> = {
 /** session splits "user → target (PROTO)" as the API labels sessions and recordings. */
 function session(name?: string) {
   const m = /^(.+) → (.+) \((\w+)\)$/.exec(name ?? '')
-  return m ? { user: m[1], target: m[2], proto: m[3] } : null
+  // SSH and RDP read as acronyms; DATABASE would read as a code.
+  return m ? { user: m[1], target: m[2], proto: m[3] === 'DATABASE' ? 'database' : m[3] } : null
 }
 
 const str = (v: unknown) => (typeof v === 'string' ? v : '')
