@@ -29,6 +29,7 @@ func TestResolveNames(t *testing.T) {
 	for _, q := range []string{
 		`INSERT INTO users (id, username, display_name, created_at, updated_at) VALUES ('u1', 'alice', 'Alice', ?, ?)`,
 		`INSERT INTO targets (id, name, address, os_family, created_at, updated_at) VALUES ('t1', 'box', '10.0.0.5', 'linux', ?, ?)`,
+		`INSERT INTO access_requests (id, user_id, target_id, protocol, reason, requested_minutes, created_at, updated_at) VALUES ('ar1', 'u1', 't1', 'ssh', 'incident', 60, ?, ?)`,
 	} {
 		if _, err := db.ExecContext(ctx, db.Rebind(q), now, now); err != nil {
 			t.Fatal(err)
@@ -49,6 +50,7 @@ func TestResolveNames(t *testing.T) {
 		{"target", "t1", "box"},
 		{"access_session", s.ID, "alice → box (SSH)"},
 		{"recording", rec.ID, "alice → box (SSH)"},
+		{"access_request", "ar1", "alice → box (SSH)"},
 	}
 	for _, c := range cases {
 		got, err := r.ResolveNames(ctx, c.kind, []string{c.id, c.id, ""})
