@@ -126,6 +126,10 @@ migrate:
   # Migrations are an explicit step; the gateway refuses to start with any pending.
   enabled: true
   backoffLimit: 3
+  # A short schema migration; no limit would let a stuck one take the node's memory.
+  resources:
+    requests: {cpu: 50m, memory: 64Mi}
+    limits: {memory: 256Mi}
 
 podDisruptionBudget:
   enabled: true
