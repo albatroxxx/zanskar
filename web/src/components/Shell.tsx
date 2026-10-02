@@ -18,7 +18,7 @@ function NavBadge({ load }: { load: () => Promise<number> }) {
   const [n, setN] = useState(0)
   useEffect(() => {
     const tick = () => load().then(setN).catch(() => {})
-    tick()
+    void tick()
     const t = setInterval(tick, 60_000)
     return () => clearInterval(t)
   }, [load])

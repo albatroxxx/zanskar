@@ -131,7 +131,7 @@ export function MyAccess() {
             </Field>
             <div className="actions">
               <button type="button" className="btn" onClick={() => setExtending(null)}>Cancel</button>
-              <button className="btn primary" disabled={busy}>Request extension</button>
+              <button type="submit" className="btn primary" disabled={busy}>Request extension</button>
             </div>
           </form>
         </Modal>

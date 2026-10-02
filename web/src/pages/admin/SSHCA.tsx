@@ -255,7 +255,7 @@ export function CASetup({ credential, onClose, onSaved }: { credential: Credenti
         </Field>
         <div className="actions">
           <button type="button" className="btn" onClick={onClose}>Close</button>
-          <button className="btn primary" disabled={busy}>Save</button>
+          <button type="submit" className="btn primary" disabled={busy}>Save</button>
         </div>
       </form>
     </Modal>

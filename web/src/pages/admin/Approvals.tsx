@@ -140,7 +140,7 @@ export function Approvals() {
             </Field>
             <div className="actions">
               <button type="button" className="btn" onClick={() => setApproving(null)}>Cancel</button>
-              <button className="btn primary" disabled={busy === approving.id || grant.minutes < 1}>Approve for {grant.minutes || '…'} min</button>
+              <button type="submit" className="btn primary" disabled={busy === approving.id || grant.minutes < 1}>Approve for {grant.minutes || '…'} min</button>
             </div>
           </form>
         </Modal>

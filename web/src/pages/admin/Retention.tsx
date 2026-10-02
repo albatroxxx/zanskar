@@ -84,7 +84,7 @@ export function Retention() {
         )}
 
         <div className="actions">
-          <button className="btn primary" disabled={busy}>{busy ? 'Saving…' : 'Save policy'}</button>
+          <button type="submit" className="btn primary" disabled={busy}>{busy ? 'Saving…' : 'Save policy'}</button>
         </div>
         {loaded?.updated_at && (
           <p className="muted" style={{ marginTop: 12, fontSize: '0.82rem' }}>

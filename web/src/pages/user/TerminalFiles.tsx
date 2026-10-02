@@ -80,20 +80,21 @@ export function TerminalFiles({ sessionId }: { sessionId: string }) {
       </header>
       <div className="list">
         <div className="entry dir">{cwd || '…'}</div>
-        {parent !== null && <div className="entry dir" onClick={() => void list(parent)}>..</div>}
+        {parent !== null && <button type="button" className="entry dir" title="parent folder" onClick={() => void list(parent)}>..</button>}
         {entries === null && <div className="hint">Loading…</div>}
         {entries?.length === 0 && <div className="hint">Empty.</div>}
         {entries?.map((e) => (
-          <div
+          <button
+            type="button"
             key={e.path}
             className={'entry' + (e.dir ? ' dir' : '')}
             title={e.dir ? 'open folder' : 'download'}
             onClick={() => { if (e.dir) void list(e.path); else void download(e) }}
           >
-            <span>{e.dir ? '📁' : '📄'}</span>
+            <span aria-hidden="true">{e.dir ? '📁' : '📄'}</span>
             <span>{e.name}</span>
             {!e.dir && <span className="size">{fmtBytes(e.size)}</span>}
-          </div>
+          </button>
         ))}
       </div>
       <div className={'status' + (status?.err ? ' err' : '')}>{status?.text}</div>

@@ -322,7 +322,7 @@ function ProviderModal({ existing, onClose, onSaved }: { existing: Provider | nu
           <span>{existing && <button type="button" className="btn" onClick={runTest}>Test connection</button>}</span>
           <span>
             <button type="button" className="btn" onClick={onClose} disabled={busy}>Cancel</button>{' '}
-            <button className="btn primary" disabled={busy}>{busy ? 'Saving…' : 'Save'}</button>
+            <button type="submit" className="btn primary" disabled={busy}>{busy ? 'Saving…' : 'Save'}</button>
           </span>
         </div>
       </form>

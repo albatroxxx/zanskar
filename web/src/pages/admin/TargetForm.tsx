@@ -239,7 +239,7 @@ export function TargetForm({ initial, kind, onClose, onSaved }: { initial?: Targ
           </Field>
           <div className="actions">
             <button type="button" className="btn" onClick={onClose}>Cancel</button>
-            <button className="btn primary" disabled={busy}>{initial ? 'Save' : 'Create'}</button>
+            <button type="submit" className="btn primary" disabled={busy}>{initial ? 'Save' : 'Create'}</button>
           </div>
         </form>
       )}

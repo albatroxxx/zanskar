@@ -362,7 +362,7 @@ export function Targets() {
             </Field>
             <div className="actions">
               <button type="button" className="btn" onClick={() => setReqModal(null)}>Cancel</button>
-              <button className="btn primary" disabled={busy === 'request'}>Request access</button>
+              <button type="submit" className="btn primary" disabled={busy === 'request'}>Request access</button>
             </div>
           </form>
         </Modal>
@@ -385,7 +385,7 @@ export function Targets() {
             </Field>
             <div className="actions">
               <button type="button" className="btn" onClick={() => setPrompt(null)}>Cancel</button>
-              <button className="btn primary" disabled={busy !== ''}>Connect</button>
+              <button type="submit" className="btn primary" disabled={busy !== ''}>Connect</button>
             </div>
           </form>
         </Modal>

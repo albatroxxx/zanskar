@@ -223,6 +223,12 @@ td.actions > * + * { margin-left: 8px; }
 .files-panel .list { flex: 1; overflow: auto; padding: 6px 0; }
 .files-panel .entry { display: flex; align-items: center; gap: 8px; padding: 6px 12px; cursor: pointer; }
 .files-panel .entry:hover { background: var(--term-btn-bg); }
+/* Entries you can open or download are buttons, so the keyboard reaches them;
+   they keep the look of a plain list row. */
+.files-panel button.entry { width: 100%; border: 0; background: none; color: inherit; font: inherit; text-align: left; }
+.files-panel button.entry:hover { background: var(--term-btn-bg); }
+.files-panel button.entry:focus-visible { outline: 2px solid var(--term-link); outline-offset: -2px; }
+.files-panel button.entry.dir { color: var(--term-link); }
 .files-panel .entry .size { margin-left: auto; color: var(--term-fg-muted); font-variant-numeric: tabular-nums; font-size: 0.78rem; }
 .files-panel .entry.dir { color: var(--term-link); }
 .files-panel .hint { padding: 12px; color: var(--term-fg-muted); }

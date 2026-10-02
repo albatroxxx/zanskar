@@ -148,7 +148,7 @@ export function Login() {
               <Field label="Password">
                 <input id="password" type="password" autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} required />
               </Field>
-              <button className="btn primary" disabled={busy} style={{ width: '100%', justifyContent: 'center' }}>
+              <button type="submit" className="btn primary" disabled={busy} style={{ width: '100%', justifyContent: 'center' }}>
                 {busy ? 'Signing in…' : 'Sign in'}
               </button>
               {providers.filter((p) => p.type === 'oidc').length > 0 && (
@@ -181,7 +181,7 @@ export function Login() {
               </Field>
               <div className="actions" style={{ justifyContent: 'space-between' }}>
                 <button type="button" className="btn ghost" onClick={() => void auth.logout().then(() => setStep('password'))}>Cancel</button>
-                <button className="btn primary" disabled={busy}>Set password and continue</button>
+                <button type="submit" className="btn primary" disabled={busy}>Set password and continue</button>
               </div>
             </form>
           )}
@@ -194,7 +194,7 @@ export function Login() {
               </Field>
               <div className="actions" style={{ justifyContent: 'space-between' }}>
                 <button type="button" className="btn ghost" onClick={() => void auth.logout().then(() => setStep('password'))}>Cancel</button>
-                <button className="btn primary" disabled={busy}>Verify</button>
+                <button type="submit" className="btn primary" disabled={busy}>Verify</button>
               </div>
             </form>
           )}
@@ -218,7 +218,7 @@ export function Login() {
               </Field>
               <div className="actions" style={{ justifyContent: 'space-between' }}>
                 <button type="button" className="btn ghost" onClick={() => void auth.logout().then(() => setStep('password'))}>Cancel</button>
-                <button className="btn primary" disabled={busy || !enroll}>Activate</button>
+                <button type="submit" className="btn primary" disabled={busy || !enroll}>Activate</button>
               </div>
             </form>
           )}

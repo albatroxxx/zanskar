@@ -169,13 +169,12 @@ function DesktopSession({ state }: { state: DesktopState }) {
           if (!mimetype.startsWith('text/')) return
           lastClipRef.current = text
           setClipText(text)
-          const write = navigator.clipboard?.writeText?.(text)
-          if (!write) {
+          if (!navigator.clipboard?.writeText) {
             setClipNote('Copied in the session; this browser cannot write your clipboard, so it is in the panel.')
             setClipOpen(true)
             return
           }
-          write.then(() => setClipNote(null)).catch(() => {
+          navigator.clipboard.writeText(text).then(() => setClipNote(null)).catch(() => {
             setClipNote('Copied in the session; the browser did not allow writing your clipboard, so it is in the panel.')
             setClipOpen(true)
           })
@@ -438,15 +437,15 @@ function DesktopSession({ state }: { state: DesktopState }) {
               <div className="list">
                 <div className="entry dir">{cwd}</div>
                 {parent !== null && (
-                  <div className="entry dir" onClick={() => list(parent)}>..</div>
+                  <button type="button" className="entry dir" title="parent folder" onClick={() => list(parent)}>..</button>
                 )}
                 {entries === null && <div className="hint">Loading…</div>}
                 {entries?.length === 0 && <div className="hint">Empty. Upload a file, or save one to the Zanskar drive in the session.</div>}
                 {entries?.map((e) => (
-                  <div key={e.path} className={'entry' + (e.dir ? ' dir' : '')} onClick={() => (e.dir ? list(e.path) : download(e))} title={e.dir ? 'open folder' : 'download'}>
-                    <span>{e.dir ? '📁' : '📄'}</span>
+                  <button type="button" key={e.path} className={'entry' + (e.dir ? ' dir' : '')} onClick={() => (e.dir ? list(e.path) : download(e))} title={e.dir ? 'open folder' : 'download'}>
+                    <span aria-hidden="true">{e.dir ? '📁' : '📄'}</span>
                     <span>{e.name}</span>
-                  </div>
+                  </button>
                 ))}
               </div>
             )}

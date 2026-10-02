@@ -332,7 +332,7 @@ function GroupForm({ initial, credentials, onClose, onSaved }: { initial?: Autos
         )}
         <div className="actions">
           <button type="button" className="btn" onClick={onClose}>Cancel</button>
-          <button className="btn primary" disabled={busy}>{initial ? 'Save' : test?.ok ? 'Enroll' : 'Enroll without a passing test'}</button>
+          <button type="submit" className="btn primary" disabled={busy}>{initial ? 'Save' : test?.ok ? 'Enroll' : 'Enroll without a passing test'}</button>
         </div>
       </form>
     </Modal>
