@@ -36,7 +36,7 @@ jobs:
           cache: npm
           cache-dependency-path: web/package-lock.json
       - name: Build web UI
-        run: cd web && npm ci --ignore-scripts --no-fund --no-audit && npm run build && npm run lint -- src
+        run: cd web && npm ci --ignore-scripts --no-fund --no-audit && npm run build && npm run lint -- src && npm test
       - run: go mod verify
       - run: go vet ./...
       - run: go build -trimpath -tags webui ./...

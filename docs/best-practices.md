@@ -10,7 +10,7 @@ criteria in the badge project's `criteria.yml`; re-check before submitting.
 | Gap | Criterion | What closes it | Owner |
 |---|---|---|---|
 | Coverage is 61.6% | `test_statement_coverage80` (MUST) | Tests to reach 80% statement coverage (`go test -cover ./...`) | Engineering |
-| 8 of 22 recent fixes added a test | `regression_tests_added50` (MUST) | Regression tests for fixes from now on (now policy in CONTRIBUTING), and a frontend test runner, since most untested fixes were console fixes | Engineering |
+| 8 of 22 recent fixes added a test | `regression_tests_added50` (MUST) | Regression tests for fixes from now on (policy in CONTRIBUTING). The console now has a test runner (Vitest, run in CI), so console fixes can carry one too | Engineering |
 
 Status key: **Met**, **N/A**, **Unmet**, **Pending** (met once the pull request adding the
 document or change merges).
@@ -68,8 +68,8 @@ document or change merges).
 | dependency_monitoring | MUST | Met | Dependabot, govulncheck on every change, OSV-Scanner through Scorecard, Trivy filesystem scan. |
 | updateable_reused_components | MUST | Met | All reused components are Go modules or npm packages, updated with the standard tools; no vendored copies. |
 | interfaces_current | SHOULD | Met | staticcheck (through golangci-lint) flags deprecated APIs; the one deprecated module advisory (x/crypto/openpgp) is for a package Zanskar never imports (osv-scanner.toml). |
-| automated_integration_testing | MUST | Met | CI runs `go test -race ./...` on every push and PR, against SQLite and PostgreSQL, plus fuzz targets and a frontend build; results show on each PR. |
-| regression_tests_added50 | MUST | Unmet | 8 of 22 bug-fix commits since April 2026 added a test (36%). Now required by CONTRIBUTING.md; most misses were console fixes, which need a frontend test runner. |
+| automated_integration_testing | MUST | Met | CI runs `go test -race ./...` on every push and PR, against SQLite and PostgreSQL, plus fuzz targets, the console tests (Vitest) and a frontend build; results show on each PR. |
+| regression_tests_added50 | MUST | Unmet | 8 of 22 bug-fix commits from April to September 2026 added a test (36%); most misses were console fixes, which had no test runner. The console now has one (Vitest, in CI), and its first tests cover the access-request wording and keyboard file-panel fixes. Fixes carry a regression test by policy (CONTRIBUTING.md), so the share rises as fixes land. |
 | test_statement_coverage80 | MUST | Unmet | 61.6% statement coverage (Go, `go test -cover ./...`, 2026-09-30). |
 | test_policy_mandated | MUST | Pending | CONTRIBUTING.md, "Tests are part of the change": new functionality comes with tests in the same PR. |
 | tests_documented_added | MUST | Met | As above, in the instructions for change proposals. |

@@ -3,9 +3,9 @@ MODULE   := github.com/albatroxxx/zanskar
 VERSION  ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 LDFLAGS  := -s -w -X $(MODULE)/internal/version.Version=$(VERSION)
 
-.PHONY: all setup build build-api web web-dev dist-linux packages release-check notices run test lint vet vuln sec tidy clean migrate-check
+.PHONY: all setup build build-api web web-dev web-test dist-linux packages release-check notices run test lint vet vuln sec tidy clean migrate-check
 
-all: lint test build
+all: lint test build web-test
 
 # setup activates the repo's git hooks (.githooks/) for this clone and checks
 # the tools they call. Run once after cloning.
@@ -27,6 +27,10 @@ web:
 
 web-dev:
 	cd web && npm run dev
+
+# web-test runs the console tests (Vitest, jsdom). Needs `make web` once for node_modules.
+web-test:
+	cd web && npm test
 
 run:
 	go run ./cmd/zanskar serve

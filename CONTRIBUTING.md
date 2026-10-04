@@ -47,13 +47,13 @@ exposed, so the hooks are the layer that actually protects you. `git commit --no
 Run the same checks CI runs, and make sure they pass:
 
 ```sh
-make all           # lint + test + build
+make all           # lint + test + build + console tests
 make sec           # gosec
 make vuln          # govulncheck
 gofmt -l .         # should print nothing
 ```
 
-Individual targets: `make test` (race + coverage), `make lint` (golangci-lint), `make vet`,
+Individual targets: `make test` (race + coverage), `make web-test` (console tests, Vitest), `make lint` (golangci-lint), `make vet`,
 `make sec` (gosec), `make vuln` (govulncheck). golangci-lint, gosec and govulncheck must be
 installed locally; CI runs all of them plus a secret scan and a container scan.
 
@@ -81,8 +81,8 @@ the rest.
 
 ## Tests are part of the change
 
-- **New functionality comes with tests** in the automated suite (`go test ./...` and the frontend
-  build), in the same pull request. A reviewer asks for them if they are missing.
+- **New functionality comes with tests** in the automated suite (`go test ./...` for the gateway,
+  `npm test` in `web/` for the console), in the same pull request. A reviewer asks for them if they are missing.
 - **A bug fix comes with a regression test** that fails before the fix and passes after, unless a
   test is genuinely impractical; say why in the pull request if so.
 - Security-relevant parsing (protocol frames, tokens, configuration) gets a fuzz target alongside

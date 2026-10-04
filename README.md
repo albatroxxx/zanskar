@@ -171,7 +171,7 @@ To work on the code, [CONTRIBUTING.md](CONTRIBUTING.md) has the setup, the check
 and the project conventions. The short version:
 
 ```sh
-make all   # runs the linters, the race-detector tests, and builds the UI + binary
+make all   # runs the linters, the race-detector tests, builds the UI + binary, and runs the console tests
 ```
 
 How the project is run, who holds which role and how decisions are made is in
