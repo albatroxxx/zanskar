@@ -16,54 +16,9 @@ import (
 
 	"github.com/coder/websocket"
 
+	"github.com/albatroxxx/zanskar/internal/gateway/dbgw/dbtest"
 	"github.com/albatroxxx/zanskar/internal/recording"
 )
-
-// requireDocker skips unless ZANSKAR_TEST_DOCKER=1 and a Docker daemon
-// answers. These tests pull images and start containers, so they are opt-in
-// (CI sets the variable; a laptop without Docker skips them).
-func requireDocker(t *testing.T) {
-	t.Helper()
-	if os.Getenv("ZANSKAR_TEST_DOCKER") != "1" {
-		t.Skip("set ZANSKAR_TEST_DOCKER=1 to run tests that start containers")
-	}
-	if err := exec.Command("docker", "info").Run(); err != nil {
-		t.Skipf("docker is not available: %v", err)
-	}
-}
-
-func docker(t *testing.T, args ...string) string {
-	t.Helper()
-	out, err := exec.Command("docker", args...).CombinedOutput() // #nosec G204 -- fixed test arguments
-	if err != nil {
-		t.Fatalf("docker %s: %v\n%s", strings.Join(args, " "), err, out)
-	}
-	return strings.TrimSpace(string(out))
-}
-
-// startPostgres runs PostgreSQL on the Docker host's own network, on a high
-// port, and returns the address a session's containers reach it at: the
-// default bridge's gateway, which is the Docker host on Linux and inside
-// Colima alike. Host networking keeps the path free of Docker's isolation
-// rules between bridge networks, which differ between hosts.
-func startPostgres(t *testing.T, password string) (string, int) {
-	t.Helper()
-	host := docker(t, "network", "inspect", "bridge", "-f", "{{(index .IPAM.Config 0).Gateway}}")
-	name := "zanskar-test-pg-" + strconv.FormatInt(time.Now().UnixNano(), 36)
-	port := 40000 + int(time.Now().UnixNano()%10000)
-	docker(t, "run", "-d", "--name", name, "--network", "host", "-e", "POSTGRES_PASSWORD="+password, "-e", "POSTGRES_DB=app",
-		"postgres:16-alpine", "postgres", "-p", strconv.Itoa(port), "-c", "listen_addresses=*")
-	t.Cleanup(func() { _ = exec.Command("docker", "rm", "-f", name).Run() })
-	deadline := time.Now().Add(90 * time.Second)
-	for exec.Command("docker", "exec", name, "pg_isready", "-h", "127.0.0.1", "-p", strconv.Itoa(port), "-U", "postgres", "-d", "app").Run() != nil { // #nosec G204 -- fixed test arguments
-		if time.Now().After(deadline) {
-			logs, _ := exec.Command("docker", "logs", name).CombinedOutput()
-			t.Fatalf("postgres never became ready:\n%s", logs)
-		}
-		time.Sleep(500 * time.Millisecond)
-	}
-	return host, port
-}
 
 // TestBridgePostgresEndToEnd runs a real database session: a pgbouncer
 // sidecar holds the credential, a psql container talks to it, and the
@@ -71,9 +26,9 @@ func startPostgres(t *testing.T, password string) (string, int) {
 // never carries the password, the session is recorded, and every Docker
 // object the session made is gone afterwards.
 func TestBridgePostgresEndToEnd(t *testing.T) {
-	requireDocker(t)
+	dbtest.RequireDocker(t)
 	const password = "upstream-only-pw-7"
-	host, port := startPostgres(t, password)
+	host, port := dbtest.StartPostgres(t, password)
 	sessionID := "t" + strconv.FormatInt(time.Now().UnixNano(), 36)
 	spec := Spec{Engine: "postgres", Host: host, Port: port, Database: "app", Username: "postgres",
 		Password: password, SessionID: sessionID, TLSMode: "disable"}
@@ -130,7 +85,7 @@ func TestBridgePostgresEndToEnd(t *testing.T) {
 		if !inspected && strings.Contains(output, "=#") {
 			// While the session runs: the client container must not hold
 			// the upstream password anywhere it could read it.
-			cfg := docker(t, "inspect", client, "-f", "{{json .Config.Env}} {{json .Config.Cmd}} {{json .Args}}")
+			cfg := dbtest.Docker(t, "inspect", client, "-f", "{{json .Config.Env}} {{json .Config.Cmd}} {{json .Args}}")
 			if strings.Contains(cfg, password) {
 				t.Fatalf("the client container carries the upstream password: %s", cfg)
 			}
