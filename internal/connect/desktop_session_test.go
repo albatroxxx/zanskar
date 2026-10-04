@@ -246,7 +246,39 @@ func TestDesktopRefusesMismatchedRDPCertificate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("the pinned certificate must be accepted: %v", err)
 	}
+	// The first message names the session; close it and wait for the
+	// gateway to finish it, so its recording is not still being written
+	// when the test's temporary directory is removed.
+	_, first, err := ws.Read(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
 	ws.CloseNow()
+	r.waitEnded(t, sessionIDFrom(string(first)))
+}
+
+// sessionIDFrom reads the session id from the first desktop message,
+// guac.Encode("", id): "0.,<len>.<id>;".
+func sessionIDFrom(msg string) string {
+	if i := strings.Index(msg, ","); i >= 0 {
+		rest := msg[i+1:]
+		if j := strings.Index(rest, "."); j >= 0 {
+			return strings.TrimSuffix(strings.SplitN(rest[j+1:], ";", 2)[0], ";")
+		}
+	}
+	return ""
+}
+
+// waitEnded blocks until the session's row says it ended.
+func (r *desktopRig) waitEnded(t *testing.T, id string) {
+	t.Helper()
+	for i := 0; i < 250; i++ {
+		if s, err := r.h.Sessions.Get(r.ctx, id); err == nil && s.EndedAt != nil {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatalf("session %q never ended", id)
 }
 
 // TestDesktopRouteRefusals: a desktop endpoint will not redeem an SSH

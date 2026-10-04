@@ -457,7 +457,7 @@ func (h *Handler) totpEnroll(w http.ResponseWriter, r *http.Request) {
 	}
 	enr, err := h.TOTP.Enroll(r.Context(), p.User.ID, p.User.Username)
 	if err != nil {
-		if errors.Is(err, ErrTOTPBadCode) || strings.Contains(err.Error(), "already") {
+		if errors.Is(err, ErrTOTPAlreadyEnrolled) {
 			WriteError(w, http.StatusConflict, "already_enrolled", "an authenticator is already enrolled")
 			return
 		}
@@ -486,6 +486,8 @@ func (h *Handler) totpConfirm(w http.ResponseWriter, r *http.Request) {
 			WriteError(w, http.StatusUnauthorized, "invalid_code", "invalid code")
 		case errors.Is(err, ErrTOTPNotEnrolled):
 			WriteError(w, http.StatusConflict, "not_enrolled", "start enrollment first")
+		case errors.Is(err, ErrTOTPAlreadyEnrolled):
+			WriteError(w, http.StatusConflict, "already_enrolled", "an authenticator is already enrolled")
 		default:
 			h.serverError(w, r, err)
 		}

@@ -9,7 +9,6 @@ criteria in the badge project's `criteria.yml`; re-check before submitting.
 
 | Gap | Criterion | What closes it | Owner |
 |---|---|---|---|
-| Statement coverage is under 80% | `test_statement_coverage80` (MUST) | Tests to reach 80% of the gateway's own code (`go test -coverpkg` over every package but `hack/`; the README badge shows the current figure) | Engineering |
 | 8 of 22 recent fixes added a test | `regression_tests_added50` (MUST) | Regression tests for fixes from now on (policy in CONTRIBUTING). The console now has a test runner (Vitest, run in CI), so console fixes can carry one too | Engineering |
 
 Status key: **Met**, **N/A**, **Unmet**, **Pending** (met once the pull request adding the
@@ -69,8 +68,8 @@ document or change merges).
 | updateable_reused_components | MUST | Met | All reused components are Go modules or npm packages, updated with the standard tools; no vendored copies. |
 | interfaces_current | SHOULD | Met | staticcheck (through golangci-lint) flags deprecated APIs; the one deprecated module advisory (x/crypto/openpgp) is for a package Zanskar never imports (osv-scanner.toml). |
 | automated_integration_testing | MUST | Met | CI runs `go test -race ./...` on every push and PR, against SQLite and PostgreSQL, plus fuzz targets, the console tests (Vitest) and a frontend build; results show on each PR. |
-| regression_tests_added50 | MUST | Unmet | 8 of 22 bug-fix commits from April to September 2026 added a test (36%); most misses were console fixes, which had no test runner. The console now has one (Vitest, in CI), and its first tests cover the access-request wording and keyboard file-panel fixes. Fixes carry a regression test by policy (CONTRIBUTING.md), so the share rises as fixes land. |
-| test_statement_coverage80 | MUST | Unmet | Measured over the gateway's own code: `go test -coverpkg` across every package except `hack/`, whose test tools (a toy SSH server and a WebSocket client for the smoke test) are never built into a release; each statement counted once, covered if any test reaches it. CI publishes the figure as the README coverage badge. It was 61.6% by per-package counting (2026-09-30), 65.9% suite-wide (2026-10-04, with `hack/`), and 75.5% with `hack/` set aside (2026-10-04). |
+| regression_tests_added50 | MUST | Unmet | 8 of 22 bug-fix commits from April to September 2026 added a test (36%); most misses were console fixes, which had no test runner until #123 added one (Vitest, in CI). Since then the fixes in #122, #123, #129, #138 and the TOTP fix each came with a test that fails without the fix; the CSS layout fixes in #120 were checked visually, not by a test. Fixes carry a regression test by policy (CONTRIBUTING.md), so the share over the last six months rises as these land. |
+| test_statement_coverage80 | MUST | Met | 80.2% statement coverage of the gateway's own code (2026-10-04): `go test -coverpkg` across every package except `hack/`, whose test tools are never built into a release, each statement counted once and covered if any test reaches it, with the Docker-backed database-session tests on as in CI. CI publishes the current figure as the README coverage badge. It was 61.6% by per-package counting on 2026-09-30. |
 | test_policy_mandated | MUST | Pending | CONTRIBUTING.md, "Tests are part of the change": new functionality comes with tests in the same PR. |
 | tests_documented_added | MUST | Met | As above, in the instructions for change proposals. |
 | warnings_strict | MUST | Met | go vet, golangci-lint and gosec fail the build; tsc fails on unused locals and parameters. (Enabling TypeScript `strict` would go further.) |
