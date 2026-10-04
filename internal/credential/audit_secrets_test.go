@@ -70,6 +70,7 @@ func TestAuditNeverHoldsSecrets(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	defer func() { _ = rows.Close() }()
 	var log strings.Builder
 	n := 0
 	for rows.Next() {
@@ -80,7 +81,9 @@ func TestAuditNeverHoldsSecrets(t *testing.T) {
 		log.WriteString(a + " " + ip + " " + ot + " " + oid + " " + d + "\n")
 		n++
 	}
-	_ = rows.Close()
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
 	if n < 10 {
 		t.Fatalf("only %d audit events; the operations above should each record one", n)
 	}
