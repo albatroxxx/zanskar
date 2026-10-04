@@ -259,3 +259,34 @@ func TestOnboardingPasswords(t *testing.T) {
 		t.Fatalf("reset without change: %d %v", r.code, r.body)
 	}
 }
+
+// TestResetMFA: an admin removes a user's authenticator (a lost phone) and
+// every login session that passed the old second factor ends with it; the
+// reset is audited. An unknown user is a 404 and resets nothing.
+func TestResetMFA(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	u := &user.User{Username: "ivy", DisplayName: "Ivy", Roles: []user.Role{user.RoleUser}}
+	if err := e.users.Create(ctx, u); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 2; i++ {
+		if _, _, err := e.sessions.Create(ctx, u.ID, "203.0.113.8", "test", true); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if r := e.do("DELETE", "/api/v1/users/no-such-user/mfa", nil); r.code != 404 || len(e.totp.reset) != 0 {
+		t.Fatalf("unknown user: %d, resets %v", r.code, e.totp.reset)
+	}
+	r := e.do("DELETE", "/api/v1/users/"+u.ID+"/mfa", nil)
+	if r.code != 200 || r.body["sessions_revoked"] != float64(2) {
+		t.Fatalf("reset: %d %v", r.code, r.body)
+	}
+	if len(e.totp.reset) != 1 || e.totp.reset[0] != u.ID {
+		t.Fatalf("authenticator reset for %v, want %s", e.totp.reset, u.ID)
+	}
+	evs, _, err := e.audit.List(ctx, audit.Filter{Action: "user.mfa.reset", Limit: 1})
+	if err != nil || len(evs) != 1 || evs[0].ObjectID != u.ID || evs[0].ActorUserID != e.admin.ID {
+		t.Fatalf("user.mfa.reset audit: %+v %v", evs, err)
+	}
+}

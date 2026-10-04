@@ -72,6 +72,21 @@ func TestGroupHandlers(t *testing.T) {
 	if code, _ := do("PUT", "/api/v1/groups/"+id+"/members", map[string]any{"user_ids": []string{"ghost"}}); code != 400 {
 		t.Fatalf("unknown member: %d", code)
 	}
+	if code, body := do("GET", "/api/v1/groups/"+id+"/members", nil); code != 200 || len(body["items"].([]any)) != 1 {
+		t.Fatalf("members: %d %v", code, body)
+	}
+	// A body without user_ids is a mistake, not "remove everyone".
+	if code, _ := do("PUT", "/api/v1/groups/"+id+"/members", map[string]any{}); code != 400 {
+		t.Fatalf("members without user_ids: %d, want 400", code)
+	}
+	if code, body := do("GET", "/api/v1/groups/"+id+"/members", nil); code != 200 || len(body["items"].([]any)) != 1 {
+		t.Fatalf("a refused update must leave the members: %d %v", code, body)
+	}
+	for _, rq := range []struct{ method, path string }{{"GET", "/api/v1/groups/nope/members"}, {"PUT", "/api/v1/groups/nope"}, {"DELETE", "/api/v1/groups/nope"}} {
+		if code, _ := do(rq.method, rq.path, map[string]any{"name": "x"}); code != 404 {
+			t.Errorf("%s %s: %d, want 404", rq.method, rq.path, code)
+		}
+	}
 	code, body = do("GET", "/api/v1/groups/"+id, nil)
 	if code != 200 || body["member_count"].(float64) != 1 || len(body["members"].([]any)) != 1 {
 		t.Fatalf("detail: %d %v", code, body)
