@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/albatroxxx/zanskar/internal/audit"
 	"github.com/albatroxxx/zanskar/internal/auth"
 	"github.com/albatroxxx/zanskar/internal/config"
 	"github.com/albatroxxx/zanskar/internal/policy"
@@ -30,6 +31,9 @@ type env struct {
 	aliceCSR string
 	admin    *http.Cookie
 	adminCSR string
+	audit    *audit.Log
+	ids      map[string]string // username -> user id
+	login    func(name string, roles ...user.Role) (*http.Cookie, string)
 }
 
 // newEnv wires the handler behind the real auth middleware with one
@@ -51,17 +55,19 @@ func newEnv(t *testing.T) *env {
 	sessions := auth.NewSessions(db, bytes.Repeat([]byte{5}, 32), false)
 	policies, targets, requests := policy.NewRepo(db), target.NewRepo(db), NewRepo(db)
 
-	h := &Handler{Requests: requests, Policies: policies, Targets: targets, Log: log}
+	auditLog := audit.NewLog(db)
+	h := &Handler{Requests: requests, Policies: policies, Targets: targets, Audit: auditLog, Log: log}
 	mux := http.NewServeMux()
 	h.Register(mux)
 	mw := &auth.Middleware{Sessions: sessions, Users: users, Log: log}
-	e := &env{srv: mw.Authenticate(mw.CSRF(mux)), requests: requests}
+	e := &env{srv: mw.Authenticate(mw.CSRF(mux)), requests: requests, audit: auditLog, ids: map[string]string{}}
 
 	login := func(name string, roles ...user.Role) (*http.Cookie, string) {
 		u := &user.User{Username: name, DisplayName: name, Roles: roles}
 		if err := users.Create(ctx, u); err != nil {
 			t.Fatal(err)
 		}
+		e.ids[name] = u.ID
 		tok, sess, err := sessions.Create(ctx, u.ID, "203.0.113.9", "test", true)
 		if err != nil {
 			t.Fatal(err)
@@ -78,6 +84,7 @@ func newEnv(t *testing.T) *env {
 		}
 		return &http.Cookie{Name: auth.CookieName, Value: tok}, sessions.CSRFToken(sess.ID)
 	}
+	e.login = login
 	e.alice, e.aliceCSR = login("alice", user.RoleUser)
 	e.admin, e.adminCSR = login("root", user.RoleAdmin)
 	tg := &target.Target{Name: "web-1", Address: "10.0.0.5", OSFamily: target.Linux, Tags: map[string]string{"env": "prod"}}
