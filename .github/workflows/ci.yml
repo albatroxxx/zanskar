@@ -43,6 +43,8 @@ jobs:
       - name: Test (SQLite and PostgreSQL)
         env:
           ZANSKAR_TEST_POSTGRES_DSN: postgres://zanskar:zanskar@localhost:5432/zanskar_test?sslmode=disable
+          # Database-session tests start real containers (the runner has Docker).
+          ZANSKAR_TEST_DOCKER: "1"
         # Every package's tests run; coverage is measured over the gateway's own
         # code. hack/ holds test tools (fakessh, wsclient) that no release builds.
         run: |
