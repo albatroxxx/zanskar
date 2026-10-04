@@ -241,6 +241,8 @@ type env struct {
 	srv    http.Handler
 	cookie *http.Cookie
 	csrf   string
+	db     *store.DB
+	vault  *Vault
 }
 
 func newHandlerEnv(t *testing.T) *env {
@@ -261,7 +263,7 @@ func newHandlerEnv(t *testing.T) *env {
 	mux := http.NewServeMux()
 	(&AdminHandler{Vault: v, Audit: audit.NewLog(db), Log: log}).Register(mux)
 	mw := &auth.Middleware{Sessions: sessions, Users: users, Log: log}
-	return &env{srv: mw.Authenticate(mw.CSRF(mux)), cookie: &http.Cookie{Name: auth.CookieName, Value: token}, csrf: sessions.CSRFToken(sess.ID)}
+	return &env{srv: mw.Authenticate(mw.CSRF(mux)), cookie: &http.Cookie{Name: auth.CookieName, Value: token}, csrf: sessions.CSRFToken(sess.ID), db: db, vault: v}
 }
 
 func (e *env) do(method, path string, body any) (int, string) {
