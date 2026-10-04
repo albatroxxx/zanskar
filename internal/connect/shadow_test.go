@@ -30,6 +30,7 @@ type shadowEnv struct {
 	auditLog *audit.Log
 	sessions *auth.Sessions
 	users    *user.Repo
+	h        *ShadowHandler
 }
 
 func newShadowEnv(t *testing.T) *shadowEnv {
@@ -47,6 +48,7 @@ func newShadowEnv(t *testing.T) *shadowEnv {
 	e := &shadowEnv{reg: gateway.NewRegistry(), auditLog: audit.NewLog(db), users: user.NewRepo(db)}
 	e.sessions = auth.NewSessions(db, bytes.Repeat([]byte{3}, 32), false)
 	h := &ShadowHandler{Registry: e.reg, Audit: e.auditLog, Log: log}
+	e.h = h
 	mux := http.NewServeMux()
 	h.Register(mux)
 	mw := &auth.Middleware{Sessions: e.sessions, Users: e.users, Log: log}
