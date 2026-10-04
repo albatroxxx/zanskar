@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/albatroxxx/zanskar/internal/audit"
 	"github.com/albatroxxx/zanskar/internal/auth"
 	"github.com/albatroxxx/zanskar/internal/config"
 	"github.com/albatroxxx/zanskar/internal/store"
@@ -25,6 +26,9 @@ type handlerEnv struct {
 	users *user.Repo
 	admin *http.Cookie
 	csrf  string
+	audit *audit.Log
+	// sessions signs in other users for role checks.
+	sessions *auth.Sessions
 }
 
 func newHandlerEnv(t *testing.T) *handlerEnv {
@@ -42,11 +46,12 @@ func newHandlerEnv(t *testing.T) *handlerEnv {
 	users := user.NewRepo(db)
 	sessions := auth.NewSessions(db, bytes.Repeat([]byte{3}, 32), false)
 
-	h := &AdminHandler{Repo: NewRepo(db), Users: users, Log: log}
+	auditLog := audit.NewLog(db)
+	h := &AdminHandler{Repo: NewRepo(db), Users: users, Audit: auditLog, Log: log}
 	mux := http.NewServeMux()
 	h.Register(mux)
 	mw := &auth.Middleware{Sessions: sessions, Users: users, Log: log}
-	e := &handlerEnv{srv: mw.Authenticate(mw.CSRF(mux)), db: db, users: users}
+	e := &handlerEnv{srv: mw.Authenticate(mw.CSRF(mux)), db: db, users: users, audit: auditLog, sessions: sessions}
 
 	admin := &user.User{Username: "admin", DisplayName: "Admin", Roles: []user.Role{user.RoleAdmin}}
 	if err := users.Create(ctx, admin); err != nil {

@@ -222,3 +222,70 @@ func TestWebhookSinkSignsAndVerifies(t *testing.T) {
 		t.Fatal("stale timestamp must fail")
 	}
 }
+
+// namedSink is a flakySink under its own checkpoint name.
+type namedSink struct {
+	*flakySink
+	name string
+}
+
+func (n namedSink) Name() string { return n.name }
+
+func (f *flakySink) delivered() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	n := 0
+	for _, b := range f.got {
+		n += len(b)
+	}
+	return n
+}
+
+// TestRunKeepsHealthySinksFlowing: in the polling loop, a sink that keeps
+// failing backs off without holding up a healthy one, then catches up in
+// order once it recovers; events recorded while running reach both; and the
+// loop stops when its context ends.
+func TestRunKeepsHealthySinksFlowing(t *testing.T) {
+	l := exportLog(t, 4)
+	healthy := namedSink{&flakySink{}, "healthy"}
+	down := namedSink{&flakySink{failFirst: 3}, "down"}
+	e := &Exporter{Log: l, Sinks: []Sink{down, healthy}, Interval: 5 * time.Millisecond, MaxBackoff: 20 * time.Millisecond}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { e.Run(ctx); close(done) }()
+
+	waitFor := func(what string, cond func() bool) {
+		t.Helper()
+		deadline := time.Now().Add(5 * time.Second)
+		for !cond() {
+			if time.Now().After(deadline) {
+				cancel()
+				t.Fatalf("timed out waiting for %s", what)
+			}
+			time.Sleep(2 * time.Millisecond)
+		}
+	}
+	waitFor("the healthy sink", func() bool { return healthy.delivered() == 4 })
+	if _, err := l.Record(context.Background(), Actor{IP: "x"}.Event("target.create", "target", "t1", Success, nil)); err != nil {
+		t.Fatal(err)
+	}
+	waitFor("both sinks to see all five events", func() bool { return healthy.delivered() == 5 && down.delivered() == 5 })
+
+	down.mu.Lock()
+	var order []int64
+	for _, b := range down.got {
+		order = append(order, b...)
+	}
+	down.mu.Unlock()
+	for i, id := range order {
+		if id != int64(i+1) {
+			t.Fatalf("the recovered sink got events out of order: %v", order)
+		}
+	}
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Run did not stop when its context ended")
+	}
+}
