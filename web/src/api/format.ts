@@ -67,3 +67,14 @@ export function engineName(engine?: string | null, version?: string | null): str
   const name = engineNames[engine] ?? engine
   return version ? `${name} ${version}` : name
 }
+
+/** protocolName is how a protocol reads in the console: SSH, RDP and VNC are
+ *  acronyms, WinRM keeps its own spelling, and "database" is a word rather
+ *  than a shouted code. */
+export function protocolName(p: string): string {
+  switch (p) {
+    case 'winrm': return 'WinRM'
+    case 'database': return 'database'
+    default: return p.toUpperCase()
+  }
+}

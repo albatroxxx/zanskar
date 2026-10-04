@@ -1,3 +1,4 @@
+import { protocolName } from '../../api/format'
 import { useState, type FormEvent } from 'react'
 import { api, errorMessage } from '../../api/client'
 import { canConnect } from '../../auth/home'
@@ -330,7 +331,7 @@ function PolicyForm({ initial, groups, users, targets, asgs, onClose, onSaved }:
             {policyProtocols.map((p) => (
               <span key={p} className="field inline" style={{ margin: 0 }}>
                 <input id={`p-proto-${p}`} type="checkbox" checked={f.protocols.includes(p)} onChange={() => toggleProto(p)} />
-                <label htmlFor={`p-proto-${p}`}>{p.toUpperCase()}</label>
+                <label htmlFor={`p-proto-${p}`}>{protocolName(p)}</label>
               </span>
             ))}
           </div>
@@ -371,7 +372,7 @@ function PolicyForm({ initial, groups, users, targets, asgs, onClose, onSaved }:
                 {policyProtocols.map((p) => (
                   <span key={p} className="field inline" style={{ margin: 0 }}>
                     <input id={`p-r${i}-proto-${p}`} type="checkbox" checked={r.protocols.includes(p)} onChange={() => setRule(i, { protocols: toggleIn(r.protocols, p) })} />
-                    <label htmlFor={`p-r${i}-proto-${p}`}>{p.toUpperCase()}</label>
+                    <label htmlFor={`p-r${i}-proto-${p}`}>{protocolName(p)}</label>
                   </span>
                 ))}
               </div>

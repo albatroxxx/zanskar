@@ -1,6 +1,6 @@
 import { describe as group, expect, it } from 'vitest'
 import type { AuditEvent } from '../../api/types'
-import { describe, humanAction, who } from './eventText'
+import { describe, detailText, humanAction, who } from './eventText'
 
 const event = (over: Partial<AuditEvent>): AuditEvent => ({
   id: 1, ts: '2026-10-02T14:40:40Z', actor_user_id: 'u1', actor_username: 'root', actor_ip: '127.0.0.1',
@@ -26,7 +26,7 @@ group('access request events read as who asked for what', () => {
   })
 
   it('names the database protocol in words, not as a code', () => {
-    expect(describe(req('access.request.deny', 'bob → orders-db (DATABASE)'))).toBe("denied bob's request for database access to orders-db")
+    expect(describe(req('access.request.deny', 'bob → orders-db (database)'))).toBe("denied bob's request for database access to orders-db")
   })
 
   it.each(['access.request.create', 'access.request.approve', 'access.request.deny', 'access.request.revoke', 'access.grant.expire'])(
@@ -58,5 +58,17 @@ group('humanAction', () => {
   })
   it('turns an unknown code into words', () => {
     expect(humanAction('tls.cert_upload')).toBe('TLS cert upload')
+  })
+})
+
+group('detailText', () => {
+  it('shows a timestamp as a date and time, keeping the exact value', () => {
+    const d = detailText('2026-10-04T15:16:06.752946Z')
+    expect(d.text).not.toContain('T15:16')
+    expect(d.title).toBe('2026-10-04T15:16:06.752946Z')
+  })
+  it('leaves other values as they are', () => {
+    expect(detailText(60)).toEqual({ text: '60' })
+    expect(detailText('database')).toEqual({ text: 'database' })
   })
 })

@@ -4,7 +4,7 @@ import { api, errorMessage, query } from '../../api/client'
 import { fmtPreciseTime, shortId } from '../../api/format'
 import type { AuditEvent, AuditFacets, AuditVerify, Page } from '../../api/types'
 import { Alert, Badge, Empty, PageHead } from '../../components/ui'
-import { capitalize, describe, humanAction, typeLabel, who, words } from './eventText'
+import { capitalize, describe, detailText, humanAction, typeLabel, who, words } from './eventText'
 import { useRecordingsPath } from './paths'
 
 interface Filters { actor: string; action: string; object_type: string; range: string; from: string; to: string }
@@ -59,7 +59,8 @@ function DetailRow({ k, v, name }: { k: string; v: unknown; name?: string }) {
   } else if (k.endsWith('_id') && id) {
     body = <span className="mono" title={id}>{shortId(id)}</span>
   } else {
-    body = <span>{String(v)}</span>
+    const d = detailText(v)
+    body = <span title={d.title}>{d.text}</span>
   }
   return (
     <>

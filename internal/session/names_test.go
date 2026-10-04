@@ -111,3 +111,13 @@ func TestDetailIDs(t *testing.T) {
 		t.Fatalf("recording id: %v", perEvent[3])
 	}
 }
+
+// TestProtocolNameInLabels: labels name the protocol as people say it, not as
+// a shouted code; the Events page builds its sentences from them.
+func TestProtocolNameInLabels(t *testing.T) {
+	for in, want := range map[string]string{"ssh": "SSH", "rdp": "RDP", "vnc": "VNC", "winrm": "WinRM", "database": "database"} {
+		if got := protocolName(in); got != want {
+			t.Errorf("protocolName(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
