@@ -20,18 +20,19 @@ const tabs = await (await fetch(`http://127.0.0.1:${port}/json/list`)).json()
 const ws = new WebSocket(tabs.find((t) => t.type === 'page').webSocketDebuggerUrl)
 await new Promise((r) => (ws.onopen = r))
 let next = 0
-const waiting = {}
+const waiting = new Map()
 ws.onmessage = (m) => {
   const d = JSON.parse(m.data)
-  if (d.id && waiting[d.id]) {
-    waiting[d.id](d)
-    delete waiting[d.id]
+  const resolve = waiting.get(d.id)
+  if (resolve) {
+    waiting.delete(d.id)
+    resolve(d)
   }
 }
 const send = (method, params = {}) =>
   new Promise((r) => {
     const id = ++next
-    waiting[id] = r
+    waiting.set(id, r)
     ws.send(JSON.stringify({ id, method, params }))
   })
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
