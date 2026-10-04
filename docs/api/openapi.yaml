@@ -4357,34 +4357,32 @@ components:
               type: integer
     ConnectTicket:
       type: object
-      required: [ticket, session_id, transport, expires_at, policy]
+      description: >
+        A one-time pass for the WebSocket that carries the session. The session id and the
+        policy's limits are not here: the session starts when the WebSocket opens, and its
+        first message carries them.
+      required: [ticket, expires_at, ws_path]
       properties:
         ticket:
           type: string
-          description: One-time, 32 bytes of randomness, base64url. Present as `?ticket=` on the WebSocket URL.
-        session_id:
-          type: string
-        transport:
-          type: string
-          enum: [terminal, desktop]
-        websocket_path:
-          type: string
-          examples: [/ws/terminal]
+          description: >
+            One-time, 32 bytes of randomness, base64url. Present as `?ticket=` on the WebSocket
+            URL. It works once, only from the address that asked for it, and only until
+            `expires_at`, 30 seconds after it was issued.
         expires_at:
           $ref: "#/components/schemas/Timestamp"
-        policy:
-          type: object
-          description: Effective limits the UI should display.
-          required: [idle_timeout_minutes, allow_clipboard, allow_file_transfer]
-          properties:
-            idle_timeout_minutes:
-              type: integer
-            max_session_minutes:
-              type: [integer, "null"]
-            allow_clipboard:
-              type: boolean
-            allow_file_transfer:
-              type: boolean
+        ws_path:
+          type: string
+          enum: [/ws/terminal, /ws/desktop, /ws/winrm, /ws/database]
+          description: The WebSocket endpoint that redeems this ticket, chosen by protocol.
+        asg_id:
+          type: string
+          description: Set when the session is on an autoscaling group's instance.
+        asg_instance_id:
+          type: string
+        instance_label:
+          type: string
+          description: The instance the session lands on, as "instance id · availability zone".
 
     # ---------------------------------------------------------------- sessions
     OwnSession:
