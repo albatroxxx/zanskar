@@ -3,15 +3,13 @@
 package connect
 
 import (
-	"crypto/ed25519"
-	"crypto/rand"
 	"encoding/json"
-	"errors"
 	"net"
 	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -21,65 +19,29 @@ import (
 	"github.com/albatroxxx/zanskar/internal/audit"
 )
 
-// sftpTarget starts an SSH server on loopback that offers only the sftp
-// subsystem over the local filesystem, and returns a client connected to it
-// as a live terminal session's connection would be.
+// sftpTarget is an SSH server offering only the sftp subsystem over the
+// local filesystem, and a client connected to it as a live terminal
+// session's connection would be.
 func sftpTarget(t *testing.T) *ssh.Client {
 	t.Helper()
-	_, hostPriv, _ := ed25519.GenerateKey(rand.Reader)
-	hostSigner, _ := ssh.NewSignerFromKey(hostPriv)
-	cfg := &ssh.ServerConfig{PasswordCallback: func(c ssh.ConnMetadata, pw []byte) (*ssh.Permissions, error) {
-		if c.User() == "test" && string(pw) == "pw" {
-			return nil, nil
-		}
-		return nil, errors.New("denied")
-	}}
-	cfg.AddHostKey(hostSigner)
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = ln.Close() })
-	go func() {
-		for {
-			nc, err := ln.Accept()
-			if err != nil {
-				return
+	port, _, hostKey := fakeSSHTarget(t, "test", "pw", func(ch ssh.Channel, reqs <-chan *ssh.Request) {
+		for r := range reqs {
+			ok := r.Type == "subsystem" && len(r.Payload) > 4 && string(r.Payload[4:]) == "sftp"
+			if r.WantReply {
+				_ = r.Reply(ok, nil)
 			}
-			go func() {
-				_, chans, reqs, err := ssh.NewServerConn(nc, cfg)
-				if err != nil {
-					return
-				}
-				go ssh.DiscardRequests(reqs)
-				for newCh := range chans {
-					ch, creqs, err := newCh.Accept()
-					if err != nil {
-						return
+			if ok {
+				go func() {
+					if srv, err := sftp.NewServer(ch); err == nil {
+						_ = srv.Serve()
 					}
-					go func() {
-						for r := range creqs {
-							ok := r.Type == "subsystem" && len(r.Payload) > 4 && string(r.Payload[4:]) == "sftp"
-							if r.WantReply {
-								_ = r.Reply(ok, nil)
-							}
-							if ok {
-								go func() {
-									if srv, err := sftp.NewServer(ch); err == nil {
-										_ = srv.Serve()
-									}
-									_ = ch.Close()
-								}()
-							}
-						}
-					}()
-				}
-			}()
+					_ = ch.Close()
+				}()
+			}
 		}
-	}()
-	client, err := ssh.Dial("tcp", ln.Addr().String(), &ssh.ClientConfig{
-		User: "test", Auth: []ssh.AuthMethod{ssh.Password("pw")},
-		HostKeyCallback: ssh.FixedHostKey(hostSigner.PublicKey()),
+	})
+	client, err := ssh.Dial("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(port)), &ssh.ClientConfig{
+		User: "test", Auth: []ssh.AuthMethod{ssh.Password("pw")}, HostKeyCallback: ssh.FixedHostKey(hostKey),
 	})
 	if err != nil {
 		t.Fatal(err)

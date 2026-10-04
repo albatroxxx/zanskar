@@ -5,12 +5,8 @@ package connect
 import (
 	"bytes"
 	"context"
-	"crypto/ed25519"
-	"crypto/rand"
 	"encoding/binary"
 	"encoding/json"
-	"errors"
-	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -28,58 +24,22 @@ import (
 	"github.com/albatroxxx/zanskar/internal/ticket"
 )
 
-// shellTarget is an SSH server on loopback that accepts the fixture's vaulted
-// credential (svc / pw-123456) and runs a shell that upper-cases each line
-// and stops on "exit". It returns its port and host key fingerprint.
+// shellTarget is an SSH server that accepts the fixture's vaulted credential
+// (svc / pw-123456) and runs upperShell. It returns its port and host key
+// fingerprint.
 func shellTarget(t *testing.T) (int, string) {
 	t.Helper()
-	_, hostPriv, _ := ed25519.GenerateKey(rand.Reader)
-	hostSigner, _ := ssh.NewSignerFromKey(hostPriv)
-	cfg := &ssh.ServerConfig{PasswordCallback: func(c ssh.ConnMetadata, pw []byte) (*ssh.Permissions, error) {
-		if c.User() == "svc" && string(pw) == "pw-123456" {
-			return nil, nil
-		}
-		return nil, errors.New("denied")
-	}}
-	cfg.AddHostKey(hostSigner)
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = ln.Close() })
-	go func() {
-		for {
-			nc, err := ln.Accept()
-			if err != nil {
-				return
+	port, fp, _ := fakeSSHTarget(t, "svc", "pw-123456", func(ch ssh.Channel, reqs <-chan *ssh.Request) {
+		for r := range reqs {
+			if r.WantReply {
+				_ = r.Reply(r.Type == "pty-req" || r.Type == "shell" || r.Type == "window-change", nil)
 			}
-			go func() {
-				sc, chans, reqs, err := ssh.NewServerConn(nc, cfg)
-				if err != nil {
-					return
-				}
-				defer func() { _ = sc.Close() }()
-				go ssh.DiscardRequests(reqs)
-				for newCh := range chans {
-					ch, creqs, err := newCh.Accept()
-					if err != nil {
-						return
-					}
-					go func() {
-						for r := range creqs {
-							if r.WantReply {
-								_ = r.Reply(r.Type == "pty-req" || r.Type == "shell" || r.Type == "window-change", nil)
-							}
-							if r.Type == "shell" {
-								go upperShell(ch)
-							}
-						}
-					}()
-				}
-			}()
+			if r.Type == "shell" {
+				go upperShell(ch)
+			}
 		}
-	}()
-	return ln.Addr().(*net.TCPAddr).Port, ssh.FingerprintSHA256(hostSigner.PublicKey())
+	})
+	return port, fp
 }
 
 func upperShell(ch ssh.Channel) {
