@@ -1,7 +1,7 @@
 // The words the Events page uses for audit events: action names, object
 // types and the one-line sentence per event. Kept apart from the page so the
 // wording can be tested, since a reader sees words and never ids.
-import { shortId } from '../../api/format'
+import { fmtPreciseTime, shortId } from '../../api/format'
 import type { AuditEvent } from '../../api/types'
 
 /** Readable names for the action codes the gateway records. The code stays
@@ -140,8 +140,7 @@ const verbs: Record<string, string> = {
 /** session splits "user → target (PROTO)" as the API labels sessions and recordings. */
 function session(name?: string) {
   const m = /^(.+) → (.+) \((\w+)\)$/.exec(name ?? '')
-  // SSH and RDP read as acronyms; DATABASE would read as a code.
-  return m ? { user: m[1], target: m[2], proto: m[3] === 'DATABASE' ? 'database' : m[3] } : null
+  return m ? { user: m[1], target: m[2], proto: m[3] } : null
 }
 
 const str = (v: unknown) => (typeof v === 'string' ? v : '')
@@ -223,4 +222,14 @@ export function who(ev: AuditEvent): { name: string; system: boolean } {
   // words; the id stays in the event's details and exports.
   if (ev.actor_user_id) return { name: 'deleted user', system: false }
   return { name: ev.actor_ip === 'sync' ? 'gateway' : 'system', system: true }
+}
+
+const isoTime = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/
+
+/** detailText is how a plain detail value reads: a timestamp as a date and
+ *  time like the row's own (the exact value goes in title), anything else as
+ *  itself. */
+export function detailText(v: unknown): { text: string; title?: string } {
+  if (typeof v === 'string' && isoTime.test(v)) return { text: fmtPreciseTime(v), title: v }
+  return { text: String(v) }
 }

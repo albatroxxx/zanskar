@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { api, errorMessage } from '../../api/client'
-import { fmtTime } from '../../api/format'
+import { fmtTime, protocolName } from '../../api/format'
 import type { AccessRequest, Page } from '../../api/types'
 import { Alert, Badge, Empty, Field, Modal, PageHead } from '../../components/ui'
 
@@ -77,7 +77,7 @@ export function Approvals() {
                   <td className="muted">{fmtTime(r.created_at)}</td>
                   <td>{who(r)}</td>
                   <td><strong>{what(r)}</strong></td>
-                  <td>{r.protocol.toUpperCase()}</td>
+                  <td>{protocolName(r.protocol)}</td>
                   <td>{r.reason}{r.extends_request_id && <> <Badge tone="warn">extension</Badge></>}</td>
                   <td>{r.requested_minutes} min</td>
                   <td style={{ whiteSpace: 'nowrap' }}>
@@ -112,7 +112,7 @@ export function Approvals() {
                 <tr key={r.id}>
                   <td>{who(r)}</td>
                   <td><strong>{what(r)}</strong></td>
-                  <td>{r.protocol.toUpperCase()}</td>
+                  <td>{protocolName(r.protocol)}</td>
                   <td>{r.approved_minutes || r.requested_minutes} min{r.approved_minutes && r.approved_minutes !== r.requested_minutes ? <span className="muted"> (asked {r.requested_minutes})</span> : null}{r.extends_request_id && <> <Badge tone="warn">extension</Badge></>}</td>
                   <td className="muted">{r.expires_at ? fmtTime(r.expires_at) : '—'}</td>
                   <td><button className="btn sm" disabled={busy === r.id} onClick={() => void act(r.id, 'revoke')}>Revoke</button></td>
@@ -125,7 +125,7 @@ export function Approvals() {
 
       {approving && (
         <Modal title={`Approve ${who(approving)} on ${what(approving)}`} onClose={() => setApproving(null)}>
-          <p className="muted">{approving.protocol.toUpperCase()} · asked for {approving.requested_minutes} minutes: “{approving.reason}”{approving.extends_request_id ? ' — an extension: it runs on from the current grant while that is still active, otherwise from now.' : ''}</p>
+          <p className="muted">{protocolName(approving.protocol)} · asked for {approving.requested_minutes} minutes: “{approving.reason}”{approving.extends_request_id ? ' — an extension: it runs on from the current grant while that is still active, otherwise from now.' : ''}</p>
           <form
             onSubmit={(e) => {
               e.preventDefault()

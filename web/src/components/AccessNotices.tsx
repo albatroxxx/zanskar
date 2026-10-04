@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { api } from '../api/client'
-import { fmtTime } from '../api/format'
+import { fmtTime, protocolName } from '../api/format'
 import type { AccessRequest, Page } from '../api/types'
 import { Alert } from './ui'
 
@@ -38,7 +38,7 @@ export function AccessNotices() {
   }, [])
 
   const dismiss = (key: string) => setDismissed((d) => new Set(d).add(key))
-  const what = (g: AccessRequest) => `${g.protocol.toUpperCase()} on ${g.target_name || g.asg_name || 'the target'}`
+  const what = (g: AccessRequest) => `${protocolName(g.protocol)} on ${g.target_name || g.asg_name || 'the target'}`
   const notices: { key: string; tone: 'ok' | 'warn'; body: React.ReactNode }[] = []
   for (const g of grants) {
     if (!g.expires_at) continue

@@ -1,7 +1,7 @@
 import { useEffect, useState, type FormEvent } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { api, errorMessage } from '../../api/client'
-import { fmtTime } from '../../api/format'
+import { fmtTime, protocolName } from '../../api/format'
 import type { AccessRequest, AccessStatus, Page } from '../../api/types'
 import { Alert, Badge, Empty, Field, Modal, PageHead } from '../../components/ui'
 
@@ -64,7 +64,7 @@ export function MyAccess() {
         minutes: Number(ext.minutes),
         extends_request_id: extending.id,
       })
-      setNotice(`Asked to extend ${extending.protocol.toUpperCase()} access to ${extending.target_name || extending.asg_name || 'the target'} by ${ext.minutes} minutes. An administrator must approve it; the current grant continues until it expires.`)
+      setNotice(`Asked to extend ${protocolName(extending.protocol)} access to ${extending.target_name || extending.asg_name || 'the target'} by ${ext.minutes} minutes. An administrator must approve it; the current grant continues until it expires.`)
       setExtending(null)
       void load()
     } catch (e) {

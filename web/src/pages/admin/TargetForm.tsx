@@ -1,3 +1,4 @@
+import { protocolName } from '../../api/format'
 import { useState, type FormEvent } from 'react'
 import { api, errorMessage } from '../../api/client'
 import type { OSFamily, Protocol, Target } from '../../api/types'
@@ -200,7 +201,7 @@ export function TargetForm({ initial, kind, onClose, onSaved }: { initial?: Targ
           {k === 'host' && (
             <div className="form-grid">
               {protocols.map((p) => (
-                <Field key={p} label={`${p.toUpperCase()} port`} hint="blank = default">
+                <Field key={p} label={`${protocolName(p)} port`} hint="blank = default">
                   <input id={`t-port-${p}`} inputMode="numeric" value={f[p]} onChange={set(p)} placeholder={{ ssh: '22', rdp: '3389', vnc: '5900', winrm: '5986' }[p]} />
                 </Field>
               ))}

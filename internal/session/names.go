@@ -106,7 +106,7 @@ func (r *Repo) labels(ctx context.Context, q string, ids []string) (map[string]s
 		if where == "" {
 			where = "unknown target"
 		}
-		out[id] = fmt.Sprintf("%s → %s (%s)", who, where, strings.ToUpper(protocol))
+		out[id] = fmt.Sprintf("%s → %s (%s)", who, where, protocolName(protocol))
 	}
 	return out, rows.Err()
 }
@@ -148,4 +148,17 @@ func toArgs(ids []string) []any {
 		args[i] = id
 	}
 	return args
+}
+
+// protocolName is how a protocol reads in a label: SSH, RDP and VNC are
+// acronyms, WinRM keeps its spelling, and "database" is a word, not a code.
+func protocolName(p string) string {
+	switch p {
+	case "winrm":
+		return "WinRM"
+	case "database":
+		return "database"
+	default:
+		return strings.ToUpper(p)
+	}
 }

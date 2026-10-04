@@ -1,6 +1,6 @@
 import { useEffect, useState, type FormEvent } from 'react'
 import { api, errorMessage } from '../../api/client'
-import { fmtTime } from '../../api/format'
+import { fmtTime, protocolName } from '../../api/format'
 import type { AsgAccessTest, AsgIAMDocs, AsgInstance, AutoscalingGroup, AwsIdentity, Credential, OSFamily, Protocol } from '../../api/types'
 import { Alert, Badge, Confirm, Empty, Field, Modal, PageHead, Tags } from '../../components/ui'
 import { formatTags, parseTags, protocols, useList, type PortProtocol } from './lib'
@@ -282,7 +282,7 @@ function GroupForm({ initial, credentials, onClose, onSaved }: { initial?: Autos
                   <td>
                     <div className="field inline" style={{ margin: 0 }}>
                       <input id={`asg-cap-${p}`} type="checkbox" checked={f.caps[p]} onChange={(e) => up({ caps: { ...f.caps, [p]: e.target.checked } })} />
-                      <label htmlFor={`asg-cap-${p}`}>{p.toUpperCase()}</label>
+                      <label htmlFor={`asg-cap-${p}`}>{protocolName(p)}</label>
                     </div>
                   </td>
                   <td>
@@ -614,7 +614,7 @@ function GroupDetail({ group, credentials, onClose, onChanged, onDeleted, onErro
       </dl>
       <h2 style={{ marginTop: 18 }}>Credentials per protocol</h2>
       <CredentialBindings
-        slots={g.capabilities.map((p) => ({ protocol: p, label: p.toUpperCase() }))}
+        slots={g.capabilities.map((p) => ({ protocol: p, label: protocolName(p) }))}
         current={g.credentials}
         credentials={credentials}
         onSave={saveBindings}
