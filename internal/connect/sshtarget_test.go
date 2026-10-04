@@ -3,10 +3,13 @@
 package connect
 
 import (
+	"bytes"
 	"crypto/ed25519"
 	"crypto/rand"
+	"encoding/json"
 	"errors"
 	"net"
+	"net/http"
 	"testing"
 
 	"golang.org/x/crypto/ssh"
@@ -55,4 +58,23 @@ func fakeSSHTarget(t *testing.T, username, password string, serve func(ssh.Chann
 		}
 	}()
 	return ln.Addr().(*net.TCPAddr).Port, ssh.FingerprintSHA256(hostSigner.PublicKey()), hostSigner.PublicKey()
+}
+
+// postConnect asks a real server at baseURL for a ticket as alice and returns
+// the decoded response and its status.
+func (f *connectFixture) postConnect(t *testing.T, baseURL, targetID, proto string) (int, map[string]any) {
+	t.Helper()
+	body, _ := json.Marshal(map[string]string{"target_id": targetID, "protocol": proto})
+	req, _ := http.NewRequest("POST", baseURL+"/api/v1/connect", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-CSRF-Token", f.csrf)
+	req.AddCookie(f.cookie)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	var out map[string]any
+	_ = json.NewDecoder(resp.Body).Decode(&out)
+	return resp.StatusCode, out
 }
