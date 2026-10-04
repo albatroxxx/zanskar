@@ -159,7 +159,12 @@ func (h *AdminHandler) update(w http.ResponseWriter, r *http.Request) {
 		h.writeErr(w, r, err)
 		return
 	}
-	h.record(r, "target.update", t.ID, audit.Success, map[string]any{"before": before, "after": map[string]any{"name": t.Name, "address": t.Address, "status": t.Status}})
+	details := map[string]any{"before": before, "after": map[string]any{"name": t.Name, "address": t.Address, "status": t.Status}}
+	if before["address"] != t.Address {
+		// Repo.Update cleared the host key and certificate pins with it.
+		details["trust_reset"] = true
+	}
+	h.record(r, "target.update", t.ID, audit.Success, details)
 	httpx.WriteJSON(w, http.StatusOK, t)
 }
 

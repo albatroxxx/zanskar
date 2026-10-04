@@ -162,6 +162,24 @@ func (r *Repo) Update(ctx context.Context, t *Target) error {
 		return err
 	}
 	defer tx.Rollback() //nolint:errcheck
+	// A new address may be a different machine: what was trusted and pinned
+	// for the old one says nothing about it. Clear the host key, its trust
+	// and both certificate pins, so the next probe starts from "unknown"
+	// rather than reporting a key change that looks like an attack.
+	var oldAddress string
+	if err := tx.QueryRowContext(ctx, r.db.Rebind(`SELECT address FROM targets WHERE id = ? AND deleted_at IS NULL`), t.ID).Scan(&oldAddress); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrNotFound
+		}
+		return err
+	}
+	if oldAddress != t.Address {
+		if _, err := tx.ExecContext(ctx, r.db.Rebind(`UPDATE targets SET host_key_fingerprint = NULL, host_key_status = 'unknown',
+			tls_fingerprint = NULL, winrm_tls_fingerprint = NULL, last_probed_at = NULL WHERE id = ?`), t.ID); err != nil {
+			return err
+		}
+		t.HostKeyFingerprint, t.HostKeyStatus, t.TLSFingerprint, t.WinRMTLSFingerprint, t.LastProbedAt = nil, HostKeyUnknown, nil, nil, nil
+	}
 	res, err := tx.ExecContext(ctx, r.db.Rebind(`UPDATE targets SET name = ?, address = ?, os_family = ?, ports = ?, capabilities = ?,
 		tags = ?, status = ?, notes = ?, engine = ?, engine_version = ?, retention_days = ?, database_name = ?, tls_mode = ?, tls_ca = ?, updated_at = ? WHERE id = ? AND deleted_at IS NULL`),
 		t.Name, t.Address, string(t.OSFamily), mustJSON(t.Ports), mustJSON(t.Capabilities), mustJSON(t.Tags), t.Status, t.Notes,

@@ -166,7 +166,9 @@ export function TargetForm({ initial, kind, onClose, onSaved }: { initial?: Targ
             </Field>
             {k === 'host' ? (
               <>
-                <Field label="Address" hint="Hostname or IP reachable from the gateway">
+                <Field label="Address" hint={initial && f.address.trim() !== initial.address
+                  ? 'A new address may be a different machine: saving clears the trusted host key and pinned certificates, so probe and trust it again.'
+                  : 'Hostname or IP reachable from the gateway'}>
                   <input id="t-address" value={f.address} onChange={set('address')} required />
                 </Field>
                 <Field label="Operating system">
