@@ -127,6 +127,14 @@ func newLeveledLogger(cfg *config.Config) (*slog.Logger, *slog.LevelVar, *logrin
 }
 
 func runServe() error {
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+	return serve(ctx)
+}
+
+// serve runs the gateway until ctx ends (SIGINT or SIGTERM under runServe) or
+// a console-requested restart has drained. It returns nil on a clean stop.
+func serve(ctx context.Context) error {
 	startedAt := time.Now().UTC()
 	// Taken before anything else reads or touches the environment: it is
 	// what the environment file is later compared against (ADR 0020).
@@ -136,8 +144,6 @@ func runServe() error {
 		return err
 	}
 	log, logLevel, logs := newLeveledLogger(cfg)
-	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-	defer stop()
 	// A console-requested restart cancels this context once live sessions
 	// have drained; serve then returns nil and the supervisor starts a fresh
 	// process that reads the environment file again.
