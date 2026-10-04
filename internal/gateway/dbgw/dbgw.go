@@ -343,7 +343,7 @@ func Bridge(ctx context.Context, log *slog.Logger, docker string, spec Spec, ws 
 	if err != nil {
 		return "error", err
 	}
-	cmd := exec.CommandContext(ctx, docker, cargs...) // #nosec G204 -- args built by clientArgs from validated fields, no shell
+	cmd := exec.CommandContext(ctx, docker, cargs...) // #nosec G204 G702 -- args built by clientArgs from validated fields (a stored, validated target), no shell
 	f, err := pty.StartWithSize(cmd, &pty.Winsize{Cols: uint16(cols), Rows: uint16(rows)})
 	if err != nil {
 		return "error", fmt.Errorf("dbgw: start client: %w", err)
