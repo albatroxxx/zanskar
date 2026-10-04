@@ -25,7 +25,7 @@ Agentless VM access gateway in Go. Module path `github.com/albatroxxx/zanskar`. 
 ## Before committing
 
 ```
-gofmt -l . && go vet ./... && go test -race ./... && ~/go/bin/golangci-lint run ./... && gosec -quiet ./... && govulncheck ./...
+gofmt -l . && go vet ./... && go test -race ./... && ~/go/bin/golangci-lint run ./... && gosec -quiet ./... && govulncheck ./... && (cd web && npm test)
 ```
 
 ## Smoke test
