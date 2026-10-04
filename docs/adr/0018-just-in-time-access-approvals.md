@@ -68,6 +68,14 @@ figure stays on the record beside the granted one, and the requester is told wha
 **Approver model (v1): any admin.** Approve / deny / revoke are admin-only; auditors may view.
 Designated per-target or per-policy approvers, and multi-step chains, are deferred.
 
+**An admin may approve their own request** (decided 2026-10-04). An admin also holds the user
+role, so an approval-gated policy can make them eligible, and nothing stops them approving it.
+Blocking that would add no control: an admin can give themselves standing access at any time by
+writing a policy. What protects the estate from an admin is the record, not the approval step:
+the request, the approval, the policy change and every session are audited in the hash chain and
+recorded, with the admin named as both requester and approver. Approval is a check on users, not
+on admins. Designated approvers, when they come, are the place to require a second person.
+
 **Connect is gated on an active grant.** `issueTicket` continues to run every existing check
 (policy match, time window, MFA, host-key/cert pinning, session and idle limits). Additionally,
 when the only policy that grants the requested target+protocol is `require_approval`, it
