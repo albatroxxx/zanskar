@@ -43,7 +43,7 @@ jobs:
       - name: Test (SQLite and PostgreSQL)
         env:
           ZANSKAR_TEST_POSTGRES_DSN: postgres://zanskar:zanskar@localhost:5432/zanskar_test?sslmode=disable
-        run: go test -race -coverprofile=coverage.out ./...
+        run: go test -race -coverpkg=./... -coverprofile=coverage.out ./...
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: coverage
@@ -203,7 +203,9 @@ jobs:
       - name: Compute total coverage
         id: cov
         run: |
-          pct=$(awk 'NR>1 { s+=$2; if ($3>0) c+=$2 } END { printf "%.1f", 100*c/s }' coverage.out)
+          # -coverpkg lists each block once per test binary: count a block once,
+          # covered if any test reached it.
+          pct=$(awk 'NR>1 { n[$1]=$2; if ($3>0) hit[$1]=1 } END { for (k in n) { t+=n[k]; if (hit[k]) v+=n[k] } printf "%.1f", 100*v/t }' coverage.out)
           echo "pct=$pct" >> "$GITHUB_OUTPUT"
           echo "total statement coverage: $pct%" >> "$GITHUB_STEP_SUMMARY"
       - name: Publish badge JSON
