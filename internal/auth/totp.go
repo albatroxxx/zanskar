@@ -24,7 +24,10 @@ import (
 // TOTP errors.
 var (
 	ErrTOTPNotEnrolled = errors.New("auth: totp not enrolled")
-	ErrTOTPBadCode     = errors.New("auth: invalid code")
+	// ErrTOTPAlreadyEnrolled: a confirmed authenticator is neither replaced nor
+	// confirmed again; an admin reset clears it first.
+	ErrTOTPAlreadyEnrolled = errors.New("auth: totp already enrolled; reset it first")
+	ErrTOTPBadCode         = errors.New("auth: invalid code")
 )
 
 const recoveryCodeCount = 8
@@ -72,7 +75,7 @@ func (t *TOTP) Enroll(ctx context.Context, userID, username string) (*Enrollment
 		return nil, err
 	}
 	if enrolled {
-		return nil, errors.New("auth: totp already enrolled; reset it first")
+		return nil, ErrTOTPAlreadyEnrolled
 	}
 	key, err := totp.Generate(totp.GenerateOpts{
 		Issuer: t.Issuer, AccountName: username, SecretSize: 20, Algorithm: otp.AlgorithmSHA1, Digits: otp.DigitsSix,
@@ -111,7 +114,7 @@ func (t *TOTP) Confirm(ctx context.Context, userID, code string) ([]string, erro
 		return nil, err
 	}
 	if confirmed {
-		return nil, errors.New("auth: totp already confirmed")
+		return nil, ErrTOTPAlreadyEnrolled
 	}
 	if !t.validate(secret, code) {
 		return nil, ErrTOTPBadCode
