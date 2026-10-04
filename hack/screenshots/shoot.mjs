@@ -24,7 +24,7 @@ const waiting = new Map()
 ws.onmessage = (m) => {
   const d = JSON.parse(m.data)
   const resolve = waiting.get(d.id)
-  if (resolve) {
+  if (typeof resolve === 'function') {
     waiting.delete(d.id)
     resolve(d)
   }
