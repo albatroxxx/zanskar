@@ -29,6 +29,8 @@ type env struct {
 	audit   *audit.Log
 	storage *recording.LocalStorage
 	cookies map[string]*http.Cookie
+	csrf    map[string]string
+	ids     map[string]string // username -> user id
 }
 
 // newEnv wires the session handler behind the real auth middleware with an
@@ -48,7 +50,7 @@ func newEnv(t *testing.T) *env {
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	users := user.NewRepo(db)
 	sessions := auth.NewSessions(db, bytes.Repeat([]byte{6}, 32), false)
-	e := &env{db: db, repo: NewRepo(db), audit: audit.NewLog(db), storage: &recording.LocalStorage{Dir: t.TempDir()}, cookies: map[string]*http.Cookie{}}
+	e := &env{db: db, repo: NewRepo(db), audit: audit.NewLog(db), storage: &recording.LocalStorage{Dir: t.TempDir()}, cookies: map[string]*http.Cookie{}, csrf: map[string]string{}, ids: map[string]string{}}
 	h := &Handler{Repo: e.repo, Audit: e.audit, Storage: e.storage, Log: log}
 	mux := http.NewServeMux()
 	h.Register(mux)
@@ -59,11 +61,12 @@ func newEnv(t *testing.T) *env {
 		if err := users.Create(ctx, u); err != nil {
 			t.Fatal(err)
 		}
-		tok, _, err := sessions.Create(ctx, u.ID, "203.0.113.9", "test", true)
+		tok, sess, err := sessions.Create(ctx, u.ID, "203.0.113.9", "test", true)
 		if err != nil {
 			t.Fatal(err)
 		}
 		e.cookies[name] = &http.Cookie{Name: auth.CookieName, Value: tok}
+		e.csrf[name], e.ids[name] = sessions.CSRFToken(sess.ID), u.ID
 	}
 	now := store.TimeArg(time.Now())
 	if _, err := db.ExecContext(ctx, db.Rebind(`INSERT INTO targets (id, name, address, os_family, created_at, updated_at) VALUES ('t1', 'web 1', '10.0.0.5', 'linux', ?, ?)`), now, now); err != nil {
