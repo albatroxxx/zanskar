@@ -114,21 +114,10 @@ func (f *connectFixture) mustTarget(t *testing.T, name string) *target.Target {
 // loopback address the WebSocket will come from.
 func (r *terminalRig) ticket(t *testing.T) string {
 	t.Helper()
-	body, _ := json.Marshal(map[string]string{"target_id": r.targetID, "protocol": "ssh"})
-	req, _ := http.NewRequest("POST", r.url+"/api/v1/connect", bytes.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-CSRF-Token", r.csrf)
-	req.AddCookie(r.cookie)
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-	var out map[string]any
-	_ = json.NewDecoder(resp.Body).Decode(&out)
+	code, out := r.postConnect(t, r.url, r.targetID, "ssh")
 	tok, _ := out["ticket"].(string)
-	if resp.StatusCode != http.StatusOK || tok == "" {
-		t.Fatalf("connect: %d %v", resp.StatusCode, out)
+	if code != http.StatusOK || tok == "" {
+		t.Fatalf("connect: %d %v", code, out)
 	}
 	return tok
 }
