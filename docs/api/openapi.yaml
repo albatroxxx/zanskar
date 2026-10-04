@@ -294,6 +294,21 @@ paths:
                       type: string
         "400":
           $ref: "#/components/responses/BadRequest"
+        "401":
+          description: The code is wrong; `code` is `invalid_code`. Audited as a failed `user.mfa.confirm`.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: >
+            `not_enrolled` before enrollment has started; `already_enrolled` once an authenticator is
+            confirmed. A confirmed authenticator is never replaced or confirmed again through the API;
+            an admin resets it first, so a stolen session cannot swap the second factor.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
   /auth/logout:
     post:
       tags: [auth]
