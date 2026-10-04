@@ -152,7 +152,7 @@ Every badge above is computed from this repository by an open-source tool and li
 | CodeQL | Static analysis of the Go server and TypeScript UI with the `security-extended` query suite; alerts appear in the Security tab | [`codeql.yml`](.github/workflows/codeql.yml) |
 | OpenSSF Scorecard | Supply-chain hygiene scored 0 to 10 by the [OpenSSF](https://scorecard.dev): pinned dependencies, token permissions, branch protection, SAST, vulnerability status, and more. Weekly and on every push to main | [`scorecard.yml`](.github/workflows/scorecard.yml) |
 | OpenSSF Best Practices | The [OpenSSF Best Practices](https://www.bestpractices.dev/) criteria for FLOSS projects: documented contribution and vulnerability-reporting process, tests and CI, static and dynamic analysis, published cryptography, secure delivery. Answers are public and linked to their evidence | [project 14924](https://www.bestpractices.dev/projects/14924) |
-| Test coverage | Total statement coverage from the CI test run, written to the `badges` branch after each push to main | [`ci.yml`](.github/workflows/ci.yml) |
+| Test coverage | Statement coverage of the gateway's own code (every package but the `hack/` test tools) from the CI test run, written to the `badges` branch after each push to main | [`ci.yml`](.github/workflows/ci.yml) |
 | Go version | Read from `go.mod` | shields.io |
 
 The published image `ghcr.io/albatroxxx/zanskar:latest` is also re-scanned by Trivy every week,

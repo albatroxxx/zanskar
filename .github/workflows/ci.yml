@@ -43,7 +43,11 @@ jobs:
       - name: Test (SQLite and PostgreSQL)
         env:
           ZANSKAR_TEST_POSTGRES_DSN: postgres://zanskar:zanskar@localhost:5432/zanskar_test?sslmode=disable
-        run: go test -race -coverpkg=./... -coverprofile=coverage.out ./...
+        # Every package's tests run; coverage is measured over the gateway's own
+        # code. hack/ holds test tools (fakessh, wsclient) that no release builds.
+        run: |
+          pkgs=$(go list ./... | grep -v '/hack/' | paste -sd, -)
+          go test -race -coverpkg="$pkgs" -coverprofile=coverage.out ./...
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: coverage
