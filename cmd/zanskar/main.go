@@ -56,45 +56,57 @@ import (
 	"github.com/albatroxxx/zanskar/web"
 )
 
-func main() {
-	if len(os.Args) < 2 {
+func main() { os.Exit(run(os.Args[1:])) }
+
+// errUsage reports a malformed command line whose usage text has already
+// been printed; it exits 2 rather than 1.
+var errUsage = errors.New("usage")
+
+// run dispatches a command line (without the program name) and returns the
+// process exit code: 0 on success, 1 on a failed command, 2 on bad usage.
+func run(args []string) int {
+	if len(args) < 1 {
 		usage()
-		os.Exit(2)
+		return 2
 	}
 	var err error
-	switch os.Args[1] {
+	switch args[0] {
 	case "serve":
 		err = runServe()
 	case "migrate":
 		err = runMigrate()
 	case "init":
-		err = runInit(os.Args[2:])
+		err = runInit(args[1:])
 	case "backup":
-		err = runBackup(os.Args[2:])
+		err = runBackup(args[1:])
 	case "restore":
-		err = runRestore(os.Args[2:])
+		err = runRestore(args[1:])
 	case "keygen":
 		err = runKeygen()
 	case "key":
-		err = runKey(os.Args[2:])
+		err = runKey(args[1:])
 	case "dbproxy":
 		err = runDBProxy()
 	case "version":
 		fmt.Println(version.Version)
 	case "admin":
-		err = runAdmin(os.Args[2:])
+		err = runAdmin(args[1:])
 	case "audit":
-		err = runAudit(os.Args[2:])
+		err = runAudit(args[1:])
 	case "-h", "--help", "help":
 		usage()
 	default:
 		usage()
-		os.Exit(2)
+		return 2
 	}
-	if err != nil {
+	switch {
+	case errors.Is(err, errUsage):
+		return 2
+	case err != nil:
 		fmt.Fprintln(os.Stderr, "error:", err)
-		os.Exit(1)
+		return 1
 	}
+	return 0
 }
 
 func usage() {

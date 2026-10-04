@@ -18,7 +18,7 @@ import (
 func runAudit(args []string) error {
 	if len(args) == 0 {
 		auditUsage()
-		os.Exit(2)
+		return errUsage
 	}
 	switch args[0] {
 	case "verify":
@@ -27,8 +27,7 @@ func runAudit(args []string) error {
 		return runAuditReseal(args[1:])
 	default:
 		auditUsage()
-		os.Exit(2)
-		return nil
+		return errUsage
 	}
 }
 
