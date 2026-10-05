@@ -60,6 +60,11 @@ type Config struct {
 	// loopback-bound Zanskar. Never set it when clients reach Zanskar over
 	// plain HTTP.
 	TrustProxyTLS bool
+	// ConsoleCLI turns on the command line in the console (ADR 0027). On
+	// unless ZANSKAR_CONSOLE_CLI=off. It is an install-time switch on purpose,
+	// not a console setting, so a stolen administrator session cannot turn it
+	// back on.
+	ConsoleCLI bool
 	// Issuer is the name shown in authenticator apps.
 	Issuer string
 	// RequireMFA forces every password user to enroll an authenticator before
@@ -142,6 +147,7 @@ func Load(opts Options) (*Config, error) {
 		GuacdAddr:            os.Getenv("ZANSKAR_GUACD_ADDR"),  // empty disables RDP and VNC
 		DockerPath:           os.Getenv("ZANSKAR_DOCKER_PATH"), // empty defaults to "docker" on PATH
 		TrustProxyTLS:        os.Getenv("ZANSKAR_TRUST_PROXY_TLS") == "true",
+		ConsoleCLI:           !strings.EqualFold(strings.TrimSpace(os.Getenv("ZANSKAR_CONSOLE_CLI")), "off"),
 		Issuer:               envOr("ZANSKAR_ISSUER", "Zanskar"),
 		RequireMFA:           envOr("ZANSKAR_REQUIRE_MFA", "true") != "false",
 		RecordingsDir:        envOr("ZANSKAR_RECORDINGS_DIR", "data/recordings"),

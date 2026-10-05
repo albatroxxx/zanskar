@@ -2876,6 +2876,128 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
+  /admin/cli:
+    get:
+      tags: [admin]
+      summary: The console command line's state for this sign-in
+      description: >
+        Whether the command line (ADR 0027) is open for this sign-in. It opens only after a
+        code from the administrator's authenticator, proved at sign-in or through
+        `/admin/cli/unlock`, and closes after `idle_minutes` without a command. The route
+        does not exist when the gateway runs with `ZANSKAR_CONSOLE_CLI=off`; the console
+        then hides the button.
+      responses:
+        "200":
+          description: The state.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  enabled: { type: boolean }
+                  unlocked: { type: boolean, description: Commands are accepted now. }
+                  mfa_enrolled: { type: boolean, description: The administrator has an authenticator; without one the command line cannot be opened. }
+                  idle_minutes: { type: integer, description: Minutes without a command before a fresh code is needed. }
+    post:
+      tags: [admin]
+      summary: Run one command line
+      description: >
+        Runs a line from the command table (`help` lists it; docs/console-cli.md is the
+        reference). Each command is dispatched through the same routes and role checks as
+        the console, so it can do only what the API lets this administrator do. There is
+        no shell: pipes, redirection and variables are refused, and host-level operations
+        (backup, restore, key rotation, audit repair) are not commands. A destructive
+        command first answers `status: confirm` with the word to type; the same line sent
+        again with `confirm` set to that word, within two minutes, runs it. Every line is
+        audited as `cli.command` with its result and the routes it called. Limited to 60
+        lines a minute per sign-in.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [line]
+              properties:
+                line: { type: string, maxLength: 1024, example: "sessions --live" }
+                confirm: { type: string, description: The word a confirmation asked for. }
+      responses:
+        "200":
+          description: >
+            The command ran, failed, asked for confirmation or was cancelled; `status`
+            says which, and `lines` is what to print.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, enum: [ok, error, confirm, cancelled] }
+                  expect: { type: string, description: With `confirm`, the word to type. }
+                  lines:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        text: { type: string }
+                        style: { type: string, enum: [head, ok, warn, error, muted] }
+        "403":
+          description: >
+            `cli_locked`: a fresh authenticator code is needed first. Or the caller is not an
+            administrator.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "429":
+          description: More than 60 lines in a minute; `code` is `rate_limited`.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /admin/cli/unlock:
+    post:
+      tags: [admin]
+      summary: Open the command line with a fresh authenticator code
+      description: >
+        Checks a code from the administrator's authenticator (a recovery code also works, and
+        is used up). Five wrong codes close the command line for this sign-in for 15
+        minutes; the sign-in itself is not affected. Audited as `cli.unlock`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [code]
+              properties:
+                code: { type: string, example: "123456" }
+      responses:
+        "200":
+          description: The command line is open.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  unlocked: { type: boolean }
+        "422":
+          description: The code is wrong; `code` is `bad_code`.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: The administrator has no authenticator; `code` is `mfa_not_enrolled`.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "429":
+          description: Too many wrong codes; `code` is `cli_locked`.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
   /admin/retention:
     get:
       tags: [admin]

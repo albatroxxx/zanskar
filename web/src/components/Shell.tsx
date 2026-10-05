@@ -3,6 +3,7 @@ import { Link, NavLink, Outlet, useNavigate } from 'react-router-dom'
 import { useAuth } from '../auth/AuthContext'
 import { canConnect } from '../auth/home'
 import { AccessNotices } from './AccessNotices'
+import { ConsoleCLI } from './ConsoleCLI'
 import { RestartNotice } from './RestartNotice'
 
 export interface NavItem {
@@ -87,7 +88,8 @@ export function Shell({ portal, items }: { portal: 'user' | 'admin' | 'audit'; i
           </button>
         </div>
       </aside>
-      <main className="main">
+      <main className={'main' + (portal === 'admin' ? ' has-cli' : '')}>
+        {portal === 'admin' && <ConsoleCLI />}
         {portal === 'user' && <AccessNotices />}
         {portal === 'admin' && <RestartNotice />}
         <Outlet />

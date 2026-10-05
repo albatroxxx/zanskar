@@ -316,6 +316,7 @@ func serve(ctx context.Context) error {
 				DockerPath: cfg.DockerPath, DBProxyImage: func() string { return runtime.String(settings.KeyDBProxyImage) },
 				Prober: &target.Prober{}, ASGs: asgRepo, Cloud: cloudProviders},
 			&connect.ShadowHandler{Registry: registry, Audit: auditLog, Log: log, GuacdAddr: guacdAddr},
+			consoleCLI(cfg, sessions, totp, auditLog, log),
 		},
 	}
 	if n, err := users.CountAdmins(ctx); err == nil && n == 0 {
