@@ -2015,7 +2015,7 @@ SOFTWARE.
 
 ### github.com/aws/aws-sdk-go-v2/service/ec2
 
-* Version: `v1.336.1`
+* Version: `v1.338.1`
 
 ```
 
@@ -3281,7 +3281,7 @@ SOFTWARE.
 
 ### github.com/aws/aws-sdk-go-v2/service/s3
 
-* Version: `v1.113.4`
+* Version: `v1.114.0`
 
 ```
 
@@ -9883,7 +9883,7 @@ SOFTWARE.```
 
 ### modernc.org/libc
 
-* Version: `v1.75.7`
+* Version: `v1.77.1`
 
 ```
 Copyright (c) 2017 The Libc Authors. All rights reserved.
@@ -9991,7 +9991,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 ### modernc.org/sqlite
 
-* Version: `v1.59.0`
+* Version: `v1.60.1`
 
 ```
 Copyright (c) 2017 The Sqlite Authors. All rights reserved.
