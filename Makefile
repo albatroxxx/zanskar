@@ -101,7 +101,8 @@ FUZZ_TARGETS := \
 	internal/audit:FuzzVerifySignature \
 	internal/policy:FuzzParseClock \
 	internal/cloud:FuzzParseConsoleHostKeys \
-	internal/auth:FuzzParseAddr
+	internal/auth:FuzzParseAddr \
+	internal/cli:FuzzTokenize
 
 .PHONY: fuzz
 fuzz:

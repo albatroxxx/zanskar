@@ -851,8 +851,17 @@ func planSettingSet(x *run) (string, string, error) {
 	if err != nil {
 		return "", "", err
 	}
+	// Only plain value types are set here. A setting of any other type, a
+	// secret one day, is refused, so that "no secrets on the command line"
+	// stays true without anyone remembering to keep it so (ADR 0027).
+	if !plainSettingTypes[str(r, "type")] {
+		return "", "", usagef("%s is set from the console's Settings page, not here", str(r, "key"))
+	}
 	return fmt.Sprintf("This changes %s (%s) from %q to %q for everyone.", str(r, "title"), str(r, "key"), str(r, "value"), x.rest), str(r, "key"), nil
 }
+
+// plainSettingTypes are the runtime setting types the command line may set.
+var plainSettingTypes = map[string]bool{"string": true, "text": true, "bool": true, "enum": true, "hostport": true}
 
 func cmdSettingSet(x *run) error {
 	if err := x.api.do(http.MethodPut, pathf("/admin/settings/%s", x.args[0]), map[string]string{"value": x.rest}, nil); err != nil {

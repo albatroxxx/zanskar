@@ -284,7 +284,7 @@ td.actions > * + * { margin-left: 8px; }
 
 /* console command line (ADR 0027) */
 .main { position: relative; }
-.main.has-cli .page-head { padding-right: 56px; }
+.main:has(> .cli-icon) .page-head { padding-right: 56px; }
 .cli-icon { position: absolute; top: 25px; right: 32px; z-index: 30; width: 42px; height: 40px; padding: 0; display: flex; align-items: center; justify-content: center; border-radius: 7px; border: 1px solid var(--line-strong); background: var(--bg-raised); color: var(--accent); cursor: pointer; }
 .cli-icon:hover { border-color: var(--accent); }
 .cli-icon.on { background: var(--accent-soft); border-color: var(--accent); box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 25%, transparent); }

@@ -68,31 +68,53 @@ func (c *cliClient) run(line, confirm string) (string, string, string) {
 	return status, strings.Join(text, "\n"), expect
 }
 
-// TestConsoleCLIEndToEnd drives the command line against a real gateway: the
-// commands reach the real routes, read their real replies, ask before
-// destructive changes, refuse shell syntax and leave an audit trail.
-func TestConsoleCLIEndToEnd(t *testing.T) {
+// startCLIGateway starts a real gateway with one administrator, root, and
+// returns a client that has not signed in yet.
+func startCLIGateway(t *testing.T, requireMFA, consoleCLI string) *cliClient {
+	t.Helper()
 	newCLIGateway(t, true)
 	addr := freeAddr(t)
 	t.Setenv("ZANSKAR_LISTEN_ADDR", addr)
 	t.Setenv("ZANSKAR_LOG_LEVEL", "error")
-	t.Setenv("ZANSKAR_REQUIRE_MFA", "true")
-	t.Setenv("ZANSKAR_CONSOLE_CLI", "")
+	t.Setenv("ZANSKAR_REQUIRE_MFA", requireMFA)
+	t.Setenv("ZANSKAR_CONSOLE_CLI", consoleCLI)
 	t.Setenv("ZANSKAR_ADMIN_PASSWORD", "a long enough passphrase 42")
 	if _, _, err := output(t, func() error { return runAdmin([]string{"create", "-username", "root", "-name", "Root"}) }); err != nil {
 		t.Fatal(err)
 	}
 	base, _, cancel := startServe(t, addr)
-	defer cancel()
-	jar, _ := cookiejar.New(nil)
-	c := &cliClient{t: t, base: base, http: &http.Client{Timeout: 10 * time.Second, Jar: jar}}
+	t.Cleanup(cancel)
+	return newCLIClient(t, base)
+}
 
-	// Sign in and enrol an authenticator; confirming it proves a code.
-	code, out := c.call("POST", "/api/v1/auth/login", map[string]string{"username": "root", "password": "a long enough passphrase 42"})
+func newCLIClient(t *testing.T, base string) *cliClient {
+	jar, _ := cookiejar.New(nil)
+	return &cliClient{t: t, base: base, http: &http.Client{Timeout: 10 * time.Second, Jar: jar}}
+}
+
+// signIn signs c in with a password and keeps the CSRF token.
+func (c *cliClient) signIn(name, password string) map[string]any {
+	c.t.Helper()
+	code, out := c.call("POST", "/api/v1/auth/login", map[string]string{"username": name, "password": password})
 	if code != http.StatusOK {
-		t.Fatalf("login: %d %v", code, out)
+		c.t.Fatalf("login %s: %d %v", name, code, out)
 	}
 	c.csrf, _ = out["csrf_token"].(string)
+	return out
+}
+
+// TestConsoleCLIEndToEnd drives the command line against a real gateway: the
+// commands reach the real routes, read their real replies, ask before
+// destructive changes, refuse shell syntax and leave an audit trail.
+func TestConsoleCLIEndToEnd(t *testing.T) {
+	c := startCLIGateway(t, "true", "")
+
+	// Sign in and enrol an authenticator; confirming it proves a code.
+	c.signIn("root", "a long enough passphrase 42")
+	var (
+		code int
+		out  map[string]any
+	)
 	if code, out = c.call("POST", "/api/v1/auth/mfa/totp/enroll", nil); code != http.StatusOK {
 		t.Fatalf("enroll: %d %v", code, out)
 	}
@@ -227,14 +249,7 @@ func TestConsoleCLIEndToEnd(t *testing.T) {
 
 // TestConsoleCLIOff: with ZANSKAR_CONSOLE_CLI=off the routes do not exist.
 func TestConsoleCLIOff(t *testing.T) {
-	newCLIGateway(t, true)
-	addr := freeAddr(t)
-	t.Setenv("ZANSKAR_LISTEN_ADDR", addr)
-	t.Setenv("ZANSKAR_LOG_LEVEL", "error")
-	t.Setenv("ZANSKAR_CONSOLE_CLI", "off")
-	base, _, cancel := startServe(t, addr)
-	defer cancel()
-	c := &cliClient{t: t, base: base, http: &http.Client{Timeout: 5 * time.Second}}
+	c := startCLIGateway(t, "true", "off")
 	if code, _ := c.call("GET", "/api/v1/admin/cli", nil); code != http.StatusNotFound {
 		t.Fatalf("GET /admin/cli with the command line off: %d, want 404", code)
 	}
@@ -245,28 +260,7 @@ func TestConsoleCLIOff(t *testing.T) {
 // code: by signing in, or by replacing a password another administrator set.
 // Neither proves a code, so the command line stays shut.
 func TestConsoleCLINeedsAProvedCode(t *testing.T) {
-	newCLIGateway(t, true)
-	addr := freeAddr(t)
-	t.Setenv("ZANSKAR_LISTEN_ADDR", addr)
-	t.Setenv("ZANSKAR_LOG_LEVEL", "error")
-	t.Setenv("ZANSKAR_REQUIRE_MFA", "false")
-	t.Setenv("ZANSKAR_CONSOLE_CLI", "")
-	t.Setenv("ZANSKAR_ADMIN_PASSWORD", "a long enough passphrase 42")
-	if _, _, err := output(t, func() error { return runAdmin([]string{"create", "-username", "root", "-name", "Root"}) }); err != nil {
-		t.Fatal(err)
-	}
-	base, _, cancel := startServe(t, addr)
-	defer cancel()
-	signIn := func(name, password string) (*cliClient, map[string]any) {
-		jar, _ := cookiejar.New(nil)
-		c := &cliClient{t: t, base: base, http: &http.Client{Timeout: 10 * time.Second, Jar: jar}}
-		code, out := c.call("POST", "/api/v1/auth/login", map[string]string{"username": name, "password": password})
-		if code != http.StatusOK {
-			t.Fatalf("login %s: %d %v", name, code, out)
-		}
-		c.csrf, _ = out["csrf_token"].(string)
-		return c, out
-	}
+	root := startCLIGateway(t, "false", "")
 	locked := func(c *cliClient, who string) {
 		t.Helper()
 		if code, out := c.call("GET", "/api/v1/users", nil); code != http.StatusOK {
@@ -277,8 +271,7 @@ func TestConsoleCLINeedsAProvedCode(t *testing.T) {
 		}
 	}
 
-	root, out := signIn("root", "a long enough passphrase 42")
-	if out["status"] != "ok" {
+	if out := root.signIn("root", "a long enough passphrase 42"); out["status"] != "ok" {
 		t.Fatalf("root signs in with no authenticator: %v", out)
 	}
 	locked(root, "root after sign-in")
@@ -290,7 +283,8 @@ func TestConsoleCLINeedsAProvedCode(t *testing.T) {
 	if code, out := root.call("POST", "/api/v1/users", map[string]any{"username": "ops", "display_name": "Ops", "password": "ops temporary pw 1", "roles": []string{"admin"}}); code != http.StatusCreated {
 		t.Fatalf("create ops: %d %v", code, out)
 	}
-	ops, _ := signIn("ops", "ops temporary pw 1")
+	ops := newCLIClient(t, root.base)
+	ops.signIn("ops", "ops temporary pw 1")
 	if code, out := ops.call("POST", "/api/v1/auth/password", map[string]string{"current_password": "ops temporary pw 1", "new_password": "ops chose this passphrase"}); code != http.StatusOK || out["status"] != "ok" {
 		t.Fatalf("ops replaces the password: %d %v", code, out)
 	}

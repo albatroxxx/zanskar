@@ -88,7 +88,7 @@ export function Shell({ portal, items }: { portal: 'user' | 'admin' | 'audit'; i
           </button>
         </div>
       </aside>
-      <main className={'main' + (portal === 'admin' ? ' has-cli' : '')}>
+      <main className="main">
         {portal === 'admin' && <ConsoleCLI />}
         {portal === 'user' && <AccessNotices />}
         {portal === 'admin' && <RestartNotice />}

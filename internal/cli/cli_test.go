@@ -464,3 +464,21 @@ func TestReferenceIsCurrent(t *testing.T) {
 		t.Fatal("docs/console-cli.md is out of date: run go run ./hack/gen-cli-docs > docs/console-cli.md")
 	}
 }
+
+// TestSettingSetRefusesOtherTypes: only plain value types can be set from the
+// command line; a setting of any other type is refused before anything runs.
+func TestSettingSetRefusesOtherTypes(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/v1/admin/settings", func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, `{"runtime":[{"key":"webhook.token","type":"secret","value":""},{"key":"log.level","type":"enum","value":"info","title":"Log level"}]}`)
+	})
+	x := &run{parsed: parsed{args: []string{"webhook.token"}, rest: "hunter2"}, out: &out{}, resolved: map[string]string{},
+		api: &caller{mux: mux, ctx: context.Background()}}
+	if _, _, err := planSettingSet(x); err == nil || !strings.Contains(err.Error(), "Settings page") {
+		t.Fatalf("a secret-typed setting: %v", err)
+	}
+	x.args, x.rest = []string{"log.level"}, "debug"
+	if prompt, expect, err := planSettingSet(x); err != nil || expect != "log.level" || !strings.Contains(prompt, `from "info" to "debug"`) {
+		t.Fatalf("a plain setting: %q %q %v", prompt, expect, err)
+	}
+}
