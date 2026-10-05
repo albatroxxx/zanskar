@@ -45,4 +45,4 @@ and update the status of the old one.
 | [0024](0024-windows-autoscaling-sessions.md) | Windows sessions on autoscaling instances, pinned per instance | Accepted |
 | [0025](0025-database-tls-verified-by-default.md) | Database targets verify TLS by default; the master key can live in its own file | Accepted |
 | [0026](0026-no-dco-sign-off.md) | Contributions need no DCO sign-off | Accepted |
-| [0027](0027-restricted-console-cli.md) | A restricted command line in the console: Zanskar commands only, never a shell | Proposed |
+| [0027](0027-restricted-console-cli.md) | A restricted command line in the console: Zanskar commands only, never a shell | Accepted |

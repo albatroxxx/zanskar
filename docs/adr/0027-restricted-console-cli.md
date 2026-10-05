@@ -4,7 +4,7 @@ Date: 2026-10-05
 
 ## Status
 
-Proposed.
+Accepted.
 
 ## Context
 
@@ -29,14 +29,16 @@ call the API the console already uses, never a shell.
 
 **What it is**
 - A terminal-window icon (a small window with `>_` inside) at the top right of every
-  administrator page (also Ctrl+`) opens a terminal panel
-  that slides up from the bottom over the page and can be resized (xterm.js, already a
-  dependency). Only administrators see the icon.
+  administrator page (also Ctrl+`) opens a terminal-styled panel
+  that slides up from the bottom over the page and can be resized. It is built from ordinary
+  page elements, a transcript and a prompt, rather than a terminal emulator, so screen readers,
+  copying and code autofill work. Only administrators see the icon.
 - The browser sends each command line to one endpoint, `POST /api/v1/admin/cli`, with the
   session cookie and CSRF token like any other console request. Nothing is long-lived: no
   WebSocket, no process, no PTY.
 - The gateway parses the line against a fixed command table. A known command is turned into the
-  same internal API request the console would make and dispatched through the same router, so it
+  same internal API request the console would make and dispatched through the same router, with
+  the console request's own context (the signed-in user, client address and request id), so it
   passes the same `RequireRole` checks, input validation and audit events. **There is no second
   authorisation model**: the CLI can do exactly what the API lets this user do, and nothing more.
 - The reply is plain text (tables and messages) for the terminal to print.
@@ -57,13 +59,18 @@ call the API the console already uses, never a shell.
   result (`ok`, `denied`, `invalid`, `error`). Read-only commands are audited too, so the log shows
   what an administrator looked at from the CLI, not only what they changed.
 - When the command changes something, the API's own event (for example `session.terminate`) is
-  recorded as well, carrying the same request id, so the two can be read together.
+  recorded as well, just before the `cli.command` event, whose details list the routes the
+  command called with their status codes, so the two can be read together.
 - Output is never written to the audit log; the API never returns secrets anyway.
 
 **Guard rails**
-- **Fresh MFA to open it.** The CLI asks for a TOTP code when opened unless the session passed MFA
-  in the last 15 minutes, and again after 15 minutes idle. A stolen cookie alone cannot use it.
-  (This adds a "last MFA at" time to sessions; today they only record whether MFA passed.)
+- **Fresh MFA to open it.** The CLI asks for a code from the administrator's authenticator unless
+  the session proved one in the last 15 minutes, and again after 15 minutes without a command. A
+  stolen cookie alone cannot use it. Only a proved code counts: the code at sign-in, confirming a
+  new authenticator, or the CLI's own unlock (a recovery code works and is used up). Signing in
+  through an identity provider, or with no authenticator where none is required, proves nothing,
+  so an administrator without an authenticator cannot open the CLI. Sessions gain a "MFA proved
+  at" time for this. Five wrong codes close the CLI for 15 minutes; the sign-in is unaffected.
 - **Confirmation for destructive commands** (terminate a session, disable a user, reset MFA,
   revoke access, restart the gateway, change a setting): the gateway answers with what will
   happen and a one-time confirmation bound to that exact command, and the administrator types
@@ -79,11 +86,11 @@ call the API the console already uses, never a shell.
 |---|---|
 | General | `help [command]`, `status`, `version`, `clear`, `history` (the last two run in the browser) |
 | Sessions | `sessions [--user U] [--target T]`, `session show <id>`, `session terminate <id>` |
-| Users | `users [--role R]`, `user show <name>`, `user disable <name>`, `user enable <name>`, `user reset-mfa <name>`, `user sessions <name>` |
-| Targets | `targets [--tag k=v]`, `target show <name>`, `target probe <name>` |
+| Users | `users [--role R]`, `user show <name>`, `user disable <name>`, `user enable <name>`, `user reset-mfa <name>`, `user signout <name>` |
+| Targets | `targets [--tag k=v] [--search T]`, `target show <name>`, `target probe <name>` |
 | Access | `policies`, `policy show <name>`, `requests [--pending]`, `request approve <id> [note]`, `request deny <id> [note]`, `request revoke <id>` |
 | Audit | `events [--user U] [--action A] [--last N]`, `audit verify` |
-| Gateway | `logs [--last N]`, `tls`, `storage`, `storage test`, `settings`, `setting get <key>`, `setting set <key> <value>`, `restart` |
+| Gateway | `logs [--last N] [--level L] [--search T]`, `tls`, `storage`, `storage test`, `settings`, `setting get <key>`, `setting set <key> <value>`, `restart [--wait M]` (15 minutes for live sessions by default, as in the console), `restart cancel` |
 | Autoscaling | `asgs`, `asg sync <name>` |
 
 Objects are named by their name where they have one (users, targets, policies, groups), with ids

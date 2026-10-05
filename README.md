@@ -177,7 +177,8 @@ make all   # runs the linters, the race-detector tests, builds the UI + binary, 
 How the project is run, who holds which role and how decisions are made is in
 [GOVERNANCE.md](GOVERNANCE.md); everyone taking part follows the
 [code of conduct](CODE_OF_CONDUCT.md). The high-level design is in
-[docs/architecture.md](docs/architecture.md), and the answers behind the project's OpenSSF Best
+[docs/architecture.md](docs/architecture.md), every command of the console's command line in
+[docs/console-cli.md](docs/console-cli.md), and the answers behind the project's OpenSSF Best
 Practices Silver badge are in [docs/best-practices.md](docs/best-practices.md).
 
 ## Security
