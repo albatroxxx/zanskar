@@ -39,6 +39,19 @@ group('access request events read as who asked for what', () => {
   )
 })
 
+group('command line events', () => {
+  it.each([
+    [{ action: 'cli.unlock' }, 'opened the command line'],
+    [{ action: 'cli.unlock', details: { recovery_code_used: true } }, 'opened the command line with a recovery code'],
+    [{ action: 'cli.unlock', outcome: 'failure', details: { reason: 'wrong code' } }, 'failed to open the command line (wrong code)'],
+    [{ action: 'cli.command', details: { line: 'sessions --live', result: 'ok' } }, 'ran “sessions --live” on the command line'],
+    [{ action: 'cli.command', details: { line: 'restart', result: 'confirm_requested' } }, 'ran “restart” on the command line (asked to confirm)'],
+    [{ action: 'cli.command', outcome: 'failure', details: { line: 'rm -rf /', result: 'unknown' } }, 'ran “rm -rf /” on the command line (not a command)'],
+  ] as const)('%o', (over, want) => {
+    expect(describe(event(over as Partial<AuditEvent>))).toBe(want)
+  })
+})
+
 group('who', () => {
   it('names the actor', () => {
     expect(who(event({}))).toEqual({ name: 'root', system: false })

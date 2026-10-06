@@ -37,6 +37,8 @@ const actionLabels: Record<string, string> = {
   'credential.rotate.prepare': 'Authority next key prepared',
   'credential.rotate.cancel': 'Authority prepared key discarded',
   'credential.rotate.retire': 'Authority old key retired',
+  'cli.command': 'Command line used',
+  'cli.unlock': 'Command line opened',
   'database.proxy_image': 'Database relay image changed',
   'file.download': 'File downloaded',
   'file.upload': 'File uploaded',
@@ -137,6 +139,12 @@ const verbs: Record<string, string> = {
   download: 'downloaded', purge: 'purged', move: 'moved', regenerate: 'regenerated',
 }
 
+// How a command line entry ended, beside the line itself; ok needs no note.
+const cliResults: Record<string, string> = {
+  confirm_requested: 'asked to confirm', cancelled: 'cancelled', invalid: 'not understood', unknown: 'not a command',
+  denied: 'refused', error: 'failed', locked: 'needed a code first',
+}
+
 /** session splits "user → target (PROTO)" as the API labels sessions and recordings. */
 function session(name?: string) {
   const m = /^(.+) → (.+) \((\w+)\)$/.exec(name ?? '')
@@ -173,6 +181,15 @@ export function describe(ev: AuditEvent): string {
     case 'session.failover': return s ? `moved the ${s.proto} session on ${s.target} to another instance` : `failed over session ${name}`
     case 'recording.view': return s ? `played the recording of ${s.user} on ${s.target} (${s.proto})` : `played recording ${name}`
     case 'audit.read': return 'viewed the audit log'
+    case 'cli.unlock':
+      if (fail) return `failed to open the command line${reason ? ` (${reason})` : ''}`
+      return d.recovery_code_used ? 'opened the command line with a recovery code' : 'opened the command line'
+    case 'cli.command': {
+      const line = str(d.line)
+      const ran = line ? `“${line}”` : 'a line'
+      const result = cliResults[str(d.result)]
+      return `ran ${ran} on the command line${result ? ` (${result})` : ''}`
+    }
     // Access requests resolve to "requester → target (PROTO)", like sessions.
     // Without a label (the request was deleted with its user) the sentence
     // still reads as words rather than an id.
