@@ -7,10 +7,12 @@ image:
   pullPolicy: IfNotPresent
 imagePullSecrets: []
 
-# Number of gateway pods. Gateways are stateless except for two in-memory
-# structures (connect tickets and the live-session registry), so >1 needs
-# session affinity: see service.sessionAffinity and ingress.affinity below.
-replicaCount: 2
+# Number of gateway pods. Keep 1: Zanskar runs as a single instance. Connect
+# tickets and the live-session registry live in the pod's memory, so with more
+# than one pod an admin's terminate or an auditor's shadow can land on a pod
+# that does not hold the session (terminate then leaves it running, shadow
+# says "not live here"). High availability is planned (docs/deploy.md).
+replicaCount: 1
 
 # Existing Secret holding the gateway secrets. Create it before installing:
 #   kubectl create secret generic zanskar-secrets \
@@ -47,11 +49,14 @@ config:
   extraEnvFrom: []            # additional envFrom sources (e.g. SIEM secrets)
 
 # Session recordings. Exactly one backend:
-#  - pvc: a ReadWriteMany volume shared by all gateway pods (NFS, EFS, CephFS).
-#         ReadWriteOnce only works with replicaCount: 1.
-#  - s3:  object storage via ZANSKAR_RECORDINGS_S3_BUCKET (the S3 backend is
-#         being added alongside this chart; the env var is wired here so the
-#         upgrade is a values change). Uses the pod identity (IRSA) for access.
+#  - pvc: a persistent volume. The default asks for ReadWriteMany (NFS, EFS,
+#         CephFS). With the single gateway pod ReadWriteOnce also works; set it
+#         in pvc.accessModes if your storage class has no ReadWriteMany.
+#  - s3:  an S3-compatible bucket, set through ZANSKAR_RECORDINGS_S3_BUCKET,
+#         _PREFIX and _REGION. Access uses the pod identity (IRSA). For an
+#         endpoint (MinIO, Ceph) or a KMS key, add ZANSKAR_RECORDINGS_S3_ENDPOINT
+#         or ZANSKAR_RECORDINGS_S3_KMS_KEY through config.extraEnv. The console's
+#         Settings page can also set the bucket, and its setting wins.
 recordings:
   backend: pvc                # pvc | s3
   pvc:
@@ -131,14 +136,17 @@ migrate:
     requests: {cpu: 50m, memory: 64Mi}
     limits: {memory: 256Mi}
 
+# Off by default: with one pod, minAvailable 1 would block every node drain.
 podDisruptionBudget:
-  enabled: true
+  enabled: false
   minAvailable: 1
 
+# Leave off. Zanskar runs as one pod (see replicaCount); a second one would
+# break terminate and shadow, so the bounds stay at 1.
 autoscaling:
   enabled: false
-  minReplicas: 2
-  maxReplicas: 6
+  minReplicas: 1
+  maxReplicas: 1
   targetCPUUtilizationPercentage: 70
 
 resources:

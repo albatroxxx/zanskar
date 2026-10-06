@@ -27,7 +27,8 @@ Zanskar {{ .Chart.AppVersion }} is installed as release {{ .Release.Name }}.
    kubectl -n {{ .Release.Namespace }} exec -it deploy/{{ include "zanskar.fullname" . }} -- \
      /zanskar admin create --username admin --name "Your Name"
 
-   Set ZANSKAR_ADMIN_PASSWORD in the exec environment to avoid the prompt.
+   It asks for the password twice without echo (-it gives it a terminal); keep the
+   password off the command line.
 
 4. Reach the UI:
 {{- if .Values.ingress.enabled }}

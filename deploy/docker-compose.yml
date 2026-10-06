@@ -1,13 +1,16 @@
-# Single-instance Zanskar (the v1.0 deployment model): SQLite on a persistent
+# Single-instance Zanskar: SQLite on a persistent
 # volume, guacd for RDP/VNC, and Caddy terminating TLS in front. The gateway
 # itself is never published — only Caddy's 80/443 are — so plaintext flows only
 # on the private Docker network between Caddy and the gateway.
 #
 # Quick start (from the repo root):
 #   cp deploy/.env.example deploy/.env      # then set ZANSKAR_MASTER_KEY
-#   docker compose -f deploy/docker-compose.yml up -d --build
-#   docker compose -f deploy/docker-compose.yml exec -e ZANSKAR_ADMIN_PASSWORD=... \
+#   docker compose -f deploy/docker-compose.yml up -d
+#   docker compose -f deploy/docker-compose.yml exec \
 #     zanskar /zanskar admin create --username admin --name "Your Name"
+# admin create asks for the password twice without echo; keep it off the
+# command line (shell history). To build the image from this checkout instead,
+# add -f deploy/docker-compose.build.yml and --build to the `up` command.
 # Then open https://localhost/ (self-signed by default — see deploy/.env.example
 # to serve a real certificate for a public hostname).
 

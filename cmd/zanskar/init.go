@@ -34,7 +34,7 @@ func runInit(args []string) error {
 	force := fs.Bool("force", false, "overwrite an existing env file (an existing master key is always preserved)")
 	stdout := fs.Bool("print", false, "write the env file to stdout instead of --out")
 	nonInteractive := fs.Bool("non-interactive", false, "never prompt; take values from flags and defaults")
-	listen := fs.String("listen", "", "listen address (default 127.0.0.1:8443)")
+	listen := fs.String("listen", "", "listen address (default 0.0.0.0:443; 127.0.0.1:8443 with -behind-proxy)")
 	behindProxy := fs.Bool("behind-proxy", false, "a TLS proxy terminates in front on loopback (no cert needed)")
 	managedTLS := fs.Bool("managed-tls", false, "Zanskar serves TLS with a certificate it manages: self-signed at first start, replaced from the console (the default; ADR 0021)")
 	tlsHosts := fs.String("tls-hosts", "", "extra names or addresses the managed certificate must cover, comma separated; a cloud instance needs its public address or DNS name here")
@@ -506,7 +506,8 @@ func printNextSteps(a initAnswers, out string, mode os.FileMode, freshKey bool) 
 		fmt.Printf("  (run the database commands as %q, which owns %s, so it owns the files)\n", svcUser, a.DataDir)
 	}
 	fmt.Printf("  1. Apply migrations:   %szanskar migrate   (or let the unit's ExecStartPre do it)\n", pfx)
-	fmt.Printf("  2. Create the admin:   ZANSKAR_ADMIN_PASSWORD=... %szanskar admin create --username admin --name \"Your Name\"\n", pfx)
+	fmt.Printf("  2. Create the admin:   %szanskar admin create --username admin --name \"Your Name\"\n", pfx)
+	fmt.Println("     It asks for the password twice without echo; keep it off the command line.")
 	fmt.Println("  3. Start the service:  sudo systemctl enable --now zanskar")
 	if a.TLSMode == tlsModeManaged {
 		fmt.Printf("     Then open https://<this host>%s/ . The certificate is self-signed until you upload\n", listenPortSuffix(a.ListenAddr))
