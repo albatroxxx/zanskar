@@ -97,7 +97,8 @@ export function ConsoleCLI() {
 
   const refresh = useCallback(() => fetchState().then(setState), [])
   useEffect(() => {
-    fetchState().then(setState)
+    // fetchState never rejects: a failure resolves to null.
+    void fetchState().then(setState)
   }, [])
 
   const toggle = useCallback(() => {
@@ -337,7 +338,7 @@ export function ConsoleCLI() {
               )}
             </div>
           ) : (
-            <div className="cli-body" ref={bodyRef} onClick={() => window.getSelection()?.toString() || inputRef.current?.focus()}>
+            <div className="cli-body" ref={bodyRef} role="presentation" onClick={() => window.getSelection()?.toString() || inputRef.current?.focus()}>
               <div aria-live="polite">
                 {transcript.map((l, i) => (
                   <div key={i} className={'cli-line' + (l.style ? ' ' + l.style : '')}>
