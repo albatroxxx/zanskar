@@ -1,10 +1,12 @@
 openapi: 3.1.0
 info:
   title: Zanskar API
-  version: 1.2.2
+  version: "1"
   summary: Agentless VM access gateway
   description: |
-    Zanskar exposes a JSON API under `/api/v1` and two WebSocket endpoints under `/ws`.
+    Zanskar exposes a JSON API under `/api/v1` and its WebSocket endpoints under `/ws`.
+    `info.version` is the API version, matching the `/api/v1` prefix, not the release version;
+    `GET /version` returns the running release.
 
     ## Authentication
 
@@ -40,9 +42,10 @@ info:
 
     ## Pagination
 
-    Every list endpoint accepts `limit` (default 50, max 200) and `cursor`. Responses contain
-    `items` and `next_cursor`. A null `next_cursor` means the list is exhausted. Cursors are
-    opaque; do not construct them.
+    Paged lists accept `limit` (default 50, max 200 unless a route says otherwise) and `cursor`.
+    Responses contain `items` and, when more remain, `next_cursor`; no `next_cursor` means the
+    list is exhausted. Cursors are opaque; do not construct them. A few short lists, such as
+    autoscaling groups, are not paged and say so.
 
     ## Errors
 
@@ -329,6 +332,38 @@ paths:
                 $ref: "#/components/schemas/Me"
         "401":
           $ref: "#/components/responses/Unauthorized"
+  /auth/providers:
+    get:
+      tags: [auth]
+      summary: Sign-in providers
+      description: |
+        The enabled identity providers, by name, for the sign-in page to offer. Callable before
+        signing in. Only `id`, `name` and `type` are returned; no configuration. Not paged:
+        every enabled provider is in `items`.
+      security: []
+      responses:
+        "200":
+          description: Enabled providers, ordered by name.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      required: [id, name, type]
+                      properties:
+                        id:
+                          type: string
+                          description: Use it in `/auth/oidc/{id}/start`.
+                        name:
+                          type: string
+                        type:
+                          type: string
+                          enum: [oidc, ldap]
   /auth/oidc/{id}/start:
     get:
       tags: [auth]
@@ -621,24 +656,188 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
 
+  /sessions/{id}/files:
+    get:
+      tags: [user]
+      summary: List a folder on the machine of a live terminal session
+      description: |
+        File transfer over the SSH connection of the caller's own open terminal session (ADR
+        0016). Works only while the session is open, only for its owner, and only when the
+        policy that allowed it permits file transfer; otherwise `404`. Without `path`, lists the
+        login folder. Entries are folders first, then by name.
+      parameters:
+        - $ref: "#/components/parameters/Id"
+        - name: path
+          in: query
+          description: The folder to list. Leave it out for the login folder.
+          schema:
+            type: string
+      responses:
+        "200":
+          description: The folder and its entries.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [path, entries]
+                properties:
+                  path:
+                    type: string
+                    description: The folder that was listed.
+                  entries:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/FileEntry"
+        "400":
+          description: The machine refused the request (no such folder, no permission); `code` is `sftp_error`.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: No open file-transfer session with this id for the caller.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: The machine's SSH server does not offer file transfer; `code` is `sftp_unavailable`.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /sessions/{id}/files/content:
+    parameters:
+      - $ref: "#/components/parameters/Id"
+      - name: path
+        in: query
+        required: true
+        description: The file on the machine.
+        schema:
+          type: string
+    get:
+      tags: [user]
+      summary: Download a file from the machine of a live terminal session
+      description: |
+        Same conditions as `GET /sessions/{id}/files`. The file is sent as an attachment named
+        after the file. Audited as `file.download` with the path and byte count; the contents
+        are not recorded.
+      responses:
+        "200":
+          description: "The file, with `Content-Disposition: attachment`."
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        "400":
+          description: "`path` is missing, or the machine refused to open the file (`sftp_error`)."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: No open file-transfer session with this id for the caller.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: The machine's SSH server does not offer file transfer; `code` is `sftp_unavailable`.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+    post:
+      tags: [user]
+      summary: Upload a file to the machine of a live terminal session
+      description: |
+        Same conditions as `GET /sessions/{id}/files`. The request body is the raw file; it is
+        written to `path`, replacing any file already there. Audited as `file.upload` with the
+        path and byte count; the contents are not recorded.
+      requestBody:
+        required: true
+        content:
+          application/octet-stream:
+            schema:
+              type: string
+              format: binary
+      responses:
+        "200":
+          description: Written.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [path, bytes]
+                properties:
+                  path:
+                    type: string
+                  bytes:
+                    type: integer
+                    format: int64
+                    description: Bytes written.
+        "400":
+          description: "`path` is missing, or the machine refused the write (`sftp_error`)."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: No open file-transfer session with this id for the caller.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: The machine's SSH server does not offer file transfer; `code` is `sftp_unavailable`.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
   # ------------------------------------------------------------------ websocket
   /ws/terminal:
     servers:
       - url: /
     get:
       tags: [websocket]
-      summary: Terminal transport (SSH, WinRM)
+      summary: SSH terminal transport
       description: |
-        Served at the root, not under `/api/v1`. The browser opens
-        `wss://<host>/ws/terminal?ticket=<ticket>`. The server validates the ticket, marks it
-        used, checks the `Origin` header against the configured public URL, and then dials the
-        target. Messages are binary frames. Client to server frames are raw keystrokes or a JSON
-        control frame `{"type":"resize","cols":N,"rows":N}`. Server to client frames are raw
-        terminal output or a JSON control frame `{"type":"target_lost","healthy_pool":[...]}`
-        when an autoscaling instance leaves the healthy pool. Idle and maximum-duration limits
-        from the policy are enforced here.
+        Served at the root, not under `/api/v1`. For SSH; WinRM uses `/ws/winrm` and databases
+        `/ws/database`. The browser opens `wss://<host>/ws/terminal?ticket=<ticket>`. The server
+        redeems the ticket (it is invalid after first use), prepares the credential, checks the
+        `Origin` header, upgrades, and then dials the target with its trusted host key. Idle and
+        maximum-duration limits from the policy are enforced here.
+
+        Frames: the browser sends keystrokes as binary frames or as text `{"t":"i","d":"..."}`,
+        a resize as `{"t":"r","c":cols,"r":rows}` and a keep-alive as `{"t":"p"}`. The server
+        sends terminal output as binary frames, `{"t":"ready","session_id":"...","files":bool}`
+        when the session starts (`files` is true when the policy allows file transfer through
+        `/api/v1/sessions/{id}/files`), and `{"t":"end","reason":"...","msg":"..."}` when it
+        ends. `reason` is an end reason such as `user_exit`, `admin_terminated`,
+        `policy_revoked`, `gateway_restart` or `target_lost`; after `target_lost` on an
+        autoscaling instance the browser may call `POST /sessions/{id}/failover`. If the dial
+        fails after the upgrade, the socket closes with a message such as
+        `host key mismatch; connection refused`.
       parameters:
         - $ref: "#/components/parameters/Ticket"
+        - name: cols
+          in: query
+          description: Initial terminal width in columns.
+          schema:
+            type: integer
+        - name: rows
+          in: query
+          description: Initial terminal height in rows.
+          schema:
+            type: integer
       security: []
       responses:
         "101":
@@ -646,7 +845,17 @@ paths:
         "401":
           description: Ticket missing, expired, or already used.
         "403":
-          description: Origin mismatch.
+          description: >-
+            Origin mismatch, or the certificate authority does not issue certificates for the
+            login user (`login_user_not_permitted`).
+        "409":
+          description: The target is no longer available (`target_unavailable`) or the credential could not be opened or issued (`credential_unavailable`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "503":
+          description: The gateway is restarting; `code` is `restarting`.
   /ws/desktop:
     servers:
       - url: /
@@ -669,6 +878,168 @@ paths:
           description: Ticket missing, expired, or already used.
         "403":
           description: Origin mismatch.
+
+  /ws/winrm:
+    servers:
+      - url: /
+    get:
+      tags: [websocket]
+      summary: Windows PowerShell console transport (WinRM)
+      description: |
+        Served at the root, not under `/api/v1`. Same ticket handshake as `/ws/terminal`, for a
+        ticket issued for `winrm`. Connects to the machine over HTTPS only, pinned to the
+        certificate the probe captured, and runs a line-by-line PowerShell console rather than
+        a full terminal: the gateway echoes and edits the line and sends it when Enter is
+        pressed. Frames: the browser sends keystrokes as binary frames or as text
+        `{"t":"i","d":"..."}`, a resize as `{"t":"r","c":cols,"r":rows}` and a keep-alive as
+        `{"t":"p"}`; the server sends output as binary frames, `{"t":"ready","session_id":"..."}`
+        when the session starts and `{"t":"end","reason":"...","msg":"..."}` when it ends.
+        A resize is accepted and ignored. The session is recorded as asciicast, and the policy's
+        idle and maximum durations apply.
+      parameters:
+        - $ref: "#/components/parameters/Ticket"
+        - name: cols
+          in: query
+          description: Terminal width in columns, written to the recording.
+          schema:
+            type: integer
+        - name: rows
+          in: query
+          description: Terminal height in rows, written to the recording.
+          schema:
+            type: integer
+      security: []
+      responses:
+        "101":
+          description: Switching protocols.
+        "400":
+          description: The ticket was not issued for `winrm`.
+        "401":
+          description: Ticket missing, expired, or already used.
+        "403":
+          description: Origin mismatch.
+        "409":
+          description: |
+            The connection could not be made before the upgrade. `code` says why:
+            `target_unavailable`, `credential_unavailable`, `certificate_unpinned` (probe the
+            machine over HTTPS first), `certificate_mismatch`, or `not_authorized` (the account
+            must be a local administrator on the machine).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "503":
+          description: The gateway is restarting; `code` is `restarting`.
+  /ws/database:
+    servers:
+      - url: /
+    get:
+      tags: [websocket]
+      summary: Database console transport
+      description: |
+        Served at the root, not under `/api/v1`. Same ticket handshake as `/ws/terminal`, for a
+        ticket issued for `database` (ADR 0017). The gateway starts the database's own command
+        line client, matched to the target's engine and version, in a short-lived container that
+        reaches the database through a proxy holding the credential; the credential never
+        reaches the client the user types into. Frames: the browser sends keystrokes as binary
+        frames or as text `{"t":"i","d":"..."}`, a resize as `{"t":"r","c":cols,"r":rows}` and a keep-alive as
+        `{"t":"p"}`; the server sends output as binary frames, `{"t":"ready","session_id":"..."}`
+        when the session starts and `{"t":"end","reason":"...","msg":"..."}` when it ends.
+        The session is recorded as asciicast, and the policy's idle and maximum durations apply.
+      parameters:
+        - $ref: "#/components/parameters/Ticket"
+        - name: cols
+          in: query
+          description: Terminal width in columns.
+          schema:
+            type: integer
+        - name: rows
+          in: query
+          description: Terminal height in rows.
+          schema:
+            type: integer
+      security: []
+      responses:
+        "101":
+          description: Switching protocols.
+        "401":
+          description: Ticket missing, expired, or already used.
+        "403":
+          description: Origin mismatch.
+        "409":
+          description: The target is no longer available (`target_unavailable`) or its credential could not be opened (`credential_unavailable`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "503":
+          description: The gateway is restarting; `code` is `restarting`.
+  /ws/shadow/{sessionID}:
+    servers:
+      - url: /
+    get:
+      tags: [websocket, auditor]
+      summary: Watch a live session, read-only
+      description: |
+        Served at the root, not under `/api/v1`. For `admin` and `auditor`. Unlike the other
+        transports it uses the signed-in cookie, not a ticket, and the browser's `Origin` must
+        match. Every watch is audited as `session.shadow.start` and `session.shadow.end`, naming
+        the watcher and the session's owner.
+
+        Terminal sessions (SSH, WinRM): the server sends a text frame
+        `{"t":"ready","replay":bool}`, then, when `replay` is true, one binary frame with the
+        recent output so the screen is not blank, then the live output as binary frames.
+        Anything the watcher sends is ignored. When the session ends the server sends
+        `{"t":"end","reason":"session_ended"}` and closes.
+
+        Desktop sessions (RDP, VNC): uses the `guacamole` subprotocol and joins the live
+        connection in read-only mode, so the watcher sees the screen and their input is
+        discarded.
+
+        Database sessions cannot be watched. The session must be live on the gateway that
+        receives the request.
+      parameters:
+        - name: sessionID
+          in: path
+          required: true
+          description: The access session's `id`.
+          schema:
+            type: string
+        - name: width
+          in: query
+          description: Desktop sessions only. Display width in pixels.
+          schema:
+            type: integer
+        - name: height
+          in: query
+          description: Desktop sessions only. Display height in pixels.
+          schema:
+            type: integer
+      responses:
+        "101":
+          description: Switching protocols.
+        "400":
+          description: This kind of session cannot be watched.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: The session is not live on this gateway (`not_live`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: Could not join the desktop session (`join_failed`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
 
   # ------------------------------------------------------------------ admin: users
   /users:
@@ -870,6 +1241,34 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
 
+  /users/{id}/mfa:
+    delete:
+      tags: [admin]
+      summary: Reset a user's two-step sign-in
+      description: |
+        Removes the user's authenticator app and their recovery codes, and signs them out
+        everywhere, so a session that passed two-step sign-in with the old authenticator does
+        not outlive it. The user enrols again at their next sign-in if the deployment requires
+        it. Audited as `user.mfa.reset`.
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: Reset.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status, sessions_revoked]
+                properties:
+                  status:
+                    type: string
+                    enum: [ok]
+                  sessions_revoked:
+                    type: integer
+        "404":
+          $ref: "#/components/responses/NotFound"
+
   # ------------------------------------------------------------------ admin: groups
   /groups:
     get:
@@ -960,10 +1359,32 @@ paths:
   /groups/{id}/members:
     parameters:
       - $ref: "#/components/parameters/Id"
+    get:
+      tags: [admin]
+      summary: List a group's members
+      description: Ordered by username. Not paged; every member is in `items`.
+      responses:
+        "200":
+          description: Members.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/GroupMember"
+        "404":
+          $ref: "#/components/responses/NotFound"
     put:
       tags: [admin]
       summary: Replace the member list
-      description: Groups synced from an identity provider reject this call with 409.
+      description: >
+        Sets the group's members to exactly the users sent; an empty list removes everyone.
+        Audited as `group.members.update` with the users added and removed. Groups synced from
+        an identity provider reject this call with `409 synced`.
       requestBody:
         required: true
         content:
@@ -978,11 +1399,19 @@ paths:
                     type: string
       responses:
         "200":
-          description: Updated membership.
+          description: The new member list, ordered by username.
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/GroupDetail"
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/GroupMember"
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "404":
           $ref: "#/components/responses/NotFound"
         "409":
@@ -1143,6 +1572,42 @@ paths:
           application/json:
             schema:
               $ref: "#/components/schemas/CredentialWrite"
+      responses:
+        "201":
+          description: Created.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Credential"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "409":
+          $ref: "#/components/responses/Conflict"
+  /credentials/generate-ssh-key:
+    post:
+      tags: [admin]
+      summary: Create an SSH key credential with a new key
+      description: |
+        Generates a new ed25519 key pair, stores the private half sealed as a vaulted `ssh_key`
+        credential, and returns the credential with its `public_key` to place in the machine's
+        `authorized_keys`. The private key is never returned. Audited as `credential.create`
+        with `generated_key: true`. The same result is reached by `POST /credentials` with
+        `type=ssh_key`, `mode=vaulted` and no `private_key`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, username]
+              properties:
+                name:
+                  type: string
+                  minLength: 1
+                  maxLength: 255
+                username:
+                  type: string
+                  description: The login name on the machine.
       responses:
         "201":
           description: Created.
@@ -1847,34 +2312,29 @@ paths:
     get:
       tags: [admin]
       summary: List autoscaling groups
-      parameters:
-        - $ref: "#/components/parameters/Limit"
-        - $ref: "#/components/parameters/Cursor"
-        - name: status
-          in: query
-          schema:
-            $ref: "#/components/schemas/ActiveStatus"
+      description: >
+        Every group that has not been un-enrolled, active or not, ordered by name. Not paged:
+        every group is in `items`, and there is no `next_cursor`.
       responses:
         "200":
           description: Groups.
           content:
             application/json:
               schema:
-                allOf:
-                  - $ref: "#/components/schemas/PagedResponse"
-                  - type: object
-                    properties:
-                      items:
-                        type: array
-                        items:
-                          $ref: "#/components/schemas/AutoscalingGroup"
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/AutoscalingGroupListed"
     post:
       tags: [admin]
       summary: Enroll an autoscaling group
       description: |
-        Zanskar generates `external_id`. The response includes `trust_policy`, a ready-to-paste
-        IAM trust policy naming Zanskar's principal and the ExternalId, and `permissions_policy`,
-        the least-privilege permissions the role needs. The first sync runs on creation; check
+        Zanskar generates `external_id` unless one minted by `POST /autoscaling-groups/iam-preview`
+        is sent back. The IAM trust and permissions policies for the role are not in the response;
+        read them from `GET /autoscaling-groups/{id}/iam`. The first sync runs on creation; check
         `last_error`.
       requestBody:
         required: true
@@ -1888,7 +2348,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/AutoscalingGroupDetail"
+                $ref: "#/components/schemas/AutoscalingGroup"
         "400":
           $ref: "#/components/responses/BadRequest"
         "409":
@@ -1899,13 +2359,14 @@ paths:
     get:
       tags: [admin]
       summary: Get an autoscaling group
+      description: The IAM policy documents for the role are at `GET /autoscaling-groups/{id}/iam`.
       responses:
         "200":
-          description: Group with IAM policy documents.
+          description: Group.
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/AutoscalingGroupDetail"
+                $ref: "#/components/schemas/AutoscalingGroup"
         "404":
           $ref: "#/components/responses/NotFound"
     put:
@@ -1928,7 +2389,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/AutoscalingGroupDetail"
+                $ref: "#/components/schemas/AutoscalingGroup"
         "404":
           $ref: "#/components/responses/NotFound"
     delete:
@@ -2075,6 +2536,64 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/AwsIdentity"
+  /autoscaling-groups/{id}/credentials/{protocol}:
+    parameters:
+      - $ref: "#/components/parameters/Id"
+      - name: protocol
+        in: path
+        required: true
+        schema:
+          $ref: "#/components/schemas/Protocol"
+    put:
+      tags: [admin]
+      summary: Bind a credential to one protocol for a group
+      description: >
+        Sets the credential every instance of the group presents for the protocol, replacing
+        any bound before. Audited as `asg.credential.set`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [credential_id]
+              properties:
+                credential_id:
+                  type: string
+                  description: >
+                    A credential's id, or `user_supplied` to have the user asked for their own
+                    username and password at connect time. The shared prompt credential is
+                    created on first use and its id is what the group then carries.
+      responses:
+        "200":
+          description: The group with its bindings in `credentials`.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AutoscalingGroup"
+        "400":
+          description: "`credential_id` is missing, the protocol is unknown, or the credential does not exist."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    delete:
+      tags: [admin]
+      summary: Clear a group's protocol binding
+      description: Audited as `asg.credential.unset`.
+      responses:
+        "204":
+          description: Cleared.
+        "400":
+          description: The protocol is unknown.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          $ref: "#/components/responses/NotFound"
   /autoscaling-groups/{id}/sync:
     post:
       tags: [admin]
@@ -2131,10 +2650,17 @@ paths:
   # ------------------------------------------------------------------ admin: sessions
   /sessions:
     get:
-      tags: [admin]
+      tags: [auditor]
       summary: List all access sessions
       parameters:
-        - $ref: "#/components/parameters/Limit"
+        - name: limit
+          in: query
+          description: Page size. This list allows up to 500, more than the usual 200.
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 500
+            default: 50
         - $ref: "#/components/parameters/Cursor"
         - name: user_id
           in: query
@@ -2149,29 +2675,11 @@ paths:
           in: query
           schema:
             type: string
-        - name: asg_id
-          in: query
-          schema:
-            type: string
-        - name: protocol
-          in: query
-          schema:
-            $ref: "#/components/schemas/Protocol"
         - name: open
           in: query
-          description: Only sessions with no `ended_at`.
+          description: When `true`, only sessions with no `ended_at`.
           schema:
             type: boolean
-        - name: from
-          in: query
-          schema:
-            type: string
-            format: date-time
-        - name: to
-          in: query
-          schema:
-            type: string
-            format: date-time
       responses:
         "200":
           description: Sessions.
@@ -2186,11 +2694,30 @@ paths:
                         type: array
                         items:
                           $ref: "#/components/schemas/AccessSession"
+  /sessions/{id}:
+    get:
+      tags: [auditor]
+      summary: Get one access session
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: Session.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AccessSession"
+        "404":
+          $ref: "#/components/responses/NotFound"
   /sessions/{id}/terminate:
     post:
       tags: [admin]
       summary: Terminate an open session
-      description: Closes the WebSocket and the upstream connection, sets `end_reason=admin_terminated`, and audits `session.terminate` with the optional reason.
+      description: >
+        Ends the session with `end_reason=admin_terminated` and audits `session.terminate` with
+        the optional reason. When the session is live on this gateway its WebSocket and upstream
+        connection are closed and `live` is true. Otherwise (another gateway holds it, or a crash
+        left it open) the session row is closed so it stops showing as open, and `live` is false.
       parameters:
         - $ref: "#/components/parameters/Id"
       requestBody:
@@ -2204,15 +2731,25 @@ paths:
                   maxLength: 500
       responses:
         "200":
-          description: Terminated.
+          description: Terminating.
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/AccessSession"
+                type: object
+                required: [status, live]
+                properties:
+                  status:
+                    type: string
+                    enum: [terminating]
+                  live:
+                    type: boolean
+                    description: The session was live on this gateway and its connection is being closed.
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "404":
           $ref: "#/components/responses/NotFound"
         "409":
-          description: Session already ended.
+          description: Session already ended (`already_ended`).
           content:
             application/json:
               schema:
@@ -2276,20 +2813,41 @@ paths:
     get:
       tags: [auditor]
       summary: Verify the audit hash chain
-      description: Recomputes every hash from the first event (or from `from_id`) and compares. Long chains stream progress in the response; expect this to take seconds on large tables.
-      parameters:
-        - name: from_id
-          in: query
-          schema:
-            type: integer
-            format: int64
+      description: >
+        Walks the whole log from the first event in id order, checking each event's link to the
+        one before and recomputing its hash. Stops at the first break. Expect this to take
+        seconds on large tables.
       responses:
         "200":
-          description: Verification result. `ok=false` is still 200; the break is described in the body.
+          description: Verification result. A broken chain is still 200, with `intact=false` and the break in `broken`.
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/AuditVerifyResult"
+  /audit/facets:
+    get:
+      tags: [auditor]
+      summary: Values to filter the audit log by
+      description: >
+        The distinct `action` and `object_type` values present in the audit log, sorted, for
+        the console's filter lists. Each list holds at most 200 values.
+      responses:
+        "200":
+          description: The values.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [actions, object_types]
+                properties:
+                  actions:
+                    type: array
+                    items:
+                      type: string
+                  object_types:
+                    type: array
+                    items:
+                      type: string
   /recordings/{id}:
     get:
       tags: [auditor]
@@ -3157,13 +3715,14 @@ components:
           type: string
     PagedResponse:
       type: object
-      required: [items, next_cursor]
+      required: [items]
       properties:
         items:
           type: array
           items: {}
         next_cursor:
-          type: [string, "null"]
+          type: string
+          description: Pass as `cursor` for the next page. Absent on the last page.
     Health:
       type: object
       required: [status]
@@ -3456,6 +4015,18 @@ components:
           $ref: "#/components/schemas/Timestamp"
         updated_at:
           $ref: "#/components/schemas/Timestamp"
+    GroupMember:
+      type: object
+      required: [user_id, username, display_name, added_at]
+      properties:
+        user_id:
+          type: string
+        username:
+          type: string
+        display_name:
+          type: string
+        added_at:
+          $ref: "#/components/schemas/Timestamp"
     GroupDetail:
       allOf:
         - $ref: "#/components/schemas/Group"
@@ -3465,17 +4036,7 @@ components:
             members:
               type: array
               items:
-                type: object
-                required: [user_id, username, display_name, added_at]
-                properties:
-                  user_id:
-                    type: string
-                  username:
-                    type: string
-                  display_name:
-                    type: string
-                  added_at:
-                    $ref: "#/components/schemas/Timestamp"
+                $ref: "#/components/schemas/GroupMember"
     GroupWrite:
       type: object
       required: [name]
@@ -3500,7 +4061,7 @@ components:
           description: Used in `/auth/oidc/{idp}/...` paths.
         type:
           type: string
-          enum: [oidc, ldap, saml]
+          enum: [oidc, ldap]
         enabled:
           type: boolean
         config:
@@ -3559,7 +4120,7 @@ components:
           maxLength: 64
         type:
           type: string
-          enum: [oidc, ldap, saml]
+          enum: [oidc, ldap]
         enabled:
           type: boolean
           default: true
@@ -4133,7 +4694,7 @@ components:
     # ---------------------------------------------------------------- autoscaling
     AutoscalingGroup:
       type: object
-      required: [id, name, provider, region, external_name, role_arn, external_id, os_family, ports, capabilities, address_preference, poll_interval_seconds, tags, status, credentials, healthy_count, total_count, created_at, updated_at]
+      required: [id, name, provider, region, external_name, role_arn, external_id, os_family, ports, capabilities, address_preference, poll_interval_seconds, tags, status, last_synced_at, credentials, created_at, updated_at]
       properties:
         id:
           type: string
@@ -4171,36 +4732,34 @@ components:
           $ref: "#/components/schemas/ActiveStatus"
         credentials:
           type: object
+          description: Bound credential ids, keyed by protocol.
           additionalProperties:
             type: string
-        healthy_count:
-          type: integer
-        total_count:
-          type: integer
         last_synced_at:
           oneOf:
             - $ref: "#/components/schemas/Timestamp"
             - type: "null"
         last_error:
-          type: [string, "null"]
+          type: string
+          description: Absent when the last sync succeeded.
         created_by:
-          type: [string, "null"]
+          type: string
         created_at:
           $ref: "#/components/schemas/Timestamp"
         updated_at:
           $ref: "#/components/schemas/Timestamp"
-    AutoscalingGroupDetail:
+    AutoscalingGroupListed:
       allOf:
         - $ref: "#/components/schemas/AutoscalingGroup"
         - type: object
-          required: [trust_policy, permissions_policy]
+          required: [healthy_count, instance_count]
           properties:
-            trust_policy:
-              type: object
-              description: IAM trust policy JSON to attach to the role, with Zanskar's principal and the ExternalId condition filled in.
-            permissions_policy:
-              type: object
-              description: Least-privilege IAM permissions policy JSON for the role.
+            healthy_count:
+              type: integer
+              description: Live instances currently in the healthy pool.
+            instance_count:
+              type: integer
+              description: Instances not yet terminated.
     AutoscalingGroupWrite:
       type: object
       required: [name, provider, region, external_name, role_arn, os_family]
@@ -4556,6 +5115,28 @@ components:
             - type: "null"
         failover_from_session_id:
           type: [string, "null"]
+    FileEntry:
+      type: object
+      required: [name, path, dir, size, mode, mtime]
+      properties:
+        name:
+          type: string
+        path:
+          type: string
+          description: The full path, to pass back as `path`.
+        dir:
+          type: boolean
+          description: True for a folder.
+        size:
+          type: integer
+          format: int64
+        mode:
+          type: string
+          description: Permission bits as text, for example `-rw-r--r--`.
+        mtime:
+          type: integer
+          format: int64
+          description: Last modified, in Unix seconds.
     AccessSession:
       allOf:
         - $ref: "#/components/schemas/OwnSession"
@@ -4897,25 +5478,36 @@ components:
           type: string
     AuditVerifyResult:
       type: object
-      required: [ok, checked_from_id, checked_to_id, checked_count, verified_at]
+      required: [intact, checked, last_id, last_hash, broken]
       properties:
-        ok:
+        intact:
           type: boolean
-        checked_from_id:
+          description: True when every event checked out.
+        checked:
           type: integer
           format: int64
-        checked_to_id:
+          description: Events verified before the walk ended or stopped at a break.
+        last_id:
           type: integer
           format: int64
-        checked_count:
-          type: integer
-          format: int64
-        first_bad_id:
-          type: [integer, "null"]
-          format: int64
-          description: The first event whose hash did not match, when `ok` is false.
-        reason:
-          type: [string, "null"]
-          enum: [hash_mismatch, prev_hash_mismatch, gap, null]
-        verified_at:
-          $ref: "#/components/schemas/Timestamp"
+          description: The id of the last event that verified; 0 for an empty log.
+        last_hash:
+          type: string
+          description: The hash of the last event that verified; 64 zeros for an empty log.
+        broken:
+          description: The first break, or null when the chain is intact.
+          oneOf:
+            - type: "null"
+            - type: object
+              required: [Index, ID, Reason]
+              properties:
+                Index:
+                  type: integer
+                  description: Position of the broken event in the walk, counting from 0.
+                ID:
+                  type: integer
+                  format: int64
+                  description: The broken event's id.
+                Reason:
+                  type: string
+                  description: Why it failed, for example `prev_hash does not match previous event` or `hash does not match content`.

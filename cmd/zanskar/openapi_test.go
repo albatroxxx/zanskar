@@ -134,29 +134,10 @@ func TestOpenAPIMatchesRoutes(t *testing.T) {
 		}
 	}
 
-	// Routes not yet in the spec. Document one, then delete its line here;
-	// a route added without documentation fails this test.
-	undocumented := map[string]bool{
-		"DELETE /api/v1/autoscaling-groups/{id}/credentials/{protocol}": true,
-		"DELETE /api/v1/users/{id}/mfa":                                 true,
-		"GET /api/v1/audit/facets":                                      true,
-		"GET /api/v1/auth/providers":                                    true,
-		"GET /api/v1/groups/{id}/members":                               true,
-		"GET /api/v1/sessions/{id}":                                     true,
-		"GET /api/v1/sessions/{id}/files":                               true,
-		"GET /api/v1/sessions/{id}/files/content":                       true,
-		"POST /api/v1/credentials/generate-ssh-key":                     true,
-		"POST /api/v1/sessions/{id}/files/content":                      true,
-		"PUT /api/v1/autoscaling-groups/{id}/credentials/{protocol}":    true,
-		"GET /ws/database":                                              true,
-		"GET /ws/shadow/{sessionID}":                                    true,
-		"GET /ws/winrm":                                                 true,
-	}
+	// Every route the server registers must be documented, spelled exactly as
+	// registered (same method, same path parameter names).
 	for op := range code {
-		switch {
-		case spec[op] && undocumented[op]:
-			t.Errorf("%s is documented now; remove it from the undocumented list", op)
-		case !spec[op] && !undocumented[op]:
+		if !spec[op] {
 			t.Errorf("the server registers %s, but openapi.yaml does not document it", op)
 		}
 	}
