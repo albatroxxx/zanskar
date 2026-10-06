@@ -368,7 +368,7 @@ func TestTokenize(t *testing.T) {
 	}{
 		{"users", []string{"users"}, ""},
 		{"  request approve  9c1d   'ok for now' ", []string{"request", "approve", "9c1d", "ok for now"}, ""},
-		{`setting set login.banner "Use is monitored; $5 fine"`, []string{"setting", "set", "login.banner", "Use is monitored; $5 fine"}, ""},
+		{`setting set login_banner "Use is monitored; $5 fine"`, []string{"setting", "set", "login_banner", "Use is monitored; $5 fine"}, ""},
 		{"a\tb", []string{"a", "b"}, ""},
 		{"", nil, "empty"},
 		{"users; reboot", nil, "not a shell"},

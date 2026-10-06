@@ -46,7 +46,7 @@ runs Zanskar commands only. It is not a shell, and it cannot reach the gateway's
 
 Names work wherever there is one (users, targets, policies, autoscaling groups); ids work too. Sessions and
 access requests are named by the first 8 characters of their id, as the lists show them; 6 are
-enough when they are unique. Words with spaces go in quotes: ` + "`setting set login.banner \"Use is monitored\"`" + `.
+enough when they are unique. Words with spaces go in quotes: ` + "`setting set login_banner \"Use is monitored\"`" + `.
 
 The console also understands ` + "`clear`" + ` and ` + "`history`" + `, and the up and down arrows recall earlier
 lines.
