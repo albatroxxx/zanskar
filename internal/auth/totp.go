@@ -11,6 +11,7 @@ import (
 	"encoding/base32"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 
@@ -28,9 +29,15 @@ var (
 	// confirmed again; an admin reset clears it first.
 	ErrTOTPAlreadyEnrolled = errors.New("auth: totp already enrolled; reset it first")
 	ErrTOTPBadCode         = errors.New("auth: invalid code")
+	// ErrTOTPReused is a right code that was already accepted once. It wraps
+	// ErrTOTPBadCode, so callers answer it exactly like a wrong code.
+	ErrTOTPReused = fmt.Errorf("%w: already used", ErrTOTPBadCode)
 )
 
-const recoveryCodeCount = 8
+const (
+	recoveryCodeCount = 8
+	totpPeriod        = 30 // seconds per code
+)
 
 // TOTP manages time-based one-time password enrollment and verification.
 // Secrets are sealed with the key ring; recovery codes are stored hashed.
@@ -116,7 +123,8 @@ func (t *TOTP) Confirm(ctx context.Context, userID, code string) ([]string, erro
 	if confirmed {
 		return nil, ErrTOTPAlreadyEnrolled
 	}
-	if !t.validate(secret, code) {
+	step, ok := t.validate(secret, code)
+	if !ok {
 		return nil, ErrTOTPBadCode
 	}
 	codes, hashes, err := newRecoveryCodes()
@@ -129,7 +137,7 @@ func (t *TOTP) Confirm(ctx context.Context, userID, code string) ([]string, erro
 		return nil, err
 	}
 	defer tx.Rollback() //nolint:errcheck
-	if _, err := tx.ExecContext(ctx, t.db.Rebind(`UPDATE mfa_totp SET confirmed_at = ? WHERE user_id = ?`), now, userID); err != nil {
+	if _, err := tx.ExecContext(ctx, t.db.Rebind(`UPDATE mfa_totp SET confirmed_at = ?, last_step = ? WHERE user_id = ?`), now, step, userID); err != nil {
 		return nil, err
 	}
 	if _, err := tx.ExecContext(ctx, t.db.Rebind(`DELETE FROM mfa_recovery_codes WHERE user_id = ?`), userID); err != nil {
@@ -156,8 +164,8 @@ func (t *TOTP) Verify(ctx context.Context, userID, code string) (bool, error) {
 		return false, ErrTOTPNotEnrolled
 	}
 	code = strings.ReplaceAll(strings.TrimSpace(code), " ", "")
-	if t.validate(secret, code) {
-		return false, nil
+	if step, ok := t.validate(secret, code); ok {
+		return false, t.claim(ctx, userID, step)
 	}
 	used, err := t.consumeRecovery(ctx, userID, code)
 	if err != nil {
@@ -206,14 +214,40 @@ func (t *TOTP) secret(ctx context.Context, userID string) (string, bool, error) 
 	return string(plain), confirmed.Valid, nil
 }
 
-func (t *TOTP) validate(secret, code string) bool {
+// validate reports whether code is the authenticator's code for the current
+// 30-second step or one either side of it, and which step it matched.
+func (t *TOTP) validate(secret, code string) (int64, bool) {
 	if len(code) != 6 {
-		return false
+		return 0, false
 	}
-	ok, err := totp.ValidateCustom(code, secret, t.now().UTC(), totp.ValidateOpts{
-		Period: 30, Skew: 1, Digits: otp.DigitsSix, Algorithm: otp.AlgorithmSHA1,
-	})
-	return err == nil && ok
+	now := t.now().UTC().Unix() / totpPeriod
+	for _, step := range []int64{now - 1, now, now + 1} {
+		want, err := totp.GenerateCodeCustom(secret, time.Unix(step*totpPeriod, 0).UTC(), totp.ValidateOpts{
+			Period: totpPeriod, Digits: otp.DigitsSix, Algorithm: otp.AlgorithmSHA1,
+		})
+		if err == nil && subtle.ConstantTimeCompare([]byte(want), []byte(code)) == 1 {
+			return step, true
+		}
+	}
+	return 0, false
+}
+
+// claim records step as the user's last accepted code, refusing it when that
+// step or a later one was already accepted: a code works once (RFC 6238
+// section 5.2), so one read over a shoulder or from a screen share cannot
+// sign in or open the command line again inside its window.
+func (t *TOTP) claim(ctx context.Context, userID string, step int64) error {
+	res, err := t.db.ExecContext(ctx, t.db.Rebind(
+		`UPDATE mfa_totp SET last_step = ? WHERE user_id = ? AND (last_step IS NULL OR last_step < ?)`), step, userID, step)
+	if err != nil {
+		return err
+	}
+	if n, err := res.RowsAffected(); err != nil {
+		return err
+	} else if n == 0 {
+		return ErrTOTPReused
+	}
+	return nil
 }
 
 func (t *TOTP) consumeRecovery(ctx context.Context, userID, code string) (bool, error) {

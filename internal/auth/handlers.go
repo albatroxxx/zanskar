@@ -425,6 +425,10 @@ func (h *Handler) totpVerify(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		if errors.Is(err, ErrTOTPBadCode) || errors.Is(err, ErrTOTPNotEnrolled) {
 			details := map[string]any{"reason": "bad_code", "session_id": p.Session.ID}
+			if errors.Is(err, ErrTOTPReused) {
+				// A right code seen once already: someone may have read it.
+				details["reason"] = "code_reused"
+			}
 			if h.mfaFailure(p.Session.ID) {
 				_ = h.Sessions.Revoke(r.Context(), p.Session.ID)
 				h.Sessions.ClearCookie(w)

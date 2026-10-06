@@ -164,7 +164,11 @@ func (h *Handler) unlock(w http.ResponseWriter, r *http.Request) {
 			s.lockedUntil, s.fails = now.Add(lockFor), 0
 		}
 		h.mu.Unlock()
-		h.record(r, "cli.unlock", audit.Failure, map[string]any{"reason": "wrong code", "closed": closed})
+		reason := "wrong code"
+		if errors.Is(err, auth.ErrTOTPReused) {
+			reason = "code already used" // a right code seen once already: someone may have read it
+		}
+		h.record(r, "cli.unlock", audit.Failure, map[string]any{"reason": reason, "closed": closed})
 		// 422, not 401: to the console a 401 means the sign-in itself has ended.
 		httpx.WriteError(w, http.StatusUnprocessableEntity, "bad_code", "that code is not right")
 		return

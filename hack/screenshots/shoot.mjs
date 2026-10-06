@@ -50,7 +50,7 @@ async function shot(name, url, after, height = 720) {
   await send('Page.navigate', { url: base + url })
   await sleep(2000)
   if (after) {
-    await send('Runtime.evaluate', { expression: after })
+    await send('Runtime.evaluate', { expression: after, awaitPromise: true })
     await sleep(800)
   }
   const { result } = await send('Page.captureScreenshot', { format: 'jpeg', quality: 85 })
@@ -70,6 +70,19 @@ await shot('ssh-ca', '/admin/credentials',
 // The audit log, with the first access decision's details open.
 await shot('audit-events', '/admin/events',
   `[...document.querySelectorAll('tr')].find((r) => r.textContent.includes('request for'))?.querySelector('details')?.setAttribute('open', '')`, 800)
+// The command line, last: its commands are audit events of their own.
+await shot('console-cli', '/admin/policies', `(async () => {
+  const wait = (ms) => new Promise((r) => setTimeout(r, ms))
+  document.querySelector('button[aria-label="Command line"]').click()
+  await wait(500)
+  for (const line of ['status', 'requests --pending']) {
+    const input = document.querySelector('.cli-prompt input')
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(input, line)
+    input.dispatchEvent(new Event('input', { bubbles: true }))
+    input.form.requestSubmit()
+    await wait(700)
+  }
+})()`, 800)
 await as(aliceCookie)
 await shot('user-targets', '/')
 ws.close()
