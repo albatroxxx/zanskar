@@ -46,6 +46,7 @@ and update the status of the old one.
 | [0025](0025-database-tls-verified-by-default.md) | Database targets verify TLS by default; the master key can live in its own file | Accepted |
 | [0026](0026-no-dco-sign-off.md) | Contributions need no DCO sign-off | Accepted |
 | [0027](0027-restricted-console-cli.md) | A restricted command line in the console: Zanskar commands only, never a shell | Accepted |
+| [0028](0028-webauthn-second-factor.md) | Security keys and passkeys as a second factor (WebAuthn) | Proposed |
 | [0029](0029-portal-dashboards.md) | Each portal lands on a dashboard, scoped to the portal's role | Accepted |
 | [0030](0030-off-cloud-aws-enrolment.md) | A gateway outside AWS enrolls autoscaling groups with a certificate | Proposed |
 | [0031](0031-monitoring-current-state-console-time-series-exporter.md) | Monitoring: current state in the console, time series through an exporter | Proposed |
