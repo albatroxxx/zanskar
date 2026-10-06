@@ -167,6 +167,7 @@ export default function App() {
                 items={[
                   { to: '/audit', label: 'Events', end: true },
                   { to: '/audit/recordings', label: 'Recordings' },
+                  { to: '/audit/sessions', label: 'Sessions' },
                 ]}
               />
             </AdminToConsole>
