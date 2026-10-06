@@ -46,4 +46,4 @@ and update the status of the old one.
 | [0025](0025-database-tls-verified-by-default.md) | Database targets verify TLS by default; the master key can live in its own file | Accepted |
 | [0026](0026-no-dco-sign-off.md) | Contributions need no DCO sign-off | Accepted |
 | [0027](0027-restricted-console-cli.md) | A restricted command line in the console: Zanskar commands only, never a shell | Accepted |
-| [0028](0028-webauthn-second-factor.md) | Security keys and passkeys as a second factor (WebAuthn) | Proposed |
+| [0028](0028-webauthn-second-factor.md) | Security keys and passkeys as a second factor (WebAuthn) | Accepted, build parked |
