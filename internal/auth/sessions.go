@@ -36,6 +36,10 @@ type Session struct {
 	CreatedAt   time.Time
 	ExpiresAt   time.Time
 	LastSeenAt  time.Time
+	// MFAAt is when the session last proved an authenticator code, zero if
+	// it never has. Signing in through an identity provider, or with no
+	// authenticator enrolled, leaves it zero (ADR 0027).
+	MFAAt time.Time
 }
 
 // Errors.
@@ -105,19 +109,19 @@ func (s *Sessions) Lookup(ctx context.Context, token string) (*Session, error) {
 		return nil, ErrNoSession
 	}
 	var (
-		sess                        Session
-		revoked, created, exp, seen store.NullTime
+		sess                               Session
+		revoked, created, exp, seen, mfaAt store.NullTime
 	)
-	err := s.db.QueryRowContext(ctx, s.db.Rebind(`SELECT id, user_id, ip, user_agent, mfa_verified, created_at, expires_at, last_seen_at, revoked_at
+	err := s.db.QueryRowContext(ctx, s.db.Rebind(`SELECT id, user_id, ip, user_agent, mfa_verified, created_at, expires_at, last_seen_at, revoked_at, mfa_verified_at
 		FROM auth_sessions WHERE token_hash = ?`), hashToken(token)).
-		Scan(&sess.ID, &sess.UserID, &sess.IP, &sess.UserAgent, &sess.MFAVerified, &created, &exp, &seen, &revoked)
+		Scan(&sess.ID, &sess.UserID, &sess.IP, &sess.UserAgent, &sess.MFAVerified, &created, &exp, &seen, &revoked, &mfaAt)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNoSession
 		}
 		return nil, err
 	}
-	sess.CreatedAt, sess.ExpiresAt, sess.LastSeenAt = created.Time, exp.Time, seen.Time
+	sess.CreatedAt, sess.ExpiresAt, sess.LastSeenAt, sess.MFAAt = created.Time, exp.Time, seen.Time, mfaAt.Time
 	now := s.now().UTC()
 	if revoked.Valid || now.After(sess.ExpiresAt) || now.Sub(sess.LastSeenAt) > s.IdleTTL {
 		return nil, ErrNoSession
@@ -133,9 +137,19 @@ func (s *Sessions) Lookup(ctx context.Context, token string) (*Session, error) {
 	return &sess, nil
 }
 
-// MarkMFAVerified upgrades a session after a successful second factor.
+// MarkMFAVerified lets a session past the second-factor step. It records no
+// proof: a sign-in with no authenticator enrolled, where none is required,
+// comes through here too (ADR 0027).
 func (s *Sessions) MarkMFAVerified(ctx context.Context, id string) error {
 	_, err := s.db.ExecContext(ctx, s.db.Rebind(`UPDATE auth_sessions SET mfa_verified = TRUE WHERE id = ?`), id)
+	return err
+}
+
+// MarkMFAProved records that the session just proved a code from its
+// authenticator, and lets it past the second-factor step. The console's
+// command line opens only on a recent proof.
+func (s *Sessions) MarkMFAProved(ctx context.Context, id string) error {
+	_, err := s.db.ExecContext(ctx, s.db.Rebind(`UPDATE auth_sessions SET mfa_verified = TRUE, mfa_verified_at = ? WHERE id = ?`), store.TimeArg(s.now().UTC()), id)
 	return err
 }
 

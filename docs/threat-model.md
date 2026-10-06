@@ -79,6 +79,7 @@ requires it. That fact drives the network isolation requirement on guacd in sect
 | Information disclosure | Recording or credential data cached by the browser | `Cache-Control: no-store` on all API responses, recordings streamed with authorization on every request |
 | Denial of service | WebSocket flood or slowloris on the listener | Connection limits per user, read and write deadlines, idle timeouts, upstream rate limiting recommended |
 | Elevation of privilege | User calls an admin API directly | Authorization enforced in the handler layer for every route, never in the UI alone; roles resolved server-side from the session |
+| Elevation of privilege | A stolen administrator cookie used through the console's command line, to act quickly or to reach the gateway host | The command line (ADR 0027) runs only a fixed table of Zanskar commands through the same routes and role checks as the console, never a shell; host operations are not commands. It opens only on an authenticator code proved in the last 15 minutes of use, five wrong codes close it, destructive commands need the object's name typed, and every line is audited. `ZANSKAR_CONSOLE_CLI=off` removes it, and that is not a console setting |
 
 ### TB2 Gateway and guacd
 
@@ -156,6 +157,7 @@ threat model update in the same change.
 | Opaque hashed session tokens | 256-bit random, SHA-256 stored, never logged, rotated on privilege change | Token theft, database leak |
 | Strict CSP and cookie flags | `default-src 'self'`, no inline scripts, `Secure`, `HttpOnly`, `SameSite=Strict` | XSS, CSRF, session theft |
 | CSRF tokens | Double-submit token verified on every state-changing request, `Origin` check on WebSocket upgrade | CSRF |
+| Confined console command line | Fixed command table dispatched through the API's own routes and checks; no shell, no host operations, no secrets as arguments; fresh authenticator code to open; every line audited. See ADR 0027 | Stolen admin session, A3 track covering |
 | Rate limiting and lockout | Per-account and per-IP limits on login, MFA and connect; progressive lockout with admin unlock | A1 |
 | No secrets in logs | Structured logging with a redaction layer; credentials, tokens, and MFA secrets are typed so they cannot be formatted by accident | Log leakage |
 | Memory hygiene | Plaintext credentials held in byte slices that are zeroed after use; no plaintext in long-lived structs | Memory disclosure |

@@ -7,6 +7,9 @@ updates:
     groups:
       go-deps:
         patterns: ["*"]
+      go-security:
+        applies-to: security-updates
+        patterns: ["*"]
   - package-ecosystem: github-actions
     directory: /
     schedule:
@@ -21,4 +24,7 @@ updates:
       interval: weekly
     groups:
       web-deps:
+        patterns: ["*"]
+      web-security:
+        applies-to: security-updates
         patterns: ["*"]

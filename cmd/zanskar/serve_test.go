@@ -29,6 +29,36 @@ func freeAddr(t *testing.T) string {
 // against a migrated install with one admin: it becomes ready, answers its
 // health checks and the API (a sign-in reaches the second-factor step, an
 // unknown API path is a JSON 404), and stops cleanly when its context ends.
+// startServe runs serve on addr until the returned cancel is called, and
+// returns once /readyz answers. done receives serve's result.
+func startServe(t *testing.T, addr string) (base string, done chan error, cancel context.CancelFunc) {
+	t.Helper()
+	ctx, cancel := context.WithCancel(context.Background())
+	done = make(chan error, 1)
+	go func() { done <- serve(ctx) }()
+	base = "http://" + addr
+	client := &http.Client{Timeout: 2 * time.Second}
+	for i := 0; i < 200; i++ {
+		select {
+		case err := <-done:
+			cancel()
+			t.Fatalf("serve stopped early: %v", err)
+		default:
+		}
+		if resp, err := client.Get(base + "/readyz"); err == nil {
+			ok := resp.StatusCode == http.StatusOK
+			_ = resp.Body.Close()
+			if ok {
+				return base, done, cancel
+			}
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+	cancel()
+	t.Fatal("gateway never became ready")
+	return "", nil, nil
+}
+
 func TestServeStartsAndStops(t *testing.T) {
 	newCLIGateway(t, true)
 	addr := freeAddr(t)
@@ -40,31 +70,9 @@ func TestServeStartsAndStops(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
+	base, done, cancel := startServe(t, addr)
 	defer cancel()
-	done := make(chan error, 1)
-	go func() { done <- serve(ctx) }()
-
-	base := "http://" + addr
 	client := &http.Client{Timeout: 2 * time.Second}
-	ready := false
-	for i := 0; i < 200 && !ready; i++ {
-		select {
-		case err := <-done:
-			t.Fatalf("serve stopped early: %v", err)
-		default:
-		}
-		if resp, err := client.Get(base + "/readyz"); err == nil {
-			ready = resp.StatusCode == http.StatusOK
-			_ = resp.Body.Close()
-		}
-		if !ready {
-			time.Sleep(25 * time.Millisecond)
-		}
-	}
-	if !ready {
-		t.Fatal("gateway never became ready")
-	}
 
 	get := func(path string) (int, string) {
 		t.Helper()

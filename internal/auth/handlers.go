@@ -438,7 +438,7 @@ func (h *Handler) totpVerify(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.mfaClear(p.Session.ID)
-	if err := h.Sessions.MarkMFAVerified(r.Context(), p.Session.ID); err != nil {
+	if err := h.Sessions.MarkMFAProved(r.Context(), p.Session.ID); err != nil {
 		h.serverError(w, r, err)
 		return
 	}
@@ -495,11 +495,9 @@ func (h *Handler) totpConfirm(w http.ResponseWriter, r *http.Request) {
 	}
 	// A freshly confirmed authenticator counts as a verified second factor
 	// for this session: the user just proved possession of it.
-	if !p.Session.MFAVerified {
-		if err := h.Sessions.MarkMFAVerified(r.Context(), p.Session.ID); err != nil {
-			h.serverError(w, r, err)
-			return
-		}
+	if err := h.Sessions.MarkMFAProved(r.Context(), p.Session.ID); err != nil {
+		h.serverError(w, r, err)
+		return
 	}
 	h.record(r, h.actor(r).Event("user.mfa.confirm", "user", p.User.ID, audit.Success, nil))
 	WriteJSON(w, http.StatusOK, map[string]any{"recovery_codes": codes, "status": "ok", "csrf_token": h.Sessions.CSRFToken(p.Session.ID)})

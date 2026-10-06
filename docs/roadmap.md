@@ -16,11 +16,13 @@ Approved 2026-09-20. Durations are estimates for a small team; the order matters
 
 What the project intends to do, in order. Dates are targets; the order matters more.
 
-1. **OpenSSF Best Practices Silver** (Q4 2026). Two maintainers with merge and release rights
-   ([GOVERNANCE.md](../GOVERNANCE.md)), pull requests approved by someone other than their
-   author, and the remaining Silver criteria tracked in [best-practices.md](best-practices.md).
+1. **OpenSSF Best Practices Silver**: done, 5 October 2026. Two maintainers with merge and
+   release rights ([GOVERNANCE.md](../GOVERNANCE.md)); the answers are in
+   [best-practices.md](best-practices.md). Still to do: require approval from someone other than
+   the author on pull requests to `main`, once both maintainers are reviewing regularly.
 2. **1.2.x maintenance** (Q4 2026). SPDX SBOMs, SLSA level 3 provenance and reproducible
-   packages in every release; fixes found in use; test coverage towards 80%.
+   packages in every release (since 1.2.1); fixes found in use; test coverage at 80% (reached
+   in 1.2.2).
 3. **Restricted admin CLI** (Q1 2027). A console-side CLI that runs allow-listed `zanskar`
    operations inside the gateway, never a system shell, with every command audited, and a
    reference of every command. An ADR comes first.
