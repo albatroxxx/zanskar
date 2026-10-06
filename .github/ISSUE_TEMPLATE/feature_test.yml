@@ -1,0 +1,52 @@
+name: Feature test
+description: A test of one feature that one person can run in one sitting. Results go in comments.
+title: "Test: "
+labels: ["feature-test"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Feature tests live on the [Zanskar feature testing](https://github.com/users/albatroxxx/projects/2) board; how to claim and report one is in the pinned "How to test Zanskar" issue.
+        This issue is public: **never** post passwords, keys, codes, real addresses or hostnames. A security problem goes through [SECURITY.md](https://github.com/albatroxxx/zanskar/blob/main/SECURITY.md), not here.
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options: [install, update, removal, security, targets, databases, autoscaling, access, sessions, audit, operations, console-cli, docs]
+    validations:
+      required: true
+  - type: input
+    id: needs
+    attributes:
+      label: You need
+      description: What a tester must have, e.g. "Ubuntu 24.04 VM; an authenticator app". Say if it costs money (an AWS account).
+    validations:
+      required: true
+  - type: input
+    id: time
+    attributes:
+      label: Time
+      placeholder: about 45 minutes
+  - type: textarea
+    id: docs
+    attributes:
+      label: Read first
+      description: Links to the guide sections this test follows.
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps
+      description: Numbered, with the names the console and commands actually use.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected
+    validations:
+      required: true
+  - type: textarea
+    id: also
+    attributes:
+      label: Also check
+      description: What must be refused or must not happen.

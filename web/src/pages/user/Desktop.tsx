@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Navigate, useLocation, useNavigate } from 'react-router-dom'
 import type { Client, GuacObject, InputStream, Keyboard } from 'guacamole-common-js'
-import { fmtBytes, fmtSeconds } from '../../api/format'
+import { fmtBytes, fmtSeconds, protocolName } from '../../api/format'
 import { Modal } from '../../components/ui'
 import { FailoverDialog } from './Failover'
 import { useFullscreen } from './fullscreen'
@@ -388,7 +388,7 @@ function DesktopSession({ state }: { state: DesktopState }) {
         <span className="name">{state.target}</span>
         {state.instance_label && <span className="stat mono">{state.instance_label}</span>}
         {state.switched_from && <span className="stat switched">switched from {state.switched_from}</span>}
-        <span className="stat">{state.protocol.toUpperCase()}</span>
+        <span className="stat">{protocolName(state.protocol)}</span>
         <span className="stat">elapsed {fmtSeconds(elapsed)}</span>
         <span className="grow" />
         <span className="stat rec" title="This session is being recorded"><i className="rec-dot" aria-hidden="true" />Recording</span>

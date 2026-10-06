@@ -108,9 +108,9 @@ development stack instead, use `deploy/docker-compose.dev.yml`.
 The product site at <https://albatroxxx.github.io/zanskar/> has the installation guide,
 the how-to guide and release notes in one place.
 
-Zanskar 1.2 is a **single-instance** deployment: one gateway, embedded SQLite or PostgreSQL, and a
-guacd sidecar for RDP/VNC. Two supported install paths, both from the
-[releases page](https://github.com/albatroxxx/zanskar/releases):
+Zanskar runs as a **single instance**: one gateway, embedded SQLite or PostgreSQL, and a
+guacd sidecar for RDP/VNC. High availability is planned. Two supported install paths, both
+from the [releases page](https://github.com/albatroxxx/zanskar/releases):
 
 - **Packages** (recommended): `.deb` / `.rpm` for amd64 and arm64, then `sudo zanskar init`
   writes the configuration, serves HTTPS on 443 with a certificate it manages (upload yours on the
@@ -126,8 +126,8 @@ guacd sidecar for RDP/VNC. Two supported install paths, both from the
 Checksums and the image are signed with Sigstore; the release notes carry the `cosign verify`
 commands. `cosign` is not in the Ubuntu, Debian or RHEL repositories, so install it from
 [its own release](https://github.com/sigstore/cosign/releases/latest) first (the
-[install page](https://albatroxxx.github.io/zanskar/docs/#cosign) has the commands). The Helm chart in `deploy/helm/zanskar` is a **preview**: it deploys, but multi-replica
-HA (cross-pod terminate and shadowing) is Phase 4 work and not supported in 1.2. Topology,
+[install page](https://albatroxxx.github.io/zanskar/docs/#cosign) has the commands). The Helm chart in `deploy/helm/zanskar` is a **preview**: it deploys one gateway pod. Zanskar
+runs as a single instance; high availability is planned. Topology,
 upgrades, backups, TLS, recording storage, database access, AWS enrolment, the certificate
 authority and the security checklist are in [docs/deploy.md](docs/deploy.md).
 

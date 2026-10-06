@@ -1,13 +1,18 @@
 import { useState } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useLocation } from 'react-router-dom'
 import { api, errorMessage } from '../../api/client'
 import { fmtDuration, fmtTime } from '../../api/format'
 import { sessionTarget, sessionUser } from '../../api/labels'
 import type { Session } from '../../api/types'
 import { Alert, Confirm, Empty, Field, PageHead, reasonBadge } from '../../components/ui'
+import { useRecordingsPath } from '../audit/paths'
 import { useList } from './lib'
 
+// Mounted in the admin console and, without Terminate, in the audit portal,
+// where an auditor watches live sessions read-only (ADR 0006).
 export function Sessions() {
+  const admin = useLocation().pathname.startsWith('/admin')
+  const recordings = useRecordingsPath()
   const [openOnly, setOpenOnly] = useState(false)
   const [username, setUsername] = useState('')
   const [applied, setApplied] = useState('')
@@ -17,7 +22,14 @@ export function Sessions() {
 
   return (
     <>
-      <PageHead title="Sessions" lead="Every connection through the gateway. Terminating a live session closes the user's terminal immediately.">
+      <PageHead
+        title="Sessions"
+        lead={
+          admin
+            ? "Every connection through the gateway. Terminating a live session closes the user's terminal immediately."
+            : 'Every connection through the gateway. Watch a live session read-only; each view is audited.'
+        }
+      >
         <span className="field inline" style={{ margin: 0 }}>
           <input id="s-open" type="checkbox" checked={openOnly} onChange={(e) => setOpenOnly(e.target.checked)} />
           <label htmlFor="s-open">Live only</label>
@@ -57,14 +69,18 @@ export function Sessions() {
                   <td className="mono muted">{s.client_ip}</td>
                   <td>{fmtDuration(s.started_at, s.ended_at)}</td>
                   <td>{reasonBadge(s.end_reason)}</td>
-                  <td>{s.recording_id ? <Link to={`/admin/recordings/${s.recording_id}`}>play</Link> : <span className="muted">—</span>}</td>
+                  <td>{s.recording_id ? <Link to={`${recordings}/${s.recording_id}`}>play</Link> : <span className="muted">—</span>}</td>
                   <td>
                     {!s.ended_at && (
                       <span className="actions">
                         <Link className="btn sm" to={`/audit/shadow/${s.id}?protocol=${s.protocol}&target=${encodeURIComponent(sessionTarget(s))}`} title="Watch live, read-only; the view is audited">
                           Watch
                         </Link>
-                        <button className="btn sm danger" onClick={() => setTerminating(s)}>Terminate</button>
+                        {admin && (
+                          <button className="btn sm danger" onClick={() => setTerminating(s)}>
+                            Terminate
+                          </button>
+                        )}
                       </span>
                     )}
                   </td>

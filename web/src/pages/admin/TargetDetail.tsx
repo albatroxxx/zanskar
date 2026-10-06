@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { api, errorMessage } from '../../api/client'
-import { dbTLS, engineName, fmtTime } from '../../api/format'
+import { dbTLS, engineName, fmtTime, protocolName } from '../../api/format'
 import type { CertificateProbe, Credential, Protocol, Target } from '../../api/types'
 import { Alert, Badge, Confirm, Modal, Tags } from '../../components/ui'
 import { hostKeyBadge, protocols, type ProbeWire } from './lib'
@@ -145,7 +145,7 @@ export function TargetDetail({ target, credentials, onClose, onChanged, onDelete
       {/* A database target has one slot, the brokered "database" protocol;
           the host slots (ssh, rdp, vnc, winrm) do not apply to it. */}
       <CredentialBindings
-        slots={(database ? (['database'] as Protocol[]) : protocols).map((p) => ({ protocol: p, label: p === 'database' ? `Database (${engineName(t.engine)})` : p.toUpperCase() }))}
+        slots={(database ? (['database'] as Protocol[]) : protocols).map((p) => ({ protocol: p, label: p === 'database' ? `Database (${engineName(t.engine)})` : protocolName(p) }))}
         current={t.credentials}
         credentials={credentials}
         onSave={saveBindings}
@@ -167,7 +167,7 @@ export function TargetDetail({ target, credentials, onClose, onChanged, onDelete
               if (!r) return null
               return (
                 <span key={p} style={{ display: 'contents' }}>
-                  <dt>{p.toUpperCase()}</dt>
+                  <dt>{protocolName(p)}</dt>
                   <dd>
                     {r.reachable ? <Badge tone="ok">reachable · {r.latency_ms} ms</Badge> : <Badge>unreachable</Badge>} {r.error && <span className="muted">{r.error}</span>}
                   </dd>

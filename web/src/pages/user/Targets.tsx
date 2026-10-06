@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { api, ApiError, errorMessage } from '../../api/client'
 import type { AccessRequest, ConnectResponse, Page, Protocol, ReachableInstance, ReachableTarget } from '../../api/types'
 import { Alert, Badge, Empty, Field, Modal, PageHead, Tags } from '../../components/ui'
-import { engineName } from '../../api/format'
+import { engineName, protocolName } from '../../api/format'
 import { fmtAgo } from './Failover'
 
 const terminalProtocols: Protocol[] = ['ssh', 'winrm']
@@ -117,7 +117,7 @@ export function Targets() {
         reason: reqForm.reason,
         minutes: Number(reqForm.minutes),
       })
-      setNotice(`Requested ${reqModal.protocol.toUpperCase()} access to ${reqModal.target.name}. An administrator must approve it — track it under My access.`)
+      setNotice(`Requested ${protocolName(reqModal.protocol)} access to ${reqModal.target.name}. An administrator must approve it — track it under My access.`)
       setReqModal(null)
       setReqForm({ reason: '', minutes: 60 })
       void loadGrants()
@@ -166,8 +166,8 @@ export function Targets() {
     }
     return (
       <>
-        <td>{cell(term, ' proto-terminal', term ? term.toUpperCase() : '', notReady)}</td>
-        <td>{cell(desk, ' proto-desktop', desk ? desk.toUpperCase() : '', false)}</td>
+        <td>{cell(term, ' proto-terminal', term ? protocolName(term) : '', notReady)}</td>
+        <td>{cell(desk, ' proto-desktop', desk ? protocolName(desk) : '', false)}</td>
       </>
     )
   }
@@ -352,7 +352,7 @@ export function Targets() {
 
       {reqModal && (
         <Modal title={`Request access to ${reqModal.target.name}`} onClose={() => setReqModal(null)}>
-          <p className="muted">This machine requires approval for {reqModal.protocol.toUpperCase()}. Say why and for how long; an administrator approves before you can connect.</p>
+          <p className="muted">This machine requires approval for {protocolName(reqModal.protocol)}. Say why and for how long; an administrator approves before you can connect.</p>
           <form onSubmit={(e) => void submitRequest(e)}>
             <Field label="Reason">
               <textarea id="req-reason" autoFocus value={reqForm.reason} onChange={(e) => setReqForm({ ...reqForm, reason: e.target.value })} required placeholder="What you need to do" />

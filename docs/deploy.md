@@ -1,27 +1,30 @@
 # Deploying Zanskar
 
-Zanskar is one static binary (the web UI is embedded) plus a PostgreSQL database and,
-for RDP and VNC, a guacd sidecar. This guide covers a single node with Docker Compose
-and a highly available Kubernetes deployment with the Helm chart in `deploy/helm/zanskar`.
+Zanskar is one static binary (the web UI is embedded), a database and, for RDP and VNC,
+a guacd sidecar. The database is SQLite, built in, by default; PostgreSQL is an option.
+Zanskar runs as a single instance; high availability is planned. This guide covers a
+package install, a single node with Docker Compose, and Kubernetes with the Helm chart in
+`deploy/helm/zanskar`.
 
 ## Topology
 
 ```
- browsers ──TLS──▶ load balancer / ingress ──TLS──▶ zanskar gateways (N pods)
+ browsers ──TLS──▶ load balancer / ingress ──TLS──▶ zanskar gateway (one pod)
                                                    │        │        │
                                                    │        │        └──▶ targets: SSH 22, WinRM 5986
                                                    │        └──▶ guacd (ClusterIP, isolated) ──▶ targets: RDP 3389, VNC 5900
-                                                   └──▶ PostgreSQL          recordings: shared volume or S3
+                                                   └──▶ SQLite or PostgreSQL   recordings: volume or S3
                                                         cloud APIs (autoscaling groups, via the pod identity)
 ```
 
-- **Gateways** are stateless apart from two in-memory structures described under
-  High availability. Everything durable is in PostgreSQL and the recordings store.
-- **guacd** must only be reachable from gateway pods. It speaks an unauthenticated
+- **The gateway** keeps two structures in memory, described under
+  [One gateway instance](#one-gateway-instance). Everything durable is in the database and
+  the recordings store.
+- **guacd** must only be reachable from the gateway. It speaks an unauthenticated
   protocol and carries target credentials in flight (threat model, ADR 0002).
-- **Recordings** are append-only files. Use a ReadWriteMany volume shared by all
-  gateways, or object storage (an S3-compatible bucket, set at install or from the console's Settings
-  page; see Recording storage below).
+- **Recordings** are append-only files. Use a persistent volume, or object storage (an
+  S3-compatible bucket, set at install or from the console's Settings page; see Recording
+  storage below).
 
 ## Packages (deb / rpm)
 
@@ -87,9 +90,9 @@ them in place. Build the packages locally with `make packages` (needs goreleaser
 ## Guided single-node install
 
 For a single instance, `zanskar init` writes the environment file the server reads
-(ADR 0014): it asks for the listen address and TLS mode (own certificate, or behind a
-TLS proxy on loopback), the data directory, whether to enable RDP and VNC, MFA and
-logging; it generates the master key and prints the migrate and admin-create steps. It
+(ADR 0014): it asks for the listen address and TLS mode (a managed certificate, the
+default; your own certificate files; or behind a TLS proxy on loopback), the data
+directory, whether to enable RDP and VNC, MFA and logging; it generates the master key and prints the migrate and admin-create steps. It
 runs non-interactively from flags for cloud-init or Ansible, and re-running it preserves
 an existing master key.
 
@@ -117,9 +120,17 @@ set `ZANSKAR_VERSION` explicitly in `deploy/.env`.
 ```sh
 cp deploy/.env.example deploy/.env    # then set ZANSKAR_MASTER_KEY (openssl rand -base64 32)
 docker compose -f deploy/docker-compose.yml up -d
-docker compose -f deploy/docker-compose.yml exec -e ZANSKAR_ADMIN_PASSWORD=... \
+docker compose -f deploy/docker-compose.yml exec \
   zanskar /zanskar admin create --username admin --name "Your Name"
 ```
+
+`admin create` asks for the password twice without echo (`exec` gives it a terminal). Do not
+put the password on the command line, where it lands in your shell history. A script can read
+it without echo and pass it through:
+`read -rs ZANSKAR_ADMIN_PASSWORD && export ZANSKAR_ADMIN_PASSWORD`, then
+`docker compose -f deploy/docker-compose.yml exec -e ZANSKAR_ADMIN_PASSWORD zanskar /zanskar admin create ...`.
+`-e` with a name and no value passes the variable from your shell, so history holds only its
+name, not the password.
 
 To build the image from a checkout instead (contributors, unreleased changes), add the
 override file: `docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.build.yml up -d --build`.
@@ -141,16 +152,14 @@ production.
 
 ## Kubernetes with the Helm chart
 
-> **Preview.** The chart installs and runs, but 1.2 is a single-instance release: the
-> cross-pod control channel that admin terminate and auditor shadowing need with more than
-> one replica is Phase 4 work. Run it with `replicaCount: 1` and treat it as an evaluation
-> path until HA is announced. `image.tag` defaults to the chart's `appVersion`, which tracks
-> the current release tag.
+> **Preview.** The chart installs and runs one gateway pod. Zanskar runs as a single
+> instance; high availability is planned (see [One gateway instance](#one-gateway-instance)).
+> Keep `replicaCount: 1`, the default, and treat the chart as an evaluation path.
+> `image.tag` defaults to the chart's `appVersion`, which tracks the current release tag.
 
 Prerequisites: a PostgreSQL 14+ database, a `kubernetes.io/tls` certificate for the
-pods (cert-manager is the easy path), an ingress controller that supports WebSockets
-and cookie affinity, and, for recordings with more than one replica, a ReadWriteMany
-storage class or an S3 bucket.
+pod (cert-manager is the easy path), an ingress controller that supports WebSockets,
+and, for recordings, a persistent volume or an S3 bucket.
 
 1. **Secrets.** The chart reads `ZANSKAR_MASTER_KEY` and `ZANSKAR_DB_DSN` from an existing
    Secret and never writes secrets from values:
@@ -183,54 +192,47 @@ storage class or an S3 bucket.
    kubectl -n zanskar exec -it deploy/zanskar -- /zanskar admin create --username admin --name "Your Name"
    ```
 
-5. **Autoscaling groups on EKS (IRSA).** Give the gateway pods an IAM role by annotating
+5. **Autoscaling groups on EKS (IRSA).** Give the gateway pod an IAM role by annotating
    the service account (`serviceAccount.annotations: eks.amazonaws.com/role-arn: ...`).
    That role is the principal that assumes each group's cross-account role with the
    ExternalId Zanskar generated; set `config.awsGatewayPrincipal` to the same ARN so the
    trust policy shown to admins is correct. The per-group role needs only the
    permissions the admin UI renders (Describe calls, console output, Instance Connect).
 
-6. **Ingress affinity.** Two requests must land on the same pod: `POST /api/v1/connect`,
-   which issues a short-lived ticket held in that pod's memory, and the `GET /ws/*`
-   upgrade that redeems it within 30 seconds. Behind an ingress, client IPs are NATed,
-   so use cookie affinity; the default values carry the ingress-nginx annotations
-   (`affinity: cookie`, `session-cookie-name: zanskar_pod`, one-hour proxy timeouts for
-   long WebSocket sessions). The Service defaults to `sessionAffinity: ClientIP` for
-   setups without an ingress.
+6. **Ingress.** Terminal sessions are long WebSockets; the default values carry
+   ingress-nginx annotations with one-hour proxy timeouts. They also set cookie affinity
+   (`session-cookie-name: zanskar_pod`) and the Service sets `sessionAffinity: ClientIP`.
+   With one pod these change nothing; they are there so a connect ticket and the
+   WebSocket that redeems it reach the same pod.
 
-## High availability
+## One gateway instance
 
-Run two or more gateway replicas behind the ingress. What lives where:
+Zanskar runs as a single instance; high availability is planned. Run one gateway: one
+package install, one Compose stack, or one pod (`replicaCount: 1`, the chart's default).
+Two pieces of state live only in the gateway's memory:
 
-| State | Location | Shared across pods |
-|---|---|---|
-| Users, policies, targets, credentials (sealed), audit chain, sessions | PostgreSQL | yes |
-| Recordings | RWX volume or S3 | yes |
-| Connect tickets (30 s, single use) | pod memory | no, hence affinity |
-| Live-session registry (what is connected right now) | pod memory | no |
-| Autoscaling sync loop | every pod runs it | duplicated polls, idempotent writes |
+| State | Location |
+|---|---|
+| Users, policies, targets, credentials (sealed), audit chain, sessions | the database |
+| Recordings | the recordings volume or S3 |
+| Connect tickets (30 s, single use) | gateway memory |
+| Live-session registry (what is connected right now) | gateway memory |
 
-Consequences, stated plainly:
+Why a second replica is not supported:
 
-- **Admin "terminate" and auditor "shadow" act on the pod that receives the request.**
-  If the session lives on another pod, terminate closes the database row (the session
-  shows as ended) but the live connection keeps running until its own bridge notices,
-  and shadow returns "not live here". With cookie affinity an admin who terminates a
-  session usually lands on a different pod than the user. Mitigations today: run a
-  single gateway replica where live control matters, or put admins behind their own
-  pod via the separate admin listener. A cross-pod control channel (Postgres LISTEN/
-  NOTIFY or a small pub/sub) is the planned fix and is tracked in the roadmap.
-- **Autoscaling sync runs on every pod.** Polls are duplicated; the writes are
-  idempotent upserts, so this costs API calls, not correctness. A leader election is a
-  follow-up.
-- The audit chain is serialised with a database advisory lock, so many pods appending
-  concurrently stay consistent (ADR 0008).
+- **Admin "terminate" and auditor "shadow" act only on the gateway that receives the
+  request.** With two pods, a terminate that lands on the wrong pod ends the session in
+  the database but leaves the live connection running, and shadow answers "not live here".
+  A control channel between pods fixes this; it is on the [roadmap](roadmap.md).
+- **A connect ticket can only be redeemed on the pod that issued it**, so every pod would
+  need sticky sessions.
+- **The autoscaling sync loop would run on every pod**, duplicating cloud API calls.
 
 ## Upgrades and migrations
 
 Migrations are explicit and forward-only. The chart's hook Job applies them before the
 new pods start; outside Helm, run `zanskar migrate` yourself before restarting. Take a
-database backup first. Rolling updates keep at least one pod (PodDisruptionBudget);
+database backup first. On an upgrade the old pod is replaced by a new one;
 `terminationGracePeriodSeconds` gives live sessions a minute to close.
 
 ## Backups and key custody
@@ -290,6 +292,20 @@ tooling below rather than `zanskar backup`.
 - guacd isolated by the NetworkPolicy the chart installs; never expose port 4822.
 - `ZANSKAR_REQUIRE_MFA=true` (default). Do not turn it off outside throwaway installs.
   The console's Settings page can override it; the change is audited and shows its source.
+- The session cookie is `Secure`, `HttpOnly`, `SameSite=Strict` when TLS is on; do not set
+  `ZANSKAR_TRUST_PROXY_TLS` in the in-pod TLS mode.
+- Recordings volume: only the gateway identity can read it; the API records every view.
+- The gateway pod runs as non-root on a distroless image with a read-only root filesystem
+  and all capabilities dropped; keep `readOnlyRootFilesystem` when adding sidecars.
+- Ship the audit log to your SIEM. `ZANSKAR_SIEM_SYSLOG_ADDR` (`tcp://` or `tls://`) sends
+  syslog in CEF, or JSON with `ZANSKAR_SIEM_SYSLOG_FORMAT=json`; `ZANSKAR_SIEM_SYSLOG_CA`
+  names a CA file for a private authority. `ZANSKAR_SIEM_WEBHOOK_URL` (https) with
+  `ZANSKAR_SIEM_WEBHOOK_SECRET` (16 characters or more) posts signed JSON batches. Both
+  can be set together. In the chart, pass them through `config.extraEnv` /
+  `config.extraEnvFrom`.
+- Verify the audit chain on a schedule: `zanskar audit verify` from a CronJob.
+- Keep guacd at 1.6 or newer (certificate pinning, ADR 0012); Dependabot tracks the
+  compose image, and `guacd.image.tag` in the chart.
 
 ## TLS certificate
 
@@ -480,15 +496,3 @@ The check needs the running service to read the env file: `zanskar init` writes 
 console; fix with `chgrp zanskar /etc/zanskar/env && chmod 0640 /etc/zanskar/env`. If the
 file lives elsewhere, set `ZANSKAR_ENV_FILE=<path>` in it. Containers normally have no
 file and the check is off.
-- Cookies are `Secure`, `HttpOnly`, `SameSite=Strict` when TLS is on; do not set
-  `ZANSKAR_TRUST_PROXY_TLS` in the in-pod TLS mode.
-- Recordings volume: only the gateway identity can read it; the API records every view.
-- Gateway pods run as non-root on a distroless image with a read-only root filesystem
-  and all capabilities dropped; keep `readOnlyRootFilesystem` when adding sidecars.
-- Ship the audit log to your SIEM: `ZANSKAR_SIEM_SYSLOG_ADDR` (syslog/CEF),
-  `ZANSKAR_SIEM_WEBHOOK_URL` with `ZANSKAR_SIEM_WEBHOOK_SECRET` (signed JSON). These are
-  being added alongside this chart and are described in the configuration reference;
-  pass them through `config.extraEnv` / `config.extraEnvFrom`.
-- Verify the audit chain on a schedule: `zanskar audit verify` from a CronJob.
-- Keep guacd at 1.6 or newer (certificate pinning, ADR 0012); Dependabot tracks the
-  compose image, and `guacd.image.tag` in the chart.

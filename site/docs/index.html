@@ -76,7 +76,7 @@ zanskar version</code></pre></div></div>
     <div data-panel="rpm" hidden><div class="code-block"><button type="button" class="copy" aria-label="Copy package install commands (rpm)">Copy</button><pre><code>sudo rpm -i zanskar_${V}_linux_amd64.rpm
 zanskar version</code></pre></div></div></div>
     <h3 id="init">Configure with <code>zanskar init</code></h3>
-    <p><code>zanskar init</code> writes <code>/etc/zanskar/env</code> (mode 0600), generates the master key, and prints the exact next commands with your paths filled in. Interactively it asks for the listen address, TLS mode, data directory, guacd, MFA and logging. Non-interactively it takes flags, which suits cloud-init and Ansible.</p>
+    <p><code>zanskar init</code> writes <code>/etc/zanskar/env</code> (owned by root, readable by the <code>zanskar</code> group only, mode 0640), generates the master key, and prints the exact next commands with your paths filled in. Interactively it asks for the listen address, TLS mode, data directory, guacd, MFA and logging. Non-interactively it takes flags, which suits cloud-init and Ansible.</p>
     <p><strong>Interactive.</strong> Answers each question in turn; the defaults are the recommended setup.</p>
     <div class="code-block"><button type="button" class="copy" aria-label="Copy the interactive init command">Copy</button><pre><code>sudo zanskar init</code></pre></div>
     <p><strong>The default, non-interactively.</strong> HTTPS on 443 with a managed certificate (self-signed until you upload one in Settings), and plain HTTP on 80 redirected there.</p>

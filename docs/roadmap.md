@@ -137,7 +137,7 @@ loss, admin enrollment and instance views. Also: SIEM export of the audit chain 
 JSON over syslog TCP/TLS, HMAC-signed HTTPS webhook; at-least-once with per-sink
 checkpoints), S3-compatible recording storage for multi-gateway deployments, a Helm chart
 with hardened pods, guacd isolation and a pre-upgrade migrate hook, and docs/deploy.md
-covering topology, HA and its current per-pod limitations.
+covering topology and why the gateway runs as a single instance for now.
 
 Phase 3 is complete. Known limitation carried forward: admin terminate and auditor
 shadowing act only on sessions hosted by the pod that receives the request; a cross-pod

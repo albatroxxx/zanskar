@@ -2,14 +2,17 @@ import { Route } from 'react-router-dom'
 import { Events } from './Events'
 import { Recordings } from './Recordings'
 import { Player } from './Player'
+import { Sessions } from '../admin/Sessions'
 
-// Auditor portal: read-only review of the audit chain and session recordings.
+// Auditor portal: read-only review of the audit chain, session recordings and
+// live sessions, which an auditor can watch but not end.
 // Every read here is itself audited.
 export const auditRoutes = (
   <>
     <Route index element={<Events />} />
     <Route path="recordings" element={<Recordings />} />
     <Route path="recordings/:id" element={<Player />} />
+    <Route path="sessions" element={<Sessions />} />
   </>
 )
 

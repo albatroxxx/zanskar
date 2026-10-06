@@ -31,14 +31,23 @@ if [ "$fresh" = 1 ] && [ ! -f /etc/zanskar/env ]; then
 
 Zanskar is installed but not started. To configure and start it:
 
-  sudo zanskar init                      # writes /etc/zanskar/env (master key, TLS, paths)
+  # 1. Write /etc/zanskar/env (master key, TLS, paths). It prints the next steps.
+  sudo zanskar init
+
+  # 2. Apply migrations and create the first admin, as the zanskar user so it
+  #    owns the database files. admin create asks for the password twice
+  #    without echo; keep it off the command line (shell history).
+  sudo bash -c 'set -a; . /etc/zanskar/env; set +a; \
+    runuser -u zanskar -- zanskar migrate && \
+    runuser -u zanskar -- zanskar admin create --username admin --name "Your Name"'
+
+  # 3. Start the service.
   sudo systemctl enable --now zanskar
 
 By default the gateway then serves HTTPS on 443 with a self-signed certificate
 (port 80 redirects there); upload a real certificate in Settings, or run
-`zanskar init -behind-proxy` to sit behind Caddy/nginx instead. Or copy
-/etc/zanskar/env.example to /etc/zanskar/env, edit it, then enable the service.
-See /usr/share/doc/zanskar or https://github.com/albatroxxx/zanskar.
+`zanskar init -behind-proxy` to sit behind Caddy/nginx instead.
+Install guide: https://albatroxxx.github.io/zanskar/docs/
 
 MSG
 fi
