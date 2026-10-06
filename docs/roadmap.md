@@ -23,9 +23,10 @@ What the project intends to do, in order. Dates are targets; the order matters m
 2. **1.2.x maintenance** (Q4 2026). SPDX SBOMs, SLSA level 3 provenance and reproducible
    packages in every release (since 1.2.1); fixes found in use; test coverage at 80% (reached
    in 1.2.2).
-3. **Restricted admin CLI** (Q1 2027). A console-side CLI that runs allow-listed `zanskar`
-   operations inside the gateway, never a system shell, with every command audited, and a
-   reference of every command. An ADR comes first.
+3. **Restricted admin CLI**: done in 1.3.0. A command line inside the admin console that runs
+   only Zanskar commands, through the API's own permission checks, opened with a fresh
+   authenticator code and audited line by line ([ADR 0027](adr/0027-restricted-console-cli.md),
+   [command reference](console-cli.md)).
 4. **Phase 4, enterprise** (2027). The cross-pod control channel that makes high availability and
    the Helm chart supported; SAML and SCIM; WebAuthn; access reviews and delegated or multi-step
    approvers; GCP managed instance groups and Azure scale sets.
