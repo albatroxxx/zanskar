@@ -129,7 +129,11 @@ func TestConsoleCLIEndToEnd(t *testing.T) {
 	if code, out = c.call("POST", "/api/v1/admin/cli/unlock", map[string]string{"code": "000000"}); code != http.StatusUnprocessableEntity {
 		t.Fatalf("wrong unlock code: %d %v", code, out)
 	}
-	if code, out = c.call("POST", "/api/v1/admin/cli/unlock", map[string]string{"code": now}); code != http.StatusOK {
+	if code, out = c.call("POST", "/api/v1/admin/cli/unlock", map[string]string{"code": now}); code != http.StatusUnprocessableEntity {
+		t.Fatalf("unlock with the code that confirmed enrolment: %d %v, want 422: a code works once", code, out)
+	}
+	next, _ := totp.GenerateCode(secret, time.Now().Add(30*time.Second))
+	if code, out = c.call("POST", "/api/v1/admin/cli/unlock", map[string]string{"code": next}); code != http.StatusOK {
 		t.Fatalf("unlock: %d %v", code, out)
 	}
 

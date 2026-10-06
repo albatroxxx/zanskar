@@ -44,6 +44,8 @@ group('command line events', () => {
     [{ action: 'cli.unlock' }, 'opened the command line'],
     [{ action: 'cli.unlock', details: { recovery_code_used: true } }, 'opened the command line with a recovery code'],
     [{ action: 'cli.unlock', outcome: 'failure', details: { reason: 'wrong code' } }, 'failed to open the command line (wrong code)'],
+    [{ action: 'cli.unlock', outcome: 'failure', details: { reason: 'code already used' } }, 'failed to open the command line (code already used)'],
+    [{ action: 'user.mfa.verify', outcome: 'failure', details: { reason: 'code_reused' } }, 'failed the second factor (a code already used)'],
     [{ action: 'cli.command', details: { line: 'sessions --live', result: 'ok' } }, 'ran “sessions --live” on the command line'],
     [{ action: 'cli.command', details: { line: 'restart', result: 'confirm_requested' } }, 'ran “restart” on the command line (asked to confirm)'],
     [{ action: 'cli.command', outcome: 'failure', details: { line: 'rm -rf /', result: 'unknown' } }, 'ran “rm -rf /” on the command line (not a command)'],

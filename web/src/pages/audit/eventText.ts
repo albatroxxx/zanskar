@@ -171,7 +171,9 @@ export function describe(ev: AuditEvent): string {
     case 'user.logout': return 'signed out'
     case 'user.mfa.enroll': return 'started enrolling an authenticator'
     case 'user.mfa.confirm': return fail ? 'failed to confirm an authenticator' : 'enrolled an authenticator'
-    case 'user.mfa.verify': return fail ? 'failed the second factor' : 'passed the second factor'
+    case 'user.mfa.verify':
+      if (!fail) return 'passed the second factor'
+      return reason === 'code_reused' ? 'failed the second factor (a code already used)' : 'failed the second factor'
     case 'session.connect': return fail ? `was refused ${proto} access to ${name}${reason ? ` (${words(reason)})` : ''}` : `requested ${proto} access to ${name}`
     case 'session.start': return s ? `opened a ${s.proto} session on ${s.target}` : `opened a session ${name}`
     case 'session.end': return s ? `ended the ${s.proto} session on ${s.target}${reason ? ` (${words(reason)})` : ''}` : `ended session ${name}`

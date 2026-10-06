@@ -237,7 +237,12 @@ func TestTOTPFlow(t *testing.T) {
 	if v := e.do("POST", "/api/v1/auth/mfa/totp/verify", map[string]string{"code": "123456"}, r.cookie, hdr); v.code != 401 {
 		t.Fatalf("wrong code: %d", v.code)
 	}
-	code, _ = totp.GenerateCode(secret, time.Now())
+	// The code that confirmed enrolment has been used; it is refused even
+	// though it is still inside its window. The next one works.
+	if v := e.do("POST", "/api/v1/auth/mfa/totp/verify", map[string]string{"code": code}, r.cookie, hdr); v.code != 401 {
+		t.Fatalf("a code used once already: %d, want 401", v.code)
+	}
+	code, _ = totp.GenerateCode(secret, time.Now().Add(30*time.Second))
 	v := e.do("POST", "/api/v1/auth/mfa/totp/verify", map[string]string{"code": code}, r.cookie, hdr)
 	if v.code != 200 || v.body["status"] != "ok" {
 		t.Fatalf("verify: %d %v", v.code, v.body)
@@ -459,7 +464,8 @@ func TestPasswordChangeAfterSecondFactor(t *testing.T) {
 	if me := e.do("GET", "/api/v1/auth/me", nil, r.cookie, nil); me.body["pending"] != "verify" {
 		t.Fatalf("verify is owed first: %v", me.body)
 	}
-	code, _ = totp.GenerateCode(enr.body["secret"].(string), time.Now())
+	// The confirm code is spent; the next step's code is not.
+	code, _ = totp.GenerateCode(enr.body["secret"].(string), time.Now().Add(30*time.Second))
 	if v := e.do("POST", "/api/v1/auth/mfa/totp/verify", map[string]string{"code": code}, r.cookie, hdr); v.code != 200 {
 		t.Fatalf("verify: %d %v", v.code, v.body)
 	}

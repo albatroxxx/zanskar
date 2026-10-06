@@ -71,7 +71,7 @@ requires it. That fact drives the network isolation requirement on guacd in sect
 |---|---|---|
 | Spoofing | Credential stuffing and password spraying against the login endpoint | Argon2id hashing, per-account and per-IP rate limiting, progressive lockout, mandatory MFA for admin and auditor, MFA available to all |
 | Spoofing | Stolen session cookie reused from another machine | Opaque 256-bit random tokens stored hashed, `Secure`, `HttpOnly`, `SameSite=Strict`, absolute and idle expiry, binding to the originating IP range is optional per deployment |
-| Spoofing | Phishing of TOTP codes | WebAuthn offered as phishing-resistant second factor; TOTP codes single-use with a short replay window |
+| Spoofing | Phishing or shoulder-surfing of TOTP codes | A code works once: the gateway keeps the last accepted 30-second step per user and refuses that step and every earlier one (RFC 6238 section 5.2), so a code read over a shoulder or a screen share cannot be replayed inside its window; a reused code is audited as such. A real-time phishing proxy can still relay a fresh code; WebAuthn, the phishing-resistant factor, is planned (roadmap phase 4) and not yet built |
 | Tampering | Cross-site request forgery against state-changing endpoints | CSRF token on every non-GET request, `SameSite=Strict`, `Origin` header verification on WebSocket upgrade |
 | Tampering | Cross-site scripting through target names, usernames, or terminal output | Strict Content Security Policy with no inline scripts, output encoding in the SPA, terminal rendering through xterm.js which does not interpret HTML |
 | Repudiation | User denies having run a session | Every connect, disconnect, and input stream is recorded and linked to the authenticated user in the audit log |
@@ -148,7 +148,7 @@ threat model update in the same change.
 | Control | Detail | Threats addressed |
 |---|---|---|
 | Argon2id password hashing | Parameters at or above OWASP recommendation, per-user salt, constant-time comparison | A1 credential stuffing, offline cracking after a database leak |
-| TOTP and WebAuthn MFA | Required for `admin` and `auditor`, available to `user`, enforceable by policy | A1, phishing |
+| TOTP MFA, each code accepted once | Required for `admin` and `auditor`, available to `user`, enforceable by policy; WebAuthn planned | A1, phishing, code replay |
 | Envelope encryption | Per-secret DEK, AES-256-GCM, DEKs wrapped by a KEK from a local master key, AWS KMS, or Vault Transit. See ADR 0007 | Database leak, backup leak |
 | Hash-chained audit log | SHA-256 chain over canonical JSON, append-only, external anchors. See ADR 0008 | A3 track covering, database tampering |
 | Host key and certificate pinning | TOFU at enrollment, admin approval, change blocks connections | A4, A6 |

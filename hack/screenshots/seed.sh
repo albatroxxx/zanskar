@@ -37,7 +37,9 @@ o=h[-1]&15; print("%06d"%((struct.unpack(">I",h[o:o+4])[0]&0x7fffffff)%1000000))
 SECRET=$(api -X POST "$B/auth/mfa/totp/enroll" | jget 'd["secret"]')
 CSRF=$(api -X POST "$B/auth/mfa/totp/confirm" -d "{\"code\":\"$(totp "$SECRET")\"}" | jget 'd["csrf_token"]')
 # Open it now, so its audit event sits below the ones the Events shot shows;
-# it stays open for 15 idle minutes, far longer than the shots take.
+# it stays open for 15 idle minutes, far longer than the shots take. A code
+# works once, so wait for the authenticator's next one.
+sleep $((30 - $(date +%s) % 30 + 1))
 api -X POST "$B/admin/cli/unlock" -d "{\"code\":\"$(totp "$SECRET")\"}" >/dev/null
 
 # People and groups.
