@@ -4,7 +4,7 @@ Date: 2026-10-06
 
 ## Status
 
-Proposed.
+Accepted on 2026-10-06; build parked until the project owner resumes it.
 
 ## Context
 
