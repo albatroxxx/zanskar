@@ -106,7 +106,7 @@ export function MyAccess() {
                 <tr key={r.id}>
                   <td className="muted">{fmtTime(r.created_at)}</td>
                   <td><strong>{name(r)}</strong></td>
-                  <td>{r.protocol.toUpperCase()}</td>
+                  <td>{protocolName(r.protocol)}</td>
                   <td>{r.reason}{r.extends_request_id && <> <Badge tone="warn">extension</Badge></>}{r.decision_note && <div className="muted">Note: {r.decision_note}</div>}</td>
                   <td><Badge tone={tone[r.status]}>{r.status}</Badge></td>
                   <td>{r.approved_minutes ? <>{r.approved_minutes} min{r.approved_minutes !== r.requested_minutes && <span className="muted"> (asked {r.requested_minutes})</span>}</> : <span className="muted">{r.requested_minutes} min asked</span>}</td>
@@ -121,7 +121,7 @@ export function MyAccess() {
 
       {extending && (
         <Modal title={`Extend access to ${name(extending)}`} onClose={() => setExtending(null)}>
-          <p className="muted">Your current {extending.protocol.toUpperCase()} grant runs until {extending.expires_at ? fmtTime(extending.expires_at) : '—'}. If an administrator approves while this grant is still active, the extension starts when it ends, so there is no gap; approved after it has ended, the extension starts at approval.</p>
+          <p className="muted">Your current {protocolName(extending.protocol)} grant runs until {extending.expires_at ? fmtTime(extending.expires_at) : '—'}. If an administrator approves while this grant is still active, the extension starts when it ends, so there is no gap; approved after it has ended, the extension starts at approval.</p>
           <form onSubmit={(e) => void submitExtend(e)}>
             <Field label="Extend by (minutes)" hint="Capped by the policy">
               <input id="ext-minutes" type="number" min={1} value={ext.minutes} autoFocus onChange={(e) => setExt({ ...ext, minutes: Number(e.target.value) })} required />

@@ -4,7 +4,7 @@ import { Terminal as XTerm } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { WebLinksAddon } from '@xterm/addon-web-links'
 import '@xterm/xterm/css/xterm.css'
-import { fmtSeconds } from '../../api/format'
+import { fmtSeconds, protocolName } from '../../api/format'
 import { Modal } from '../../components/ui'
 import { FailoverDialog } from './Failover'
 import { TerminalFiles } from './TerminalFiles'
@@ -165,7 +165,7 @@ function TerminalSession({ state }: { state: TerminalState }) {
         <span className="name">{state.target}</span>
         {state.instance_label && <span className="stat mono">{state.instance_label}</span>}
         {state.switched_from && <span className="stat switched">switched from {state.switched_from}</span>}
-        <span className="stat">{state.protocol.toUpperCase()}</span>
+        <span className="stat">{protocolName(state.protocol)}</span>
         <span className="stat">{status === 'connecting' ? 'connecting…' : (ended ? 'ran for ' : 'elapsed ') + fmtSeconds(elapsed)}</span>
         {!ended && <span className={'stat' + (idle > 600 ? ' warn' : '')}>idle {fmtSeconds(idle)}</span>}
         <span className="grow" />
@@ -194,7 +194,7 @@ function TerminalSession({ state }: { state: TerminalState }) {
           <p>{reasonText[ended.reason] ?? `The session ended: ${ended.reason.replace(/_/g, ' ')}.`}</p>
           {ended.msg && <p className="muted">{ended.msg}</p>}
           <p className="muted">
-            {state.target} · {state.protocol.toUpperCase()} · ran for {fmtSeconds(elapsed)}. The recording is kept for as long as the retention policy says.
+            {state.target} · {protocolName(state.protocol)} · ran for {fmtSeconds(elapsed)}. The recording is kept for as long as the retention policy says.
           </p>
           <div className="actions">
             <button className="btn primary" onClick={() => nav('/')}>Back to targets</button>
