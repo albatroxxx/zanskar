@@ -30,6 +30,16 @@ CSRF=$(login admin 'screenshot admin passphrase' | jget 'd["csrf_token"]')
 api() { curl -s -b "$DIR/admin.jar" -H "X-CSRF-Token: $CSRF" -H 'Content-Type: application/json' "$@"; }
 id() { jget 'd.get("id") or d'; }
 
+# The admin enrols an authenticator, so the console's command line opens.
+totp() { python3 -c 'import base64,hmac,struct,sys,time
+k=base64.b32decode(sys.argv[1]+"="*(-len(sys.argv[1])%8)); h=hmac.digest(k,struct.pack(">Q",int(time.time())//30),"sha1")
+o=h[-1]&15; print("%06d"%((struct.unpack(">I",h[o:o+4])[0]&0x7fffffff)%1000000))' "$1"; }
+SECRET=$(api -X POST "$B/auth/mfa/totp/enroll" | jget 'd["secret"]')
+CSRF=$(api -X POST "$B/auth/mfa/totp/confirm" -d "{\"code\":\"$(totp "$SECRET")\"}" | jget 'd["csrf_token"]')
+# Open it now, so its audit event sits below the ones the Events shot shows;
+# it stays open for 15 idle minutes, far longer than the shots take.
+api -X POST "$B/admin/cli/unlock" -d "{\"code\":\"$(totp "$SECRET")\"}" >/dev/null
+
 # People and groups.
 ALICE=$(api -X POST "$B/users" -d '{"username":"alice","display_name":"Alice Moreau","password":"alice temporary pw 1","roles":["user"]}' | id)
 CAROL=$(api -X POST "$B/users" -d '{"username":"carol","display_name":"Carol Diaz","password":"carol temporary pw 1","roles":["user"]}' | id)
