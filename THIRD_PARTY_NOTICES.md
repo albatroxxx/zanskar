@@ -11454,7 +11454,7 @@ SOFTWARE.
 
 ### seroval
 
-* Version: `1.5.6`
+* Version: `1.6.8`
 * Declared license: `MIT`
 
 ```
@@ -11470,7 +11470,7 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 
 ### seroval-plugins
 
-* Version: `1.5.6`
+* Version: `1.6.8`
 * Declared license: `MIT`
 
 ```
