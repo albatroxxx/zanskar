@@ -31,6 +31,10 @@ jobs:
         with:
           results_file: results.sarif
           results_format: sarif
+          # Read-only fine-grained token (Administration: read) so the
+          # Branch-Protection check can read the classic protection rules,
+          # which the default token cannot. Runs only on main and the schedule.
+          repo_token: ${{ secrets.SCORECARD_TOKEN }}
           publish_results: true
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
