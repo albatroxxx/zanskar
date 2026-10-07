@@ -6,7 +6,7 @@ body:
   - type: markdown
     attributes:
       value: |
-        Feature tests live on the [Zanskar feature testing](https://github.com/users/albatroxxx/projects/2) board; how to claim and report one is in the pinned "How to test Zanskar" issue.
+        Feature tests live on the [Zanskar](https://github.com/users/albatroxxx/projects/2) board; how to claim and report one is in the pinned "How to test Zanskar" issue.
         This issue is public: **never** post passwords, keys, codes, real addresses or hostnames. A security problem goes through [SECURITY.md](https://github.com/albatroxxx/zanskar/blob/main/SECURITY.md), not here.
   - type: dropdown
     id: area
