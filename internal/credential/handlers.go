@@ -177,20 +177,30 @@ func (h *AdminHandler) update(w http.ResponseWriter, r *http.Request) {
 	if req.CertificatePrincipals != nil {
 		m.CertificatePrincipals = *req.CertificatePrincipals
 	}
+	// A secret in the update body means rotate, as the API spec describes. It
+	// is checked first, so a secret that would be refused saves nothing.
+	rotate := req.Password != "" || req.PrivateKey != ""
+	if rotate {
+		if err := h.Vault.CheckRotate(existing, req.secret()); err != nil {
+			h.writeErr(w, r, err)
+			return
+		}
+	}
 	c, err := h.Vault.Update(r.Context(), id, m)
 	if err != nil {
 		h.writeErr(w, r, err)
 		return
 	}
-	// A secret in the update body means rotate, as the API spec describes.
-	if req.Password != "" || req.PrivateKey != "" {
+	// Audited as soon as it is saved, so a rotation that fails after this
+	// still leaves the saved change on the record.
+	h.record(r, "credential.update", c, map[string]any{"type": c.Type, "mode": c.Mode, "name": c.Name, "certificate_principals": len(c.CertificatePrincipals)})
+	if rotate {
 		if c, err = h.Vault.Rotate(r.Context(), id, req.secret()); err != nil {
 			h.writeErr(w, r, err)
 			return
 		}
 		h.record(r, "credential.rotate", c, map[string]any{"type": c.Type, "mode": c.Mode, "name": c.Name})
 	}
-	h.record(r, "credential.update", c, map[string]any{"type": c.Type, "mode": c.Mode, "name": c.Name, "certificate_principals": len(c.CertificatePrincipals)})
 	httpx.WriteJSON(w, http.StatusOK, c)
 }
 

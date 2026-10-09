@@ -208,6 +208,12 @@ func runKeyRotateMaster(args []string) error {
 	// The env file must be the one this process runs with, or the service
 	// would be left with a key that opens nothing.
 	if *envFile != "" {
+		// masterKeyFrom reads a missing file as one with no key; say which.
+		f, err := os.Open(*envFile) // #nosec G304 -- the operator names the env file
+		if err != nil {
+			return fmt.Errorf("cannot read the env file: %w", err)
+		}
+		_ = f.Close()
 		current := masterKeyFrom(*envFile)
 		if current == "" {
 			return fmt.Errorf("%s has no ZANSKAR_MASTER_KEY line", *envFile)

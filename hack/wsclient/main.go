@@ -67,7 +67,9 @@ func main() {
 			}
 			continue
 		}
-		fmt.Println("control:", string(data))
+		// Quoted: a control frame is whatever the server sent, and printed
+		// raw a newline or escape sequence in it could forge output lines.
+		fmt.Printf("control: %q\n", data)
 		if strings.Contains(string(data), `"end"`) {
 			break
 		}
