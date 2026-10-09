@@ -154,27 +154,8 @@ func (h *Handler) getRecording(w http.ResponseWriter, r *http.Request) {
 // streamRecording sends the raw recording. Every stream is a recorded view
 // and an audit event naming the viewer.
 func (h *Handler) streamRecording(w http.ResponseWriter, r *http.Request) {
-	rec, err := h.Repo.GetRecording(r.Context(), r.PathValue("id"))
-	if err != nil {
-		h.fail(w, r, err)
-		return
-	}
-	if rec.PurgedAt != nil {
-		httpx.WriteError(w, http.StatusGone, "purged", "this recording was deleted by the retention policy")
-		return
-	}
-	p, _ := auth.FromContext(r.Context())
-	ip := auth.ClientIP(r)
-	if err := h.Repo.RecordView(r.Context(), rec.ID, p.User.ID, ip); err != nil {
-		h.fail(w, r, err)
-		return
-	}
-	h.record(r, audit.Actor{UserID: p.User.ID, IP: ip}.Event("recording.view", "recording", rec.ID, audit.Success,
-		map[string]any{"session_id": rec.SessionID, "format": rec.Format}))
-	rc, err := h.Storage.Open(r.Context(), rec.StorageURI)
-	if err != nil {
-		h.Log.Error("open recording", "id", rec.ID, "err", err)
-		httpx.WriteError(w, http.StatusNotFound, "not_found", "recording data unavailable")
+	rec, _, rc, ok := h.openForReview(w, r, "recording.view", nil)
+	if !ok {
 		return
 	}
 	defer func() { _ = rc.Close() }()
@@ -191,36 +172,45 @@ func (h *Handler) streamRecording(w http.ResponseWriter, r *http.Request) {
 }
 
 // openForReview loads a recording for a reviewer, refuses one that retention
-// purged, records the view and writes the audit event with the given action
-// and details. It returns the recording, its session (nil when unknown) and
-// whether the caller may go on; on false the response is already written.
-func (h *Handler) openForReview(w http.ResponseWriter, r *http.Request, action string, details map[string]any) (*Recording, *Session, bool) {
+// purged, opens its data, and only then records the view and writes the
+// audit event with the given action and details, so a recording whose data
+// is gone is not logged as seen. It returns the recording, its session (nil
+// when unknown), the open data, which the caller closes, and whether the
+// caller may go on; on false the response is already written.
+func (h *Handler) openForReview(w http.ResponseWriter, r *http.Request, action string, details map[string]any) (*Recording, *Session, io.ReadCloser, bool) {
 	rec, err := h.Repo.GetRecording(r.Context(), r.PathValue("id"))
 	if err != nil {
 		h.fail(w, r, err)
-		return nil, nil, false
+		return nil, nil, nil, false
 	}
 	if rec.PurgedAt != nil {
 		httpx.WriteError(w, http.StatusGone, "purged", "this recording was deleted by the retention policy")
-		return nil, nil, false
+		return nil, nil, nil, false
 	}
 	sess, err := h.Repo.Get(r.Context(), rec.SessionID)
 	if err != nil && !errors.Is(err, ErrNotFound) {
 		h.fail(w, r, err)
-		return nil, nil, false
+		return nil, nil, nil, false
+	}
+	rc, err := h.Storage.Open(r.Context(), rec.StorageURI)
+	if err != nil {
+		h.Log.Error("open recording", "id", rec.ID, "err", err)
+		httpx.WriteError(w, http.StatusNotFound, "not_found", "recording data unavailable")
+		return nil, nil, nil, false
 	}
 	p, _ := auth.FromContext(r.Context())
 	ip := auth.ClientIP(r)
 	if err := h.Repo.RecordView(r.Context(), rec.ID, p.User.ID, ip); err != nil {
+		_ = rc.Close()
 		h.fail(w, r, err)
-		return nil, nil, false
+		return nil, nil, nil, false
 	}
 	d := map[string]any{"session_id": rec.SessionID, "format": rec.Format}
 	for k, v := range details {
 		d[k] = v
 	}
 	h.record(r, audit.Actor{UserID: p.User.ID, IP: ip}.Event(action, "recording", rec.ID, audit.Success, d))
-	return rec, sess, true
+	return rec, sess, rc, true
 }
 
 // downloadName builds the attachment file name from what a reviewer knows
@@ -264,14 +254,8 @@ func downloadName(rec *Recording, sess *Session, ext string) string {
 // downloadRecording sends the raw recording as an attachment: the asciicast
 // file for a terminal session, the guacd instruction stream for a desktop.
 func (h *Handler) downloadRecording(w http.ResponseWriter, r *http.Request) {
-	rec, sess, ok := h.openForReview(w, r, "recording.download", map[string]any{"kind": "raw"})
+	rec, sess, rc, ok := h.openForReview(w, r, "recording.download", map[string]any{"kind": "raw"})
 	if !ok {
-		return
-	}
-	rc, err := h.Storage.Open(r.Context(), rec.StorageURI)
-	if err != nil {
-		h.Log.Error("open recording", "id", rec.ID, "err", err)
-		httpx.WriteError(w, http.StatusNotFound, "not_found", "recording data unavailable")
 		return
 	}
 	defer func() { _ = rc.Close() }()
@@ -302,14 +286,8 @@ func (h *Handler) downloadTranscript(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, http.StatusConflict, "not_a_terminal_recording", "a command transcript exists for terminal sessions only; download the desktop recording instead")
 		return
 	}
-	rec, sess, ok := h.openForReview(w, r, "recording.download", map[string]any{"kind": "transcript"})
+	rec, sess, rc, ok := h.openForReview(w, r, "recording.download", map[string]any{"kind": "transcript"})
 	if !ok {
-		return
-	}
-	rc, err := h.Storage.Open(r.Context(), rec.StorageURI)
-	if err != nil {
-		h.Log.Error("open recording", "id", rec.ID, "err", err)
-		httpx.WriteError(w, http.StatusNotFound, "not_found", "recording data unavailable")
 		return
 	}
 	markers, err := recording.Markers(rc)
