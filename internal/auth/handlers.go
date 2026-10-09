@@ -429,12 +429,19 @@ func (h *Handler) totpVerify(w http.ResponseWriter, r *http.Request) {
 				// A right code seen once already: someone may have read it.
 				details["reason"] = "code_reused"
 			}
-			if h.mfaFailure(p.Session.ID) {
+			ended := h.mfaFailure(p.Session.ID)
+			if ended {
 				_ = h.Sessions.Revoke(r.Context(), p.Session.ID)
 				h.Sessions.ClearCookie(w)
 				details["session_ended"] = true
 			}
 			h.record(r, h.actor(r).Event("user.mfa.verify", "user", p.User.ID, audit.Failure, details))
+			if ended {
+				// Its own code, so the console goes back to the password step
+				// instead of offering a code box that can no longer work.
+				WriteError(w, http.StatusUnauthorized, "sign_in_ended", "too many wrong codes; sign in again")
+				return
+			}
 			WriteError(w, http.StatusUnauthorized, "invalid_code", "invalid code")
 			return
 		}

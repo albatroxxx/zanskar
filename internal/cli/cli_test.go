@@ -482,3 +482,26 @@ func TestSettingSetRefusesOtherTypes(t *testing.T) {
 		t.Fatalf("a plain setting: %q %q %v", prompt, expect, err)
 	}
 }
+
+// TestSettingInstallTimeKey: a key set at install is named as such, with the
+// environment variable that changes it, rather than called unknown (#197).
+func TestSettingInstallTimeKey(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/v1/admin/settings", func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, `{"runtime":[{"key":"log.level","type":"enum","value":"info"}],`+
+			`"boot":[{"key":"log_format","title":"Log format","env_var":"ZANSKAR_LOG_FORMAT","value":"json","description":"json or text."}]}`)
+	})
+	x := &run{parsed: parsed{args: []string{"log_format"}, rest: "text"}, out: &out{}, resolved: map[string]string{},
+		api: &caller{mux: mux, ctx: context.Background()}}
+	_, _, err := planSettingSet(x)
+	if err == nil || !strings.Contains(err.Error(), "set at install") || !strings.Contains(err.Error(), "ZANSKAR_LOG_FORMAT") {
+		t.Fatalf("setting set on an install-time key: %v", err)
+	}
+	if err := cmdSettingGet(x); err != nil {
+		t.Fatalf("setting get on an install-time key: %v", err)
+	}
+	x.args = []string{"no.such"}
+	if _, _, err := planSettingSet(x); err == nil || !strings.Contains(err.Error(), `no setting "no.such"`) {
+		t.Fatalf("an unknown key: %v", err)
+	}
+}

@@ -140,6 +140,14 @@ export function query(params: Record<string, string | number | boolean | undefin
   return s ? '?' + s : ''
 }
 
+/**
+ * True when a sign-in step was refused because the half-finished sign-in is
+ * gone (too many wrong codes, or it expired), as opposed to a wrong code.
+ */
+export function signInEnded(e: unknown): boolean {
+  return e instanceof ApiError && e.status === 401 && e.code !== 'invalid_code'
+}
+
 export function errorMessage(err: unknown): string {
   // An expired session is announced once, by the session dialog. Repeating it
   // as an error banner inside the page would only be noise behind that dialog.

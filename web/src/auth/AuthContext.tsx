@@ -1,5 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
-import { api, setCsrf } from '../api/client'
+import { api, setCsrf, signInEnded } from '../api/client'
 import type { LoginResponse, Me, Role, User } from '../api/types'
 
 /**
@@ -82,22 +82,43 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return res
   }, [refresh])
 
+  // A 401 other than a wrong code means the half-finished sign-in is gone
+  // (too many wrong codes, or it expired): drop back to the password step
+  // rather than keep offering a code box that can no longer work.
+  const dropIfEnded = useCallback((e: unknown) => {
+    if (signInEnded(e)) {
+      setCsrf('')
+      setState({ status: 'anonymous', user: null, mfaEnrolled: false, pending: null })
+    }
+  }, [])
+
   const verifyTotp = useCallback(async (code: string) => {
-    const res = await api.post<LoginResponse>('/auth/mfa/totp/verify', { code })
-    if (res.csrf_token) setCsrf(res.csrf_token)
+    try {
+      const res = await api.post<LoginResponse>('/auth/mfa/totp/verify', { code })
+      if (res.csrf_token) setCsrf(res.csrf_token)
+    } catch (e) {
+      dropIfEnded(e)
+      throw e
+    }
     await refresh()
-  }, [refresh])
+  }, [refresh, dropIfEnded])
 
   const enrollTotp = useCallback(async () => {
     return api.post<{ secret: string; otpauth_url: string }>('/auth/mfa/totp/enroll')
   }, [])
 
   const confirmTotp = useCallback(async (code: string) => {
-    const res = await api.post<{ recovery_codes: string[]; csrf_token?: string }>('/auth/mfa/totp/confirm', { code })
+    let res: { recovery_codes: string[]; csrf_token?: string }
+    try {
+      res = await api.post<{ recovery_codes: string[]; csrf_token?: string }>('/auth/mfa/totp/confirm', { code })
+    } catch (e) {
+      dropIfEnded(e)
+      throw e
+    }
     if (res.csrf_token) setCsrf(res.csrf_token)
     await refresh()
     return res.recovery_codes
-  }, [refresh])
+  }, [refresh, dropIfEnded])
 
   const logout = useCallback(async () => {
     try {

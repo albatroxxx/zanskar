@@ -197,7 +197,14 @@ paths:
               schema:
                 $ref: "#/components/schemas/Me"
         "401":
-          $ref: "#/components/responses/Unauthorized"
+          description: |
+            `invalid_code`: the code is wrong; try again. After five wrong codes the half-finished
+            sign-in ends and the reply's `code` is `sign_in_ended`: start again from the password.
+            `unauthenticated`: there is no sign-in in progress.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
         "429":
           $ref: "#/components/responses/RateLimited"
   /auth/password:

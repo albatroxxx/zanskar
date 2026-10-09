@@ -815,26 +815,48 @@ func cmdSettings(x *run) error {
 	return nil
 }
 
-func (x *run) setting() (obj, error) {
+// setting finds the key among the runtime settings. A key that is set at
+// install comes back as boot, so get can show it and set can say where it
+// is changed instead of claiming no such setting exists.
+func (x *run) setting() (r obj, boot bool, err error) {
 	key := x.args[0]
 	var s struct {
 		Runtime []obj `json:"runtime"`
+		Boot    []obj `json:"boot"`
 	}
 	if err := x.api.get("/admin/settings", &s); err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	for _, r := range s.Runtime {
 		if str(r, "key") == key {
-			return r, nil
+			return r, false, nil
 		}
 	}
-	return nil, usagef("no runtime setting %q; type settings to list them", key)
+	for _, r := range s.Boot {
+		if str(r, "key") == key {
+			return r, true, nil
+		}
+	}
+	return nil, false, usagef("no setting %q; type settings to list them", key)
+}
+
+// bootRefusal says where an install-time setting is changed.
+func bootRefusal(r obj) error {
+	return usagef("%s (%s) is set at install: edit %s in the service's environment file and restart the gateway",
+		str(r, "title"), str(r, "key"), str(r, "env_var"))
 }
 
 func cmdSettingGet(x *run) error {
-	r, err := x.setting()
+	r, boot, err := x.setting()
 	if err != nil {
 		return err
+	}
+	if boot {
+		x.out.pairs([][2]string{
+			{"key", str(r, "key")}, {"title", str(r, "title")}, {"value", str(r, "value")},
+			{"from", "install (" + str(r, "env_var") + ")"}, {"about", str(r, "description")},
+		})
+		return nil
 	}
 	x.out.pairs([][2]string{
 		{"key", str(r, "key")}, {"title", str(r, "title")}, {"value", str(r, "value")}, {"from", str(r, "source")},
@@ -847,9 +869,12 @@ func planSettingSet(x *run) (string, string, error) {
 	if x.rest == "" {
 		return "", "", usagef("usage: setting set <key> <value>")
 	}
-	r, err := x.setting()
+	r, boot, err := x.setting()
 	if err != nil {
 		return "", "", err
+	}
+	if boot {
+		return "", "", bootRefusal(r)
 	}
 	// Only plain value types are set here. A setting of any other type, a
 	// secret one day, is refused, so that "no secrets on the command line"
