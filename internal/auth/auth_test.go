@@ -268,8 +268,13 @@ func TestTOTPFlow(t *testing.T) {
 	e.handler.MFAAttempts = 2
 	r = login()
 	hdr = map[string]string{"X-CSRF-Token": r.body["csrf_token"].(string)}
-	e.do("POST", "/api/v1/auth/mfa/totp/verify", map[string]string{"code": "000000"}, r.cookie, hdr)
-	e.do("POST", "/api/v1/auth/mfa/totp/verify", map[string]string{"code": "000000"}, r.cookie, hdr)
+	if v := e.do("POST", "/api/v1/auth/mfa/totp/verify", map[string]string{"code": "000000"}, r.cookie, hdr); v.code != 401 || v.body["code"] != "invalid_code" {
+		t.Fatalf("first wrong code: %d %v", v.code, v.body)
+	}
+	// The attempt that ends the sign-in says so (#205).
+	if v := e.do("POST", "/api/v1/auth/mfa/totp/verify", map[string]string{"code": "000000"}, r.cookie, hdr); v.code != 401 || v.body["code"] != "sign_in_ended" {
+		t.Fatalf("last wrong code: %d %v", v.code, v.body)
+	}
 	if v := e.do("POST", "/api/v1/auth/mfa/totp/verify", map[string]string{"code": code}, r.cookie, hdr); v.code != 401 || v.body["code"] != "unauthenticated" {
 		t.Fatalf("session should have been revoked, got %d %v", v.code, v.body)
 	}

@@ -2,7 +2,7 @@ import { useEffect, useState, type FormEvent } from 'react'
 import { Navigate, useLocation } from 'react-router-dom'
 import QRCode from 'qrcode'
 import { useAuth } from '../auth/AuthContext'
-import { api, errorMessage } from '../api/client'
+import { api, ApiError, errorMessage, signInEnded } from '../api/client'
 import { Alert, Field } from '../components/ui'
 
 type Step = 'password' | 'change' | 'verify' | 'enroll' | 'recovery'
@@ -96,6 +96,19 @@ export function Login() {
     }
   }
 
+  // A wrong code stays on the code step. A sign-in that has ended (#205)
+  // goes back to the password, saying why.
+  const afterCodeError = (e: unknown) => {
+    setCode('')
+    if (signInEnded(e)) {
+      setStep('password')
+      setEnroll(null)
+      setErr(e instanceof ApiError && e.code === 'sign_in_ended' ? 'Too many wrong codes. Sign in again.' : 'Your sign-in expired. Sign in again.')
+      return
+    }
+    setErr(errorMessage(e))
+  }
+
   const submitVerify = async (e: FormEvent) => {
     e.preventDefault()
     setBusy(true)
@@ -103,8 +116,7 @@ export function Login() {
     try {
       await auth.verifyTotp(code.trim())
     } catch (e) {
-      setErr(errorMessage(e))
-      setCode('')
+      afterCodeError(e)
     } finally {
       setBusy(false)
     }
@@ -119,8 +131,7 @@ export function Login() {
       setRecovery(codes)
       setStep('recovery')
     } catch (e) {
-      setErr(errorMessage(e))
-      setCode('')
+      afterCodeError(e)
     } finally {
       setBusy(false)
     }
