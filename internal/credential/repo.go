@@ -162,19 +162,43 @@ func (v *Vault) Update(ctx context.Context, id string, m Metadata) (*Credential,
 	return v.Get(ctx, id)
 }
 
+// rotatable refuses a credential whose secret is not replaced in place.
+func rotatable(c *Credential) error {
+	if c.Mode != ModeVaulted || c.Type == TypeEC2InstanceConnect {
+		return fmt.Errorf("%w: nothing to rotate for %s/%s", ErrInvalid, c.Type, c.Mode)
+	}
+	if c.Type == TypeSSHCA {
+		// Overwriting the authority in place breaks every session on a
+		// host that has not learned the new key yet (ADR 0022).
+		return fmt.Errorf("%w: a certificate authority is rotated in two steps: prepare the next key, then cut over", ErrInvalid)
+	}
+	return nil
+}
+
+// CheckRotate reports whether Rotate would accept s for c, changing nothing,
+// so a request that also edits the metadata can be refused before any of it
+// is saved.
+func (v *Vault) CheckRotate(c *Credential, s *Secret) error {
+	if err := rotatable(c); err != nil {
+		return err
+	}
+	cp := *c
+	p, err := validateAndPrepare(&cp, s)
+	if err != nil {
+		return err
+	}
+	crypto.Zero(p.plaintext)
+	return nil
+}
+
 // Rotate replaces the secret, re-derives the public key and stamps rotated_at.
 func (v *Vault) Rotate(ctx context.Context, id string, s *Secret) (*Credential, error) {
 	c, err := v.Get(ctx, id)
 	if err != nil {
 		return nil, err
 	}
-	if c.Mode != ModeVaulted || c.Type == TypeEC2InstanceConnect {
-		return nil, fmt.Errorf("%w: nothing to rotate for %s/%s", ErrInvalid, c.Type, c.Mode)
-	}
-	if c.Type == TypeSSHCA {
-		// Overwriting the authority in place breaks every session on a
-		// host that has not learned the new key yet (ADR 0022).
-		return nil, fmt.Errorf("%w: a certificate authority is rotated in two steps: prepare the next key, then cut over", ErrInvalid)
+	if err := rotatable(c); err != nil {
+		return nil, err
 	}
 	p, err := validateAndPrepare(c, s)
 	if err != nil {
