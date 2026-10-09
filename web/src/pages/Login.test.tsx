@@ -1,4 +1,4 @@
-import { cleanup, render, screen, waitFor } from '@testing-library/react'
+import { cleanup, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router-dom'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -10,9 +10,6 @@ afterEach(() => {
   cleanup()
   vi.restoreAllMocks()
 })
-
-// The login form's labels are not tied to their inputs, so find them by id.
-const input = (id: string) => document.getElementById(id) as HTMLInputElement | null
 
 const wrong = () => new ApiError(401, { code: 'invalid_code', message: 'invalid code' }, '401')
 const ended = () => new ApiError(401, { code: 'sign_in_ended', message: 'too many wrong codes; sign in again' }, '401')
@@ -35,27 +32,26 @@ async function atCodeStep(verify: () => Promise<never>) {
     </MemoryRouter>,
   )
   const user = userEvent.setup()
-  await waitFor(() => expect(input('username')).not.toBeNull())
-  await user.type(input('username')!, 'alice')
-  await user.type(input('password')!, 'a long enough passphrase{Enter}')
-  await waitFor(() => expect(input('totp')).not.toBeNull())
+  await user.type(await screen.findByLabelText('Username'), 'alice')
+  await user.type(screen.getByLabelText('Password'), 'a long enough passphrase{Enter}')
+  await screen.findByLabelText('Code')
   return user
 }
 
 describe('Login', () => {
   it('stays on the code step after a wrong code', async () => {
     const user = await atCodeStep(() => Promise.reject(wrong()))
-    await user.type(input('totp')!, '000000{Enter}')
+    await user.type(screen.getByLabelText('Code'), '000000{Enter}')
     expect((await screen.findByRole('alert')).textContent).toBe('invalid code')
-    expect(input('totp')).not.toBeNull()
+    expect(screen.getByLabelText('Code')).toBeDefined()
   })
 
   // #205: the attempt that ends the sign-in goes back to the password step.
   it('goes back to the password step when too many wrong codes end the sign-in', async () => {
     const user = await atCodeStep(() => Promise.reject(ended()))
-    await user.type(input('totp')!, '000000{Enter}')
+    await user.type(screen.getByLabelText('Code'), '000000{Enter}')
     expect((await screen.findByRole('alert')).textContent).toBe('Too many wrong codes. Sign in again.')
-    expect(input('totp')).toBeNull()
-    expect(input('username')).not.toBeNull()
+    expect(screen.queryByLabelText('Code')).toBeNull()
+    expect(screen.getByLabelText('Username')).toBeDefined()
   })
 })
