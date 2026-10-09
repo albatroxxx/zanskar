@@ -9638,7 +9638,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 ### golang.org/x/net
 
-* Version: `v0.58.0`
+* Version: `v0.60.0`
 
 ```
 Copyright 2009 The Go Authors.
