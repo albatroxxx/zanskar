@@ -181,11 +181,19 @@ func runRestore(args []string) error {
 	if err := os.MkdirAll(filepath.Dir(dbPath), 0o750); err != nil {
 		return err
 	}
+	// The snapshot is copied beside the database first and renamed over it
+	// only once complete, so a copy that fails (a full disk, say) leaves the
+	// current database in place rather than none.
+	tmp, err := copyBeside(snap, dbPath, 0o600)
+	if err != nil {
+		return fmt.Errorf("restore: place database: %w", err)
+	}
+	defer func() { _ = os.Remove(tmp) }()
 	// Remove WAL/SHM siblings so the restored file is authoritative.
-	for _, sfx := range []string{"", "-wal", "-shm"} {
+	for _, sfx := range []string{"-wal", "-shm"} {
 		_ = os.Remove(dbPath + sfx)
 	}
-	if err := copyFile(snap, dbPath, 0o600); err != nil {
+	if err := os.Rename(tmp, dbPath); err != nil {
 		return fmt.Errorf("restore: place database: %w", err)
 	}
 
@@ -241,6 +249,36 @@ func fileExists(p string) bool {
 	return err == nil && !info.IsDir()
 }
 
+// copyBeside copies src to a new temporary file in dst's directory, synced
+// to disk, and returns its name; the caller renames it over dst.
+func copyBeside(src, dst string, mode os.FileMode) (string, error) {
+	in, err := os.Open(src) // #nosec G304 -- src is inside our staging dir
+	if err != nil {
+		return "", err
+	}
+	defer func() { _ = in.Close() }()
+	out, err := os.CreateTemp(filepath.Dir(dst), ".zanskar-restore-*")
+	if err != nil {
+		return "", err
+	}
+	name := out.Name()
+	_, err = io.Copy(out, in) // #nosec G110 -- our own snapshot, not attacker input
+	if err == nil {
+		err = out.Chmod(mode)
+	}
+	if err == nil {
+		err = out.Sync()
+	}
+	if cerr := out.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil {
+		_ = os.Remove(name)
+		return "", err
+	}
+	return name, nil
+}
+
 func copyFile(src, dst string, mode os.FileMode) error {
 	in, err := os.Open(src) // #nosec G304 -- src is inside our staging dir
 	if err != nil {
@@ -280,12 +318,36 @@ func copyTree(src, dst string) error {
 	})
 }
 
+// writeTarGz writes the archive beside outPath and renames it into place
+// once complete, so a backup that fails leaves no partial archive that looks
+// like a real one, and an existing file at outPath is replaced only by a
+// finished archive.
 func writeTarGz(srcDir, outPath string) error {
-	f, err := os.OpenFile(outPath, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600) // #nosec G304 -- operator-chosen archive path
+	f, err := os.CreateTemp(filepath.Dir(outPath), ".zanskar-backup-*")
 	if err != nil {
 		return err
 	}
-	defer func() { _ = f.Close() }()
+	tmp := f.Name()
+	defer func() { _ = os.Remove(tmp) }()
+	if err := f.Chmod(0o600); err != nil {
+		_ = f.Close()
+		return err
+	}
+	if err := writeTarGzTo(f, srcDir); err != nil {
+		_ = f.Close()
+		return err
+	}
+	if err := f.Sync(); err != nil {
+		_ = f.Close()
+		return err
+	}
+	if err := f.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmp, outPath)
+}
+
+func writeTarGzTo(f *os.File, srcDir string) error {
 	gz := gzip.NewWriter(f)
 	tw := tar.NewWriter(gz)
 	walkErr := filepath.WalkDir(srcDir, func(path string, d os.DirEntry, err error) error {
@@ -328,10 +390,7 @@ func writeTarGz(srcDir, outPath string) error {
 		_ = gz.Close()
 		return err
 	}
-	if err := gz.Close(); err != nil {
-		return err
-	}
-	return f.Close()
+	return gz.Close()
 }
 
 // extractTarGz unpacks into destDir, refusing any entry that would escape it
