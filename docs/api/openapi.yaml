@@ -6,7 +6,7 @@ info:
   description: |
     Zanskar exposes a JSON API under `/api/v1` and its WebSocket endpoints under `/ws`.
     `info.version` is the API version, matching the `/api/v1` prefix, not the release version;
-    `GET /version` returns the running release.
+    `GET /version` returns the running release to a signed-in caller.
 
     ## Authentication
 
@@ -130,9 +130,13 @@ paths:
     get:
       tags: [system]
       summary: Version
-      description: Returns the release version only. No commit hash, build host, or dependency list.
-      security: []
+      description: >-
+        Returns the release version only, to any signed-in caller. No commit hash, build host,
+        or dependency list. Not answered without a session, so the release is not advertised to
+        whoever can reach the gateway.
       responses:
+        "401":
+          $ref: "#/components/responses/Unauthorized"
         "200":
           description: Version string.
           content:

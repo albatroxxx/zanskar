@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -87,5 +88,47 @@ func TestEveryErrorCarriesTheRequestID(t *testing.T) {
 				t.Errorf("%s: the log line should name the route and keep the error on one line:\n%s", path, logs.String())
 			}
 		}
+	}
+}
+
+// TestVersionNeedsASignedInCaller: /api/v1/version told anyone who could
+// reach the gateway which release it runs (L16), which is what a scanner
+// matches against advisories. It answers a signed-in caller now, such as the
+// console's command line; the sign-in page never showed it.
+func TestVersionNeedsASignedInCaller(t *testing.T) {
+	ctx := context.Background()
+	db, err := store.Open(ctx, config.DriverSQLite, "file::memory:?_pragma=foreign_keys(1)")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	if _, err := store.Migrate(ctx, db); err != nil {
+		t.Fatal(err)
+	}
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	users, sessions := user.NewRepo(db), auth.NewSessions(db, bytes.Repeat([]byte{7}, 32), false)
+	s := New(&config.Config{ListenAddr: "127.0.0.1:0"}, db, log, Deps{AuthMiddleware: &auth.Middleware{Sessions: sessions, Users: users, Log: log}})
+
+	rr := httptest.NewRecorder()
+	s.http.Handler.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/api/v1/version", nil))
+	if rr.Code != http.StatusUnauthorized || strings.Contains(rr.Body.String(), "version") {
+		t.Fatalf("anonymous: %d %s, want 401 without the version", rr.Code, rr.Body)
+	}
+
+	u := &user.User{Username: "alice", DisplayName: "Alice", Roles: []user.Role{user.RoleUser}}
+	if err := users.Create(ctx, u); err != nil {
+		t.Fatal(err)
+	}
+	tok, _, err := sessions.Create(ctx, u.ID, "192.0.2.1", "test", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/version", nil)
+	req.AddCookie(&http.Cookie{Name: auth.CookieName, Value: tok})
+	rr = httptest.NewRecorder()
+	s.http.Handler.ServeHTTP(rr, req)
+	var body map[string]string
+	if err := json.Unmarshal(rr.Body.Bytes(), &body); rr.Code != http.StatusOK || err != nil || body["version"] == "" {
+		t.Fatalf("signed in: %d %s", rr.Code, rr.Body)
 	}
 }

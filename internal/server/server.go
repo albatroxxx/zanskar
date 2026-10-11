@@ -59,7 +59,9 @@ func New(cfg *config.Config, db *store.DB, log *slog.Logger, deps Deps) *Server 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", s.handleHealthz)
 	mux.HandleFunc("GET /readyz", s.handleReadyz)
-	mux.HandleFunc("GET /api/v1/version", s.handleVersion)
+	// The release is for people signed in (the console's command line asks
+	// for it); told to anyone, it is what a scanner matches advisories by.
+	mux.Handle("GET /api/v1/version", auth.RequireAuth(http.HandlerFunc(s.handleVersion)))
 	mux.HandleFunc("/api/", s.handleNotFound)
 	mux.HandleFunc("/ws/", s.handleNotFound)
 	mux.Handle("/", spaHandler(web.FS()))
