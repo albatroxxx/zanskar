@@ -135,7 +135,7 @@ type loginResponse struct {
 func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
 	ip := ClientIP(r)
 	actor := audit.Actor{IP: ip}
-	if !h.loginLimiter.Allow(ip) {
+	if !h.loginLimiter.Allow(limiterKey(ip)) {
 		h.record(r, actor.Event("user.login", "user", "", audit.Failure, map[string]string{"reason": "rate_limited"}))
 		WriteError(w, http.StatusTooManyRequests, "rate_limited", "too many attempts; try again later")
 		return
@@ -169,7 +169,9 @@ func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
 				h.Log.Warn("external login error", "err", eerr)
 			}
 		}
-		user.BurnPasswordCheck(req.Password)
+		if !h.hashing(w, r, func() { user.BurnPasswordCheck(req.Password) }) {
+			return
+		}
 		h.record(r, actor.Event("user.login", "user", "", audit.Failure, map[string]string{"reason": "unknown_user", "username": attempted}))
 		WriteError(w, http.StatusUnauthorized, "invalid_credentials", "invalid username or password")
 		return
@@ -178,12 +180,28 @@ func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
 	// Local password path: only when the account carries a password hash.
 	if u.PasswordHash != "" {
 		if u.IsLocked(time.Now()) {
-			user.BurnPasswordCheck(req.Password)
+			if !h.hashing(w, r, func() { user.BurnPasswordCheck(req.Password) }) {
+				return
+			}
 			h.record(r, actor.Event("user.login", "user", u.ID, audit.Failure, map[string]string{"reason": "locked"}))
 			WriteError(w, http.StatusUnauthorized, "invalid_credentials", "invalid username or password")
 			return
 		}
-		if !user.VerifyPassword(u.PasswordHash, req.Password) {
+		var (
+			match  bool
+			rehash string
+		)
+		if !h.hashing(w, r, func() {
+			match = user.VerifyPassword(u.PasswordHash, req.Password)
+			if match && user.NeedsRehash(u.PasswordHash) {
+				if nh, err := user.HashPassword(req.Password); err == nil {
+					rehash = nh
+				}
+			}
+		}) {
+			return
+		}
+		if !match {
 			locked, lerr := h.Users.RecordLoginFailure(r.Context(), u.ID, h.MaxFailures, h.LockFor)
 			if lerr != nil {
 				h.Log.Error("record login failure", "err", lerr)
@@ -196,10 +214,8 @@ func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
 			WriteError(w, http.StatusUnauthorized, "invalid_credentials", "invalid username or password")
 			return
 		}
-		if user.NeedsRehash(u.PasswordHash) {
-			if nh, err := user.HashPassword(req.Password); err == nil {
-				_ = h.Users.SetPasswordHash(r.Context(), u.ID, nh, u.MustResetOnLogin)
-			}
+		if rehash != "" {
+			_ = h.Users.SetPasswordHash(r.Context(), u.ID, rehash, u.MustResetOnLogin)
 		}
 		h.completeLogin(w, r, u, actor)
 		return
@@ -218,9 +234,26 @@ func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
 			h.Log.Warn("external login error", "err", eerr)
 		}
 	}
-	user.BurnPasswordCheck(req.Password)
+	if !h.hashing(w, r, func() { user.BurnPasswordCheck(req.Password) }) {
+		return
+	}
 	h.record(r, actor.Event("user.login", "user", u.ID, audit.Failure, map[string]string{"reason": "no_password_no_external"}))
 	WriteError(w, http.StatusUnauthorized, "invalid_credentials", "invalid username or password")
+}
+
+// hashing runs fn, which computes password hashes, in a passwordHashing
+// slot (M10). When none comes free in time it answers 503 busy and returns
+// false, and the caller stops there: the attempt was not checked, so it is
+// neither counted nor audited.
+func (h *Handler) hashing(w http.ResponseWriter, r *http.Request, fn func()) bool {
+	leave, ok := passwordHashing.enter(r.Context())
+	if !ok {
+		WriteError(w, http.StatusServiceUnavailable, "busy", "too many sign-ins at once; try again in a moment")
+		return false
+	}
+	defer leave()
+	fn()
+	return true
 }
 
 // completeLogin issues the session and returns the appropriate MFA status.
@@ -326,7 +359,11 @@ func (h *Handler) changePassword(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	if p.User.PasswordHash == "" || !user.VerifyPassword(p.User.PasswordHash, req.CurrentPassword) {
+	var current bool
+	if p.User.PasswordHash != "" && !h.hashing(w, r, func() { current = user.VerifyPassword(p.User.PasswordHash, req.CurrentPassword) }) {
+		return
+	}
+	if !current {
 		h.recordAction(r, actor, actionSelfReset, "user", p.User.ID, audit.Failure, map[string]string{"reason": "current_mismatch"})
 		WriteError(w, http.StatusUnauthorized, "invalid_credentials", "the current password is wrong")
 		return
@@ -339,7 +376,13 @@ func (h *Handler) changePassword(w http.ResponseWriter, r *http.Request) {
 		WriteError(w, http.StatusBadRequest, "bad_request", err.Error())
 		return
 	}
-	hash, err := user.HashPassword(req.NewPassword)
+	var (
+		hash string
+		err  error
+	)
+	if !h.hashing(w, r, func() { hash, err = user.HashPassword(req.NewPassword) }) {
+		return
+	}
 	if err != nil {
 		h.serverError(w, r, err)
 		return
