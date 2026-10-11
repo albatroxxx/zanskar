@@ -145,17 +145,17 @@ func (h *Handler) desktop(w http.ResponseWriter, r *http.Request) {
 	defer zero(g.UserSecret)
 	proto := target.Protocol(g.Protocol)
 	if proto != target.RDP && proto != target.VNC {
-		httpx.WriteError(w, http.StatusBadRequest, "bad_request", "ticket is not for a desktop protocol")
+		httpx.WriteError(w, r, http.StatusBadRequest, "bad_request", "ticket is not for a desktop protocol")
 		return
 	}
 	guacdAddr := h.guacd()
 	if guacdAddr == "" {
-		httpx.WriteError(w, http.StatusNotImplemented, "protocol_unavailable", "desktop sessions are not configured on this gateway")
+		httpx.WriteError(w, r, http.StatusNotImplemented, "protocol_unavailable", "desktop sessions are not configured on this gateway")
 		return
 	}
 	ep, err := h.resolveGrant(r.Context(), g)
 	if err != nil || !ep.Active {
-		httpx.WriteError(w, http.StatusConflict, "target_unavailable", "target is no longer available")
+		httpx.WriteError(w, r, http.StatusConflict, "target_unavailable", "target is no longer available")
 		return
 	}
 
@@ -164,7 +164,7 @@ func (h *Handler) desktop(w http.ResponseWriter, r *http.Request) {
 		opened, err = h.Vault.Open(r.Context(), g.CredentialID)
 		if err != nil {
 			h.Log.Error("open credential", "id", g.CredentialID, "err", err)
-			httpx.WriteError(w, http.StatusConflict, "credential_unavailable", "credential could not be opened")
+			httpx.WriteError(w, r, http.StatusConflict, "credential_unavailable", "credential could not be opened")
 			return
 		}
 		defer opened.Close()
@@ -173,7 +173,7 @@ func (h *Handler) desktop(w http.ResponseWriter, r *http.Request) {
 	// filled in once the session id exists.
 	params, err := desktopParams(ep, proto, opened, g.UserSecret, g.Username, g.AllowFileTransfer, g.AllowClipboard, "")
 	if err != nil {
-		httpx.WriteError(w, http.StatusConflict, "target_unavailable", err.Error())
+		httpx.WriteError(w, r, http.StatusConflict, "target_unavailable", err.Error())
 		return
 	}
 	// Enforce the certificate pin at the gateway before handing off to guacd,
@@ -188,7 +188,7 @@ func (h *Handler) desktop(w http.ResponseWriter, r *http.Request) {
 				h.record(r, actorFor(g.UserID, ip).Event(audit.TargetTLSMismatch, "target", ep.LiveKey, audit.Failure,
 					map[string]string{"protocol": "rdp", "expected": mm.want, "seen": mm.got}))
 			}
-			httpx.WriteError(w, http.StatusConflict, "certificate_mismatch", "the target's certificate does not match the pinned fingerprint")
+			httpx.WriteError(w, r, http.StatusConflict, "certificate_mismatch", "the target's certificate does not match the pinned fingerprint")
 			return
 		}
 	}

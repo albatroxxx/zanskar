@@ -19,6 +19,7 @@ import (
 	"github.com/albatroxxx/zanskar/internal/audit"
 	"github.com/albatroxxx/zanskar/internal/config"
 	"github.com/albatroxxx/zanskar/internal/crypto"
+	"github.com/albatroxxx/zanskar/internal/httpx"
 	"github.com/albatroxxx/zanskar/internal/keyring"
 	"github.com/albatroxxx/zanskar/internal/store"
 	"github.com/albatroxxx/zanskar/internal/user"
@@ -60,13 +61,13 @@ func newEnv(t *testing.T) *env {
 	mux := http.NewServeMux()
 	e.handler.Register(mux)
 	mux.Handle("GET /api/v1/admin-only", RequireRole(user.RoleAdmin)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		WriteJSON(w, 200, map[string]string{"ok": "admin"})
+		httpx.WriteJSON(w, 200, map[string]string{"ok": "admin"})
 	})))
 	mux.Handle("POST /api/v1/mutate", RequireAuth(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		WriteJSON(w, 200, map[string]string{"ok": "mutated"})
+		httpx.WriteJSON(w, 200, map[string]string{"ok": "mutated"})
 	})))
 	mux.Handle("GET /api/v1/connect-only", RequireConnect(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		WriteJSON(w, 200, map[string]string{"ok": "connect"})
+		httpx.WriteJSON(w, 200, map[string]string{"ok": "connect"})
 	})))
 	mw := &Middleware{Sessions: e.sessions, Users: e.users, Log: log}
 	e.srv = mw.Authenticate(mw.CSRF(mux))

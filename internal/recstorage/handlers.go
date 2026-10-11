@@ -71,7 +71,7 @@ func (h *Handler) get(w http.ResponseWriter, r *http.Request) { h.write(w, r, ht
 func (h *Handler) decode(w http.ResponseWriter, r *http.Request) (Config, bool) {
 	var c Config
 	if err := httpx.DecodeJSON(r, &c); err != nil {
-		httpx.BadRequest(w, err.Error())
+		httpx.BadRequest(w, r, err.Error())
 		return c, false
 	}
 	return c, true
@@ -133,7 +133,7 @@ func (h *Handler) move(w http.ResponseWriter, r *http.Request) {
 	})
 	if err != nil {
 		if errors.Is(err, ErrBusy) {
-			httpx.WriteError(w, http.StatusConflict, "move_running", "a move is already running")
+			httpx.WriteError(w, r, http.StatusConflict, "move_running", "a move is already running")
 			return
 		}
 		h.fail(w, r, err)
@@ -149,9 +149,8 @@ func (h *Handler) record(r *http.Request, action string, details map[string]any)
 func (h *Handler) fail(w http.ResponseWriter, r *http.Request, err error) {
 	if errors.Is(err, ErrInvalid) {
 		// The message can quote what the operator typed; one line of it.
-		httpx.BadRequest(w, strings.NewReplacer("\n", " ", "\r", " ").Replace(strings.TrimPrefix(err.Error(), "recstorage: invalid configuration: ")))
+		httpx.BadRequest(w, r, strings.NewReplacer("\n", " ", "\r", " ").Replace(strings.TrimPrefix(err.Error(), "recstorage: invalid configuration: ")))
 		return
 	}
-	h.Log.Error("storage handler", "route", r.Pattern, "err", strings.NewReplacer("\n", " ", "\r", " ").Replace(err.Error()))
-	httpx.WriteError(w, http.StatusInternalServerError, "internal", "internal error")
+	httpx.Internal(w, r, h.Log, err)
 }

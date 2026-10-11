@@ -214,8 +214,8 @@ func TestDeletePolicyLookupFailure(t *testing.T) {
 	if _, err := repo.Get(context.Background(), tg.ID); err != nil {
 		t.Fatalf("target must survive a failed delete: %v", err)
 	}
-	if !strings.Contains(logs.String(), "target handler") || !strings.Contains(logs.String(), "/api/v1/targets/"+tg.ID) {
-		t.Fatalf("server error must be logged with its path: %s", logs.String())
+	if !strings.Contains(logs.String(), `msg="request failed"`) || !strings.Contains(logs.String(), "database is closed") {
+		t.Fatalf("server error must be logged: %s", logs.String())
 	}
 }
 

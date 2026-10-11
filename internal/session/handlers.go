@@ -108,7 +108,7 @@ func (h *Handler) terminate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if s.EndedAt != nil {
-		httpx.WriteError(w, http.StatusConflict, "already_ended", "session already ended")
+		httpx.WriteError(w, r, http.StatusConflict, "already_ended", "session already ended")
 		return
 	}
 	var body struct {
@@ -116,7 +116,7 @@ func (h *Handler) terminate(w http.ResponseWriter, r *http.Request) {
 	}
 	if r.ContentLength > 0 {
 		if err := httpx.DecodeJSON(r, &body); err != nil {
-			httpx.BadRequest(w, err.Error())
+			httpx.BadRequest(w, r, err.Error())
 			return
 		}
 	}
@@ -187,7 +187,7 @@ func (h *Handler) openForReview(w http.ResponseWriter, r *http.Request, action s
 		return nil, nil, nil, false
 	}
 	if rec.PurgedAt != nil {
-		httpx.WriteError(w, http.StatusGone, "purged", "this recording was deleted by the retention policy")
+		httpx.WriteError(w, r, http.StatusGone, "purged", "this recording was deleted by the retention policy")
 		return nil, nil, nil, false
 	}
 	sess, err := h.Repo.Get(r.Context(), rec.SessionID)
@@ -198,7 +198,7 @@ func (h *Handler) openForReview(w http.ResponseWriter, r *http.Request, action s
 	rc, err := h.Storage.Open(r.Context(), rec.StorageURI)
 	if err != nil {
 		h.Log.Error("open recording", "id", rec.ID, "err", err)
-		httpx.WriteError(w, http.StatusNotFound, "not_found", "recording data unavailable")
+		httpx.WriteError(w, r, http.StatusNotFound, "not_found", "recording data unavailable")
 		return nil, nil, nil, false
 	}
 	p, _ := auth.FromContext(r.Context())
@@ -286,7 +286,7 @@ func (h *Handler) downloadTranscript(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if rec.Format != "asciicast" {
-		httpx.WriteError(w, http.StatusConflict, "not_a_terminal_recording", "a command transcript exists for terminal sessions only; download the desktop recording instead")
+		httpx.WriteError(w, r, http.StatusConflict, "not_a_terminal_recording", "a command transcript exists for terminal sessions only; download the desktop recording instead")
 		return
 	}
 	rec, sess, rc, ok := h.openForReview(w, r, audit.RecordingDownload, map[string]any{"kind": "transcript"})
@@ -402,7 +402,7 @@ func (h *Handler) auditEvents(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		if !excludeToken.MatchString(ex) || len(f.Exclude) >= 16 {
-			httpx.BadRequest(w, "exclude: expected action or action:outcome tokens")
+			httpx.BadRequest(w, r, "exclude: expected action or action:outcome tokens")
 			return
 		}
 		f.Exclude = append(f.Exclude, ex)
@@ -529,11 +529,10 @@ func (h *Handler) record(r *http.Request, e audit.Event) {
 
 func (h *Handler) fail(w http.ResponseWriter, r *http.Request, err error) {
 	if errors.Is(err, ErrNotFound) {
-		httpx.WriteError(w, http.StatusNotFound, "not_found", "not found")
+		httpx.WriteError(w, r, http.StatusNotFound, "not_found", "not found")
 		return
 	}
-	h.Log.Error("session handler", "path", r.URL.Path, "err", err)
-	httpx.WriteError(w, http.StatusInternalServerError, "internal", "internal error")
+	httpx.Internal(w, r, h.Log, err)
 }
 
 // getRetention returns the current recording-retention policy (admin only).
@@ -550,11 +549,11 @@ func (h *Handler) getRetention(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) setRetention(w http.ResponseWriter, r *http.Request) {
 	var in RetentionPolicy
 	if err := httpx.DecodeJSON(r, &in); err != nil {
-		httpx.BadRequest(w, err.Error())
+		httpx.BadRequest(w, r, err.Error())
 		return
 	}
 	if in.MaxAgeDays < 0 || in.MaxTotalBytes < 0 {
-		httpx.BadRequest(w, "retention values must not be negative")
+		httpx.BadRequest(w, r, "retention values must not be negative")
 		return
 	}
 	p, _ := auth.FromContext(r.Context())

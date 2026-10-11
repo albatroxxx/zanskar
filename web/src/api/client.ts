@@ -152,7 +152,9 @@ export function errorMessage(err: unknown): string {
   // An expired session is announced once, by the session dialog. Repeating it
   // as an error banner inside the page would only be noise behind that dialog.
   if (err instanceof ApiError && err.sessionEnded) return ''
-  if (err instanceof ApiError) return err.message
+  // A server error is the one people report; its request id finds the
+  // gateway's log lines, so it is shown with the message.
+  if (err instanceof ApiError) return err.status >= 500 && err.requestId ? `${err.message} (reference ${err.requestId})` : err.message
   if (err instanceof Error) return err.message
   return String(err)
 }

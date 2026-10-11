@@ -10,7 +10,6 @@ import (
 	"crypto/rand"
 	"crypto/tls"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"log/slog"
 	"net"
@@ -20,6 +19,7 @@ import (
 
 	"github.com/albatroxxx/zanskar/internal/auth"
 	"github.com/albatroxxx/zanskar/internal/config"
+	"github.com/albatroxxx/zanskar/internal/httpx"
 	"github.com/albatroxxx/zanskar/internal/store"
 	"github.com/albatroxxx/zanskar/internal/tlscert"
 	"github.com/albatroxxx/zanskar/internal/version"
@@ -70,9 +70,10 @@ func New(cfg *config.Config, db *store.DB, log *slog.Logger, deps Deps) *Server 
 		h.Register(mux)
 	}
 
-	// RealIP runs before accessLog and the handlers so the forwarded client
-	// address, not the proxy's, reaches the log and every audit row.
-	mws := []middleware{s.recoverer, requestID, auth.RealIP(cfg.TrustedProxies), s.securityHeaders, s.accessLog}
+	// The request id comes first, so even a recovered panic answers and logs
+	// with it. RealIP runs before accessLog and the handlers so the forwarded
+	// client address, not the proxy's, reaches the log and every audit row.
+	mws := []middleware{requestID, s.recoverer, auth.RealIP(cfg.TrustedProxies), s.securityHeaders, s.accessLog}
 	if deps.AuthMiddleware != nil {
 		mws = append(mws, deps.AuthMiddleware.Authenticate, deps.AuthMiddleware.CSRF)
 	}
@@ -155,7 +156,7 @@ func (s *Server) ListenAndServe(ctx context.Context) error {
 // ---- system handlers
 
 func (s *Server) handleHealthz(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+	httpx.WriteJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
 func (s *Server) handleReadyz(w http.ResponseWriter, r *http.Request) {
@@ -163,41 +164,23 @@ func (s *Server) handleReadyz(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 	if err := s.db.PingContext(ctx); err != nil {
 		s.log.Error("readiness: database ping failed", "err", err)
-		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"status": "database unavailable"})
+		httpx.WriteJSON(w, http.StatusServiceUnavailable, map[string]string{"status": "database unavailable"})
 		return
 	}
 	pending, err := store.Pending(ctx, s.db)
 	if err != nil || len(pending) > 0 {
-		writeJSON(w, http.StatusServiceUnavailable, map[string]any{"status": "migrations pending", "pending": pending})
+		httpx.WriteJSON(w, http.StatusServiceUnavailable, map[string]any{"status": "migrations pending", "pending": pending})
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]string{"status": "ready"})
+	httpx.WriteJSON(w, http.StatusOK, map[string]string{"status": "ready"})
 }
 
 func (s *Server) handleVersion(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]string{"version": version.Version})
+	httpx.WriteJSON(w, http.StatusOK, map[string]string{"version": version.Version})
 }
 
 func (s *Server) handleNotFound(w http.ResponseWriter, r *http.Request) {
-	writeError(w, r, http.StatusNotFound, "not_found", "no such route")
-}
-
-// ---- response helpers
-
-type apiError struct {
-	Code      string `json:"code"`
-	Message   string `json:"message"`
-	RequestID string `json:"request_id,omitempty"`
-}
-
-func writeJSON(w http.ResponseWriter, status int, v any) {
-	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(v)
-}
-
-func writeError(w http.ResponseWriter, r *http.Request, status int, code, msg string) {
-	writeJSON(w, status, apiError{Code: code, Message: msg, RequestID: RequestIDFrom(r.Context())})
+	httpx.WriteError(w, r, http.StatusNotFound, "not_found", "no such route")
 }
 
 // ---- middleware
@@ -212,16 +195,6 @@ func chain(h http.Handler, mws ...middleware) http.Handler {
 	return h
 }
 
-type ctxKey int
-
-const ctxRequestID ctxKey = iota
-
-// RequestIDFrom returns the request id set by the requestID middleware.
-func RequestIDFrom(ctx context.Context) string {
-	id, _ := ctx.Value(ctxRequestID).(string)
-	return id
-}
-
 // requestID assigns a fresh random id to every request. Client-supplied ids
 // are ignored on purpose: they would let a caller forge log correlation.
 func requestID(next http.Handler) http.Handler {
@@ -230,7 +203,7 @@ func requestID(next http.Handler) http.Handler {
 		_, _ = rand.Read(b[:])
 		id := hex.EncodeToString(b[:])
 		w.Header().Set("X-Request-Id", id)
-		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), ctxRequestID, id)))
+		next.ServeHTTP(w, r.WithContext(httpx.WithRequestID(r.Context(), id)))
 	})
 }
 
@@ -303,7 +276,7 @@ func (s *Server) accessLog(next http.Handler) http.Handler {
 		}
 		// Query strings are intentionally not logged: connect tickets travel there.
 		s.log.Log(r.Context(), level, "http",
-			"request_id", RequestIDFrom(r.Context()),
+			"request_id", httpx.RequestID(r.Context()),
 			"method", r.Method,
 			"path", r.URL.Path,
 			"status", rec.status,
@@ -317,8 +290,8 @@ func (s *Server) recoverer(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		defer func() {
 			if rec := recover(); rec != nil {
-				s.log.Error("panic", "request_id", RequestIDFrom(r.Context()), "panic", rec)
-				writeError(w, r, http.StatusInternalServerError, "internal", "internal error")
+				s.log.Error("panic", "request_id", httpx.RequestID(r.Context()), "panic", rec)
+				httpx.WriteError(w, r, http.StatusInternalServerError, "internal", "internal error")
 			}
 		}()
 		next.ServeHTTP(w, r)

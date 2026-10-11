@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	"github.com/albatroxxx/zanskar/internal/config"
+	"github.com/albatroxxx/zanskar/internal/httpx"
 	"github.com/albatroxxx/zanskar/internal/store"
 )
 
@@ -71,7 +72,7 @@ func TestNotFoundIsJSONWithRequestID(t *testing.T) {
 	if rr.Code != http.StatusNotFound {
 		t.Fatalf("got %d", rr.Code)
 	}
-	var e apiError
+	var e httpx.Error
 	if err := json.Unmarshal(rr.Body.Bytes(), &e); err != nil || e.RequestID == "" || e.Code != "not_found" {
 		t.Fatalf("bad error body: %s (%v)", rr.Body, err)
 	}

@@ -52,7 +52,7 @@ func (h *API) params(r *http.Request) (slog.Level, string, int, bool) {
 func (h *API) list(w http.ResponseWriter, r *http.Request) {
 	level, q, limit, ok := h.params(r)
 	if !ok {
-		httpx.BadRequest(w, "level must be debug, info, warn or error; limit a positive number")
+		httpx.BadRequest(w, r, "level must be debug, info, warn or error; limit a positive number")
 		return
 	}
 	w.Header().Set("Cache-Control", "no-store")

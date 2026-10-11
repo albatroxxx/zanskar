@@ -610,7 +610,7 @@ paths:
             schema:
               $ref: "#/components/schemas/ConnectRequest"
       responses:
-        "201":
+        "200":
           description: Ticket issued.
           content:
             application/json:
@@ -631,6 +631,22 @@ paths:
           $ref: "#/components/responses/NotFound"
         "409":
           description: The target is not reachable for this protocol (capability missing, host key untrusted or changed, or instance no longer healthy).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "422":
+          description: >-
+            `credential_required`: the target uses the caller's own account for this protocol, so
+            the request must carry `credential`.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "501":
+          description: >-
+            The gateway cannot broker this here: `protocol_unavailable`, `engine_unavailable`, or
+            `credential_mode_unavailable`.
           content:
             application/json:
               schema:
@@ -3816,11 +3832,20 @@ components:
       properties:
         code:
           type: string
-          description: Stable machine-readable code, for example `validation_failed`, `csrf_invalid`, `policy_denied`, `host_key_untrusted`, `instance_unhealthy`, `approval_required`, `not_eligible`, `duration_too_long`, `login_user_not_permitted`.
+          description: >-
+            Stable machine-readable code, for example `bad_request` (a missing or malformed
+            field), `csrf_invalid`, `policy_denied`, `host_key_untrusted`, `instance_unhealthy`,
+            `approval_required`, `credential_required` (the target uses the caller's own account,
+            so the request must carry `credential`), `not_eligible`, `duration_too_long`,
+            `login_user_not_permitted`, `internal`.
         message:
           type: string
+          description: For people. Wording may change between releases; match on `code`.
         request_id:
           type: string
+          description: >-
+            The response's `X-Request-Id`. Quote it in a bug report: the gateway's log lines
+            for the request carry the same id.
     PagedResponse:
       type: object
       required: [items]

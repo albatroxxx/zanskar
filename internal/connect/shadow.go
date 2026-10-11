@@ -52,7 +52,7 @@ func (h *ShadowHandler) shadow(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("sessionID")
 	live, ok := h.Registry.Get(id)
 	if !ok {
-		httpx.WriteError(w, http.StatusNotFound, "not_live", "session is not live on this gateway")
+		httpx.WriteError(w, r, http.StatusNotFound, "not_live", "session is not live on this gateway")
 		return
 	}
 	actor := audit.Actor{UserID: p.User.ID, IP: auth.ClientIP(r)}
@@ -64,14 +64,14 @@ func (h *ShadowHandler) shadow(w http.ResponseWriter, r *http.Request) {
 	case "rdp", "vnc":
 		h.shadowDesktop(w, r, live, actor, details)
 	default:
-		httpx.WriteError(w, http.StatusBadRequest, "bad_request", "protocol cannot be shadowed")
+		httpx.WriteError(w, r, http.StatusBadRequest, "bad_request", "protocol cannot be shadowed")
 	}
 }
 
 func (h *ShadowHandler) shadowTerminal(w http.ResponseWriter, r *http.Request, live gateway.Live, actor audit.Actor, details map[string]string) {
 	tap := live.Tap
 	if tap == nil {
-		httpx.WriteError(w, http.StatusNotFound, "not_live", "session has no output stream")
+		httpx.WriteError(w, r, http.StatusNotFound, "not_live", "session has no output stream")
 		return
 	}
 	ws, err := websocket.Accept(w, r, &websocket.AcceptOptions{CompressionMode: websocket.CompressionDisabled})
@@ -133,7 +133,7 @@ func (h *ShadowHandler) shadowDesktop(w http.ResponseWriter, r *http.Request, li
 		guacdAddr = h.GuacdAddr()
 	}
 	if guacdAddr == "" || live.GuacID == "" {
-		httpx.WriteError(w, http.StatusNotFound, "not_live", "desktop session cannot be joined")
+		httpx.WriteError(w, r, http.StatusNotFound, "not_live", "desktop session cannot be joined")
 		return
 	}
 	width, _ := strconv.Atoi(r.URL.Query().Get("width"))
@@ -145,7 +145,7 @@ func (h *ShadowHandler) shadowDesktop(w http.ResponseWriter, r *http.Request, li
 	gc, err := guac.Join(r.Context(), guacdAddr, live.GuacID, width, height, timeout)
 	if err != nil {
 		h.Log.Warn("guacd join failed", "session", live.SessionID, "err", err)
-		httpx.WriteError(w, http.StatusConflict, "join_failed", "could not join the desktop session")
+		httpx.WriteError(w, r, http.StatusConflict, "join_failed", "could not join the desktop session")
 		return
 	}
 	defer func() { _ = gc.Close() }()
