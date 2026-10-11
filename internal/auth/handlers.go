@@ -134,8 +134,13 @@ type loginResponse struct {
 func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
 	ip := ClientIP(r)
 	actor := audit.Actor{IP: ip}
-	if !h.loginLimiter.Allow(limiterKey(ip)) {
-		h.record(r, actor.Event(audit.UserLogin, "user", "", audit.Failure, map[string]string{"reason": "rate_limited"}))
+	if ok, first := h.loginLimiter.Take(limiterKey(ip)); !ok {
+		// One row per run of refusals from an address, not one per attempt:
+		// an unauthenticated flood must not grow the hash-chained log, and
+		// queue every other event behind its writer, without bound (L11).
+		if first {
+			h.record(r, actor.Event(audit.UserLogin, "user", "", audit.Failure, map[string]string{"reason": "rate_limited"}))
+		}
 		httpx.WriteError(w, r, http.StatusTooManyRequests, "rate_limited", "too many attempts; try again later")
 		return
 	}

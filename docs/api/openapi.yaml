@@ -156,8 +156,10 @@ paths:
       summary: Log in with username and password
       description: |
         Rate limited per source address, an IPv6 client by its /64; while the limiter is full of
-        other addresses, a new one gets the same `429`. Each attempt checks a password, and only so
-        many checks run at once: one that waits too long for its turn gets `503` with code `busy`.
+        other addresses, a new one gets the same `429`. A run of `429`s to one address is audited
+        once, as `user.login` with reason `rate_limited`, not once per attempt. Each attempt checks
+        a password, and only so many checks run at once: one that waits too long for its turn gets
+        `503` with code `busy`.
 
         Wrong passwords and wrong second-factor codes count against the account together: five in
         a row, from whichever clients, lock it against new sign-ins for 15 minutes

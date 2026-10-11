@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"strings"
 	"sync"
 	"testing"
@@ -581,5 +582,58 @@ func TestDeleteExpiredSessions(t *testing.T) {
 	e.sessions.now = func() time.Time { return time.Now().Add(e.sessions.AbsoluteTTL + 48*time.Hour) }
 	if n, err := e.sessions.DeleteExpired(ctx); err != nil || n != 1 {
 		t.Fatalf("after expiry deleted %d, %v; want the live session %s", n, err, live.ID)
+	}
+}
+
+// TestRateLimitedSignInsAreAuditedOncePerRun: every refused attempt wrote a
+// hash-chained audit row before the body was even read (L11), so a flood from
+// one address grew the log without bound and queued every real event behind
+// the writer's lock. A run of refusals from an address is recorded once; the
+// next run, after the address got through again, is recorded again.
+func TestRateLimitedSignInsAreAuditedOncePerRun(t *testing.T) {
+	e := newEnv(t)
+	now := time.Now()
+	l := newIPLimiter(60, 1) // one attempt a second
+	l.now = func() time.Time { return now }
+	e.handler.loginLimiter = l
+	// No username: an admitted attempt is a 400 before any hash is spent.
+	try := func() int {
+		return e.doFrom("203.0.113.9:4444", "POST", "/api/v1/auth/login", map[string]string{"username": "", "password": "a guess at it"}, nil, nil).code
+	}
+	refusals := func() int {
+		t.Helper()
+		evs, _, err := e.audit.List(context.Background(), audit.Filter{Action: audit.UserLogin, Limit: 100})
+		if err != nil {
+			t.Fatal(err)
+		}
+		n := 0
+		for _, ev := range evs {
+			var d map[string]any
+			_ = json.Unmarshal(ev.Details, &d)
+			if d["reason"] == "rate_limited" {
+				n++
+			}
+		}
+		return n
+	}
+	run := func(refused int) {
+		t.Helper()
+		if code := try(); code != http.StatusBadRequest {
+			t.Fatalf("the first attempt of a run: %d, want it admitted", code)
+		}
+		for i := 0; i < refused; i++ {
+			if code := try(); code != http.StatusTooManyRequests {
+				t.Fatalf("attempt %d of a run: %d, want 429", i+2, code)
+			}
+		}
+	}
+	run(5)
+	if n := refusals(); n != 1 {
+		t.Fatalf("five refused attempts wrote %d audit rows, want 1", n)
+	}
+	now = now.Add(2 * time.Second)
+	run(3)
+	if n := refusals(); n != 2 {
+		t.Fatalf("a second run of refusals: %d audit rows in all, want 2", n)
 	}
 }

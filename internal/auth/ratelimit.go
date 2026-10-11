@@ -31,6 +31,9 @@ type ipLimiter struct {
 type bucket struct {
 	tokens float64
 	last   time.Time
+	// refusing is set by a refusal and cleared when a token is taken, so
+	// Take can tell the first refusal of a run from the rest.
+	refusing bool
 }
 
 func newIPLimiter(perMinute, burst int) *ipLimiter {
@@ -47,6 +50,15 @@ func newIPLimiter(perMinute, burst int) *ipLimiter {
 // Allow consumes one token for key if available. A new key that finds the
 // limiter full is refused the same way, unless a sweep makes room for it.
 func (l *ipLimiter) Allow(key string) bool {
+	ok, _ := l.Take(key)
+	return ok
+}
+
+// Take is Allow that also reports whether a refusal is the first of a run
+// for key, the one worth recording: the rest of the run says nothing new. A
+// new key refused because the limiter is full holds no bucket to remember
+// the run by, so its refusals are never first.
+func (l *ipLimiter) Take(key string) (ok, firstRefusal bool) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	now := l.now()
@@ -65,7 +77,7 @@ func (l *ipLimiter) Allow(key string) bool {
 				l.lastSweep = now
 			}
 			if len(l.buckets) >= l.maxKeys {
-				return false
+				return false, false
 			}
 		}
 		b = &bucket{tokens: l.burst, last: now}
@@ -77,10 +89,13 @@ func (l *ipLimiter) Allow(key string) bool {
 	}
 	b.last = now
 	if b.tokens < 1 {
-		return false
+		first := !b.refusing
+		b.refusing = true
+		return false, first
 	}
 	b.tokens--
-	return true
+	b.refusing = false
+	return true, false
 }
 
 // sweep drops the buckets that have refilled to the burst. Such a bucket
