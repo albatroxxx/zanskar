@@ -340,17 +340,18 @@ func (h *AdminHandler) resetMFA(w http.ResponseWriter, r *http.Request) {
 		h.writeUserError(w, r, err)
 		return
 	}
-	if err := h.TOTP.Reset(r.Context(), id); err != nil {
+	// A session that passed MFA with the old authenticator should not outlive
+	// it, in the console or on a target.
+	n, err := auth.ResetMFA(r.Context(), h.TOTP, h.Sessions, id)
+	details := map[string]any{"sessions_revoked": n}
+	switch {
+	case errors.Is(err, auth.ErrSignOutAfterReset):
+		h.Log.Error("revoke sessions after mfa reset", "user_id", id, "err", err)
+		details["sign_out_failed"] = true
+	case err != nil:
 		h.serverError(w, r, err)
 		return
 	}
-	// A session that passed MFA with the old authenticator should not outlive
-	// it, in the console or on a target.
-	n, err := h.Sessions.RevokeAllForUser(r.Context(), id)
-	if err != nil {
-		h.Log.Error("revoke sessions after mfa reset", "user_id", id, "err", err)
-	}
-	details := map[string]any{"sessions_revoked": n}
 	h.endLive(id, details)
 	h.record(r, "user.mfa.reset", id, audit.Success, details)
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"status": "ok", "sessions_revoked": n})

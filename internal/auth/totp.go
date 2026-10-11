@@ -306,3 +306,28 @@ func hashRecovery(code string) string {
 	sum := sha256.Sum256([]byte("recovery:" + code))
 	return hex.EncodeToString(sum[:])
 }
+
+// ErrSignOutAfterReset reports a reset whose authenticator is gone but whose
+// sign-ins could not all be revoked: the reset happened and must be
+// recorded, and the caller says the sign-out did not.
+var ErrSignOutAfterReset = errors.New("authenticator reset, but signing the user out failed")
+
+// ResetMFA removes a user's authenticator and recovery codes, then signs the
+// user out everywhere: a session that proved MFA with the old authenticator
+// must not outlive it. It is the one implementation behind the console's
+// reset and `zanskar admin reset-mfa`, so whatever else a reset must clear
+// (security keys, ADR 0028) is added once.
+func ResetMFA(ctx context.Context, mfa interface {
+	Reset(ctx context.Context, userID string) error
+}, sessions interface {
+	RevokeAllForUser(ctx context.Context, userID string) (int64, error)
+}, userID string) (revoked int64, err error) {
+	if err := mfa.Reset(ctx, userID); err != nil {
+		return 0, err
+	}
+	n, err := sessions.RevokeAllForUser(ctx, userID)
+	if err != nil {
+		return n, fmt.Errorf("%w: %w", ErrSignOutAfterReset, err)
+	}
+	return n, nil
+}
