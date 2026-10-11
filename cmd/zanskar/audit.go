@@ -13,7 +13,6 @@ import (
 
 	"github.com/albatroxxx/zanskar/internal/audit"
 	"github.com/albatroxxx/zanskar/internal/config"
-	"github.com/albatroxxx/zanskar/internal/store"
 )
 
 // runAudit handles `zanskar audit <subcommand>`.
@@ -47,16 +46,13 @@ func auditUsage() {
 // from the master key, and a close func. Every audit command needs the key:
 // verify checks the anchors' signatures with it and refuses to run without.
 func openLog() (*audit.Log, []byte, func(), error) {
-	cfg, err := config.Load(config.Options{RequireMasterKey: true})
+	cfg, db, err := openDB(context.Background(), config.Options{RequireMasterKey: true})
 	if err != nil {
 		return nil, nil, nil, err
 	}
 	key, err := audit.AnchorKey(cfg.MasterKey)
 	if err != nil {
-		return nil, nil, nil, err
-	}
-	db, err := store.Open(context.Background(), cfg.DBDriver, cfg.DBDSN)
-	if err != nil {
+		_ = db.Close()
 		return nil, nil, nil, err
 	}
 	return audit.NewLog(db), key, func() { _ = db.Close() }, nil
