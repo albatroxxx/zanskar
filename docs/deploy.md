@@ -251,9 +251,12 @@ Why a second replica is not supported:
 ## Upgrades and migrations
 
 Migrations are explicit and forward-only. The chart's hook Job applies them before the
-new pods start; outside Helm, run `zanskar migrate` yourself before restarting. Take a
-database backup first. On an upgrade the old pod is replaced by a new one;
-`terminationGracePeriodSeconds` gives live sessions a minute to close.
+new pod starts; the packaged systemd unit runs `zanskar migrate` before every start, and the
+compose stack's `zanskar-migrate` service before the gateway, so a restart is enough there.
+Run `zanskar migrate` yourself only where you start `serve` some other way. Take a database
+backup first. On an upgrade the chart stops the old pod before it starts the new one
+(`strategy: Recreate`), so two gateways never run at once; `terminationGracePeriodSeconds`
+gives live sessions a minute to close.
 
 ## Backups and key custody
 
@@ -334,8 +337,10 @@ tooling below rather than `zanskar backup`.
   the audit log's anchors that lives outside the database ([Audit anchors](#audit-anchors)).
 - Verify the audit log on a schedule: `zanskar audit verify` from a CronJob or a timer,
   with `--anchor` and a line kept outside the database.
-- Keep guacd at 1.6 or newer (certificate pinning, ADR 0012); Dependabot tracks the
-  compose image, and `guacd.image.tag` in the chart.
+- Keep guacd at 1.6 or newer (certificate pinning, ADR 0012). Its image is pinned in the
+  compose files and, separately, in the chart's `guacd.image.tag`; Dependabot's Docker
+  updates cover the Dockerfiles, so check the guacd tag yourself when you upgrade and keep
+  the two in step.
 
 ## The audit log outside the database
 
