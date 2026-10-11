@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -98,7 +99,26 @@ func newTerminalRig(t *testing.T, port int, trustedFP string) *terminalRig {
 	if _, err := f.h.Targets.TrustHostKey(f.ctx, tg.ID, trustedFP); err != nil {
 		t.Fatal(err)
 	}
-	srv := httptest.NewServer(f.srv)
+	// Every request the rig serves is counted, a WebSocket one for the whole
+	// session it runs, and the cleanup waits for them: a session still
+	// closing its recording when the temporary directory goes made the
+	// directory's removal fail now and then. Cleanups run last first, so the
+	// server closes, then this waits, then the directory goes.
+	var inflight sync.WaitGroup
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		inflight.Add(1)
+		defer inflight.Done()
+		f.srv.ServeHTTP(w, r)
+	}))
+	t.Cleanup(func() {
+		done := make(chan struct{})
+		go func() { inflight.Wait(); close(done) }()
+		select {
+		case <-done:
+		case <-time.After(10 * time.Second):
+			t.Error("a session was still running 10s after the test ended")
+		}
+	})
 	t.Cleanup(srv.Close)
 	return &terminalRig{connectFixture: f, url: srv.URL, targetID: tg.ID}
 }
