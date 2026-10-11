@@ -15,7 +15,9 @@ records it. Nothing is installed on targets (ADR 0009).
  Browser ──HTTPS/WSS──▶ zanskar gateway ──SSH / WinRM / SFTP──────────────▶ Linux, Windows
                          │    │    │
                          │    │    └──Guacamole protocol──▶ guacd ──RDP/VNC─▶ Windows, VNC hosts
-                         │    └──────── per-session container ──PG / MySQL──▶ databases
+                         │    └── per-session client container ─▶ relay sidecar ─PG / MySQL─▶ databases
+                         │        (internal network; only the relay, which holds the
+                         │         credential, reaches the database; ADR 0017)
                          │
                          ├── SQLite or PostgreSQL (state, sealed secrets, audit chain)
                          ├── recordings: local disk or S3-compatible storage
@@ -30,6 +32,7 @@ The gateway is one process. Its packages under `internal/` are split by domain:
 | Area | Packages | Responsibility |
 |---|---|---|
 | HTTP and API | `server`, `httpx`, `auth` | TLS listener, JSON API, sessions and CSRF, role checks, the embedded web console |
+| Console command line | `cli` | The restricted command line in the admin console (ADR 0027): a fixed table of commands run through the API's own permission checks, unlocked with a fresh authenticator code and audited line by line |
 | Identity | `user`, `group`, `idp`, `auth` | Local accounts (Argon2id, TOTP), OIDC and LDAP sign-in, group mapping |
 | Inventory | `target`, `asg`, `cloud`, `credential`, `sshca` | Hosts, databases, autoscaling groups, vaulted credentials, the SSH certificate authority |
 | Decision | `policy`, `access`, `ticket` | Who may reach what over which protocol, just-in-time grants, one-time connect tickets |
