@@ -151,6 +151,9 @@ func TestLockout(t *testing.T) {
 	if !got.IsLocked(time.Now()) || got.LockedUntil == nil {
 		t.Fatal("expected locked_until set")
 	}
+	if got.IsBlocked() {
+		t.Fatal("a temporary lock refuses new sign-ins only; it does not block the account")
+	}
 	if got.IsLocked(time.Now().Add(2 * time.Minute)) {
 		t.Fatal("lock must expire")
 	}
@@ -165,8 +168,8 @@ func TestLockout(t *testing.T) {
 		t.Fatal(err)
 	}
 	got, _ = r.GetByID(ctx, u.ID)
-	if !got.IsLocked(time.Now()) {
-		t.Fatal("disabled accounts count as locked")
+	if !got.IsLocked(time.Now()) || !got.IsBlocked() {
+		t.Fatal("disabled accounts count as locked and blocked")
 	}
 }
 

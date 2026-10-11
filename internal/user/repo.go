@@ -264,12 +264,22 @@ func (r *Repo) RecordLoginSuccess(ctx context.Context, id string) error {
 	return err
 }
 
-// IsLocked reports whether the account is currently locked out.
+// IsLocked reports whether the account may not sign in now: it is blocked,
+// or wrong passwords have locked it until LockedUntil. Sign-in paths use it.
 func (u *User) IsLocked(now time.Time) bool {
-	if u.Status == StatusLocked || u.Status == StatusDisabled {
+	if u.IsBlocked() {
 		return true
 	}
 	return u.LockedUntil != nil && now.Before(*u.LockedUntil)
+}
+
+// IsBlocked reports whether an administrator has disabled or locked the
+// account. It ignores the temporary lock that wrong passwords set: that one
+// refuses new sign-ins only. Anyone who knows a username can set it, so if
+// it also ended the sessions already signed in, anyone could sign the
+// account's owner out (M6). Session checks use this.
+func (u *User) IsBlocked() bool {
+	return u.Status == StatusLocked || u.Status == StatusDisabled
 }
 
 // CountAdmins returns the number of active users holding admin.
