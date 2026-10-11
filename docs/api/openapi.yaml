@@ -926,8 +926,11 @@ paths:
         Served at the root, not under `/api/v1`. Same ticket handshake as `/ws/terminal`. The
         server speaks the Guacamole protocol to guacd on a private network and relays instructions
         to the browser, which renders them with guacamole-common-js. Clipboard and file transfer
-        instructions are dropped unless the policy allows them. The same `target_lost` control
-        message is delivered as a Guacamole `error` instruction with status 519 and a JSON payload.
+        instructions are dropped unless the policy allows them. When the gateway ends the session it
+        sends a Guacamole `error` instruction whose message says why, then `disconnect`, then a
+        normal close: status 519 when the target was lost (on an autoscaling group the console then
+        offers another instance), 523 (session closed) for any other end the gateway decided, such
+        as an administrator's terminate, a policy change, a restart or a time limit.
       parameters:
         - $ref: "#/components/parameters/Ticket"
       security: []

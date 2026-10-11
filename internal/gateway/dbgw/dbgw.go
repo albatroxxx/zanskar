@@ -345,7 +345,9 @@ func dockerRun(ctx context.Context, docker string, env []string, args ...string)
 
 // Bridge sets up the per-session network + proxy sidecar, runs the client under
 // a pty, and pumps it to the WebSocket until one side ends, returning the end
-// reason. docker is the path to the docker CLI; rec may be nil.
+// reason. docker is the path to the docker CLI; rec may be nil. Once the
+// browser has been told why the session ended, Bridge closes ws normally
+// (gateway.CloseAfterEnd).
 func Bridge(ctx context.Context, log *slog.Logger, docker string, spec Spec, ws *websocket.Conn, rec *recording.Asciicast, cols, rows int, lim Limits) (string, error) {
 	if log == nil {
 		log = slog.Default()
@@ -421,8 +423,23 @@ func Bridge(ctx context.Context, log *slog.Logger, docker string, spec Spec, ws 
 		_ = dockerRun(tdCtx, docker, nil, "rm", "-f", client)
 	}()
 
+	// The client was started under the session's own context, and a
+	// cancellation closes that context's Done before it reaches the child
+	// made below. The client can therefore be killed and reaped while the
+	// child still reads as live, so "did the session end it?" is asked of
+	// session, never of the child.
+	session := ctx
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
+	// The browser is read and written under a context of its own, which the
+	// session's cancellation does not reach. coder/websocket drops the
+	// connection when the context of a read or write in progress is
+	// cancelled, so reading under ctx let an administrator, a restart or a
+	// policy change tear the socket down before the end frame could tell the
+	// browser why. wsCancel ends it: through CloseAfterEnd once the end frame
+	// is out, or at once when the browser has gone. It is a child of
+	// detached, so cancelling it leaves the teardown above alone.
+	wsCtx, wsCancel := context.WithCancel(detached)
 	var (
 		mu     sync.Mutex
 		reason = "user_exit"
@@ -460,7 +477,7 @@ func Bridge(ctx context.Context, log *slog.Logger, docker string, spec Spec, ws 
 						return
 					}
 				}
-				if werr := ws.Write(ctx, websocket.MessageBinary, buf[:n]); werr != nil {
+				if werr := ws.Write(wsCtx, websocket.MessageBinary, buf[:n]); werr != nil {
 					return
 				}
 			}
@@ -473,7 +490,7 @@ func Bridge(ctx context.Context, log *slog.Logger, docker string, spec Spec, ws 
 	go func() {
 		defer close(inDone)
 		for {
-			typ, data, rerr := ws.Read(ctx)
+			typ, data, rerr := ws.Read(wsCtx)
 			if rerr != nil {
 				return
 			}
@@ -521,6 +538,7 @@ func Bridge(ctx context.Context, log *slog.Logger, docker string, spec Spec, ws 
 		setEnd(r)
 		r = current()
 		sendCtrl(control{T: "end", Reason: r, Msg: msg})
+		gateway.CloseAfterEnd(ws, r, wsCancel)
 		cancel()
 		return r, nil
 	}
@@ -531,12 +549,22 @@ func Bridge(ctx context.Context, log *slog.Logger, docker string, spec Spec, ws 
 			return finish(reason, msg)
 		case <-inDone:
 			r := current()
+			wsCancel()
 			cancel()
 			return r, nil
 		case <-waitDone:
 			<-outDone
+			if session.Err() != nil {
+				// The client runs under the session's context, so the
+				// cancellation killed it and may be seen here first; its
+				// cause is the reason.
+				return finish(gateway.CancelReason(session))
+			}
 			return finish("user_exit", "")
 		case <-outDone:
+			if session.Err() != nil {
+				return finish(gateway.CancelReason(session))
+			}
 			if r := current(); r != "user_exit" {
 				return finish(r, "the database session ended")
 			}

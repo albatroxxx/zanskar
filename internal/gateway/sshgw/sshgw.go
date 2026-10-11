@@ -166,7 +166,8 @@ type control struct {
 
 // Bridge runs an interactive shell over the client and pumps it to the
 // WebSocket until one side ends. It returns the end reason for the
-// access_sessions row. rec may be nil.
+// access_sessions row. rec may be nil. Once the browser has been told why the
+// session ended, Bridge closes ws normally (gateway.CloseAfterEnd).
 func Bridge(ctx context.Context, log *slog.Logger, client *ssh.Client, ws *websocket.Conn, rec *recording.Asciicast, cols, rows int, lim Limits) (string, error) {
 	if log == nil {
 		log = slog.Default()
@@ -201,6 +202,15 @@ func Bridge(ctx context.Context, log *slog.Logger, client *ssh.Client, ws *webso
 
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
+	// The browser is read and written under a context of its own, which the
+	// session's cancellation does not reach. coder/websocket drops the
+	// connection when the context of a read or write in progress is
+	// cancelled, so reading under ctx let an administrator, a restart, a
+	// policy change or the autoscaling sync tear the socket down before the
+	// end frame could tell the browser why, and the console reported a lost
+	// target instead. wsCancel ends it: through CloseAfterEnd once the end
+	// frame is out, or at once when the browser has gone.
+	wsCtx, wsCancel := context.WithCancel(context.WithoutCancel(ctx))
 	var (
 		mu     sync.Mutex
 		reason = "user_exit"
@@ -254,7 +264,7 @@ func Bridge(ctx context.Context, log *slog.Logger, client *ssh.Client, ws *webso
 				if lim.Tap != nil {
 					lim.Tap.Write(buf[:n])
 				}
-				if werr := ws.Write(ctx, websocket.MessageBinary, buf[:n]); werr != nil {
+				if werr := ws.Write(wsCtx, websocket.MessageBinary, buf[:n]); werr != nil {
 					return
 				}
 			}
@@ -271,7 +281,7 @@ func Bridge(ctx context.Context, log *slog.Logger, client *ssh.Client, ws *webso
 	go func() {
 		defer close(inDone)
 		for {
-			typ, data, err := ws.Read(ctx)
+			typ, data, err := ws.Read(wsCtx)
 			if err != nil {
 				return
 			}
@@ -325,6 +335,7 @@ func Bridge(ctx context.Context, log *slog.Logger, client *ssh.Client, ws *webso
 		setEnd(r)
 		r = current()
 		sendCtrl(control{T: "end", Reason: r, Msg: msg})
+		gateway.CloseAfterEnd(ws, r, wsCancel)
 		cancel()
 		return r, nil
 	}
@@ -338,6 +349,7 @@ func Bridge(ctx context.Context, log *slog.Logger, client *ssh.Client, ws *webso
 		case <-inDone:
 			// Browser went away (tab closed, network drop). Nothing to send.
 			r := current()
+			wsCancel()
 			cancel()
 			return r, nil
 		case err := <-waitDone:
