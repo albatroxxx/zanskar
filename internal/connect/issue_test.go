@@ -13,6 +13,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/coder/websocket"
+
 	"github.com/albatroxxx/zanskar/internal/access"
 	"github.com/albatroxxx/zanskar/internal/audit"
 	"github.com/albatroxxx/zanskar/internal/auth"
@@ -33,6 +35,12 @@ import (
 // way a connect request can be refused. Policies grant alice everything
 // tagged env=test; targets tagged tier=mfa or tier=jit fall under their own
 // policies that require an authenticator or an approved request.
+// wsOptions dials a WebSocket as alice's browser does: with the cookie of
+// the sign-in that asked for the ticket, which redemption checks (L9).
+func (f *connectFixture) wsOptions(subprotocols ...string) *websocket.DialOptions {
+	return &websocket.DialOptions{Subprotocols: subprotocols, HTTPHeader: http.Header{"Cookie": []string{f.cookie.String()}}}
+}
+
 type connectFixture struct {
 	ctx      context.Context
 	srv      http.Handler

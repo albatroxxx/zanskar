@@ -637,10 +637,13 @@ paths:
       summary: Request a connect ticket
       description: |
         Server-side policy evaluation happens here: role, group membership, target selector,
-        protocol, time window, and MFA requirement. On success an `access_sessions` row is created
-        and a one-time ticket is returned. The ticket must be presented to `/ws/terminal` or
-        `/ws/desktop` within `expires_at` (30 seconds) and is invalid after first use. Credentials
-        supplied in the body are held in memory only for the life of the ticket. When every
+        protocol, time window, and MFA requirement. On success a one-time ticket is returned; the
+        `access_sessions` row is created when it is redeemed. The ticket must be presented to the
+        returned `ws_path` within `expires_at` (30 seconds), from the same address and with the
+        same sign-in's cookie (a browser sends it with the upgrade), and is spent by its first use,
+        right or wrong. The policies are applied again at that moment, so a revocation in between
+        refuses the upgrade (`403 policy_denied`). Credentials supplied in the body are held in
+        memory only for the life of the ticket. When every
         policy that grants the caller this target is approval-gated (ADR 0018), the caller needs
         an active grant: without one the request is refused with `403 approval_required` and the
         UI offers to request access instead.

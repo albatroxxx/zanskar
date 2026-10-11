@@ -52,7 +52,7 @@ func TestDatabaseSessionEndToEnd(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Minute)
 	defer cancel()
-	ws, _, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(srv.URL, "http")+"/ws/database?cols=100&rows=30&ticket="+tok, nil) //nolint:bodyclose // the library closes the handshake body
+	ws, _, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(srv.URL, "http")+"/ws/database?cols=100&rows=30&ticket="+tok, f.wsOptions()) //nolint:bodyclose // the library closes the handshake body
 	if err != nil {
 		t.Fatal(err)
 	}
