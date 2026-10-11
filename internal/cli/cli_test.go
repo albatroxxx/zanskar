@@ -132,7 +132,10 @@ func (e *env) fakeAPI(mux *http.ServeMux) {
 	reply("GET /api/v1/admin/system/status", 200, `{"version":"1.2.2","uptime_seconds":273600,"live_sessions":2,"draining":true}`)
 	reply("POST /api/v1/admin/system/restart", 202, `{}`)
 	reply("DELETE /api/v1/admin/system/restart", 200, `{}`)
-	e.verify = `{"intact":false,"checked":12,"broken":{"id":7,"reason":"hash mismatch"}}`
+	// Built from the gateway's own types, so the reply has the shape the API
+	// sends ({"Index":…,"ID":…,"Reason":…}, B31), not one written by hand.
+	broken, _ := json.Marshal(map[string]any{"intact": false, "checked": 12, "broken": &audit.VerifyError{Index: 6, ID: 7, Reason: "hash mismatch"}})
+	e.verify = string(broken)
 	mux.Handle("GET /api/v1/audit/verify", admin(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		e.mu.Lock()
 		e.calls = append(e.calls, r.Method+" "+r.URL.Path)
