@@ -237,6 +237,8 @@ const prompt = "PS> "
 // Bridge relays a line-oriented PowerShell console between the browser and the
 // target until one side ends, returning the end reason for the session row.
 // rec may be nil. cols and rows are accepted for protocol parity but unused.
+// Once the browser has been told why the session ended, Bridge closes ws
+// normally (gateway.CloseAfterEnd).
 func Bridge(ctx context.Context, log *slog.Logger, sh Shell, ws *websocket.Conn, rec *recording.Asciicast, cols, rows int, lim Limits) (string, error) {
 	if log == nil {
 		log = slog.Default()
@@ -245,13 +247,21 @@ func Bridge(ctx context.Context, log *slog.Logger, sh Shell, ws *websocket.Conn,
 	_ = rows
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
+	// The browser is read and written under a context of its own, which the
+	// session's cancellation does not reach. coder/websocket drops the
+	// connection when the context of a read or write in progress is
+	// cancelled, so reading under ctx let an administrator, a restart, a
+	// policy change or the autoscaling sync tear the socket down before the
+	// end frame could tell the browser why. wsCancel ends it: through
+	// CloseAfterEnd once the end frame is out, or at once when the browser
+	// has gone.
+	wsCtx, wsCancel := context.WithCancel(context.WithoutCancel(ctx))
 
 	var (
 		mu     sync.Mutex
 		reason = "user_exit"
 		lastIn = time.Now()
 		start  = time.Now()
-		wmu    sync.Mutex // serialises websocket writes
 		setEnd = func(r string) {
 			mu.Lock()
 			if reason == "user_exit" {
@@ -263,6 +273,12 @@ func Bridge(ctx context.Context, log *slog.Logger, sh Shell, ws *websocket.Conn,
 		touch   = func() { mu.Lock(); lastIn = time.Now(); mu.Unlock() }
 	)
 
+	// The reader's echo, the executor's output and the control frames all
+	// write to the browser. coder/websocket takes the connection's write lock
+	// for each whole message and waits for it under the write's context, so
+	// they go one message at a time and the end frame's deadline also bounds
+	// its wait behind output to a browser that has stopped reading. A lock of
+	// the bridge's own would not honour that deadline.
 	out := func(b []byte) bool {
 		if len(b) == 0 {
 			return true
@@ -277,16 +293,12 @@ func Bridge(ctx context.Context, log *slog.Logger, sh Shell, ws *websocket.Conn,
 		if lim.Tap != nil {
 			lim.Tap.Write(b)
 		}
-		wmu.Lock()
-		defer wmu.Unlock()
-		return ws.Write(ctx, websocket.MessageBinary, b) == nil
+		return ws.Write(wsCtx, websocket.MessageBinary, b) == nil
 	}
 	sendCtrl := func(c control) {
 		b, _ := json.Marshal(c)
 		wctx, wcancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer wcancel()
-		wmu.Lock()
-		defer wmu.Unlock()
 		_ = ws.Write(wctx, websocket.MessageText, b)
 	}
 
@@ -329,7 +341,7 @@ func Bridge(ctx context.Context, log *slog.Logger, sh Shell, ws *websocket.Conn,
 			return true
 		}
 		for {
-			typ, data, err := ws.Read(ctx)
+			typ, data, err := ws.Read(wsCtx)
 			if err != nil {
 				return
 			}
@@ -416,6 +428,7 @@ func Bridge(ctx context.Context, log *slog.Logger, sh Shell, ws *websocket.Conn,
 		setEnd(r)
 		r = current()
 		sendCtrl(control{T: "end", Reason: r, Msg: msg})
+		gateway.CloseAfterEnd(ws, r, wsCancel)
 		cancel()
 		_ = sh.Close()
 		return r, nil
@@ -430,11 +443,17 @@ func Bridge(ctx context.Context, log *slog.Logger, sh Shell, ws *websocket.Conn,
 		case <-readerDone:
 			// Browser went away.
 			r := current()
+			wsCancel()
 			cancel()
 			_ = sh.Close()
 			return r, nil
 		case <-execDone:
-			// Executor stopped: "exit" typed or target lost.
+			// Executor stopped: "exit" typed or target lost. It also stops
+			// when ctx is cancelled and may be seen first; then the
+			// cancellation's cause is the reason.
+			if ctx.Err() != nil {
+				return finish(gateway.CancelReason(ctx))
+			}
 			return finish(current(), msgFor(current()))
 		case now := <-ticker.C:
 			mu.Lock()

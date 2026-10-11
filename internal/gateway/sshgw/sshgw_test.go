@@ -22,6 +22,7 @@ import (
 	"github.com/pkg/sftp"
 	"golang.org/x/crypto/ssh"
 
+	"github.com/albatroxxx/zanskar/internal/gateway"
 	"github.com/albatroxxx/zanskar/internal/recording"
 )
 
@@ -371,6 +372,116 @@ func TestBridgeIdleTimeout(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("bridge did not end")
+	}
+}
+
+// registryCauses are the ways the registry ends a live session.
+var registryCauses = []error{gateway.ErrAdminTerminated, gateway.ErrGatewayRestart, gateway.ErrPolicyRevoked, gateway.ErrTargetLost}
+
+// wantEnd is the end reason and message a session cancelled with cause
+// must report.
+func wantEnd(cause error) (reason, msg string) {
+	ctx, cancel := context.WithCancelCause(context.Background())
+	cancel(cause)
+	return gateway.CancelReason(ctx)
+}
+
+// TestBridgeRegistryEndReachesBrowser: a session the registry ends (an
+// administrator, a restart, a policy change, the autoscaling sync) still
+// tells the browser why in the end frame, and the socket then closes
+// normally. coder/websocket closes the connection when the context of a
+// pending read is cancelled, so a bridge reading the browser under the
+// session's context lost the socket first and the console showed "target
+// lost" whatever the reason.
+func TestBridgeRegistryEndReachesBrowser(t *testing.T) {
+	fs := startFakeServer(t)
+	for _, cause := range registryCauses {
+		wantReason, wantMsg := wantEnd(cause)
+		t.Run(wantReason, func(t *testing.T) {
+			reg := gateway.NewRegistry()
+			reasonCh := make(chan string, 1)
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				ws, err := websocket.Accept(w, r, &websocket.AcceptOptions{InsecureSkipVerify: true})
+				if err != nil {
+					return
+				}
+				defer ws.CloseNow()
+				client, err := Dial(r.Context(), endpoint(fs, true), Auth{Username: "test", Password: "pw"}, time.Second)
+				if err != nil {
+					t.Errorf("dial: %v", err)
+					return
+				}
+				defer func() { _ = client.Close() }()
+				ctx := reg.Add(r.Context(), gateway.Live{SessionID: "s1", Protocol: "ssh"})
+				defer reg.Remove("s1")
+				reason, err := Bridge(ctx, nil, client, ws, nil, 80, 24, Limits{SessionID: "s1", Idle: time.Minute, tick: 20 * time.Millisecond})
+				if err != nil {
+					t.Errorf("bridge: %v", err)
+				}
+				reasonCh <- reason
+				// What the connect handler does once the session is recorded.
+				_ = ws.Close(websocket.StatusNormalClosure, reason)
+			}))
+			defer srv.Close()
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			ws, _, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(srv.URL, "http"), nil) //nolint:bodyclose // library closes the handshake body
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer ws.CloseNow()
+
+			// The prompt: the shell is up and the bridge is reading the browser.
+			var screen string
+			for !strings.Contains(screen, "$ ") {
+				typ, data, err := ws.Read(ctx)
+				if err != nil {
+					t.Fatalf("waiting for the prompt: %v (screen %q)", err, screen)
+				}
+				if typ == websocket.MessageBinary {
+					screen += string(data)
+				}
+			}
+			if !reg.TerminateWithCause("s1", cause) {
+				t.Fatal("the session is not in the registry")
+			}
+
+			var end control
+			for end.T != "end" {
+				typ, data, err := ws.Read(ctx)
+				if err != nil {
+					t.Fatalf("the socket went before the end frame: %v", err)
+				}
+				if typ == websocket.MessageText {
+					end = control{}
+					_ = json.Unmarshal(data, &end)
+				}
+			}
+			if end.Reason != wantReason || end.Msg != wantMsg {
+				t.Fatalf("end frame %+v, want reason %q and msg %q", end, wantReason, wantMsg)
+			}
+			for {
+				typ, _, err := ws.Read(ctx)
+				if err == nil {
+					if typ == websocket.MessageText {
+						t.Fatal("a text frame after the end frame")
+					}
+					continue
+				}
+				if websocket.CloseStatus(err) != websocket.StatusNormalClosure {
+					t.Fatalf("after the end frame: %v, want a normal close", err)
+				}
+				break
+			}
+			select {
+			case r := <-reasonCh:
+				if r != wantReason {
+					t.Fatalf("bridge reason %q, want %q", r, wantReason)
+				}
+			case <-time.After(5 * time.Second):
+				t.Fatal("bridge did not end")
+			}
+		})
 	}
 }
 
