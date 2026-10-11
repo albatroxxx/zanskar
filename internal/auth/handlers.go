@@ -441,8 +441,13 @@ func (h *Handler) changePassword(w http.ResponseWriter, r *http.Request) {
 	h.recordAction(r, actor, actionSelfReset, "user", p.User.ID, audit.Success, map[string]any{
 		"session_id": p.Session.ID, "was_required": p.User.MustResetOnLogin, "other_sessions_revoked": others,
 	})
+	wasOwed := p.User.MustResetOnLogin
 	p.User.MustResetOnLogin = false
 	if p.Session.MFAVerified {
+		// A change that was owed was the sign-in's last step (L13).
+		if wasOwed && !h.rotate(w, r, p) {
+			return
+		}
 		httpx.WriteJSON(w, http.StatusOK, loginResponse{Status: "ok", User: p.User, CSRFToken: h.Sessions.CSRFToken(p.Session.ID)})
 		return
 	}
@@ -465,6 +470,9 @@ func (h *Handler) changePassword(w http.ResponseWriter, r *http.Request) {
 		}
 		if err := h.Sessions.MarkMFAVerified(r.Context(), p.Session.ID); err != nil {
 			httpx.Internal(w, r, h.Log, err)
+			return
+		}
+		if !h.rotate(w, r, p) {
 			return
 		}
 		httpx.WriteJSON(w, http.StatusOK, loginResponse{Status: "ok", User: p.User, CSRFToken: h.Sessions.CSRFToken(p.Session.ID)})
@@ -657,6 +665,9 @@ func (h *Handler) totpVerify(w http.ResponseWriter, r *http.Request) {
 		httpx.Internal(w, r, h.Log, err)
 		return
 	}
+	if !p.Session.MFAVerified && !h.rotate(w, r, p) {
+		return
+	}
 	method := "totp"
 	if usedRecovery {
 		method = "recovery_code"
@@ -773,6 +784,9 @@ func (h *Handler) totpConfirm(w http.ResponseWriter, r *http.Request) {
 		httpx.Internal(w, r, h.Log, err)
 		return
 	}
+	if signIn && !h.rotate(w, r, p) {
+		return
+	}
 	h.record(r, ActorFor(r).Event(audit.UserMFAConfirm, "user", p.User.ID, audit.Success, nil))
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"recovery_codes": codes, "status": "ok", "csrf_token": h.Sessions.CSRFToken(p.Session.ID)})
 }
@@ -781,6 +795,18 @@ func (h *Handler) totpConfirm(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) record(r *http.Request, e audit.Event) {
 	Recorder{Audit: h.Audit, Log: h.Log}.Record(r, e)
+}
+
+// rotate gives the session a new token as its sign-in completes and sends
+// it as the cookie (L13). When it returns false it has answered.
+func (h *Handler) rotate(w http.ResponseWriter, r *http.Request, p *Principal) bool {
+	token, err := h.Sessions.Rotate(r.Context(), p.Session.ID)
+	if err != nil {
+		httpx.Internal(w, r, h.Log, err)
+		return false
+	}
+	h.Sessions.SetCookie(w, token)
+	return true
 }
 
 // signInBodyLimit caps the bodies of these endpoints, most of which answer

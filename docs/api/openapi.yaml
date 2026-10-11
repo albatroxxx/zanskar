@@ -19,6 +19,11 @@ info:
     with `mfa_verified=false`. Such a session may only call the `/auth/mfa/*` endpoints until
     `POST /auth/mfa/totp/verify` succeeds.
 
+    The step that completes a sign-in (the second factor, the enrolment a sign-in owes, or a
+    password change that was its last step) sets a new cookie. The token used while signing in
+    stops working, so a cookie planted in the browser beforehand never becomes a signed-in one.
+    The session, its id and its CSRF token carry on.
+
     The temporary lock that wrong passwords set (see `POST /auth/login`) stops new sign-ins
     only; sessions already signed in carry on. When the gateway cannot check a session cookie
     because its database does not answer, API calls and WebSocket upgrades get `503` with code

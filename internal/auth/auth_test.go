@@ -280,7 +280,8 @@ func TestTOTPFlow(t *testing.T) {
 	if v.code != 200 || v.body["status"] != "ok" {
 		t.Fatalf("verify: %d %v", v.code, v.body)
 	}
-	if me := e.do("GET", "/api/v1/auth/me", nil, r.cookie, nil); me.code != 200 {
+	// Completing the sign-in issued a new token (L13).
+	if me := e.do("GET", "/api/v1/auth/me", nil, v.cookie, nil); me.code != 200 {
 		t.Fatalf("expected full session after verify, got %d", me.code)
 	}
 
@@ -356,10 +357,12 @@ func TestMFAEnrollmentRequired(t *testing.T) {
 		t.Fatalf("enroll on partial session: %d %v", enr.code, enr.body)
 	}
 	code, _ := totp.GenerateCode(enr.body["secret"].(string), time.Now())
-	if c := e.do("POST", "/api/v1/auth/mfa/totp/confirm", map[string]string{"code": code}, r.cookie, hdr); c.code != 200 || c.body["status"] != "ok" {
+	c := e.do("POST", "/api/v1/auth/mfa/totp/confirm", map[string]string{"code": code}, r.cookie, hdr)
+	if c.code != 200 || c.body["status"] != "ok" {
 		t.Fatalf("confirm: %d %v", c.code, c.body)
 	}
-	if me := e.do("GET", "/api/v1/auth/me", nil, r.cookie, nil); me.code != 200 {
+	// Completing the sign-in issued a new token (L13).
+	if me := e.do("GET", "/api/v1/auth/me", nil, c.cookie, nil); me.code != 200 {
 		t.Fatalf("session should be full after confirm, got %d", me.code)
 	}
 	// The requirement is a runtime setting: flipping it applies to the next
@@ -467,7 +470,8 @@ func TestPasswordChangeRequiredFirst(t *testing.T) {
 	if x.code != 200 || x.body["status"] != "ok" {
 		t.Fatalf("change without MFA: %d %v", x.code, x.body)
 	}
-	if me := e.do("GET", "/api/v1/auth/me", nil, r.cookie, nil); me.body["pending"] != nil || me.body["user"] == nil {
+	// Completing the sign-in issued a new token (L13).
+	if me := e.do("GET", "/api/v1/auth/me", nil, x.cookie, nil); me.body["pending"] != nil || me.body["user"] == nil {
 		t.Fatalf("session is full after the change: %v", me.body)
 	}
 }
@@ -504,16 +508,21 @@ func TestPasswordChangeAfterSecondFactor(t *testing.T) {
 	}
 	// The confirm code is spent; the next step's code is not.
 	code, _ = totp.GenerateCode(enr.body["secret"].(string), time.Now().Add(30*time.Second))
-	if v := e.do("POST", "/api/v1/auth/mfa/totp/verify", map[string]string{"code": code}, r.cookie, hdr); v.code != 200 {
+	v := e.do("POST", "/api/v1/auth/mfa/totp/verify", map[string]string{"code": code}, r.cookie, hdr)
+	if v.code != 200 {
 		t.Fatalf("verify: %d %v", v.code, v.body)
 	}
+	// The second factor issued a new token (L13); the session goes on.
+	r.cookie = v.cookie
 	if me := e.do("GET", "/api/v1/auth/me", nil, r.cookie, nil); me.body["pending"] != "password" || me.body["user"] != nil {
 		t.Fatalf("after the second factor the change is owed: %v", me.body)
 	}
-	if x := e.do("POST", "/api/v1/auth/password", map[string]string{"current_password": "ines first passphrase", "new_password": "ines second passphrase"}, r.cookie, hdr); x.code != 200 || x.body["status"] != "ok" {
+	x := e.do("POST", "/api/v1/auth/password", map[string]string{"current_password": "ines first passphrase", "new_password": "ines second passphrase"}, r.cookie, hdr)
+	if x.code != 200 || x.body["status"] != "ok" {
 		t.Fatalf("change after the second factor: %d %v", x.code, x.body)
 	}
-	if me := e.do("GET", "/api/v1/auth/me", nil, r.cookie, nil); me.body["pending"] != nil || me.body["user"] == nil {
+	// The change was the sign-in's last step, so it issued a new token too.
+	if me := e.do("GET", "/api/v1/auth/me", nil, x.cookie, nil); me.body["pending"] != nil || me.body["user"] == nil {
 		t.Fatalf("full after the change: %v", me.body)
 	}
 }
@@ -628,4 +637,63 @@ func TestEnrolmentFromAFullSessionNeedsThePassword(t *testing.T) {
 	if x := e.do("POST", "/api/v1/auth/mfa/totp/enroll", nil, partial.cookie, csrfOf(partial)); x.code != http.StatusOK {
 		t.Fatalf("enrolment while signing in: %d %v", x.code, x.body)
 	}
+}
+
+// TestSignInCompletionRotatesTheToken: a sign-in that becomes full kept the
+// cookie it had while partial (L13), so a cookie planted in the victim's
+// browser before sign-in (from a sibling subdomain, say) became fully
+// verified when the victim typed their code. Each step that completes a
+// sign-in now issues a new token for the same session: the code, the
+// enrolment a sign-in owes, and the password change that is its last step.
+// The old token stops working; the session, its id and CSRF token go on.
+func TestSignInCompletionRotatesTheToken(t *testing.T) {
+	e := newEnv(t)
+	unlimited(e)
+	completes := func(t *testing.T, before, after resp) {
+		t.Helper()
+		if after.code != http.StatusOK || after.cookie == nil || after.cookie.Value == "" || after.cookie.Value == before.cookie.Value {
+			t.Fatalf("the completing step must set a new cookie: %d %v", after.code, after.cookie)
+		}
+		if me := e.do("GET", "/api/v1/auth/me", nil, before.cookie, nil); me.code != http.StatusUnauthorized {
+			t.Fatalf("the token from before the sign-in completed: %d, want 401", me.code)
+		}
+		me := e.do("GET", "/api/v1/auth/me", nil, after.cookie, nil)
+		if me.code != http.StatusOK || me.body["user"] == nil || me.body["csrf_token"] != before.body["csrf_token"] {
+			t.Fatalf("the new token: %d %v, want the same session", me.code, me.body)
+		}
+	}
+
+	t.Run("code", func(t *testing.T) {
+		u := e.createUser(t, "pia", "pia keeps a long passphrase", user.RoleUser)
+		enr, err := e.totp.Enroll(context.Background(), u.ID, u.Username)
+		if err != nil {
+			t.Fatal(err)
+		}
+		code, _ := totp.GenerateCode(enr.Secret, time.Now())
+		if _, err := e.totp.Confirm(context.Background(), u.ID, code); err != nil {
+			t.Fatal(err)
+		}
+		r := login(e, "pia", "pia keeps a long passphrase")
+		code, _ = totp.GenerateCode(enr.Secret, time.Now().Add(30*time.Second))
+		completes(t, r, e.do("POST", "/api/v1/auth/mfa/totp/verify", map[string]string{"code": code}, r.cookie, csrfOf(r)))
+	})
+
+	t.Run("enrolment", func(t *testing.T) {
+		e.handler.RequireMFA = func() bool { return true }
+		defer func() { e.handler.RequireMFA = nil }()
+		e.createUser(t, "quin", "quin keeps a long passphrase", user.RoleUser)
+		r := login(e, "quin", "quin keeps a long passphrase")
+		enr := e.do("POST", "/api/v1/auth/mfa/totp/enroll", nil, r.cookie, csrfOf(r))
+		code, _ := totp.GenerateCode(enr.body["secret"].(string), time.Now())
+		completes(t, r, e.do("POST", "/api/v1/auth/mfa/totp/confirm", map[string]string{"code": code}, r.cookie, csrfOf(r)))
+	})
+
+	t.Run("password change", func(t *testing.T) {
+		u := e.createUser(t, "rosa", "rosa was handed this phrase", user.RoleUser)
+		if err := e.users.SetPasswordHash(context.Background(), u.ID, u.PasswordHash, true); err != nil {
+			t.Fatal(err)
+		}
+		r := login(e, "rosa", "rosa was handed this phrase")
+		completes(t, r, e.do("POST", "/api/v1/auth/password", map[string]string{"current_password": "rosa was handed this phrase", "new_password": "rosa chose her own phrase"}, r.cookie, csrfOf(r)))
+	})
 }
