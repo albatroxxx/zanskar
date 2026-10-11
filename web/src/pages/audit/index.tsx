@@ -1,8 +1,12 @@
+import { lazy } from 'react'
 import { Route } from 'react-router-dom'
-import { Events } from './Events'
-import { Recordings } from './Recordings'
-import { Player } from './Player'
-import { Sessions } from '../admin/Sessions'
+
+// Loaded when first opened (ADR 0010); the player brings asciinema-player,
+// which no other page needs.
+const Events = lazy(() => import('./Events').then((m) => ({ default: m.Events })))
+const Recordings = lazy(() => import('./Recordings').then((m) => ({ default: m.Recordings })))
+const Player = lazy(() => import('./Player').then((m) => ({ default: m.Player })))
+const Sessions = lazy(() => import('../admin/Sessions').then((m) => ({ default: m.Sessions })))
 
 // Auditor portal: read-only review of the audit chain, session recordings and
 // live sessions, which an auditor can watch but not end.

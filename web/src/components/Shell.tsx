@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useState } from 'react'
+import { Fragment, Suspense, useEffect, useState } from 'react'
 import { Link, NavLink, Outlet, useNavigate } from 'react-router-dom'
 import { useAuth } from '../auth/AuthContext'
 import { canConnect } from '../auth/home'
@@ -92,7 +92,11 @@ export function Shell({ portal, items }: { portal: 'user' | 'admin' | 'audit'; i
         {portal === 'admin' && <ConsoleCLI />}
         {portal === 'user' && <AccessNotices />}
         {portal === 'admin' && <RestartNotice />}
-        <Outlet />
+        {/* The admin and audit pages load on demand (ADR 0010), so the
+            sign-in page does not carry the whole console. */}
+        <Suspense fallback={<div className="empty">Loading…</div>}>
+          <Outlet />
+        </Suspense>
       </main>
     </div>
   )
