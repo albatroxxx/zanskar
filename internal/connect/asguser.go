@@ -145,10 +145,10 @@ func (h *Handler) failover(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if code != "" {
-		h.record(r, actor.Event("session.failover", "access_session", old.ID, audit.Failure, map[string]string{"reason": code}))
+		h.record(r, actor.Event(audit.SessionFailover, "access_session", old.ID, audit.Failure, map[string]string{"reason": code}))
 		httpx.WriteError(w, codeStatus(code), code, msg)
 		return
 	}
-	h.record(r, actor.Event("session.failover", "access_session", old.ID, audit.Success, map[string]any{"asg_id": old.ASGID, "from_instance": old.ASGInstanceID, "to_instance": ep.ASGInstanceID}))
+	h.record(r, actor.Event(audit.SessionFailover, "access_session", old.ID, audit.Success, map[string]any{"asg_id": old.ASGID, "from_instance": old.ASGInstanceID, "to_instance": ep.ASGInstanceID}))
 	httpx.WriteJSON(w, http.StatusOK, res)
 }

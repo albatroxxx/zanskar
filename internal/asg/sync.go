@@ -123,10 +123,10 @@ func (s *Syncer) SyncGroup(ctx context.Context, g *Group) (Summary, error) {
 		switch {
 		case isNew:
 			sum.Joined++
-			s.record(ctx, "asg.instance.joined", g, stored, map[string]any{"healthy": stored.Healthy, "host_key_source": stored.HostKeySource})
+			s.record(ctx, audit.ASGInstanceJoined, g, stored, map[string]any{"healthy": stored.Healthy, "host_key_source": stored.HostKeySource})
 		case prev != nil && prev.Healthy && !stored.Healthy:
 			sum.Retired++
-			s.record(ctx, "asg.instance.unhealthy", g, stored, map[string]any{"lifecycle": stored.LifecycleState, "lb": stored.LBHealth, "probe": stored.ProbeHealth})
+			s.record(ctx, audit.ASGInstanceUnhealthy, g, stored, map[string]any{"lifecycle": stored.LifecycleState, "lb": stored.LBHealth, "probe": stored.ProbeHealth})
 			s.retire(stored)
 		}
 	}
@@ -137,7 +137,7 @@ func (s *Syncer) SyncGroup(ctx context.Context, g *Group) (Summary, error) {
 	}
 	for _, in := range gone {
 		sum.Left++
-		s.record(ctx, "asg.instance.left", g, in, nil)
+		s.record(ctx, audit.ASGInstanceLeft, g, in, nil)
 		s.retire(in)
 	}
 	return sum, s.Repo.RecordSync(ctx, g.ID, nil)
@@ -180,7 +180,7 @@ func (s *Syncer) probe(ctx context.Context, provider cloud.Provider, g *Group, i
 		if res.SSHHostKey != nil && res.SSHHostKey.Fingerprint != prev.HostKeyFingerprint {
 			in.ProbeHealth = "unhealthy"
 			sum.HostKeyMismatches++
-			s.record(ctx, "asg.instance.hostkey.changed", g, prev, map[string]any{"pinned": prev.HostKeyFingerprint, "observed": res.SSHHostKey.Fingerprint})
+			s.record(ctx, audit.ASGInstanceHostKeyChanged, g, prev, map[string]any{"pinned": prev.HostKeyFingerprint, "observed": res.SSHHostKey.Fingerprint})
 		}
 		in.HostKeyFingerprint, in.HostKeySource = prev.HostKeyFingerprint, prev.HostKeySource
 		return
@@ -202,7 +202,7 @@ func (s *Syncer) probe(ctx context.Context, provider cloud.Provider, g *Group, i
 		// rebuilt instance reusing an id. Refuse to pin.
 		in.ProbeHealth = "unhealthy"
 		sum.HostKeyMismatches++
-		s.record(ctx, "asg.instance.hostkey.mismatch", g, in, map[string]any{"console": consoleKeys, "observed": observed})
+		s.record(ctx, audit.ASGInstanceHostKeyMismatch, g, in, map[string]any{"console": consoleKeys, "observed": observed})
 	default:
 		in.HostKeyFingerprint, in.HostKeySource = observed, "tofu"
 	}
@@ -222,7 +222,7 @@ func (s *Syncer) pinCertificates(ctx context.Context, g *Group, in, prev *Instan
 			in.ProbeHealth = "unhealthy"
 			sum.CertificateMismatches++
 			set(pinned)
-			s.record(ctx, "asg.instance.certificate.changed", g, in, map[string]any{"protocol": string(proto), "pinned": pinned, "observed": observed})
+			s.record(ctx, audit.ASGInstanceCertificateChanged, g, in, map[string]any{"protocol": string(proto), "pinned": pinned, "observed": observed})
 		}
 	}
 	var prevTLS, prevWinRM string

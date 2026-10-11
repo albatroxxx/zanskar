@@ -83,7 +83,7 @@ func (h *Handler) winrm(w http.ResponseWriter, r *http.Request) {
 	client, err := winrmgw.Dial(r.Context(), winrmgw.Endpoint{Address: ep.Address, Port: port, UseTLS: true, PinnedFingerprint: ep.WinRMTLSFingerprint}, a, timeout)
 	if err != nil {
 		if errors.Is(err, winrmgw.ErrCertMismatch) {
-			h.record(r, actorFor(g.UserID, ip).Event("target.tls.mismatch", "target", ep.LiveKey, audit.Failure, map[string]string{"protocol": "winrm", "expected": ep.WinRMTLSFingerprint}))
+			h.record(r, actorFor(g.UserID, ip).Event(audit.TargetTLSMismatch, "target", ep.LiveKey, audit.Failure, map[string]string{"protocol": "winrm", "expected": ep.WinRMTLSFingerprint}))
 			httpx.WriteError(w, http.StatusConflict, "certificate_mismatch", "the target presented a different certificate; connection refused")
 			return
 		}
@@ -125,7 +125,7 @@ func (h *Handler) winrm(w http.ResponseWriter, r *http.Request) {
 	actor := audit.Actor{UserID: g.UserID, IP: ip}
 	endWith := func(reason string) {
 		_ = h.Sessions.End(context.Background(), s.ID, reason)
-		h.record(r, actor.Event("session.end", "access_session", s.ID, audit.Success, map[string]string{"reason": reason, "target_id": ep.LiveKey}))
+		h.record(r, actor.Event(audit.SessionEnd, "access_session", s.ID, audit.Success, map[string]string{"reason": reason, "target_id": ep.LiveKey}))
 	}
 
 	rec, uri, err := recording.NewAsciicast(r.Context(), h.Storage, s.ID+".cast", recording.Header{Width: cols, Height: rows, Title: sessionLabel(ep),
@@ -143,7 +143,7 @@ func (h *Handler) winrm(w http.ResponseWriter, r *http.Request) {
 		endWith(session.EndError)
 		return
 	}
-	h.record(r, actor.Event("session.start", "access_session", s.ID, audit.Success, map[string]any{"target_id": ep.LiveKey, "protocol": g.Protocol, "policy_id": g.PolicyID, "recording_id": recRow.ID}))
+	h.record(r, actor.Event(audit.SessionStart, "access_session", s.ID, audit.Success, map[string]any{"target_id": ep.LiveKey, "protocol": g.Protocol, "policy_id": g.PolicyID, "recording_id": recRow.ID}))
 
 	ctx := h.Registry.Add(r.Context(), gateway.Live{SessionID: s.ID, UserID: g.UserID, TargetID: ep.LiveKey, Protocol: g.Protocol, PolicyID: g.PolicyID})
 	defer h.Registry.Remove(s.ID)

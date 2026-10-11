@@ -97,7 +97,7 @@ func (h *Handler) upload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// The key is never recorded; the certificate is public.
-	h.record(r, "tls.certificate.upload", map[string]any{"subject": info.Subject, "hosts": info.Hosts, "not_after": info.NotAfter, "fingerprint": info.Fingerprint})
+	h.record(r, audit.TLSCertificateUpload, map[string]any{"subject": info.Subject, "hosts": info.Hosts, "not_after": info.NotAfter, "fingerprint": info.Fingerprint})
 	httpx.WriteJSON(w, http.StatusOK, h.status(r))
 }
 
@@ -111,7 +111,7 @@ func (h *Handler) reset(w http.ResponseWriter, r *http.Request) {
 		h.fail(w, r, err)
 		return
 	}
-	h.record(r, "tls.certificate.reset", map[string]any{"before": before.Fingerprint, "after": info.Fingerprint, "after_source": info.Source})
+	h.record(r, audit.TLSCertificateReset, map[string]any{"before": before.Fingerprint, "after": info.Fingerprint, "after_source": info.Source})
 	httpx.WriteJSON(w, http.StatusOK, h.status(r))
 }
 
@@ -148,7 +148,7 @@ func (h *Handler) regenerate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	g, _ := h.Manager.Generated(r.Context())
-	h.record(r, "tls.certificate.regenerate", map[string]any{"hosts": hosts, "fingerprint": g.Fingerprint, "serving": h.Manager.Active().Source == SourceGenerated})
+	h.record(r, audit.TLSCertificateRegenerate, map[string]any{"hosts": hosts, "fingerprint": g.Fingerprint, "serving": h.Manager.Active().Source == SourceGenerated})
 	httpx.WriteJSON(w, http.StatusOK, h.status(r))
 }
 

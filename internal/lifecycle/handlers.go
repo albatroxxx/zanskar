@@ -81,7 +81,7 @@ func (h *Handler) restart(w http.ResponseWriter, r *http.Request) {
 	p, _ := auth.FromContext(r.Context())
 	before := h.current()
 	d := h.Controller.Restart(p.User.ID, wait)
-	h.record(r, "system.restart", map[string]any{
+	h.record(r, audit.SystemRestart, map[string]any{
 		"wait_minutes": d.WaitMinutes, "live_sessions": before.LiveSessions,
 		"env_file_state": before.EnvFile.State, "changed_env": before.EnvFile.Changed, "supervisor": before.Supervisor,
 	})
@@ -93,7 +93,7 @@ func (h *Handler) cancel(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, http.StatusConflict, "not_draining", "no restart is in progress")
 		return
 	}
-	h.record(r, "system.restart_cancel", map[string]any{"live_sessions": h.Controller.Registry.Count()})
+	h.record(r, audit.SystemRestartCancel, map[string]any{"live_sessions": h.Controller.Registry.Count()})
 	httpx.WriteJSON(w, http.StatusOK, h.current())
 }
 

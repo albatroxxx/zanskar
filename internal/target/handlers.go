@@ -130,7 +130,7 @@ func (h *AdminHandler) create(w http.ResponseWriter, r *http.Request) {
 		h.writeErr(w, r, err)
 		return
 	}
-	h.record(r, "target.create", t.ID, audit.Success, map[string]any{"name": t.Name, "address": t.Address, "os_family": t.OSFamily})
+	h.record(r, audit.TargetCreate, t.ID, audit.Success, map[string]any{"name": t.Name, "address": t.Address, "os_family": t.OSFamily})
 	httpx.WriteJSON(w, http.StatusCreated, t)
 }
 
@@ -165,7 +165,7 @@ func (h *AdminHandler) update(w http.ResponseWriter, r *http.Request) {
 		// Repo.Update cleared the host key and certificate pins with it.
 		details["trust_reset"] = true
 	}
-	h.record(r, "target.update", t.ID, audit.Success, details)
+	h.record(r, audit.TargetUpdate, t.ID, audit.Success, details)
 	httpx.WriteJSON(w, http.StatusOK, t)
 }
 
@@ -181,7 +181,7 @@ func (h *AdminHandler) delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if blocked != "" {
-		h.record(r, "target.delete", t.ID, audit.Failure, map[string]any{"name": t.Name, "reason": "in_use"})
+		h.record(r, audit.TargetDelete, t.ID, audit.Failure, map[string]any{"name": t.Name, "reason": "in_use"})
 		httpx.WriteError(w, http.StatusConflict, "in_use", blocked)
 		return
 	}
@@ -189,7 +189,7 @@ func (h *AdminHandler) delete(w http.ResponseWriter, r *http.Request) {
 		h.writeErr(w, r, err)
 		return
 	}
-	h.record(r, "target.delete", t.ID, audit.Success, map[string]any{"name": t.Name, "address": t.Address})
+	h.record(r, audit.TargetDelete, t.ID, audit.Success, map[string]any{"name": t.Name, "address": t.Address})
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -255,7 +255,7 @@ func (h *AdminHandler) probe(w http.ResponseWriter, r *http.Request) {
 	}
 	res, err := h.Prober.Probe(r.Context(), t.Address, t.EffectivePorts(), ProbeTimeout)
 	if err != nil {
-		h.record(r, "target.probe", t.ID, audit.Failure, map[string]any{"address": t.Address, "error": err.Error()})
+		h.record(r, audit.TargetProbe, t.ID, audit.Failure, map[string]any{"address": t.Address, "error": err.Error()})
 		if errors.Is(err, ErrAddressForbidden) {
 			httpx.WriteError(w, http.StatusUnprocessableEntity, "address_forbidden", err.Error())
 			return
@@ -268,20 +268,20 @@ func (h *AdminHandler) probe(w http.ResponseWriter, r *http.Request) {
 		h.writeErr(w, r, err)
 		return
 	}
-	h.record(r, "target.probe", t.ID, audit.Success, map[string]any{
+	h.record(r, audit.TargetProbe, t.ID, audit.Success, map[string]any{
 		"address": t.Address, "capabilities": res.Capabilities, "host_key_status": change.Status,
 		"host_key_fingerprint": change.New, "tls_fingerprint": t.TLSFingerprint,
 	})
 	out := ProbeResponse{Target: t, Probe: res, HostKeyStatus: t.HostKeyStatus, HostKeyFingerprint: t.HostKeyFingerprint}
 	for _, c := range change.Certificates {
-		h.record(r, "target.tls.changed", t.ID, audit.Failure, map[string]any{
+		h.record(r, audit.TargetTLSChanged, t.ID, audit.Failure, map[string]any{
 			"address": t.Address, "protocol": c.Protocol, "pinned": c.Pinned, "seen": c.Seen,
 		})
 		h.Log.Warn("pinned certificate changed; the new one awaits confirmation", "target", t.Name, "protocol", c.Protocol, "pinned", c.Pinned, "seen", c.Seen)
 	}
 	if change.Changed {
 		out.HostKeyChangedFrom = change.Old
-		h.record(r, "target.hostkey.changed", t.ID, audit.Failure, map[string]any{
+		h.record(r, audit.TargetHostKeyChanged, t.ID, audit.Failure, map[string]any{
 			"address": t.Address, "old": change.Old, "new": change.New,
 			"note": "trusted host key replaced; connections refused until an admin re-trusts",
 		})
@@ -406,7 +406,7 @@ func (h *AdminHandler) probeCertificate(w http.ResponseWriter, r *http.Request) 
 	if !out.Accepted {
 		outcome = audit.Failure
 	}
-	h.record(r, "target.probe.certificate", t.ID, outcome, map[string]any{"address": t.Address, "credential_id": credID, "key": body.Key, "login_user": loginUser, "reason": out.Reason})
+	h.record(r, audit.TargetProbeCertificate, t.ID, outcome, map[string]any{"address": t.Address, "credential_id": credID, "key": body.Key, "login_user": loginUser, "reason": out.Reason})
 	httpx.WriteJSON(w, http.StatusOK, out)
 }
 
@@ -426,11 +426,11 @@ func (h *AdminHandler) trustHostKey(w http.ResponseWriter, r *http.Request) {
 	}
 	t, err := h.Repo.TrustHostKey(r.Context(), r.PathValue("id"), body.HostKeyFingerprint)
 	if err != nil {
-		h.record(r, "target.hostkey.trust", r.PathValue("id"), audit.Failure, map[string]any{"fingerprint": body.HostKeyFingerprint, "error": err.Error()})
+		h.record(r, audit.TargetHostKeyTrust, r.PathValue("id"), audit.Failure, map[string]any{"fingerprint": body.HostKeyFingerprint, "error": err.Error()})
 		h.writeErr(w, r, err)
 		return
 	}
-	h.record(r, "target.hostkey.trust", t.ID, audit.Success, map[string]any{"address": t.Address, "fingerprint": body.HostKeyFingerprint})
+	h.record(r, audit.TargetHostKeyTrust, t.ID, audit.Success, map[string]any{"address": t.Address, "fingerprint": body.HostKeyFingerprint})
 	httpx.WriteJSON(w, http.StatusOK, t)
 }
 
@@ -453,11 +453,11 @@ func (h *AdminHandler) trustCertificate(w http.ResponseWriter, r *http.Request) 
 	}
 	t, err := h.Repo.TrustCertificate(r.Context(), r.PathValue("id"), body.Protocol, body.Fingerprint)
 	if err != nil {
-		h.record(r, "target.tls.trust", r.PathValue("id"), audit.Failure, map[string]any{"protocol": body.Protocol, "fingerprint": body.Fingerprint, "error": err.Error()})
+		h.record(r, audit.TargetTLSTrust, r.PathValue("id"), audit.Failure, map[string]any{"protocol": body.Protocol, "fingerprint": body.Fingerprint, "error": err.Error()})
 		h.writeErr(w, r, err)
 		return
 	}
-	h.record(r, "target.tls.trust", t.ID, audit.Success, map[string]any{"address": t.Address, "protocol": body.Protocol, "fingerprint": body.Fingerprint})
+	h.record(r, audit.TargetTLSTrust, t.ID, audit.Success, map[string]any{"address": t.Address, "protocol": body.Protocol, "fingerprint": body.Fingerprint})
 	httpx.WriteJSON(w, http.StatusOK, t)
 }
 
@@ -485,7 +485,7 @@ func (h *AdminHandler) setCredential(w http.ResponseWriter, r *http.Request) {
 		h.writeErr(w, r, err)
 		return
 	}
-	h.record(r, "target.credential.set", id, audit.Success, map[string]any{"protocol": proto, "credential_id": body.CredentialID})
+	h.record(r, audit.TargetCredentialSet, id, audit.Success, map[string]any{"protocol": proto, "credential_id": body.CredentialID})
 	t, err := h.Repo.Get(r.Context(), id)
 	if err != nil {
 		h.writeErr(w, r, err)
@@ -504,7 +504,7 @@ func (h *AdminHandler) unsetCredential(w http.ResponseWriter, r *http.Request) {
 		h.writeErr(w, r, err)
 		return
 	}
-	h.record(r, "target.credential.unset", id, audit.Success, map[string]any{"protocol": proto})
+	h.record(r, audit.TargetCredentialUnset, id, audit.Success, map[string]any{"protocol": proto})
 	w.WriteHeader(http.StatusNoContent)
 }
 

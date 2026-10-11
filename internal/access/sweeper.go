@@ -37,7 +37,7 @@ func (s *Sweeper) Sweep(ctx context.Context) (int, error) {
 	}
 	if s.Audit != nil {
 		for _, r := range due {
-			ev := audit.Actor{IP: "system"}.Event("access.grant.expire", "access_request", r.ID, audit.Success,
+			ev := audit.Actor{IP: "system"}.Event(audit.AccessGrantExpire, "access_request", r.ID, audit.Success,
 				map[string]any{"user_id": r.UserID, "target_id": r.TargetID, "asg_id": r.ASGID, "protocol": r.Protocol})
 			if _, err := s.Audit.Record(ctx, ev); err != nil {
 				s.Log.Error("audit grant expire", "request", r.ID, "err", err)

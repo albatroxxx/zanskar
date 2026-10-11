@@ -103,7 +103,7 @@ func (h *Handler) set(w http.ResponseWriter, r *http.Request) {
 	}
 	// None of the runtime settings is a secret; the audit row keeps both
 	// values, since "what was it set to that day" is the compliance question.
-	h.record(r, "settings.update", key, map[string]any{"before": before.Value, "before_source": before.Source, "after": v.Value})
+	h.record(r, audit.SettingsUpdate, key, map[string]any{"before": before.Value, "before_source": before.Source, "after": v.Value})
 	httpx.WriteJSON(w, http.StatusOK, v)
 }
 
@@ -118,7 +118,7 @@ func (h *Handler) reset(w http.ResponseWriter, r *http.Request) {
 		h.fail(w, r, err)
 		return
 	}
-	h.record(r, "settings.reset", key, map[string]any{"before": before.Value, "after": v.Value, "after_source": v.Source})
+	h.record(r, audit.SettingsReset, key, map[string]any{"before": before.Value, "after": v.Value, "after_source": v.Source})
 	httpx.WriteJSON(w, http.StatusOK, v)
 }
 

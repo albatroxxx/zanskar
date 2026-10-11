@@ -132,7 +132,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 		h.fail(w, r, err)
 		return
 	}
-	h.record(r, "access.request.create", req, map[string]any{"extends_request_id": req.ExtendsRequestID})
+	h.record(r, audit.AccessRequestCreate, req, map[string]any{"extends_request_id": req.ExtendsRequestID})
 	httpx.WriteJSON(w, http.StatusCreated, req)
 }
 
@@ -260,7 +260,7 @@ func (h *Handler) approve(w http.ResponseWriter, r *http.Request) {
 		h.fail(w, r, err)
 		return
 	}
-	h.record(r, "access.request.approve", req, map[string]any{"expires_at": req.ExpiresAt, "approved_minutes": minutes, "extends_request_id": req.ExtendsRequestID})
+	h.record(r, audit.AccessRequestApprove, req, map[string]any{"expires_at": req.ExpiresAt, "approved_minutes": minutes, "extends_request_id": req.ExtendsRequestID})
 	httpx.WriteJSON(w, http.StatusOK, req)
 }
 
@@ -271,7 +271,7 @@ func (h *Handler) deny(w http.ResponseWriter, r *http.Request) {
 		h.fail(w, r, err)
 		return
 	}
-	h.record(r, "access.request.deny", req, nil)
+	h.record(r, audit.AccessRequestDeny, req, nil)
 	httpx.WriteJSON(w, http.StatusOK, req)
 }
 
@@ -281,7 +281,7 @@ func (h *Handler) revoke(w http.ResponseWriter, r *http.Request) {
 		h.fail(w, r, err)
 		return
 	}
-	h.record(r, "access.request.revoke", req, nil)
+	h.record(r, audit.AccessRequestRevoke, req, nil)
 	httpx.WriteJSON(w, http.StatusOK, req)
 }
 

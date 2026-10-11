@@ -185,7 +185,7 @@ func (h *Handler) desktop(w http.ResponseWriter, r *http.Request) {
 			// WinRM's and SSH's are; an unreachable target is only logged.
 			var mm *certMismatch
 			if errors.As(err, &mm) {
-				h.record(r, actorFor(g.UserID, ip).Event("target.tls.mismatch", "target", ep.LiveKey, audit.Failure,
+				h.record(r, actorFor(g.UserID, ip).Event(audit.TargetTLSMismatch, "target", ep.LiveKey, audit.Failure,
 					map[string]string{"protocol": "rdp", "expected": mm.want, "seen": mm.got}))
 			}
 			httpx.WriteError(w, http.StatusConflict, "certificate_mismatch", "the target's certificate does not match the pinned fingerprint")
@@ -216,7 +216,7 @@ func (h *Handler) desktop(w http.ResponseWriter, r *http.Request) {
 	actor := audit.Actor{UserID: g.UserID, IP: ip}
 	endWith := func(reason, msg string) {
 		_ = h.Sessions.End(context.Background(), s.ID, reason)
-		h.record(r, actor.Event("session.end", "access_session", s.ID, audit.Success, map[string]string{"reason": reason, "target_id": ep.LiveKey}))
+		h.record(r, actor.Event(audit.SessionEnd, "access_session", s.ID, audit.Success, map[string]string{"reason": reason, "target_id": ep.LiveKey}))
 		if msg != "" {
 			wctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 			_ = ws.Write(wctx, websocket.MessageText, []byte(guac.ErrorInstruction(msg, 519)))
@@ -252,7 +252,7 @@ func (h *Handler) desktop(w http.ResponseWriter, r *http.Request) {
 		endWith(session.EndError, "recording could not be registered; session refused")
 		return
 	}
-	h.record(r, actor.Event("session.start", "access_session", s.ID, audit.Success, map[string]any{"target_id": ep.LiveKey, "protocol": g.Protocol, "policy_id": g.PolicyID, "recording_id": recRow.ID}))
+	h.record(r, actor.Event(audit.SessionStart, "access_session", s.ID, audit.Success, map[string]any{"target_id": ep.LiveKey, "protocol": g.Protocol, "policy_id": g.PolicyID, "recording_id": recRow.ID}))
 
 	// guacamole-common-js expects the tunnel's internal opcode with an id first.
 	// It is followed by a Zanskar-specific instruction carrying the policy

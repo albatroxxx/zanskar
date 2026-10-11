@@ -206,7 +206,7 @@ func runAuditReseal(args []string) error {
 		return err
 	}
 	if _, err := log.Record(ctx, audit.Event{
-		Action:     "audit.reseal",
+		Action:     audit.AuditReseal,
 		ObjectType: "audit_log",
 		Outcome:    audit.Success,
 		Details:    details,

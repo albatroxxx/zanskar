@@ -115,7 +115,7 @@ func (h *AdminHandler) create(w http.ResponseWriter, r *http.Request) {
 		h.fail(w, r, err)
 		return
 	}
-	h.record(r, "idp.create", p, map[string]any{"config": idp.AccessSummary(&cfg)})
+	h.record(r, audit.IdPCreate, p, map[string]any{"config": idp.AccessSummary(&cfg)})
 	op, err := h.Providers.Open(r.Context(), p.ID)
 	if err != nil {
 		h.fail(w, r, err)
@@ -149,7 +149,7 @@ func (h *AdminHandler) update(w http.ResponseWriter, r *http.Request) {
 	if err == nil {
 		details["config"] = idp.AccessSummary(&op.Config)
 	}
-	h.record(r, "idp.update", p, details)
+	h.record(r, audit.IdPUpdate, p, details)
 	if err != nil {
 		h.fail(w, r, err)
 		return
@@ -167,7 +167,7 @@ func (h *AdminHandler) del(w http.ResponseWriter, r *http.Request) {
 		h.fail(w, r, err)
 		return
 	}
-	h.record(r, "idp.delete", p, nil)
+	h.record(r, audit.IdPDelete, p, nil)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -208,7 +208,7 @@ func (h *AdminHandler) test(w http.ResponseWriter, r *http.Request) {
 		outcome = audit.Failure
 		result = map[string]any{"status": "failed", "message": terr.Error()}
 	}
-	h.recordOutcome(r, "idp.test", &op.Provider, outcome, nil)
+	h.recordOutcome(r, audit.IdPTest, &op.Provider, outcome, nil)
 	status := http.StatusOK
 	if terr != nil {
 		status = http.StatusBadGateway

@@ -130,7 +130,7 @@ func (h *Handler) terminate(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	p, _ := auth.FromContext(r.Context())
-	h.record(r, audit.Actor{UserID: p.User.ID, IP: auth.ClientIP(r)}.Event("session.terminate", "access_session", s.ID, audit.Success,
+	h.record(r, audit.Actor{UserID: p.User.ID, IP: auth.ClientIP(r)}.Event(audit.SessionTerminate, "access_session", s.ID, audit.Success,
 		map[string]any{"target_user_id": s.UserID, "reason": body.Reason, "was_live_here": found}))
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"status": "terminating", "live": found})
 }
@@ -157,7 +157,7 @@ func (h *Handler) getRecording(w http.ResponseWriter, r *http.Request) {
 // streamRecording sends the raw recording. Every stream is a recorded view
 // and an audit event naming the viewer.
 func (h *Handler) streamRecording(w http.ResponseWriter, r *http.Request) {
-	rec, _, rc, ok := h.openForReview(w, r, "recording.view", nil)
+	rec, _, rc, ok := h.openForReview(w, r, audit.RecordingView, nil)
 	if !ok {
 		return
 	}
@@ -257,7 +257,7 @@ func downloadName(rec *Recording, sess *Session, ext string) string {
 // downloadRecording sends the raw recording as an attachment: the asciicast
 // file for a terminal session, the guacd instruction stream for a desktop.
 func (h *Handler) downloadRecording(w http.ResponseWriter, r *http.Request) {
-	rec, sess, rc, ok := h.openForReview(w, r, "recording.download", map[string]any{"kind": "raw"})
+	rec, sess, rc, ok := h.openForReview(w, r, audit.RecordingDownload, map[string]any{"kind": "raw"})
 	if !ok {
 		return
 	}
@@ -289,7 +289,7 @@ func (h *Handler) downloadTranscript(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, http.StatusConflict, "not_a_terminal_recording", "a command transcript exists for terminal sessions only; download the desktop recording instead")
 		return
 	}
-	rec, sess, rc, ok := h.openForReview(w, r, "recording.download", map[string]any{"kind": "transcript"})
+	rec, sess, rc, ok := h.openForReview(w, r, audit.RecordingDownload, map[string]any{"kind": "transcript"})
 	if !ok {
 		return
 	}
@@ -428,7 +428,7 @@ func (h *Handler) auditEvents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	p, _ := auth.FromContext(r.Context())
-	h.record(r, audit.Actor{UserID: p.User.ID, IP: auth.ClientIP(r)}.Event("audit.read", "audit_log", "", audit.Success,
+	h.record(r, audit.Actor{UserID: p.User.ID, IP: auth.ClientIP(r)}.Event(audit.AuditRead, "audit_log", "", audit.Success,
 		map[string]any{"count": len(items), "filter_action": f.Action, "filter_actor": f.ActorUserID}))
 	httpx.WriteJSON(w, http.StatusOK, httpx.Page[auditRow]{Items: rows, NextCursor: next})
 }
@@ -562,7 +562,7 @@ func (h *Handler) setRetention(w http.ResponseWriter, r *http.Request) {
 		h.fail(w, r, err)
 		return
 	}
-	h.record(r, audit.Actor{UserID: p.User.ID, IP: auth.ClientIP(r)}.Event("retention.policy.update", "retention_policy", retentionPolicyID, audit.Success,
+	h.record(r, audit.Actor{UserID: p.User.ID, IP: auth.ClientIP(r)}.Event(audit.RetentionPolicyUpdate, "retention_policy", retentionPolicyID, audit.Success,
 		map[string]any{"max_age_days": in.MaxAgeDays, "max_total_bytes": in.MaxTotalBytes}))
 	saved, err := h.Repo.GetRetentionPolicy(r.Context())
 	if err != nil {

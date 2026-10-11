@@ -74,7 +74,7 @@ func runAdminCreate(args []string) error {
 	if err := user.NewRepo(db).Create(ctx, u); err != nil {
 		return err
 	}
-	_, err = audit.NewLog(db).Record(ctx, audit.Actor{IP: "cli"}.Event("user.create", "user", u.ID, audit.Success,
+	_, err = audit.NewLog(db).Record(ctx, audit.Actor{IP: "cli"}.Event(audit.UserCreate, "user", u.ID, audit.Success,
 		map[string]any{"username": u.Username, "roles": u.Roles, "via": "zanskar admin create"}))
 	if err != nil {
 		return fmt.Errorf("user created but audit record failed: %w", err)
@@ -145,7 +145,7 @@ func runAdminResetMFA(args []string) error {
 	if resetErr != nil {
 		details["sign_out_failed"] = true
 	}
-	if _, err := audit.NewLog(db).Record(ctx, audit.Actor{IP: "cli"}.Event("user.mfa.reset", "user", u.ID, audit.Success, details)); err != nil {
+	if _, err := audit.NewLog(db).Record(ctx, audit.Actor{IP: "cli"}.Event(audit.UserMFAReset, "user", u.ID, audit.Success, details)); err != nil {
 		return fmt.Errorf("authenticator reset but audit record failed: %w", err)
 	}
 	if resetErr != nil {
