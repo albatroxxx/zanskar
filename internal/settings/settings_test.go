@@ -18,6 +18,7 @@ import (
 	"github.com/albatroxxx/zanskar/internal/config"
 	"github.com/albatroxxx/zanskar/internal/store"
 	"github.com/albatroxxx/zanskar/internal/user"
+	"github.com/albatroxxx/zanskar/internal/version"
 )
 
 func newDB(t *testing.T) *store.DB {
@@ -98,6 +99,30 @@ func TestValidateTypes(t *testing.T) {
 		{KeyGuacdAddr, "guacd:99999", "", false},
 		{KeyLoginBanner, "  a\r\nb  ", "a\nb", true},
 		{KeyLoginBanner, strings.Repeat("x", MaxLoginBanner+1), "", false},
+		// The relay image lands in a docker run argument vector: an image
+		// reference and nothing that could read as another argument.
+		{KeyDBProxyImage, " ghcr.io/albatroxxx/zanskar:1.2.0-rc.1 ", "ghcr.io/albatroxxx/zanskar:1.2.0-rc.1", true},
+		{KeyDBProxyImage, "zanskar:local", "zanskar:local", true},
+		{KeyDBProxyImage, "zanskar", "zanskar", true},
+		{KeyDBProxyImage, "localhost:5000/zanskar:dev", "localhost:5000/zanskar:dev", true},
+		{KeyDBProxyImage, "registry.example.com:443/mirror/albatroxxx/zanskar_relay__x:1.3.0", "registry.example.com:443/mirror/albatroxxx/zanskar_relay__x:1.3.0", true},
+		{KeyDBProxyImage, "ghcr.io/albatroxxx/zanskar@sha256:" + strings.Repeat("ab", 32), "ghcr.io/albatroxxx/zanskar@sha256:" + strings.Repeat("ab", 32), true},
+		{KeyDBProxyImage, "ghcr.io/albatroxxx/zanskar:1.3.0@sha256:" + strings.Repeat("0f", 32), "ghcr.io/albatroxxx/zanskar:1.3.0@sha256:" + strings.Repeat("0f", 32), true},
+		{KeyDBProxyImage, "--privileged", "", false},
+		{KeyDBProxyImage, "-v=/:/host", "", false},
+		{KeyDBProxyImage, "zanskar:local --privileged", "", false},
+		{KeyDBProxyImage, "zanskar:local\n--privileged", "", false},
+		{KeyDBProxyImage, "zanskar:local\x00", "", false},
+		{KeyDBProxyImage, "", "", false},
+		{KeyDBProxyImage, "ghcr.io/Albatroxxx/zanskar:1.3.0", "", false},
+		{KeyDBProxyImage, "ghcr.io/albatroxxx/zanskar:-1", "", false},
+		{KeyDBProxyImage, "ghcr.io/albatroxxx/zanskar:" + strings.Repeat("t", 129), "", false},
+		{KeyDBProxyImage, "ghcr.io/albatroxxx/zanskar@sha256:" + strings.Repeat("ab", 31), "", false},
+		{KeyDBProxyImage, "ghcr.io/albatroxxx/zanskar@sha256:" + strings.Repeat("AB", 32), "", false},
+		{KeyDBProxyImage, "ghcr.io/albatroxxx/zanskar@md5:" + strings.Repeat("ab", 16), "", false},
+		{KeyDBProxyImage, "https://ghcr.io/albatroxxx/zanskar", "", false},
+		{KeyDBProxyImage, "ghcr.io/" + strings.Repeat("a", 250) + "/zanskar", "", false},
+		{KeyDBProxyImage, strings.Repeat("a", 5000), "", false},
 	}
 	for _, c := range cases {
 		d, _ := Lookup(c.key)
@@ -105,6 +130,57 @@ func TestValidateTypes(t *testing.T) {
 		if (err == nil) != c.ok || got != c.want {
 			t.Errorf("Validate(%s, %q) = %q, %v; want %q ok=%v", c.key, c.in, got, err, c.want, c.ok)
 		}
+	}
+}
+
+// TestDefaultDBProxyImageValidates: the relay image the gateway uses when no
+// one has set one, its own image at its own version, is itself a reference
+// the setting accepts, for a release, a candidate and a development build.
+func TestDefaultDBProxyImageValidates(t *testing.T) {
+	saved := version.Version
+	t.Cleanup(func() { version.Version = saved })
+	d, _ := Lookup(KeyDBProxyImage)
+	// goreleaser's release and snapshot versions, and the Makefile's
+	// `git describe --tags --always --dirty` with and without a tag.
+	for _, v := range []string{"", "dev", "1.3.0", "1.2.0-rc.1", "1.3.1-snapshot", "v1.3.0-5-gd867b8c-dirty", "d867b8c"} {
+		version.Version = v
+		img := DefaultDBProxyImage()
+		if got, err := Validate(d, img); err != nil || got != img {
+			t.Errorf("version %q: default %q refused: %v", v, img, err)
+		}
+	}
+}
+
+// TestLoadSkipsInvalidStoredValue: a value stored before its check existed
+// (a relay image that would read as a docker run flag, say) is not used once
+// the gateway starts: the environment value, else the default, applies until
+// an administrator sets it again. The other stored values still load.
+func TestLoadSkipsInvalidStoredValue(t *testing.T) {
+	ctx := context.Background()
+	db := newDB(t)
+	repo := NewRepo(db)
+	if _, err := repo.Set(ctx, KeyDBProxyImage, "--privileged", ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.Set(ctx, KeyLogLevel, "debug", ""); err != nil {
+		t.Fatal(err)
+	}
+	svc := NewService(repo, nil, nil)
+	if err := svc.Load(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if v, _ := svc.Get(KeyDBProxyImage); v.Value != DefaultDBProxyImage() || v.Source != SourceDefault {
+		t.Fatalf("a stored relay image that is not an image reference is used: %+v", v)
+	}
+	if v, _ := svc.Get(KeyLogLevel); v.Value != "debug" || v.Source != SourceConsole {
+		t.Fatalf("a valid stored value was dropped: %+v", v)
+	}
+	withEnv := NewService(repo, map[string]string{KeyDBProxyImage: "mirror.example.com/zanskar:1.3.0"}, nil)
+	if err := withEnv.Load(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if v, _ := withEnv.Get(KeyDBProxyImage); v.Value != "mirror.example.com/zanskar:1.3.0" || v.Source != SourceEnvironment {
+		t.Fatalf("the environment value must apply in its place: %+v", v)
 	}
 }
 
@@ -218,6 +294,24 @@ func TestRoutes(t *testing.T) {
 	if code, out := e.do("PUT", "/api/v1/admin/settings/nope", map[string]string{"value": "x"}, e.admin, e.aCSRF); code != 404 {
 		t.Fatalf("unknown key: %d %v", code, out)
 	}
+	// The relay image goes into a docker run argument vector: a value that
+	// would read as one of its flags is refused, and saying why.
+	for _, bad := range []string{"--privileged", "zanskar:local --privileged", "-v=/:/host"} {
+		code, out := e.do("PUT", "/api/v1/admin/settings/"+KeyDBProxyImage, map[string]string{"value": bad}, e.admin, e.aCSRF)
+		if msg, _ := out["message"].(string); code != 400 || !strings.Contains(msg, "image reference") {
+			t.Fatalf("relay image %q: %d %v, want 400 naming an image reference", bad, code, out)
+		}
+	}
+	if v, _ := e.svc.Get(KeyDBProxyImage); v.Source != SourceDefault {
+		t.Fatalf("a refused relay image was stored: %+v", v)
+	}
+	pinned := "ghcr.io/albatroxxx/zanskar:1.3.0@sha256:" + strings.Repeat("0f", 32)
+	if code, out := e.do("PUT", "/api/v1/admin/settings/"+KeyDBProxyImage, map[string]string{"value": pinned}, e.admin, e.aCSRF); code != 200 || out["value"] != pinned {
+		t.Fatalf("a pinned relay image: %d %v", code, out)
+	}
+	if code, out := e.do("DELETE", "/api/v1/admin/settings/"+KeyDBProxyImage, nil, e.admin, e.aCSRF); code != 200 || out["source"] != SourceDefault {
+		t.Fatalf("relay image reset: %d %v", code, out)
+	}
 	code, out = e.do("DELETE", "/api/v1/admin/settings/"+KeyLogLevel, nil, e.admin, e.aCSRF)
 	if code != 200 || out["value"] != "warn" || out["source"] != SourceEnvironment || len(applied) != 2 || applied[1] != "warn" {
 		t.Fatalf("reset: %d %v applied=%v", code, out, applied)
@@ -234,15 +328,17 @@ func TestRoutes(t *testing.T) {
 		t.Fatalf("public banner: %d %v", code, out)
 	}
 
+	// Refused values leave no audit row; the pinned relay image and its
+	// reset do.
 	events, _, err := e.audit.List(ctx, audit.Filter{ObjectType: "setting"})
-	if err != nil || len(events) != 3 {
+	if err != nil || len(events) != 5 {
 		t.Fatalf("audit: %d %v", len(events), err)
 	}
 	actions := map[string]int{}
 	for _, ev := range events {
 		actions[ev.Action]++
 	}
-	if actions["settings.update"] != 2 || actions["settings.reset"] != 1 {
+	if actions["settings.update"] != 3 || actions["settings.reset"] != 2 {
 		t.Fatalf("audit actions: %v", actions)
 	}
 }

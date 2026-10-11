@@ -511,7 +511,11 @@ password.
   PostgreSQL; `mysql:<version>` or `mariadb:<version>` and `ghcr.io/albatroxxx/zanskar:<your
   version>` for MySQL and MariaDB. Pull them ahead of time on an air-gapped host; the relay
   image can be pointed at a mirror with `ZANSKAR_DBPROXY_IMAGE` or the console's Settings
-  page.
+  page. It must be an image reference: `registry/repository`, an optional `:tag` and an
+  optional `@sha256:<64 hex digits>` to pin it by digest. The console refuses anything else,
+  and an environment value that is not one is ignored in favour of the default. The default
+  is the gateway's own image by version tag, not by digest: the digest of an image is known
+  only once it is built, and the binary inside it, which names the default, is built first.
 - **TLS to the database** is verified by default (ADR 0025): a new database target uses
   `verify-full` and needs the CA bundle that signs the database's certificate. For Amazon
   RDS that is your region's bundle,

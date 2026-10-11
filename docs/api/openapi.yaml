@@ -3260,7 +3260,13 @@ paths:
               schema:
                 $ref: "#/components/schemas/Setting"
         "400":
-          description: The value does not fit the type (not true/false, not in the enum, not host:port, too long).
+          description: >
+            The value does not fit the type (not true/false, not in the enum, not host:port,
+            too long). For `database.proxy_image`, also when it is not an image reference: a
+            lowercase `registry/repository` path, an optional `:tag` and an optional
+            `@sha256:` digest of 64 hex digits, with no spaces and no leading `-`, the name at
+            most 255 characters; `message` says so. The value lands in a `docker run`
+            argument vector, so nothing else is accepted.
           content:
             application/json:
               schema:
