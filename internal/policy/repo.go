@@ -282,14 +282,13 @@ func affected(res sql.Result) error {
 }
 
 func mapErr(err error) error {
-	msg := strings.ToLower(err.Error())
-	if strings.Contains(msg, "unique") || strings.Contains(msg, "duplicate key") {
+	if store.IsUniqueViolation(err) {
 		return ErrDuplicate
 	}
-	if strings.Contains(msg, "foreign key") {
+	if store.IsForeignKeyViolation(err) {
 		return fmt.Errorf("%w: group or user does not exist", ErrInvalidInput)
 	}
-	if strings.Contains(msg, "check constraint") || strings.Contains(msg, "check failed") {
+	if store.IsCheckViolation(err) {
 		return fmt.Errorf("%w: exactly one of group_id or user_id is required", ErrInvalidInput)
 	}
 	return err

@@ -238,7 +238,7 @@ func (r *Repo) Create(ctx context.Context, p *Provider, c *Config) error {
 	_, err = r.db.ExecContext(ctx, r.db.Rebind(`INSERT INTO identity_providers (id, name, type, config_enc, key_version, enabled, created_at, updated_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`), p.ID, p.Name, string(p.Type), sealed, ver, p.Enabled, store.TimeArg(now), store.TimeArg(now))
 	if err != nil {
-		if isUnique(err) {
+		if store.IsUniqueViolation(err) {
 			return ErrDuplicate
 		}
 		return err
@@ -271,7 +271,7 @@ func (r *Repo) Update(ctx context.Context, p *Provider, c *Config) error {
 	res, err := r.db.ExecContext(ctx, r.db.Rebind(`UPDATE identity_providers SET name = ?, config_enc = ?, key_version = ?, enabled = ?, updated_at = ? WHERE id = ?`),
 		p.Name, sealed, ver, p.Enabled, store.TimeArg(p.UpdatedAt), p.ID)
 	if err != nil {
-		if isUnique(err) {
+		if store.IsUniqueViolation(err) {
 			return ErrDuplicate
 		}
 		return err
@@ -662,11 +662,6 @@ func affected(res sql.Result) error {
 		return ErrNotFound
 	}
 	return nil
-}
-
-func isUnique(err error) bool {
-	msg := strings.ToLower(err.Error())
-	return strings.Contains(msg, "unique") || strings.Contains(msg, "duplicate key")
 }
 
 func firstNonEmpty(a, b string) string {
