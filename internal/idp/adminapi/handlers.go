@@ -106,7 +106,7 @@ func (h *AdminHandler) get(w http.ResponseWriter, r *http.Request) {
 func (h *AdminHandler) create(w http.ResponseWriter, r *http.Request) {
 	var in input
 	if err := httpx.DecodeJSON(r, &in); err != nil {
-		httpx.BadRequest(w, err.Error())
+		httpx.BadRequest(w, r, err.Error())
 		return
 	}
 	p := &idp.Provider{Name: in.Name, Type: in.Type, Enabled: in.Enabled == nil || *in.Enabled}
@@ -127,7 +127,7 @@ func (h *AdminHandler) create(w http.ResponseWriter, r *http.Request) {
 func (h *AdminHandler) update(w http.ResponseWriter, r *http.Request) {
 	var in input
 	if err := httpx.DecodeJSON(r, &in); err != nil {
-		httpx.BadRequest(w, err.Error())
+		httpx.BadRequest(w, r, err.Error())
 		return
 	}
 	cur, err := h.Providers.Open(r.Context(), r.PathValue("id"))
@@ -231,13 +231,12 @@ func (h *AdminHandler) recordOutcome(r *http.Request, action string, p *idp.Prov
 func (h *AdminHandler) fail(w http.ResponseWriter, r *http.Request, err error) {
 	switch {
 	case errors.Is(err, idp.ErrNotFound):
-		httpx.WriteError(w, http.StatusNotFound, "not_found", "identity provider not found")
+		httpx.WriteError(w, r, http.StatusNotFound, "not_found", "identity provider not found")
 	case errors.Is(err, idp.ErrDuplicate):
-		httpx.WriteError(w, http.StatusConflict, "conflict", "a provider with that name exists")
+		httpx.WriteError(w, r, http.StatusConflict, "conflict", "a provider with that name exists")
 	case errors.Is(err, idp.ErrInvalidInput):
-		httpx.BadRequest(w, err.Error())
+		httpx.BadRequest(w, r, err.Error())
 	default:
-		h.Log.Error("idp admin handler", "path", r.URL.Path, "err", err)
-		httpx.WriteError(w, http.StatusInternalServerError, "internal", "internal error")
+		httpx.Internal(w, r, h.Log, err)
 	}
 }

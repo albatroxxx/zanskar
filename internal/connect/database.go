@@ -31,7 +31,7 @@ func (h *Handler) database(w http.ResponseWriter, r *http.Request) {
 	}
 	defer zero(g.UserSecret)
 	if target.Protocol(g.Protocol) != target.Database {
-		httpx.WriteError(w, http.StatusBadRequest, "bad_request", "ticket is not for database")
+		httpx.WriteError(w, r, http.StatusBadRequest, "bad_request", "ticket is not for database")
 		return
 	}
 	cols, _ := strconv.Atoi(r.URL.Query().Get("cols"))
@@ -39,7 +39,7 @@ func (h *Handler) database(w http.ResponseWriter, r *http.Request) {
 
 	ep, err := h.resolveGrant(r.Context(), g)
 	if err != nil || !ep.Active || ep.Engine == "" {
-		httpx.WriteError(w, http.StatusConflict, "target_unavailable", "target is no longer available")
+		httpx.WriteError(w, r, http.StatusConflict, "target_unavailable", "target is no longer available")
 		return
 	}
 
@@ -55,7 +55,7 @@ func (h *Handler) database(w http.ResponseWriter, r *http.Request) {
 		opened, err := h.Vault.Open(r.Context(), g.CredentialID)
 		if err != nil {
 			h.Log.Error("open credential", "id", g.CredentialID, "err", err)
-			httpx.WriteError(w, http.StatusConflict, "credential_unavailable", "credential could not be opened")
+			httpx.WriteError(w, r, http.StatusConflict, "credential_unavailable", "credential could not be opened")
 			return
 		}
 		defer opened.Close()
@@ -79,7 +79,7 @@ func (h *Handler) database(w http.ResponseWriter, r *http.Request) {
 	if h.DBMaxSessions > 0 && h.Registry != nil && h.liveDatabaseSessions() >= h.DBMaxSessions {
 		h.record(r, actorFor(g.UserID, ip).Event(audit.SessionConnect, "target", ep.LiveKey, audit.Failure,
 			map[string]any{"protocol": g.Protocol, "reason": "too_many_sessions", "limit": h.DBMaxSessions}))
-		httpx.WriteError(w, http.StatusServiceUnavailable, "too_many_sessions", "the gateway is running its maximum number of database sessions; try again in a moment")
+		httpx.WriteError(w, r, http.StatusServiceUnavailable, "too_many_sessions", "the gateway is running its maximum number of database sessions; try again in a moment")
 		return
 	}
 

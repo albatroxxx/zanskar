@@ -42,7 +42,7 @@ func (h *Handler) winrm(w http.ResponseWriter, r *http.Request) {
 	}
 	defer zero(g.UserSecret)
 	if target.Protocol(g.Protocol) != target.WinRM {
-		httpx.WriteError(w, http.StatusBadRequest, "bad_request", "ticket is not for winrm")
+		httpx.WriteError(w, r, http.StatusBadRequest, "bad_request", "ticket is not for winrm")
 		return
 	}
 	cols, _ := strconv.Atoi(r.URL.Query().Get("cols"))
@@ -50,7 +50,7 @@ func (h *Handler) winrm(w http.ResponseWriter, r *http.Request) {
 
 	ep, err := h.resolveGrant(r.Context(), g)
 	if err != nil || !ep.Active {
-		httpx.WriteError(w, http.StatusConflict, "target_unavailable", "target is no longer available")
+		httpx.WriteError(w, r, http.StatusConflict, "target_unavailable", "target is no longer available")
 		return
 	}
 
@@ -62,7 +62,7 @@ func (h *Handler) winrm(w http.ResponseWriter, r *http.Request) {
 		opened, err := h.Vault.Open(r.Context(), g.CredentialID)
 		if err != nil {
 			h.Log.Error("open credential", "id", g.CredentialID, "err", err)
-			httpx.WriteError(w, http.StatusConflict, "credential_unavailable", "credential could not be opened")
+			httpx.WriteError(w, r, http.StatusConflict, "credential_unavailable", "credential could not be opened")
 			return
 		}
 		defer opened.Close()
@@ -77,33 +77,33 @@ func (h *Handler) winrm(w http.ResponseWriter, r *http.Request) {
 	if port == 5985 || ep.WinRMTLSFingerprint == "" {
 		// connect() already refuses these; re-check here because the ticket
 		// was issued earlier and the target may have been re-probed since.
-		httpx.WriteError(w, http.StatusConflict, "certificate_unpinned", "winrm target is not pinned; probe it over HTTPS first")
+		httpx.WriteError(w, r, http.StatusConflict, "certificate_unpinned", "winrm target is not pinned; probe it over HTTPS first")
 		return
 	}
 	client, err := winrmgw.Dial(r.Context(), winrmgw.Endpoint{Address: ep.Address, Port: port, UseTLS: true, PinnedFingerprint: ep.WinRMTLSFingerprint}, a, timeout)
 	if err != nil {
 		if errors.Is(err, winrmgw.ErrCertMismatch) {
 			h.record(r, actorFor(g.UserID, ip).Event(audit.TargetTLSMismatch, "target", ep.LiveKey, audit.Failure, map[string]string{"protocol": "winrm", "expected": ep.WinRMTLSFingerprint}))
-			httpx.WriteError(w, http.StatusConflict, "certificate_mismatch", "the target presented a different certificate; connection refused")
+			httpx.WriteError(w, r, http.StatusConflict, "certificate_mismatch", "the target presented a different certificate; connection refused")
 			return
 		}
 		if errors.Is(err, winrmgw.ErrNotAuthorized) {
 			h.Log.Warn("winrm authorization refused", "target", ep.LiveKey, "err", err)
-			httpx.WriteError(w, http.StatusConflict, "not_authorized", winrmAdminHint)
+			httpx.WriteError(w, r, http.StatusConflict, "not_authorized", winrmAdminHint)
 			return
 		}
 		h.Log.Warn("winrm dial failed", "target", ep.LiveKey, "err", err)
-		httpx.WriteError(w, http.StatusConflict, "target_unavailable", "could not connect to the target")
+		httpx.WriteError(w, r, http.StatusConflict, "target_unavailable", "could not connect to the target")
 		return
 	}
 	sh, err := client.Shell(r.Context())
 	if err != nil {
 		h.Log.Warn("winrm shell failed", "target", ep.LiveKey, "err", err)
 		if errors.Is(err, winrmgw.ErrNotAuthorized) {
-			httpx.WriteError(w, http.StatusConflict, "not_authorized", winrmAdminHint)
+			httpx.WriteError(w, r, http.StatusConflict, "not_authorized", winrmAdminHint)
 			return
 		}
-		httpx.WriteError(w, http.StatusConflict, "target_unavailable", "could not open a shell on the target")
+		httpx.WriteError(w, r, http.StatusConflict, "target_unavailable", "could not open a shell on the target")
 		return
 	}
 	defer func() { _ = sh.Close() }()

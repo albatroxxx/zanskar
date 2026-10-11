@@ -6,10 +6,10 @@ import (
 	"context"
 	"log/slog"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/albatroxxx/zanskar/internal/audit"
+	"github.com/albatroxxx/zanskar/internal/httpx"
 )
 
 // recordTimeout bounds one audit insert once it no longer follows the
@@ -56,16 +56,6 @@ func (rc Recorder) Record(r *http.Request, e audit.Event) {
 		if log == nil {
 			log = slog.Default()
 		}
-		log.Error("audit record failed", "action", e.Action, "route", route(r), "err", err)
+		log.Error("audit record failed", "action", e.Action, "route", httpx.Route(r), "err", err)
 	}
-}
-
-// route names the handler that served r without echoing the request's own
-// path into the log: the matched pattern, which carries the method when the
-// route was registered with one, otherwise prefixed with the method.
-func route(r *http.Request) string {
-	if strings.HasPrefix(r.Pattern, r.Method+" ") {
-		return r.Pattern
-	}
-	return strings.TrimSpace(r.Method + " " + r.Pattern)
 }

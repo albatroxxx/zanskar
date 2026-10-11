@@ -130,7 +130,7 @@ func (h *Handler) myTargets(w http.ResponseWriter, r *http.Request) {
 	p, _ := auth.FromContext(r.Context())
 	pols, err := h.Policies.ForUser(r.Context(), p.User.ID)
 	if err != nil {
-		h.fail(w, r, err)
+		httpx.Internal(w, r, h.Log, err)
 		return
 	}
 	out := []reachableTarget{}
@@ -143,7 +143,7 @@ func (h *Handler) myTargets(w http.ResponseWriter, r *http.Request) {
 	for {
 		batch, next, err := h.Targets.List(r.Context(), after, 500, target.ListFilter{})
 		if err != nil {
-			h.fail(w, r, err)
+			httpx.Internal(w, r, h.Log, err)
 			return
 		}
 		for _, t := range batch {
@@ -181,7 +181,7 @@ func (h *Handler) myTargets(w http.ResponseWriter, r *http.Request) {
 	if h.ASGs != nil {
 		groups, err := h.ASGs.List(r.Context(), true)
 		if err != nil {
-			h.fail(w, r, err)
+			httpx.Internal(w, r, h.Log, err)
 			return
 		}
 		for _, g := range groups {
@@ -254,12 +254,12 @@ func (h *Handler) connect(w http.ResponseWriter, r *http.Request) {
 	actor := audit.Actor{UserID: p.User.ID, IP: auth.ClientIP(r)}
 	var req connectRequest
 	if err := httpx.DecodeJSON(r, &req); err != nil {
-		httpx.BadRequest(w, err.Error())
+		httpx.BadRequest(w, r, err.Error())
 		return
 	}
 	deny := func(status int, code, msg string) {
 		h.record(r, actor.Event(audit.SessionConnect, "target", req.TargetID, audit.Failure, map[string]string{"protocol": req.Protocol, "reason": code}))
-		httpx.WriteError(w, status, code, msg)
+		httpx.WriteError(w, r, status, code, msg)
 	}
 	if h.draining() {
 		deny(http.StatusServiceUnavailable, "restarting", restartingMsg)
@@ -267,7 +267,7 @@ func (h *Handler) connect(w http.ResponseWriter, r *http.Request) {
 	}
 	proto := target.Protocol(req.Protocol)
 	if !target.ValidProtocol(proto) {
-		httpx.BadRequest(w, "unknown protocol")
+		httpx.BadRequest(w, r, "unknown protocol")
 		return
 	}
 	switch proto {
@@ -302,13 +302,13 @@ func (h *Handler) connect(w http.ResponseWriter, r *http.Request) {
 		case errors.Is(err, errNoHealthyInstances):
 			deny(http.StatusConflict, "no_healthy_instances", "the autoscaling group has no healthy instances right now")
 		default:
-			h.fail(w, r, err)
+			httpx.Internal(w, r, h.Log, err)
 		}
 		return
 	}
 	res, code, msg, err := h.issueTicket(r.Context(), p, auth.ClientIP(r), ep, proto, req.Credential, "")
 	if err != nil {
-		h.fail(w, r, err)
+		httpx.Internal(w, r, h.Log, err)
 		return
 	}
 	if code != "" {
@@ -465,7 +465,7 @@ func (h *Handler) terminal(w http.ResponseWriter, r *http.Request) {
 	// The policy allowed the ticket's protocol, not this one: a ticket for
 	// RDP must not open an SSH shell with the RDP credential.
 	if target.Protocol(g.Protocol) != target.SSH {
-		httpx.WriteError(w, http.StatusBadRequest, "bad_request", "ticket is not for ssh")
+		httpx.WriteError(w, r, http.StatusBadRequest, "bad_request", "ticket is not for ssh")
 		return
 	}
 	cols, _ := strconv.Atoi(r.URL.Query().Get("cols"))
@@ -473,7 +473,7 @@ func (h *Handler) terminal(w http.ResponseWriter, r *http.Request) {
 
 	ep, err := h.resolveGrant(r.Context(), g)
 	if err != nil || !ep.Active || !ep.HostKeyTrusted || ep.HostKeyFingerprint == "" {
-		httpx.WriteError(w, http.StatusConflict, "target_unavailable", "target is no longer available")
+		httpx.WriteError(w, r, http.StatusConflict, "target_unavailable", "target is no longer available")
 		return
 	}
 
@@ -490,7 +490,7 @@ func (h *Handler) terminal(w http.ResponseWriter, r *http.Request) {
 		cred, err := h.Vault.Get(r.Context(), g.CredentialID)
 		if err != nil {
 			h.Log.Error("open credential", "id", g.CredentialID, "err", err)
-			httpx.WriteError(w, http.StatusConflict, "credential_unavailable", "credential could not be opened")
+			httpx.WriteError(w, r, http.StatusConflict, "credential_unavailable", "credential could not be opened")
 			return
 		}
 		if cred.Type == credential.TypeEC2InstanceConnect {
@@ -498,18 +498,18 @@ func (h *Handler) terminal(w http.ResponseWriter, r *http.Request) {
 			// stored anywhere. Requires the ec2-instance-connect package on
 			// the instance, which stock Amazon Linux and Ubuntu AMIs ship.
 			if ep.Group == nil || h.Cloud == nil {
-				httpx.WriteError(w, http.StatusConflict, "credential_unavailable", "instance connect needs an autoscaling instance")
+				httpx.WriteError(w, r, http.StatusConflict, "credential_unavailable", "instance connect needs an autoscaling instance")
 				return
 			}
 			provider, err := h.Cloud(r.Context(), ep.Group)
 			if err != nil {
 				h.Log.Error("cloud provider", "asg", ep.Group.Name, "err", err)
-				httpx.WriteError(w, http.StatusConflict, "credential_unavailable", "cloud access failed")
+				httpx.WriteError(w, r, http.StatusConflict, "credential_unavailable", "cloud access failed")
 				return
 			}
 			pubLine, privPEM, err := ephemeralSSHKey()
 			if err != nil {
-				h.fail(w, r, err)
+				httpx.Internal(w, r, h.Log, err)
 				return
 			}
 			osUser := cred.Username
@@ -518,7 +518,7 @@ func (h *Handler) terminal(w http.ResponseWriter, r *http.Request) {
 			}
 			if err := provider.SendSSHPublicKey(r.Context(), ep.CloudInstanceID, ep.AvailabilityZone, osUser, []byte(pubLine)); err != nil {
 				h.Log.Warn("instance connect push failed", "instance", ep.CloudInstanceID, "err", err)
-				httpx.WriteError(w, http.StatusConflict, "credential_unavailable", "instance connect refused the key; check the role's permissions")
+				httpx.WriteError(w, r, http.StatusConflict, "credential_unavailable", "instance connect refused the key; check the role's permissions")
 				return
 			}
 			a.Username, a.PrivateKey = osUser, privPEM
@@ -527,7 +527,7 @@ func (h *Handler) terminal(w http.ResponseWriter, r *http.Request) {
 		opened, err := h.Vault.Open(r.Context(), g.CredentialID)
 		if err != nil {
 			h.Log.Error("open credential", "id", g.CredentialID, "err", err)
-			httpx.WriteError(w, http.StatusConflict, "credential_unavailable", "credential could not be opened")
+			httpx.WriteError(w, r, http.StatusConflict, "credential_unavailable", "credential could not be opened")
 			return
 		}
 		defer opened.Close()
@@ -540,14 +540,14 @@ func (h *Handler) terminal(w http.ResponseWriter, r *http.Request) {
 			// the Zanskar user, which sshd logs on the target (ADR 0022).
 			loginUser := caLoginUser(&opened.Credential, g.Username)
 			if !opened.PermitsPrincipal(loginUser) {
-				httpx.WriteError(w, http.StatusForbidden, "login_user_not_permitted", "this certificate authority does not issue certificates for login user "+loginUser)
+				httpx.WriteError(w, r, http.StatusForbidden, "login_user_not_permitted", "this certificate authority does not issue certificates for login user "+loginUser)
 				return
 			}
 			certLine, keyPEM, err := sshca.IssueForSession(opened.PrivateKey, sshca.CertParams{
 				Principals: []string{loginUser}, Validity: opened.CertificateTTL(), KeyID: sshca.SessionKeyID(g.Username, loginUser)})
 			if err != nil {
 				h.Log.Error("mint ssh certificate", "id", g.CredentialID, "err", err)
-				httpx.WriteError(w, http.StatusConflict, "credential_unavailable", "could not issue a session certificate")
+				httpx.WriteError(w, r, http.StatusConflict, "credential_unavailable", "could not issue a session certificate")
 				return
 			}
 			a.Username = loginUser
@@ -667,12 +667,12 @@ func (h *Handler) draining() bool { return h.Draining != nil && h.Draining() }
 // a session the drain would miss.
 func (h *Handler) redeem(w http.ResponseWriter, r *http.Request) (*ticket.Grant, bool) {
 	if h.draining() {
-		httpx.WriteError(w, http.StatusServiceUnavailable, "restarting", restartingMsg)
+		httpx.WriteError(w, r, http.StatusServiceUnavailable, "restarting", restartingMsg)
 		return nil, false
 	}
 	g, err := h.Tickets.Redeem(r.URL.Query().Get("ticket"), auth.ClientIP(r))
 	if err != nil {
-		httpx.WriteError(w, http.StatusUnauthorized, "invalid_ticket", "invalid or expired ticket")
+		httpx.WriteError(w, r, http.StatusUnauthorized, "invalid_ticket", "invalid or expired ticket")
 		return nil, false
 	}
 	return g, true
@@ -707,11 +707,6 @@ func (h *Handler) guacd() string {
 
 func (h *Handler) record(r *http.Request, e audit.Event) {
 	auth.Recorder{Audit: h.Audit, Log: h.Log}.Record(r, e)
-}
-
-func (h *Handler) fail(w http.ResponseWriter, r *http.Request, err error) {
-	h.Log.Error("connect handler", "path", r.URL.Path, "err", err)
-	httpx.WriteError(w, http.StatusInternalServerError, "internal", "internal error")
 }
 
 func zero(b []byte) {

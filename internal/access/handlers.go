@@ -61,20 +61,20 @@ type createInput struct {
 func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 	var in createInput
 	if err := httpx.DecodeJSON(r, &in); err != nil {
-		httpx.BadRequest(w, err.Error())
+		httpx.BadRequest(w, r, err.Error())
 		return
 	}
 	pr, _ := auth.FromContext(r.Context())
 	in.Reason = strings.TrimSpace(in.Reason)
 	switch {
 	case (in.TargetID == "") == (in.ASGID == "") || in.Protocol == "":
-		httpx.BadRequest(w, "protocol and exactly one of target_id and asg_id are required")
+		httpx.BadRequest(w, r, "protocol and exactly one of target_id and asg_id are required")
 		return
 	case in.Reason == "":
-		httpx.BadRequest(w, "a reason is required")
+		httpx.BadRequest(w, r, "a reason is required")
 		return
 	case in.Minutes < 1:
-		httpx.BadRequest(w, "minutes must be at least 1")
+		httpx.BadRequest(w, r, "minutes must be at least 1")
 		return
 	}
 
@@ -92,13 +92,13 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 	// requested here — a user who already has it connects directly.
 	elig := eligiblePolicy(pols, ref, in.Protocol)
 	if elig == nil {
-		httpx.WriteError(w, http.StatusForbidden, "not_eligible",
+		httpx.WriteError(w, r, http.StatusForbidden, "not_eligible",
 			"no approval-gated policy makes you eligible for this target and protocol")
 		return
 	}
 	max := maxMinutes(elig)
 	if in.Minutes > max {
-		httpx.WriteError(w, http.StatusBadRequest, "duration_too_long",
+		httpx.WriteError(w, r, http.StatusBadRequest, "duration_too_long",
 			fmt.Sprintf("requested duration exceeds the policy maximum of %d minutes", max))
 		return
 	}
@@ -113,15 +113,15 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 	}
 	switch {
 	case open != nil && open.Status == StatusPending:
-		httpx.WriteError(w, http.StatusConflict, "duplicate_request",
+		httpx.WriteError(w, r, http.StatusConflict, "duplicate_request",
 			"you already have a pending request for this target and protocol; wait for the decision")
 		return
 	case open != nil && in.ExtendsRequestID == "":
-		httpx.WriteError(w, http.StatusConflict, "already_granted",
+		httpx.WriteError(w, r, http.StatusConflict, "already_granted",
 			fmt.Sprintf("you already hold access to this target until %s; extend that grant instead", open.ExpiresAt.UTC().Format(time.RFC3339)))
 		return
 	case in.ExtendsRequestID != "" && (open == nil || open.ID != in.ExtendsRequestID):
-		httpx.WriteError(w, http.StatusConflict, "not_extendable",
+		httpx.WriteError(w, r, http.StatusConflict, "not_extendable",
 			"that grant is not active for this target and protocol; request access afresh")
 		return
 	}
@@ -142,7 +142,7 @@ func (h *Handler) subject(w http.ResponseWriter, r *http.Request, in createInput
 	if in.TargetID != "" {
 		tgt, err := h.Targets.Get(r.Context(), in.TargetID)
 		if errors.Is(err, target.ErrNotFound) {
-			httpx.WriteError(w, http.StatusNotFound, "not_found", "target not found")
+			httpx.WriteError(w, r, http.StatusNotFound, "not_found", "target not found")
 			return ref, false
 		}
 		if err != nil {
@@ -152,12 +152,12 @@ func (h *Handler) subject(w http.ResponseWriter, r *http.Request, in createInput
 		return policy.TargetRef{ID: tgt.ID, Tags: tgt.Tags}, true
 	}
 	if h.ASGs == nil {
-		httpx.WriteError(w, http.StatusNotFound, "not_found", "autoscaling group not found")
+		httpx.WriteError(w, r, http.StatusNotFound, "not_found", "autoscaling group not found")
 		return ref, false
 	}
 	g, err := h.ASGs.Get(r.Context(), in.ASGID)
 	if errors.Is(err, asg.ErrNotFound) {
-		httpx.WriteError(w, http.StatusNotFound, "not_found", "autoscaling group not found")
+		httpx.WriteError(w, r, http.StatusNotFound, "not_found", "autoscaling group not found")
 		return ref, false
 	}
 	if err != nil {
@@ -200,7 +200,7 @@ func (h *Handler) adminList(w http.ResponseWriter, r *http.Request) {
 	switch status {
 	case "", StatusPending, StatusApproved, StatusDenied, StatusExpired, StatusRevoked:
 	default:
-		httpx.BadRequest(w, "unknown status filter")
+		httpx.BadRequest(w, r, "unknown status filter")
 		return
 	}
 	list, err := h.Requests.List(r.Context(), status)
@@ -219,7 +219,7 @@ func (h *Handler) approve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if cur.Status != StatusPending {
-		httpx.WriteError(w, http.StatusConflict, "conflict", "request is not pending")
+		httpx.WriteError(w, r, http.StatusConflict, "conflict", "request is not pending")
 		return
 	}
 	d := h.decision(r)
@@ -228,7 +228,7 @@ func (h *Handler) approve(w http.ResponseWriter, r *http.Request) {
 	minutes := cur.RequestedMinutes
 	if d.Minutes != 0 {
 		if d.Minutes < 1 {
-			httpx.BadRequest(w, "minutes must be at least 1")
+			httpx.BadRequest(w, r, "minutes must be at least 1")
 			return
 		}
 		var pol *policy.Policy
@@ -239,7 +239,7 @@ func (h *Handler) approve(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		if max := maxMinutes(pol); d.Minutes > max {
-			httpx.WriteError(w, http.StatusBadRequest, "duration_too_long",
+			httpx.WriteError(w, r, http.StatusBadRequest, "duration_too_long",
 				fmt.Sprintf("granted duration exceeds the policy maximum of %d minutes", max))
 			return
 		}
@@ -335,15 +335,14 @@ func (h *Handler) record(r *http.Request, action string, req *Request, extra map
 func (h *Handler) fail(w http.ResponseWriter, r *http.Request, err error) {
 	switch {
 	case errors.Is(err, ErrNotFound):
-		httpx.WriteError(w, http.StatusNotFound, "not_found", "access request not found")
+		httpx.WriteError(w, r, http.StatusNotFound, "not_found", "access request not found")
 	case errors.Is(err, ErrState):
-		httpx.WriteError(w, http.StatusConflict, "conflict", "request is not in a state for that action")
+		httpx.WriteError(w, r, http.StatusConflict, "conflict", "request is not in a state for that action")
 	case errors.Is(err, ErrDuplicate):
-		httpx.WriteError(w, http.StatusConflict, "duplicate_request", err.Error())
+		httpx.WriteError(w, r, http.StatusConflict, "duplicate_request", err.Error())
 	case errors.Is(err, ErrInvalid):
-		httpx.BadRequest(w, err.Error())
+		httpx.BadRequest(w, r, err.Error())
 	default:
-		h.Log.Error("access handler", "path", r.URL.Path, "err", err)
-		httpx.WriteError(w, http.StatusInternalServerError, "internal", "internal error")
+		httpx.Internal(w, r, h.Log, err)
 	}
 }

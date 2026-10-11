@@ -104,7 +104,7 @@ func (h *AdminHandler) list(w http.ResponseWriter, r *http.Request) {
 	limit, cursor := httpx.Paging(r, 50, 500)
 	users, next, err := h.Users.List(r.Context(), cursor, limit)
 	if err != nil {
-		h.serverError(w, r, err)
+		httpx.Internal(w, r, h.Log, err)
 		return
 	}
 	if users == nil {
@@ -116,11 +116,11 @@ func (h *AdminHandler) list(w http.ResponseWriter, r *http.Request) {
 func (h *AdminHandler) create(w http.ResponseWriter, r *http.Request) {
 	var req createRequest
 	if err := httpx.DecodeJSON(r, &req); err != nil {
-		httpx.BadRequest(w, err.Error())
+		httpx.BadRequest(w, r, err.Error())
 		return
 	}
 	if len(req.Roles) == 0 {
-		httpx.BadRequest(w, "at least one role is required")
+		httpx.BadRequest(w, r, "at least one role is required")
 		return
 	}
 	u := &user.User{
@@ -139,14 +139,14 @@ func (h *AdminHandler) create(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case req.Password != "":
 		if err := user.CheckPasswordPolicy(req.Password); err != nil {
-			httpx.BadRequest(w, err.Error())
+			httpx.BadRequest(w, r, err.Error())
 			return
 		}
 		initial, source = req.Password, "set"
 	case !req.PasswordLess:
 		pw, err := user.GeneratePassword()
 		if err != nil {
-			h.serverError(w, r, err)
+			httpx.Internal(w, r, h.Log, err)
 			return
 		}
 		initial, source = pw, "generated"
@@ -154,14 +154,14 @@ func (h *AdminHandler) create(w http.ResponseWriter, r *http.Request) {
 	if initial != "" {
 		hash, err := user.HashPassword(initial)
 		if err != nil {
-			h.serverError(w, r, err)
+			httpx.Internal(w, r, h.Log, err)
 			return
 		}
 		u.PasswordHash = hash
 		u.MustResetOnLogin = req.MustResetOnLogin == nil || *req.MustResetOnLogin
 	}
 	if err := h.Users.Create(r.Context(), u); err != nil {
-		h.writeUserError(w, r, err)
+		h.fail(w, r, err)
 		return
 	}
 	details := map[string]any{"username": u.Username, "roles": u.Roles, "has_password": u.PasswordHash != "", "initial_password": source, "must_change_password": u.MustResetOnLogin}
@@ -179,7 +179,7 @@ func (h *AdminHandler) create(w http.ResponseWriter, r *http.Request) {
 func (h *AdminHandler) get(w http.ResponseWriter, r *http.Request) {
 	u, err := h.Users.GetByID(r.Context(), r.PathValue("id"))
 	if err != nil {
-		h.writeUserError(w, r, err)
+		h.fail(w, r, err)
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, u)
@@ -189,12 +189,12 @@ func (h *AdminHandler) update(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	var req updateRequest
 	if err := httpx.DecodeJSON(r, &req); err != nil {
-		httpx.BadRequest(w, err.Error())
+		httpx.BadRequest(w, r, err.Error())
 		return
 	}
 	existing, err := h.Users.GetByID(r.Context(), id)
 	if err != nil {
-		h.writeUserError(w, r, err)
+		h.fail(w, r, err)
 		return
 	}
 	if req.DisplayName == "" {
@@ -204,11 +204,11 @@ func (h *AdminHandler) update(w http.ResponseWriter, r *http.Request) {
 		req.Status = existing.Status
 	}
 	if req.Status != user.StatusActive && h.isSelf(r, id) {
-		httpx.WriteError(w, http.StatusConflict, "self", "you cannot disable or lock your own account")
+		httpx.WriteError(w, r, http.StatusConflict, "self", "you cannot disable or lock your own account")
 		return
 	}
 	if err := h.Users.Update(r.Context(), id, req.DisplayName, req.Email, req.Status); err != nil {
-		h.writeUserError(w, r, err)
+		h.fail(w, r, err)
 		return
 	}
 	if req.Status != user.StatusActive && existing.Status == user.StatusActive {
@@ -225,7 +225,7 @@ func (h *AdminHandler) update(w http.ResponseWriter, r *http.Request) {
 	h.record(r, audit.UserUpdate, id, audit.Success, details)
 	u, err := h.Users.GetByID(r.Context(), id)
 	if err != nil {
-		h.writeUserError(w, r, err)
+		h.fail(w, r, err)
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, u)
@@ -235,20 +235,20 @@ func (h *AdminHandler) setRoles(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	var req rolesRequest
 	if err := httpx.DecodeJSON(r, &req); err != nil {
-		httpx.BadRequest(w, err.Error())
+		httpx.BadRequest(w, r, err.Error())
 		return
 	}
 	if len(req.Roles) == 0 {
-		httpx.BadRequest(w, "at least one role is required")
+		httpx.BadRequest(w, r, "at least one role is required")
 		return
 	}
 	before, err := h.Users.GetByID(r.Context(), id)
 	if err != nil {
-		h.writeUserError(w, r, err)
+		h.fail(w, r, err)
 		return
 	}
 	if err := h.Users.SetRoles(r.Context(), id, req.Roles); err != nil {
-		h.writeUserError(w, r, err)
+		h.fail(w, r, err)
 		return
 	}
 	details := map[string]any{"roles": req.Roles, "previous_roles": before.Roles}
@@ -267,7 +267,7 @@ func (h *AdminHandler) setRoles(w http.ResponseWriter, r *http.Request) {
 	h.record(r, audit.UserRolesUpdate, id, audit.Success, details)
 	u, err := h.Users.GetByID(r.Context(), id)
 	if err != nil {
-		h.writeUserError(w, r, err)
+		h.fail(w, r, err)
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, u)
@@ -277,30 +277,30 @@ func (h *AdminHandler) setPassword(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	var req passwordRequest
 	if err := httpx.DecodeJSON(r, &req); err != nil {
-		httpx.BadRequest(w, err.Error())
+		httpx.BadRequest(w, r, err.Error())
 		return
 	}
 	pw, source := req.Password, "set"
 	if req.Generate {
 		var err error
 		if pw, err = user.GeneratePassword(); err != nil {
-			h.serverError(w, r, err)
+			httpx.Internal(w, r, h.Log, err)
 			return
 		}
 		source = "generated"
 	}
 	if err := user.CheckPasswordPolicy(pw); err != nil {
-		httpx.BadRequest(w, err.Error())
+		httpx.BadRequest(w, r, err.Error())
 		return
 	}
 	hash, err := user.HashPassword(pw)
 	if err != nil {
-		h.serverError(w, r, err)
+		httpx.Internal(w, r, h.Log, err)
 		return
 	}
 	mustChange := req.MustResetOnLogin == nil || *req.MustResetOnLogin
 	if err := h.Users.SetPasswordHash(r.Context(), id, hash, mustChange); err != nil {
-		h.writeUserError(w, r, err)
+		h.fail(w, r, err)
 		return
 	}
 	n, err := h.Sessions.RevokeAllForUser(r.Context(), id)
@@ -320,12 +320,12 @@ func (h *AdminHandler) setPassword(w http.ResponseWriter, r *http.Request) {
 func (h *AdminHandler) revokeSessions(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if _, err := h.Users.GetByID(r.Context(), id); err != nil {
-		h.writeUserError(w, r, err)
+		h.fail(w, r, err)
 		return
 	}
 	n, err := h.Sessions.RevokeAllForUser(r.Context(), id)
 	if err != nil {
-		h.serverError(w, r, err)
+		httpx.Internal(w, r, h.Log, err)
 		return
 	}
 	details := map[string]any{"sessions_revoked": n}
@@ -337,7 +337,7 @@ func (h *AdminHandler) revokeSessions(w http.ResponseWriter, r *http.Request) {
 func (h *AdminHandler) resetMFA(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if _, err := h.Users.GetByID(r.Context(), id); err != nil {
-		h.writeUserError(w, r, err)
+		h.fail(w, r, err)
 		return
 	}
 	// A session that passed MFA with the old authenticator should not outlive
@@ -349,7 +349,7 @@ func (h *AdminHandler) resetMFA(w http.ResponseWriter, r *http.Request) {
 		h.Log.Error("revoke sessions after mfa reset", "user_id", id, "err", err)
 		details["sign_out_failed"] = true
 	case err != nil:
-		h.serverError(w, r, err)
+		httpx.Internal(w, r, h.Log, err)
 		return
 	}
 	h.endLive(id, details)
@@ -360,21 +360,21 @@ func (h *AdminHandler) resetMFA(w http.ResponseWriter, r *http.Request) {
 func (h *AdminHandler) del(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if h.isSelf(r, id) {
-		httpx.WriteError(w, http.StatusConflict, "self", "you cannot delete your own account")
+		httpx.WriteError(w, r, http.StatusConflict, "self", "you cannot delete your own account")
 		return
 	}
 	u, err := h.Users.GetByID(r.Context(), id)
 	if err != nil {
-		h.writeUserError(w, r, err)
+		h.fail(w, r, err)
 		return
 	}
 	// Refused before anything is revoked or ended: an account the record
 	// keeps is disabled, not deleted.
 	if has, err := h.Users.HasHistory(r.Context(), id); err != nil {
-		h.serverError(w, r, err)
+		httpx.Internal(w, r, h.Log, err)
 		return
 	} else if has {
-		h.writeUserError(w, r, user.ErrHasHistory)
+		h.fail(w, r, user.ErrHasHistory)
 		return
 	}
 	if _, err := h.Sessions.RevokeAllForUser(r.Context(), id); err != nil {
@@ -383,7 +383,7 @@ func (h *AdminHandler) del(w http.ResponseWriter, r *http.Request) {
 	details := map[string]any{"username": u.Username, "roles": u.Roles}
 	h.endLive(id, details)
 	if err := h.Users.Delete(r.Context(), id); err != nil {
-		h.writeUserError(w, r, err)
+		h.fail(w, r, err)
 		return
 	}
 	h.record(r, audit.UserDelete, id, audit.Success, details)
@@ -442,25 +442,20 @@ func (h *AdminHandler) record(r *http.Request, action, objectID string, outcome 
 	auth.Recorder{Audit: h.Audit, Log: h.Log}.Record(r, auth.ActorFor(r).Event(action, "user", objectID, outcome, details))
 }
 
-func (h *AdminHandler) writeUserError(w http.ResponseWriter, r *http.Request, err error) {
+func (h *AdminHandler) fail(w http.ResponseWriter, r *http.Request, err error) {
 	switch {
 	case errors.Is(err, user.ErrNotFound):
-		httpx.WriteError(w, http.StatusNotFound, "not_found", "no such user")
+		httpx.WriteError(w, r, http.StatusNotFound, "not_found", "no such user")
 	case errors.Is(err, user.ErrDuplicate):
-		httpx.WriteError(w, http.StatusConflict, "conflict", "username or email already exists")
+		httpx.WriteError(w, r, http.StatusConflict, "conflict", "username or email already exists")
 	case errors.Is(err, user.ErrLastAdmin):
-		httpx.WriteError(w, http.StatusConflict, "last_admin", "this is the last active admin")
+		httpx.WriteError(w, r, http.StatusConflict, "last_admin", "this is the last active admin")
 	case errors.Is(err, user.ErrHasHistory):
-		httpx.WriteError(w, http.StatusConflict, "has_history", "this account has sessions on record, which keep it; disable it instead of deleting it")
+		httpx.WriteError(w, r, http.StatusConflict, "has_history", "this account has sessions on record, which keep it; disable it instead of deleting it")
 	case errors.Is(err, user.ErrInvalidRole), errors.Is(err, user.ErrUsernameShape),
 		errors.Is(err, user.ErrInvalidInput), errors.Is(err, user.ErrWeakPassword):
-		httpx.BadRequest(w, err.Error())
+		httpx.BadRequest(w, r, err.Error())
 	default:
-		h.serverError(w, r, err)
+		httpx.Internal(w, r, h.Log, err)
 	}
-}
-
-func (h *AdminHandler) serverError(w http.ResponseWriter, r *http.Request, err error) {
-	h.Log.Error("users admin handler", "path", r.URL.Path, "err", err)
-	httpx.WriteError(w, http.StatusInternalServerError, "internal", "internal error")
 }

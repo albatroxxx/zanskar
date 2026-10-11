@@ -4,7 +4,6 @@ package auth
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"log/slog"
 	"net"
@@ -12,6 +11,7 @@ import (
 	"net/netip"
 	"strings"
 
+	"github.com/albatroxxx/zanskar/internal/httpx"
 	"github.com/albatroxxx/zanskar/internal/user"
 )
 
@@ -187,7 +187,7 @@ func (m *Middleware) Authenticate(next http.Handler) http.Handler {
 func (m *Middleware) unchecked(w http.ResponseWriter, r *http.Request, next http.Handler, what string, err error) {
 	m.Log.Error(what, "err", err)
 	if p := r.URL.Path; strings.HasPrefix(p, "/api/") || strings.HasPrefix(p, "/ws/") {
-		WriteError(w, http.StatusServiceUnavailable, "unavailable", "the gateway cannot check your sign-in right now; try again in a moment")
+		httpx.WriteError(w, r, http.StatusServiceUnavailable, "unavailable", "the gateway cannot check your sign-in right now; try again in a moment")
 		return
 	}
 	next.ServeHTTP(w, r)
@@ -200,18 +200,18 @@ func RequireAuth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		p, ok := FromContext(r.Context())
 		if !ok {
-			WriteError(w, http.StatusUnauthorized, "unauthenticated", "sign in required")
+			httpx.WriteError(w, r, http.StatusUnauthorized, "unauthenticated", "sign in required")
 			return
 		}
 		if !p.Session.MFAVerified {
-			WriteError(w, http.StatusUnauthorized, "mfa_required", "second factor required")
+			httpx.WriteError(w, r, http.StatusUnauthorized, "mfa_required", "second factor required")
 			return
 		}
 		// A password an administrator set has to be replaced before the
 		// account does anything else (QA finding R25); the sign-in page
 		// carries the step, the API only refuses.
 		if p.User.MustResetOnLogin {
-			WriteError(w, http.StatusUnauthorized, "password_change_required", "replace the password you were given first")
+			httpx.WriteError(w, r, http.StatusUnauthorized, "password_change_required", "replace the password you were given first")
 			return
 		}
 		next.ServeHTTP(w, r)
@@ -222,7 +222,7 @@ func RequireAuth(next http.Handler) http.Handler {
 func RequirePartialAuth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if _, ok := FromContext(r.Context()); !ok {
-			WriteError(w, http.StatusUnauthorized, "unauthenticated", "sign in required")
+			httpx.WriteError(w, r, http.StatusUnauthorized, "unauthenticated", "sign in required")
 			return
 		}
 		next.ServeHTTP(w, r)
@@ -240,7 +240,7 @@ func RequireRole(roles ...user.Role) func(http.Handler) http.Handler {
 					return
 				}
 			}
-			WriteError(w, http.StatusForbidden, "forbidden", "insufficient role")
+			httpx.WriteError(w, r, http.StatusForbidden, "forbidden", "insufficient role")
 		}))
 	}
 }
@@ -253,7 +253,7 @@ func RequireConnect(next http.Handler) http.Handler {
 	return RequireAuth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		p, _ := FromContext(r.Context())
 		if !p.User.CanConnect() {
-			WriteError(w, http.StatusForbidden, "review_only", "this account is review-only; the user role is required to reach targets")
+			httpx.WriteError(w, r, http.StatusForbidden, "review_only", "this account is review-only; the user role is required to reach targets")
 			return
 		}
 		next.ServeHTTP(w, r)
@@ -272,12 +272,12 @@ func (m *Middleware) CSRF(next http.Handler) http.Handler {
 			return
 		}
 		if !sameOrigin(r) {
-			WriteError(w, http.StatusForbidden, "csrf_invalid", "cross-origin request rejected")
+			httpx.WriteError(w, r, http.StatusForbidden, "csrf_invalid", "cross-origin request rejected")
 			return
 		}
 		if p, ok := FromContext(r.Context()); ok {
 			if !m.Sessions.CheckCSRF(p.Session.ID, r.Header.Get("X-CSRF-Token")) {
-				WriteError(w, http.StatusForbidden, "csrf_invalid", "missing or invalid X-CSRF-Token")
+				httpx.WriteError(w, r, http.StatusForbidden, "csrf_invalid", "missing or invalid X-CSRF-Token")
 				return
 			}
 		}
@@ -297,22 +297,4 @@ func sameOrigin(r *http.Request) bool {
 	}
 	origin = strings.TrimPrefix(strings.TrimPrefix(origin, "https://"), "http://")
 	return strings.EqualFold(origin, r.Host)
-}
-
-// APIError is the JSON error body shared by every handler.
-type APIError struct {
-	Code    string `json:"code"`
-	Message string `json:"message"`
-}
-
-// WriteError writes a JSON error.
-func WriteError(w http.ResponseWriter, status int, code, msg string) {
-	WriteJSON(w, status, APIError{Code: code, Message: msg})
-}
-
-// WriteJSON writes v with the right headers.
-func WriteJSON(w http.ResponseWriter, status int, v any) {
-	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(v)
 }

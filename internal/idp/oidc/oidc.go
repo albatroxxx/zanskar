@@ -82,8 +82,7 @@ type publicProvider struct {
 func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 	ps, err := h.Providers.List(r.Context(), true)
 	if err != nil {
-		h.Log.Error("list providers", "err", err)
-		httpx.WriteError(w, http.StatusInternalServerError, "internal", "internal error")
+		httpx.Internal(w, r, h.Log, fmt.Errorf("list providers: %w", err))
 		return
 	}
 	out := make([]publicProvider, 0, len(ps))
