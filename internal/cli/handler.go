@@ -227,15 +227,23 @@ func (h *Handler) exec(w http.ResponseWriter, r *http.Request) {
 	h.mu.Lock()
 	s := h.signInFor(p.Session.ID, now)
 	fresh := h.fresh(p, s, now)
+	closed := now.Before(s.lockedUntil)
 	limited := !allow(s, now)
 	h.mu.Unlock()
+	// Closed after too many wrong codes: say so, rather than ask for a code
+	// the unlock would refuse.
+	if closed {
+		h.audit(r, line, "", resultLocked, nil)
+		httpx.WriteError(w, http.StatusTooManyRequests, "cli_locked", "too many wrong codes; the command line is closed for this sign-in for a while")
+		return
+	}
 	if limited {
 		httpx.WriteError(w, http.StatusTooManyRequests, "rate_limited", "too many commands; wait a moment")
 		return
 	}
 	if !fresh {
 		h.audit(r, line, "", resultLocked, nil)
-		httpx.WriteError(w, http.StatusForbidden, "cli_locked", "enter a code from your authenticator to use the command line")
+		httpx.WriteError(w, http.StatusForbidden, "cli_code_required", "enter a code from your authenticator to use the command line")
 		return
 	}
 	reply, name, result, calls := h.run(r, s, line, in.Confirm, now)

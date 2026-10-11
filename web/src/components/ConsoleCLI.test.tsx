@@ -117,11 +117,23 @@ describe('ConsoleCLI', () => {
 
   it('goes back to the code when the command line closed while idle', async () => {
     vi.spyOn(api, 'get').mockResolvedValue(state() as never)
-    vi.spyOn(api, 'post').mockRejectedValue(new ApiError(403, { code: 'cli_locked', message: 'enter a code' }, '403'))
+    vi.spyOn(api, 'post').mockRejectedValue(new ApiError(403, { code: 'cli_code_required', message: 'enter a code' }, '403'))
     render(<ConsoleCLI />)
     const user = await openPanel()
     await user.type(screen.getByLabelText('zanskar>'), 'sessions{Enter}')
     expect(await screen.findByLabelText('Authenticator code')).toBeDefined()
+  })
+
+  it('says the command line is closed after too many wrong codes, not that it needs one', async () => {
+    vi.spyOn(api, 'get').mockResolvedValue(state() as never)
+    vi.spyOn(api, 'post').mockRejectedValue(
+      new ApiError(429, { code: 'cli_locked', message: 'too many wrong codes; the command line is closed for this sign-in for a while' }, '429'),
+    )
+    render(<ConsoleCLI />)
+    const user = await openPanel()
+    await user.type(screen.getByLabelText('zanskar>'), 'sessions{Enter}')
+    expect(await screen.findByText(/too many wrong codes/)).toBeDefined()
+    expect(screen.queryByText(/Enter a fresh code/)).toBeNull()
   })
 
   it('opens and closes with Ctrl+`, and Close clears the transcript', async () => {
