@@ -46,7 +46,8 @@ func (f *liveRevoker) GroupDeleted(context.Context, string) int {
 }
 
 // TestAccountChangesEndLiveSessions: disabling or locking an account,
-// changing its roles, signing it out everywhere and deleting it each end the
+// changing its roles, signing it out everywhere, resetting its password or
+// authenticator and deleting it each end the
 // user's live sessions through the gateway, and the event for the change
 // says how many ended. Edits that leave access alone (a new display name,
 // re-enabling, the same roles in another order) end nothing.
@@ -100,6 +101,10 @@ func TestAccountChangesEndLiveSessions(t *testing.T) {
 	step("same roles reordered", "PUT", "/api/v1/users/"+id+"/roles", map[string]any{"roles": []string{"auditor", "user"}}, false, "user.roles.update")
 	step("drop a role", "PUT", "/api/v1/users/"+id+"/roles", map[string]any{"roles": []string{"auditor"}}, true, "user.roles.update")
 	step("sign out everywhere", "DELETE", "/api/v1/users/"+id+"/sessions", nil, true, "user.sessions.revoke")
+	// Both resets already sign the user out of the console; their live
+	// sessions end with it.
+	step("password reset", "PUT", "/api/v1/users/"+id+"/password", map[string]any{"generate": true}, true, "user.password.reset")
+	step("authenticator reset", "DELETE", "/api/v1/users/"+id+"/mfa", nil, true, "user.mfa.reset")
 	step("delete", "DELETE", "/api/v1/users/"+id, nil, true, "user.delete")
 
 	if len(rv.unexpected) != 0 {

@@ -307,7 +307,9 @@ func (h *AdminHandler) setPassword(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		h.Log.Error("revoke sessions after password reset", "user_id", id, "err", err)
 	}
-	h.record(r, "user.password.reset", id, audit.Success, map[string]any{"sessions_revoked": n, "password": source, "must_change_password": mustChange})
+	details := map[string]any{"sessions_revoked": n, "password": source, "must_change_password": mustChange}
+	h.endLive(id, details)
+	h.record(r, "user.password.reset", id, audit.Success, details)
 	out := map[string]any{"status": "ok", "sessions_revoked": n, "must_change_password": mustChange}
 	if req.Generate {
 		out["initial_password"] = pw
@@ -342,12 +344,15 @@ func (h *AdminHandler) resetMFA(w http.ResponseWriter, r *http.Request) {
 		h.serverError(w, r, err)
 		return
 	}
-	// A session that passed MFA with the old authenticator should not outlive it.
+	// A session that passed MFA with the old authenticator should not outlive
+	// it, in the console or on a target.
 	n, err := h.Sessions.RevokeAllForUser(r.Context(), id)
 	if err != nil {
 		h.Log.Error("revoke sessions after mfa reset", "user_id", id, "err", err)
 	}
-	h.record(r, "user.mfa.reset", id, audit.Success, map[string]any{"sessions_revoked": n})
+	details := map[string]any{"sessions_revoked": n}
+	h.endLive(id, details)
+	h.record(r, "user.mfa.reset", id, audit.Success, details)
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"status": "ok", "sessions_revoked": n})
 }
 
