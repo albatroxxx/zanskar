@@ -140,9 +140,11 @@ func Bridge(ctx context.Context, log *slog.Logger, c *Conn, ws *websocket.Conn, 
 			mu.Unlock()
 		}
 		current = func() string { mu.Lock(); defer mu.Unlock(); return reason }
-		// coder/websocket permits only one concurrent writer. The guacd->browser
-		// goroutine, the idle heartbeat and the final disconnect all write to the
-		// browser, so every write is serialized through wsMu.
+		// The guacd->browser goroutine, the idle heartbeat and the final
+		// disconnect all write to the browser. coder/websocket allows
+		// concurrent Write calls (only Read must have a single caller), so
+		// wsMu is not needed for safety; it keeps the writers one message at
+		// a time, which is simpler to reason about and costs nothing here.
 		wsMu    sync.Mutex
 		wsWrite = func(wctx context.Context, raw string) error {
 			wsMu.Lock()
