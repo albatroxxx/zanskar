@@ -170,3 +170,18 @@ func TestDatabaseMaxSessions(t *testing.T) {
 		}
 	}
 }
+
+// TestLoadRefusesAdminListenAddr: a separate admin listener was promised
+// but never built, so the setting is refused rather than quietly ignored —
+// whoever set it believes the admin routes are off the main listener.
+func TestLoadRefusesAdminListenAddr(t *testing.T) {
+	t.Setenv("ZANSKAR_ADMIN_LISTEN_ADDR", "127.0.0.1:9443")
+	_, err := Load(Options{})
+	if err == nil || !strings.Contains(err.Error(), "ZANSKAR_ADMIN_LISTEN_ADDR") || !strings.Contains(err.Error(), "not supported") {
+		t.Fatalf("expected the setting to be refused, got %v", err)
+	}
+	t.Setenv("ZANSKAR_ADMIN_LISTEN_ADDR", "")
+	if _, err := Load(Options{}); err != nil {
+		t.Fatalf("empty is fine: %v", err)
+	}
+}
