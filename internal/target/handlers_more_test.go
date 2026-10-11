@@ -517,3 +517,35 @@ func TestHasCapability(t *testing.T) {
 		t.Fatal("a target never probed has no capabilities")
 	}
 }
+
+// TestCertificateTrustRoute: the administrator confirms a pending RDP
+// certificate by presenting its fingerprint; both the refusal and the
+// confirmation are audited, and only the exact pending one is accepted.
+func TestCertificateTrustRoute(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	id := e.mkTarget(t, map[string]any{"name": "win-trust", "address": "10.0.0.20", "os_family": "windows"})
+	repo := NewRepo(e.db)
+	for _, fp := range []string{"aa11", "evil1"} {
+		if _, _, err := repo.RecordProbe(ctx, id, ProbeResult{TLS: &TLSInfo{Fingerprint: fp, Source: "rdp"}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	path := "/api/v1/targets/" + id + "/certificate/trust"
+	if code, out := e.do("POST", path, map[string]string{"protocol": "rdp", "fingerprint": "other"}, e.admin); code != 409 || out["code"] != "fingerprint_mismatch" {
+		t.Fatalf("wrong fingerprint: %d %v", code, out)
+	}
+	if code, out := e.do("POST", path, map[string]string{"protocol": "winrm", "fingerprint": "evil1"}, e.admin); code != 409 || out["code"] != "no_pending_certificate" {
+		t.Fatalf("nothing pending for winrm: %d %v", code, out)
+	}
+	if code, out := e.do("POST", path, map[string]string{"protocol": "ssh", "fingerprint": "evil1"}, e.admin); code != 400 {
+		t.Fatalf("not a certificate protocol: %d %v", code, out)
+	}
+	code, out := e.do("POST", path, map[string]string{"protocol": "rdp", "fingerprint": "evil1"}, e.admin)
+	if code != 200 || out["tls_fingerprint"] != "evil1" || out["tls_fingerprint_pending"] != nil {
+		t.Fatalf("confirm: %d %v", code, out)
+	}
+	if n := len(auditActions(t, e, "target.tls.trust")); n != 4 {
+		t.Fatalf("%d target.tls.trust events, want 4 (three refusals and the confirmation)", n)
+	}
+}

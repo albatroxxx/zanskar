@@ -181,6 +181,13 @@ func (h *Handler) desktop(w http.ResponseWriter, r *http.Request) {
 	if proto == target.RDP {
 		if err := h.verifyPinnedCert(r.Context(), ep); err != nil {
 			h.Log.Warn("rdp certificate pin check failed", "target", ep.LiveKey, "err", err)
+			// A different certificate is the ADR 0012 case and is audited, as
+			// WinRM's and SSH's are; an unreachable target is only logged.
+			var mm *certMismatch
+			if errors.As(err, &mm) {
+				h.record(r, actorFor(g.UserID, ip).Event("target.tls.mismatch", "target", ep.LiveKey, audit.Failure,
+					map[string]string{"protocol": "rdp", "expected": mm.want, "seen": mm.got}))
+			}
 			httpx.WriteError(w, http.StatusConflict, "certificate_mismatch", "the target's certificate does not match the pinned fingerprint")
 			return
 		}
@@ -301,9 +308,17 @@ func (h *Handler) verifyPinnedCert(ctx context.Context, t *endpoint) error {
 		return errors.New("target presented no certificate")
 	}
 	if got := strings.ToLower(strings.ReplaceAll(res.TLS.Fingerprint, ":", "")); got != want {
-		return fmt.Errorf("certificate fingerprint %s does not match pinned %s", got, want)
+		return &certMismatch{got: got, want: want}
 	}
 	return nil
+}
+
+// certMismatch is a target that answered with a certificate other than the
+// pinned one.
+type certMismatch struct{ got, want string }
+
+func (e *certMismatch) Error() string {
+	return fmt.Sprintf("certificate fingerprint %s does not match pinned %s", e.got, e.want)
 }
 
 // drivePathFor is the per-session directory guacd exposes as the mapped drive.

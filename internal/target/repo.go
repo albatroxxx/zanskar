@@ -24,7 +24,7 @@ func NewRepo(db *store.DB) *Repo { return &Repo{db: db} }
 
 const cols = `id, name, address, os_family, ports, capabilities, host_key_fingerprint, host_key_status,
 	tls_fingerprint, tags, status, notes, created_by, created_at, updated_at, last_probed_at, winrm_tls_fingerprint,
-	engine, engine_version, retention_days, database_name, tls_mode, tls_ca`
+	engine, engine_version, retention_days, database_name, tls_mode, tls_ca, tls_fingerprint_pending, winrm_tls_fingerprint_pending`
 
 // Create validates and inserts t, including its credential mapping.
 func (r *Repo) Create(ctx context.Context, t *Target) error {
@@ -175,10 +175,12 @@ func (r *Repo) Update(ctx context.Context, t *Target) error {
 	}
 	if oldAddress != t.Address {
 		if _, err := tx.ExecContext(ctx, r.db.Rebind(`UPDATE targets SET host_key_fingerprint = NULL, host_key_status = 'unknown',
-			tls_fingerprint = NULL, winrm_tls_fingerprint = NULL, last_probed_at = NULL WHERE id = ?`), t.ID); err != nil {
+			tls_fingerprint = NULL, winrm_tls_fingerprint = NULL, tls_fingerprint_pending = NULL, winrm_tls_fingerprint_pending = NULL,
+			last_probed_at = NULL WHERE id = ?`), t.ID); err != nil {
 			return err
 		}
 		t.HostKeyFingerprint, t.HostKeyStatus, t.TLSFingerprint, t.WinRMTLSFingerprint, t.LastProbedAt = nil, HostKeyUnknown, nil, nil, nil
+		t.TLSFingerprintPending, t.WinRMTLSFingerprintPending = nil, nil
 	}
 	res, err := tx.ExecContext(ctx, r.db.Rebind(`UPDATE targets SET name = ?, address = ?, os_family = ?, ports = ?, capabilities = ?,
 		tags = ?, status = ?, notes = ?, engine = ?, engine_version = ?, retention_days = ?, database_name = ?, tls_mode = ?, tls_ca = ?, updated_at = ? WHERE id = ? AND deleted_at IS NULL`),
@@ -269,6 +271,33 @@ type HostKeyChange struct {
 	// Changed is true when a trusted key was replaced: the case that must be
 	// audited and that blocks connections until an admin re-trusts.
 	Changed bool `json:"changed"`
+	// Certificates lists the pinned RDP or WinRM certificates the probe
+	// found replaced; each was kept, with the new one held as pending.
+	Certificates []CertificateChange `json:"certificates,omitempty"`
+}
+
+// CertificateChange is a pinned certificate a probe saw replaced.
+type CertificateChange struct {
+	Protocol Protocol `json:"protocol"` // rdp or winrm
+	Pinned   string   `json:"pinned"`
+	Seen     string   `json:"seen"`
+}
+
+// pinCertificate applies ADR 0012 to one listener: the first certificate a
+// probe sees is pinned; the pinned one is never replaced by a probe. A
+// different one is held as pending, and reported once, when it first
+// appears; seeing the pinned one again clears a stale pending one.
+func pinCertificate(pinned, pending **string, seen string, proto Protocol) *CertificateChange {
+	switch {
+	case *pinned == nil:
+		*pinned, *pending = &seen, nil
+	case **pinned == seen:
+		*pending = nil
+	case *pending == nil || **pending != seen:
+		*pending = &seen
+		return &CertificateChange{Protocol: proto, Pinned: **pinned, Seen: seen}
+	}
+	return nil
 }
 
 // RecordProbe stores a probe result and advances the host key state machine:
@@ -309,12 +338,14 @@ func (r *Repo) RecordProbe(ctx context.Context, id string, res ProbeResult) (*Ta
 		change.New = t.HostKeyFingerprint
 	}
 	if res.TLS != nil && res.TLS.Fingerprint != "" {
-		fp := res.TLS.Fingerprint
-		t.TLSFingerprint = &fp
+		if c := pinCertificate(&t.TLSFingerprint, &t.TLSFingerprintPending, res.TLS.Fingerprint, RDP); c != nil {
+			change.Certificates = append(change.Certificates, *c)
+		}
 	}
 	if res.WinRMTLS != nil && res.WinRMTLS.Fingerprint != "" {
-		fp := res.WinRMTLS.Fingerprint
-		t.WinRMTLSFingerprint = &fp
+		if c := pinCertificate(&t.WinRMTLSFingerprint, &t.WinRMTLSFingerprintPending, res.WinRMTLS.Fingerprint, WinRM); c != nil {
+			change.Certificates = append(change.Certificates, *c)
+		}
 	}
 	caps := res.Capabilities
 	if caps == nil {
@@ -329,9 +360,10 @@ func (r *Repo) RecordProbe(ctx context.Context, id string, res ProbeResult) (*Ta
 	t.LastProbedAt = &now
 	t.UpdatedAt = now
 	_, err = r.db.ExecContext(ctx, r.db.Rebind(`UPDATE targets SET capabilities = ?, host_key_fingerprint = ?, host_key_status = ?,
-		tls_fingerprint = ?, winrm_tls_fingerprint = ?, last_probed_at = ?, updated_at = ? WHERE id = ?`),
+		tls_fingerprint = ?, winrm_tls_fingerprint = ?, tls_fingerprint_pending = ?, winrm_tls_fingerprint_pending = ?,
+		last_probed_at = ?, updated_at = ? WHERE id = ?`),
 		mustJSON(t.Capabilities), nullStr(t.HostKeyFingerprint), string(t.HostKeyStatus), nullStr(t.TLSFingerprint), nullStr(t.WinRMTLSFingerprint),
-		store.TimeArg(now), store.TimeArg(now), id)
+		nullStr(t.TLSFingerprintPending), nullStr(t.WinRMTLSFingerprintPending), store.TimeArg(now), store.TimeArg(now), id)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -362,6 +394,46 @@ func (r *Repo) TrustHostKey(ctx context.Context, id, fingerprint string) (*Targe
 		return nil, ErrFingerprintMismatch
 	}
 	t.HostKeyStatus = HostKeyTrusted
+	t.UpdatedAt = now
+	return t, nil
+}
+
+// TrustCertificate is the administrator's confirmation of a pending RDP or
+// WinRM certificate: it becomes the pinned one. The caller presents the
+// fingerprint it is approving, so a probe racing the approval cannot get a
+// different certificate pinned.
+func (r *Repo) TrustCertificate(ctx context.Context, id string, proto Protocol, fingerprint string) (*Target, error) {
+	t, err := r.Get(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	pinCol, pendCol := "tls_fingerprint", "tls_fingerprint_pending"
+	pinned, pending := &t.TLSFingerprint, &t.TLSFingerprintPending
+	switch proto {
+	case RDP:
+	case WinRM:
+		pinCol, pendCol = "winrm_tls_fingerprint", "winrm_tls_fingerprint_pending"
+		pinned, pending = &t.WinRMTLSFingerprint, &t.WinRMTLSFingerprintPending
+	default:
+		return nil, fmt.Errorf("%w: protocol must be rdp or winrm", ErrInvalid)
+	}
+	if *pending == nil {
+		return nil, ErrNoPendingCertificate
+	}
+	if fingerprint != **pending {
+		return nil, ErrFingerprintMismatch
+	}
+	now := time.Now().UTC()
+	// #nosec G202 -- column names come from the two constants above.
+	res, err := r.db.ExecContext(ctx, r.db.Rebind(`UPDATE targets SET `+pinCol+` = ?, `+pendCol+` = NULL, updated_at = ? WHERE id = ? AND `+pendCol+` = ?`),
+		fingerprint, store.TimeArg(now), id, fingerprint)
+	if err != nil {
+		return nil, err
+	}
+	if err := affected(res); err != nil {
+		return nil, ErrFingerprintMismatch
+	}
+	*pinned, *pending = &fingerprint, nil
 	t.UpdatedAt = now
 	return t, nil
 }
@@ -442,13 +514,14 @@ func scanTarget(s scanner) (*Target, error) {
 		ports, capsRaw, tagsRaw []byte
 		hk, tlsFP, createdBy    sql.NullString
 		winrmFP                 sql.NullString
+		tlsPend, winrmPend      sql.NullString
 		engine, engineVer       sql.NullString
 		retention               sql.NullInt64
 		dbName, tlsMode, tlsCA  sql.NullString
 		created, updated, probe store.NullTime
 	)
 	err := s.Scan(&t.ID, &t.Name, &t.Address, &osFamily, &ports, &capsRaw, &hk, &hkStatus, &tlsFP, &tagsRaw,
-		&t.Status, &t.Notes, &createdBy, &created, &updated, &probe, &winrmFP, &engine, &engineVer, &retention, &dbName, &tlsMode, &tlsCA)
+		&t.Status, &t.Notes, &createdBy, &created, &updated, &probe, &winrmFP, &engine, &engineVer, &retention, &dbName, &tlsMode, &tlsCA, &tlsPend, &winrmPend)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound
@@ -480,6 +553,12 @@ func scanTarget(s scanner) (*Target, error) {
 	}
 	if winrmFP.Valid {
 		t.WinRMTLSFingerprint = &winrmFP.String
+	}
+	if tlsPend.Valid {
+		t.TLSFingerprintPending = &tlsPend.String
+	}
+	if winrmPend.Valid {
+		t.WinRMTLSFingerprintPending = &winrmPend.String
 	}
 	if createdBy.Valid {
 		t.CreatedBy = &createdBy.String

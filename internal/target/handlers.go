@@ -51,6 +51,7 @@ func (h *AdminHandler) Register(mux *http.ServeMux) {
 	mux.Handle("POST /api/v1/targets/{id}/probe", admin(http.HandlerFunc(h.probe)))
 	mux.Handle("POST /api/v1/targets/{id}/probe-certificate", admin(http.HandlerFunc(h.probeCertificate)))
 	mux.Handle("POST /api/v1/targets/{id}/host-key/trust", admin(http.HandlerFunc(h.trustHostKey)))
+	mux.Handle("POST /api/v1/targets/{id}/certificate/trust", admin(http.HandlerFunc(h.trustCertificate)))
 	mux.Handle("PUT /api/v1/targets/{id}/credentials/{protocol}", admin(http.HandlerFunc(h.setCredential)))
 	mux.Handle("DELETE /api/v1/targets/{id}/credentials/{protocol}", admin(http.HandlerFunc(h.unsetCredential)))
 }
@@ -272,6 +273,12 @@ func (h *AdminHandler) probe(w http.ResponseWriter, r *http.Request) {
 		"host_key_fingerprint": change.New, "tls_fingerprint": t.TLSFingerprint,
 	})
 	out := ProbeResponse{Target: t, Probe: res, HostKeyStatus: t.HostKeyStatus, HostKeyFingerprint: t.HostKeyFingerprint}
+	for _, c := range change.Certificates {
+		h.record(r, "target.tls.changed", t.ID, audit.Failure, map[string]any{
+			"address": t.Address, "protocol": c.Protocol, "pinned": c.Pinned, "seen": c.Seen,
+		})
+		h.Log.Warn("pinned certificate changed; the new one awaits confirmation", "target", t.Name, "protocol", c.Protocol, "pinned", c.Pinned, "seen", c.Seen)
+	}
 	if change.Changed {
 		out.HostKeyChangedFrom = change.Old
 		h.record(r, "target.hostkey.changed", t.ID, audit.Failure, map[string]any{
@@ -427,6 +434,33 @@ func (h *AdminHandler) trustHostKey(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, t)
 }
 
+type certificateTrustBody struct {
+	Protocol    Protocol `json:"protocol"` // rdp or winrm
+	Fingerprint string   `json:"fingerprint"`
+}
+
+// trustCertificate pins the RDP or WinRM certificate a probe held as pending
+// (ADR 0012); the administrator presents the fingerprint they checked.
+func (h *AdminHandler) trustCertificate(w http.ResponseWriter, r *http.Request) {
+	var body certificateTrustBody
+	if err := httpx.DecodeJSON(r, &body); err != nil {
+		httpx.BadRequest(w, err.Error())
+		return
+	}
+	if body.Fingerprint == "" {
+		httpx.BadRequest(w, "fingerprint required")
+		return
+	}
+	t, err := h.Repo.TrustCertificate(r.Context(), r.PathValue("id"), body.Protocol, body.Fingerprint)
+	if err != nil {
+		h.record(r, "target.tls.trust", r.PathValue("id"), audit.Failure, map[string]any{"protocol": body.Protocol, "fingerprint": body.Fingerprint, "error": err.Error()})
+		h.writeErr(w, r, err)
+		return
+	}
+	h.record(r, "target.tls.trust", t.ID, audit.Success, map[string]any{"address": t.Address, "protocol": body.Protocol, "fingerprint": body.Fingerprint})
+	httpx.WriteJSON(w, http.StatusOK, t)
+}
+
 type credentialBody struct {
 	CredentialID string `json:"credential_id"`
 }
@@ -491,9 +525,11 @@ func (h *AdminHandler) writeErr(w http.ResponseWriter, r *http.Request, err erro
 	case errors.Is(err, ErrInvalidCredential):
 		httpx.WriteError(w, http.StatusUnprocessableEntity, "invalid_credential", "credential does not exist")
 	case errors.Is(err, ErrFingerprintMismatch):
-		httpx.WriteError(w, http.StatusConflict, "fingerprint_mismatch", "the fingerprint does not match the key awaiting trust; probe again and review")
+		httpx.WriteError(w, http.StatusConflict, "fingerprint_mismatch", "the fingerprint does not match the one awaiting trust; probe again and review")
 	case errors.Is(err, ErrNoPendingHostKey):
 		httpx.WriteError(w, http.StatusConflict, "no_pending_host_key", "no host key is awaiting trust")
+	case errors.Is(err, ErrNoPendingCertificate):
+		httpx.WriteError(w, http.StatusConflict, "no_pending_certificate", "no certificate is awaiting trust for that protocol")
 	default:
 		h.serverError(w, r, err)
 	}

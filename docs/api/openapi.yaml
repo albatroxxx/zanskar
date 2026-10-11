@@ -2094,6 +2094,50 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
 
+  /targets/{id}/certificate/trust:
+    post:
+      tags: [admin]
+      summary: Accept the RDP or WinRM certificate awaiting confirmation
+      description: |
+        Pins the certificate a probe held as pending (`tls_fingerprint_pending` or
+        `winrm_tls_fingerprint_pending`) for that protocol and clears the pending one. The
+        request must echo the fingerprint it is accepting, so a probe racing this call cannot
+        get a different certificate pinned. Audited as `target.tls.trust`, refusals included.
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [protocol, fingerprint]
+              properties:
+                protocol:
+                  type: string
+                  enum: [rdp, winrm]
+                fingerprint:
+                  type: string
+      responses:
+        "200":
+          description: Accepted; the target as stored now.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Target"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: >
+            `fingerprint_mismatch`: the fingerprint is not the one awaiting confirmation;
+            `no_pending_certificate`: nothing awaits confirmation for that protocol.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
   # ------------------------------------------------------------------ admin: access policies
   /access-policies:
     get:
@@ -4298,6 +4342,19 @@ components:
           $ref: "#/components/schemas/HostKeyStatus"
         tls_fingerprint:
           type: [string, "null"]
+          description: SHA-256 of the RDP listener certificate pinned by the first probe (ADR 0012).
+        winrm_tls_fingerprint:
+          type: [string, "null"]
+          description: SHA-256 of the WinRM HTTPS listener certificate pinned by the first probe.
+        tls_fingerprint_pending:
+          type: [string, "null"]
+          description: >
+            A different RDP certificate a later probe saw. The pinned one stays and RDP
+            connections are refused until an administrator accepts this one with
+            `POST /targets/{id}/certificate/trust`. A probe never replaces a pin.
+        winrm_tls_fingerprint_pending:
+          type: [string, "null"]
+          description: The WinRM counterpart of `tls_fingerprint_pending`.
         tags:
           $ref: "#/components/schemas/Tags"
         status:
