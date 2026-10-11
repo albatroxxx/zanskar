@@ -136,17 +136,23 @@ func runAdminResetMFA(args []string) error {
 	if err != nil {
 		return err
 	}
-	if err := auth.NewTOTP(db, nil, cfg.Issuer).Reset(ctx, u.ID); err != nil {
-		return fmt.Errorf("reset authenticator: %w", err)
+	revoked, resetErr := auth.ResetMFA(ctx, auth.NewTOTP(db, nil, cfg.Issuer), auth.NewSessions(db, nil, false), u.ID)
+	if resetErr != nil && !errors.Is(resetErr, auth.ErrSignOutAfterReset) {
+		return fmt.Errorf("reset authenticator: %w", resetErr)
 	}
-	revoked, err := auth.NewSessions(db, nil, false).RevokeAllForUser(ctx, u.ID)
-	if err != nil {
-		return fmt.Errorf("revoke sessions: %w", err)
+	// The reset happened, so it is recorded even when signing out did not.
+	details := map[string]any{"username": u.Username, "sessions_revoked": revoked, "via": "zanskar admin reset-mfa"}
+	if resetErr != nil {
+		details["sign_out_failed"] = true
 	}
-	if _, err := audit.NewLog(db).Record(ctx, audit.Actor{IP: "cli"}.Event("user.mfa.reset", "user", u.ID, audit.Success,
-		map[string]any{"username": u.Username, "sessions_revoked": revoked, "via": "zanskar admin reset-mfa"})); err != nil {
+	if _, err := audit.NewLog(db).Record(ctx, audit.Actor{IP: "cli"}.Event("user.mfa.reset", "user", u.ID, audit.Success, details)); err != nil {
 		return fmt.Errorf("authenticator reset but audit record failed: %w", err)
 	}
+	if resetErr != nil {
+		return fmt.Errorf("%q: %w", u.Username, resetErr)
+	}
+	// The gateway's live sessions are its own process's: end them from the
+	// console (Users, Sign out everywhere) if the account may be in use.
 	fmt.Printf("authenticator reset for %q; %d session(s) revoked; the next login will enroll a new one\n", u.Username, revoked)
 	return nil
 }
