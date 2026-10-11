@@ -348,9 +348,22 @@ func (h *Handler) changePassword(w http.ResponseWriter, r *http.Request) {
 		h.serverError(w, r, err)
 		return
 	}
+	// Every other session of the account ends, since whoever the change is
+	// meant to shut out may hold one (M9); this one carries on. The
+	// password has changed by now, so the revocation must not depend on the
+	// client staying connected. A failure is logged and the change stands,
+	// as after an administrator's reset.
+	revokeCtx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), recordTimeout)
+	others, err := h.Sessions.RevokeOthersForUser(revokeCtx, p.User.ID, p.Session.ID)
+	cancel()
+	if err != nil {
+		h.Log.Error("revoke other sessions after password change", "err", err)
+	}
 	// The audit row says whether this was the forced first change or the
 	// user's own; a bool, since only the fact matters.
-	h.recordAction(r, actor, actionSelfReset, "user", p.User.ID, audit.Success, map[string]any{"session_id": p.Session.ID, "was_required": p.User.MustResetOnLogin})
+	h.recordAction(r, actor, actionSelfReset, "user", p.User.ID, audit.Success, map[string]any{
+		"session_id": p.Session.ID, "was_required": p.User.MustResetOnLogin, "other_sessions_revoked": others,
+	})
 	p.User.MustResetOnLogin = false
 	if p.Session.MFAVerified {
 		WriteJSON(w, http.StatusOK, loginResponse{Status: "ok", User: p.User, CSRFToken: h.Sessions.CSRFToken(p.Session.ID)})

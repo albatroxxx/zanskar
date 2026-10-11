@@ -159,14 +159,30 @@ func (s *Sessions) Revoke(ctx context.Context, id string) error {
 	return err
 }
 
-// RevokeAllForUser ends every live session of a user, for example after a
-// password change or an admin disabling the account.
+// RevokeAllForUser ends every live session of a user: after an administrator
+// resets their password or authenticator, disables or deletes the account,
+// or ends its sessions on purpose. A user replacing their own password keeps
+// the session they did it from: see RevokeOthersForUser.
 func (s *Sessions) RevokeAllForUser(ctx context.Context, userID string) (int64, error) {
 	res, err := s.db.ExecContext(ctx, s.db.Rebind(`UPDATE auth_sessions SET revoked_at = ? WHERE user_id = ? AND revoked_at IS NULL`), store.TimeArg(s.now()), userID)
 	if err != nil {
 		return 0, err
 	}
 	return res.RowsAffected()
+}
+
+// RevokeOthersForUser ends every live session of a user except
+// keepSessionID, and returns how many it ended. A user who replaces their
+// own password keeps the session they did it from; any other may belong to
+// whoever the change is meant to shut out (M9).
+func (s *Sessions) RevokeOthersForUser(ctx context.Context, userID, keepSessionID string) (int, error) {
+	res, err := s.db.ExecContext(ctx, s.db.Rebind(`UPDATE auth_sessions SET revoked_at = ? WHERE user_id = ? AND id <> ? AND revoked_at IS NULL`),
+		store.TimeArg(s.now()), userID, keepSessionID)
+	if err != nil {
+		return 0, err
+	}
+	n, err := res.RowsAffected()
+	return int(n), err
 }
 
 // DeleteExpired removes sessions that can never be used again. Run periodically.

@@ -218,9 +218,11 @@ paths:
       description: |
         The step owed when an administrator set the password (`password_change_required` at
         sign-in, `pending: password` on `/auth/me`), or a change of the caller's own from a
-        full session. The current password is required either way. Afterwards the sign-in
+        full session. The current password is required either way. Every other session of the
+        account ends; the one that made the change carries on. Afterwards the sign-in
         continues where it would have: the response is a LoginResponse whose status is
-        `mfa_required`, `mfa_enrollment_required` or `ok`. Audited as `user.password.change`.
+        `mfa_required`, `mfa_enrollment_required` or `ok`. Audited as `user.password.change`,
+        with the number of other sessions ended in `other_sessions_revoked`.
       requestBody:
         required: true
         content:
