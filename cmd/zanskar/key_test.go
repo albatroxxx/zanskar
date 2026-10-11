@@ -127,6 +127,15 @@ func TestRotateMasterKeyFile(t *testing.T) {
 	if err := runKeyRotateMaster([]string{"-env-file", filepath.Join(dir, "env"), "-generate", "-yes"}); err == nil || !strings.Contains(err.Error(), "drop -env-file") {
 		t.Fatalf("want the -env-file refusal, got %v", err)
 	}
+	// So is another copy of the key: the new key would land there while
+	// the service went on reading the old one from its own file (L4).
+	copyPath := filepath.Join(dir, "copy.key")
+	if err := os.WriteFile(copyPath, []byte(base64.StdEncoding.EncodeToString(oldKey)+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := runKeyRotateMaster([]string{"-key-file", copyPath, "-generate", "-yes"}); err == nil || !strings.Contains(err.Error(), "drop -key-file or name that file") {
+		t.Fatalf("want the refusal of a key file the service does not read, got %v", err)
+	}
 	if err := runKeyRotateMaster([]string{"-generate", "-yes"}); err != nil {
 		t.Fatalf("rotate: %v", err)
 	}
@@ -155,4 +164,61 @@ func TestRotateMasterKeyFile(t *testing.T) {
 		t.Fatalf("the new key must open the ring: %v", err)
 	}
 	r2.Close()
+}
+
+// TestRotateMasterKeyFileWhenTheServiceReadsTheEnvironment: with the key in
+// ZANSKAR_MASTER_KEY, -key-file was accepted whenever the named file held
+// the same key (L4). The new key then went into that file while the service
+// went on loading the old one from its environment, and could no longer
+// start. It is refused before anything is rewrapped, and says what to pass.
+func TestRotateMasterKeyFileWhenTheServiceReadsTheEnvironment(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	dsn := "file:" + filepath.Join(dir, "z.db") + "?_pragma=foreign_keys(1)"
+	oldKey := make([]byte, 32)
+	if _, err := rand.Read(oldKey); err != nil {
+		t.Fatal(err)
+	}
+	oldB64 := base64.StdEncoding.EncodeToString(oldKey)
+	copyPath := filepath.Join(dir, "master.key")
+	if err := os.WriteFile(copyPath, []byte(oldB64+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("ZANSKAR_DB_DSN", dsn)
+	t.Setenv("ZANSKAR_MASTER_KEY", oldB64)
+	t.Setenv("ZANSKAR_MASTER_KEY_FILE", "")
+	t.Setenv("ZANSKAR_NEW_MASTER_KEY", "")
+
+	db, err := store.Open(ctx, "sqlite", dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Migrate(ctx, db); err != nil {
+		t.Fatal(err)
+	}
+	kek, _ := crypto.NewLocalKEK(oldKey)
+	ring, err := keyring.Open(ctx, db, kek)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ring.Close()
+	_ = db.Close()
+
+	err = runKeyRotateMaster([]string{"-key-file", copyPath, "-generate", "-yes"})
+	if err == nil || !strings.Contains(err.Error(), "ZANSKAR_MASTER_KEY") || !strings.Contains(err.Error(), "-env-file") {
+		t.Fatalf("want a refusal naming where the key comes from, got %v", err)
+	}
+	if b, _ := os.ReadFile(copyPath); strings.TrimSpace(string(b)) != oldB64 { // #nosec G304 -- test temp file
+		t.Fatal("the key file was replaced")
+	}
+	db, err = store.Open(ctx, "sqlite", dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = db.Close() }()
+	r, err := keyring.Open(ctx, db, kek)
+	if err != nil {
+		t.Fatalf("the old key must still open the ring: %v", err)
+	}
+	r.Close()
 }

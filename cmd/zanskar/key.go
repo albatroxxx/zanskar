@@ -177,19 +177,23 @@ func runKeyRotateMaster(args []string) error {
 	}
 	defer func() { ring.Close(); _ = db.Close() }()
 
-	// A key loaded from a file is replaced in that file: it is the one the
-	// service reads, and an env-file edit would leave the file holding a key
-	// that opens nothing.
-	if cfg.MasterKeyFile != "" {
-		if *envFile != "" {
-			return fmt.Errorf("the master key is read from %s (ZANSKAR_MASTER_KEY_FILE); drop -env-file", cfg.MasterKeyFile)
-		}
-		if *keyFile == "" {
-			*keyFile = cfg.MasterKeyFile
-		}
-	}
-	if *envFile != "" && *keyFile != "" {
-		return errors.New("pass -env-file or -key-file, not both")
+	// The new key goes where the service reads the old one: a key file in
+	// place, or the env file's ZANSKAR_MASTER_KEY line. Anywhere else would
+	// leave the service starting with a key that opens nothing.
+	switch {
+	case cfg.MasterKeyFile != "" && *envFile != "":
+		return fmt.Errorf("the master key is read from %s (ZANSKAR_MASTER_KEY_FILE); drop -env-file", cfg.MasterKeyFile)
+	case cfg.MasterKeyFile != "" && *keyFile != "" && filepath.Clean(*keyFile) != filepath.Clean(cfg.MasterKeyFile):
+		// Another copy of the key is not the one the service reads: the new
+		// key would land there and the service would start with the old one.
+		return fmt.Errorf("the master key is read from %s (ZANSKAR_MASTER_KEY_FILE); drop -key-file or name that file", cfg.MasterKeyFile)
+	case cfg.MasterKeyFile != "":
+		*keyFile = cfg.MasterKeyFile
+	case *keyFile != "":
+		// The other way round: a key the service reads from its environment
+		// is replaced there. Writing it to a file would leave the service
+		// starting with the old key, which no longer opens anything (L4).
+		return errors.New("the master key is read from ZANSKAR_MASTER_KEY, not a file; pass -env-file with the environment file the service loads, or move the service to ZANSKAR_MASTER_KEY_FILE first")
 	}
 	if *keyFile != "" {
 		b, err := os.ReadFile(*keyFile) // #nosec G304 -- the operator names the key file

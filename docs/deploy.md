@@ -289,7 +289,10 @@ tooling below rather than `zanskar backup`.
   sudo systemctl restart zanskar
   ```
 
-  `zanskar key rotate-master` then rewrites that file, keeping its owner and mode.
+  `zanskar key rotate-master` then rewrites that file, keeping its owner and mode. The new
+  key always goes where the service reads the old one: with the key in the environment, pass
+  `-env-file /etc/zanskar/env`; with a key file, name no file at all (or that one). Any other
+  file is refused, since the service would start with a key that no longer opens anything.
 
 ## Security checklist
 
