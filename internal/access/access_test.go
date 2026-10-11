@@ -286,3 +286,53 @@ func TestOpenAndDecideMinutes(t *testing.T) {
 		t.Fatalf("a revoked grant frees the tuple, got %v", err)
 	}
 }
+
+// TestGrantExpiryInsideASecond holds a grant to its exact end (M28). On
+// SQLite expires_at is text; with trimmed RFC 3339 a grant ending at 10:00:00
+// still read as active at 10:00:00.3 ("…:00Z" > "…:00.3Z") and was not yet
+// due for expiry, while one ending at 10:00:00.5 read as over at 10:00:00.
+func TestGrantExpiryInsideASecond(t *testing.T) {
+	ctx, r := setup(t)
+	end := time.Date(2026, 10, 11, 10, 0, 0, 0, time.UTC)
+	ms := time.Millisecond
+	grant := func(user, approver string, expires time.Time) string {
+		t.Helper()
+		req := &Request{UserID: user, TargetID: "t1", Protocol: "ssh", Reason: "x", RequestedMinutes: 60}
+		if err := r.Create(ctx, req); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := r.Decide(ctx, req.ID, approver, StatusApproved, "", &expires, 0); err != nil {
+			t.Fatal(err)
+		}
+		return req.ID
+	}
+	whole := grant("u1", "u2", end)            // ends on the second
+	half := grant("u2", "u1", end.Add(500*ms)) // ends half a second later
+
+	for _, c := range []struct {
+		user string
+		at   time.Duration
+		want bool
+	}{
+		{"u1", -300 * ms, true},
+		{"u1", 0, false},
+		{"u1", 300 * ms, false},
+		{"u2", 0, true},
+		{"u2", 400 * ms, true},
+		{"u2", 500 * ms, false},
+	} {
+		if ok, err := r.HasActiveGrant(ctx, c.user, "t1", "", "ssh", end.Add(c.at)); err != nil || ok != c.want {
+			t.Errorf("grant of %s active at %s: %v %v, want %v", c.user, end.Add(c.at).Format(time.StampMicro), ok, err, c.want)
+		}
+	}
+	due, err := r.DueForExpiry(ctx, end.Add(300*ms))
+	if err != nil || len(due) != 1 || due[0].ID != whole {
+		t.Fatalf("due for expiry at 10:00:00.3: %v %v, want only %s", due, err, whole)
+	}
+	if n, err := r.ExpireDue(ctx, end.Add(300*ms)); err != nil || n != 1 {
+		t.Fatalf("expired at 10:00:00.3: %d %v, want 1", n, err)
+	}
+	if got, err := r.Get(ctx, half); err != nil || got.Status != StatusApproved {
+		t.Fatalf("the grant ending at 10:00:00.5 must still stand: %+v %v", got, err)
+	}
+}

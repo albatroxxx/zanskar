@@ -8,6 +8,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/albatroxxx/zanskar/internal/config"
 	"github.com/albatroxxx/zanskar/internal/crypto"
@@ -219,5 +220,45 @@ func TestRewrap(t *testing.T) {
 	var rotated string
 	if err := db.QueryRowContext(ctx, `SELECT rotated_at FROM key_versions WHERE id = 1`).Scan(&rotated); err != nil || rotated == "" {
 		t.Fatalf("rotated_at should record the rewrap: %q %v", rotated, err)
+	}
+}
+
+// TestKeyVersionTimesAreStored: created_at and rotated_at are written in the
+// form every timestamp is stored in (store.TimeArg, M28), not as RFC 3339
+// whole seconds, so they compare as times with the rest on SQLite.
+func TestKeyVersionTimesAreStored(t *testing.T) {
+	ctx := context.Background()
+	db := newDB(t)
+	r, err := Open(ctx, db, kek(t, 1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.Rotate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.Rewrap(ctx, kek(t, 2)); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := db.QueryContext(ctx, `SELECT created_at, rotated_at FROM key_versions ORDER BY id`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = rows.Close() }()
+	n := 0
+	for rows.Next() {
+		var created, rotated string
+		if err := rows.Scan(&created, &rotated); err != nil {
+			t.Fatal(err)
+		}
+		for _, v := range []string{created, rotated} {
+			at, err := time.Parse(time.RFC3339Nano, v)
+			if err != nil || v != store.TimeArg(at) || len(v) != len("2006-01-02T15:04:05.000000Z") {
+				t.Errorf("key version %d: %q is not stored as store.TimeArg writes it (%v)", n+1, v, err)
+			}
+		}
+		n++
+	}
+	if err := rows.Err(); err != nil || n != 2 {
+		t.Fatalf("key versions read: %d %v", n, err)
 	}
 }

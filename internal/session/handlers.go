@@ -532,6 +532,10 @@ func (h *Handler) fail(w http.ResponseWriter, r *http.Request, err error) {
 		httpx.WriteError(w, r, http.StatusNotFound, "not_found", "not found")
 		return
 	}
+	if errors.Is(err, ErrBadCursor) {
+		httpx.BadRequest(w, r, "cursor: pass the next_cursor of the previous page")
+		return
+	}
 	httpx.Internal(w, r, h.Log, err)
 }
 

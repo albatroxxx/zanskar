@@ -215,3 +215,21 @@ func TestRecordingDownloads(t *testing.T) {
 		t.Fatalf("recording_views: %d %v", views, err)
 	}
 }
+
+// TestSessionListsRefuseANonTimeCursor: a session list's cursor is a start
+// time. One that is not a time is the caller's mistake: 400 on both lists,
+// where SQLite used to compare it as text and PostgreSQL failed the query.
+func TestSessionListsRefuseANonTimeCursor(t *testing.T) {
+	e := newEnv(t)
+	for _, c := range []struct{ path, who string }{
+		{"/api/v1/sessions?cursor=yesterday", "reviewer"},
+		{"/api/v1/me/sessions?cursor=yesterday", "alice"},
+	} {
+		if rr, out := e.get(c.path, c.who); rr.Code != 400 || out["code"] != "bad_request" {
+			t.Errorf("%s as %s: %d %v", c.path, c.who, rr.Code, out)
+		}
+	}
+	if rr, _ := e.get("/api/v1/sessions?cursor=2026-10-11T10:00:00.5Z", "reviewer"); rr.Code != 200 {
+		t.Errorf("a time cursor: %d %s", rr.Code, rr.Body.String())
+	}
+}

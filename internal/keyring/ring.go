@@ -162,7 +162,7 @@ func (r *Ring) createVersion(ctx context.Context, onlyIfEmpty bool) (int, error)
 
 	_, err = tx.ExecContext(ctx, r.db.Rebind(
 		`INSERT INTO key_versions (id, algorithm, kek_source, kek_ref, wrapped_dek, created_at) VALUES (?, ?, ?, NULL, ?, ?)`),
-		newID, algorithm, r.kek.Source(), wrapped, time.Now().UTC().Format(time.RFC3339))
+		newID, algorithm, r.kek.Source(), wrapped, store.TimeArg(time.Now()))
 	if err != nil {
 		return 0, fmt.Errorf("keyring: insert key version: %w", err)
 	}
@@ -288,7 +288,7 @@ func (r *Ring) Rewrap(ctx context.Context, newKEK crypto.KEKProvider) (int, erro
 	if len(set) == 0 {
 		return 0, errors.New("keyring: no key versions to rewrap")
 	}
-	now := time.Now().UTC().Format(time.RFC3339)
+	now := store.TimeArg(time.Now())
 	for _, rw := range set {
 		aad := []byte(AAD("key_versions", strconv.Itoa(rw.id)))
 		// If the new key already opens the old wrapping it is the same key,
