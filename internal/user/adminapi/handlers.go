@@ -58,9 +58,15 @@ type createRequest struct {
 	Roles            []user.Role `json:"roles"`
 	Password         string      `json:"password"`
 	MustResetOnLogin *bool       `json:"must_change_password"`
-	// PasswordLess creates an account with no password at all, for one
-	// that signs in through an identity provider. Otherwise a one-time
-	// password is generated when none is given.
+	// PasswordLess creates an account with no password at all, for someone
+	// who signs in through an identity provider. Give it the username the
+	// provider asserts: the first time a provider authenticates someone
+	// under that username, it adopts the account (links it to the provider
+	// and the person's external id) and the account keeps the roles set
+	// here, whether or not the provider auto-provisions (see
+	// idp.Provisioner.Resolve and ADR 0005). Otherwise a one-time password
+	// is generated when none is given; an account with a password is never
+	// adopted.
 	PasswordLess bool `json:"password_less"`
 }
 
@@ -123,7 +129,8 @@ func (h *AdminHandler) create(w http.ResponseWriter, r *http.Request) {
 	// one-time password returned once. Either way the user replaces it at
 	// their first sign-in unless the request says otherwise (QA finding
 	// R25). An account that will sign in through an identity provider is
-	// created with password_less: false.
+	// created with password_less: true and no password, so that its
+	// provider adopts it at the first sign-in.
 	initial, source := "", "none"
 	switch {
 	case req.Password != "":

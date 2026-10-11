@@ -248,7 +248,7 @@ func serve(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	authHandler.ExternalLogin = ldapExternalAuth{ldap.NewLogin(idpRepo, provisioner)}
+	authHandler.ExternalLogin = ldapExternalAuth{ldap.NewLogin(idpRepo, provisioner, auditLog, log)}
 	vault := credential.NewVault(db, ring)
 	targets := target.NewRepo(db)
 	policies := policy.NewRepo(db)

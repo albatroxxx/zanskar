@@ -353,3 +353,95 @@ func TestCallbackRefusesControlCharacterNext(t *testing.T) {
 		t.Fatalf("a plain path must be kept: %d %q", status, location)
 	}
 }
+
+// linkEvents returns the user.link events recorded so far.
+func linkEvents(t *testing.T, e *env) []audit.Event {
+	t.Helper()
+	evs, _, err := e.h.Audit.List(context.Background(), audit.Filter{Action: "user.link", Limit: 50})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return evs
+}
+
+// TestFlowAdoptsPreCreatedAccount is H8 through a real OIDC sign-in. An
+// account an administrator created with no password, under the username the
+// provider asserts, signs in with auto-provisioning off: the callback links
+// it to the provider and the subject, records the link as user.link, and the
+// account keeps the roles it was given. The second sign-in matches on the
+// subject and links nothing.
+func TestFlowAdoptsPreCreatedAccount(t *testing.T) {
+	f := newFakeIdP(t)
+	f.claims = map[string]any{"preferred_username": "erin", "email": "erin@corp.example", "name": "Erin E"}
+	e, id := newEnv(t, f, idp.Config{OIDC: &idp.OIDCConfig{ClientID: "cid", ClientSecret: "s"}, AutoProvision: false})
+	ctx := context.Background()
+	erin := &user.User{Username: "erin", DisplayName: "Erin", Roles: []user.Role{user.RoleAuditor}}
+	if err := e.users.Create(ctx, erin); err != nil {
+		t.Fatal(err)
+	}
+
+	status, location, cookies := drive(t, e, f, id)
+	if status != 302 || location != "/admin" || !hasSession(cookies) {
+		t.Fatalf("callback: %d %s session=%v", status, location, hasSession(cookies))
+	}
+	got, err := e.users.GetByID(ctx, erin.ID)
+	if err != nil || got.IdPID != id || got.ExternalID != "sub-1" || len(got.Roles) != 1 || got.Roles[0] != user.RoleAuditor {
+		t.Fatalf("pre-created account after sign-in: %+v %v", got, err)
+	}
+	evs := linkEvents(t, e)
+	if len(evs) != 1 {
+		t.Fatalf("%d user.link events, want 1", len(evs))
+	}
+	var d map[string]string
+	_ = json.Unmarshal(evs[0].Details, &d)
+	if ev := evs[0]; ev.ActorUserID != erin.ID || ev.ObjectID != erin.ID || ev.Outcome != audit.Success || ev.ActorIP == "" ||
+		d["idp"] != id || d["idp_name"] != "fake" || d["external_id"] != "sub-1" {
+		t.Fatalf("user.link event: %+v %v", ev, d)
+	}
+
+	if status, _, _ := drive(t, e, f, id); status != 302 {
+		t.Fatalf("second sign-in: %d", status)
+	}
+	if n := len(linkEvents(t, e)); n != 1 {
+		t.Fatalf("%d user.link events after the second sign-in, want still 1", n)
+	}
+	if all, _, _ := e.users.List(ctx, "", 10); len(all) != 1 {
+		t.Fatalf("%d accounts, want 1", len(all))
+	}
+}
+
+// TestFlowRefusesLocalPasswordAccount: a provider asserting the username of a
+// local account that has a password is refused, with a reason the sign-in
+// page and the audit log both show, and the account is left unlinked.
+func TestFlowRefusesLocalPasswordAccount(t *testing.T) {
+	for _, auto := range []bool{false, true} {
+		f := newFakeIdP(t)
+		f.claims = map[string]any{"preferred_username": "frank", "email": "frank@corp.example"}
+		e, id := newEnv(t, f, idp.Config{OIDC: &idp.OIDCConfig{ClientID: "cid", ClientSecret: "s"}, AutoProvision: auto})
+		ctx := context.Background()
+		frank := &user.User{Username: "frank", DisplayName: "Frank", Roles: []user.Role{user.RoleAdmin},
+			PasswordHash: "$argon2id$v=19$m=65536,t=3,p=1$c2FsdHNhbHRzYWx0c2FsdA$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"}
+		if err := e.users.Create(ctx, frank); err != nil {
+			t.Fatal(err)
+		}
+
+		status, location, cookies := drive(t, e, f, id)
+		if status != 302 || location != "/login?error=account_conflict" || hasSession(cookies) {
+			t.Fatalf("auto_provision=%v: callback %d %s session=%v, want a refusal", auto, status, location, hasSession(cookies))
+		}
+		if got, _ := e.users.GetByID(ctx, frank.ID); got.IdPID != "" || got.ExternalID != "" {
+			t.Fatalf("auto_provision=%v: the password account was linked to %q/%q", auto, got.IdPID, got.ExternalID)
+		}
+		evs, _, _ := e.h.Audit.List(ctx, audit.Filter{Action: "user.login", Limit: 1})
+		var d map[string]string
+		if len(evs) == 1 {
+			_ = json.Unmarshal(evs[0].Details, &d)
+		}
+		if len(evs) != 1 || evs[0].Outcome != audit.Failure || d["reason"] != "account_conflict" {
+			t.Fatalf("auto_provision=%v: user.login audit %v %v", auto, evs, d)
+		}
+		if n := len(linkEvents(t, e)); n != 0 {
+			t.Fatalf("auto_provision=%v: %d user.link events, want none", auto, n)
+		}
+	}
+}

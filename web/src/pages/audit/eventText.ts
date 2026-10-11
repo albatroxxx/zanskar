@@ -92,6 +92,7 @@ const actionLabels: Record<string, string> = {
   'user.create': 'User created',
   'user.update': 'User updated',
   'user.delete': 'User deleted',
+  'user.link': 'Account linked to its identity provider',
   'user.login': 'Sign-in',
   'user.logout': 'Sign-out',
   'user.mfa.enroll': 'Authenticator enrollment started',
