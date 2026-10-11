@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/albatroxxx/zanskar/internal/audit"
 	"github.com/albatroxxx/zanskar/internal/credential"
 	"github.com/albatroxxx/zanskar/internal/crypto"
 	"github.com/albatroxxx/zanskar/internal/keyring"
@@ -237,11 +238,22 @@ func TestRotateMasterEnvFile(t *testing.T) {
 		})
 	}
 
+	// An audit anchor signed under the old key, which the rotation re-signs.
+	g.with(t, func(ctx context.Context, db *store.DB, _ *keyring.Ring) {
+		if _, err := audit.NewLog(db).Record(ctx, audit.Event{Action: "credential.create", Outcome: audit.Success}); err != nil {
+			t.Fatal(err)
+		}
+	})
+	if line, _, err := output(t, func() error { return runAuditAnchor(nil) }); err != nil || !strings.HasPrefix(line, "anchor ") {
+		t.Fatalf("anchor before the rotation: %v %q", err, line)
+	}
+
 	out, stderr, err := output(t, func() error { return runKeyRotateMaster([]string{"-env-file", envPath, "-generate", "-yes"}) })
 	if err != nil {
 		t.Fatalf("rotate-master: %v\n%s", err, stderr)
 	}
-	if !strings.Contains(out, "rewrapped 1 data-key version(s)") || !strings.Contains(out, "updated ZANSKAR_MASTER_KEY in "+envPath) {
+	if !strings.Contains(out, "rewrapped 1 data-key version(s)") || !strings.Contains(out, "updated ZANSKAR_MASTER_KEY in "+envPath) ||
+		!strings.Contains(out, "re-signed 1 audit anchor(s) under the new key") {
 		t.Fatalf("output:\n%s", out)
 	}
 	newB64 := masterKeyFrom(envPath)
@@ -273,8 +285,13 @@ func TestRotateMasterEnvFile(t *testing.T) {
 	ev := lastAudit(t, g, "key.rotate_master")
 	var d map[string]any
 	_ = json.Unmarshal(ev.Details, &d)
-	if d["env_file_updated"] != true || d["key_file_updated"] != false || d["versions_rewrapped"] != float64(1) {
+	if d["env_file_updated"] != true || d["key_file_updated"] != false || d["versions_rewrapped"] != float64(1) || d["anchors_resigned"] != float64(1) {
 		t.Fatalf("audit details %v", d)
+	}
+	// Under the new key the anchor written before the rotation still verifies.
+	t.Setenv("ZANSKAR_MASTER_KEY", newB64)
+	if out, stderr, err := output(t, func() error { return runAuditVerify(nil) }); err != nil || !strings.Contains(out, "anchors: 1 checked") {
+		t.Fatalf("verify after the rotation: %v\n%s%s", err, out, stderr)
 	}
 	if bytes.Contains(ev.Details, []byte(newB64)) {
 		t.Fatal("the audit event must not carry the key")

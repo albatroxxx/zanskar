@@ -2863,14 +2863,19 @@ paths:
   /audit/verify:
     get:
       tags: [auditor]
-      summary: Verify the audit hash chain
+      summary: Verify the audit hash chain, its anchors and the id sequence
       description: >
         Walks the whole log from the first event in id order, checking each event's link to the
-        one before and recomputing its hash. Stops at the first break. Expect this to take
-        seconds on large tables.
+        one before and recomputing its hash; the walk stops at the first break. Then checks every
+        stored anchor (ADR 0008): its signature, made with a key derived from the master key, and
+        that the event it names is still in the log with the hash it signed. Last it compares the
+        id sequence with the newest event, which notices the newest events being deleted before
+        an anchor covers them. Expect this to take seconds on large tables.
       responses:
         "200":
-          description: Verification result. A broken chain is still 200, with `intact=false` and the break in `broken`.
+          description: >
+            Verification result. A broken chain or a problem is still 200, with `intact=false`, the
+            break in `broken` and the findings in `problems`.
           content:
             application/json:
               schema:
@@ -5554,11 +5559,13 @@ components:
           type: string
     AuditVerifyResult:
       type: object
-      required: [intact, checked, last_id, last_hash, broken]
+      required: [intact, checked, last_id, last_hash, broken, anchors_checked, last_anchor, problems, warnings]
       properties:
         intact:
           type: boolean
-          description: True when every event checked out.
+          description: >
+            True when every event checked out and `problems` is empty. A log whose newest events
+            were deleted still links, so `broken` can be null while `intact` is false.
         checked:
           type: integer
           format: int64
@@ -5587,3 +5594,56 @@ components:
                 Reason:
                   type: string
                   description: Why it failed, for example `prev_hash does not match previous event` or `hash does not match content`.
+        anchors_checked:
+          type: integer
+          description: How many stored anchors were checked. The gateway writes one at start and every hour.
+        last_anchor:
+          description: >
+            The matching anchor that names the newest event: its signature verifies and its event
+            is still in the log with the hash it signed. Null when no anchor matches.
+          oneOf:
+            - type: "null"
+            - $ref: "#/components/schemas/AuditAnchor"
+        problems:
+          type: array
+          description: >
+            What the anchor and id-sequence checks found, as sentences. Each is evidence that the
+            log was truncated or edited (an anchored event missing or changed, the log ending
+            before an anchored event, on SQLite an id sequence ahead of the newest event) or that
+            an anchor was not written by this gateway. Anchors past the first 20 with a finding of
+            their own are counted in one closing entry.
+          items:
+            type: string
+        warnings:
+          type: array
+          description: >
+            Findings that may be innocent and do not make `intact` false. On PostgreSQL an id
+            sequence ahead of the newest event is a warning, since a failed insert also uses up an id.
+          items:
+            type: string
+    AuditAnchor:
+      type: object
+      description: >
+        The head of the audit chain at one moment, signed with HMAC-SHA256 under a key derived from
+        the master key (ADR 0008). `zanskar audit anchor` prints one as
+        `anchor <event_id> <hash> <created_at> <mac>`.
+      required: [id, event_id, hash, created_at, mac]
+      properties:
+        id:
+          type: integer
+          format: int64
+          description: The stored anchor's id.
+        event_id:
+          type: integer
+          format: int64
+          description: The id of the event the anchor names.
+        hash:
+          type: string
+          description: That event's hash when the anchor was written.
+        created_at:
+          type: string
+          format: date-time
+          description: When the anchor was written.
+        mac:
+          type: string
+          description: The signature, 64 hexadecimal characters.

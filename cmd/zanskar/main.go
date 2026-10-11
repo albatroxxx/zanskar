@@ -5,7 +5,8 @@
 //	zanskar serve     run the gateway
 //	zanskar migrate   apply pending database migrations and exit
 //	zanskar keygen    print a new base64 master key for ZANSKAR_MASTER_KEY
-//	zanskar audit verify   walk the audit log and check the hash chain
+//	zanskar audit verify   walk the audit log and check the hash chain, anchors and id sequence
+//	zanskar audit anchor   sign the newest audit event and print the anchor line
 //	zanskar version   print the build version
 package main
 
@@ -112,7 +113,7 @@ func run(args []string) int {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: zanskar <init|serve|migrate|backup|restore|keygen|key status|key rotate|key rotate-master|admin create|admin reset-mfa|audit verify|audit reseal|dbproxy|version>")
+	fmt.Fprintln(os.Stderr, "usage: zanskar <init|serve|migrate|backup|restore|keygen|key status|key rotate|key rotate-master|admin create|admin reset-mfa|audit verify|audit anchor|audit reseal|dbproxy|version>")
 }
 
 func newLogger(cfg *config.Config) *slog.Logger {
@@ -235,6 +236,12 @@ func serve(ctx context.Context) error {
 		log.Warn("session cookies are not marked Secure; fine on loopback, never in production")
 	}
 	auditLog := audit.NewLog(db)
+	// Signs the audit anchors (ADR 0008), derived from the master key like
+	// the CSRF key; `zanskar key rotate-master` re-signs the stored anchors.
+	anchorKey, err := audit.AnchorKey(cfg.MasterKey)
+	if err != nil {
+		return err
+	}
 	totp := auth.NewTOTP(db, ring, cfg.Issuer)
 	authHandler := auth.NewHandler(users, sessions, totp, auditLog, log)
 	authHandler.RequireMFA = requireMFA
@@ -316,7 +323,7 @@ func serve(ctx context.Context) error {
 			&policy.AdminHandler{Repo: policies, Users: users, Revoker: connectHandler, Audit: auditLog, Log: log},
 			&access.Handler{Requests: accessReqs, Policies: policies, Targets: targets, Audit: auditLog, Log: log},
 			&asg.AdminHandler{Repo: asgRepo, Sync: syncer.SyncGroup, Identity: awsIdentity, Providers: cloudProviders, Policies: policies, Live: registry, Vault: vault, Audit: auditLog, Log: log},
-			&session.Handler{Repo: sessionRepo, Audit: auditLog, Registry: registry, Storage: storage, Log: log},
+			&session.Handler{Repo: sessionRepo, Audit: auditLog, AnchorKey: anchorKey, Registry: registry, Storage: storage, Log: log},
 			&settings.Handler{Service: runtime, Audit: auditLog, Log: log},
 			&recstorage.Handler{Manager: storageMgr, Audit: auditLog, Log: log},
 			&lifecycle.Handler{Drift: drift, Controller: restarter, Audit: auditLog, Log: log, StartedAt: startedAt},
@@ -356,6 +363,12 @@ func serve(ctx context.Context) error {
 		go exporter.Run(ctx)
 		log.Info("audit export enabled", "sinks", len(sinks))
 	}
+
+	// Audit anchors (ADR 0008): sign the chain head now and every hour. Each
+	// new anchor is logged as "audit anchor"; that journal line is the copy
+	// kept outside the database, for `zanskar audit verify --anchor`.
+	anchorer := &audit.Anchorer{Log: auditLog, Key: anchorKey, Logger: log, Interval: time.Hour}
+	go anchorer.Run(ctx)
 	if cfg.AllowPlainHTTP && !cfg.ServesTLS() {
 		log.Warn("ZANSKAR_ALLOW_PLAIN_HTTP=true: serving without TLS on a non-loopback address; development only")
 	}

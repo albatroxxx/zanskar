@@ -286,7 +286,21 @@ export interface AuditEvent {
   hash: string
 }
 
-export interface AuditVerify { intact: boolean; checked: number; last_id: number; last_hash: string; broken?: { Index: number; ID: number; Reason: string } | null }
+export interface AuditAnchor { id: number; event_id: number; hash: string; created_at: string; mac: string }
+
+/** intact is false on a broken chain and on any problem: a log whose newest
+ *  events were deleted still links, so broken can be null while intact is false. */
+export interface AuditVerify {
+  intact: boolean
+  checked: number
+  last_id: number
+  last_hash: string
+  broken?: { Index: number; ID: number; Reason: string } | null
+  anchors_checked?: number
+  last_anchor?: AuditAnchor | null
+  problems?: string[]
+  warnings?: string[]
+}
 
 export interface ConnectResponse {
   ticket: string

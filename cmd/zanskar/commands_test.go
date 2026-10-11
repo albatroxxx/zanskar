@@ -285,11 +285,15 @@ func TestAuditVerifyAndReseal(t *testing.T) {
 			}
 		}
 	})
-	if out, _, err := output(t, runAuditVerify); err != nil || !strings.Contains(out, "intact: 3 event(s)") {
+	if out, _, err := output(t, func() error { return runAuditVerify(nil) }); err != nil || !strings.Contains(out, "intact: 3 event(s)") {
 		t.Fatalf("verify an intact chain: %v %q", err, out)
 	}
 	if out, _, err := output(t, func() error { return runAuditReseal([]string{"--yes"}) }); err != nil || !strings.Contains(out, "already intact") {
 		t.Fatalf("reseal an intact chain: %v %q", err, out)
+	}
+	// An anchor over the head, which the reseal below rewrites.
+	if out, _, err := output(t, func() error { return runAuditAnchor(nil) }); err != nil || !strings.HasPrefix(out, "anchor 3 ") {
+		t.Fatalf("anchor: %v %q", err, out)
 	}
 
 	g.with(t, func(ctx context.Context, db *store.DB, _ *keyring.Ring) {
@@ -297,25 +301,27 @@ func TestAuditVerifyAndReseal(t *testing.T) {
 			t.Fatal(err)
 		}
 	})
-	if _, stderr, err := output(t, runAuditVerify); err == nil || !strings.Contains(stderr, "BROKEN") {
+	if _, stderr, err := output(t, func() error { return runAuditVerify(nil) }); err == nil || !strings.Contains(stderr, "BROKEN") {
 		t.Fatalf("verify a tampered chain: %v %q", err, stderr)
 	}
 	if _, stderr, err := output(t, func() error { return runAuditReseal(nil) }); err == nil || !strings.Contains(stderr, "--yes") {
 		t.Fatalf("reseal without --yes: %v %q", err, stderr)
 	}
-	if _, _, err := output(t, runAuditVerify); err == nil {
+	if _, _, err := output(t, func() error { return runAuditVerify(nil) }); err == nil {
 		t.Fatal("a refused reseal must leave the chain broken")
 	}
-	if out, _, err := output(t, func() error { return runAuditReseal([]string{"--yes"}) }); err != nil || !strings.Contains(out, "resealed") {
+	out, _, err := output(t, func() error { return runAuditReseal([]string{"--yes"}) })
+	if err != nil || !strings.Contains(out, "resealed") || !strings.Contains(out, "1 anchor(s) over rewritten events removed") ||
+		!strings.Contains(out, "anchored the resealed head") || !strings.Contains(out, "\nanchor 4 ") {
 		t.Fatalf("reseal --yes: %v %q", err, out)
 	}
-	if out, _, err := output(t, runAuditVerify); err != nil || !strings.Contains(out, "intact") {
+	if out, _, err := output(t, func() error { return runAuditVerify(nil) }); err != nil || !strings.Contains(out, "intact") || !strings.Contains(out, "the newest covers event 4") {
 		t.Fatalf("verify after reseal: %v %q", err, out)
 	}
 	ev := lastAudit(t, g, "audit.reseal")
 	var d map[string]any
 	_ = json.Unmarshal(ev.Details, &d)
-	if d["rows_rewritten"] == nil || d["reason"] == nil {
+	if d["rows_rewritten"] == nil || d["reason"] == nil || d["anchors_removed"] != float64(1) {
 		t.Fatalf("audit.reseal details %v", d)
 	}
 }

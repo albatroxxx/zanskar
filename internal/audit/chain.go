@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
-// Package audit defines audit events and the hash chain that makes the log
-// tamper-evident (ADR 0008). Persistence lives with the store; this package is
-// pure so it can be verified offline from an export.
+// Package audit defines audit events, the hash chain that makes the log
+// tamper-evident and the signed anchors that make a truncated tail detectable
+// (ADR 0008). It also stores them (Log, over audit_events and audit_anchors)
+// and ships events to SIEM sinks. Verification reads the database; there is no
+// verifier for an exported copy. This file holds the pure chain functions.
 package audit
 
 import (

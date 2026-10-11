@@ -128,11 +128,11 @@ func (l *Log) Record(ctx context.Context, e Event) (Event, error) {
 		string(e.Outcome), string(e.Details), e.PrevHash, e.Hash,
 	}
 	if l.db.Driver == config.DriverPostgres {
-		if err := tx.QueryRowContext(ctx, l.db.Rebind(q+` RETURNING id`), args...).Scan(&e.ID); err != nil {
+		if err := tx.QueryRowContext(ctx, l.db.Rebind(q+` RETURNING id`), args...).Scan(&e.ID); err != nil { // #nosec G701 -- constant statement, bound args
 			return Event{}, fmt.Errorf("audit: insert: %w", err)
 		}
 	} else {
-		res, err := tx.ExecContext(ctx, l.db.Rebind(q), args...)
+		res, err := tx.ExecContext(ctx, l.db.Rebind(q), args...) // #nosec G701 -- constant statement, bound args
 		if err != nil {
 			return Event{}, fmt.Errorf("audit: insert: %w", err)
 		}
@@ -247,18 +247,238 @@ func (l *Log) List(ctx context.Context, f Filter) ([]Event, string, error) {
 	return events, next, nil
 }
 
-// VerifyResult reports the outcome of a full chain walk.
+// VerifyResult reports the outcome of a full chain walk and of the checks
+// against the anchors and the id sequence (ADR 0008).
 type VerifyResult struct {
 	Checked  int64
 	LastID   int64
 	LastHash string
 	Broken   *VerifyError // nil when the chain is intact
+
+	// Anchors is how many anchors were checked, stored and supplied.
+	Anchors int
+	// LastAnchor is the matching anchor that names the newest event: its
+	// signature verifies and its event is still in the log with the hash it
+	// signed. Nil when no anchor matches.
+	LastAnchor *Anchor
+	// Problems are what the anchor and sequence checks found. Each is
+	// evidence that the log was truncated or edited, or that an anchor was
+	// not written by this gateway.
+	Problems []string
+	// Warnings may be innocent and do not fail the check: on PostgreSQL, an
+	// id sequence ahead of the newest event.
+	Warnings []string
 }
 
+// Intact reports whether the chain verified and no anchor or sequence check
+// found a problem.
+func (r VerifyResult) Intact() bool {
+	return r.Broken == nil && len(r.Problems) == 0
+}
+
+// maxAnchorReports bounds how many anchor problems are listed one by one;
+// the rest are counted in a final entry.
+const maxAnchorReports = 20
+
 // Verify walks the whole log in id order and checks every link and hash. It
-// reads in batches so memory stays flat regardless of log size. A broken chain
-// is reported in the result, not as an error; errors are for I/O failures.
-func (l *Log) Verify(ctx context.Context) (VerifyResult, error) {
+// reads in batches so memory stays flat regardless of log size. It then
+// checks every stored anchor, and each anchor supplied from outside the
+// database, against the log: the signature under key, and that the event it
+// names is still there with the hash it signed. Last it compares the id
+// sequence with the newest event, which notices the newest rows being deleted
+// before any anchor covers them. A broken chain or a problem is reported in
+// the result, not as an error; errors are for I/O failures and a missing key.
+func (l *Log) Verify(ctx context.Context, key []byte, kept ...Anchor) (VerifyResult, error) {
+	if len(key) == 0 {
+		return VerifyResult{LastHash: GenesisHash}, ErrNoAnchorKey
+	}
+	res, err := l.walk(ctx)
+	if err != nil {
+		return res, err
+	}
+	if err := l.checkAnchors(ctx, key, kept, &res); err != nil {
+		return res, err
+	}
+	if err := l.checkSequence(ctx, &res); err != nil {
+		return res, err
+	}
+	return res, nil
+}
+
+// checkAnchors checks the stored anchors and the supplied ones against the
+// log. An anchor that does not verify under key says nothing about the log
+// and is reported as not written by this gateway; a genuine one whose event is
+// gone or different is evidence of truncation or editing.
+func (l *Log) checkAnchors(ctx context.Context, key []byte, kept []Anchor, res *VerifyResult) error {
+	stored, err := l.Anchors(ctx)
+	if err != nil {
+		return err
+	}
+	// The hash of every event a stored anchor names, in one read (drained
+	// before the next statement), and of each supplied anchor's event.
+	hashes, err := l.anchoredHashes(ctx)
+	if err != nil {
+		return err
+	}
+	for _, a := range kept {
+		var h string
+		err := l.db.QueryRowContext(ctx, l.db.Rebind(`SELECT hash FROM audit_events WHERE id = ?`), a.EventID).Scan(&h) // #nosec G701 -- constant statement, bound args
+		switch {
+		case err == nil:
+			hashes[a.EventID] = h
+		case !errors.Is(err, sql.ErrNoRows):
+			return fmt.Errorf("audit: verify: read event %d: %w", a.EventID, err)
+		}
+	}
+	var maxID sql.NullInt64
+	if err := l.db.QueryRowContext(ctx, `SELECT MAX(id) FROM audit_events`).Scan(&maxID); err != nil {
+		return fmt.Errorf("audit: verify: read the newest event: %w", err)
+	}
+
+	type named struct {
+		Anchor
+		name string
+	}
+	var past []named // genuine anchors naming events after the log's end
+	var found []string
+	check := func(a Anchor, supplied bool) {
+		res.Anchors++
+		name := fmt.Sprintf("anchor %d", a.ID)
+		if supplied {
+			name = "the supplied anchor"
+		}
+		if !a.Signed(key) {
+			if supplied {
+				name = fmt.Sprintf("the supplied anchor for event %d", a.EventID)
+			}
+			found = append(found, name+" was not written by this gateway: its signature does not match")
+			return
+		}
+		h, ok := hashes[a.EventID]
+		switch {
+		case !ok && a.EventID > maxID.Int64:
+			past = append(past, named{a, name})
+		case !ok:
+			found = append(found, fmt.Sprintf("%s: event %d is missing — the log was truncated or edited", name, a.EventID))
+		case h != a.Hash:
+			found = append(found, fmt.Sprintf("%s: event %d has changed since it was anchored — the log was edited", name, a.EventID))
+		case res.LastAnchor == nil || a.EventID > res.LastAnchor.EventID:
+			match := a
+			res.LastAnchor = &match
+		}
+	}
+	for _, a := range stored {
+		check(a, false)
+	}
+	for _, a := range kept {
+		check(a, true)
+	}
+
+	if len(past) > 0 {
+		newest := past[0]
+		for _, p := range past[1:] {
+			if p.EventID > newest.EventID {
+				newest = p
+			}
+		}
+		msg := fmt.Sprintf("the log ends at event %d, but %s covers event %d: the newest events were deleted", maxID.Int64, newest.name, newest.EventID)
+		if !maxID.Valid {
+			msg = fmt.Sprintf("the log is empty, but %s covers event %d: every event was deleted", newest.name, newest.EventID)
+		}
+		if len(past) > 1 {
+			msg += fmt.Sprintf(" (%d anchors name events past the end)", len(past))
+		}
+		res.Problems = append(res.Problems, msg)
+	}
+	if len(found) > maxAnchorReports {
+		more := len(found) - maxAnchorReports
+		found = append(found[:maxAnchorReports], fmt.Sprintf("and %d more anchor problem(s)", more))
+	}
+	res.Problems = append(res.Problems, found...)
+	return nil
+}
+
+// anchoredHashes maps the id of every event a stored anchor names to that
+// event's hash. Events that are gone are simply absent.
+func (l *Log) anchoredHashes(ctx context.Context) (map[int64]string, error) {
+	rows, err := l.db.QueryContext(ctx, `SELECT e.id, e.hash FROM audit_events e JOIN audit_anchors a ON a.event_id = e.id`)
+	if err != nil {
+		return nil, fmt.Errorf("audit: verify: read anchored events: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	out := map[int64]string{}
+	for rows.Next() {
+		var id int64
+		var h string
+		if err := rows.Scan(&id, &h); err != nil {
+			return nil, fmt.Errorf("audit: verify: read anchored events: %w", err)
+		}
+		out[id] = h
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("audit: verify: read anchored events: %w", err)
+	}
+	return out, nil
+}
+
+// checkSequence compares the high-water mark of audit_events' id sequence
+// with the newest event. Deleting the newest rows leaves the chain linked
+// and, until an anchor covers them, nothing else to notice; the sequence
+// still remembers the ids it handed out. On SQLite the sequence row is
+// written in the inserting transaction, so a rolled-back insert does not
+// advance it: a mark ahead of the newest event means rows were deleted from
+// the end (or the sequence row edited), a problem. A PostgreSQL sequence is
+// not transactional: an insert that fails or rolls back still uses up its id,
+// and a crash can skip ahead, so there the same finding is a warning.
+func (l *Log) checkSequence(ctx context.Context, res *VerifyResult) error {
+	if l.db.Driver == config.DriverPostgres {
+		high, newest, err := l.pgSequence(ctx)
+		switch {
+		case err != nil:
+			res.Warnings = append(res.Warnings, "the id sequence could not be read, so it was not compared with the newest event: "+err.Error())
+		case high > newest:
+			res.Warnings = append(res.Warnings, fmt.Sprintf("the id sequence is ahead of the newest event (%d vs %d): the newest events may have been deleted, or an insert failed", high, newest))
+		}
+		return nil
+	}
+	var seq, newest sql.NullInt64
+	err := l.db.QueryRowContext(ctx, `SELECT (SELECT seq FROM sqlite_sequence WHERE name = 'audit_events'), (SELECT MAX(id) FROM audit_events)`).Scan(&seq, &newest)
+	if err != nil {
+		return fmt.Errorf("audit: verify: read the id sequence: %w", err)
+	}
+	if seq.Int64 > newest.Int64 {
+		res.Problems = append(res.Problems, fmt.Sprintf("the id sequence is ahead of the newest event (%d vs %d): events were deleted from the end of the log", seq.Int64, newest.Int64))
+	}
+	return nil
+}
+
+// pgSequence reads the high-water mark of audit_events_id_seq (the BIGSERIAL
+// sequence 0001_init.sql creates) and the newest event id together, under the
+// writers' advisory lock: an insert in flight has taken its id but not yet
+// committed, and would otherwise read as a deleted event.
+func (l *Log) pgSequence(ctx context.Context) (high, newest int64, err error) {
+	tx, err := l.db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, 0, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if _, err := tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock($1)`, advisoryLockID); err != nil {
+		return 0, 0, err
+	}
+	var last int64
+	var called bool
+	var maxID sql.NullInt64
+	if err := tx.QueryRowContext(ctx, `SELECT s.last_value, s.is_called, (SELECT MAX(id) FROM audit_events) FROM audit_events_id_seq s`).Scan(&last, &called, &maxID); err != nil {
+		return 0, 0, err
+	}
+	if called { // otherwise no id has been handed out yet
+		high = last
+	}
+	return high, maxID.Int64, nil
+}
+
+// walk checks every link and hash of the chain, in id order.
+func (l *Log) walk(ctx context.Context) (VerifyResult, error) {
 	res := VerifyResult{LastHash: GenesisHash}
 	prev := GenesisHash
 	var afterID int64
@@ -300,7 +520,7 @@ func (l *Log) Verify(ctx context.Context) (VerifyResult, error) {
 }
 
 func (l *Log) fetchBatch(ctx context.Context, q string, afterID int64) ([]Event, error) {
-	rows, err := l.db.QueryContext(ctx, q, afterID, verifyBatchSize)
+	rows, err := l.db.QueryContext(ctx, q, afterID, verifyBatchSize) // #nosec G701 -- q is the constant statement Verify builds; bound args
 	if err != nil {
 		return nil, fmt.Errorf("audit: verify: %w", err)
 	}
@@ -381,6 +601,10 @@ type ResealResult struct {
 	FirstID int64
 	LastID  int64
 	Head    string
+	// AnchorsRemoved counts the stored anchors that named rewritten events.
+	// They signed hashes that no longer exist, so they could never verify
+	// again; copies kept outside the database still show the rewrite.
+	AnchorsRemoved int64
 }
 
 // Reseal relinks and rehashes the log, rewriting every row whose stored hash
@@ -397,7 +621,10 @@ type ResealResult struct {
 // writes an audit.reseal event describing the rewrite.
 //
 // Rewriting starts at the first mismatch and necessarily continues to the head,
-// because each hash covers the previous row's hash.
+// because each hash covers the previous row's hash. Stored anchors naming a
+// rewritten event are removed in the same transaction (their hash is gone);
+// an anchor naming an event that is missing is kept, so verify still reports
+// the gap.
 func (l *Log) Reseal(ctx context.Context) (ResealResult, error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -438,7 +665,7 @@ func (l *Log) Reseal(ctx context.Context) (ResealResult, error) {
 				return res, fmt.Errorf("audit: reseal event %d: %w", e.ID, err)
 			}
 			if want != storedHash || prev != storedPrev {
-				if _, err := tx.ExecContext(ctx, updQ, prev, want, e.ID); err != nil {
+				if _, err := tx.ExecContext(ctx, updQ, prev, want, e.ID); err != nil { // #nosec G701 -- constant statement, bound args
 					return res, fmt.Errorf("audit: reseal event %d: %w", e.ID, err)
 				}
 				res.Rewritten++
@@ -456,6 +683,15 @@ func (l *Log) Reseal(ctx context.Context) (ResealResult, error) {
 		}
 	}
 	res.Head = prev
+	if res.FirstID > 0 {
+		r, err := tx.ExecContext(ctx, l.db.Rebind(`DELETE FROM audit_anchors WHERE event_id >= ? AND event_id IN (SELECT id FROM audit_events)`), res.FirstID) // #nosec G701 -- constant statement, bound args
+		if err != nil {
+			return res, fmt.Errorf("audit: reseal: remove stale anchors: %w", err)
+		}
+		if res.AnchorsRemoved, err = r.RowsAffected(); err != nil {
+			return res, fmt.Errorf("audit: reseal: remove stale anchors: %w", err)
+		}
+	}
 	if err := tx.Commit(); err != nil {
 		return res, fmt.Errorf("audit: commit: %w", err)
 	}
@@ -464,7 +700,7 @@ func (l *Log) Reseal(ctx context.Context) (ResealResult, error) {
 
 // fetchBatchTx is fetchBatch bound to a transaction.
 func fetchBatchTx(ctx context.Context, tx *sql.Tx, q string, afterID int64) ([]Event, error) {
-	rows, err := tx.QueryContext(ctx, q, afterID, verifyBatchSize)
+	rows, err := tx.QueryContext(ctx, q, afterID, verifyBatchSize) // #nosec G701 -- q is the constant statement Reseal builds; bound args
 	if err != nil {
 		return nil, fmt.Errorf("audit: reseal: %w", err)
 	}
@@ -550,7 +786,7 @@ func (l *Log) ListAfter(ctx context.Context, afterID int64, limit int) ([]Event,
 	if limit <= 0 || limit > maxListLimit {
 		limit = maxListLimit
 	}
-	rows, err := l.db.QueryContext(ctx, l.db.Rebind(selectColumns+" WHERE id > ? ORDER BY id ASC LIMIT "+strconv.Itoa(limit)), afterID)
+	rows, err := l.db.QueryContext(ctx, l.db.Rebind(selectColumns+" WHERE id > ? ORDER BY id ASC LIMIT "+strconv.Itoa(limit)), afterID) // #nosec G701 -- constant but for a bounded integer; bound args
 	if err != nil {
 		return nil, err
 	}
