@@ -332,6 +332,42 @@ func (h *Handler) recordAction(r *http.Request, actor audit.Actor, action, objec
 	h.record(r, actor.Event(action, objectType, objectID, outcome, details))
 }
 
+// currentPassword checks the password a signed-in user gives again before a
+// step a stolen session must not take on its own: changing the password, or
+// adding an authenticator. A wrong one counts against the account like a
+// wrong sign-in password (L17), and while the account is locked the check is
+// refused before any hash is spent, so a session cannot go on guessing. An
+// account without a local password has none to give and counts nothing.
+// When it returns false it has answered.
+func (h *Handler) currentPassword(w http.ResponseWriter, r *http.Request, p *Principal, password, action string) bool {
+	actor := ActorFor(r)
+	if p.User.IsLocked(time.Now()) {
+		h.recordAction(r, actor, action, "user", p.User.ID, audit.Failure, map[string]string{"reason": "locked"})
+		httpx.WriteError(w, r, http.StatusTooManyRequests, "too_many_attempts", "too many wrong passwords; try again later")
+		return false
+	}
+	var ok bool
+	if p.User.PasswordHash != "" && !h.hashing(w, r, func() { ok = user.VerifyPassword(p.User.PasswordHash, password) }) {
+		return false
+	}
+	if ok {
+		return true
+	}
+	details := map[string]any{"reason": "current_mismatch"}
+	if p.User.PasswordHash != "" {
+		locked, err := h.Users.RecordLoginFailure(r.Context(), p.User.ID, h.MaxFailures, h.LockFor)
+		if err != nil {
+			h.Log.Error("record password failure", "err", err)
+		}
+		if locked {
+			details["locked_for"] = h.LockFor.String()
+		}
+	}
+	h.recordAction(r, actor, action, "user", p.User.ID, audit.Failure, details)
+	httpx.WriteError(w, r, http.StatusUnauthorized, "invalid_credentials", "the current password is wrong")
+	return false
+}
+
 // changePassword lets a signed-in user replace their password: the step
 // owed after an administrator set one (a partial session), or a change of
 // their own (a full session). The current password is required either
@@ -363,13 +399,7 @@ func (h *Handler) changePassword(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	var current bool
-	if p.User.PasswordHash != "" && !h.hashing(w, r, func() { current = user.VerifyPassword(p.User.PasswordHash, req.CurrentPassword) }) {
-		return
-	}
-	if !current {
-		h.recordAction(r, actor, actionSelfReset, "user", p.User.ID, audit.Failure, map[string]string{"reason": "current_mismatch"})
-		httpx.WriteError(w, r, http.StatusUnauthorized, "invalid_credentials", "the current password is wrong")
+	if !h.currentPassword(w, r, p, req.CurrentPassword, actionSelfReset) {
 		return
 	}
 	if req.NewPassword == req.CurrentPassword {
@@ -639,6 +669,40 @@ func (h *Handler) totpEnroll(w http.ResponseWriter, r *http.Request) {
 	p, _ := FromContext(r.Context())
 	if h.passwordChangeOwed(w, r, p) {
 		return
+	}
+	// From a full session an authenticator takes the password again (L14):
+	// a stolen cookie must not enrol the thief's device and lock the owner
+	// out of every later sign-in. Enrolling as the step a sign-in owes needs
+	// nothing more, the password was given a moment ago, and an account an
+	// identity provider signs in has no local password to give.
+	if p.Session.MFAVerified && p.User.PasswordHash != "" {
+		// One already enrolled is refused below whatever is sent, so it is
+		// not asked for a password first.
+		enrolled, err := h.TOTP.Enrolled(r.Context(), p.User.ID)
+		if err != nil {
+			httpx.Internal(w, r, h.Log, err)
+			return
+		}
+		if enrolled {
+			httpx.WriteError(w, r, http.StatusConflict, "already_enrolled", "an authenticator is already enrolled")
+			return
+		}
+		var req struct {
+			CurrentPassword string `json:"current_password"`
+		}
+		if r.ContentLength != 0 {
+			if err := httpx.DecodeJSONLimit(r, &req, signInBodyLimit); err != nil {
+				httpx.WriteError(w, r, http.StatusBadRequest, "bad_request", err.Error())
+				return
+			}
+		}
+		if req.CurrentPassword == "" {
+			httpx.WriteError(w, r, http.StatusUnauthorized, "password_required", "enter your current password to add an authenticator")
+			return
+		}
+		if !h.currentPassword(w, r, p, req.CurrentPassword, audit.UserMFAEnroll) {
+			return
+		}
 	}
 	enr, err := h.TOTP.Enroll(r.Context(), p.User.ID, p.User.Username)
 	if err != nil {

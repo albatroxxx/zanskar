@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -237,7 +238,9 @@ func TestTOTPFlow(t *testing.T) {
 	csrf := r.body["csrf_token"].(string)
 	hdr := map[string]string{"X-CSRF-Token": csrf}
 
-	enr := e.do("POST", "/api/v1/auth/mfa/totp/enroll", nil, r.cookie, hdr)
+	// carol's sign-in is full (a second factor is not required here), so
+	// enrolling takes the password again (L14).
+	enr := e.do("POST", "/api/v1/auth/mfa/totp/enroll", map[string]string{"current_password": "carol has a long passphrase"}, r.cookie, hdr)
 	if enr.code != 200 || enr.body["secret"] == "" {
 		t.Fatalf("enroll: %d %v", enr.code, enr.body)
 	}
@@ -552,5 +555,77 @@ func TestPasswordChangeEndsOtherSessions(t *testing.T) {
 	}
 	if x := e.do("POST", "/api/v1/auth/mfa/totp/enroll", nil, other.cookie, csrfOf(other)); x.code != 401 {
 		t.Fatalf("enrolment from the other sign-in with the handed-out password: %d %v, want 401", x.code, x.body)
+	}
+}
+
+// TestWrongCurrentPasswordCounts: a wrong current_password on a password
+// change was neither limited nor counted (L17), so whoever held a stolen
+// session could guess the password there without end. It counts against
+// the account like a wrong sign-in password: the fifth locks the account,
+// and while it is locked the change is refused before any hash is spent,
+// even with the right password.
+func TestWrongCurrentPasswordCounts(t *testing.T) {
+	e := newEnv(t)
+	const pw = "mona keeps a long passphrase"
+	mona := e.createUser(t, "mona", pw, user.RoleUser)
+	s := e.sessionFor(t, mona, true)
+	change := func(current string) resp {
+		return e.do("POST", "/api/v1/auth/password", map[string]string{"current_password": current, "new_password": "mona picked another phrase"}, s.cookie, csrfOf(s))
+	}
+	for i := 1; i <= 5; i++ {
+		if x := change(fmt.Sprintf("guess number %d of five", i)); x.code != http.StatusUnauthorized || x.body["code"] != "invalid_credentials" {
+			t.Fatalf("guess %d: %d %v", i, x.code, x.body)
+		}
+		u, err := e.users.GetByID(context.Background(), mona.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		// The fifth locks the account (checked below) and restarts the count.
+		if i < 5 && u.FailedLogins != i {
+			t.Fatalf("after guess %d: %d failures counted", i, u.FailedLogins)
+		}
+	}
+	if u, _ := e.users.GetByID(context.Background(), mona.ID); u.LockedUntil == nil || !u.LockedUntil.After(time.Now()) {
+		t.Fatalf("five wrong current passwords must lock the account: %+v", u.LockedUntil)
+	}
+	if x := change(pw); x.code != http.StatusTooManyRequests || x.body["code"] != "too_many_attempts" {
+		t.Fatalf("the right password while locked: %d %v, want 429 too_many_attempts", x.code, x.body)
+	}
+	if u, _ := e.users.GetByID(context.Background(), mona.ID); !user.VerifyPassword(u.PasswordHash, pw) {
+		t.Fatal("the password changed while the account was locked")
+	}
+}
+
+// TestEnrolmentFromAFullSessionNeedsThePassword: an account with no
+// authenticator could have one enrolled from any full session, without the
+// password (L14), so a stolen cookie could enrol the thief's device and lock
+// the owner out of every later sign-in. From a full session it now takes the
+// current password, which counts like any other; enrolling as a step of
+// signing in (a partial session) does not.
+func TestEnrolmentFromAFullSessionNeedsThePassword(t *testing.T) {
+	e := newEnv(t)
+	const pw = "nina keeps a long passphrase"
+	nina := e.createUser(t, "nina", pw, user.RoleUser)
+	s := e.sessionFor(t, nina, true)
+	enrol := func(body any) resp { return e.do("POST", "/api/v1/auth/mfa/totp/enroll", body, s.cookie, csrfOf(s)) }
+	if x := enrol(nil); x.code != http.StatusUnauthorized || x.body["code"] != "password_required" {
+		t.Fatalf("no password: %d %v, want 401 password_required", x.code, x.body)
+	}
+	if x := enrol(map[string]string{"current_password": "not nina's phrase at all"}); x.code != http.StatusUnauthorized || x.body["code"] != "invalid_credentials" {
+		t.Fatalf("wrong password: %d %v, want 401 invalid_credentials", x.code, x.body)
+	}
+	if u, _ := e.users.GetByID(context.Background(), nina.ID); u.FailedLogins != 1 {
+		t.Fatalf("a wrong password at enrolment must count: %d", u.FailedLogins)
+	}
+	if x := enrol(map[string]string{"current_password": pw}); x.code != http.StatusOK || x.body["otpauth_url"] == nil {
+		t.Fatalf("right password: %d %v", x.code, x.body)
+	}
+
+	// Enrolling as the step a sign-in owes needs nothing more: the password
+	// was given a moment ago.
+	omar := e.createUser(t, "omar", "omar keeps a long passphrase", user.RoleUser)
+	partial := e.sessionFor(t, omar, false)
+	if x := e.do("POST", "/api/v1/auth/mfa/totp/enroll", nil, partial.cookie, csrfOf(partial)); x.code != http.StatusOK {
+		t.Fatalf("enrolment while signing in: %d %v", x.code, x.body)
 	}
 }

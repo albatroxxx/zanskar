@@ -241,6 +241,11 @@ paths:
         continues where it would have: the response is a LoginResponse whose status is
         `mfa_required`, `mfa_enrollment_required` or `ok`. Audited as `user.password.change`,
         with the number of other sessions ended in `other_sessions_revoked`.
+
+        A wrong current password counts against the account like a wrong sign-in password: the
+        fifth in a row locks the account, and while it is locked the change is refused with
+        `429 too_many_attempts` before any password is checked, so a session cannot go on
+        guessing.
       requestBody:
         required: true
         content:
@@ -270,7 +275,13 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
         "401":
-          description: The current password is wrong.
+          description: The current password is wrong (`invalid_credentials`); it is counted.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "429":
+          description: "`too_many_attempts`: the account is locked after wrong passwords; try again later."
           content:
             application/json:
               schema:
@@ -290,8 +301,15 @@ paths:
       description: |
         Generates a new secret for the caller. The secret and the `otpauth://` URI are returned
         exactly once. Enrollment is not active until `POST /auth/mfa/totp/confirm` succeeds.
-        Re-enrolling replaces an unconfirmed secret; replacing a confirmed secret requires the
-        current password in the request body.
+        Re-enrolling replaces an unconfirmed secret; a confirmed authenticator cannot be replaced
+        through the API (`409 already_enrolled`), only reset by an administrator.
+
+        From a fully signed-in session the body must carry the caller's `current_password`, so a
+        stolen session cannot enrol another device and lock the owner out: `401
+        password_required` without it, `401 invalid_credentials` when it is wrong (counted like a
+        wrong sign-in password), `429 too_many_attempts` while the account is locked. Enrolling
+        as the step a sign-in still owes needs no password, and an account that signs in through
+        an identity provider has no local password to give.
       requestBody:
         content:
           application/json:
@@ -310,6 +328,18 @@ paths:
                 $ref: "#/components/schemas/TotpEnrollment"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "409":
+          description: "`already_enrolled`: an authenticator is confirmed already."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "429":
+          description: "`too_many_attempts`: the account is locked after wrong passwords; try again later."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
   /auth/mfa/totp/confirm:
     post:
       tags: [auth]
