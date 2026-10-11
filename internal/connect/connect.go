@@ -631,7 +631,14 @@ func (h *Handler) terminal(w http.ResponseWriter, r *http.Request) {
 	ctx := h.Registry.Add(r.Context(), gateway.Live{SessionID: s.ID, UserID: g.UserID, TargetID: ep.LiveKey, Protocol: g.Protocol})
 	defer h.Registry.Remove(s.ID)
 
-	reason, berr := sshgw.Bridge(ctx, h.Log, client, ws, rec, cols, rows, sshgw.Limits{Idle: g.IdleTimeout, Max: g.MaxSession, SessionID: s.ID, AllowFiles: g.AllowFileTransfer})
+	lim := sshgw.Limits{Idle: g.IdleTimeout, Max: g.MaxSession, SessionID: s.ID, AllowFiles: g.AllowFileTransfer}
+	// The registry made the tap that shadowing watchers subscribe to (ADR
+	// 0006); the bridge has to write to it or they see nothing. Assigned only
+	// when present: a nil *Tap in the interface would be dereferenced.
+	if tap := h.Registry.Tap(s.ID); tap != nil {
+		lim.Tap = tap
+	}
+	reason, berr := sshgw.Bridge(ctx, h.Log, client, ws, rec, cols, rows, lim)
 	size, sum, cerr := rec.Close()
 	if cerr != nil {
 		h.Log.Error("close recording", "session", s.ID, "err", cerr)

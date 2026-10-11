@@ -68,6 +68,49 @@ func (r *winrmRig) open(t *testing.T, targetID string) (*websocket.Conn, *http.R
 	return websocket.Dial(context.Background(), "ws"+strings.TrimPrefix(r.url, "http")+"/ws/winrm?cols=100&rows=30&ticket="+tok, nil)
 }
 
+// runConsole drives a WinRM console on ws the way a user does: a
+// Get-Service line once the bridge names the session, "exit" once the target
+// has run it. onReady, if set, runs when the bridge names the session. It
+// returns the session id, every byte the browser received and the end reason.
+func runConsole(t *testing.T, ctx context.Context, ws *websocket.Conn, onReady func(sessionID string)) (sessionID, output, endReason string) {
+	t.Helper()
+	send := func(d string) {
+		b, _ := json.Marshal(map[string]string{"t": "i", "d": d})
+		if err := ws.Write(ctx, websocket.MessageText, b); err != nil {
+			t.Fatal(err)
+		}
+	}
+	sent := false
+	for endReason == "" {
+		typ, data, err := ws.Read(ctx)
+		if err != nil {
+			t.Fatalf("read: %v (output %q)", err, output)
+		}
+		if typ == websocket.MessageText {
+			var c termFrame
+			_ = json.Unmarshal(data, &c)
+			if c.T == "ready" {
+				sessionID = c.SessionID
+				if onReady != nil {
+					onReady(sessionID)
+				}
+				send("Get-Service winrm\r")
+				sent = true
+			}
+			if c.T == "end" {
+				endReason = c.Reason
+			}
+			continue
+		}
+		output += string(data)
+		if sent && strings.Contains(output, "ran: Get-Service winrm") {
+			send("exit\r")
+			sent = false
+		}
+	}
+	return sessionID, output, endReason
+}
+
 // TestWinRMSessionEndToEnd: a WinRM ticket opens a recorded PowerShell
 // console through the pinned listener; a typed line runs on the target and
 // its output comes back; "exit" ends the session, audited.
@@ -81,49 +124,55 @@ func TestWinRMSessionEndToEnd(t *testing.T) {
 	defer ws.CloseNow()
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
-	send := func(d string) {
-		b, _ := json.Marshal(map[string]string{"t": "i", "d": d})
-		if err := ws.Write(ctx, websocket.MessageText, b); err != nil {
-			t.Fatal(err)
-		}
-	}
 
-	var output, sessionID, reason string
-	sent := false
-	for reason == "" {
-		typ, data, err := ws.Read(ctx)
-		if err != nil {
-			t.Fatalf("read: %v (output %q)", err, output)
-		}
-		if typ == websocket.MessageText {
-			var c struct {
-				T         string `json:"t"`
-				SessionID string `json:"session_id"`
-				Reason    string `json:"reason"`
-			}
-			_ = json.Unmarshal(data, &c)
-			if c.T == "ready" {
-				sessionID = c.SessionID
-				send("Get-Service winrm\r")
-				sent = true
-			}
-			if c.T == "end" {
-				reason = c.Reason
-			}
-			continue
-		}
-		output += string(data)
-		if sent && strings.Contains(output, "ran: Get-Service winrm") {
-			send("exit\r")
-			sent = false
-		}
-	}
+	sessionID, output, reason := runConsole(t, ctx, ws, nil)
 	if reason != "user_exit" || !strings.Contains(output, "ran: Get-Service winrm") {
 		t.Fatalf("end %q, output %q", reason, output)
 	}
 	start := lastEvent(t, r.connectFixture, "session.start")
 	if start.ObjectID != sessionID {
 		t.Fatalf("session.start for %s, browser saw %s", start.ObjectID, sessionID)
+	}
+}
+
+// TestWinRMOutputReachesShadowTap: the registry's tap for a live WinRM
+// session carries what the browser sees, so an auditor shadowing it (ADR
+// 0006) gets the console rather than silence. Subscribed the way the shadow
+// route does, once the bridge names the session; replay plus live stream are
+// checked against the browser's bytes.
+func TestWinRMOutputReachesShadowTap(t *testing.T) {
+	r := newWinRMRig(t)
+	id := r.winTarget(t, "win-1", "admin", r.wsm.Fingerprint())
+	ws, _, err := r.open(t, id) //nolint:bodyclose // the library closes the handshake body
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ws.CloseNow()
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	var (
+		tap    *gateway.Tap
+		live   <-chan []byte
+		tapped []byte
+	)
+	sessionID, output, reason := runConsole(t, ctx, ws, func(id string) {
+		if tap = r.h.Registry.Tap(id); tap == nil {
+			t.Fatalf("live session %s has no tap", id)
+		}
+		var unsubscribe func()
+		live, tapped, unsubscribe = tap.Subscribe()
+		t.Cleanup(unsubscribe)
+	})
+	if reason != "user_exit" || !strings.Contains(output, "ran: Get-Service winrm") {
+		t.Fatalf("session %s ended %q with output %q", sessionID, reason, output)
+	}
+	tapped = append(tapped, drainTap(t, ctx, live)...)
+	if !strings.HasPrefix(string(tapped), output) {
+		t.Fatalf("tap carried %q, browser saw %q", tapped, output)
+	}
+	if n := tap.Dropped.Load(); n != 0 {
+		t.Fatalf("tap dropped %d chunk(s)", n)
 	}
 }
 

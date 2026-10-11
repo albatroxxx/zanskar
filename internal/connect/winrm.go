@@ -148,7 +148,12 @@ func (h *Handler) winrm(w http.ResponseWriter, r *http.Request) {
 	ctx := h.Registry.Add(r.Context(), gateway.Live{SessionID: s.ID, UserID: g.UserID, TargetID: ep.LiveKey, Protocol: g.Protocol})
 	defer h.Registry.Remove(s.ID)
 
-	reason, berr := winrmgw.Bridge(ctx, h.Log, sh, ws, rec, cols, rows, winrmgw.Limits{Idle: g.IdleTimeout, Max: g.MaxSession, SessionID: s.ID})
+	lim := winrmgw.Limits{Idle: g.IdleTimeout, Max: g.MaxSession, SessionID: s.ID}
+	// The registry's tap feeds shadowing watchers (ADR 0006); see terminal.
+	if tap := h.Registry.Tap(s.ID); tap != nil {
+		lim.Tap = tap
+	}
+	reason, berr := winrmgw.Bridge(ctx, h.Log, sh, ws, rec, cols, rows, lim)
 	size, sum, cerr := rec.Close()
 	if cerr != nil {
 		h.Log.Error("close recording", "session", s.ID, "err", cerr)

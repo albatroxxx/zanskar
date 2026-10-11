@@ -125,22 +125,12 @@ type termFrame struct {
 	Reason    string `json:"reason"`
 }
 
-// TestTerminalSessionEndToEnd: a ticket opens one recorded SSH session, the
-// shell's output reaches the browser, and the session's start and end are in
-// the audit log with the recording finished and hashed.
-func TestTerminalSessionEndToEnd(t *testing.T) {
-	port, fp := shellTarget(t)
-	r := newTerminalRig(t, port, fp)
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	defer cancel()
-
-	ws, _, err := r.dial(ctx, r.ticket(t)) //nolint:bodyclose // the library closes the handshake body
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer ws.CloseNow()
-
-	var sessionID, output, endReason string
+// runShell drives a terminal session on ws the way a user does: "hello" at
+// the first prompt, "exit" once the shell has echoed HELLO. onReady, if set,
+// runs when the bridge names the session. It returns the session id, every
+// byte the browser received and the end reason.
+func runShell(t *testing.T, ctx context.Context, ws *websocket.Conn, onReady func(sessionID string)) (sessionID, output, endReason string) {
+	t.Helper()
 	send := func(d string) {
 		b, _ := json.Marshal(map[string]string{"t": "i", "d": d})
 		if err := ws.Write(ctx, websocket.MessageText, b); err != nil {
@@ -167,10 +157,50 @@ func TestTerminalSessionEndToEnd(t *testing.T) {
 		switch c.T {
 		case "ready":
 			sessionID = c.SessionID
+			if onReady != nil {
+				onReady(sessionID)
+			}
 		case "end":
 			endReason = c.Reason
 		}
 	}
+	return sessionID, output, endReason
+}
+
+// drainTap collects a tap subscription until the tap closes, which the
+// registry does when the session's bridge returns.
+func drainTap(t *testing.T, ctx context.Context, ch <-chan []byte) []byte {
+	t.Helper()
+	var out []byte
+	for {
+		select {
+		case <-ctx.Done():
+			t.Fatalf("tap never closed: %v (collected %q)", ctx.Err(), out)
+		case chunk, ok := <-ch:
+			if !ok {
+				return out
+			}
+			out = append(out, chunk...)
+		}
+	}
+}
+
+// TestTerminalSessionEndToEnd: a ticket opens one recorded SSH session, the
+// shell's output reaches the browser, and the session's start and end are in
+// the audit log with the recording finished and hashed.
+func TestTerminalSessionEndToEnd(t *testing.T) {
+	port, fp := shellTarget(t)
+	r := newTerminalRig(t, port, fp)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	ws, _, err := r.dial(ctx, r.ticket(t)) //nolint:bodyclose // the library closes the handshake body
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ws.CloseNow()
+
+	sessionID, output, endReason := runShell(t, ctx, ws, nil)
 	if sessionID == "" || !strings.Contains(output, "HELLO") || endReason != "user_exit" {
 		t.Fatalf("session %q output %q end %q", sessionID, output, endReason)
 	}
@@ -205,6 +235,50 @@ func TestTerminalSessionEndToEnd(t *testing.T) {
 	raw, err := os.ReadFile(strings.TrimPrefix(rec.StorageURI, "file://"))
 	if err != nil || !strings.Contains(string(raw), "HELLO") {
 		t.Fatalf("recording does not hold the session output: %v", err)
+	}
+}
+
+// TestTerminalOutputReachesShadowTap: the registry's tap for a live SSH
+// session carries what the browser sees, so an auditor shadowing it (ADR
+// 0006) gets the screen rather than silence. The test subscribes the way the
+// shadow route does, once the bridge names the session, and checks the
+// replay plus the live stream against the browser's bytes.
+func TestTerminalOutputReachesShadowTap(t *testing.T) {
+	port, fp := shellTarget(t)
+	r := newTerminalRig(t, port, fp)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	ws, _, err := r.dial(ctx, r.ticket(t)) //nolint:bodyclose // the library closes the handshake body
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ws.CloseNow()
+
+	var (
+		tap    *gateway.Tap
+		live   <-chan []byte
+		tapped []byte
+	)
+	sessionID, output, endReason := runShell(t, ctx, ws, func(id string) {
+		if tap = r.h.Registry.Tap(id); tap == nil {
+			t.Fatalf("live session %s has no tap", id)
+		}
+		var unsubscribe func()
+		live, tapped, unsubscribe = tap.Subscribe()
+		t.Cleanup(unsubscribe)
+	})
+	if endReason != "user_exit" || !strings.Contains(output, "HELLO") {
+		t.Fatalf("session %s ended %q with output %q", sessionID, endReason, output)
+	}
+	tapped = append(tapped, drainTap(t, ctx, live)...)
+	// The bridge hands each chunk to the tap before the browser, so the tap
+	// holds at least what the browser read before the end frame.
+	if !strings.HasPrefix(string(tapped), output) {
+		t.Fatalf("tap carried %q, browser saw %q", tapped, output)
+	}
+	if n := tap.Dropped.Load(); n != 0 {
+		t.Fatalf("tap dropped %d chunk(s)", n)
 	}
 }
 
