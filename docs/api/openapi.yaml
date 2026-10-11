@@ -509,10 +509,10 @@ paths:
   /me/access-requests:
     post:
       tags: [user]
-      summary: Request just-in-time access to a target
+      summary: Request just-in-time access to a target or an autoscaling group
       description: |
-        Ask for time-bounded access to a target the caller is *eligible* for — one matched by an
-        enabled policy with `require_approval` set (ADR 0018). The request starts `pending` until
+        Ask for time-bounded access to a target or an autoscaling group the caller is *eligible*
+        for — one matched by an enabled policy with `require_approval` set (ADR 0018). The request starts `pending` until
         an admin approves or denies it. Standing access needs no request: a user who already has
         it connects directly through `/connect`.
       requestBody:
@@ -529,13 +529,15 @@ paths:
               schema:
                 $ref: "#/components/schemas/AccessRequest"
         "400":
-          description: Missing field, `minutes` below 1, or `duration_too_long` (over the policy maximum).
+          description: >-
+            Missing field, both or neither of `target_id` and `asg_id`, `minutes` below 1, or
+            `duration_too_long` (over the policy maximum).
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
         "403":
-          description: The caller is not eligible — no approval-gated policy covers this target and protocol (`not_eligible`).
+          description: The caller is not eligible — no approval-gated policy covers this target or group and protocol (`not_eligible`).
           content:
             application/json:
               schema:
@@ -4783,10 +4785,17 @@ components:
           $ref: "#/components/schemas/Timestamp"
     AccessRequestCreate:
       type: object
-      required: [target_id, protocol, reason, minutes]
+      description: Names exactly one of `target_id` and `asg_id`.
+      required: [protocol, reason, minutes]
       properties:
         target_id:
           type: string
+          description: The host access is asked for.
+        asg_id:
+          type: string
+          description: >-
+            The autoscaling group access is asked for. The grant covers every instance of the
+            group, including ones launched after approval.
         protocol:
           $ref: "#/components/schemas/Protocol"
         reason:

@@ -59,6 +59,7 @@ export function MyAccess() {
     try {
       await api.post<AccessRequest>('/me/access-requests', {
         target_id: extending.target_id,
+        asg_id: extending.asg_id,
         protocol: extending.protocol,
         reason: ext.reason,
         minutes: Number(ext.minutes),
@@ -111,7 +112,7 @@ export function MyAccess() {
                   <td><Badge tone={tone[r.status]}>{r.status}</Badge></td>
                   <td>{r.approved_minutes ? <>{r.approved_minutes} min{r.approved_minutes !== r.requested_minutes && <span className="muted"> (asked {r.requested_minutes})</span>}</> : <span className="muted">{r.requested_minutes} min asked</span>}</td>
                   <td className="muted">{r.status === 'approved' && r.expires_at ? fmtTime(r.expires_at) : '—'}</td>
-                  <td>{active(r) && r.target_id && <button className="btn sm" onClick={() => openExtend(r)}>Extend…</button>}</td>
+                  <td>{active(r) && <button className="btn sm" onClick={() => openExtend(r)}>Extend…</button>}</td>
                 </tr>
               ))}
             </tbody>

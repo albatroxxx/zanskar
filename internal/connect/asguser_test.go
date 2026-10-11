@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -13,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/albatroxxx/zanskar/internal/access"
 	"github.com/albatroxxx/zanskar/internal/asg"
 	"github.com/albatroxxx/zanskar/internal/audit"
 	"github.com/albatroxxx/zanskar/internal/auth"
@@ -41,6 +43,7 @@ type asgEnv struct {
 	user     *user.User
 	group    *asg.Group
 	fake     *cloud.Fake
+	db       *store.DB
 }
 
 func newASGEnv(t *testing.T) *asgEnv {
@@ -98,7 +101,7 @@ func newASGEnv(t *testing.T) *asgEnv {
 	h.Register(mux)
 	mw := &auth.Middleware{Sessions: sessions, Users: users, Log: log}
 	return &asgEnv{srv: mw.Authenticate(mw.CSRF(mux)), cookie: &http.Cookie{Name: auth.CookieName, Value: tok}, csrf: sessions.CSRFToken(sess.ID),
-		h: h, asgs: asgs, sessions: session.NewRepo(db), users: users, user: u, group: ag, fake: fake}
+		h: h, asgs: asgs, sessions: session.NewRepo(db), users: users, user: u, group: ag, fake: fake, db: db}
 }
 
 // TestASGInstanceConnectPushesKey covers the SSH terminal handler's credential
@@ -292,5 +295,53 @@ func TestASGWindowsSessionAllowed(t *testing.T) {
 	code, out = e.do("POST", "/api/v1/connect", map[string]any{"asg_instance_id": pinned.ID, "protocol": "database"})
 	if code == 200 {
 		t.Fatalf("database on an autoscaling group must be refused: %v", out)
+	}
+}
+
+// TestASGApprovalGated: a group reached only through an approval-gated policy
+// is listed as needing a request for that protocol, as a host is, so the
+// console offers Request rather than a connect that can only fail (M27). A
+// connect without a grant is refused as approval_required, and one with an
+// approved grant for the group is admitted.
+func TestASGApprovalGated(t *testing.T) {
+	e := newASGEnv(t)
+	ctx := context.Background()
+	pols, err := e.h.Policies.ForUser(ctx, e.user.ID)
+	if err != nil || len(pols) != 1 {
+		t.Fatalf("policies: %v %v", pols, err)
+	}
+	pols[0].RequireApproval = true
+	if err := e.h.Policies.Update(ctx, pols[0]); err != nil {
+		t.Fatal(err)
+	}
+	e.h.Access = access.NewRepo(e.db)
+	launched := time.Now()
+	if _, _, err := e.asgs.UpsertInstance(ctx, &asg.Instance{GroupID: e.group.ID, InstanceID: "i-1", PrivateIP: "10.0.0.5", AvailabilityZone: "ap-south-1a",
+		LifecycleState: "InService", ProbeHealth: "healthy", HostKeyFingerprint: "SHA256:abc", HostKeySource: "console", LaunchedAt: &launched}); err != nil {
+		t.Fatal(err)
+	}
+
+	code, out := e.do("GET", "/api/v1/me/targets", nil)
+	items, _ := out["items"].([]any)
+	if code != 200 || len(items) != 1 {
+		t.Fatalf("targets: %d %v", code, out)
+	}
+	if got := items[0].(map[string]any)["requires_approval"]; fmt.Sprint(got) != "[ssh]" {
+		t.Fatalf("an approval-gated group must say so: requires_approval = %v in %v", got, items[0])
+	}
+	if code, out := e.do("POST", "/api/v1/connect", map[string]any{"asg_id": e.group.ID, "protocol": "ssh"}); code != 403 || out["code"] != "approval_required" {
+		t.Fatalf("connect without a grant: %d %v", code, out)
+	}
+
+	req := &access.Request{UserID: e.user.ID, PolicyID: pols[0].ID, ASGID: e.group.ID, Protocol: "ssh", Reason: "deploy", RequestedMinutes: 30}
+	if err := e.h.Access.Create(ctx, req); err != nil {
+		t.Fatal(err)
+	}
+	expires := time.Now().Add(30 * time.Minute)
+	if _, err := e.h.Access.Decide(ctx, req.ID, e.user.ID, access.StatusApproved, "", &expires, 30); err != nil {
+		t.Fatal(err)
+	}
+	if code, out := e.do("POST", "/api/v1/connect", map[string]any{"asg_id": e.group.ID, "protocol": "ssh"}); code != 200 || out["ticket"] == nil {
+		t.Fatalf("connect with a grant for the group: %d %v", code, out)
 	}
 }

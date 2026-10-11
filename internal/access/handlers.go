@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/albatroxxx/zanskar/internal/asg"
 	"github.com/albatroxxx/zanskar/internal/audit"
 	"github.com/albatroxxx/zanskar/internal/auth"
 	"github.com/albatroxxx/zanskar/internal/httpx"
@@ -24,8 +25,11 @@ type Handler struct {
 	Requests *Repo
 	Policies *policy.Repo
 	Targets  *target.Repo
-	Audit    *audit.Log
-	Log      *slog.Logger
+	// ASGs finds the autoscaling group a request names; nil refuses such
+	// requests as not found.
+	ASGs  *asg.Repo
+	Audit *audit.Log
+	Log   *slog.Logger
 }
 
 // Register mounts the routes. Creating and viewing one's own requests needs an
@@ -43,7 +47,9 @@ func (h *Handler) Register(mux *http.ServeMux) {
 }
 
 type createInput struct {
+	// Exactly one of TargetID and ASGID names what access is asked for.
 	TargetID string `json:"target_id"`
+	ASGID    string `json:"asg_id"`
 	Protocol string `json:"protocol"`
 	Reason   string `json:"reason"`
 	Minutes  int    `json:"minutes"`
@@ -61,8 +67,8 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 	pr, _ := auth.FromContext(r.Context())
 	in.Reason = strings.TrimSpace(in.Reason)
 	switch {
-	case in.TargetID == "" || in.Protocol == "":
-		httpx.BadRequest(w, "target_id and protocol are required")
+	case (in.TargetID == "") == (in.ASGID == "") || in.Protocol == "":
+		httpx.BadRequest(w, "protocol and exactly one of target_id and asg_id are required")
 		return
 	case in.Reason == "":
 		httpx.BadRequest(w, "a reason is required")
@@ -72,13 +78,8 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	tgt, err := h.Targets.Get(r.Context(), in.TargetID)
-	if err != nil {
-		if errors.Is(err, target.ErrNotFound) {
-			httpx.WriteError(w, http.StatusNotFound, "not_found", "target not found")
-			return
-		}
-		h.fail(w, r, err)
+	ref, ok := h.subject(w, r, in)
+	if !ok {
 		return
 	}
 	pols, err := h.Policies.ForUser(r.Context(), pr.User.ID)
@@ -87,9 +88,9 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// Eligibility: an enabled, approval-gated policy of the caller's must cover
-	// this target and protocol. Standing (non-approval) access is not requested
-	// here — a user who already has it connects directly.
-	elig := eligiblePolicy(pols, policy.TargetRef{ID: tgt.ID, Tags: tgt.Tags}, in.Protocol)
+	// this target or group and protocol. Standing (non-approval) access is not
+	// requested here — a user who already has it connects directly.
+	elig := eligiblePolicy(pols, ref, in.Protocol)
 	if elig == nil {
 		httpx.WriteError(w, http.StatusForbidden, "not_eligible",
 			"no approval-gated policy makes you eligible for this target and protocol")
@@ -101,11 +102,11 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 			fmt.Sprintf("requested duration exceeds the policy maximum of %d minutes", max))
 		return
 	}
-	// One open request per (user, target, protocol): a second pending one
+	// One open request per (user, target or group, protocol): a second pending one
 	// would only put the same decision in front of the approver twice, and a
 	// request while a grant is active is an extension or nothing.
 	now := time.Now().UTC()
-	open, err := h.Requests.Open(r.Context(), pr.User.ID, tgt.ID, "", in.Protocol, now)
+	open, err := h.Requests.Open(r.Context(), pr.User.ID, ref.ID, ref.ASGID, in.Protocol, now)
 	if err != nil && !errors.Is(err, ErrNotFound) {
 		h.fail(w, r, err)
 		return
@@ -125,7 +126,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	req := &Request{UserID: pr.User.ID, PolicyID: elig.ID, TargetID: tgt.ID,
+	req := &Request{UserID: pr.User.ID, PolicyID: elig.ID, TargetID: ref.ID, ASGID: ref.ASGID,
 		Protocol: in.Protocol, Reason: in.Reason, RequestedMinutes: in.Minutes, ExtendsRequestID: in.ExtendsRequestID}
 	if err := h.Requests.Create(r.Context(), req); err != nil {
 		h.fail(w, r, err)
@@ -133,6 +134,37 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 	}
 	h.record(r, "access.request.create", req, map[string]any{"extends_request_id": req.ExtendsRequestID})
 	httpx.WriteJSON(w, http.StatusCreated, req)
+}
+
+// subject finds the host or autoscaling group a request names, as the
+// reference its eligibility is judged on. When ok is false it has answered.
+func (h *Handler) subject(w http.ResponseWriter, r *http.Request, in createInput) (ref policy.TargetRef, ok bool) {
+	if in.TargetID != "" {
+		tgt, err := h.Targets.Get(r.Context(), in.TargetID)
+		if errors.Is(err, target.ErrNotFound) {
+			httpx.WriteError(w, http.StatusNotFound, "not_found", "target not found")
+			return ref, false
+		}
+		if err != nil {
+			h.fail(w, r, err)
+			return ref, false
+		}
+		return policy.TargetRef{ID: tgt.ID, Tags: tgt.Tags}, true
+	}
+	if h.ASGs == nil {
+		httpx.WriteError(w, http.StatusNotFound, "not_found", "autoscaling group not found")
+		return ref, false
+	}
+	g, err := h.ASGs.Get(r.Context(), in.ASGID)
+	if errors.Is(err, asg.ErrNotFound) {
+		httpx.WriteError(w, http.StatusNotFound, "not_found", "autoscaling group not found")
+		return ref, false
+	}
+	if err != nil {
+		h.fail(w, r, err)
+		return ref, false
+	}
+	return policy.TargetRef{ASGID: g.ID, Tags: g.Tags}, true
 }
 
 // maxMinutes is the longest grant a policy allows.
