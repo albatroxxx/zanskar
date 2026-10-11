@@ -284,3 +284,50 @@ func TestSyncPinsWindowsCertificatePerInstance(t *testing.T) {
 		t.Fatal("a certificate change must be audited")
 	}
 }
+
+// TestSyncStopsWhenTheStoredInstancesCannotBeRead: when the read of the
+// group's stored instances fails, the poll must stop, not carry on as if
+// every instance were new; that would re-pin a stored host key on first use
+// (here: a different key on the same instance) with no changed event, and
+// skip retiring sessions on instances that went unhealthy.
+func TestSyncStopsWhenTheStoredInstancesCannotBeRead(t *testing.T) {
+	ctx := context.Background()
+	s, repo, fake, _ := newSyncer(t)
+	port, fp := sshHost(t)
+	otherPort, otherFP := sshHost(t)
+	g := sample()
+	g.Ports = map[target.Protocol]int{target.SSH: port}
+	if err := repo.Create(ctx, g); err != nil {
+		t.Fatal(err)
+	}
+	fake.Set("web-asg",
+		cloud.Instance{ID: "i-1", PrivateIP: "127.0.0.1", AvailabilityZone: "ap-south-1a", LifecycleState: "InService", LBHealth: "healthy"},
+		cloud.Instance{ID: "i-9", PrivateIP: "127.0.0.1", AvailabilityZone: "ap-south-1b", LifecycleState: "Pending"},
+	)
+	fake.Console["i-1"] = []string{fp}
+	if _, err := s.SyncGroup(ctx, g); err != nil {
+		t.Fatal(err)
+	}
+
+	// Next poll: i-1 answers with another key, and reading the group's
+	// stored instances fails (another instance's row holds a value the
+	// reader cannot decode, standing in for a transient read failure; i-1's
+	// own row still reads and writes).
+	g.Ports = map[target.Protocol]int{target.SSH: otherPort}
+	delete(fake.Console, "i-1")
+	fake.Set("web-asg", cloud.Instance{ID: "i-1", PrivateIP: "127.0.0.1", AvailabilityZone: "ap-south-1a", LifecycleState: "InService", LBHealth: "healthy"})
+	if _, err := repo.db.ExecContext(ctx, `UPDATE asg_instances SET launched_at = 'not a time' WHERE instance_id = 'i-9'`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.Instances(ctx, g.ID, false); err == nil {
+		t.Fatal("setup: the stored instances should not read")
+	}
+	_, _ = s.SyncGroup(ctx, g)
+	var stored string
+	if err := repo.db.QueryRowContext(ctx, `SELECT host_key_fingerprint FROM asg_instances WHERE instance_id = 'i-1'`).Scan(&stored); err != nil {
+		t.Fatal(err)
+	}
+	if stored != fp {
+		t.Fatalf("pinned host key replaced on first use: stored %q, want %q (the new key was %q)", stored, fp, otherFP)
+	}
+}
