@@ -53,18 +53,25 @@ func runInit(args []string) error {
 
 	// Preserve an existing master key: writing a fresh one would make every
 	// stored credential undecryptable (ADR 0014).
-	existingKey := ""
+	existingKey, existingKeyFile := "", ""
 	if info, err := os.Stat(*out); err == nil && !info.IsDir() {
 		if !*force && !*stdout {
 			return fmt.Errorf("%s already exists; re-run with --force to overwrite (its master key is preserved either way)", *out)
 		}
 		existingKey = masterKeyFrom(*out)
+		// An install converted to a key file (ADR 0025) names the file
+		// instead; it is kept as it is, and no key is minted beside it.
+		existingKeyFile = envValueFrom(*out, "ZANSKAR_MASTER_KEY_FILE")
+		if existingKey != "" && existingKeyFile != "" {
+			return fmt.Errorf("%s sets both ZANSKAR_MASTER_KEY and ZANSKAR_MASTER_KEY_FILE, which serve refuses; remove the one the service does not use, then run init again", *out)
+		}
 	}
 
 	a := defaultAnswers()
 	if existingKey != "" {
 		a.MasterKey = existingKey
 	}
+	a.MasterKeyFile = existingKeyFile
 	// Flags override defaults; interactive mode fills the rest by prompting.
 	if *listen != "" {
 		a.ListenAddr = *listen
@@ -119,7 +126,7 @@ func runInit(args []string) error {
 		}
 	}
 
-	if a.MasterKey == "" {
+	if a.MasterKey == "" && a.MasterKeyFile == "" {
 		key, err := newMasterKey()
 		if err != nil {
 			return err
@@ -158,7 +165,7 @@ func runInit(args []string) error {
 			fmt.Fprintln(os.Stderr, "warning: could not set the file's group:", err)
 		}
 	}
-	printNextSteps(a, *out, mode, existingKey == "")
+	printNextSteps(a, *out, mode, existingKey == "" && existingKeyFile == "")
 	return nil
 }
 
@@ -207,6 +214,10 @@ type initAnswers struct {
 	LogLevel   string
 	LogFormat  string
 	MasterKey  string // base64, 32 bytes
+	// MasterKeyFile, when set, is written instead of MasterKey: the path of
+	// an owner-only file holding the key (ADR 0025), kept from the env file
+	// init is rewriting.
+	MasterKeyFile string
 }
 
 func defaultAnswers() initAnswers {
@@ -294,8 +305,11 @@ func validateAnswers(a initAnswers) error {
 	if !logFormats[a.LogFormat] {
 		return fmt.Errorf("log format %q must be json or text", a.LogFormat)
 	}
-	if _, err := base64.StdEncoding.DecodeString(a.MasterKey); err != nil || len(a.MasterKey) == 0 {
-		return errors.New("master key is missing or not valid base64")
+	// A key file is read, and its mode checked, by serve.
+	if a.MasterKeyFile == "" {
+		if _, err := base64.StdEncoding.DecodeString(a.MasterKey); err != nil || len(a.MasterKey) == 0 {
+			return errors.New("master key is missing or not valid base64")
+		}
 	}
 	return nil
 }
@@ -395,7 +409,11 @@ func renderEnv(a initAnswers) string {
 
 	p("# Sealing key for all stored secrets. Back it up: losing it makes every\n")
 	p("# stored credential unrecoverable. Never change it on an existing install.\n")
-	p("ZANSKAR_MASTER_KEY=%s\n", a.MasterKey)
+	if a.MasterKeyFile != "" {
+		p("ZANSKAR_MASTER_KEY_FILE=%s\n", a.MasterKeyFile)
+	} else {
+		p("ZANSKAR_MASTER_KEY=%s\n", a.MasterKey)
+	}
 	return b.String()
 }
 
@@ -413,6 +431,12 @@ func newMasterKey() (string, error) {
 // if none. Best-effort: a read error means "no key found", and the caller then
 // generates one.
 func masterKeyFrom(path string) string {
+	return envValueFrom(path, "ZANSKAR_MASTER_KEY")
+}
+
+// envValueFrom returns the value of name in an env file, or "" when the file
+// cannot be read or has no such line.
+func envValueFrom(path, name string) string {
 	f, err := os.Open(path) // #nosec G304 -- path is the operator-specified env file being (re)written; reading it back preserves the master key
 	if err != nil {
 		return ""
@@ -421,7 +445,7 @@ func masterKeyFrom(path string) string {
 	s := bufio.NewScanner(f)
 	for s.Scan() {
 		line := strings.TrimSpace(s.Text())
-		if v, ok := strings.CutPrefix(line, "ZANSKAR_MASTER_KEY="); ok {
+		if v, ok := strings.CutPrefix(line, name+"="); ok {
 			return strings.TrimSpace(v)
 		}
 	}
