@@ -148,9 +148,15 @@ func newEnv(t *testing.T, f *fakeIdP, cfg idp.Config) (*env, string) {
 // drive follows start -> provider -> callback manually so we can inspect each hop.
 func drive(t *testing.T, e *env, f *fakeIdP, id string) (status int, location string, cookies []*http.Cookie) {
 	t.Helper()
+	return driveNext(t, e, f, id, "/admin")
+}
+
+// driveNext is drive with the post-login path the browser asks for.
+func driveNext(t *testing.T, e *env, f *fakeIdP, id, next string) (status int, location string, cookies []*http.Cookie) {
+	t.Helper()
 	jar, _ := cookiejar.New(nil)
 	client := &http.Client{Jar: jar, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
-	res, err := client.Get(e.app.URL + "/api/v1/auth/oidc/" + id + "/start?next=/admin")
+	res, err := client.Get(e.app.URL + "/api/v1/auth/oidc/" + id + "/start?next=" + url.QueryEscape(next))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -277,5 +283,73 @@ func TestPartialSessionWhenEnrolled(t *testing.T) {
 	e2.h.MFAEnrolled = func(context.Context, string) (bool, error) { return true, nil }
 	if _, location2, _ := drive(t, e2, f, id2); location2 != "/admin" {
 		t.Fatalf("skip_mfa should complete the session: %s", location2)
+	}
+}
+
+// TestSafeNext: the post-login path is used in a Location header, so it must
+// be a path on this origin after a browser has had its way with it.
+func TestSafeNext(t *testing.T) {
+	for _, tc := range []struct {
+		next string
+		ok   bool
+		why  string
+	}{
+		{"/ok", true, "a plain path"},
+		{"/ok?x=1", true, "a query string is fine"},
+		{"/ok/", true, "a single trailing slash is fine"},
+		{"/", true, "the root"},
+		{"/admin/sessions?tab=live#x", true, "a fragment is fine"},
+		{"/café", true, "non-ASCII is percent-encoded by http.Redirect"},
+		// A percent-encoded control character in the path is harmless: the
+		// browser keeps it encoded, so it can never become a second "/". The
+		// literal string only arises from double encoding ("%2509" in the
+		// query); a single "%09" reaches safeNext as a real tab and is refused.
+		{"/%09/evil.example", true, "percent-encoded tab stays encoded"},
+		{"", false, "empty"},
+		{"/\t/evil.example", false, "tab: browsers strip it, leaving //evil.example"},
+		{"/\r/evil.example", false, "carriage return"},
+		{"/\n/evil.example", false, "line feed"},
+		{"/ok\x00", false, "NUL"},
+		{"/ok\x7f", false, "DEL"},
+		{"/ok\x1b", false, "escape"},
+		{"/\\evil.example", false, "backslash reads as a slash in http URLs"},
+		{"//evil.example", false, "scheme-relative"},
+		{"///evil.example", false, "browsers skip the extra slashes"},
+		{"http://evil.example", false, "absolute URL"},
+		{"https://evil.example/", false, "absolute URL"},
+		{"javascript:alert(1)", false, "a scheme"},
+		{"evil.example", false, "no leading slash"},
+		{"ok", false, "relative path"},
+		{"?x=1", false, "no path"},
+		{"/ok/../../x", false, "dot-dot segments"},
+		{"/ok/./x", false, "dot segment"},
+		{"/ok//x", false, "not clean"},
+		{"/ok/%2e%2e/x", false, "percent-encoded dot-dot: browsers treat it as .."},
+		{"/@evil.example", true, "an @ in a path is just an @"},
+	} {
+		if got := safeNext(tc.next); got != tc.ok {
+			t.Errorf("safeNext(%q) = %v, want %v (%s)", tc.next, got, tc.ok, tc.why)
+		}
+	}
+}
+
+// TestCallbackRefusesControlCharacterNext reproduces H3 end to end: a next of
+// "/" + TAB + "/evil.example" used to be accepted, sealed into the state
+// cookie and written verbatim into the callback's Location, where a browser
+// drops the tab and goes to //evil.example. Now it is refused at start and
+// the sign-in lands on "/".
+func TestCallbackRefusesControlCharacterNext(t *testing.T) {
+	f := newFakeIdP(t)
+	f.claims = map[string]any{"preferred_username": "dave", "email": "dave@corp.example"}
+	e, id := newEnv(t, f, idp.Config{OIDC: &idp.OIDCConfig{ClientID: "cid", ClientSecret: "s"}, AutoProvision: true})
+	for _, next := range []string{"/\t/evil.example", "/\r\n/evil.example", "//evil.example", "/\\evil.example", "https://evil.example/"} {
+		status, location, cookies := driveNext(t, e, f, id, next)
+		if status != 302 || location != "/" || !hasSession(cookies) {
+			t.Fatalf("next=%q: callback answered %d Location %q (session cookie %v); want a 302 to /", next, status, location, hasSession(cookies))
+		}
+	}
+	// And a good path still gets the user where they were going.
+	if status, location, _ := driveNext(t, e, f, id, "/targets?tab=live"); status != 302 || location != "/targets?tab=live" {
+		t.Fatalf("a plain path must be kept: %d %q", status, location)
 	}
 }
