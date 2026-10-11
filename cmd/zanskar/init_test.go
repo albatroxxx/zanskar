@@ -240,3 +240,38 @@ func TestInitWritesCertificateNames(t *testing.T) {
 		t.Fatal("the variable must be absent when no name is given")
 	}
 }
+
+// TestInitKeepsMasterKeyFile: an install converted to a key file (ADR 0025)
+// keeps ZANSKAR_MASTER_KEY_FILE through `init --force`; init must neither
+// mint a new key nor write one inline (ADR 0014: init never regenerates a
+// master key an existing env file already holds).
+func TestInitKeepsMasterKeyFile(t *testing.T) {
+	dir := t.TempDir()
+	env := filepath.Join(dir, "env")
+	if err := os.WriteFile(env, []byte("ZANSKAR_LISTEN_ADDR=127.0.0.1:8443\nZANSKAR_MASTER_KEY_FILE=/etc/zanskar/master.key\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	stdout, _, err := output(t, func() error {
+		return runInit([]string{"--print", "--non-interactive", "--out", env, "--data-dir", filepath.Join(dir, "data")})
+	})
+	if err != nil {
+		t.Fatalf("init: %v", err)
+	}
+	if !strings.Contains(stdout, "ZANSKAR_MASTER_KEY_FILE=/etc/zanskar/master.key\n") {
+		t.Errorf("the key file line was dropped:\n%s", stdout)
+	}
+	if strings.Contains(stdout, "ZANSKAR_MASTER_KEY=") {
+		t.Errorf("a key was written inline beside the key file:\n%s", stdout)
+	}
+
+	// Both lines at once is a broken file (serve refuses it); init says so
+	// rather than choosing one.
+	if err := os.WriteFile(env, []byte("ZANSKAR_MASTER_KEY=a2V5\nZANSKAR_MASTER_KEY_FILE=/etc/zanskar/master.key\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := output(t, func() error {
+		return runInit([]string{"--print", "--non-interactive", "--out", env, "--data-dir", filepath.Join(dir, "data")})
+	}); err == nil || !strings.Contains(err.Error(), "both") {
+		t.Fatalf("both key lines: %v, want a refusal", err)
+	}
+}
