@@ -115,7 +115,7 @@ func (h *AdminHandler) create(w http.ResponseWriter, r *http.Request) {
 		h.fail(w, r, err)
 		return
 	}
-	h.record(r, "idp.create", p)
+	h.record(r, "idp.create", p, map[string]any{"config": idp.AccessSummary(&cfg)})
 	op, err := h.Providers.Open(r.Context(), p.ID)
 	if err != nil {
 		h.fail(w, r, err)
@@ -130,7 +130,7 @@ func (h *AdminHandler) update(w http.ResponseWriter, r *http.Request) {
 		httpx.BadRequest(w, err.Error())
 		return
 	}
-	cur, err := h.Providers.Get(r.Context(), r.PathValue("id"))
+	cur, err := h.Providers.Open(r.Context(), r.PathValue("id"))
 	if err != nil {
 		h.fail(w, r, err)
 		return
@@ -144,8 +144,12 @@ func (h *AdminHandler) update(w http.ResponseWriter, r *http.Request) {
 		h.fail(w, r, err)
 		return
 	}
-	h.record(r, "idp.update", p)
 	op, err := h.Providers.Open(r.Context(), p.ID)
+	details := map[string]any{"previous": idp.AccessSummary(&cur.Config), "previous_enabled": cur.Enabled}
+	if err == nil {
+		details["config"] = idp.AccessSummary(&op.Config)
+	}
+	h.record(r, "idp.update", p, details)
 	if err != nil {
 		h.fail(w, r, err)
 		return
@@ -163,7 +167,7 @@ func (h *AdminHandler) del(w http.ResponseWriter, r *http.Request) {
 		h.fail(w, r, err)
 		return
 	}
-	h.record(r, "idp.delete", p)
+	h.record(r, "idp.delete", p, nil)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -204,7 +208,7 @@ func (h *AdminHandler) test(w http.ResponseWriter, r *http.Request) {
 		outcome = audit.Failure
 		result = map[string]any{"status": "failed", "message": terr.Error()}
 	}
-	h.recordOutcome(r, "idp.test", &op.Provider, outcome)
+	h.recordOutcome(r, "idp.test", &op.Provider, outcome, nil)
 	status := http.StatusOK
 	if terr != nil {
 		status = http.StatusBadGateway
@@ -212,12 +216,15 @@ func (h *AdminHandler) test(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, status, result)
 }
 
-func (h *AdminHandler) record(r *http.Request, action string, p *idp.Provider) {
-	h.recordOutcome(r, action, p, audit.Success)
+func (h *AdminHandler) record(r *http.Request, action string, p *idp.Provider, extra map[string]any) {
+	h.recordOutcome(r, action, p, audit.Success, extra)
 }
 
-func (h *AdminHandler) recordOutcome(r *http.Request, action string, p *idp.Provider, outcome audit.Outcome) {
+func (h *AdminHandler) recordOutcome(r *http.Request, action string, p *idp.Provider, outcome audit.Outcome, extra map[string]any) {
 	details := map[string]any{"name": p.Name, "type": p.Type, "enabled": p.Enabled}
+	for k, v := range extra {
+		details[k] = v
+	}
 	auth.Recorder{Audit: h.Audit, Log: h.Log}.Record(r, auth.ActorFor(r).Event(action, "identity_provider", p.ID, outcome, details))
 }
 

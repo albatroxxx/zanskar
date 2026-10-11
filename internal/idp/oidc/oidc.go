@@ -188,7 +188,7 @@ func (h *Handler) callback(w http.ResponseWriter, r *http.Request) {
 		h.fail(w, r, "", id, "domain_not_allowed", fmt.Errorf("email domain not allowed for %q", ident.Email))
 		return
 	}
-	u, linked, err := h.Provisioner.Resolve(r.Context(), op, ident)
+	res, err := h.Provisioner.Resolve(r.Context(), op, ident)
 	if err != nil {
 		code := "provisioning_failed"
 		switch {
@@ -200,8 +200,9 @@ func (h *Handler) callback(w http.ResponseWriter, r *http.Request) {
 		h.fail(w, r, "", id, code, err)
 		return
 	}
-	if linked {
-		h.record(r, idp.LinkEvent(ip, u, op, ident))
+	u := res.User
+	for _, e := range res.Events(ip, op, ident) {
+		h.record(r, e)
 	}
 
 	mfa := "provider"

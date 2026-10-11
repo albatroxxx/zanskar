@@ -13,10 +13,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
+	goldap "github.com/go-ldap/ldap/v3"
+
 	"github.com/albatroxxx/zanskar/internal/audit"
+	"github.com/albatroxxx/zanskar/internal/gateway"
 	"github.com/albatroxxx/zanskar/internal/keyring"
 	"github.com/albatroxxx/zanskar/internal/store"
 	"github.com/albatroxxx/zanskar/internal/user"
@@ -31,10 +35,16 @@ const (
 	TypeLDAP Type = "ldap"
 )
 
-// GroupMapping maps an external group name (OIDC claim value or LDAP group
-// name / DN) to a Zanskar group id. Membership is synchronised on every login:
-// the user is added to mapped groups they hold and removed from mapped groups
-// they no longer hold. Unmapped Zanskar groups are never touched.
+// GroupMapping maps an external group to a Zanskar group id. Membership is
+// synchronised on every login: the user is added to mapped groups they hold
+// and removed from mapped groups they no longer hold. Unmapped Zanskar groups
+// are never touched.
+//
+// A key is an OIDC claim value, or for LDAP either a group's full DN
+// ("cn=zanskar-admins,ou=groups,dc=corp,dc=example", compared as LDAP compares
+// DNs) or its bare name. A bare name matches every directory group with that
+// name, in any OU, so whoever can create a group anywhere in the directory can
+// create a matching one; use the DN for any group that grants real access.
 type GroupMapping map[string]string
 
 // OIDCConfig configures an OpenID Connect provider (Okta, Entra ID, Keycloak,
@@ -101,6 +111,28 @@ type Provider struct {
 	Enabled   bool      `json:"enabled"`
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
+}
+
+// AccessSummary is the part of a provider's configuration that decides who
+// gets in and with what, recorded when a provider is created or changed so
+// the log shows who configured, say, auto-provisioning as admin (ADR 0006:
+// granting admin or auditor is an audit event). It never holds a secret:
+// no client secret, bind password or CA bundle.
+func AccessSummary(c *Config) map[string]any {
+	d := map[string]any{"auto_provision": c.AutoProvision, "default_roles": c.DefaultRoles, "group_mapping": c.GroupMapping}
+	if c.GroupMapping == nil {
+		d["group_mapping"] = GroupMapping{}
+	}
+	if o := c.OIDC; o != nil {
+		d["issuer"], d["client_id"], d["skip_mfa"] = o.Issuer, o.ClientID, o.SkipMFA
+		d["allowed_domains"], d["username_claim"], d["groups_claim"] = orEmpty(o.AllowedDomains), o.UsernameClaim, o.GroupsClaim
+	}
+	if l := c.LDAP; l != nil {
+		d["url"], d["start_tls"], d["insecure_skip_verify"] = l.URL, l.StartTLS, l.InsecureSkipVerify
+		d["bind_dn"], d["base_dn"], d["user_filter"], d["username_suffix"] = l.BindDN, l.BaseDN, l.UserFilter, l.UsernameSuffix
+		d["group_attr"], d["group_base_dn"], d["group_filter"] = l.GroupAttr, l.GroupBaseDN, l.GroupFilter
+	}
+	return d
 }
 
 // Opened is a provider with its decrypted configuration.
@@ -323,6 +355,9 @@ type Identity struct {
 	DisplayName string
 	Email       string
 	Groups      []string // external group names, matched against GroupMapping
+	// GroupDNs are the full DNs of the user's LDAP groups, matched against
+	// mapping keys written as DNs; empty for OIDC.
+	GroupDNs []string
 }
 
 // Provisioner turns an asserted Identity into a Zanskar user and syncs its
@@ -330,12 +365,33 @@ type Identity struct {
 type Provisioner struct {
 	Users  *user.Repo
 	Groups GroupSyncer
+	// Revoker, when set, ends the live sessions a group removal takes away
+	// (ADR 0013), as an administrator's removal does.
+	Revoker gateway.Revoker
 }
 
 // GroupSyncer is satisfied by *group.Repo; declared here to avoid a cycle.
 type GroupSyncer interface {
 	AddMember(ctx context.Context, groupID, userID string) error
 	RemoveMember(ctx context.Context, groupID, userID string) error
+	GroupIDsForUser(ctx context.Context, userID string) ([]string, error)
+}
+
+// Resolution is what Resolve did for one sign-in, for the caller to audit:
+// an adopted or created account, and group memberships the sign-in changed.
+type Resolution struct {
+	User *user.User
+	// Linked: a pre-created account was adopted (ADR 0005 addendum).
+	Linked bool
+	// Created: the account was provisioned on this sign-in, with the
+	// provider's default roles.
+	Created bool
+	// GroupsAdded and GroupsRemoved are the mapped Zanskar groups this
+	// sign-in added the user to or removed it from.
+	GroupsAdded, GroupsRemoved []string
+	// LiveSessionsEnded counts live sessions ended because a removal took
+	// away the group that granted them.
+	LiveSessionsEnded int
 }
 
 // ErrNotProvisioned is returned when auto-provisioning is off and there is
@@ -371,24 +427,24 @@ var errLocked = errors.New("idp: account is disabled or locked")
 //     or locked account is refused and not linked.
 //   - Otherwise, with AutoProvision a user is created with DefaultRoles;
 //     without it the answer is ErrNotProvisioned.
-func (pv *Provisioner) Resolve(ctx context.Context, p *Opened, id Identity) (u *user.User, linked bool, err error) {
+func (pv *Provisioner) Resolve(ctx context.Context, p *Opened, id Identity) (Resolution, error) {
+	var res Resolution
 	if !user.ValidUsername(id.Username) {
-		return nil, false, fmt.Errorf("%w: provider asserted an unusable username %q", ErrInvalidInput, id.Username)
+		return res, fmt.Errorf("%w: provider asserted an unusable username %q", ErrInvalidInput, id.Username)
 	}
-	created := false
-	u, err = pv.Users.GetByExternalID(ctx, p.ID, id.ExternalID)
+	u, err := pv.Users.GetByExternalID(ctx, p.ID, id.ExternalID)
 	if errors.Is(err, user.ErrNotFound) {
 		u, err = pv.adopt(ctx, p, id)
-		linked = err == nil
+		res.Linked = err == nil
 		if errors.Is(err, user.ErrNotFound) {
 			u, err = pv.create(ctx, p, id)
-			created = err == nil
+			res.Created = err == nil
 		}
 	}
 	if err != nil {
-		return nil, false, err
+		return Resolution{}, err
 	}
-	if !created && (u.DisplayName != id.DisplayName || (id.Email != "" && u.Email != id.Email)) {
+	if !res.Created && (u.DisplayName != id.DisplayName || (id.Email != "" && u.Email != id.Email)) {
 		name := id.DisplayName
 		if name == "" {
 			name = u.DisplayName
@@ -396,25 +452,79 @@ func (pv *Provisioner) Resolve(ctx context.Context, p *Opened, id Identity) (u *
 		_ = pv.Users.Update(ctx, u.ID, name, firstNonEmpty(id.Email, u.Email), u.Status)
 	}
 	if u.IsLocked(time.Now()) {
-		return nil, false, errLocked
+		return Resolution{}, errLocked
 	}
 	if pv.Groups != nil && len(p.Config.GroupMapping) > 0 {
-		have := map[string]bool{}
-		for _, g := range id.Groups {
-			have[strings.ToLower(g)] = true
+		pv.syncGroups(ctx, p, id, u.ID, &res)
+	}
+	if res.User, err = pv.Users.GetByID(ctx, u.ID); err != nil {
+		return Resolution{}, err
+	}
+	return res, nil
+}
+
+// syncGroups brings the user's mapped memberships in line with the groups
+// the provider asserted, records what changed, and ends the live sessions a
+// removal takes away. A group that cannot be changed is left as it is and
+// the sign-in goes on; the result lists only what did change.
+func (pv *Provisioner) syncGroups(ctx context.Context, p *Opened, id Identity, userID string, res *Resolution) {
+	before := map[string]bool{}
+	if ids, err := pv.Groups.GroupIDsForUser(ctx, userID); err == nil {
+		for _, gid := range ids {
+			before[gid] = true
 		}
-		for ext, gid := range p.Config.GroupMapping {
-			if have[strings.ToLower(ext)] {
-				_ = pv.Groups.AddMember(ctx, gid, u.ID)
-			} else {
-				_ = pv.Groups.RemoveMember(ctx, gid, u.ID)
+	}
+	names := map[string]bool{}
+	for _, g := range id.Groups {
+		names[strings.ToLower(g)] = true
+	}
+	var dns []*goldap.DN
+	for _, raw := range id.GroupDNs {
+		if dn, err := goldap.ParseDN(raw); err == nil {
+			dns = append(dns, dn)
+		}
+	}
+	keys := make([]string, 0, len(p.Config.GroupMapping))
+	for ext := range p.Config.GroupMapping {
+		keys = append(keys, ext)
+	}
+	sort.Strings(keys) // a stable order for the audit details
+	for _, ext := range keys {
+		gid := p.Config.GroupMapping[ext]
+		if holds(ext, names, dns) {
+			if !before[gid] && pv.Groups.AddMember(ctx, gid, userID) == nil {
+				res.GroupsAdded = append(res.GroupsAdded, gid)
+				before[gid] = true
+			}
+			continue
+		}
+		if before[gid] && pv.Groups.RemoveMember(ctx, gid, userID) == nil {
+			res.GroupsRemoved = append(res.GroupsRemoved, gid)
+			delete(before, gid)
+			if pv.Revoker != nil {
+				res.LiveSessionsEnded += pv.Revoker.GroupMembersRemoved(ctx, gid, []string{userID})
 			}
 		}
 	}
-	if u, err = pv.Users.GetByID(ctx, u.ID); err != nil {
-		return nil, false, err
+}
+
+// holds reports whether the asserted groups include the mapping key: a key
+// written as a DN is compared with each group DN as LDAP compares DNs; any
+// other key with the group names, ignoring case.
+func holds(key string, names map[string]bool, dns []*goldap.DN) bool {
+	if strings.Contains(key, "=") {
+		want, err := goldap.ParseDN(key)
+		if err != nil {
+			return false
+		}
+		for _, dn := range dns {
+			if want.EqualFold(dn) {
+				return true
+			}
+		}
+		return false
 	}
-	return u, linked, nil
+	return names[strings.ToLower(key)]
 }
 
 // adopt links the local account named id.Username to p and id.ExternalID
@@ -461,6 +571,48 @@ func (pv *Provisioner) create(ctx context.Context, p *Opened, id Identity) (*use
 		return nil, err
 	}
 	return u, nil
+}
+
+// Events are the audit events a sign-in's Resolution owes, in order: the
+// account adopted or created (with its roles, as an administrator's create
+// records them: granting admin or auditor is an audit event, ADR 0006),
+// then the mapped group memberships the sign-in changed. The actor is the
+// signed-in account, from ip.
+func (r Resolution) Events(ip string, p *Opened, id Identity) []audit.Event {
+	var out []audit.Event
+	if r.Linked {
+		out = append(out, LinkEvent(ip, r.User, p, id))
+	}
+	actor := audit.Actor{UserID: r.User.ID, IP: ip}
+	if r.Created {
+		d := map[string]any{"username": r.User.Username, "roles": r.User.Roles, "has_password": false,
+			"via": "identity_provider", "idp": p.ID, "idp_name": p.Name, "external_id": id.ExternalID}
+		var granted []user.Role
+		for _, role := range r.User.Roles {
+			if role != user.RoleUser {
+				granted = append(granted, role)
+			}
+		}
+		if len(granted) > 0 {
+			d["roles_granted"] = granted
+		}
+		out = append(out, actor.Event("user.create", "user", r.User.ID, audit.Success, d))
+	}
+	if len(r.GroupsAdded)+len(r.GroupsRemoved) > 0 {
+		d := map[string]any{"idp": p.ID, "idp_name": p.Name, "groups_added": orEmpty(r.GroupsAdded), "groups_removed": orEmpty(r.GroupsRemoved)}
+		if len(r.GroupsRemoved) > 0 {
+			d["live_sessions_ended"] = r.LiveSessionsEnded
+		}
+		out = append(out, actor.Event("user.groups.sync", "user", r.User.ID, audit.Success, d))
+	}
+	return out
+}
+
+func orEmpty(ids []string) []string {
+	if ids == nil {
+		return []string{}
+	}
+	return ids
 }
 
 // LinkEvent is the audit event for a sign-in that adopted a pre-created

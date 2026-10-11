@@ -299,6 +299,9 @@ func serve(ctx context.Context) error {
 		Registry: registry, Storage: storage, Audit: auditLog, Log: log, MFAEnrolled: totp.Enrolled, GuacdAddr: guacdAddr, Draining: restarter.Draining,
 		DockerPath: cfg.DockerPath, DBMaxSessions: cfg.DatabaseMaxSessions, DBProxyImage: func() string { return runtime.String(settings.KeyDBProxyImage) },
 		Prober: &target.Prober{}, ASGs: asgRepo, Cloud: cloudProviders}
+	// A sign-in through an identity provider that removes the user from a
+	// mapped group ends what that group granted, as an admin's removal does.
+	provisioner.Revoker = connectHandler
 	deps := server.Deps{
 		TLS:            tlsMgr,
 		AuthMiddleware: &auth.Middleware{Sessions: sessions, Users: users, Log: log},

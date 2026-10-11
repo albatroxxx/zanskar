@@ -5,12 +5,16 @@ package idp
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
+	"github.com/albatroxxx/zanskar/internal/audit"
 	"github.com/albatroxxx/zanskar/internal/config"
 	"github.com/albatroxxx/zanskar/internal/crypto"
+	"github.com/albatroxxx/zanskar/internal/gateway"
 	"github.com/albatroxxx/zanskar/internal/keyring"
 	"github.com/albatroxxx/zanskar/internal/store"
 	"github.com/albatroxxx/zanskar/internal/user"
@@ -20,17 +24,36 @@ import (
 // one, and a real Argon2id hash costs a quarter of a second per account.
 const aHash = "$argon2id$v=19$m=65536,t=3,p=1$c2FsdHNhbHRzYWx0c2FsdA$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
 
-// groupCalls records what Resolve asks of the group repository.
-type groupCalls struct{ added, removed []string }
+// groupCalls stands in for the group repository: it keeps memberships and
+// records what Resolve asks of it.
+type groupCalls struct {
+	added, removed []string
+	member         map[string]bool // groupID + "/" + userID
+}
 
 func (g *groupCalls) AddMember(_ context.Context, groupID, userID string) error {
 	g.added = append(g.added, groupID+"/"+userID)
+	if g.member == nil {
+		g.member = map[string]bool{}
+	}
+	g.member[groupID+"/"+userID] = true
 	return nil
 }
 
 func (g *groupCalls) RemoveMember(_ context.Context, groupID, userID string) error {
 	g.removed = append(g.removed, groupID+"/"+userID)
+	delete(g.member, groupID+"/"+userID)
 	return nil
+}
+
+func (g *groupCalls) GroupIDsForUser(_ context.Context, userID string) ([]string, error) {
+	var out []string
+	for k := range g.member {
+		if gid, uid, _ := strings.Cut(k, "/"); uid == userID {
+			out = append(out, gid)
+		}
+	}
+	return out, nil
 }
 
 type provisionEnv struct {
@@ -129,7 +152,8 @@ func TestResolveAdoptsPreCreatedAccount(t *testing.T) {
 	alice := e.local(t, "alice", "", user.RoleAdmin)
 	id := Identity{ExternalID: "sub-1", Username: "Alice", DisplayName: "Alice Example", Email: "alice@corp.example", Groups: []string{"OPS-team"}}
 
-	u, linked, err := e.pv.Resolve(ctx, p, id)
+	r, err := e.pv.Resolve(ctx, p, id)
+	u, linked := r.User, r.Linked
 	if err != nil {
 		t.Fatalf("first sign-in of a pre-created password-less account: %v", err)
 	}
@@ -152,7 +176,8 @@ func TestResolveAdoptsPreCreatedAccount(t *testing.T) {
 	// The next sign-in matches on the external id, not the username: a
 	// rename in the directory keeps the account.
 	id.Username = "alice.renamed"
-	again, linked, err := e.pv.Resolve(ctx, p, id)
+	r, err = e.pv.Resolve(ctx, p, id)
+	again, linked := r.User, r.Linked
 	if err != nil || again.ID != alice.ID || linked {
 		t.Fatalf("second sign-in: %v linked=%v %v, want account %s matched, not linked again", again, linked, err, alice.ID)
 	}
@@ -171,7 +196,8 @@ func TestResolveAdoptsRatherThanDuplicates(t *testing.T) {
 	p := e.provider(t, "corp", true)
 	alice := e.local(t, "alice", "", user.RoleAuditor)
 
-	u, linked, err := e.pv.Resolve(ctx, p, Identity{ExternalID: "sub-1", Username: "alice"})
+	r, err := e.pv.Resolve(ctx, p, Identity{ExternalID: "sub-1", Username: "alice"})
+	u, linked := r.User, r.Linked
 	if err != nil {
 		t.Fatalf("first sign-in with auto-provisioning on: %v", err)
 	}
@@ -194,7 +220,7 @@ func TestResolveRefusesAccountWithPassword(t *testing.T) {
 		p := e.provider(t, "corp", auto)
 		admin := e.local(t, "admin", aHash, user.RoleAdmin)
 
-		_, _, err := e.pv.Resolve(ctx, p, Identity{ExternalID: "sub-1", Username: "admin"})
+		_, err := e.pv.Resolve(ctx, p, Identity{ExternalID: "sub-1", Username: "admin"})
 		if !errors.Is(err, ErrAccountConflict) || !strings.Contains(err.Error(), `"admin" has a password; remove it or rename one of them`) {
 			t.Fatalf("auto_provision=%v: got %v, want a refusal that names the password", auto, err)
 		}
@@ -217,16 +243,17 @@ func TestResolveRefusesAccountLinkedElsewhere(t *testing.T) {
 		ctx := context.Background()
 		a := e.provider(t, "corp-a", auto)
 		b := e.provider(t, "corp-b", true)
-		alice, _, err := e.pv.Resolve(ctx, b, Identity{ExternalID: "b-sub", Username: "alice"})
+		r, err := e.pv.Resolve(ctx, b, Identity{ExternalID: "b-sub", Username: "alice"})
+		alice := r.User
 		if err != nil {
 			t.Fatal(err)
 		}
 
-		_, _, err = e.pv.Resolve(ctx, a, Identity{ExternalID: "a-sub", Username: "alice"})
+		r, err = e.pv.Resolve(ctx, a, Identity{ExternalID: "a-sub", Username: "alice"})
 		if !errors.Is(err, ErrAccountConflict) || !strings.Contains(err.Error(), `"alice" is linked to another identity provider`) {
 			t.Fatalf("auto_provision=%v: provider A on B's account: got %v, want a refusal", auto, err)
 		}
-		_, _, err = e.pv.Resolve(ctx, b, Identity{ExternalID: "b-sub-2", Username: "alice"})
+		r, err = e.pv.Resolve(ctx, b, Identity{ExternalID: "b-sub-2", Username: "alice"})
 		if !errors.Is(err, ErrAccountConflict) || !strings.Contains(err.Error(), `"alice" is linked to a different identity at this provider`) {
 			t.Fatalf("auto_provision=%v: another subject at B: got %v, want a refusal", auto, err)
 		}
@@ -250,7 +277,7 @@ func TestResolveDoesNotLinkDisabledAccount(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, _, err := e.pv.Resolve(ctx, p, Identity{ExternalID: "sub-1", Username: "alice"})
+	_, err := e.pv.Resolve(ctx, p, Identity{ExternalID: "sub-1", Username: "alice"})
 	if err == nil || !strings.Contains(err.Error(), "disabled or locked") {
 		t.Fatalf("got %v, want the disabled-account refusal", err)
 	}
@@ -270,7 +297,8 @@ func TestResolveCreatesWhenDirectoryUsernameDiffers(t *testing.T) {
 	p := e.provider(t, "corp", true)
 	alice := e.local(t, "alice", "", user.RoleAdmin)
 
-	u, linked, err := e.pv.Resolve(ctx, p, Identity{ExternalID: "sub-1", Username: "alice.smith", Email: "alice@corp.example"})
+	r, err := e.pv.Resolve(ctx, p, Identity{ExternalID: "sub-1", Username: "alice.smith", Email: "alice@corp.example"})
+	u, linked := r.User, r.Linked
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -282,10 +310,100 @@ func TestResolveCreatesWhenDirectoryUsernameDiffers(t *testing.T) {
 	}
 
 	q := e.provider(t, "closed", false)
-	if _, _, err := e.pv.Resolve(ctx, q, Identity{ExternalID: "sub-9", Username: "alice.jones"}); !errors.Is(err, ErrNotProvisioned) {
+	if _, err := e.pv.Resolve(ctx, q, Identity{ExternalID: "sub-9", Username: "alice.jones"}); !errors.Is(err, ErrNotProvisioned) {
 		t.Fatalf("no matching account and auto-provisioning off: got %v, want ErrNotProvisioned", err)
 	}
 	if n := e.count(t); n != 2 {
 		t.Fatalf("%d accounts, want 2", n)
 	}
+}
+
+// TestResolveGroupDNMappingIsExact: an LDAP mapping key written as a DN
+// matches that group only, not a same-named group someone created in
+// another OU; a bare-name key still matches by name, as before.
+func TestResolveGroupDNMappingIsExact(t *testing.T) {
+	e := newProvisionEnv(t)
+	ctx := context.Background()
+	p := e.provider(t, "dir", true)
+	p.Config.GroupMapping = GroupMapping{"cn=zanskar-admins,ou=groups,dc=corp,dc=example": "g-admins"}
+
+	planted := Identity{ExternalID: "sub-1", Username: "mallory", Groups: []string{"zanskar-admins"},
+		GroupDNs: []string{"cn=zanskar-admins,ou=contractors,dc=corp,dc=example"}}
+	if r, err := e.pv.Resolve(ctx, p, planted); err != nil || len(r.GroupsAdded) != 0 {
+		t.Fatalf("a same-named group in another OU joined the mapped group: %+v %v", r.GroupsAdded, err)
+	}
+	real := Identity{ExternalID: "sub-2", Username: "alice", Groups: []string{"zanskar-admins"},
+		GroupDNs: []string{"CN=Zanskar-Admins, OU=Groups, DC=corp, DC=example"}}
+	if r, err := e.pv.Resolve(ctx, p, real); err != nil || strings.Join(r.GroupsAdded, ",") != "g-admins" {
+		t.Fatalf("the mapped DN, written differently, must match: %+v %v", r.GroupsAdded, err)
+	}
+	p.Config.GroupMapping = GroupMapping{"zanskar-admins": "g-admins"}
+	if r, err := e.pv.Resolve(ctx, p, Identity{ExternalID: "sub-3", Username: "bob", Groups: []string{"Zanskar-Admins"}}); err != nil || strings.Join(r.GroupsAdded, ",") != "g-admins" {
+		t.Fatalf("a bare-name key matches by name: %+v %v", r.GroupsAdded, err)
+	}
+}
+
+// sessionEnder records what a sign-in asked the gateway to end.
+type sessionEnder struct {
+	gateway.Revoker // only GroupMembersRemoved is used here
+	calls           []string
+}
+
+func (s *sessionEnder) GroupMembersRemoved(_ context.Context, groupID string, userIDs []string) int {
+	s.calls = append(s.calls, groupID+":"+strings.Join(userIDs, ","))
+	return 3
+}
+
+// TestResolveReportsWhatItDid: a provisioned account and the group changes
+// a sign-in makes come back to the caller, which audits them; a removal
+// from a mapped group ends the sessions that group granted.
+func TestResolveReportsWhatItDid(t *testing.T) {
+	e := newProvisionEnv(t)
+	ctx := context.Background()
+	ender := &sessionEnder{}
+	e.pv.Revoker = ender
+	p := e.provider(t, "corp", true)
+	p.Config.DefaultRoles = []user.Role{user.RoleAdmin}
+	p.Config.GroupMapping = GroupMapping{"ops-team": "g-ops", "dev-team": "g-dev"}
+
+	r, err := e.pv.Resolve(ctx, p, Identity{ExternalID: "sub-1", Username: "carol", Groups: []string{"ops-team", "dev-team"}})
+	if err != nil || !r.Created || r.Linked {
+		t.Fatalf("first sign-in: %+v %v", r, err)
+	}
+	evs := r.Events("192.0.2.7", p, Identity{ExternalID: "sub-1"})
+	if len(evs) != 2 || evs[0].Action != "user.create" || evs[1].Action != "user.groups.sync" {
+		t.Fatalf("events: %v", actions(evs))
+	}
+	var created map[string]any
+	_ = json.Unmarshal(evs[0].Details, &created)
+	if created["via"] != "identity_provider" || fmt.Sprint(created["roles_granted"]) != "[admin]" || evs[0].ActorIP != "192.0.2.7" {
+		t.Fatalf("the provisioned admin is not on the record: %v", created)
+	}
+
+	// The directory drops carol from ops-team: she leaves g-ops, and what
+	// g-ops granted ends.
+	r, err = e.pv.Resolve(ctx, p, Identity{ExternalID: "sub-1", Username: "carol", Groups: []string{"dev-team"}})
+	if err != nil || r.Created || len(r.GroupsAdded) != 0 || strings.Join(r.GroupsRemoved, ",") != "g-ops" || r.LiveSessionsEnded != 3 {
+		t.Fatalf("second sign-in: %+v %v", r, err)
+	}
+	if strings.Join(ender.calls, ";") != "g-ops:"+r.User.ID {
+		t.Fatalf("sessions ended: %v", ender.calls)
+	}
+	evs = r.Events("192.0.2.7", p, Identity{ExternalID: "sub-1"})
+	var sync map[string]any
+	if len(evs) != 1 || json.Unmarshal(evs[0].Details, &sync) != nil || sync["live_sessions_ended"] != float64(3) {
+		t.Fatalf("group sync event: %v %v", actions(evs), sync)
+	}
+	// A sign-in that changes nothing records nothing extra.
+	if r, _ = e.pv.Resolve(ctx, p, Identity{ExternalID: "sub-1", Username: "carol", Groups: []string{"dev-team"}}); len(r.Events("", p, Identity{})) != 0 {
+		t.Fatal("an unchanged sign-in recorded events")
+	}
+}
+
+func actions(evs []audit.Event) []string {
+	out := make([]string, 0, len(evs))
+	for _, e := range evs {
+		out = append(out, e.Action)
+	}
+	return out
 }
