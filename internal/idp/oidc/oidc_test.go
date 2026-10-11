@@ -286,6 +286,53 @@ func TestPartialSessionWhenEnrolled(t *testing.T) {
 	}
 }
 
+// TestPartialSignInKeepsTheFailureCount: wrong passwords and wrong
+// authenticator codes share one budget per account (M7). A provider sign-in
+// that still owes the code is not a complete sign-in, so it must leave the
+// account's failure count alone, or each one would hand out a fresh set of
+// guesses at the code; one that completes clears it.
+func TestPartialSignInKeepsTheFailureCount(t *testing.T) {
+	f := newFakeIdP(t)
+	f.claims = map[string]any{"preferred_username": "dora", "email": "dora@corp.example"}
+	e, id := newEnv(t, f, idp.Config{OIDC: &idp.OIDCConfig{ClientID: "cid", ClientSecret: "s"}, AutoProvision: true})
+	if st, _, _ := drive(t, e, f, id); st != 302 {
+		t.Fatalf("first sign-in: %d", st)
+	}
+	ctx := context.Background()
+	u, err := e.users.GetByUsername(ctx, "dora")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 2; i++ {
+		if _, err := e.users.RecordLoginFailure(ctx, u.ID, 5, time.Minute); err != nil {
+			t.Fatal(err)
+		}
+	}
+	failed := func() int {
+		t.Helper()
+		got, err := e.users.GetByID(ctx, u.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return got.FailedLogins
+	}
+
+	e.h.MFAEnrolled = func(context.Context, string) (bool, error) { return true, nil }
+	if st, loc, _ := drive(t, e, f, id); st != 302 || !strings.HasPrefix(loc, "/login?next=") {
+		t.Fatalf("sign-in owing the code: %d %s", st, loc)
+	}
+	if n := failed(); n != 2 {
+		t.Fatalf("a provider sign-in with the code still owed left %d failures on the account, want 2", n)
+	}
+	e.h.MFAEnrolled = func(context.Context, string) (bool, error) { return false, nil }
+	if st, loc, _ := drive(t, e, f, id); st != 302 || loc != "/admin" {
+		t.Fatalf("complete sign-in: %d %s", st, loc)
+	}
+	if n := failed(); n != 0 {
+		t.Fatalf("a complete provider sign-in left %d failures, want 0", n)
+	}
+}
+
 // TestSafeNext: the post-login path is used in a Location header, so it must
 // be a path on this origin after a browser has had its way with it.
 func TestSafeNext(t *testing.T) {

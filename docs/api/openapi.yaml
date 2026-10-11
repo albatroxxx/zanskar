@@ -151,9 +151,12 @@ paths:
       tags: [auth]
       summary: Log in with username and password
       description: |
-        Rate limited per source IP and per username. After repeated failures the account is set to
-        `locked` until `locked_until`. The response body does not reveal whether the username
-        exists. On success the `zanskar_session` cookie is set.
+        Rate limited per source IP. Wrong passwords and wrong second-factor codes count against the
+        account together: five in a row, from whichever clients, lock it against new sign-ins for
+        15 minutes (`locked_until`), and a locked account gets the same `401` as a wrong password.
+        Sessions already signed in carry on. The count is cleared when a sign-in completes, not by
+        the right password while a second factor is still owed. The response body does not reveal
+        whether the username exists. On success the `zanskar_session` cookie is set.
       security: []
       requestBody:
         required: true
@@ -175,12 +178,6 @@ paths:
                 $ref: "#/components/schemas/LoginResponse"
         "401":
           $ref: "#/components/responses/Unauthorized"
-        "423":
-          description: Account is locked.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
         "429":
           $ref: "#/components/responses/RateLimited"
   /auth/mfa/totp/verify:
@@ -203,8 +200,10 @@ paths:
                 $ref: "#/components/schemas/Me"
         "401":
           description: |
-            `invalid_code`: the code is wrong; try again. After five wrong codes the half-finished
-            sign-in ends and the reply's `code` is `sign_in_ended`: start again from the password.
+            `invalid_code`: the code is wrong; try again. Wrong codes count against the account
+            together with wrong passwords (see `POST /auth/login`). After five wrong codes the
+            half-finished sign-in ends and the reply's `code` is `sign_in_ended`: start again from
+            the password. A sign-in whose account is locked ends the same way, whatever the code.
             `unauthenticated`: there is no sign-in in progress.
           content:
             application/json:
@@ -310,7 +309,12 @@ paths:
         "400":
           $ref: "#/components/responses/BadRequest"
         "401":
-          description: The code is wrong; `code` is `invalid_code`. Audited as a failed `user.mfa.confirm`.
+          description: >
+            The code is wrong; `code` is `invalid_code`. Audited as a failed `user.mfa.confirm`.
+            Wrong codes count against the account together with wrong passwords (see
+            `POST /auth/login`). When enrolment is the step a sign-in still owes and the account is
+            locked, by this code or before it, the sign-in ends instead and `code` is
+            `sign_in_ended`: start again from the password.
           content:
             application/json:
               schema:
