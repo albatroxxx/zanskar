@@ -64,6 +64,9 @@ type Info struct {
 	Fingerprint string    `json:"fingerprint"` // SHA-256 of the leaf, hex
 	SelfSigned  bool      `json:"self_signed"`
 	CertPEM     string    `json:"cert_pem,omitempty"`
+	// Problem says why a stored certificate cannot serve now (expired, not
+	// valid yet, not for server authentication); empty when it can.
+	Problem string `json:"problem,omitempty"`
 }
 
 // ExpiresWithin reports whether the certificate ends before now+d.
@@ -133,12 +136,20 @@ func Parse(certPEM, keyPEM string) (tls.Certificate, *x509.Certificate, error) {
 	if err != nil {
 		return tls.Certificate{}, nil, fmt.Errorf("%w: %w", ErrInvalid, err)
 	}
-	now := time.Now()
+	if err := servable(leaf, time.Now()); err != nil {
+		return tls.Certificate{}, nil, err
+	}
+	cert.Leaf = leaf
+	return cert, leaf, nil
+}
+
+// servable reports why a leaf cannot serve TLS at now, or nil when it can.
+func servable(leaf *x509.Certificate, now time.Time) error {
 	if now.After(leaf.NotAfter) {
-		return tls.Certificate{}, nil, fmt.Errorf("%w: the certificate expired on %s", ErrInvalid, leaf.NotAfter.UTC().Format(time.RFC3339))
+		return fmt.Errorf("%w: the certificate expired on %s", ErrInvalid, leaf.NotAfter.UTC().Format(time.RFC3339))
 	}
 	if now.Before(leaf.NotBefore) {
-		return tls.Certificate{}, nil, fmt.Errorf("%w: the certificate is not valid before %s", ErrInvalid, leaf.NotBefore.UTC().Format(time.RFC3339))
+		return fmt.Errorf("%w: the certificate is not valid before %s", ErrInvalid, leaf.NotBefore.UTC().Format(time.RFC3339))
 	}
 	if len(leaf.ExtKeyUsage) > 0 {
 		ok := false
@@ -148,11 +159,10 @@ func Parse(certPEM, keyPEM string) (tls.Certificate, *x509.Certificate, error) {
 			}
 		}
 		if !ok {
-			return tls.Certificate{}, nil, fmt.Errorf("%w: the certificate does not allow server authentication", ErrInvalid)
+			return fmt.Errorf("%w: the certificate does not allow server authentication", ErrInvalid)
 		}
 	}
-	cert.Leaf = leaf
-	return cert, leaf, nil
+	return nil
 }
 
 // SelfSign makes a certificate for hosts (DNS names and IP addresses),
@@ -279,6 +289,16 @@ func (r *Repo) Get(ctx context.Context, kind string) (certPEM, keyPEM string, er
 	return certPEM, string(plain), nil
 }
 
+// GetCertPEM returns a stored certificate without its key.
+func (r *Repo) GetCertPEM(ctx context.Context, kind string) (string, error) {
+	var certPEM string
+	err := r.db.QueryRowContext(ctx, r.db.Rebind(`SELECT cert_pem FROM tls_certificates WHERE kind = ?`), kind).Scan(&certPEM)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", ErrNotFound
+	}
+	return certPEM, err
+}
+
 // Put stores (or replaces) the row of kind.
 func (r *Repo) Put(ctx context.Context, kind, certPEM, keyPEM, createdBy string) error {
 	sealed, ver, err := r.ring.Encrypt(keyring.AAD(table, kind), []byte(keyPEM))
@@ -327,12 +347,12 @@ func (m *Manager) Load(ctx context.Context) error {
 			m.set(SourceUploaded, cert, leaf, certPEM)
 			return nil
 		}
-		// An upload that expired while the gateway was down would hide from
-		// the card and could never be removed; drop it and say so.
-		m.Log.Warn("uploaded TLS certificate no longer valid; removed, falling back", "err", perr)
-		if err := m.Repo.Delete(ctx, SourceUploaded); err != nil {
-			return err
-		}
+		// An upload that cannot serve now (expired while the gateway was
+		// down, or not valid yet because the clock is behind after a
+		// restore) is kept with its key, never deleted here: the Settings
+		// card shows it and why, and the administrator replaces or removes
+		// it. A clock that catches up makes it serve again at the next start.
+		m.Log.Warn("uploaded TLS certificate cannot serve now; kept, falling back", "err", perr)
 	} else if !errors.Is(err, ErrNotFound) {
 		return err
 	}
@@ -447,26 +467,39 @@ func (m *Manager) Regenerate(ctx context.Context, hosts []string, by string) err
 
 // Generated describes the stored self-signed certificate, if any.
 func (m *Manager) Generated(ctx context.Context) (Info, error) {
-	certPEM, keyPEM, err := m.Repo.Get(ctx, SourceGenerated)
-	if err != nil {
-		return Info{}, err
-	}
-	_, leaf, err := Parse(certPEM, keyPEM)
-	if err != nil {
-		return Info{}, err
-	}
-	return describe(SourceGenerated, leaf, certPEM), nil
+	return m.stored(ctx, SourceGenerated)
 }
 
-// Uploaded describes the stored uploaded certificate, if any.
+// Uploaded describes the stored uploaded certificate, if any, with the
+// reason it cannot serve when it cannot.
 func (m *Manager) Uploaded(ctx context.Context) (Info, error) {
-	certPEM, keyPEM, err := m.Repo.Get(ctx, SourceUploaded)
+	return m.stored(ctx, SourceUploaded)
+}
+
+// stored describes a stored certificate from the certificate alone: the
+// Settings card polls it, and nothing it shows needs the private key, so
+// the key is not unsealed per poll.
+func (m *Manager) stored(ctx context.Context, kind string) (Info, error) {
+	certPEM, err := m.Repo.GetCertPEM(ctx, kind)
 	if err != nil {
 		return Info{}, err
 	}
-	_, leaf, err := Parse(certPEM, keyPEM)
+	leaf, err := leafOf(certPEM)
 	if err != nil {
 		return Info{}, err
 	}
-	return describe(SourceUploaded, leaf, certPEM), nil
+	info := describe(kind, leaf, certPEM)
+	if err := servable(leaf, time.Now()); err != nil {
+		info.Problem = strings.TrimPrefix(err.Error(), ErrInvalid.Error()+": ")
+	}
+	return info, nil
+}
+
+// leafOf parses the first certificate of a PEM bundle.
+func leafOf(certPEM string) (*x509.Certificate, error) {
+	b, _ := pem.Decode([]byte(certPEM))
+	if b == nil || b.Type != "CERTIFICATE" {
+		return nil, fmt.Errorf("%w: no certificate in the stored PEM", ErrInvalid)
+	}
+	return x509.ParseCertificate(b.Bytes)
 }
