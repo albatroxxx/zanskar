@@ -136,7 +136,7 @@ func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
 	ip := ClientIP(r)
 	actor := audit.Actor{IP: ip}
 	if !h.loginLimiter.Allow(limiterKey(ip)) {
-		h.record(r, actor.Event("user.login", "user", "", audit.Failure, map[string]string{"reason": "rate_limited"}))
+		h.record(r, actor.Event(audit.UserLogin, "user", "", audit.Failure, map[string]string{"reason": "rate_limited"}))
 		WriteError(w, http.StatusTooManyRequests, "rate_limited", "too many attempts; try again later")
 		return
 	}
@@ -172,7 +172,7 @@ func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
 		if !h.hashing(w, r, func() { user.BurnPasswordCheck(req.Password) }) {
 			return
 		}
-		h.record(r, actor.Event("user.login", "user", "", audit.Failure, map[string]string{"reason": "unknown_user", "username": attempted}))
+		h.record(r, actor.Event(audit.UserLogin, "user", "", audit.Failure, map[string]string{"reason": "unknown_user", "username": attempted}))
 		WriteError(w, http.StatusUnauthorized, "invalid_credentials", "invalid username or password")
 		return
 	}
@@ -183,7 +183,7 @@ func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
 			if !h.hashing(w, r, func() { user.BurnPasswordCheck(req.Password) }) {
 				return
 			}
-			h.record(r, actor.Event("user.login", "user", u.ID, audit.Failure, map[string]string{"reason": "locked"}))
+			h.record(r, actor.Event(audit.UserLogin, "user", u.ID, audit.Failure, map[string]string{"reason": "locked"}))
 			WriteError(w, http.StatusUnauthorized, "invalid_credentials", "invalid username or password")
 			return
 		}
@@ -210,7 +210,7 @@ func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
 			if locked {
 				details["locked_for"] = h.LockFor.String()
 			}
-			h.record(r, actor.Event("user.login", "user", u.ID, audit.Failure, details))
+			h.record(r, actor.Event(audit.UserLogin, "user", u.ID, audit.Failure, details))
 			WriteError(w, http.StatusUnauthorized, "invalid_credentials", "invalid username or password")
 			return
 		}
@@ -237,7 +237,7 @@ func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
 	if !h.hashing(w, r, func() { user.BurnPasswordCheck(req.Password) }) {
 		return
 	}
-	h.record(r, actor.Event("user.login", "user", u.ID, audit.Failure, map[string]string{"reason": "no_password_no_external"}))
+	h.record(r, actor.Event(audit.UserLogin, "user", u.ID, audit.Failure, map[string]string{"reason": "no_password_no_external"}))
 	WriteError(w, http.StatusUnauthorized, "invalid_credentials", "invalid username or password")
 }
 
@@ -295,27 +295,27 @@ func (h *Handler) completeLogin(w http.ResponseWriter, r *http.Request, u *user.
 	// to choose the next one. An account without one changes first, then
 	// enrols.
 	if !enrolled && u.MustResetOnLogin {
-		h.record(r, actor.Event("user.login", "user", u.ID, audit.Success, map[string]string{"stage": "password", "next": "password_change", "session_id": sess.ID}))
+		h.record(r, actor.Event(audit.UserLogin, "user", u.ID, audit.Success, map[string]string{"stage": "password", "next": "password_change", "session_id": sess.ID}))
 		WriteJSON(w, http.StatusOK, loginResponse{Status: "password_change_required", CSRFToken: h.Sessions.CSRFToken(sess.ID)})
 		return
 	}
 	if !enrolled && require {
-		h.record(r, actor.Event("user.login", "user", u.ID, audit.Success, map[string]string{"stage": "password", "next": "mfa_enrollment", "session_id": sess.ID}))
+		h.record(r, actor.Event(audit.UserLogin, "user", u.ID, audit.Success, map[string]string{"stage": "password", "next": "mfa_enrollment", "session_id": sess.ID}))
 		WriteJSON(w, http.StatusOK, loginResponse{Status: "mfa_enrollment_required", CSRFToken: h.Sessions.CSRFToken(sess.ID)})
 		return
 	}
 	if enrolled {
-		h.record(r, actor.Event("user.login", "user", u.ID, audit.Success, map[string]string{"stage": "password", "session_id": sess.ID}))
+		h.record(r, actor.Event(audit.UserLogin, "user", u.ID, audit.Success, map[string]string{"stage": "password", "session_id": sess.ID}))
 		WriteJSON(w, http.StatusOK, loginResponse{Status: "mfa_required", CSRFToken: h.Sessions.CSRFToken(sess.ID)})
 		return
 	}
-	h.record(r, actor.Event("user.login", "user", u.ID, audit.Success, map[string]string{"stage": "complete", "mfa": "none", "session_id": sess.ID}))
+	h.record(r, actor.Event(audit.UserLogin, "user", u.ID, audit.Success, map[string]string{"stage": "complete", "mfa": "none", "session_id": sess.ID}))
 	WriteJSON(w, http.StatusOK, loginResponse{Status: "ok", User: u, CSRFToken: h.Sessions.CSRFToken(sess.ID)})
 }
 
 // actionSelfReset is the audit action for a user replacing their own
 // password.
-const actionSelfReset = "user.password.change"
+const actionSelfReset = audit.UserPasswordChange
 
 // recordAction builds and records an audit event from its parts. The event
 // is built here, from plain parameters, rather than at the call sites:
@@ -444,7 +444,7 @@ func (h *Handler) logout(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.Sessions.ClearCookie(w)
-	h.record(r, ActorFor(r).Event("user.logout", "user", p.User.ID, audit.Success, map[string]string{"session_id": p.Session.ID}))
+	h.record(r, ActorFor(r).Event(audit.UserLogout, "user", p.User.ID, audit.Success, map[string]string{"session_id": p.Session.ID}))
 	WriteJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
@@ -608,7 +608,7 @@ func (h *Handler) totpVerify(w http.ResponseWriter, r *http.Request) {
 			h.endSignIn(w, r, p)
 			details["session_ended"] = true
 		}
-		h.record(r, ActorFor(r).Event("user.mfa.verify", "user", p.User.ID, audit.Failure, details))
+		h.record(r, ActorFor(r).Event(audit.UserMFAVerify, "user", p.User.ID, audit.Failure, details))
 		if ended {
 			// Its own code, so the console goes back to the password step
 			// instead of offering a code box that can no longer work.
@@ -627,7 +627,7 @@ func (h *Handler) totpVerify(w http.ResponseWriter, r *http.Request) {
 	if usedRecovery {
 		method = "recovery_code"
 	}
-	h.record(r, ActorFor(r).Event("user.login", "user", p.User.ID, audit.Success, map[string]string{"stage": "complete", "mfa": method, "session_id": p.Session.ID}))
+	h.record(r, ActorFor(r).Event(audit.UserLogin, "user", p.User.ID, audit.Success, map[string]string{"stage": "complete", "mfa": method, "session_id": p.Session.ID}))
 	WriteJSON(w, http.StatusOK, loginResponse{Status: "ok", User: p.User, CSRFToken: h.Sessions.CSRFToken(p.Session.ID)})
 }
 
@@ -645,7 +645,7 @@ func (h *Handler) totpEnroll(w http.ResponseWriter, r *http.Request) {
 		h.serverError(w, r, err)
 		return
 	}
-	h.record(r, ActorFor(r).Event("user.mfa.enroll", "user", p.User.ID, audit.Success, nil))
+	h.record(r, ActorFor(r).Event(audit.UserMFAEnroll, "user", p.User.ID, audit.Success, nil))
 	WriteJSON(w, http.StatusOK, enr)
 }
 
@@ -691,11 +691,11 @@ func (h *Handler) totpConfirm(w http.ResponseWriter, r *http.Request) {
 		if signIn && verdict != codeWrong {
 			h.endSignIn(w, r, p)
 			details["session_ended"] = true
-			h.record(r, ActorFor(r).Event("user.mfa.confirm", "user", p.User.ID, audit.Failure, details))
+			h.record(r, ActorFor(r).Event(audit.UserMFAConfirm, "user", p.User.ID, audit.Failure, details))
 			WriteError(w, http.StatusUnauthorized, "sign_in_ended", "too many wrong codes; sign in again")
 			return
 		}
-		h.record(r, ActorFor(r).Event("user.mfa.confirm", "user", p.User.ID, audit.Failure, details))
+		h.record(r, ActorFor(r).Event(audit.UserMFAConfirm, "user", p.User.ID, audit.Failure, details))
 		WriteError(w, http.StatusUnauthorized, "invalid_code", "invalid code")
 		return
 	}
@@ -705,7 +705,7 @@ func (h *Handler) totpConfirm(w http.ResponseWriter, r *http.Request) {
 		h.serverError(w, r, err)
 		return
 	}
-	h.record(r, ActorFor(r).Event("user.mfa.confirm", "user", p.User.ID, audit.Success, nil))
+	h.record(r, ActorFor(r).Event(audit.UserMFAConfirm, "user", p.User.ID, audit.Success, nil))
 	WriteJSON(w, http.StatusOK, map[string]any{"recovery_codes": codes, "status": "ok", "csrf_token": h.Sessions.CSRFToken(p.Session.ID)})
 }
 

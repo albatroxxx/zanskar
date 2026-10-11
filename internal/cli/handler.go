@@ -153,7 +153,7 @@ func (h *Handler) unlock(w http.ResponseWriter, r *http.Request) {
 	recovery, err := h.MFA.Verify(r.Context(), p.User.ID, in.Code)
 	switch {
 	case errors.Is(err, auth.ErrTOTPNotEnrolled):
-		h.record(r, "cli.unlock", audit.Failure, map[string]any{"reason": "no authenticator enrolled"})
+		h.record(r, audit.CLIUnlock, audit.Failure, map[string]any{"reason": "no authenticator enrolled"})
 		httpx.WriteError(w, http.StatusConflict, "mfa_not_enrolled", "enrol an authenticator first: the command line asks for a code from it")
 		return
 	case errors.Is(err, auth.ErrTOTPBadCode):
@@ -168,7 +168,7 @@ func (h *Handler) unlock(w http.ResponseWriter, r *http.Request) {
 		if errors.Is(err, auth.ErrTOTPReused) {
 			reason = "code already used" // a right code seen once already: someone may have read it
 		}
-		h.record(r, "cli.unlock", audit.Failure, map[string]any{"reason": reason, "closed": closed})
+		h.record(r, audit.CLIUnlock, audit.Failure, map[string]any{"reason": reason, "closed": closed})
 		// 422, not 401: to the console a 401 means the sign-in itself has ended.
 		httpx.WriteError(w, http.StatusUnprocessableEntity, "bad_code", "that code is not right")
 		return
@@ -185,7 +185,7 @@ func (h *Handler) unlock(w http.ResponseWriter, r *http.Request) {
 	h.mu.Lock()
 	s.fails, s.lastUse = 0, now
 	h.mu.Unlock()
-	h.record(r, "cli.unlock", audit.Success, map[string]any{"recovery_code_used": recovery})
+	h.record(r, audit.CLIUnlock, audit.Success, map[string]any{"recovery_code_used": recovery})
 	httpx.WriteJSON(w, http.StatusOK, map[string]bool{"unlocked": true})
 }
 
@@ -377,7 +377,7 @@ func (h *Handler) audit(r *http.Request, line, name, result string, calls []apiC
 	if len(calls) > 0 {
 		details["calls"] = calls
 	}
-	h.record(r, "cli.command", outcome, details)
+	h.record(r, audit.CLICommand, outcome, details)
 }
 
 func (h *Handler) record(r *http.Request, action string, outcome audit.Outcome, details any) {

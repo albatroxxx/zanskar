@@ -150,7 +150,7 @@ func runKeyRotate() error {
 	if err != nil {
 		return err
 	}
-	if _, err := audit.NewLog(db).Record(ctx, audit.Actor{IP: "cli"}.Event("key.rotate", "key_version", fmt.Sprint(ver), audit.Success,
+	if _, err := audit.NewLog(db).Record(ctx, audit.Actor{IP: "cli"}.Event(audit.KeyRotate, "key_version", fmt.Sprint(ver), audit.Success,
 		map[string]any{"active_version": ver})); err != nil {
 		return fmt.Errorf("rotated to version %d but the audit event failed: %w", ver, err)
 	}
@@ -281,7 +281,7 @@ func runKeyRotateMaster(args []string) error {
 	default:
 		fmt.Printf("re-signed %d audit anchor(s) under the new key.\n", resigned)
 	}
-	if _, err := auditLog.Record(ctx, audit.Actor{IP: "cli"}.Event("key.rotate_master", "key_versions", "all", audit.Success,
+	if _, err := auditLog.Record(ctx, audit.Actor{IP: "cli"}.Event(audit.KeyRotateMaster, "key_versions", "all", audit.Success,
 		map[string]any{"versions_rewrapped": n, "anchors_resigned": resigned, "env_file_updated": *envFile != "", "key_file_updated": *keyFile != ""})); err != nil {
 		fmt.Fprintln(os.Stderr, "warning: the rewrap succeeded but the audit event could not be written:", err)
 	}

@@ -104,7 +104,7 @@ func (h *AdminHandler) create(w http.ResponseWriter, r *http.Request) {
 		h.writeErr(w, r, err)
 		return
 	}
-	h.record(r, "credential.create", c, map[string]any{"type": c.Type, "mode": c.Mode, "name": c.Name, "generated_key": generated, "certificate_principals": len(c.CertificatePrincipals)})
+	h.record(r, audit.CredentialCreate, c, map[string]any{"type": c.Type, "mode": c.Mode, "name": c.Name, "generated_key": generated, "certificate_principals": len(c.CertificatePrincipals)})
 	httpx.WriteJSON(w, http.StatusCreated, c)
 }
 
@@ -130,7 +130,7 @@ func (h *AdminHandler) generateSSHKey(w http.ResponseWriter, r *http.Request) {
 		h.writeErr(w, r, err)
 		return
 	}
-	h.record(r, "credential.create", c, map[string]any{"type": c.Type, "mode": c.Mode, "name": c.Name, "generated_key": true})
+	h.record(r, audit.CredentialCreate, c, map[string]any{"type": c.Type, "mode": c.Mode, "name": c.Name, "generated_key": true})
 	httpx.WriteJSON(w, http.StatusCreated, c)
 }
 
@@ -193,13 +193,13 @@ func (h *AdminHandler) update(w http.ResponseWriter, r *http.Request) {
 	}
 	// Audited as soon as it is saved, so a rotation that fails after this
 	// still leaves the saved change on the record.
-	h.record(r, "credential.update", c, map[string]any{"type": c.Type, "mode": c.Mode, "name": c.Name, "certificate_principals": len(c.CertificatePrincipals)})
+	h.record(r, audit.CredentialUpdate, c, map[string]any{"type": c.Type, "mode": c.Mode, "name": c.Name, "certificate_principals": len(c.CertificatePrincipals)})
 	if rotate {
 		if c, err = h.Vault.Rotate(r.Context(), id, req.secret()); err != nil {
 			h.writeErr(w, r, err)
 			return
 		}
-		h.record(r, "credential.rotate", c, map[string]any{"type": c.Type, "mode": c.Mode, "name": c.Name})
+		h.record(r, audit.CredentialRotate, c, map[string]any{"type": c.Type, "mode": c.Mode, "name": c.Name})
 	}
 	httpx.WriteJSON(w, http.StatusOK, c)
 }
@@ -236,7 +236,7 @@ func (h *AdminHandler) rotate(w http.ResponseWriter, r *http.Request) {
 			h.writeErr(w, r, err)
 			return
 		}
-		h.record(r, "credential.rotate.prepare", c, map[string]any{"type": c.Type, "name": c.Name, "generated_key": generated,
+		h.record(r, audit.CredentialRotatePrepare, c, map[string]any{"type": c.Type, "name": c.Name, "generated_key": generated,
 			"next_fingerprint": fingerprint(c.Rotation.PendingPublicKey)})
 		httpx.WriteJSON(w, http.StatusOK, c)
 		return
@@ -246,7 +246,7 @@ func (h *AdminHandler) rotate(w http.ResponseWriter, r *http.Request) {
 		h.writeErr(w, r, err)
 		return
 	}
-	h.record(r, "credential.rotate", c, map[string]any{"type": c.Type, "mode": c.Mode, "name": c.Name, "generated_key": generated})
+	h.record(r, audit.CredentialRotate, c, map[string]any{"type": c.Type, "mode": c.Mode, "name": c.Name, "generated_key": generated})
 	httpx.WriteJSON(w, http.StatusOK, c)
 }
 
@@ -262,7 +262,7 @@ func (h *AdminHandler) cutOver(w http.ResponseWriter, r *http.Request) {
 		h.writeErr(w, r, err)
 		return
 	}
-	h.record(r, "credential.rotate", c, map[string]any{"type": c.Type, "mode": c.Mode, "name": c.Name,
+	h.record(r, audit.CredentialRotate, c, map[string]any{"type": c.Type, "mode": c.Mode, "name": c.Name,
 		"old_fingerprint": fingerprint(before.PublicKey), "new_fingerprint": fingerprint(c.PublicKey)})
 	httpx.WriteJSON(w, http.StatusOK, c)
 }
@@ -273,7 +273,7 @@ func (h *AdminHandler) cancelRotation(w http.ResponseWriter, r *http.Request) {
 		h.writeErr(w, r, err)
 		return
 	}
-	h.record(r, "credential.rotate.cancel", c, map[string]any{"type": c.Type, "name": c.Name})
+	h.record(r, audit.CredentialRotateCancel, c, map[string]any{"type": c.Type, "name": c.Name})
 	httpx.WriteJSON(w, http.StatusOK, c)
 }
 
@@ -292,7 +292,7 @@ func (h *AdminHandler) retire(w http.ResponseWriter, r *http.Request) {
 	if before.Rotation != nil {
 		retired = fingerprint(before.Rotation.RetiredPublicKey)
 	}
-	h.record(r, "credential.rotate.retire", c, map[string]any{"type": c.Type, "name": c.Name, "retired_fingerprint": retired})
+	h.record(r, audit.CredentialRotateRetire, c, map[string]any{"type": c.Type, "name": c.Name, "retired_fingerprint": retired})
 	httpx.WriteJSON(w, http.StatusOK, c)
 }
 
@@ -319,7 +319,7 @@ func (h *AdminHandler) delete(w http.ResponseWriter, r *http.Request) {
 		h.writeErr(w, r, err)
 		return
 	}
-	h.record(r, "credential.delete", c, map[string]any{"type": c.Type, "mode": c.Mode, "name": c.Name})
+	h.record(r, audit.CredentialDelete, c, map[string]any{"type": c.Type, "mode": c.Mode, "name": c.Name})
 	w.WriteHeader(http.StatusNoContent)
 }
 

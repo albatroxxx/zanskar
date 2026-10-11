@@ -101,7 +101,7 @@ func (h *Handler) put(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	a := h.Manager.Active()
-	h.record(r, "recording.storage.update", map[string]any{"before": before, "after": a})
+	h.record(r, audit.RecordingStorageUpdate, map[string]any{"before": before, "after": a})
 	h.write(w, r, http.StatusOK)
 }
 
@@ -111,7 +111,7 @@ func (h *Handler) reset(w http.ResponseWriter, r *http.Request) {
 		h.fail(w, r, err)
 		return
 	}
-	h.record(r, "recording.storage.reset", map[string]any{"before": before, "after": h.Manager.Active(), "source": h.Manager.Source()})
+	h.record(r, audit.RecordingStorageReset, map[string]any{"before": before, "after": h.Manager.Active(), "source": h.Manager.Source()})
 	h.write(w, r, http.StatusOK)
 }
 
@@ -126,9 +126,9 @@ func (h *Handler) move(w http.ResponseWriter, r *http.Request) {
 		// its own context.
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		if _, err := h.Audit.Record(ctx, actor.Event("recording.storage.move", "recording_storage", "gateway", audit.Success,
+		if _, err := h.Audit.Record(ctx, actor.Event(audit.RecordingStorageMove, "recording_storage", "gateway", audit.Success,
 			map[string]any{"moved": final.Moved, "failed": final.Failed, "total": final.Total, "last_error": final.LastError})); err != nil {
-			h.Log.Error("audit record failed", "action", "recording.storage.move", "err", err)
+			h.Log.Error("audit record failed", "action", audit.RecordingStorageMove, "err", err)
 		}
 	})
 	if err != nil {

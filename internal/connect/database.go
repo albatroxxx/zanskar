@@ -77,7 +77,7 @@ func (h *Handler) database(w http.ResponseWriter, r *http.Request) {
 	// simultaneous starts can overshoot by the burst. Refused here, before the
 	// upgrade, because no status can follow it.
 	if h.DBMaxSessions > 0 && h.Registry != nil && h.liveDatabaseSessions() >= h.DBMaxSessions {
-		h.record(r, actorFor(g.UserID, ip).Event("session.connect", "target", ep.LiveKey, audit.Failure,
+		h.record(r, actorFor(g.UserID, ip).Event(audit.SessionConnect, "target", ep.LiveKey, audit.Failure,
 			map[string]any{"protocol": g.Protocol, "reason": "too_many_sessions", "limit": h.DBMaxSessions}))
 		httpx.WriteError(w, http.StatusServiceUnavailable, "too_many_sessions", "the gateway is running its maximum number of database sessions; try again in a moment")
 		return
@@ -101,7 +101,7 @@ func (h *Handler) database(w http.ResponseWriter, r *http.Request) {
 	actor := audit.Actor{UserID: g.UserID, IP: ip}
 	endWith := func(reason, msg string) {
 		_ = h.Sessions.End(context.Background(), s.ID, reason)
-		h.record(r, actor.Event("session.end", "access_session", s.ID, audit.Success, map[string]string{"reason": reason, "target_id": ep.LiveKey}))
+		h.record(r, actor.Event(audit.SessionEnd, "access_session", s.ID, audit.Success, map[string]string{"reason": reason, "target_id": ep.LiveKey}))
 		if msg != "" {
 			_ = ws.Close(websocket.StatusPolicyViolation, msg)
 		}
@@ -121,7 +121,7 @@ func (h *Handler) database(w http.ResponseWriter, r *http.Request) {
 		endWith(session.EndError, "recording could not be registered; session refused")
 		return
 	}
-	h.record(r, actor.Event("session.start", "access_session", s.ID, audit.Success,
+	h.record(r, actor.Event(audit.SessionStart, "access_session", s.ID, audit.Success,
 		map[string]any{"target_id": ep.LiveKey, "protocol": g.Protocol, "policy_id": g.PolicyID, "recording_id": recRow.ID, "engine": ep.Engine}))
 
 	ctx := h.Registry.Add(r.Context(), gateway.Live{SessionID: s.ID, UserID: g.UserID, TargetID: ep.LiveKey, Protocol: g.Protocol, PolicyID: g.PolicyID})

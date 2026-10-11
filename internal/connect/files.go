@@ -121,7 +121,7 @@ func (h *Handler) downloadFile(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Length", strconv.FormatInt(fi.Size(), 10))
 	w.Header().Set("Content-Disposition", "attachment; filename*=UTF-8''"+url.PathEscape(path.Base(rpath)))
 	n, _ := io.Copy(w, f)
-	h.record(r, audit.Actor{UserID: p.User.ID, IP: auth.ClientIP(r)}.Event("file.download", "access_session", r.PathValue("id"), audit.Success,
+	h.record(r, audit.Actor{UserID: p.User.ID, IP: auth.ClientIP(r)}.Event(audit.FileDownload, "access_session", r.PathValue("id"), audit.Success,
 		map[string]any{"path": rpath, "bytes": n, "target_id": fs.targetKey}))
 }
 
@@ -149,7 +149,7 @@ func (h *Handler) uploadFile(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, http.StatusBadRequest, "sftp_error", "upload failed")
 		return
 	}
-	h.record(r, audit.Actor{UserID: p.User.ID, IP: auth.ClientIP(r)}.Event("file.upload", "access_session", r.PathValue("id"), audit.Success,
+	h.record(r, audit.Actor{UserID: p.User.ID, IP: auth.ClientIP(r)}.Event(audit.FileUpload, "access_session", r.PathValue("id"), audit.Success,
 		map[string]any{"path": rpath, "bytes": n, "target_id": fs.targetKey}))
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"path": rpath, "bytes": n})
 }

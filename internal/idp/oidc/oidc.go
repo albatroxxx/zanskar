@@ -237,7 +237,7 @@ func (h *Handler) callback(w http.ResponseWriter, r *http.Request) {
 		_ = h.Provisioner.Users.RecordLoginSuccess(r.Context(), u.ID)
 	}
 	h.Sessions.SetCookie(w, token)
-	h.record(r, audit.Actor{UserID: u.ID, IP: ip}.Event("user.login", "user", u.ID, audit.Success,
+	h.record(r, audit.Actor{UserID: u.ID, IP: ip}.Event(audit.UserLogin, "user", u.ID, audit.Success,
 		map[string]string{"idp": id, "mfa": mfa, "session_id": sess.ID, "stage": map[bool]string{true: "complete", false: "password"}[verified]}))
 	// The cookie is sealed, so Next is what start accepted; checking it again
 	// costs nothing and covers a cookie sealed under an older rule.
@@ -435,7 +435,7 @@ func (h *Handler) unseal(v string) (state, error) {
 
 func (h *Handler) fail(w http.ResponseWriter, r *http.Request, userID, idpID, code string, err error) {
 	h.Log.Warn("oidc login failed", "idp", idpID, "code", code, "err", err)
-	h.record(r, audit.Actor{UserID: userID, IP: auth.ClientIP(r)}.Event("user.login", "user", userID, audit.Failure,
+	h.record(r, audit.Actor{UserID: userID, IP: auth.ClientIP(r)}.Event(audit.UserLogin, "user", userID, audit.Failure,
 		map[string]string{"idp": idpID, "reason": code}))
 	http.Redirect(w, r, "/login?error="+url.QueryEscape(code), http.StatusFound)
 }

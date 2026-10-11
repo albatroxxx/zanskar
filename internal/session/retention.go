@@ -180,7 +180,7 @@ func (s *RetentionSweeper) Sweep(ctx context.Context) (int, error) {
 			continue
 		}
 		if s.Audit != nil {
-			if _, err := s.Audit.Record(ctx, audit.Actor{IP: "system"}.Event("recording.purge", "recording", c.id, audit.Success,
+			if _, err := s.Audit.Record(ctx, audit.Actor{IP: "system"}.Event(audit.RecordingPurge, "recording", c.id, audit.Success,
 				map[string]any{"reason": reason, "bytes": c.size})); err != nil {
 				s.Log.Error("retention: audit purge", "recording", c.id, "err", err)
 			}

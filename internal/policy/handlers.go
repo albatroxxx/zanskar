@@ -107,7 +107,7 @@ func (h *AdminHandler) create(w http.ResponseWriter, r *http.Request) {
 		h.fail(w, r, err)
 		return
 	}
-	h.record(r, "policy.create", p, nil)
+	h.record(r, audit.PolicyCreate, p, nil)
 	httpx.WriteJSON(w, http.StatusCreated, p)
 }
 
@@ -135,7 +135,7 @@ func (h *AdminHandler) update(w http.ResponseWriter, r *http.Request) {
 	if h.Revoker != nil {
 		more["live_sessions_ended"] = h.Revoker.PolicyChanged(r.Context(), p.ID)
 	}
-	h.record(r, "policy.update", p, more)
+	h.record(r, audit.PolicyUpdate, p, more)
 	httpx.WriteJSON(w, http.StatusOK, p)
 }
 
@@ -180,7 +180,7 @@ func (h *AdminHandler) del(w http.ResponseWriter, r *http.Request) {
 	if h.Revoker != nil {
 		more["live_sessions_ended"] = h.Revoker.PolicyDeleted(p.ID)
 	}
-	h.record(r, "policy.delete", p, more)
+	h.record(r, audit.PolicyDelete, p, more)
 	w.WriteHeader(http.StatusNoContent)
 }
 

@@ -81,8 +81,8 @@ func (h *ShadowHandler) shadowTerminal(w http.ResponseWriter, r *http.Request, l
 	defer ws.CloseNow()
 	ch, replay, cancel := tap.Subscribe()
 	defer cancel()
-	h.record(r, actor.Event("session.shadow.start", "access_session", live.SessionID, audit.Success, details))
-	defer h.record(r, actor.Event("session.shadow.end", "access_session", live.SessionID, audit.Success, details))
+	h.record(r, actor.Event(audit.SessionShadowStart, "access_session", live.SessionID, audit.Success, details))
+	defer h.record(r, actor.Event(audit.SessionShadowEnd, "access_session", live.SessionID, audit.Success, details))
 
 	ctx, stop := context.WithCancel(r.Context())
 	defer stop()
@@ -154,8 +154,8 @@ func (h *ShadowHandler) shadowDesktop(w http.ResponseWriter, r *http.Request, li
 		return
 	}
 	defer ws.CloseNow()
-	h.record(r, actor.Event("session.shadow.start", "access_session", live.SessionID, audit.Success, details))
-	defer h.record(r, actor.Event("session.shadow.end", "access_session", live.SessionID, audit.Success, details))
+	h.record(r, actor.Event(audit.SessionShadowStart, "access_session", live.SessionID, audit.Success, details))
+	defer h.record(r, actor.Event(audit.SessionShadowEnd, "access_session", live.SessionID, audit.Success, details))
 	if err := ws.Write(r.Context(), websocket.MessageText, []byte(guac.Encode("", live.SessionID))); err != nil {
 		return
 	}

@@ -72,7 +72,7 @@ func (h *AdminHandler) create(w http.ResponseWriter, r *http.Request) {
 		h.writeGroupError(w, r, err)
 		return
 	}
-	h.record(r, "group.create", g.ID, map[string]any{"name": g.Name})
+	h.record(r, audit.GroupCreate, g.ID, map[string]any{"name": g.Name})
 	httpx.WriteJSON(w, http.StatusCreated, g)
 }
 
@@ -109,7 +109,7 @@ func (h *AdminHandler) update(w http.ResponseWriter, r *http.Request) {
 		h.writeGroupError(w, r, err)
 		return
 	}
-	h.record(r, "group.update", id, map[string]any{"name": req.Name, "previous_name": before.Name})
+	h.record(r, audit.GroupUpdate, id, map[string]any{"name": req.Name, "previous_name": before.Name})
 	g, err := h.Groups.Get(r.Context(), id)
 	if err != nil {
 		h.writeGroupError(w, r, err)
@@ -140,7 +140,7 @@ func (h *AdminHandler) del(w http.ResponseWriter, r *http.Request) {
 	if h.Revoker != nil {
 		details["live_sessions_ended"] = ended
 	}
-	h.record(r, "group.delete", id, details)
+	h.record(r, audit.GroupDelete, id, details)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -175,7 +175,7 @@ func (h *AdminHandler) setMembers(w http.ResponseWriter, r *http.Request) {
 	if h.Revoker != nil && len(removed) > 0 {
 		details["live_sessions_ended"] = h.Revoker.GroupMembersRemoved(r.Context(), id, removed)
 	}
-	h.record(r, "group.members.update", id, details)
+	h.record(r, audit.GroupMembersUpdate, id, details)
 	members, err := h.Groups.Members(r.Context(), id)
 	if err != nil {
 		h.writeGroupError(w, r, err)

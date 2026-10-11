@@ -168,7 +168,7 @@ func (h *AdminHandler) create(w http.ResponseWriter, r *http.Request) {
 	if granted := privileged(u.Roles); len(granted) > 0 {
 		details["roles_granted"] = granted
 	}
-	h.record(r, "user.create", u.ID, audit.Success, details)
+	h.record(r, audit.UserCreate, u.ID, audit.Success, details)
 	out := createResponse{User: u}
 	if source == "generated" {
 		out.InitialPassword = initial
@@ -222,7 +222,7 @@ func (h *AdminHandler) update(w http.ResponseWriter, r *http.Request) {
 	if req.Status == user.StatusDisabled || req.Status == user.StatusLocked {
 		h.endLive(id, details)
 	}
-	h.record(r, "user.update", id, audit.Success, details)
+	h.record(r, audit.UserUpdate, id, audit.Success, details)
 	u, err := h.Users.GetByID(r.Context(), id)
 	if err != nil {
 		h.writeUserError(w, r, err)
@@ -264,7 +264,7 @@ func (h *AdminHandler) setRoles(w http.ResponseWriter, r *http.Request) {
 	if !sameRoles(before.Roles, req.Roles) {
 		h.endLive(id, details)
 	}
-	h.record(r, "user.roles.update", id, audit.Success, details)
+	h.record(r, audit.UserRolesUpdate, id, audit.Success, details)
 	u, err := h.Users.GetByID(r.Context(), id)
 	if err != nil {
 		h.writeUserError(w, r, err)
@@ -309,7 +309,7 @@ func (h *AdminHandler) setPassword(w http.ResponseWriter, r *http.Request) {
 	}
 	details := map[string]any{"sessions_revoked": n, "password": source, "must_change_password": mustChange}
 	h.endLive(id, details)
-	h.record(r, "user.password.reset", id, audit.Success, details)
+	h.record(r, audit.UserPasswordReset, id, audit.Success, details)
 	out := map[string]any{"status": "ok", "sessions_revoked": n, "must_change_password": mustChange}
 	if req.Generate {
 		out["initial_password"] = pw
@@ -330,7 +330,7 @@ func (h *AdminHandler) revokeSessions(w http.ResponseWriter, r *http.Request) {
 	}
 	details := map[string]any{"sessions_revoked": n}
 	h.endLive(id, details)
-	h.record(r, "user.sessions.revoke", id, audit.Success, details)
+	h.record(r, audit.UserSessionsRevoke, id, audit.Success, details)
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"status": "ok", "sessions_revoked": n})
 }
 
@@ -353,7 +353,7 @@ func (h *AdminHandler) resetMFA(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.endLive(id, details)
-	h.record(r, "user.mfa.reset", id, audit.Success, details)
+	h.record(r, audit.UserMFAReset, id, audit.Success, details)
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"status": "ok", "sessions_revoked": n})
 }
 
@@ -386,7 +386,7 @@ func (h *AdminHandler) del(w http.ResponseWriter, r *http.Request) {
 		h.writeUserError(w, r, err)
 		return
 	}
-	h.record(r, "user.delete", id, audit.Success, details)
+	h.record(r, audit.UserDelete, id, audit.Success, details)
 	w.WriteHeader(http.StatusNoContent)
 }
 

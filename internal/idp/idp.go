@@ -596,14 +596,14 @@ func (r Resolution) Events(ip string, p *Opened, id Identity) []audit.Event {
 		if len(granted) > 0 {
 			d["roles_granted"] = granted
 		}
-		out = append(out, actor.Event("user.create", "user", r.User.ID, audit.Success, d))
+		out = append(out, actor.Event(audit.UserCreate, "user", r.User.ID, audit.Success, d))
 	}
 	if len(r.GroupsAdded)+len(r.GroupsRemoved) > 0 {
 		d := map[string]any{"idp": p.ID, "idp_name": p.Name, "groups_added": orEmpty(r.GroupsAdded), "groups_removed": orEmpty(r.GroupsRemoved)}
 		if len(r.GroupsRemoved) > 0 {
 			d["live_sessions_ended"] = r.LiveSessionsEnded
 		}
-		out = append(out, actor.Event("user.groups.sync", "user", r.User.ID, audit.Success, d))
+		out = append(out, actor.Event(audit.UserGroupsSync, "user", r.User.ID, audit.Success, d))
 	}
 	return out
 }
@@ -621,7 +621,7 @@ func orEmpty(ids []string) []string {
 // apart from the user.login that follows, because the link stays even if the
 // sign-in goes no further.
 func LinkEvent(ip string, u *user.User, p *Opened, id Identity) audit.Event {
-	return audit.Actor{UserID: u.ID, IP: ip}.Event("user.link", "user", u.ID, audit.Success,
+	return audit.Actor{UserID: u.ID, IP: ip}.Event(audit.UserLink, "user", u.ID, audit.Success,
 		map[string]string{"idp": p.ID, "idp_name": p.Name, "external_id": id.ExternalID})
 }
 

@@ -258,7 +258,7 @@ func (h *Handler) connect(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	deny := func(status int, code, msg string) {
-		h.record(r, actor.Event("session.connect", "target", req.TargetID, audit.Failure, map[string]string{"protocol": req.Protocol, "reason": code}))
+		h.record(r, actor.Event(audit.SessionConnect, "target", req.TargetID, audit.Failure, map[string]string{"protocol": req.Protocol, "reason": code}))
 		httpx.WriteError(w, status, code, msg)
 	}
 	if h.draining() {
@@ -315,7 +315,7 @@ func (h *Handler) connect(w http.ResponseWriter, r *http.Request) {
 		deny(codeStatus(code), code, msg)
 		return
 	}
-	h.record(r, actor.Event("session.connect", "target", ep.LiveKey, audit.Success, map[string]any{"protocol": req.Protocol, "asg_id": ep.ASGID, "instance": ep.CloudInstanceID}))
+	h.record(r, actor.Event(audit.SessionConnect, "target", ep.LiveKey, audit.Success, map[string]any{"protocol": req.Protocol, "asg_id": ep.ASGID, "instance": ep.CloudInstanceID}))
 	httpx.WriteJSON(w, http.StatusOK, res)
 }
 
@@ -579,7 +579,7 @@ func (h *Handler) terminal(w http.ResponseWriter, r *http.Request) {
 	actor := audit.Actor{UserID: g.UserID, IP: ip}
 	endWith := func(reason, msg string) {
 		_ = h.Sessions.End(context.Background(), s.ID, reason)
-		h.record(r, actor.Event("session.end", "access_session", s.ID, audit.Success, map[string]string{"reason": reason, "target_id": ep.LiveKey}))
+		h.record(r, actor.Event(audit.SessionEnd, "access_session", s.ID, audit.Success, map[string]string{"reason": reason, "target_id": ep.LiveKey}))
 		if msg != "" {
 			_ = ws.Close(websocket.StatusPolicyViolation, msg)
 		}
@@ -596,7 +596,7 @@ func (h *Handler) terminal(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case errors.Is(err, sshgw.ErrHostKeyMismatch):
 			msg = "host key mismatch; connection refused"
-			h.record(r, actor.Event("target.hostkey.mismatch", "target", ep.LiveKey, audit.Failure, map[string]string{"expected": fp}))
+			h.record(r, actor.Event(audit.TargetHostKeyMismatch, "target", ep.LiveKey, audit.Failure, map[string]string{"expected": fp}))
 		case errors.Is(err, sshgw.ErrAuthFailed):
 			msg = "authentication to the target failed"
 		}
@@ -627,7 +627,7 @@ func (h *Handler) terminal(w http.ResponseWriter, r *http.Request) {
 		endWith(session.EndError, "recording could not be registered; session refused")
 		return
 	}
-	h.record(r, actor.Event("session.start", "access_session", s.ID, audit.Success, map[string]any{"target_id": ep.LiveKey, "protocol": g.Protocol, "policy_id": g.PolicyID, "recording_id": recRow.ID}))
+	h.record(r, actor.Event(audit.SessionStart, "access_session", s.ID, audit.Success, map[string]any{"target_id": ep.LiveKey, "protocol": g.Protocol, "policy_id": g.PolicyID, "recording_id": recRow.ID}))
 
 	ctx := h.Registry.Add(r.Context(), gateway.Live{SessionID: s.ID, UserID: g.UserID, TargetID: ep.LiveKey, Protocol: g.Protocol, PolicyID: g.PolicyID})
 	defer h.Registry.Remove(s.ID)

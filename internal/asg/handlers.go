@@ -143,7 +143,7 @@ func (h *AdminHandler) create(w http.ResponseWriter, r *http.Request) {
 		h.fail(w, r, err)
 		return
 	}
-	h.record(r, "asg.create", g, audit.Success, nil)
+	h.record(r, audit.ASGCreate, g, audit.Success, nil)
 	httpx.WriteJSON(w, http.StatusCreated, g)
 }
 
@@ -178,9 +178,9 @@ func (h *AdminHandler) update(w http.ResponseWriter, r *http.Request) {
 		h.fail(w, r, err)
 		return
 	}
-	h.record(r, "asg.update", g, audit.Success, map[string]any{"before": before})
+	h.record(r, audit.ASGUpdate, g, audit.Success, map[string]any{"before": before})
 	if rotated {
-		h.record(r, "asg.external_id.rotate", g, audit.Success, nil)
+		h.record(r, audit.ASGExternalIDRotate, g, audit.Success, nil)
 	}
 	httpx.WriteJSON(w, http.StatusOK, g)
 }
@@ -197,7 +197,7 @@ func (h *AdminHandler) delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if blocked != "" {
-		h.record(r, "asg.delete", g, audit.Failure, map[string]any{"reason": "in_use"})
+		h.record(r, audit.ASGDelete, g, audit.Failure, map[string]any{"reason": "in_use"})
 		httpx.WriteError(w, http.StatusConflict, "in_use", blocked)
 		return
 	}
@@ -205,7 +205,7 @@ func (h *AdminHandler) delete(w http.ResponseWriter, r *http.Request) {
 		h.fail(w, r, err)
 		return
 	}
-	h.record(r, "asg.delete", g, audit.Success, nil)
+	h.record(r, audit.ASGDelete, g, audit.Success, nil)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -292,7 +292,7 @@ func (h *AdminHandler) sync(w http.ResponseWriter, r *http.Request) {
 	} else {
 		resp.Group = g
 	}
-	h.record(r, "asg.sync", g, outcome, map[string]any{"seen": sum.Seen, "healthy": sum.Healthy, "joined": sum.Joined, "left": sum.Left, "error": resp.Error})
+	h.record(r, audit.ASGSync, g, outcome, map[string]any{"seen": sum.Seen, "healthy": sum.Healthy, "joined": sum.Joined, "left": sum.Left, "error": resp.Error})
 	httpx.WriteJSON(w, http.StatusOK, resp)
 }
 
@@ -398,7 +398,7 @@ func (h *AdminHandler) testAccess(w http.ResponseWriter, r *http.Request) {
 	if !res.OK {
 		outcome = audit.Failure
 	}
-	h.record(r, "asg.test", g, outcome, map[string]any{"role_arn": g.RoleARN, "stage": res.Stage, "group_found": res.GroupFound, "instances": res.InstanceCount})
+	h.record(r, audit.ASGTest, g, outcome, map[string]any{"role_arn": g.RoleARN, "stage": res.Stage, "group_found": res.GroupFound, "instances": res.InstanceCount})
 	httpx.WriteJSON(w, http.StatusOK, res)
 }
 
@@ -411,7 +411,7 @@ func (h *AdminHandler) identityRefresh(w http.ResponseWriter, r *http.Request) {
 	if h.Identity != nil {
 		id = h.Identity.Refresh(r.Context())
 	}
-	auth.Recorder{Audit: h.Audit, Log: h.Log}.Record(r, auth.ActorFor(r).Event("aws.identity.refresh", "gateway", "aws", audit.Success, map[string]string{"source": id.Source, "principal": id.Principal}))
+	auth.Recorder{Audit: h.Audit, Log: h.Log}.Record(r, auth.ActorFor(r).Event(audit.AWSIdentityRefresh, "gateway", "aws", audit.Success, map[string]string{"source": id.Source, "principal": id.Principal}))
 	httpx.WriteJSON(w, http.StatusOK, id)
 }
 
@@ -480,7 +480,7 @@ func (h *AdminHandler) setCredential(w http.ResponseWriter, r *http.Request) {
 		h.fail(w, r, err)
 		return
 	}
-	h.record(r, "asg.credential.set", g, audit.Success, map[string]any{"protocol": proto, "credential_id": body.CredentialID})
+	h.record(r, audit.ASGCredentialSet, g, audit.Success, map[string]any{"protocol": proto, "credential_id": body.CredentialID})
 	g, _ = h.Repo.Get(r.Context(), g.ID)
 	httpx.WriteJSON(w, http.StatusOK, g)
 }
@@ -496,7 +496,7 @@ func (h *AdminHandler) unsetCredential(w http.ResponseWriter, r *http.Request) {
 		h.fail(w, r, err)
 		return
 	}
-	h.record(r, "asg.credential.unset", g, audit.Success, map[string]any{"protocol": proto})
+	h.record(r, audit.ASGCredentialUnset, g, audit.Success, map[string]any{"protocol": proto})
 	w.WriteHeader(http.StatusNoContent)
 }
 
