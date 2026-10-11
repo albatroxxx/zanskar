@@ -445,6 +445,8 @@ export interface TLSCertInfo {
   fingerprint: string
   self_signed: boolean
   cert_pem?: string
+  /** Why a stored certificate cannot serve now (expired, not valid yet, ...). */
+  problem?: string
 }
 
 /** GET /admin/tls. */

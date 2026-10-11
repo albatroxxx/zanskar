@@ -91,6 +91,11 @@ export function TLSCard() {
           <p className="muted">What browsers see when they connect. An uploaded certificate applies to the next connection, no restart. Until one is uploaded the gateway serves {status.file_hint ? 'the certificate from the environment file' : 'a self-signed certificate: browsers warn about it, and the SHA-256 below is what to check on first visit'}.</p>
           {err && <Alert tone="danger">{err}</Alert>}
           {ok && <Alert tone="ok">{ok}</Alert>}
+          {status.uploaded?.problem && (
+            <Alert tone="warn">
+              The uploaded certificate ({status.uploaded.subject}) is not in use: {status.uploaded.problem}. Upload a replacement below, or remove it.
+            </Alert>
+          )}
           {a && (
             <dl className="kv">
               <dt>Serving</dt><dd>{sourceBadge(a)}</dd>

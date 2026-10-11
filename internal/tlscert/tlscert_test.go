@@ -13,7 +13,6 @@ import (
 	"crypto/x509/pkix"
 	"encoding/json"
 	"encoding/pem"
-	"errors"
 	"io"
 	"log/slog"
 	"math/big"
@@ -301,24 +300,60 @@ func TestListenerSwapsWithoutRestart(t *testing.T) {
 	}
 }
 
-// TestExpiredUploadIsDropped: an upload that expired while the gateway was
-// down is removed at load, with the generated certificate serving again.
-func TestExpiredUploadIsDropped(t *testing.T) {
+// TestUnusableUploadIsKept: an uploaded certificate that cannot serve now
+// (expired while the gateway was down, or not valid yet because the clock
+// is behind after a restore) is kept, not deleted with its key: it is
+// skipped for this run, the generated certificate serves, and the Settings
+// card shows the upload and why it is not in use, so the administrator can
+// replace or remove it. A clock that catches up makes it serve again.
+func TestUnusableUploadIsKept(t *testing.T) {
 	ctx := context.Background()
-	repo, _ := newRepo(t)
-	expired, key := certFor(t, "old", time.Now().Add(-48*time.Hour), time.Now().Add(-time.Hour), nil)
-	if err := repo.Put(ctx, SourceUploaded, expired, key, ""); err != nil {
-		t.Fatal(err)
-	}
-	m := &Manager{Repo: repo, Log: slog.New(slog.NewTextHandler(io.Discard, nil)), Hosts: []string{"gw"}}
-	if err := m.Load(ctx); err != nil || m.Active().Source != SourceGenerated {
-		t.Fatalf("load: %+v %v", m.Active(), err)
-	}
-	if _, _, err := repo.Get(ctx, SourceUploaded); !errors.Is(err, ErrNotFound) {
-		t.Fatalf("expired upload must be removed: %v", err)
+	for _, tc := range []struct {
+		name, problem       string
+		notBefore, notAfter time.Time
+	}{
+		{"expired", "expired", time.Now().Add(-48 * time.Hour), time.Now().Add(-time.Hour)},
+		{"not yet valid", "not valid before", time.Now().Add(time.Hour), time.Now().Add(48 * time.Hour)},
+	} {
+		repo, _ := newRepo(t)
+		cert, key := certFor(t, "up", tc.notBefore, tc.notAfter, nil)
+		if err := repo.Put(ctx, SourceUploaded, cert, key, ""); err != nil {
+			t.Fatal(err)
+		}
+		m := &Manager{Repo: repo, Log: slog.New(slog.NewTextHandler(io.Discard, nil)), Hosts: []string{"gw"}}
+		if err := m.Load(ctx); err != nil || m.Active().Source != SourceGenerated {
+			t.Fatalf("%s: load: %+v %v", tc.name, m.Active(), err)
+		}
+		if _, _, err := repo.Get(ctx, SourceUploaded); err != nil {
+			t.Fatalf("%s: the upload and its key were deleted: %v", tc.name, err)
+		}
+		up, err := m.Uploaded(ctx)
+		if err != nil || !strings.Contains(up.Problem, tc.problem) {
+			t.Fatalf("%s: card: %+v %v, want a problem naming %q", tc.name, up, err, tc.problem)
+		}
 	}
 	if _, _, err := SelfSign([]string{"bad host"}); err == nil {
 		t.Fatal("SelfSign must refuse a bad host")
+	}
+}
+
+// TestDescribingDoesNotUnsealTheKey: the Settings card is polled; describing
+// a stored certificate reads the certificate alone, so a key that cannot be
+// unsealed right now does not hide it, and no key is decrypted per poll.
+func TestDescribingDoesNotUnsealTheKey(t *testing.T) {
+	ctx := context.Background()
+	repo, db := newRepo(t)
+	cert, key := certFor(t, "up", time.Now().Add(-time.Hour), time.Now().Add(48*time.Hour), nil)
+	if err := repo.Put(ctx, SourceUploaded, cert, key, ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, `UPDATE tls_certificates SET key_enc = x'00' WHERE kind = 'uploaded'`); err != nil {
+		t.Fatal(err)
+	}
+	m := &Manager{Repo: repo, Log: slog.New(slog.NewTextHandler(io.Discard, nil)), Hosts: []string{"gw"}}
+	up, err := m.Uploaded(ctx)
+	if err != nil || up.Subject == "" || up.Problem != "" {
+		t.Fatalf("describe without the key: %+v %v", up, err)
 	}
 }
 

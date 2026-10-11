@@ -5314,6 +5314,13 @@ components:
           type: boolean
         cert_pem:
           type: string
+        problem:
+          type: string
+          description: >
+            Why a stored certificate cannot serve now (it expired, is not valid yet, or does
+            not allow server authentication). An uploaded certificate with a problem is kept,
+            not deleted; the gateway serves the next certificate in line until it is replaced
+            or removed.
     TLSStatus:
       type: object
       required: [mode]
