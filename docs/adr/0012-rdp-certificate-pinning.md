@@ -69,3 +69,22 @@ unless the SHA-256 matches the stored `tls_fingerprint`; only then does guacd co
 ADR is unchanged: a connection proceeds only against the exact pinned certificate, verified
 on the same host and network path microseconds earlier. guacd never decides certificate
 trust for RDP.
+
+## Addendum 2026-10-11: clipboard and file policy, at both layers
+
+The bridge used to drop only the instruction that opens a clipboard or file stream. In the
+Guacamole protocol that instruction carries no data: the content follows as `blob`
+instructions for the same stream index, and those were relayed, so a clipboard-off policy
+still delivered the remote clipboard to the browser's WebSocket (reachable from devtools or
+a modified client). The bridge now remembers the index of every stream it refuses, in each
+direction separately, and drops that stream's `blob` and `end` as well. A refused
+guacd-to-browser stream is acknowledged to guacd with a forbidden status on the browser's
+behalf, as a stock client does for a stream type it cannot handle, so guacd frees the stream
+instead of waiting for an acknowledgement that would never come.
+
+guacd is also told the policy now: `disable-copy` and `disable-paste` (RDP and VNC) when the
+clipboard is off, `disable-download` and `disable-upload` (RDP) when file transfer is off,
+alongside the drive staying unmapped. The data then stops at guacd and the bridge is the
+second line, which is what "enforced in the Zanskar bridge rather than trusting guacd
+parameters alone" was meant to be. The auditor's read-only shadow of a desktop session goes
+through the same guacd connection, so the guacd-side parameters cover it as well.

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"strconv"
 	"sync"
 	"time"
 
@@ -32,6 +33,88 @@ type Limits struct {
 	// redirection object protocol ("filesystem", "body", "get", "put").
 	AllowFileTransfer bool
 	tick              time.Duration
+}
+
+// allows reports whether the policy lets an opcode through. The same table
+// serves both directions: an opcode that only one side ever sends is simply
+// never seen from the other.
+func (lim Limits) allows(op string) bool {
+	switch op {
+	case "clipboard":
+		return lim.AllowClipboard
+	case "file", "pipe", "filesystem", "body", "undefine", "get", "put":
+		return lim.AllowFileTransfer
+	}
+	return true
+}
+
+// Stream-opening opcodes per direction, with the argument that carries the
+// stream index. Most name the stream first; "body" and "put" name the object
+// first and the stream second.
+var (
+	serverOpens = map[string]int{"audio": 0, "argv": 0, "clipboard": 0, "file": 0, "img": 0, "pipe": 0, "video": 0, "body": 1}
+	clientOpens = map[string]int{"audio": 0, "argv": 0, "clipboard": 0, "file": 0, "pipe": 0, "put": 1}
+)
+
+// statusClientForbidden is the Guacamole status the bridge answers a refused
+// stream with (0x0303, "permission was denied to perform the operation").
+const statusClientForbidden = 0x0303
+
+// streamFilter applies the policy to one direction of the relay. Guacamole
+// moves clipboard text and files as streams: an opening instruction
+// ("clipboard", "file", "body", "put", ...) names a stream index, and the
+// data follows as "blob" instructions and an "end" for that index. Dropping
+// the opening instruction alone would leave the data flowing, so the filter
+// remembers the index of every stream it refused and drops its blobs and end
+// as well. The two sides number their streams independently, so each
+// direction has its own filter, owned by the goroutine relaying that way.
+type streamFilter struct {
+	opens   map[string]int
+	blocked map[int]struct{}
+}
+
+func newStreamFilter(opens map[string]int) *streamFilter {
+	return &streamFilter{opens: opens, blocked: map[int]struct{}{}}
+}
+
+// check decides whether a raw instruction may be relayed. refused is the
+// index of a stream whose opening instruction was just dropped by policy, or
+// -1; the caller decides what the other side needs to hear about it.
+func (f *streamFilter) check(raw, op string, lim Limits) (pass bool, refused int) {
+	refused = -1
+	if op == "blob" || op == "end" {
+		idx, ok := streamIndex(raw, 0)
+		if !ok {
+			// Not an index guacd could have allocated or would accept: guacd
+			// parses indexes with atoi, so "00" would land on stream 0 while the
+			// bridge saw a different stream. Nobody legitimate sends this.
+			return false, refused
+		}
+		if _, blocked := f.blocked[idx]; !blocked {
+			return true, refused
+		}
+		if op == "end" {
+			delete(f.blocked, idx)
+		}
+		return false, refused
+	}
+	arg, opens := f.opens[op]
+	if !opens {
+		return lim.allows(op), refused
+	}
+	idx, ok := streamIndex(raw, arg)
+	if !ok {
+		return false, refused
+	}
+	// The index is in use again, so whatever it referred to before is over:
+	// guacd reuses an index it freed without an "end" when a stream was
+	// refused, and the next user of that index may well be the display.
+	delete(f.blocked, idx)
+	if lim.allows(op) {
+		return true, refused
+	}
+	f.blocked[idx] = struct{}{}
+	return false, idx
 }
 
 // Bridge relays instructions between guacd and the browser until either side
@@ -71,6 +154,7 @@ func Bridge(ctx context.Context, log *slog.Logger, c *Conn, ws *websocket.Conn, 
 	// guacd -> browser
 	go func() {
 		defer close(gdDone)
+		filter := newStreamFilter(serverOpens)
 		for {
 			raw, err := c.ReadRaw()
 			if err != nil {
@@ -80,8 +164,7 @@ func Bridge(ctx context.Context, log *slog.Logger, c *Conn, ws *websocket.Conn, 
 				return
 			}
 			op := Opcode(raw)
-			switch op {
-			case "nop":
+			if op == "nop" {
 				// guacd's keepalive. Forward it so the browser's tunnel
 				// receiveTimeout (15s without any server message) does not fire on
 				// an idle, unchanging desktop, but do not record it.
@@ -89,15 +172,26 @@ func Bridge(ctx context.Context, log *slog.Logger, c *Conn, ws *websocket.Conn, 
 					return
 				}
 				continue
-			case "clipboard":
-				if !lim.AllowClipboard {
-					continue
+			}
+			pass, refused := filter.check(raw, op, lim)
+			if refused >= 0 {
+				// guacd waits for the browser to acknowledge a "file" or "body"
+				// stream before it sends the first blob, and the browser never saw
+				// this one. Decline it on the browser's behalf, as a stock client
+				// does for a stream type it has no handler for, so guacd closes the
+				// file and frees the stream instead of holding both until the
+				// session ends. A "clipboard" stream is sent in one go and freed
+				// before the answer arrives; guacd ignores the late ack.
+				if err := c.Send("ack", strconv.Itoa(refused), "blocked by policy", strconv.Itoa(statusClientForbidden)); err != nil {
+					setEnd("target_lost")
+					return
 				}
-			case "file", "pipe", "filesystem", "body", "undefine":
-				if !lim.AllowFileTransfer {
-					continue
-				}
-			case "error":
+			}
+			if !pass {
+				// Dropped by policy: neither the browser nor the recording sees it.
+				continue
+			}
+			if op == "error" {
 				setEnd("target_lost")
 			}
 			if rec != nil {
@@ -119,6 +213,7 @@ func Bridge(ctx context.Context, log *slog.Logger, c *Conn, ws *websocket.Conn, 
 	// browser -> guacd
 	go func() {
 		defer close(wsDone)
+		filter := newStreamFilter(clientOpens)
 		for {
 			_, data, err := ws.Read(ctx)
 			if err != nil {
@@ -126,20 +221,13 @@ func Bridge(ctx context.Context, log *slog.Logger, c *Conn, ws *websocket.Conn, 
 			}
 			raw := string(data)
 			op := Opcode(raw)
+			if pass, _ := filter.check(raw, op, lim); !pass {
+				continue
+			}
 			switch op {
 			case "nop", "sync":
 				// keepalives and frame acks do not count as user activity
-			case "clipboard":
-				if !lim.AllowClipboard {
-					continue
-				}
-				touch(&mu, &lastIn)
-			case "file", "pipe", "get", "put":
-				if !lim.AllowFileTransfer {
-					continue
-				}
-				touch(&mu, &lastIn)
-			case "mouse", "key":
+			case "clipboard", "file", "pipe", "get", "put", "mouse", "key":
 				touch(&mu, &lastIn)
 			}
 			if _, err := c.Write([]byte(raw)); err != nil {

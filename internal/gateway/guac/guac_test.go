@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -102,6 +103,14 @@ func fakeGuacd(t *testing.T, gotParams chan<- map[string]string) string {
 					if in.Opcode == "trigger-fs" {
 						// Simulate guacd announcing the redirected drive.
 						_, _ = c.Write([]byte(Encode("filesystem", "0", "Zanskar")))
+						continue
+					}
+					if in.Opcode == "emit" {
+						// Play the given wire-format instructions as guacd's output,
+						// in one burst, before reading anything else.
+						for _, raw := range in.Args {
+							_, _ = c.Write([]byte(raw))
+						}
 						continue
 					}
 					_, _ = c.Write([]byte(Encode("echo", append([]string{in.Opcode}, in.Args...)...)))
@@ -213,6 +222,12 @@ func (f recFunc) Write(raw string) error { return f(raw) }
 // returns a connected client plus helpers.
 func runBridge(t *testing.T, addr string, lim Limits) (send func(string), read func() string) {
 	t.Helper()
+	return runBridgeRecorded(t, addr, lim, nil)
+}
+
+// runBridgeRecorded is runBridge with a recorder attached to the bridge.
+func runBridgeRecorded(t *testing.T, addr string, lim Limits, rec Recorder) (send func(string), read func() string) {
+	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ws, err := websocket.Accept(w, r, &websocket.AcceptOptions{InsecureSkipVerify: true})
 		if err != nil {
@@ -224,7 +239,7 @@ func runBridge(t *testing.T, addr string, lim Limits) (send func(string), read f
 			return
 		}
 		defer c.Close()
-		_, _ = Bridge(r.Context(), nil, c, ws, nil, lim)
+		_, _ = Bridge(r.Context(), nil, c, ws, rec, lim)
 		_ = ws.Close(websocket.StatusNormalClosure, "")
 	}))
 	t.Cleanup(srv.Close)
@@ -294,5 +309,188 @@ func TestDialUnreachableIsSentinel(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), addr) {
 		t.Fatalf("the address tried should be in the error for the journal: %v", err)
+	}
+}
+
+// A dropped stream is the whole stream. Guacamole opens a clipboard or file
+// stream with one instruction and sends the content afterwards as blobs, so
+// the bridge must drop the blobs and the end with the opening instruction,
+// answer guacd on the browser's behalf so it frees the stream, and keep the
+// rest of the session (here a "sync") flowing.
+func TestBridgeClipboardStreamData(t *testing.T) {
+	addr := fakeGuacd(t, nil)
+	stream := []string{Encode("clipboard", "0", "text/plain"), Encode("blob", "0", "c2VjcmV0"), Encode("end", "0"), Encode("sync", "1")}
+	refused := Encode("echo", "ack", "0", "blocked by policy", "771")
+
+	var mu sync.Mutex
+	var recorded []string
+	rec := recFunc(func(raw string) error { mu.Lock(); recorded = append(recorded, raw); mu.Unlock(); return nil })
+	send, read := runBridgeRecorded(t, addr, Limits{Idle: time.Minute, AllowClipboard: false, tick: 50 * time.Millisecond}, rec)
+	send(Encode("emit", stream...))
+	if got := read(); got != Encode("sync", "1") {
+		t.Fatalf("clipboard off: the stream must not reach the browser, got %q", got)
+	}
+	if got := read(); got != refused {
+		t.Fatalf("clipboard off: guacd must be told the stream was refused, got %q", got)
+	}
+	mu.Lock()
+	for _, raw := range recorded {
+		if op := Opcode(raw); op == "clipboard" || op == "blob" || op == "end" {
+			t.Fatalf("a dropped frame must not be recorded: %q", raw)
+		}
+	}
+	mu.Unlock()
+
+	send, read = runBridge(t, addr, Limits{Idle: time.Minute, AllowClipboard: true, tick: 50 * time.Millisecond})
+	send(Encode("emit", stream...))
+	for _, want := range stream {
+		if got := read(); got != want {
+			t.Fatalf("clipboard on: want %q, got %q", want, got)
+		}
+	}
+	// Nothing was refused, so nothing was acknowledged for guacd: the next
+	// thing the browser hears is its own echo.
+	send(Encode("mouse", "1", "1", "0"))
+	if got := read(); got != Encode("echo", "mouse", "1", "1", "0") {
+		t.Fatalf("clipboard on: unexpected %q", got)
+	}
+}
+
+func TestBridgeFileStreamData(t *testing.T) {
+	addr := fakeGuacd(t, nil)
+	// A download ("file", stream 0), a directory listing ("body" names the
+	// object first and the stream second: stream 3) and, in the same burst, a
+	// display update on stream 2 which must arrive intact.
+	download := []string{Encode("file", "0", "application/octet-stream", "secret.txt"), Encode("blob", "0", "c2VjcmV0"), Encode("end", "0")}
+	listing := []string{Encode("body", "1", "3", "text/plain", "/"), Encode("blob", "3", "c2VjcmV0"), Encode("end", "3")}
+	display := []string{Encode("img", "2", "14", "0", "image/png", "0", "0"), Encode("blob", "2", "iVBORw0KGgo="), Encode("end", "2")}
+	var burst []string
+	burst = append(burst, download...)
+	burst = append(burst, listing...)
+	burst = append(burst, display...)
+	burst = append(burst, Encode("sync", "1"))
+
+	send, read := runBridge(t, addr, Limits{Idle: time.Minute, AllowFileTransfer: false, tick: 50 * time.Millisecond})
+	send(Encode("emit", burst...))
+	for _, want := range append(append([]string{}, display...), Encode("sync", "1")) {
+		if got := read(); got != want {
+			t.Fatalf("files off: want %q, got %q", want, got)
+		}
+	}
+	for _, idx := range []string{"0", "3"} {
+		if want, got := Encode("echo", "ack", idx, "blocked by policy", "771"), read(); got != want {
+			t.Fatalf("files off: want %q, got %q", want, got)
+		}
+	}
+
+	send, read = runBridge(t, addr, Limits{Idle: time.Minute, AllowFileTransfer: true, tick: 50 * time.Millisecond})
+	send(Encode("emit", burst...))
+	for _, want := range burst {
+		if got := read(); got != want {
+			t.Fatalf("files on: want %q, got %q", want, got)
+		}
+	}
+}
+
+// guacd frees a refused stream without an "end" and reuses the index, often
+// for the display. The next opening instruction on that index must clear the
+// block, and a later refused stream on it must be blocked again.
+func TestBridgeBlockedIndexReuse(t *testing.T) {
+	addr := fakeGuacd(t, nil)
+	display := []string{Encode("img", "7", "14", "0", "image/png", "0", "0"), Encode("blob", "7", "iVBORw0KGgo="), Encode("end", "7")}
+	burst := []string{Encode("clipboard", "7", "text/plain"), Encode("blob", "7", "c2VjcmV0")}
+	burst = append(burst, display...)
+	burst = append(burst, Encode("clipboard", "7", "text/plain"), Encode("blob", "7", "c2VjcmV0"), Encode("end", "7"), Encode("sync", "2"))
+
+	send, read := runBridge(t, addr, Limits{Idle: time.Minute, AllowClipboard: false, tick: 50 * time.Millisecond})
+	send(Encode("emit", burst...))
+	for _, want := range append(append([]string{}, display...), Encode("sync", "2")) {
+		if got := read(); got != want {
+			t.Fatalf("want %q, got %q", want, got)
+		}
+	}
+}
+
+// The browser's side of the same rule: the data of a stream the browser is
+// not allowed to open never reaches guacd, however it is numbered.
+func TestBridgeClientStreamData(t *testing.T) {
+	addr := fakeGuacd(t, nil)
+	mouse, echo := Encode("mouse", "1", "1", "0"), Encode("echo", "mouse", "1", "1", "0")
+
+	send, read := runBridge(t, addr, Limits{Idle: time.Minute, AllowClipboard: false, AllowFileTransfer: false, tick: 50 * time.Millisecond})
+	for _, raw := range []string{
+		Encode("clipboard", "0", "text/plain"), Encode("blob", "0", "c2VjcmV0"), Encode("end", "0"),
+		// An upload: "put" names the object first and the stream second.
+		Encode("put", "0", "1", "application/octet-stream", "/x.txt"), Encode("blob", "1", "c2VjcmV0"), Encode("end", "1"),
+		// Index spellings guacd's atoi would map onto a stream the bridge
+		// never saw opened are refused outright.
+		Encode("blob", "01", "c2VjcmV0"), Encode("blob", "+1", "c2VjcmV0"), Encode("end", "1 "),
+		mouse,
+	} {
+		send(raw)
+	}
+	if got := read(); got != echo {
+		t.Fatalf("blocked stream data reached guacd: %q", got)
+	}
+	// A microphone stream reusing index 0 is allowed, and so is its data.
+	send(Encode("audio", "0", "audio/L16;rate=44100,channels=2"))
+	send(Encode("blob", "0", "AAAA"))
+	if got := read(); got != Encode("echo", "audio", "0", "audio/L16;rate=44100,channels=2") {
+		t.Fatalf("allowed stream on a reused index: %q", got)
+	}
+	if got := read(); got != Encode("echo", "blob", "0", "AAAA") {
+		t.Fatalf("allowed stream's data on a reused index: %q", got)
+	}
+
+	send, read = runBridge(t, addr, Limits{Idle: time.Minute, AllowClipboard: true, AllowFileTransfer: true, tick: 50 * time.Millisecond})
+	for _, raw := range []string{
+		Encode("clipboard", "0", "text/plain"), Encode("blob", "0", "c2VjcmV0"), Encode("end", "0"),
+		Encode("put", "0", "1", "application/octet-stream", "/x.txt"), Encode("blob", "1", "c2VjcmV0"), Encode("end", "1"),
+	} {
+		send(raw)
+		if want, got := Encode("echo", append([]string{Opcode(raw)}, mustParse(t, raw).Args...)...), read(); got != want {
+			t.Fatalf("allowed: want %q, got %q", want, got)
+		}
+	}
+}
+
+func mustParse(t *testing.T, raw string) Instruction {
+	t.Helper()
+	in, err := Parse(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return in
+}
+
+func TestStreamIndex(t *testing.T) {
+	for _, tc := range []struct {
+		raw  string
+		arg  int
+		want int
+		ok   bool
+	}{
+		{Encode("blob", "0", "c2VjcmV0"), 0, 0, true},
+		{Encode("end", "5"), 0, 5, true},
+		{Encode("body", "1", "3", "text/plain", "/"), 1, 3, true},
+		{Encode("put", "0", "12", "application/octet-stream", "/x"), 1, 12, true},
+		{Encode("file", "63", "text/plain", "日本語.txt"), 0, 63, true},
+		{Encode("blob", "00", "x"), 0, 0, false},
+		{Encode("blob", "+1", "x"), 0, 0, false},
+		{Encode("blob", "1 ", "x"), 0, 0, false},
+		{Encode("blob", "-1", "x"), 0, 0, false},
+		{Encode("blob", "1024", "x"), 0, 0, false},
+		{Encode("blob", "", "x"), 0, 0, false},
+		{Encode("blob"), 0, 0, false},
+		{Encode("body", "1"), 1, 0, false},
+		{"4.blob,1.0", 0, 0, false},             // unterminated
+		{"4.blob,9.0;", 0, 0, false},            // length overruns the instruction
+		{"4.blob,1.0x8.c2VjcmV0;", 0, 0, false}, // bad separator
+		{"", 0, 0, false},
+	} {
+		got, ok := streamIndex(tc.raw, tc.arg)
+		if ok != tc.ok || got != tc.want {
+			t.Errorf("streamIndex(%q, %d) = %d, %v; want %d, %v", tc.raw, tc.arg, got, ok, tc.want, tc.ok)
+		}
 	}
 }

@@ -178,3 +178,63 @@ func Opcode(raw string) string {
 func ErrorInstruction(msg string, status int) string {
 	return Encode("error", msg, fmt.Sprint(status))
 }
+
+// maxStreams bounds the stream indexes the bridge keeps track of. guacd
+// numbers a user's streams from 0 and allows 64 per direction (128 counting
+// the odd, client-level indexes it broadcasts on), so anything at or above
+// this is not a stream guacd would open or accept.
+const maxStreams = 1024
+
+// streamIndex returns the stream index at argument position arg of a raw
+// instruction (0 is the first argument after the opcode). Only the leading
+// elements are walked, so classifying a multi-megabyte blob costs nothing.
+// The index must be the plain decimal guacd and guacamole-common-js write;
+// anything else reports false.
+func streamIndex(raw string, arg int) (int, bool) {
+	s, ok := element(raw, arg+1)
+	if !ok {
+		return 0, false
+	}
+	n, err := strconv.Atoi(s)
+	if err != nil || n < 0 || n >= maxStreams || strconv.Itoa(n) != s {
+		return 0, false
+	}
+	return n, true
+}
+
+// element returns the i-th element of a raw instruction (0 is the opcode)
+// without parsing past it. It reports false when the instruction is malformed
+// up to that element or has fewer elements.
+func element(raw string, i int) (string, bool) {
+	rest := raw
+	for {
+		dot := strings.IndexByte(rest, '.')
+		if dot < 0 {
+			return "", false
+		}
+		n, err := strconv.Atoi(rest[:dot])
+		if err != nil || n < 0 {
+			return "", false
+		}
+		rest = rest[dot+1:]
+		end := 0
+		for k := 0; k < n; k++ {
+			if end >= len(rest) {
+				return "", false
+			}
+			_, size := utf8.DecodeRuneInString(rest[end:])
+			end += size
+		}
+		if end >= len(rest) || (rest[end] != ',' && rest[end] != ';') {
+			return "", false
+		}
+		if i == 0 {
+			return rest[:end], true
+		}
+		if rest[end] == ';' {
+			return "", false
+		}
+		rest = rest[end+1:]
+		i--
+	}
+}

@@ -43,7 +43,23 @@ func FuzzParseRaw(f *testing.F) {
 	f.Fuzz(func(t *testing.T, raw string) {
 		in, err := Parse(raw)
 		if err != nil {
+			// element must not panic on what Parse rejects, and must not
+			// invent an element past the point where the instruction breaks.
+			_, _ = element(raw, 0)
+			_, _ = element(raw, 1)
 			return
+		}
+		// element walks only the leading elements; it must agree with Parse.
+		if op, ok := element(raw, 0); !ok || op != in.Opcode {
+			t.Fatalf("element(%q, 0) = %q, %v; Parse says %q", raw, op, ok, in.Opcode)
+		}
+		for i, want := range in.Args {
+			if got, ok := element(raw, i+1); !ok || got != want {
+				t.Fatalf("element(%q, %d) = %q, %v; Parse says %q", raw, i+1, got, ok, want)
+			}
+		}
+		if got, ok := element(raw, len(in.Args)+1); ok {
+			t.Fatalf("element(%q, %d) = %q past the last element", raw, len(in.Args)+1, got)
 		}
 		again, err := Parse(in.String())
 		if err != nil {
