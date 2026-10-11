@@ -7,6 +7,7 @@
 //	zanskar keygen    print a new base64 master key for ZANSKAR_MASTER_KEY
 //	zanskar audit verify   walk the audit log and check the hash chain, anchors and id sequence
 //	zanskar audit anchor   sign the newest audit event and print the anchor line
+//	zanskar healthcheck   ask the running gateway whether it is ready (container health checks)
 //	zanskar version   print the build version
 package main
 
@@ -90,6 +91,8 @@ func run(args []string) int {
 		err = runKey(args[1:])
 	case "dbproxy":
 		err = runDBProxy()
+	case "healthcheck":
+		err = runHealthcheck()
 	case "version":
 		fmt.Println(version.Version)
 	case "admin":
@@ -113,7 +116,7 @@ func run(args []string) int {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: zanskar <init|serve|migrate|backup|restore|keygen|key status|key rotate|key rotate-master|admin create|admin reset-mfa|audit verify|audit anchor|audit reseal|dbproxy|version>")
+	fmt.Fprintln(os.Stderr, "usage: zanskar <init|serve|migrate|backup|restore|keygen|key status|key rotate|key rotate-master|admin create|admin reset-mfa|audit verify|audit anchor|audit reseal|dbproxy|healthcheck|version>")
 }
 
 func newLogger(cfg *config.Config) *slog.Logger {

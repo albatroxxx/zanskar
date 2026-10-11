@@ -145,10 +145,34 @@ type Options struct {
 	RequireMasterKey bool
 }
 
+// DefaultListenAddr is where serve listens when ZANSKAR_LISTEN_ADDR is unset.
+const DefaultListenAddr = "127.0.0.1:8443"
+
+// tlsMode is ZANSKAR_TLS_MODE, or, unset, what an install had before the
+// variable existed: file when a certificate is named, otherwise proxy.
+func tlsMode() string {
+	if m := strings.ToLower(os.Getenv("ZANSKAR_TLS_MODE")); m != "" {
+		return m
+	}
+	if os.Getenv("ZANSKAR_TLS_CERT") != "" {
+		return TLSFile
+	}
+	return TLSProxy
+}
+
+// Listener says where serve listens and whether it serves TLS there, from
+// the environment alone and without checking anything else. It is for
+// `zanskar healthcheck`, which must not read the master key or the database
+// to ask the running gateway whether it is ready.
+func Listener() (addr string, servesTLS bool) {
+	m := tlsMode()
+	return envOr("ZANSKAR_LISTEN_ADDR", DefaultListenAddr), m == TLSFile || m == TLSManaged
+}
+
 // Load reads the environment and returns a validated Config.
 func Load(opts Options) (*Config, error) {
 	c := &Config{
-		ListenAddr:           envOr("ZANSKAR_LISTEN_ADDR", "127.0.0.1:8443"),
+		ListenAddr:           envOr("ZANSKAR_LISTEN_ADDR", DefaultListenAddr),
 		DBDriver:             envOr("ZANSKAR_DB_DRIVER", DriverSQLite),
 		DBDSN:                envOr("ZANSKAR_DB_DSN", "file:zanskar.db?_pragma=journal_mode(WAL)&_pragma=foreign_keys(1)&_pragma=busy_timeout(5000)"),
 		TLSCert:              os.Getenv("ZANSKAR_TLS_CERT"),
@@ -180,15 +204,8 @@ func Load(opts Options) (*Config, error) {
 		LogFormat:            strings.ToLower(envOr("ZANSKAR_LOG_FORMAT", "json")),
 		ShutdownTimeout:      20 * time.Second,
 		EnvFile:              os.Getenv("ZANSKAR_ENV_FILE"),
-		TLSMode:              strings.ToLower(os.Getenv("ZANSKAR_TLS_MODE")),
+		TLSMode:              tlsMode(),
 		RedirectAddr:         os.Getenv("ZANSKAR_HTTP_REDIRECT_ADDR"),
-	}
-	if c.TLSMode == "" {
-		if c.TLSCert != "" {
-			c.TLSMode = TLSFile
-		} else {
-			c.TLSMode = TLSProxy
-		}
 	}
 	if c.EnvFile == "" {
 		if _, err := os.Stat(DefaultEnvFile); err == nil {

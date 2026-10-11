@@ -212,6 +212,28 @@ func TestPublicURL(t *testing.T) {
 	}
 }
 
+// TestListener: the health check learns where serve listens and whether it
+// serves TLS the way Load does, from those variables alone.
+func TestListener(t *testing.T) {
+	for _, tc := range []struct {
+		listen, mode, cert, want string
+		tls                      bool
+	}{
+		{"", "", "", DefaultListenAddr, false},
+		{"0.0.0.0:443", "managed", "", "0.0.0.0:443", true},
+		{"127.0.0.1:9443", "", "/etc/zanskar/tls.crt", "127.0.0.1:9443", true},
+		{"127.0.0.1:9443", "PROXY", "/etc/zanskar/tls.crt", "127.0.0.1:9443", false},
+		{"0.0.0.0:8443", "proxy", "", "0.0.0.0:8443", false},
+	} {
+		t.Setenv("ZANSKAR_LISTEN_ADDR", tc.listen)
+		t.Setenv("ZANSKAR_TLS_MODE", tc.mode)
+		t.Setenv("ZANSKAR_TLS_CERT", tc.cert)
+		if addr, tls := Listener(); addr != tc.want || tls != tc.tls {
+			t.Errorf("%+v: Listener() = %q, %v", tc, addr, tls)
+		}
+	}
+}
+
 // TestDropSecretEnv: once the configuration is read, the variables that
 // carry a secret leave the process environment and their names come back;
 // a secret that was never set is not reported, and the other settings stay.

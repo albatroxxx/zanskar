@@ -87,6 +87,11 @@ func TestServeStartsAndStops(t *testing.T) {
 	if os.Getenv("ZANSKAR_LISTEN_ADDR") != addr {
 		t.Error("a setting that is not a secret left the environment too")
 	}
+	// The container health check: the running gateway is ready.
+	var health int
+	if _, stderr, _ := output(t, func() error { health = run([]string{"healthcheck"}); return nil }); health != 0 {
+		t.Fatalf("healthcheck while serving: exit %d: %s", health, stderr)
+	}
 
 	get := func(path string) (int, string) {
 		t.Helper()
@@ -129,6 +134,9 @@ func TestServeStartsAndStops(t *testing.T) {
 		}
 	case <-time.After(15 * time.Second):
 		t.Fatal("serve did not stop when its context ended")
+	}
+	if _, _, _ = output(t, func() error { health = run([]string{"healthcheck"}); return nil }); health != 1 {
+		t.Fatalf("healthcheck after serve stopped: exit %d, want 1", health)
 	}
 
 	// At start the gateway anchored the head of the audit log (the admin

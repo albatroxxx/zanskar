@@ -96,7 +96,9 @@ prints an anchor to keep outside the database. If the only admin loses their aut
 `zanskar admin reset-mfa --username <name>` on the gateway host clears it and audits the reset;
 the next login enrolls a new one. `zanskar key status`, `key rotate` and `key rotate-master`
 manage the key ring and the master key; `zanskar dbproxy` is the MySQL/MariaDB relay the gateway
-runs beside a database session, not something to start by hand.
+runs beside a database session, not something to start by hand. `zanskar healthcheck` asks the
+running gateway's `/readyz` and exits 0 when it is ready, for a container's health check (the
+image has no shell, curl or wget).
 
 Requires Go 1.27+ and Node 22+ to build.
 
