@@ -223,7 +223,8 @@ Why a second replica is not supported:
 - **Admin "terminate" and auditor "shadow" act only on the gateway that receives the
   request.** With two pods, a terminate that lands on the wrong pod ends the session in
   the database but leaves the live connection running, and shadow answers "not live here".
-  A control channel between pods fixes this; it is on the [roadmap](roadmap.md).
+  Ending live sessions when access is taken away (a policy, group or account change) has
+  the same limit. A control channel between pods fixes this; it is on the [roadmap](roadmap.md).
 - **A connect ticket can only be redeemed on the pod that issued it**, so every pod would
   need sticky sessions.
 - **The autoscaling sync loop would run on every pod**, duplicating cloud API calls.

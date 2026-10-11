@@ -17,6 +17,9 @@ type Live struct {
 	UserID    string
 	TargetID  string
 	Protocol  string
+	// PolicyID is the access policy that admitted the session, the one its
+	// access_sessions row names, so a change to that policy can find it.
+	PolicyID  string
 	StartedAt time.Time
 	// Tap carries the output stream for shadowing. Terminal protocols get
 	// one automatically in Add; desktop sessions are shadowed through guacd

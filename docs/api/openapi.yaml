@@ -2166,8 +2166,8 @@ paths:
         Replaces the whole policy: read it, change it, and send all of it back. A left-out
         switch takes its default, not its current value: `enabled` and `require_mfa` on,
         `allow_clipboard`, `allow_file_transfer` and `require_approval` off, and
-        `idle_timeout_minutes` 15. Open sessions are re-evaluated against the new policy on the
-        next timer tick and terminated if no longer permitted.
+        `idle_timeout_minutes` 15. Live sessions this policy admitted are checked against the
+        saved policy at once, and those it no longer grants end with `policy_revoked`.
       requestBody:
         required: true
         content:

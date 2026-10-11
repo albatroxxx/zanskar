@@ -133,7 +133,7 @@ function Users() {
       {action?.a === 'sessions' && (
         <Confirm
           title={`Sign ${action.u.username} out everywhere?`}
-          body="Every browser session for this account ends now. Live terminal sessions continue until they end on their own or are terminated."
+          body="Every browser session for this account ends now, and so does every live session it has open to a machine."
           confirmLabel="Revoke sessions"
           onClose={() => setAction(null)}
           onConfirm={async () => {
@@ -158,7 +158,7 @@ function Users() {
       {action?.a === 'status' && (
         <Confirm
           title={`${action.u.status === 'active' ? 'Disable' : 'Enable'} ${action.u.username}?`}
-          body={action.u.status === 'active' ? 'They are signed out and cannot sign in until re-enabled.' : 'They can sign in again.'}
+          body={action.u.status === 'active' ? 'They are signed out, their live sessions end, and they cannot sign in until re-enabled.' : 'They can sign in again.'}
           confirmLabel={action.u.status === 'active' ? 'Disable' : 'Enable'}
           danger={action.u.status === 'active'}
           onClose={() => setAction(null)}
@@ -412,7 +412,7 @@ function Groups() {
       {deleting && (
         <Confirm
           title={`Delete group ${deleting.name}?`}
-          body="Policies attached to this group are deleted with it."
+          body="Policies attached to this group are deleted with it, and the live sessions they allowed end now."
           confirmLabel="Delete"
           danger
           onClose={() => setDeleting(null)}

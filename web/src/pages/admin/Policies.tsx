@@ -104,7 +104,7 @@ export function Policies() {
       {deleting && (
         <Confirm
           title={`Delete policy ${deleting.name}?`}
-          body={deleting.user_id ? `${userName(deleting.user_id)} loses the access it granted. Live sessions are not cut off by deletion.` : 'Users in its group lose the access it granted. Live sessions are not cut off by deletion.'}
+          body={deleting.user_id ? `${userName(deleting.user_id)} loses the access it granted, and any live session it allowed ends now.` : 'Users in its group lose the access it granted, and any live session it allowed ends now.'}
           confirmLabel="Delete"
           danger
           onClose={() => setDeleting(null)}

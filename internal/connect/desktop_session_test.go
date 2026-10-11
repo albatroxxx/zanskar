@@ -122,10 +122,12 @@ func newDesktopRig(t *testing.T) *desktopRig {
 	f.h.Registry = gateway.NewRegistry()
 	f.h.Prober = &target.Prober{AllowLoopback: true}
 	f.h.DialTimeout = 3 * time.Second
-	if err := f.h.Policies.Create(f.ctx, &policy.Policy{Name: "desk", UserID: f.alice.ID, Enabled: true, IdleTimeoutMinutes: 15,
-		Selector: policy.Selector{Tags: map[string]string{"desk": "yes"}}, Protocols: []string{"rdp", "vnc"}}); err != nil {
+	desk := &policy.Policy{Name: "desk", UserID: f.alice.ID, Enabled: true, IdleTimeoutMinutes: 15,
+		Selector: policy.Selector{Tags: map[string]string{"desk": "yes"}}, Protocols: []string{"rdp", "vnc"}}
+	if err := f.h.Policies.Create(f.ctx, desk); err != nil {
 		t.Fatal(err)
 	}
+	f.policyIDs[desk.Name] = desk.ID
 	srv := httptest.NewServer(f.srv)
 	t.Cleanup(srv.Close)
 	return &desktopRig{connectFixture: f, url: srv.URL, accepted: accepted}

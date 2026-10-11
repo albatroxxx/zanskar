@@ -14,6 +14,7 @@ import (
 
 	"github.com/albatroxxx/zanskar/internal/audit"
 	"github.com/albatroxxx/zanskar/internal/auth"
+	"github.com/albatroxxx/zanskar/internal/gateway"
 	"github.com/albatroxxx/zanskar/internal/httpx"
 	"github.com/albatroxxx/zanskar/internal/user"
 )
@@ -33,8 +34,11 @@ type AdminHandler struct {
 	Users    *user.Repo
 	Sessions SessionRevoker
 	TOTP     MFAResetter
-	Audit    *audit.Log
-	Log      *slog.Logger
+	// Revoker ends the user's live sessions when their access is withdrawn
+	// (ADR 0013); nil leaves them to their own limits.
+	Revoker gateway.Revoker
+	Audit   *audit.Log
+	Log     *slog.Logger
 }
 
 // Register mounts the routes behind the admin role.
@@ -212,9 +216,13 @@ func (h *AdminHandler) update(w http.ResponseWriter, r *http.Request) {
 			h.Log.Error("revoke sessions after status change", "user_id", id, "err", err)
 		}
 	}
-	h.record(r, "user.update", id, audit.Success, map[string]any{
+	details := map[string]any{
 		"display_name": req.DisplayName, "email": req.Email, "status": req.Status, "previous_status": existing.Status,
-	})
+	}
+	if req.Status == user.StatusDisabled || req.Status == user.StatusLocked {
+		h.endLive(id, details)
+	}
+	h.record(r, "user.update", id, audit.Success, details)
 	u, err := h.Users.GetByID(r.Context(), id)
 	if err != nil {
 		h.writeUserError(w, r, err)
@@ -252,6 +260,9 @@ func (h *AdminHandler) setRoles(w http.ResponseWriter, r *http.Request) {
 	}
 	if len(granted) > 0 {
 		details["roles_granted"] = granted
+	}
+	if !sameRoles(before.Roles, req.Roles) {
+		h.endLive(id, details)
 	}
 	h.record(r, "user.roles.update", id, audit.Success, details)
 	u, err := h.Users.GetByID(r.Context(), id)
@@ -315,7 +326,9 @@ func (h *AdminHandler) revokeSessions(w http.ResponseWriter, r *http.Request) {
 		h.serverError(w, r, err)
 		return
 	}
-	h.record(r, "user.sessions.revoke", id, audit.Success, map[string]any{"sessions_revoked": n})
+	details := map[string]any{"sessions_revoked": n}
+	h.endLive(id, details)
+	h.record(r, "user.sessions.revoke", id, audit.Success, details)
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"status": "ok", "sessions_revoked": n})
 }
 
@@ -352,15 +365,47 @@ func (h *AdminHandler) del(w http.ResponseWriter, r *http.Request) {
 	if _, err := h.Sessions.RevokeAllForUser(r.Context(), id); err != nil {
 		h.Log.Error("revoke sessions before delete", "user_id", id, "err", err)
 	}
+	details := map[string]any{"username": u.Username, "roles": u.Roles}
+	h.endLive(id, details)
 	if err := h.Users.Delete(r.Context(), id); err != nil {
 		h.writeUserError(w, r, err)
 		return
 	}
-	h.record(r, "user.delete", id, audit.Success, map[string]any{"username": u.Username, "roles": u.Roles})
+	h.record(r, "user.delete", id, audit.Success, details)
 	w.WriteHeader(http.StatusNoContent)
 }
 
 // ---- helpers
+
+// endLive ends the user's live sessions through the gateway (ADR 0013) and
+// records how many in details. Without a gateway it does nothing.
+func (h *AdminHandler) endLive(userID string, details map[string]any) {
+	if h.Revoker == nil {
+		return
+	}
+	details["live_sessions_ended"] = h.Revoker.UserRevoked(userID)
+}
+
+// sameRoles reports whether two role lists hold the same roles, in any order.
+func sameRoles(a, b []user.Role) bool {
+	set := func(roles []user.Role) map[user.Role]bool {
+		m := map[user.Role]bool{}
+		for _, role := range roles {
+			m[role] = true
+		}
+		return m
+	}
+	sa, sb := set(a), set(b)
+	if len(sa) != len(sb) {
+		return false
+	}
+	for role := range sa {
+		if !sb[role] {
+			return false
+		}
+	}
+	return true
+}
 
 func privileged(roles []user.Role) []user.Role {
 	var out []user.Role

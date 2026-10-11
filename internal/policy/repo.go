@@ -145,6 +145,18 @@ func (r *Repo) ForUser(ctx context.Context, userID string) ([]*Policy, error) {
 	return scanAll(rows)
 }
 
+// ForGroup returns every policy bound to the group, enabled or not, in name
+// order. It is not an input to Evaluate (ForUser is): it says which policies
+// a change to the group's membership, or its deletion, touches.
+func (r *Repo) ForGroup(ctx context.Context, groupID string) ([]*Policy, error) {
+	rows, err := r.db.QueryContext(ctx, r.db.Rebind(`SELECT `+cols+` FROM access_policies WHERE group_id = ? ORDER BY name`), groupID)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	return scanAll(rows)
+}
+
 // ---- helpers
 
 func encode(p *Policy) (sel, protos, wins, rules []byte, err error) {

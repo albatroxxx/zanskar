@@ -1,9 +1,14 @@
 // SPDX-License-Identifier: Apache-2.0
 
 // Package policy decides who may open which protocol to which target, and
-// under what constraints. A policy binds one group to a selector of targets.
-// Evaluation happens server-side on every connect and is re-checked while a
-// session is open, so a revoked policy ends live sessions too.
+// under what constraints. A policy binds one subject, a group or a single
+// user (ADR 0013), to a selector of targets. Evaluation happens server-side on
+// every connect. An open session is not re-evaluated on a timer; instead the
+// changes that take access away end the live sessions they affect at once: an
+// edit after which the admitting policy alone no longer grants the session,
+// that policy's deletion, the user's removal from its group or the group's
+// deletion, and an account disabled, locked, deleted, signed out everywhere or
+// given new roles.
 package policy
 
 import (

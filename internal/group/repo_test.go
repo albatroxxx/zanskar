@@ -104,7 +104,7 @@ func TestGroupCRUDAndMembers(t *testing.T) {
 	if err := r.Update(ctx, g.ID, "operations", "renamed"); err != nil {
 		t.Fatal(err)
 	}
-	if err := r.Delete(ctx, g.ID); err != nil {
+	if _, err := r.Delete(ctx, g.ID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := r.Get(ctx, g.ID); !errors.Is(err, ErrNotFound) {
@@ -113,7 +113,7 @@ func TestGroupCRUDAndMembers(t *testing.T) {
 	if mine, _ := r.GroupsForUser(ctx, a.ID); len(mine) != 0 {
 		t.Fatal("membership must cascade on delete")
 	}
-	if err := r.Delete(ctx, "nope"); !errors.Is(err, ErrNotFound) {
+	if _, err := r.Delete(ctx, "nope"); !errors.Is(err, ErrNotFound) {
 		t.Fatal("deleting unknown group must be not found")
 	}
 }
