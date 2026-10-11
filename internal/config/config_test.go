@@ -185,3 +185,29 @@ func TestLoadRefusesAdminListenAddr(t *testing.T) {
 		t.Fatalf("empty is fine: %v", err)
 	}
 }
+
+// TestPublicURL: the address people reach the gateway at, which OIDC needs
+// behind a proxy that terminates TLS (the gateway itself sees plain HTTP
+// there, so it cannot build an https redirect URI on its own).
+func TestPublicURL(t *testing.T) {
+	for _, tc := range []struct{ in, want, err string }{
+		{"", "", ""},
+		{"https://gw.example.com", "https://gw.example.com", ""},
+		{"https://gw.example.com/", "https://gw.example.com", ""},
+		{"https://gw.example.com:8443", "https://gw.example.com:8443", ""},
+		{"http://gw.example.com", "", "https"},
+		{"https://gw.example.com/zanskar", "", "path"},
+		{"https://gw.example.com/?x=1", "", "path"},
+		{"gw.example.com", "", "https"},
+		{"https://", "", "host"},
+	} {
+		t.Setenv("ZANSKAR_PUBLIC_URL", tc.in)
+		c, err := Load(Options{})
+		switch {
+		case tc.err == "" && (err != nil || c.PublicURL != tc.want):
+			t.Errorf("%q: %v %q, want %q", tc.in, err, c.PublicURL, tc.want)
+		case tc.err != "" && (err == nil || !strings.Contains(err.Error(), "ZANSKAR_PUBLIC_URL") || !strings.Contains(err.Error(), tc.err)):
+			t.Errorf("%q: %v, want an error naming the variable and %q", tc.in, err, tc.err)
+		}
+	}
+}
