@@ -306,10 +306,97 @@ tooling below rather than `zanskar backup`.
   names a CA file for a private authority. `ZANSKAR_SIEM_WEBHOOK_URL` (https) with
   `ZANSKAR_SIEM_WEBHOOK_SECRET` (16 characters or more) posts signed JSON batches. Both
   can be set together. In the chart, pass them through `config.extraEnv` /
-  `config.extraEnvFrom`.
-- Verify the audit chain on a schedule: `zanskar audit verify` from a CronJob.
+  `config.extraEnvFrom`. The webhook signature a receiver checks is described under
+  [SIEM export](#siem-export).
+- Ship the gateway's own log off the host too: its `audit anchor` lines are the copy of
+  the audit log's anchors that lives outside the database ([Audit anchors](#audit-anchors)).
+- Verify the audit log on a schedule: `zanskar audit verify` from a CronJob or a timer,
+  with `--anchor` and a line kept outside the database.
 - Keep guacd at 1.6 or newer (certificate pinning, ADR 0012); Dependabot tracks the
   compose image, and `guacd.image.tag` in the chart.
+
+## The audit log outside the database
+
+Every audit event is hashed onto the one before it (ADR 0008), so editing or removing an
+event breaks the chain from there on. Deleting the *newest* events leaves a chain that still
+links; the anchors and the id-sequence check below are what notice that.
+
+### SIEM export
+
+`ZANSKAR_SIEM_SYSLOG_ADDR` sends one RFC 5424 message per event over `tcp://` or `tls://`,
+with octet-counting framing: a CEF record (the event id as `externalId`, its hash as `cs3`),
+or the event as JSON with `ZANSKAR_SIEM_SYSLOG_FORMAT=json`. UDP is not offered, since audit
+delivery must not be silently lossy.
+
+`ZANSKAR_SIEM_WEBHOOK_URL` receives `POST` requests whose body is `{"events":[...]}`, each
+event with its `id`, `hash` and `prev_hash`. Each request is signed with
+`ZANSKAR_SIEM_WEBHOOK_SECRET`:
+
+```
+Content-Type: application/json
+X-Zanskar-Timestamp: <unix seconds>
+X-Zanskar-Signature: sha256=<hex of HMAC-SHA256(secret, timestamp + "." + body)>
+```
+
+A receiver computes the HMAC over the `X-Zanskar-Timestamp` value, a literal `.`, and the
+request body exactly as received, before any JSON parsing; compares it with the header in
+constant time; and refuses a timestamp more than a few minutes from its own clock, so a
+captured request cannot be replayed later. Delivery is at least once: a batch the receiver
+does not answer with a 2xx is sent again, so treat the event `id` (or `hash`) as the
+idempotency key. Each sink keeps its own position across restarts.
+
+### Audit anchors
+
+The gateway signs the head of the audit log, the newest event's id and hash, when it starts
+and every hour after (when there is a newer event), with HMAC-SHA256 under a key derived from
+the master key. Each anchor is stored in the database and logged once as `audit anchor`:
+
+```
+{"time":"…","level":"INFO","msg":"audit anchor","anchor_id":12,"event_id":5310,"hash":"4be1…","created_at":"2026-10-11T09:00:00.123456Z","mac":"9f0c…"}
+```
+
+That log line is the copy outside the database, as long as the gateway's log (the journal,
+or your cluster's log pipeline) is shipped somewhere the database's administrators cannot
+edit. `zanskar audit anchor` writes one on demand and prints it as a line to keep:
+
+```
+$ zanskar audit anchor
+anchor 5310 4be1… 2026-10-11T09:00:00.123456Z 9f0c…
+```
+
+`zanskar audit verify` checks each stored anchor's signature and that the event it names is
+still in the log with the hash it signed, and compares the id sequence with the newest event.
+`--anchor "<line>"`, which may be repeated, checks a line kept outside the database the same
+way. It exits 0 when everything checks out, 1 when something does not and 2 on a malformed
+command line; the console's audit page shows the same result.
+
+- **Stored anchors** notice the newest events being deleted, and any rewrite of an anchored
+  event, by someone who can write to the database but leaves `audit_anchors` alone. Without
+  the master key an anchor can be deleted but not forged or altered; a row that does not
+  verify is reported as not written by this gateway.
+- **The id sequence** notices the newest events being deleted before an anchor covers them.
+  On SQLite that is a failure. On PostgreSQL a failed insert also uses up an id, so it is a
+  warning to look into.
+- **A line kept outside the database** is what notices someone with full database access,
+  who can also delete the stored anchors and rewind the sequence. On a package install whose
+  journal is shipped off the host, a scheduled check against the newest logged anchor:
+
+  ```sh
+  line=$(journalctl -u zanskar -o cat -g '"msg":"audit anchor"' | tail -n 1 |
+         jq -r '"\(.event_id) \(.hash) \(.created_at) \(.mac)"')
+  sudo bash -c "set -a; . /etc/zanskar/env; set +a; \
+    runuser -u zanskar -- zanskar audit verify --anchor '$line'"
+  ```
+
+  Checked on the gateway against its own journal, this proves little; check against the
+  copy your log pipeline keeps.
+
+`zanskar key rotate-master` re-signs the stored anchors under the new key. Lines kept from
+before a rotation were signed with the old key and no longer verify, so restart the service
+right after rotating (until then it still signs with the old key), run `zanskar audit anchor`
+and keep the new line. `zanskar audit reseal` removes the stored anchors over the events it
+rewrites and anchors the new head; lines kept for the rewritten events then fail, which is
+the record that the log was rewritten.
 
 ## TLS certificate
 

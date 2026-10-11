@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -231,6 +232,25 @@ func TestAuditLogRoutes(t *testing.T) {
 	if _, out := e.get("/api/v1/audit/verify", "reviewer"); out["intact"] != true {
 		t.Fatalf("verify an intact log: %v", out)
 	}
+
+	// An anchor over the head, then the newest events deleted: the chain
+	// still links, but the anchor and the id sequence show the truncation.
+	anchor, err := e.audit.Anchor(ctx, testAnchorKey)
+	if err != nil || anchor.ID == 0 {
+		t.Fatalf("anchor: %+v %v", anchor, err)
+	}
+	if _, out := e.get("/api/v1/audit/verify", "reviewer"); out["intact"] != true || out["anchors_checked"] != float64(1) || out["last_anchor"] == nil {
+		t.Fatalf("verify an anchored log: %v", out)
+	}
+	if _, err := e.db.ExecContext(ctx, e.db.Rebind(`DELETE FROM audit_events WHERE id > ?`), anchor.EventID-2); err != nil {
+		t.Fatal(err)
+	}
+	_, truncated := e.get("/api/v1/audit/verify", "reviewer")
+	problems, _ := truncated["problems"].([]any)
+	if truncated["intact"] != false || truncated["broken"] != nil || len(problems) != 2 || !strings.Contains(fmt.Sprint(problems[0]), "the newest events were deleted") {
+		t.Fatalf("verify a truncated log: %v", truncated)
+	}
+
 	if _, err := e.db.ExecContext(ctx, e.db.Rebind(`UPDATE audit_events SET actor_ip = ? WHERE action = ?`), "198.51.100.1", "user.login"); err != nil {
 		t.Fatal(err)
 	}

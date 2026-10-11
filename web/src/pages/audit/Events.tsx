@@ -73,9 +73,31 @@ function DetailRow({ k, v, name }: { k: string; v: unknown; name?: string }) {
 function ChainStatus({ verify, err }: { verify: AuditVerify | null; err: string }) {
   if (err) return <Badge tone="danger">chain check failed: {err}</Badge>
   if (!verify) return <Badge>checking chain…</Badge>
-  if (verify.intact) return <Badge tone="ok">chain intact · {verify.checked} events</Badge>
+  const problems = verify.problems ?? []
+  const warnings = verify.warnings ?? []
+  if (verify.intact) {
+    const anchor = verify.last_anchor
+      ? `The newest signed anchor covers event ${verify.last_anchor.event_id}, written ${fmtPreciseTime(verify.last_anchor.created_at)}.`
+      : 'No signed anchor yet; the gateway writes one at start and every hour.'
+    return (
+      <span title={[anchor, ...warnings].join('\n')}>
+        <Badge tone={warnings.length ? 'warn' : 'ok'}>
+          chain intact · {verify.checked} events{warnings.length ? ` · ${warnings.length} warning${warnings.length > 1 ? 's' : ''}` : ''}
+        </Badge>
+      </span>
+    )
+  }
+  if (!verify.broken && problems.length) {
+    // The chain links, but a signed anchor or the id sequence shows events
+    // were deleted or rewritten (ADR 0008).
+    return (
+      <span title={problems.join('\n')}>
+        <Badge tone="danger">events deleted or edited: {problems[0]}</Badge>
+      </span>
+    )
+  }
   return (
-    <span title="Every event is hashed onto the one before it. A break means a row was altered or removed after it was written, or was written by a build whose hashing differed.">
+    <span title={['Every event is hashed onto the one before it. A break means a row was altered or removed after it was written, or was written by a build whose hashing differed.', ...problems].join('\n')}>
       <Badge tone="danger">chain broken at event {verify.broken?.ID ?? '?'}: {verify.broken?.Reason ?? 'unknown reason'}</Badge>
     </span>
   )

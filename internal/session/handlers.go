@@ -26,11 +26,14 @@ import (
 // Handler serves session, recording and audit read endpoints for users,
 // admins and auditors (ADR 0006: admins and auditors read; only admins act).
 type Handler struct {
-	Repo     *Repo
-	Audit    *audit.Log
-	Registry *gateway.Registry
-	Storage  recording.Storage
-	Log      *slog.Logger
+	Repo  *Repo
+	Audit *audit.Log
+	// AnchorKey checks the audit anchors' signatures (audit.AnchorKey of the
+	// master key). Without it the verify route fails rather than skip them.
+	AnchorKey []byte
+	Registry  *gateway.Registry
+	Storage   recording.Storage
+	Log       *slog.Logger
 }
 
 // Register mounts the routes.
@@ -491,18 +494,32 @@ func (h *Handler) auditFacets(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, f)
 }
 
+// auditVerify walks the chain and checks the anchors and the id sequence
+// (ADR 0008). intact is false on a broken chain and on any problem, so a log
+// whose newest events were deleted no longer reads as intact.
 func (h *Handler) auditVerify(w http.ResponseWriter, r *http.Request) {
-	res, err := h.Audit.Verify(r.Context())
+	res, err := h.Audit.Verify(r.Context(), h.AnchorKey)
 	if err != nil {
 		h.fail(w, r, err)
 		return
 	}
+	problems, warnings := res.Problems, res.Warnings
+	if problems == nil {
+		problems = []string{}
+	}
+	if warnings == nil {
+		warnings = []string{}
+	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
-		"intact":    res.Broken == nil,
-		"checked":   res.Checked,
-		"last_id":   res.LastID,
-		"last_hash": res.LastHash,
-		"broken":    res.Broken,
+		"intact":          res.Intact(),
+		"checked":         res.Checked,
+		"last_id":         res.LastID,
+		"last_hash":       res.LastHash,
+		"broken":          res.Broken,
+		"anchors_checked": res.Anchors,
+		"last_anchor":     res.LastAnchor,
+		"problems":        problems,
+		"warnings":        warnings,
 	})
 }
 

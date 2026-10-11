@@ -83,8 +83,10 @@ func Sign(secret []byte, timestamp string, body []byte) string {
 	return hex.EncodeToString(mac.Sum(nil))
 }
 
-// VerifySignature is the receiver-side check, exported so integrators (and
-// tests) share one implementation. maxSkew rejects stale timestamps.
+// VerifySignature is the receiver-side check, kept beside Sign so the tests
+// prove the two agree. It is internal to this module and cannot be imported
+// by a receiver; the scheme a receiver implements is documented in
+// docs/deploy.md (SIEM export). maxSkew rejects stale timestamps.
 func VerifySignature(secret []byte, timestamp, signature string, body []byte, maxSkew time.Duration) bool {
 	sec, err := strconv.ParseInt(timestamp, 10, 64)
 	if err != nil {

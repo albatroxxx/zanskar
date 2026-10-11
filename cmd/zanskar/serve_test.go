@@ -116,6 +116,12 @@ func TestServeStartsAndStops(t *testing.T) {
 	case <-time.After(15 * time.Second):
 		t.Fatal("serve did not stop when its context ended")
 	}
+
+	// At start the gateway anchored the head of the audit log (the admin
+	// create), signed with the key derived from its master key.
+	if out, stderr, err := output(t, func() error { return runAuditVerify(nil) }); err != nil || !strings.Contains(out, "anchors: 1 checked") {
+		t.Fatalf("verify after serve: %v\n%s%s", err, out, stderr)
+	}
 }
 
 // TestServeRefusesPendingMigrations: migrations are an explicit operator
