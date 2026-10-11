@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"net"
 	"net/http"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -60,12 +61,14 @@ func startServe(t *testing.T, addr string) (base string, done chan error, cancel
 }
 
 func TestServeStartsAndStops(t *testing.T) {
-	newCLIGateway(t, true)
+	g := newCLIGateway(t, true)
 	addr := freeAddr(t)
 	t.Setenv("ZANSKAR_LISTEN_ADDR", addr)
 	t.Setenv("ZANSKAR_LOG_LEVEL", "error")
 	t.Setenv("ZANSKAR_REQUIRE_MFA", "true")
 	t.Setenv("ZANSKAR_ADMIN_PASSWORD", "a long enough passphrase 42")
+	// The secret alone: with no URL nothing is posted anywhere.
+	t.Setenv("ZANSKAR_SIEM_WEBHOOK_SECRET", "a webhook secret of some length")
 	if _, _, err := output(t, func() error { return runAdmin([]string{"create", "-username", "root", "-name", "Root"}) }); err != nil {
 		t.Fatal(err)
 	}
@@ -73,6 +76,17 @@ func TestServeStartsAndStops(t *testing.T) {
 	base, done, cancel := startServe(t, addr)
 	defer cancel()
 	client := &http.Client{Timeout: 2 * time.Second}
+
+	// Once read, the secrets are gone from the process environment, where
+	// every child the gateway starts and every dump of it would find them.
+	for _, k := range []string{"ZANSKAR_MASTER_KEY", "ZANSKAR_DB_DSN", "ZANSKAR_SIEM_WEBHOOK_SECRET", "ZANSKAR_ADMIN_PASSWORD"} {
+		if _, ok := os.LookupEnv(k); ok {
+			t.Errorf("%s is still in the serving process's environment", k)
+		}
+	}
+	if os.Getenv("ZANSKAR_LISTEN_ADDR") != addr {
+		t.Error("a setting that is not a secret left the environment too")
+	}
 
 	get := func(path string) (int, string) {
 		t.Helper()
@@ -118,7 +132,11 @@ func TestServeStartsAndStops(t *testing.T) {
 	}
 
 	// At start the gateway anchored the head of the audit log (the admin
-	// create), signed with the key derived from its master key.
+	// create), signed with the key derived from its master key. verify is a
+	// process of its own in real life, started with the environment file;
+	// here it shares serve's process, so it is handed the two again.
+	t.Setenv("ZANSKAR_MASTER_KEY", g.keyB64)
+	t.Setenv("ZANSKAR_DB_DSN", "file:"+g.dbPath+"?_pragma=foreign_keys(1)")
 	if out, stderr, err := output(t, func() error { return runAuditVerify(nil) }); err != nil || !strings.Contains(out, "anchors: 1 checked") {
 		t.Fatalf("verify after serve: %v\n%s%s", err, out, stderr)
 	}

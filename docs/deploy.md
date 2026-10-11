@@ -486,6 +486,17 @@ password.
   ```
 
   For Podman, point `ZANSKAR_DOCKER_PATH` at the `podman` binary.
+- **What the container CLI is given:** it starts with `PATH`, `HOME` and the variables that
+  say which daemon to reach and how (`DOCKER_HOST`, `DOCKER_CONTEXT`, `DOCKER_CONFIG`,
+  `DOCKER_CERT_PATH`, `DOCKER_TLS_VERIFY`, `DOCKER_TLS`, `DOCKER_API_VERSION`, and for Podman
+  `XDG_RUNTIME_DIR`, `CONTAINER_HOST`, `CONTAINER_CONNECTION`, `CONTAINERS_CONF`), plus the
+  session's own sidecar settings; nothing else from the gateway's environment. Set those in the
+  environment file if the daemon is not the local default. The gateway also removes the master
+  key, the database DSN, the webhook secret, `ZANSKAR_ADMIN_PASSWORD` and
+  `ZANSKAR_NEW_MASTER_KEY` from its own environment once it has read them at start, so no
+  process it starts inherits them. The kernel's copy of the environment the service started
+  with (`/proc/<pid>/environ`) is not changed, and stays readable by the service user and
+  root; keep the master key in `ZANSKAR_MASTER_KEY_FILE` to keep it out of that copy too.
 - **Containment on the host:** the session network is internal, so the client container
   reaches its proxy and nothing else; only the proxy is also on the runtime's default
   bridge, through which it reaches the database. Docker 28.1 or newer also keeps the

@@ -338,6 +338,40 @@ func Load(opts Options) (*Config, error) {
 	return c, nil
 }
 
+// SecretEnv names the variables that carry a secret: the master key, the
+// database DSN (which can hold the database password) and the SIEM webhook's
+// signing secret, which serve reads, and two that only the command line reads
+// but that an operator may leave in the same environment file: the first
+// administrator's password and the next master key of a rotation.
+var SecretEnv = []string{
+	"ZANSKAR_MASTER_KEY",
+	"ZANSKAR_DB_DSN",
+	"ZANSKAR_SIEM_WEBHOOK_SECRET",
+	"ZANSKAR_ADMIN_PASSWORD",
+	"ZANSKAR_NEW_MASTER_KEY",
+}
+
+// DropSecretEnv removes the SecretEnv variables from this process's
+// environment and returns the names of those that were set. serve calls it
+// once Load has read them, so a child started without an environment of its
+// own does not inherit them and nothing in the process that reads the
+// environment later finds them. It changes the process's copy only: the
+// kernel keeps the block the process was started with, which the service
+// user and root can still read in /proc/<pid>/environ. Nothing needs them
+// back. A restart is never this process starting itself again: it exits and
+// its supervisor (systemd, Docker, Kubernetes) starts a new process from the
+// environment file or the container's definition.
+func DropSecretEnv() []string {
+	var dropped []string
+	for _, k := range SecretEnv {
+		if _, ok := os.LookupEnv(k); ok {
+			_ = os.Unsetenv(k)
+			dropped = append(dropped, k)
+		}
+	}
+	return dropped
+}
+
 // SecureCookies reports whether browser cookies should carry the Secure flag.
 func (c *Config) SecureCookies() bool {
 	return c.ServesTLS() || c.TrustProxyTLS

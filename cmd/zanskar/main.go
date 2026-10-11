@@ -158,6 +158,11 @@ func serve(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	// Read once, the secrets leave the process's environment, which a child
+	// started without one of its own would inherit. The snapshot above keeps
+	// the restart check working, and a restart is a new process
+	// (lifecycle.Controller).
+	config.DropSecretEnv()
 	log, logLevel, logs := newLeveledLogger(cfg)
 	// A console-requested restart cancels this context once live sessions
 	// have drained; serve then returns nil and the supervisor starts a fresh

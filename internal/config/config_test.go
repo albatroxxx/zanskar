@@ -211,3 +211,35 @@ func TestPublicURL(t *testing.T) {
 		}
 	}
 }
+
+// TestDropSecretEnv: once the configuration is read, the variables that
+// carry a secret leave the process environment and their names come back;
+// a secret that was never set is not reported, and the other settings stay.
+func TestDropSecretEnv(t *testing.T) {
+	for _, k := range SecretEnv {
+		t.Setenv(k, "")
+		_ = os.Unsetenv(k)
+	}
+	t.Setenv("ZANSKAR_MASTER_KEY", base64.StdEncoding.EncodeToString(make([]byte, 32)))
+	t.Setenv("ZANSKAR_DB_DSN", "postgres://zanskar:pw@db/zanskar")
+	t.Setenv("ZANSKAR_SIEM_WEBHOOK_SECRET", "a webhook secret of some length")
+	t.Setenv("ZANSKAR_LISTEN_ADDR", "127.0.0.1:9443")
+	if _, err := Load(Options{RequireMasterKey: true}); err != nil {
+		t.Fatal(err)
+	}
+	got := DropSecretEnv()
+	if strings.Join(got, ",") != "ZANSKAR_MASTER_KEY,ZANSKAR_DB_DSN,ZANSKAR_SIEM_WEBHOOK_SECRET" {
+		t.Fatalf("dropped %v", got)
+	}
+	for _, k := range SecretEnv {
+		if _, ok := os.LookupEnv(k); ok {
+			t.Errorf("%s is still set", k)
+		}
+	}
+	if os.Getenv("ZANSKAR_LISTEN_ADDR") != "127.0.0.1:9443" {
+		t.Error("a setting that is not a secret was dropped")
+	}
+	if again := DropSecretEnv(); len(again) != 0 {
+		t.Errorf("a second call dropped %v", again)
+	}
+}
