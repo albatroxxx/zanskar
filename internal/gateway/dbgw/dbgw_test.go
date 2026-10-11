@@ -275,3 +275,19 @@ func TestSessionObjectsAreLabelled(t *testing.T) {
 		wantLabels(s.Engine+" client", args)
 	}
 }
+
+// TestProxyGivesNoAdminConsole: pgbouncer's admin console (the "pgbouncer"
+// database) shows the upstream host, port and user and can pause or kill
+// the pool; the session user must not be one of its users (ADR 0017: the
+// client never learns the upstream).
+func TestProxyGivesNoAdminConsole(t *testing.T) {
+	_, env, err := proxyArgs(Spec{Engine: "postgres", Host: "db.internal", Port: 5432, Database: "app", Username: "app", Password: "s3cret", SessionID: "s1"}, "net", "proxy")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range env {
+		if strings.HasPrefix(e, "PGB_INI=") && (strings.Contains(e, "admin_users") || strings.Contains(e, "stats_users")) {
+			t.Fatalf("the session user is given the pgbouncer console:\n%s", e)
+		}
+	}
+}

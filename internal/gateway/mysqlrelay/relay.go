@@ -44,8 +44,8 @@ type TLSMode string
 const (
 	// TLSPrefer encrypts when the server offers TLS and falls back to plain
 	// otherwise; the certificate is not verified. It mirrors the pgbouncer
-	// sidecar's server_tls_sslmode=prefer. Verification arrives with the
-	// target's TLS settings.
+	// sidecar's server_tls_sslmode=prefer; a target chooses it explicitly,
+	// since its TLS mode defaults to verify-full (ADR 0025).
 	TLSPrefer TLSMode = "prefer"
 	// TLSRequire refuses a server that does not offer TLS.
 	TLSRequire TLSMode = "require"
@@ -98,6 +98,9 @@ func (c *Config) Validate() error {
 	if c.DialTimeout <= 0 {
 		c.DialTimeout = 15 * time.Second
 	}
+	// The gateway always passes the target's mode (verify-full unless the
+	// target says otherwise, ADR 0025); only a hand-run relay with no mode
+	// gets prefer here.
 	if c.Upstream.TLS == "" {
 		c.Upstream.TLS = TLSPrefer
 	}
