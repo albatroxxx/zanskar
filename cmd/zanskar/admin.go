@@ -14,7 +14,6 @@ import (
 	"github.com/albatroxxx/zanskar/internal/audit"
 	"github.com/albatroxxx/zanskar/internal/auth"
 	"github.com/albatroxxx/zanskar/internal/config"
-	"github.com/albatroxxx/zanskar/internal/store"
 	"github.com/albatroxxx/zanskar/internal/user"
 )
 
@@ -58,21 +57,12 @@ func runAdminCreate(args []string) error {
 		return err
 	}
 
-	cfg, err := config.Load(config.Options{})
-	if err != nil {
-		return err
-	}
 	ctx := context.Background()
-	db, err := store.Open(ctx, cfg.DBDriver, cfg.DBDSN)
+	_, db, err := openDB(ctx, config.Options{})
 	if err != nil {
 		return err
 	}
 	defer func() { _ = db.Close() }()
-	if pending, err := store.Pending(ctx, db); err != nil {
-		return err
-	} else if len(pending) > 0 {
-		return fmt.Errorf("%d migration(s) pending; run `zanskar migrate` first", len(pending))
-	}
 
 	u := &user.User{
 		Username:     *username,
@@ -135,12 +125,8 @@ func runAdminResetMFA(args []string) error {
 	if *username == "" {
 		return errors.New("--username is required")
 	}
-	cfg, err := config.Load(config.Options{})
-	if err != nil {
-		return err
-	}
 	ctx := context.Background()
-	db, err := store.Open(ctx, cfg.DBDriver, cfg.DBDSN)
+	cfg, db, err := openDB(ctx, config.Options{})
 	if err != nil {
 		return err
 	}

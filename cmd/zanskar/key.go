@@ -51,11 +51,7 @@ func runKey(args []string) error {
 // openRing opens the database and the key ring with the configured master
 // key, the way serve does but without the server.
 func openRing(ctx context.Context) (*config.Config, *store.DB, *keyring.Ring, error) {
-	cfg, err := config.Load(config.Options{RequireMasterKey: true})
-	if err != nil {
-		return nil, nil, nil, err
-	}
-	db, err := store.Open(ctx, cfg.DBDriver, cfg.DBDSN)
+	cfg, db, err := openDB(ctx, config.Options{RequireMasterKey: true})
 	if err != nil {
 		return nil, nil, nil, err
 	}
