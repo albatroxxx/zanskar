@@ -59,7 +59,7 @@
     </ul>
 
     <h3 id="idp-oidc">OIDC single sign-on</h3>
-    <p>Type <em>oidc</em> needs the issuer URL, a client id and secret; discovery finds the rest. The <em>username claim</em> is usually <code>preferred_username</code>, and the <em>groups claim</em> feeds the same group mapping as LDAP. Restrict who may use it with <em>allowed email domains</em>. The console shows the exact redirect URI to register at the provider once the entry is saved; it is <code>/api/v1/auth/oidc/&lt;provider id&gt;/callback</code> on your gateway&#39;s own hostname.</p>
+    <p>Type <em>oidc</em> needs the issuer URL, a client id and secret; discovery finds the rest. The <em>username claim</em> is usually <code>preferred_username</code>, and the <em>groups claim</em> feeds the same group mapping as LDAP. Restrict who may use it with <em>allowed email domains</em>; the provider must have verified the address (its <code>email_verified</code> claim), so someone who can edit their own email cannot type their way in. Microsoft Entra ID never sends that claim: tick <em>trust email addresses</em> for it when your directory assigns the addresses. An address the provider marks unverified is never used, not even to make a username. The console shows the exact redirect URI to register at the provider once the entry is saved; it is <code>/api/v1/auth/oidc/&lt;provider id&gt;/callback</code> on your gateway&#39;s own hostname.</p>
     <p>Whichever you use, <strong>keep one local admin</strong> with a password and an authenticator. If the directory is unreachable, that account is how you get back in.</p>
 
     <h2 id="credentials">Store a credential</h2>

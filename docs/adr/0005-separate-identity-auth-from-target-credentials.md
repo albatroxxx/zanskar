@@ -104,8 +104,12 @@ granted through a provider is on the record like access an administrator grants:
 - Mapped group memberships the sign-in added or removed are recorded as `user.groups.sync`. A
   removal ends the live sessions the group granted, as an administrator's removal does (ADR 0013).
 - Creating or changing a provider records the settings that decide who gets in and with what:
-  default roles, auto-provisioning, group mapping, and for OIDC the issuer, allowed domains and
-  the skip-MFA switch (before and after, on a change). Secrets are never part of it.
+  default roles, auto-provisioning, group mapping, and for OIDC the issuer, allowed domains, the
+  trust-email switch and the skip-MFA switch (before and after, on a change). Secrets are never
+  part of it.
+- Allowed domains are checked only against an address the provider has verified
+  (`email_verified`), or, for a provider marked trust-email that never sends the claim, the one
+  it gives (2026-10-11, L12). An address the provider marks unverified is not used at all.
 
 A group mapping key for LDAP may be the group's full DN, compared as LDAP compares DNs, or its
 bare name. A bare name matches every group of that name in any OU, so it is only as safe as

@@ -56,8 +56,14 @@ type OIDCConfig struct {
 	Scopes        []string `json:"scopes,omitempty"`         // default openid profile email
 	GroupsClaim   string   `json:"groups_claim,omitempty"`   // e.g. "groups"; empty disables group sync
 	UsernameClaim string   `json:"username_claim,omitempty"` // default preferred_username, then email
-	// AllowedDomains restricts sign-in to these email domains when set.
+	// AllowedDomains restricts sign-in to these email domains when set. The
+	// address must be one the provider has verified (email_verified).
 	AllowedDomains []string `json:"allowed_domains,omitempty"`
+	// TrustEmail accepts the email claim as verified when the provider never
+	// says, as Entra ID does not. Set it only for a provider whose addresses
+	// its own directory assigns. An address the provider marks unverified is
+	// never used, whatever this says.
+	TrustEmail bool `json:"trust_email,omitempty"`
 	// SkipMFA trusts the provider's own MFA and does not require TOTP in Zanskar.
 	SkipMFA bool `json:"skip_mfa"`
 }
@@ -126,6 +132,7 @@ func AccessSummary(c *Config) map[string]any {
 	if o := c.OIDC; o != nil {
 		d["issuer"], d["client_id"], d["skip_mfa"] = o.Issuer, o.ClientID, o.SkipMFA
 		d["allowed_domains"], d["username_claim"], d["groups_claim"] = orEmpty(o.AllowedDomains), o.UsernameClaim, o.GroupsClaim
+		d["trust_email"] = o.TrustEmail
 	}
 	if l := c.LDAP; l != nil {
 		d["url"], d["start_tls"], d["insecure_skip_verify"] = l.URL, l.StartTLS, l.InsecureSkipVerify
