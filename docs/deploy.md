@@ -389,6 +389,16 @@ password.
   ```
 
   For Podman, point `ZANSKAR_DOCKER_PATH` at the `podman` binary.
+- **Containment on the host:** the session network is internal, so the client container
+  reaches its proxy and nothing else; only the proxy is also on the runtime's default
+  bridge, through which it reaches the database. Docker 28.1 or newer also keeps the
+  gateway host's own address off that network (an older daemon leaves it reachable from
+  the client container, and the gateway logs a warning per session). Every container and
+  network is labelled `zanskar.managed=1` and `zanskar.session=<id>`; at start and every
+  five minutes the gateway removes those that belong to no session it runs and are older
+  than two minutes, so a crash leaves nothing behind. `ZANSKAR_DATABASE_MAX_SESSIONS`
+  (default 20, `0` for no cap) bounds how many database sessions run at once; a user past
+  it is told the gateway is full and to retry.
 - **Images pulled on first use:** `postgres:<version>-alpine` and `edoburu/pgbouncer` for
   PostgreSQL; `mysql:<version>` or `mariadb:<version>` and `ghcr.io/albatroxxx/zanskar:<your
   version>` for MySQL and MariaDB. Pull them ahead of time on an air-gapped host; the relay

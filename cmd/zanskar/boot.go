@@ -5,6 +5,7 @@ package main
 import (
 	"fmt"
 	"net/url"
+	"strconv"
 	"strings"
 
 	"github.com/albatroxxx/zanskar/internal/config"
@@ -103,6 +104,7 @@ func bootSettings(cfg *config.Config, keyVersion int) []settings.Boot {
 		{Key: "recordings_dir", Title: "Recordings directory", EnvVar: "ZANSKAR_RECORDINGS_DIR", Value: cfg.RecordingsDir, Description: "Local recording storage."},
 		{Key: "recordings_s3", Title: "Recordings in S3", EnvVar: "ZANSKAR_RECORDINGS_S3_*", Value: set(cfg.RecordingsS3Bucket), Description: "Install-time bucket for recordings; the console's Settings page can override it."},
 		{Key: "docker_path", Title: "Container runtime", EnvVar: "ZANSKAR_DOCKER_PATH", Value: map[bool]string{true: cfg.DockerPath, false: "docker (on PATH)"}[cfg.DockerPath != ""], Description: "Spawns database session containers."},
+		{Key: "database_max_sessions", Title: "Database session cap", EnvVar: "ZANSKAR_DATABASE_MAX_SESSIONS", Value: map[bool]string{true: strconv.Itoa(cfg.DatabaseMaxSessions), false: "no cap"}[cfg.DatabaseMaxSessions > 0], Description: "Most database sessions at once; each is two containers and a network on this host. 0 lifts the cap."},
 		{Key: "issuer", Title: "Authenticator issuer", EnvVar: "ZANSKAR_ISSUER", Value: cfg.Issuer, Description: "Name shown in authenticator apps; baked into enrolled authenticators."},
 		{Key: "siem", Title: "SIEM export", EnvVar: "ZANSKAR_SIEM_*", Value: map[bool]string{true: "configured", false: "(not set)"}[cfg.SIEMSyslogAddr != "" || cfg.SIEMWebhookURL != ""], Description: "Where audit events are shipped."},
 		{Key: "log_format", Title: "Log format", EnvVar: "ZANSKAR_LOG_FORMAT", Value: cfg.LogFormat, Description: "json or text."},

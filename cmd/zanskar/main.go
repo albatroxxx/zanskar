@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"os/exec"
 	"os/signal"
 	"syscall"
 	"time"
@@ -32,6 +33,7 @@ import (
 	"github.com/albatroxxx/zanskar/internal/credential"
 	"github.com/albatroxxx/zanskar/internal/crypto"
 	"github.com/albatroxxx/zanskar/internal/gateway"
+	"github.com/albatroxxx/zanskar/internal/gateway/dbgw"
 	"github.com/albatroxxx/zanskar/internal/group"
 	"github.com/albatroxxx/zanskar/internal/idp"
 	idpadmin "github.com/albatroxxx/zanskar/internal/idp/adminapi"
@@ -313,7 +315,7 @@ func serve(ctx context.Context) error {
 			&tlscert.Handler{Manager: tlsMgr, Mode: cfg.TLSMode, Audit: auditLog, Log: log},
 			&connect.Handler{Targets: targets, Policies: policies, Access: accessReqs, Vault: vault, Sessions: sessionRepo, Tickets: ticket.NewStore(),
 				Registry: registry, Storage: storage, Audit: auditLog, Log: log, MFAEnrolled: totp.Enrolled, GuacdAddr: guacdAddr, Draining: restarter.Draining,
-				DockerPath: cfg.DockerPath, DBProxyImage: func() string { return runtime.String(settings.KeyDBProxyImage) },
+				DockerPath: cfg.DockerPath, DBMaxSessions: cfg.DatabaseMaxSessions, DBProxyImage: func() string { return runtime.String(settings.KeyDBProxyImage) },
 				Prober: &target.Prober{}, ASGs: asgRepo, Cloud: cloudProviders},
 			&connect.ShadowHandler{Registry: registry, Audit: auditLog, Log: log, GuacdAddr: guacdAddr},
 			consoleCLI(cfg, sessions, totp, auditLog, log),
@@ -366,6 +368,29 @@ func serve(ctx context.Context) error {
 				} else if n > 0 {
 					log.Info("session sweep", "deleted", n)
 				}
+			}
+		}
+	}()
+
+	// Database sessions (ADR 0017): the containers and networks a crashed
+	// process or a failed teardown left behind are removed by label, now and
+	// every five minutes; a session this process still runs is never touched.
+	// A host without a container CLI serves no database targets, so that is
+	// not worth a warning every pass.
+	go func() {
+		live := func(id string) bool { _, ok := registry.Get(id); return ok }
+		t := time.NewTicker(5 * time.Minute)
+		defer t.Stop()
+		for {
+			if n, err := dbgw.Reap(ctx, cfg.DockerPath, live); err != nil && !errors.Is(err, exec.ErrNotFound) {
+				log.Warn("database session reaper", "err", err)
+			} else if n > 0 {
+				log.Info("database session reaper removed leftovers", "removed", n)
+			}
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.C:
 			}
 		}
 	}()

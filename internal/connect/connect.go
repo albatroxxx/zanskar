@@ -64,6 +64,9 @@ type Handler struct {
 	// DockerPath is the docker CLI used to spawn database session containers
 	// (ADR 0017); empty means "docker" on PATH.
 	DockerPath string
+	// DBMaxSessions caps the database sessions running at once on this
+	// gateway, each two containers and a network; 0 lifts the cap.
+	DBMaxSessions int
 	// DBProxyImage returns the image run as the MySQL/MariaDB relay sidecar,
 	// normally the gateway's own; a function so the runtime setting applies
 	// to the next session.

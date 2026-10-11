@@ -72,6 +72,17 @@ func (h *Handler) database(w http.ResponseWriter, r *http.Request) {
 		spec.ProxyImage = h.DBProxyImage()
 	}
 
+	// The cap on concurrent database sessions (ADR 0017), each two containers
+	// and a network on this host. It is counted, not reserved, so a burst of
+	// simultaneous starts can overshoot by the burst. Refused here, before the
+	// upgrade, because no status can follow it.
+	if h.DBMaxSessions > 0 && h.Registry != nil && h.liveDatabaseSessions() >= h.DBMaxSessions {
+		h.record(r, actorFor(g.UserID, ip).Event("session.connect", "target", ep.LiveKey, audit.Failure,
+			map[string]any{"protocol": g.Protocol, "reason": "too_many_sessions", "limit": h.DBMaxSessions}))
+		httpx.WriteError(w, http.StatusServiceUnavailable, "too_many_sessions", "the gateway is running its maximum number of database sessions; try again in a moment")
+		return
+	}
+
 	ws, err := websocket.Accept(w, r, &websocket.AcceptOptions{CompressionMode: websocket.CompressionDisabled})
 	if err != nil {
 		return
@@ -132,4 +143,15 @@ func (h *Handler) database(w http.ResponseWriter, r *http.Request) {
 	}
 	endWith(reason, "")
 	_ = ws.Close(websocket.StatusNormalClosure, reason)
+}
+
+// liveDatabaseSessions counts the database sessions this gateway is running.
+func (h *Handler) liveDatabaseSessions() int {
+	n := 0
+	for _, l := range h.Registry.List() {
+		if l.Protocol == string(target.Database) {
+			n++
+		}
+	}
+	return n
 }

@@ -220,3 +220,58 @@ func TestSSLModeFailsClosed(t *testing.T) {
 		t.Fatalf("an unset mode must verify against the CA file:\n%s", ini)
 	}
 }
+
+// TestNetworkArgsInternalAndLabelled: the session network has no route out,
+// uses the isolated gateway mode when offered it, and carries the labels;
+// the proxy's way out is the runtime's default bridge.
+func TestNetworkArgsInternalAndLabelled(t *testing.T) {
+	got := strings.Join(networkArgs("sess1", "zanskar-net-sess1", true), " ")
+	want := "network create --internal -o com.docker.network.bridge.gateway_mode_ipv4=isolated --label zanskar.managed=1 --label zanskar.session=sess1 zanskar-net-sess1"
+	if got != want {
+		t.Errorf("isolated:\n got %s\nwant %s", got, want)
+	}
+	got = strings.Join(networkArgs("sess1", "zanskar-net-sess1", false), " ")
+	want = "network create --internal --label zanskar.managed=1 --label zanskar.session=sess1 zanskar-net-sess1"
+	if got != want {
+		t.Errorf("plain:\n got %s\nwant %s", got, want)
+	}
+	for cli, net := range map[string]string{"docker": "bridge", "/usr/bin/docker": "bridge", "": "bridge", "podman": "podman", "/usr/bin/podman": "podman"} {
+		if got := egressNetwork(cli); got != net {
+			t.Errorf("egressNetwork(%q)=%q want %q", cli, got, net)
+		}
+	}
+}
+
+// TestSessionObjectsAreLabelled: every container a session starts carries
+// the labels the reaper finds leftovers by, so a crashed gateway's objects
+// are found by label and never by guessing names.
+func TestSessionObjectsAreLabelled(t *testing.T) {
+	wantLabels := func(kind string, args []string) {
+		t.Helper()
+		j := " " + strings.Join(args, " ") + " "
+		for _, l := range []string{" --label zanskar.managed=1 ", " --label zanskar.session=sess1 "} {
+			if !strings.Contains(j, l) {
+				t.Errorf("%s argv lacks %q: %s", kind, strings.TrimSpace(l), j)
+			}
+		}
+	}
+	pg := Spec{Engine: "postgres", Host: "db.internal", Port: 5432, Database: "app", Username: "svc", Password: "x", SessionID: "sess1", TLSMode: "prefer"}
+	args, _, err := proxyArgs(pg, "zanskar-net-sess1", "zanskar-dbproxy-sess1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantLabels("pgbouncer proxy", args)
+	my := Spec{Engine: "mysql", Host: "db.internal", Port: 3306, Username: "svc", Password: "x", SessionID: "sess1", ProxyImage: "img"}
+	args, _, err = proxyArgs(my, "zanskar-net-sess1", "zanskar-dbproxy-sess1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantLabels("mysql relay proxy", args)
+	for _, s := range []Spec{pg, my} {
+		args, err = clientArgs(s, "zanskar-net-sess1", "zanskar-dbcli-sess1", "zanskar-dbproxy-sess1")
+		if err != nil {
+			t.Fatal(err)
+		}
+		wantLabels(s.Engine+" client", args)
+	}
+}

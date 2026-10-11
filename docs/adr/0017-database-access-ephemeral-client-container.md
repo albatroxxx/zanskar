@@ -177,3 +177,44 @@ Not changed: the operational requirement that the service user can use the conta
 runtime. The packaged unit does not add `SupplementaryGroups=docker` by itself, since an
 unconditional grant fails the unit on hosts without a docker group; `docs/deploy.md`
 shows the drop-in.
+
+## Addendum 2026-10-11: the containment that now exists, and what still does not
+
+The "Containment is non-negotiable" list above promised more than the code did. The
+per-session network was an ordinary bridge with NAT out, so the client container, whose
+`psql` and `mysql` have shell escapes, could reach anything the gateway host could; nothing
+capped how many sessions ran; and nothing removed the containers and networks a crashed
+gateway left behind (`docker run --rm` only removes a container that exits). As of this
+date:
+
+- **Egress lockdown.** The session network is created `--internal`: it has no route out,
+  and the client container is on it alone, so the client reaches the proxy and nothing
+  else, not the database and not the gateway's network. Only the proxy is additionally
+  attached to the runtime's default bridge (`bridge`; `podman` under Podman, which is not
+  verified), through which it dials the database; it dials only when the client connects,
+  so attaching after start is in time, and the client still resolves the proxy by name.
+  On Docker 28.1 and newer the network also uses the isolated gateway mode
+  (`com.docker.network.bridge.gateway_mode_ipv4=isolated`), so the bridge carries no
+  address of the gateway host either. Measured on Docker 29: from the client, the
+  database's address and an outside address are unreachable in both modes; the host's
+  own address on the session bridge is reachable on a plain internal network (so the
+  gateway's own listeners would be) and gone in the isolated mode. A daemon that refuses
+  the mode gets a plain internal network and the gateway logs a warning per session; one
+  that does not know the option ignores it silently, so on Docker older than 28.1 that
+  one residual remains.
+- **Labels and a reaper.** Every network, proxy and client carries `zanskar.managed=1`
+  and `zanskar.session=<id>`. `dbgw.Reap` lists both by label and removes what belongs to
+  no session this process runs and is older than two minutes, so a start in flight is
+  never reaped, containers before networks; `serve` runs it at start and every five
+  minutes.
+- **A cap.** `ZANSKAR_DATABASE_MAX_SESSIONS` (default 20; 0 lifts it) bounds the database
+  sessions running at once; past it a connection is refused with `503 too_many_sessions`
+  and audited as a failed `session.connect`. It is counted, not reserved, so a burst of
+  simultaneous starts can overshoot by the burst.
+- **Session lifetime** is the policy's maximum session duration and idle timeout, which
+  the bridge already enforced; a policy without a maximum has no TTL beyond the idle
+  timeout, and the reaper covers leaks, not lifetimes.
+
+Still not done: the hardened spawn path (a brokered helper with a fixed API, or a
+rootless runtime; the gateway still talks to the Docker socket, see the 2026-09-24
+addendum), and client images pinned by digest rather than by tag.
