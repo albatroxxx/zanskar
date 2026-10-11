@@ -11,7 +11,6 @@ import (
 	"net/http"
 	"net/netip"
 	"strings"
-	"time"
 
 	"github.com/albatroxxx/zanskar/internal/user"
 )
@@ -134,8 +133,10 @@ type Middleware struct {
 	Log      *slog.Logger
 }
 
-// Authenticate attaches a Principal when the cookie names a live session and
-// an active user. It never rejects; RequireAuth does that.
+// Authenticate attaches a Principal when the cookie names a live session of
+// an account an administrator has not blocked. It never refuses a caller for
+// who they are; RequireAuth does that. A cookie the database cannot check
+// right now is neither accepted nor thrown away: see unchecked.
 func (m *Middleware) Authenticate(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		c, err := r.Cookie(CookieName)
@@ -144,16 +145,30 @@ func (m *Middleware) Authenticate(next http.Handler) http.Handler {
 			return
 		}
 		sess, err := m.Sessions.Lookup(r.Context(), c.Value)
-		if err != nil {
-			if !errors.Is(err, ErrNoSession) {
-				m.Log.Error("session lookup", "err", err)
-			}
+		if errors.Is(err, ErrNoSession) {
 			m.Sessions.ClearCookie(w)
 			next.ServeHTTP(w, r)
 			return
 		}
+		if err != nil {
+			m.unchecked(w, r, next, "session lookup", err)
+			return
+		}
 		u, err := m.Users.GetByID(r.Context(), sess.UserID)
-		if err != nil || u.IsLocked(time.Now()) {
+		if errors.Is(err, user.ErrNotFound) {
+			// Deleted meanwhile: the same as a revoked session.
+			m.Sessions.ClearCookie(w)
+			next.ServeHTTP(w, r)
+			return
+		}
+		if err != nil {
+			m.unchecked(w, r, next, "session user lookup", err)
+			return
+		}
+		// Only an administrator's block ends a live session. The temporary
+		// lock that wrong passwords set refuses new sign-ins and nothing
+		// more: anyone who knows a username can set it (M6).
+		if u.IsBlocked() {
 			m.Sessions.ClearCookie(w)
 			next.ServeHTTP(w, r)
 			return
@@ -161,6 +176,21 @@ func (m *Middleware) Authenticate(next http.Handler) http.Handler {
 		ctx := context.WithValue(r.Context(), principalKey, &Principal{Session: sess, User: u})
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
+}
+
+// unchecked answers a request whose cookie the database could not check: an
+// outage, not a verdict on the cookie, so the cookie is kept. Clearing it
+// would sign everyone out on every database blip (M6). API and WebSocket
+// calls get 503, not an anonymous run that would end in a misleading 401;
+// anything else, such as the console's own files, is served without a
+// principal.
+func (m *Middleware) unchecked(w http.ResponseWriter, r *http.Request, next http.Handler, what string, err error) {
+	m.Log.Error(what, "err", err)
+	if p := r.URL.Path; strings.HasPrefix(p, "/api/") || strings.HasPrefix(p, "/ws/") {
+		WriteError(w, http.StatusServiceUnavailable, "unavailable", "the gateway cannot check your sign-in right now; try again in a moment")
+		return
+	}
+	next.ServeHTTP(w, r)
 }
 
 // RequireAuth rejects anonymous callers and callers who still owe a second

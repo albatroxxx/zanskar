@@ -86,6 +86,30 @@ func (e *env) createUser(t *testing.T, name, pw string, roles ...user.Role) *use
 	return u
 }
 
+// bareUser creates an account with no password. A password costs a full
+// Argon2id hash to set and another to sign in with, which the race
+// detector makes slow; tests not about the password use bareUser and
+// sessionFor instead.
+func (e *env) bareUser(t *testing.T, name string, roles ...user.Role) *user.User {
+	t.Helper()
+	u := &user.User{Username: name, DisplayName: name, Roles: roles}
+	if err := e.users.Create(context.Background(), u); err != nil {
+		t.Fatal(err)
+	}
+	return u
+}
+
+// sessionFor starts a session for u as a sign-in would have, full or still
+// owing a second factor, and returns it the way login does.
+func (e *env) sessionFor(t *testing.T, u *user.User, mfaVerified bool) resp {
+	t.Helper()
+	tok, sess, err := e.sessions.Create(context.Background(), u.ID, "203.0.113.5", "test", mfaVerified)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return resp{code: http.StatusOK, body: map[string]any{"csrf_token": e.sessions.CSRFToken(sess.ID)}, cookie: &http.Cookie{Name: CookieName, Value: tok}}
+}
+
 type resp struct {
 	code   int
 	body   map[string]any
@@ -93,13 +117,18 @@ type resp struct {
 }
 
 func (e *env) do(method, path string, body any, cookie *http.Cookie, headers map[string]string) resp {
+	return e.doFrom("203.0.113.5:4444", method, path, body, cookie, headers)
+}
+
+// doFrom is do from another client address (host:port).
+func (e *env) doFrom(addr, method, path string, body any, cookie *http.Cookie, headers map[string]string) resp {
 	var buf bytes.Buffer
 	if body != nil {
 		_ = json.NewEncoder(&buf).Encode(body)
 	}
 	req := httptest.NewRequest(method, path, &buf)
 	req.Header.Set("Content-Type", "application/json")
-	req.RemoteAddr = "203.0.113.5:4444"
+	req.RemoteAddr = addr
 	if cookie != nil {
 		req.AddCookie(cookie)
 	}
