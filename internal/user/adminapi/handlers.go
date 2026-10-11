@@ -368,6 +368,15 @@ func (h *AdminHandler) del(w http.ResponseWriter, r *http.Request) {
 		h.writeUserError(w, r, err)
 		return
 	}
+	// Refused before anything is revoked or ended: an account the record
+	// keeps is disabled, not deleted.
+	if has, err := h.Users.HasHistory(r.Context(), id); err != nil {
+		h.serverError(w, r, err)
+		return
+	} else if has {
+		h.writeUserError(w, r, user.ErrHasHistory)
+		return
+	}
 	if _, err := h.Sessions.RevokeAllForUser(r.Context(), id); err != nil {
 		h.Log.Error("revoke sessions before delete", "user_id", id, "err", err)
 	}
@@ -441,6 +450,8 @@ func (h *AdminHandler) writeUserError(w http.ResponseWriter, r *http.Request, er
 		httpx.WriteError(w, http.StatusConflict, "conflict", "username or email already exists")
 	case errors.Is(err, user.ErrLastAdmin):
 		httpx.WriteError(w, http.StatusConflict, "last_admin", "this is the last active admin")
+	case errors.Is(err, user.ErrHasHistory):
+		httpx.WriteError(w, http.StatusConflict, "has_history", "this account has sessions on record, which keep it; disable it instead of deleting it")
 	case errors.Is(err, user.ErrInvalidRole), errors.Is(err, user.ErrUsernameShape),
 		errors.Is(err, user.ErrInvalidInput), errors.Is(err, user.ErrWeakPassword):
 		httpx.BadRequest(w, err.Error())

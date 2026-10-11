@@ -1182,14 +1182,19 @@ paths:
     delete:
       tags: [admin]
       summary: Delete a user
-      description: Audit events and sessions referencing the user are retained; `actor_user_id` keeps the old id.
+      description: >
+        Audit events referencing the user are retained; `actor_user_id` keeps the old id. An
+        account that sessions or recording views name is kept for the record and cannot be
+        deleted; disable it instead (`status: disabled`), which also ends its sessions.
       responses:
         "204":
           description: Deleted.
         "404":
           $ref: "#/components/responses/NotFound"
         "409":
-          description: Cannot delete the last admin or yourself.
+          description: >
+            `self`: you cannot delete yourself. `last_admin`: this is the last active admin.
+            `has_history`: sessions on record keep the account; nothing was revoked or ended.
           content:
             application/json:
               schema:

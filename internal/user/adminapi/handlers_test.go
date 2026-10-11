@@ -27,6 +27,7 @@ func (f *fakeTOTP) Reset(_ context.Context, id string) error {
 }
 
 type env struct {
+	db       *store.DB
 	srv      http.Handler
 	h        *AdminHandler
 	users    *user.Repo
@@ -50,7 +51,7 @@ func newEnv(t *testing.T) *env {
 		t.Fatal(err)
 	}
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	e := &env{
+	e := &env{db: db,
 		users:    user.NewRepo(db),
 		sessions: auth.NewSessions(db, bytes.Repeat([]byte{2}, 32), false),
 		audit:    audit.NewLog(db),
