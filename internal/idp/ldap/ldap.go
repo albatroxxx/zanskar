@@ -12,6 +12,7 @@ import (
 	"crypto/x509"
 	"errors"
 	"fmt"
+	"net"
 	"net/url"
 	"strings"
 	"time"
@@ -31,7 +32,8 @@ var (
 
 // Authenticator verifies passwords against a directory.
 type Authenticator struct {
-	// Timeout bounds the connection and each operation. Zero means 10 s.
+	// Timeout bounds the dial, the TLS handshake and each operation. Zero
+	// means 10 s.
 	Timeout time.Duration
 }
 
@@ -121,9 +123,17 @@ func (a *Authenticator) connect(ctx context.Context, cfg *idp.LDAPConfig) (*gold
 	if err != nil {
 		return nil, err
 	}
-	dctx, cancel := context.WithTimeout(ctx, a.timeout())
-	defer cancel()
-	opts := []goldap.DialOpt{}
+	// go-ldap dials without a context and with its own 60 s default, so the
+	// bound goes on the dialer: the timeout, or the caller's deadline when
+	// that comes first. For ldaps it covers the TLS handshake too (B21).
+	timeout := a.timeout()
+	if dl, ok := ctx.Deadline(); ok && time.Until(dl) < timeout {
+		timeout = time.Until(dl)
+	}
+	if timeout <= 0 {
+		return nil, fmt.Errorf("%w: %w", ErrDirectory, context.DeadlineExceeded)
+	}
+	opts := []goldap.DialOpt{goldap.DialWithDialer(&net.Dialer{Timeout: timeout})}
 	if u.Scheme == "ldaps" {
 		opts = append(opts, goldap.DialWithTLSConfig(tlsCfg))
 	}
@@ -142,7 +152,6 @@ func (a *Authenticator) connect(ctx context.Context, cfg *idp.LDAPConfig) (*gold
 			return nil, fmt.Errorf("%w: starttls: %v", ErrDirectory, redact(err))
 		}
 	}
-	_ = dctx
 	return conn, nil
 }
 
