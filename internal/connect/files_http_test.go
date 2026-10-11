@@ -4,6 +4,7 @@ package connect
 
 import (
 	"encoding/json"
+	"errors"
 	"net"
 	"net/http"
 	"net/url"
@@ -166,4 +167,75 @@ func assertTransferAudited(t *testing.T, f *connectFixture, action, path string,
 			t.Errorf("%s audit carries unexpected detail %q", action, k)
 		}
 	}
+}
+
+// failingBody gives some bytes, then fails, as a client that drops mid-upload.
+type failingBody struct{ sent bool }
+
+func (b *failingBody) Read(p []byte) (int, error) {
+	if b.sent {
+		return 0, errors.New("the client went away")
+	}
+	b.sent = true
+	return copy(p, "partial,"), nil
+}
+
+// TestFileTransferFailuresAreAudited: a failed upload returned before it was
+// audited, and a download that broke off was audited as a success (L10), so
+// the log showed neither an attempt to plant a file nor one to take one.
+// Every attempt is now recorded with its real outcome, and what moved.
+func TestFileTransferFailuresAreAudited(t *testing.T) {
+	f := newConnectFixture(t)
+	dir := t.TempDir()
+	f.h.Files.add("s1", &fileSession{client: sftpTarget(t), userID: f.alice.ID, targetKey: "t-web"})
+	content := "/api/v1/sessions/s1/files/content?path="
+	last := func(action string) (audit.Event, map[string]any) {
+		t.Helper()
+		evs, _, err := f.auditLog.List(f.ctx, audit.Filter{Action: action, Limit: 1})
+		if err != nil || len(evs) != 1 {
+			t.Fatalf("%s not audited: %v", action, err)
+		}
+		var d map[string]any
+		_ = json.Unmarshal(evs[0].Details, &d)
+		return evs[0], d
+	}
+	failed := func(t *testing.T, action, path string, bytes int) {
+		t.Helper()
+		ev, d := last(action)
+		if ev.Outcome != audit.Failure || d["path"] != path || d["bytes"] != float64(bytes) || d["error"] == nil {
+			t.Fatalf("%s audit: outcome %s, details %v; want a failure for %s with %d bytes and the error", action, ev.Outcome, d, path, bytes)
+		}
+	}
+
+	t.Run("download of a missing file", func(t *testing.T) {
+		p := filepath.Join(dir, "nope")
+		if rr := f.do("GET", content+url.QueryEscape(p), "", nil, f.cookie, f.csrf); rr.Code != http.StatusBadRequest {
+			t.Fatalf("%d, want 400", rr.Code)
+		}
+		failed(t, "file.download", p, 0)
+	})
+
+	t.Run("download that breaks off", func(t *testing.T) {
+		// A directory opens, then fails on the first read.
+		if rr := f.do("GET", content+url.QueryEscape(dir), "", nil, f.cookie, f.csrf); rr.Code != http.StatusBadRequest {
+			t.Fatalf("%d, want 400", rr.Code)
+		}
+		failed(t, "file.download", dir, 0)
+	})
+
+	t.Run("upload that cannot be created", func(t *testing.T) {
+		p := filepath.Join(dir, "missing-dir", "x.csv")
+		if rr := f.do("POST", content+url.QueryEscape(p), "application/octet-stream", strings.NewReader("a,b\n"), f.cookie, f.csrf); rr.Code != http.StatusBadRequest {
+			t.Fatalf("%d, want 400", rr.Code)
+		}
+		failed(t, "file.upload", p, 0)
+	})
+
+	t.Run("upload that breaks off", func(t *testing.T) {
+		p := filepath.Join(dir, "half.csv")
+		if rr := f.do("POST", content+url.QueryEscape(p), "application/octet-stream", &failingBody{}, f.cookie, f.csrf); rr.Code != http.StatusBadRequest {
+			t.Fatalf("%d, want 400", rr.Code)
+		}
+		failed(t, "file.upload", p, len("partial,"))
+	})
 }
