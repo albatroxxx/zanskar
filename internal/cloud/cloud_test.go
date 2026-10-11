@@ -5,7 +5,9 @@ package cloud
 import (
 	"context"
 	"encoding/base64"
+	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/autoscaling"
@@ -132,5 +134,22 @@ func TestAWSDescribeGroupMerges(t *testing.T) {
 	}
 	if p.eic.(*fakeEIC).calls != 1 {
 		t.Fatal("expected one SendSSHPublicKey call")
+	}
+}
+
+// TestClipProviderError: the helper was called redactARNs and said it kept
+// ARNs out of errors, but it only cut the text at 300 bytes (C9), sometimes
+// inside a character. It is named for what it does: a short error passes
+// whole, ARNs included, since an administrator fixing a trust policy needs
+// them; a long one is cut between characters and marked as cut.
+func TestClipProviderError(t *testing.T) {
+	short := "User: arn:aws:sts::123456789012:assumed-role/zanskar/i-1 is not authorized to perform: sts:AssumeRole"
+	if got := clipProviderError(short); got != short {
+		t.Fatalf("a short error must pass whole: %q", got)
+	}
+	long := strings.Repeat("a", 299) + "é and then more text"
+	got := clipProviderError(long)
+	if !utf8.ValidString(got) || !strings.HasSuffix(got, "…") || len(got) > 300+len("…") {
+		t.Fatalf("a long error must be cut between characters and marked: %q (%d bytes)", got, len(got))
 	}
 }
