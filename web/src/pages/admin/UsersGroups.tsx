@@ -176,7 +176,7 @@ function Users() {
       {action?.a === 'delete' && (
         <Confirm
           title={`Delete ${action.u.username}?`}
-          body="The account is removed. Audit entries keep the user id so history stays intact."
+          body="The account is removed. Audit entries keep the user id so history stays intact. An account that has ever opened a session is kept for the record and cannot be deleted: disable it instead."
           confirmLabel="Delete"
           danger
           onClose={() => setAction(null)}

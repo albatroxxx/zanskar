@@ -78,9 +78,12 @@ func (u *User) CanConnect() bool {
 
 // Errors returned by the repository.
 var (
-	ErrNotFound      = errors.New("user: not found")
-	ErrDuplicate     = errors.New("user: username or email already exists")
-	ErrLastAdmin     = errors.New("user: cannot remove the last admin")
+	ErrNotFound  = errors.New("user: not found")
+	ErrDuplicate = errors.New("user: username or email already exists")
+	ErrLastAdmin = errors.New("user: cannot remove the last admin")
+	// ErrHasHistory refuses to delete an account that sessions or recording
+	// views name: the record keeps it. Disabling it is the way to remove access.
+	ErrHasHistory    = errors.New("user: has session history")
 	ErrInvalidInput  = errors.New("user: invalid input")
 	ErrInvalidRole   = errors.New("user: invalid role")
 	ErrUsernameShape = errors.New("user: username must be 2-64 characters of letters, digits, '.', '_' or '-'")

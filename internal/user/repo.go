@@ -223,9 +223,23 @@ func (r *Repo) Delete(ctx context.Context, id string) error {
 	}
 	res, err := r.db.ExecContext(ctx, r.db.Rebind(`DELETE FROM users WHERE id = ?`), id)
 	if err != nil {
+		// Sessions and recording views keep the account (ON DELETE RESTRICT);
+		// a history that appeared after HasHistory was asked lands here.
+		if strings.Contains(strings.ToLower(err.Error()), "foreign key") {
+			return ErrHasHistory
+		}
 		return err
 	}
 	return affected(res)
+}
+
+// HasHistory reports whether sessions or recording views name the account,
+// which keeps it from being deleted (the record keeps it; ADR 0019's reason).
+func (r *Repo) HasHistory(ctx context.Context, id string) (bool, error) {
+	var n int
+	err := r.db.QueryRowContext(ctx, r.db.Rebind(`SELECT (SELECT COUNT(*) FROM access_sessions WHERE user_id = ?)
+		+ (SELECT COUNT(*) FROM recording_views WHERE user_id = ?)`), id, id).Scan(&n)
+	return n > 0, err
 }
 
 // RecordLoginFailure counts a wrong password or a wrong second-factor code
