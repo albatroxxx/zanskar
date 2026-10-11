@@ -105,6 +105,12 @@ func (g *Group) Validate() error {
 	if strings.TrimSpace(g.Region) == "" || strings.TrimSpace(g.ExternalName) == "" {
 		return fmt.Errorf("%w: region and the cloud-side group name are required", ErrInvalidInput)
 	}
+	// The cloud-side name is shown back in the paste-ready role script and
+	// template; no real autoscaling group name holds a line break or a
+	// control character, so one is refused rather than carried along.
+	if strings.ContainsFunc(g.Region+g.ExternalName, func(r rune) bool { return r < 0x20 || r == 0x7f }) {
+		return fmt.Errorf("%w: region and the cloud-side group name must not contain control characters", ErrInvalidInput)
+	}
 	if !strings.HasPrefix(g.RoleARN, "arn:aws:iam::") || !strings.Contains(g.RoleARN, ":role/") {
 		return fmt.Errorf("%w: role_arn must be an IAM role ARN", ErrInvalidInput)
 	}
@@ -249,25 +255,43 @@ func (g *Group) SuggestedRoleName() string {
 }
 
 // RoleCLI is a paste-ready AWS CLI script that creates the role with the
-// trust and permissions policies and prints its ARN.
+// trust and permissions policies and prints its ARN. The role name is
+// SuggestedRoleName's, which holds only letters, digits, "-" and "_"; the
+// group name is free text from the cloud, so it is shell-quoted.
 func (g *Group) RoleCLI(roleName, trustPolicy string) string {
 	return "cat > zanskar-trust.json <<'EOF'\n" + trustPolicy + "\nEOF\n" +
 		"cat > zanskar-permissions.json <<'EOF'\n" + g.PermissionsPolicy() + "\nEOF\n" +
 		"aws iam create-role --role-name " + roleName + " --assume-role-policy-document file://zanskar-trust.json \\\n" +
-		"  --description 'Zanskar gateway: read autoscaling group " + g.ExternalName + "'\n" +
+		"  --description " + shellQuote("Zanskar gateway: read autoscaling group "+g.ExternalName) + "\n" +
 		"aws iam put-role-policy --role-name " + roleName + " --policy-name zanskar --policy-document file://zanskar-permissions.json\n" +
 		"aws iam get-role --role-name " + roleName + " --query Role.Arn --output text\n"
 }
 
 // RoleCloudFormation is the same role as a CloudFormation template; JSON
-// policy documents are valid YAML, so they are embedded as they are.
+// policy documents are valid YAML, so they are embedded as they are, and the
+// description is a JSON string for the same reason, so the group name cannot
+// end the line and start a key of its own.
 func (g *Group) RoleCloudFormation(roleName, trustPolicy string) string {
 	return "AWSTemplateFormatVersion: \"2010-09-09\"\n" +
-		"Description: Zanskar gateway access to autoscaling group " + g.ExternalName + "\n" +
+		"Description: " + yamlString("Zanskar gateway access to autoscaling group "+g.ExternalName) + "\n" +
 		"Resources:\n  ZanskarRole:\n    Type: AWS::IAM::Role\n    Properties:\n      RoleName: " + roleName + "\n" +
 		"      AssumeRolePolicyDocument:\n" + indent(trustPolicy, "        ") +
 		"      Policies:\n        - PolicyName: zanskar\n          PolicyDocument:\n" + indent(g.PermissionsPolicy(), "            ") +
 		"Outputs:\n  RoleArn:\n    Value: !GetAtt ZanskarRole.Arn\n"
+}
+
+// shellQuote makes s one POSIX shell word: it is wrapped in single quotes,
+// and each single quote inside closes the quoting, is escaped with a
+// backslash, and reopens it.
+func shellQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+}
+
+// yamlString writes s as a double-quoted scalar. JSON's string escapes are a
+// subset of YAML's, so the encoder's output is read back as exactly s.
+func yamlString(s string) string {
+	b, _ := json.Marshal(s) // a string always marshals
+	return string(b)
 }
 
 func indent(text, prefix string) string {
@@ -280,10 +304,9 @@ func indent(text, prefix string) string {
 	return b.String()
 }
 
-// renderPolicy encodes an IAM document for display. Encoding goes through a
-// json.Encoder with HTML escaping off so that literal "<" and ">" (used in
-// placeholders such as <GATEWAY-ACCOUNT-ID>) survive instead of becoming
-// \u003c / \u003e, which admins were pasting into IAM verbatim.
+// renderPolicy encodes an IAM document for display. HTML escaping is off so
+// the document reads exactly as IAM will store it, with no \u003c-style
+// escapes for an administrator to paste; the console shows it as text.
 func renderPolicy(doc any) string {
 	var buf bytes.Buffer
 	enc := json.NewEncoder(&buf)
