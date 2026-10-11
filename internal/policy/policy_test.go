@@ -470,3 +470,39 @@ func TestRetentionDays(t *testing.T) {
 		t.Fatal("0 days must be refused")
 	}
 }
+
+// TestEvaluateStandingPolicyDecidesItsOwnSession: when a standing policy
+// admits a session, an approval-gated policy covering the same target must
+// not lend it its privileges or limits: its flags, its MFA setting, its
+// idle timeout and its id on the session row all belong to the access that
+// was actually used (ADR 0018: the standing path wins).
+func TestEvaluateStandingPolicyDecidesItsOwnSession(t *testing.T) {
+	now := time.Date(2026, 9, 21, 10, 0, 0, 0, time.UTC)
+	standing := &Policy{Name: "standing", Enabled: true, Selector: Selector{Targets: []string{"t1"}}, Protocols: []string{"ssh"},
+		IdleTimeoutMinutes: 15, RequireMFA: true}
+	gated := &Policy{Name: "gated", Enabled: true, Selector: Selector{Targets: []string{"t1"}}, Protocols: []string{"ssh"},
+		IdleTimeoutMinutes: 5, AllowClipboard: true, AllowFileTransfer: true, RequireApproval: true}
+	ref := TargetRef{ID: "t1"}
+
+	d := Evaluate([]*Policy{standing, gated}, ref, "ssh", now)
+	if !d.Allowed || d.RequireApproval || d.Policy != standing || d.AllowClipboard || d.AllowFileTransfer || !d.RequireMFA || d.IdleTimeout != 15*time.Minute {
+		t.Fatalf("standing admission carried the gated policy's terms: %+v (policy %s)", d, d.Policy.Name)
+	}
+	// Only the gated policy: approval is owed, and its own terms apply.
+	d = Evaluate([]*Policy{gated}, ref, "ssh", now)
+	if !d.Allowed || !d.RequireApproval || d.Policy != gated || !d.AllowClipboard {
+		t.Fatalf("gated only: %+v", d)
+	}
+}
+
+// TestSelectorEmptyTagValue: a selector tag with an empty value is refused,
+// and one already stored never matches a target that lacks the key.
+func TestSelectorEmptyTagValue(t *testing.T) {
+	if err := validateSelector(Selector{Tags: map[string]string{"owner": ""}}); err == nil {
+		t.Fatal("an empty tag value must be refused")
+	}
+	s := Selector{Tags: map[string]string{"owner": ""}}
+	if s.Matches(TargetRef{ID: "t1", Tags: map[string]string{"env": "prod"}}) {
+		t.Fatal("a target without the key must not match")
+	}
+}
