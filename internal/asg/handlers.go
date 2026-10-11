@@ -411,15 +411,7 @@ func (h *AdminHandler) identityRefresh(w http.ResponseWriter, r *http.Request) {
 	if h.Identity != nil {
 		id = h.Identity.Refresh(r.Context())
 	}
-	if h.Audit != nil {
-		a := audit.Actor{IP: auth.ClientIP(r)}
-		if p, ok := auth.FromContext(r.Context()); ok {
-			a.UserID = p.User.ID
-		}
-		if _, err := h.Audit.Record(r.Context(), a.Event("aws.identity.refresh", "gateway", "aws", audit.Success, map[string]string{"source": id.Source, "principal": id.Principal})); err != nil {
-			h.Log.Error("audit record failed", "action", "aws.identity.refresh", "err", err)
-		}
-	}
+	auth.Recorder{Audit: h.Audit, Log: h.Log}.Record(r, auth.ActorFor(r).Event("aws.identity.refresh", "gateway", "aws", audit.Success, map[string]string{"source": id.Source, "principal": id.Principal}))
 	httpx.WriteJSON(w, http.StatusOK, id)
 }
 
@@ -511,20 +503,11 @@ func (h *AdminHandler) unsetCredential(w http.ResponseWriter, r *http.Request) {
 // ---- helpers
 
 func (h *AdminHandler) record(r *http.Request, action string, g *Group, outcome audit.Outcome, extra map[string]any) {
-	if h.Audit == nil {
-		return
-	}
 	details := map[string]any{"name": g.Name, "region": g.Region, "external_name": g.ExternalName}
 	for k, v := range extra {
 		details[k] = v
 	}
-	actor := audit.Actor{IP: auth.ClientIP(r)}
-	if p, ok := auth.FromContext(r.Context()); ok {
-		actor.UserID = p.User.ID
-	}
-	if _, err := h.Audit.Record(r.Context(), actor.Event(action, "autoscaling_group", g.ID, outcome, details)); err != nil {
-		h.Log.Error("audit record failed", "action", action, "err", err)
-	}
+	auth.Recorder{Audit: h.Audit, Log: h.Log}.Record(r, auth.ActorFor(r).Event(action, "autoscaling_group", g.ID, outcome, details))
 }
 
 func (h *AdminHandler) fail(w http.ResponseWriter, r *http.Request, err error) {

@@ -166,10 +166,5 @@ func (h *ShadowHandler) shadowDesktop(w http.ResponseWriter, r *http.Request, li
 }
 
 func (h *ShadowHandler) record(r *http.Request, e audit.Event) {
-	if h.Audit == nil {
-		return
-	}
-	if _, err := h.Audit.Record(context.WithoutCancel(r.Context()), e); err != nil {
-		h.Log.Error("audit record failed", "action", e.Action, "err", err)
-	}
+	auth.Recorder{Audit: h.Audit, Log: h.Log}.Record(r, e)
 }

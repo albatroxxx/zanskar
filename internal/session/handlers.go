@@ -507,12 +507,7 @@ func (h *Handler) auditVerify(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) record(r *http.Request, e audit.Event) {
-	if h.Audit == nil {
-		return
-	}
-	if _, err := h.Audit.Record(r.Context(), e); err != nil {
-		h.Log.Error("audit record failed", "action", e.Action, "err", err)
-	}
+	auth.Recorder{Audit: h.Audit, Log: h.Log}.Record(r, e)
 }
 
 func (h *Handler) fail(w http.ResponseWriter, r *http.Request, err error) {

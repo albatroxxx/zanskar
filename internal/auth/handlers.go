@@ -282,7 +282,7 @@ func (h *Handler) changePassword(w http.ResponseWriter, r *http.Request) {
 		WriteError(w, http.StatusBadRequest, "bad_request", err.Error())
 		return
 	}
-	actor := h.actor(r)
+	actor := ActorFor(r)
 	// Only a fully signed-in user, or the session of an account without an
 	// authenticator that owes the change, may change the password: a
 	// password-only session of an account with an authenticator could
@@ -355,7 +355,7 @@ func (h *Handler) logout(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.Sessions.ClearCookie(w)
-	h.record(r, h.actor(r).Event("user.logout", "user", p.User.ID, audit.Success, map[string]string{"session_id": p.Session.ID}))
+	h.record(r, ActorFor(r).Event("user.logout", "user", p.User.ID, audit.Success, map[string]string{"session_id": p.Session.ID}))
 	WriteJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
@@ -435,7 +435,7 @@ func (h *Handler) totpVerify(w http.ResponseWriter, r *http.Request) {
 				h.Sessions.ClearCookie(w)
 				details["session_ended"] = true
 			}
-			h.record(r, h.actor(r).Event("user.mfa.verify", "user", p.User.ID, audit.Failure, details))
+			h.record(r, ActorFor(r).Event("user.mfa.verify", "user", p.User.ID, audit.Failure, details))
 			if ended {
 				// Its own code, so the console goes back to the password step
 				// instead of offering a code box that can no longer work.
@@ -457,7 +457,7 @@ func (h *Handler) totpVerify(w http.ResponseWriter, r *http.Request) {
 	if usedRecovery {
 		method = "recovery_code"
 	}
-	h.record(r, h.actor(r).Event("user.login", "user", p.User.ID, audit.Success, map[string]string{"stage": "complete", "mfa": method, "session_id": p.Session.ID}))
+	h.record(r, ActorFor(r).Event("user.login", "user", p.User.ID, audit.Success, map[string]string{"stage": "complete", "mfa": method, "session_id": p.Session.ID}))
 	WriteJSON(w, http.StatusOK, loginResponse{Status: "ok", User: p.User, CSRFToken: h.Sessions.CSRFToken(p.Session.ID)})
 }
 
@@ -475,7 +475,7 @@ func (h *Handler) totpEnroll(w http.ResponseWriter, r *http.Request) {
 		h.serverError(w, r, err)
 		return
 	}
-	h.record(r, h.actor(r).Event("user.mfa.enroll", "user", p.User.ID, audit.Success, nil))
+	h.record(r, ActorFor(r).Event("user.mfa.enroll", "user", p.User.ID, audit.Success, nil))
 	WriteJSON(w, http.StatusOK, enr)
 }
 
@@ -493,7 +493,7 @@ func (h *Handler) totpConfirm(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		switch {
 		case errors.Is(err, ErrTOTPBadCode):
-			h.record(r, h.actor(r).Event("user.mfa.confirm", "user", p.User.ID, audit.Failure, nil))
+			h.record(r, ActorFor(r).Event("user.mfa.confirm", "user", p.User.ID, audit.Failure, nil))
 			WriteError(w, http.StatusUnauthorized, "invalid_code", "invalid code")
 		case errors.Is(err, ErrTOTPNotEnrolled):
 			WriteError(w, http.StatusConflict, "not_enrolled", "start enrollment first")
@@ -510,27 +510,14 @@ func (h *Handler) totpConfirm(w http.ResponseWriter, r *http.Request) {
 		h.serverError(w, r, err)
 		return
 	}
-	h.record(r, h.actor(r).Event("user.mfa.confirm", "user", p.User.ID, audit.Success, nil))
+	h.record(r, ActorFor(r).Event("user.mfa.confirm", "user", p.User.ID, audit.Success, nil))
 	WriteJSON(w, http.StatusOK, map[string]any{"recovery_codes": codes, "status": "ok", "csrf_token": h.Sessions.CSRFToken(p.Session.ID)})
 }
 
 // ---- helpers
 
-func (h *Handler) actor(r *http.Request) audit.Actor {
-	a := audit.Actor{IP: ClientIP(r)}
-	if p, ok := FromContext(r.Context()); ok {
-		a.UserID = p.User.ID
-	}
-	return a
-}
-
 func (h *Handler) record(r *http.Request, e audit.Event) {
-	if h.Audit == nil {
-		return
-	}
-	if _, err := h.Audit.Record(r.Context(), e); err != nil {
-		h.Log.Error("audit record failed", "action", e.Action, "err", err)
-	}
+	Recorder{Audit: h.Audit, Log: h.Log}.Record(r, e)
 }
 
 func (h *Handler) serverError(w http.ResponseWriter, r *http.Request, err error) {

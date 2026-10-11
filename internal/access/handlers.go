@@ -289,11 +289,6 @@ func eligiblePolicy(pols []*policy.Policy, ref policy.TargetRef, protocol string
 }
 
 func (h *Handler) record(r *http.Request, action string, req *Request, extra map[string]any) {
-	if h.Audit == nil {
-		return
-	}
-	pr, _ := auth.FromContext(r.Context())
-	actor := audit.Actor{UserID: pr.User.ID, IP: auth.ClientIP(r)}
 	details := map[string]any{"target_id": req.TargetID, "asg_id": req.ASGID, "protocol": req.Protocol,
 		"requested_minutes": req.RequestedMinutes, "status": req.Status}
 	for k, v := range extra {
@@ -302,9 +297,7 @@ func (h *Handler) record(r *http.Request, action string, req *Request, extra map
 		}
 		details[k] = v
 	}
-	if _, err := h.Audit.Record(r.Context(), actor.Event(action, "access_request", req.ID, audit.Success, details)); err != nil {
-		h.Log.Error("audit record failed", "action", action, "err", err)
-	}
+	auth.Recorder{Audit: h.Audit, Log: h.Log}.Record(r, auth.ActorFor(r).Event(action, "access_request", req.ID, audit.Success, details))
 }
 
 func (h *Handler) fail(w http.ResponseWriter, r *http.Request, err error) {

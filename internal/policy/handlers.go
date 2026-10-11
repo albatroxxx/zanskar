@@ -172,15 +172,8 @@ func (h *AdminHandler) del(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *AdminHandler) record(r *http.Request, action string, p *Policy) {
-	if h.Audit == nil {
-		return
-	}
-	pr, _ := auth.FromContext(r.Context())
-	actor := audit.Actor{UserID: pr.User.ID, IP: auth.ClientIP(r)}
 	details := map[string]any{"name": p.Name, "group_id": p.GroupID, "user_id": p.UserID, "protocols": p.Protocols, "selector": p.Selector, "enabled": p.Enabled}
-	if _, err := h.Audit.Record(r.Context(), actor.Event(action, "access_policy", p.ID, audit.Success, details)); err != nil {
-		h.Log.Error("audit record failed", "action", action, "err", err)
-	}
+	auth.Recorder{Audit: h.Audit, Log: h.Log}.Record(r, auth.ActorFor(r).Event(action, "access_policy", p.ID, audit.Success, details))
 }
 
 func (h *AdminHandler) fail(w http.ResponseWriter, r *http.Request, err error) {

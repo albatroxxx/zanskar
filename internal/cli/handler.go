@@ -373,14 +373,5 @@ func (h *Handler) audit(r *http.Request, line, name, result string, calls []apiC
 }
 
 func (h *Handler) record(r *http.Request, action string, outcome audit.Outcome, details any) {
-	if h.Audit == nil {
-		return
-	}
-	actor := audit.Actor{IP: auth.ClientIP(r)}
-	if p, ok := auth.FromContext(r.Context()); ok {
-		actor.UserID = p.User.ID
-	}
-	if _, err := h.Audit.Record(r.Context(), actor.Event(action, "cli", "", outcome, details)); err != nil {
-		h.Log.Error("audit record failed", "action", action, "err", err)
-	}
+	auth.Recorder{Audit: h.Audit, Log: h.Log}.Record(r, auth.ActorFor(r).Event(action, "cli", "", outcome, details))
 }
