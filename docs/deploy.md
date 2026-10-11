@@ -260,6 +260,9 @@ zanskar restore --in /secure/zanskar-2026-09-22.tar.gz --force
 systemctl start zanskar
 ```
 
+Run as root, restore gives the database and recordings it writes to the owner of the files they
+replace (or of the directory they land in), so the service's own user can open them.
+
 Restore refuses to overwrite an existing database without `--force`, and warns when the
 archive was sealed under a different `ZANSKAR_MASTER_KEY` — its stored credentials would
 be undecryptable. Restore the original key first if you have it. For PostgreSQL, use the

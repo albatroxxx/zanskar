@@ -16,6 +16,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/albatroxxx/zanskar/internal/config"
@@ -90,7 +91,7 @@ func runBackup(args []string) error {
 		// S3 is durable and lives outside the box; note it rather than copy it.
 		man.RecordingsBackend = "s3"
 	case dirExists(cfg.RecordingsDir):
-		if err := copyTree(cfg.RecordingsDir, filepath.Join(stage, "recordings")); err != nil {
+		if err := copyTree(cfg.RecordingsDir, filepath.Join(stage, "recordings"), owner{}); err != nil {
 			return fmt.Errorf("backup: copy recordings: %w", err)
 		}
 		man.RecordingsIncluded = true
@@ -181,6 +182,10 @@ func runRestore(args []string) error {
 	if err := os.MkdirAll(filepath.Dir(dbPath), 0o750); err != nil {
 		return err
 	}
+	// Restore is run from a root shell while the service runs as its own
+	// user: what it writes goes to whoever owned what it replaces (or the
+	// directory it lands in), or the service could not open its database.
+	dbOwner := ownerOf(dbPath)
 	// The snapshot is copied beside the database first and renamed over it
 	// only once complete, so a copy that fails (a full disk, say) leaves the
 	// current database in place rather than none.
@@ -189,6 +194,9 @@ func runRestore(args []string) error {
 		return fmt.Errorf("restore: place database: %w", err)
 	}
 	defer func() { _ = os.Remove(tmp) }()
+	if err := dbOwner.give(tmp); err != nil {
+		return fmt.Errorf("restore: give the database to its owner: %w", err)
+	}
 	// Remove WAL/SHM siblings so the restored file is authoritative.
 	for _, sfx := range []string{"-wal", "-shm"} {
 		_ = os.Remove(dbPath + sfx)
@@ -198,7 +206,7 @@ func runRestore(args []string) error {
 	}
 
 	if man.RecordingsIncluded {
-		if err := copyTree(filepath.Join(stage, "recordings"), cfg.RecordingsDir); err != nil {
+		if err := copyTree(filepath.Join(stage, "recordings"), cfg.RecordingsDir, ownerOf(cfg.RecordingsDir)); err != nil {
 			return fmt.Errorf("restore: recordings: %w", err)
 		}
 	}
@@ -247,6 +255,40 @@ func dirExists(p string) bool {
 func fileExists(p string) bool {
 	info, err := os.Stat(p)
 	return err == nil && !info.IsDir()
+}
+
+// Seams for tests: restore runs as root in production, and tests cannot.
+var (
+	euid  = os.Geteuid
+	chown = os.Lchown
+)
+
+// owner is who restored files must belong to: the owner of the path being
+// replaced, else of the directory it lands in. ok is false when neither can
+// be read, or the platform has no Unix owners.
+type owner struct {
+	uid, gid int
+	ok       bool
+}
+
+func ownerOf(path string) owner {
+	for _, p := range []string{path, filepath.Dir(path)} {
+		if fi, err := os.Stat(p); err == nil {
+			if st, isUnix := fi.Sys().(*syscall.Stat_t); isUnix {
+				return owner{uid: int(st.Uid), gid: int(st.Gid), ok: true}
+			}
+		}
+	}
+	return owner{}
+}
+
+// give hands path to o when restore runs as root. A non-root caller already
+// owns what it wrote and could not give it away anyway.
+func (o owner) give(path string) error {
+	if !o.ok || euid() != 0 {
+		return nil
+	}
+	return chown(path, o.uid, o.gid)
 }
 
 // copyBeside copies src to a new temporary file in dst's directory, synced
@@ -298,7 +340,7 @@ func copyFile(src, dst string, mode os.FileMode) error {
 
 // copyTree copies a directory tree, preserving relative layout with 0700 dirs
 // and 0600 files (recordings are sensitive).
-func copyTree(src, dst string) error {
+func copyTree(src, dst string, o owner) error {
 	return filepath.WalkDir(src, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -309,12 +351,18 @@ func copyTree(src, dst string) error {
 		}
 		target := filepath.Join(dst, rel)
 		if d.IsDir() {
-			return os.MkdirAll(target, 0o700)
+			if err := os.MkdirAll(target, 0o700); err != nil {
+				return err
+			}
+			return o.give(target)
 		}
 		if err := os.MkdirAll(filepath.Dir(target), 0o700); err != nil {
 			return err
 		}
-		return copyFile(path, target, 0o600)
+		if err := copyFile(path, target, 0o600); err != nil {
+			return err
+		}
+		return o.give(target)
 	})
 }
 
