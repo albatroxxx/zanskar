@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 // Package server wires the HTTP router, middleware and system endpoints.
-// Domain handlers register themselves on the router in later phases.
+// Domain handlers add their routes through Deps.
 package server
 
 import (
@@ -47,9 +47,9 @@ type Deps struct {
 	AuthMiddleware *auth.Middleware
 	Auth           *auth.Handler
 	Handlers       []Registrar
-	// TLS hands the listener its certificate per handshake (ADR 0021), so
-	// an upload in the console applies without a restart. Nil in proxy
-	// mode, or when the file certificate is served the old way.
+	// TLS hands the listener its certificate per handshake (ADR 0021): an
+	// upload in the console, the ZANSKAR_TLS_CERT files, or the self-signed
+	// one, so an upload applies without a restart. Nil in proxy mode.
 	TLS *tlscert.Manager
 }
 
