@@ -92,3 +92,22 @@ the `@`, so a provider that admits accounts from outside the organisation needs 
 domains. Deleting a provider clears its accounts' link, so the next provider that asserts one
 of their usernames adopts that account: when a new directory's usernames name different people,
 remove the old accounts first. There is no API yet to link or unlink an account by hand.
+
+## Addendum 2026-10-11: what a provider sign-in records, and LDAP group keys
+
+A sign-in through a provider now reports what it changed, and the caller audits it, so access
+granted through a provider is on the record like access an administrator grants:
+
+- An account provisioned at sign-in is recorded as `user.create` with `via: identity_provider`,
+  its roles, and `roles_granted` when the provider's default roles include admin or auditor
+  (ADR 0006). Before, it left no trace but the `user.login`.
+- Mapped group memberships the sign-in added or removed are recorded as `user.groups.sync`. A
+  removal ends the live sessions the group granted, as an administrator's removal does (ADR 0013).
+- Creating or changing a provider records the settings that decide who gets in and with what:
+  default roles, auto-provisioning, group mapping, and for OIDC the issuer, allowed domains and
+  the skip-MFA switch (before and after, on a change). Secrets are never part of it.
+
+A group mapping key for LDAP may be the group's full DN, compared as LDAP compares DNs, or its
+bare name. A bare name matches every group of that name in any OU, so it is only as safe as
+control over group creation anywhere in the directory; the guide and the console recommend DNs.
+

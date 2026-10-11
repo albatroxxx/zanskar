@@ -184,12 +184,16 @@ func TestAuthenticate(t *testing.T) {
 	if strings.Join(id.Groups, ",") != "ops,dev" {
 		t.Fatalf("groups from memberOf: %v", id.Groups)
 	}
+	// The full DNs come along, so a mapping written as a DN matches exactly.
+	if strings.Join(id.GroupDNs, ";") != opsDN+";"+devDN {
+		t.Fatalf("group DNs from memberOf: %v", id.GroupDNs)
+	}
 
 	// Group search mode instead of memberOf.
 	cfg := baseConfig(fd)
 	cfg.GroupAttr, cfg.GroupBaseDN, cfg.GroupFilter, cfg.GroupNameAttr = "", "ou=groups,dc=example,dc=com", "(member=%s)", "cn"
 	id, err = a.Authenticate(ctx, cfg, "alice", alicePW)
-	if err != nil || strings.Join(id.Groups, ",") != "ops,dev" {
+	if err != nil || strings.Join(id.Groups, ",") != "ops,dev" || len(id.GroupDNs) != 2 {
 		t.Fatalf("group search: %v %v", id, err)
 	}
 

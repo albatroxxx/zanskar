@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -28,6 +29,7 @@ type env struct {
 	admin *http.Cookie
 	csrf  string
 	repo  *idp.Repo
+	audit *audit.Log
 }
 
 func newEnv(t *testing.T) *env {
@@ -49,8 +51,8 @@ func newEnv(t *testing.T) *env {
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	users := user.NewRepo(db)
 	sessions := auth.NewSessions(db, bytes.Repeat([]byte{2}, 32), false)
-	e := &env{repo: idp.NewRepo(db, ring)}
-	h := &AdminHandler{Providers: e.repo, Audit: audit.NewLog(db), Log: log}
+	e := &env{repo: idp.NewRepo(db, ring), audit: audit.NewLog(db)}
+	h := &AdminHandler{Providers: e.repo, Audit: e.audit, Log: log}
 	mux := http.NewServeMux()
 	h.Register(mux)
 	mw := &auth.Middleware{Sessions: sessions, Users: users, Log: log}
@@ -132,5 +134,51 @@ func TestProviderCRUD(t *testing.T) {
 	}
 	if code, _, _ := e.do(t, "GET", "/api/v1/identity-providers/"+id, nil); code != 404 {
 		t.Fatalf("after delete: %d", code)
+	}
+}
+
+// TestProviderEventsRecordWhoGetsIn: creating or changing a provider records
+// the settings that decide who signs in and with what roles, before and
+// after, so an auto-provisioning admin grant is on the record with the
+// administrator who configured it; the client secret never is.
+func TestProviderEventsRecordWhoGetsIn(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	body := map[string]any{
+		"name": "Okta", "type": "oidc",
+		"config": map[string]any{
+			"oidc":           map[string]any{"issuer": "https://okta.example", "client_id": "cid", "client_secret": "s3cret"},
+			"auto_provision": true, "default_roles": []string{"admin"},
+		},
+	}
+	code, out, raw := e.do(t, "POST", "/api/v1/identity-providers", body)
+	if code != 201 {
+		t.Fatalf("create: %d %s", code, raw)
+	}
+	id := out["id"].(string)
+	body["config"].(map[string]any)["default_roles"] = []string{"auditor"}
+	if code, _, raw := e.do(t, "PUT", "/api/v1/identity-providers/"+id, body); code != 200 {
+		t.Fatalf("update: %d %s", code, raw)
+	}
+	details := func(action string) (map[string]any, string) {
+		t.Helper()
+		evs, _, err := e.audit.List(ctx, audit.Filter{Action: action, Limit: 1})
+		if err != nil || len(evs) != 1 {
+			t.Fatalf("no %s event: %v", action, err)
+		}
+		var d map[string]any
+		_ = json.Unmarshal(evs[0].Details, &d)
+		return d, string(evs[0].Details)
+	}
+	created, raw := details("idp.create")
+	cfg, _ := created["config"].(map[string]any)
+	if cfg == nil || fmt.Sprint(cfg["default_roles"]) != "[admin]" || cfg["auto_provision"] != true || cfg["issuer"] != "https://okta.example" || strings.Contains(raw, "s3cret") {
+		t.Fatalf("idp.create details: %s", raw)
+	}
+	updated, raw := details("idp.update")
+	prev, _ := updated["previous"].(map[string]any)
+	now, _ := updated["config"].(map[string]any)
+	if prev == nil || now == nil || fmt.Sprint(prev["default_roles"]) != "[admin]" || fmt.Sprint(now["default_roles"]) != "[auditor]" || strings.Contains(raw, "s3cret") {
+		t.Fatalf("idp.update details: %s", raw)
 	}
 }

@@ -330,6 +330,24 @@ func (r *Repo) RemoveMember(ctx context.Context, groupID, userID string) error {
 	return err
 }
 
+// GroupIDsForUser returns the ids of every group the user belongs to.
+func (r *Repo) GroupIDsForUser(ctx context.Context, userID string) ([]string, error) {
+	rows, err := r.db.QueryContext(ctx, r.db.Rebind(`SELECT group_id FROM group_members WHERE user_id = ?`), userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []string{}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out = append(out, id)
+	}
+	return out, rows.Err()
+}
+
 // GroupsForUser returns every group the user belongs to, ordered by name.
 func (r *Repo) GroupsForUser(ctx context.Context, userID string) ([]*Group, error) {
 	rows, err := r.db.QueryContext(ctx, r.db.Rebind(`SELECT `+groupCols+` FROM groups g

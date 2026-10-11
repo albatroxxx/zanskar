@@ -4,6 +4,7 @@ import { fmtTime } from '../../api/format'
 import type { Group, Page, Role } from '../../api/types'
 import { Alert, Badge, Confirm, Empty, Field, Modal, PageHead } from '../../components/ui'
 import { useList } from './lib'
+import { mappingToText, textToMapping } from './groupMapping'
 
 // Shapes mirror internal/idp: the API returns the provider row plus its
 // config with secrets blanked and a single has_secret flag. Secrets are
@@ -58,20 +59,6 @@ interface Provider {
 
 const roleOptions: Role[] = ['user', 'auditor', 'admin']
 
-function mappingToText(m?: Record<string, string>): string {
-  return Object.entries(m ?? {}).map(([k, v]) => `${k}=${v}`).join('\n')
-}
-function textToMapping(text: string): { mapping: Record<string, string>; error?: string } {
-  const mapping: Record<string, string> = {}
-  for (const raw of text.split('\n')) {
-    const line = raw.trim()
-    if (!line) continue
-    const i = line.indexOf('=')
-    if (i <= 0) return { mapping, error: `line "${line}" must be externalName=groupId` }
-    mapping[line.slice(0, i).trim()] = line.slice(i + 1).trim()
-  }
-  return { mapping }
-}
 function csv(v?: string[]): string {
   return (v ?? []).join(', ')
 }
@@ -309,7 +296,7 @@ function ProviderModal({ existing, onClose, onSaved }: { existing: Provider | nu
             ))}
           </div>
         </Field>
-        <Field label="Group mapping" hint='one per line: externalGroupName=zanskarGroupId'>
+        <Field label="Group mapping" hint="One per line: externalGroup=zanskarGroupId. For LDAP use the group's full DN (cn=ops,ou=groups,dc=…): a plain name matches every group of that name in any OU.">
           <textarea id="idp-mapping" value={mapping} onChange={(e) => setMapping(e.target.value)} placeholder="ops-team=abc123..." />
         </Field>
         {groups.length > 0 && (
