@@ -142,7 +142,9 @@ reachable with DNS pointing at the host; Caddy fetches one from Let's Encrypt
 automatically. The gateway trusts Caddy's `X-Forwarded-*` headers — so the audit log
 records real client IPs — via `ZANSKAR_TRUST_PROXY_TLS` and the pinned `172.28.0.0/16`
 network in `ZANSKAR_TRUSTED_PROXIES`; if that subnet collides with an existing network,
-change it in both places in the compose file.
+change it in both places in the compose file. For single sign-on (OIDC) behind the proxy, also
+set `ZANSKAR_PUBLIC_URL` to the address people use (`https://<your host>`): the gateway sees
+plain HTTP from the proxy and cannot build the https redirect URI the provider has registered.
 
 The SQLite database and local recordings live in the `zanskar_data` volume; back them up
 with `zanskar backup` (see [Backups and key custody](#backups-and-key-custody)) or by

@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"net"
 	"net/netip"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -64,6 +65,12 @@ type Config struct {
 	// loopback-bound Zanskar. Never set it when clients reach Zanskar over
 	// plain HTTP.
 	TrustProxyTLS bool
+	// PublicURL is the https origin people reach the gateway at
+	// (ZANSKAR_PUBLIC_URL), without a trailing slash. OIDC builds its
+	// redirect URI from it; behind a proxy that terminates TLS the gateway
+	// itself sees plain HTTP and cannot build an https one on its own. Empty
+	// means the request's own scheme and host.
+	PublicURL string
 	// ConsoleCLI turns on the command line in the console (ADR 0027). On
 	// unless ZANSKAR_CONSOLE_CLI=off. It is an install-time switch on purpose,
 	// not a console setting, so a stolen administrator session cannot turn it
@@ -150,6 +157,7 @@ func Load(opts Options) (*Config, error) {
 		GuacdAddr:            os.Getenv("ZANSKAR_GUACD_ADDR"),  // empty disables RDP and VNC
 		DockerPath:           os.Getenv("ZANSKAR_DOCKER_PATH"), // empty defaults to "docker" on PATH
 		TrustProxyTLS:        os.Getenv("ZANSKAR_TRUST_PROXY_TLS") == "true",
+		PublicURL:            strings.TrimRight(strings.TrimSpace(os.Getenv("ZANSKAR_PUBLIC_URL")), "/"),
 		ConsoleCLI:           !strings.EqualFold(strings.TrimSpace(os.Getenv("ZANSKAR_CONSOLE_CLI")), "off"),
 		Issuer:               envOr("ZANSKAR_ISSUER", "Zanskar"),
 		RequireMFA:           envOr("ZANSKAR_REQUIRE_MFA", "true") != "false",
@@ -218,6 +226,11 @@ func Load(opts Options) (*Config, error) {
 
 	if _, _, err := net.SplitHostPort(c.ListenAddr); err != nil {
 		errs = append(errs, fmt.Errorf("ZANSKAR_LISTEN_ADDR: %w", err))
+	}
+	if c.PublicURL != "" {
+		if err := checkPublicURL(c.PublicURL); err != nil {
+			errs = append(errs, fmt.Errorf("ZANSKAR_PUBLIC_URL: %w", err))
+		}
 	}
 	// A separate admin listener was planned (ADR 0010) but never built. The
 	// setting is refused rather than ignored: whoever set it believes the
@@ -382,4 +395,23 @@ func readKeyFile(path string) (string, error) {
 		return "", err
 	}
 	return strings.TrimSpace(string(b)), nil
+}
+
+// checkPublicURL accepts an https origin: a scheme and a host (with an
+// optional port), and nothing after them.
+func checkPublicURL(raw string) error {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return err
+	}
+	if u.Scheme != "https" {
+		return errors.New("must start with https:// (people reach the gateway over TLS)")
+	}
+	if u.Host == "" {
+		return errors.New("must name the host, as in https://gateway.example.com")
+	}
+	if (u.Path != "" && u.Path != "/") || u.RawQuery != "" || u.Fragment != "" || u.User != nil {
+		return errors.New("must be the origin only, with no path, query or user")
+	}
+	return nil
 }

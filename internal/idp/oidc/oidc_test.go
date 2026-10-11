@@ -492,3 +492,25 @@ func TestFlowRefusesLocalPasswordAccount(t *testing.T) {
 		}
 	}
 }
+
+// TestStartUsesThePublicURL: behind a proxy that terminates TLS the gateway
+// sees plain HTTP, so the redirect URI it sends the provider is built from
+// ZANSKAR_PUBLIC_URL (BaseURL), never from the request's scheme and host.
+func TestStartUsesThePublicURL(t *testing.T) {
+	f := newFakeIdP(t)
+	e, id := newEnv(t, f, idp.Config{OIDC: &idp.OIDCConfig{ClientID: "cid", ClientSecret: "s"}, AutoProvision: true, DefaultRoles: []user.Role{user.RoleUser}})
+	e.h.BaseURL = "https://gw.example.com"
+	client := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	res, err := client.Get(e.app.URL + "/api/v1/auth/oidc/" + id + "/start")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = res.Body.Close()
+	loc, err := url.Parse(res.Header.Get("Location"))
+	if err != nil || res.StatusCode != http.StatusFound {
+		t.Fatalf("start: %d %v", res.StatusCode, err)
+	}
+	if got, want := loc.Query().Get("redirect_uri"), "https://gw.example.com/api/v1/auth/oidc/"+id+"/callback"; got != want {
+		t.Fatalf("redirect_uri %q, want %q", got, want)
+	}
+}

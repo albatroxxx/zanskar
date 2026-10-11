@@ -96,6 +96,7 @@ func bootSettings(cfg *config.Config, keyVersion int) []settings.Boot {
 		{Key: "tls_hosts", Title: "Certificate names", EnvVar: "ZANSKAR_TLS_HOSTS", Value: set(strings.Join(cfg.TLSHosts, ", ")), Description: "Extra names a managed certificate covers, beyond this machine's own. A cloud instance's public address is not on an interface, so it belongs here."},
 		{Key: "http_redirect", Title: "HTTP redirect", EnvVar: "ZANSKAR_HTTP_REDIRECT_ADDR", Value: set(cfg.RedirectAddr), Description: "Plain-HTTP listener that redirects to HTTPS."},
 		{Key: "trust_proxy_tls", Title: "Trust proxy TLS", EnvVar: "ZANSKAR_TRUST_PROXY_TLS", Value: yesno(cfg.TrustProxyTLS), Description: "Cookies are marked Secure because TLS terminates in front."},
+		{Key: "public_url", Title: "Public URL", EnvVar: "ZANSKAR_PUBLIC_URL", Value: set(cfg.PublicURL), Description: "The https address people use; single sign-on redirects there. Needed behind a proxy that terminates TLS."},
 		{Key: "trusted_proxies", Title: "Trusted proxies", EnvVar: "ZANSKAR_TRUSTED_PROXIES", Value: strings.Join(proxies, ", "), Description: "Networks whose X-Forwarded-For is believed."},
 		{Key: "allow_plain_http", Title: "Allow plain HTTP", EnvVar: "ZANSKAR_ALLOW_PLAIN_HTTP", Value: yesno(cfg.AllowPlainHTTP), Description: "Development only."},
 		{Key: "db", Title: "Database", EnvVar: "ZANSKAR_DB_DRIVER, ZANSKAR_DB_DSN", Value: describeDSN(cfg.DBDriver, cfg.DBDSN), Description: "Where everything is stored."},
