@@ -11,7 +11,9 @@ version: 2
 project_name: zanskar
 
 # The web bundle is embedded via -tags webui, so it must exist before the Go
-# build. `make web` runs `npm ci --ignore-scripts && npm run build`.
+# build. `make web` runs `npm ci --ignore-scripts && npm run build`. The
+# release workflow builds the bundle in a separate read-only job and runs
+# goreleaser with --skip=before; a local build still runs the hook.
 before:
   hooks:
     - make web
