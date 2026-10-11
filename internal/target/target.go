@@ -147,23 +147,28 @@ type Target struct {
 	DatabaseName string `json:"database_name,omitempty"`
 	// TLSMode says how the sidecar protects its connection to the
 	// database; TLSCA is an optional PEM bundle for verify-full.
-	TLSMode             string              `json:"tls_mode,omitempty"`
-	TLSCA               string              `json:"tls_ca,omitempty"`
-	OSFamily            OSFamily            `json:"os_family"`
-	Ports               map[Protocol]int    `json:"ports"`
-	Capabilities        []Protocol          `json:"capabilities"`
-	HostKeyFingerprint  *string             `json:"host_key_fingerprint"`
-	HostKeyStatus       HostKeyStatus       `json:"host_key_status"`
-	TLSFingerprint      *string             `json:"tls_fingerprint"`       // RDP listener certificate, SHA-256 hex
-	WinRMTLSFingerprint *string             `json:"winrm_tls_fingerprint"` // WinRM HTTPS listener certificate, SHA-256 hex
-	Tags                map[string]string   `json:"tags"`
-	Status              string              `json:"status"`
-	Notes               string              `json:"notes"`
-	Credentials         map[Protocol]string `json:"credentials"`
-	CreatedBy           *string             `json:"created_by"`
-	CreatedAt           time.Time           `json:"created_at"`
-	UpdatedAt           time.Time           `json:"updated_at"`
-	LastProbedAt        *time.Time          `json:"last_probed_at"`
+	TLSMode             string           `json:"tls_mode,omitempty"`
+	TLSCA               string           `json:"tls_ca,omitempty"`
+	OSFamily            OSFamily         `json:"os_family"`
+	Ports               map[Protocol]int `json:"ports"`
+	Capabilities        []Protocol       `json:"capabilities"`
+	HostKeyFingerprint  *string          `json:"host_key_fingerprint"`
+	HostKeyStatus       HostKeyStatus    `json:"host_key_status"`
+	TLSFingerprint      *string          `json:"tls_fingerprint"`       // RDP listener certificate, SHA-256 hex
+	WinRMTLSFingerprint *string          `json:"winrm_tls_fingerprint"` // WinRM HTTPS listener certificate, SHA-256 hex
+	// TLSFingerprintPending and WinRMTLSFingerprintPending hold a different
+	// certificate a probe saw after one was pinned (ADR 0012). The pinned
+	// one stays and keeps refusing it until an administrator confirms.
+	TLSFingerprintPending      *string             `json:"tls_fingerprint_pending,omitempty"`
+	WinRMTLSFingerprintPending *string             `json:"winrm_tls_fingerprint_pending,omitempty"`
+	Tags                       map[string]string   `json:"tags"`
+	Status                     string              `json:"status"`
+	Notes                      string              `json:"notes"`
+	Credentials                map[Protocol]string `json:"credentials"`
+	CreatedBy                  *string             `json:"created_by"`
+	CreatedAt                  time.Time           `json:"created_at"`
+	UpdatedAt                  time.Time           `json:"updated_at"`
+	LastProbedAt               *time.Time          `json:"last_probed_at"`
 }
 
 // Port returns the effective port for p.
@@ -201,12 +206,13 @@ func (t *Target) HasCapability(p Protocol) bool {
 
 // Errors.
 var (
-	ErrNotFound            = errors.New("target: not found")
-	ErrDuplicate           = errors.New("target: name already exists")
-	ErrInvalid             = errors.New("target: invalid")
-	ErrInvalidCredential   = errors.New("target: credential does not exist")
-	ErrFingerprintMismatch = errors.New("target: fingerprint does not match the pending host key")
-	ErrNoPendingHostKey    = errors.New("target: no host key awaiting trust")
+	ErrNotFound             = errors.New("target: not found")
+	ErrDuplicate            = errors.New("target: name already exists")
+	ErrInvalid              = errors.New("target: invalid")
+	ErrInvalidCredential    = errors.New("target: credential does not exist")
+	ErrFingerprintMismatch  = errors.New("target: fingerprint does not match the key or certificate awaiting trust")
+	ErrNoPendingHostKey     = errors.New("target: no host key awaiting trust")
+	ErrNoPendingCertificate = errors.New("target: no certificate awaiting trust")
 )
 
 var hostnameRe = regexp.MustCompile(`^[a-zA-Z0-9]([a-zA-Z0-9-]{0,62}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9-]{0,62}[a-zA-Z0-9])?)*\.?$`)

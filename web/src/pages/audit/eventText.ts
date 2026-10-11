@@ -86,6 +86,8 @@ const actionLabels: Record<string, string> = {
   'target.probe': 'Target connection tested',
   'target.probe.certificate': 'Target certificate login tested',
   'target.tls.mismatch': 'Target certificate changed',
+  'target.tls.changed': 'Target certificate changed',
+  'target.tls.trust': 'Target certificate accepted',
   'tls.certificate.upload': 'TLS certificate uploaded',
   'tls.certificate.regenerate': 'TLS certificate regenerated',
   'tls.certificate.reset': 'TLS certificate reset',
@@ -205,7 +207,9 @@ export function describe(ev: AuditEvent): string {
     case 'target.hostkey.trust': return `trusted the host key of target ${name}`
     case 'target.hostkey.changed':
     case 'target.hostkey.mismatch': return `saw a changed host key on target ${name}`
+    case 'target.tls.changed':
     case 'target.tls.mismatch': return `saw a changed certificate on target ${name}`
+    case 'target.tls.trust': return `accepted a new certificate for target ${name}`
     case 'target.credential.set': return `set a credential on target ${name}`
     case 'target.credential.unset': return `removed a credential from target ${name}`
     case 'asg.credential.set': return `set a credential on autoscaling group ${name}`

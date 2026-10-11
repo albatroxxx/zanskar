@@ -22,6 +22,8 @@ export function TargetDetail({ target, credentials, onClose, onChanged, onDelete
   const [certProbe, setCertProbe] = useState<CertificateProbe | null>(null)
   const [certProbing, setCertProbing] = useState(false)
   const [confirm, setConfirm] = useState<'trust' | 'delete' | null>(null)
+  // The RDP or WinRM certificate the administrator is about to accept.
+  const [trustCert, setTrustCert] = useState<{ protocol: 'rdp' | 'winrm'; pinned: string; seen: string } | null>(null)
   const [err, setErr] = useState('')
   const t = target
   const database = !!t.engine
@@ -90,6 +92,20 @@ export function TargetDetail({ target, credentials, onClose, onChanged, onDelete
             <div className="mono" style={{ marginTop: 6 }}>previous {probe.host_key_changed_from}</div>
           )}
         </Alert>
+      )}
+      {([
+        ['rdp', 'RDP', t.tls_fingerprint, t.tls_fingerprint_pending],
+        ['winrm', 'WinRM', t.winrm_tls_fingerprint, t.winrm_tls_fingerprint_pending],
+      ] as const).map(([protocol, label, pinned, seen]) =>
+        pinned && seen ? (
+          <Alert key={protocol} tone="danger">
+            The {label} certificate changed after it was pinned. {label} connections are refused until an administrator accepts the new one; check it with the machine's owner first.
+            <div className="mono" style={{ marginTop: 6, wordBreak: 'break-all' }}>pinned {pinned}<br />now {seen}</div>
+            <div className="actions" style={{ marginTop: 8 }}>
+              <button className="btn" onClick={() => setTrustCert({ protocol, pinned, seen })}>Accept the new {label} certificate…</button>
+            </div>
+          </Alert>
+        ) : null,
       )}
       <dl className="kv">
         {database ? (
@@ -243,6 +259,24 @@ export function TargetDetail({ target, credentials, onClose, onChanged, onDelete
           onConfirm={async () => {
             const res = await api.post<Target | { target: Target }>(`/targets/${t.id}/host-key/trust`, { host_key_fingerprint: fp })
             onChanged('target' in res ? res.target : res)
+          }}
+        />
+      )}
+      {trustCert && (
+        <Confirm
+          title={`Accept the new ${trustCert.protocol === 'rdp' ? 'RDP' : 'WinRM'} certificate?`}
+          body={
+            <div>
+              <p>Zanskar will only connect to <strong>{t.name}</strong> over {trustCert.protocol === 'rdp' ? 'RDP' : 'WinRM'} when it presents this certificate:</p>
+              <p className="mono" style={{ wordBreak: 'break-all' }}>{trustCert.seen}</p>
+              <Alert tone="danger">This replaces the pinned certificate {trustCert.pinned}. Only proceed if you confirmed the change with the machine's owner.</Alert>
+            </div>
+          }
+          confirmLabel="Accept"
+          danger
+          onClose={() => setTrustCert(null)}
+          onConfirm={async () => {
+            onChanged(await api.post<Target>(`/targets/${t.id}/certificate/trust`, { protocol: trustCert.protocol, fingerprint: trustCert.seen }))
           }}
         />
       )}

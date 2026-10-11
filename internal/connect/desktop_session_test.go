@@ -19,6 +19,7 @@ import (
 
 	"github.com/coder/websocket"
 
+	"github.com/albatroxxx/zanskar/internal/audit"
 	"github.com/albatroxxx/zanskar/internal/gateway"
 	"github.com/albatroxxx/zanskar/internal/gateway/guac"
 	"github.com/albatroxxx/zanskar/internal/policy"
@@ -241,6 +242,11 @@ func TestDesktopRefusesMismatchedRDPCertificate(t *testing.T) {
 	_ = resp.Body.Close()
 	if n := r.accepted.Load(); n != 0 {
 		t.Fatalf("guacd was contacted %d time(s) for a refused session", n)
+	}
+	// The refusal is on the record, as WinRM's and SSH's are (ADR 0012).
+	evs, _, err := r.h.Audit.List(ctx, audit.Filter{Action: "target.tls.mismatch", Limit: 1})
+	if err != nil || len(evs) != 1 || evs[0].Outcome != audit.Failure || !strings.Contains(string(evs[0].Details), `"protocol":"rdp"`) || !strings.Contains(string(evs[0].Details), fp) {
+		t.Fatalf("mismatch audit: %v %v", evs, err)
 	}
 
 	ws, _, err = r.dial(ctx, r.ticket(t, right, "rdp")) //nolint:bodyclose // the library closes the handshake body

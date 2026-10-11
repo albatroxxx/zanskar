@@ -58,6 +58,9 @@ export interface Target {
   host_key_status: HostKeyStatus
   tls_fingerprint: string | null
   winrm_tls_fingerprint: string | null
+  /** A different certificate a probe saw after one was pinned; awaits confirmation (ADR 0012). */
+  tls_fingerprint_pending?: string | null
+  winrm_tls_fingerprint_pending?: string | null
   tags: Record<string, string>
   status: 'active' | 'disabled'
   notes: string
