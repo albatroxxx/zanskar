@@ -117,8 +117,14 @@ type Filter struct {
 	TargetID string
 	OpenOnly bool
 	Limit    int
-	Cursor   string // started_at of the last row seen, RFC 3339
+	// Cursor is the started_at of the last row seen, as List returns it. Any
+	// RFC 3339 form is read as a time and compared in the stored form, so a
+	// cursor from before migration 0030 pages the same way.
+	Cursor string
 }
+
+// ErrBadCursor is returned by List for a cursor that is not an RFC 3339 time.
+var ErrBadCursor = errors.New("session: the cursor is not a time")
 
 // List returns sessions newest first.
 func (r *Repo) List(ctx context.Context, f Filter) ([]*Session, string, error) {
@@ -143,8 +149,12 @@ func (r *Repo) List(ctx context.Context, f Filter) ([]*Session, string, error) {
 		q += ` AND s.ended_at IS NULL`
 	}
 	if f.Cursor != "" {
+		at, err := time.Parse(time.RFC3339Nano, f.Cursor)
+		if err != nil {
+			return nil, "", ErrBadCursor
+		}
 		q += ` AND s.started_at < ?`
-		args = append(args, f.Cursor)
+		args = append(args, store.TimeArg(at))
 	}
 	q += ` ORDER BY s.started_at DESC LIMIT ?`
 	args = append(args, f.Limit+1)

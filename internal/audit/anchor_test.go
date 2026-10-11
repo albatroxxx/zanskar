@@ -532,3 +532,43 @@ func TestAnchorerLogsEachNewAnchorOnce(t *testing.T) {
 		t.Fatalf("verify against the logged anchor: %+v", res)
 	}
 }
+
+// TestAnchorsSurviveTheFixedWidthRewrite: migration 0030 rewrites stored
+// times into one fixed width on SQLite (M28), audit_anchors.created_at
+// included. An anchor's signature covers its time as parsed, so an anchor
+// stored in the old trimmed form must still verify after the rewrite.
+func TestAnchorsSurviveTheFixedWidthRewrite(t *testing.T) {
+	ctx := context.Background()
+	log, db := newTestLog(t)
+	ev, err := log.Record(ctx, Actor{IP: "10.0.0.1"}.Event(UserLogin, "user", "u1", Success, nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// As a build before 0030 stored it: trailing zeros trimmed.
+	a := Anchor{EventID: ev.ID, Hash: ev.Hash, CreatedAt: time.Date(2026, 10, 5, 10, 0, 0, 500_000_000, time.UTC)}
+	a.MAC = a.mac(testKey)
+	if _, err := db.ExecContext(ctx, `INSERT INTO audit_anchors (event_id, hash, created_at, mac) VALUES (?, ?, ?, ?)`,
+		a.EventID, a.Hash, "2026-10-05T10:00:00.5Z", a.MAC); err != nil {
+		t.Fatal(err)
+	}
+	check := func(when string) {
+		t.Helper()
+		res, err := log.Verify(ctx, testKey)
+		if err != nil || res.Broken != nil || len(res.Problems) > 0 || res.LastAnchor == nil {
+			t.Fatalf("%s: %+v %v", when, res, err)
+		}
+	}
+	check("before the rewrite")
+
+	if _, err := db.ExecContext(ctx, `DELETE FROM schema_migrations WHERE version = '0030_fixed_width_timestamps'`); err != nil {
+		t.Fatal(err)
+	}
+	if ran, err := store.Migrate(ctx, db); err != nil || len(ran) != 1 {
+		t.Fatalf("rerun 0030: %v %v", ran, err)
+	}
+	var stored string
+	if err := db.QueryRowContext(ctx, `SELECT created_at FROM audit_anchors`).Scan(&stored); err != nil || stored != "2026-10-05T10:00:00.500000Z" {
+		t.Fatalf("the anchor's time was not rewritten: %q %v", stored, err)
+	}
+	check("after the rewrite")
+}

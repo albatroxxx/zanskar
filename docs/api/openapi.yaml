@@ -673,6 +673,8 @@ paths:
                         type: array
                         items:
                           $ref: "#/components/schemas/OwnSession"
+        "400":
+          $ref: "#/components/responses/BadRequest"
   /sessions/{id}/failover:
     post:
       tags: [user]
@@ -2801,6 +2803,8 @@ paths:
                         type: array
                         items:
                           $ref: "#/components/schemas/AccessSession"
+        "400":
+          $ref: "#/components/responses/BadRequest"
   /sessions/{id}:
     get:
       tags: [auditor]

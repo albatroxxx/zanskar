@@ -5,6 +5,7 @@ package session
 import (
 	"context"
 	"errors"
+	"slices"
 	"testing"
 	"time"
 
@@ -147,5 +148,80 @@ func TestSessionLabelsAndUsernameFilter(t *testing.T) {
 		if err != nil || len(list) != c.want {
 			t.Fatalf("Filter{Username: %q}: got %d %v, want %d", c.username, len(list), err, c.want)
 		}
+	}
+}
+
+// TestListOrdersInsideASecond: sessions are listed newest first and paged by
+// start time (M28). On SQLite started_at is text, so the order inside a
+// shared second, and the cursor, must compare as times. A cursor is read as
+// a time and written back in the stored form, so one an older build handed
+// out (trimmed) or one with an offset pages the same way.
+func TestListOrdersInsideASecond(t *testing.T) {
+	ctx := context.Background()
+	db, err := store.Open(ctx, config.DriverSQLite, "file::memory:?_pragma=foreign_keys(1)")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	if _, err := store.Migrate(ctx, db); err != nil {
+		t.Fatal(err)
+	}
+	base := time.Date(2026, 10, 11, 10, 0, 0, 0, time.UTC)
+	exec := func(q string, args ...any) {
+		t.Helper()
+		if _, err := db.ExecContext(ctx, db.Rebind(q), args...); err != nil {
+			t.Fatal(err)
+		}
+	}
+	exec(`INSERT INTO users (id, username, display_name, created_at, updated_at) VALUES ('u1', 'alice', 'Alice', ?, ?)`, store.TimeArg(base), store.TimeArg(base))
+	exec(`INSERT INTO targets (id, name, address, os_family, created_at, updated_at) VALUES ('t1', 'box', '10.0.0.5', 'linux', ?, ?)`, store.TimeArg(base), store.TimeArg(base))
+	for id, at := range map[string]time.Duration{"s1": 0, "s2": 500 * time.Millisecond, "s3": time.Second} {
+		exec(`INSERT INTO access_sessions (id, user_id, target_id, protocol, client_ip, started_at) VALUES (?, 'u1', 't1', 'ssh', '10.0.0.1', ?)`, id, store.TimeArg(base.Add(at)))
+	}
+	r := NewRepo(db)
+	ids := func(f Filter) ([]string, string) {
+		t.Helper()
+		list, next, err := r.List(ctx, f)
+		if err != nil {
+			t.Fatalf("list %+v: %v", f, err)
+		}
+		var out []string
+		for _, s := range list {
+			out = append(out, s.ID)
+		}
+		return out, next
+	}
+	if got, _ := ids(Filter{}); !slices.Equal(got, []string{"s3", "s2", "s1"}) {
+		t.Errorf("newest first: %v", got)
+	}
+	// One at a time, by the cursor each page returns.
+	var paged []string
+	cursor := ""
+	for range 4 {
+		page, next := ids(Filter{Limit: 1, Cursor: cursor})
+		paged = append(paged, page...)
+		if next == "" {
+			break
+		}
+		cursor = next
+	}
+	if !slices.Equal(paged, []string{"s3", "s2", "s1"}) {
+		t.Errorf("paged one at a time: %v", paged)
+	}
+	for _, c := range []struct {
+		cursor string
+		want   []string
+	}{
+		{"2026-10-11T10:00:00.5Z", []string{"s1"}},      // trimmed, as builds before 0030 wrote it
+		{"2026-10-11T10:00:01Z", []string{"s2", "s1"}},  // whole seconds
+		{"2026-10-11T15:30:00.5+05:30", []string{"s1"}}, // the same instant with an offset
+		{"2026-10-11T10:00:00.500000Z", []string{"s1"}}, // the stored form
+	} {
+		if got, _ := ids(Filter{Cursor: c.cursor}); !slices.Equal(got, c.want) {
+			t.Errorf("before cursor %q: %v, want %v", c.cursor, got, c.want)
+		}
+	}
+	if _, _, err := r.List(ctx, Filter{Cursor: "yesterday"}); !errors.Is(err, ErrBadCursor) {
+		t.Errorf("a cursor that is not a time: %v, want ErrBadCursor", err)
 	}
 }

@@ -8,10 +8,20 @@ import (
 	"time"
 )
 
-// TimeArg formats a time for storage. Both drivers receive an RFC 3339 UTC
-// string: SQLite keeps it as TEXT, PostgreSQL casts it to TIMESTAMPTZ.
+// timeLayout is the stored form of a timestamp: RFC 3339 in UTC with exactly
+// six fractional digits. SQLite keeps timestamps as TEXT and compares them
+// byte by byte, so the form must be fixed-width for text order to be time
+// order; with trailing zeros trimmed, "…T10:00:00.5Z" sorted before
+// "…T10:00:00Z" ('.' < 'Z'). Six digits are the microseconds PostgreSQL's
+// TIMESTAMPTZ keeps (ADR 0003, amended 2026-10-11).
+const timeLayout = "2006-01-02T15:04:05.000000Z"
+
+// TimeArg formats a time for storage, truncated to the microsecond. Both
+// drivers receive the same fixed-width UTC string: SQLite keeps it as TEXT,
+// PostgreSQL casts it to TIMESTAMPTZ. Every timestamp written or compared in
+// SQL goes through it, so stored values and bounds compare as times.
 func TimeArg(t time.Time) string {
-	return t.UTC().Format(time.RFC3339Nano)
+	return t.UTC().Format(timeLayout)
 }
 
 // NullTime scans a nullable timestamp from either driver.
@@ -38,6 +48,9 @@ func (n *NullTime) Scan(src any) error {
 	}
 }
 
+// parse accepts any RFC 3339 time, not only the fixed form TimeArg writes: a
+// value in the form written before migration 0030 (fraction trimmed, or whole
+// seconds) still reads.
 func (n *NullTime) parse(s string) error {
 	t, err := time.Parse(time.RFC3339Nano, s)
 	if err != nil {

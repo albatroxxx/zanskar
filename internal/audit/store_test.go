@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -346,4 +347,78 @@ func TestReseal(t *testing.T) {
 	if after.Checked != 6 {
 		t.Fatalf("expected 6 events after reseal, got %d", after.Checked)
 	}
+}
+
+// TestListFromToInsideASecond is the reviewer's case (M28): events at
+// 10:00:00.5 and 10:00:01.5. On SQLite ts is text, and with trimmed RFC 3339
+// a bound compared wrongly inside a shared second: From 10:00:00 returned one
+// event of two, To 10:00:01 returned two instead of one. PostgreSQL, where ts
+// is a TIMESTAMPTZ, must answer the same.
+func TestListFromToInsideASecond(t *testing.T) {
+	base := time.Date(2026, 10, 11, 10, 0, 0, 0, time.UTC)
+	for _, b := range testBackends(t) {
+		t.Run(b.name, func(t *testing.T) {
+			ctx := context.Background()
+			log := NewLog(b.open(t))
+			for _, at := range []time.Duration{500 * time.Millisecond, 1500 * time.Millisecond} {
+				if _, err := log.Record(ctx, Event{Action: "user.login", Outcome: Success, Timestamp: base.Add(at)}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			for _, c := range []struct {
+				name     string
+				from, to time.Duration // after base; -1 for no bound
+				want     int
+			}{
+				{"from the whole second before both", 0, -1, 2},
+				{"to the whole second between them", -1, time.Second, 1},
+				{"from the first exactly", 500 * time.Millisecond, -1, 2},
+				{"from a microsecond after the first", 500*time.Millisecond + time.Microsecond, -1, 1},
+				{"to the first exactly (exclusive)", -1, 500 * time.Millisecond, 0},
+				{"to a microsecond after the second", -1, 1500*time.Millisecond + time.Microsecond, 2},
+				{"the second whole second", time.Second, 2 * time.Second, 1},
+			} {
+				var f Filter
+				if c.from >= 0 {
+					f.From = base.Add(c.from)
+				}
+				if c.to >= 0 {
+					f.To = base.Add(c.to)
+				}
+				got, _, err := log.List(ctx, f)
+				if err != nil || len(got) != c.want {
+					t.Errorf("%s: %d events (%v), want %d", c.name, len(got), err, c.want)
+				}
+			}
+			if res, err := log.Verify(ctx, testKey); err != nil || res.Broken != nil || res.Checked != 2 {
+				t.Fatalf("verify: %+v %v", res, err)
+			}
+		})
+	}
+}
+
+type testBackend struct {
+	name string
+	open func(t *testing.T) *store.DB
+}
+
+// testBackends is a migrated SQLite in memory and, when
+// ZANSKAR_TEST_POSTGRES_DSN is set, a migrated PostgreSQL schema of the
+// test's own, dropped afterwards.
+func testBackends(t *testing.T) []testBackend {
+	t.Helper()
+	backends := []testBackend{{"sqlite", func(t *testing.T) *store.DB {
+		_, db := newTestLog(t)
+		return db
+	}}}
+	if dsn := os.Getenv("ZANSKAR_TEST_POSTGRES_DSN"); dsn != "" {
+		backends = append(backends, testBackend{"postgres", func(t *testing.T) *store.DB {
+			db := isolatedPostgres(t, dsn)
+			if _, err := store.Migrate(context.Background(), db); err != nil {
+				t.Fatal(err)
+			}
+			return db
+		}})
+	}
+	return backends
 }

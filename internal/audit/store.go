@@ -83,8 +83,8 @@ func (l *Log) Record(ctx context.Context, e Event) (Event, error) {
 	// PostgreSQL's TIMESTAMPTZ keeps only microseconds, so a nanosecond-precision
 	// timestamp read back after insert differs from the one that was hashed and
 	// the chain fails verification. Truncate before hashing so the hash covers
-	// exactly what the column will return. (SQLite stores full-precision text and
-	// is unaffected, but truncating on both keeps the chain portable.)
+	// exactly what the column will return. (SQLite stores the same microseconds,
+	// as fixed-width text: store.TimeArg.)
 	e.Timestamp = e.Timestamp.Truncate(time.Microsecond)
 	if e.Outcome == "" {
 		return Event{}, errors.New("audit: outcome is required")
@@ -723,16 +723,21 @@ func fetchBatchTx(ctx context.Context, tx *sql.Tx, q string, afterID int64) ([]E
 
 const selectColumns = `SELECT id, ts, actor_user_id, actor_ip, action, object_type, object_id, outcome, details, prev_hash, hash FROM audit_events`
 
-// tsArg formats a timestamp for the driver: RFC 3339 nano text on SQLite,
-// a native timestamptz on PostgreSQL.
+// tsArg formats a timestamp for the driver: the fixed-width text every
+// timestamp is stored in on SQLite (store.TimeArg), so the From and To bounds
+// compare with ts as times; a native timestamptz on PostgreSQL. The hash is
+// unaffected by the stored form: ComputeHash formats the parsed time.
 func (l *Log) tsArg(t time.Time) any {
 	if l.db.Driver == config.DriverPostgres {
 		return t.UTC()
 	}
-	return t.UTC().Format(time.RFC3339Nano)
+	return store.TimeArg(t)
 }
 
-// tsScan accepts whatever the driver hands back for a timestamp column.
+// tsScan accepts whatever the driver hands back for a timestamp column. Text
+// is RFC 3339 of any width: the fixed form, or the nanoseconds of an event
+// from a build before 1.0, which migration 0030 leaves as written because its
+// hash covers every digit.
 type tsScan struct{ t time.Time }
 
 func (s *tsScan) Scan(v any) error {
