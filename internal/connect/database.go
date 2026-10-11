@@ -30,6 +30,10 @@ func (h *Handler) database(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer zero(g.UserSecret)
+	if target.Protocol(g.Protocol) != target.Database {
+		httpx.WriteError(w, http.StatusBadRequest, "bad_request", "ticket is not for database")
+		return
+	}
 	cols, _ := strconv.Atoi(r.URL.Query().Get("cols"))
 	rows, _ := strconv.Atoi(r.URL.Query().Get("rows"))
 

@@ -80,7 +80,8 @@ type Handler struct {
 // connect (user or admin); an auditor-only account is review-only and gets
 // 403 before any policy is consulted (ADR 0006). The WebSocket routes sit
 // outside the CSRF middleware's mutating-method check because they are GETs;
-// the ticket, which only POST /connect issues, is their only credential.
+// the ticket, which only POST /connect issues, is their only credential, and
+// each route redeems only a ticket issued for its own protocol.
 func (h *Handler) Register(mux *http.ServeMux) {
 	if h.Files == nil {
 		h.Files = newFileRegistry()
@@ -460,6 +461,12 @@ func (h *Handler) terminal(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer zero(g.UserSecret)
+	// The policy allowed the ticket's protocol, not this one: a ticket for
+	// RDP must not open an SSH shell with the RDP credential.
+	if target.Protocol(g.Protocol) != target.SSH {
+		httpx.WriteError(w, http.StatusBadRequest, "bad_request", "ticket is not for ssh")
+		return
+	}
 	cols, _ := strconv.Atoi(r.URL.Query().Get("cols"))
 	rows, _ := strconv.Atoi(r.URL.Query().Get("rows"))
 

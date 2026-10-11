@@ -42,6 +42,7 @@ type connectFixture struct {
 	auditLog *audit.Log
 	access   *access.Repo
 	ids      map[string]string // target name -> id
+	vaulted  string            // id of the vaulted credential, svc / pw-123456
 	mfa      bool              // what MFAEnrolled reports for alice
 	h        *Handler
 	users    *user.Repo
@@ -91,6 +92,7 @@ func newConnectFixture(t *testing.T) *connectFixture {
 	}
 	vaulted := cred(&credential.Credential{Name: "svc", Type: credential.TypePassword, Mode: credential.ModeVaulted, Username: "svc"}, &credential.Secret{Password: "pw-123456"})
 	typed := cred(&credential.Credential{Name: "own", Type: credential.TypePassword, Mode: credential.ModeUserSupplied}, nil)
+	f.vaulted = vaulted
 
 	targets := target.NewRepo(db)
 	const sshFP = "SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"

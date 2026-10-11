@@ -19,7 +19,9 @@ import (
 
 	"github.com/albatroxxx/zanskar/internal/audit"
 	"github.com/albatroxxx/zanskar/internal/gateway"
+	"github.com/albatroxxx/zanskar/internal/policy"
 	"github.com/albatroxxx/zanskar/internal/recording"
+	"github.com/albatroxxx/zanskar/internal/session"
 	"github.com/albatroxxx/zanskar/internal/target"
 	"github.com/albatroxxx/zanskar/internal/ticket"
 )
@@ -85,7 +87,7 @@ func newTerminalRig(t *testing.T, port int, trustedFP string) *terminalRig {
 	f.h.Registry = gateway.NewRegistry()
 	f.h.DialTimeout = 5 * time.Second
 	tg := &target.Target{Name: "shell", Address: "127.0.0.1", OSFamily: target.Linux, Tags: map[string]string{"env": "test"},
-		Ports: map[target.Protocol]int{target.SSH: port}, Credentials: f.mustTarget(t, "ok").Credentials}
+		Ports: map[target.Protocol]int{target.SSH: port}, Credentials: map[target.Protocol]string{target.SSH: f.vaulted}}
 	if err := f.h.Targets.Create(f.ctx, tg); err != nil {
 		t.Fatal(err)
 	}
@@ -99,15 +101,6 @@ func newTerminalRig(t *testing.T, port int, trustedFP string) *terminalRig {
 	srv := httptest.NewServer(f.srv)
 	t.Cleanup(srv.Close)
 	return &terminalRig{connectFixture: f, url: srv.URL, targetID: tg.ID}
-}
-
-func (f *connectFixture) mustTarget(t *testing.T, name string) *target.Target {
-	t.Helper()
-	tg, err := f.h.Targets.Get(f.ctx, f.ids[name])
-	if err != nil {
-		t.Fatal(err)
-	}
-	return tg
 }
 
 // ticket asks for an SSH ticket over the real server, so it is bound to the
@@ -250,7 +243,7 @@ func TestTerminalTickets(t *testing.T) {
 
 	t.Run("from another address", func(t *testing.T) {
 		tok, err := r.h.Tickets.Issue(ticket.Grant{UserID: r.alice.ID, Username: "alice", TargetID: r.targetID, Protocol: "ssh",
-			CredentialID: r.mustTarget(t, "ok").Credentials[target.SSH], ClientIP: "198.51.100.7"})
+			CredentialID: r.vaulted, ClientIP: "198.51.100.7"})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -285,6 +278,97 @@ func TestTerminalRefusesChangedHostKey(t *testing.T) {
 	if d["reason"] != "error" {
 		t.Fatalf("session.end reason %q, want error", d["reason"])
 	}
+}
+
+// TestTerminalRefusesTicketForAnotherProtocol: a ticket is good for the
+// route of the protocol it was issued for and no other. The target is a
+// Windows box that also runs OpenSSH with a trusted host key, reached through
+// a policy that grants alice RDP only, and its RDP credential is one sshd
+// accepts; the SSH route must still refuse the RDP ticket before the upgrade,
+// so no session row and no session.start exist. The database route refuses
+// it the same way, and an SSH ticket on an SSH policy still works.
+func TestTerminalRefusesTicketForAnotherProtocol(t *testing.T) {
+	port, fp := shellTarget(t)
+	r := newTerminalRig(t, port, fp)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	// The fixture's vaulted credential, svc / pw-123456, is what shellTarget
+	// accepts; here it is the target's RDP credential.
+	tg := &target.Target{Name: "win-with-sshd", Address: "127.0.0.1", OSFamily: target.Windows, Tags: map[string]string{"role": "rdp-only"},
+		Ports: map[target.Protocol]int{target.SSH: port}, Credentials: map[target.Protocol]string{target.RDP: r.vaulted}}
+	if err := r.h.Targets.Create(r.ctx, tg); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := r.h.Targets.RecordProbe(r.ctx, tg.ID, target.ProbeResult{Address: tg.Address, ResolvedIP: tg.Address,
+		Capabilities: []target.Protocol{target.SSH, target.RDP}, SSHHostKey: &target.SSHHostKey{Fingerprint: fp, Type: "ssh-ed25519"},
+		TLS: &target.TLSInfo{Fingerprint: strings.Repeat("ab", 32), Source: "rdp"}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.h.Targets.TrustHostKey(r.ctx, tg.ID, fp); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.h.Policies.Create(r.ctx, &policy.Policy{Name: "rdp-only", UserID: r.alice.ID, Enabled: true, IdleTimeoutMinutes: 15,
+		Selector: policy.Selector{Tags: map[string]string{"role": "rdp-only"}}, Protocols: []string{"rdp"}}); err != nil {
+		t.Fatal(err)
+	}
+	if code, out := r.postConnect(t, r.url, tg.ID, "ssh"); code != http.StatusForbidden || out["code"] != "policy_denied" {
+		t.Fatalf("ssh on the rdp-only target: %d %v, want 403 policy_denied", code, out)
+	}
+	rdpTicket := func() string {
+		t.Helper()
+		code, out := r.postConnect(t, r.url, tg.ID, "rdp")
+		tok, _ := out["ticket"].(string)
+		if code != http.StatusOK || tok == "" || out["ws_path"] != "/ws/desktop" {
+			t.Fatalf("connect rdp: %d %v", code, out)
+		}
+		return tok
+	}
+	refused := func(route, tok string) {
+		t.Helper()
+		ws, resp, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(r.url, "http")+route+"?cols=80&rows=24&ticket="+tok, nil)
+		if err == nil {
+			ws.CloseNow()
+			t.Fatalf("%s opened a session on an RDP ticket", route)
+		}
+		if resp == nil {
+			t.Fatalf("%s: %v", route, err)
+		}
+		defer func() { _ = resp.Body.Close() }()
+		var out map[string]any
+		_ = json.NewDecoder(resp.Body).Decode(&out)
+		if resp.StatusCode != http.StatusBadRequest || out["code"] != "bad_request" {
+			t.Fatalf("%s: got %d %v, want 400 bad_request", route, resp.StatusCode, out)
+		}
+	}
+	// Tickets are single-use, so each route gets its own.
+	refused("/ws/terminal", rdpTicket())
+	refused("/ws/database", rdpTicket())
+	if rows, _, err := r.h.Sessions.List(r.ctx, session.Filter{TargetID: tg.ID}); err != nil || len(rows) != 0 {
+		t.Fatalf("sessions on the rdp-only target: %d %v, want none", len(rows), err)
+	}
+	// Nothing has opened a session yet, so the log must hold no session.start.
+	if evs, _, err := r.auditLog.List(r.ctx, audit.Filter{Action: "session.start"}); err != nil || len(evs) != 0 {
+		t.Fatalf("session.start events: %d %v, want none", len(evs), err)
+	}
+
+	// An SSH ticket issued under an SSH policy opens the terminal as before.
+	ws, _, err := r.dial(ctx, r.ticket(t)) //nolint:bodyclose // the library closes the handshake body
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ws.CloseNow()
+	_, first, err := ws.Read(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var c termFrame
+	_ = json.Unmarshal(first, &c)
+	if c.T != "ready" || c.SessionID == "" {
+		t.Fatalf("first frame %s, want ready", first)
+	}
+	ws.CloseNow()
+	r.waitEnded(t, c.SessionID)
 }
 
 func lastEvent(t *testing.T, f *connectFixture, action string) audit.Event {
