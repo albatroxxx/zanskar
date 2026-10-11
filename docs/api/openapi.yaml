@@ -1264,8 +1264,8 @@ paths:
       tags: [admin]
       summary: Update a user
       description: |
-        Sets the display name, email and status. A left-out `display_name` or `status` keeps
-        its current value; a left-out `email` clears it. Roles and the password have their own
+        Sets the display name, email and status. A field left out keeps its current value;
+        an empty `email` clears it. Roles and the password have their own
         routes: `PUT /users/{id}/roles` and `PUT /users/{id}/password`.
 
         Setting `status` to `active` clears `failed_logins` and `locked_until`. Disabling or
@@ -4234,7 +4234,7 @@ components:
         email:
           type: string
           format: email
-          description: Left out or empty clears the email.
+          description: Empty clears the email; left out keeps it.
         display_name:
           type: string
         status:

@@ -74,9 +74,11 @@ type createRequest struct {
 	PasswordLess bool `json:"password_less"`
 }
 
+// updateRequest changes what it names: a field left out keeps its value.
+// Email is a pointer so that leaving it out and clearing it ("") differ.
 type updateRequest struct {
 	DisplayName string      `json:"display_name"`
-	Email       string      `json:"email"`
+	Email       *string     `json:"email"`
 	Status      user.Status `json:"status"`
 }
 
@@ -203,11 +205,15 @@ func (h *AdminHandler) update(w http.ResponseWriter, r *http.Request) {
 	if req.Status == "" {
 		req.Status = existing.Status
 	}
+	email := existing.Email
+	if req.Email != nil {
+		email = *req.Email
+	}
 	if req.Status != user.StatusActive && h.isSelf(r, id) {
 		httpx.WriteError(w, r, http.StatusConflict, "self", "you cannot disable or lock your own account")
 		return
 	}
-	if err := h.Users.Update(r.Context(), id, req.DisplayName, req.Email, req.Status); err != nil {
+	if err := h.Users.Update(r.Context(), id, req.DisplayName, email, req.Status); err != nil {
 		h.fail(w, r, err)
 		return
 	}
@@ -217,7 +223,7 @@ func (h *AdminHandler) update(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	details := map[string]any{
-		"display_name": req.DisplayName, "email": req.Email, "status": req.Status, "previous_status": existing.Status,
+		"display_name": req.DisplayName, "email": email, "status": req.Status, "previous_status": existing.Status,
 	}
 	if req.Status == user.StatusDisabled || req.Status == user.StatusLocked {
 		h.endLive(id, details)
