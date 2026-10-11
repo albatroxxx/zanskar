@@ -345,7 +345,8 @@ request body exactly as received, before any JSON parsing; compares it with the 
 constant time; and refuses a timestamp more than a few minutes from its own clock, so a
 captured request cannot be replayed later. Delivery is at least once: a batch the receiver
 does not answer with a 2xx is sent again, so treat the event `id` (or `hash`) as the
-idempotency key. Each sink keeps its own position across restarts.
+idempotency key. Each sink keeps its own position across restarts. Redirects are not
+followed: a 3xx answer counts as a failed delivery, so give the receiver's final address.
 
 ### Audit anchors
 
