@@ -14,6 +14,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/netip"
+	"slices"
 	"strconv"
 	"time"
 
@@ -149,27 +150,14 @@ func (h *Handler) myTargets(w http.ResponseWriter, r *http.Request) {
 			if t.Status != "active" {
 				continue
 			}
-			ref := policy.TargetRef{ID: t.ID, Tags: t.Tags}
-			var allowed, needApproval []string
-			consider := func(proto target.Protocol) {
-				d := policy.Evaluate(pols, ref, string(proto), now)
-				if !d.Allowed {
-					return
-				}
-				allowed = append(allowed, string(proto))
-				if d.RequireApproval {
-					needApproval = append(needApproval, string(proto))
-				}
-			}
-			for _, proto := range target.Protocols {
-				consider(proto)
-			}
+			protos := target.Protocols
 			// database is not in target.Protocols (it is not probed); offer it
 			// for database targets the policy permits (ADR 0017), and only
 			// when the gateway can actually broker that engine.
 			if t.IsDatabase() && target.ServableEngine(t.Engine) {
-				consider(target.Database)
+				protos = append(slices.Clip(protos), target.Database)
 			}
+			allowed, needApproval := reach(pols, policy.TargetRef{ID: t.ID, Tags: t.Tags}, protos, now)
 			if len(allowed) == 0 {
 				continue
 			}
@@ -197,13 +185,7 @@ func (h *Handler) myTargets(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		for _, g := range groups {
-			ref := policy.TargetRef{ASGID: g.ID, Tags: g.Tags}
-			var allowed []string
-			for _, proto := range g.Capabilities {
-				if policy.Evaluate(pols, ref, string(proto), now).Allowed {
-					allowed = append(allowed, string(proto))
-				}
-			}
+			allowed, needApproval := reach(pols, policy.TargetRef{ASGID: g.ID, Tags: g.Tags}, g.Capabilities, now)
 			if len(allowed) == 0 {
 				continue
 			}
@@ -221,11 +203,27 @@ func (h *Handler) myTargets(w http.ResponseWriter, r *http.Request) {
 			}
 			out = append(out, reachableTarget{
 				Kind: "asg", ID: g.ID, Name: g.Name, OSFamily: g.OSFamily, Tags: g.Tags, Capabilities: g.Capabilities,
-				Allowed: allowed, HostKeyReady: true, HealthyCount: healthy, InstanceCnt: live,
+				Allowed: allowed, RequiresApproval: needApproval, HostKeyReady: true, HealthyCount: healthy, InstanceCnt: live,
 			})
 		}
 	}
 	httpx.WriteJSON(w, http.StatusOK, httpx.Page[reachableTarget]{Items: out})
+}
+
+// reach returns the protocols of protos the policies allow on ref and, of
+// those, the ones that need an approved request first (ADR 0018).
+func reach(pols []*policy.Policy, ref policy.TargetRef, protos []target.Protocol, now time.Time) (allowed, needApproval []string) {
+	for _, proto := range protos {
+		d := policy.Evaluate(pols, ref, string(proto), now)
+		if !d.Allowed {
+			continue
+		}
+		allowed = append(allowed, string(proto))
+		if d.RequireApproval {
+			needApproval = append(needApproval, string(proto))
+		}
+	}
+	return allowed, needApproval
 }
 
 type connectRequest struct {
