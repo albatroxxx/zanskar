@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"hash/fnv"
 	"io"
 	"log/slog"
 	"net/http"
@@ -36,7 +37,9 @@ type Handler struct {
 	Audit    *audit.Log
 	Log      *slog.Logger
 
-	// MaxFailures failed passwords lock the account for LockFor.
+	// MaxFailures wrong passwords and wrong second-factor codes, counted
+	// together until a sign-in completes, lock the account against new
+	// sign-ins for LockFor.
 	MaxFailures int
 	LockFor     time.Duration
 	// MFAAttempts wrong codes end the pending session.
@@ -52,6 +55,25 @@ type Handler struct {
 	loginLimiter *ipLimiter
 	mfaMu        sync.Mutex
 	mfaAttempts  map[string]int
+	// codeChecks runs second-factor checks one at a time per account.
+	codeChecks accountLocks
+}
+
+// accountLockStripes is how many locks accountLocks spreads accounts over.
+const accountLockStripes = 64
+
+// accountLocks serialises work per account. It is striped rather than one
+// lock per account so it needs no bookkeeping: two accounts that share a
+// stripe only wait out each other's few milliseconds.
+type accountLocks [accountLockStripes]sync.Mutex
+
+// lock takes the lock for userID and returns its unlock.
+func (l *accountLocks) lock(userID string) (unlock func()) {
+	h := fnv.New32a()
+	_, _ = h.Write([]byte(userID))
+	m := &l[h.Sum32()%accountLockStripes]
+	m.Lock()
+	return m.Unlock
 }
 
 // mfaFailure counts a wrong code and reports whether the session must end.
@@ -140,7 +162,6 @@ func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
 		// try external providers before rejecting.
 		if h.ExternalLogin != nil {
 			if eu, eerr := h.ExternalLogin.Login(r.Context(), req.Username, req.Password, ip); eerr == nil {
-				_ = h.Users.RecordLoginSuccess(r.Context(), eu.ID)
 				actor.UserID = eu.ID
 				h.completeLogin(w, r, eu, actor)
 				return
@@ -180,10 +201,6 @@ func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
 				_ = h.Users.SetPasswordHash(r.Context(), u.ID, nh, u.MustResetOnLogin)
 			}
 		}
-		if err := h.Users.RecordLoginSuccess(r.Context(), u.ID); err != nil {
-			h.serverError(w, r, err)
-			return
-		}
 		h.completeLogin(w, r, u, actor)
 		return
 	}
@@ -193,7 +210,6 @@ func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
 	if h.ExternalLogin != nil {
 		eu, eerr := h.ExternalLogin.Login(r.Context(), req.Username, req.Password, ip)
 		if eerr == nil {
-			_ = h.Users.RecordLoginSuccess(r.Context(), eu.ID)
 			actor.UserID = eu.ID
 			h.completeLogin(w, r, eu, actor)
 			return
@@ -223,7 +239,19 @@ func (h *Handler) completeLogin(w http.ResponseWriter, r *http.Request, u *user.
 	if u.MustResetOnLogin {
 		full = false
 	}
-	token, sess, err := h.Sessions.Create(r.Context(), u.ID, ip, r.UserAgent(), full && !enrolled)
+	complete := full && !enrolled
+	// Only a sign-in that completes clears the account's failure count. One
+	// that still owes a second factor or a password change leaves it alone:
+	// wrong codes count against the same budget as wrong passwords, and the
+	// right password must not hand out a fresh set of guesses at the code
+	// (M7). The step that completes the sign-in clears it.
+	if complete {
+		if err := h.Users.RecordLoginSuccess(r.Context(), u.ID); err != nil {
+			h.serverError(w, r, err)
+			return
+		}
+	}
+	token, sess, err := h.Sessions.Create(r.Context(), u.ID, ip, r.UserAgent(), complete)
 	if err != nil {
 		h.serverError(w, r, err)
 		return
@@ -340,6 +368,11 @@ func (h *Handler) changePassword(w http.ResponseWriter, r *http.Request) {
 	case require:
 		WriteJSON(w, http.StatusOK, loginResponse{Status: "mfa_enrollment_required", CSRFToken: h.Sessions.CSRFToken(p.Session.ID)})
 	default:
+		// The change was the last step owed: the sign-in completes here.
+		if err := h.Users.RecordLoginSuccess(r.Context(), p.User.ID); err != nil {
+			h.serverError(w, r, err)
+			return
+		}
 		if err := h.Sessions.MarkMFAVerified(r.Context(), p.Session.ID); err != nil {
 			h.serverError(w, r, err)
 			return
@@ -410,6 +443,69 @@ func (h *Handler) passwordChangeOwed(w http.ResponseWriter, p *Principal) bool {
 	return false
 }
 
+// codeVerdict is what one second-factor check came to.
+type codeVerdict int
+
+const (
+	codeRight   codeVerdict = iota // the code was right
+	codeWrong                      // wrong, and counted against the account
+	codeLocking                    // wrong, and counting it locked the account
+	codeLocked                     // not compared: the account is locked
+)
+
+// checkCode compares one second-factor code for an account through check,
+// and keeps the account's failure count, which wrong codes share with wrong
+// passwords (M7): each wrong code counts, and MaxFailures of them lock the
+// account for LockFor. wrong says which of check's errors mean a wrong
+// code; any other is returned, with nothing counted. During a sign-in
+// (signIn), a locked account's code is not compared at all, just as a
+// locked account's password is not, and a right code completes the sign-in
+// and clears the count.
+//
+// Checks for one account run one at a time, and each reads the lock state
+// the one before it left: codes sent all at once, from several
+// half-finished sign-ins, must not all be compared before the first of them
+// is counted.
+func (h *Handler) checkCode(ctx context.Context, userID string, signIn bool, check func() error, wrong func(error) bool) (codeVerdict, error) {
+	defer h.codeChecks.lock(userID)()
+	if signIn {
+		u, err := h.Users.GetByID(ctx, userID)
+		if err != nil {
+			return 0, err
+		}
+		if u.IsLocked(time.Now()) {
+			return codeLocked, nil
+		}
+	}
+	if err := check(); err != nil {
+		if !wrong(err) {
+			return 0, err
+		}
+		locked, lerr := h.Users.RecordLoginFailure(ctx, userID, h.MaxFailures, h.LockFor)
+		if lerr != nil {
+			// The refusal stands; only this failure goes uncounted.
+			h.Log.Error("record second-factor failure", "err", lerr)
+		}
+		if locked {
+			return codeLocking, nil
+		}
+		return codeWrong, nil
+	}
+	if signIn {
+		return codeRight, h.Users.RecordLoginSuccess(ctx, userID)
+	}
+	return codeRight, nil
+}
+
+// endSignIn ends a half-finished sign-in: its session is revoked and the
+// cookie cleared. The caller answers sign_in_ended, which sends the console
+// back to the password step (#205).
+func (h *Handler) endSignIn(w http.ResponseWriter, r *http.Request, p *Principal) {
+	h.mfaClear(p.Session.ID)
+	_ = h.Sessions.Revoke(r.Context(), p.Session.ID)
+	h.Sessions.ClearCookie(w)
+}
+
 func (h *Handler) totpVerify(w http.ResponseWriter, r *http.Request) {
 	p, _ := FromContext(r.Context())
 	if p.Session.MFAVerified {
@@ -421,31 +517,49 @@ func (h *Handler) totpVerify(w http.ResponseWriter, r *http.Request) {
 		WriteError(w, http.StatusBadRequest, "bad_request", err.Error())
 		return
 	}
-	usedRecovery, err := h.TOTP.Verify(r.Context(), p.User.ID, req.Code)
+	var (
+		usedRecovery bool
+		refusal      error
+	)
+	verdict, err := h.checkCode(r.Context(), p.User.ID, true, func() error {
+		usedRecovery, refusal = h.TOTP.Verify(r.Context(), p.User.ID, req.Code)
+		return refusal
+	}, func(err error) bool {
+		return errors.Is(err, ErrTOTPBadCode) || errors.Is(err, ErrTOTPNotEnrolled)
+	})
 	if err != nil {
-		if errors.Is(err, ErrTOTPBadCode) || errors.Is(err, ErrTOTPNotEnrolled) {
-			details := map[string]any{"reason": "bad_code", "session_id": p.Session.ID}
-			if errors.Is(err, ErrTOTPReused) {
-				// A right code seen once already: someone may have read it.
-				details["reason"] = "code_reused"
-			}
-			ended := h.mfaFailure(p.Session.ID)
-			if ended {
-				_ = h.Sessions.Revoke(r.Context(), p.Session.ID)
-				h.Sessions.ClearCookie(w)
-				details["session_ended"] = true
-			}
-			h.record(r, ActorFor(r).Event("user.mfa.verify", "user", p.User.ID, audit.Failure, details))
-			if ended {
-				// Its own code, so the console goes back to the password step
-				// instead of offering a code box that can no longer work.
-				WriteError(w, http.StatusUnauthorized, "sign_in_ended", "too many wrong codes; sign in again")
-				return
-			}
-			WriteError(w, http.StatusUnauthorized, "invalid_code", "invalid code")
+		h.serverError(w, r, err)
+		return
+	}
+	if verdict != codeRight {
+		details := map[string]any{"reason": "bad_code", "session_id": p.Session.ID}
+		if errors.Is(refusal, ErrTOTPReused) {
+			// A right code seen once already: someone may have read it.
+			details["reason"] = "code_reused"
+		}
+		// MFAAttempts wrong codes end the sign-in, and so does a locked
+		// account: no code can complete it now.
+		var ended bool
+		switch verdict {
+		case codeLocked:
+			details["reason"], ended = "locked", true
+		case codeLocking:
+			details["locked_for"], ended = h.LockFor.String(), true
+		default:
+			ended = h.mfaFailure(p.Session.ID)
+		}
+		if ended {
+			h.endSignIn(w, r, p)
+			details["session_ended"] = true
+		}
+		h.record(r, ActorFor(r).Event("user.mfa.verify", "user", p.User.ID, audit.Failure, details))
+		if ended {
+			// Its own code, so the console goes back to the password step
+			// instead of offering a code box that can no longer work.
+			WriteError(w, http.StatusUnauthorized, "sign_in_ended", "too many wrong codes; sign in again")
 			return
 		}
-		h.serverError(w, r, err)
+		WriteError(w, http.StatusUnauthorized, "invalid_code", "invalid code")
 		return
 	}
 	h.mfaClear(p.Session.ID)
@@ -489,19 +603,44 @@ func (h *Handler) totpConfirm(w http.ResponseWriter, r *http.Request) {
 		WriteError(w, http.StatusBadRequest, "bad_request", err.Error())
 		return
 	}
-	codes, err := h.TOTP.Confirm(r.Context(), p.User.ID, strings.TrimSpace(req.Code))
-	if err != nil {
-		switch {
-		case errors.Is(err, ErrTOTPBadCode):
-			h.record(r, ActorFor(r).Event("user.mfa.confirm", "user", p.User.ID, audit.Failure, nil))
-			WriteError(w, http.StatusUnauthorized, "invalid_code", "invalid code")
-		case errors.Is(err, ErrTOTPNotEnrolled):
-			WriteError(w, http.StatusConflict, "not_enrolled", "start enrollment first")
-		case errors.Is(err, ErrTOTPAlreadyEnrolled):
-			WriteError(w, http.StatusConflict, "already_enrolled", "an authenticator is already enrolled")
-		default:
-			h.serverError(w, r, err)
+	// Enrolling as the step a sign-in still owes completes that sign-in. A
+	// full session that enrols is not signing in: the lock, which is about
+	// new sign-ins, does not stop it (M6), though its wrong codes count.
+	signIn := !p.Session.MFAVerified
+	var codes []string
+	verdict, err := h.checkCode(r.Context(), p.User.ID, signIn, func() (err error) {
+		codes, err = h.TOTP.Confirm(r.Context(), p.User.ID, strings.TrimSpace(req.Code))
+		return err
+	}, func(err error) bool { return errors.Is(err, ErrTOTPBadCode) })
+	switch {
+	case errors.Is(err, ErrTOTPNotEnrolled):
+		WriteError(w, http.StatusConflict, "not_enrolled", "start enrollment first")
+		return
+	case errors.Is(err, ErrTOTPAlreadyEnrolled):
+		WriteError(w, http.StatusConflict, "already_enrolled", "an authenticator is already enrolled")
+		return
+	case err != nil:
+		h.serverError(w, r, err)
+		return
+	}
+	if verdict != codeRight {
+		details := map[string]any{"reason": "bad_code"}
+		switch verdict {
+		case codeLocked:
+			details["reason"] = "locked"
+		case codeLocking:
+			details["locked_for"] = h.LockFor.String()
 		}
+		// A half-finished sign-in of a locked account ends, as at verify.
+		if signIn && verdict != codeWrong {
+			h.endSignIn(w, r, p)
+			details["session_ended"] = true
+			h.record(r, ActorFor(r).Event("user.mfa.confirm", "user", p.User.ID, audit.Failure, details))
+			WriteError(w, http.StatusUnauthorized, "sign_in_ended", "too many wrong codes; sign in again")
+			return
+		}
+		h.record(r, ActorFor(r).Event("user.mfa.confirm", "user", p.User.ID, audit.Failure, details))
+		WriteError(w, http.StatusUnauthorized, "invalid_code", "invalid code")
 		return
 	}
 	// A freshly confirmed authenticator counts as a verified second factor
