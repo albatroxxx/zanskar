@@ -197,7 +197,7 @@ func TestLockedUntilAFreshCode(t *testing.T) {
 	if code, out := e.post("/api/v1/admin/cli", nil, e.admin, e.csrf); code != 200 || out["unlocked"] != false || out["mfa_enrolled"] != true {
 		t.Fatalf("state before a code: %d %v", code, out)
 	}
-	if code, out := e.post("/api/v1/admin/cli", map[string]string{"line": "status"}, e.admin, e.csrf); code != 403 || out["code"] != "cli_locked" {
+	if code, out := e.post("/api/v1/admin/cli", map[string]string{"line": "status"}, e.admin, e.csrf); code != 403 || out["code"] != "cli_code_required" {
 		t.Fatalf("a line before a code: %d %v", code, out)
 	}
 	e.unlock()
@@ -536,5 +536,23 @@ func TestSettingInstallTimeKey(t *testing.T) {
 	x.args = []string{"no.such"}
 	if _, _, err := planSettingSet(x); err == nil || !strings.Contains(err.Error(), `no setting "no.such"`) {
 		t.Fatalf("an unknown key: %v", err)
+	}
+}
+
+// TestExecSaysWhyACodeIsNeeded: a command run without a fresh code is told
+// to enter one (cli_code_required); a sign-in that is closed after too many
+// wrong codes is told that instead (cli_locked, 429), so the console does
+// not ask for a code the gateway would refuse.
+func TestExecSaysWhyACodeIsNeeded(t *testing.T) {
+	e := newEnv(t)
+	line := map[string]string{"line": "status"}
+	if code, out := e.post("/api/v1/admin/cli", line, e.admin, e.csrf); code != 403 || out["code"] != "cli_code_required" {
+		t.Fatalf("no fresh code: %d %v", code, out)
+	}
+	for i := 0; i < maxFails; i++ {
+		e.post("/api/v1/admin/cli/unlock", map[string]string{"code": "999999"}, e.admin, e.csrf)
+	}
+	if code, out := e.post("/api/v1/admin/cli", line, e.admin, e.csrf); code != 429 || out["code"] != "cli_locked" {
+		t.Fatalf("closed after wrong codes: %d %v", code, out)
 	}
 }

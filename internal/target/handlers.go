@@ -519,11 +519,11 @@ func (h *AdminHandler) writeErr(w http.ResponseWriter, r *http.Request, err erro
 	case errors.Is(err, ErrNotFound):
 		httpx.WriteError(w, http.StatusNotFound, "not_found", "target not found")
 	case errors.Is(err, ErrDuplicate):
-		httpx.WriteError(w, http.StatusConflict, "duplicate", "a target with that name exists")
+		httpx.WriteError(w, http.StatusConflict, "conflict", "a target with that name exists")
 	case errors.Is(err, ErrInvalid):
 		httpx.BadRequest(w, strings.TrimPrefix(err.Error(), "target: invalid: "))
 	case errors.Is(err, ErrInvalidCredential):
-		httpx.WriteError(w, http.StatusUnprocessableEntity, "invalid_credential", "credential does not exist")
+		httpx.BadRequest(w, "credential does not exist")
 	case errors.Is(err, ErrFingerprintMismatch):
 		httpx.WriteError(w, http.StatusConflict, "fingerprint_mismatch", "the fingerprint does not match the one awaiting trust; probe again and review")
 	case errors.Is(err, ErrNoPendingHostKey):

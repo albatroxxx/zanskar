@@ -131,7 +131,7 @@ func TestHandlersCreateProbeTrust(t *testing.T) {
 	if body["host_key_status"] != "unknown" {
 		t.Fatalf("new target should have unknown host key, got %v", body["host_key_status"])
 	}
-	if code, body := e.do("POST", "/api/v1/targets", map[string]any{"name": "ssh-box", "address": "10.0.0.1", "os_family": "linux"}, e.admin); code != 409 {
+	if code, body := e.do("POST", "/api/v1/targets", map[string]any{"name": "ssh-box", "address": "10.0.0.1", "os_family": "linux"}, e.admin); code != 409 || body["code"] != "conflict" {
 		t.Fatalf("duplicate: %d %v", code, body)
 	}
 	if code, body := e.do("POST", "/api/v1/targets", map[string]any{"name": "bad", "address": "http://x", "os_family": "linux"}, e.admin); code != 400 {
@@ -163,8 +163,10 @@ func TestHandlersCreateProbeTrust(t *testing.T) {
 	if code, body := e.do("PUT", "/api/v1/targets/"+id+"/credentials/ssh", map[string]string{"credential_id": "cred1"}, e.admin); code != 200 || body["credentials"].(map[string]any)["ssh"] != "cred1" {
 		t.Fatalf("set credential: %d %v", code, body)
 	}
-	if code, _ := e.do("PUT", "/api/v1/targets/"+id+"/credentials/ssh", map[string]string{"credential_id": "ghost"}, e.admin); code != 422 {
-		t.Fatalf("ghost credential should be 422, got %d", code)
+	// A reference to something that does not exist is a bad request, worded,
+	// as for autoscaling groups and policies.
+	if code, body := e.do("PUT", "/api/v1/targets/"+id+"/credentials/ssh", map[string]string{"credential_id": "ghost"}, e.admin); code != 400 || body["code"] != "bad_request" || body["message"] != "credential does not exist" {
+		t.Fatalf("ghost credential should be 400 bad_request, got %d %v", code, body)
 	}
 	if code, _ := e.do("DELETE", "/api/v1/targets/"+id+"/credentials/ssh", nil, e.admin); code != 204 {
 		t.Fatalf("unset credential: %d", code)

@@ -1896,8 +1896,8 @@ paths:
                 $ref: "#/components/schemas/Target"
         "404":
           $ref: "#/components/responses/NotFound"
-        "422":
-          description: The credential does not exist; `code` is `invalid_credential`.
+        "400":
+          description: The credential does not exist; `code` is `bad_request`.
           content:
             application/json:
               schema:
@@ -3589,14 +3589,17 @@ paths:
                         style: { type: string, enum: [head, ok, warn, error, muted] }
         "403":
           description: >
-            `cli_locked`: a fresh authenticator code is needed first. Or the caller is not an
-            administrator.
+            `cli_code_required`: a fresh authenticator code is needed first. Or the caller is not
+            an administrator.
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
         "429":
-          description: More than 60 lines in a minute; `code` is `rate_limited`.
+          description: >
+            `rate_limited`: more than 60 lines in a minute. `cli_locked`: the command line is
+            closed for this sign-in after too many wrong codes; a fresh code is refused until the
+            lock passes.
           content:
             application/json:
               schema:
@@ -3919,7 +3922,7 @@ components:
         status:
           type: string
           enum: [ok, mfa_required, mfa_enrollment_required, password_change_required]
-          description: "`ok` means the session is fully usable. `mfa_required` means call `/auth/mfa/totp/verify`. `mfa_enrollment_required` means the deployment requires MFA and the account has none; call `/auth/mfa/totp/enroll`. `password_change_required` means an administrator set the password; call `/auth/password` first, whose response says what is owed next."
+          description: "`ok` means the session is fully usable. `mfa_required` means call `/auth/mfa/totp/verify`. `mfa_enrollment_required` means the deployment requires MFA and the account has none; call `/auth/mfa/totp/enroll`. `password_change_required` means an administrator set the password; call `/auth/password` first, whose response says what is owed next. Until then, any other API call answers 401 with `code` `password_change_required` (the sign-in is not complete), and `/auth/mfa/totp/enroll` and `/auth/mfa/totp/confirm` answer 409 with the same code (that step is out of order)."
         csrf_token:
           type: string
         user:
