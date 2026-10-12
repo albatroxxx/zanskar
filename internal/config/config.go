@@ -55,7 +55,6 @@ type Config struct {
 	// request with a redirect to the HTTPS listener (":80" on a default
 	// install). Only meaningful when the gateway serves TLS.
 	RedirectAddr string
-	GuacdAddr    string
 	// DockerPath is the container CLI used to spawn ephemeral database session
 	// containers (ADR 0017); empty defaults to "docker" on PATH. Set it to an
 	// absolute path or to "podman" for alternate runtimes.
@@ -81,10 +80,6 @@ type Config struct {
 	ConsoleCLI bool
 	// Issuer is the name shown in authenticator apps.
 	Issuer string
-	// RequireMFA forces every password user to enroll an authenticator before
-	// the session becomes usable. Default true; set ZANSKAR_REQUIRE_MFA=false
-	// only for throwaway development databases.
-	RequireMFA bool
 	// RecordingsDir is where session recordings are written (local storage).
 	RecordingsDir string
 	// RecordingsS3Bucket switches recordings to an S3-compatible bucket.
@@ -181,12 +176,10 @@ func Load(opts Options) (*Config, error) {
 		TLSCert:              os.Getenv("ZANSKAR_TLS_CERT"),
 		TLSKey:               os.Getenv("ZANSKAR_TLS_KEY"),
 		TLSHosts:             splitList(os.Getenv("ZANSKAR_TLS_HOSTS")),
-		GuacdAddr:            os.Getenv("ZANSKAR_GUACD_ADDR"),  // empty disables RDP and VNC
 		DockerPath:           os.Getenv("ZANSKAR_DOCKER_PATH"), // empty defaults to "docker" on PATH
 		PublicURL:            strings.TrimRight(strings.TrimSpace(os.Getenv("ZANSKAR_PUBLIC_URL")), "/"),
 		ConsoleCLI:           !strings.EqualFold(strings.TrimSpace(os.Getenv("ZANSKAR_CONSOLE_CLI")), "off"),
 		Issuer:               envOr("ZANSKAR_ISSUER", "Zanskar"),
-		RequireMFA:           envOr("ZANSKAR_REQUIRE_MFA", "true") != "false",
 		RecordingsDir:        envOr("ZANSKAR_RECORDINGS_DIR", "data/recordings"),
 		RecordingsS3Bucket:   os.Getenv("ZANSKAR_RECORDINGS_S3_BUCKET"),
 		RecordingsS3Prefix:   envOr("ZANSKAR_RECORDINGS_S3_PREFIX", "recordings/"),
