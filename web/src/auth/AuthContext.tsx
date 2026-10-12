@@ -1,15 +1,18 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
-import { api, setCsrf, signInEnded } from '../api/client'
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { ApiError, api, setCsrf, signInEnded } from '../api/client'
 import type { LoginResponse, Me, Role, User } from '../api/types'
 
 /**
  * Auth state machine:
- *   loading  -> anonymous | partial | full
+ *   loading  -> anonymous | partial | full, or unreachable until the gateway
+ *              answers
  *   partial  = password accepted; a password change (an administrator chose
  *              the current one), then the second factor (verify or enroll),
  *              still owed
  */
-export type AuthStatus = 'loading' | 'anonymous' | 'partial' | 'full'
+/** unreachable: the gateway did not answer the session check (restarting,
+ *  or the network); the console asks again rather than signing out. */
+export type AuthStatus = 'loading' | 'unreachable' | 'anonymous' | 'partial' | 'full'
 
 interface AuthState {
   status: AuthStatus
@@ -34,8 +37,11 @@ const AuthContext = createContext<AuthContextValue | null>(null)
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [state, setState] = useState<AuthState>({ status: 'loading', user: null, mfaEnrolled: false, pending: null })
+  const retry = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+  const again = useRef<() => Promise<void>>(async () => {})
 
   const refresh = useCallback(async () => {
+    clearTimeout(retry.current)
     try {
       const me = await api.get<Me>('/auth/me')
       setCsrf(me.csrf_token)
@@ -47,11 +53,24 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       } else {
         setState({ status: 'full', user: me.user ?? null, mfaEnrolled: me.mfa_enrolled, pending: null })
       }
-    } catch {
-      setCsrf('')
-      setState({ status: 'anonymous', user: null, mfaEnrolled: false, pending: null })
+    } catch (e) {
+      // Only a 401 means signed out. Anything else (the restart the
+      // console itself offers, a proxy between deploys, the network) says
+      // nothing about the cookie: keep what is known, say the gateway is
+      // not answering if nothing is known yet, and ask again (B22).
+      if (e instanceof ApiError && e.status === 401) {
+        setCsrf('')
+        setState({ status: 'anonymous', user: null, mfaEnrolled: false, pending: null })
+        return
+      }
+      setState((s) => (s.status === 'loading' ? { ...s, status: 'unreachable' } : s))
+      retry.current = setTimeout(() => void again.current(), 3000)
     }
   }, [])
+  useEffect(() => {
+    again.current = refresh
+    return () => clearTimeout(retry.current)
+  }, [refresh])
 
   useEffect(() => {
     const t = setTimeout(() => void refresh(), 0)
