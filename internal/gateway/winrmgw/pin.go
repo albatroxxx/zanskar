@@ -26,8 +26,8 @@ import (
 // other than the one pinned at probe time. Mirrors RDP's cert-fingerprints.
 var ErrCertMismatch = errors.New("winrmgw: server certificate does not match the pinned fingerprint")
 
-// ErrUnpinned is returned when TLS is requested with neither a pinned
-// fingerprint nor a CA bundle, and Insecure was not explicitly chosen.
+// ErrUnpinned is returned when TLS is requested without a pinned
+// fingerprint.
 var ErrUnpinned = errors.New("winrmgw: tls target has no pinned certificate; probe the target first")
 
 // pinnedTransport is a winrm.Transporter whose TLS trust is a single leaf

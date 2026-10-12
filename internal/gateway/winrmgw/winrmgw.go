@@ -12,7 +12,6 @@ package winrmgw
 
 import (
 	"context"
-	"crypto/x509"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -45,11 +44,6 @@ type Endpoint struct {
 	// captured by the probe. When set, it is the only trust anchor: the CA and
 	// hostname checks are replaced by an exact match, like SSH host key pinning.
 	PinnedFingerprint string
-	// CACertPEM verifies the listener against a CA bundle instead of a pin.
-	CACertPEM string
-	// Insecure skips verification entirely. Development only; Dial refuses
-	// TLS endpoints that have neither a pin, a CA bundle, nor this flag.
-	Insecure bool
 }
 
 // Auth is how Zanskar authenticates to the target (ADR 0005). A non-empty
@@ -63,7 +57,6 @@ type Auth struct {
 // Errors the connect handler maps to user-facing messages.
 var (
 	ErrAuthFailed = errors.New("winrmgw: authentication to target failed")
-	ErrBadCACert  = errors.New("winrmgw: CA certificate is not valid PEM")
 	// ErrNotAuthorized is the credential being known to the target but not
 	// allowed to open a shell on it. WinRM's RootSDDL grants that to local
 	// administrators only, so being in Remote Management Users is not enough:
@@ -113,22 +106,17 @@ func Dial(ctx context.Context, ep Endpoint, a Auth, timeout time.Duration) (*Cli
 			port = 5985
 		}
 	}
-	var caPEM []byte
-	if ep.UseTLS && ep.CACertPEM != "" {
-		pool := x509.NewCertPool()
-		if !pool.AppendCertsFromPEM([]byte(ep.CACertPEM)) {
-			return nil, ErrBadCACert
-		}
-		caPEM = []byte(ep.CACertPEM)
-	}
-	if ep.UseTLS && ep.PinnedFingerprint == "" && caPEM == nil && !ep.Insecure {
+	// TLS is trusted through the certificate pinned at probe time, and only
+	// that way: a CA-bundle and a skip-verification mode were never offered
+	// by any target setting, and were gone here (D2).
+	if ep.UseTLS && ep.PinnedFingerprint == "" {
 		return nil, ErrUnpinned
 	}
 	if ep.IP != "" && (!ep.UseTLS || ep.PinnedFingerprint == "") {
 		// The library's own transports would look Address up again.
 		return nil, errors.New("winrmgw: a fixed address needs a pinned certificate")
 	}
-	endpoint := winrm.NewEndpoint(ep.Address, port, ep.UseTLS, ep.Insecure, caPEM, nil, nil, timeout)
+	endpoint := winrm.NewEndpoint(ep.Address, port, ep.UseTLS, false, nil, nil, nil, timeout)
 
 	params := winrm.NewParameters("PT60S", "en-US", 153600)
 	user := a.Username
