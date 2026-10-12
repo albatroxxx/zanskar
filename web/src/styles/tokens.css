@@ -58,9 +58,24 @@
   --term-btn-hover: #363b45;
   --term-danger: #ff9a8f;
   --term-danger-line: #a8453d;
+  --term-ok: #8fd6a6;
+  --term-ok-line: #2f6a46;
+  /* The light theme's --warn is a dark amber that all but vanishes on these
+     surfaces; this one reads on them in both themes. */
+  --term-warn: #f2c46d;
   --term-link: var(--periwinkle);
+  /* The console command line's sign-in card, a step up from its panel. */
+  --term-card-bg: #1d2026;
+  --term-shadow: rgba(0, 0, 0, 0.35);
+  /* Selected text in the terminal: periwinkle, see-through. A literal, not
+     color-mix(): theme.ts hands this value to xterm as written. */
+  --term-selection: rgba(169, 180, 255, 0.28);
 
   --backdrop: rgba(22, 20, 15, 0.55);
+  /* The shade at a dialog body's top or bottom edge when more is scrolled away. */
+  --scroll-shadow: rgba(0, 0, 0, 0.16);
+  /* A QR code is read by a camera: dark modules on white, in either theme. */
+  --qr-bg: #ffffff;
 
   --font: "Cantarell", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
   --mono: ui-monospace, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;

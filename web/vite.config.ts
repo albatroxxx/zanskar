@@ -23,5 +23,8 @@ export default defineConfig({
     environment: 'jsdom',
     include: ['src/**/*.test.{ts,tsx}'],
     restoreMocks: true,
+    // Stylesheets stay empty in tests, except one imported as text (?raw),
+    // which the colour test reads as written.
+    css: { include: [/\.css\?raw$/] },
   },
 })

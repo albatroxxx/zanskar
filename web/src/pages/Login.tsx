@@ -216,7 +216,7 @@ export function Login() {
               <p className="muted" style={{ marginTop: 0 }}>This deployment requires a second factor. Scan the code with your authenticator app, then enter the six-digit code it shows.</p>
               {enroll ? (
                 <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12 }}>
-                  <img src={enroll.qr} alt="TOTP enrollment QR code" width={192} height={192} style={{ borderRadius: 6, background: '#fff' }} />
+                  <img className="qr" src={enroll.qr} alt="TOTP enrollment QR code" width={192} height={192} />
                   <div style={{ textAlign: 'center', maxWidth: '100%' }}>
                     <div className="muted" style={{ fontSize: '0.8rem' }}>Manual entry key</div>
                     <code style={{ wordBreak: 'break-all' }}>{enroll.secret}</code>

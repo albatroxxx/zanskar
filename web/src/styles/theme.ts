@@ -9,6 +9,6 @@ export function terminalTheme() {
     foreground: v('--term-fg', '#e8e4da'),
     cursor: v('--term-link', '#a9b4ff'),
     cursorAccent: v('--terminal-bg', '#181a1f'),
-    selectionBackground: 'rgba(169, 180, 255, 0.28)',
+    selectionBackground: v('--term-selection', 'rgba(169, 180, 255, 0.28)'),
   }
 }
