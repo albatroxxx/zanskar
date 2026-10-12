@@ -2,8 +2,9 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { Navigate, useLocation, useNavigate } from 'react-router-dom'
 import type { Client, GuacObject, InputStream, Keyboard } from 'guacamole-common-js'
 import { fmtBytes, fmtSeconds, protocolName } from '../../api/format'
-import { Modal } from '../../components/ui'
 import { FailoverDialog } from './Failover'
+import { SessionEndedDialog } from './SessionEnded'
+import { desktopEnd, type SessionEnd } from './session'
 import { useFullscreen } from './fullscreen'
 import { FullscreenButton } from './FullscreenButton'
 import type { ConnectResponse } from '../../api/types'
@@ -68,7 +69,8 @@ function DesktopSession({ state }: { state: DesktopState }) {
   const { isFull, toggle: toggleFull, exit: exitFull } = useFullscreen(pageRef)
   const [sessionId, setSessionId] = useState('')
   const [elapsed, setElapsed] = useState(0)
-  const [ended, setEnded] = useState<{ reason: string; msg?: string } | null>(null)
+  const [ended, setEnded] = useState<SessionEnd | null>(null)
+  const endedRef = useRef(false)
   const [flags, setFlags] = useState({ files: false, clipboard: false })
   const [panelOpen, setPanelOpen] = useState(false)
   const [fsReady, setFsReady] = useState(false)
@@ -122,7 +124,12 @@ function DesktopSession({ state }: { state: DesktopState }) {
     if (!host.current) return
     let disposed = false
     const start = Date.now()
-    const tick = setInterval(() => setElapsed(Math.floor((Date.now() - start) / 1000)), 1000)
+    // The clock stops when the session ends, as on the terminal page: it is a
+    // live reading, and a running clock on a dead session is a lie. endedRef,
+    // not the ended state, so the effect does not rebuild the session.
+    const tick = setInterval(() => {
+      if (!endedRef.current) setElapsed(Math.floor((Date.now() - start) / 1000))
+    }, 1000)
     const el = host.current
     // Assigned once the library has loaded; released by the effect cleanup
     // below. Guacamole.Keyboard listens on the document itself and calls
@@ -146,7 +153,7 @@ function DesktopSession({ state }: { state: DesktopState }) {
       const tunnel = new Guacamole.WebSocketTunnel(url)
       const client = new Guacamole.Client(tunnel)
       el.appendChild(client.getDisplay().getElement())
-      client.onerror = (st) => setEnded((cur) => cur ?? { reason: st.code === 519 ? 'target_lost' : 'error', msg: st.message })
+      client.onerror = (st) => setEnded((cur) => cur ?? desktopEnd(st.code, st.message))
       tunnel.onerror = () => setEnded((cur) => cur ?? { reason: 'target_lost' })
       client.onstatechange = (s: number) => {
         if (s === 5) setEnded((cur) => cur ?? { reason: 'user_exit' })
@@ -385,6 +392,7 @@ function DesktopSession({ state }: { state: DesktopState }) {
       } satisfies DesktopState,
     })
   }
+  useEffect(() => { endedRef.current = !!ended }, [ended])
   const failover = ended?.reason === 'target_lost' && !!state.asg_id && !!sessionId
   // Drop out of full screen when the session ends so the dialog shows normally.
   useEffect(() => { if (ended) exitFull() }, [ended, exitFull])
@@ -395,9 +403,13 @@ function DesktopSession({ state }: { state: DesktopState }) {
         {state.instance_label && <span className="stat mono">{state.instance_label}</span>}
         {state.switched_from && <span className="stat switched">switched from {state.switched_from}</span>}
         <span className="stat">{protocolName(state.protocol)}</span>
-        <span className="stat">elapsed {fmtSeconds(elapsed)}</span>
+        <span className="stat">{(ended ? 'ran for ' : 'elapsed ') + fmtSeconds(elapsed)}</span>
         <span className="grow" />
-        <span className="stat rec" title="This session is being recorded"><i className="rec-dot" aria-hidden="true" />Recording</span>
+        {ended ? (
+          <span className="stat">Ended · recording saved</span>
+        ) : (
+          <span className="stat rec" title="This session is being recorded"><i className="rec-dot" aria-hidden="true" />Recording</span>
+        )}
         <FullscreenButton isFull={isFull} onClick={toggleFull} />
         {flags.clipboard && (
           <button className="btn sm" onClick={() => setClipOpen((o) => !o)} aria-pressed={clipOpen}>
@@ -409,7 +421,7 @@ function DesktopSession({ state }: { state: DesktopState }) {
             {panelOpen ? 'Hide files' : 'Files'}
           </button>
         )}
-        <button className="btn sm" onClick={() => disconnectRef.current()}>Disconnect</button>
+        {!ended && <button className="btn sm" onClick={() => disconnectRef.current()}>Disconnect</button>}
       </div>
       <div className="desk-body">
         <div className="term-host" ref={host} style={{ overflow: 'hidden' }} />
@@ -466,12 +478,7 @@ function DesktopSession({ state }: { state: DesktopState }) {
         <FailoverDialog sessionId={sessionId} asgId={state.asg_id!} protocol={state.protocol} lostLabel={state.instance_label} onExit={() => nav('/')} onSwitched={onSwitched} />
       )}
       {ended && !failover && (
-        <Modal title="Session ended" onClose={() => nav('/')}>
-          <p>{ended.msg ?? ended.reason.replace(/_/g, ' ')}</p>
-          <div className="actions">
-            <button className="btn primary" onClick={() => nav('/')}>Back to targets</button>
-          </div>
-        </Modal>
+        <SessionEndedDialog ended={ended} target={state.target} protocol={state.protocol} elapsed={elapsed} onClose={() => nav('/')} />
       )}
     </div>
   )

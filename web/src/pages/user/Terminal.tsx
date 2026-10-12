@@ -5,8 +5,9 @@ import { FitAddon } from '@xterm/addon-fit'
 import { WebLinksAddon } from '@xterm/addon-web-links'
 import '@xterm/xterm/css/xterm.css'
 import { fmtSeconds, protocolName } from '../../api/format'
-import { Modal } from '../../components/ui'
 import { FailoverDialog } from './Failover'
+import { SessionEndedDialog } from './SessionEnded'
+import type { SessionEnd } from './session'
 import { TerminalFiles } from './TerminalFiles'
 import { useFullscreen } from './fullscreen'
 import { FullscreenButton } from './FullscreenButton'
@@ -27,15 +28,6 @@ interface TerminalState {
   switched_from?: string
 }
 
-const reasonText: Record<string, string> = {
-  user_exit: 'You closed the session, or the shell on the target exited.',
-  idle_timeout: 'Disconnected after a period without input, as the access policy requires.',
-  max_duration: 'The session reached the maximum duration the access policy allows.',
-  admin_terminated: 'An administrator ended the session.',
-  target_lost: 'The connection to the target was lost.',
-  error: 'The session ended because of an error.',
-}
-
 export function Terminal() {
   const loc = useLocation()
   const state = loc.state as TerminalState | null
@@ -53,7 +45,7 @@ function TerminalSession({ state }: { state: TerminalState }) {
   const [sessionId, setSessionId] = useState('')
   const [elapsed, setElapsed] = useState(0)
   const [idle, setIdle] = useState(0)
-  const [ended, setEnded] = useState<{ reason: string; msg?: string } | null>(null)
+  const [ended, setEnded] = useState<SessionEnd | null>(null)
   const endedRef = useRef(false)
   const [status, setStatus] = useState<'connecting' | 'live'>('connecting')
   const [filesAllowed, setFilesAllowed] = useState(false)
@@ -190,16 +182,7 @@ function TerminalSession({ state }: { state: TerminalState }) {
         <FailoverDialog sessionId={sessionId} asgId={state.asg_id!} protocol={state.protocol} lostLabel={state.instance_label} onExit={() => nav('/')} onSwitched={onSwitched} />
       )}
       {ended && !failover && (
-        <Modal title="Session ended" onClose={() => nav('/')}>
-          <p>{reasonText[ended.reason] ?? `The session ended: ${ended.reason.replace(/_/g, ' ')}.`}</p>
-          {ended.msg && <p className="muted">{ended.msg}</p>}
-          <p className="muted">
-            {state.target} · {protocolName(state.protocol)} · ran for {fmtSeconds(elapsed)}. The recording is kept for as long as the retention policy says.
-          </p>
-          <div className="actions">
-            <button className="btn primary" onClick={() => nav('/')}>Back to targets</button>
-          </div>
-        </Modal>
+        <SessionEndedDialog ended={ended} target={state.target} protocol={state.protocol} elapsed={elapsed} onClose={() => nav('/')} />
       )}
     </div>
   )
