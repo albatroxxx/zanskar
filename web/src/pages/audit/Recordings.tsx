@@ -59,8 +59,8 @@ export function Recordings() {
     <>
       <PageHead title="Recordings" lead="Every session is recorded: the terminal transcript and the commands that were run, or the desktop stream. Playing one is logged with your name.">
         <input
-          className="mono"
-          style={{ padding: '7px 10px', border: '1px solid var(--line-strong)', borderRadius: 'var(--radius)', background: 'var(--bg-raised)', minWidth: 220 }}
+          className="mono filter-control"
+          style={{ minWidth: 220 }}
           placeholder="filter by user, machine, protocol"
           value={search}
           onChange={(e) => setSearch(e.target.value)}

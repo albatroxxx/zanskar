@@ -67,6 +67,16 @@ describe('colours', () => {
     expect(offenders).toEqual([])
   })
 
+  // The filter boxes beside a page title each carried the same border,
+  // padding and background inline; they take that look from one class.
+  it('of a page filter box come from one class, not each page', () => {
+    const inline = /style=\{\{[^}]*border: '1px solid var\(--line-strong\)'/
+    const offenders = Object.entries(sources)
+      .filter(([path]) => !/\.test\.tsx?$/.test(path))
+      .flatMap(([path, text]) => text.split('\n').flatMap((line, i) => (inline.test(line) ? [`${path}:${i + 1}`] : [])))
+    expect(offenders).toEqual([])
+  })
+
   it('reach the terminal from the tokens', () => {
     const set = {
       '--terminal-bg': 'rgb(1, 2, 3)',

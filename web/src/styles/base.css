@@ -103,6 +103,8 @@ td.actions > * + * { margin-left: 8px; }
 .btn.danger { color: var(--danger); border-color: var(--danger); }
 .btn.sm { padding: 4px 9px; font-size: 0.82rem; }
 .btn.ghost { border-color: transparent; background: transparent; }
+/* A filter box or picker beside a page's title (Sessions, Logs, Recordings). */
+.filter-control { padding: 6px 10px; border: 1px solid var(--line-strong); border-radius: var(--radius); background: var(--bg-raised); }
 .field { display: flex; flex-direction: column; gap: 4px; margin-bottom: 12px; }
 .field label { font-size: 0.82rem; font-weight: 500; color: var(--fg-muted); }
 .field input, .field select, .field textarea { padding: 7px 10px; border: 1px solid var(--line-strong); border-radius: var(--radius); background: var(--bg-raised); width: 100%; }
