@@ -580,24 +580,9 @@ func (h *Handler) terminal(w http.ResponseWriter, r *http.Request) {
 	defer ws.CloseNow()
 	ws.SetReadLimit(1 << 20)
 
-	// Persist the session first so even a failed dial leaves a trace.
-	s := &session.Session{UserID: g.UserID, PolicyID: g.PolicyID, TargetID: ep.TargetID, ASGID: ep.ASGID, ASGInstanceID: ep.ASGInstanceID,
-		Protocol: g.Protocol, CredentialID: g.CredentialID, ClientIP: ip, UserAgent: r.UserAgent(), FailoverFromSessionID: g.FailoverFrom}
-	if err := h.Sessions.Start(r.Context(), s); err != nil {
-		h.Log.Error("start session", "err", err)
-		_ = ws.Close(websocket.StatusInternalError, "could not start session")
+	run, ok := h.startRun(r, ws, g, ep, ip)
+	if !ok {
 		return
-	}
-	if g.FailoverFrom != "" {
-		_ = h.Sessions.End(context.Background(), g.FailoverFrom, session.EndFailover)
-	}
-	actor := audit.Actor{UserID: g.UserID, IP: ip}
-	endWith := func(reason, msg string) {
-		_ = h.Sessions.End(context.Background(), s.ID, reason)
-		h.record(r, actor.Event(audit.SessionEnd, "access_session", s.ID, audit.Success, map[string]string{"reason": reason, "target_id": ep.LiveKey}))
-		if msg != "" {
-			_ = ws.Close(websocket.StatusPolicyViolation, msg)
-		}
 	}
 
 	timeout := h.DialTimeout
@@ -615,7 +600,7 @@ func (h *Handler) terminal(w http.ResponseWriter, r *http.Request) {
 		if errors.Is(err, target.ErrAddressForbidden) {
 			msg = addressRefusedMsg
 		}
-		endWith(session.EndError, msg)
+		run.end(session.EndError, msg)
 		return
 	}
 	client, err := sshgw.Dial(r.Context(), sshgw.Endpoint{Address: dialIP.String(), Port: ep.port(target.SSH), HostKeyFingerprint: fp, HostKeyTrusted: true}, a, timeout)
@@ -624,12 +609,12 @@ func (h *Handler) terminal(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case errors.Is(err, sshgw.ErrHostKeyMismatch):
 			msg = "host key mismatch; connection refused"
-			h.record(r, actor.Event(audit.TargetHostKeyMismatch, "target", ep.LiveKey, audit.Failure, map[string]string{"expected": fp}))
+			h.record(r, run.actor.Event(audit.TargetHostKeyMismatch, "target", ep.LiveKey, audit.Failure, map[string]string{"expected": fp}))
 		case errors.Is(err, sshgw.ErrAuthFailed):
 			msg = "authentication to the target failed"
 		}
 		h.Log.Warn("ssh dial failed", "target", ep.LiveKey, "err", err)
-		endWith(reason, msg)
+		run.end(reason, msg)
 		return
 	}
 	defer func() { _ = client.Close() }()
@@ -637,46 +622,26 @@ func (h *Handler) terminal(w http.ResponseWriter, r *http.Request) {
 	// Expose this session's SSH connection for SFTP file transfer while it is
 	// open, when the policy allows it (ADR 0016).
 	if g.AllowFileTransfer {
-		h.Files.add(s.ID, &fileSession{client: client, userID: g.UserID, targetKey: ep.LiveKey})
-		defer h.Files.remove(s.ID)
+		h.Files.add(run.s.ID, &fileSession{client: client, userID: g.UserID, targetKey: ep.LiveKey})
+		defer h.Files.remove(run.s.ID)
 	}
 
-	rec, uri, err := recording.NewAsciicast(r.Context(), h.Storage, s.ID+".cast", recording.Header{Width: cols, Height: rows, Title: sessionLabel(ep),
-		Env: map[string]string{"ZANSKAR_SESSION": s.ID}})
-	if err != nil {
-		h.Log.Error("start recording", "err", err)
-		endWith(session.EndError, "recording could not be started; session refused")
+	rec, recRow, ok := run.asciicast(sessionLabel(ep), cols, rows)
+	if !ok {
 		return
 	}
-	recRow := &session.Recording{SessionID: s.ID, Format: "asciicast", StorageURI: uri, RetentionUntil: retentionUntil(g)}
-	if err := h.Sessions.CreateRecording(r.Context(), recRow); err != nil {
-		h.Log.Error("register recording", "err", err)
-		_, _, _ = rec.Close()
-		endWith(session.EndError, "recording could not be registered; session refused")
-		return
-	}
-	h.record(r, actor.Event(audit.SessionStart, "access_session", s.ID, audit.Success, map[string]any{"target_id": ep.LiveKey, "protocol": g.Protocol, "policy_id": g.PolicyID, "recording_id": recRow.ID}))
+	ctx, done := run.live()
+	defer done()
 
-	ctx := h.Registry.Add(r.Context(), gateway.Live{SessionID: s.ID, UserID: g.UserID, TargetID: ep.LiveKey, Protocol: g.Protocol, PolicyID: g.PolicyID})
-	defer h.Registry.Remove(s.ID)
-
-	lim := sshgw.Limits{Idle: g.IdleTimeout, Max: g.MaxSession, SessionID: s.ID, AllowFiles: g.AllowFileTransfer}
+	lim := sshgw.Limits{Idle: g.IdleTimeout, Max: g.MaxSession, SessionID: run.s.ID, AllowFiles: g.AllowFileTransfer}
 	// The registry made the tap that shadowing watchers subscribe to (ADR
 	// 0006); the bridge has to write to it or they see nothing. Assigned only
 	// when present: a nil *Tap in the interface would be dereferenced.
-	if tap := h.Registry.Tap(s.ID); tap != nil {
+	if tap := h.Registry.Tap(run.s.ID); tap != nil {
 		lim.Tap = tap
 	}
 	reason, berr := sshgw.Bridge(ctx, h.Log, client, ws, rec, cols, rows, lim)
-	h.finishRecording(r, actor, s.ID, recRow, rec)
-	if berr != nil {
-		h.Log.Warn("bridge ended with error", "session", s.ID, "err", berr)
-		if reason == "" || reason == "error" {
-			reason = session.EndError
-		}
-	}
-	endWith(reason, "")
-	_ = ws.Close(websocket.StatusNormalClosure, reason)
+	run.finish(rec, recRow, reason, berr)
 }
 
 const restartingMsg = "the gateway is restarting to apply a configuration change; try again in a minute"
@@ -729,24 +694,6 @@ func retentionDays(ep *endpoint, d policy.Decision) int {
 		return ep.RetentionDays
 	}
 	return d.RetentionDays
-}
-
-// finishRecording closes a session's recording and records its size and
-// digest. A recording whose close failed (its upload, say) is not marked
-// finished: its row keeps finished_at empty, as the storage documents, and
-// the loss is audited as recording.lost, so a playback that cannot find it
-// has an explanation. It used to be marked finished with size 0 and no
-// digest, which read as an empty recording (B14).
-func (h *Handler) finishRecording(r *http.Request, actor audit.Actor, sessionID string, recRow *session.Recording, rec interface{ Close() (int64, string, error) }) {
-	size, sum, err := rec.Close()
-	if err != nil {
-		h.Log.Error("close recording", "session", sessionID, "err", err)
-		h.record(r, actor.Event(audit.RecordingLost, "recording", recRow.ID, audit.Failure, map[string]string{"session_id": sessionID, "error": err.Error()}))
-		return
-	}
-	if err := h.Sessions.FinishRecording(context.Background(), recRow.ID, size, sum); err != nil {
-		h.Log.Error("finish recording", "session", sessionID, "err", err)
-	}
 }
 
 // retentionUntil fixes a new recording's retention from its grant.

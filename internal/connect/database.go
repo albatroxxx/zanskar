@@ -3,7 +3,6 @@
 package connect
 
 import (
-	"context"
 	"net/http"
 	"strconv"
 
@@ -11,12 +10,9 @@ import (
 
 	"github.com/albatroxxx/zanskar/internal/audit"
 	"github.com/albatroxxx/zanskar/internal/auth"
-	"github.com/albatroxxx/zanskar/internal/gateway"
 	"github.com/albatroxxx/zanskar/internal/gateway/dbgw"
 	"github.com/albatroxxx/zanskar/internal/httpx"
 	"github.com/albatroxxx/zanskar/internal/protocol"
-	"github.com/albatroxxx/zanskar/internal/recording"
-	"github.com/albatroxxx/zanskar/internal/session"
 	"github.com/albatroxxx/zanskar/internal/target"
 )
 
@@ -99,53 +95,21 @@ func (h *Handler) database(w http.ResponseWriter, r *http.Request) {
 	defer ws.CloseNow()
 	ws.SetReadLimit(1 << 20)
 
-	s := &session.Session{UserID: g.UserID, PolicyID: g.PolicyID, TargetID: ep.TargetID,
-		Protocol: g.Protocol, CredentialID: g.CredentialID, ClientIP: ip, UserAgent: r.UserAgent()}
-	if err := h.Sessions.Start(r.Context(), s); err != nil {
-		h.Log.Error("start session", "err", err)
-		_ = ws.Close(websocket.StatusInternalError, "could not start session")
+	run, ok := h.startRun(r, ws, g, ep, ip)
+	if !ok {
 		return
 	}
-	spec.SessionID = s.ID
-	actor := audit.Actor{UserID: g.UserID, IP: ip}
-	endWith := func(reason, msg string) {
-		_ = h.Sessions.End(context.Background(), s.ID, reason)
-		h.record(r, actor.Event(audit.SessionEnd, "access_session", s.ID, audit.Success, map[string]string{"reason": reason, "target_id": ep.LiveKey}))
-		if msg != "" {
-			_ = ws.Close(websocket.StatusPolicyViolation, msg)
-		}
-	}
-
-	rec, uri, err := recording.NewAsciicast(r.Context(), h.Storage, s.ID+".cast", recording.Header{Width: cols, Height: rows, Title: ep.Name,
-		Env: map[string]string{"ZANSKAR_SESSION": s.ID}})
-	if err != nil {
-		h.Log.Error("start recording", "err", err)
-		endWith(session.EndError, "recording could not be started; session refused")
+	spec.SessionID = run.s.ID
+	run.startDetails = map[string]any{"engine": ep.Engine}
+	rec, recRow, ok := run.asciicast(ep.Name, cols, rows)
+	if !ok {
 		return
 	}
-	recRow := &session.Recording{SessionID: s.ID, Format: "asciicast", StorageURI: uri, RetentionUntil: retentionUntil(g)}
-	if err := h.Sessions.CreateRecording(r.Context(), recRow); err != nil {
-		h.Log.Error("register recording", "err", err)
-		_, _, _ = rec.Close()
-		endWith(session.EndError, "recording could not be registered; session refused")
-		return
-	}
-	h.record(r, actor.Event(audit.SessionStart, "access_session", s.ID, audit.Success,
-		map[string]any{"target_id": ep.LiveKey, "protocol": g.Protocol, "policy_id": g.PolicyID, "recording_id": recRow.ID, "engine": ep.Engine}))
+	ctx, done := run.live()
+	defer done()
 
-	ctx := h.Registry.Add(r.Context(), gateway.Live{SessionID: s.ID, UserID: g.UserID, TargetID: ep.LiveKey, Protocol: g.Protocol, PolicyID: g.PolicyID})
-	defer h.Registry.Remove(s.ID)
-
-	reason, berr := dbgw.Bridge(ctx, h.Log, h.DockerPath, spec, ws, rec, cols, rows, dbgw.Limits{Idle: g.IdleTimeout, Max: g.MaxSession, SessionID: s.ID})
-	h.finishRecording(r, actor, s.ID, recRow, rec)
-	if berr != nil {
-		h.Log.Warn("db bridge ended with error", "session", s.ID, "err", berr)
-		if reason == "" || reason == "error" {
-			reason = session.EndError
-		}
-	}
-	endWith(reason, "")
-	_ = ws.Close(websocket.StatusNormalClosure, reason)
+	reason, berr := dbgw.Bridge(ctx, h.Log, h.DockerPath, spec, ws, rec, cols, rows, dbgw.Limits{Idle: g.IdleTimeout, Max: g.MaxSession, SessionID: run.s.ID})
+	run.finish(rec, recRow, reason, berr)
 }
 
 // liveDatabaseSessions counts the database sessions this gateway is running.

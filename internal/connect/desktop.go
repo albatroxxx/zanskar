@@ -16,11 +16,9 @@ import (
 	"github.com/albatroxxx/zanskar/internal/audit"
 	"github.com/albatroxxx/zanskar/internal/auth"
 	"github.com/albatroxxx/zanskar/internal/credential"
-	"github.com/albatroxxx/zanskar/internal/gateway"
 	"github.com/albatroxxx/zanskar/internal/gateway/guac"
 	"github.com/albatroxxx/zanskar/internal/httpx"
 	"github.com/albatroxxx/zanskar/internal/protocol"
-	"github.com/albatroxxx/zanskar/internal/recording"
 	"github.com/albatroxxx/zanskar/internal/session"
 	"github.com/albatroxxx/zanskar/internal/target"
 )
@@ -221,27 +219,18 @@ func (h *Handler) desktop(w http.ResponseWriter, r *http.Request) {
 	defer ws.CloseNow()
 	ws.SetReadLimit(4 << 20)
 
-	s := &session.Session{UserID: g.UserID, PolicyID: g.PolicyID, TargetID: ep.TargetID, ASGID: ep.ASGID, ASGInstanceID: ep.ASGInstanceID,
-		Protocol: g.Protocol, CredentialID: g.CredentialID, ClientIP: ip, UserAgent: r.UserAgent()}
-	if err := h.Sessions.Start(r.Context(), s); err != nil {
-		h.Log.Error("start session", "err", err)
-		_ = ws.Close(websocket.StatusInternalError, "could not start session")
+	run, ok := h.startRun(r, ws, g, ep, ip)
+	if !ok {
 		return
 	}
-	actor := audit.Actor{UserID: g.UserID, IP: ip}
-	endWith := func(reason, msg string) {
-		_ = h.Sessions.End(context.Background(), s.ID, reason)
-		h.record(r, actor.Event(audit.SessionEnd, "access_session", s.ID, audit.Success, map[string]string{"reason": reason, "target_id": ep.LiveKey}))
-		if msg != "" {
-			wctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-			_ = ws.Write(wctx, websocket.MessageText, []byte(guac.ErrorInstruction(msg, 519)))
-			cancel()
-			_ = ws.Close(websocket.StatusPolicyViolation, msg)
-		}
+	run.tell = func(msg string) {
+		wctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		_ = ws.Write(wctx, websocket.MessageText, []byte(guac.ErrorInstruction(msg, 519)))
+		cancel()
 	}
 
 	if g.AllowFileTransfer && proto == target.RDP {
-		params.Args["drive-path"] = drivePathFor(s.ID)
+		params.Args["drive-path"] = drivePathFor(run.s.ID)
 	}
 	timeout := h.DialTimeout
 	if timeout <= 0 {
@@ -250,46 +239,32 @@ func (h *Handler) desktop(w http.ResponseWriter, r *http.Request) {
 	gc, err := guac.Dial(r.Context(), guacdAddr, params, timeout)
 	if err != nil {
 		h.Log.Warn("guacd dial failed", "target", ep.LiveKey, "guacd", guacdAddr, "err", err)
-		endWith(session.EndError, desktopDialMessage(err))
+		run.end(session.EndError, desktopDialMessage(err))
 		return
 	}
 	defer func() { _ = gc.Close() }()
 
-	rec, uri, err := recording.NewGuacStream(r.Context(), h.Storage, s.ID+".guac")
-	if err != nil {
-		h.Log.Error("start recording", "err", err)
-		endWith(session.EndError, "recording could not be started; session refused")
+	rec, recRow, ok := run.guacStream()
+	if !ok {
 		return
 	}
-	recRow := &session.Recording{SessionID: s.ID, Format: "guac", StorageURI: uri, RetentionUntil: retentionUntil(g)}
-	if err := h.Sessions.CreateRecording(r.Context(), recRow); err != nil {
-		_, _, _ = rec.Close()
-		endWith(session.EndError, "recording could not be registered; session refused")
-		return
-	}
-	h.record(r, actor.Event(audit.SessionStart, "access_session", s.ID, audit.Success, map[string]any{"target_id": ep.LiveKey, "protocol": g.Protocol, "policy_id": g.PolicyID, "recording_id": recRow.ID}))
 
 	// guacamole-common-js expects the tunnel's internal opcode with an id first.
 	// It is followed by a Zanskar-specific instruction carrying the policy
 	// flags so the browser can show or hide the file and clipboard controls.
 	// Guacamole.Client ignores opcodes it does not know, so it is harmless to
 	// a stock client and never reaches guacd.
-	if err := ws.Write(r.Context(), websocket.MessageText, []byte(guac.Encode("", s.ID)+FlagsInstruction(g.AllowFileTransfer, g.AllowClipboard))); err != nil {
+	if err := ws.Write(r.Context(), websocket.MessageText, []byte(guac.Encode("", run.s.ID)+FlagsInstruction(g.AllowFileTransfer, g.AllowClipboard))); err != nil {
 		_, _, _ = rec.Close()
-		endWith(session.EndError, "")
+		run.end(session.EndError, "")
 		return
 	}
 
-	ctx := h.Registry.Add(r.Context(), gateway.Live{SessionID: s.ID, UserID: g.UserID, TargetID: ep.LiveKey, Protocol: g.Protocol, PolicyID: g.PolicyID})
-	h.Registry.SetGuacID(s.ID, gc.ID) // lets auditors join this desktop via guacd
-	defer h.Registry.Remove(s.ID)
+	ctx, done := run.live()
+	defer done()
+	h.Registry.SetGuacID(run.s.ID, gc.ID) // lets auditors join this desktop via guacd
 	reason, berr := guac.Bridge(ctx, h.Log, gc, ws, rec, guac.Limits{Idle: g.IdleTimeout, Max: g.MaxSession, AllowClipboard: g.AllowClipboard, AllowFileTransfer: g.AllowFileTransfer})
-	h.finishRecording(r, actor, s.ID, recRow, rec)
-	if berr != nil {
-		h.Log.Warn("desktop bridge ended with error", "session", s.ID, "err", berr)
-	}
-	endWith(reason, "")
-	_ = ws.Close(websocket.StatusNormalClosure, reason)
+	run.finish(rec, recRow, reason, berr)
 }
 
 // verifyPinnedCert reconnects to the target's RDP TLS listener and confirms it
