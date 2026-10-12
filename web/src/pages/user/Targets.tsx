@@ -2,7 +2,7 @@ import { useEffect, useState, type FormEvent } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { api, ApiError, errorMessage } from '../../api/client'
 import type { AccessRequest, ConnectResponse, Page, Protocol, ReachableInstance, ReachableTarget } from '../../api/types'
-import { Alert, Badge, Empty, Field, Modal, PageHead, Tags } from '../../components/ui'
+import { Alert, Badge, Empty, Field, Modal, PageHead, Tabs, Tags } from '../../components/ui'
 import { engineName, protocolName } from '../../api/format'
 import { fmtAgo } from './Failover'
 
@@ -177,11 +177,16 @@ export function Targets() {
       <PageHead title="Targets" lead="What your access policies let you reach. Terminal opens SSH or PowerShell; Desktop opens RDP or VNC when the machine offers it; a database opens its SQL client. Request marks one that needs approval before you can connect." />
       {err && <Alert tone="danger">{err}</Alert>}
       {notice && <Alert tone="ok">{notice}</Alert>}
-      <div className="tabs">
-        <button className={tab === 'static' ? 'active' : ''} onClick={() => setTab('static')}>Hosts</button>
-        <button className={tab === 'database' ? 'active' : ''} onClick={() => setTab('database')}>Databases{databases && databases.length > 0 ? ` (${databases.length})` : ''}</button>
-        <button className={tab === 'asg' ? 'active' : ''} onClick={() => setTab('asg')}>Autoscaling</button>
-      </div>
+      <Tabs
+        label="Kinds of target"
+        value={tab}
+        onChange={setTab}
+        tabs={[
+          { key: 'static', label: 'Hosts' },
+          { key: 'database', label: `Databases${databases && databases.length > 0 ? ` (${databases.length})` : ''}` },
+          { key: 'asg', label: 'Autoscaling' },
+        ]}
+      />
 
       {tab === 'database' && (
         <div className="card table-wrap">

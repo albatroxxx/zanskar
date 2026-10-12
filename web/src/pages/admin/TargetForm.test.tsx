@@ -32,3 +32,20 @@ describe('TargetForm address', () => {
     expect(screen.queryByText(warning)).toBeNull()
   })
 })
+
+// B28: the Host and Database choice on a new target showed which one was
+// picked only by its styling.
+describe('TargetForm kind', () => {
+  it('is a tab list that says which kind is picked', async () => {
+    render(<TargetForm onClose={() => {}} onSaved={() => {}} />)
+
+    const tabs = screen.getByRole('tablist', { name: 'Kind of target' })
+    expect(screen.getByRole('tab', { name: 'Host' }).getAttribute('aria-selected')).toBe('false')
+    expect(tabs.querySelectorAll('[tabindex="0"]')).toHaveLength(1)
+
+    await userEvent.click(screen.getByRole('tab', { name: 'Database' }))
+
+    expect(screen.getByRole('tab', { name: 'Database', selected: true })).toBeDefined()
+    expect(screen.getByLabelText('Engine')).toBeDefined()
+  })
+})

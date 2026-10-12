@@ -46,3 +46,24 @@ describe('Targets, an approval-gated autoscaling group', () => {
     expect(post).toHaveBeenCalledWith('/me/access-requests', { asg_id: 'g1', protocol: 'ssh', reason: 'deploy', minutes: 60 })
   })
 })
+
+// B28: the Hosts, Databases and Autoscaling tabs showed which one was open
+// only by their styling.
+describe('Targets tabs', () => {
+  it('are a tab list that says which tab is open', async () => {
+    vi.spyOn(api, 'get').mockImplementation(async () => ({ items: [] }) as never)
+    render(
+      <MemoryRouter>
+        <Targets />
+      </MemoryRouter>,
+    )
+
+    await screen.findByRole('tablist', { name: 'Kinds of target' })
+    expect(screen.getByRole('tab', { name: 'Hosts', selected: true })).toBeDefined()
+
+    await userEvent.setup().click(screen.getByRole('tab', { name: 'Autoscaling' }))
+
+    expect(screen.getByRole('tab', { name: 'Autoscaling', selected: true })).toBeDefined()
+    expect(screen.getByRole('tab', { name: 'Hosts' }).getAttribute('aria-selected')).toBe('false')
+  })
+})

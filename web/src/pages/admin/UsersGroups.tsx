@@ -3,7 +3,7 @@ import { api, errorMessage } from '../../api/client'
 import { fmtTime } from '../../api/format'
 import type { Group, GroupMember, Role, User } from '../../api/types'
 import { useAuth } from '../../auth/AuthContext'
-import { Alert, Badge, Confirm, Empty, Field, Modal, PageHead } from '../../components/ui'
+import { Alert, Badge, Confirm, Empty, Field, Modal, PageHead, Tabs } from '../../components/ui'
 import { useList } from './lib'
 
 const roles: Role[] = ['admin', 'auditor', 'user']
@@ -13,10 +13,7 @@ export function UsersGroups() {
   return (
     <>
       <PageHead title="Users & groups" lead="People sign in to Zanskar as users; policies grant access to groups. Roles: admin configures, auditor reviews, user connects." />
-      <div className="tabs">
-        <button className={tab === 'users' ? 'active' : ''} onClick={() => setTab('users')}>Users</button>
-        <button className={tab === 'groups' ? 'active' : ''} onClick={() => setTab('groups')}>Groups</button>
-      </div>
+      <Tabs label="Users and groups" value={tab} onChange={setTab} tabs={[{ key: 'users', label: 'Users' }, { key: 'groups', label: 'Groups' }]} />
       {tab === 'users' ? <Users /> : <Groups />}
     </>
   )

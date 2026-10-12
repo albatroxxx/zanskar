@@ -427,7 +427,7 @@ export function Player() {
                 <p className="muted" style={{ margin: 0 }}>No command lines were recorded in this session. Recordings made before command capture was added, or sessions where nothing was typed, show none.</p>
               ) : (
                 <>
-                  <p className="muted" style={{ marginTop: 0 }}>Each line the user submitted, in order. Click one to jump the playback to it. Input the remote did not echo, such as a password, is marked hidden and was never stored.</p>
+                  <p className="muted" style={{ marginTop: 0 }}>Each line the user submitted, in order. Choose one to jump the playback to it. Input the remote did not echo, such as a password, is marked hidden and was never stored.</p>
                   {/* Seek by marker INDEX, not the command's original timestamp:
                       the player compresses idle gaps (idleTimeLimit), so its
                       timeline no longer matches recording time and a raw-seconds
@@ -436,9 +436,11 @@ export function Player() {
                       the correct spot on the compressed timeline. */}
                   <ol className="commands">
                     {commands.map((c, i) => (
-                      <li key={i} onClick={() => void term.current?.seek({ marker: i })} title="Jump to this point">
-                        <span className="t">{fmtSeconds(Math.floor(c.t))}</span>
-                        {c.text === '(hidden input)' ? <span className="hidden">{c.text}</span> : <span>{c.text}</span>}
+                      <li key={i}>
+                        <button type="button" onClick={() => void term.current?.seek({ marker: i })} title="Jump to this point">
+                          <span className="t">{fmtSeconds(Math.floor(c.t))}</span>
+                          {c.text === '(hidden input)' ? <span className="hidden">{c.text}</span> : <span>{c.text}</span>}
+                        </button>
                       </li>
                     ))}
                   </ol>

@@ -8,10 +8,19 @@ import { Player } from './Player'
 
 // The players themselves are libraries with their own tests; what matters
 // here is what the page asks them and the gateway for.
-const h = vi.hoisted(() => ({ tunnels: [] as string[] }))
+const h = vi.hoisted(() => ({ tunnels: [] as string[], seeks: [] as unknown[] }))
 
 vi.mock('asciinema-player', () => ({
-  create: () => ({ addEventListener() {}, dispose() {}, seek: async () => {}, play: async () => {}, pause: async () => {}, getCurrentTime: () => 0 }),
+  create: () => ({
+    addEventListener() {},
+    dispose() {},
+    seek: async (to: unknown) => {
+      h.seeks.push(to)
+    },
+    play: async () => {},
+    pause: async () => {},
+    getCurrentTime: () => 0,
+  }),
 }))
 
 vi.mock('guacamole-common-js', () => {
@@ -72,6 +81,7 @@ function open(path: string) {
 let ended: ReturnType<typeof vi.fn<() => void>>
 beforeEach(() => {
   h.tunnels.length = 0
+  h.seeks.length = 0
   // jsdom lays nothing out, so it has no scrolling to do.
   Element.prototype.scrollIntoView = () => {}
   ended = vi.fn<() => void>()
@@ -131,5 +141,27 @@ describe('Player', () => {
     await waitFor(() => expect(seen).toContain(`/api/v1/recordings/${RID}/stream`))
     expect(screen.getByRole('link', { name: 'Download recording' }).getAttribute('href')).toBe(`/api/v1/recordings/${RID}/download`)
     expect(screen.getByRole('link', { name: 'Download transcript' }).getAttribute('href')).toBe(`/api/v1/recordings/${RID}/transcript`)
+  })
+})
+
+// B28: the command list was clickable <li>s, so a keyboard user could not
+// jump the playback to a command. Each command is a button now.
+describe('Player, the command list', () => {
+  it('jumps the playback to a command from the keyboard', async () => {
+    const cast = ['{"version": 2, "width": 80, "height": 24}', '[1.0, "m", "ls -la"]', '[2.5, "m", "whoami"]', '[3.0, "m", "(hidden input)"]'].join('\n')
+    gateway({
+      [`/api/v1/recordings/${RID}`]: [() => json(200, recording())],
+      [`/api/v1/recordings/${RID}/stream`]: [() => new Response(cast)],
+    })
+    open(`/audit/recordings/${RID}`)
+    const user = userEvent.setup()
+    await user.click(await screen.findByRole('button', { name: 'Play' }))
+
+    const whoami = await screen.findByRole('button', { name: /whoami/ })
+    expect(screen.getByRole('button', { name: /hidden input/ })).toBeDefined()
+    whoami.focus()
+    await user.keyboard('{Enter}')
+
+    expect(h.seeks).toEqual([{ marker: 1 }])
   })
 })

@@ -67,6 +67,7 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--line); margin-bottom: 16px; }
 .tabs button { background: none; border: 0; padding: 8px 12px; border-bottom: 2px solid transparent; margin-bottom: -1px; color: var(--fg-muted); cursor: pointer; }
 .tabs button.active { color: var(--fg); border-bottom-color: var(--accent); font-weight: 500; }
+.modal .tabs { margin-bottom: 12px; }
 
 /* tables */
 table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
@@ -263,11 +264,15 @@ td.actions > * + * { margin-left: 8px; }
 .event-meta dd { margin: 0; color: var(--fg-muted); }
 .event-what pre { margin: 6px 0 0; white-space: pre-wrap; word-break: break-all; max-width: 560px; font-size: 0.78rem; background: var(--bg-sunken); padding: 8px 10px; border-radius: var(--radius); }
 .commands { list-style: none; margin: 0; padding: 0; border: 1px solid var(--line); border-radius: var(--radius); max-height: 340px; overflow-y: auto; }
-.commands li { display: grid; grid-template-columns: 72px 1fr; gap: 10px; padding: 6px 10px; border-bottom: 1px solid var(--line); font-family: var(--mono); font-size: 0.82rem; cursor: pointer; }
+.commands li { border-bottom: 1px solid var(--line); }
 .commands li:last-child { border-bottom: 0; }
-.commands li:hover { background: var(--bg-sunken); }
-.commands li .t { color: var(--fg-muted); font-variant-numeric: tabular-nums; }
-.commands li .hidden { color: var(--fg-faint); font-style: italic; }
+/* Each command is a button, so the keyboard reaches it; it keeps the look of
+   a plain list row. */
+.commands button { display: grid; grid-template-columns: 72px 1fr; gap: 10px; width: 100%; padding: 6px 10px; border: 0; background: none; font-family: var(--mono); font-size: 0.82rem; text-align: left; cursor: pointer; }
+.commands button:hover { background: var(--bg-sunken); }
+.commands button:focus-visible { outline-offset: -2px; }
+.commands .t { color: var(--fg-muted); font-variant-numeric: tabular-nums; }
+.commands .hidden { color: var(--fg-faint); font-style: italic; }
 .player-host { margin-top: 12px; }
 /* Same stacking-context requirement as .term-host: the replayed desktop's default
    layer carries z-index:-1, so without a stacking context here it would paint
