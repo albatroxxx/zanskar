@@ -10,6 +10,7 @@ import (
 	"github.com/albatroxxx/zanskar/internal/asg"
 	"github.com/albatroxxx/zanskar/internal/audit"
 	"github.com/albatroxxx/zanskar/internal/auth"
+	"github.com/albatroxxx/zanskar/internal/gateway"
 	"github.com/albatroxxx/zanskar/internal/httpx"
 	"github.com/albatroxxx/zanskar/internal/policy"
 	"github.com/albatroxxx/zanskar/internal/session"
@@ -106,7 +107,9 @@ func (h *Handler) failover(w http.ResponseWriter, r *http.Request) {
 		}
 		_ = h.Sessions.End(r.Context(), old.ID, session.EndTargetLost)
 		if h.Registry != nil {
-			h.Registry.Terminate(old.ID)
+			// With its cause, so the bridge ends and audits it as the lost
+			// target the row says, not as an administrator's terminate (B16).
+			h.Registry.TerminateWithCause(old.ID, gateway.ErrTargetLost)
 		}
 	} else if old.EndReason != session.EndTargetLost {
 		httpx.WriteError(w, r, http.StatusConflict, "not_failoverable", "the session did not end because the instance was lost")
