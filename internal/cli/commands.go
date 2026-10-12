@@ -11,6 +11,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/albatroxxx/zanskar/internal/protocol"
 )
 
 // command is one row of the command table. Every command maps to existing
@@ -366,7 +368,7 @@ func cmdSessions(x *run) error {
 		if str(s, "ended_at") != "" {
 			state = "ended " + when(s, "ended_at")
 		}
-		rows = append(rows, []string{short(str(s, "id")), str(s, "username"), str(s, "target_name") + str(s, "asg_name"), protocolName(str(s, "protocol")), when(s, "started_at"), state})
+		rows = append(rows, []string{short(str(s, "id")), str(s, "username"), str(s, "target_name") + str(s, "asg_name"), protocol.Name(str(s, "protocol")), when(s, "started_at"), state})
 	}
 	x.out.table([]string{"ID", "USER", "TARGET", "PROTOCOL", "STARTED", "STATE"}, rows)
 	return nil
@@ -383,7 +385,7 @@ func cmdSessionShow(x *run) error {
 	}
 	x.out.pairs([][2]string{
 		{"id", str(s, "id")}, {"user", str(s, "username")}, {"target", str(s, "target_name") + str(s, "asg_name")},
-		{"protocol", protocolName(str(s, "protocol"))}, {"from", str(s, "client_ip")}, {"started", when(s, "started_at")},
+		{"protocol", protocol.Name(str(s, "protocol"))}, {"from", str(s, "client_ip")}, {"started", when(s, "started_at")},
 		{"ended", when(s, "ended_at")}, {"end reason", str(s, "end_reason")}, {"recording", str(s, "recording_id")},
 	})
 	return nil
@@ -399,7 +401,7 @@ func planSessionTerminate(x *run) (string, string, error) {
 	}
 	x.resolved["session"] = str(s, "id")
 	return fmt.Sprintf("This ends %s's %s session to %s now. The recording stops at this moment.",
-		str(s, "username"), protocolName(str(s, "protocol")), str(s, "target_name")+str(s, "asg_name")), str(s, "username"), nil
+		str(s, "username"), protocol.Name(str(s, "protocol")), str(s, "target_name")+str(s, "asg_name")), str(s, "username"), nil
 }
 
 func cmdSessionTerminate(x *run) error {
@@ -634,7 +636,7 @@ func cmdRequests(x *run) error {
 	}
 	rows := make([][]string, 0, len(items))
 	for _, r := range items {
-		rows = append(rows, []string{short(str(r, "id")), str(r, "username"), str(r, "target_name"), protocolName(str(r, "protocol")), str(r, "requested_minutes") + "m", str(r, "status"), str(r, "reason")})
+		rows = append(rows, []string{short(str(r, "id")), str(r, "username"), str(r, "target_name"), protocol.Name(str(r, "protocol")), str(r, "requested_minutes") + "m", str(r, "status"), str(r, "reason")})
 	}
 	x.out.table([]string{"ID", "USER", "TARGET", "PROTOCOL", "FOR", "STATUS", "REASON"}, rows)
 	return nil
@@ -990,16 +992,4 @@ func cmdASGSync(x *run) error {
 	}
 	x.out.add(styleOK, "✓ Synced %s.", str(g, "name"))
 	return nil
-}
-
-// protocolName matches the console: SSH, RDP, VNC, WinRM, database.
-func protocolName(p string) string {
-	switch p {
-	case "winrm":
-		return "WinRM"
-	case "database":
-		return "database"
-	default:
-		return strings.ToUpper(p)
-	}
 }

@@ -163,7 +163,7 @@ func (p *Prober) probeOne(ctx context.Context, proto Protocol, ip net.IP, port i
 		}
 		return pr, hk, nil, ""
 	case WinRM:
-		info, err := probeTLS(ctx, conn, serverName, "winrm")
+		info, err := probeTLS(ctx, conn, serverName, string(WinRM))
 		if err != nil {
 			pr.Error = shortErr(err)
 		}
@@ -290,7 +290,7 @@ func probeRDP(ctx context.Context, conn net.Conn, serverName string) (*TLSInfo, 
 		if selected == 0 {
 			return nil, errors.New("rdp: server selected standard RDP security")
 		}
-		return probeTLS(ctx, conn, serverName, "rdp")
+		return probeTLS(ctx, conn, serverName, string(RDP))
 	case 0x03: // RDP_NEG_FAILURE
 		code := uint32(neg[4]) | uint32(neg[5])<<8 | uint32(neg[6])<<16 | uint32(neg[7])<<24
 		return nil, fmt.Errorf("rdp: negotiation failure code %d", code)

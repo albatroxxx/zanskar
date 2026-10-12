@@ -16,11 +16,13 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/albatroxxx/zanskar/internal/protocol"
 )
 
 // Protocols a policy may allow. "database" grants brokered access to a database
 // target (ADR 0017); it is evaluated at connect time like any other protocol.
-var validProtocols = map[string]bool{"ssh": true, "rdp": true, "vnc": true, "winrm": true, "database": true}
+var validProtocols = map[string]bool{protocol.SSH: true, protocol.RDP: true, protocol.VNC: true, protocol.WinRM: true, protocol.Database: true}
 
 // Selector names the targets a policy covers. A target matches when its id is
 // listed, its ASG id is listed, or every selector tag is present on it with

@@ -14,6 +14,7 @@ import (
 	"github.com/albatroxxx/zanskar/internal/gateway"
 	"github.com/albatroxxx/zanskar/internal/gateway/dbgw"
 	"github.com/albatroxxx/zanskar/internal/httpx"
+	"github.com/albatroxxx/zanskar/internal/protocol"
 	"github.com/albatroxxx/zanskar/internal/recording"
 	"github.com/albatroxxx/zanskar/internal/session"
 	"github.com/albatroxxx/zanskar/internal/target"
@@ -73,7 +74,7 @@ func (h *Handler) database(w http.ResponseWriter, r *http.Request) {
 	// the convention of a database named after the role, while MySQL and
 	// MariaDB open with no schema selected and the user picks one with USE.
 	spec.Database = ep.DatabaseName
-	if spec.Database == "" && spec.Engine == "postgres" {
+	if spec.Database == "" && spec.Engine == protocol.Postgres {
 		spec.Database = spec.Username
 	}
 	if h.DBProxyImage != nil {
@@ -151,7 +152,7 @@ func (h *Handler) database(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) liveDatabaseSessions() int {
 	n := 0
 	for _, l := range h.Registry.List() {
-		if l.Protocol == string(target.Database) {
+		if l.Protocol == protocol.Database {
 			n++
 		}
 	}

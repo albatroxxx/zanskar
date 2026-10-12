@@ -19,6 +19,7 @@ import (
 	"github.com/albatroxxx/zanskar/internal/gateway"
 	"github.com/albatroxxx/zanskar/internal/gateway/guac"
 	"github.com/albatroxxx/zanskar/internal/httpx"
+	"github.com/albatroxxx/zanskar/internal/protocol"
 	"github.com/albatroxxx/zanskar/internal/recording"
 	"github.com/albatroxxx/zanskar/internal/session"
 	"github.com/albatroxxx/zanskar/internal/target"
@@ -200,7 +201,7 @@ func (h *Handler) desktop(w http.ResponseWriter, r *http.Request) {
 			var mm *certMismatch
 			if errors.As(err, &mm) {
 				h.record(r, actorFor(g.UserID, ip).Event(audit.TargetTLSMismatch, "target", ep.LiveKey, audit.Failure,
-					map[string]string{"protocol": "rdp", "expected": mm.want, "seen": mm.got}))
+					map[string]string{"protocol": protocol.RDP, "expected": mm.want, "seen": mm.got}))
 			}
 			httpx.WriteError(w, r, http.StatusConflict, "certificate_mismatch", "the target's certificate does not match the pinned fingerprint")
 			return

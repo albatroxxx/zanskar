@@ -16,6 +16,7 @@ import (
 	"github.com/albatroxxx/zanskar/internal/gateway"
 	"github.com/albatroxxx/zanskar/internal/gateway/winrmgw"
 	"github.com/albatroxxx/zanskar/internal/httpx"
+	"github.com/albatroxxx/zanskar/internal/protocol"
 	"github.com/albatroxxx/zanskar/internal/recording"
 	"github.com/albatroxxx/zanskar/internal/session"
 	"github.com/albatroxxx/zanskar/internal/target"
@@ -90,7 +91,7 @@ func (h *Handler) winrm(w http.ResponseWriter, r *http.Request) {
 	client, err := winrmgw.Dial(r.Context(), winrmgw.Endpoint{Address: ep.Address, IP: dialIP.String(), Port: port, UseTLS: true, PinnedFingerprint: ep.WinRMTLSFingerprint}, a, timeout)
 	if err != nil {
 		if errors.Is(err, winrmgw.ErrCertMismatch) {
-			h.record(r, actorFor(g.UserID, ip).Event(audit.TargetTLSMismatch, "target", ep.LiveKey, audit.Failure, map[string]string{"protocol": "winrm", "expected": ep.WinRMTLSFingerprint}))
+			h.record(r, actorFor(g.UserID, ip).Event(audit.TargetTLSMismatch, "target", ep.LiveKey, audit.Failure, map[string]string{"protocol": protocol.WinRM, "expected": ep.WinRMTLSFingerprint}))
 			httpx.WriteError(w, r, http.StatusConflict, "certificate_mismatch", "the target presented a different certificate; connection refused")
 			return
 		}

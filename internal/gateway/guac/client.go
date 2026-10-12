@@ -9,6 +9,8 @@ import (
 	"net"
 	"strings"
 	"time"
+
+	"github.com/albatroxxx/zanskar/internal/protocol"
 )
 
 // Params describe one connection guacd should open. Keys follow guacd's
@@ -49,7 +51,7 @@ var ErrGuacdUnreachable = errors.New("guac: guacd unreachable")
 //
 // Parameter values are taken from p.Args by name; unknown names get "".
 func Dial(ctx context.Context, addr string, p Params, timeout time.Duration) (*Conn, error) {
-	if p.Protocol != "rdp" && p.Protocol != "vnc" {
+	if !protocol.Desktop(p.Protocol) {
 		return nil, fmt.Errorf("guac: unsupported protocol %q", p.Protocol)
 	}
 	d := net.Dialer{Timeout: timeout}
