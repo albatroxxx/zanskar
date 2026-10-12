@@ -503,6 +503,7 @@ function GroupDetail({ group, credentials, onClose, onChanged, onDeleted, onErro
   const [confirmRotate, setConfirmRotate] = useState(false)
   const [syncing, setSyncing] = useState(false)
   const [testing, setTesting] = useState(false)
+  const [toggling, setToggling] = useState(false)
   const [accessTest, setAccessTest] = useState<AsgAccessTest | null>(null)
   const [summary, setSummary] = useState<SyncResponse | null>(null)
   const [err, setErr] = useState('')
@@ -550,13 +551,21 @@ function GroupDetail({ group, credentials, onClose, onChanged, onDeleted, onErro
     }
   }
 
-  const toggleStatus = async () => {
+  // Disable and Enable are one button, so a second click undoes the first.
+  // It is off while the change is in flight, and the second click of a
+  // double-click is ignored: on a quick network the first change has
+  // already answered when it lands, and the button reads Enable by then.
+  const toggleStatus = async (click: { detail: number }) => {
+    if (click.detail > 1) return
+    setToggling(true)
     try {
       const f = initialForm(g)
       const body = toBody(f, g.status === 'active' ? 'disabled' : 'active')
       update(await api.put<AutoscalingGroup>(`/autoscaling-groups/${g.id}`, body))
     } catch (e) {
       setErr(errorMessage(e))
+    } finally {
+      setToggling(false)
     }
   }
 
@@ -585,7 +594,7 @@ function GroupDetail({ group, credentials, onClose, onChanged, onDeleted, onErro
         <button className="btn" onClick={() => setEditing(true)}>Edit</button>
         <button className="btn" onClick={() => setIam(true)}>IAM setup</button>
         <button className="btn" onClick={() => setConfirmRotate(true)}>Rotate ExternalId</button>
-        <button className="btn" onClick={() => void toggleStatus()}>{g.status === 'active' ? 'Disable' : 'Enable'}</button>
+        <button className="btn" disabled={toggling} onClick={(e) => void toggleStatus(e)}>{g.status === 'active' ? (toggling ? 'Disabling…' : 'Disable') : toggling ? 'Enabling…' : 'Enable'}</button>
         <button className="btn ghost" onClick={onClose}>Close</button>
         <button className="btn danger" onClick={() => setConfirmDelete(true)}>Delete</button>
       </div>

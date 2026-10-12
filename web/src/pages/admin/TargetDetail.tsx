@@ -21,6 +21,7 @@ export function TargetDetail({ target, credentials, onClose, onChanged, onDelete
   const [probing, setProbing] = useState(false)
   const [certProbe, setCertProbe] = useState<CertificateProbe | null>(null)
   const [certProbing, setCertProbing] = useState(false)
+  const [toggling, setToggling] = useState(false)
   const [confirm, setConfirm] = useState<'trust' | 'delete' | null>(null)
   // The RDP or WinRM certificate the administrator is about to accept.
   const [trustCert, setTrustCert] = useState<{ protocol: 'rdp' | 'winrm'; pinned: string; seen: string } | null>(null)
@@ -62,7 +63,21 @@ export function TargetDetail({ target, credentials, onClose, onChanged, onDelete
     onChanged(latest)
   }
 
-  const toggleStatus = () => run(async () => onChanged(await api.put<Target>(`/targets/${t.id}`, targetBody(t, { status: t.status === 'active' ? 'disabled' : 'active' }))))
+  // Disable and Enable are one button, so a second click undoes the first.
+  // It is off while the change is in flight, and the second click of a
+  // double-click is ignored: on a quick network the first change has
+  // already answered when it lands, and the button reads Enable by then.
+  const toggleStatus = (click: { detail: number }) => {
+    if (click.detail > 1) return
+    void run(async () => {
+      setToggling(true)
+      try {
+        onChanged(await api.put<Target>(`/targets/${t.id}`, targetBody(t, { status: t.status === 'active' ? 'disabled' : 'active' })))
+      } finally {
+        setToggling(false)
+      }
+    })
+  }
 
   // A certificate login test applies when the SSH slot holds an authority
   // and the host key is trusted; it is a real login, so it is a button, not
@@ -227,7 +242,7 @@ export function TargetDetail({ target, credentials, onClose, onChanged, onDelete
             <button className="btn" onClick={() => void testCertificate()} disabled={certProbing} title="Signs in once with a certificate from the bound authority, then disconnects">{certProbing ? 'Testing…' : 'Test certificate login'}</button>
           )}
           <button className="btn" onClick={() => setEditing(true)}>Edit</button>
-          <button className="btn" onClick={() => void toggleStatus()}>{t.status === 'active' ? 'Disable' : 'Enable'}</button>
+          <button className="btn" disabled={toggling} onClick={toggleStatus}>{t.status === 'active' ? (toggling ? 'Disabling…' : 'Disable') : toggling ? 'Enabling…' : 'Enable'}</button>
           <button className="btn ghost" onClick={onClose}>Close</button>
         </div>
         <button className="btn danger" onClick={() => setConfirm('delete')}>Delete</button>
