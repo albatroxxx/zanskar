@@ -929,7 +929,11 @@ paths:
         `policy_revoked`, `gateway_restart` or `target_lost`; after `target_lost` on an
         autoscaling instance the browser may call `POST /sessions/{id}/failover`. If the dial
         fails after the upgrade, the socket closes with a message such as
-        `host key mismatch; connection refused`.
+        `host key mismatch; connection refused`. Just before the dial the target's address is
+        looked up once and checked against the addresses the gateway never connects to (see
+        `TargetWrite.address`), and the gateway dials the address it checked, not the name. A
+        refused address closes the socket the same way, with a message saying so, and is audited
+        as a failed `session.connect` with reason `address_forbidden`.
       parameters:
         - $ref: "#/components/parameters/Ticket"
         - name: cols
@@ -985,6 +989,24 @@ paths:
           description: Ticket missing, expired, or already used.
         "403":
           description: Origin mismatch.
+        "409":
+          description: >-
+            The target is no longer available or its name does not resolve
+            (`target_unavailable`), its credential could not be opened (`credential_unavailable`),
+            or the RDP certificate no longer matches the pin (`certificate_mismatch`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "422":
+          description: >-
+            The target's address, looked up before guacd is asked to connect, is one the gateway
+            never connects to (`address_forbidden`, see `TargetWrite.address`); audited as a
+            failed `session.connect`. guacd is handed the name and looks it up again itself.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
 
   /ws/winrm:
     servers:
@@ -1035,6 +1057,16 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
+        "422":
+          description: >-
+            The target's address is one the gateway never connects to (`address_forbidden`, see
+            `TargetWrite.address`); audited as a failed `session.connect`. Otherwise the client
+            connects to the address it checked, while the URL and the TLS server name keep the
+            target's name.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
         "503":
           description: The gateway is restarting; `code` is `restarting`.
   /ws/database:
@@ -1074,7 +1106,18 @@ paths:
         "403":
           description: Origin mismatch.
         "409":
-          description: The target is no longer available (`target_unavailable`) or its credential could not be opened (`credential_unavailable`).
+          description: The target is no longer available or its name does not resolve (`target_unavailable`), or its credential could not be opened (`credential_unavailable`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "422":
+          description: >-
+            The database's address is one the gateway never connects to (`address_forbidden`, see
+            `TargetWrite.address`); audited as a failed `session.connect`, and no container starts.
+            A database target is never probed, so this is where its name is first looked up. The
+            proxy sidecar is still handed the name, which `verify-full` checks the certificate
+            against, and looks it up again itself.
           content:
             application/json:
               schema:
@@ -1878,6 +1921,14 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "409":
           $ref: "#/components/responses/Conflict"
+        "422":
+          description: >-
+            The address is an IP the gateway never connects to (`address_forbidden`); see
+            `TargetWrite.address`. Nothing is saved, and the refusal is audited.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
   /targets/{id}:
     parameters:
       - $ref: "#/components/parameters/Id"
@@ -1916,6 +1967,14 @@ paths:
                 $ref: "#/components/schemas/Target"
         "404":
           $ref: "#/components/responses/NotFound"
+        "422":
+          description: >-
+            The address is an IP the gateway never connects to (`address_forbidden`); see
+            `TargetWrite.address`. Nothing is saved, and the refusal is audited.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
     delete:
       tags: [admin]
       summary: Delete a target
@@ -2099,6 +2158,14 @@ paths:
                 $ref: "#/components/schemas/ProbeResult"
         "404":
           $ref: "#/components/responses/NotFound"
+        "422":
+          description: >-
+            The address, or an address its name resolves to, is one the gateway never connects
+            to (`address_forbidden`); see `TargetWrite.address`. Nothing is dialled.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
         "504":
           description: Gateway could not reach the address on any port.
           content:
@@ -2158,6 +2225,15 @@ paths:
                 $ref: "#/components/schemas/Error"
         "409":
           description: "`host_key_untrusted`, `no_credential`, `not_certificate_authority` or `no_rotation`."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "422":
+          description: >-
+            The address, or an address its name resolves to, is one the gateway never connects
+            to (`address_forbidden`); a name that does not resolve is answered the same way. No
+            login is attempted. Otherwise the login goes to the address that was checked.
           content:
             application/json:
               schema:
@@ -4519,7 +4595,12 @@ components:
           maxLength: 255
         address:
           type: string
-          description: Hostname or IP. Loopback, link-local, and the gateway's own addresses are rejected.
+          description: >-
+            Hostname or IP. An IP the gateway never connects to is refused with 422
+            `address_forbidden`: loopback, link-local, multicast, unspecified, the cloud metadata
+            services outside link-local (`fd00:ec2::254`, `100.100.100.200`), and the address the
+            gateway listens on when `ZANSKAR_LISTEN_ADDR` names one. A hostname is checked the same
+            way each time it is looked up, by the probe and by every session.
         engine:
           type: string
           description: >

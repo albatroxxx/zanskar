@@ -37,7 +37,7 @@ func TestPinnedTransportAcceptsOnlyThePinnedCert(t *testing.T) {
 
 	ep := &winrm.Endpoint{Host: u.Hostname(), Port: port, HTTPS: true, Timeout: 5 * time.Second}
 
-	pt, err := newPinnedTransport(u.Hostname(), port, "svc", "pw", good, false)
+	pt, err := newPinnedTransport(u.Hostname(), "", port, "svc", "pw", good, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -51,14 +51,14 @@ func TestPinnedTransportAcceptsOnlyThePinnedCert(t *testing.T) {
 
 	// Wrong pin: the TLS handshake must fail before any request is sent.
 	bad := hex.EncodeToString(make([]byte, sha256.Size))
-	pt2, _ := newPinnedTransport(u.Hostname(), port, "svc", "pw", bad, false)
+	pt2, _ := newPinnedTransport(u.Hostname(), "", port, "svc", "pw", bad, false)
 	_ = pt2.Transport(ep)
 	if _, err := pt2.Post(nil, soap.NewMessage()); err == nil || !errors.Is(err, ErrCertMismatch) {
 		t.Fatalf("expected ErrCertMismatch, got %v", err)
 	}
 
 	// Malformed pin is rejected up front.
-	if _, err := newPinnedTransport("h", 1, "u", "p", "nothex", false); err == nil {
+	if _, err := newPinnedTransport("h", "", 1, "u", "p", "nothex", false); err == nil {
 		t.Fatal("expected bad fingerprint error")
 	}
 	// Colon-separated upper-case fingerprints are normalised.
@@ -69,8 +69,42 @@ func TestPinnedTransportAcceptsOnlyThePinnedCert(t *testing.T) {
 		}
 		colon += good[i : i+2]
 	}
-	if _, err := newPinnedTransport("h", 1, "u", "p", colon, false); err != nil {
+	if _, err := newPinnedTransport("h", "", 1, "u", "p", colon, false); err != nil {
 		t.Fatalf("colon form rejected: %v", err)
+	}
+}
+
+// TestPinnedTransportDialsTheGivenAddress (L1): given an address to dial, the
+// connection goes there while the URL keeps the target's name, so the TLS
+// server name and the Host header are the ones the probe sent. The name here
+// cannot resolve, so a request arriving at all means no lookup was made.
+func TestPinnedTransportDialsTheGivenAddress(t *testing.T) {
+	seen := make(chan [2]string, 1)
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case seen <- [2]string{r.Host, r.TLS.ServerName}:
+		default:
+		}
+		w.Header().Set("Content-Type", "application/soap+xml;charset=UTF-8")
+		_, _ = w.Write([]byte("<s:Envelope/>"))
+	}))
+	defer srv.Close()
+	u, _ := url.Parse(srv.URL)
+	port, _ := strconv.Atoi(u.Port())
+	sum := sha256.Sum256(srv.Certificate().Raw)
+
+	pt, err := newPinnedTransport("win.zanskar.invalid", u.Hostname(), port, "svc", "pw", hex.EncodeToString(sum[:]), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := pt.Transport(&winrm.Endpoint{Host: "win.zanskar.invalid", Port: port, HTTPS: true, Timeout: 5 * time.Second}); err != nil {
+		t.Fatal(err)
+	}
+	if body, err := pt.Post(nil, soap.NewMessage()); err != nil || body != "<s:Envelope/>" {
+		t.Fatalf("post through the given address: %q %v", body, err)
+	}
+	if got := <-seen; got != [2]string{"win.zanskar.invalid:" + u.Port(), "win.zanskar.invalid"} {
+		t.Fatalf("host and server name %q, want the target's name", got)
 	}
 }
 

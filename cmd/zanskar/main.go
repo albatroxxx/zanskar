@@ -299,13 +299,17 @@ func serve(ctx context.Context) error {
 			log.Info("aws gateway identity not available; autoscaling trust policies need ZANSKAR_AWS_GATEWAY_PRINCIPAL", "detail", id.Error)
 		}
 	}()
-	syncer := &asg.Syncer{Repo: asgRepo, Providers: cloudProviders, Prober: &target.Prober{}, Registry: registry, Audit: auditLog, Log: log}
+	// One set of address rules for every connection to a target: probes, the
+	// autoscaling sync and sessions. A listener bound to one address makes
+	// that address the gateway's own, refused as a target.
+	prober := &target.Prober{Self: target.ListenIP(cfg.ListenAddr)}
+	syncer := &asg.Syncer{Repo: asgRepo, Providers: cloudProviders, Prober: prober, Registry: registry, Audit: auditLog, Log: log}
 	// The connect handler runs the bridges; the user, group and policy admin
 	// handlers hand it the changes that end live sessions (ADR 0013).
 	connectHandler := &connect.Handler{Targets: targets, Policies: policies, Access: accessReqs, Vault: vault, Sessions: sessionRepo, Tickets: ticket.NewStore(),
 		Registry: registry, Storage: storage, Audit: auditLog, Log: log, MFAEnrolled: totp.Enrolled, GuacdAddr: guacdAddr, Draining: restarter.Draining,
 		DockerPath: cfg.DockerPath, DBMaxSessions: cfg.DatabaseMaxSessions, DBProxyImage: func() string { return runtime.String(settings.KeyDBProxyImage) },
-		Prober: &target.Prober{}, ASGs: asgRepo, Cloud: cloudProviders}
+		Prober: prober, ASGs: asgRepo, Cloud: cloudProviders}
 	// A sign-in through an identity provider that removes the user from a
 	// mapped group ends what that group granted, as an admin's removal does.
 	provisioner.Revoker = connectHandler
@@ -320,7 +324,7 @@ func serve(ctx context.Context) error {
 			&oidc.Handler{Providers: idpRepo, Provisioner: provisioner, Sessions: sessions, Audit: auditLog, Log: log, StateKey: stateKey, MFAEnrolled: totp.Enrolled, RequireMFA: requireMFA,
 				BaseURL: cfg.PublicURL},
 			&credential.AdminHandler{Vault: vault, Audit: auditLog, Log: log},
-			&target.AdminHandler{Repo: targets, Prober: &target.Prober{}, Policies: policies, Live: registry, Vault: vault, Audit: auditLog, Log: log},
+			&target.AdminHandler{Repo: targets, Prober: prober, Policies: policies, Live: registry, Vault: vault, Audit: auditLog, Log: log},
 			&policy.AdminHandler{Repo: policies, Users: users, Revoker: connectHandler, Audit: auditLog, Log: log},
 			&access.Handler{Requests: accessReqs, Policies: policies, Targets: targets, ASGs: asgRepo, Audit: auditLog, Log: log},
 			&asg.AdminHandler{Repo: asgRepo, Sync: syncer.SyncGroup, Identity: awsIdentity, Providers: cloudProviders, Policies: policies, Live: registry, Vault: vault, Audit: auditLog, Log: log},

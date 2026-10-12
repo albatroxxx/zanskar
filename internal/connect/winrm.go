@@ -53,6 +53,13 @@ func (h *Handler) winrm(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, http.StatusConflict, "target_unavailable", "target is no longer available")
 		return
 	}
+	// WinRM dials before the upgrade, so its address is checked here, before
+	// the credential is opened, and the client dials the checked address.
+	dialIP, err := h.checkAddress(r, g, ep)
+	if err != nil {
+		refuseAddress(w, r, err)
+		return
+	}
 
 	// Resolve credential material before upgrading.
 	a := winrmgw.Auth{Username: g.Username}
@@ -80,7 +87,7 @@ func (h *Handler) winrm(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, http.StatusConflict, "certificate_unpinned", "winrm target is not pinned; probe it over HTTPS first")
 		return
 	}
-	client, err := winrmgw.Dial(r.Context(), winrmgw.Endpoint{Address: ep.Address, Port: port, UseTLS: true, PinnedFingerprint: ep.WinRMTLSFingerprint}, a, timeout)
+	client, err := winrmgw.Dial(r.Context(), winrmgw.Endpoint{Address: ep.Address, IP: dialIP.String(), Port: port, UseTLS: true, PinnedFingerprint: ep.WinRMTLSFingerprint}, a, timeout)
 	if err != nil {
 		if errors.Is(err, winrmgw.ErrCertMismatch) {
 			h.record(r, actorFor(g.UserID, ip).Event(audit.TargetTLSMismatch, "target", ep.LiveKey, audit.Failure, map[string]string{"protocol": "winrm", "expected": ep.WinRMTLSFingerprint}))

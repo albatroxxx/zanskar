@@ -126,6 +126,9 @@ func (h *AdminHandler) create(w http.ResponseWriter, r *http.Request) {
 	p, _ := auth.FromContext(r.Context())
 	t := &Target{CreatedBy: &p.User.ID}
 	body.apply(t)
+	if !h.addressAllowed(w, r, audit.TargetCreate, "", t) {
+		return
+	}
 	if err := h.Repo.Create(r.Context(), t); err != nil {
 		h.fail(w, r, err)
 		return
@@ -156,6 +159,9 @@ func (h *AdminHandler) update(w http.ResponseWriter, r *http.Request) {
 	}
 	before := map[string]any{"name": t.Name, "address": t.Address, "status": t.Status}
 	body.apply(t)
+	if !h.addressAllowed(w, r, audit.TargetUpdate, t.ID, t) {
+		return
+	}
 	if err := h.Repo.Update(r.Context(), t); err != nil {
 		h.fail(w, r, err)
 		return
@@ -363,7 +369,10 @@ func (h *AdminHandler) probeCertificate(w http.ResponseWriter, r *http.Request) 
 		httpx.WriteError(w, r, http.StatusForbidden, "login_user_not_permitted", "this certificate authority does not issue certificates for login user "+loginUser)
 		return
 	}
-	if _, err := h.Prober.resolve(r.Context(), t.Address); err != nil {
+	// The login goes to the address checked here: dialling the name would
+	// look it up a second time, and the answer could have changed.
+	dialIP, err := h.Prober.Resolve(r.Context(), t.Address)
+	if err != nil {
 		httpx.WriteError(w, r, http.StatusUnprocessableEntity, "address_forbidden", err.Error())
 		return
 	}
@@ -389,7 +398,7 @@ func (h *AdminHandler) probeCertificate(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	out := CertificateProbe{Key: body.Key, LoginUser: loginUser}
-	client, err := sshgw.Dial(r.Context(), sshgw.Endpoint{Address: t.Address, Port: t.EffectivePorts()[SSH], HostKeyFingerprint: *t.HostKeyFingerprint, HostKeyTrusted: true},
+	client, err := sshgw.Dial(r.Context(), sshgw.Endpoint{Address: dialIP.String(), Port: t.EffectivePorts()[SSH], HostKeyFingerprint: *t.HostKeyFingerprint, HostKeyTrusted: true},
 		sshgw.Auth{Username: loginUser, PrivateKey: []byte(keyPEM), Certificate: []byte(certLine)}, ProbeTimeout)
 	switch {
 	case err == nil:
@@ -510,6 +519,20 @@ func (h *AdminHandler) unsetCredential(w http.ResponseWriter, r *http.Request) {
 
 // ---- helpers
 
+// addressAllowed refuses, before anything is saved, an address that is an IP
+// literal the gateway must never connect to, answering as the probe does. A
+// database target is never probed, so for one this is the only check its
+// address meets before a session; a name is checked each time it resolves.
+func (h *AdminHandler) addressAllowed(w http.ResponseWriter, r *http.Request, action, id string, t *Target) bool {
+	err := h.Prober.CheckLiteral(t.Address)
+	if err == nil {
+		return true
+	}
+	h.record(r, action, id, audit.Failure, map[string]any{"name": t.Name, "address": strings.TrimSpace(t.Address), "reason": "address_forbidden"})
+	h.fail(w, r, err)
+	return false
+}
+
 func (h *AdminHandler) record(r *http.Request, action, id string, outcome audit.Outcome, details any) {
 	auth.Recorder{Audit: h.Audit, Log: h.Log}.Record(r, auth.ActorFor(r).Event(action, "target", id, outcome, details))
 }
@@ -524,6 +547,8 @@ func (h *AdminHandler) fail(w http.ResponseWriter, r *http.Request, err error) {
 		httpx.BadRequest(w, r, strings.TrimPrefix(err.Error(), "target: invalid: "))
 	case errors.Is(err, ErrInvalidCredential):
 		httpx.BadRequest(w, r, "credential does not exist")
+	case errors.Is(err, ErrAddressForbidden):
+		httpx.WriteError(w, r, http.StatusUnprocessableEntity, "address_forbidden", err.Error())
 	case errors.Is(err, ErrFingerprintMismatch):
 		httpx.WriteError(w, r, http.StatusConflict, "fingerprint_mismatch", "the fingerprint does not match the one awaiting trust; probe again and review")
 	case errors.Is(err, ErrNoPendingHostKey):

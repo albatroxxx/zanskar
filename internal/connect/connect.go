@@ -51,8 +51,11 @@ type Handler struct {
 	Audit       *audit.Log
 	Log         *slog.Logger
 	MFAEnrolled func(ctx context.Context, userID string) (bool, error)
-	// Prober re-verifies a target's pinned TLS certificate just before a
-	// desktop connection (ADR 0012); the gateway enforces the RDP pin itself.
+	// Prober holds the address rules a session's target must pass when it
+	// is dialled (checkAddress); nil applies them with no exception. It also
+	// re-verifies a target's pinned TLS certificate just before a desktop
+	// connection (ADR 0012), the gateway enforcing the RDP pin itself, which
+	// a nil Prober cannot do.
 	Prober      *target.Prober
 	DialTimeout time.Duration
 	// Draining reports that the gateway is about to restart: no new session
@@ -602,7 +605,20 @@ func (h *Handler) terminal(w http.ResponseWriter, r *http.Request) {
 		timeout = 10 * time.Second
 	}
 	fp := ep.HostKeyFingerprint
-	client, err := sshgw.Dial(r.Context(), sshgw.Endpoint{Address: ep.Address, Port: ep.port(target.SSH), HostKeyFingerprint: fp, HostKeyTrusted: true}, a, timeout)
+	// Checked here, after the upgrade, so the user is told why. The bridge
+	// then dials the checked address, not the name: a second lookup could
+	// answer with somewhere else. The host key pin does not depend on the
+	// name.
+	dialIP, err := h.checkAddress(r, g, ep)
+	if err != nil {
+		msg := "could not connect to the target"
+		if errors.Is(err, target.ErrAddressForbidden) {
+			msg = addressRefusedMsg
+		}
+		endWith(session.EndError, msg)
+		return
+	}
+	client, err := sshgw.Dial(r.Context(), sshgw.Endpoint{Address: dialIP.String(), Port: ep.port(target.SSH), HostKeyFingerprint: fp, HostKeyTrusted: true}, a, timeout)
 	if err != nil {
 		reason, msg := session.EndError, "could not connect to the target"
 		switch {

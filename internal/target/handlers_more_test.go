@@ -489,8 +489,13 @@ func TestProbeCertificateEdges(t *testing.T) {
 		t.Fatalf("audited outcomes: %v", reasons)
 	}
 
-	// A link-local target is refused before any login attempt.
-	meta := e.mkTarget(t, map[string]any{"name": "meta", "address": "169.254.169.254", "os_family": "linux"})
+	// A link-local target is refused before any login attempt. The API no
+	// longer saves one (L1); this is a row saved before it refused them.
+	metaTarget := &Target{Name: "meta", Address: "169.254.169.254", OSFamily: Linux}
+	if err := NewRepo(e.db).Create(ctx, metaTarget); err != nil {
+		t.Fatal(err)
+	}
+	meta := metaTarget.ID
 	if _, err := e.db.ExecContext(ctx, e.db.Rebind(`UPDATE targets SET host_key_status = 'trusted', host_key_fingerprint = ? WHERE id = ?`), srv.fp, meta); err != nil {
 		t.Fatal(err)
 	}
