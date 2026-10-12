@@ -18,6 +18,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/albatroxxx/zanskar/internal/cloud"
 	"github.com/albatroxxx/zanskar/internal/store"
 	"github.com/albatroxxx/zanskar/internal/target"
 )
@@ -608,15 +609,14 @@ func (r *Repo) SetCredential(ctx context.Context, groupID string, p target.Proto
 const instanceCols = `id, asg_id, instance_id, private_ip, public_ip, availability_zone, lifecycle_state, lb_health, probe_health,
 	host_key_fingerprint, host_key_source, tls_fingerprint, winrm_tls_fingerprint, launched_at, first_seen_at, last_seen_at, terminated_at`
 
+// derive is an instance's health under ADR 0011: still there, its own
+// probe healthy, and the cloud's view healthy by cloud.Healthy, the one
+// place that rule is written (D5).
 func derive(in *Instance) bool {
-	if in.TerminatedAt != nil || in.LifecycleState != "InService" || in.ProbeHealth != "healthy" {
+	if in.TerminatedAt != nil || in.ProbeHealth != "healthy" {
 		return false
 	}
-	switch strings.ToLower(in.LBHealth) {
-	case "", "healthy":
-		return true
-	}
-	return false
+	return cloud.Healthy(cloud.Instance{LifecycleState: in.LifecycleState, LBHealth: in.LBHealth})
 }
 
 func (r *Repo) instanceByCloudID(ctx context.Context, groupID, instanceID string) (*Instance, error) {

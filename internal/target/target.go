@@ -194,16 +194,6 @@ func (t *Target) EffectivePorts() map[Protocol]int {
 	return out
 }
 
-// HasCapability reports whether the last probe (or the admin) declared p.
-func (t *Target) HasCapability(p Protocol) bool {
-	for _, c := range t.Capabilities {
-		if c == p {
-			return true
-		}
-	}
-	return false
-}
-
 // Errors.
 var (
 	ErrNotFound             = errors.New("target: not found")
