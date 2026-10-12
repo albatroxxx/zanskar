@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { errorMessage } from '../../api/client'
 import type { Credential, CredentialType, Protocol } from '../../api/types'
 import { Field } from '../../components/ui'
 
@@ -95,7 +96,7 @@ function BindingsEditor({ slots, current, credentials, onSave, onError }: Props)
     try {
       await onSave(changes)
     } catch (e) {
-      onError(e instanceof Error ? e.message : String(e))
+      onError(errorMessage(e))
     } finally {
       setBusy(false)
     }

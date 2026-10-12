@@ -1,4 +1,5 @@
 import { Children, cloneElement, isValidElement, useEffect, useId, useRef, useState, type ReactElement, type ReactNode } from 'react'
+import { errorMessage } from '../api/client'
 
 export function PageHead({ title, lead, children }: { title: string; lead?: string; children?: ReactNode }) {
   return (
@@ -121,7 +122,7 @@ export function Confirm({ title, body, confirmLabel, danger, onConfirm, onClose 
               await onConfirm()
               onClose()
             } catch (e) {
-              setErr(e instanceof Error ? e.message : String(e))
+              setErr(errorMessage(e))
             } finally {
               setBusy(false)
             }
