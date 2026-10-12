@@ -331,3 +331,36 @@ func TestSyncStopsWhenTheStoredInstancesCannotBeRead(t *testing.T) {
 		t.Fatalf("pinned host key replaced on first use: stored %q, want %q (the new key was %q)", stored, fp, otherFP)
 	}
 }
+
+// TestSyncAuditsAMismatchOncePerSighting: a host key or certificate mismatch
+// was audited on every poll (B3), so one affected instance wrote about 2,880
+// chained events a day at the 30 s default. A mismatch is now recorded when
+// it is first seen; polls that see the same one again add nothing.
+func TestSyncAuditsAMismatchOncePerSighting(t *testing.T) {
+	ctx := context.Background()
+	s, repo, fake, _ := newSyncer(t)
+	port, _ := sshHost(t)
+	g := sample()
+	g.Ports = map[target.Protocol]int{target.SSH: port}
+	if err := repo.Create(ctx, g); err != nil {
+		t.Fatal(err)
+	}
+	fake.Set("web-asg", cloud.Instance{ID: "i-9", PrivateIP: "127.0.0.1", LifecycleState: "InService"})
+	fake.Console["i-9"] = []string{"SHA256:SomethingElseEntirely0000000000000000000000"}
+	for i := 0; i < 3; i++ {
+		sum, err := s.SyncGroup(ctx, g)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if sum.HostKeyMismatches != 1 {
+			t.Fatalf("poll %d: the mismatch must still be counted: %+v", i+1, sum)
+		}
+	}
+	events, _, err := s.Audit.List(ctx, audit.Filter{Action: audit.ASGInstanceHostKeyMismatch})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 1 {
+		t.Fatalf("three polls of one mismatch wrote %d audit events, want 1", len(events))
+	}
+}

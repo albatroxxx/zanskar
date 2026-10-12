@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"sync"
 	"time"
 
@@ -37,6 +38,40 @@ type Syncer struct {
 
 	mu      sync.Mutex
 	running map[string]bool
+	// reported holds the mismatches already audited, by instance, kind and
+	// what was observed, so a mismatch is recorded when it is first seen
+	// rather than on every poll (B3). An observation that matches the pin
+	// again, or the instance's retirement, forgets it. A restart forgets
+	// everything, so each mismatch still standing is recorded once more.
+	reported map[string]bool
+}
+
+// firstSighting reports whether this mismatch is new, and remembers it.
+func (s *Syncer) firstSighting(instanceID, kind, observed string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.reported == nil {
+		s.reported = map[string]bool{}
+	}
+	key := instanceID + "\x00" + kind + "\x00" + observed
+	if s.reported[key] {
+		return false
+	}
+	s.reported[key] = true
+	return true
+}
+
+// cleared forgets the mismatches of kind on an instance (all kinds when kind
+// is empty): the next one, even the same again, is a new sighting.
+func (s *Syncer) cleared(instanceID, kind string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	prefix := instanceID + "\x00" + kind
+	for k := range s.reported {
+		if strings.HasPrefix(k, prefix) {
+			delete(s.reported, k)
+		}
+	}
 }
 
 // Summary reports one poll.
@@ -139,6 +174,7 @@ func (s *Syncer) SyncGroup(ctx context.Context, g *Group) (Summary, error) {
 		sum.Left++
 		s.record(ctx, audit.ASGInstanceLeft, g, in, nil)
 		s.retire(in)
+		s.cleared(in.InstanceID, "")
 	}
 	return sum, s.Repo.RecordSync(ctx, g.ID, nil)
 }
@@ -180,7 +216,11 @@ func (s *Syncer) probe(ctx context.Context, provider cloud.Provider, g *Group, i
 		if res.SSHHostKey != nil && res.SSHHostKey.Fingerprint != prev.HostKeyFingerprint {
 			in.ProbeHealth = "unhealthy"
 			sum.HostKeyMismatches++
-			s.record(ctx, audit.ASGInstanceHostKeyChanged, g, prev, map[string]any{"pinned": prev.HostKeyFingerprint, "observed": res.SSHHostKey.Fingerprint})
+			if s.firstSighting(in.InstanceID, "hostkey", res.SSHHostKey.Fingerprint) {
+				s.record(ctx, audit.ASGInstanceHostKeyChanged, g, prev, map[string]any{"pinned": prev.HostKeyFingerprint, "observed": res.SSHHostKey.Fingerprint})
+			}
+		} else if res.SSHHostKey != nil {
+			s.cleared(in.InstanceID, "hostkey")
 		}
 		in.HostKeyFingerprint, in.HostKeySource = prev.HostKeyFingerprint, prev.HostKeySource
 		return
@@ -195,6 +235,7 @@ func (s *Syncer) probe(ctx context.Context, provider cloud.Provider, g *Group, i
 		for _, fp := range consoleKeys {
 			if fp == observed {
 				in.HostKeyFingerprint, in.HostKeySource = observed, "console"
+				s.cleared(in.InstanceID, "console")
 				return
 			}
 		}
@@ -202,7 +243,9 @@ func (s *Syncer) probe(ctx context.Context, provider cloud.Provider, g *Group, i
 		// rebuilt instance reusing an id. Refuse to pin.
 		in.ProbeHealth = "unhealthy"
 		sum.HostKeyMismatches++
-		s.record(ctx, audit.ASGInstanceHostKeyMismatch, g, in, map[string]any{"console": consoleKeys, "observed": observed})
+		if s.firstSighting(in.InstanceID, "console", observed) {
+			s.record(ctx, audit.ASGInstanceHostKeyMismatch, g, in, map[string]any{"console": consoleKeys, "observed": observed})
+		}
 	default:
 		in.HostKeyFingerprint, in.HostKeySource = observed, "tofu"
 	}
@@ -218,11 +261,16 @@ func (s *Syncer) pinCertificates(ctx context.Context, g *Group, in, prev *Instan
 			set(observed)
 		case observed == "" || observed == pinned:
 			set(pinned)
+			if observed == pinned {
+				s.cleared(in.InstanceID, "cert:"+string(proto))
+			}
 		default:
 			in.ProbeHealth = "unhealthy"
 			sum.CertificateMismatches++
 			set(pinned)
-			s.record(ctx, audit.ASGInstanceCertificateChanged, g, in, map[string]any{"protocol": string(proto), "pinned": pinned, "observed": observed})
+			if s.firstSighting(in.InstanceID, "cert:"+string(proto), observed) {
+				s.record(ctx, audit.ASGInstanceCertificateChanged, g, in, map[string]any{"protocol": string(proto), "pinned": pinned, "observed": observed})
+			}
 		}
 	}
 	var prevTLS, prevWinRM string
