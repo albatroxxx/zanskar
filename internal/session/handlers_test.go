@@ -16,9 +16,9 @@ import (
 
 	"github.com/albatroxxx/zanskar/internal/audit"
 	"github.com/albatroxxx/zanskar/internal/auth"
-	"github.com/albatroxxx/zanskar/internal/config"
 	"github.com/albatroxxx/zanskar/internal/recording"
 	"github.com/albatroxxx/zanskar/internal/store"
+	"github.com/albatroxxx/zanskar/internal/store/storetest"
 	"github.com/albatroxxx/zanskar/internal/user"
 )
 
@@ -42,14 +42,7 @@ var testAnchorKey = bytes.Repeat([]byte{5}, 32)
 func newEnv(t *testing.T) *env {
 	t.Helper()
 	ctx := context.Background()
-	db, err := store.Open(ctx, config.DriverSQLite, "file::memory:?_pragma=foreign_keys(1)")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = db.Close() })
-	if _, err := store.Migrate(ctx, db); err != nil {
-		t.Fatal(err)
-	}
+	db := storetest.Open(t)
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	users := user.NewRepo(db)
 	sessions := auth.NewSessions(db, bytes.Repeat([]byte{6}, 32), false)

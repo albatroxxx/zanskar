@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/albatroxxx/zanskar/internal/config"
 	"github.com/albatroxxx/zanskar/internal/store"
+	"github.com/albatroxxx/zanskar/internal/store/storetest"
 	"github.com/albatroxxx/zanskar/internal/user"
 )
 
@@ -104,14 +104,7 @@ func TestEvaluate(t *testing.T) {
 
 func TestRepo(t *testing.T) {
 	ctx := context.Background()
-	db, err := store.Open(ctx, config.DriverSQLite, "file::memory:?_pragma=foreign_keys(1)")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = db.Close() })
-	if _, err := store.Migrate(ctx, db); err != nil {
-		t.Fatal(err)
-	}
+	db := storetest.Open(t)
 	// Minimal fixtures: a group and a user in it.
 	now := store.TimeArg(time.Now())
 	mustExec := func(q string, args ...any) {
@@ -171,14 +164,7 @@ func TestRepo(t *testing.T) {
 // the user's group policies, and a policy must name exactly one subject.
 func TestRepoUserScopedPolicy(t *testing.T) {
 	ctx := context.Background()
-	db, err := store.Open(ctx, config.DriverSQLite, "file::memory:?_pragma=foreign_keys(1)")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = db.Close() })
-	if _, err := store.Migrate(ctx, db); err != nil {
-		t.Fatal(err)
-	}
+	db := storetest.Open(t)
 	now := store.TimeArg(time.Now())
 	for _, q := range []string{
 		`INSERT INTO groups (id, name, created_at, updated_at) VALUES ('g1', 'ops', ?, ?)`,
@@ -280,14 +266,7 @@ func TestEvaluateRequireApproval(t *testing.T) {
 
 func TestReferencing(t *testing.T) {
 	ctx := context.Background()
-	db, err := store.Open(ctx, config.DriverSQLite, "file::memory:?_pragma=foreign_keys(1)")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = db.Close() })
-	if _, err := store.Migrate(ctx, db); err != nil {
-		t.Fatal(err)
-	}
+	db := storetest.Open(t)
 	now := store.TimeArg(time.Now())
 	if _, err := db.ExecContext(ctx, db.Rebind(`INSERT INTO groups (id, name, created_at, updated_at) VALUES ('g1', 'ops', ?, ?)`), now, now); err != nil {
 		t.Fatal(err)
@@ -393,14 +372,7 @@ func TestRulesCoverAndValidate(t *testing.T) {
 
 func TestRepoRulesRoundTrip(t *testing.T) {
 	ctx := context.Background()
-	db, err := store.Open(ctx, config.DriverSQLite, "file::memory:?_pragma=foreign_keys(1)")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = db.Close() })
-	if _, err := store.Migrate(ctx, db); err != nil {
-		t.Fatal(err)
-	}
+	db := storetest.Open(t)
 	now := store.TimeArg(time.Now())
 	if _, err := db.ExecContext(ctx, db.Rebind(`INSERT INTO groups (id, name, created_at, updated_at) VALUES ('g1', 'ops', ?, ?)`), now, now); err != nil {
 		t.Fatal(err)
@@ -431,14 +403,7 @@ func TestRepoRulesRoundTrip(t *testing.T) {
 // carried into the decision.
 func TestRetentionDays(t *testing.T) {
 	ctx := context.Background()
-	db, err := store.Open(ctx, config.DriverSQLite, "file::memory:?_pragma=foreign_keys(1)")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = db.Close() })
-	if _, err := store.Migrate(ctx, db); err != nil {
-		t.Fatal(err)
-	}
+	db := storetest.Open(t)
 	repo := NewRepo(db)
 	u := &user.User{Username: "uma", DisplayName: "Uma", Roles: []user.Role{user.RoleUser}}
 	if err := user.NewRepo(db).Create(ctx, u); err != nil {

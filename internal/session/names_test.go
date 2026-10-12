@@ -9,22 +9,15 @@ import (
 	"time"
 
 	"github.com/albatroxxx/zanskar/internal/audit"
-	"github.com/albatroxxx/zanskar/internal/config"
 	"github.com/albatroxxx/zanskar/internal/store"
+	"github.com/albatroxxx/zanskar/internal/store/storetest"
 )
 
 // TestResolveNames covers every object type the audit page decorates,
 // including the session and recording labels that join across tables.
 func TestResolveNames(t *testing.T) {
 	ctx := context.Background()
-	db, err := store.Open(ctx, config.DriverSQLite, "file::memory:?_pragma=foreign_keys(1)")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = db.Close() })
-	if _, err := store.Migrate(ctx, db); err != nil {
-		t.Fatal(err)
-	}
+	db := storetest.Open(t)
 	now := store.TimeArg(time.Now())
 	for _, q := range []string{
 		`INSERT INTO users (id, username, display_name, created_at, updated_at) VALUES ('u1', 'alice', 'Alice', ?, ?)`,

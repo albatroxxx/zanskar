@@ -12,11 +12,10 @@ import (
 	"testing"
 
 	"github.com/albatroxxx/zanskar/internal/audit"
-	"github.com/albatroxxx/zanskar/internal/config"
 	"github.com/albatroxxx/zanskar/internal/crypto"
 	"github.com/albatroxxx/zanskar/internal/gateway"
 	"github.com/albatroxxx/zanskar/internal/keyring"
-	"github.com/albatroxxx/zanskar/internal/store"
+	"github.com/albatroxxx/zanskar/internal/store/storetest"
 	"github.com/albatroxxx/zanskar/internal/user"
 )
 
@@ -66,14 +65,7 @@ type provisionEnv struct {
 func newProvisionEnv(t *testing.T) *provisionEnv {
 	t.Helper()
 	ctx := context.Background()
-	db, err := store.Open(ctx, config.DriverSQLite, "file::memory:?_pragma=foreign_keys(1)")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = db.Close() })
-	if _, err := store.Migrate(ctx, db); err != nil {
-		t.Fatal(err)
-	}
+	db := storetest.Open(t)
 	kek, err := crypto.NewLocalKEK(bytes.Repeat([]byte{7}, 32))
 	if err != nil {
 		t.Fatal(err)

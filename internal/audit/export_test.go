@@ -17,20 +17,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/albatroxxx/zanskar/internal/config"
-	"github.com/albatroxxx/zanskar/internal/store"
+	"github.com/albatroxxx/zanskar/internal/store/storetest"
 )
 
 func exportLog(t *testing.T, n int) *Log {
 	t.Helper()
-	db, err := store.Open(context.Background(), config.DriverSQLite, "file::memory:?_pragma=foreign_keys(1)")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = db.Close() })
-	if _, err := store.Migrate(context.Background(), db); err != nil {
-		t.Fatal(err)
-	}
+	db := storetest.Open(t)
 	l := NewLog(db)
 	for i := 0; i < n; i++ {
 		ev := Actor{UserID: "u1", IP: "10.0.0.1"}.Event("user.login", "user", "u1", Success, map[string]any{"n": i, "note": "a=b|c\nd"})

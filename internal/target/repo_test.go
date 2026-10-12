@@ -8,21 +8,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/albatroxxx/zanskar/internal/config"
 	"github.com/albatroxxx/zanskar/internal/store"
+	"github.com/albatroxxx/zanskar/internal/store/storetest"
 )
 
 func testDB(t *testing.T) *store.DB {
-	t.Helper()
-	db, err := store.Open(context.Background(), config.DriverSQLite, "file::memory:?_pragma=foreign_keys(1)")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = db.Close() })
-	if _, err := store.Migrate(context.Background(), db); err != nil {
-		t.Fatal(err)
-	}
-	return db
+	return storetest.Open(t)
 }
 
 func insertCredential(t *testing.T, db *store.DB, id string) {

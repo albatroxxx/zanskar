@@ -9,20 +9,13 @@ import (
 	"testing"
 	"time"
 
-	"github.com/albatroxxx/zanskar/internal/config"
 	"github.com/albatroxxx/zanskar/internal/store"
+	"github.com/albatroxxx/zanskar/internal/store/storetest"
 )
 
 func TestSessionsAndRecordings(t *testing.T) {
 	ctx := context.Background()
-	db, err := store.Open(ctx, config.DriverSQLite, "file::memory:?_pragma=foreign_keys(1)")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = db.Close() })
-	if _, err := store.Migrate(ctx, db); err != nil {
-		t.Fatal(err)
-	}
+	db := storetest.Open(t)
 	now := store.TimeArg(time.Now())
 	for _, q := range []string{
 		`INSERT INTO users (id, username, display_name, created_at, updated_at) VALUES ('u1', 'alice', 'Alice', ?, ?)`,
@@ -97,14 +90,7 @@ func TestSessionsAndRecordings(t *testing.T) {
 // cloud instance id, and List narrows by username the way it narrows by id.
 func TestSessionLabelsAndUsernameFilter(t *testing.T) {
 	ctx := context.Background()
-	db, err := store.Open(ctx, config.DriverSQLite, "file::memory:?_pragma=foreign_keys(1)")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = db.Close() })
-	if _, err := store.Migrate(ctx, db); err != nil {
-		t.Fatal(err)
-	}
+	db := storetest.Open(t)
 	now := store.TimeArg(time.Now())
 	for _, q := range []string{
 		`INSERT INTO users (id, username, display_name, created_at, updated_at) VALUES ('u1', 'alice', 'Alice', ?, ?)`,
@@ -158,14 +144,7 @@ func TestSessionLabelsAndUsernameFilter(t *testing.T) {
 // out (trimmed) or one with an offset pages the same way.
 func TestListOrdersInsideASecond(t *testing.T) {
 	ctx := context.Background()
-	db, err := store.Open(ctx, config.DriverSQLite, "file::memory:?_pragma=foreign_keys(1)")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = db.Close() })
-	if _, err := store.Migrate(ctx, db); err != nil {
-		t.Fatal(err)
-	}
+	db := storetest.Open(t)
 	base := time.Date(2026, 10, 11, 10, 0, 0, 0, time.UTC)
 	exec := func(q string, args ...any) {
 		t.Helper()
