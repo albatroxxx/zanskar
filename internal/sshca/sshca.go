@@ -55,13 +55,6 @@ func NewSigner(caPrivatePEM []byte) (*Signer, error) {
 	return &Signer{ca: ca}, nil
 }
 
-// AuthorityPublicKey returns the CA public key in authorized_keys format.
-// This is the value an admin installs in a host's TrustedUserCAKeys file so
-// the host trusts certificates this Signer issues.
-func (s *Signer) AuthorityPublicKey() string {
-	return strings.TrimSpace(string(ssh.MarshalAuthorizedKey(s.ca.PublicKey())))
-}
-
 // CertParams describes the certificate to mint.
 type CertParams struct {
 	// Principals are the login names the certificate is valid for. Required.
@@ -148,7 +141,7 @@ func IssueForSession(caPrivatePEM []byte, p CertParams) (certAuthorizedKey strin
 		return "", "", err
 	}
 
-	pub, priv, err := ed25519.GenerateKey(rand.Reader)
+	_, priv, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		return "", "", err
 	}
@@ -160,7 +153,6 @@ func IssueForSession(caPrivatePEM []byte, p CertParams) (certAuthorizedKey strin
 	if err != nil {
 		return "", "", fmt.Errorf("sshca: user key: %w", err)
 	}
-	_ = pub
 
 	cert, err := signer.Issue(userSigner.PublicKey(), p)
 	if err != nil {

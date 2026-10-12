@@ -59,9 +59,6 @@ func TestAsciicastLeavesKeystrokesOutByDefault(t *testing.T) {
 		a.RecordInput = on
 		_ = a.Output([]byte("Password: "))
 		_ = a.Input([]byte("hunter2-typed"))
-		if err := a.Flush(); err != nil {
-			t.Fatal(err)
-		}
 		if _, _, err := a.Close(); err != nil {
 			t.Fatal(err)
 		}

@@ -106,16 +106,46 @@ type Header struct {
 // Asciicast writes an asciicast v2 stream: a JSON header then one JSON array
 // per event: [elapsed_seconds, "o"|"i"|"r", data].
 type Asciicast struct {
+	sink
+	start time.Time
+	// RecordInput captures keystrokes too. Off by default: input often
+	// contains passwords typed into the remote shell.
+	RecordInput bool
+}
+
+// sink is what both recording formats write through: a buffered blob in
+// storage, its running size and SHA-256, and the one way to finish it
+// (D7: the two formats carried identical copies of all of it).
+type sink struct {
 	mu     sync.Mutex
 	w      *bufio.Writer
 	closer io.Closer
 	hash   hash.Hash
 	size   int64
-	start  time.Time
 	closed bool
-	// RecordInput captures keystrokes too. Off by default: input often
-	// contains passwords typed into the remote shell.
-	RecordInput bool
+}
+
+func newSink(wc io.WriteCloser, buffer int) sink {
+	return sink{w: bufio.NewWriterSize(wc, buffer), closer: wc, hash: sha256.New()}
+}
+
+// Close finishes the recording and returns its size and SHA-256. A second
+// call returns the same; a failed flush or close is the caller's to report.
+func (s *sink) Close() (int64, string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed {
+		return s.size, hex.EncodeToString(s.hash.Sum(nil)), nil
+	}
+	s.closed = true
+	if err := s.w.Flush(); err != nil {
+		_ = s.closer.Close()
+		return 0, "", err
+	}
+	if err := s.closer.Close(); err != nil {
+		return 0, "", err
+	}
+	return s.size, hex.EncodeToString(s.hash.Sum(nil)), nil
 }
 
 // NewAsciicast starts a recording on the storage under name.
@@ -128,7 +158,7 @@ func NewAsciicast(ctx context.Context, st Storage, name string, h Header) (*Asci
 	if h.Timestamp == 0 {
 		h.Timestamp = time.Now().Unix()
 	}
-	a := &Asciicast{w: bufio.NewWriterSize(wc, 32<<10), closer: wc, hash: sha256.New(), start: time.Now()}
+	a := &Asciicast{sink: newSink(wc, 32<<10), start: time.Now()}
 	line, err := json.Marshal(h)
 	if err != nil {
 		_ = wc.Close()
@@ -185,29 +215,4 @@ func (a *Asciicast) writeLine(line []byte) error {
 	a.hash.Write([]byte{'\n'})
 	a.size += int64(len(line)) + 1
 	return nil
-}
-
-// Flush pushes buffered events to storage without closing.
-func (a *Asciicast) Flush() error {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	return a.w.Flush()
-}
-
-// Close finishes the recording and returns its size and SHA-256.
-func (a *Asciicast) Close() (int64, string, error) {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	if a.closed {
-		return a.size, hex.EncodeToString(a.hash.Sum(nil)), nil
-	}
-	a.closed = true
-	if err := a.w.Flush(); err != nil {
-		_ = a.closer.Close()
-		return 0, "", err
-	}
-	if err := a.closer.Close(); err != nil {
-		return 0, "", err
-	}
-	return a.size, hex.EncodeToString(a.hash.Sum(nil)), nil
 }
