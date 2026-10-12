@@ -7,15 +7,12 @@ import '@xterm/xterm/css/xterm.css'
 import { fmtSeconds, protocolName } from '../../api/format'
 import { FailoverDialog } from './Failover'
 import { SessionEndedDialog } from './SessionEnded'
-import type { SessionEnd } from './session'
+import { SESSION_ID, type SessionEnd } from './session'
 import { TerminalFiles } from './TerminalFiles'
 import { useFullscreen } from './fullscreen'
 import { FullscreenButton } from './FullscreenButton'
 import type { ConnectResponse } from '../../api/types'
 import { terminalTheme } from '../../styles/theme'
-
-/** Access-session ids are 16 random bytes, hex-encoded. */
-const SESSION_ID = /^[0-9a-f]{32}$/
 
 interface TerminalState {
   ticket: string

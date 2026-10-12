@@ -1,6 +1,11 @@
 // What the terminal and desktop session pages share, so that both say the
 // same thing about a session.
 
+/** Access-session ids are 16 random bytes, hex-encoded (store.NewID). The
+ *  gateway sends a page its session's id, which then goes into API paths
+ *  (file transfer, failover), so only that shape is accepted. */
+export const SESSION_ID = /^[0-9a-f]{32}$/
+
 /** How a session ended: the gateway's reason code, and its own words when it gave any. */
 export interface SessionEnd { reason: string; msg?: string }
 

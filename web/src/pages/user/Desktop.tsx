@@ -4,7 +4,7 @@ import type { Client, GuacObject, InputStream, Keyboard } from 'guacamole-common
 import { fmtBytes, fmtSeconds, protocolName } from '../../api/format'
 import { FailoverDialog } from './Failover'
 import { SessionEndedDialog } from './SessionEnded'
-import { desktopEnd, type SessionEnd } from './session'
+import { desktopEnd, SESSION_ID, type SessionEnd } from './session'
 import { useFullscreen } from './fullscreen'
 import { FullscreenButton } from './FullscreenButton'
 import type { ConnectResponse } from '../../api/types'
@@ -229,7 +229,9 @@ function DesktopSession({ state }: { state: DesktopState }) {
       const inner = tunnel.oninstruction
       tunnel.oninstruction = (opcode, args) => {
         // The tunnel's internal opcode carries the Zanskar session id first.
-        if (opcode === '' && args[0]) setSessionId((cur) => cur || args[0])
+        // It addresses the failover endpoint, so only the shape the gateway
+        // generates is taken, as on the terminal page.
+        if (opcode === '' && SESSION_ID.test(args[0] ?? '')) setSessionId((cur) => cur || args[0])
         if (opcode === 'zanskar') {
           const next = { files: false, clipboard: false }
           for (let i = 0; i + 1 < args.length; i += 2) {

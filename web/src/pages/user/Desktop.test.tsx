@@ -196,3 +196,19 @@ describe('Desktop, the keyboard', () => {
     expect(g.keyboards[1]).toMatchObject({ onkeydown: null, onkeyup: null })
   })
 })
+
+// Q7: the terminal page accepts only a session id of the shape the gateway
+// generates, since the id goes into API paths; the desktop page took
+// anything, and a failover would have used it.
+describe('Desktop, the session id from the gateway', () => {
+  it('is used only when it has the shape the gateway generates', async () => {
+    const get = vi.spyOn(api, 'get').mockResolvedValue({ items: [] } as never)
+    start({ ...desk, asg_id: 'g1' })
+    const client = await connected()
+    act(() => client.tunnel.oninstruction?.('', ['../../admin/logs']))
+    act(() => client.onerror?.({ code: 0x0207, message: 'the instance left the healthy pool' }))
+
+    expect(screen.getByRole('dialog').querySelector('h2')?.textContent).toBe('Session ended')
+    expect(get).not.toHaveBeenCalled()
+  })
+})
