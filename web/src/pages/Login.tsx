@@ -11,7 +11,10 @@ type Step = 'password' | 'change' | 'verify' | 'enroll' | 'recovery'
 export function Login() {
   const auth = useAuth()
   const loc = useLocation()
-  const from = safeReturnPath((loc.state as { from?: unknown } | null)?.from)
+  // Where to go once signed in: what the guard remembered, else the ?next=
+  // the gateway's single sign-on sends while a code is still owed (B20);
+  // either way only a path on this site.
+  const from = safeReturnPath((loc.state as { from?: unknown } | null)?.from ?? new URLSearchParams(loc.search).get('next'))
   const [step, setStep] = useState<Step>('password')
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')

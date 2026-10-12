@@ -25,7 +25,8 @@ function Guard({ roles, children }: { roles?: Role[]; children: React.ReactNode 
   const loc = useLocation()
   if (auth.status === 'loading') return <div className="empty">Loading…</div>
   if (auth.status === 'unreachable') return <div className="empty">The gateway is not answering; trying again…</div>
-  if (auth.status !== 'full') return <Navigate to="/login" state={{ from: loc.pathname }} replace />
+  // The query string is part of where the user was going (a filter, a tab).
+  if (auth.status !== 'full') return <Navigate to="/login" state={{ from: loc.pathname + loc.search }} replace />
   if (roles && !auth.hasRole(...roles)) {
     // Send the account to the portal it does have. An account with no role at
     // all (which the API refuses to create) would otherwise bounce forever.

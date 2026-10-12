@@ -1,6 +1,6 @@
 import { cleanup, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { MemoryRouter } from 'react-router-dom'
+import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { ApiError, api } from '../api/client'
 import { AuthProvider } from '../auth/AuthContext'
@@ -83,3 +83,39 @@ describe('Login after a failed single sign-on', () => {
     window.history.pushState({}, '', '/')
   })
 })
+
+// B20: the gateway's single sign-on sends a sign-in that still owes a code to
+// /login?next=<where the user was going>, and the page read only the router's
+// state, so the deep link was lost. A ?next= that is a path on this site is
+// where the page goes once signed in; anything else goes home (L7's rule).
+describe('Login after signing in', () => {
+  it('goes to ?next= when it is a path on this site', async () => {
+    vi.spyOn(api, 'get').mockImplementation(async (path: string) => {
+      if (path === '/auth/me') return { user: { id: 'u1', username: 'alice', display_name: 'Alice', roles: ['user'] }, csrf_token: 't', mfa_enrolled: true } as never
+      if (path === '/auth/providers') return { items: [] } as never
+      return { text: '' } as never
+    })
+    for (const [next, want] of [
+      ['/admin/targets?tab=2', '/admin/targets?tab=2'],
+      ['//evil.example/x', '/'],
+    ]) {
+      render(
+        <MemoryRouter initialEntries={['/login?next=' + encodeURIComponent(next)]}>
+          <AuthProvider>
+            <Routes>
+              <Route path="/login" element={<Login />} />
+              <Route path="*" element={<Where />} />
+            </Routes>
+          </AuthProvider>
+        </MemoryRouter>,
+      )
+      expect(await screen.findByText('at ' + want)).toBeDefined()
+      cleanup()
+    }
+  })
+})
+
+function Where() {
+  const loc = useLocation()
+  return <p>at {loc.pathname + loc.search}</p>
+}
