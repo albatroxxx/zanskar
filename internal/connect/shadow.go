@@ -114,7 +114,7 @@ func (h *ShadowHandler) shadowTerminal(w http.ResponseWriter, r *http.Request, l
 			return
 		case chunk, ok := <-ch:
 			if !ok {
-				wctx, wcancel := context.WithTimeout(context.Background(), 2*time.Second)
+				wctx, wcancel := detach(ctx, frameTimeout)
 				b, _ := json.Marshal(shadowControl{T: "end", Reason: "session_ended"})
 				_ = ws.Write(wctx, websocket.MessageText, b)
 				wcancel()

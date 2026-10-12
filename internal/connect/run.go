@@ -6,6 +6,7 @@ import (
 	"context"
 	"maps"
 	"net/http"
+	"time"
 
 	"github.com/coder/websocket"
 
@@ -38,6 +39,32 @@ type sessionRun struct {
 	tell func(msg string)
 }
 
+// closeTimeout is the default bound on one closing write (Handler.CloseTimeout).
+// The bridges bound their closing frames to 2 s and recording storage its
+// deletes to 10 s; a database write gets the longer of the two.
+const closeTimeout = 10 * time.Second
+
+// frameTimeout bounds one closing websocket frame, as the bridges bound
+// theirs.
+const frameTimeout = 2 * time.Second
+
+// detach keeps ctx's values, such as the request id the logs carry, but not
+// its cancellation, and bounds what follows to d: for writes that must happen
+// although the client that asked for them has gone, without a stuck database
+// holding the goroutine for ever.
+func detach(ctx context.Context, d time.Duration) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.WithoutCancel(ctx), d)
+}
+
+// closing returns the context for one write that closes the session.
+func (run *sessionRun) closing() (context.Context, context.CancelFunc) {
+	d := run.h.CloseTimeout
+	if d <= 0 {
+		d = closeTimeout
+	}
+	return detach(run.r.Context(), d)
+}
+
 // startRun writes the session's row. When it cannot, the socket is closed and
 // ok is false.
 func (h *Handler) startRun(r *http.Request, ws *websocket.Conn, g *ticket.Grant, ep *endpoint, ip string) (*sessionRun, bool) {
@@ -60,7 +87,9 @@ func (h *Handler) startRun(r *http.Request, ws *websocket.Conn, g *ticket.Grant,
 
 // endRow closes a session's row.
 func (run *sessionRun) endRow(id, reason string) {
-	if err := run.h.Sessions.End(context.Background(), id, reason); err != nil {
+	ctx, cancel := run.closing()
+	defer cancel()
+	if err := run.h.Sessions.End(ctx, id, reason); err != nil {
 		run.h.Log.Error("end session", "session", id, "err", err)
 	}
 }
@@ -166,7 +195,9 @@ func (run *sessionRun) finishRecording(rec recorder, row *session.Recording) {
 		run.h.record(run.r, run.actor.Event(audit.RecordingLost, "recording", row.ID, audit.Failure, map[string]string{"session_id": run.s.ID, "error": err.Error()}))
 		return
 	}
-	if err := run.h.Sessions.FinishRecording(context.Background(), row.ID, size, sum); err != nil {
+	ctx, cancel := run.closing()
+	defer cancel()
+	if err := run.h.Sessions.FinishRecording(ctx, row.ID, size, sum); err != nil {
 		run.h.Log.Error("finish recording", "session", run.s.ID, "err", err)
 	}
 }

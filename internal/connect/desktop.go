@@ -224,7 +224,7 @@ func (h *Handler) desktop(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	run.tell = func(msg string) {
-		wctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		wctx, cancel := detach(r.Context(), frameTimeout)
 		_ = ws.Write(wctx, websocket.MessageText, []byte(guac.ErrorInstruction(msg, 519)))
 		cancel()
 	}

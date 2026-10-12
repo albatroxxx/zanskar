@@ -58,6 +58,10 @@ type Handler struct {
 	// a nil Prober cannot do.
 	Prober      *target.Prober
 	DialTimeout time.Duration
+	// CloseTimeout bounds each write that closes a session once its client
+	// may have gone: the row's end, the recording's size and digest. Zero
+	// means closeTimeout.
+	CloseTimeout time.Duration
 	// Draining reports that the gateway is about to restart: no new session
 	// starts, live ones run on until the drain ends them.
 	Draining func() bool
