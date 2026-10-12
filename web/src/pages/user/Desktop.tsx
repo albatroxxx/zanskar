@@ -90,6 +90,23 @@ function DesktopSession({ state }: { state: DesktopState }) {
   // The last text both sides agree on, so a focus sync does not echo back
   // what the desktop just sent, and unchanged text is not resent.
   const lastClipRef = useRef('')
+  // Guacamole.Keyboard listens on the document itself and calls
+  // preventDefault on every key it handles. Leaving its handlers set after
+  // the page was left made every form field on the site deaf (the login page
+  // included) until a full reload; leaving them set once the session ended
+  // swallowed Enter, Space and Tab in the very dialog that says so, and in
+  // the one offering another instance. The library has no detach call:
+  // nulling the handlers is how it is told to stop intercepting.
+  const keyboardRef = useRef<Keyboard | null>(null)
+  const releaseKeyboard = useCallback(() => {
+    const kb = keyboardRef.current
+    if (!kb) return
+    keyboardRef.current = null
+    // Release anything still held (sends the key-ups while the client is
+    // there to take them), then stop intercepting the document's keys.
+    kb.reset()
+    kb.onkeydown = kb.onkeyup = null
+  }, [])
 
   // pushClipboard sends text to the desktop's clipboard through a Guacamole
   // clipboard stream. The bridge drops the instruction when the policy
@@ -131,13 +148,6 @@ function DesktopSession({ state }: { state: DesktopState }) {
       if (!endedRef.current) setElapsed(Math.floor((Date.now() - start) / 1000))
     }, 1000)
     const el = host.current
-    // Assigned once the library has loaded; released by the effect cleanup
-    // below. Guacamole.Keyboard listens on the document itself and calls
-    // preventDefault on every key it handles, so leaving its handlers set
-    // after the session left every form field on the site deaf (the login
-    // page included) until a full reload. The library has no detach call:
-    // nulling the handlers is how it is told to stop intercepting.
-    let keyboard: Keyboard | null = null
     let ro: ResizeObserver | null = null
     let sizeTimer: ReturnType<typeof setTimeout> | undefined
     void import('guacamole-common-js').then((mod) => {
@@ -193,7 +203,7 @@ function DesktopSession({ state }: { state: DesktopState }) {
       const send = (m: unknown) => client.sendMouseState(m as never)
       mouse.onmousedown = mouse.onmouseup = mouse.onmousemove = send
       const kb = new Guacamole.Keyboard(document)
-      keyboard = kb
+      keyboardRef.current = kb
       // Key events go out in order through one queue. A paste keystroke
       // (V with Ctrl or Cmd held) first reads the browser clipboard and
       // sends it to the desktop, and only then is the key passed on, so the
@@ -249,12 +259,7 @@ function DesktopSession({ state }: { state: DesktopState }) {
       clearInterval(tick)
       clearTimeout(sizeTimer)
       ro?.disconnect()
-      if (keyboard) {
-        // Release anything still held (sends the key-ups while the client is
-        // connected), then stop intercepting the document's key events.
-        keyboard.reset()
-        keyboard.onkeydown = keyboard.onkeyup = null
-      }
+      releaseKeyboard()
       clientRef.current = null
       disconnectRef.current()
     }
@@ -393,6 +398,8 @@ function DesktopSession({ state }: { state: DesktopState }) {
     })
   }
   useEffect(() => { endedRef.current = !!ended }, [ended])
+  // An ended session takes no more keys; the dialogs that follow need them.
+  useEffect(() => { if (ended) releaseKeyboard() }, [ended, releaseKeyboard])
   const failover = ended?.reason === 'target_lost' && !!state.asg_id && !!sessionId
   // Drop out of full screen when the session ends so the dialog shows normally.
   useEffect(() => { if (ended) exitFull() }, [ended, exitFull])
