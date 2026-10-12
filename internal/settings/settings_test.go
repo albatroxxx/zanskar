@@ -342,3 +342,22 @@ func TestRoutes(t *testing.T) {
 		t.Fatalf("audit actions: %v", actions)
 	}
 }
+
+// TestEnvValuesReportsWhatItCannotUse: an environment value that failed
+// validation was dropped without a word (B13): ZANSKAR_GUACD_ADDR=guacd, no
+// port, left desktops switched off and nothing said why. It is now an error
+// naming the variable, which serve refuses to start on.
+func TestEnvValuesReportsWhatItCannotUse(t *testing.T) {
+	t.Setenv("ZANSKAR_GUACD_ADDR", "guacd")
+	t.Setenv("ZANSKAR_LOG_LEVEL", "info")
+	vals, errs := EnvValues()
+	if len(errs) != 1 || !strings.Contains(errs[0].Error(), "ZANSKAR_GUACD_ADDR") {
+		t.Fatalf("errors %v, want one naming ZANSKAR_GUACD_ADDR", errs)
+	}
+	if _, ok := vals[KeyGuacdAddr]; ok {
+		t.Fatal("the bad value must not be used")
+	}
+	if vals[KeyLogLevel] != "info" {
+		t.Fatalf("the good values still come through: %v", vals)
+	}
+}

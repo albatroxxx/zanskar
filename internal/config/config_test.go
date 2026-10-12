@@ -265,3 +265,43 @@ func TestDropSecretEnv(t *testing.T) {
 		t.Errorf("a second call dropped %v", again)
 	}
 }
+
+// TestBooleansAndIgnoredSettingsAreNotSilent: environment values were
+// accepted and then ignored without a word (B13). ZANSKAR_TRUST_PROXY_TLS
+// and ZANSKAR_ALLOW_PLAIN_HTTP matched only the literal "true", so "1" or
+// "yes" quietly read as false; TLS files in proxy mode, TLS hosts in file
+// mode and plain HTTP while serving TLS were dropped. A boolean now reads
+// the words the runtime settings accept and refuses anything else, and a
+// setting that does nothing in this configuration is named in Warnings.
+func TestBooleansAndIgnoredSettingsAreNotSilent(t *testing.T) {
+	t.Setenv("ZANSKAR_MASTER_KEY", "")
+	for raw, want := range map[string]bool{"true": true, "1": true, "yes": true, "ON": true, "false": false, "0": false, "no": false, "": false} {
+		t.Setenv("ZANSKAR_TRUST_PROXY_TLS", raw)
+		c, err := Load(Options{})
+		if err != nil || c.TrustProxyTLS != want {
+			t.Fatalf("ZANSKAR_TRUST_PROXY_TLS=%q: %v %v, want %v", raw, c.TrustProxyTLS, err, want)
+		}
+	}
+	t.Setenv("ZANSKAR_TRUST_PROXY_TLS", "ture")
+	if _, err := Load(Options{}); err == nil || !strings.Contains(err.Error(), "ZANSKAR_TRUST_PROXY_TLS") {
+		t.Fatalf("a value that is no boolean must be refused, naming the variable: %v", err)
+	}
+	t.Setenv("ZANSKAR_TRUST_PROXY_TLS", "")
+
+	t.Setenv("ZANSKAR_TLS_MODE", "proxy")
+	t.Setenv("ZANSKAR_TLS_CERT", "/etc/zanskar/tls.crt")
+	t.Setenv("ZANSKAR_TLS_KEY", "/etc/zanskar/tls.key")
+	c, err := Load(Options{})
+	if err != nil || !anyContains(c.Warnings, "ZANSKAR_TLS_CERT") {
+		t.Fatalf("TLS files in proxy mode must be named as ignored: %v %v", c.Warnings, err)
+	}
+}
+
+func anyContains(list []string, sub string) bool {
+	for _, s := range list {
+		if strings.Contains(s, sub) {
+			return true
+		}
+	}
+	return false
+}

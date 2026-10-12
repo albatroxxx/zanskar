@@ -244,8 +244,12 @@ func Validate(d Definition, value string) (string, error) {
 
 // EnvValues reads the install-time value of every runtime setting that has
 // an environment variable, normalised; variables that are unset are absent.
-func EnvValues() map[string]string {
+// A value that fails validation is left out and reported, naming the
+// variable: it used to be dropped without a word, so ZANSKAR_GUACD_ADDR
+// without a port switched desktops off and nothing said why (B13).
+func EnvValues() (map[string]string, []error) {
 	out := map[string]string{}
+	var errs []error
 	for _, d := range Definitions {
 		if d.EnvVar == "" {
 			continue
@@ -254,11 +258,14 @@ func EnvValues() map[string]string {
 		if !ok {
 			continue
 		}
-		if v, err := Validate(d, raw); err == nil {
-			out[d.Key] = v
+		v, err := Validate(d, raw)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("%s: %w", d.EnvVar, err))
+			continue
 		}
+		out[d.Key] = v
 	}
-	return out
+	return out, errs
 }
 
 // Repo reads and writes console rows.
