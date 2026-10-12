@@ -8,7 +8,10 @@ import { Alert, Badge, Empty, Field, Modal, PageHead } from '../../components/ui
  *  approve or deny what's pending, and revoke grants that are still active. */
 export function Approvals() {
   const [pending, setPending] = useState<AccessRequest[] | null>(null)
-  const [active, setActive] = useState<AccessRequest[]>([])
+  const [active, setActive] = useState<AccessRequest[] | null>(null)
+  // Why a list could not be read, shown in its place: a failed read must not
+  // look like an empty queue, or an approver reads "nobody holds access".
+  const [loadErr, setLoadErr] = useState({ pending: '', active: '' })
   const [err, setErr] = useState('')
   const [busy, setBusy] = useState('')
   // The approve dialog: the approver may grant more or less than was asked,
@@ -17,8 +20,16 @@ export function Approvals() {
   const [grant, setGrant] = useState({ minutes: 0, note: '' })
 
   const load = () => {
-    api.get<Page<AccessRequest>>('/access-requests?status=pending').then((p) => setPending(p.items)).catch((e) => setErr(errorMessage(e)))
-    api.get<Page<AccessRequest>>('/access-requests?status=approved').then((p) => setActive(p.items)).catch(() => {})
+    const read = (status: 'pending' | 'approved', list: 'pending' | 'active', set: (items: AccessRequest[]) => void) =>
+      api
+        .get<Page<AccessRequest>>(`/access-requests?status=${status}`)
+        .then((p) => {
+          set(p.items)
+          setLoadErr((cur) => ({ ...cur, [list]: '' }))
+        })
+        .catch((e) => setLoadErr((cur) => ({ ...cur, [list]: errorMessage(e) })))
+    void read('pending', 'pending', setPending)
+    void read('approved', 'active', setActive)
   }
   useEffect(() => {
     load()
@@ -54,7 +65,9 @@ export function Approvals() {
 
       <div className="card table-wrap">
         <h2>Pending</h2>
-        {pending === null ? (
+        {loadErr.pending ? (
+          <Alert tone="danger">The pending requests could not be loaded: {loadErr.pending}</Alert>
+        ) : pending === null ? (
           <Empty>Loading…</Empty>
         ) : pending.length === 0 ? (
           <p className="muted" style={{ margin: 0 }}>No requests are waiting.</p>
@@ -93,7 +106,11 @@ export function Approvals() {
 
       <div className="card table-wrap">
         <h2>Active grants</h2>
-        {active.length === 0 ? (
+        {loadErr.active ? (
+          <Alert tone="danger">The active grants could not be loaded: {loadErr.active}</Alert>
+        ) : active === null ? (
+          <Empty>Loading…</Empty>
+        ) : active.length === 0 ? (
           <p className="muted" style={{ margin: 0 }}>No active grants.</p>
         ) : (
           <table>
