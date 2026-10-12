@@ -364,3 +364,42 @@ func TestSyncAuditsAMismatchOncePerSighting(t *testing.T) {
 		t.Fatalf("three polls of one mismatch wrote %d audit events, want 1", len(events))
 	}
 }
+
+// TestPollScheduleBacksOff: the poll loop retried a group whose cloud API
+// failed at its normal interval forever (B4), though ADR 0011 promises
+// exponential backoff, and synced groups one after another, so one slow
+// group held up the rest. A failing group now waits twice as long after
+// each failure in a row, up to ten minutes (or its own interval when that
+// is longer), and is back on its interval after a success; a group whose
+// sync is still running is never started again alongside it.
+func TestPollScheduleBacksOff(t *testing.T) {
+	var sch schedule
+	now := time.Date(2026, 10, 12, 10, 0, 0, 0, time.UTC)
+	every := 30 * time.Second
+	if !sch.start("g1", now) {
+		t.Fatal("a group never synced is due")
+	}
+	if sch.start("g1", now) {
+		t.Fatal("a group whose sync is running must not start again")
+	}
+	failed := errors.New("throttled")
+	wantGaps := []time.Duration{time.Minute, 2 * time.Minute, 4 * time.Minute, 8 * time.Minute, 10 * time.Minute, 10 * time.Minute}
+	for i, want := range wantGaps {
+		sch.done("g1", every, failed, now)
+		if sch.start("g1", now.Add(want-time.Second)) {
+			t.Fatalf("failure %d: due again before %s", i+1, want)
+		}
+		if !sch.start("g1", now.Add(want)) {
+			t.Fatalf("failure %d: not due after %s", i+1, want)
+		}
+	}
+	sch.done("g1", every, nil, now)
+	if sch.start("g1", now.Add(every-time.Second)) || !sch.start("g1", now.Add(every)) {
+		t.Fatal("after a success the group is back on its own interval")
+	}
+	// A long interval is never shortened by the cap.
+	sch.done("g1", time.Hour, failed, now)
+	if sch.start("g1", now.Add(time.Hour-time.Minute)) {
+		t.Fatal("backoff must not undercut a group's own long interval")
+	}
+}

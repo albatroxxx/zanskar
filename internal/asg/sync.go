@@ -319,7 +319,10 @@ func (s *Syncer) record(ctx context.Context, action string, g *Group, in *Instan
 // Run polls every active group on its own interval until ctx ends. Groups
 // added later are picked up within one scheduler tick (10 s).
 func (s *Syncer) Run(ctx context.Context) {
-	next := map[string]time.Time{}
+	var sch schedule
+	// Groups sync side by side, a few at a time, so one slow or failing
+	// group does not hold up the others' polls (B4).
+	slots := make(chan struct{}, 4)
 	tick := time.NewTicker(10 * time.Second)
 	defer tick.Stop()
 	for {
@@ -329,20 +332,23 @@ func (s *Syncer) Run(ctx context.Context) {
 				s.Log.Error("list autoscaling groups", "err", err)
 			}
 		}
-		now := time.Now()
 		for _, g := range groups {
-			if t, ok := next[g.ID]; ok && now.Before(t) {
+			if !sch.start(g.ID, time.Now()) {
 				continue
 			}
-			next[g.ID] = now.Add(time.Duration(g.PollIntervalSeconds) * time.Second)
-			sum, err := s.SyncGroup(ctx, g)
-			if s.Log != nil {
-				if err != nil {
-					s.Log.Warn("asg sync failed", "asg", g.Name, "err", err)
-				} else {
-					s.Log.Debug("asg sync", "asg", g.Name, "seen", sum.Seen, "healthy", sum.Healthy, "joined", sum.Joined, "left", sum.Left)
+			go func() {
+				slots <- struct{}{}
+				defer func() { <-slots }()
+				sum, err := s.SyncGroup(ctx, g)
+				sch.done(g.ID, time.Duration(g.PollIntervalSeconds)*time.Second, err, time.Now())
+				if s.Log != nil {
+					if err != nil {
+						s.Log.Warn("asg sync failed", "asg", g.Name, "err", err)
+					} else {
+						s.Log.Debug("asg sync", "asg", g.Name, "seen", sum.Seen, "healthy", sum.Healthy, "joined", sum.Joined, "left", sum.Left)
+					}
 				}
-			}
+			}()
 		}
 		select {
 		case <-ctx.Done():
@@ -350,6 +356,68 @@ func (s *Syncer) Run(ctx context.Context) {
 		case <-tick.C:
 		}
 	}
+}
+
+// maxBackoff caps how long a failing group waits between polls, unless its
+// own interval is longer.
+const maxBackoff = 10 * time.Minute
+
+// schedule decides when each group polls next: on its interval after a
+// success, and twice as long after each failure in a row, up to maxBackoff
+// (ADR 0011's exponential backoff, B4). A group whose poll is running is
+// never started again alongside it.
+type schedule struct {
+	mu     sync.Mutex
+	groups map[string]*groupSchedule
+}
+
+type groupSchedule struct {
+	next     time.Time
+	failures int
+	running  bool
+}
+
+// start reports whether the group is due at now, and if so marks it running.
+func (sc *schedule) start(id string, now time.Time) bool {
+	sc.mu.Lock()
+	defer sc.mu.Unlock()
+	if sc.groups == nil {
+		sc.groups = map[string]*groupSchedule{}
+	}
+	g := sc.groups[id]
+	if g == nil {
+		g = &groupSchedule{}
+		sc.groups[id] = g
+	}
+	if g.running || now.Before(g.next) {
+		return false
+	}
+	g.running = true
+	return true
+}
+
+// done records the end of a poll that ended with err and sets the next one.
+func (sc *schedule) done(id string, interval time.Duration, err error, now time.Time) {
+	sc.mu.Lock()
+	defer sc.mu.Unlock()
+	g := sc.groups[id]
+	if g == nil {
+		g = &groupSchedule{}
+		sc.groups[id] = g
+	}
+	g.running = false
+	if err == nil {
+		g.failures = 0
+		g.next = now.Add(interval)
+		return
+	}
+	g.failures++
+	limit := max(maxBackoff, interval)
+	wait := interval
+	for i := 0; i < g.failures && wait < limit; i++ {
+		wait *= 2
+	}
+	g.next = now.Add(min(wait, limit))
 }
 
 // AWSProviders is a ProviderFactory for AWS that caches one provider per
