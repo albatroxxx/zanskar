@@ -248,11 +248,14 @@ type Opened struct {
 	PrivateKey []byte // OpenSSH PEM, unencrypted
 }
 
-// Close zeroes the secret material (best effort; see crypto.Zero).
+// Close zeroes the private key and drops the password (best effort; see
+// crypto.Zero). A Go string cannot be overwritten, so the password is only
+// let go: the decrypted bytes it was made from were zeroed in Open, and
+// every protocol library it is handed to takes a string anyway. Zeroing
+// []byte(o.Password), as this did, cleared a fresh copy and nothing else
+// (B11).
 func (o *Opened) Close() {
 	crypto.Zero(o.PrivateKey)
-	b := []byte(o.Password)
-	crypto.Zero(b)
 	o.Password, o.PrivateKey = "", nil
 }
 

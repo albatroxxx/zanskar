@@ -599,3 +599,34 @@ func TestUnreadablePrincipalsFailClosed(t *testing.T) {
 		t.Fatalf("a damaged allowlist read as %v (permits root: %v), want an error", got.CertificatePrincipals, got.PermitsPrincipal("root"))
 	}
 }
+
+// TestOpenedCloseZeroesTheKey: Close must overwrite the private key bytes it
+// was given, not a copy, so nothing of the key outlives the handshake in the
+// slice the caller held (B11 checked what Close really clears).
+func TestOpenedCloseZeroesTheKey(t *testing.T) {
+	v, _ := testVault(t)
+	ctx := context.Background()
+	pem, err := GenerateSSHKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := &Credential{Name: "deploy-key", Type: TypeSSHKey, Mode: ModeVaulted, Username: "deploy"}
+	if err := v.Create(ctx, c, &Secret{PrivateKey: pem}, ""); err != nil {
+		t.Fatal(err)
+	}
+	o, err := v.Open(ctx, c.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	key := o.PrivateKey
+	if len(key) == 0 || !bytes.Contains(key, []byte("PRIVATE KEY")) {
+		t.Fatalf("opened key: %q", key)
+	}
+	o.Close()
+	if !bytes.Equal(key, make([]byte, len(key))) {
+		t.Fatal("the key bytes survive Close")
+	}
+	if o.PrivateKey != nil || o.Password != "" {
+		t.Fatal("Close must drop the secret")
+	}
+}
