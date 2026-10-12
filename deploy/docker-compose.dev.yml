@@ -1,15 +1,27 @@
 # Development / evaluation stack: PostgreSQL + guacd + Zanskar over plain HTTP
 # on loopback. NOT for production — throwaway credentials, no TLS. For a real
 # single-instance deployment use deploy/docker-compose.yml (SQLite + Caddy TLS).
+# Images are pinned by the digest of their multi-arch index, as in
+# docker-compose.yml.
 services:
   postgres:
-    image: postgres:16-alpine
+    image: postgres:16-alpine@sha256:721873c34ceb9f8d8fc265984940dc982404c105f19ad51be9fdc5970a6080ea
     environment:
       POSTGRES_USER: zanskar
       POSTGRES_PASSWORD: zanskar
       POSTGRES_DB: zanskar
     volumes:
       - pgdata:/var/lib/postgresql/data
+    # PostgreSQL writes its data volume, its socket directory and /tmp only.
+    read_only: true
+    tmpfs: [/var/run/postgresql, /tmp]
+    # The entrypoint starts as root to own the data directory (chown, and
+    # reading it while it is the postgres user's 0700) and then becomes
+    # postgres; those are the only capabilities it keeps.
+    cap_drop: [ALL]
+    cap_add: [CHOWN, DAC_READ_SEARCH, FOWNER, SETGID, SETUID]
+    security_opt:
+      - no-new-privileges:true
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U zanskar"]
       interval: 5s
@@ -19,7 +31,7 @@ services:
       - "127.0.0.1:5432:5432"
 
   guacd:
-    image: guacamole/guacd:1.6.0
+    image: guacamole/guacd:1.6.0@sha256:8974eaa9ba32f713daf311e7cc8cd7e4cdfba1edea39eed75524e78ef4b08f4f
     # guacd only needs to be reachable from zanskar; never publish it on a host port.
     read_only: true
     # FreeRDP writes a certificate store under $HOME/.config/freerdp before each
@@ -33,6 +45,17 @@ services:
     # container and are never written to disk. Raise the size for large files.
     tmpfs:
       - /tmp:size=512m,mode=1777
+    # guacd runs as its own unprivileged user and needs no capability.
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    # The image checks itself every five minutes; this answers within seconds.
+    healthcheck:
+      test: ["CMD", "nc", "-z", "127.0.0.1", "4822"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
 
   zanskar:
     build:
@@ -59,6 +82,13 @@ services:
     cap_drop: [ALL]
     security_opt:
       - no-new-privileges:true
+    # The image has no shell, curl or wget, so the binary asks its own /readyz.
+    healthcheck:
+      test: ["CMD", "/zanskar", "healthcheck"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
 
 volumes:
   pgdata:

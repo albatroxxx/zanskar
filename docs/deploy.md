@@ -135,6 +135,23 @@ name, not the password.
 To build the image from a checkout instead (contributors, unreleased changes), add the
 override file: `docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.build.yml up -d --build`.
 
+Every long-running service has a health check, and `docker compose -f deploy/docker-compose.yml ps`
+shows it: Caddy's admin API answering on its own loopback, guacd's port 4822 open, and the
+gateway's `/readyz`, which the gateway's image asks itself with `zanskar healthcheck` because
+it has no shell, curl or wget. Caddy starts only once the gateway is healthy, so the first
+requests are not refused with 502. `zanskar healthcheck` arrived after 1.3.0: with 1.3.0 or an
+older image the gateway never turns healthy, and Compose starts Caddy anyway within a minute,
+with a warning, rather than leaving the site down. That fallback (`required: false` on Caddy's
+dependency) needs Docker Compose 2.20 or newer; an older Compose refuses the file.
+
+Caddy, guacd and the gateway run with a read-only root filesystem and every Linux capability
+dropped, except the one Caddy needs to bind ports 80 and 443; Caddy keeps its certificates and
+saved configuration in the `caddy_data` and `caddy_config` volumes. Caddy and guacd are pinned
+by the digest of their multi-arch image, so a tag pushed again upstream cannot change what runs;
+Dependabot proposes the next digest. To pin the gateway image as well, give `ZANSKAR_VERSION`
+its digest after the tag, as in `ZANSKAR_VERSION=1.3.0@sha256:<digest>`; `docker buildx
+imagetools inspect ghcr.io/albatroxxx/zanskar:<tag>` prints it.
+
 By default Caddy serves `https://localhost/` with a self-signed certificate from its
 internal CA (a browser warning, fine for a trial). For a real certificate, set
 `ZANSKAR_SITE_ADDRESS` to a public hostname in `deploy/.env` and make ports 80 and 443

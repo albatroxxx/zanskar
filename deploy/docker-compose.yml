@@ -34,13 +34,22 @@ x-zanskar-env: &zanskar-env
   ZANSKAR_LOG_FORMAT: json
   ZANSKAR_MASTER_KEY: "${ZANSKAR_MASTER_KEY:?set ZANSKAR_MASTER_KEY in deploy/.env — generate one with openssl rand -base64 32}"
 
+# Third-party images are pinned by the digest of their multi-arch index, so a
+# re-pushed tag cannot change what runs; Dependabot proposes the next digest.
+# The gateway image follows ZANSKAR_VERSION, which can carry a digest too
+# (deploy/.env.example).
 services:
   caddy:
-    image: caddy:2.8-alpine
+    image: caddy:2.8-alpine@sha256:af32e97399febea808609119bb21544d0265c58a02836576e32a2d082c262c17
     restart: unless-stopped
     depends_on:
       zanskar:
-        condition: service_started
+        # Caddy starts once the gateway answers /readyz, so the first requests
+        # are not 502s. Not required: an image older than `zanskar healthcheck`
+        # (1.3.0 and before) never turns healthy, and Compose then starts Caddy
+        # anyway, after a warning, rather than leave the site down.
+        condition: service_healthy
+        required: false
     ports:
       - "80:80"
       - "443:443"
@@ -56,11 +65,27 @@ services:
       - caddy_data:/data # issued certificates — must persist
       - caddy_config:/config
     networks: [zanskar]
+    # Caddy writes only its certificates (/data) and its saved config (/config),
+    # both volumes, so the image's own files stay read-only.
+    read_only: true
+    tmpfs: [/tmp]
+    # Caddy runs as root in its image; all it keeps is the right to bind 80 and 443.
+    cap_drop: [ALL]
+    cap_add: [NET_BIND_SERVICE]
     security_opt:
       - no-new-privileges:true
+    # Caddy's admin API, on the container's own loopback, answers once its
+    # config is running. Asking the site instead would fail for a public
+    # hostname, whose certificate does not name localhost.
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:2019/config/"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
 
   guacd:
-    image: guacamole/guacd:1.6.0
+    image: guacamole/guacd:1.6.0@sha256:8974eaa9ba32f713daf311e7cc8cd7e4cdfba1edea39eed75524e78ef4b08f4f
     restart: unless-stopped
     # guacd only needs to be reachable from zanskar; never publish it on a host port.
     read_only: true
@@ -76,8 +101,17 @@ services:
     tmpfs:
       - /tmp:size=512m,mode=1777
     networks: [zanskar]
+    # guacd runs as its own unprivileged user and needs no capability.
+    cap_drop: [ALL]
     security_opt:
       - no-new-privileges:true
+    # The image checks itself every five minutes; this answers within seconds.
+    healthcheck:
+      test: ["CMD", "nc", "-z", "127.0.0.1", "4822"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
 
   # One-shot: apply pending migrations, then exit. `serve` refuses to start with
   # migrations pending, so the gateway waits for this to complete successfully.
@@ -101,6 +135,8 @@ services:
     depends_on:
       zanskar-migrate:
         condition: service_completed_successfully
+      # Started, not healthy: the gateway asks guacd only when a desktop
+      # session opens, and sign-in and SSH must not wait on it.
       guacd:
         condition: service_started
     environment: *zanskar-env
@@ -113,6 +149,14 @@ services:
     cap_drop: [ALL]
     security_opt:
       - no-new-privileges:true
+    # The image has no shell, curl or wget, so the binary asks its own /readyz:
+    # healthy once the gateway serves and its database is reachable.
+    healthcheck:
+      test: ["CMD", "/zanskar", "healthcheck"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
 
 networks:
   zanskar:
