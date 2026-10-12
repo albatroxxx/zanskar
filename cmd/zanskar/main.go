@@ -363,6 +363,12 @@ func serve(ctx context.Context) error {
 	grantSweeper := &access.Sweeper{Repo: accessReqs, Audit: auditLog, Log: log}
 	go grantSweeper.Run(ctx, time.Minute)
 
+	// Renew the self-signed certificate inside thirty days of its end while
+	// the gateway runs, not only at start (ADR 0021, B9).
+	if tlsMgr != nil {
+		go tlsMgr.Run(ctx, 6*time.Hour)
+	}
+
 	// SIEM export: ship the audit chain to the configured sinks.
 	var sinks []audit.Sink
 	if cfg.SIEMSyslogAddr != "" {

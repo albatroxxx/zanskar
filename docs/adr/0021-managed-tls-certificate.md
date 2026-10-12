@@ -37,7 +37,7 @@ on every handshake. The manager resolves, in this order: a certificate **uploade
 console**, the **file** certificate from the environment, and a **self-signed** one the
 gateway generates at first start (P-256, two years, names: the listen host, the machine's
 host name, its non-loopback addresses, localhost) and regenerates when within thirty days
-of its end. An upload replaces what is served on the next connection; removing it falls
+of its end (checked at start and every six hours while it runs). An upload replaces what is served on the next connection; removing it falls
 back down the list. Private keys are sealed by the key ring like every other secret and are
 never returned by the API, written to the audit log or logged. Uploads are validated (key
 matches, leaf within its validity, server authentication allowed, unencrypted key) and every

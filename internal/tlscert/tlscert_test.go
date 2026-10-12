@@ -410,3 +410,63 @@ func mustLeaf(t *testing.T, certPEM string) *x509.Certificate {
 	}
 	return leaf
 }
+
+// TestFailedRegenerationKeepsServing: Load cleared the active certificate
+// before making a new self-signed one (B8), so when that failed (the
+// database refusing the write, say) the listener had nothing to offer until
+// a restart, and every TLS handshake failed. A failure now leaves the
+// previous certificate serving, and the caller gets the error.
+func TestFailedRegenerationKeepsServing(t *testing.T) {
+	ctx := context.Background()
+	repo, db := newRepo(t)
+	m := &Manager{Repo: repo, Log: slog.New(slog.NewTextHandler(io.Discard, nil)), Hosts: []string{"gw.example.test"}}
+	if err := m.Load(ctx); err != nil {
+		t.Fatal(err)
+	}
+	certPEM, keyPEM := certFor(t, "real.example.test", time.Now().Add(-time.Hour), time.Now().Add(90*24*time.Hour), []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth})
+	if _, err := m.Upload(ctx, certPEM, keyPEM, ""); err != nil {
+		t.Fatal(err)
+	}
+	// No generated certificate to fall back to, and no way to store one.
+	for _, q := range []string{
+		`DELETE FROM tls_certificates WHERE kind = 'generated'`,
+		`CREATE TRIGGER refuse_insert BEFORE INSERT ON tls_certificates BEGIN SELECT RAISE(ABORT, 'disk full'); END`,
+		`CREATE TRIGGER refuse_update BEFORE UPDATE ON tls_certificates BEGIN SELECT RAISE(ABORT, 'disk full'); END`,
+	} {
+		if _, err := db.ExecContext(ctx, q); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := m.Reset(ctx); err == nil {
+		t.Fatal("reset must report that no certificate could be made")
+	}
+	if c, err := m.GetCertificate(nil); err != nil || c == nil {
+		t.Fatalf("after a failed regeneration the listener has no certificate: %v", err)
+	}
+}
+
+// TestSelfSignedRenewsWhileRunning: the self-signed certificate was renewed
+// only at start (B9), so a gateway that ran past its end served an expired
+// one, though ADR 0021 renews within thirty days of the end. Renew, which
+// the gateway now runs every few hours, makes a new one once inside that
+// window and leaves a fresh one alone.
+func TestSelfSignedRenewsWhileRunning(t *testing.T) {
+	ctx := context.Background()
+	repo, _ := newRepo(t)
+	m := &Manager{Repo: repo, Log: slog.New(slog.NewTextHandler(io.Discard, nil)), Hosts: []string{"gw.example.test"}}
+	if err := m.Load(ctx); err != nil {
+		t.Fatal(err)
+	}
+	first := m.Active()
+	if err := m.Renew(ctx); err != nil || m.Active().Fingerprint != first.Fingerprint {
+		t.Fatalf("a fresh certificate must be left alone: %v %s", err, m.Active().Fingerprint)
+	}
+	// Ten days before the end, as a long-running gateway would get there.
+	m.now = func() time.Time { return first.NotAfter.Add(-10 * 24 * time.Hour) }
+	if err := m.Renew(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if got := m.Active(); got.Fingerprint == first.Fingerprint || got.Source != SourceGenerated {
+		t.Fatalf("inside thirty days of its end the certificate must be renewed: %+v", got)
+	}
+}
