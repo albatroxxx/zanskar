@@ -19,6 +19,7 @@ import (
 	"github.com/albatroxxx/zanskar/internal/audit"
 	"github.com/albatroxxx/zanskar/internal/auth"
 	"github.com/albatroxxx/zanskar/internal/cloud"
+	"github.com/albatroxxx/zanskar/internal/cloud/cloudtest"
 	"github.com/albatroxxx/zanskar/internal/config"
 	"github.com/albatroxxx/zanskar/internal/credential"
 	"github.com/albatroxxx/zanskar/internal/crypto"
@@ -42,7 +43,7 @@ type asgEnv struct {
 	users    *user.Repo
 	user     *user.User
 	group    *asg.Group
-	fake     *cloud.Fake
+	fake     *cloudtest.Fake
 	db       *store.DB
 }
 
@@ -93,7 +94,7 @@ func newASGEnv(t *testing.T) *asgEnv {
 	if err != nil {
 		t.Fatal(err)
 	}
-	fake := cloud.NewFake()
+	fake := cloudtest.NewFake()
 	h := &Handler{Targets: target.NewRepo(db), Policies: policy.NewRepo(db), Vault: vault, Sessions: session.NewRepo(db), Tickets: ticket.NewStore(),
 		Audit: audit.NewLog(db), Log: log, ASGs: asgs, MFAEnrolled: func(context.Context, string) (bool, error) { return true, nil },
 		Cloud: func(context.Context, *asg.Group) (cloud.Provider, error) { return fake, nil }}

@@ -17,6 +17,7 @@ import (
 	"github.com/albatroxxx/zanskar/internal/audit"
 	"github.com/albatroxxx/zanskar/internal/auth"
 	"github.com/albatroxxx/zanskar/internal/cloud"
+	"github.com/albatroxxx/zanskar/internal/cloud/cloudtest"
 	"github.com/albatroxxx/zanskar/internal/gateway"
 	"github.com/albatroxxx/zanskar/internal/policy"
 	"github.com/albatroxxx/zanskar/internal/store"
@@ -34,7 +35,7 @@ type env struct {
 	admin    *http.Cookie
 	csrf     string
 	user     *http.Cookie
-	fake     *cloud.Fake
+	fake     *cloudtest.Fake
 }
 
 func newEnv(t *testing.T) *env {
@@ -62,7 +63,7 @@ func newEnv(t *testing.T) *env {
 	}
 
 	policies, live := policy.NewRepo(db), gateway.NewRegistry()
-	fake := cloud.NewFake()
+	fake := cloudtest.NewFake()
 	h := &AdminHandler{Repo: repo, Sync: syncFn, Identity: cloud.NewGatewayIdentity("arn:aws:iam::111111111111:role/zanskar-gateway"), Providers: func(context.Context, *Group) (cloud.Provider, error) { return fake, nil }, Policies: policies, Live: live, Audit: auditLog, Log: log}
 	mux := http.NewServeMux()
 	h.Register(mux)

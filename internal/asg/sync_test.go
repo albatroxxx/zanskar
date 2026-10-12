@@ -23,6 +23,7 @@ import (
 
 	"github.com/albatroxxx/zanskar/internal/audit"
 	"github.com/albatroxxx/zanskar/internal/cloud"
+	"github.com/albatroxxx/zanskar/internal/cloud/cloudtest"
 	"github.com/albatroxxx/zanskar/internal/gateway"
 	"github.com/albatroxxx/zanskar/internal/target"
 )
@@ -60,11 +61,11 @@ func sshHost(t *testing.T) (port int, fingerprint string) {
 	return port, ssh.FingerprintSHA256(signer.PublicKey())
 }
 
-func newSyncer(t *testing.T) (*Syncer, *Repo, *cloud.Fake, *gateway.Registry) {
+func newSyncer(t *testing.T) (*Syncer, *Repo, *cloudtest.Fake, *gateway.Registry) {
 	t.Helper()
 	d := testDB(t)
 	repo := NewRepo(d)
-	fake := cloud.NewFake()
+	fake := cloudtest.NewFake()
 	reg := gateway.NewRegistry()
 	s := &Syncer{
 		Repo:         repo,
