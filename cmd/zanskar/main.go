@@ -335,7 +335,7 @@ func serve(ctx context.Context) error {
 			&target.AdminHandler{Repo: targets, Prober: prober, Policies: policies, Live: registry, Vault: vault, Audit: auditLog, Log: log},
 			&policy.AdminHandler{Repo: policies, Users: users, Revoker: connectHandler, Audit: auditLog, Log: log},
 			&access.Handler{Requests: accessReqs, Policies: policies, Targets: targets, ASGs: asgRepo, Audit: auditLog, Log: log},
-			&asg.AdminHandler{Repo: asgRepo, Sync: syncer.SyncGroup, Identity: awsIdentity, Providers: cloudProviders, Policies: policies, Live: registry, Vault: vault, Audit: auditLog, Log: log},
+			&asg.AdminHandler{Repo: asgRepo, Sync: syncer.SyncGroup, Identity: awsIdentity, Providers: asg.AWSFresh(), Policies: policies, Live: registry, Vault: vault, Audit: auditLog, Log: log},
 			&session.Handler{Repo: sessionRepo, Audit: auditLog, AnchorKey: anchorKey, Registry: registry, Storage: storage, Log: log},
 			&settings.Handler{Service: runtime, Audit: auditLog, Log: log},
 			&recstorage.Handler{Manager: storageMgr, Audit: auditLog, Log: log},

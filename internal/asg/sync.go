@@ -420,6 +420,17 @@ func (sc *schedule) done(id string, interval time.Duration, err error, now time.
 	g.next = now.Add(min(wait, limit))
 }
 
+// AWSFresh is a ProviderFactory for AWS that builds a new client, and so
+// assumes the role again, on every call. The access test uses it: it must
+// find out whether the role can be assumed now, and a cached client would
+// reuse credentials for up to fifteen minutes and pass a trust policy that
+// was revoked a minute ago (B1).
+func AWSFresh() ProviderFactory {
+	return func(ctx context.Context, g *Group) (cloud.Provider, error) {
+		return cloud.NewAWS(ctx, cloud.AWSAccess{Region: g.Region, RoleARN: g.RoleARN, ExternalID: g.ExternalID})
+	}
+}
+
 // AWSProviders is a ProviderFactory for AWS that caches one provider per
 // group and rebuilds it when the group's role or region changes.
 func AWSProviders() ProviderFactory {

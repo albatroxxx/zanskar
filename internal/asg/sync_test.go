@@ -403,3 +403,35 @@ func TestPollScheduleBacksOff(t *testing.T) {
 		t.Fatal("backoff must not undercut a group's own long interval")
 	}
 }
+
+// TestAccessTestAssumesTheRoleAfresh: "Test access" on a saved group used the
+// syncer's cached client (B1), whose credentials are kept for up to fifteen
+// minutes, so a trust policy revoked a minute ago still tested OK. The test
+// gets a factory that builds a new client, and so assumes the role again,
+// on every call; the syncer keeps its cache.
+func TestAccessTestAssumesTheRoleAfresh(t *testing.T) {
+	ctx := context.Background()
+	g := sample()
+	if err := g.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	g.ID = "g1"
+	fresh := AWSFresh()
+	a, err := fresh(ctx, g)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := fresh(ctx, g)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a == b {
+		t.Fatal("the access test's factory must not hand back a cached client")
+	}
+	cached := AWSProviders()
+	c, _ := cached(ctx, g)
+	d, _ := cached(ctx, g)
+	if c != d {
+		t.Fatal("the syncer's factory keeps one client per group")
+	}
+}
