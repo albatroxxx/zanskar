@@ -5078,7 +5078,7 @@ components:
           description: On create only, the ExternalId an IAM preview minted, so the saved group matches the role created with it (ADR 0023). Omitted, a new one is minted.
         role_arn:
           type: string
-          pattern: "^arn:aws(-[a-z]+)?:iam::[0-9]{12}:role/.+$"
+          pattern: "^arn:aws(-us-gov|-cn)?:iam::[0-9]{12}:role/.+$"
         os_family:
           $ref: "#/components/schemas/OsFamily"
         ports:
