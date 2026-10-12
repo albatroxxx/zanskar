@@ -283,13 +283,7 @@ func (h *Handler) desktop(w http.ResponseWriter, r *http.Request) {
 	h.Registry.SetGuacID(s.ID, gc.ID) // lets auditors join this desktop via guacd
 	defer h.Registry.Remove(s.ID)
 	reason, berr := guac.Bridge(ctx, h.Log, gc, ws, rec, guac.Limits{Idle: g.IdleTimeout, Max: g.MaxSession, AllowClipboard: g.AllowClipboard, AllowFileTransfer: g.AllowFileTransfer})
-	size, sum, cerr := rec.Close()
-	if cerr != nil {
-		h.Log.Error("close recording", "session", s.ID, "err", cerr)
-	}
-	if err := h.Sessions.FinishRecording(context.Background(), recRow.ID, size, sum); err != nil {
-		h.Log.Error("finish recording", "session", s.ID, "err", err)
-	}
+	h.finishRecording(r, actor, s.ID, recRow, rec)
 	if berr != nil {
 		h.Log.Warn("desktop bridge ended with error", "session", s.ID, "err", berr)
 	}

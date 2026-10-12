@@ -136,13 +136,7 @@ func (h *Handler) database(w http.ResponseWriter, r *http.Request) {
 	defer h.Registry.Remove(s.ID)
 
 	reason, berr := dbgw.Bridge(ctx, h.Log, h.DockerPath, spec, ws, rec, cols, rows, dbgw.Limits{Idle: g.IdleTimeout, Max: g.MaxSession, SessionID: s.ID})
-	size, sum, cerr := rec.Close()
-	if cerr != nil {
-		h.Log.Error("close recording", "session", s.ID, "err", cerr)
-	}
-	if err := h.Sessions.FinishRecording(context.Background(), recRow.ID, size, sum); err != nil {
-		h.Log.Error("finish recording", "session", s.ID, "err", err)
-	}
+	h.finishRecording(r, actor, s.ID, recRow, rec)
 	if berr != nil {
 		h.Log.Warn("db bridge ended with error", "session", s.ID, "err", berr)
 		if reason == "" || reason == "error" {

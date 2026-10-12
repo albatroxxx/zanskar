@@ -56,6 +56,7 @@ const actionLabels: Record<string, string> = {
   'policy.update': 'Policy updated',
   'policy.delete': 'Policy deleted',
   'recording.download': 'Recording downloaded',
+  'recording.lost': 'Recording could not be saved',
   'recording.purge': 'Recordings purged',
   'recording.view': 'Recording played',
   'recording.storage.move': 'Recordings moved to new storage',

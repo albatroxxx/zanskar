@@ -161,13 +161,7 @@ func (h *Handler) winrm(w http.ResponseWriter, r *http.Request) {
 		lim.Tap = tap
 	}
 	reason, berr := winrmgw.Bridge(ctx, h.Log, sh, ws, rec, cols, rows, lim)
-	size, sum, cerr := rec.Close()
-	if cerr != nil {
-		h.Log.Error("close recording", "session", s.ID, "err", cerr)
-	}
-	if err := h.Sessions.FinishRecording(context.Background(), recRow.ID, size, sum); err != nil {
-		h.Log.Error("finish recording", "session", s.ID, "err", err)
-	}
+	h.finishRecording(r, actor, s.ID, recRow, rec)
 	if berr != nil {
 		h.Log.Warn("winrm bridge ended with error", "session", s.ID, "err", berr)
 	}
