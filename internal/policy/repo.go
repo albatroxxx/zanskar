@@ -66,7 +66,7 @@ func (r *Repo) Update(ctx context.Context, p *Policy) error {
 	if err != nil {
 		return mapErr(err)
 	}
-	return affected(res)
+	return store.Affected(res, ErrNotFound)
 }
 
 // Get returns one policy.
@@ -128,7 +128,7 @@ func (r *Repo) Delete(ctx context.Context, id string) error {
 	if err != nil {
 		return err
 	}
-	return affected(res)
+	return store.Affected(res, ErrNotFound)
 }
 
 // ForUser returns the enabled policies that apply to the user: those bound to
@@ -179,9 +179,7 @@ func encode(p *Policy) (sel, protos, wins, rules []byte, err error) {
 	return
 }
 
-type scanner interface{ Scan(dest ...any) error }
-
-func scan(s scanner) (*Policy, error) {
+func scan(s store.Scanner) (*Policy, error) {
 	var (
 		p                        Policy
 		sel, protos, wins, rules []byte
@@ -268,17 +266,6 @@ func nullStr(s string) any {
 		return nil
 	}
 	return s
-}
-
-func affected(res sql.Result) error {
-	n, err := res.RowsAffected()
-	if err != nil {
-		return err
-	}
-	if n == 0 {
-		return ErrNotFound
-	}
-	return nil
 }
 
 func mapErr(err error) error {

@@ -189,7 +189,7 @@ func (r *Repo) Update(ctx context.Context, t *Target) error {
 	if err != nil {
 		return mapErr(err)
 	}
-	if err := affected(res); err != nil {
+	if err := store.Affected(res, ErrNotFound); err != nil {
 		return err
 	}
 	if err := replaceCredentialsTx(ctx, tx, r.db, t.ID, t.Credentials); err != nil {
@@ -216,7 +216,7 @@ func (r *Repo) Delete(ctx context.Context, id string) error {
 	if err != nil {
 		return mapErr(err)
 	}
-	if err := affected(res); err != nil {
+	if err := store.Affected(res, ErrNotFound); err != nil {
 		return err
 	}
 	if _, err := tx.ExecContext(ctx, r.db.Rebind(`DELETE FROM target_credentials WHERE target_id = ?`), id); err != nil {
@@ -390,7 +390,7 @@ func (r *Repo) TrustHostKey(ctx context.Context, id, fingerprint string) (*Targe
 	if err != nil {
 		return nil, err
 	}
-	if err := affected(res); err != nil {
+	if err := store.Affected(res, ErrNotFound); err != nil {
 		return nil, ErrFingerprintMismatch
 	}
 	t.HostKeyStatus = HostKeyTrusted
@@ -430,7 +430,7 @@ func (r *Repo) TrustCertificate(ctx context.Context, id string, proto Protocol, 
 	if err != nil {
 		return nil, err
 	}
-	if err := affected(res); err != nil {
+	if err := store.Affected(res, ErrNotFound); err != nil {
 		return nil, ErrFingerprintMismatch
 	}
 	*pinned, *pending = &fingerprint, nil
@@ -505,9 +505,7 @@ func replaceCredentialsTx(ctx context.Context, tx *sql.Tx, db *store.DB, id stri
 	return nil
 }
 
-type scanner interface{ Scan(dest ...any) error }
-
-func scanTarget(s scanner) (*Target, error) {
+func scanTarget(s store.Scanner) (*Target, error) {
 	var (
 		t                       Target
 		osFamily, hkStatus      string
@@ -581,17 +579,6 @@ func nullStr(s *string) any {
 		return nil
 	}
 	return *s
-}
-
-func affected(res sql.Result) error {
-	n, err := res.RowsAffected()
-	if err != nil {
-		return err
-	}
-	if n == 0 {
-		return ErrNotFound
-	}
-	return nil
 }
 
 func mapErr(err error) error {

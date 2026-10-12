@@ -145,7 +145,7 @@ func (r *Repo) Update(ctx context.Context, id, displayName, email string, status
 		}
 		return err
 	}
-	return affected(res)
+	return store.Affected(res, ErrNotFound)
 }
 
 // SetRoles replaces the user's roles. It refuses to leave the system with no admin.
@@ -202,7 +202,7 @@ func (r *Repo) SetPasswordHash(ctx context.Context, id, hash string, mustChange 
 	if err != nil {
 		return err
 	}
-	return affected(res)
+	return store.Affected(res, ErrNotFound)
 }
 
 // Delete removes the user. Audit rows keep the id as plain text by design.
@@ -230,7 +230,7 @@ func (r *Repo) Delete(ctx context.Context, id string) error {
 		}
 		return err
 	}
-	return affected(res)
+	return store.Affected(res, ErrNotFound)
 }
 
 // HasHistory reports whether sessions or recording views name the account,
@@ -259,7 +259,7 @@ func (r *Repo) RecordLoginFailure(ctx context.Context, id string, maxFailures in
 	if err != nil {
 		return false, err
 	}
-	if err := affected(res); err != nil {
+	if err := store.Affected(res, ErrNotFound); err != nil {
 		return false, err
 	}
 	var failed int
@@ -344,9 +344,7 @@ func setRolesTx(ctx context.Context, tx *sql.Tx, db *store.DB, id string, roles 
 	return nil
 }
 
-type scanner interface{ Scan(dest ...any) error }
-
-func scanUser(s scanner) (*User, error) {
+func scanUser(s store.Scanner) (*User, error) {
 	var (
 		u                                   User
 		email, hash, idp, ext               sql.NullString
@@ -374,17 +372,6 @@ func nullStr(s string) any {
 	return s
 }
 
-func affected(res sql.Result) error {
-	n, err := res.RowsAffected()
-	if err != nil {
-		return err
-	}
-	if n == 0 {
-		return ErrNotFound
-	}
-	return nil
-}
-
 // LinkExternal ties the account to an identity provider's subject, so that
 // sign-ins through idpID find it by externalID (GetByExternalID). It writes
 // the link and nothing else: roles, password, profile and status stay as they
@@ -401,7 +388,7 @@ func (r *Repo) LinkExternal(ctx context.Context, id, idpID, externalID string) e
 		}
 		return err
 	}
-	return affected(res)
+	return store.Affected(res, ErrNotFound)
 }
 
 // GetByExternalID finds a user provisioned from an identity provider.

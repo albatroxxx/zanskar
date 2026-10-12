@@ -139,7 +139,7 @@ func (r *Repo) Update(ctx context.Context, id, name, description string) error {
 		}
 		return err
 	}
-	return affected(res)
+	return store.Affected(res, ErrNotFound)
 }
 
 // Delete removes a group and returns, in name order, the ids of the access
@@ -177,7 +177,7 @@ func (r *Repo) Delete(ctx context.Context, id string) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := affected(res); err != nil {
+	if err := store.Affected(res, ErrNotFound); err != nil {
 		return nil, err
 	}
 	if err := tx.Commit(); err != nil {
@@ -371,9 +371,7 @@ func (r *Repo) GroupsForUser(ctx context.Context, userID string) ([]*Group, erro
 	return out, rows.Err()
 }
 
-type scanner interface{ Scan(dest ...any) error }
-
-func scanGroup(s scanner) (*Group, error) {
+func scanGroup(s store.Scanner) (*Group, error) {
 	var (
 		g                Group
 		idp, ext         sql.NullString
@@ -395,15 +393,4 @@ func nullStr(s string) any {
 		return nil
 	}
 	return s
-}
-
-func affected(res sql.Result) error {
-	n, err := res.RowsAffected()
-	if err != nil {
-		return err
-	}
-	if n == 0 {
-		return ErrNotFound
-	}
-	return nil
 }

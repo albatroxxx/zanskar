@@ -283,7 +283,7 @@ func (r *Repo) Update(ctx context.Context, p *Provider, c *Config) error {
 		}
 		return err
 	}
-	return affected(res)
+	return store.Affected(res, ErrNotFound)
 }
 
 // Get returns the public row.
@@ -352,7 +352,7 @@ func (r *Repo) Delete(ctx context.Context, id string) error {
 	if err != nil {
 		return err
 	}
-	return affected(res)
+	return store.Affected(res, ErrNotFound)
 }
 
 // Identity is what a provider asserts after a successful authentication.
@@ -642,9 +642,7 @@ func (r *Repo) seal(id string, c *Config) ([]byte, int, error) {
 	return r.ring.Encrypt(keyring.AAD("identity_providers", id), plain)
 }
 
-type scanner interface{ Scan(dest ...any) error }
-
-func scan(s scanner) (*Provider, error) {
+func scan(s store.Scanner) (*Provider, error) {
 	var (
 		p                Provider
 		typ              string
@@ -658,17 +656,6 @@ func scan(s scanner) (*Provider, error) {
 	}
 	p.Type, p.CreatedAt, p.UpdatedAt = Type(typ), created.Time, updated.Time
 	return &p, nil
-}
-
-func affected(res sql.Result) error {
-	n, err := res.RowsAffected()
-	if err != nil {
-		return err
-	}
-	if n == 0 {
-		return ErrNotFound
-	}
-	return nil
 }
 
 func firstNonEmpty(a, b string) string {

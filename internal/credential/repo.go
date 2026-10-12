@@ -156,7 +156,7 @@ func (v *Vault) Update(ctx context.Context, id string, m Metadata) (*Credential,
 		}
 		return nil, err
 	}
-	if err := affected(res); err != nil {
+	if err := store.Affected(res, ErrNotFound); err != nil {
 		return nil, err
 	}
 	return v.Get(ctx, id)
@@ -215,7 +215,7 @@ func (v *Vault) Rotate(ctx context.Context, id string, s *Secret) (*Credential, 
 	if err != nil {
 		return nil, err
 	}
-	if err := affected(res); err != nil {
+	if err := store.Affected(res, ErrNotFound); err != nil {
 		return nil, err
 	}
 	return v.Get(ctx, id)
@@ -237,7 +237,7 @@ func (v *Vault) Delete(ctx context.Context, id string) error {
 		}
 		return err
 	}
-	return affected(res)
+	return store.Affected(res, ErrNotFound)
 }
 
 // Opened is a credential with its secret in memory. Only the gateway calls
@@ -322,7 +322,7 @@ func (v *Vault) PrepareRotation(ctx context.Context, id string, s *Secret) (*Cre
 	if err != nil {
 		return nil, err
 	}
-	if err := affected(res); err != nil {
+	if err := store.Affected(res, ErrNotFound); err != nil {
 		return nil, err
 	}
 	return v.Get(ctx, id)
@@ -358,7 +358,7 @@ func (v *Vault) CutOver(ctx context.Context, id string) (*Credential, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := affected(res); err != nil {
+	if err := store.Affected(res, ErrNotFound); err != nil {
 		return nil, err
 	}
 	return v.Get(ctx, id)
@@ -378,7 +378,7 @@ func (v *Vault) CancelRotation(ctx context.Context, id string) (*Credential, err
 	if err != nil {
 		return nil, err
 	}
-	if err := affected(res); err != nil {
+	if err := store.Affected(res, ErrNotFound); err != nil {
 		return nil, err
 	}
 	return v.Get(ctx, id)
@@ -399,7 +399,7 @@ func (v *Vault) Retire(ctx context.Context, id string) (*Credential, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := affected(res); err != nil {
+	if err := store.Affected(res, ErrNotFound); err != nil {
 		return nil, err
 	}
 	return v.Get(ctx, id)
@@ -448,9 +448,7 @@ func (v *Vault) unseal(ctx context.Context, id string, pending bool) ([]byte, er
 	return plain, nil
 }
 
-type scanner interface{ Scan(dest ...any) error }
-
-func scan(s scanner) (*Credential, error) {
+func scan(s store.Scanner) (*Credential, error) {
 	var (
 		c                         Credential
 		typ, mode                 string
@@ -495,17 +493,6 @@ func nullStr(s string) any {
 		return nil
 	}
 	return s
-}
-
-func affected(res sql.Result) error {
-	n, err := res.RowsAffected()
-	if err != nil {
-		return err
-	}
-	if n == 0 {
-		return ErrNotFound
-	}
-	return nil
 }
 
 // UserSuppliedSentinel is the credential_id an admin binds to a slot to mean

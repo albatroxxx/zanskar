@@ -392,7 +392,7 @@ func (r *Repo) Update(ctx context.Context, g *Group) error {
 	if err != nil {
 		return mapErr(err)
 	}
-	if err := affected(res); err != nil {
+	if err := store.Affected(res, ErrNotFound); err != nil {
 		return err
 	}
 	if err := setCredentialsTx(ctx, tx, r.db, g.ID, g.Credentials); err != nil {
@@ -464,7 +464,7 @@ func (r *Repo) Delete(ctx context.Context, id string) error {
 	if err != nil {
 		return err
 	}
-	if err := affected(res); err != nil {
+	if err := store.Affected(res, ErrNotFound); err != nil {
 		return err
 	}
 	if _, err := tx.ExecContext(ctx, r.db.Rebind(`DELETE FROM asg_credentials WHERE asg_id = ?`), id); err != nil {
@@ -659,9 +659,7 @@ func setCredentialsTx(ctx context.Context, tx *sql.Tx, db *store.DB, groupID str
 	return nil
 }
 
-type scanner interface{ Scan(dest ...any) error }
-
-func scanGroup(s scanner) (*Group, error) {
+func scanGroup(s store.Scanner) (*Group, error) {
 	var (
 		g                        Group
 		osFamily                 string
@@ -692,7 +690,7 @@ func scanGroup(s scanner) (*Group, error) {
 	return &g, nil
 }
 
-func scanInstance(s scanner) (*Instance, error) {
+func scanInstance(s store.Scanner) (*Instance, error) {
 	var (
 		in                                  Instance
 		priv, pub, az, lb, hk, hks, tf, wtf sql.NullString
@@ -737,17 +735,6 @@ func timeOrNil(t *time.Time) any {
 		return nil
 	}
 	return store.TimeArg(*t)
-}
-
-func affected(res sql.Result) error {
-	n, err := res.RowsAffected()
-	if err != nil {
-		return err
-	}
-	if n == 0 {
-		return ErrNotFound
-	}
-	return nil
 }
 
 func mapErr(err error) error {
