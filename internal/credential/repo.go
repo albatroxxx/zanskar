@@ -472,8 +472,13 @@ func scan(s scanner) (*Credential, error) {
 	c.Username, c.Domain, c.PublicKey, c.CreatedBy = username.String, domain.String, pub.String, by.String
 	c.KeyVersion, c.HasSecret = int(keyVersion.Int64), hasSecret
 	c.CertificateTTLSeconds = int(certTTL.Int64)
+	// An empty allowlist lets a certificate name any login user, so one
+	// that cannot be read must not pass for empty (B12): the credential is
+	// unusable until the row is repaired.
 	if len(principals) > 0 {
-		_ = json.Unmarshal(principals, &c.CertificatePrincipals)
+		if err := json.Unmarshal(principals, &c.CertificatePrincipals); err != nil {
+			return nil, fmt.Errorf("credential %s: unreadable certificate principals: %w", c.ID, err)
+		}
 	}
 	if pendingPub.Valid || retiredPub.Valid {
 		c.Rotation = &Rotation{PendingPublicKey: pendingPub.String, PendingSince: pendingAt.Ptr(), RetiredPublicKey: retiredPub.String, RetiredAt: retiredAt.Ptr()}

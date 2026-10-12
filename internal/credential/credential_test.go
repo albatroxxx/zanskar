@@ -574,3 +574,28 @@ func TestCertificateAuthorityRotationRoutes(t *testing.T) {
 		t.Fatalf("retire twice: %d %s", code, body)
 	}
 }
+
+// TestUnreadablePrincipalsFailClosed: an SSH authority's principal allowlist
+// that could not be read was taken as empty (B12), and an empty allowlist
+// lets the certificate name any login user, so a damaged row opened every
+// account on every target the authority signs for. It is now an error: the
+// credential is not used until the row is repaired.
+func TestUnreadablePrincipalsFailClosed(t *testing.T) {
+	v, db := testVault(t)
+	ctx := context.Background()
+	caPEM, err := GenerateSSHKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := &Credential{Name: "ca", Type: TypeSSHCA, Mode: ModeVaulted, CertificateTTLSeconds: 120, CertificatePrincipals: []string{"deploy"}}
+	if err := v.Create(ctx, c, &Secret{PrivateKey: caPEM}, ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, `UPDATE credentials SET certificate_principals = '{"deploy"' WHERE id = ?`, c.ID); err != nil {
+		t.Fatal(err)
+	}
+	got, err := v.Get(ctx, c.ID)
+	if err == nil {
+		t.Fatalf("a damaged allowlist read as %v (permits root: %v), want an error", got.CertificatePrincipals, got.PermitsPrincipal("root"))
+	}
+}
