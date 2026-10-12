@@ -53,7 +53,7 @@ const MaxRules = 32
 type TimeWindow struct {
 	Days []string `json:"days"` // mon..sun
 	From string   `json:"from"` // "09:00"
-	To   string   `json:"to"`   // "18:00"; may be less than From for overnight windows
+	To   string   `json:"to"`   // "18:00"; less than From for overnight windows, equal for all day
 	TZ   string   `json:"tz"`   // IANA zone, default UTC
 }
 
@@ -270,7 +270,12 @@ func (w TimeWindow) Open(now time.Time) bool {
 	minute := local.Hour()*60 + local.Minute()
 	today := local.Weekday()
 	yesterday := (today + 6) % 7
-	if from <= to {
+	if from == to {
+		// Equal ends are the whole day, as 00:00 to 00:00 is written to say;
+		// read as an empty span, such a window never opened (B18).
+		return w.hasDay(today)
+	}
+	if from < to {
 		return w.hasDay(today) && minute >= from && minute < to
 	}
 	// Overnight window, e.g. 22:00 to 06:00: either after From today, or

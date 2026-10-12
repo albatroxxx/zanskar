@@ -525,10 +525,11 @@ func Bridge(ctx context.Context, log *slog.Logger, docker string, spec Spec, ws 
 			if rerr != nil {
 				return
 			}
-			mu.Lock()
-			lastIn = time.Now()
-			mu.Unlock()
+			// Only keystrokes count as activity, not resizes (B18).
 			if typ == websocket.MessageBinary {
+				mu.Lock()
+				lastIn = time.Now()
+				mu.Unlock()
 				if _, werr := f.Write(data); werr != nil {
 					return
 				}
@@ -540,6 +541,9 @@ func Bridge(ctx context.Context, log *slog.Logger, docker string, spec Spec, ws 
 			}
 			switch fr.T {
 			case "i":
+				mu.Lock()
+				lastIn = time.Now()
+				mu.Unlock()
 				if rec != nil {
 					_ = rec.Input([]byte(fr.D))
 				}
