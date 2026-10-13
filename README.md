@@ -58,8 +58,12 @@ a switch to another healthy instance instead of a dead terminal.
 - **Identity, kept separate** — local accounts (Argon2id + TOTP, onboarding with a one-time password
   replaced at first sign-in), OIDC and LDAP/AD sign-in.
 - **Recorded and audited** — every session is recorded; recordings and command transcripts can be
-  downloaded, with every view and download audited; the audit log is hash-chained with a `verify`
-  command and can be streamed to a SIEM.
+  downloaded, with every view and download audited; the audit log is hash-chained, anchored by a
+  signature every hour so that even its newest events cannot be removed unnoticed, checked with a
+  `verify` command, and streamed to a SIEM.
+- **Access taken away ends the session** — disabling an account, changing its roles or groups, or
+  revoking a policy ends the live sessions that access allowed, with the reason shown to the user;
+  terminal sessions can be shadowed live, as desktops already could.
 - **Operated from the console** — HTTPS out of the box with a gateway-managed certificate you replace
   on the Settings page, runtime settings applied live, a restart-required banner when the environment
   file drifts, recording storage moved to an S3-compatible bucket without a restart, and the gateway's
