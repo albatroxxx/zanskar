@@ -396,7 +396,6 @@ export interface AuditFacets {
   object_types: string[]
 }
 
-/** Recording retention policy (admin-editable). Mirrors internal/session. */
 /** One runtime setting resolved with its precedence (ADR 0020). Mirrors internal/settings.Value. */
 export interface RuntimeSetting {
   key: string
@@ -510,6 +509,7 @@ export interface SystemStatus {
   drain?: { requested_at: string; requested_by: string; deadline: string; wait_minutes: number }
 }
 
+/** Recording retention policy (admin-editable). Mirrors internal/session. */
 export interface RetentionPolicy {
   max_age_days: number
   max_total_bytes: number

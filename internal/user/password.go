@@ -23,8 +23,9 @@ const (
 	argonKeyLen    = 32
 	argonSaltLen   = 16
 
-	// Password length limits. The lower bound follows NIST SP 800-63B; the
-	// upper bound stops a client from forcing a huge hash computation.
+	// MinPasswordLen and MaxPasswordLen bound a password's length. The lower
+	// bound follows NIST SP 800-63B; the upper bound stops a client from
+	// forcing a huge hash computation.
 	MinPasswordLen = 12
 	MaxPasswordLen = 256
 )

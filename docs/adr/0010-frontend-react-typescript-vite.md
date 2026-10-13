@@ -67,3 +67,10 @@ lazily loaded chunk, fetched the first time it is opened; the entry bundle is ab
 and the player (with asciinema-player) loads only for playback. The terminal, desktop and shadow
 pages were already split.
 
+## Amendment, 2026-10-13: the linter is oxlint
+
+The decision above names ESLint; the console is linted with oxlint instead (`npm run lint`, which
+CI runs), configured in `web/.oxlintrc.json` with its React and TypeScript plugins. The type check
+is part of `npm run build`, and CI runs both. oxlint reads ESLint-style disable comments, so the
+few `react-hooks/exhaustive-deps` directives in the pages are live: each marks an effect keyed on
+fewer values on purpose.
