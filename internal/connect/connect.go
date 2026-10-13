@@ -51,8 +51,11 @@ type Handler struct {
 	Audit       *audit.Log
 	Log         *slog.Logger
 	MFAEnrolled func(ctx context.Context, userID string) (bool, error)
-	// Prober re-verifies a target's pinned TLS certificate just before a
-	// desktop connection (ADR 0012); the gateway enforces the RDP pin itself.
+	// Prober holds the address rules a session's target must pass when it
+	// is dialled (checkAddress); nil applies them with no exception. It also
+	// re-verifies a target's pinned TLS certificate just before a desktop
+	// connection (ADR 0012), the gateway enforcing the RDP pin itself, which
+	// a nil Prober cannot do.
 	Prober      *target.Prober
 	DialTimeout time.Duration
 	// Draining reports that the gateway is about to restart: no new session
@@ -321,6 +324,43 @@ func (h *Handler) connect(w http.ResponseWriter, r *http.Request) {
 
 // issueTicket runs policy, pinning and credential checks for an endpoint and
 // issues a connect ticket. A non-empty code is a user-facing refusal.
+// admits applies the access policies to userID reaching ep over proto: when
+// a ticket is issued, and again when it is redeemed, so a policy, a group
+// membership or an approval revoked in between is not outrun. It returns
+// the allowing decision, or the code and message of a refusal.
+func (h *Handler) admits(ctx context.Context, userID string, ep *endpoint, proto target.Protocol) (policy.Decision, string, string, error) {
+	pols, err := h.Policies.ForUser(ctx, userID)
+	if err != nil {
+		return policy.Decision{}, "", "", err
+	}
+	id, asgID, tags := ep.policyRef()
+	d := policy.Evaluate(pols, policy.TargetRef{ID: id, ASGID: asgID, Tags: tags}, string(proto), time.Now())
+	if !d.Allowed {
+		return d, "policy_denied", d.Reason, nil
+	}
+	// Approval-gated access needs a live grant (ADR 0018); a standing policy
+	// covering the same target would have set RequireApproval false above.
+	if d.RequireApproval && h.Access != nil {
+		granted, err := h.Access.HasActiveGrant(ctx, userID, ep.TargetID, ep.ASGID, string(proto), time.Now())
+		if err != nil {
+			return d, "", "", err
+		}
+		if !granted {
+			return d, "approval_required", "access to this target requires an approved request", nil
+		}
+	}
+	if d.RequireMFA && h.MFAEnrolled != nil {
+		enrolled, err := h.MFAEnrolled(ctx, userID)
+		if err != nil {
+			return d, "", "", err
+		}
+		if !enrolled {
+			return d, "mfa_required_by_policy", "this policy requires an enrolled authenticator", nil
+		}
+	}
+	return d, "", "", nil
+}
+
 func (h *Handler) issueTicket(ctx context.Context, p *auth.Principal, ip string, ep *endpoint, proto target.Protocol, uc *userCredential, failoverFrom string) (*connectResponse, string, string, error) {
 	if h.draining() {
 		return nil, "restarting", restartingMsg, nil
@@ -334,34 +374,9 @@ func (h *Handler) issueTicket(ctx context.Context, p *auth.Principal, ip string,
 	if ep.ASGID != "" && proto == target.Database {
 		return nil, "protocol_unavailable", "database access is configured per endpoint, not per autoscaling group", nil
 	}
-	pols, err := h.Policies.ForUser(ctx, p.User.ID)
-	if err != nil {
-		return nil, "", "", err
-	}
-	id, asgID, tags := ep.policyRef()
-	d := policy.Evaluate(pols, policy.TargetRef{ID: id, ASGID: asgID, Tags: tags}, string(proto), time.Now())
-	if !d.Allowed {
-		return nil, "policy_denied", d.Reason, nil
-	}
-	// Approval-gated access needs a live grant (ADR 0018); a standing policy
-	// covering the same target would have set RequireApproval false above.
-	if d.RequireApproval && h.Access != nil {
-		granted, err := h.Access.HasActiveGrant(ctx, p.User.ID, ep.TargetID, ep.ASGID, string(proto), time.Now())
-		if err != nil {
-			return nil, "", "", err
-		}
-		if !granted {
-			return nil, "approval_required", "access to this target requires an approved request", nil
-		}
-	}
-	if d.RequireMFA && h.MFAEnrolled != nil {
-		enrolled, err := h.MFAEnrolled(ctx, p.User.ID)
-		if err != nil {
-			return nil, "", "", err
-		}
-		if !enrolled {
-			return nil, "mfa_required_by_policy", "this policy requires an enrolled authenticator", nil
-		}
+	d, code, msg, err := h.admits(ctx, p.User.ID, ep, proto)
+	if err != nil || code != "" {
+		return nil, code, msg, err
 	}
 	switch proto {
 	case target.SSH:
@@ -590,7 +605,20 @@ func (h *Handler) terminal(w http.ResponseWriter, r *http.Request) {
 		timeout = 10 * time.Second
 	}
 	fp := ep.HostKeyFingerprint
-	client, err := sshgw.Dial(r.Context(), sshgw.Endpoint{Address: ep.Address, Port: ep.port(target.SSH), HostKeyFingerprint: fp, HostKeyTrusted: true}, a, timeout)
+	// Checked here, after the upgrade, so the user is told why. The bridge
+	// then dials the checked address, not the name: a second lookup could
+	// answer with somewhere else. The host key pin does not depend on the
+	// name.
+	dialIP, err := h.checkAddress(r, g, ep)
+	if err != nil {
+		msg := "could not connect to the target"
+		if errors.Is(err, target.ErrAddressForbidden) {
+			msg = addressRefusedMsg
+		}
+		endWith(session.EndError, msg)
+		return
+	}
+	client, err := sshgw.Dial(r.Context(), sshgw.Endpoint{Address: dialIP.String(), Port: ep.port(target.SSH), HostKeyFingerprint: fp, HostKeyTrusted: true}, a, timeout)
 	if err != nil {
 		reason, msg := session.EndError, "could not connect to the target"
 		switch {
@@ -670,10 +698,31 @@ func (h *Handler) redeem(w http.ResponseWriter, r *http.Request) (*ticket.Grant,
 		httpx.WriteError(w, r, http.StatusServiceUnavailable, "restarting", restartingMsg)
 		return nil, false
 	}
-	g, err := h.Tickets.Redeem(r.URL.Query().Get("ticket"), auth.ClientIP(r))
+	// The browser sends the cookie of its sign-in with the upgrade; the
+	// ticket is redeemed only by the sign-in that asked for it (L9).
+	sessionID := ""
+	if p, ok := auth.FromContext(r.Context()); ok {
+		sessionID = p.Session.ID
+	}
+	g, err := h.Tickets.Redeem(r.URL.Query().Get("ticket"), auth.ClientIP(r), sessionID)
 	if err != nil {
 		httpx.WriteError(w, r, http.StatusUnauthorized, "invalid_ticket", "invalid or expired ticket")
 		return nil, false
+	}
+	// Up to 30 seconds have passed since the policies allowed this: ask
+	// them again. Where the target itself is gone, the handler says so.
+	if ep, err := h.resolveGrant(r.Context(), g); err == nil {
+		_, code, msg, err := h.admits(r.Context(), g.UserID, ep, target.Protocol(g.Protocol))
+		if err != nil {
+			zero(g.UserSecret)
+			httpx.Internal(w, r, h.Log, err)
+			return nil, false
+		}
+		if code != "" {
+			zero(g.UserSecret)
+			httpx.WriteError(w, r, codeStatus(code), code, msg)
+			return nil, false
+		}
 	}
 	return g, true
 }

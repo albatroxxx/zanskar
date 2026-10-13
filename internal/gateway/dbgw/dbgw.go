@@ -322,15 +322,46 @@ type Limits struct {
 	tick      time.Duration
 }
 
+// childEnvVars are the only variables a docker (or podman) child takes from
+// the gateway's environment: where to find programs, the home directory its
+// configuration lives under, and the settings that say which daemon to talk
+// to and how. The gateway's environment can hold the master key, the database
+// DSN, the SIEM webhook secret and cloud credentials, and a child is handed
+// whatever it is given, so it is given this list and nothing else. The Podman
+// names (runtime directory, connection) are not verified against a Podman host.
+var childEnvVars = []string{
+	"PATH", "HOME",
+	"DOCKER_HOST", "DOCKER_CONTEXT", "DOCKER_CONFIG", "DOCKER_CERT_PATH", "DOCKER_TLS_VERIFY", "DOCKER_TLS", "DOCKER_API_VERSION",
+	"XDG_RUNTIME_DIR", "CONTAINER_HOST", "CONTAINER_CONNECTION", "CONTAINERS_CONF",
+}
+
+// childEnv builds a docker child's environment: those of childEnvVars that
+// are set, then extra, a session's own variables (the proxy's configuration,
+// which `docker run -e NAME` reads from here). It is never nil: exec.Cmd
+// takes a nil Env to mean the gateway's whole environment.
+func childEnv(extra []string) []string {
+	env := make([]string, 0, len(childEnvVars)+len(extra))
+	for _, k := range childEnvVars {
+		if v, ok := os.LookupEnv(k); ok {
+			env = append(env, k+"="+v)
+		}
+	}
+	return append(env, extra...)
+}
+
+// dockerCommand is every docker child the gateway starts: the CLI with args,
+// bound to ctx, in the environment childEnv builds.
+func dockerCommand(ctx context.Context, docker string, extra []string, args ...string) *exec.Cmd {
+	cmd := exec.CommandContext(ctx, docker, args...) // #nosec G204 G702 -- args built from fixed literals and validated fields (a stored, validated target), no shell
+	cmd.Env = childEnv(extra)
+	return cmd
+}
+
 // dockerOutput runs a short docker command (network create, container start,
 // a listing, teardown) with an optional extra environment, bounded by the
 // context, and returns its combined output.
 func dockerOutput(ctx context.Context, docker string, env []string, args ...string) (string, error) {
-	cmd := exec.CommandContext(ctx, docker, args...) // #nosec G204 -- args built from fixed literals + validated fields
-	if len(env) > 0 {
-		cmd.Env = append(os.Environ(), env...)
-	}
-	out, err := cmd.CombinedOutput()
+	out, err := dockerCommand(ctx, docker, env, args...).CombinedOutput()
 	if err != nil {
 		return string(out), fmt.Errorf("docker %s: %w: %s", args[0], err, string(out))
 	}
@@ -411,7 +442,7 @@ func Bridge(ctx context.Context, log *slog.Logger, docker string, spec Spec, ws 
 	if err != nil {
 		return "error", err
 	}
-	cmd := exec.CommandContext(ctx, docker, cargs...) // #nosec G204 G702 -- args built by clientArgs from validated fields (a stored, validated target), no shell
+	cmd := dockerCommand(ctx, docker, nil, cargs...)
 	f, err := pty.StartWithSize(cmd, &pty.Winsize{Cols: uint16(cols), Rows: uint16(rows)})
 	if err != nil {
 		return "error", fmt.Errorf("dbgw: start client: %w", err)

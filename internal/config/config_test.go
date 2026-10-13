@@ -211,3 +211,57 @@ func TestPublicURL(t *testing.T) {
 		}
 	}
 }
+
+// TestListener: the health check learns where serve listens and whether it
+// serves TLS the way Load does, from those variables alone.
+func TestListener(t *testing.T) {
+	for _, tc := range []struct {
+		listen, mode, cert, want string
+		tls                      bool
+	}{
+		{"", "", "", DefaultListenAddr, false},
+		{"0.0.0.0:443", "managed", "", "0.0.0.0:443", true},
+		{"127.0.0.1:9443", "", "/etc/zanskar/tls.crt", "127.0.0.1:9443", true},
+		{"127.0.0.1:9443", "PROXY", "/etc/zanskar/tls.crt", "127.0.0.1:9443", false},
+		{"0.0.0.0:8443", "proxy", "", "0.0.0.0:8443", false},
+	} {
+		t.Setenv("ZANSKAR_LISTEN_ADDR", tc.listen)
+		t.Setenv("ZANSKAR_TLS_MODE", tc.mode)
+		t.Setenv("ZANSKAR_TLS_CERT", tc.cert)
+		if addr, tls := Listener(); addr != tc.want || tls != tc.tls {
+			t.Errorf("%+v: Listener() = %q, %v", tc, addr, tls)
+		}
+	}
+}
+
+// TestDropSecretEnv: once the configuration is read, the variables that
+// carry a secret leave the process environment and their names come back;
+// a secret that was never set is not reported, and the other settings stay.
+func TestDropSecretEnv(t *testing.T) {
+	for _, k := range SecretEnv {
+		t.Setenv(k, "")
+		_ = os.Unsetenv(k)
+	}
+	t.Setenv("ZANSKAR_MASTER_KEY", base64.StdEncoding.EncodeToString(make([]byte, 32)))
+	t.Setenv("ZANSKAR_DB_DSN", "postgres://zanskar:pw@db/zanskar")
+	t.Setenv("ZANSKAR_SIEM_WEBHOOK_SECRET", "a webhook secret of some length")
+	t.Setenv("ZANSKAR_LISTEN_ADDR", "127.0.0.1:9443")
+	if _, err := Load(Options{RequireMasterKey: true}); err != nil {
+		t.Fatal(err)
+	}
+	got := DropSecretEnv()
+	if strings.Join(got, ",") != "ZANSKAR_MASTER_KEY,ZANSKAR_DB_DSN,ZANSKAR_SIEM_WEBHOOK_SECRET" {
+		t.Fatalf("dropped %v", got)
+	}
+	for _, k := range SecretEnv {
+		if _, ok := os.LookupEnv(k); ok {
+			t.Errorf("%s is still set", k)
+		}
+	}
+	if os.Getenv("ZANSKAR_LISTEN_ADDR") != "127.0.0.1:9443" {
+		t.Error("a setting that is not a secret was dropped")
+	}
+	if again := DropSecretEnv(); len(again) != 0 {
+		t.Errorf("a second call dropped %v", again)
+	}
+}

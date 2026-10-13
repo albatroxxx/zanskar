@@ -40,8 +40,8 @@ Conventions used in the drawings:
 One form, no tabs. The provider buttons appear only for enabled identity providers and take
 their label from the provider `name`. Failure shows one generic message, "Username or password
 is incorrect", regardless of whether the account exists. A locked account gets the same message
-plus a line saying to contact an administrator; the lock duration is not shown. The version
-string comes from `/version` and nothing else about the build is displayed.
+plus a line saying to contact an administrator; the lock duration is not shown. The page shows
+no version or anything else about the build: `/version` answers only a signed-in caller.
 
 ### 1b. TOTP step
 

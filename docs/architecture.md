@@ -50,6 +50,8 @@ behind the `webui` build tag.
 2. The person picks a target. `policy` decides whether they may connect over that protocol, and
    `access` checks for any just-in-time grant the policy requires.
 3. `ticket` issues a short-lived, single-use connect ticket; the browser opens a WebSocket with it.
+   The ticket works only from the same address and with the same sign-in's cookie, and the
+   policies are asked again when it is redeemed.
 4. `connect` resolves the target, unseals the credential through `keyring` (or asks the person for
    one, or issues a short-lived SSH certificate through `sshca`), and opens the protocol:
    - SSH and WinRM directly from the gateway, with pinned host keys and certificates (ADR 0012);

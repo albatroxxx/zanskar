@@ -55,3 +55,31 @@ describe('Login', () => {
     expect(screen.getByLabelText('Username')).toBeDefined()
   })
 })
+
+// L6: the sign-in page showed ?error= inside its own alert, word for word.
+describe('Login after a failed single sign-on', () => {
+  it('shows the reason in its own words and nothing it was handed', async () => {
+    vi.spyOn(api, 'get').mockImplementation(async (path: string) => {
+      if (path === '/auth/me') throw new ApiError(401, { code: 'unauthenticated', message: 'sign in required' }, '401')
+      if (path === '/auth/providers') return { items: [] } as never
+      return { text: '' } as never
+    })
+    for (const [query, want] of [
+      ['?error=not_provisioned', 'There is no account for you here yet. Ask an administrator to add you.'],
+      ['?error=Your+account+is+locked.+Call+%2B1+555+0100', 'Single sign-on did not complete. Try again, or ask an administrator.'],
+    ]) {
+      window.history.pushState({}, '', '/login' + query)
+      render(
+        <MemoryRouter>
+          <AuthProvider>
+            <Login />
+          </AuthProvider>
+        </MemoryRouter>,
+      )
+      expect(await screen.findByText(want)).toBeDefined()
+      expect(document.body.textContent).not.toMatch(/555 0100|locked/)
+      cleanup()
+    }
+    window.history.pushState({}, '', '/')
+  })
+})

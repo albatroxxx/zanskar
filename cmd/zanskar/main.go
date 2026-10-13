@@ -7,6 +7,7 @@
 //	zanskar keygen    print a new base64 master key for ZANSKAR_MASTER_KEY
 //	zanskar audit verify   walk the audit log and check the hash chain, anchors and id sequence
 //	zanskar audit anchor   sign the newest audit event and print the anchor line
+//	zanskar healthcheck   ask the running gateway whether it is ready (container health checks)
 //	zanskar version   print the build version
 package main
 
@@ -90,6 +91,8 @@ func run(args []string) int {
 		err = runKey(args[1:])
 	case "dbproxy":
 		err = runDBProxy()
+	case "healthcheck":
+		err = runHealthcheck()
 	case "version":
 		fmt.Println(version.Version)
 	case "admin":
@@ -113,7 +116,7 @@ func run(args []string) int {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: zanskar <init|serve|migrate|backup|restore|keygen|key status|key rotate|key rotate-master|admin create|admin reset-mfa|audit verify|audit anchor|audit reseal|dbproxy|version>")
+	fmt.Fprintln(os.Stderr, "usage: zanskar <init|serve|migrate|backup|restore|keygen|key status|key rotate|key rotate-master|admin create|admin reset-mfa|audit verify|audit anchor|audit reseal|dbproxy|healthcheck|version>")
 }
 
 func newLogger(cfg *config.Config) *slog.Logger {
@@ -158,6 +161,11 @@ func serve(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	// Read once, the secrets leave the process's environment, which a child
+	// started without one of its own would inherit. The snapshot above keeps
+	// the restart check working, and a restart is a new process
+	// (lifecycle.Controller).
+	config.DropSecretEnv()
 	log, logLevel, logs := newLeveledLogger(cfg)
 	// A console-requested restart cancels this context once live sessions
 	// have drained; serve then returns nil and the supervisor starts a fresh
@@ -299,13 +307,17 @@ func serve(ctx context.Context) error {
 			log.Info("aws gateway identity not available; autoscaling trust policies need ZANSKAR_AWS_GATEWAY_PRINCIPAL", "detail", id.Error)
 		}
 	}()
-	syncer := &asg.Syncer{Repo: asgRepo, Providers: cloudProviders, Prober: &target.Prober{}, Registry: registry, Audit: auditLog, Log: log}
+	// One set of address rules for every connection to a target: probes, the
+	// autoscaling sync and sessions. A listener bound to one address makes
+	// that address the gateway's own, refused as a target.
+	prober := &target.Prober{Self: target.ListenIP(cfg.ListenAddr)}
+	syncer := &asg.Syncer{Repo: asgRepo, Providers: cloudProviders, Prober: prober, Registry: registry, Audit: auditLog, Log: log}
 	// The connect handler runs the bridges; the user, group and policy admin
 	// handlers hand it the changes that end live sessions (ADR 0013).
 	connectHandler := &connect.Handler{Targets: targets, Policies: policies, Access: accessReqs, Vault: vault, Sessions: sessionRepo, Tickets: ticket.NewStore(),
 		Registry: registry, Storage: storage, Audit: auditLog, Log: log, MFAEnrolled: totp.Enrolled, GuacdAddr: guacdAddr, Draining: restarter.Draining,
 		DockerPath: cfg.DockerPath, DBMaxSessions: cfg.DatabaseMaxSessions, DBProxyImage: func() string { return runtime.String(settings.KeyDBProxyImage) },
-		Prober: &target.Prober{}, ASGs: asgRepo, Cloud: cloudProviders}
+		Prober: prober, ASGs: asgRepo, Cloud: cloudProviders}
 	// A sign-in through an identity provider that removes the user from a
 	// mapped group ends what that group granted, as an admin's removal does.
 	provisioner.Revoker = connectHandler
@@ -320,7 +332,7 @@ func serve(ctx context.Context) error {
 			&oidc.Handler{Providers: idpRepo, Provisioner: provisioner, Sessions: sessions, Audit: auditLog, Log: log, StateKey: stateKey, MFAEnrolled: totp.Enrolled, RequireMFA: requireMFA,
 				BaseURL: cfg.PublicURL},
 			&credential.AdminHandler{Vault: vault, Audit: auditLog, Log: log},
-			&target.AdminHandler{Repo: targets, Prober: &target.Prober{}, Policies: policies, Live: registry, Vault: vault, Audit: auditLog, Log: log},
+			&target.AdminHandler{Repo: targets, Prober: prober, Policies: policies, Live: registry, Vault: vault, Audit: auditLog, Log: log},
 			&policy.AdminHandler{Repo: policies, Users: users, Revoker: connectHandler, Audit: auditLog, Log: log},
 			&access.Handler{Requests: accessReqs, Policies: policies, Targets: targets, ASGs: asgRepo, Audit: auditLog, Log: log},
 			&asg.AdminHandler{Repo: asgRepo, Sync: syncer.SyncGroup, Identity: awsIdentity, Providers: cloudProviders, Policies: policies, Live: registry, Vault: vault, Audit: auditLog, Log: log},

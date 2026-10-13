@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 // Package server wires the HTTP router, middleware and system endpoints.
-// Domain handlers register themselves on the router in later phases.
+// Domain handlers add their routes through Deps.
 package server
 
 import (
@@ -47,9 +47,9 @@ type Deps struct {
 	AuthMiddleware *auth.Middleware
 	Auth           *auth.Handler
 	Handlers       []Registrar
-	// TLS hands the listener its certificate per handshake (ADR 0021), so
-	// an upload in the console applies without a restart. Nil in proxy
-	// mode, or when the file certificate is served the old way.
+	// TLS hands the listener its certificate per handshake (ADR 0021): an
+	// upload in the console, the ZANSKAR_TLS_CERT files, or the self-signed
+	// one, so an upload applies without a restart. Nil in proxy mode.
 	TLS *tlscert.Manager
 }
 
@@ -59,7 +59,9 @@ func New(cfg *config.Config, db *store.DB, log *slog.Logger, deps Deps) *Server 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", s.handleHealthz)
 	mux.HandleFunc("GET /readyz", s.handleReadyz)
-	mux.HandleFunc("GET /api/v1/version", s.handleVersion)
+	// The release is for people signed in (the console's command line asks
+	// for it); told to anyone, it is what a scanner matches advisories by.
+	mux.Handle("GET /api/v1/version", auth.RequireAuth(http.HandlerFunc(s.handleVersion)))
 	mux.HandleFunc("/api/", s.handleNotFound)
 	mux.HandleFunc("/ws/", s.handleNotFound)
 	mux.Handle("/", spaHandler(web.FS()))

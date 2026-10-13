@@ -158,6 +158,13 @@ func (h *Handler) desktop(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, http.StatusConflict, "target_unavailable", "target is no longer available")
 		return
 	}
+	// guacd is handed the name and looks it up again itself, so this refuses
+	// a name that already leads somewhere forbidden; it cannot fix the
+	// answer guacd gets.
+	if _, err := h.checkAddress(r, g, ep); err != nil {
+		refuseAddress(w, r, err)
+		return
+	}
 
 	var opened *credential.Opened
 	if len(g.UserSecret) == 0 {
@@ -180,6 +187,13 @@ func (h *Handler) desktop(w http.ResponseWriter, r *http.Request) {
 	// which connects with cert checks disabled (see desktopParams).
 	if proto == target.RDP {
 		if err := h.verifyPinnedCert(r.Context(), ep); err != nil {
+			// The pin check looks the name up once more; an answer refused
+			// now is a refused address, not a changed certificate.
+			if errors.Is(err, target.ErrAddressForbidden) {
+				h.addressRefused(r, g, ep, err)
+				refuseAddress(w, r, err)
+				return
+			}
 			h.Log.Warn("rdp certificate pin check failed", "target", ep.LiveKey, "err", err)
 			// A different certificate is the ADR 0012 case and is audited, as
 			// WinRM's and SSH's are; an unreachable target is only logged.

@@ -30,7 +30,8 @@ import (
 type WebhookSink struct {
 	URL    string
 	Secret []byte
-	// Client defaults to a 30 s timeout client.
+	// Client defaults to a 30 s timeout client. Redirects are never
+	// followed, whichever client sends.
 	Client *http.Client
 	// AllowHTTP permits a plain http:// URL (development only).
 	AllowHTTP bool
@@ -58,16 +59,22 @@ func (w *WebhookSink) Send(ctx context.Context, events []Event) error {
 	req.Header.Set("User-Agent", "zanskar-audit-export")
 	req.Header.Set("X-Zanskar-Timestamp", ts)
 	req.Header.Set("X-Zanskar-Signature", "sha256="+Sign(w.Secret, ts, body))
-	client := w.Client
-	if client == nil {
-		client = &http.Client{Timeout: 30 * time.Second}
+	client := http.Client{Timeout: 30 * time.Second}
+	if w.Client != nil {
+		client = *w.Client
 	}
+	// A redirect is not followed: 307 and 308 re-send the body, so the
+	// signed batch could be posted on to another host, or to plain http.
+	client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 	resp, err := client.Do(req)
 	if err != nil {
 		return fmt.Errorf("webhook: %w", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
+	if resp.StatusCode >= 300 && resp.StatusCode <= 399 {
+		return fmt.Errorf("webhook: receiver answered %d with a redirect, which is not followed; set the final address", resp.StatusCode)
+	}
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
 		return fmt.Errorf("webhook: receiver returned %d", resp.StatusCode)
 	}

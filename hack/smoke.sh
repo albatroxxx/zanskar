@@ -18,6 +18,8 @@ B=http://127.0.0.1:18443/api/v1
 J=$S/e2e.jar
 login=$(curl -s -c $J -X POST $B/auth/login -H 'Content-Type: application/json' -d '{"username":"root","password":"bootstrap passphrase 2026"}')
 CSRF=$(echo $login | python3 -c 'import sys,json; print(json.load(sys.stdin)["csrf_token"])')
+# A ticket is redeemed only with the sign-in that asked for it: wsclient sends this cookie.
+export ZANSKAR_COOKIE="zanskar_session=$(awk '$6 == "zanskar_session" {print $7}' $J)"
 ROOT=$(echo $login | python3 -c 'import sys,json; print(json.load(sys.stdin)["user"]["id"])')
 api() { curl -s -b $J -H "X-CSRF-Token: $CSRF" -H 'Content-Type: application/json' "$@"; }
 jget() { python3 -c "import sys,json; d=json.load(sys.stdin); print($1)"; }

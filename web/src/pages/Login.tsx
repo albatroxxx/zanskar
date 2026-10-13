@@ -4,21 +4,19 @@ import QRCode from 'qrcode'
 import { useAuth } from '../auth/AuthContext'
 import { api, ApiError, errorMessage, signInEnded } from '../api/client'
 import { Alert, Field } from '../components/ui'
+import { safeReturnPath, signInError } from './loginErrors'
 
 type Step = 'password' | 'change' | 'verify' | 'enroll' | 'recovery'
 
 export function Login() {
   const auth = useAuth()
   const loc = useLocation()
-  const from = (loc.state as { from?: string } | null)?.from ?? '/'
+  const from = safeReturnPath((loc.state as { from?: unknown } | null)?.from)
   const [step, setStep] = useState<Step>('password')
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
   const [code, setCode] = useState('')
-  const [err, setErr] = useState(() => {
-    const e = new URLSearchParams(window.location.search).get('error')
-    return e ? 'Sign-in failed: ' + e.replace(/_/g, ' ') : ''
-  })
+  const [err, setErr] = useState(() => signInError(new URLSearchParams(window.location.search).get('error')))
   const [busy, setBusy] = useState(false)
   const [enroll, setEnroll] = useState<{ secret: string; otpauth_url: string; qr: string } | null>(null)
   const [providers, setProviders] = useState<{ id: string; name: string; type: string }[]>([])

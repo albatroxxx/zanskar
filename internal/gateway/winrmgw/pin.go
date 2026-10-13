@@ -3,6 +3,7 @@
 package winrmgw
 
 import (
+	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"crypto/tls"
@@ -39,6 +40,7 @@ var ErrUnpinned = errors.New("winrmgw: tls target has no pinned certificate; pro
 // this transport carries its own copies.
 type pinnedTransport struct {
 	url      string
+	dialAddr string // ip:port every connection goes to; empty dials the URL's host
 	user     string
 	password string
 	pin      []byte // SHA-256 of the DER leaf certificate
@@ -46,15 +48,21 @@ type pinnedTransport struct {
 	rt       http.RoundTripper
 }
 
-func newPinnedTransport(host string, port int, user, password, fingerprintHex string, ntlm bool) (*pinnedTransport, error) {
+// newPinnedTransport names host in the URL; with ip set, connections go to
+// ip instead of a fresh lookup of host (Endpoint.IP).
+func newPinnedTransport(host, ip string, port int, user, password, fingerprintHex string, ntlm bool) (*pinnedTransport, error) {
 	pin, err := hex.DecodeString(strings.ToLower(strings.ReplaceAll(fingerprintHex, ":", "")))
 	if err != nil || len(pin) != sha256.Size {
 		return nil, fmt.Errorf("winrmgw: pinned fingerprint must be 64 hex characters: %w", err)
 	}
-	return &pinnedTransport{
+	pt := &pinnedTransport{
 		url:  "https://" + net.JoinHostPort(host, fmt.Sprint(port)) + "/wsman",
 		user: user, password: password, pin: pin, ntlm: ntlm,
-	}, nil
+	}
+	if ip != "" {
+		pt.dialAddr = net.JoinHostPort(ip, fmt.Sprint(port))
+	}
+	return pt, nil
 }
 
 // Transport builds the HTTP transport. Verification is delegated entirely to
@@ -64,6 +72,15 @@ func newPinnedTransport(host string, port int, user, password, fingerprintHex st
 // resumed sessions, and session tickets are disabled so every connection
 // performs a full handshake against the pin.
 func (p *pinnedTransport) Transport(endpoint *winrm.Endpoint) error {
+	d := &net.Dialer{Timeout: 30 * time.Second, KeepAlive: 30 * time.Second}
+	dial := d.DialContext
+	if p.dialAddr != "" {
+		// The URL keeps the name for the TLS server name and the Host
+		// header; the connection goes to the address the caller checked.
+		dial = func(ctx context.Context, network, _ string) (net.Conn, error) {
+			return d.DialContext(ctx, network, p.dialAddr)
+		}
+	}
 	tr := &http.Transport{
 		Proxy: nil, // never route a target connection through an environment proxy
 		TLSClientConfig: &tls.Config{
@@ -72,7 +89,7 @@ func (p *pinnedTransport) Transport(endpoint *winrm.Endpoint) error {
 			SessionTicketsDisabled: true,
 			VerifyConnection:       p.verifyConn,
 		},
-		DialContext:           (&net.Dialer{Timeout: 30 * time.Second, KeepAlive: 30 * time.Second}).DialContext,
+		DialContext:           dial,
 		ResponseHeaderTimeout: endpoint.Timeout,
 	}
 	var rt http.RoundTripper = tr

@@ -137,6 +137,27 @@ func (s *Sessions) Lookup(ctx context.Context, token string) (*Session, error) {
 	return &sess, nil
 }
 
+// Rotate gives a live session a new token and returns it; the old one stops
+// working at once. A sign-in that becomes full rotates (L13): a cookie that
+// was planted in the browser before the sign-in, from a sibling subdomain
+// say, must not be the one that comes out fully verified. The session keeps
+// its id, so its CSRF token and everything recorded against it carry on.
+func (s *Sessions) Rotate(ctx context.Context, id string) (string, error) {
+	raw := make([]byte, 32)
+	if _, err := rand.Read(raw); err != nil {
+		return "", err
+	}
+	token := base64.RawURLEncoding.EncodeToString(raw)
+	res, err := s.db.ExecContext(ctx, s.db.Rebind(`UPDATE auth_sessions SET token_hash = ? WHERE id = ? AND revoked_at IS NULL`), hashToken(token), id)
+	if err != nil {
+		return "", err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return "", ErrNoSession
+	}
+	return token, nil
+}
+
 // MarkMFAVerified lets a session past the second-factor step. It records no
 // proof: a sign-in with no authenticator enrolled, where none is required,
 // comes through here too (ADR 0027).

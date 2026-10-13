@@ -42,6 +42,14 @@ func (h *Handler) database(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, http.StatusConflict, "target_unavailable", "target is no longer available")
 		return
 	}
+	// A database target is never probed, so this is the first time its name
+	// is looked up. The sidecar is still handed the name, not this address,
+	// because verify-full checks the database's certificate against the
+	// name; it looks the name up again itself.
+	if _, err := h.checkAddress(r, g, ep); err != nil {
+		refuseAddress(w, r, err)
+		return
+	}
 
 	// Resolve the upstream credential before upgrading, so a vault failure is a
 	// plain HTTP error rather than a broken socket. It is handed only to the

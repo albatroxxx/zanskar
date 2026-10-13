@@ -81,8 +81,9 @@ func (s *Store) Issue(g Grant) (string, error) {
 }
 
 // Redeem returns the grant and deletes the ticket. A ticket can be redeemed
-// once; the client IP must match the issuing request.
-func (s *Store) Redeem(tok, clientIP string) (*Grant, error) {
+// once; the client IP and the browser session must be those of the issuing
+// request.
+func (s *Store) Redeem(tok, clientIP, sessionID string) (*Grant, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	g, ok := s.tickets[tok]
@@ -90,7 +91,11 @@ func (s *Store) Redeem(tok, clientIP string) (*Grant, error) {
 		return nil, ErrInvalid
 	}
 	delete(s.tickets, tok)
-	if s.now().After(g.ExpiresAt) || g.ClientIP != clientIP {
+	// A ticket is redeemed by the sign-in that asked for it, from where it
+	// asked (L9): one that leaked is useless without that sign-in's cookie,
+	// and a sign-out ends it. A ticket presented any other way is spent,
+	// since it has been seen where it should not be.
+	if s.now().After(g.ExpiresAt) || g.ClientIP != clientIP || g.SessionID != sessionID {
 		zero(g.UserSecret)
 		return nil, ErrInvalid
 	}

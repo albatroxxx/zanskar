@@ -97,14 +97,14 @@ func (g *GatewayIdentity) Refresh(ctx context.Context) Identity {
 func DetectIdentity(ctx context.Context) (Identity, error) {
 	cfg, err := awsconfig.LoadDefaultConfig(ctx, awsconfig.WithEC2IMDSRegion())
 	if err != nil {
-		return Identity{}, fmt.Errorf("cloud: aws config: %s", redactARNs(err.Error()))
+		return Identity{}, fmt.Errorf("cloud: aws config: %s", clipProviderError(err.Error()))
 	}
 	if cfg.Region == "" {
 		cfg.Region = "us-east-1"
 	}
 	out, err := sts.NewFromConfig(cfg).GetCallerIdentity(ctx, &sts.GetCallerIdentityInput{})
 	if err != nil {
-		return Identity{}, fmt.Errorf("cloud: no AWS identity: %s", redactARNs(err.Error()))
+		return Identity{}, fmt.Errorf("cloud: no AWS identity: %s", clipProviderError(err.Error()))
 	}
 	raw := aws.ToString(out.Arn)
 	return Identity{Principal: RolePrincipal(raw), RawARN: raw, AccountID: aws.ToString(out.Account), Source: SourceDetected}, nil

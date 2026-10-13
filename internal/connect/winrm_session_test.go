@@ -65,7 +65,7 @@ func (r *winrmRig) open(t *testing.T, targetID string) (*websocket.Conn, *http.R
 	if code != http.StatusOK || tok == "" || out["ws_path"] != "/ws/winrm" {
 		t.Fatalf("connect: %d %v", code, out)
 	}
-	return websocket.Dial(context.Background(), "ws"+strings.TrimPrefix(r.url, "http")+"/ws/winrm?cols=100&rows=30&ticket="+tok, nil)
+	return websocket.Dial(context.Background(), "ws"+strings.TrimPrefix(r.url, "http")+"/ws/winrm?cols=100&rows=30&ticket="+tok, r.wsOptions())
 }
 
 // runConsole drives a WinRM console on ws the way a user does: a

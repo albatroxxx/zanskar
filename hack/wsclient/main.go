@@ -2,6 +2,8 @@
 
 // wsclient: drives a Zanskar terminal WebSocket for smoke tests.
 // usage: wsclient <ws-url> [prompt] [command] [expect]
+// A ticket is redeemed only with the sign-in that asked for it, so the
+// session cookie goes in ZANSKAR_COOKIE ("zanskar_session=...").
 // Waits for the prompt (default "$ "), sends the command (default "hello"), waits for expect
 // (default "HELLO"), sends exit, and prints the end frame. Real shells use for example
 // `wsclient <url> '$ ' 'echo HEL""LO' HELLO` and PowerShell `wsclient <url> '> ' 'echo HEL""LO' HELLO`.
@@ -11,6 +13,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"os"
 	"strings"
 	"time"
@@ -36,7 +39,11 @@ func main() {
 	if len(os.Args) > 4 {
 		expect = os.Args[4]
 	}
-	ws, _, err := websocket.Dial(ctx, os.Args[1], nil)
+	var opts *websocket.DialOptions
+	if c := os.Getenv("ZANSKAR_COOKIE"); c != "" {
+		opts = &websocket.DialOptions{HTTPHeader: http.Header{"Cookie": []string{c}}}
+	}
+	ws, _, err := websocket.Dial(ctx, os.Args[1], opts) //nolint:bodyclose // the library closes the handshake body
 	if err != nil {
 		fmt.Println("dial error:", err)
 		cancel()

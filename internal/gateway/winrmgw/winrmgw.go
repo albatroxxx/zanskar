@@ -33,8 +33,14 @@ import (
 // Endpoint describes the WinRM listener on the target.
 type Endpoint struct {
 	Address string
-	Port    int  // 0 uses 5986 for TLS, 5985 otherwise
-	UseTLS  bool // WinRM over HTTPS (required by the gateway; plain HTTP is refused)
+	// IP, when set, is where the connection goes. Address still names the
+	// target in the URL, the TLS server name and the Host header, as it did
+	// for the probe that captured the pin. The caller checked IP; looking
+	// Address up again could answer with somewhere else. Only the pinned
+	// transport dials a fixed address, so IP needs PinnedFingerprint.
+	IP     string
+	Port   int  // 0 uses 5986 for TLS, 5985 otherwise
+	UseTLS bool // WinRM over HTTPS (required by the gateway; plain HTTP is refused)
 	// PinnedFingerprint is the SHA-256 (hex) of the listener's leaf certificate
 	// captured by the probe. When set, it is the only trust anchor: the CA and
 	// hostname checks are replaced by an exact match, like SSH host key pinning.
@@ -118,6 +124,10 @@ func Dial(ctx context.Context, ep Endpoint, a Auth, timeout time.Duration) (*Cli
 	if ep.UseTLS && ep.PinnedFingerprint == "" && caPEM == nil && !ep.Insecure {
 		return nil, ErrUnpinned
 	}
+	if ep.IP != "" && (!ep.UseTLS || ep.PinnedFingerprint == "") {
+		// The library's own transports would look Address up again.
+		return nil, errors.New("winrmgw: a fixed address needs a pinned certificate")
+	}
 	endpoint := winrm.NewEndpoint(ep.Address, port, ep.UseTLS, ep.Insecure, caPEM, nil, nil, timeout)
 
 	params := winrm.NewParameters("PT60S", "en-US", 153600)
@@ -132,7 +142,7 @@ func Dial(ctx context.Context, ep Endpoint, a Auth, timeout time.Duration) (*Cli
 		}
 	}
 	if ep.UseTLS && ep.PinnedFingerprint != "" {
-		pt, err := newPinnedTransport(ep.Address, port, user, a.Password, ep.PinnedFingerprint, ntlm)
+		pt, err := newPinnedTransport(ep.Address, ep.IP, port, user, a.Password, ep.PinnedFingerprint, ntlm)
 		if err != nil {
 			return nil, err
 		}

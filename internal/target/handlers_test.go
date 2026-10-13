@@ -39,6 +39,12 @@ type env struct {
 
 func newEnv(t *testing.T) *env {
 	t.Helper()
+	return newEnvWith(t, &Prober{AllowLoopback: true})
+}
+
+// newEnvWith is newEnv with the address rules the test chooses.
+func newEnvWith(t *testing.T, prober *Prober) *env {
+	t.Helper()
 	db := testDB(t)
 	ctx := context.Background()
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
@@ -57,7 +63,7 @@ func newEnv(t *testing.T) *env {
 	}
 	t.Cleanup(ring.Close)
 	vault := credential.NewVault(db, ring)
-	h := &AdminHandler{Repo: NewRepo(db), Prober: &Prober{AllowLoopback: true}, Policies: policies, Live: live, Vault: vault, Audit: auditLog, Log: log}
+	h := &AdminHandler{Repo: NewRepo(db), Prober: prober, Policies: policies, Live: live, Vault: vault, Audit: auditLog, Log: log}
 	mux := http.NewServeMux()
 	h.Register(mux)
 	mw := &auth.Middleware{Sessions: sessions, Users: users, Log: log}
@@ -202,13 +208,15 @@ func TestHandlersCreateProbeTrust(t *testing.T) {
 	}
 }
 
+// TestProbeForbiddenAddressIs422: the API no longer saves a forbidden literal
+// (L1), but a row saved before it refused them is still refused by the probe.
 func TestProbeForbiddenAddressIs422(t *testing.T) {
 	e := newEnv(t)
-	code, body := e.do("POST", "/api/v1/targets", map[string]any{"name": "meta", "address": "169.254.169.254", "os_family": "linux"}, e.admin)
-	if code != 201 {
-		t.Fatalf("create: %d %v", code, body)
+	tg := &Target{Name: "meta", Address: "169.254.169.254", OSFamily: Linux}
+	if err := NewRepo(e.db).Create(context.Background(), tg); err != nil {
+		t.Fatal(err)
 	}
-	if code, body := e.do("POST", "/api/v1/targets/"+body["id"].(string)+"/probe", nil, e.admin); code != 422 || body["code"] != "address_forbidden" {
+	if code, body := e.do("POST", "/api/v1/targets/"+tg.ID+"/probe", nil, e.admin); code != 422 || body["code"] != "address_forbidden" {
 		t.Fatalf("expected 422 address_forbidden, got %d %v", code, body)
 	}
 }
