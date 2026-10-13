@@ -210,9 +210,11 @@ func TestRotateMasterEnvFile(t *testing.T) {
 		{"env file with another key", []string{"-env-file", write("env-other", "ZANSKAR_MASTER_KEY="+otherB64+"\n"), "-generate", "-yes"}, "", "different master key"},
 		{"env file without the key line", []string{"-env-file", write("env-none", "ZANSKAR_LISTEN_ADDR=x\n"), "-generate", "-yes"}, "", "no ZANSKAR_MASTER_KEY line"},
 		{"env file that does not exist", []string{"-env-file", filepath.Join(g.dir, "missing"), "-generate", "-yes"}, "", "cannot read the env file"},
-		{"both files", []string{"-env-file", envPath, "-key-file", write("k", g.keyB64), "-generate", "-yes"}, "", "not both"},
-		{"key file with another key", []string{"-key-file", write("k-other", otherB64+"\n"), "-generate", "-yes"}, "", "different master key"},
-		{"key file that does not exist", []string{"-key-file", filepath.Join(g.dir, "nope.key"), "-generate", "-yes"}, "", "no such file"},
+		// The service reads this key from its environment, so a key file is
+		// never where the new one belongs (L4).
+		{"both files", []string{"-env-file", envPath, "-key-file", write("k", g.keyB64), "-generate", "-yes"}, "", "not a file"},
+		{"key file with the same key", []string{"-key-file", write("k-same", g.keyB64+"\n"), "-generate", "-yes"}, "", "not a file"},
+		{"key file with another key", []string{"-key-file", write("k-other", otherB64+"\n"), "-generate", "-yes"}, "", "not a file"},
 		{"short new key", []string{"-env-file", envPath, "-yes"}, base64.StdEncoding.EncodeToString([]byte("too short")), "32 bytes"},
 		{"new key not base64", []string{"-env-file", envPath, "-yes"}, "!!not-base64!!", "32 bytes"},
 	}
@@ -352,7 +354,11 @@ func TestRotateMasterKeyFileUnwritable(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = os.Chmod(locked, 0o700) })
-	_, _, err := output(t, func() error { return runKeyRotateMaster([]string{"-key-file", keyPath, "-generate", "-yes"}) })
+	// The service reads its key from that file, so the file is where the new
+	// key goes.
+	t.Setenv("ZANSKAR_MASTER_KEY", "")
+	t.Setenv("ZANSKAR_MASTER_KEY_FILE", keyPath)
+	_, _, err := output(t, func() error { return runKeyRotateMaster([]string{"-generate", "-yes"}) })
 	if err == nil || !strings.Contains(err.Error(), "nothing was changed") || !strings.Contains(err.Error(), locked) {
 		t.Fatalf("want a refusal naming the directory, got %v", err)
 	}

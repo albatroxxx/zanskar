@@ -3,6 +3,13 @@
 # ZANSKAR_SITE_ADDRESS to either a public hostname (Caddy fetches a Let's Encrypt
 # certificate) or "localhost" (Caddy serves a self-signed certificate from its
 # internal CA — a browser warning, fine for a local trial).
+{
+	# The internal CA's root is not installed into the container's own trust
+	# store: nothing in the container needs to trust it (browsers are
+	# elsewhere), and the container's root filesystem is read-only.
+	skip_install_trust
+}
+
 {$ZANSKAR_SITE_ADDRESS} {
 	encode zstd gzip
 

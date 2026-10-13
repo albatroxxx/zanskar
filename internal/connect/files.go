@@ -3,6 +3,8 @@
 package connect
 
 import (
+	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/url"
@@ -68,12 +70,12 @@ func (h *Handler) openSessionSFTP(w http.ResponseWriter, r *http.Request) (*file
 	p, _ := auth.FromContext(r.Context())
 	fs, ok := h.Files.lookup(r.PathValue("id"), p.User.ID)
 	if !ok {
-		httpx.WriteError(w, http.StatusNotFound, "not_found", "no file-transfer session; open the terminal and ensure the policy allows file transfer")
+		httpx.WriteError(w, r, http.StatusNotFound, "not_found", "no file-transfer session; open the terminal and ensure the policy allows file transfer")
 		return nil, nil, nil, false
 	}
 	s, err := sshgw.OpenSFTP(fs.client)
 	if err != nil {
-		httpx.WriteError(w, http.StatusConflict, "sftp_unavailable", "the target's SSH server does not offer file transfer")
+		httpx.WriteError(w, r, http.StatusConflict, "sftp_unavailable", "the target's SSH server does not offer file transfer")
 		return nil, nil, nil, false
 	}
 	return fs, s, p, true
@@ -92,7 +94,7 @@ func (h *Handler) listFiles(w http.ResponseWriter, r *http.Request) {
 	}
 	entries, err := s.List(dir)
 	if err != nil {
-		httpx.WriteError(w, http.StatusBadRequest, "sftp_error", err.Error())
+		httpx.WriteError(w, r, http.StatusBadRequest, "sftp_error", err.Error())
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"path": dir, "entries": entries})
@@ -108,21 +110,46 @@ func (h *Handler) downloadFile(w http.ResponseWriter, r *http.Request) {
 	defer func() { _ = s.Close() }()
 	rpath := r.URL.Query().Get("path")
 	if rpath == "" {
-		httpx.WriteError(w, http.StatusBadRequest, "bad_request", "path is required")
+		httpx.WriteError(w, r, http.StatusBadRequest, "bad_request", "path is required")
 		return
 	}
+	done := h.transferRecorder(r, p, fs, audit.FileDownload, rpath)
 	f, fi, err := s.Open(rpath)
 	if err != nil {
-		httpx.WriteError(w, http.StatusBadRequest, "sftp_error", err.Error())
+		done(0, err)
+		httpx.WriteError(w, r, http.StatusBadRequest, "sftp_error", err.Error())
 		return
 	}
 	defer func() { _ = f.Close() }()
 	w.Header().Set("Content-Type", "application/octet-stream")
 	w.Header().Set("Content-Length", strconv.FormatInt(fi.Size(), 10))
 	w.Header().Set("Content-Disposition", "attachment; filename*=UTF-8''"+url.PathEscape(path.Base(rpath)))
-	n, _ := io.Copy(w, f)
-	h.record(r, audit.Actor{UserID: p.User.ID, IP: auth.ClientIP(r)}.Event("file.download", "access_session", r.PathValue("id"), audit.Success,
-		map[string]any{"path": rpath, "bytes": n, "target_id": fs.targetKey}))
+	n, err := io.Copy(w, f)
+	if err == nil && n != fi.Size() {
+		err = fmt.Errorf("sent %d of %d bytes", n, fi.Size())
+	}
+	done(n, err)
+	if err != nil && n == 0 {
+		// Nothing has been sent yet, so the browser can still be told,
+		// rather than handed an empty file.
+		w.Header().Del("Content-Length")
+		w.Header().Del("Content-Disposition")
+		httpx.WriteError(w, r, http.StatusBadRequest, "sftp_error", "download failed: "+err.Error())
+	}
+}
+
+// transferRecorder returns the function that audits one file transfer when
+// it ends. Every attempt is recorded, with what moved and the error when it
+// failed: an attempt to plant or take a file is worth knowing about whether
+// or not it worked (L10).
+func (h *Handler) transferRecorder(r *http.Request, p *auth.Principal, fs *fileSession, action, rpath string) func(n int64, err error) {
+	return func(n int64, err error) {
+		outcome, details := audit.Success, map[string]any{"path": rpath, "bytes": n, "target_id": fs.targetKey}
+		if err != nil {
+			outcome, details["error"] = audit.Failure, err.Error()
+		}
+		h.record(r, audit.Actor{UserID: p.User.ID, IP: auth.ClientIP(r)}.Event(action, "access_session", r.PathValue("id"), outcome, details))
+	}
 }
 
 // uploadFile writes the request body to a file on the session's target. The
@@ -135,21 +162,22 @@ func (h *Handler) uploadFile(w http.ResponseWriter, r *http.Request) {
 	defer func() { _ = s.Close() }()
 	rpath := r.URL.Query().Get("path")
 	if rpath == "" {
-		httpx.WriteError(w, http.StatusBadRequest, "bad_request", "path is required")
+		httpx.WriteError(w, r, http.StatusBadRequest, "bad_request", "path is required")
 		return
 	}
+	done := h.transferRecorder(r, p, fs, audit.FileUpload, rpath)
 	f, err := s.Create(rpath)
 	if err != nil {
-		httpx.WriteError(w, http.StatusBadRequest, "sftp_error", err.Error())
+		done(0, err)
+		httpx.WriteError(w, r, http.StatusBadRequest, "sftp_error", err.Error())
 		return
 	}
 	n, cerr := io.Copy(f, r.Body)
-	closeErr := f.Close()
-	if cerr != nil || closeErr != nil {
-		httpx.WriteError(w, http.StatusBadRequest, "sftp_error", "upload failed")
+	if err := errors.Join(cerr, f.Close()); err != nil {
+		done(n, err)
+		httpx.WriteError(w, r, http.StatusBadRequest, "sftp_error", "upload failed")
 		return
 	}
-	h.record(r, audit.Actor{UserID: p.User.ID, IP: auth.ClientIP(r)}.Event("file.upload", "access_session", r.PathValue("id"), audit.Success,
-		map[string]any{"path": rpath, "bytes": n, "target_id": fs.targetKey}))
+	done(n, nil)
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"path": rpath, "bytes": n})
 }

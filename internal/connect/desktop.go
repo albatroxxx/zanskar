@@ -145,17 +145,24 @@ func (h *Handler) desktop(w http.ResponseWriter, r *http.Request) {
 	defer zero(g.UserSecret)
 	proto := target.Protocol(g.Protocol)
 	if proto != target.RDP && proto != target.VNC {
-		httpx.WriteError(w, http.StatusBadRequest, "bad_request", "ticket is not for a desktop protocol")
+		httpx.WriteError(w, r, http.StatusBadRequest, "bad_request", "ticket is not for a desktop protocol")
 		return
 	}
 	guacdAddr := h.guacd()
 	if guacdAddr == "" {
-		httpx.WriteError(w, http.StatusNotImplemented, "protocol_unavailable", "desktop sessions are not configured on this gateway")
+		httpx.WriteError(w, r, http.StatusNotImplemented, "protocol_unavailable", "desktop sessions are not configured on this gateway")
 		return
 	}
 	ep, err := h.resolveGrant(r.Context(), g)
 	if err != nil || !ep.Active {
-		httpx.WriteError(w, http.StatusConflict, "target_unavailable", "target is no longer available")
+		httpx.WriteError(w, r, http.StatusConflict, "target_unavailable", "target is no longer available")
+		return
+	}
+	// guacd is handed the name and looks it up again itself, so this refuses
+	// a name that already leads somewhere forbidden; it cannot fix the
+	// answer guacd gets.
+	if _, err := h.checkAddress(r, g, ep); err != nil {
+		refuseAddress(w, r, err)
 		return
 	}
 
@@ -164,7 +171,7 @@ func (h *Handler) desktop(w http.ResponseWriter, r *http.Request) {
 		opened, err = h.Vault.Open(r.Context(), g.CredentialID)
 		if err != nil {
 			h.Log.Error("open credential", "id", g.CredentialID, "err", err)
-			httpx.WriteError(w, http.StatusConflict, "credential_unavailable", "credential could not be opened")
+			httpx.WriteError(w, r, http.StatusConflict, "credential_unavailable", "credential could not be opened")
 			return
 		}
 		defer opened.Close()
@@ -173,22 +180,29 @@ func (h *Handler) desktop(w http.ResponseWriter, r *http.Request) {
 	// filled in once the session id exists.
 	params, err := desktopParams(ep, proto, opened, g.UserSecret, g.Username, g.AllowFileTransfer, g.AllowClipboard, "")
 	if err != nil {
-		httpx.WriteError(w, http.StatusConflict, "target_unavailable", err.Error())
+		httpx.WriteError(w, r, http.StatusConflict, "target_unavailable", err.Error())
 		return
 	}
 	// Enforce the certificate pin at the gateway before handing off to guacd,
 	// which connects with cert checks disabled (see desktopParams).
 	if proto == target.RDP {
 		if err := h.verifyPinnedCert(r.Context(), ep); err != nil {
+			// The pin check looks the name up once more; an answer refused
+			// now is a refused address, not a changed certificate.
+			if errors.Is(err, target.ErrAddressForbidden) {
+				h.addressRefused(r, g, ep, err)
+				refuseAddress(w, r, err)
+				return
+			}
 			h.Log.Warn("rdp certificate pin check failed", "target", ep.LiveKey, "err", err)
 			// A different certificate is the ADR 0012 case and is audited, as
 			// WinRM's and SSH's are; an unreachable target is only logged.
 			var mm *certMismatch
 			if errors.As(err, &mm) {
-				h.record(r, actorFor(g.UserID, ip).Event("target.tls.mismatch", "target", ep.LiveKey, audit.Failure,
+				h.record(r, actorFor(g.UserID, ip).Event(audit.TargetTLSMismatch, "target", ep.LiveKey, audit.Failure,
 					map[string]string{"protocol": "rdp", "expected": mm.want, "seen": mm.got}))
 			}
-			httpx.WriteError(w, http.StatusConflict, "certificate_mismatch", "the target's certificate does not match the pinned fingerprint")
+			httpx.WriteError(w, r, http.StatusConflict, "certificate_mismatch", "the target's certificate does not match the pinned fingerprint")
 			return
 		}
 	}
@@ -216,7 +230,7 @@ func (h *Handler) desktop(w http.ResponseWriter, r *http.Request) {
 	actor := audit.Actor{UserID: g.UserID, IP: ip}
 	endWith := func(reason, msg string) {
 		_ = h.Sessions.End(context.Background(), s.ID, reason)
-		h.record(r, actor.Event("session.end", "access_session", s.ID, audit.Success, map[string]string{"reason": reason, "target_id": ep.LiveKey}))
+		h.record(r, actor.Event(audit.SessionEnd, "access_session", s.ID, audit.Success, map[string]string{"reason": reason, "target_id": ep.LiveKey}))
 		if msg != "" {
 			wctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 			_ = ws.Write(wctx, websocket.MessageText, []byte(guac.ErrorInstruction(msg, 519)))
@@ -252,7 +266,7 @@ func (h *Handler) desktop(w http.ResponseWriter, r *http.Request) {
 		endWith(session.EndError, "recording could not be registered; session refused")
 		return
 	}
-	h.record(r, actor.Event("session.start", "access_session", s.ID, audit.Success, map[string]any{"target_id": ep.LiveKey, "protocol": g.Protocol, "policy_id": g.PolicyID, "recording_id": recRow.ID}))
+	h.record(r, actor.Event(audit.SessionStart, "access_session", s.ID, audit.Success, map[string]any{"target_id": ep.LiveKey, "protocol": g.Protocol, "policy_id": g.PolicyID, "recording_id": recRow.ID}))
 
 	// guacamole-common-js expects the tunnel's internal opcode with an id first.
 	// It is followed by a Zanskar-specific instruction carrying the policy

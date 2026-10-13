@@ -112,7 +112,7 @@ export function Targets() {
     setErr('')
     try {
       await api.post<AccessRequest>('/me/access-requests', {
-        target_id: reqModal.target.id,
+        ...(reqModal.target.kind === 'asg' ? { asg_id: reqModal.target.id } : { target_id: reqModal.target.id }),
         protocol: reqModal.protocol,
         reason: reqForm.reason,
         minutes: Number(reqForm.minutes),
@@ -144,8 +144,8 @@ export function Targets() {
   const databases = items?.filter((t) => kindOf(t) === 'database') ?? null
   const groups = items?.filter((t) => kindOf(t) === 'asg') ?? null
 
-  // protoButtons renders one cell per protocol family. onRequest, when given
-  // (static targets), turns a gated protocol into a Request button.
+  // protoButtons renders one cell per protocol family. onRequest, when given,
+  // turns a gated protocol into a Request button.
   const protoButtons = (t: ReachableTarget, onPick: (p: Protocol) => void, onRequest?: (p: Protocol) => void) => {
     const term = pick(t, terminalProtocols)
     const desk = pick(t, desktopProtocols)
@@ -300,7 +300,7 @@ export function Targets() {
                       <td>
                         <Badge tone={healthy === 0 ? 'danger' : 'ok'}>{healthy} / {total}</Badge>
                       </td>
-                      {protoButtons(g, (p) => void loadInstances(g, p))}
+                      {protoButtons(g, (p) => void loadInstances(g, p), (p) => setReqModal({ target: g, protocol: p }))}
                     </tr>
                   )
                 })}
@@ -352,7 +352,7 @@ export function Targets() {
 
       {reqModal && (
         <Modal title={`Request access to ${reqModal.target.name}`} onClose={() => setReqModal(null)}>
-          <p className="muted">This machine requires approval for {protocolName(reqModal.protocol)}. Say why and for how long; an administrator approves before you can connect.</p>
+          <p className="muted">{reqModal.target.kind === 'asg' ? 'This autoscaling group' : 'This machine'} requires approval for {protocolName(reqModal.protocol)}. Say why and for how long; an administrator approves before you can connect.</p>
           <form onSubmit={(e) => void submitRequest(e)}>
             <Field label="Reason">
               <textarea id="req-reason" autoFocus value={reqForm.reason} onChange={(e) => setReqForm({ ...reqForm, reason: e.target.value })} required placeholder="What you need to do" />

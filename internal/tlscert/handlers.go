@@ -66,16 +66,16 @@ func (h *Handler) get(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, h.status(r))
 }
 
-func (h *Handler) managed(w http.ResponseWriter) bool {
+func (h *Handler) managed(w http.ResponseWriter, r *http.Request) bool {
 	if h.Mode == "proxy" || h.Manager == nil {
-		httpx.WriteError(w, http.StatusConflict, "tls_proxy", "TLS is terminated by the proxy in front of the gateway (ZANSKAR_TLS_MODE=proxy); manage the certificate there")
+		httpx.WriteError(w, r, http.StatusConflict, "tls_proxy", "TLS is terminated by the proxy in front of the gateway (ZANSKAR_TLS_MODE=proxy); manage the certificate there")
 		return false
 	}
 	return true
 }
 
 func (h *Handler) upload(w http.ResponseWriter, r *http.Request) {
-	if !h.managed(w) {
+	if !h.managed(w, r) {
 		return
 	}
 	var in struct {
@@ -83,11 +83,11 @@ func (h *Handler) upload(w http.ResponseWriter, r *http.Request) {
 		KeyPEM  string `json:"key_pem"`
 	}
 	if err := httpx.DecodeJSON(r, &in); err != nil {
-		httpx.BadRequest(w, err.Error())
+		httpx.BadRequest(w, r, err.Error())
 		return
 	}
 	if strings.TrimSpace(in.CertPEM) == "" || strings.TrimSpace(in.KeyPEM) == "" {
-		httpx.BadRequest(w, "cert_pem and key_pem are required")
+		httpx.BadRequest(w, r, "cert_pem and key_pem are required")
 		return
 	}
 	p, _ := auth.FromContext(r.Context())
@@ -97,12 +97,12 @@ func (h *Handler) upload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// The key is never recorded; the certificate is public.
-	h.record(r, "tls.certificate.upload", map[string]any{"subject": info.Subject, "hosts": info.Hosts, "not_after": info.NotAfter, "fingerprint": info.Fingerprint})
+	h.record(r, audit.TLSCertificateUpload, map[string]any{"subject": info.Subject, "hosts": info.Hosts, "not_after": info.NotAfter, "fingerprint": info.Fingerprint})
 	httpx.WriteJSON(w, http.StatusOK, h.status(r))
 }
 
 func (h *Handler) reset(w http.ResponseWriter, r *http.Request) {
-	if !h.managed(w) {
+	if !h.managed(w, r) {
 		return
 	}
 	before := h.Manager.Active()
@@ -111,12 +111,12 @@ func (h *Handler) reset(w http.ResponseWriter, r *http.Request) {
 		h.fail(w, r, err)
 		return
 	}
-	h.record(r, "tls.certificate.reset", map[string]any{"before": before.Fingerprint, "after": info.Fingerprint, "after_source": info.Source})
+	h.record(r, audit.TLSCertificateReset, map[string]any{"before": before.Fingerprint, "after": info.Fingerprint, "after_source": info.Source})
 	httpx.WriteJSON(w, http.StatusOK, h.status(r))
 }
 
 func (h *Handler) regenerate(w http.ResponseWriter, r *http.Request) {
-	if !h.managed(w) {
+	if !h.managed(w, r) {
 		return
 	}
 	var in struct {
@@ -124,7 +124,7 @@ func (h *Handler) regenerate(w http.ResponseWriter, r *http.Request) {
 	}
 	if r.ContentLength != 0 {
 		if err := httpx.DecodeJSON(r, &in); err != nil {
-			httpx.BadRequest(w, err.Error())
+			httpx.BadRequest(w, r, err.Error())
 			return
 		}
 	}
@@ -133,7 +133,7 @@ func (h *Handler) regenerate(w http.ResponseWriter, r *http.Request) {
 		hosts = h.Manager.Hosts
 	}
 	if len(hosts) > 32 {
-		httpx.BadRequest(w, "at most 32 hosts")
+		httpx.BadRequest(w, r, "at most 32 hosts")
 		return
 	}
 	for _, host := range hosts {
@@ -148,7 +148,7 @@ func (h *Handler) regenerate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	g, _ := h.Manager.Generated(r.Context())
-	h.record(r, "tls.certificate.regenerate", map[string]any{"hosts": hosts, "fingerprint": g.Fingerprint, "serving": h.Manager.Active().Source == SourceGenerated})
+	h.record(r, audit.TLSCertificateRegenerate, map[string]any{"hosts": hosts, "fingerprint": g.Fingerprint, "serving": h.Manager.Active().Source == SourceGenerated})
 	httpx.WriteJSON(w, http.StatusOK, h.status(r))
 }
 
@@ -158,10 +158,8 @@ func (h *Handler) record(r *http.Request, action string, details map[string]any)
 
 func (h *Handler) fail(w http.ResponseWriter, r *http.Request, err error) {
 	if errors.Is(err, ErrInvalid) {
-		httpx.BadRequest(w, strings.TrimPrefix(err.Error(), "tlscert: invalid certificate: "))
+		httpx.BadRequest(w, r, strings.TrimPrefix(err.Error(), "tlscert: invalid certificate: "))
 		return
 	}
-	// The error can carry text derived from the upload; one line of it.
-	h.Log.Error("tls handler", "route", r.Pattern, "err", strings.NewReplacer("\n", " ", "\r", " ").Replace(err.Error()))
-	httpx.WriteError(w, http.StatusInternalServerError, "internal", "internal error")
+	httpx.Internal(w, r, h.Log, err)
 }

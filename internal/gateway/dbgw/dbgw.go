@@ -322,15 +322,46 @@ type Limits struct {
 	tick      time.Duration
 }
 
+// childEnvVars are the only variables a docker (or podman) child takes from
+// the gateway's environment: where to find programs, the home directory its
+// configuration lives under, and the settings that say which daemon to talk
+// to and how. The gateway's environment can hold the master key, the database
+// DSN, the SIEM webhook secret and cloud credentials, and a child is handed
+// whatever it is given, so it is given this list and nothing else. The Podman
+// names (runtime directory, connection) are not verified against a Podman host.
+var childEnvVars = []string{
+	"PATH", "HOME",
+	"DOCKER_HOST", "DOCKER_CONTEXT", "DOCKER_CONFIG", "DOCKER_CERT_PATH", "DOCKER_TLS_VERIFY", "DOCKER_TLS", "DOCKER_API_VERSION",
+	"XDG_RUNTIME_DIR", "CONTAINER_HOST", "CONTAINER_CONNECTION", "CONTAINERS_CONF",
+}
+
+// childEnv builds a docker child's environment: those of childEnvVars that
+// are set, then extra, a session's own variables (the proxy's configuration,
+// which `docker run -e NAME` reads from here). It is never nil: exec.Cmd
+// takes a nil Env to mean the gateway's whole environment.
+func childEnv(extra []string) []string {
+	env := make([]string, 0, len(childEnvVars)+len(extra))
+	for _, k := range childEnvVars {
+		if v, ok := os.LookupEnv(k); ok {
+			env = append(env, k+"="+v)
+		}
+	}
+	return append(env, extra...)
+}
+
+// dockerCommand is every docker child the gateway starts: the CLI with args,
+// bound to ctx, in the environment childEnv builds.
+func dockerCommand(ctx context.Context, docker string, extra []string, args ...string) *exec.Cmd {
+	cmd := exec.CommandContext(ctx, docker, args...) // #nosec G204 G702 -- args built from fixed literals and validated fields (a stored, validated target), no shell
+	cmd.Env = childEnv(extra)
+	return cmd
+}
+
 // dockerOutput runs a short docker command (network create, container start,
 // a listing, teardown) with an optional extra environment, bounded by the
 // context, and returns its combined output.
 func dockerOutput(ctx context.Context, docker string, env []string, args ...string) (string, error) {
-	cmd := exec.CommandContext(ctx, docker, args...) // #nosec G204 -- args built from fixed literals + validated fields
-	if len(env) > 0 {
-		cmd.Env = append(os.Environ(), env...)
-	}
-	out, err := cmd.CombinedOutput()
+	out, err := dockerCommand(ctx, docker, env, args...).CombinedOutput()
 	if err != nil {
 		return string(out), fmt.Errorf("docker %s: %w: %s", args[0], err, string(out))
 	}
@@ -345,7 +376,9 @@ func dockerRun(ctx context.Context, docker string, env []string, args ...string)
 
 // Bridge sets up the per-session network + proxy sidecar, runs the client under
 // a pty, and pumps it to the WebSocket until one side ends, returning the end
-// reason. docker is the path to the docker CLI; rec may be nil.
+// reason. docker is the path to the docker CLI; rec may be nil. Once the
+// browser has been told why the session ended, Bridge closes ws normally
+// (gateway.CloseAfterEnd).
 func Bridge(ctx context.Context, log *slog.Logger, docker string, spec Spec, ws *websocket.Conn, rec *recording.Asciicast, cols, rows int, lim Limits) (string, error) {
 	if log == nil {
 		log = slog.Default()
@@ -409,7 +442,7 @@ func Bridge(ctx context.Context, log *slog.Logger, docker string, spec Spec, ws 
 	if err != nil {
 		return "error", err
 	}
-	cmd := exec.CommandContext(ctx, docker, cargs...) // #nosec G204 G702 -- args built by clientArgs from validated fields (a stored, validated target), no shell
+	cmd := dockerCommand(ctx, docker, nil, cargs...)
 	f, err := pty.StartWithSize(cmd, &pty.Winsize{Cols: uint16(cols), Rows: uint16(rows)})
 	if err != nil {
 		return "error", fmt.Errorf("dbgw: start client: %w", err)
@@ -421,8 +454,23 @@ func Bridge(ctx context.Context, log *slog.Logger, docker string, spec Spec, ws 
 		_ = dockerRun(tdCtx, docker, nil, "rm", "-f", client)
 	}()
 
+	// The client was started under the session's own context, and a
+	// cancellation closes that context's Done before it reaches the child
+	// made below. The client can therefore be killed and reaped while the
+	// child still reads as live, so "did the session end it?" is asked of
+	// session, never of the child.
+	session := ctx
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
+	// The browser is read and written under a context of its own, which the
+	// session's cancellation does not reach. coder/websocket drops the
+	// connection when the context of a read or write in progress is
+	// cancelled, so reading under ctx let an administrator, a restart or a
+	// policy change tear the socket down before the end frame could tell the
+	// browser why. wsCancel ends it: through CloseAfterEnd once the end frame
+	// is out, or at once when the browser has gone. It is a child of
+	// detached, so cancelling it leaves the teardown above alone.
+	wsCtx, wsCancel := context.WithCancel(detached)
 	var (
 		mu     sync.Mutex
 		reason = "user_exit"
@@ -460,7 +508,7 @@ func Bridge(ctx context.Context, log *slog.Logger, docker string, spec Spec, ws 
 						return
 					}
 				}
-				if werr := ws.Write(ctx, websocket.MessageBinary, buf[:n]); werr != nil {
+				if werr := ws.Write(wsCtx, websocket.MessageBinary, buf[:n]); werr != nil {
 					return
 				}
 			}
@@ -473,7 +521,7 @@ func Bridge(ctx context.Context, log *slog.Logger, docker string, spec Spec, ws 
 	go func() {
 		defer close(inDone)
 		for {
-			typ, data, rerr := ws.Read(ctx)
+			typ, data, rerr := ws.Read(wsCtx)
 			if rerr != nil {
 				return
 			}
@@ -521,6 +569,7 @@ func Bridge(ctx context.Context, log *slog.Logger, docker string, spec Spec, ws 
 		setEnd(r)
 		r = current()
 		sendCtrl(control{T: "end", Reason: r, Msg: msg})
+		gateway.CloseAfterEnd(ws, r, wsCancel)
 		cancel()
 		return r, nil
 	}
@@ -531,12 +580,22 @@ func Bridge(ctx context.Context, log *slog.Logger, docker string, spec Spec, ws 
 			return finish(reason, msg)
 		case <-inDone:
 			r := current()
+			wsCancel()
 			cancel()
 			return r, nil
 		case <-waitDone:
 			<-outDone
+			if session.Err() != nil {
+				// The client runs under the session's context, so the
+				// cancellation killed it and may be seen here first; its
+				// cause is the reason.
+				return finish(gateway.CancelReason(session))
+			}
 			return finish("user_exit", "")
 		case <-outDone:
+			if session.Err() != nil {
+				return finish(gateway.CancelReason(session))
+			}
 			if r := current(); r != "user_exit" {
 				return finish(r, "the database session ended")
 			}

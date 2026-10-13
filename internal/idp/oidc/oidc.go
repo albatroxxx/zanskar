@@ -19,6 +19,7 @@ import (
 	"net/http"
 	"net/url"
 	"path"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -82,8 +83,7 @@ type publicProvider struct {
 func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 	ps, err := h.Providers.List(r.Context(), true)
 	if err != nil {
-		h.Log.Error("list providers", "err", err)
-		httpx.WriteError(w, http.StatusInternalServerError, "internal", "internal error")
+		httpx.Internal(w, r, h.Log, fmt.Errorf("list providers: %w", err))
 		return
 	}
 	out := make([]publicProvider, 0, len(ps))
@@ -179,14 +179,23 @@ func (h *Handler) callback(w http.ResponseWriter, r *http.Request) {
 		h.fail(w, r, "", id, "nonce_mismatch", errors.New("nonce mismatch"))
 		return
 	}
-	ident, err := identityFromToken(idt, cfg)
+	ident, emailTrusted, err := identityFromToken(idt, cfg)
 	if err != nil {
 		h.fail(w, r, "", id, "claims_invalid", err)
 		return
 	}
-	if len(cfg.AllowedDomains) > 0 && !domainAllowed(ident.Email, cfg.AllowedDomains) {
-		h.fail(w, r, "", id, "domain_not_allowed", fmt.Errorf("email domain not allowed for %q", ident.Email))
-		return
+	if len(cfg.AllowedDomains) > 0 {
+		// The gate means something only for an address the provider vouches
+		// for: on one where people edit their own, anyone could type in an
+		// allowed domain.
+		if !emailTrusted {
+			h.fail(w, r, "", id, "email_unverified", errors.New("the provider has not verified the email address"))
+			return
+		}
+		if !domainAllowed(ident.Email, cfg.AllowedDomains) {
+			h.fail(w, r, "", id, "domain_not_allowed", fmt.Errorf("email domain not allowed for %q", ident.Email))
+			return
+		}
 	}
 	res, err := h.Provisioner.Resolve(r.Context(), op, ident)
 	if err != nil {
@@ -237,7 +246,7 @@ func (h *Handler) callback(w http.ResponseWriter, r *http.Request) {
 		_ = h.Provisioner.Users.RecordLoginSuccess(r.Context(), u.ID)
 	}
 	h.Sessions.SetCookie(w, token)
-	h.record(r, audit.Actor{UserID: u.ID, IP: ip}.Event("user.login", "user", u.ID, audit.Success,
+	h.record(r, audit.Actor{UserID: u.ID, IP: ip}.Event(audit.UserLogin, "user", u.ID, audit.Success,
 		map[string]string{"idp": id, "mfa": mfa, "session_id": sess.ID, "stage": map[bool]string{true: "complete", false: "password"}[verified]}))
 	// The cookie is sealed, so Next is what start accepted; checking it again
 	// costs nothing and covers a cookie sealed under an older rule.
@@ -306,29 +315,40 @@ func (h *Handler) baseURL(r *http.Request) string {
 
 type claims struct {
 	Email             string `json:"email"`
+	EmailVerified     any    `json:"email_verified"`
 	Name              string `json:"name"`
 	PreferredUsername string `json:"preferred_username"`
 }
 
-func identityFromToken(idt *gooidc.IDToken, cfg *idp.OIDCConfig) (idp.Identity, error) {
+// identityFromToken reads who signed in. emailTrusted reports whether the
+// address may stand for the person: the provider verified it, or never says
+// and is marked TrustEmail. An address the provider says is unverified is
+// dropped, and only a trusted one makes a username when no claim gives one.
+func identityFromToken(idt *gooidc.IDToken, cfg *idp.OIDCConfig) (ident idp.Identity, emailTrusted bool, err error) {
 	var all map[string]any
 	if err := idt.Claims(&all); err != nil {
-		return idp.Identity{}, err
+		return idp.Identity{}, false, err
 	}
 	var c claims
 	_ = idt.Claims(&c)
+	email := strings.ToLower(strings.TrimSpace(c.Email))
+	verified, said := emailVerified(c.EmailVerified)
+	if said && !verified {
+		email = ""
+	}
+	emailTrusted = email != "" && (verified || (!said && cfg.TrustEmail))
 	username, _ := all[cfg.UsernameClaim].(string)
 	if username == "" {
 		username = c.PreferredUsername
 	}
-	if username == "" && c.Email != "" {
-		username = c.Email[:strings.IndexByte(c.Email+"@", '@')]
+	if username == "" && emailTrusted {
+		username = email[:strings.IndexByte(email+"@", '@')]
 	}
 	username = strings.ToLower(strings.TrimSpace(username))
 	if username == "" {
-		return idp.Identity{}, errors.New("no usable username claim")
+		return idp.Identity{}, false, errors.New("no usable username claim")
 	}
-	ident := idp.Identity{ExternalID: idt.Subject, Username: username, DisplayName: c.Name, Email: strings.ToLower(c.Email)}
+	ident = idp.Identity{ExternalID: idt.Subject, Username: username, DisplayName: c.Name, Email: email}
 	if cfg.GroupsClaim != "" {
 		if raw, ok := all[cfg.GroupsClaim].([]any); ok {
 			for _, g := range raw {
@@ -338,7 +358,21 @@ func identityFromToken(idt *gooidc.IDToken, cfg *idp.OIDCConfig) (idp.Identity, 
 			}
 		}
 	}
-	return ident, nil
+	return ident, emailTrusted, nil
+}
+
+// emailVerified reads the email_verified claim, a boolean or the string some
+// providers send instead. said is false when the claim is absent or neither.
+func emailVerified(v any) (verified, said bool) {
+	switch x := v.(type) {
+	case bool:
+		return x, true
+	case string:
+		if b, err := strconv.ParseBool(x); err == nil {
+			return b, true
+		}
+	}
+	return false, false
 }
 
 func domainAllowed(email string, domains []string) bool {
@@ -436,7 +470,7 @@ func (h *Handler) unseal(v string) (state, error) {
 
 func (h *Handler) fail(w http.ResponseWriter, r *http.Request, userID, idpID, code string, err error) {
 	h.Log.Warn("oidc login failed", "idp", idpID, "code", code, "err", err)
-	h.record(r, audit.Actor{UserID: userID, IP: auth.ClientIP(r)}.Event("user.login", "user", userID, audit.Failure,
+	h.record(r, audit.Actor{UserID: userID, IP: auth.ClientIP(r)}.Event(audit.UserLogin, "user", userID, audit.Failure,
 		map[string]string{"idp": idpID, "reason": code}))
 	http.Redirect(w, r, "/login?error="+url.QueryEscape(code), http.StatusFound)
 }

@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -18,6 +19,7 @@ import (
 	"golang.org/x/crypto/ssh"
 
 	"github.com/albatroxxx/zanskar/internal/audit"
+	"github.com/albatroxxx/zanskar/internal/auth"
 	"github.com/albatroxxx/zanskar/internal/gateway"
 	"github.com/albatroxxx/zanskar/internal/policy"
 	"github.com/albatroxxx/zanskar/internal/recording"
@@ -98,7 +100,26 @@ func newTerminalRig(t *testing.T, port int, trustedFP string) *terminalRig {
 	if _, err := f.h.Targets.TrustHostKey(f.ctx, tg.ID, trustedFP); err != nil {
 		t.Fatal(err)
 	}
-	srv := httptest.NewServer(f.srv)
+	// Every request the rig serves is counted, a WebSocket one for the whole
+	// session it runs, and the cleanup waits for them: a session still
+	// closing its recording when the temporary directory goes made the
+	// directory's removal fail now and then. Cleanups run last first, so the
+	// server closes, then this waits, then the directory goes.
+	var inflight sync.WaitGroup
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		inflight.Add(1)
+		defer inflight.Done()
+		f.srv.ServeHTTP(w, r)
+	}))
+	t.Cleanup(func() {
+		done := make(chan struct{})
+		go func() { inflight.Wait(); close(done) }()
+		select {
+		case <-done:
+		case <-time.After(10 * time.Second):
+			t.Error("a session was still running 10s after the test ended")
+		}
+	})
 	t.Cleanup(srv.Close)
 	return &terminalRig{connectFixture: f, url: srv.URL, targetID: tg.ID}
 }
@@ -116,7 +137,16 @@ func (r *terminalRig) ticket(t *testing.T) string {
 }
 
 func (r *terminalRig) dial(ctx context.Context, tok string) (*websocket.Conn, *http.Response, error) {
-	return websocket.Dial(ctx, "ws"+strings.TrimPrefix(r.url, "http")+"/ws/terminal?cols=80&rows=24&ticket="+tok, nil)
+	return websocket.Dial(ctx, "ws"+strings.TrimPrefix(r.url, "http")+"/ws/terminal?cols=80&rows=24&ticket="+tok, r.wsOptions())
+}
+
+// dialWith dials as some other browser: with cookie, or none when it is nil.
+func (r *terminalRig) dialWith(ctx context.Context, tok string, cookie *http.Cookie) (*websocket.Conn, *http.Response, error) {
+	opts := &websocket.DialOptions{}
+	if cookie != nil {
+		opts.HTTPHeader = http.Header{"Cookie": []string{cookie.String()}}
+	}
+	return websocket.Dial(ctx, "ws"+strings.TrimPrefix(r.url, "http")+"/ws/terminal?cols=80&rows=24&ticket="+tok, opts)
 }
 
 type termFrame struct {
@@ -316,7 +346,12 @@ func TestTerminalTickets(t *testing.T) {
 	})
 
 	t.Run("from another address", func(t *testing.T) {
-		tok, err := r.h.Tickets.Issue(ticket.Grant{UserID: r.alice.ID, Username: "alice", TargetID: r.targetID, Protocol: "ssh",
+		// Alice's own sign-in, so only the address is wrong.
+		sess, err := r.sessions.Lookup(ctx, r.cookie.Value)
+		if err != nil {
+			t.Fatal(err)
+		}
+		tok, err := r.h.Tickets.Issue(ticket.Grant{UserID: r.alice.ID, Username: "alice", SessionID: sess.ID, TargetID: r.targetID, Protocol: "ssh",
 			CredentialID: r.vaulted, ClientIP: "198.51.100.7"})
 		if err != nil {
 			t.Fatal(err)
@@ -400,7 +435,7 @@ func TestTerminalRefusesTicketForAnotherProtocol(t *testing.T) {
 	}
 	refused := func(route, tok string) {
 		t.Helper()
-		ws, resp, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(r.url, "http")+route+"?cols=80&rows=24&ticket="+tok, nil)
+		ws, resp, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(r.url, "http")+route+"?cols=80&rows=24&ticket="+tok, r.wsOptions())
 		if err == nil {
 			ws.CloseNow()
 			t.Fatalf("%s opened a session on an RDP ticket", route)
@@ -452,4 +487,70 @@ func lastEvent(t *testing.T, f *connectFixture, action string) audit.Event {
 		t.Fatalf("no %s event: %v", action, err)
 	}
 	return evs[0]
+}
+
+// TestTicketBelongsToItsSignIn: a ticket opened a session for whoever brought
+// it from the same address within its 30 seconds (L9). One that leaked, into
+// a proxy log or a shared screen, worked from behind the same NAT without
+// any cookie, and signing out did not stop it. It is now redeemed only with
+// the sign-in that asked for it, and the policy is applied again at that
+// moment, so a revocation in between is not outrun.
+func TestTicketBelongsToItsSignIn(t *testing.T) {
+	port, fp := shellTarget(t)
+	r := newTerminalRig(t, port, fp)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	refusedWith := func(t *testing.T, tok string, cookie *http.Cookie, want int, code string) {
+		t.Helper()
+		ws, resp, err := r.dialWith(ctx, tok, cookie)
+		if err == nil {
+			ws.CloseNow()
+			t.Fatal("WebSocket opened")
+		}
+		if resp == nil || resp.StatusCode != want {
+			t.Fatalf("got %v, want %d", resp, want)
+		}
+		var body map[string]any
+		_ = json.NewDecoder(resp.Body).Decode(&body)
+		_ = resp.Body.Close()
+		if body["code"] != code {
+			t.Fatalf("code %v, want %s", body["code"], code)
+		}
+	}
+
+	t.Run("without the sign-in's cookie", func(t *testing.T) {
+		refusedWith(t, r.ticket(t), nil, http.StatusUnauthorized, "invalid_ticket")
+	})
+
+	t.Run("with another sign-in of the same user", func(t *testing.T) {
+		tok, _, err := r.sessions.Create(ctx, r.alice.ID, "127.0.0.1", "test", true)
+		if err != nil {
+			t.Fatal(err)
+		}
+		refusedWith(t, r.ticket(t), &http.Cookie{Name: auth.CookieName, Value: tok}, http.StatusUnauthorized, "invalid_ticket")
+	})
+
+	t.Run("after the policy is revoked", func(t *testing.T) {
+		tok := r.ticket(t)
+		if err := r.h.Policies.Delete(ctx, r.policyIDs["test-all"]); err != nil {
+			t.Fatal(err)
+		}
+		refusedWith(t, tok, r.cookie, http.StatusForbidden, "policy_denied")
+	})
+
+	t.Run("after signing out", func(t *testing.T) {
+		pol := &policy.Policy{Name: "test-all-again", GroupID: r.opsID, Enabled: true, Selector: policy.Selector{Tags: map[string]string{"env": "test"}}, Protocols: []string{"ssh"}, IdleTimeoutMinutes: 15}
+		if err := r.h.Policies.Create(ctx, pol); err != nil {
+			t.Fatal(err)
+		}
+		tok := r.ticket(t)
+		sess, err := r.sessions.Lookup(ctx, r.cookie.Value)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := r.sessions.Revoke(ctx, sess.ID); err != nil {
+			t.Fatal(err)
+		}
+		refusedWith(t, tok, r.cookie, http.StatusUnauthorized, "invalid_ticket")
+	})
 }

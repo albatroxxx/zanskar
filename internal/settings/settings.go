@@ -16,6 +16,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -66,13 +67,48 @@ const (
 
 // DefaultDBProxyImage is the gateway's own image at the running version. A
 // development build has no published tag, so it points at latest and the
-// setting must be overridden to test the relay from a local build.
+// setting must be overridden to test the relay from a local build. It is a
+// tag, not a digest: the binary that names it is built into that image, so
+// the digest is not known when the binary is.
 func DefaultDBProxyImage() string {
 	v := strings.TrimPrefix(version.Version, "v")
 	if v == "" || v == "dev" {
 		v = "latest"
 	}
 	return "ghcr.io/albatroxxx/zanskar:" + v
+}
+
+// Image references as the OCI distribution spec writes them, cut to what a
+// relay image needs: an optional registry host with an optional port, a
+// lowercase repository path, an optional tag and an optional sha256 digest.
+const (
+	refHostPart = `(?:[a-zA-Z0-9]|[a-zA-Z0-9][a-zA-Z0-9-]*[a-zA-Z0-9])`
+	refRegistry = refHostPart + `(?:\.` + refHostPart + `)*(?::[0-9]+)?`
+	refPathPart = `[a-z0-9]+(?:(?:[._]|__|-+)[a-z0-9]+)*`
+	refName     = `(?:` + refRegistry + `/)?` + refPathPart + `(?:/` + refPathPart + `)*`
+)
+
+// imageRefRe matches a whole image reference and captures its name. Anchored
+// at both ends it admits no space, no control character and no leading "-",
+// so the value cannot become a flag or a second argument of the `docker run`
+// it is placed in.
+var imageRefRe = regexp.MustCompile(`^(` + refName + `)(?::[A-Za-z0-9_][A-Za-z0-9_.-]{0,127})?(?:@sha256:[a-f0-9]{64})?$`)
+
+// maxImageName is the longest repository name a registry takes, registry host
+// included; with a tag of at most 128 characters and a digest the whole
+// reference stays under 460.
+const maxImageName = 255
+
+// checkImageRef refuses a value that is not an image reference.
+func checkImageRef(v string) error {
+	m := imageRefRe.FindStringSubmatch(v)
+	if m == nil {
+		return errors.New("must be an image reference, such as ghcr.io/albatroxxx/zanskar:1.3.0 or a mirror's registry.example.com/zanskar@sha256:<64 hex digits>: a lowercase repository path, an optional :tag and an optional @sha256 digest, with no spaces")
+	}
+	if len(m[1]) > maxImageName {
+		return fmt.Errorf("must be an image reference whose name (registry and repository) is at most %d characters", maxImageName)
+	}
+	return nil
 }
 
 // MaxLoginBanner bounds the banner: long enough for a legal notice, short
@@ -102,7 +138,7 @@ var Definitions = []Definition{
 	{Key: KeyLogLevel, Category: "Logging", Title: "Log level", Type: TypeEnum, Default: "info", EnvVar: "ZANSKAR_LOG_LEVEL", Enum: []string{"debug", "info", "warn", "error"},
 		Description: "Verbosity of the gateway's log. Applies at once; go back to info afterwards."},
 	{Key: KeyDBProxyImage, Category: "Databases", Title: "MySQL relay image", Type: TypeString, Default: DefaultDBProxyImage(), EnvVar: "ZANSKAR_DBPROXY_IMAGE",
-		Description: "Container image started beside each MySQL or MariaDB session to hold the credential and relay the protocol: the gateway's own image, running zanskar dbproxy. Change it only to pin a mirror or test a local build. Applies to the next session."},
+		Description: "Container image started beside each MySQL or MariaDB session to hold the credential and relay the protocol: the gateway's own image, running zanskar dbproxy. Change it only to pin a mirror or test a local build. An image reference: registry/repository, an optional :tag and an optional @sha256 digest, such as registry.example.com/zanskar:1.3.0. Applies to the next session."},
 }
 
 // Lookup returns the definition for key.
@@ -194,6 +230,13 @@ func Validate(d Definition, value string) (string, error) {
 		v := strings.TrimSpace(value)
 		if !utf8.ValidString(v) || len(v) > 4096 {
 			return "", fmt.Errorf("%w: %s must be valid UTF-8 up to 4096 bytes", ErrInvalid, d.Key)
+		}
+		// The relay image is an argument of `docker run`; free text there
+		// could be read as one of its flags (--privileged, a host mount).
+		if d.Key == KeyDBProxyImage {
+			if err := checkImageRef(v); err != nil {
+				return "", fmt.Errorf("%w: %s %w", ErrInvalid, d.Key, err)
+			}
 		}
 		return v, nil
 	}
@@ -314,9 +357,17 @@ func (s *Service) Load(ctx context.Context) error {
 	defer s.mu.Unlock()
 	s.rows = map[string]Setting{}
 	for _, row := range all {
-		if _, ok := Lookup(row.Key); ok {
-			s.rows[row.Key] = row
+		d, ok := Lookup(row.Key)
+		if !ok {
+			continue
 		}
+		// A value stored before its check existed (a relay image that is
+		// not an image reference) is not used: the environment value or the
+		// default applies until an administrator sets it again.
+		if _, err := Validate(d, row.Value); err != nil {
+			continue
+		}
+		s.rows[row.Key] = row
 	}
 	return nil
 }

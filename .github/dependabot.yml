@@ -18,6 +18,12 @@ updates:
     directory: /deploy
     schedule:
       interval: weekly
+  # The compose files pin caddy, guacd and postgres by digest; the docker
+  # ecosystem above reads only the Dockerfiles.
+  - package-ecosystem: docker-compose
+    directory: /deploy
+    schedule:
+      interval: weekly
   - package-ecosystem: npm
     directory: /web
     schedule:

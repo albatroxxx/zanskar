@@ -108,7 +108,7 @@ func (h *Handler) terminate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if s.EndedAt != nil {
-		httpx.WriteError(w, http.StatusConflict, "already_ended", "session already ended")
+		httpx.WriteError(w, r, http.StatusConflict, "already_ended", "session already ended")
 		return
 	}
 	var body struct {
@@ -116,7 +116,7 @@ func (h *Handler) terminate(w http.ResponseWriter, r *http.Request) {
 	}
 	if r.ContentLength > 0 {
 		if err := httpx.DecodeJSON(r, &body); err != nil {
-			httpx.BadRequest(w, err.Error())
+			httpx.BadRequest(w, r, err.Error())
 			return
 		}
 	}
@@ -130,7 +130,7 @@ func (h *Handler) terminate(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	p, _ := auth.FromContext(r.Context())
-	h.record(r, audit.Actor{UserID: p.User.ID, IP: auth.ClientIP(r)}.Event("session.terminate", "access_session", s.ID, audit.Success,
+	h.record(r, audit.Actor{UserID: p.User.ID, IP: auth.ClientIP(r)}.Event(audit.SessionTerminate, "access_session", s.ID, audit.Success,
 		map[string]any{"target_user_id": s.UserID, "reason": body.Reason, "was_live_here": found}))
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"status": "terminating", "live": found})
 }
@@ -157,7 +157,7 @@ func (h *Handler) getRecording(w http.ResponseWriter, r *http.Request) {
 // streamRecording sends the raw recording. Every stream is a recorded view
 // and an audit event naming the viewer.
 func (h *Handler) streamRecording(w http.ResponseWriter, r *http.Request) {
-	rec, _, rc, ok := h.openForReview(w, r, "recording.view", nil)
+	rec, _, rc, ok := h.openForReview(w, r, audit.RecordingView, nil)
 	if !ok {
 		return
 	}
@@ -187,7 +187,7 @@ func (h *Handler) openForReview(w http.ResponseWriter, r *http.Request, action s
 		return nil, nil, nil, false
 	}
 	if rec.PurgedAt != nil {
-		httpx.WriteError(w, http.StatusGone, "purged", "this recording was deleted by the retention policy")
+		httpx.WriteError(w, r, http.StatusGone, "purged", "this recording was deleted by the retention policy")
 		return nil, nil, nil, false
 	}
 	sess, err := h.Repo.Get(r.Context(), rec.SessionID)
@@ -198,7 +198,7 @@ func (h *Handler) openForReview(w http.ResponseWriter, r *http.Request, action s
 	rc, err := h.Storage.Open(r.Context(), rec.StorageURI)
 	if err != nil {
 		h.Log.Error("open recording", "id", rec.ID, "err", err)
-		httpx.WriteError(w, http.StatusNotFound, "not_found", "recording data unavailable")
+		httpx.WriteError(w, r, http.StatusNotFound, "not_found", "recording data unavailable")
 		return nil, nil, nil, false
 	}
 	p, _ := auth.FromContext(r.Context())
@@ -257,7 +257,7 @@ func downloadName(rec *Recording, sess *Session, ext string) string {
 // downloadRecording sends the raw recording as an attachment: the asciicast
 // file for a terminal session, the guacd instruction stream for a desktop.
 func (h *Handler) downloadRecording(w http.ResponseWriter, r *http.Request) {
-	rec, sess, rc, ok := h.openForReview(w, r, "recording.download", map[string]any{"kind": "raw"})
+	rec, sess, rc, ok := h.openForReview(w, r, audit.RecordingDownload, map[string]any{"kind": "raw"})
 	if !ok {
 		return
 	}
@@ -286,10 +286,10 @@ func (h *Handler) downloadTranscript(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if rec.Format != "asciicast" {
-		httpx.WriteError(w, http.StatusConflict, "not_a_terminal_recording", "a command transcript exists for terminal sessions only; download the desktop recording instead")
+		httpx.WriteError(w, r, http.StatusConflict, "not_a_terminal_recording", "a command transcript exists for terminal sessions only; download the desktop recording instead")
 		return
 	}
-	rec, sess, rc, ok := h.openForReview(w, r, "recording.download", map[string]any{"kind": "transcript"})
+	rec, sess, rc, ok := h.openForReview(w, r, audit.RecordingDownload, map[string]any{"kind": "transcript"})
 	if !ok {
 		return
 	}
@@ -402,7 +402,7 @@ func (h *Handler) auditEvents(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		if !excludeToken.MatchString(ex) || len(f.Exclude) >= 16 {
-			httpx.BadRequest(w, "exclude: expected action or action:outcome tokens")
+			httpx.BadRequest(w, r, "exclude: expected action or action:outcome tokens")
 			return
 		}
 		f.Exclude = append(f.Exclude, ex)
@@ -428,7 +428,7 @@ func (h *Handler) auditEvents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	p, _ := auth.FromContext(r.Context())
-	h.record(r, audit.Actor{UserID: p.User.ID, IP: auth.ClientIP(r)}.Event("audit.read", "audit_log", "", audit.Success,
+	h.record(r, audit.Actor{UserID: p.User.ID, IP: auth.ClientIP(r)}.Event(audit.AuditRead, "audit_log", "", audit.Success,
 		map[string]any{"count": len(items), "filter_action": f.Action, "filter_actor": f.ActorUserID}))
 	httpx.WriteJSON(w, http.StatusOK, httpx.Page[auditRow]{Items: rows, NextCursor: next})
 }
@@ -529,11 +529,14 @@ func (h *Handler) record(r *http.Request, e audit.Event) {
 
 func (h *Handler) fail(w http.ResponseWriter, r *http.Request, err error) {
 	if errors.Is(err, ErrNotFound) {
-		httpx.WriteError(w, http.StatusNotFound, "not_found", "not found")
+		httpx.WriteError(w, r, http.StatusNotFound, "not_found", "not found")
 		return
 	}
-	h.Log.Error("session handler", "path", r.URL.Path, "err", err)
-	httpx.WriteError(w, http.StatusInternalServerError, "internal", "internal error")
+	if errors.Is(err, ErrBadCursor) {
+		httpx.BadRequest(w, r, "cursor: pass the next_cursor of the previous page")
+		return
+	}
+	httpx.Internal(w, r, h.Log, err)
 }
 
 // getRetention returns the current recording-retention policy (admin only).
@@ -550,11 +553,11 @@ func (h *Handler) getRetention(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) setRetention(w http.ResponseWriter, r *http.Request) {
 	var in RetentionPolicy
 	if err := httpx.DecodeJSON(r, &in); err != nil {
-		httpx.BadRequest(w, err.Error())
+		httpx.BadRequest(w, r, err.Error())
 		return
 	}
 	if in.MaxAgeDays < 0 || in.MaxTotalBytes < 0 {
-		httpx.BadRequest(w, "retention values must not be negative")
+		httpx.BadRequest(w, r, "retention values must not be negative")
 		return
 	}
 	p, _ := auth.FromContext(r.Context())
@@ -562,7 +565,7 @@ func (h *Handler) setRetention(w http.ResponseWriter, r *http.Request) {
 		h.fail(w, r, err)
 		return
 	}
-	h.record(r, audit.Actor{UserID: p.User.ID, IP: auth.ClientIP(r)}.Event("retention.policy.update", "retention_policy", retentionPolicyID, audit.Success,
+	h.record(r, audit.Actor{UserID: p.User.ID, IP: auth.ClientIP(r)}.Event(audit.RetentionPolicyUpdate, "retention_policy", retentionPolicyID, audit.Success,
 		map[string]any{"max_age_days": in.MaxAgeDays, "max_total_bytes": in.MaxTotalBytes}))
 	saved, err := h.Repo.GetRetentionPolicy(r.Context())
 	if err != nil {

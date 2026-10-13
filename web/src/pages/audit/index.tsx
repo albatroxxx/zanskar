@@ -1,8 +1,5 @@
 import { Route } from 'react-router-dom'
-import { Events } from './Events'
-import { Recordings } from './Recordings'
-import { Player } from './Player'
-import { Sessions } from '../admin/Sessions'
+import { Events, Recordings, Player, Sessions } from './pages'
 
 // Auditor portal: read-only review of the audit chain, session recordings and
 // live sessions, which an auditor can watch but not end.

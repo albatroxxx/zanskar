@@ -25,6 +25,13 @@ export function Alert({ tone, children }: { tone?: 'ok' | 'warn' | 'danger'; chi
 // stack; the stack also decides when the page behind can scroll again.
 const openModals: symbol[] = []
 
+// focusable lists what Tab can reach inside el, in order.
+function focusable(el: HTMLElement): HTMLElement[] {
+  return Array.from(
+    el.querySelectorAll<HTMLElement>('a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'),
+  ).filter((n) => !n.closest('[hidden], [inert]'))
+}
+
 export function Modal({ title, onClose, children, width }: { title: string; onClose: () => void; children: ReactNode; width?: number }) {
   const me = useRef(Symbol('modal'))
   const box = useRef<HTMLDivElement>(null)
@@ -50,9 +57,33 @@ export function Modal({ title, onClose, children, width }: { title: string; onCl
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' && openModals[openModals.length - 1] === me.current) {
+      if (openModals[openModals.length - 1] !== me.current) return
+      if (e.key === 'Escape') {
         e.stopPropagation()
         onClose()
+        return
+      }
+      // Tab stays inside the topmost dialog: past its last control it wraps
+      // to the first, and back again, so the keyboard never reaches the page
+      // behind it, which aria-modal hides from screen readers only.
+      if (e.key === 'Tab' && box.current) {
+        const items = focusable(box.current)
+        if (items.length === 0) {
+          e.preventDefault()
+          box.current.focus()
+          return
+        }
+        const first = items[0]
+        const last = items[items.length - 1]
+        const at = document.activeElement
+        const inside = at instanceof Node && box.current.contains(at)
+        if (e.shiftKey && (at === first || at === box.current || !inside)) {
+          e.preventDefault()
+          last.focus()
+        } else if (!e.shiftKey && (at === last || !inside)) {
+          e.preventDefault()
+          first.focus()
+        }
       }
     }
     window.addEventListener('keydown', onKey)

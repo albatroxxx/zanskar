@@ -56,8 +56,14 @@ type OIDCConfig struct {
 	Scopes        []string `json:"scopes,omitempty"`         // default openid profile email
 	GroupsClaim   string   `json:"groups_claim,omitempty"`   // e.g. "groups"; empty disables group sync
 	UsernameClaim string   `json:"username_claim,omitempty"` // default preferred_username, then email
-	// AllowedDomains restricts sign-in to these email domains when set.
+	// AllowedDomains restricts sign-in to these email domains when set. The
+	// address must be one the provider has verified (email_verified).
 	AllowedDomains []string `json:"allowed_domains,omitempty"`
+	// TrustEmail accepts the email claim as verified when the provider never
+	// says, as Entra ID does not. Set it only for a provider whose addresses
+	// its own directory assigns. An address the provider marks unverified is
+	// never used, whatever this says.
+	TrustEmail bool `json:"trust_email,omitempty"`
 	// SkipMFA trusts the provider's own MFA and does not require TOTP in Zanskar.
 	SkipMFA bool `json:"skip_mfa"`
 }
@@ -126,6 +132,7 @@ func AccessSummary(c *Config) map[string]any {
 	if o := c.OIDC; o != nil {
 		d["issuer"], d["client_id"], d["skip_mfa"] = o.Issuer, o.ClientID, o.SkipMFA
 		d["allowed_domains"], d["username_claim"], d["groups_claim"] = orEmpty(o.AllowedDomains), o.UsernameClaim, o.GroupsClaim
+		d["trust_email"] = o.TrustEmail
 	}
 	if l := c.LDAP; l != nil {
 		d["url"], d["start_tls"], d["insecure_skip_verify"] = l.URL, l.StartTLS, l.InsecureSkipVerify
@@ -238,7 +245,7 @@ func (r *Repo) Create(ctx context.Context, p *Provider, c *Config) error {
 	_, err = r.db.ExecContext(ctx, r.db.Rebind(`INSERT INTO identity_providers (id, name, type, config_enc, key_version, enabled, created_at, updated_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`), p.ID, p.Name, string(p.Type), sealed, ver, p.Enabled, store.TimeArg(now), store.TimeArg(now))
 	if err != nil {
-		if isUnique(err) {
+		if store.IsUniqueViolation(err) {
 			return ErrDuplicate
 		}
 		return err
@@ -271,7 +278,7 @@ func (r *Repo) Update(ctx context.Context, p *Provider, c *Config) error {
 	res, err := r.db.ExecContext(ctx, r.db.Rebind(`UPDATE identity_providers SET name = ?, config_enc = ?, key_version = ?, enabled = ?, updated_at = ? WHERE id = ?`),
 		p.Name, sealed, ver, p.Enabled, store.TimeArg(p.UpdatedAt), p.ID)
 	if err != nil {
-		if isUnique(err) {
+		if store.IsUniqueViolation(err) {
 			return ErrDuplicate
 		}
 		return err
@@ -596,14 +603,14 @@ func (r Resolution) Events(ip string, p *Opened, id Identity) []audit.Event {
 		if len(granted) > 0 {
 			d["roles_granted"] = granted
 		}
-		out = append(out, actor.Event("user.create", "user", r.User.ID, audit.Success, d))
+		out = append(out, actor.Event(audit.UserCreate, "user", r.User.ID, audit.Success, d))
 	}
 	if len(r.GroupsAdded)+len(r.GroupsRemoved) > 0 {
 		d := map[string]any{"idp": p.ID, "idp_name": p.Name, "groups_added": orEmpty(r.GroupsAdded), "groups_removed": orEmpty(r.GroupsRemoved)}
 		if len(r.GroupsRemoved) > 0 {
 			d["live_sessions_ended"] = r.LiveSessionsEnded
 		}
-		out = append(out, actor.Event("user.groups.sync", "user", r.User.ID, audit.Success, d))
+		out = append(out, actor.Event(audit.UserGroupsSync, "user", r.User.ID, audit.Success, d))
 	}
 	return out
 }
@@ -621,7 +628,7 @@ func orEmpty(ids []string) []string {
 // apart from the user.login that follows, because the link stays even if the
 // sign-in goes no further.
 func LinkEvent(ip string, u *user.User, p *Opened, id Identity) audit.Event {
-	return audit.Actor{UserID: u.ID, IP: ip}.Event("user.link", "user", u.ID, audit.Success,
+	return audit.Actor{UserID: u.ID, IP: ip}.Event(audit.UserLink, "user", u.ID, audit.Success,
 		map[string]string{"idp": p.ID, "idp_name": p.Name, "external_id": id.ExternalID})
 }
 
@@ -662,11 +669,6 @@ func affected(res sql.Result) error {
 		return ErrNotFound
 	}
 	return nil
-}
-
-func isUnique(err error) bool {
-	msg := strings.ToLower(err.Error())
-	return strings.Contains(msg, "unique") || strings.Contains(msg, "duplicate key")
 }
 
 func firstNonEmpty(a, b string) string {

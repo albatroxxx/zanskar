@@ -143,10 +143,15 @@ export function ConsoleCLI() {
       append(reply.lines)
       setConfirm(reply.status === 'confirm' && reply.expect ? { line, expect: reply.expect } : null)
     } catch (err) {
-      if (err instanceof ApiError && err.code === 'cli_locked') {
+      if (err instanceof ApiError && err.code === 'cli_code_required') {
         setAfterUnlock(confirmWord === undefined ? line : null)
         setState((s) => (s ? { ...s, unlocked: false } : s))
         append([{ text: 'The command line closed after a while without use. Enter a fresh code to go on.', style: 'muted' }])
+      } else if (err instanceof ApiError && err.code === 'cli_locked') {
+        // Closed after too many wrong codes: the code form shows why, so the
+        // admin is not just asked for a code the gateway would refuse.
+        setState((s) => (s ? { ...s, unlocked: false } : s))
+        setCodeError(errorMessage(err))
       } else if (!(err instanceof ApiError && err.sessionEnded)) {
         append([{ text: errorMessage(err), style: 'error' }])
       }

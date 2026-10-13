@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
@@ -93,7 +94,7 @@ func NewAWS(ctx context.Context, a AWSAccess) (*AWS, error) {
 func (p *AWS) Check(ctx context.Context, groupName string) (*AccessCheck, error) {
 	id, err := p.sts.GetCallerIdentity(ctx, &sts.GetCallerIdentityInput{})
 	if err != nil {
-		return nil, fmt.Errorf("%w: %s", ErrAssumeRole, redactARNs(err.Error()))
+		return nil, fmt.Errorf("%w: %s", ErrAssumeRole, clipProviderError(err.Error()))
 	}
 	out := &AccessCheck{AssumedARN: aws.ToString(id.Arn)}
 	snap, err := p.DescribeGroup(ctx, groupName)
@@ -102,7 +103,7 @@ func (p *AWS) Check(ctx context.Context, groupName string) (*AccessCheck, error)
 		out.GroupFound, out.InstanceCount = true, len(snap.Instances)
 	case errors.Is(err, ErrGroupNotFound):
 	default:
-		out.DescribeError = redactARNs(err.Error())
+		out.DescribeError = clipProviderError(err.Error())
 	}
 	return out, nil
 }
@@ -214,15 +215,23 @@ func wrapAWS(err error) error {
 	}
 	msg := err.Error()
 	if strings.Contains(msg, "AccessDenied") || strings.Contains(msg, "UnauthorizedOperation") || strings.Contains(msg, "not authorized") {
-		return fmt.Errorf("%w: %s", ErrAccessDenied, redactARNs(msg))
+		return fmt.Errorf("%w: %s", ErrAccessDenied, clipProviderError(msg))
 	}
 	return err
 }
 
-// redactARNs keeps error text useful without echoing full principal ARNs.
-func redactARNs(s string) string {
-	if len(s) > 300 {
-		s = s[:300]
+// clipProviderError keeps an error from AWS to a length the console and the
+// log can show, cut between characters. It keeps the ARNs in it: the
+// administrator reading it needs them to fix a trust policy, and the console
+// shows the gateway's own principal for that already (ADR 0023).
+func clipProviderError(s string) string {
+	const limit = 300
+	if len(s) <= limit {
+		return s
 	}
-	return s
+	cut := limit
+	for cut > 0 && !utf8.RuneStart(s[cut]) {
+		cut--
+	}
+	return s[:cut] + "…"
 }

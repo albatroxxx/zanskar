@@ -1,0 +1,4 @@
+-- Timestamps compare as times on SQLite (M28; ADR 0003, amended 2026-10-11).
+-- PostgreSQL stores every timestamp as TIMESTAMPTZ, which compares as a time
+-- already, so nothing changes here. The SQLite migration of the same name
+-- rewrites the text SQLite stores to one fixed-width form.

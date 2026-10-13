@@ -65,7 +65,7 @@ func (v *Vault) Create(ctx context.Context, c *Credential, s *Secret, createdBy 
 		sealed, nullStr(c.PublicKey), keyVersion, nullStr(createdBy), store.TimeArg(now), store.TimeArg(now),
 		nullInt(c.CertificateTTLSeconds), principalsJSON(c.CertificatePrincipals))
 	if err != nil {
-		if isUnique(err) {
+		if store.IsUniqueViolation(err) {
 			return ErrDuplicate
 		}
 		return err
@@ -151,7 +151,7 @@ func (v *Vault) Update(ctx context.Context, id string, m Metadata) (*Credential,
 		strings.TrimSpace(name), nullStr(strings.TrimSpace(username)), nullStr(strings.TrimSpace(domain)),
 		nullInt(c.CertificateTTLSeconds), principalsJSON(c.CertificatePrincipals), store.TimeArg(time.Now()), id)
 	if err != nil {
-		if isUnique(err) {
+		if store.IsUniqueViolation(err) {
 			return nil, ErrDuplicate
 		}
 		return nil, err
@@ -232,7 +232,7 @@ func (v *Vault) Delete(ctx context.Context, id string) error {
 	}
 	res, err := v.db.ExecContext(ctx, v.db.Rebind(`DELETE FROM credentials WHERE id = ?`), id)
 	if err != nil {
-		if strings.Contains(strings.ToLower(err.Error()), "foreign key") {
+		if store.IsForeignKeyViolation(err) {
 			return ErrInUse
 		}
 		return err
@@ -498,11 +498,6 @@ func affected(res sql.Result) error {
 		return ErrNotFound
 	}
 	return nil
-}
-
-func isUnique(err error) bool {
-	msg := strings.ToLower(err.Error())
-	return strings.Contains(msg, "unique") || strings.Contains(msg, "duplicate key")
 }
 
 // UserSuppliedSentinel is the credential_id an admin binds to a slot to mean

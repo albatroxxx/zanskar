@@ -4,10 +4,8 @@ package auth
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"hash/fnv"
-	"io"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -15,6 +13,7 @@ import (
 	"time"
 
 	"github.com/albatroxxx/zanskar/internal/audit"
+	"github.com/albatroxxx/zanskar/internal/httpx"
 	"github.com/albatroxxx/zanskar/internal/user"
 )
 
@@ -135,19 +134,24 @@ type loginResponse struct {
 func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
 	ip := ClientIP(r)
 	actor := audit.Actor{IP: ip}
-	if !h.loginLimiter.Allow(limiterKey(ip)) {
-		h.record(r, actor.Event("user.login", "user", "", audit.Failure, map[string]string{"reason": "rate_limited"}))
-		WriteError(w, http.StatusTooManyRequests, "rate_limited", "too many attempts; try again later")
+	if ok, first := h.loginLimiter.Take(limiterKey(ip)); !ok {
+		// One row per run of refusals from an address, not one per attempt:
+		// an unauthenticated flood must not grow the hash-chained log, and
+		// queue every other event behind its writer, without bound (L11).
+		if first {
+			h.record(r, actor.Event(audit.UserLogin, "user", "", audit.Failure, map[string]string{"reason": "rate_limited"}))
+		}
+		httpx.WriteError(w, r, http.StatusTooManyRequests, "rate_limited", "too many attempts; try again later")
 		return
 	}
 	var req loginRequest
-	if err := decodeJSON(r, &req); err != nil {
-		WriteError(w, http.StatusBadRequest, "bad_request", err.Error())
+	if err := httpx.DecodeJSONLimit(r, &req, signInBodyLimit); err != nil {
+		httpx.WriteError(w, r, http.StatusBadRequest, "bad_request", err.Error())
 		return
 	}
 	req.Username = strings.TrimSpace(req.Username)
 	if req.Username == "" || req.Password == "" || len(req.Password) > user.MaxPasswordLen {
-		WriteError(w, http.StatusBadRequest, "bad_request", "username and password required")
+		httpx.WriteError(w, r, http.StatusBadRequest, "bad_request", "username and password required")
 		return
 	}
 	attempted := truncate(req.Username, 64)
@@ -155,7 +159,7 @@ func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
 	u, err := h.Users.GetByUsername(r.Context(), req.Username)
 	if err != nil {
 		if !errors.Is(err, user.ErrNotFound) {
-			h.serverError(w, r, err)
+			httpx.Internal(w, r, h.Log, err)
 			return
 		}
 		// No local user: a first-time LDAP user is provisioned on login, so
@@ -172,8 +176,8 @@ func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
 		if !h.hashing(w, r, func() { user.BurnPasswordCheck(req.Password) }) {
 			return
 		}
-		h.record(r, actor.Event("user.login", "user", "", audit.Failure, map[string]string{"reason": "unknown_user", "username": attempted}))
-		WriteError(w, http.StatusUnauthorized, "invalid_credentials", "invalid username or password")
+		h.record(r, actor.Event(audit.UserLogin, "user", "", audit.Failure, map[string]string{"reason": "unknown_user", "username": attempted}))
+		httpx.WriteError(w, r, http.StatusUnauthorized, "invalid_credentials", "invalid username or password")
 		return
 	}
 	actor.UserID = u.ID
@@ -183,8 +187,8 @@ func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
 			if !h.hashing(w, r, func() { user.BurnPasswordCheck(req.Password) }) {
 				return
 			}
-			h.record(r, actor.Event("user.login", "user", u.ID, audit.Failure, map[string]string{"reason": "locked"}))
-			WriteError(w, http.StatusUnauthorized, "invalid_credentials", "invalid username or password")
+			h.record(r, actor.Event(audit.UserLogin, "user", u.ID, audit.Failure, map[string]string{"reason": "locked"}))
+			httpx.WriteError(w, r, http.StatusUnauthorized, "invalid_credentials", "invalid username or password")
 			return
 		}
 		var (
@@ -210,8 +214,8 @@ func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
 			if locked {
 				details["locked_for"] = h.LockFor.String()
 			}
-			h.record(r, actor.Event("user.login", "user", u.ID, audit.Failure, details))
-			WriteError(w, http.StatusUnauthorized, "invalid_credentials", "invalid username or password")
+			h.record(r, actor.Event(audit.UserLogin, "user", u.ID, audit.Failure, details))
+			httpx.WriteError(w, r, http.StatusUnauthorized, "invalid_credentials", "invalid username or password")
 			return
 		}
 		if rehash != "" {
@@ -237,8 +241,8 @@ func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
 	if !h.hashing(w, r, func() { user.BurnPasswordCheck(req.Password) }) {
 		return
 	}
-	h.record(r, actor.Event("user.login", "user", u.ID, audit.Failure, map[string]string{"reason": "no_password_no_external"}))
-	WriteError(w, http.StatusUnauthorized, "invalid_credentials", "invalid username or password")
+	h.record(r, actor.Event(audit.UserLogin, "user", u.ID, audit.Failure, map[string]string{"reason": "no_password_no_external"}))
+	httpx.WriteError(w, r, http.StatusUnauthorized, "invalid_credentials", "invalid username or password")
 }
 
 // hashing runs fn, which computes password hashes, in a passwordHashing
@@ -248,7 +252,7 @@ func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) hashing(w http.ResponseWriter, r *http.Request, fn func()) bool {
 	leave, ok := passwordHashing.enter(r.Context())
 	if !ok {
-		WriteError(w, http.StatusServiceUnavailable, "busy", "too many sign-ins at once; try again in a moment")
+		httpx.WriteError(w, r, http.StatusServiceUnavailable, "busy", "too many sign-ins at once; try again in a moment")
 		return false
 	}
 	defer leave()
@@ -261,7 +265,7 @@ func (h *Handler) completeLogin(w http.ResponseWriter, r *http.Request, u *user.
 	ip := ClientIP(r)
 	enrolled, err := h.TOTP.Enrolled(r.Context(), u.ID)
 	if err != nil {
-		h.serverError(w, r, err)
+		httpx.Internal(w, r, h.Log, err)
 		return
 	}
 	require := h.RequireMFA != nil && h.RequireMFA()
@@ -280,13 +284,13 @@ func (h *Handler) completeLogin(w http.ResponseWriter, r *http.Request, u *user.
 	// (M7). The step that completes the sign-in clears it.
 	if complete {
 		if err := h.Users.RecordLoginSuccess(r.Context(), u.ID); err != nil {
-			h.serverError(w, r, err)
+			httpx.Internal(w, r, h.Log, err)
 			return
 		}
 	}
 	token, sess, err := h.Sessions.Create(r.Context(), u.ID, ip, r.UserAgent(), complete)
 	if err != nil {
-		h.serverError(w, r, err)
+		httpx.Internal(w, r, h.Log, err)
 		return
 	}
 	h.Sessions.SetCookie(w, token)
@@ -295,27 +299,27 @@ func (h *Handler) completeLogin(w http.ResponseWriter, r *http.Request, u *user.
 	// to choose the next one. An account without one changes first, then
 	// enrols.
 	if !enrolled && u.MustResetOnLogin {
-		h.record(r, actor.Event("user.login", "user", u.ID, audit.Success, map[string]string{"stage": "password", "next": "password_change", "session_id": sess.ID}))
-		WriteJSON(w, http.StatusOK, loginResponse{Status: "password_change_required", CSRFToken: h.Sessions.CSRFToken(sess.ID)})
+		h.record(r, actor.Event(audit.UserLogin, "user", u.ID, audit.Success, map[string]string{"stage": "password", "next": "password_change", "session_id": sess.ID}))
+		httpx.WriteJSON(w, http.StatusOK, loginResponse{Status: "password_change_required", CSRFToken: h.Sessions.CSRFToken(sess.ID)})
 		return
 	}
 	if !enrolled && require {
-		h.record(r, actor.Event("user.login", "user", u.ID, audit.Success, map[string]string{"stage": "password", "next": "mfa_enrollment", "session_id": sess.ID}))
-		WriteJSON(w, http.StatusOK, loginResponse{Status: "mfa_enrollment_required", CSRFToken: h.Sessions.CSRFToken(sess.ID)})
+		h.record(r, actor.Event(audit.UserLogin, "user", u.ID, audit.Success, map[string]string{"stage": "password", "next": "mfa_enrollment", "session_id": sess.ID}))
+		httpx.WriteJSON(w, http.StatusOK, loginResponse{Status: "mfa_enrollment_required", CSRFToken: h.Sessions.CSRFToken(sess.ID)})
 		return
 	}
 	if enrolled {
-		h.record(r, actor.Event("user.login", "user", u.ID, audit.Success, map[string]string{"stage": "password", "session_id": sess.ID}))
-		WriteJSON(w, http.StatusOK, loginResponse{Status: "mfa_required", CSRFToken: h.Sessions.CSRFToken(sess.ID)})
+		h.record(r, actor.Event(audit.UserLogin, "user", u.ID, audit.Success, map[string]string{"stage": "password", "session_id": sess.ID}))
+		httpx.WriteJSON(w, http.StatusOK, loginResponse{Status: "mfa_required", CSRFToken: h.Sessions.CSRFToken(sess.ID)})
 		return
 	}
-	h.record(r, actor.Event("user.login", "user", u.ID, audit.Success, map[string]string{"stage": "complete", "mfa": "none", "session_id": sess.ID}))
-	WriteJSON(w, http.StatusOK, loginResponse{Status: "ok", User: u, CSRFToken: h.Sessions.CSRFToken(sess.ID)})
+	h.record(r, actor.Event(audit.UserLogin, "user", u.ID, audit.Success, map[string]string{"stage": "complete", "mfa": "none", "session_id": sess.ID}))
+	httpx.WriteJSON(w, http.StatusOK, loginResponse{Status: "ok", User: u, CSRFToken: h.Sessions.CSRFToken(sess.ID)})
 }
 
 // actionSelfReset is the audit action for a user replacing their own
 // password.
-const actionSelfReset = "user.password.change"
+const actionSelfReset = audit.UserPasswordChange
 
 // recordAction builds and records an audit event from its parts. The event
 // is built here, from plain parameters, rather than at the call sites:
@@ -326,6 +330,42 @@ const actionSelfReset = "user.password.change"
 // evidence). The admin API records the same way.
 func (h *Handler) recordAction(r *http.Request, actor audit.Actor, action, objectType, objectID string, outcome audit.Outcome, details any) {
 	h.record(r, actor.Event(action, objectType, objectID, outcome, details))
+}
+
+// currentPassword checks the password a signed-in user gives again before a
+// step a stolen session must not take on its own: changing the password, or
+// adding an authenticator. A wrong one counts against the account like a
+// wrong sign-in password (L17), and while the account is locked the check is
+// refused before any hash is spent, so a session cannot go on guessing. An
+// account without a local password has none to give and counts nothing.
+// When it returns false it has answered.
+func (h *Handler) currentPassword(w http.ResponseWriter, r *http.Request, p *Principal, password, action string) bool {
+	actor := ActorFor(r)
+	if p.User.IsLocked(time.Now()) {
+		h.recordAction(r, actor, action, "user", p.User.ID, audit.Failure, map[string]string{"reason": "locked"})
+		httpx.WriteError(w, r, http.StatusTooManyRequests, "too_many_attempts", "too many wrong passwords; try again later")
+		return false
+	}
+	var ok bool
+	if p.User.PasswordHash != "" && !h.hashing(w, r, func() { ok = user.VerifyPassword(p.User.PasswordHash, password) }) {
+		return false
+	}
+	if ok {
+		return true
+	}
+	details := map[string]any{"reason": "current_mismatch"}
+	if p.User.PasswordHash != "" {
+		locked, err := h.Users.RecordLoginFailure(r.Context(), p.User.ID, h.MaxFailures, h.LockFor)
+		if err != nil {
+			h.Log.Error("record password failure", "err", err)
+		}
+		if locked {
+			details["locked_for"] = h.LockFor.String()
+		}
+	}
+	h.recordAction(r, actor, action, "user", p.User.ID, audit.Failure, details)
+	httpx.WriteError(w, r, http.StatusUnauthorized, "invalid_credentials", "the current password is wrong")
+	return false
 }
 
 // changePassword lets a signed-in user replace their password: the step
@@ -339,8 +379,8 @@ func (h *Handler) changePassword(w http.ResponseWriter, r *http.Request) {
 		CurrentPassword string `json:"current_password"`
 		NewPassword     string `json:"new_password"`
 	}
-	if err := decodeJSON(r, &req); err != nil {
-		WriteError(w, http.StatusBadRequest, "bad_request", err.Error())
+	if err := httpx.DecodeJSONLimit(r, &req, signInBodyLimit); err != nil {
+		httpx.WriteError(w, r, http.StatusBadRequest, "bad_request", err.Error())
 		return
 	}
 	actor := ActorFor(r)
@@ -351,29 +391,23 @@ func (h *Handler) changePassword(w http.ResponseWriter, r *http.Request) {
 	if !p.Session.MFAVerified {
 		enrolled, err := h.TOTP.Enrolled(r.Context(), p.User.ID)
 		if err != nil {
-			h.serverError(w, r, err)
+			httpx.Internal(w, r, h.Log, err)
 			return
 		}
 		if enrolled || !p.User.MustResetOnLogin {
-			WriteError(w, http.StatusUnauthorized, "mfa_required", "second factor required")
+			httpx.WriteError(w, r, http.StatusUnauthorized, "mfa_required", "second factor required")
 			return
 		}
 	}
-	var current bool
-	if p.User.PasswordHash != "" && !h.hashing(w, r, func() { current = user.VerifyPassword(p.User.PasswordHash, req.CurrentPassword) }) {
-		return
-	}
-	if !current {
-		h.recordAction(r, actor, actionSelfReset, "user", p.User.ID, audit.Failure, map[string]string{"reason": "current_mismatch"})
-		WriteError(w, http.StatusUnauthorized, "invalid_credentials", "the current password is wrong")
+	if !h.currentPassword(w, r, p, req.CurrentPassword, actionSelfReset) {
 		return
 	}
 	if req.NewPassword == req.CurrentPassword {
-		WriteError(w, http.StatusBadRequest, "bad_request", "choose a password you have not used just now")
+		httpx.WriteError(w, r, http.StatusBadRequest, "bad_request", "choose a password you have not used just now")
 		return
 	}
 	if err := user.CheckPasswordPolicy(req.NewPassword); err != nil {
-		WriteError(w, http.StatusBadRequest, "bad_request", err.Error())
+		httpx.WriteError(w, r, http.StatusBadRequest, "bad_request", err.Error())
 		return
 	}
 	var (
@@ -384,11 +418,11 @@ func (h *Handler) changePassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		h.serverError(w, r, err)
+		httpx.Internal(w, r, h.Log, err)
 		return
 	}
 	if err := h.Users.SetPasswordHash(r.Context(), p.User.ID, hash, false); err != nil {
-		h.serverError(w, r, err)
+		httpx.Internal(w, r, h.Log, err)
 		return
 	}
 	// Every other session of the account ends, since whoever the change is
@@ -407,52 +441,60 @@ func (h *Handler) changePassword(w http.ResponseWriter, r *http.Request) {
 	h.recordAction(r, actor, actionSelfReset, "user", p.User.ID, audit.Success, map[string]any{
 		"session_id": p.Session.ID, "was_required": p.User.MustResetOnLogin, "other_sessions_revoked": others,
 	})
+	wasOwed := p.User.MustResetOnLogin
 	p.User.MustResetOnLogin = false
 	if p.Session.MFAVerified {
-		WriteJSON(w, http.StatusOK, loginResponse{Status: "ok", User: p.User, CSRFToken: h.Sessions.CSRFToken(p.Session.ID)})
+		// A change that was owed was the sign-in's last step (L13).
+		if wasOwed && !h.rotate(w, r, p) {
+			return
+		}
+		httpx.WriteJSON(w, http.StatusOK, loginResponse{Status: "ok", User: p.User, CSRFToken: h.Sessions.CSRFToken(p.Session.ID)})
 		return
 	}
 	enrolled, err := h.TOTP.Enrolled(r.Context(), p.User.ID)
 	if err != nil {
-		h.serverError(w, r, err)
+		httpx.Internal(w, r, h.Log, err)
 		return
 	}
 	require := h.RequireMFA != nil && h.RequireMFA()
 	switch {
 	case enrolled:
-		WriteJSON(w, http.StatusOK, loginResponse{Status: "mfa_required", CSRFToken: h.Sessions.CSRFToken(p.Session.ID)})
+		httpx.WriteJSON(w, http.StatusOK, loginResponse{Status: "mfa_required", CSRFToken: h.Sessions.CSRFToken(p.Session.ID)})
 	case require:
-		WriteJSON(w, http.StatusOK, loginResponse{Status: "mfa_enrollment_required", CSRFToken: h.Sessions.CSRFToken(p.Session.ID)})
+		httpx.WriteJSON(w, http.StatusOK, loginResponse{Status: "mfa_enrollment_required", CSRFToken: h.Sessions.CSRFToken(p.Session.ID)})
 	default:
 		// The change was the last step owed: the sign-in completes here.
 		if err := h.Users.RecordLoginSuccess(r.Context(), p.User.ID); err != nil {
-			h.serverError(w, r, err)
+			httpx.Internal(w, r, h.Log, err)
 			return
 		}
 		if err := h.Sessions.MarkMFAVerified(r.Context(), p.Session.ID); err != nil {
-			h.serverError(w, r, err)
+			httpx.Internal(w, r, h.Log, err)
 			return
 		}
-		WriteJSON(w, http.StatusOK, loginResponse{Status: "ok", User: p.User, CSRFToken: h.Sessions.CSRFToken(p.Session.ID)})
+		if !h.rotate(w, r, p) {
+			return
+		}
+		httpx.WriteJSON(w, http.StatusOK, loginResponse{Status: "ok", User: p.User, CSRFToken: h.Sessions.CSRFToken(p.Session.ID)})
 	}
 }
 
 func (h *Handler) logout(w http.ResponseWriter, r *http.Request) {
 	p, _ := FromContext(r.Context())
 	if err := h.Sessions.Revoke(r.Context(), p.Session.ID); err != nil {
-		h.serverError(w, r, err)
+		httpx.Internal(w, r, h.Log, err)
 		return
 	}
 	h.Sessions.ClearCookie(w)
-	h.record(r, ActorFor(r).Event("user.logout", "user", p.User.ID, audit.Success, map[string]string{"session_id": p.Session.ID}))
-	WriteJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+	h.record(r, ActorFor(r).Event(audit.UserLogout, "user", p.User.ID, audit.Success, map[string]string{"session_id": p.Session.ID}))
+	httpx.WriteJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
 func (h *Handler) me(w http.ResponseWriter, r *http.Request) {
 	p, _ := FromContext(r.Context())
 	enrolled, err := h.TOTP.Enrolled(r.Context(), p.User.ID)
 	if err != nil {
-		h.serverError(w, r, err)
+		httpx.Internal(w, r, h.Log, err)
 		return
 	}
 	// A partial session gets only what the login page needs to resume the
@@ -467,14 +509,14 @@ func (h *Handler) me(w http.ResponseWriter, r *http.Request) {
 		case !enrolled:
 			pending = "enroll"
 		}
-		WriteJSON(w, http.StatusOK, map[string]any{
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{
 			"pending":      pending,
 			"mfa_enrolled": enrolled,
 			"csrf_token":   h.Sessions.CSRFToken(p.Session.ID),
 		})
 		return
 	}
-	WriteJSON(w, http.StatusOK, map[string]any{
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{
 		"user":         p.User,
 		"csrf_token":   h.Sessions.CSRFToken(p.Session.ID),
 		"mfa_enrolled": enrolled,
@@ -491,9 +533,9 @@ type codeRequest struct {
 
 // passwordChangeOwed refuses the second-factor steps while a password an
 // administrator chose is still in place: the change comes first.
-func (h *Handler) passwordChangeOwed(w http.ResponseWriter, p *Principal) bool {
+func (h *Handler) passwordChangeOwed(w http.ResponseWriter, r *http.Request, p *Principal) bool {
 	if p.User.MustResetOnLogin {
-		WriteError(w, http.StatusConflict, "password_change_required", "replace the password you were given first")
+		httpx.WriteError(w, r, http.StatusConflict, "password_change_required", "replace the password you were given first")
 		return true
 	}
 	return false
@@ -565,12 +607,12 @@ func (h *Handler) endSignIn(w http.ResponseWriter, r *http.Request, p *Principal
 func (h *Handler) totpVerify(w http.ResponseWriter, r *http.Request) {
 	p, _ := FromContext(r.Context())
 	if p.Session.MFAVerified {
-		WriteJSON(w, http.StatusOK, loginResponse{Status: "ok", User: p.User, CSRFToken: h.Sessions.CSRFToken(p.Session.ID)})
+		httpx.WriteJSON(w, http.StatusOK, loginResponse{Status: "ok", User: p.User, CSRFToken: h.Sessions.CSRFToken(p.Session.ID)})
 		return
 	}
 	var req codeRequest
-	if err := decodeJSON(r, &req); err != nil {
-		WriteError(w, http.StatusBadRequest, "bad_request", err.Error())
+	if err := httpx.DecodeJSONLimit(r, &req, signInBodyLimit); err != nil {
+		httpx.WriteError(w, r, http.StatusBadRequest, "bad_request", err.Error())
 		return
 	}
 	var (
@@ -584,7 +626,7 @@ func (h *Handler) totpVerify(w http.ResponseWriter, r *http.Request) {
 		return errors.Is(err, ErrTOTPBadCode) || errors.Is(err, ErrTOTPNotEnrolled)
 	})
 	if err != nil {
-		h.serverError(w, r, err)
+		httpx.Internal(w, r, h.Log, err)
 		return
 	}
 	if verdict != codeRight {
@@ -608,55 +650,92 @@ func (h *Handler) totpVerify(w http.ResponseWriter, r *http.Request) {
 			h.endSignIn(w, r, p)
 			details["session_ended"] = true
 		}
-		h.record(r, ActorFor(r).Event("user.mfa.verify", "user", p.User.ID, audit.Failure, details))
+		h.record(r, ActorFor(r).Event(audit.UserMFAVerify, "user", p.User.ID, audit.Failure, details))
 		if ended {
 			// Its own code, so the console goes back to the password step
 			// instead of offering a code box that can no longer work.
-			WriteError(w, http.StatusUnauthorized, "sign_in_ended", "too many wrong codes; sign in again")
+			httpx.WriteError(w, r, http.StatusUnauthorized, "sign_in_ended", "too many wrong codes; sign in again")
 			return
 		}
-		WriteError(w, http.StatusUnauthorized, "invalid_code", "invalid code")
+		httpx.WriteError(w, r, http.StatusUnauthorized, "invalid_code", "invalid code")
 		return
 	}
 	h.mfaClear(p.Session.ID)
 	if err := h.Sessions.MarkMFAProved(r.Context(), p.Session.ID); err != nil {
-		h.serverError(w, r, err)
+		httpx.Internal(w, r, h.Log, err)
+		return
+	}
+	if !p.Session.MFAVerified && !h.rotate(w, r, p) {
 		return
 	}
 	method := "totp"
 	if usedRecovery {
 		method = "recovery_code"
 	}
-	h.record(r, ActorFor(r).Event("user.login", "user", p.User.ID, audit.Success, map[string]string{"stage": "complete", "mfa": method, "session_id": p.Session.ID}))
-	WriteJSON(w, http.StatusOK, loginResponse{Status: "ok", User: p.User, CSRFToken: h.Sessions.CSRFToken(p.Session.ID)})
+	h.record(r, ActorFor(r).Event(audit.UserLogin, "user", p.User.ID, audit.Success, map[string]string{"stage": "complete", "mfa": method, "session_id": p.Session.ID}))
+	httpx.WriteJSON(w, http.StatusOK, loginResponse{Status: "ok", User: p.User, CSRFToken: h.Sessions.CSRFToken(p.Session.ID)})
 }
 
 func (h *Handler) totpEnroll(w http.ResponseWriter, r *http.Request) {
 	p, _ := FromContext(r.Context())
-	if h.passwordChangeOwed(w, p) {
+	if h.passwordChangeOwed(w, r, p) {
 		return
+	}
+	// From a full session an authenticator takes the password again (L14):
+	// a stolen cookie must not enrol the thief's device and lock the owner
+	// out of every later sign-in. Enrolling as the step a sign-in owes needs
+	// nothing more, the password was given a moment ago, and an account an
+	// identity provider signs in has no local password to give.
+	if p.Session.MFAVerified && p.User.PasswordHash != "" {
+		// One already enrolled is refused below whatever is sent, so it is
+		// not asked for a password first.
+		enrolled, err := h.TOTP.Enrolled(r.Context(), p.User.ID)
+		if err != nil {
+			httpx.Internal(w, r, h.Log, err)
+			return
+		}
+		if enrolled {
+			httpx.WriteError(w, r, http.StatusConflict, "already_enrolled", "an authenticator is already enrolled")
+			return
+		}
+		var req struct {
+			CurrentPassword string `json:"current_password"`
+		}
+		if r.ContentLength != 0 {
+			if err := httpx.DecodeJSONLimit(r, &req, signInBodyLimit); err != nil {
+				httpx.WriteError(w, r, http.StatusBadRequest, "bad_request", err.Error())
+				return
+			}
+		}
+		if req.CurrentPassword == "" {
+			httpx.WriteError(w, r, http.StatusUnauthorized, "password_required", "enter your current password to add an authenticator")
+			return
+		}
+		if !h.currentPassword(w, r, p, req.CurrentPassword, audit.UserMFAEnroll) {
+			return
+		}
 	}
 	enr, err := h.TOTP.Enroll(r.Context(), p.User.ID, p.User.Username)
 	if err != nil {
 		if errors.Is(err, ErrTOTPAlreadyEnrolled) {
-			WriteError(w, http.StatusConflict, "already_enrolled", "an authenticator is already enrolled")
+			httpx.WriteError(w, r, http.StatusConflict, "already_enrolled", "an authenticator is already enrolled")
 			return
 		}
-		h.serverError(w, r, err)
+		httpx.Internal(w, r, h.Log, err)
 		return
 	}
-	h.record(r, ActorFor(r).Event("user.mfa.enroll", "user", p.User.ID, audit.Success, nil))
-	WriteJSON(w, http.StatusOK, enr)
+	h.record(r, ActorFor(r).Event(audit.UserMFAEnroll, "user", p.User.ID, audit.Success, nil))
+	httpx.WriteJSON(w, http.StatusOK, enr)
 }
 
 func (h *Handler) totpConfirm(w http.ResponseWriter, r *http.Request) {
 	p, _ := FromContext(r.Context())
-	if h.passwordChangeOwed(w, p) {
+	if h.passwordChangeOwed(w, r, p) {
 		return
 	}
 	var req codeRequest
-	if err := decodeJSON(r, &req); err != nil {
-		WriteError(w, http.StatusBadRequest, "bad_request", err.Error())
+	if err := httpx.DecodeJSONLimit(r, &req, signInBodyLimit); err != nil {
+		httpx.WriteError(w, r, http.StatusBadRequest, "bad_request", err.Error())
 		return
 	}
 	// Enrolling as the step a sign-in still owes completes that sign-in. A
@@ -670,13 +749,13 @@ func (h *Handler) totpConfirm(w http.ResponseWriter, r *http.Request) {
 	}, func(err error) bool { return errors.Is(err, ErrTOTPBadCode) })
 	switch {
 	case errors.Is(err, ErrTOTPNotEnrolled):
-		WriteError(w, http.StatusConflict, "not_enrolled", "start enrollment first")
+		httpx.WriteError(w, r, http.StatusConflict, "not_enrolled", "start enrollment first")
 		return
 	case errors.Is(err, ErrTOTPAlreadyEnrolled):
-		WriteError(w, http.StatusConflict, "already_enrolled", "an authenticator is already enrolled")
+		httpx.WriteError(w, r, http.StatusConflict, "already_enrolled", "an authenticator is already enrolled")
 		return
 	case err != nil:
-		h.serverError(w, r, err)
+		httpx.Internal(w, r, h.Log, err)
 		return
 	}
 	if verdict != codeRight {
@@ -691,22 +770,25 @@ func (h *Handler) totpConfirm(w http.ResponseWriter, r *http.Request) {
 		if signIn && verdict != codeWrong {
 			h.endSignIn(w, r, p)
 			details["session_ended"] = true
-			h.record(r, ActorFor(r).Event("user.mfa.confirm", "user", p.User.ID, audit.Failure, details))
-			WriteError(w, http.StatusUnauthorized, "sign_in_ended", "too many wrong codes; sign in again")
+			h.record(r, ActorFor(r).Event(audit.UserMFAConfirm, "user", p.User.ID, audit.Failure, details))
+			httpx.WriteError(w, r, http.StatusUnauthorized, "sign_in_ended", "too many wrong codes; sign in again")
 			return
 		}
-		h.record(r, ActorFor(r).Event("user.mfa.confirm", "user", p.User.ID, audit.Failure, details))
-		WriteError(w, http.StatusUnauthorized, "invalid_code", "invalid code")
+		h.record(r, ActorFor(r).Event(audit.UserMFAConfirm, "user", p.User.ID, audit.Failure, details))
+		httpx.WriteError(w, r, http.StatusUnauthorized, "invalid_code", "invalid code")
 		return
 	}
 	// A freshly confirmed authenticator counts as a verified second factor
 	// for this session: the user just proved possession of it.
 	if err := h.Sessions.MarkMFAProved(r.Context(), p.Session.ID); err != nil {
-		h.serverError(w, r, err)
+		httpx.Internal(w, r, h.Log, err)
 		return
 	}
-	h.record(r, ActorFor(r).Event("user.mfa.confirm", "user", p.User.ID, audit.Success, nil))
-	WriteJSON(w, http.StatusOK, map[string]any{"recovery_codes": codes, "status": "ok", "csrf_token": h.Sessions.CSRFToken(p.Session.ID)})
+	if signIn && !h.rotate(w, r, p) {
+		return
+	}
+	h.record(r, ActorFor(r).Event(audit.UserMFAConfirm, "user", p.User.ID, audit.Success, nil))
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"recovery_codes": codes, "status": "ok", "csrf_token": h.Sessions.CSRFToken(p.Session.ID)})
 }
 
 // ---- helpers
@@ -715,19 +797,18 @@ func (h *Handler) record(r *http.Request, e audit.Event) {
 	Recorder{Audit: h.Audit, Log: h.Log}.Record(r, e)
 }
 
-func (h *Handler) serverError(w http.ResponseWriter, r *http.Request, err error) {
-	h.Log.Error("auth handler", "path", r.URL.Path, "err", err)
-	WriteError(w, http.StatusInternalServerError, "internal", "internal error")
+// rotate gives the session a new token as its sign-in completes and sends
+// it as the cookie (L13). When it returns false it has answered.
+func (h *Handler) rotate(w http.ResponseWriter, r *http.Request, p *Principal) bool {
+	token, err := h.Sessions.Rotate(r.Context(), p.Session.ID)
+	if err != nil {
+		httpx.Internal(w, r, h.Log, err)
+		return false
+	}
+	h.Sessions.SetCookie(w, token)
+	return true
 }
 
-func decodeJSON(r *http.Request, v any) error {
-	if ct := r.Header.Get("Content-Type"); !strings.HasPrefix(ct, "application/json") {
-		return errors.New("content-type must be application/json")
-	}
-	dec := json.NewDecoder(io.LimitReader(r.Body, 64<<10))
-	dec.DisallowUnknownFields()
-	if err := dec.Decode(v); err != nil {
-		return errors.New("malformed JSON body")
-	}
-	return nil
-}
+// signInBodyLimit caps the bodies of these endpoints, most of which answer
+// callers who have not signed in yet: a name, a password or a code, no more.
+const signInBodyLimit = 64 << 10

@@ -270,7 +270,7 @@ func TestConsoleCLINeedsAProvedCode(t *testing.T) {
 		if code, out := c.call("GET", "/api/v1/users", nil); code != http.StatusOK {
 			t.Fatalf("%s: the console session should work: %d %v", who, code, out)
 		}
-		if code, out := c.call("POST", "/api/v1/admin/cli", map[string]string{"line": "users"}); code != http.StatusForbidden || out["code"] != "cli_locked" {
+		if code, out := c.call("POST", "/api/v1/admin/cli", map[string]string{"line": "users"}); code != http.StatusForbidden || out["code"] != "cli_code_required" {
 			t.Fatalf("%s: a command with no proved code: %d %v", who, code, out)
 		}
 	}

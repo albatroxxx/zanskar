@@ -31,7 +31,7 @@ func (h *Handler) database(w http.ResponseWriter, r *http.Request) {
 	}
 	defer zero(g.UserSecret)
 	if target.Protocol(g.Protocol) != target.Database {
-		httpx.WriteError(w, http.StatusBadRequest, "bad_request", "ticket is not for database")
+		httpx.WriteError(w, r, http.StatusBadRequest, "bad_request", "ticket is not for database")
 		return
 	}
 	cols, _ := strconv.Atoi(r.URL.Query().Get("cols"))
@@ -39,7 +39,15 @@ func (h *Handler) database(w http.ResponseWriter, r *http.Request) {
 
 	ep, err := h.resolveGrant(r.Context(), g)
 	if err != nil || !ep.Active || ep.Engine == "" {
-		httpx.WriteError(w, http.StatusConflict, "target_unavailable", "target is no longer available")
+		httpx.WriteError(w, r, http.StatusConflict, "target_unavailable", "target is no longer available")
+		return
+	}
+	// A database target is never probed, so this is the first time its name
+	// is looked up. The sidecar is still handed the name, not this address,
+	// because verify-full checks the database's certificate against the
+	// name; it looks the name up again itself.
+	if _, err := h.checkAddress(r, g, ep); err != nil {
+		refuseAddress(w, r, err)
 		return
 	}
 
@@ -55,7 +63,7 @@ func (h *Handler) database(w http.ResponseWriter, r *http.Request) {
 		opened, err := h.Vault.Open(r.Context(), g.CredentialID)
 		if err != nil {
 			h.Log.Error("open credential", "id", g.CredentialID, "err", err)
-			httpx.WriteError(w, http.StatusConflict, "credential_unavailable", "credential could not be opened")
+			httpx.WriteError(w, r, http.StatusConflict, "credential_unavailable", "credential could not be opened")
 			return
 		}
 		defer opened.Close()
@@ -77,9 +85,9 @@ func (h *Handler) database(w http.ResponseWriter, r *http.Request) {
 	// simultaneous starts can overshoot by the burst. Refused here, before the
 	// upgrade, because no status can follow it.
 	if h.DBMaxSessions > 0 && h.Registry != nil && h.liveDatabaseSessions() >= h.DBMaxSessions {
-		h.record(r, actorFor(g.UserID, ip).Event("session.connect", "target", ep.LiveKey, audit.Failure,
+		h.record(r, actorFor(g.UserID, ip).Event(audit.SessionConnect, "target", ep.LiveKey, audit.Failure,
 			map[string]any{"protocol": g.Protocol, "reason": "too_many_sessions", "limit": h.DBMaxSessions}))
-		httpx.WriteError(w, http.StatusServiceUnavailable, "too_many_sessions", "the gateway is running its maximum number of database sessions; try again in a moment")
+		httpx.WriteError(w, r, http.StatusServiceUnavailable, "too_many_sessions", "the gateway is running its maximum number of database sessions; try again in a moment")
 		return
 	}
 
@@ -101,7 +109,7 @@ func (h *Handler) database(w http.ResponseWriter, r *http.Request) {
 	actor := audit.Actor{UserID: g.UserID, IP: ip}
 	endWith := func(reason, msg string) {
 		_ = h.Sessions.End(context.Background(), s.ID, reason)
-		h.record(r, actor.Event("session.end", "access_session", s.ID, audit.Success, map[string]string{"reason": reason, "target_id": ep.LiveKey}))
+		h.record(r, actor.Event(audit.SessionEnd, "access_session", s.ID, audit.Success, map[string]string{"reason": reason, "target_id": ep.LiveKey}))
 		if msg != "" {
 			_ = ws.Close(websocket.StatusPolicyViolation, msg)
 		}
@@ -121,7 +129,7 @@ func (h *Handler) database(w http.ResponseWriter, r *http.Request) {
 		endWith(session.EndError, "recording could not be registered; session refused")
 		return
 	}
-	h.record(r, actor.Event("session.start", "access_session", s.ID, audit.Success,
+	h.record(r, actor.Event(audit.SessionStart, "access_session", s.ID, audit.Success,
 		map[string]any{"target_id": ep.LiveKey, "protocol": g.Protocol, "policy_id": g.PolicyID, "recording_id": recRow.ID, "engine": ep.Engine}))
 
 	ctx := h.Registry.Add(r.Context(), gateway.Live{SessionID: s.ID, UserID: g.UserID, TargetID: ep.LiveKey, Protocol: g.Protocol, PolicyID: g.PolicyID})

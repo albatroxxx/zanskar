@@ -13,6 +13,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/coder/websocket"
+
 	"github.com/albatroxxx/zanskar/internal/access"
 	"github.com/albatroxxx/zanskar/internal/audit"
 	"github.com/albatroxxx/zanskar/internal/auth"
@@ -33,6 +35,12 @@ import (
 // way a connect request can be refused. Policies grant alice everything
 // tagged env=test; targets tagged tier=mfa or tier=jit fall under their own
 // policies that require an authenticator or an approved request.
+// wsOptions dials a WebSocket as alice's browser does: with the cookie of
+// the sign-in that asked for the ticket, which redemption checks (L9).
+func (f *connectFixture) wsOptions(subprotocols ...string) *websocket.DialOptions {
+	return &websocket.DialOptions{Subprotocols: subprotocols, HTTPHeader: http.Header{"Cookie": []string{f.cookie.String()}}}
+}
+
 type connectFixture struct {
 	ctx      context.Context
 	srv      http.Handler
@@ -52,6 +60,7 @@ type connectFixture struct {
 	groups    *group.Repo
 	opsID     string
 	policyIDs map[string]string
+	db        *store.DB
 }
 
 func newConnectFixture(t *testing.T) *connectFixture {
@@ -71,7 +80,7 @@ func newConnectFixture(t *testing.T) *connectFixture {
 		t.Fatal(err)
 	}
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	f := &connectFixture{ctx: ctx, ids: map[string]string{}, auditLog: audit.NewLog(db), access: access.NewRepo(db), policyIDs: map[string]string{}}
+	f := &connectFixture{ctx: ctx, ids: map[string]string{}, auditLog: audit.NewLog(db), access: access.NewRepo(db), policyIDs: map[string]string{}, db: db}
 
 	users := user.NewRepo(db)
 	f.alice = &user.User{Username: "alice", DisplayName: "Alice", Roles: []user.Role{user.RoleUser}}
@@ -163,8 +172,10 @@ func newConnectFixture(t *testing.T) *connectFixture {
 	}
 	f.cookie, f.csrf = &http.Cookie{Name: auth.CookieName, Value: tok}, sessions.CSRFToken(sess.ID)
 
+	// The rigs built on this fixture run their stand-in targets on loopback,
+	// which production refuses; address_test.go runs without the allowance.
 	h := &Handler{Targets: targets, Policies: policies, Access: f.access, Vault: vault, Sessions: session.NewRepo(db),
-		Tickets: ticket.NewStore(), Audit: f.auditLog, Log: log,
+		Tickets: ticket.NewStore(), Audit: f.auditLog, Log: log, Prober: &target.Prober{AllowLoopback: true},
 		GuacdAddr:   func() string { return "127.0.0.1:4822" },
 		MFAEnrolled: func(context.Context, string) (bool, error) { return f.mfa, nil }}
 	mux := http.NewServeMux()

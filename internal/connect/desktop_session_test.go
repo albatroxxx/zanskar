@@ -162,7 +162,7 @@ func (r *desktopRig) ticket(t *testing.T, targetID, proto string) string {
 
 func (r *desktopRig) dial(ctx context.Context, tok string) (*websocket.Conn, *http.Response, error) {
 	return websocket.Dial(ctx, "ws"+strings.TrimPrefix(r.url, "http")+"/ws/desktop?width=1024&height=768&ticket="+tok,
-		&websocket.DialOptions{Subprotocols: []string{"guacamole"}})
+		r.wsOptions("guacamole"))
 }
 
 // TestDesktopSessionEndToEnd: a VNC ticket opens a recorded session through

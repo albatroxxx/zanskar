@@ -4,6 +4,7 @@ package winrmgw
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
@@ -14,6 +15,8 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
+
+	"github.com/albatroxxx/zanskar/internal/gateway"
 )
 
 // fakeShell upper-cases each line into stdout and returns exit code 0. It
@@ -268,5 +271,154 @@ func TestBridgeTargetLost(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("bridge did not end")
+	}
+}
+
+// wantEnd is the end reason and message a session cancelled with cause
+// must report.
+func wantEnd(cause error) (reason, msg string) {
+	ctx, cancel := context.WithCancelCause(context.Background())
+	cancel(cause)
+	return gateway.CancelReason(ctx)
+}
+
+// TestBridgeRegistryEndReachesBrowser: a console the registry ends (an
+// administrator, a restart, a policy change, the autoscaling sync) still
+// tells the browser why in the end frame, and the socket then closes
+// normally, rather than vanishing under a cancelled read.
+func TestBridgeRegistryEndReachesBrowser(t *testing.T) {
+	for _, cause := range []error{gateway.ErrAdminTerminated, gateway.ErrGatewayRestart, gateway.ErrPolicyRevoked, gateway.ErrTargetLost} {
+		wantReason, wantMsg := wantEnd(cause)
+		t.Run(wantReason, func(t *testing.T) {
+			reg := gateway.NewRegistry()
+			sh := &fakeShell{}
+			reasonCh := make(chan string, 1)
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				ws, err := websocket.Accept(w, r, &websocket.AcceptOptions{InsecureSkipVerify: true})
+				if err != nil {
+					return
+				}
+				defer ws.CloseNow()
+				ctx := reg.Add(r.Context(), gateway.Live{SessionID: "s1", Protocol: "winrm"})
+				defer reg.Remove("s1")
+				reason, berr := Bridge(ctx, nil, sh, ws, nil, 80, 24, Limits{SessionID: "s1", Idle: time.Minute, tick: 20 * time.Millisecond})
+				if berr != nil {
+					t.Errorf("bridge error: %v", berr)
+				}
+				reasonCh <- reason
+				// What the connect handler does once the session is recorded.
+				_ = ws.Close(websocket.StatusNormalClosure, reason)
+			}))
+			t.Cleanup(srv.Close)
+			ws, ctx, cancel := dial(t, srv)
+			defer cancel()
+			defer ws.CloseNow()
+			readReady(t, ctx, ws)
+			readUntil(t, ctx, ws, "PS> ")
+			if !reg.TerminateWithCause("s1", cause) {
+				t.Fatal("the session is not in the registry")
+			}
+
+			var end control
+			if err := json.Unmarshal([]byte(readEnd(t, ctx, ws)), &end); err != nil {
+				t.Fatal(err)
+			}
+			if end.Reason != wantReason || end.Msg != wantMsg {
+				t.Fatalf("end frame %+v, want reason %q and msg %q", end, wantReason, wantMsg)
+			}
+			for {
+				_, _, err := ws.Read(ctx)
+				if err == nil {
+					continue
+				}
+				if websocket.CloseStatus(err) != websocket.StatusNormalClosure {
+					t.Fatalf("after the end frame: %v, want a normal close", err)
+				}
+				break
+			}
+			select {
+			case r := <-reasonCh:
+				if r != wantReason {
+					t.Fatalf("bridge reason %q, want %q", r, wantReason)
+				}
+			case <-time.After(5 * time.Second):
+				t.Fatal("bridge did not end")
+			}
+			if !sh.wasClosed() {
+				t.Fatal("shell was not closed")
+			}
+		})
+	}
+}
+
+// floodShell prints without end, like a command whose output a browser that
+// has stopped reading cannot take. stalled is closed once a write has been
+// held up: the bridge is stuck writing to that browser.
+type floodShell struct {
+	fakeShell
+	stalled chan struct{}
+	once    sync.Once
+}
+
+func (f *floodShell) Run(ctx context.Context, _ string, stdout, _ io.Writer) (int, error) {
+	chunk := []byte(strings.Repeat("x", 32<<10))
+	for ctx.Err() == nil {
+		watch := time.AfterFunc(200*time.Millisecond, func() { f.once.Do(func() { close(f.stalled) }) })
+		_, err := stdout.Write(chunk)
+		watch.Stop()
+		if err != nil {
+			return 1, err
+		}
+	}
+	return 1, ctx.Err()
+}
+
+// TestBridgeRegistryEndWithStalledBrowser: a browser that has stopped reading
+// while output pours in cannot hold the console open once the registry ends
+// it. The session's cancellation no longer aborts writes to the browser, so
+// the end frame may wait behind a stuck one only until its own deadline.
+func TestBridgeRegistryEndWithStalledBrowser(t *testing.T) {
+	reg := gateway.NewRegistry()
+	sh := &floodShell{stalled: make(chan struct{})}
+	reasonCh := make(chan string, 1)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ws, err := websocket.Accept(w, r, &websocket.AcceptOptions{InsecureSkipVerify: true})
+		if err != nil {
+			return
+		}
+		defer ws.CloseNow()
+		ctx := reg.Add(r.Context(), gateway.Live{SessionID: "s1", Protocol: "winrm"})
+		defer reg.Remove("s1")
+		reason, _ := Bridge(ctx, nil, sh, ws, nil, 80, 24, Limits{SessionID: "s1", Idle: time.Minute, tick: 20 * time.Millisecond})
+		reasonCh <- reason
+		_ = ws.Close(websocket.StatusNormalClosure, reason)
+	}))
+	t.Cleanup(srv.Close)
+	ws, ctx, cancel := dial(t, srv)
+	defer cancel()
+	defer ws.CloseNow()
+	readReady(t, ctx, ws)
+	readUntil(t, ctx, ws, "PS> ")
+	sendText(t, ctx, ws, `{"t":"i","d":"flood\r"}`)
+	readUntil(t, ctx, ws, "xxxx")
+	// Stop reading, and wait until the output backs up: the bridge is stuck
+	// writing to this browser.
+	select {
+	case <-sh.stalled:
+	case <-ctx.Done():
+		t.Fatal("the output never backed up")
+	}
+	start := time.Now()
+	if !reg.TerminateWithCause("s1", gateway.ErrAdminTerminated) {
+		t.Fatal("the session is not in the registry")
+	}
+	select {
+	case r := <-reasonCh:
+		if r != "admin_terminated" {
+			t.Fatalf("bridge reason %q, want admin_terminated", r)
+		}
+		t.Logf("ended %v after the termination", time.Since(start).Round(time.Millisecond))
+	case <-time.After(10 * time.Second):
+		t.Fatal("a browser that stopped reading held the session open")
 	}
 }

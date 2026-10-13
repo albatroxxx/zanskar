@@ -185,3 +185,83 @@ func TestLoadRefusesAdminListenAddr(t *testing.T) {
 		t.Fatalf("empty is fine: %v", err)
 	}
 }
+
+// TestPublicURL: the address people reach the gateway at, which OIDC needs
+// behind a proxy that terminates TLS (the gateway itself sees plain HTTP
+// there, so it cannot build an https redirect URI on its own).
+func TestPublicURL(t *testing.T) {
+	for _, tc := range []struct{ in, want, err string }{
+		{"", "", ""},
+		{"https://gw.example.com", "https://gw.example.com", ""},
+		{"https://gw.example.com/", "https://gw.example.com", ""},
+		{"https://gw.example.com:8443", "https://gw.example.com:8443", ""},
+		{"http://gw.example.com", "", "https"},
+		{"https://gw.example.com/zanskar", "", "path"},
+		{"https://gw.example.com/?x=1", "", "path"},
+		{"gw.example.com", "", "https"},
+		{"https://", "", "host"},
+	} {
+		t.Setenv("ZANSKAR_PUBLIC_URL", tc.in)
+		c, err := Load(Options{})
+		switch {
+		case tc.err == "" && (err != nil || c.PublicURL != tc.want):
+			t.Errorf("%q: %v %q, want %q", tc.in, err, c.PublicURL, tc.want)
+		case tc.err != "" && (err == nil || !strings.Contains(err.Error(), "ZANSKAR_PUBLIC_URL") || !strings.Contains(err.Error(), tc.err)):
+			t.Errorf("%q: %v, want an error naming the variable and %q", tc.in, err, tc.err)
+		}
+	}
+}
+
+// TestListener: the health check learns where serve listens and whether it
+// serves TLS the way Load does, from those variables alone.
+func TestListener(t *testing.T) {
+	for _, tc := range []struct {
+		listen, mode, cert, want string
+		tls                      bool
+	}{
+		{"", "", "", DefaultListenAddr, false},
+		{"0.0.0.0:443", "managed", "", "0.0.0.0:443", true},
+		{"127.0.0.1:9443", "", "/etc/zanskar/tls.crt", "127.0.0.1:9443", true},
+		{"127.0.0.1:9443", "PROXY", "/etc/zanskar/tls.crt", "127.0.0.1:9443", false},
+		{"0.0.0.0:8443", "proxy", "", "0.0.0.0:8443", false},
+	} {
+		t.Setenv("ZANSKAR_LISTEN_ADDR", tc.listen)
+		t.Setenv("ZANSKAR_TLS_MODE", tc.mode)
+		t.Setenv("ZANSKAR_TLS_CERT", tc.cert)
+		if addr, tls := Listener(); addr != tc.want || tls != tc.tls {
+			t.Errorf("%+v: Listener() = %q, %v", tc, addr, tls)
+		}
+	}
+}
+
+// TestDropSecretEnv: once the configuration is read, the variables that
+// carry a secret leave the process environment and their names come back;
+// a secret that was never set is not reported, and the other settings stay.
+func TestDropSecretEnv(t *testing.T) {
+	for _, k := range SecretEnv {
+		t.Setenv(k, "")
+		_ = os.Unsetenv(k)
+	}
+	t.Setenv("ZANSKAR_MASTER_KEY", base64.StdEncoding.EncodeToString(make([]byte, 32)))
+	t.Setenv("ZANSKAR_DB_DSN", "postgres://zanskar:pw@db/zanskar")
+	t.Setenv("ZANSKAR_SIEM_WEBHOOK_SECRET", "a webhook secret of some length")
+	t.Setenv("ZANSKAR_LISTEN_ADDR", "127.0.0.1:9443")
+	if _, err := Load(Options{RequireMasterKey: true}); err != nil {
+		t.Fatal(err)
+	}
+	got := DropSecretEnv()
+	if strings.Join(got, ",") != "ZANSKAR_MASTER_KEY,ZANSKAR_DB_DSN,ZANSKAR_SIEM_WEBHOOK_SECRET" {
+		t.Fatalf("dropped %v", got)
+	}
+	for _, k := range SecretEnv {
+		if _, ok := os.LookupEnv(k); ok {
+			t.Errorf("%s is still set", k)
+		}
+	}
+	if os.Getenv("ZANSKAR_LISTEN_ADDR") != "127.0.0.1:9443" {
+		t.Error("a setting that is not a secret was dropped")
+	}
+	if again := DropSecretEnv(); len(again) != 0 {
+		t.Errorf("a second call dropped %v", again)
+	}
+}

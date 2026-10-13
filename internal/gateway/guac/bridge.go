@@ -60,6 +60,24 @@ var (
 // stream with (0x0303, "permission was denied to perform the operation").
 const statusClientForbidden = 0x0303
 
+// Statuses of the "error" instruction that tells the browser why its session
+// ended. The console reads 519 (upstream not found) as a lost target and, on
+// an autoscaling group, offers to switch to another instance, so only a lost
+// target may carry it; an end the gateway decided (an administrator, a
+// policy, a restart, a limit) is 523, session closed.
+const (
+	statusUpstreamNotFound = 0x0207
+	statusSessionClosed    = 0x020B
+)
+
+// endStatus is the status the end of a session with this reason carries.
+func endStatus(reason string) int {
+	if reason == "target_lost" {
+		return statusUpstreamNotFound
+	}
+	return statusSessionClosed
+}
+
 // streamFilter applies the policy to one direction of the relay. Guacamole
 // moves clipboard text and files as streams: an opening instruction
 // ("clipboard", "file", "body", "put", ...) names a stream index, and the
@@ -118,13 +136,23 @@ func (f *streamFilter) check(raw, op string, lim Limits) (pass bool, refused int
 }
 
 // Bridge relays instructions between guacd and the browser until either side
-// ends. It returns the end reason for the access_sessions row.
+// ends. It returns the end reason for the access_sessions row. Once the
+// browser has been told why the session ended, Bridge closes ws normally
+// (gateway.CloseAfterEnd).
 func Bridge(ctx context.Context, log *slog.Logger, c *Conn, ws *websocket.Conn, rec Recorder, lim Limits) (string, error) {
 	if log == nil {
 		log = slog.Default()
 	}
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
+	// The browser is read and written under a context of its own, which the
+	// session's cancellation does not reach. coder/websocket drops the
+	// connection when the context of a read or write in progress is
+	// cancelled, so reading under ctx let an administrator, a restart, a
+	// policy change or the autoscaling sync tear the socket down before the
+	// browser heard why. wsCancel ends it: through CloseAfterEnd once the
+	// browser has been told, or at once when the browser has gone.
+	wsCtx, wsCancel := context.WithCancel(context.WithoutCancel(ctx))
 	var (
 		mu     sync.Mutex
 		reason = "user_exit"
@@ -140,15 +168,14 @@ func Bridge(ctx context.Context, log *slog.Logger, c *Conn, ws *websocket.Conn, 
 			mu.Unlock()
 		}
 		current = func() string { mu.Lock(); defer mu.Unlock(); return reason }
-		// The guacd->browser goroutine, the idle heartbeat and the final
-		// disconnect all write to the browser. coder/websocket allows
-		// concurrent Write calls (only Read must have a single caller), so
-		// wsMu is not needed for safety; it keeps the writers one message at
-		// a time, which is simpler to reason about and costs nothing here.
-		wsMu    sync.Mutex
+		// The guacd->browser goroutine, the heartbeat and the final
+		// disconnect all write to the browser. coder/websocket takes the
+		// connection's write lock for each whole message and waits for it
+		// under the write's context, so the writers go one message at a time
+		// and the final messages' deadline also bounds their wait behind a
+		// write to a browser that has stopped reading. A lock of the bridge's
+		// own would not honour that deadline.
 		wsWrite = func(wctx context.Context, raw string) error {
-			wsMu.Lock()
-			defer wsMu.Unlock()
 			return ws.Write(wctx, websocket.MessageText, []byte(raw))
 		}
 	)
@@ -170,7 +197,7 @@ func Bridge(ctx context.Context, log *slog.Logger, c *Conn, ws *websocket.Conn, 
 				// guacd's keepalive. Forward it so the browser's tunnel
 				// receiveTimeout (15s without any server message) does not fire on
 				// an idle, unchanging desktop, but do not record it.
-				if err := wsWrite(ctx, raw); err != nil {
+				if err := wsWrite(wsCtx, raw); err != nil {
 					return
 				}
 				continue
@@ -203,7 +230,7 @@ func Bridge(ctx context.Context, log *slog.Logger, c *Conn, ws *websocket.Conn, 
 					return
 				}
 			}
-			if err := wsWrite(ctx, raw); err != nil {
+			if err := wsWrite(wsCtx, raw); err != nil {
 				return
 			}
 			if op == "disconnect" || op == "error" {
@@ -217,7 +244,7 @@ func Bridge(ctx context.Context, log *slog.Logger, c *Conn, ws *websocket.Conn, 
 		defer close(wsDone)
 		filter := newStreamFilter(clientOpens)
 		for {
-			_, data, err := ws.Read(ctx)
+			_, data, err := ws.Read(wsCtx)
 			if err != nil {
 				return
 			}
@@ -239,10 +266,33 @@ func Bridge(ctx context.Context, log *slog.Logger, c *Conn, ws *websocket.Conn, 
 		}
 	}()
 
-	if lim.tick <= 0 {
-		lim.tick = 5 * time.Second
+	// A local, not lim.tick: the relay goroutines above copy lim, so writing
+	// to it now would race with them.
+	tick := lim.tick
+	if tick <= 0 {
+		tick = 5 * time.Second
 	}
-	ticker := time.NewTicker(lim.tick)
+	// Heartbeat: a static desktop produces no frames, and guacd may go quiet
+	// for longer than the browser tunnel's 15s receiveTimeout, which would
+	// drop the session as "target lost". A periodic nop keeps the tunnel
+	// alive; the browser ignores its content. It runs apart from the loop
+	// below, so a browser that has stopped reading can hold up a nop but
+	// never the end of the session.
+	go func() {
+		beat := time.NewTicker(tick)
+		defer beat.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-beat.C:
+				if wsWrite(wsCtx, Encode("nop")) != nil {
+					return
+				}
+			}
+		}
+	}()
+	ticker := time.NewTicker(tick)
 	defer ticker.Stop()
 	finish := func(r, msg string) (string, error) {
 		setEnd(r)
@@ -250,9 +300,10 @@ func Bridge(ctx context.Context, log *slog.Logger, c *Conn, ws *websocket.Conn, 
 		wctx, wcancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer wcancel()
 		if msg != "" {
-			_ = wsWrite(wctx, ErrorInstruction(msg, 519))
+			_ = wsWrite(wctx, ErrorInstruction(msg, endStatus(r)))
 		}
 		_ = wsWrite(wctx, Encode("disconnect"))
+		gateway.CloseAfterEnd(ws, r, wsCancel)
 		_ = c.Send("disconnect")
 		cancel()
 		return r, nil
@@ -266,6 +317,7 @@ func Bridge(ctx context.Context, log *slog.Logger, c *Conn, ws *websocket.Conn, 
 			return finish(reason, msg)
 		case <-wsDone:
 			r := current()
+			wsCancel()
 			_ = c.Send("disconnect")
 			cancel()
 			return r, nil
@@ -275,13 +327,6 @@ func Bridge(ctx context.Context, log *slog.Logger, c *Conn, ws *websocket.Conn, 
 			}
 			return finish("user_exit", "")
 		case now := <-ticker.C:
-			// Heartbeat: a static desktop produces no frames, and guacd may go
-			// quiet for longer than the browser tunnel's 15s receiveTimeout, which
-			// would drop the session as "target lost". A periodic nop keeps the
-			// tunnel alive; the browser ignores its content.
-			if err := wsWrite(ctx, Encode("nop")); err != nil {
-				return current(), nil
-			}
 			mu.Lock()
 			idle := now.Sub(lastIn)
 			mu.Unlock()

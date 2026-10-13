@@ -135,6 +135,23 @@ name, not the password.
 To build the image from a checkout instead (contributors, unreleased changes), add the
 override file: `docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.build.yml up -d --build`.
 
+Every long-running service has a health check, and `docker compose -f deploy/docker-compose.yml ps`
+shows it: Caddy's admin API answering on its own loopback, guacd's port 4822 open, and the
+gateway's `/readyz`, which the gateway's image asks itself with `zanskar healthcheck` because
+it has no shell, curl or wget. Caddy starts only once the gateway is healthy, so the first
+requests are not refused with 502. `zanskar healthcheck` arrived after 1.3.0: with 1.3.0 or an
+older image the gateway never turns healthy, and Compose starts Caddy anyway within a minute,
+with a warning, rather than leaving the site down. That fallback (`required: false` on Caddy's
+dependency) needs Docker Compose 2.20 or newer; an older Compose refuses the file.
+
+Caddy, guacd and the gateway run with a read-only root filesystem and every Linux capability
+dropped, except the one Caddy needs to bind ports 80 and 443; Caddy keeps its certificates and
+saved configuration in the `caddy_data` and `caddy_config` volumes. Caddy and guacd are pinned
+by the digest of their multi-arch image, so a tag pushed again upstream cannot change what runs;
+Dependabot proposes the next digest. To pin the gateway image as well, give `ZANSKAR_VERSION`
+its digest after the tag, as in `ZANSKAR_VERSION=1.3.0@sha256:<digest>`; `docker buildx
+imagetools inspect ghcr.io/albatroxxx/zanskar:<tag>` prints it.
+
 By default Caddy serves `https://localhost/` with a self-signed certificate from its
 internal CA (a browser warning, fine for a trial). For a real certificate, set
 `ZANSKAR_SITE_ADDRESS` to a public hostname in `deploy/.env` and make ports 80 and 443
@@ -142,7 +159,9 @@ reachable with DNS pointing at the host; Caddy fetches one from Let's Encrypt
 automatically. The gateway trusts Caddy's `X-Forwarded-*` headers — so the audit log
 records real client IPs — via `ZANSKAR_TRUST_PROXY_TLS` and the pinned `172.28.0.0/16`
 network in `ZANSKAR_TRUSTED_PROXIES`; if that subnet collides with an existing network,
-change it in both places in the compose file.
+change it in both places in the compose file. For single sign-on (OIDC) behind the proxy, also
+set `ZANSKAR_PUBLIC_URL` to the address people use (`https://<your host>`): the gateway sees
+plain HTTP from the proxy and cannot build the https redirect URI the provider has registered.
 
 The SQLite database and local recordings live in the `zanskar_data` volume; back them up
 with `zanskar backup` (see [Backups and key custody](#backups-and-key-custody)) or by
@@ -287,7 +306,10 @@ tooling below rather than `zanskar backup`.
   sudo systemctl restart zanskar
   ```
 
-  `zanskar key rotate-master` then rewrites that file, keeping its owner and mode.
+  `zanskar key rotate-master` then rewrites that file, keeping its owner and mode. The new
+  key always goes where the service reads the old one: with the key in the environment, pass
+  `-env-file /etc/zanskar/env`; with a key file, name no file at all (or that one). Any other
+  file is refused, since the service would start with a key that no longer opens anything.
 
 ## Security checklist
 
@@ -343,7 +365,8 @@ request body exactly as received, before any JSON parsing; compares it with the 
 constant time; and refuses a timestamp more than a few minutes from its own clock, so a
 captured request cannot be replayed later. Delivery is at least once: a batch the receiver
 does not answer with a 2xx is sent again, so treat the event `id` (or `hash`) as the
-idempotency key. Each sink keeps its own position across restarts.
+idempotency key. Each sink keeps its own position across restarts. Redirects are not
+followed: a 3xx answer counts as a failed delivery, so give the receiver's final address.
 
 ### Audit anchors
 
@@ -480,6 +503,17 @@ password.
   ```
 
   For Podman, point `ZANSKAR_DOCKER_PATH` at the `podman` binary.
+- **What the container CLI is given:** it starts with `PATH`, `HOME` and the variables that
+  say which daemon to reach and how (`DOCKER_HOST`, `DOCKER_CONTEXT`, `DOCKER_CONFIG`,
+  `DOCKER_CERT_PATH`, `DOCKER_TLS_VERIFY`, `DOCKER_TLS`, `DOCKER_API_VERSION`, and for Podman
+  `XDG_RUNTIME_DIR`, `CONTAINER_HOST`, `CONTAINER_CONNECTION`, `CONTAINERS_CONF`), plus the
+  session's own sidecar settings; nothing else from the gateway's environment. Set those in the
+  environment file if the daemon is not the local default. The gateway also removes the master
+  key, the database DSN, the webhook secret, `ZANSKAR_ADMIN_PASSWORD` and
+  `ZANSKAR_NEW_MASTER_KEY` from its own environment once it has read them at start, so no
+  process it starts inherits them. The kernel's copy of the environment the service started
+  with (`/proc/<pid>/environ`) is not changed, and stays readable by the service user and
+  root; keep the master key in `ZANSKAR_MASTER_KEY_FILE` to keep it out of that copy too.
 - **Containment on the host:** the session network is internal, so the client container
   reaches its proxy and nothing else; only the proxy is also on the runtime's default
   bridge, through which it reaches the database. Docker 28.1 or newer also keeps the
@@ -494,7 +528,11 @@ password.
   PostgreSQL; `mysql:<version>` or `mariadb:<version>` and `ghcr.io/albatroxxx/zanskar:<your
   version>` for MySQL and MariaDB. Pull them ahead of time on an air-gapped host; the relay
   image can be pointed at a mirror with `ZANSKAR_DBPROXY_IMAGE` or the console's Settings
-  page.
+  page. It must be an image reference: `registry/repository`, an optional `:tag` and an
+  optional `@sha256:<64 hex digits>` to pin it by digest. The console refuses anything else,
+  and an environment value that is not one is ignored in favour of the default. The default
+  is the gateway's own image by version tag, not by digest: the digest of an image is known
+  only once it is built, and the binary inside it, which names the default, is built first.
 - **TLS to the database** is verified by default (ADR 0025): a new database target uses
   `verify-full` and needs the CA bundle that signs the database's certificate. For Amazon
   RDS that is your region's bundle,

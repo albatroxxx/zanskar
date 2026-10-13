@@ -58,3 +58,12 @@ refuses what a role may not do, whichever listener a request arrives on.
 
 Restricting admin access at the network layer would need either a second listener with every
 route classified as admin or not, or an API split under a path prefix. Neither is planned.
+
+## Amendment, 2026-10-11: what is split
+
+Until now the admin and audit pages were imported statically, so the sign-in page downloaded the
+whole console and the recording player in one 683 KB bundle. Each admin and audit page is now a
+lazily loaded chunk, fetched the first time it is opened; the entry bundle is about half the size
+and the player (with asciinema-player) loads only for playback. The terminal, desktop and shadow
+pages were already split.
+

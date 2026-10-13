@@ -65,7 +65,7 @@ func (h *AdminHandler) list(w http.ResponseWriter, r *http.Request) {
 	limit, cursor := httpx.Paging(r, 50, 500)
 	items, next, err := h.Vault.List(r.Context(), cursor, limit)
 	if err != nil {
-		h.serverError(w, r, err)
+		httpx.Internal(w, r, h.Log, err)
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, httpx.Page[*Credential]{Items: items, NextCursor: next})
@@ -74,7 +74,7 @@ func (h *AdminHandler) list(w http.ResponseWriter, r *http.Request) {
 func (h *AdminHandler) create(w http.ResponseWriter, r *http.Request) {
 	var req writeRequest
 	if err := httpx.DecodeJSON(r, &req); err != nil {
-		httpx.BadRequest(w, err.Error())
+		httpx.BadRequest(w, r, err.Error())
 		return
 	}
 	c := &Credential{Name: req.Name, Type: req.Type, Mode: req.Mode, Domain: req.Domain}
@@ -94,17 +94,17 @@ func (h *AdminHandler) create(w http.ResponseWriter, r *http.Request) {
 	if c.Mode == ModeVaulted && (c.Type == TypeSSHKey || c.Type == TypeSSHCA) && s.PrivateKey == "" && s.Password == "" {
 		pemText, err := GenerateSSHKey()
 		if err != nil {
-			h.serverError(w, r, err)
+			httpx.Internal(w, r, h.Log, err)
 			return
 		}
 		s.PrivateKey, generated = pemText, true
 	}
 	p, _ := auth.FromContext(r.Context())
 	if err := h.Vault.Create(r.Context(), c, s, p.User.ID); err != nil {
-		h.writeErr(w, r, err)
+		h.fail(w, r, err)
 		return
 	}
-	h.record(r, "credential.create", c, map[string]any{"type": c.Type, "mode": c.Mode, "name": c.Name, "generated_key": generated, "certificate_principals": len(c.CertificatePrincipals)})
+	h.record(r, audit.CredentialCreate, c, map[string]any{"type": c.Type, "mode": c.Mode, "name": c.Name, "generated_key": generated, "certificate_principals": len(c.CertificatePrincipals)})
 	httpx.WriteJSON(w, http.StatusCreated, c)
 }
 
@@ -116,28 +116,28 @@ type generateRequest struct {
 func (h *AdminHandler) generateSSHKey(w http.ResponseWriter, r *http.Request) {
 	var req generateRequest
 	if err := httpx.DecodeJSON(r, &req); err != nil {
-		httpx.BadRequest(w, err.Error())
+		httpx.BadRequest(w, r, err.Error())
 		return
 	}
 	pemText, err := GenerateSSHKey()
 	if err != nil {
-		h.serverError(w, r, err)
+		httpx.Internal(w, r, h.Log, err)
 		return
 	}
 	c := &Credential{Name: req.Name, Type: TypeSSHKey, Mode: ModeVaulted, Username: req.Username}
 	p, _ := auth.FromContext(r.Context())
 	if err := h.Vault.Create(r.Context(), c, &Secret{PrivateKey: pemText}, p.User.ID); err != nil {
-		h.writeErr(w, r, err)
+		h.fail(w, r, err)
 		return
 	}
-	h.record(r, "credential.create", c, map[string]any{"type": c.Type, "mode": c.Mode, "name": c.Name, "generated_key": true})
+	h.record(r, audit.CredentialCreate, c, map[string]any{"type": c.Type, "mode": c.Mode, "name": c.Name, "generated_key": true})
 	httpx.WriteJSON(w, http.StatusCreated, c)
 }
 
 func (h *AdminHandler) get(w http.ResponseWriter, r *http.Request) {
 	c, err := h.Vault.Get(r.Context(), r.PathValue("id"))
 	if err != nil {
-		h.writeErr(w, r, err)
+		h.fail(w, r, err)
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, c)
@@ -146,17 +146,17 @@ func (h *AdminHandler) get(w http.ResponseWriter, r *http.Request) {
 func (h *AdminHandler) update(w http.ResponseWriter, r *http.Request) {
 	var req writeRequest
 	if err := httpx.DecodeJSON(r, &req); err != nil {
-		httpx.BadRequest(w, err.Error())
+		httpx.BadRequest(w, r, err.Error())
 		return
 	}
 	id := r.PathValue("id")
 	existing, err := h.Vault.Get(r.Context(), id)
 	if err != nil {
-		h.writeErr(w, r, err)
+		h.fail(w, r, err)
 		return
 	}
 	if (req.Type != "" && req.Type != existing.Type) || (req.Mode != "" && req.Mode != existing.Mode) {
-		httpx.BadRequest(w, "type and mode are immutable; create a new credential instead")
+		httpx.BadRequest(w, r, "type and mode are immutable; create a new credential instead")
 		return
 	}
 	if req.Name == "" {
@@ -182,24 +182,24 @@ func (h *AdminHandler) update(w http.ResponseWriter, r *http.Request) {
 	rotate := req.Password != "" || req.PrivateKey != ""
 	if rotate {
 		if err := h.Vault.CheckRotate(existing, req.secret()); err != nil {
-			h.writeErr(w, r, err)
+			h.fail(w, r, err)
 			return
 		}
 	}
 	c, err := h.Vault.Update(r.Context(), id, m)
 	if err != nil {
-		h.writeErr(w, r, err)
+		h.fail(w, r, err)
 		return
 	}
 	// Audited as soon as it is saved, so a rotation that fails after this
 	// still leaves the saved change on the record.
-	h.record(r, "credential.update", c, map[string]any{"type": c.Type, "mode": c.Mode, "name": c.Name, "certificate_principals": len(c.CertificatePrincipals)})
+	h.record(r, audit.CredentialUpdate, c, map[string]any{"type": c.Type, "mode": c.Mode, "name": c.Name, "certificate_principals": len(c.CertificatePrincipals)})
 	if rotate {
 		if c, err = h.Vault.Rotate(r.Context(), id, req.secret()); err != nil {
-			h.writeErr(w, r, err)
+			h.fail(w, r, err)
 			return
 		}
-		h.record(r, "credential.rotate", c, map[string]any{"type": c.Type, "mode": c.Mode, "name": c.Name})
+		h.record(r, audit.CredentialRotate, c, map[string]any{"type": c.Type, "mode": c.Mode, "name": c.Name})
 	}
 	httpx.WriteJSON(w, http.StatusOK, c)
 }
@@ -211,13 +211,13 @@ func (h *AdminHandler) update(w http.ResponseWriter, r *http.Request) {
 func (h *AdminHandler) rotate(w http.ResponseWriter, r *http.Request) {
 	var req writeRequest
 	if err := httpx.DecodeJSON(r, &req); err != nil {
-		httpx.BadRequest(w, err.Error())
+		httpx.BadRequest(w, r, err.Error())
 		return
 	}
 	id := r.PathValue("id")
 	existing, err := h.Vault.Get(r.Context(), id)
 	if err != nil {
-		h.writeErr(w, r, err)
+		h.fail(w, r, err)
 		return
 	}
 	s := req.secret()
@@ -225,7 +225,7 @@ func (h *AdminHandler) rotate(w http.ResponseWriter, r *http.Request) {
 	if existing.Mode == ModeVaulted && (existing.Type == TypeSSHKey || existing.Type == TypeSSHCA) && s.PrivateKey == "" && s.Password == "" {
 		pemText, err := GenerateSSHKey()
 		if err != nil {
-			h.serverError(w, r, err)
+			httpx.Internal(w, r, h.Log, err)
 			return
 		}
 		s.PrivateKey, generated = pemText, true
@@ -233,20 +233,20 @@ func (h *AdminHandler) rotate(w http.ResponseWriter, r *http.Request) {
 	if existing.Type == TypeSSHCA {
 		c, err := h.Vault.PrepareRotation(r.Context(), id, s)
 		if err != nil {
-			h.writeErr(w, r, err)
+			h.fail(w, r, err)
 			return
 		}
-		h.record(r, "credential.rotate.prepare", c, map[string]any{"type": c.Type, "name": c.Name, "generated_key": generated,
+		h.record(r, audit.CredentialRotatePrepare, c, map[string]any{"type": c.Type, "name": c.Name, "generated_key": generated,
 			"next_fingerprint": fingerprint(c.Rotation.PendingPublicKey)})
 		httpx.WriteJSON(w, http.StatusOK, c)
 		return
 	}
 	c, err := h.Vault.Rotate(r.Context(), id, s)
 	if err != nil {
-		h.writeErr(w, r, err)
+		h.fail(w, r, err)
 		return
 	}
-	h.record(r, "credential.rotate", c, map[string]any{"type": c.Type, "mode": c.Mode, "name": c.Name, "generated_key": generated})
+	h.record(r, audit.CredentialRotate, c, map[string]any{"type": c.Type, "mode": c.Mode, "name": c.Name, "generated_key": generated})
 	httpx.WriteJSON(w, http.StatusOK, c)
 }
 
@@ -254,15 +254,15 @@ func (h *AdminHandler) cutOver(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	before, err := h.Vault.Get(r.Context(), id)
 	if err != nil {
-		h.writeErr(w, r, err)
+		h.fail(w, r, err)
 		return
 	}
 	c, err := h.Vault.CutOver(r.Context(), id)
 	if err != nil {
-		h.writeErr(w, r, err)
+		h.fail(w, r, err)
 		return
 	}
-	h.record(r, "credential.rotate", c, map[string]any{"type": c.Type, "mode": c.Mode, "name": c.Name,
+	h.record(r, audit.CredentialRotate, c, map[string]any{"type": c.Type, "mode": c.Mode, "name": c.Name,
 		"old_fingerprint": fingerprint(before.PublicKey), "new_fingerprint": fingerprint(c.PublicKey)})
 	httpx.WriteJSON(w, http.StatusOK, c)
 }
@@ -270,29 +270,29 @@ func (h *AdminHandler) cutOver(w http.ResponseWriter, r *http.Request) {
 func (h *AdminHandler) cancelRotation(w http.ResponseWriter, r *http.Request) {
 	c, err := h.Vault.CancelRotation(r.Context(), r.PathValue("id"))
 	if err != nil {
-		h.writeErr(w, r, err)
+		h.fail(w, r, err)
 		return
 	}
-	h.record(r, "credential.rotate.cancel", c, map[string]any{"type": c.Type, "name": c.Name})
+	h.record(r, audit.CredentialRotateCancel, c, map[string]any{"type": c.Type, "name": c.Name})
 	httpx.WriteJSON(w, http.StatusOK, c)
 }
 
 func (h *AdminHandler) retire(w http.ResponseWriter, r *http.Request) {
 	before, err := h.Vault.Get(r.Context(), r.PathValue("id"))
 	if err != nil {
-		h.writeErr(w, r, err)
+		h.fail(w, r, err)
 		return
 	}
 	c, err := h.Vault.Retire(r.Context(), before.ID)
 	if err != nil {
-		h.writeErr(w, r, err)
+		h.fail(w, r, err)
 		return
 	}
 	retired := ""
 	if before.Rotation != nil {
 		retired = fingerprint(before.Rotation.RetiredPublicKey)
 	}
-	h.record(r, "credential.rotate.retire", c, map[string]any{"type": c.Type, "name": c.Name, "retired_fingerprint": retired})
+	h.record(r, audit.CredentialRotateRetire, c, map[string]any{"type": c.Type, "name": c.Name, "retired_fingerprint": retired})
 	httpx.WriteJSON(w, http.StatusOK, c)
 }
 
@@ -312,14 +312,14 @@ func (h *AdminHandler) delete(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	c, err := h.Vault.Get(r.Context(), id)
 	if err != nil {
-		h.writeErr(w, r, err)
+		h.fail(w, r, err)
 		return
 	}
 	if err := h.Vault.Delete(r.Context(), id); err != nil {
-		h.writeErr(w, r, err)
+		h.fail(w, r, err)
 		return
 	}
-	h.record(r, "credential.delete", c, map[string]any{"type": c.Type, "mode": c.Mode, "name": c.Name})
+	h.record(r, audit.CredentialDelete, c, map[string]any{"type": c.Type, "mode": c.Mode, "name": c.Name})
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -329,26 +329,21 @@ func (h *AdminHandler) record(r *http.Request, action string, c *Credential, det
 	auth.Recorder{Audit: h.Audit, Log: h.Log}.Record(r, auth.ActorFor(r).Event(action, "credential", c.ID, audit.Success, details))
 }
 
-func (h *AdminHandler) writeErr(w http.ResponseWriter, r *http.Request, err error) {
+func (h *AdminHandler) fail(w http.ResponseWriter, r *http.Request, err error) {
 	switch {
 	case errors.Is(err, ErrNotFound):
-		httpx.WriteError(w, http.StatusNotFound, "not_found", "credential not found")
+		httpx.WriteError(w, r, http.StatusNotFound, "not_found", "credential not found")
 	case errors.Is(err, ErrDuplicate):
-		httpx.WriteError(w, http.StatusConflict, "conflict", "a credential with that name already exists")
+		httpx.WriteError(w, r, http.StatusConflict, "conflict", "a credential with that name already exists")
 	case errors.Is(err, ErrInUse):
-		httpx.WriteError(w, http.StatusConflict, "in_use", "credential is still referenced by a target or autoscaling group")
+		httpx.WriteError(w, r, http.StatusConflict, "in_use", "credential is still referenced by a target or autoscaling group")
 	case errors.Is(err, ErrRotationPending):
-		httpx.WriteError(w, http.StatusConflict, "rotation_pending", "a next key is already prepared; cut over or cancel it first")
+		httpx.WriteError(w, r, http.StatusConflict, "rotation_pending", "a next key is already prepared; cut over or cancel it first")
 	case errors.Is(err, ErrNoRotation):
-		httpx.WriteError(w, http.StatusConflict, "no_rotation", "no rotation is in progress for this credential")
+		httpx.WriteError(w, r, http.StatusConflict, "no_rotation", "no rotation is in progress for this credential")
 	case errors.Is(err, ErrInvalid), errors.Is(err, ErrBadKey), errors.Is(err, ErrPassphrase), errors.Is(err, ErrNoSecret):
-		httpx.BadRequest(w, strings.TrimPrefix(err.Error(), "credential: "))
+		httpx.BadRequest(w, r, strings.TrimPrefix(err.Error(), "credential: "))
 	default:
-		h.serverError(w, r, err)
+		httpx.Internal(w, r, h.Log, err)
 	}
-}
-
-func (h *AdminHandler) serverError(w http.ResponseWriter, r *http.Request, err error) {
-	h.Log.Error("credential handler", "path", r.URL.Path, "err", err)
-	httpx.WriteError(w, http.StatusInternalServerError, "internal", "internal error")
 }

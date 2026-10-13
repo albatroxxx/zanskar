@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -19,6 +20,7 @@ import (
 	"github.com/albatroxxx/zanskar/internal/audit"
 	"github.com/albatroxxx/zanskar/internal/config"
 	"github.com/albatroxxx/zanskar/internal/crypto"
+	"github.com/albatroxxx/zanskar/internal/httpx"
 	"github.com/albatroxxx/zanskar/internal/keyring"
 	"github.com/albatroxxx/zanskar/internal/store"
 	"github.com/albatroxxx/zanskar/internal/user"
@@ -60,13 +62,13 @@ func newEnv(t *testing.T) *env {
 	mux := http.NewServeMux()
 	e.handler.Register(mux)
 	mux.Handle("GET /api/v1/admin-only", RequireRole(user.RoleAdmin)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		WriteJSON(w, 200, map[string]string{"ok": "admin"})
+		httpx.WriteJSON(w, 200, map[string]string{"ok": "admin"})
 	})))
 	mux.Handle("POST /api/v1/mutate", RequireAuth(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		WriteJSON(w, 200, map[string]string{"ok": "mutated"})
+		httpx.WriteJSON(w, 200, map[string]string{"ok": "mutated"})
 	})))
 	mux.Handle("GET /api/v1/connect-only", RequireConnect(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		WriteJSON(w, 200, map[string]string{"ok": "connect"})
+		httpx.WriteJSON(w, 200, map[string]string{"ok": "connect"})
 	})))
 	mw := &Middleware{Sessions: e.sessions, Users: e.users, Log: log}
 	e.srv = mw.Authenticate(mw.CSRF(mux))
@@ -236,7 +238,9 @@ func TestTOTPFlow(t *testing.T) {
 	csrf := r.body["csrf_token"].(string)
 	hdr := map[string]string{"X-CSRF-Token": csrf}
 
-	enr := e.do("POST", "/api/v1/auth/mfa/totp/enroll", nil, r.cookie, hdr)
+	// carol's sign-in is full (a second factor is not required here), so
+	// enrolling takes the password again (L14).
+	enr := e.do("POST", "/api/v1/auth/mfa/totp/enroll", map[string]string{"current_password": "carol has a long passphrase"}, r.cookie, hdr)
 	if enr.code != 200 || enr.body["secret"] == "" {
 		t.Fatalf("enroll: %d %v", enr.code, enr.body)
 	}
@@ -276,7 +280,8 @@ func TestTOTPFlow(t *testing.T) {
 	if v.code != 200 || v.body["status"] != "ok" {
 		t.Fatalf("verify: %d %v", v.code, v.body)
 	}
-	if me := e.do("GET", "/api/v1/auth/me", nil, r.cookie, nil); me.code != 200 {
+	// Completing the sign-in issued a new token (L13).
+	if me := e.do("GET", "/api/v1/auth/me", nil, v.cookie, nil); me.code != 200 {
 		t.Fatalf("expected full session after verify, got %d", me.code)
 	}
 
@@ -352,10 +357,12 @@ func TestMFAEnrollmentRequired(t *testing.T) {
 		t.Fatalf("enroll on partial session: %d %v", enr.code, enr.body)
 	}
 	code, _ := totp.GenerateCode(enr.body["secret"].(string), time.Now())
-	if c := e.do("POST", "/api/v1/auth/mfa/totp/confirm", map[string]string{"code": code}, r.cookie, hdr); c.code != 200 || c.body["status"] != "ok" {
+	c := e.do("POST", "/api/v1/auth/mfa/totp/confirm", map[string]string{"code": code}, r.cookie, hdr)
+	if c.code != 200 || c.body["status"] != "ok" {
 		t.Fatalf("confirm: %d %v", c.code, c.body)
 	}
-	if me := e.do("GET", "/api/v1/auth/me", nil, r.cookie, nil); me.code != 200 {
+	// Completing the sign-in issued a new token (L13).
+	if me := e.do("GET", "/api/v1/auth/me", nil, c.cookie, nil); me.code != 200 {
 		t.Fatalf("session should be full after confirm, got %d", me.code)
 	}
 	// The requirement is a runtime setting: flipping it applies to the next
@@ -463,7 +470,8 @@ func TestPasswordChangeRequiredFirst(t *testing.T) {
 	if x.code != 200 || x.body["status"] != "ok" {
 		t.Fatalf("change without MFA: %d %v", x.code, x.body)
 	}
-	if me := e.do("GET", "/api/v1/auth/me", nil, r.cookie, nil); me.body["pending"] != nil || me.body["user"] == nil {
+	// Completing the sign-in issued a new token (L13).
+	if me := e.do("GET", "/api/v1/auth/me", nil, x.cookie, nil); me.body["pending"] != nil || me.body["user"] == nil {
 		t.Fatalf("session is full after the change: %v", me.body)
 	}
 }
@@ -500,16 +508,21 @@ func TestPasswordChangeAfterSecondFactor(t *testing.T) {
 	}
 	// The confirm code is spent; the next step's code is not.
 	code, _ = totp.GenerateCode(enr.body["secret"].(string), time.Now().Add(30*time.Second))
-	if v := e.do("POST", "/api/v1/auth/mfa/totp/verify", map[string]string{"code": code}, r.cookie, hdr); v.code != 200 {
+	v := e.do("POST", "/api/v1/auth/mfa/totp/verify", map[string]string{"code": code}, r.cookie, hdr)
+	if v.code != 200 {
 		t.Fatalf("verify: %d %v", v.code, v.body)
 	}
+	// The second factor issued a new token (L13); the session goes on.
+	r.cookie = v.cookie
 	if me := e.do("GET", "/api/v1/auth/me", nil, r.cookie, nil); me.body["pending"] != "password" || me.body["user"] != nil {
 		t.Fatalf("after the second factor the change is owed: %v", me.body)
 	}
-	if x := e.do("POST", "/api/v1/auth/password", map[string]string{"current_password": "ines first passphrase", "new_password": "ines second passphrase"}, r.cookie, hdr); x.code != 200 || x.body["status"] != "ok" {
+	x := e.do("POST", "/api/v1/auth/password", map[string]string{"current_password": "ines first passphrase", "new_password": "ines second passphrase"}, r.cookie, hdr)
+	if x.code != 200 || x.body["status"] != "ok" {
 		t.Fatalf("change after the second factor: %d %v", x.code, x.body)
 	}
-	if me := e.do("GET", "/api/v1/auth/me", nil, r.cookie, nil); me.body["pending"] != nil || me.body["user"] == nil {
+	// The change was the sign-in's last step, so it issued a new token too.
+	if me := e.do("GET", "/api/v1/auth/me", nil, x.cookie, nil); me.body["pending"] != nil || me.body["user"] == nil {
 		t.Fatalf("full after the change: %v", me.body)
 	}
 }
@@ -552,4 +565,135 @@ func TestPasswordChangeEndsOtherSessions(t *testing.T) {
 	if x := e.do("POST", "/api/v1/auth/mfa/totp/enroll", nil, other.cookie, csrfOf(other)); x.code != 401 {
 		t.Fatalf("enrolment from the other sign-in with the handed-out password: %d %v, want 401", x.code, x.body)
 	}
+}
+
+// TestWrongCurrentPasswordCounts: a wrong current_password on a password
+// change was neither limited nor counted (L17), so whoever held a stolen
+// session could guess the password there without end. It counts against
+// the account like a wrong sign-in password: the fifth locks the account,
+// and while it is locked the change is refused before any hash is spent,
+// even with the right password.
+func TestWrongCurrentPasswordCounts(t *testing.T) {
+	e := newEnv(t)
+	const pw = "mona keeps a long passphrase"
+	mona := e.createUser(t, "mona", pw, user.RoleUser)
+	s := e.sessionFor(t, mona, true)
+	change := func(current string) resp {
+		return e.do("POST", "/api/v1/auth/password", map[string]string{"current_password": current, "new_password": "mona picked another phrase"}, s.cookie, csrfOf(s))
+	}
+	for i := 1; i <= 5; i++ {
+		if x := change(fmt.Sprintf("guess number %d of five", i)); x.code != http.StatusUnauthorized || x.body["code"] != "invalid_credentials" {
+			t.Fatalf("guess %d: %d %v", i, x.code, x.body)
+		}
+		u, err := e.users.GetByID(context.Background(), mona.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		// The fifth locks the account (checked below) and restarts the count.
+		if i < 5 && u.FailedLogins != i {
+			t.Fatalf("after guess %d: %d failures counted", i, u.FailedLogins)
+		}
+	}
+	if u, _ := e.users.GetByID(context.Background(), mona.ID); u.LockedUntil == nil || !u.LockedUntil.After(time.Now()) {
+		t.Fatalf("five wrong current passwords must lock the account: %+v", u.LockedUntil)
+	}
+	if x := change(pw); x.code != http.StatusTooManyRequests || x.body["code"] != "too_many_attempts" {
+		t.Fatalf("the right password while locked: %d %v, want 429 too_many_attempts", x.code, x.body)
+	}
+	if u, _ := e.users.GetByID(context.Background(), mona.ID); !user.VerifyPassword(u.PasswordHash, pw) {
+		t.Fatal("the password changed while the account was locked")
+	}
+}
+
+// TestEnrolmentFromAFullSessionNeedsThePassword: an account with no
+// authenticator could have one enrolled from any full session, without the
+// password (L14), so a stolen cookie could enrol the thief's device and lock
+// the owner out of every later sign-in. From a full session it now takes the
+// current password, which counts like any other; enrolling as a step of
+// signing in (a partial session) does not.
+func TestEnrolmentFromAFullSessionNeedsThePassword(t *testing.T) {
+	e := newEnv(t)
+	const pw = "nina keeps a long passphrase"
+	nina := e.createUser(t, "nina", pw, user.RoleUser)
+	s := e.sessionFor(t, nina, true)
+	enrol := func(body any) resp { return e.do("POST", "/api/v1/auth/mfa/totp/enroll", body, s.cookie, csrfOf(s)) }
+	if x := enrol(nil); x.code != http.StatusUnauthorized || x.body["code"] != "password_required" {
+		t.Fatalf("no password: %d %v, want 401 password_required", x.code, x.body)
+	}
+	if x := enrol(map[string]string{"current_password": "not nina's phrase at all"}); x.code != http.StatusUnauthorized || x.body["code"] != "invalid_credentials" {
+		t.Fatalf("wrong password: %d %v, want 401 invalid_credentials", x.code, x.body)
+	}
+	if u, _ := e.users.GetByID(context.Background(), nina.ID); u.FailedLogins != 1 {
+		t.Fatalf("a wrong password at enrolment must count: %d", u.FailedLogins)
+	}
+	if x := enrol(map[string]string{"current_password": pw}); x.code != http.StatusOK || x.body["otpauth_url"] == nil {
+		t.Fatalf("right password: %d %v", x.code, x.body)
+	}
+
+	// Enrolling as the step a sign-in owes needs nothing more: the password
+	// was given a moment ago.
+	omar := e.createUser(t, "omar", "omar keeps a long passphrase", user.RoleUser)
+	partial := e.sessionFor(t, omar, false)
+	if x := e.do("POST", "/api/v1/auth/mfa/totp/enroll", nil, partial.cookie, csrfOf(partial)); x.code != http.StatusOK {
+		t.Fatalf("enrolment while signing in: %d %v", x.code, x.body)
+	}
+}
+
+// TestSignInCompletionRotatesTheToken: a sign-in that becomes full kept the
+// cookie it had while partial (L13), so a cookie planted in the victim's
+// browser before sign-in (from a sibling subdomain, say) became fully
+// verified when the victim typed their code. Each step that completes a
+// sign-in now issues a new token for the same session: the code, the
+// enrolment a sign-in owes, and the password change that is its last step.
+// The old token stops working; the session, its id and CSRF token go on.
+func TestSignInCompletionRotatesTheToken(t *testing.T) {
+	e := newEnv(t)
+	unlimited(e)
+	completes := func(t *testing.T, before, after resp) {
+		t.Helper()
+		if after.code != http.StatusOK || after.cookie == nil || after.cookie.Value == "" || after.cookie.Value == before.cookie.Value {
+			t.Fatalf("the completing step must set a new cookie: %d %v", after.code, after.cookie)
+		}
+		if me := e.do("GET", "/api/v1/auth/me", nil, before.cookie, nil); me.code != http.StatusUnauthorized {
+			t.Fatalf("the token from before the sign-in completed: %d, want 401", me.code)
+		}
+		me := e.do("GET", "/api/v1/auth/me", nil, after.cookie, nil)
+		if me.code != http.StatusOK || me.body["user"] == nil || me.body["csrf_token"] != before.body["csrf_token"] {
+			t.Fatalf("the new token: %d %v, want the same session", me.code, me.body)
+		}
+	}
+
+	t.Run("code", func(t *testing.T) {
+		u := e.createUser(t, "pia", "pia keeps a long passphrase", user.RoleUser)
+		enr, err := e.totp.Enroll(context.Background(), u.ID, u.Username)
+		if err != nil {
+			t.Fatal(err)
+		}
+		code, _ := totp.GenerateCode(enr.Secret, time.Now())
+		if _, err := e.totp.Confirm(context.Background(), u.ID, code); err != nil {
+			t.Fatal(err)
+		}
+		r := login(e, "pia", "pia keeps a long passphrase")
+		code, _ = totp.GenerateCode(enr.Secret, time.Now().Add(30*time.Second))
+		completes(t, r, e.do("POST", "/api/v1/auth/mfa/totp/verify", map[string]string{"code": code}, r.cookie, csrfOf(r)))
+	})
+
+	t.Run("enrolment", func(t *testing.T) {
+		e.handler.RequireMFA = func() bool { return true }
+		defer func() { e.handler.RequireMFA = nil }()
+		e.createUser(t, "quin", "quin keeps a long passphrase", user.RoleUser)
+		r := login(e, "quin", "quin keeps a long passphrase")
+		enr := e.do("POST", "/api/v1/auth/mfa/totp/enroll", nil, r.cookie, csrfOf(r))
+		code, _ := totp.GenerateCode(enr.body["secret"].(string), time.Now())
+		completes(t, r, e.do("POST", "/api/v1/auth/mfa/totp/confirm", map[string]string{"code": code}, r.cookie, csrfOf(r)))
+	})
+
+	t.Run("password change", func(t *testing.T) {
+		u := e.createUser(t, "rosa", "rosa was handed this phrase", user.RoleUser)
+		if err := e.users.SetPasswordHash(context.Background(), u.ID, u.PasswordHash, true); err != nil {
+			t.Fatal(err)
+		}
+		r := login(e, "rosa", "rosa was handed this phrase")
+		completes(t, r, e.do("POST", "/api/v1/auth/password", map[string]string{"current_password": "rosa was handed this phrase", "new_password": "rosa chose her own phrase"}, r.cookie, csrfOf(r)))
+	})
 }

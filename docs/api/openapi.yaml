@@ -6,7 +6,7 @@ info:
   description: |
     Zanskar exposes a JSON API under `/api/v1` and its WebSocket endpoints under `/ws`.
     `info.version` is the API version, matching the `/api/v1` prefix, not the release version;
-    `GET /version` returns the running release.
+    `GET /version` returns the running release to a signed-in caller.
 
     ## Authentication
 
@@ -18,6 +18,11 @@ info:
     deployment requires MFA, the login response returns `mfa_required` and the session is created
     with `mfa_verified=false`. Such a session may only call the `/auth/mfa/*` endpoints until
     `POST /auth/mfa/totp/verify` succeeds.
+
+    The step that completes a sign-in (the second factor, the enrolment a sign-in owes, or a
+    password change that was its last step) sets a new cookie. The token used while signing in
+    stops working, so a cookie planted in the browser beforehand never becomes a signed-in one.
+    The session, its id and its CSRF token carry on.
 
     The temporary lock that wrong passwords set (see `POST /auth/login`) stops new sign-ins
     only; sessions already signed in carry on. When the gateway cannot check a session cookie
@@ -130,9 +135,13 @@ paths:
     get:
       tags: [system]
       summary: Version
-      description: Returns the release version only. No commit hash, build host, or dependency list.
-      security: []
+      description: >-
+        Returns the release version only, to any signed-in caller. No commit hash, build host,
+        or dependency list. Not answered without a session, so the release is not advertised to
+        whoever can reach the gateway.
       responses:
+        "401":
+          $ref: "#/components/responses/Unauthorized"
         "200":
           description: Version string.
           content:
@@ -152,8 +161,10 @@ paths:
       summary: Log in with username and password
       description: |
         Rate limited per source address, an IPv6 client by its /64; while the limiter is full of
-        other addresses, a new one gets the same `429`. Each attempt checks a password, and only so
-        many checks run at once: one that waits too long for its turn gets `503` with code `busy`.
+        other addresses, a new one gets the same `429`. A run of `429`s to one address is audited
+        once, as `user.login` with reason `rate_limited`, not once per attempt. Each attempt checks
+        a password, and only so many checks run at once: one that waits too long for its turn gets
+        `503` with code `busy`.
 
         Wrong passwords and wrong second-factor codes count against the account together: five in
         a row, from whichever clients, lock it against new sign-ins for 15 minutes
@@ -235,6 +246,11 @@ paths:
         continues where it would have: the response is a LoginResponse whose status is
         `mfa_required`, `mfa_enrollment_required` or `ok`. Audited as `user.password.change`,
         with the number of other sessions ended in `other_sessions_revoked`.
+
+        A wrong current password counts against the account like a wrong sign-in password: the
+        fifth in a row locks the account, and while it is locked the change is refused with
+        `429 too_many_attempts` before any password is checked, so a session cannot go on
+        guessing.
       requestBody:
         required: true
         content:
@@ -264,7 +280,13 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
         "401":
-          description: The current password is wrong.
+          description: The current password is wrong (`invalid_credentials`); it is counted.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "429":
+          description: "`too_many_attempts`: the account is locked after wrong passwords; try again later."
           content:
             application/json:
               schema:
@@ -284,8 +306,15 @@ paths:
       description: |
         Generates a new secret for the caller. The secret and the `otpauth://` URI are returned
         exactly once. Enrollment is not active until `POST /auth/mfa/totp/confirm` succeeds.
-        Re-enrolling replaces an unconfirmed secret; replacing a confirmed secret requires the
-        current password in the request body.
+        Re-enrolling replaces an unconfirmed secret; a confirmed authenticator cannot be replaced
+        through the API (`409 already_enrolled`), only reset by an administrator.
+
+        From a fully signed-in session the body must carry the caller's `current_password`, so a
+        stolen session cannot enrol another device and lock the owner out: `401
+        password_required` without it, `401 invalid_credentials` when it is wrong (counted like a
+        wrong sign-in password), `429 too_many_attempts` while the account is locked. Enrolling
+        as the step a sign-in still owes needs no password, and an account that signs in through
+        an identity provider has no local password to give.
       requestBody:
         content:
           application/json:
@@ -304,6 +333,18 @@ paths:
                 $ref: "#/components/schemas/TotpEnrollment"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "409":
+          description: "`already_enrolled`: an authenticator is confirmed already."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "429":
+          description: "`too_many_attempts`: the account is locked after wrong passwords; try again later."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
   /auth/mfa/totp/confirm:
     post:
       tags: [auth]
@@ -509,10 +550,10 @@ paths:
   /me/access-requests:
     post:
       tags: [user]
-      summary: Request just-in-time access to a target
+      summary: Request just-in-time access to a target or an autoscaling group
       description: |
-        Ask for time-bounded access to a target the caller is *eligible* for — one matched by an
-        enabled policy with `require_approval` set (ADR 0018). The request starts `pending` until
+        Ask for time-bounded access to a target or an autoscaling group the caller is *eligible*
+        for — one matched by an enabled policy with `require_approval` set (ADR 0018). The request starts `pending` until
         an admin approves or denies it. Standing access needs no request: a user who already has
         it connects directly through `/connect`.
       requestBody:
@@ -529,13 +570,15 @@ paths:
               schema:
                 $ref: "#/components/schemas/AccessRequest"
         "400":
-          description: Missing field, `minutes` below 1, or `duration_too_long` (over the policy maximum).
+          description: >-
+            Missing field, both or neither of `target_id` and `asg_id`, `minutes` below 1, or
+            `duration_too_long` (over the policy maximum).
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
         "403":
-          description: The caller is not eligible — no approval-gated policy covers this target and protocol (`not_eligible`).
+          description: The caller is not eligible — no approval-gated policy covers this target or group and protocol (`not_eligible`).
           content:
             application/json:
               schema:
@@ -594,10 +637,13 @@ paths:
       summary: Request a connect ticket
       description: |
         Server-side policy evaluation happens here: role, group membership, target selector,
-        protocol, time window, and MFA requirement. On success an `access_sessions` row is created
-        and a one-time ticket is returned. The ticket must be presented to `/ws/terminal` or
-        `/ws/desktop` within `expires_at` (30 seconds) and is invalid after first use. Credentials
-        supplied in the body are held in memory only for the life of the ticket. When every
+        protocol, time window, and MFA requirement. On success a one-time ticket is returned; the
+        `access_sessions` row is created when it is redeemed. The ticket must be presented to the
+        returned `ws_path` within `expires_at` (30 seconds), from the same address and with the
+        same sign-in's cookie (a browser sends it with the upgrade), and is spent by its first use,
+        right or wrong. The policies are applied again at that moment, so a revocation in between
+        refuses the upgrade (`403 policy_denied`). Credentials supplied in the body are held in
+        memory only for the life of the ticket. When every
         policy that grants the caller this target is approval-gated (ADR 0018), the caller needs
         an active grant: without one the request is refused with `403 approval_required` and the
         UI offers to request access instead.
@@ -608,7 +654,7 @@ paths:
             schema:
               $ref: "#/components/schemas/ConnectRequest"
       responses:
-        "201":
+        "200":
           description: Ticket issued.
           content:
             application/json:
@@ -629,6 +675,22 @@ paths:
           $ref: "#/components/responses/NotFound"
         "409":
           description: The target is not reachable for this protocol (capability missing, host key untrusted or changed, or instance no longer healthy).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "422":
+          description: >-
+            `credential_required`: the target uses the caller's own account for this protocol, so
+            the request must carry `credential`.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "501":
+          description: >-
+            The gateway cannot broker this here: `protocol_unavailable`, `engine_unavailable`, or
+            `credential_mode_unavailable`.
           content:
             application/json:
               schema:
@@ -655,6 +717,8 @@ paths:
                         type: array
                         items:
                           $ref: "#/components/schemas/OwnSession"
+        "400":
+          $ref: "#/components/responses/BadRequest"
   /sessions/{id}/failover:
     post:
       tags: [user]
@@ -865,7 +929,11 @@ paths:
         `policy_revoked`, `gateway_restart` or `target_lost`; after `target_lost` on an
         autoscaling instance the browser may call `POST /sessions/{id}/failover`. If the dial
         fails after the upgrade, the socket closes with a message such as
-        `host key mismatch; connection refused`.
+        `host key mismatch; connection refused`. Just before the dial the target's address is
+        looked up once and checked against the addresses the gateway never connects to (see
+        `TargetWrite.address`), and the gateway dials the address it checked, not the name. A
+        refused address closes the socket the same way, with a message saying so, and is audited
+        as a failed `session.connect` with reason `address_forbidden`.
       parameters:
         - $ref: "#/components/parameters/Ticket"
         - name: cols
@@ -906,8 +974,11 @@ paths:
         Served at the root, not under `/api/v1`. Same ticket handshake as `/ws/terminal`. The
         server speaks the Guacamole protocol to guacd on a private network and relays instructions
         to the browser, which renders them with guacamole-common-js. Clipboard and file transfer
-        instructions are dropped unless the policy allows them. The same `target_lost` control
-        message is delivered as a Guacamole `error` instruction with status 519 and a JSON payload.
+        instructions are dropped unless the policy allows them. When the gateway ends the session it
+        sends a Guacamole `error` instruction whose message says why, then `disconnect`, then a
+        normal close: status 519 when the target was lost (on an autoscaling group the console then
+        offers another instance), 523 (session closed) for any other end the gateway decided, such
+        as an administrator's terminate, a policy change, a restart or a time limit.
       parameters:
         - $ref: "#/components/parameters/Ticket"
       security: []
@@ -918,6 +989,24 @@ paths:
           description: Ticket missing, expired, or already used.
         "403":
           description: Origin mismatch.
+        "409":
+          description: >-
+            The target is no longer available or its name does not resolve
+            (`target_unavailable`), its credential could not be opened (`credential_unavailable`),
+            or the RDP certificate no longer matches the pin (`certificate_mismatch`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "422":
+          description: >-
+            The target's address, looked up before guacd is asked to connect, is one the gateway
+            never connects to (`address_forbidden`, see `TargetWrite.address`); audited as a
+            failed `session.connect`. guacd is handed the name and looks it up again itself.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
 
   /ws/winrm:
     servers:
@@ -968,6 +1057,16 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
+        "422":
+          description: >-
+            The target's address is one the gateway never connects to (`address_forbidden`, see
+            `TargetWrite.address`); audited as a failed `session.connect`. Otherwise the client
+            connects to the address it checked, while the URL and the TLS server name keep the
+            target's name.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
         "503":
           description: The gateway is restarting; `code` is `restarting`.
   /ws/database:
@@ -1007,7 +1106,18 @@ paths:
         "403":
           description: Origin mismatch.
         "409":
-          description: The target is no longer available (`target_unavailable`) or its credential could not be opened (`credential_unavailable`).
+          description: The target is no longer available or its name does not resolve (`target_unavailable`), or its credential could not be opened (`credential_unavailable`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "422":
+          description: >-
+            The database's address is one the gateway never connects to (`address_forbidden`, see
+            `TargetWrite.address`); audited as a failed `session.connect`, and no container starts.
+            A database target is never probed, so this is where its name is first looked up. The
+            proxy sidecar is still handed the name, which `verify-full` checks the certificate
+            against, and looks it up again itself.
           content:
             application/json:
               schema:
@@ -1182,14 +1292,19 @@ paths:
     delete:
       tags: [admin]
       summary: Delete a user
-      description: Audit events and sessions referencing the user are retained; `actor_user_id` keeps the old id.
+      description: >
+        Audit events referencing the user are retained; `actor_user_id` keeps the old id. An
+        account that sessions or recording views name is kept for the record and cannot be
+        deleted; disable it instead (`status: disabled`), which also ends its sessions.
       responses:
         "204":
           description: Deleted.
         "404":
           $ref: "#/components/responses/NotFound"
         "409":
-          description: Cannot delete the last admin or yourself.
+          description: >
+            `self`: you cannot delete yourself. `last_admin`: this is the last active admin.
+            `has_history`: sessions on record keep the account; nothing was revoked or ended.
           content:
             application/json:
               schema:
@@ -1806,6 +1921,14 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "409":
           $ref: "#/components/responses/Conflict"
+        "422":
+          description: >-
+            The address is an IP the gateway never connects to (`address_forbidden`); see
+            `TargetWrite.address`. Nothing is saved, and the refusal is audited.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
   /targets/{id}:
     parameters:
       - $ref: "#/components/parameters/Id"
@@ -1844,6 +1967,14 @@ paths:
                 $ref: "#/components/schemas/Target"
         "404":
           $ref: "#/components/responses/NotFound"
+        "422":
+          description: >-
+            The address is an IP the gateway never connects to (`address_forbidden`); see
+            `TargetWrite.address`. Nothing is saved, and the refusal is audited.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
     delete:
       tags: [admin]
       summary: Delete a target
@@ -1896,8 +2027,8 @@ paths:
                 $ref: "#/components/schemas/Target"
         "404":
           $ref: "#/components/responses/NotFound"
-        "422":
-          description: The credential does not exist; `code` is `invalid_credential`.
+        "400":
+          description: The credential does not exist; `code` is `bad_request`.
           content:
             application/json:
               schema:
@@ -2027,6 +2158,14 @@ paths:
                 $ref: "#/components/schemas/ProbeResult"
         "404":
           $ref: "#/components/responses/NotFound"
+        "422":
+          description: >-
+            The address, or an address its name resolves to, is one the gateway never connects
+            to (`address_forbidden`); see `TargetWrite.address`. Nothing is dialled.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
         "504":
           description: Gateway could not reach the address on any port.
           content:
@@ -2086,6 +2225,15 @@ paths:
                 $ref: "#/components/schemas/Error"
         "409":
           description: "`host_key_untrusted`, `no_credential`, `not_certificate_authority` or `no_rotation`."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "422":
+          description: >-
+            The address, or an address its name resolves to, is one the gateway never connects
+            to (`address_forbidden`); a name that does not resolve is answered the same way. No
+            login is attempted. Otherwise the login goes to the address that was checked.
           content:
             application/json:
               schema:
@@ -2778,6 +2926,8 @@ paths:
                         type: array
                         items:
                           $ref: "#/components/schemas/AccessSession"
+        "400":
+          $ref: "#/components/responses/BadRequest"
   /sessions/{id}:
     get:
       tags: [auditor]
@@ -3110,7 +3260,13 @@ paths:
               schema:
                 $ref: "#/components/schemas/Setting"
         "400":
-          description: The value does not fit the type (not true/false, not in the enum, not host:port, too long).
+          description: >
+            The value does not fit the type (not true/false, not in the enum, not host:port,
+            too long). For `database.proxy_image`, also when it is not an image reference: a
+            lowercase `registry/repository` path, an optional `:tag` and an optional
+            `@sha256:` digest of 64 hex digits, with no spaces and no leading `-`, the name at
+            most 255 characters; `message` says so. The value lands in a `docker run`
+            argument vector, so nothing else is accepted.
           content:
             application/json:
               schema:
@@ -3589,14 +3745,17 @@ paths:
                         style: { type: string, enum: [head, ok, warn, error, muted] }
         "403":
           description: >
-            `cli_locked`: a fresh authenticator code is needed first. Or the caller is not an
-            administrator.
+            `cli_code_required`: a fresh authenticator code is needed first. Or the caller is not
+            an administrator.
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
         "429":
-          description: More than 60 lines in a minute; `code` is `rate_limited`.
+          description: >
+            `rate_limited`: more than 60 lines in a minute. `cli_locked`: the command line is
+            closed for this sign-in after too many wrong codes; a fresh code is refused until the
+            lock passes.
           content:
             application/json:
               schema:
@@ -3806,11 +3965,20 @@ components:
       properties:
         code:
           type: string
-          description: Stable machine-readable code, for example `validation_failed`, `csrf_invalid`, `policy_denied`, `host_key_untrusted`, `instance_unhealthy`, `approval_required`, `not_eligible`, `duration_too_long`, `login_user_not_permitted`.
+          description: >-
+            Stable machine-readable code, for example `bad_request` (a missing or malformed
+            field), `csrf_invalid`, `policy_denied`, `host_key_untrusted`, `instance_unhealthy`,
+            `approval_required`, `credential_required` (the target uses the caller's own account,
+            so the request must carry `credential`), `not_eligible`, `duration_too_long`,
+            `login_user_not_permitted`, `internal`.
         message:
           type: string
+          description: For people. Wording may change between releases; match on `code`.
         request_id:
           type: string
+          description: >-
+            The response's `X-Request-Id`. Quote it in a bug report: the gateway's log lines
+            for the request carry the same id.
     PagedResponse:
       type: object
       required: [items]
@@ -3919,7 +4087,7 @@ components:
         status:
           type: string
           enum: [ok, mfa_required, mfa_enrollment_required, password_change_required]
-          description: "`ok` means the session is fully usable. `mfa_required` means call `/auth/mfa/totp/verify`. `mfa_enrollment_required` means the deployment requires MFA and the account has none; call `/auth/mfa/totp/enroll`. `password_change_required` means an administrator set the password; call `/auth/password` first, whose response says what is owed next."
+          description: "`ok` means the session is fully usable. `mfa_required` means call `/auth/mfa/totp/verify`. `mfa_enrollment_required` means the deployment requires MFA and the account has none; call `/auth/mfa/totp/enroll`. `password_change_required` means an administrator set the password; call `/auth/password` first, whose response says what is owed next. Until then, any other API call answers 401 with `code` `password_change_required` (the sign-in is not complete), and `/auth/mfa/totp/enroll` and `/auth/mfa/totp/confirm` answer 409 with the same code (that step is out of order)."
         csrf_token:
           type: string
         user:
@@ -4433,7 +4601,12 @@ components:
           maxLength: 255
         address:
           type: string
-          description: Hostname or IP. Loopback, link-local, and the gateway's own addresses are rejected.
+          description: >-
+            Hostname or IP. An IP the gateway never connects to is refused with 422
+            `address_forbidden`: loopback, link-local, multicast, unspecified, the cloud metadata
+            services outside link-local (`fd00:ec2::254`, `100.100.100.200`), and the address the
+            gateway listens on when `ZANSKAR_LISTEN_ADDR` names one. A hostname is checked the same
+            way each time it is looked up, by the probe and by every session.
         engine:
           type: string
           description: >
@@ -4775,10 +4948,17 @@ components:
           $ref: "#/components/schemas/Timestamp"
     AccessRequestCreate:
       type: object
-      required: [target_id, protocol, reason, minutes]
+      description: Names exactly one of `target_id` and `asg_id`.
+      required: [protocol, reason, minutes]
       properties:
         target_id:
           type: string
+          description: The host access is asked for.
+        asg_id:
+          type: string
+          description: >-
+            The autoscaling group access is asked for. The grant covers every instance of the
+            group, including ones launched after approval.
         protocol:
           $ref: "#/components/schemas/Protocol"
         reason:

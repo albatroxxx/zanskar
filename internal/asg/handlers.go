@@ -106,7 +106,7 @@ type Listed struct {
 func (h *AdminHandler) list(w http.ResponseWriter, r *http.Request) {
 	groups, err := h.Repo.List(r.Context(), false)
 	if err != nil {
-		h.serverError(w, r, err)
+		httpx.Internal(w, r, h.Log, err)
 		return
 	}
 	out := make([]Listed, 0, len(groups))
@@ -131,7 +131,7 @@ func (h *AdminHandler) list(w http.ResponseWriter, r *http.Request) {
 func (h *AdminHandler) create(w http.ResponseWriter, r *http.Request) {
 	var body Write
 	if err := httpx.DecodeJSON(r, &body); err != nil {
-		httpx.BadRequest(w, err.Error())
+		httpx.BadRequest(w, r, err.Error())
 		return
 	}
 	g := &Group{ExternalID: strings.TrimSpace(body.ExternalID)}
@@ -143,7 +143,7 @@ func (h *AdminHandler) create(w http.ResponseWriter, r *http.Request) {
 		h.fail(w, r, err)
 		return
 	}
-	h.record(r, "asg.create", g, audit.Success, nil)
+	h.record(r, audit.ASGCreate, g, audit.Success, nil)
 	httpx.WriteJSON(w, http.StatusCreated, g)
 }
 
@@ -164,7 +164,7 @@ func (h *AdminHandler) update(w http.ResponseWriter, r *http.Request) {
 	}
 	var body Write
 	if err := httpx.DecodeJSON(r, &body); err != nil {
-		httpx.BadRequest(w, err.Error())
+		httpx.BadRequest(w, r, err.Error())
 		return
 	}
 	before := map[string]any{"name": g.Name, "region": g.Region, "external_name": g.ExternalName, "status": g.Status}
@@ -178,9 +178,9 @@ func (h *AdminHandler) update(w http.ResponseWriter, r *http.Request) {
 		h.fail(w, r, err)
 		return
 	}
-	h.record(r, "asg.update", g, audit.Success, map[string]any{"before": before})
+	h.record(r, audit.ASGUpdate, g, audit.Success, map[string]any{"before": before})
 	if rotated {
-		h.record(r, "asg.external_id.rotate", g, audit.Success, nil)
+		h.record(r, audit.ASGExternalIDRotate, g, audit.Success, nil)
 	}
 	httpx.WriteJSON(w, http.StatusOK, g)
 }
@@ -193,19 +193,19 @@ func (h *AdminHandler) delete(w http.ResponseWriter, r *http.Request) {
 	}
 	blocked, err := h.deleteBlockedBy(r.Context(), g)
 	if err != nil {
-		h.serverError(w, r, err)
+		httpx.Internal(w, r, h.Log, err)
 		return
 	}
 	if blocked != "" {
-		h.record(r, "asg.delete", g, audit.Failure, map[string]any{"reason": "in_use"})
-		httpx.WriteError(w, http.StatusConflict, "in_use", blocked)
+		h.record(r, audit.ASGDelete, g, audit.Failure, map[string]any{"reason": "in_use"})
+		httpx.WriteError(w, r, http.StatusConflict, "in_use", blocked)
 		return
 	}
 	if err := h.Repo.Delete(r.Context(), g.ID); err != nil {
 		h.fail(w, r, err)
 		return
 	}
-	h.record(r, "asg.delete", g, audit.Success, nil)
+	h.record(r, audit.ASGDelete, g, audit.Success, nil)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -247,7 +247,7 @@ func (h *AdminHandler) instances(w http.ResponseWriter, r *http.Request) {
 	}
 	rows, err := h.Repo.Instances(r.Context(), g.ID, false)
 	if err != nil {
-		h.serverError(w, r, err)
+		httpx.Internal(w, r, h.Log, err)
 		return
 	}
 	all := r.URL.Query().Get("all") == "true"
@@ -277,7 +277,7 @@ func (h *AdminHandler) sync(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if h.Sync == nil {
-		httpx.WriteError(w, http.StatusNotImplemented, "sync_unavailable", "sync is not configured on this gateway")
+		httpx.WriteError(w, r, http.StatusNotImplemented, "sync_unavailable", "sync is not configured on this gateway")
 		return
 	}
 	sum, serr := h.Sync(r.Context(), g)
@@ -292,7 +292,7 @@ func (h *AdminHandler) sync(w http.ResponseWriter, r *http.Request) {
 	} else {
 		resp.Group = g
 	}
-	h.record(r, "asg.sync", g, outcome, map[string]any{"seen": sum.Seen, "healthy": sum.Healthy, "joined": sum.Joined, "left": sum.Left, "error": resp.Error})
+	h.record(r, audit.ASGSync, g, outcome, map[string]any{"seen": sum.Seen, "healthy": sum.Healthy, "joined": sum.Joined, "left": sum.Left, "error": resp.Error})
 	httpx.WriteJSON(w, http.StatusOK, resp)
 }
 
@@ -319,7 +319,7 @@ type previewRequest struct {
 func (h *AdminHandler) iamPreview(w http.ResponseWriter, r *http.Request) {
 	var body previewRequest
 	if err := httpx.DecodeJSON(r, &body); err != nil {
-		httpx.BadRequest(w, err.Error())
+		httpx.BadRequest(w, r, err.Error())
 		return
 	}
 	g := &Group{Name: "preview", Region: strings.TrimSpace(body.Region), ExternalName: strings.TrimSpace(body.ExternalName),
@@ -348,7 +348,7 @@ type AccessTest struct {
 // nothing and is audited as asg.test.
 func (h *AdminHandler) testAccess(w http.ResponseWriter, r *http.Request) {
 	if h.Providers == nil {
-		httpx.WriteError(w, http.StatusNotImplemented, "test_unavailable", "no cloud provider is configured")
+		httpx.WriteError(w, r, http.StatusNotImplemented, "test_unavailable", "no cloud provider is configured")
 		return
 	}
 	var g *Group
@@ -361,13 +361,13 @@ func (h *AdminHandler) testAccess(w http.ResponseWriter, r *http.Request) {
 	} else {
 		var body Write
 		if err := httpx.DecodeJSON(r, &body); err != nil {
-			httpx.BadRequest(w, err.Error())
+			httpx.BadRequest(w, r, err.Error())
 			return
 		}
 		g = &Group{ID: "test", Name: "test", Region: strings.TrimSpace(body.Region), ExternalName: strings.TrimSpace(body.ExternalName),
 			RoleARN: strings.TrimSpace(body.RoleARN), ExternalID: strings.TrimSpace(body.ExternalID), OSFamily: target.Linux}
 		if g.ExternalID == "" {
-			httpx.BadRequest(w, "external_id required: the one from the IAM preview the role was created with")
+			httpx.BadRequest(w, r, "external_id required: the one from the IAM preview the role was created with")
 			return
 		}
 		if err := g.Validate(); err != nil {
@@ -398,7 +398,7 @@ func (h *AdminHandler) testAccess(w http.ResponseWriter, r *http.Request) {
 	if !res.OK {
 		outcome = audit.Failure
 	}
-	h.record(r, "asg.test", g, outcome, map[string]any{"role_arn": g.RoleARN, "stage": res.Stage, "group_found": res.GroupFound, "instances": res.InstanceCount})
+	h.record(r, audit.ASGTest, g, outcome, map[string]any{"role_arn": g.RoleARN, "stage": res.Stage, "group_found": res.GroupFound, "instances": res.InstanceCount})
 	httpx.WriteJSON(w, http.StatusOK, res)
 }
 
@@ -411,7 +411,7 @@ func (h *AdminHandler) identityRefresh(w http.ResponseWriter, r *http.Request) {
 	if h.Identity != nil {
 		id = h.Identity.Refresh(r.Context())
 	}
-	auth.Recorder{Audit: h.Audit, Log: h.Log}.Record(r, auth.ActorFor(r).Event("aws.identity.refresh", "gateway", "aws", audit.Success, map[string]string{"source": id.Source, "principal": id.Principal}))
+	auth.Recorder{Audit: h.Audit, Log: h.Log}.Record(r, auth.ActorFor(r).Event(audit.AWSIdentityRefresh, "gateway", "aws", audit.Success, map[string]string{"source": id.Source, "principal": id.Principal}))
 	httpx.WriteJSON(w, http.StatusOK, id)
 }
 
@@ -460,7 +460,7 @@ func (h *AdminHandler) setCredential(w http.ResponseWriter, r *http.Request) {
 		CredentialID string `json:"credential_id"`
 	}
 	if err := httpx.DecodeJSON(r, &body); err != nil {
-		httpx.BadRequest(w, err.Error())
+		httpx.BadRequest(w, r, err.Error())
 		return
 	}
 	if body.CredentialID == credential.UserSuppliedSentinel && h.Vault != nil {
@@ -473,14 +473,14 @@ func (h *AdminHandler) setCredential(w http.ResponseWriter, r *http.Request) {
 		body.CredentialID = cid
 	}
 	if body.CredentialID == "" {
-		httpx.BadRequest(w, "credential_id required")
+		httpx.BadRequest(w, r, "credential_id required")
 		return
 	}
 	if err := h.Repo.SetCredential(r.Context(), g.ID, proto, body.CredentialID); err != nil {
 		h.fail(w, r, err)
 		return
 	}
-	h.record(r, "asg.credential.set", g, audit.Success, map[string]any{"protocol": proto, "credential_id": body.CredentialID})
+	h.record(r, audit.ASGCredentialSet, g, audit.Success, map[string]any{"protocol": proto, "credential_id": body.CredentialID})
 	g, _ = h.Repo.Get(r.Context(), g.ID)
 	httpx.WriteJSON(w, http.StatusOK, g)
 }
@@ -496,7 +496,7 @@ func (h *AdminHandler) unsetCredential(w http.ResponseWriter, r *http.Request) {
 		h.fail(w, r, err)
 		return
 	}
-	h.record(r, "asg.credential.unset", g, audit.Success, map[string]any{"protocol": proto})
+	h.record(r, audit.ASGCredentialUnset, g, audit.Success, map[string]any{"protocol": proto})
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -513,17 +513,12 @@ func (h *AdminHandler) record(r *http.Request, action string, g *Group, outcome 
 func (h *AdminHandler) fail(w http.ResponseWriter, r *http.Request, err error) {
 	switch {
 	case errors.Is(err, ErrNotFound):
-		httpx.WriteError(w, http.StatusNotFound, "not_found", "autoscaling group not found")
+		httpx.WriteError(w, r, http.StatusNotFound, "not_found", "autoscaling group not found")
 	case errors.Is(err, ErrDuplicate):
-		httpx.WriteError(w, http.StatusConflict, "conflict", "an autoscaling group with that name exists")
+		httpx.WriteError(w, r, http.StatusConflict, "conflict", "an autoscaling group with that name exists")
 	case errors.Is(err, ErrInvalidInput):
-		httpx.BadRequest(w, err.Error())
+		httpx.BadRequest(w, r, err.Error())
 	default:
-		h.serverError(w, r, err)
+		httpx.Internal(w, r, h.Log, err)
 	}
-}
-
-func (h *AdminHandler) serverError(w http.ResponseWriter, r *http.Request, err error) {
-	h.Log.Error("asg handler", "path", r.URL.Path, "err", err)
-	httpx.WriteError(w, http.StatusInternalServerError, "internal", "internal error")
 }

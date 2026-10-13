@@ -735,11 +735,10 @@ func mapErr(err error) error {
 	if err == nil {
 		return nil
 	}
-	msg := strings.ToLower(err.Error())
-	if strings.Contains(msg, "unique") || strings.Contains(msg, "duplicate key") {
+	if store.IsUniqueViolation(err) {
 		return ErrDuplicate
 	}
-	if strings.Contains(msg, "foreign key") {
+	if store.IsForeignKeyViolation(err) {
 		return fmt.Errorf("%w: credential does not exist", ErrInvalidInput)
 	}
 	return err

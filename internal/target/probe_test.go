@@ -126,7 +126,9 @@ func TestProbeVNCBanner(t *testing.T) {
 
 func TestProbeRefusesForbiddenAddresses(t *testing.T) {
 	p := &Prober{}
-	for _, addr := range []string{"127.0.0.1", "::1", "169.254.169.254", "0.0.0.0", "fe80::1"} {
+	// fd00:ec2::254 and 100.100.100.200 are the AWS (IPv6) and Alibaba Cloud
+	// metadata services, outside the link-local range (L1).
+	for _, addr := range []string{"127.0.0.1", "::1", "169.254.169.254", "0.0.0.0", "fe80::1", "fd00:ec2::254", "100.100.100.200", "::ffff:169.254.169.254"} {
 		if _, err := p.Probe(context.Background(), addr, map[Protocol]int{SSH: 22}, time.Second); !errors.Is(err, ErrAddressForbidden) {
 			t.Errorf("%s: expected ErrAddressForbidden, got %v", addr, err)
 		}

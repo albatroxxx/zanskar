@@ -77,7 +77,7 @@ func (r *Repo) Create(ctx context.Context, g *Group) error {
 		VALUES (?, ?, ?, ?, ?, ?, ?)`),
 		g.ID, g.Name, g.Description, nullStr(g.IdPID), nullStr(g.ExternalID), store.TimeArg(now), store.TimeArg(now))
 	if err != nil {
-		if isUnique(err) {
+		if store.IsUniqueViolation(err) {
 			return ErrDuplicate
 		}
 		return err
@@ -130,7 +130,7 @@ func (r *Repo) Update(ctx context.Context, id, name, description string) error {
 	res, err := r.db.ExecContext(ctx, r.db.Rebind(`UPDATE groups SET name = ?, description = ?, updated_at = ? WHERE id = ?`),
 		name, description, store.TimeArg(time.Now()), id)
 	if err != nil {
-		if isUnique(err) {
+		if store.IsUniqueViolation(err) {
 			return ErrDuplicate
 		}
 		return err
@@ -279,7 +279,7 @@ func (r *Repo) SetMembers(ctx context.Context, groupID string, userIDs []string)
 	for id := range want {
 		if !have[id] {
 			if _, err := tx.ExecContext(ctx, r.db.Rebind(`INSERT INTO group_members (group_id, user_id, added_at) VALUES (?, ?, ?)`), groupID, id, now); err != nil {
-				if isFK(err) {
+				if store.IsForeignKeyViolation(err) {
 					return nil, nil, fmt.Errorf("%w: unknown user %s", ErrInvalidInput, id)
 				}
 				return nil, nil, err
@@ -311,7 +311,7 @@ func (r *Repo) AddMember(ctx context.Context, groupID, userID string) error {
 	}
 	_, err = r.db.ExecContext(ctx, r.db.Rebind(`INSERT INTO group_members (group_id, user_id, added_at) VALUES (?, ?, ?)`),
 		groupID, userID, store.TimeArg(time.Now()))
-	if err != nil && isFK(err) {
+	if store.IsForeignKeyViolation(err) {
 		return fmt.Errorf("%w: unknown user %s", ErrInvalidInput, userID)
 	}
 	return err
@@ -402,14 +402,4 @@ func affected(res sql.Result) error {
 		return ErrNotFound
 	}
 	return nil
-}
-
-func isUnique(err error) bool {
-	msg := strings.ToLower(err.Error())
-	return strings.Contains(msg, "unique") || strings.Contains(msg, "duplicate key")
-}
-
-func isFK(err error) bool {
-	msg := strings.ToLower(err.Error())
-	return strings.Contains(msg, "foreign key")
 }

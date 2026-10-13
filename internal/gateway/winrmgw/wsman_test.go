@@ -77,4 +77,36 @@ func TestDialRefusals(t *testing.T) {
 	if _, err := Dial(ctx, Endpoint{Address: "127.0.0.1", Port: 1, UseTLS: true}, Auth{Username: "admin", Password: "pw-1"}, time.Second); !errors.Is(err, ErrUnpinned) {
 		t.Fatalf("TLS with neither a pin nor a CA: %v, want ErrUnpinned", err)
 	}
+	// Only the pinned transport dials a fixed address; the library's own
+	// would look the name up again, so it is refused rather than ignored.
+	before = f.Requests.Load()
+	host, port := f.Address(t)
+	if _, err := Dial(ctx, Endpoint{Address: "win.zanskar.invalid", IP: host, Port: port, UseTLS: true, Insecure: true}, Auth{Username: "admin", Password: "pw-1"}, time.Second); err == nil {
+		t.Fatal("a fixed address without a pin was accepted")
+	}
+	if f.Requests.Load() != before {
+		t.Fatal("the refused endpoint was dialled")
+	}
+}
+
+// TestDialGoesToTheGivenAddress (L1): with an address to dial, the session
+// reaches the listener there although the target's name resolves nowhere.
+func TestDialGoesToTheGivenAddress(t *testing.T) {
+	f := winrmtest.New(t)
+	ctx := context.Background()
+	ep := endpointFor(t, f, "")
+	ep.IP, ep.Address = ep.Address, "win.zanskar.invalid"
+	c, err := Dial(ctx, ep, Auth{Username: "admin", Password: "pw-1"}, 5*time.Second)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	sh, err := c.Shell(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = sh.Close() }()
+	var out bytes.Buffer
+	if code, err := sh.Run(ctx, "Get-Service winrm", &out, io.Discard); err != nil || code != 0 || !strings.Contains(out.String(), "ran: Get-Service winrm") {
+		t.Fatalf("run: %d %v %q", code, err, out.String())
+	}
 }

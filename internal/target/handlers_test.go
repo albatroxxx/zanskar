@@ -39,6 +39,12 @@ type env struct {
 
 func newEnv(t *testing.T) *env {
 	t.Helper()
+	return newEnvWith(t, &Prober{AllowLoopback: true})
+}
+
+// newEnvWith is newEnv with the address rules the test chooses.
+func newEnvWith(t *testing.T, prober *Prober) *env {
+	t.Helper()
 	db := testDB(t)
 	ctx := context.Background()
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
@@ -57,7 +63,7 @@ func newEnv(t *testing.T) *env {
 	}
 	t.Cleanup(ring.Close)
 	vault := credential.NewVault(db, ring)
-	h := &AdminHandler{Repo: NewRepo(db), Prober: &Prober{AllowLoopback: true}, Policies: policies, Live: live, Vault: vault, Audit: auditLog, Log: log}
+	h := &AdminHandler{Repo: NewRepo(db), Prober: prober, Policies: policies, Live: live, Vault: vault, Audit: auditLog, Log: log}
 	mux := http.NewServeMux()
 	h.Register(mux)
 	mw := &auth.Middleware{Sessions: sessions, Users: users, Log: log}
@@ -131,7 +137,7 @@ func TestHandlersCreateProbeTrust(t *testing.T) {
 	if body["host_key_status"] != "unknown" {
 		t.Fatalf("new target should have unknown host key, got %v", body["host_key_status"])
 	}
-	if code, body := e.do("POST", "/api/v1/targets", map[string]any{"name": "ssh-box", "address": "10.0.0.1", "os_family": "linux"}, e.admin); code != 409 {
+	if code, body := e.do("POST", "/api/v1/targets", map[string]any{"name": "ssh-box", "address": "10.0.0.1", "os_family": "linux"}, e.admin); code != 409 || body["code"] != "conflict" {
 		t.Fatalf("duplicate: %d %v", code, body)
 	}
 	if code, body := e.do("POST", "/api/v1/targets", map[string]any{"name": "bad", "address": "http://x", "os_family": "linux"}, e.admin); code != 400 {
@@ -163,8 +169,10 @@ func TestHandlersCreateProbeTrust(t *testing.T) {
 	if code, body := e.do("PUT", "/api/v1/targets/"+id+"/credentials/ssh", map[string]string{"credential_id": "cred1"}, e.admin); code != 200 || body["credentials"].(map[string]any)["ssh"] != "cred1" {
 		t.Fatalf("set credential: %d %v", code, body)
 	}
-	if code, _ := e.do("PUT", "/api/v1/targets/"+id+"/credentials/ssh", map[string]string{"credential_id": "ghost"}, e.admin); code != 422 {
-		t.Fatalf("ghost credential should be 422, got %d", code)
+	// A reference to something that does not exist is a bad request, worded,
+	// as for autoscaling groups and policies.
+	if code, body := e.do("PUT", "/api/v1/targets/"+id+"/credentials/ssh", map[string]string{"credential_id": "ghost"}, e.admin); code != 400 || body["code"] != "bad_request" || body["message"] != "credential does not exist" {
+		t.Fatalf("ghost credential should be 400 bad_request, got %d %v", code, body)
 	}
 	if code, _ := e.do("DELETE", "/api/v1/targets/"+id+"/credentials/ssh", nil, e.admin); code != 204 {
 		t.Fatalf("unset credential: %d", code)
@@ -200,13 +208,15 @@ func TestHandlersCreateProbeTrust(t *testing.T) {
 	}
 }
 
+// TestProbeForbiddenAddressIs422: the API no longer saves a forbidden literal
+// (L1), but a row saved before it refused them is still refused by the probe.
 func TestProbeForbiddenAddressIs422(t *testing.T) {
 	e := newEnv(t)
-	code, body := e.do("POST", "/api/v1/targets", map[string]any{"name": "meta", "address": "169.254.169.254", "os_family": "linux"}, e.admin)
-	if code != 201 {
-		t.Fatalf("create: %d %v", code, body)
+	tg := &Target{Name: "meta", Address: "169.254.169.254", OSFamily: Linux}
+	if err := NewRepo(e.db).Create(context.Background(), tg); err != nil {
+		t.Fatal(err)
 	}
-	if code, body := e.do("POST", "/api/v1/targets/"+body["id"].(string)+"/probe", nil, e.admin); code != 422 || body["code"] != "address_forbidden" {
+	if code, body := e.do("POST", "/api/v1/targets/"+tg.ID+"/probe", nil, e.admin); code != 422 || body["code"] != "address_forbidden" {
 		t.Fatalf("expected 422 address_forbidden, got %d %v", code, body)
 	}
 }

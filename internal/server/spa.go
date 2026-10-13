@@ -21,15 +21,14 @@ func spaHandler(bundle fs.FS) http.Handler {
 			return
 		}
 		p := path.Clean("/" + r.URL.Path)
-		if p != "/" {
-			if f, err := bundle.Open(strings.TrimPrefix(p, "/")); err == nil {
-				_ = f.Close()
-				if strings.HasPrefix(p, "/assets/") {
-					w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
-				}
-				fileServer.ServeHTTP(w, r)
-				return
+		// A directory is not a page: it gets the app like any unknown path,
+		// never a listing of the bundle (L8).
+		if p != "/" && isFile(bundle, strings.TrimPrefix(p, "/")) {
+			if strings.HasPrefix(p, "/assets/") {
+				w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
 			}
+			fileServer.ServeHTTP(w, r)
+			return
 		}
 		// SPA fallback.
 		w.Header().Set("Cache-Control", "no-store")
@@ -39,11 +38,18 @@ func spaHandler(bundle fs.FS) http.Handler {
 	})
 }
 
+// isFile reports whether name is a regular file in the bundle.
+func isFile(bundle fs.FS, name string) bool {
+	st, err := fs.Stat(bundle, name)
+	return err == nil && st.Mode().IsRegular()
+}
+
 // uiCSP is the policy for HTML and bundle responses. Scripts and styles come
 // only from our own origin; xterm and the recording player inject inline
 // styles, so style-src allows them. 'wasm-unsafe-eval' lets the asciicast
 // player instantiate its WebAssembly terminal emulator; without it recording
 // playback is a blank screen. It permits WebAssembly only, not JavaScript
-// eval, so script injection protection is unchanged. Connections are limited
-// to our origin (API) and its WebSocket.
-const uiCSP = "default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self' ws: wss:; worker-src 'self' blob:; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"
+// eval, so script injection protection is unchanged. Connections stay on our
+// origin: 'self' covers its WebSocket too in every browser the bundle is
+// built for (L5).
+const uiCSP = "default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; worker-src 'self' blob:; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"

@@ -24,12 +24,17 @@ import (
 // Prober discovers what a target answers on and captures the material used
 // for pinning: the SSH host key and the TLS certificate. It never
 // authenticates; the SSH handshake is abandoned right after the host key
-// arrives.
+// arrives. It also holds the address rules (Resolve, CheckLiteral) that every
+// connection to a target obeys, a probe's or a session's.
 type Prober struct {
 	// AllowLoopback disables the loopback refusal. Tests only.
 	AllowLoopback bool
 	// Resolver overrides DNS resolution; nil uses net.DefaultResolver.
-	Resolver *net.Resolver
+	Resolver Resolver
+	// Self is the address the gateway's own listener is bound to, when it
+	// names one (ListenIP): a target there is the gateway itself, with
+	// whatever else listens beside it on that address.
+	Self net.IP
 }
 
 // PortResult is one protocol's outcome.
@@ -70,9 +75,6 @@ type ProbeResult struct {
 	Errors    map[Protocol]string `json:"-"`
 }
 
-// ErrAddressForbidden is returned for addresses the gateway must never probe.
-var ErrAddressForbidden = errors.New("target: address refused: loopback, link-local or unspecified")
-
 // Probe checks every protocol in ports concurrently. Resolution happens once
 // and every connection goes to the resolved IP, so a DNS answer cannot change
 // between the safety check and the connect.
@@ -87,7 +89,7 @@ func (p *Prober) Probe(ctx context.Context, address string, ports map[Protocol]i
 	if timeout <= 0 {
 		timeout = 5 * time.Second
 	}
-	ip, err := p.resolve(ctx, address)
+	ip, err := p.Resolve(ctx, address)
 	if err != nil {
 		return res, err
 	}
@@ -137,45 +139,6 @@ func (p *Prober) Probe(ctx context.Context, address string, ports map[Protocol]i
 		}
 	}
 	return res, nil
-}
-
-func (p *Prober) resolve(ctx context.Context, address string) (net.IP, error) {
-	var ips []net.IP
-	if ip := net.ParseIP(address); ip != nil {
-		ips = []net.IP{ip}
-	} else {
-		r := p.Resolver
-		if r == nil {
-			r = net.DefaultResolver
-		}
-		addrs, err := r.LookupIPAddr(ctx, address)
-		if err != nil {
-			return nil, fmt.Errorf("target: resolve %s: %w", address, err)
-		}
-		for _, a := range addrs {
-			ips = append(ips, a.IP)
-		}
-	}
-	if len(ips) == 0 {
-		return nil, fmt.Errorf("target: resolve %s: no addresses", address)
-	}
-	// Every answer must be acceptable; an attacker-controlled name with one
-	// good and one forbidden record must not slip through.
-	for _, ip := range ips {
-		if ip.IsUnspecified() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsMulticast() {
-			return nil, ErrAddressForbidden
-		}
-		if ip.IsLoopback() && !p.AllowLoopback {
-			return nil, ErrAddressForbidden
-		}
-	}
-	// Prefer IPv4 for reachability from typical gateway networks.
-	for _, ip := range ips {
-		if ip.To4() != nil {
-			return ip, nil
-		}
-	}
-	return ips[0], nil
 }
 
 func (p *Prober) probeOne(ctx context.Context, proto Protocol, ip net.IP, port int, serverName string, timeout time.Duration) (PortResult, *SSHHostKey, *TLSInfo, string) {

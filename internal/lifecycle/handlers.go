@@ -66,14 +66,14 @@ func (h *Handler) restart(w http.ResponseWriter, r *http.Request) {
 	}
 	if r.ContentLength != 0 {
 		if err := httpx.DecodeJSON(r, &in); err != nil {
-			httpx.BadRequest(w, err.Error())
+			httpx.BadRequest(w, r, err.Error())
 			return
 		}
 	}
 	wait := DefaultWait
 	if in.WaitMinutes != nil {
 		if *in.WaitMinutes < 0 || time.Duration(*in.WaitMinutes)*time.Minute > MaxWait {
-			httpx.BadRequest(w, "wait_minutes must be between 0 and 240")
+			httpx.BadRequest(w, r, "wait_minutes must be between 0 and 240")
 			return
 		}
 		wait = time.Duration(*in.WaitMinutes) * time.Minute
@@ -81,7 +81,7 @@ func (h *Handler) restart(w http.ResponseWriter, r *http.Request) {
 	p, _ := auth.FromContext(r.Context())
 	before := h.current()
 	d := h.Controller.Restart(p.User.ID, wait)
-	h.record(r, "system.restart", map[string]any{
+	h.record(r, audit.SystemRestart, map[string]any{
 		"wait_minutes": d.WaitMinutes, "live_sessions": before.LiveSessions,
 		"env_file_state": before.EnvFile.State, "changed_env": before.EnvFile.Changed, "supervisor": before.Supervisor,
 	})
@@ -90,10 +90,10 @@ func (h *Handler) restart(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) cancel(w http.ResponseWriter, r *http.Request) {
 	if !h.Controller.Cancel() {
-		httpx.WriteError(w, http.StatusConflict, "not_draining", "no restart is in progress")
+		httpx.WriteError(w, r, http.StatusConflict, "not_draining", "no restart is in progress")
 		return
 	}
-	h.record(r, "system.restart_cancel", map[string]any{"live_sessions": h.Controller.Registry.Count()})
+	h.record(r, audit.SystemRestartCancel, map[string]any{"live_sessions": h.Controller.Registry.Count()})
 	httpx.WriteJSON(w, http.StatusOK, h.current())
 }
 

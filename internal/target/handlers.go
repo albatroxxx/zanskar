@@ -90,7 +90,7 @@ func (h *AdminHandler) list(w http.ResponseWriter, r *http.Request) {
 	for _, kv := range r.URL.Query()["tag"] {
 		k, v, ok := strings.Cut(kv, "=")
 		if !ok || k == "" {
-			httpx.BadRequest(w, "tag filter must be key=value")
+			httpx.BadRequest(w, r, "tag filter must be key=value")
 			return
 		}
 		tags[k] = v
@@ -100,18 +100,18 @@ func (h *AdminHandler) list(w http.ResponseWriter, r *http.Request) {
 	switch f.Kind {
 	case "", "host", "database":
 	default:
-		httpx.BadRequest(w, "kind must be host or database")
+		httpx.BadRequest(w, r, "kind must be host or database")
 		return
 	}
 	switch f.Status {
 	case "", "active", "disabled":
 	default:
-		httpx.BadRequest(w, "status must be active or disabled")
+		httpx.BadRequest(w, r, "status must be active or disabled")
 		return
 	}
 	items, next, err := h.Repo.List(r.Context(), cursor, limit, f)
 	if err != nil {
-		h.serverError(w, r, err)
+		httpx.Internal(w, r, h.Log, err)
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, httpx.Page[*Target]{Items: items, NextCursor: next})
@@ -120,24 +120,27 @@ func (h *AdminHandler) list(w http.ResponseWriter, r *http.Request) {
 func (h *AdminHandler) create(w http.ResponseWriter, r *http.Request) {
 	var body Write
 	if err := httpx.DecodeJSON(r, &body); err != nil {
-		httpx.BadRequest(w, err.Error())
+		httpx.BadRequest(w, r, err.Error())
 		return
 	}
 	p, _ := auth.FromContext(r.Context())
 	t := &Target{CreatedBy: &p.User.ID}
 	body.apply(t)
-	if err := h.Repo.Create(r.Context(), t); err != nil {
-		h.writeErr(w, r, err)
+	if !h.addressAllowed(w, r, audit.TargetCreate, "", t) {
 		return
 	}
-	h.record(r, "target.create", t.ID, audit.Success, map[string]any{"name": t.Name, "address": t.Address, "os_family": t.OSFamily})
+	if err := h.Repo.Create(r.Context(), t); err != nil {
+		h.fail(w, r, err)
+		return
+	}
+	h.record(r, audit.TargetCreate, t.ID, audit.Success, map[string]any{"name": t.Name, "address": t.Address, "os_family": t.OSFamily})
 	httpx.WriteJSON(w, http.StatusCreated, t)
 }
 
 func (h *AdminHandler) get(w http.ResponseWriter, r *http.Request) {
 	t, err := h.Repo.Get(r.Context(), r.PathValue("id"))
 	if err != nil {
-		h.writeErr(w, r, err)
+		h.fail(w, r, err)
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, t)
@@ -146,18 +149,21 @@ func (h *AdminHandler) get(w http.ResponseWriter, r *http.Request) {
 func (h *AdminHandler) update(w http.ResponseWriter, r *http.Request) {
 	var body Write
 	if err := httpx.DecodeJSON(r, &body); err != nil {
-		httpx.BadRequest(w, err.Error())
+		httpx.BadRequest(w, r, err.Error())
 		return
 	}
 	t, err := h.Repo.Get(r.Context(), r.PathValue("id"))
 	if err != nil {
-		h.writeErr(w, r, err)
+		h.fail(w, r, err)
 		return
 	}
 	before := map[string]any{"name": t.Name, "address": t.Address, "status": t.Status}
 	body.apply(t)
+	if !h.addressAllowed(w, r, audit.TargetUpdate, t.ID, t) {
+		return
+	}
 	if err := h.Repo.Update(r.Context(), t); err != nil {
-		h.writeErr(w, r, err)
+		h.fail(w, r, err)
 		return
 	}
 	details := map[string]any{"before": before, "after": map[string]any{"name": t.Name, "address": t.Address, "status": t.Status}}
@@ -165,31 +171,31 @@ func (h *AdminHandler) update(w http.ResponseWriter, r *http.Request) {
 		// Repo.Update cleared the host key and certificate pins with it.
 		details["trust_reset"] = true
 	}
-	h.record(r, "target.update", t.ID, audit.Success, details)
+	h.record(r, audit.TargetUpdate, t.ID, audit.Success, details)
 	httpx.WriteJSON(w, http.StatusOK, t)
 }
 
 func (h *AdminHandler) delete(w http.ResponseWriter, r *http.Request) {
 	t, err := h.Repo.Get(r.Context(), r.PathValue("id"))
 	if err != nil {
-		h.writeErr(w, r, err)
+		h.fail(w, r, err)
 		return
 	}
 	blocked, err := h.deleteBlockedBy(r.Context(), t.ID)
 	if err != nil {
-		h.serverError(w, r, err)
+		httpx.Internal(w, r, h.Log, err)
 		return
 	}
 	if blocked != "" {
-		h.record(r, "target.delete", t.ID, audit.Failure, map[string]any{"name": t.Name, "reason": "in_use"})
-		httpx.WriteError(w, http.StatusConflict, "in_use", blocked)
+		h.record(r, audit.TargetDelete, t.ID, audit.Failure, map[string]any{"name": t.Name, "reason": "in_use"})
+		httpx.WriteError(w, r, http.StatusConflict, "in_use", blocked)
 		return
 	}
 	if err := h.Repo.Delete(r.Context(), t.ID); err != nil {
-		h.writeErr(w, r, err)
+		h.fail(w, r, err)
 		return
 	}
-	h.record(r, "target.delete", t.ID, audit.Success, map[string]any{"name": t.Name, "address": t.Address})
+	h.record(r, audit.TargetDelete, t.ID, audit.Success, map[string]any{"name": t.Name, "address": t.Address})
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -250,38 +256,38 @@ type ProbeResponse struct {
 func (h *AdminHandler) probe(w http.ResponseWriter, r *http.Request) {
 	t, err := h.Repo.Get(r.Context(), r.PathValue("id"))
 	if err != nil {
-		h.writeErr(w, r, err)
+		h.fail(w, r, err)
 		return
 	}
 	res, err := h.Prober.Probe(r.Context(), t.Address, t.EffectivePorts(), ProbeTimeout)
 	if err != nil {
-		h.record(r, "target.probe", t.ID, audit.Failure, map[string]any{"address": t.Address, "error": err.Error()})
+		h.record(r, audit.TargetProbe, t.ID, audit.Failure, map[string]any{"address": t.Address, "error": err.Error()})
 		if errors.Is(err, ErrAddressForbidden) {
-			httpx.WriteError(w, http.StatusUnprocessableEntity, "address_forbidden", err.Error())
+			httpx.WriteError(w, r, http.StatusUnprocessableEntity, "address_forbidden", err.Error())
 			return
 		}
-		httpx.WriteError(w, http.StatusBadGateway, "probe_failed", err.Error())
+		httpx.WriteError(w, r, http.StatusBadGateway, "probe_failed", err.Error())
 		return
 	}
 	t, change, err := h.Repo.RecordProbe(r.Context(), t.ID, res)
 	if err != nil {
-		h.writeErr(w, r, err)
+		h.fail(w, r, err)
 		return
 	}
-	h.record(r, "target.probe", t.ID, audit.Success, map[string]any{
+	h.record(r, audit.TargetProbe, t.ID, audit.Success, map[string]any{
 		"address": t.Address, "capabilities": res.Capabilities, "host_key_status": change.Status,
 		"host_key_fingerprint": change.New, "tls_fingerprint": t.TLSFingerprint,
 	})
 	out := ProbeResponse{Target: t, Probe: res, HostKeyStatus: t.HostKeyStatus, HostKeyFingerprint: t.HostKeyFingerprint}
 	for _, c := range change.Certificates {
-		h.record(r, "target.tls.changed", t.ID, audit.Failure, map[string]any{
+		h.record(r, audit.TargetTLSChanged, t.ID, audit.Failure, map[string]any{
 			"address": t.Address, "protocol": c.Protocol, "pinned": c.Pinned, "seen": c.Seen,
 		})
 		h.Log.Warn("pinned certificate changed; the new one awaits confirmation", "target", t.Name, "protocol", c.Protocol, "pinned", c.Pinned, "seen", c.Seen)
 	}
 	if change.Changed {
 		out.HostKeyChangedFrom = change.Old
-		h.record(r, "target.hostkey.changed", t.ID, audit.Failure, map[string]any{
+		h.record(r, audit.TargetHostKeyChanged, t.ID, audit.Failure, map[string]any{
 			"address": t.Address, "old": change.Old, "new": change.New,
 			"note": "trusted host key replaced; connections refused until an admin re-trusts",
 		})
@@ -318,7 +324,7 @@ func (h *AdminHandler) probeCertificate(w http.ResponseWriter, r *http.Request) 
 	}
 	if r.ContentLength != 0 {
 		if err := httpx.DecodeJSON(r, &body); err != nil {
-			httpx.BadRequest(w, err.Error())
+			httpx.BadRequest(w, r, err.Error())
 			return
 		}
 	}
@@ -326,30 +332,30 @@ func (h *AdminHandler) probeCertificate(w http.ResponseWriter, r *http.Request) 
 		body.Key = "current"
 	}
 	if body.Key != "current" && body.Key != "pending" {
-		httpx.BadRequest(w, "key must be current or pending")
+		httpx.BadRequest(w, r, "key must be current or pending")
 		return
 	}
 	t, err := h.Repo.Get(r.Context(), r.PathValue("id"))
 	if err != nil {
-		h.writeErr(w, r, err)
+		h.fail(w, r, err)
 		return
 	}
 	if t.HostKeyStatus != HostKeyTrusted || t.HostKeyFingerprint == nil || *t.HostKeyFingerprint == "" {
-		httpx.WriteError(w, http.StatusConflict, "host_key_untrusted", "probe and trust the host key first")
+		httpx.WriteError(w, r, http.StatusConflict, "host_key_untrusted", "probe and trust the host key first")
 		return
 	}
 	credID := t.Credentials[SSH]
 	if credID == "" || h.Vault == nil {
-		httpx.WriteError(w, http.StatusConflict, "no_credential", "no credential is bound to the target's SSH slot")
+		httpx.WriteError(w, r, http.StatusConflict, "no_credential", "no credential is bound to the target's SSH slot")
 		return
 	}
 	cred, err := h.Vault.Get(r.Context(), credID)
 	if err != nil {
-		h.writeErr(w, r, err)
+		h.fail(w, r, err)
 		return
 	}
 	if cred.Type != credential.TypeSSHCA {
-		httpx.WriteError(w, http.StatusConflict, "not_certificate_authority", "the SSH credential is not a certificate authority")
+		httpx.WriteError(w, r, http.StatusConflict, "not_certificate_authority", "the SSH credential is not a certificate authority")
 		return
 	}
 	// The same rule as a session: the credential's login user, else the
@@ -360,11 +366,14 @@ func (h *AdminHandler) probeCertificate(w http.ResponseWriter, r *http.Request) 
 		loginUser = p.User.Username
 	}
 	if !cred.PermitsPrincipal(loginUser) {
-		httpx.WriteError(w, http.StatusForbidden, "login_user_not_permitted", "this certificate authority does not issue certificates for login user "+loginUser)
+		httpx.WriteError(w, r, http.StatusForbidden, "login_user_not_permitted", "this certificate authority does not issue certificates for login user "+loginUser)
 		return
 	}
-	if _, err := h.Prober.resolve(r.Context(), t.Address); err != nil {
-		httpx.WriteError(w, http.StatusUnprocessableEntity, "address_forbidden", err.Error())
+	// The login goes to the address checked here: dialling the name would
+	// look it up a second time, and the answer could have changed.
+	dialIP, err := h.Prober.Resolve(r.Context(), t.Address)
+	if err != nil {
+		httpx.WriteError(w, r, http.StatusUnprocessableEntity, "address_forbidden", err.Error())
 		return
 	}
 	var opened *credential.Opened
@@ -375,21 +384,21 @@ func (h *AdminHandler) probeCertificate(w http.ResponseWriter, r *http.Request) 
 	}
 	if err != nil {
 		if errors.Is(err, credential.ErrNoRotation) {
-			httpx.WriteError(w, http.StatusConflict, "no_rotation", "no next key is prepared for this authority")
+			httpx.WriteError(w, r, http.StatusConflict, "no_rotation", "no next key is prepared for this authority")
 			return
 		}
-		h.serverError(w, r, err)
+		httpx.Internal(w, r, h.Log, err)
 		return
 	}
 	defer opened.Close()
 	certLine, keyPEM, err := sshca.IssueForSession(opened.PrivateKey, sshca.CertParams{Principals: []string{loginUser}, Validity: certificateProbeValidity,
 		KeyID: "zanskar-probe:" + p.User.Username + ":" + loginUser})
 	if err != nil {
-		h.serverError(w, r, err)
+		httpx.Internal(w, r, h.Log, err)
 		return
 	}
 	out := CertificateProbe{Key: body.Key, LoginUser: loginUser}
-	client, err := sshgw.Dial(r.Context(), sshgw.Endpoint{Address: t.Address, Port: t.EffectivePorts()[SSH], HostKeyFingerprint: *t.HostKeyFingerprint, HostKeyTrusted: true},
+	client, err := sshgw.Dial(r.Context(), sshgw.Endpoint{Address: dialIP.String(), Port: t.EffectivePorts()[SSH], HostKeyFingerprint: *t.HostKeyFingerprint, HostKeyTrusted: true},
 		sshgw.Auth{Username: loginUser, PrivateKey: []byte(keyPEM), Certificate: []byte(certLine)}, ProbeTimeout)
 	switch {
 	case err == nil:
@@ -406,7 +415,7 @@ func (h *AdminHandler) probeCertificate(w http.ResponseWriter, r *http.Request) 
 	if !out.Accepted {
 		outcome = audit.Failure
 	}
-	h.record(r, "target.probe.certificate", t.ID, outcome, map[string]any{"address": t.Address, "credential_id": credID, "key": body.Key, "login_user": loginUser, "reason": out.Reason})
+	h.record(r, audit.TargetProbeCertificate, t.ID, outcome, map[string]any{"address": t.Address, "credential_id": credID, "key": body.Key, "login_user": loginUser, "reason": out.Reason})
 	httpx.WriteJSON(w, http.StatusOK, out)
 }
 
@@ -417,20 +426,20 @@ type trustBody struct {
 func (h *AdminHandler) trustHostKey(w http.ResponseWriter, r *http.Request) {
 	var body trustBody
 	if err := httpx.DecodeJSON(r, &body); err != nil {
-		httpx.BadRequest(w, err.Error())
+		httpx.BadRequest(w, r, err.Error())
 		return
 	}
 	if body.HostKeyFingerprint == "" {
-		httpx.BadRequest(w, "host_key_fingerprint required")
+		httpx.BadRequest(w, r, "host_key_fingerprint required")
 		return
 	}
 	t, err := h.Repo.TrustHostKey(r.Context(), r.PathValue("id"), body.HostKeyFingerprint)
 	if err != nil {
-		h.record(r, "target.hostkey.trust", r.PathValue("id"), audit.Failure, map[string]any{"fingerprint": body.HostKeyFingerprint, "error": err.Error()})
-		h.writeErr(w, r, err)
+		h.record(r, audit.TargetHostKeyTrust, r.PathValue("id"), audit.Failure, map[string]any{"fingerprint": body.HostKeyFingerprint, "error": err.Error()})
+		h.fail(w, r, err)
 		return
 	}
-	h.record(r, "target.hostkey.trust", t.ID, audit.Success, map[string]any{"address": t.Address, "fingerprint": body.HostKeyFingerprint})
+	h.record(r, audit.TargetHostKeyTrust, t.ID, audit.Success, map[string]any{"address": t.Address, "fingerprint": body.HostKeyFingerprint})
 	httpx.WriteJSON(w, http.StatusOK, t)
 }
 
@@ -444,20 +453,20 @@ type certificateTrustBody struct {
 func (h *AdminHandler) trustCertificate(w http.ResponseWriter, r *http.Request) {
 	var body certificateTrustBody
 	if err := httpx.DecodeJSON(r, &body); err != nil {
-		httpx.BadRequest(w, err.Error())
+		httpx.BadRequest(w, r, err.Error())
 		return
 	}
 	if body.Fingerprint == "" {
-		httpx.BadRequest(w, "fingerprint required")
+		httpx.BadRequest(w, r, "fingerprint required")
 		return
 	}
 	t, err := h.Repo.TrustCertificate(r.Context(), r.PathValue("id"), body.Protocol, body.Fingerprint)
 	if err != nil {
-		h.record(r, "target.tls.trust", r.PathValue("id"), audit.Failure, map[string]any{"protocol": body.Protocol, "fingerprint": body.Fingerprint, "error": err.Error()})
-		h.writeErr(w, r, err)
+		h.record(r, audit.TargetTLSTrust, r.PathValue("id"), audit.Failure, map[string]any{"protocol": body.Protocol, "fingerprint": body.Fingerprint, "error": err.Error()})
+		h.fail(w, r, err)
 		return
 	}
-	h.record(r, "target.tls.trust", t.ID, audit.Success, map[string]any{"address": t.Address, "protocol": body.Protocol, "fingerprint": body.Fingerprint})
+	h.record(r, audit.TargetTLSTrust, t.ID, audit.Success, map[string]any{"address": t.Address, "protocol": body.Protocol, "fingerprint": body.Fingerprint})
 	httpx.WriteJSON(w, http.StatusOK, t)
 }
 
@@ -468,7 +477,7 @@ type credentialBody struct {
 func (h *AdminHandler) setCredential(w http.ResponseWriter, r *http.Request) {
 	var body credentialBody
 	if err := httpx.DecodeJSON(r, &body); err != nil {
-		httpx.BadRequest(w, err.Error())
+		httpx.BadRequest(w, r, err.Error())
 		return
 	}
 	id, proto := r.PathValue("id"), Protocol(r.PathValue("protocol"))
@@ -476,19 +485,19 @@ func (h *AdminHandler) setCredential(w http.ResponseWriter, r *http.Request) {
 		p, _ := auth.FromContext(r.Context())
 		cid, err := h.Vault.EnsureUserSupplied(r.Context(), p.User.ID)
 		if err != nil {
-			h.serverError(w, r, err)
+			httpx.Internal(w, r, h.Log, err)
 			return
 		}
 		body.CredentialID = cid
 	}
 	if err := h.Repo.SetCredential(r.Context(), id, proto, body.CredentialID); err != nil {
-		h.writeErr(w, r, err)
+		h.fail(w, r, err)
 		return
 	}
-	h.record(r, "target.credential.set", id, audit.Success, map[string]any{"protocol": proto, "credential_id": body.CredentialID})
+	h.record(r, audit.TargetCredentialSet, id, audit.Success, map[string]any{"protocol": proto, "credential_id": body.CredentialID})
 	t, err := h.Repo.Get(r.Context(), id)
 	if err != nil {
-		h.writeErr(w, r, err)
+		h.fail(w, r, err)
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, t)
@@ -497,45 +506,56 @@ func (h *AdminHandler) setCredential(w http.ResponseWriter, r *http.Request) {
 func (h *AdminHandler) unsetCredential(w http.ResponseWriter, r *http.Request) {
 	id, proto := r.PathValue("id"), Protocol(r.PathValue("protocol"))
 	if !ValidProtocol(proto) {
-		httpx.BadRequest(w, "unknown protocol")
+		httpx.BadRequest(w, r, "unknown protocol")
 		return
 	}
 	if err := h.Repo.UnsetCredential(r.Context(), id, proto); err != nil {
-		h.writeErr(w, r, err)
+		h.fail(w, r, err)
 		return
 	}
-	h.record(r, "target.credential.unset", id, audit.Success, map[string]any{"protocol": proto})
+	h.record(r, audit.TargetCredentialUnset, id, audit.Success, map[string]any{"protocol": proto})
 	w.WriteHeader(http.StatusNoContent)
 }
 
 // ---- helpers
 
+// addressAllowed refuses, before anything is saved, an address that is an IP
+// literal the gateway must never connect to, answering as the probe does. A
+// database target is never probed, so for one this is the only check its
+// address meets before a session; a name is checked each time it resolves.
+func (h *AdminHandler) addressAllowed(w http.ResponseWriter, r *http.Request, action, id string, t *Target) bool {
+	err := h.Prober.CheckLiteral(t.Address)
+	if err == nil {
+		return true
+	}
+	h.record(r, action, id, audit.Failure, map[string]any{"name": t.Name, "address": strings.TrimSpace(t.Address), "reason": "address_forbidden"})
+	h.fail(w, r, err)
+	return false
+}
+
 func (h *AdminHandler) record(r *http.Request, action, id string, outcome audit.Outcome, details any) {
 	auth.Recorder{Audit: h.Audit, Log: h.Log}.Record(r, auth.ActorFor(r).Event(action, "target", id, outcome, details))
 }
 
-func (h *AdminHandler) writeErr(w http.ResponseWriter, r *http.Request, err error) {
+func (h *AdminHandler) fail(w http.ResponseWriter, r *http.Request, err error) {
 	switch {
 	case errors.Is(err, ErrNotFound):
-		httpx.WriteError(w, http.StatusNotFound, "not_found", "target not found")
+		httpx.WriteError(w, r, http.StatusNotFound, "not_found", "target not found")
 	case errors.Is(err, ErrDuplicate):
-		httpx.WriteError(w, http.StatusConflict, "duplicate", "a target with that name exists")
+		httpx.WriteError(w, r, http.StatusConflict, "conflict", "a target with that name exists")
 	case errors.Is(err, ErrInvalid):
-		httpx.BadRequest(w, strings.TrimPrefix(err.Error(), "target: invalid: "))
+		httpx.BadRequest(w, r, strings.TrimPrefix(err.Error(), "target: invalid: "))
 	case errors.Is(err, ErrInvalidCredential):
-		httpx.WriteError(w, http.StatusUnprocessableEntity, "invalid_credential", "credential does not exist")
+		httpx.BadRequest(w, r, "credential does not exist")
+	case errors.Is(err, ErrAddressForbidden):
+		httpx.WriteError(w, r, http.StatusUnprocessableEntity, "address_forbidden", err.Error())
 	case errors.Is(err, ErrFingerprintMismatch):
-		httpx.WriteError(w, http.StatusConflict, "fingerprint_mismatch", "the fingerprint does not match the one awaiting trust; probe again and review")
+		httpx.WriteError(w, r, http.StatusConflict, "fingerprint_mismatch", "the fingerprint does not match the one awaiting trust; probe again and review")
 	case errors.Is(err, ErrNoPendingHostKey):
-		httpx.WriteError(w, http.StatusConflict, "no_pending_host_key", "no host key is awaiting trust")
+		httpx.WriteError(w, r, http.StatusConflict, "no_pending_host_key", "no host key is awaiting trust")
 	case errors.Is(err, ErrNoPendingCertificate):
-		httpx.WriteError(w, http.StatusConflict, "no_pending_certificate", "no certificate is awaiting trust for that protocol")
+		httpx.WriteError(w, r, http.StatusConflict, "no_pending_certificate", "no certificate is awaiting trust for that protocol")
 	default:
-		h.serverError(w, r, err)
+		httpx.Internal(w, r, h.Log, err)
 	}
-}
-
-func (h *AdminHandler) serverError(w http.ResponseWriter, r *http.Request, err error) {
-	h.Log.Error("target handler", "path", r.URL.Path, "err", err)
-	httpx.WriteError(w, http.StatusInternalServerError, "internal", "internal error")
 }

@@ -71,7 +71,7 @@ func (h *Handler) get(w http.ResponseWriter, r *http.Request) { h.write(w, r, ht
 func (h *Handler) decode(w http.ResponseWriter, r *http.Request) (Config, bool) {
 	var c Config
 	if err := httpx.DecodeJSON(r, &c); err != nil {
-		httpx.BadRequest(w, err.Error())
+		httpx.BadRequest(w, r, err.Error())
 		return c, false
 	}
 	return c, true
@@ -101,7 +101,7 @@ func (h *Handler) put(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	a := h.Manager.Active()
-	h.record(r, "recording.storage.update", map[string]any{"before": before, "after": a})
+	h.record(r, audit.RecordingStorageUpdate, map[string]any{"before": before, "after": a})
 	h.write(w, r, http.StatusOK)
 }
 
@@ -111,7 +111,7 @@ func (h *Handler) reset(w http.ResponseWriter, r *http.Request) {
 		h.fail(w, r, err)
 		return
 	}
-	h.record(r, "recording.storage.reset", map[string]any{"before": before, "after": h.Manager.Active(), "source": h.Manager.Source()})
+	h.record(r, audit.RecordingStorageReset, map[string]any{"before": before, "after": h.Manager.Active(), "source": h.Manager.Source()})
 	h.write(w, r, http.StatusOK)
 }
 
@@ -126,14 +126,14 @@ func (h *Handler) move(w http.ResponseWriter, r *http.Request) {
 		// its own context.
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		if _, err := h.Audit.Record(ctx, actor.Event("recording.storage.move", "recording_storage", "gateway", audit.Success,
+		if _, err := h.Audit.Record(ctx, actor.Event(audit.RecordingStorageMove, "recording_storage", "gateway", audit.Success,
 			map[string]any{"moved": final.Moved, "failed": final.Failed, "total": final.Total, "last_error": final.LastError})); err != nil {
-			h.Log.Error("audit record failed", "action", "recording.storage.move", "err", err)
+			h.Log.Error("audit record failed", "action", audit.RecordingStorageMove, "err", err)
 		}
 	})
 	if err != nil {
 		if errors.Is(err, ErrBusy) {
-			httpx.WriteError(w, http.StatusConflict, "move_running", "a move is already running")
+			httpx.WriteError(w, r, http.StatusConflict, "move_running", "a move is already running")
 			return
 		}
 		h.fail(w, r, err)
@@ -149,9 +149,8 @@ func (h *Handler) record(r *http.Request, action string, details map[string]any)
 func (h *Handler) fail(w http.ResponseWriter, r *http.Request, err error) {
 	if errors.Is(err, ErrInvalid) {
 		// The message can quote what the operator typed; one line of it.
-		httpx.BadRequest(w, strings.NewReplacer("\n", " ", "\r", " ").Replace(strings.TrimPrefix(err.Error(), "recstorage: invalid configuration: ")))
+		httpx.BadRequest(w, r, strings.NewReplacer("\n", " ", "\r", " ").Replace(strings.TrimPrefix(err.Error(), "recstorage: invalid configuration: ")))
 		return
 	}
-	h.Log.Error("storage handler", "route", r.Pattern, "err", strings.NewReplacer("\n", " ", "\r", " ").Replace(err.Error()))
-	httpx.WriteError(w, http.StatusInternalServerError, "internal", "internal error")
+	httpx.Internal(w, r, h.Log, err)
 }

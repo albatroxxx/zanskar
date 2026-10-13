@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/albatroxxx/zanskar/internal/asg"
 	"github.com/albatroxxx/zanskar/internal/audit"
 	"github.com/albatroxxx/zanskar/internal/auth"
 	"github.com/albatroxxx/zanskar/internal/config"
@@ -27,6 +28,7 @@ type env struct {
 	srv      http.Handler
 	requests *Repo
 	target   string
+	group    string // an autoscaling group with the same tags as the target
 	alice    *http.Cookie
 	aliceCSR string
 	admin    *http.Cookie
@@ -56,7 +58,8 @@ func newEnv(t *testing.T) *env {
 	policies, targets, requests := policy.NewRepo(db), target.NewRepo(db), NewRepo(db)
 
 	auditLog := audit.NewLog(db)
-	h := &Handler{Requests: requests, Policies: policies, Targets: targets, Audit: auditLog, Log: log}
+	asgs := asg.NewRepo(db)
+	h := &Handler{Requests: requests, Policies: policies, Targets: targets, ASGs: asgs, Audit: auditLog, Log: log}
 	mux := http.NewServeMux()
 	h.Register(mux)
 	mw := &auth.Middleware{Sessions: sessions, Users: users, Log: log}
@@ -92,6 +95,12 @@ func newEnv(t *testing.T) *env {
 		t.Fatal(err)
 	}
 	e.target = tg.ID
+	g := &asg.Group{Name: "web-fleet", Region: "ap-south-1", ExternalName: "web-asg", RoleARN: "arn:aws:iam::123456789012:role/z",
+		OSFamily: target.Linux, Tags: map[string]string{"env": "prod"}}
+	if err := asgs.Create(ctx, g); err != nil {
+		t.Fatal(err)
+	}
+	e.group = g.ID
 	return e
 }
 
@@ -186,5 +195,66 @@ func TestOneOpenRequestAndExtension(t *testing.T) {
 	// The audit trail names the extension.
 	if !strings.Contains(strings.ToLower(out["items"].([]any)[0].(map[string]any)["status"].(string)), "approved") {
 		t.Fatalf("status: %v", out)
+	}
+}
+
+// TestRequestAccessToAutoscalingGroup: an approval-gated policy can cover an
+// autoscaling group, so a request may name one (ADR 0018). Before M27 the
+// request path looked the id up as a host and answered "target not found",
+// which left the group's users no way in. Exactly one of target_id and
+// asg_id is accepted, the one-open-request rule holds per group, and the
+// approved grant is the one the connect gate looks for.
+func TestRequestAccessToAutoscalingGroup(t *testing.T) {
+	e := newEnv(t)
+	ask := func(body map[string]any) (int, map[string]any) {
+		body["reason"], body["minutes"] = "deploy", 30
+		return e.do("POST", "/api/v1/me/access-requests", body, e.alice, e.aliceCSR)
+	}
+	code, out := ask(map[string]any{"asg_id": e.group, "protocol": "ssh"})
+	if code != 201 || out["asg_id"] != e.group || out["target_id"] != nil {
+		t.Fatalf("request for a group: got %d %v, want 201 naming the group", code, out)
+	}
+	id := out["id"].(string)
+	if code, out = ask(map[string]any{"asg_id": e.group, "protocol": "ssh"}); code != 409 || out["code"] != "duplicate_request" {
+		t.Fatalf("second pending request for the group: got %d %v, want 409 duplicate_request", code, out)
+	}
+	// A pending request for the group does not hold the host with the same tags.
+	if code, out = ask(map[string]any{"target_id": e.target, "protocol": "ssh"}); code != 201 {
+		t.Fatalf("request for the host beside it: got %d %v, want 201", code, out)
+	}
+	for name, body := range map[string]map[string]any{
+		"both":     {"target_id": e.target, "asg_id": e.group, "protocol": "ssh"},
+		"neither":  {"protocol": "ssh"},
+		"no proto": {"asg_id": e.group},
+	} {
+		if code, out := ask(body); code != 400 {
+			t.Errorf("%s: got %d %v, want 400", name, code, out)
+		}
+	}
+	if code, out = ask(map[string]any{"asg_id": "00000000000000000000000000000000", "protocol": "ssh"}); code != 404 {
+		t.Fatalf("unknown group: got %d %v, want 404", code, out)
+	}
+	if code, out = ask(map[string]any{"asg_id": e.group, "protocol": "rdp"}); code != 403 || out["code"] != "not_eligible" {
+		t.Fatalf("a protocol no policy gates: got %d %v, want 403 not_eligible", code, out)
+	}
+
+	if code, out = e.do("POST", "/api/v1/access-requests/"+id+"/approve", nil, e.admin, e.adminCSR); code != 200 {
+		t.Fatalf("approve: %d %v", code, out)
+	}
+	ok, err := e.requests.HasActiveGrant(context.Background(), e.ids["alice"], "", e.group, "ssh", time.Now())
+	if err != nil || !ok {
+		t.Fatalf("the approved request must be a grant for the group: %v %v", ok, err)
+	}
+	code, out = e.do("GET", "/api/v1/me/access", nil, e.alice, e.aliceCSR)
+	items, _ := out["items"].([]any)
+	if code != 200 || len(items) != 1 || items[0].(map[string]any)["asg_name"] != "web-fleet" {
+		t.Fatalf("active grants should name the group: %d %v", code, out)
+	}
+	// While that grant runs, asking again is an extension of it.
+	if code, out = ask(map[string]any{"asg_id": e.group, "protocol": "ssh"}); code != 409 || out["code"] != "already_granted" {
+		t.Fatalf("request while granted: got %d %v, want 409 already_granted", code, out)
+	}
+	if code, out = ask(map[string]any{"asg_id": e.group, "protocol": "ssh", "extends_request_id": id}); code != 201 || out["extends_request_id"] != id {
+		t.Fatalf("extension of the group's grant: got %d %v", code, out)
 	}
 }

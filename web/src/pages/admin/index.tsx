@@ -1,16 +1,5 @@
 import { Route } from 'react-router-dom'
-import { Targets } from './Targets'
-import { Databases } from './Databases'
-import { Autoscaling } from './Autoscaling'
-import { Credentials } from './Credentials'
-import { Policies } from './Policies'
-import { Approvals } from './Approvals'
-import { UsersGroups } from './UsersGroups'
-import { IdentityProviders } from './IdentityProviders'
-import { Sessions } from './Sessions'
-import { Retention } from './Retention'
-import { Settings } from './Settings'
-import { Logs } from './Logs'
+import { Targets, Databases, Autoscaling, Credentials, Policies, Approvals, UsersGroups, IdentityProviders, Sessions, Retention, Settings, Logs } from './pages'
 
 // Admin pages, one per file. Paths match the sidebar in App.tsx.
 export const adminRoutes = (

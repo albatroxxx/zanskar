@@ -30,21 +30,21 @@ type reachableInstance struct {
 func (h *Handler) myInstances(w http.ResponseWriter, r *http.Request) {
 	p, _ := auth.FromContext(r.Context())
 	if h.ASGs == nil {
-		httpx.WriteError(w, http.StatusNotFound, "not_found", "autoscaling is not enabled")
+		httpx.WriteError(w, r, http.StatusNotFound, "not_found", "autoscaling is not enabled")
 		return
 	}
 	g, err := h.ASGs.Get(r.Context(), r.PathValue("id"))
 	if err != nil {
 		if errors.Is(err, asg.ErrNotFound) {
-			httpx.WriteError(w, http.StatusNotFound, "not_found", "group not found")
+			httpx.WriteError(w, r, http.StatusNotFound, "not_found", "group not found")
 			return
 		}
-		h.fail(w, r, err)
+		httpx.Internal(w, r, h.Log, err)
 		return
 	}
 	pols, err := h.Policies.ForUser(r.Context(), p.User.ID)
 	if err != nil {
-		h.fail(w, r, err)
+		httpx.Internal(w, r, h.Log, err)
 		return
 	}
 	allowed := false
@@ -55,12 +55,12 @@ func (h *Handler) myInstances(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if !allowed {
-		httpx.WriteError(w, http.StatusForbidden, "policy_denied", "no policy grants access to this group")
+		httpx.WriteError(w, r, http.StatusForbidden, "policy_denied", "no policy grants access to this group")
 		return
 	}
 	healthy, err := h.ASGs.Instances(r.Context(), g.ID, true)
 	if err != nil {
-		h.fail(w, r, err)
+		httpx.Internal(w, r, h.Log, err)
 		return
 	}
 	out := make([]reachableInstance, 0, len(healthy))
@@ -83,25 +83,25 @@ func (h *Handler) failover(w http.ResponseWriter, r *http.Request) {
 	old, err := h.Sessions.Get(r.Context(), r.PathValue("id"))
 	if err != nil {
 		if errors.Is(err, session.ErrNotFound) {
-			httpx.WriteError(w, http.StatusNotFound, "not_found", "session not found")
+			httpx.WriteError(w, r, http.StatusNotFound, "not_found", "session not found")
 			return
 		}
-		h.fail(w, r, err)
+		httpx.Internal(w, r, h.Log, err)
 		return
 	}
 	if old.UserID != p.User.ID {
-		httpx.WriteError(w, http.StatusForbidden, "forbidden", "not your session")
+		httpx.WriteError(w, r, http.StatusForbidden, "forbidden", "not your session")
 		return
 	}
 	if old.ASGID == "" {
-		httpx.WriteError(w, http.StatusConflict, "not_failoverable", "only autoscaling sessions can fail over")
+		httpx.WriteError(w, r, http.StatusConflict, "not_failoverable", "only autoscaling sessions can fail over")
 		return
 	}
 	// A session that is still open may be on an instance that just became
 	// unhealthy and whose bridge has not noticed yet; close it as lost.
 	if old.EndedAt == nil {
 		if in, err := h.ASGs.GetInstance(r.Context(), old.ASGInstanceID); err == nil && in.Healthy {
-			httpx.WriteError(w, http.StatusConflict, "not_failoverable", "the current instance is still healthy")
+			httpx.WriteError(w, r, http.StatusConflict, "not_failoverable", "the current instance is still healthy")
 			return
 		}
 		_ = h.Sessions.End(r.Context(), old.ID, session.EndTargetLost)
@@ -109,13 +109,13 @@ func (h *Handler) failover(w http.ResponseWriter, r *http.Request) {
 			h.Registry.Terminate(old.ID)
 		}
 	} else if old.EndReason != session.EndTargetLost {
-		httpx.WriteError(w, http.StatusConflict, "not_failoverable", "the session did not end because the instance was lost")
+		httpx.WriteError(w, r, http.StatusConflict, "not_failoverable", "the session did not end because the instance was lost")
 		return
 	}
 	var req failoverRequest
 	if r.ContentLength > 0 {
 		if err := httpx.DecodeJSON(r, &req); err != nil {
-			httpx.BadRequest(w, err.Error())
+			httpx.BadRequest(w, r, err.Error())
 			return
 		}
 	}
@@ -131,24 +131,24 @@ func (h *Handler) failover(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		switch {
 		case errors.Is(err, errNoHealthyInstances):
-			httpx.WriteError(w, http.StatusConflict, "no_healthy_instances", "the autoscaling group has no healthy instances right now")
+			httpx.WriteError(w, r, http.StatusConflict, "no_healthy_instances", "the autoscaling group has no healthy instances right now")
 		case errors.Is(err, asg.ErrNotFound):
-			httpx.WriteError(w, http.StatusNotFound, "not_found", "instance not found in this group")
+			httpx.WriteError(w, r, http.StatusNotFound, "not_found", "instance not found in this group")
 		default:
-			h.fail(w, r, err)
+			httpx.Internal(w, r, h.Log, err)
 		}
 		return
 	}
 	res, code, msg, err := h.issueTicket(r.Context(), p, auth.ClientIP(r), ep, target.Protocol(old.Protocol), req.Credential, old.ID)
 	if err != nil {
-		h.fail(w, r, err)
+		httpx.Internal(w, r, h.Log, err)
 		return
 	}
 	if code != "" {
-		h.record(r, actor.Event("session.failover", "access_session", old.ID, audit.Failure, map[string]string{"reason": code}))
-		httpx.WriteError(w, codeStatus(code), code, msg)
+		h.record(r, actor.Event(audit.SessionFailover, "access_session", old.ID, audit.Failure, map[string]string{"reason": code}))
+		httpx.WriteError(w, r, codeStatus(code), code, msg)
 		return
 	}
-	h.record(r, actor.Event("session.failover", "access_session", old.ID, audit.Success, map[string]any{"asg_id": old.ASGID, "from_instance": old.ASGInstanceID, "to_instance": ep.ASGInstanceID}))
+	h.record(r, actor.Event(audit.SessionFailover, "access_session", old.ID, audit.Success, map[string]any{"asg_id": old.ASGID, "from_instance": old.ASGInstanceID, "to_instance": ep.ASGInstanceID}))
 	httpx.WriteJSON(w, http.StatusOK, res)
 }

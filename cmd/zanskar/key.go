@@ -51,11 +51,7 @@ func runKey(args []string) error {
 // openRing opens the database and the key ring with the configured master
 // key, the way serve does but without the server.
 func openRing(ctx context.Context) (*config.Config, *store.DB, *keyring.Ring, error) {
-	cfg, err := config.Load(config.Options{RequireMasterKey: true})
-	if err != nil {
-		return nil, nil, nil, err
-	}
-	db, err := store.Open(ctx, cfg.DBDriver, cfg.DBDSN)
+	cfg, db, err := openDB(ctx, config.Options{RequireMasterKey: true})
 	if err != nil {
 		return nil, nil, nil, err
 	}
@@ -154,7 +150,7 @@ func runKeyRotate() error {
 	if err != nil {
 		return err
 	}
-	if _, err := audit.NewLog(db).Record(ctx, audit.Actor{IP: "cli"}.Event("key.rotate", "key_version", fmt.Sprint(ver), audit.Success,
+	if _, err := audit.NewLog(db).Record(ctx, audit.Actor{IP: "cli"}.Event(audit.KeyRotate, "key_version", fmt.Sprint(ver), audit.Success,
 		map[string]any{"active_version": ver})); err != nil {
 		return fmt.Errorf("rotated to version %d but the audit event failed: %w", ver, err)
 	}
@@ -181,19 +177,23 @@ func runKeyRotateMaster(args []string) error {
 	}
 	defer func() { ring.Close(); _ = db.Close() }()
 
-	// A key loaded from a file is replaced in that file: it is the one the
-	// service reads, and an env-file edit would leave the file holding a key
-	// that opens nothing.
-	if cfg.MasterKeyFile != "" {
-		if *envFile != "" {
-			return fmt.Errorf("the master key is read from %s (ZANSKAR_MASTER_KEY_FILE); drop -env-file", cfg.MasterKeyFile)
-		}
-		if *keyFile == "" {
-			*keyFile = cfg.MasterKeyFile
-		}
-	}
-	if *envFile != "" && *keyFile != "" {
-		return errors.New("pass -env-file or -key-file, not both")
+	// The new key goes where the service reads the old one: a key file in
+	// place, or the env file's ZANSKAR_MASTER_KEY line. Anywhere else would
+	// leave the service starting with a key that opens nothing.
+	switch {
+	case cfg.MasterKeyFile != "" && *envFile != "":
+		return fmt.Errorf("the master key is read from %s (ZANSKAR_MASTER_KEY_FILE); drop -env-file", cfg.MasterKeyFile)
+	case cfg.MasterKeyFile != "" && *keyFile != "" && filepath.Clean(*keyFile) != filepath.Clean(cfg.MasterKeyFile):
+		// Another copy of the key is not the one the service reads: the new
+		// key would land there and the service would start with the old one.
+		return fmt.Errorf("the master key is read from %s (ZANSKAR_MASTER_KEY_FILE); drop -key-file or name that file", cfg.MasterKeyFile)
+	case cfg.MasterKeyFile != "":
+		*keyFile = cfg.MasterKeyFile
+	case *keyFile != "":
+		// The other way round: a key the service reads from its environment
+		// is replaced there. Writing it to a file would leave the service
+		// starting with the old key, which no longer opens anything (L4).
+		return errors.New("the master key is read from ZANSKAR_MASTER_KEY, not a file; pass -env-file with the environment file the service loads, or move the service to ZANSKAR_MASTER_KEY_FILE first")
 	}
 	if *keyFile != "" {
 		b, err := os.ReadFile(*keyFile) // #nosec G304 -- the operator names the key file
@@ -285,7 +285,7 @@ func runKeyRotateMaster(args []string) error {
 	default:
 		fmt.Printf("re-signed %d audit anchor(s) under the new key.\n", resigned)
 	}
-	if _, err := auditLog.Record(ctx, audit.Actor{IP: "cli"}.Event("key.rotate_master", "key_versions", "all", audit.Success,
+	if _, err := auditLog.Record(ctx, audit.Actor{IP: "cli"}.Event(audit.KeyRotateMaster, "key_versions", "all", audit.Success,
 		map[string]any{"versions_rewrapped": n, "anchors_resigned": resigned, "env_file_updated": *envFile != "", "key_file_updated": *keyFile != ""})); err != nil {
 		fmt.Fprintln(os.Stderr, "warning: the rewrap succeeded but the audit event could not be written:", err)
 	}

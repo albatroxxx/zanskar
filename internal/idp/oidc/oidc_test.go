@@ -240,7 +240,7 @@ func TestFlowProvisionsAndMapsGroups(t *testing.T) {
 
 func TestDomainAndStateChecks(t *testing.T) {
 	f := newFakeIdP(t)
-	f.claims = map[string]any{"preferred_username": "bob", "email": "bob@else.example"}
+	f.claims = map[string]any{"preferred_username": "bob", "email": "bob@else.example", "email_verified": true}
 	e, id := newEnv(t, f, idp.Config{OIDC: &idp.OIDCConfig{ClientID: "cid", ClientSecret: "s", AllowedDomains: []string{"corp.example"}}, AutoProvision: true})
 	status, location, cookies := drive(t, e, f, id)
 	if status != 302 || !strings.Contains(location, "error=domain_not_allowed") || hasSession(cookies) {
@@ -489,6 +489,92 @@ func TestFlowRefusesLocalPasswordAccount(t *testing.T) {
 		}
 		if n := len(linkEvents(t, e)); n != 0 {
 			t.Fatalf("auto_provision=%v: %d user.link events, want none", auto, n)
+		}
+	}
+}
+
+// TestStartUsesThePublicURL: behind a proxy that terminates TLS the gateway
+// sees plain HTTP, so the redirect URI it sends the provider is built from
+// ZANSKAR_PUBLIC_URL (BaseURL), never from the request's scheme and host.
+func TestStartUsesThePublicURL(t *testing.T) {
+	f := newFakeIdP(t)
+	e, id := newEnv(t, f, idp.Config{OIDC: &idp.OIDCConfig{ClientID: "cid", ClientSecret: "s"}, AutoProvision: true, DefaultRoles: []user.Role{user.RoleUser}})
+	e.h.BaseURL = "https://gw.example.com"
+	client := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	res, err := client.Get(e.app.URL + "/api/v1/auth/oidc/" + id + "/start")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = res.Body.Close()
+	loc, err := url.Parse(res.Header.Get("Location"))
+	if err != nil || res.StatusCode != http.StatusFound {
+		t.Fatalf("start: %d %v", res.StatusCode, err)
+	}
+	if got, want := loc.Query().Get("redirect_uri"), "https://gw.example.com/api/v1/auth/oidc/"+id+"/callback"; got != want {
+		t.Fatalf("redirect_uri %q, want %q", got, want)
+	}
+}
+
+// TestDomainGateNeedsAVerifiedEmail: allowed_domains was checked against the
+// email claim whatever the provider said about it (L12), so on a provider
+// where people edit their own address anyone could pass the gate. The email
+// must now be verified (email_verified true, as a boolean or the string some
+// providers send), unless the provider is marked trust_email, for one that
+// never sends the claim (Entra ID) and whose addresses its directory owns.
+// An address the provider says is unverified is not used at all, not even to
+// make a username.
+func TestDomainGateNeedsAVerifiedEmail(t *testing.T) {
+	for _, c := range []struct {
+		name   string
+		claims map[string]any
+		trust  bool
+		want   string // "" signs in
+	}{
+		{"verified", map[string]any{"preferred_username": "ann", "email": "ann@corp.example", "email_verified": true}, false, ""},
+		{"verified as a string", map[string]any{"preferred_username": "ann", "email": "ann@corp.example", "email_verified": "true"}, false, ""},
+		{"unverified", map[string]any{"preferred_username": "ann", "email": "ann@corp.example", "email_verified": false}, false, "email_unverified"},
+		{"unverified as a string", map[string]any{"preferred_username": "ann", "email": "ann@corp.example", "email_verified": "false"}, false, "email_unverified"},
+		{"not said", map[string]any{"preferred_username": "ann", "email": "ann@corp.example"}, false, "email_unverified"},
+		{"not said, provider trusted", map[string]any{"preferred_username": "ann", "email": "ann@corp.example"}, true, ""},
+		{"unverified, provider trusted", map[string]any{"preferred_username": "ann", "email": "ann@corp.example", "email_verified": false}, true, "email_unverified"},
+		{"verified, other domain", map[string]any{"preferred_username": "ann", "email": "ann@else.example", "email_verified": true}, false, "domain_not_allowed"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			f := newFakeIdP(t)
+			f.claims = c.claims
+			e, id := newEnv(t, f, idp.Config{OIDC: &idp.OIDCConfig{ClientID: "cid", ClientSecret: "s", AllowedDomains: []string{"corp.example"}, TrustEmail: c.trust}, AutoProvision: true})
+			status, location, cookies := drive(t, e, f, id)
+			if c.want == "" {
+				if status != 302 || strings.Contains(location, "error=") || !hasSession(cookies) {
+					t.Fatalf("want a sign-in, got %d %s", status, location)
+				}
+				return
+			}
+			if status != 302 || !strings.Contains(location, "error="+c.want) || hasSession(cookies) {
+				t.Fatalf("want error=%s, got %d %s", c.want, status, location)
+			}
+		})
+	}
+}
+
+// TestUnverifiedEmailMakesNoUsername: with no username claim the username
+// falls back to the email's local part, and a pre-created account with that
+// name is adopted (H8). An address the provider has not verified must not
+// name the account, or whoever typed it in would sign in as someone else.
+func TestUnverifiedEmailMakesNoUsername(t *testing.T) {
+	for _, verified := range []any{false, nil} {
+		f := newFakeIdP(t)
+		f.claims = map[string]any{"email": "carol@corp.example"}
+		if verified != nil {
+			f.claims["email_verified"] = verified
+		}
+		e, id := newEnv(t, f, idp.Config{OIDC: &idp.OIDCConfig{ClientID: "cid", ClientSecret: "s"}, AutoProvision: true})
+		status, location, cookies := drive(t, e, f, id)
+		if status != 302 || !strings.Contains(location, "error=claims_invalid") || hasSession(cookies) {
+			t.Fatalf("email_verified %v: got %d %s, want claims_invalid", verified, status, location)
+		}
+		if _, err := e.users.GetByUsername(context.Background(), "carol"); err == nil {
+			t.Fatalf("email_verified %v: an account was named after an unverified address", verified)
 		}
 	}
 }

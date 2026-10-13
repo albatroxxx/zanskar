@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"net"
 	"net/netip"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -64,6 +65,12 @@ type Config struct {
 	// loopback-bound Zanskar. Never set it when clients reach Zanskar over
 	// plain HTTP.
 	TrustProxyTLS bool
+	// PublicURL is the https origin people reach the gateway at
+	// (ZANSKAR_PUBLIC_URL), without a trailing slash. OIDC builds its
+	// redirect URI from it; behind a proxy that terminates TLS the gateway
+	// itself sees plain HTTP and cannot build an https one on its own. Empty
+	// means the request's own scheme and host.
+	PublicURL string
 	// ConsoleCLI turns on the command line in the console (ADR 0027). On
 	// unless ZANSKAR_CONSOLE_CLI=off. It is an install-time switch on purpose,
 	// not a console setting, so a stolen administrator session cannot turn it
@@ -138,10 +145,34 @@ type Options struct {
 	RequireMasterKey bool
 }
 
+// DefaultListenAddr is where serve listens when ZANSKAR_LISTEN_ADDR is unset.
+const DefaultListenAddr = "127.0.0.1:8443"
+
+// tlsMode is ZANSKAR_TLS_MODE, or, unset, what an install had before the
+// variable existed: file when a certificate is named, otherwise proxy.
+func tlsMode() string {
+	if m := strings.ToLower(os.Getenv("ZANSKAR_TLS_MODE")); m != "" {
+		return m
+	}
+	if os.Getenv("ZANSKAR_TLS_CERT") != "" {
+		return TLSFile
+	}
+	return TLSProxy
+}
+
+// Listener says where serve listens and whether it serves TLS there, from
+// the environment alone and without checking anything else. It is for
+// `zanskar healthcheck`, which must not read the master key or the database
+// to ask the running gateway whether it is ready.
+func Listener() (addr string, servesTLS bool) {
+	m := tlsMode()
+	return envOr("ZANSKAR_LISTEN_ADDR", DefaultListenAddr), m == TLSFile || m == TLSManaged
+}
+
 // Load reads the environment and returns a validated Config.
 func Load(opts Options) (*Config, error) {
 	c := &Config{
-		ListenAddr:           envOr("ZANSKAR_LISTEN_ADDR", "127.0.0.1:8443"),
+		ListenAddr:           envOr("ZANSKAR_LISTEN_ADDR", DefaultListenAddr),
 		DBDriver:             envOr("ZANSKAR_DB_DRIVER", DriverSQLite),
 		DBDSN:                envOr("ZANSKAR_DB_DSN", "file:zanskar.db?_pragma=journal_mode(WAL)&_pragma=foreign_keys(1)&_pragma=busy_timeout(5000)"),
 		TLSCert:              os.Getenv("ZANSKAR_TLS_CERT"),
@@ -150,6 +181,7 @@ func Load(opts Options) (*Config, error) {
 		GuacdAddr:            os.Getenv("ZANSKAR_GUACD_ADDR"),  // empty disables RDP and VNC
 		DockerPath:           os.Getenv("ZANSKAR_DOCKER_PATH"), // empty defaults to "docker" on PATH
 		TrustProxyTLS:        os.Getenv("ZANSKAR_TRUST_PROXY_TLS") == "true",
+		PublicURL:            strings.TrimRight(strings.TrimSpace(os.Getenv("ZANSKAR_PUBLIC_URL")), "/"),
 		ConsoleCLI:           !strings.EqualFold(strings.TrimSpace(os.Getenv("ZANSKAR_CONSOLE_CLI")), "off"),
 		Issuer:               envOr("ZANSKAR_ISSUER", "Zanskar"),
 		RequireMFA:           envOr("ZANSKAR_REQUIRE_MFA", "true") != "false",
@@ -172,15 +204,8 @@ func Load(opts Options) (*Config, error) {
 		LogFormat:            strings.ToLower(envOr("ZANSKAR_LOG_FORMAT", "json")),
 		ShutdownTimeout:      20 * time.Second,
 		EnvFile:              os.Getenv("ZANSKAR_ENV_FILE"),
-		TLSMode:              strings.ToLower(os.Getenv("ZANSKAR_TLS_MODE")),
+		TLSMode:              tlsMode(),
 		RedirectAddr:         os.Getenv("ZANSKAR_HTTP_REDIRECT_ADDR"),
-	}
-	if c.TLSMode == "" {
-		if c.TLSCert != "" {
-			c.TLSMode = TLSFile
-		} else {
-			c.TLSMode = TLSProxy
-		}
 	}
 	if c.EnvFile == "" {
 		if _, err := os.Stat(DefaultEnvFile); err == nil {
@@ -218,6 +243,11 @@ func Load(opts Options) (*Config, error) {
 
 	if _, _, err := net.SplitHostPort(c.ListenAddr); err != nil {
 		errs = append(errs, fmt.Errorf("ZANSKAR_LISTEN_ADDR: %w", err))
+	}
+	if c.PublicURL != "" {
+		if err := checkPublicURL(c.PublicURL); err != nil {
+			errs = append(errs, fmt.Errorf("ZANSKAR_PUBLIC_URL: %w", err))
+		}
 	}
 	// A separate admin listener was planned (ADR 0010) but never built. The
 	// setting is refused rather than ignored: whoever set it believes the
@@ -325,6 +355,40 @@ func Load(opts Options) (*Config, error) {
 	return c, nil
 }
 
+// SecretEnv names the variables that carry a secret: the master key, the
+// database DSN (which can hold the database password) and the SIEM webhook's
+// signing secret, which serve reads, and two that only the command line reads
+// but that an operator may leave in the same environment file: the first
+// administrator's password and the next master key of a rotation.
+var SecretEnv = []string{
+	"ZANSKAR_MASTER_KEY",
+	"ZANSKAR_DB_DSN",
+	"ZANSKAR_SIEM_WEBHOOK_SECRET",
+	"ZANSKAR_ADMIN_PASSWORD",
+	"ZANSKAR_NEW_MASTER_KEY",
+}
+
+// DropSecretEnv removes the SecretEnv variables from this process's
+// environment and returns the names of those that were set. serve calls it
+// once Load has read them, so a child started without an environment of its
+// own does not inherit them and nothing in the process that reads the
+// environment later finds them. It changes the process's copy only: the
+// kernel keeps the block the process was started with, which the service
+// user and root can still read in /proc/<pid>/environ. Nothing needs them
+// back. A restart is never this process starting itself again: it exits and
+// its supervisor (systemd, Docker, Kubernetes) starts a new process from the
+// environment file or the container's definition.
+func DropSecretEnv() []string {
+	var dropped []string
+	for _, k := range SecretEnv {
+		if _, ok := os.LookupEnv(k); ok {
+			_ = os.Unsetenv(k)
+			dropped = append(dropped, k)
+		}
+	}
+	return dropped
+}
+
 // SecureCookies reports whether browser cookies should carry the Secure flag.
 func (c *Config) SecureCookies() bool {
 	return c.ServesTLS() || c.TrustProxyTLS
@@ -382,4 +446,23 @@ func readKeyFile(path string) (string, error) {
 		return "", err
 	}
 	return strings.TrimSpace(string(b)), nil
+}
+
+// checkPublicURL accepts an https origin: a scheme and a host (with an
+// optional port), and nothing after them.
+func checkPublicURL(raw string) error {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return err
+	}
+	if u.Scheme != "https" {
+		return errors.New("must start with https:// (people reach the gateway over TLS)")
+	}
+	if u.Host == "" {
+		return errors.New("must name the host, as in https://gateway.example.com")
+	}
+	if (u.Path != "" && u.Path != "/") || u.RawQuery != "" || u.Fragment != "" || u.User != nil {
+		return errors.New("must be the origin only, with no path, query or user")
+	}
+	return nil
 }

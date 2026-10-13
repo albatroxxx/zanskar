@@ -121,8 +121,7 @@ func (h *Handler) status(w http.ResponseWriter, r *http.Request) {
 	p, _ := auth.FromContext(r.Context())
 	enrolled, err := h.MFA.Enrolled(r.Context(), p.User.ID)
 	if err != nil {
-		h.Log.Error("cli: authenticator lookup", "err", err)
-		httpx.WriteError(w, http.StatusInternalServerError, "internal", "internal error")
+		httpx.Internal(w, r, h.Log, fmt.Errorf("cli: authenticator lookup: %w", err))
 		return
 	}
 	now := h.now()
@@ -138,7 +137,7 @@ func (h *Handler) unlock(w http.ResponseWriter, r *http.Request) {
 		Code string `json:"code"`
 	}
 	if err := httpx.DecodeJSON(r, &in); err != nil {
-		httpx.BadRequest(w, err.Error())
+		httpx.BadRequest(w, r, err.Error())
 		return
 	}
 	now := h.now()
@@ -147,14 +146,14 @@ func (h *Handler) unlock(w http.ResponseWriter, r *http.Request) {
 	locked := now.Before(s.lockedUntil)
 	h.mu.Unlock()
 	if locked {
-		httpx.WriteError(w, http.StatusTooManyRequests, "cli_locked", "too many wrong codes; the command line is closed for this sign-in for a while")
+		httpx.WriteError(w, r, http.StatusTooManyRequests, "cli_locked", "too many wrong codes; the command line is closed for this sign-in for a while")
 		return
 	}
 	recovery, err := h.MFA.Verify(r.Context(), p.User.ID, in.Code)
 	switch {
 	case errors.Is(err, auth.ErrTOTPNotEnrolled):
-		h.record(r, "cli.unlock", audit.Failure, map[string]any{"reason": "no authenticator enrolled"})
-		httpx.WriteError(w, http.StatusConflict, "mfa_not_enrolled", "enrol an authenticator first: the command line asks for a code from it")
+		h.record(r, audit.CLIUnlock, audit.Failure, map[string]any{"reason": "no authenticator enrolled"})
+		httpx.WriteError(w, r, http.StatusConflict, "mfa_not_enrolled", "enrol an authenticator first: the command line asks for a code from it")
 		return
 	case errors.Is(err, auth.ErrTOTPBadCode):
 		h.mu.Lock()
@@ -168,24 +167,22 @@ func (h *Handler) unlock(w http.ResponseWriter, r *http.Request) {
 		if errors.Is(err, auth.ErrTOTPReused) {
 			reason = "code already used" // a right code seen once already: someone may have read it
 		}
-		h.record(r, "cli.unlock", audit.Failure, map[string]any{"reason": reason, "closed": closed})
+		h.record(r, audit.CLIUnlock, audit.Failure, map[string]any{"reason": reason, "closed": closed})
 		// 422, not 401: to the console a 401 means the sign-in itself has ended.
-		httpx.WriteError(w, http.StatusUnprocessableEntity, "bad_code", "that code is not right")
+		httpx.WriteError(w, r, http.StatusUnprocessableEntity, "bad_code", "that code is not right")
 		return
 	case err != nil:
-		h.Log.Error("cli: verify code", "err", err)
-		httpx.WriteError(w, http.StatusInternalServerError, "internal", "internal error")
+		httpx.Internal(w, r, h.Log, fmt.Errorf("cli: verify code: %w", err))
 		return
 	}
 	if err := h.Sessions.MarkMFAProved(r.Context(), p.Session.ID); err != nil {
-		h.Log.Error("cli: record fresh code", "err", err)
-		httpx.WriteError(w, http.StatusInternalServerError, "internal", "internal error")
+		httpx.Internal(w, r, h.Log, fmt.Errorf("cli: record fresh code: %w", err))
 		return
 	}
 	h.mu.Lock()
 	s.fails, s.lastUse = 0, now
 	h.mu.Unlock()
-	h.record(r, "cli.unlock", audit.Success, map[string]any{"recovery_code_used": recovery})
+	h.record(r, audit.CLIUnlock, audit.Success, map[string]any{"recovery_code_used": recovery})
 	httpx.WriteJSON(w, http.StatusOK, map[string]bool{"unlocked": true})
 }
 
@@ -215,27 +212,35 @@ func (h *Handler) exec(w http.ResponseWriter, r *http.Request) {
 		Confirm string `json:"confirm"`
 	}
 	if err := httpx.DecodeJSON(r, &in); err != nil {
-		httpx.BadRequest(w, err.Error())
+		httpx.BadRequest(w, r, err.Error())
 		return
 	}
 	line := strings.TrimSpace(in.Line)
 	if len(line) > maxLine || len(in.Confirm) > maxLine {
-		httpx.BadRequest(w, errTooLong.Error())
+		httpx.BadRequest(w, r, errTooLong.Error())
 		return
 	}
 	now := h.now()
 	h.mu.Lock()
 	s := h.signInFor(p.Session.ID, now)
 	fresh := h.fresh(p, s, now)
+	closed := now.Before(s.lockedUntil)
 	limited := !allow(s, now)
 	h.mu.Unlock()
+	// Closed after too many wrong codes: say so, rather than ask for a code
+	// the unlock would refuse.
+	if closed {
+		h.audit(r, line, "", resultLocked, nil)
+		httpx.WriteError(w, r, http.StatusTooManyRequests, "cli_locked", "too many wrong codes; the command line is closed for this sign-in for a while")
+		return
+	}
 	if limited {
-		httpx.WriteError(w, http.StatusTooManyRequests, "rate_limited", "too many commands; wait a moment")
+		httpx.WriteError(w, r, http.StatusTooManyRequests, "rate_limited", "too many commands; wait a moment")
 		return
 	}
 	if !fresh {
 		h.audit(r, line, "", resultLocked, nil)
-		httpx.WriteError(w, http.StatusForbidden, "cli_locked", "enter a code from your authenticator to use the command line")
+		httpx.WriteError(w, r, http.StatusForbidden, "cli_code_required", "enter a code from your authenticator to use the command line")
 		return
 	}
 	reply, name, result, calls := h.run(r, s, line, in.Confirm, now)
@@ -369,7 +374,7 @@ func (h *Handler) audit(r *http.Request, line, name, result string, calls []apiC
 	if len(calls) > 0 {
 		details["calls"] = calls
 	}
-	h.record(r, "cli.command", outcome, details)
+	h.record(r, audit.CLICommand, outcome, details)
 }
 
 func (h *Handler) record(r *http.Request, action string, outcome audit.Outcome, details any) {

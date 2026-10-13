@@ -28,8 +28,11 @@ func TestTOTPEnrolmentGuards(t *testing.T) {
 		t.Fatalf("confirm before enrolling: %d %v", c.code, c.body)
 	}
 
-	first := post("/api/v1/auth/mfa/totp/enroll", nil)
-	second := post("/api/v1/auth/mfa/totp/enroll", nil)
+	// dana's sign-in is full (this deployment does not require a second
+	// factor), so enrolling takes the password again (L14).
+	again := map[string]string{"current_password": "dana has a long passphrase"}
+	first := post("/api/v1/auth/mfa/totp/enroll", again)
+	second := post("/api/v1/auth/mfa/totp/enroll", again)
 	if first.code != 200 || second.code != 200 || first.body["secret"] == second.body["secret"] {
 		t.Fatalf("re-enrolling before confirming must replace the secret: %v %v", first.body, second.body)
 	}

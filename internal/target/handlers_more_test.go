@@ -214,8 +214,8 @@ func TestDeletePolicyLookupFailure(t *testing.T) {
 	if _, err := repo.Get(context.Background(), tg.ID); err != nil {
 		t.Fatalf("target must survive a failed delete: %v", err)
 	}
-	if !strings.Contains(logs.String(), "target handler") || !strings.Contains(logs.String(), "/api/v1/targets/"+tg.ID) {
-		t.Fatalf("server error must be logged with its path: %s", logs.String())
+	if !strings.Contains(logs.String(), `msg="request failed"`) || !strings.Contains(logs.String(), "database is closed") {
+		t.Fatalf("server error must be logged: %s", logs.String())
 	}
 }
 
@@ -489,8 +489,13 @@ func TestProbeCertificateEdges(t *testing.T) {
 		t.Fatalf("audited outcomes: %v", reasons)
 	}
 
-	// A link-local target is refused before any login attempt.
-	meta := e.mkTarget(t, map[string]any{"name": "meta", "address": "169.254.169.254", "os_family": "linux"})
+	// A link-local target is refused before any login attempt. The API no
+	// longer saves one (L1); this is a row saved before it refused them.
+	metaTarget := &Target{Name: "meta", Address: "169.254.169.254", OSFamily: Linux}
+	if err := NewRepo(e.db).Create(ctx, metaTarget); err != nil {
+		t.Fatal(err)
+	}
+	meta := metaTarget.ID
 	if _, err := e.db.ExecContext(ctx, e.db.Rebind(`UPDATE targets SET host_key_status = 'trusted', host_key_fingerprint = ? WHERE id = ?`), srv.fp, meta); err != nil {
 		t.Fatal(err)
 	}

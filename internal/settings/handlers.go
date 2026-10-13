@@ -73,12 +73,12 @@ func (h *Handler) key(w http.ResponseWriter, r *http.Request) (string, bool) {
 	}
 	for _, b := range h.Service.BootSettings() {
 		if b.Key == key {
-			httpx.WriteError(w, http.StatusConflict, "boot_setting",
+			httpx.WriteError(w, r, http.StatusConflict, "boot_setting",
 				"this setting is fixed at install: edit "+b.EnvVar+" in the service's environment file and restart the gateway")
 			return "", false
 		}
 	}
-	httpx.WriteError(w, http.StatusNotFound, "not_found", "no such setting")
+	httpx.WriteError(w, r, http.StatusNotFound, "not_found", "no such setting")
 	return "", false
 }
 
@@ -91,7 +91,7 @@ func (h *Handler) set(w http.ResponseWriter, r *http.Request) {
 		Value string `json:"value"`
 	}
 	if err := httpx.DecodeJSON(r, &in); err != nil {
-		httpx.BadRequest(w, err.Error())
+		httpx.BadRequest(w, r, err.Error())
 		return
 	}
 	p, _ := auth.FromContext(r.Context())
@@ -103,7 +103,7 @@ func (h *Handler) set(w http.ResponseWriter, r *http.Request) {
 	}
 	// None of the runtime settings is a secret; the audit row keeps both
 	// values, since "what was it set to that day" is the compliance question.
-	h.record(r, "settings.update", key, map[string]any{"before": before.Value, "before_source": before.Source, "after": v.Value})
+	h.record(r, audit.SettingsUpdate, key, map[string]any{"before": before.Value, "before_source": before.Source, "after": v.Value})
 	httpx.WriteJSON(w, http.StatusOK, v)
 }
 
@@ -118,7 +118,7 @@ func (h *Handler) reset(w http.ResponseWriter, r *http.Request) {
 		h.fail(w, r, err)
 		return
 	}
-	h.record(r, "settings.reset", key, map[string]any{"before": before.Value, "after": v.Value, "after_source": v.Source})
+	h.record(r, audit.SettingsReset, key, map[string]any{"before": before.Value, "after": v.Value, "after_source": v.Source})
 	httpx.WriteJSON(w, http.StatusOK, v)
 }
 
@@ -129,13 +129,10 @@ func (h *Handler) record(r *http.Request, action, key string, details map[string
 func (h *Handler) fail(w http.ResponseWriter, r *http.Request, err error) {
 	switch {
 	case errors.Is(err, ErrInvalid):
-		httpx.BadRequest(w, strings.TrimPrefix(err.Error(), "settings: invalid value: "))
+		httpx.BadRequest(w, r, strings.TrimPrefix(err.Error(), "settings: invalid value: "))
 	case errors.Is(err, ErrUnknown):
-		httpx.WriteError(w, http.StatusNotFound, "not_found", "no such setting")
+		httpx.WriteError(w, r, http.StatusNotFound, "not_found", "no such setting")
 	default:
-		// The matched route pattern names the handler without echoing the
-		// request's own path into the log.
-		h.Log.Error("settings handler", "route", r.Method+" "+r.Pattern, "err", err)
-		httpx.WriteError(w, http.StatusInternalServerError, "internal", "internal error")
+		httpx.Internal(w, r, h.Log, err)
 	}
 }

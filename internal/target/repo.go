@@ -595,11 +595,10 @@ func affected(res sql.Result) error {
 }
 
 func mapErr(err error) error {
-	msg := strings.ToLower(err.Error())
 	switch {
-	case strings.Contains(msg, "foreign key"):
+	case store.IsForeignKeyViolation(err):
 		return ErrInvalidCredential
-	case strings.Contains(msg, "unique") || strings.Contains(msg, "duplicate key"):
+	case store.IsUniqueViolation(err):
 		return ErrDuplicate
 	}
 	return err

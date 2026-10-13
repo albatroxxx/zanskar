@@ -223,6 +223,37 @@ func TestWebhookSinkSignsAndVerifies(t *testing.T) {
 	}
 }
 
+// TestWebhookSinkFollowsNoRedirect: the default client followed 307 and 308,
+// which re-send the body, so a receiver (or whoever controls its address)
+// could have the signed batch posted on to another host, or to plain http
+// (L15). A redirect is now an error naming what happened, and nothing
+// reaches the other end.
+func TestWebhookSinkFollowsNoRedirect(t *testing.T) {
+	var elsewhere int
+	other := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		elsewhere++
+		w.WriteHeader(http.StatusAccepted)
+	}))
+	defer other.Close()
+	for _, code := range []int{http.StatusTemporaryRedirect, http.StatusPermanentRedirect} {
+		redirecting := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			http.Redirect(w, r, other.URL, code)
+		}))
+		l := exportLog(t, 1)
+		evs, _ := l.ListAfter(context.Background(), 0, 10)
+		for _, client := range []*http.Client{nil, {Timeout: time.Second}} {
+			err := (&WebhookSink{URL: redirecting.URL, Secret: []byte("s"), AllowHTTP: true, Client: client}).Send(context.Background(), evs)
+			if err == nil || !strings.Contains(err.Error(), "redirect") {
+				t.Errorf("%d: got %v, want an error about the redirect", code, err)
+			}
+		}
+		redirecting.Close()
+	}
+	if elsewhere != 0 {
+		t.Fatalf("the signed batch was posted on %d time(s)", elsewhere)
+	}
+}
+
 // namedSink is a flakySink under its own checkpoint name.
 type namedSink struct {
 	*flakySink

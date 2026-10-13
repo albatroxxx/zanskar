@@ -94,7 +94,7 @@ func (h *AdminHandler) get(w http.ResponseWriter, r *http.Request) {
 func (h *AdminHandler) create(w http.ResponseWriter, r *http.Request) {
 	var in input
 	if err := httpx.DecodeJSON(r, &in); err != nil {
-		httpx.BadRequest(w, err.Error())
+		httpx.BadRequest(w, r, err.Error())
 		return
 	}
 	pr, _ := auth.FromContext(r.Context())
@@ -107,14 +107,14 @@ func (h *AdminHandler) create(w http.ResponseWriter, r *http.Request) {
 		h.fail(w, r, err)
 		return
 	}
-	h.record(r, "policy.create", p, nil)
+	h.record(r, audit.PolicyCreate, p, nil)
 	httpx.WriteJSON(w, http.StatusCreated, p)
 }
 
 func (h *AdminHandler) update(w http.ResponseWriter, r *http.Request) {
 	var in input
 	if err := httpx.DecodeJSON(r, &in); err != nil {
-		httpx.BadRequest(w, err.Error())
+		httpx.BadRequest(w, r, err.Error())
 		return
 	}
 	p, err := h.Repo.Get(r.Context(), r.PathValue("id"))
@@ -135,7 +135,7 @@ func (h *AdminHandler) update(w http.ResponseWriter, r *http.Request) {
 	if h.Revoker != nil {
 		more["live_sessions_ended"] = h.Revoker.PolicyChanged(r.Context(), p.ID)
 	}
-	h.record(r, "policy.update", p, more)
+	h.record(r, audit.PolicyUpdate, p, more)
 	httpx.WriteJSON(w, http.StatusOK, p)
 }
 
@@ -152,14 +152,14 @@ func (h *AdminHandler) subjectMayConnect(w http.ResponseWriter, r *http.Request,
 	u, err := h.Users.GetByID(r.Context(), p.UserID)
 	if err != nil {
 		if errors.Is(err, user.ErrNotFound) {
-			httpx.WriteError(w, http.StatusUnprocessableEntity, "invalid_subject", "user not found")
+			httpx.WriteError(w, r, http.StatusUnprocessableEntity, "invalid_subject", "user not found")
 			return false
 		}
 		h.fail(w, r, err)
 		return false
 	}
 	if !u.CanConnect() {
-		httpx.WriteError(w, http.StatusUnprocessableEntity, "review_only_subject",
+		httpx.WriteError(w, r, http.StatusUnprocessableEntity, "review_only_subject",
 			"that account holds only the auditor role and is review-only; grant it the user role before writing a policy for it")
 		return false
 	}
@@ -180,7 +180,7 @@ func (h *AdminHandler) del(w http.ResponseWriter, r *http.Request) {
 	if h.Revoker != nil {
 		more["live_sessions_ended"] = h.Revoker.PolicyDeleted(p.ID)
 	}
-	h.record(r, "policy.delete", p, more)
+	h.record(r, audit.PolicyDelete, p, more)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -196,13 +196,12 @@ func (h *AdminHandler) record(r *http.Request, action string, p *Policy, more ma
 func (h *AdminHandler) fail(w http.ResponseWriter, r *http.Request, err error) {
 	switch {
 	case errors.Is(err, ErrNotFound):
-		httpx.WriteError(w, http.StatusNotFound, "not_found", "policy not found")
+		httpx.WriteError(w, r, http.StatusNotFound, "not_found", "policy not found")
 	case errors.Is(err, ErrDuplicate):
-		httpx.WriteError(w, http.StatusConflict, "conflict", "a policy with that name exists")
+		httpx.WriteError(w, r, http.StatusConflict, "conflict", "a policy with that name exists")
 	case errors.Is(err, ErrInvalidInput):
-		httpx.BadRequest(w, err.Error())
+		httpx.BadRequest(w, r, err.Error())
 	default:
-		h.Log.Error("policy handler", "path", r.URL.Path, "err", err)
-		httpx.WriteError(w, http.StatusInternalServerError, "internal", "internal error")
+		httpx.Internal(w, r, h.Log, err)
 	}
 }
