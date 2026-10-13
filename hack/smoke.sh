@@ -8,7 +8,7 @@ set -euo pipefail
 S=${SMOKE_TMP:-$(mktemp -d)}
 cd "$(dirname "$0")/.."
 LAN=${SMOKE_LAN_IP:-$(ipconfig getifaddr en0 2>/dev/null || hostname -I 2>/dev/null | awk '{print $1}')}
-[ -n "$LAN" ] || { echo "no LAN address found; set SMOKE_LAN_IP" >&2; exit 1; }
+[[ -n "$LAN" ]] || { echo "no LAN address found; set SMOKE_LAN_IP" >&2; exit 1; }
 # Only stop processes bound to the smoke ports, never a developer's own server on 8443/2222.
 stop() { for port in 18443 2223 2224; do lsof -ti "tcp:$port" 2>/dev/null | xargs kill 2>/dev/null || true; done; }
 stop; sleep 0.5
