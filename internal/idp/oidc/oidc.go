@@ -362,7 +362,8 @@ func domainAllowed(email string, domains []string) bool {
 // their own: the browser keeps them encoded, so "%09" or "%2F" in a path can
 // never turn into a second "/".
 func safeNext(next string) bool {
-	if next == "" || !strings.HasPrefix(next, "/") || strings.HasPrefix(next, "//") {
+	// Exactly one leading "/": a second "/" or "\" makes the rest a host.
+	if len(next) == 0 || next[0] != '/' || (len(next) > 1 && (next[1] == '/' || next[1] == '\\')) {
 		return false
 	}
 	for _, r := range next {
