@@ -6,6 +6,7 @@ package dbtest
 
 import (
 	"context"
+	"net"
 	"os"
 	"os/exec"
 	"strconv"
@@ -38,6 +39,21 @@ func Docker(t *testing.T, args ...string) string {
 	return strings.TrimSpace(string(out))
 }
 
+// freePort asks the kernel for a TCP port nothing is bound to. The database
+// runs on the host's network, so a port picked at random can be taken: the
+// range this used, 40000 to 49999, lies inside Linux's ephemeral ports, and a
+// CI runner's own connections held the one it picked, so PostgreSQL could not
+// listen on it and the test waited out its 90 seconds.
+func freePort(t *testing.T) int {
+	t.Helper()
+	ln, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", ":0") // #nosec G102 -- held for an instant to learn a port free on every interface, as PostgreSQL will bind
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = ln.Close() }()
+	return ln.Addr().(*net.TCPAddr).Port
+}
+
 // StartPostgres runs PostgreSQL (database "app", user "postgres") on the
 // Docker host's own network, on a high port, and returns the address a
 // session's containers reach it at: the default bridge's gateway, which is
@@ -47,7 +63,7 @@ func StartPostgres(t *testing.T, password string) (string, int) {
 	t.Helper()
 	host := Docker(t, "network", "inspect", "bridge", "-f", "{{(index .IPAM.Config 0).Gateway}}")
 	name := "zanskar-test-pg-" + strconv.FormatInt(time.Now().UnixNano(), 36)
-	port := 40000 + int(time.Now().UnixNano()%10000)
+	port := freePort(t)
 	Docker(t, "run", "-d", "--name", name, "--network", "host", "-e", "POSTGRES_PASSWORD="+password, "-e", "POSTGRES_DB=app",
 		"postgres:16-alpine", "postgres", "-p", strconv.Itoa(port), "-c", "listen_addresses=*")
 	t.Cleanup(func() {
