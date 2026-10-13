@@ -315,3 +315,39 @@ func TestDesktopRouteRefusals(t *testing.T) {
 	r.h.GuacdAddr = func() string { return "" }
 	refused("desktop sessions switched off", tok, http.StatusNotImplemented)
 }
+
+// TestDesktopRefusalIsNotALostTarget: a desktop the gateway refuses before
+// its bridge starts, here because guacd is not running, is told so with
+// status 523 (session closed) and the reason. It was 519, the lost-target
+// status, so the console said the connection to the target was lost and, on
+// an autoscaling group, offered another instance, which cannot help.
+func TestDesktopRefusalIsNotALostTarget(t *testing.T) {
+	r := newDesktopRig(t)
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	down := ln.Addr().String()
+	_ = ln.Close()
+	r.h.GuacdAddr = func() string { return down }
+	id := r.addTarget(t, "vnc-box", map[target.Protocol]int{target.VNC: 5900}, "")
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	ws, _, err := r.dial(ctx, r.ticket(t, id, "vnc")) //nolint:bodyclose // the library closes the handshake body
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ws.CloseNow()
+	_, data, err := ws.Read(ctx)
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	in, err := guac.Parse(string(data))
+	if err != nil || in.Opcode != "error" || len(in.Args) != 2 {
+		t.Fatalf("got %q (%v), want an error instruction", data, err)
+	}
+	if in.Args[1] != "523" || !strings.Contains(in.Args[0], "guacd") {
+		t.Fatalf("refusal %q with status %s, want guacd's absence with 523", in.Args[0], in.Args[1])
+	}
+}

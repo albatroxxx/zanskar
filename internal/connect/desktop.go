@@ -223,9 +223,14 @@ func (h *Handler) desktop(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	// The console reads why from a guacamole error instruction. A desktop
+	// refused before its bridge starts was refused by the gateway, not lost,
+	// so it is 523 (session closed) with the reason: 519 would offer another
+	// instance of an autoscaling group, which cannot help when guacd is down
+	// or the recording cannot be written.
 	run.tell = func(msg string) {
 		wctx, cancel := detach(r.Context(), frameTimeout)
-		_ = ws.Write(wctx, websocket.MessageText, []byte(guac.ErrorInstruction(msg, 519)))
+		_ = ws.Write(wctx, websocket.MessageText, []byte(guac.ErrorInstruction(msg, guac.StatusSessionClosed)))
 		cancel()
 	}
 
