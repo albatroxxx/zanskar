@@ -193,6 +193,10 @@ date:
   attached to the runtime's default bridge (`bridge`; `podman` under Podman, which is not
   verified), through which it dials the database; it dials only when the client connects,
   so attaching after start is in time, and the client still resolves the proxy by name.
+  Docker's embedded resolver forwards no outside name for a container that sits only on
+  internal networks (SERVFAIL, measured), and starts forwarding once the bridge is
+  attached, with the default route then via the bridge (measured on Docker 29), so a
+  database named by host name, as RDS endpoints are, still resolves from the proxy.
   On Docker 28.1 and newer the network also uses the isolated gateway mode
   (`com.docker.network.bridge.gateway_mode_ipv4=isolated`), so the bridge carries no
   address of the gateway host either. Measured on Docker 29: from the client, the
@@ -206,7 +210,9 @@ date:
   and `zanskar.session=<id>`. `dbgw.Reap` lists both by label and removes what belongs to
   no session this process runs and is older than two minutes, so a start in flight is
   never reaped, containers before networks; `serve` runs it at start and every five
-  minutes.
+  minutes. The labels carry no gateway identity, so the reaper assumes one gateway per
+  container daemon, as the single-instance decision above does; two gateways sharing a
+  daemon would reap each other's sessions.
 - **A cap.** `ZANSKAR_DATABASE_MAX_SESSIONS` (default 20; 0 lifts it) bounds the database
   sessions running at once; past it a connection is refused with `503 too_many_sessions`
   and audited as a failed `session.connect`. It is counted, not reserved, so a burst of
