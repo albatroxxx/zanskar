@@ -157,11 +157,16 @@ func TestLoadSkipsInvalidStoredValue(t *testing.T) {
 		t.Fatal(err)
 	}
 	svc := NewService(repo, nil, nil)
+	var logged bytes.Buffer
+	svc.Logger = slog.New(slog.NewTextHandler(&logged, nil))
 	if err := svc.Load(ctx); err != nil {
 		t.Fatal(err)
 	}
 	if v, _ := svc.Get(KeyDBProxyImage); v.Value != DefaultDBProxyImage() || v.Source != SourceDefault {
 		t.Fatalf("a stored relay image that is not an image reference is used: %+v", v)
+	}
+	if !strings.Contains(logged.String(), "stored setting ignored") || !strings.Contains(logged.String(), KeyDBProxyImage) {
+		t.Fatalf("the dropped value is not named at start: %q", logged.String())
 	}
 	if v, _ := svc.Get(KeyLogLevel); v.Value != "debug" || v.Source != SourceConsole {
 		t.Fatalf("a valid stored value was dropped: %+v", v)

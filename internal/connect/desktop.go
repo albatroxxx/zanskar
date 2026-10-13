@@ -259,7 +259,9 @@ func (h *Handler) desktop(w http.ResponseWriter, r *http.Request) {
 	// Guacamole.Client ignores opcodes it does not know, so it is harmless to
 	// a stock client and never reaches guacd.
 	if err := ws.Write(r.Context(), websocket.MessageText, []byte(guac.Encode("", run.s.ID)+FlagsInstruction(g.AllowFileTransfer, g.AllowClipboard))); err != nil {
-		_, _, _ = rec.Close()
+		// The recording is closed the way every other end closes it, so a
+		// close that fails is audited as recording.lost here too (B14).
+		run.finishRecording(rec, recRow)
 		run.end(session.EndError, "")
 		return
 	}

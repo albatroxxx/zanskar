@@ -408,6 +408,33 @@ func TestResignAnchors(t *testing.T) {
 	})
 }
 
+// TestAnchorRefusesAfterRotation: a gateway that kept running through a
+// master-key rotation holds the old key. Once the stored anchors are
+// re-signed under the new one, it must not write an anchor of its own: that
+// anchor would fail every later verification, with no key left to re-sign
+// it. The new key anchors as usual.
+func TestAnchorRefusesAfterRotation(t *testing.T) {
+	forEachBackend(t, func(t *testing.T, log *Log, _ *store.DB) {
+		ctx := context.Background()
+		record(t, log, 2)
+		anchorNow(t, log)
+		if _, _, err := log.ResignAnchors(ctx, testKey, otherKey); err != nil {
+			t.Fatal(err)
+		}
+		record(t, log, 1)
+		if _, err := log.Anchor(ctx, testKey); !errors.Is(err, ErrAnchorKeyMismatch) {
+			t.Fatalf("anchor under the old key after a rotation: %v", err)
+		}
+		a, err := log.Anchor(ctx, otherKey)
+		if err != nil || !a.Signed(otherKey) {
+			t.Fatalf("anchor under the new key: %+v %v", a, err)
+		}
+		if res, err := log.Verify(ctx, otherKey); err != nil || !res.Intact() {
+			t.Fatalf("verify under the new key: %+v %v", res, err)
+		}
+	})
+}
+
 // TestResealRemovesStaleAnchors: a reseal rewrites every hash from the first
 // break, so the anchors over rewritten events go with it, in the same
 // transaction; an anchor over an event that is missing stays, so the gap is

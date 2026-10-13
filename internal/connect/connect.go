@@ -664,12 +664,22 @@ func (h *Handler) redeem(w http.ResponseWriter, r *http.Request) (*ticket.Grant,
 	// The browser sends the cookie of its sign-in with the upgrade; the
 	// ticket is redeemed only by the sign-in that asked for it (L9).
 	sessionID := ""
-	if p, ok := auth.FromContext(r.Context()); ok {
+	p, signedIn := auth.FromContext(r.Context())
+	if signedIn {
 		sessionID = p.Session.ID
 	}
 	g, err := h.Tickets.Redeem(r.URL.Query().Get("ticket"), auth.ClientIP(r), sessionID)
 	if err != nil {
 		httpx.WriteError(w, r, http.StatusUnauthorized, "invalid_ticket", "invalid or expired ticket")
+		return nil, false
+	}
+	// The role gate RequireConnect applied when the ticket was issued is
+	// applied again here, with the roles the account holds now: a role
+	// change inside the ticket's thirty seconds ends nothing (there is no
+	// session yet) and must not let a review-only account start one.
+	if !signedIn || !p.User.CanConnect() {
+		zero(g.UserSecret)
+		httpx.WriteError(w, r, http.StatusForbidden, "review_only", "this account is review-only; the user role is required to reach targets")
 		return nil, false
 	}
 	// Up to 30 seconds have passed since the policies allowed this: ask

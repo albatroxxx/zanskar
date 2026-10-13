@@ -14,6 +14,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net"
 	"os"
 	"regexp"
@@ -338,6 +339,8 @@ type Service struct {
 	repo *Repo
 	env  map[string]string
 	boot []Boot
+	// Logger, when set, names a stored value Load leaves out.
+	Logger *slog.Logger
 
 	mu   sync.RWMutex
 	rows map[string]Setting
@@ -369,8 +372,13 @@ func (s *Service) Load(ctx context.Context) error {
 		}
 		// A value stored before its check existed (a relay image that is
 		// not an image reference) is not used: the environment value or the
-		// default applies until an administrator sets it again.
+		// default applies until an administrator sets it again. It is named
+		// at start, so a mirror pinned in an air-gapped install does not
+		// vanish in silence.
 		if _, err := Validate(d, row.Value); err != nil {
+			if s.Logger != nil {
+				s.Logger.Warn("stored setting ignored; set it again in the console", "setting", row.Key, "err", err)
+			}
 			continue
 		}
 		s.rows[row.Key] = row

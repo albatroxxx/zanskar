@@ -36,11 +36,12 @@ function typingInField(): boolean {
  *
  * The clipboard, when the policy allows it, is synced both ways: text copied
  * inside the desktop arrives through the client's clipboard stream and is
- * written to the browser clipboard; text copied in the browser is read
- * whenever the window regains focus and sent to the desktop, so a plain
- * Ctrl+V inside the session pastes it. Browsers may refuse either half
- * (permission not granted, Firefox without a user gesture), so a clipboard
- * panel with a text box is the fallback in both directions.
+ * written to the browser clipboard; text copied in the browser is read only
+ * when the user presses Ctrl+V or Cmd+V in the desktop, sent first, and the
+ * keystroke follows, so the remote application pastes it. Nothing is read on
+ * focus or on a timer. Browsers may refuse either half (permission not
+ * granted, Firefox without a user gesture), so a clipboard panel with a text
+ * box is the fallback in both directions.
  */
 export function Desktop() {
   const loc = useLocation()
@@ -73,10 +74,10 @@ function DesktopSession({ state }: { state: SessionState }) {
   const clientRef = useRef<Client | null>(null)
   const fsRef = useRef<GuacObject | null>(null)
   const fileInput = useRef<HTMLInputElement>(null)
-  // Mirrors of state the window focus listener (registered once) must read.
+  // Mirrors of state the key handler (registered once) must read.
   const clipAllowedRef = useRef(false)
-  // The last text both sides agree on, so a focus sync does not echo back
-  // what the desktop just sent, and unchanged text is not resent.
+  // The last text both sides agree on, so a paste does not echo back what
+  // the desktop just sent, and unchanged text is not resent.
   const lastClipRef = useRef('')
   // Guacamole.Keyboard listens on the document itself and calls
   // preventDefault on every key it handles. Leaving its handlers set after

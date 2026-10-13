@@ -28,6 +28,7 @@ import (
 	"github.com/albatroxxx/zanskar/internal/session"
 	"github.com/albatroxxx/zanskar/internal/target"
 	"github.com/albatroxxx/zanskar/internal/ticket"
+	"github.com/albatroxxx/zanskar/internal/user"
 )
 
 // shellTarget is an SSH server that accepts the fixture's vaulted credential
@@ -540,11 +541,25 @@ func TestTicketBelongsToItsSignIn(t *testing.T) {
 		refusedWith(t, tok, r.cookie, http.StatusForbidden, "policy_denied")
 	})
 
-	t.Run("after signing out", func(t *testing.T) {
+	t.Run("after the connect role is taken away", func(t *testing.T) {
 		pol := &policy.Policy{Name: "test-all-again", GroupID: r.opsID, Enabled: true, Selector: policy.Selector{Tags: map[string]string{"env": "test"}}, Protocols: []string{"ssh"}, IdleTimeoutMinutes: 15}
 		if err := r.h.Policies.Create(ctx, pol); err != nil {
 			t.Fatal(err)
 		}
+		tok := r.ticket(t)
+		// A role change ends live sessions (H5), but a ticket is not a
+		// session yet: the gate that issued it is applied again at
+		// redemption, so a now review-only account starts nothing.
+		if err := r.users.SetRoles(ctx, r.alice.ID, []user.Role{user.RoleAuditor}); err != nil {
+			t.Fatal(err)
+		}
+		refusedWith(t, tok, r.cookie, http.StatusForbidden, "review_only")
+		if err := r.users.SetRoles(ctx, r.alice.ID, []user.Role{user.RoleUser}); err != nil {
+			t.Fatal(err)
+		}
+	})
+
+	t.Run("after signing out", func(t *testing.T) {
 		tok := r.ticket(t)
 		sess, err := r.sessions.Lookup(ctx, r.cookie.Value)
 		if err != nil {
