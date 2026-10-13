@@ -4,7 +4,7 @@ import { fmtTime, protocolName } from '../../api/format'
 import type { AsgAccessTest, AsgIAMDocs, AsgInstance, AutoscalingGroup, AwsIdentity, Credential, OSFamily, Protocol } from '../../api/types'
 import { Alert, Badge, Confirm, Empty, Field, Modal, PageHead, Tags } from '../../components/ui'
 import { formatTags, parseTags, protocols, useList, type PortProtocol } from './lib'
-import { CredentialBindings, type BindingChange } from './Bindings'
+import { CredentialBindings, CredentialSelect, shownValue, type BindingChange } from './Bindings'
 
 interface SyncSummary { Seen: number; Healthy: number; Joined: number; Left: number; Retired: number; HostKeyMismatches: number }
 interface SyncResponse { summary: SyncSummary; group: AutoscalingGroup; error?: string }
@@ -114,13 +114,15 @@ interface FormState {
   credentials: Record<Protocol, string>
 }
 
-function initialForm(g?: AutoscalingGroup): FormState {
+/** initialForm is a group as the form edits it. Given the credential list,
+ *  a binding to the shared user-supplied row reads as that choice. */
+function initialForm(g?: AutoscalingGroup, all: Credential[] = []): FormState {
   const caps = { ssh: false, rdp: false, vnc: false, winrm: false } as Record<Protocol, boolean>
   for (const c of g?.capabilities ?? ['ssh']) caps[c] = true
   const ports = { ssh: '', rdp: '', vnc: '', winrm: '' } as Record<Protocol, string>
   for (const p of protocols) if (g?.ports[p]) ports[p] = String(g.ports[p])
   const credentials = { ssh: '', rdp: '', vnc: '', winrm: '' } as Record<Protocol, string>
-  for (const p of protocols) credentials[p] = g?.credentials[p] ?? ''
+  for (const p of protocols) credentials[p] = shownValue(g?.credentials[p], all)
   return {
     name: g?.name ?? '',
     region: g?.region ?? '',
@@ -162,7 +164,7 @@ function toBody(f: FormState, status: string, extra: Record<string, unknown> = {
 }
 
 function GroupForm({ initial, credentials, onClose, onSaved }: { initial?: AutoscalingGroup; credentials: Credential[]; onClose: () => void; onSaved: (g: AutoscalingGroup) => void }) {
-  const [f, setF] = useState<FormState>(() => initialForm(initial))
+  const [f, setF] = useState<FormState>(() => initialForm(initial, credentials))
   const [err, setErr] = useState('')
   const [busy, setBusy] = useState(false)
   const up = (patch: Partial<FormState>) => setF((s) => ({ ...s, ...patch }))
@@ -289,14 +291,7 @@ function GroupForm({ initial, credentials, onClose, onSaved }: { initial?: Autos
                     <input id={`asg-port-${p}`} type="number" min={1} max={65535} placeholder={String(defaultPorts[p])} value={f.ports[p]} disabled={!f.caps[p]} onChange={(e) => up({ ports: { ...f.ports, [p]: e.target.value } })} style={{ width: 110 }} />
                   </td>
                   <td>
-                    <select id={`asg-cred-${p}`} value={f.credentials[p]} disabled={!f.caps[p]} onChange={(e) => up({ credentials: { ...f.credentials, [p]: e.target.value } })}>
-                      <option value="">none</option>
-                      {credentials.map((c) => (
-                        <option key={c.id} value={c.id}>
-                          {c.name} ({c.type}, {c.mode})
-                        </option>
-                      ))}
-                    </select>
+                    <CredentialSelect id={`asg-cred-${p}`} protocol={p} value={f.credentials[p]} credentials={credentials} disabled={!f.caps[p]} onChange={(v) => up({ credentials: { ...f.credentials, [p]: v } })} />
                   </td>
                 </tr>
               ))}
