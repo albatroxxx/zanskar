@@ -116,7 +116,7 @@ SOFTWARE.
 
 ### github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream
 
-* Version: `v1.7.20`
+* Version: `v1.7.22`
 
 ```
 
@@ -327,7 +327,7 @@ SOFTWARE.
 
 ### github.com/aws/aws-sdk-go-v2/config
 
-* Version: `v1.33.6`
+* Version: `v1.33.9`
 
 ```
 
@@ -538,7 +538,7 @@ SOFTWARE.
 
 ### github.com/aws/aws-sdk-go-v2/credentials
 
-* Version: `v1.20.6`
+* Version: `v1.20.9`
 
 ```
 
@@ -749,7 +749,7 @@ SOFTWARE.
 
 ### github.com/aws/aws-sdk-go-v2/feature/ec2/imds
 
-* Version: `v1.20.1`
+* Version: `v1.20.3`
 
 ```
 
@@ -960,7 +960,7 @@ SOFTWARE.
 
 ### github.com/aws/aws-sdk-go-v2/internal/configsources
 
-* Version: `v1.5.4`
+* Version: `v1.5.6`
 
 ```
 
@@ -1171,7 +1171,7 @@ SOFTWARE.
 
 ### github.com/aws/aws-sdk-go-v2/internal/endpoints/v2
 
-* Version: `v2.8.4`
+* Version: `v2.8.6`
 
 ```
 
@@ -1382,7 +1382,7 @@ SOFTWARE.
 
 ### github.com/aws/aws-sdk-go-v2/internal/v4a
 
-* Version: `v1.5.4`
+* Version: `v1.5.6`
 
 ```
 
@@ -1593,7 +1593,7 @@ SOFTWARE.
 
 ### github.com/aws/aws-sdk-go-v2/service/autoscaling
 
-* Version: `v1.78.1`
+* Version: `v1.78.4`
 
 ```
 
@@ -1804,7 +1804,7 @@ SOFTWARE.
 
 ### github.com/aws/aws-sdk-go-v2/service/ec2instanceconnect
 
-* Version: `v1.42.0`
+* Version: `v1.44.1`
 
 ```
 
@@ -2015,7 +2015,7 @@ SOFTWARE.
 
 ### github.com/aws/aws-sdk-go-v2/service/ec2
 
-* Version: `v1.338.1`
+* Version: `v1.338.4`
 
 ```
 
@@ -2226,7 +2226,7 @@ SOFTWARE.
 
 ### github.com/aws/aws-sdk-go-v2/service/elasticloadbalancingv2
 
-* Version: `v1.63.1`
+* Version: `v1.63.4`
 
 ```
 
@@ -2437,7 +2437,7 @@ SOFTWARE.
 
 ### github.com/aws/aws-sdk-go-v2/service/internal/accept-encoding
 
-* Version: `v1.13.19`
+* Version: `v1.13.21`
 
 ```
 
@@ -2648,7 +2648,7 @@ SOFTWARE.
 
 ### github.com/aws/aws-sdk-go-v2/service/internal/checksum
 
-* Version: `v1.11.5`
+* Version: `v1.11.7`
 
 ```
 
@@ -2859,7 +2859,7 @@ SOFTWARE.
 
 ### github.com/aws/aws-sdk-go-v2/service/internal/presigned-url
 
-* Version: `v1.14.4`
+* Version: `v1.14.6`
 
 ```
 
@@ -3070,7 +3070,7 @@ SOFTWARE.
 
 ### github.com/aws/aws-sdk-go-v2/service/internal/s3shared
 
-* Version: `v1.20.4`
+* Version: `v1.20.6`
 
 ```
 
@@ -3281,7 +3281,7 @@ SOFTWARE.
 
 ### github.com/aws/aws-sdk-go-v2/service/s3
 
-* Version: `v1.114.0`
+* Version: `v1.114.3`
 
 ```
 
@@ -3492,7 +3492,7 @@ SOFTWARE.
 
 ### github.com/aws/aws-sdk-go-v2/service/signin
 
-* Version: `v1.10.1`
+* Version: `v1.10.4`
 
 ```
 
@@ -3703,7 +3703,7 @@ SOFTWARE.
 
 ### github.com/aws/aws-sdk-go-v2/service/ssooidc
 
-* Version: `v1.43.1`
+* Version: `v1.43.4`
 
 ```
 
@@ -3914,7 +3914,7 @@ SOFTWARE.
 
 ### github.com/aws/aws-sdk-go-v2/service/sso
 
-* Version: `v1.38.1`
+* Version: `v1.38.4`
 
 ```
 
@@ -4125,7 +4125,7 @@ SOFTWARE.
 
 ### github.com/aws/aws-sdk-go-v2/service/sts
 
-* Version: `v1.51.1`
+* Version: `v1.51.4`
 
 ```
 
@@ -4336,7 +4336,7 @@ SOFTWARE.
 
 ### github.com/aws/aws-sdk-go-v2
 
-* Version: `v1.47.1`
+* Version: `v1.47.3`
 
 ```
 
@@ -4555,7 +4555,7 @@ Copyright 2014-2015 Stripe, Inc.
 
 ### github.com/aws/smithy-go
 
-* Version: `v1.28.1`
+* Version: `v1.28.5`
 
 ```
 
@@ -5621,7 +5621,7 @@ SOFTWARE.
 
 ### github.com/go-ldap/ldap/v3
 
-* Version: `v3.4.14`
+* Version: `v3.4.15`
 
 ```
 The MIT License (MIT)
@@ -9602,7 +9602,7 @@ THE SOFTWARE.
 
 ### golang.org/x/crypto
 
-* Version: `v0.57.0`
+* Version: `v0.58.0`
 
 ```
 Copyright 2009 The Go Authors.
@@ -9710,7 +9710,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 ### golang.org/x/sync
 
-* Version: `v0.23.0`
+* Version: `v0.24.0`
 
 ```
 Copyright 2009 The Go Authors.
@@ -9746,7 +9746,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 ### golang.org/x/sys
 
-* Version: `v0.48.0`
+* Version: `v0.49.0`
 
 ```
 Copyright 2009 The Go Authors.
@@ -9782,7 +9782,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 ### golang.org/x/term
 
-* Version: `v0.46.0`
+* Version: `v0.47.0`
 
 ```
 Copyright 2009 The Go Authors.
@@ -9818,7 +9818,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 ### golang.org/x/text
 
-* Version: `v0.42.0`
+* Version: `v0.43.0`
 
 ```
 Copyright 2009 The Go Authors.
