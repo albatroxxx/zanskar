@@ -112,6 +112,12 @@ port is never published — only Caddy's 80/443 are — so plaintext flows only 
 private Docker network between them. A one-shot `zanskar-migrate` service applies pending
 migrations before the gateway starts (`serve` refuses to run with migrations pending).
 
+The file needs Docker Compose 2.20 or newer (the health checks below say why); check with
+`docker compose version`. Docker's own repository ships a current `docker-compose-plugin`, and
+the `docker-compose-v2` package on Ubuntu 22.04 and 24.04 and Debian 13's package are new
+enough. Debian 12's own `docker-compose` package is the old Compose v1, with no
+`docker compose` command at all: on Debian 12, install Docker from Docker's repository.
+
 The stack pulls the published image `ghcr.io/albatroxxx/zanskar:${ZANSKAR_VERSION:-latest}`
 (linux/amd64 and linux/arm64, signed with Sigstore — verification commands are in each
 release's notes; `cosign` is not in the Ubuntu, Debian or RHEL repositories, so install it from
