@@ -216,6 +216,16 @@ export function Empty({ children }: { children: ReactNode }) {
   return <div className="empty">{children}</div>
 }
 
+/** LoadMore is the button under a list read a page at a time; it is shown only while there is a next page. */
+export function LoadMore({ next, busy, onMore }: { next: string; busy?: boolean; onMore: () => void }) {
+  if (!next) return null
+  return (
+    <div className="actions" style={{ padding: 12 }}>
+      <button className="btn sm" disabled={busy} onClick={onMore}>Load more</button>
+    </div>
+  )
+}
+
 export function Tags({ tags }: { tags?: Record<string, string> }) {
   const entries = Object.entries(tags ?? {})
   if (entries.length === 0) return <span className="muted">none</span>

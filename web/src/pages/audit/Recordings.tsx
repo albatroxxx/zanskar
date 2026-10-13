@@ -1,44 +1,26 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { api, errorMessage, query } from '../../api/client'
+import { api, query } from '../../api/client'
 import { fmtDuration, fmtTime } from '../../api/format'
 import { sessionTarget, sessionUser } from '../../api/labels'
 import type { Page, Session } from '../../api/types'
-import { Alert, Empty, PageHead, reasonBadge } from '../../components/ui'
+import { usePaged } from '../../components/paged'
+import { Alert, Empty, LoadMore, PageHead, reasonBadge } from '../../components/ui'
 import { useRecordingsPath } from './paths'
 
 export function Recordings() {
   const recordingsPath = useRecordingsPath()
-  const [items, setItems] = useState<Session[] | null>(null)
-  // How many sessions have been read so far, recorded or not.
-  const [scanned, setScanned] = useState(0)
-  const [next, setNext] = useState('')
-  const [err, setErr] = useState('')
-  const [busy, setBusy] = useState(false)
-  const [search, setSearch] = useState('')
-
   // Recordings are found through the sessions list, which already carries
   // the user and target names, and filtered to rows that have a recording.
-  const load = (cursor?: string) => {
-    return api
-      .get<Page<Session>>('/sessions' + query({ cursor, limit: 100 }))
-      .then((p) => {
-        const withRec = p.items.filter((s) => !!s.recording_id)
-        setItems((cur) => (cursor && cur ? [...cur, ...withRec] : withRec))
-        setScanned((n) => (cursor ? n + p.items.length : p.items.length))
-        setNext(p.next_cursor ?? '')
-      })
-      .catch((e) => setErr(errorMessage(e)))
-  }
+  const { items: sessions, next, err, busy, load, more } = usePaged((cursor) => api.get<Page<Session>>('/sessions' + query({ cursor, limit: 100 })))
+  const items = sessions && sessions.filter((s) => !!s.recording_id)
+  // How many sessions have been read so far, recorded or not.
+  const scanned = sessions?.length ?? 0
+  const [search, setSearch] = useState('')
 
   useEffect(() => {
     void load()
-  }, [])
-
-  const more = () => {
-    setBusy(true)
-    void load(next).finally(() => setBusy(false))
-  }
+  }, [load])
 
   const needle = search.trim().toLowerCase()
   const visible = (items ?? []).filter((s) => {
@@ -111,11 +93,7 @@ export function Recordings() {
             </tbody>
           </table>
         )}
-        {next && (
-          <div className="actions" style={{ padding: 12 }}>
-            <button className="btn sm" disabled={busy} onClick={more}>Load more</button>
-          </div>
-        )}
+        <LoadMore next={next} busy={busy} onMore={more} />
       </div>
     </>
   )

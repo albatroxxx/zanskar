@@ -1,27 +1,17 @@
-import { useEffect, useState } from 'react'
-import { api, errorMessage, query } from '../../api/client'
+import { useEffect } from 'react'
+import { api, query } from '../../api/client'
 import { fmtDuration, fmtTime } from '../../api/format'
 import { sessionTarget } from '../../api/labels'
 import type { Page, Session } from '../../api/types'
-import { Alert, Empty, PageHead, reasonBadge } from '../../components/ui'
+import { usePaged } from '../../components/paged'
+import { Alert, Empty, LoadMore, PageHead, reasonBadge } from '../../components/ui'
 
 export function MySessions() {
-  const [items, setItems] = useState<Session[] | null>(null)
-  const [next, setNext] = useState('')
-  const [err, setErr] = useState('')
-
-  const load = (cursor?: string) =>
-    api
-      .get<Page<Session>>('/me/sessions' + query({ cursor, limit: 50 }))
-      .then((p) => {
-        setItems((cur) => (cursor && cur ? [...cur, ...p.items] : p.items))
-        setNext(p.next_cursor ?? '')
-      })
-      .catch((e) => setErr(errorMessage(e)))
+  const { items, next, err, load, more } = usePaged((cursor) => api.get<Page<Session>>('/me/sessions' + query({ cursor, limit: 50 })))
 
   useEffect(() => {
     void load()
-  }, [])
+  }, [load])
 
   return (
     <>
@@ -56,11 +46,7 @@ export function MySessions() {
             </tbody>
           </table>
         )}
-        {next && (
-          <div className="actions" style={{ padding: 12 }}>
-            <button className="btn sm" onClick={() => void load(next)}>Load more</button>
-          </div>
-        )}
+        <LoadMore next={next} onMore={more} />
       </div>
     </>
   )
