@@ -227,6 +227,7 @@ func serve(ctx context.Context) error {
 		return fmt.Errorf("settings from the environment: %w", errors.Join(envErrs...))
 	}
 	runtime := settings.NewService(settings.NewRepo(db), envSettings, bootSettings(cfg, ring.ActiveVersion()))
+	runtime.Logger = log
 	if err := runtime.Load(ctx); err != nil {
 		return fmt.Errorf("settings: %w", err)
 	}
