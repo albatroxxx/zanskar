@@ -445,7 +445,7 @@ func (r *Repo) TrustCertificate(ctx context.Context, id string, proto Protocol, 
 // consumed and closed before it returns, which matters on SQLite where the
 // pool holds a single connection: a follow-up query while rows are open
 // would deadlock.
-func (r *Repo) scanAll(ctx context.Context, q string, tags map[string]string, max int, args ...any) ([]*Target, error) {
+func (r *Repo) scanAll(ctx context.Context, q string, tags map[string]string, limit int, args ...any) ([]*Target, error) {
 	rows, err := r.db.QueryContext(ctx, q, args...)
 	if err != nil {
 		return nil, err
@@ -461,7 +461,7 @@ func (r *Repo) scanAll(ctx context.Context, q string, tags map[string]string, ma
 			continue
 		}
 		out = append(out, t)
-		if max > 0 && len(out) >= max {
+		if limit > 0 && len(out) >= limit {
 			break
 		}
 	}

@@ -71,9 +71,9 @@ func TestTimeWindow(t *testing.T) {
 
 func TestEvaluate(t *testing.T) {
 	now := time.Date(2026, 9, 21, 10, 0, 0, 0, time.UTC) // Monday 10:00
-	max := 60
+	most := 60
 	wide := &Policy{Name: "wide", Enabled: true, Selector: Selector{Tags: map[string]string{"env": "prod"}}, Protocols: []string{"ssh", "rdp"}, IdleTimeoutMinutes: 30, AllowClipboard: true}
-	tight := &Policy{Name: "tight", Enabled: true, Selector: Selector{Targets: []string{"t1"}}, Protocols: []string{"ssh"}, IdleTimeoutMinutes: 10, MaxSessionMinutes: &max, RequireMFA: true}
+	tight := &Policy{Name: "tight", Enabled: true, Selector: Selector{Targets: []string{"t1"}}, Protocols: []string{"ssh"}, IdleTimeoutMinutes: 10, MaxSessionMinutes: &most, RequireMFA: true}
 	off := &Policy{Name: "off", Enabled: false, Selector: Selector{Targets: []string{"t1"}}, Protocols: []string{"vnc"}, IdleTimeoutMinutes: 5}
 	hours := &Policy{Name: "hours", Enabled: true, Selector: Selector{Targets: []string{"t2"}}, Protocols: []string{"ssh"}, IdleTimeoutMinutes: 15,
 		TimeWindows: []TimeWindow{{Days: []string{"sat", "sun"}, From: "00:00", To: "23:59", TZ: "UTC"}}}

@@ -324,9 +324,9 @@ func TestResolveGroupDNMappingIsExact(t *testing.T) {
 	if r, err := e.pv.Resolve(ctx, p, planted); err != nil || len(r.GroupsAdded) != 0 {
 		t.Fatalf("a same-named group in another OU joined the mapped group: %+v %v", r.GroupsAdded, err)
 	}
-	real := Identity{ExternalID: "sub-2", Username: "alice", Groups: []string{"zanskar-admins"},
+	mapped := Identity{ExternalID: "sub-2", Username: "alice", Groups: []string{"zanskar-admins"},
 		GroupDNs: []string{"CN=Zanskar-Admins, OU=Groups, DC=corp, DC=example"}}
-	if r, err := e.pv.Resolve(ctx, p, real); err != nil || strings.Join(r.GroupsAdded, ",") != "g-admins" {
+	if r, err := e.pv.Resolve(ctx, p, mapped); err != nil || strings.Join(r.GroupsAdded, ",") != "g-admins" {
 		t.Fatalf("the mapped DN, written differently, must match: %+v %v", r.GroupsAdded, err)
 	}
 	p.Config.GroupMapping = GroupMapping{"zanskar-admins": "g-admins"}

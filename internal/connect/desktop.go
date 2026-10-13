@@ -196,7 +196,7 @@ func (h *Handler) desktop(w http.ResponseWriter, r *http.Request) {
 			h.Log.Warn("rdp certificate pin check failed", "target", ep.LiveKey, "err", err)
 			// A different certificate is the ADR 0012 case and is audited, as
 			// WinRM's and SSH's are; an unreachable target is only logged.
-			var mm *certMismatch
+			var mm *certMismatchError
 			if errors.As(err, &mm) {
 				h.record(r, actorFor(g.UserID, ip).Event(audit.TargetTLSMismatch, "target", ep.LiveKey, audit.Failure,
 					map[string]string{"protocol": protocol.RDP, "expected": mm.want, "seen": mm.got}))
@@ -297,16 +297,16 @@ func (h *Handler) verifyPinnedCert(ctx context.Context, t *endpoint) error {
 		return errors.New("target presented no certificate")
 	}
 	if got := strings.ToLower(strings.ReplaceAll(res.TLS.Fingerprint, ":", "")); got != want {
-		return &certMismatch{got: got, want: want}
+		return &certMismatchError{got: got, want: want}
 	}
 	return nil
 }
 
-// certMismatch is a target that answered with a certificate other than the
+// certMismatchError is a target that answered with a certificate other than the
 // pinned one.
-type certMismatch struct{ got, want string }
+type certMismatchError struct{ got, want string }
 
-func (e *certMismatch) Error() string {
+func (e *certMismatchError) Error() string {
 	return fmt.Sprintf("certificate fingerprint %s does not match pinned %s", e.got, e.want)
 }
 
