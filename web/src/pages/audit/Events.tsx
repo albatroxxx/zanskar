@@ -161,7 +161,9 @@ export function Events() {
   const reset = () => {
     restart()
     setDraft(emptyFilters)
-    setFilters(emptyFilters)
+    // A new object, so the list is read again even when the filters were
+    // empty already: restart has emptied it either way.
+    setFilters({ ...emptyFilters })
   }
   const toggleRoutine = (on: boolean) => {
     restart()
