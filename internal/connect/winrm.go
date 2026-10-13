@@ -3,7 +3,6 @@
 package connect
 
 import (
-	"context"
 	"errors"
 	"net/http"
 	"strconv"
@@ -13,11 +12,9 @@ import (
 
 	"github.com/albatroxxx/zanskar/internal/audit"
 	"github.com/albatroxxx/zanskar/internal/auth"
-	"github.com/albatroxxx/zanskar/internal/gateway"
 	"github.com/albatroxxx/zanskar/internal/gateway/winrmgw"
 	"github.com/albatroxxx/zanskar/internal/httpx"
-	"github.com/albatroxxx/zanskar/internal/recording"
-	"github.com/albatroxxx/zanskar/internal/session"
+	"github.com/albatroxxx/zanskar/internal/protocol"
 	"github.com/albatroxxx/zanskar/internal/target"
 )
 
@@ -90,7 +87,7 @@ func (h *Handler) winrm(w http.ResponseWriter, r *http.Request) {
 	client, err := winrmgw.Dial(r.Context(), winrmgw.Endpoint{Address: ep.Address, IP: dialIP.String(), Port: port, UseTLS: true, PinnedFingerprint: ep.WinRMTLSFingerprint}, a, timeout)
 	if err != nil {
 		if errors.Is(err, winrmgw.ErrCertMismatch) {
-			h.record(r, actorFor(g.UserID, ip).Event(audit.TargetTLSMismatch, "target", ep.LiveKey, audit.Failure, map[string]string{"protocol": "winrm", "expected": ep.WinRMTLSFingerprint}))
+			h.record(r, actorFor(g.UserID, ip).Event(audit.TargetTLSMismatch, "target", ep.LiveKey, audit.Failure, map[string]string{"protocol": protocol.WinRM, "expected": ep.WinRMTLSFingerprint}))
 			httpx.WriteError(w, r, http.StatusConflict, "certificate_mismatch", "the target presented a different certificate; connection refused")
 			return
 		}
@@ -122,49 +119,22 @@ func (h *Handler) winrm(w http.ResponseWriter, r *http.Request) {
 	defer ws.CloseNow()
 	ws.SetReadLimit(1 << 20)
 
-	s := &session.Session{UserID: g.UserID, PolicyID: g.PolicyID, TargetID: ep.TargetID, ASGID: ep.ASGID, ASGInstanceID: ep.ASGInstanceID,
-		Protocol: g.Protocol, CredentialID: g.CredentialID, ClientIP: ip, UserAgent: r.UserAgent()}
-	if err := h.Sessions.Start(r.Context(), s); err != nil {
-		h.Log.Error("start session", "err", err)
-		_ = ws.Close(websocket.StatusInternalError, "could not start session")
+	run, ok := h.startRun(r, ws, g, ep, ip)
+	if !ok {
 		return
 	}
-	actor := audit.Actor{UserID: g.UserID, IP: ip}
-	endWith := func(reason string) {
-		_ = h.Sessions.End(context.Background(), s.ID, reason)
-		h.record(r, actor.Event(audit.SessionEnd, "access_session", s.ID, audit.Success, map[string]string{"reason": reason, "target_id": ep.LiveKey}))
-	}
-
-	rec, uri, err := recording.NewAsciicast(r.Context(), h.Storage, s.ID+".cast", recording.Header{Width: cols, Height: rows, Title: sessionLabel(ep),
-		Env: map[string]string{"ZANSKAR_SESSION": s.ID}})
-	if err != nil {
-		h.Log.Error("start recording", "err", err)
-		endWith(session.EndError)
-		_ = ws.Close(websocket.StatusInternalError, "recording could not be started")
+	rec, recRow, ok := run.asciicast(sessionLabel(ep), cols, rows)
+	if !ok {
 		return
 	}
-	recRow := &session.Recording{SessionID: s.ID, Format: "asciicast", StorageURI: uri, RetentionUntil: retentionUntil(g)}
-	if err := h.Sessions.CreateRecording(r.Context(), recRow); err != nil {
-		h.Log.Error("register recording", "err", err)
-		_, _, _ = rec.Close()
-		endWith(session.EndError)
-		return
-	}
-	h.record(r, actor.Event(audit.SessionStart, "access_session", s.ID, audit.Success, map[string]any{"target_id": ep.LiveKey, "protocol": g.Protocol, "policy_id": g.PolicyID, "recording_id": recRow.ID}))
+	ctx, done := run.live()
+	defer done()
 
-	ctx := h.Registry.Add(r.Context(), gateway.Live{SessionID: s.ID, UserID: g.UserID, TargetID: ep.LiveKey, Protocol: g.Protocol, PolicyID: g.PolicyID})
-	defer h.Registry.Remove(s.ID)
-
-	lim := winrmgw.Limits{Idle: g.IdleTimeout, Max: g.MaxSession, SessionID: s.ID}
+	lim := winrmgw.Limits{Idle: g.IdleTimeout, Max: g.MaxSession, SessionID: run.s.ID}
 	// The registry's tap feeds shadowing watchers (ADR 0006); see terminal.
-	if tap := h.Registry.Tap(s.ID); tap != nil {
+	if tap := h.Registry.Tap(run.s.ID); tap != nil {
 		lim.Tap = tap
 	}
 	reason, berr := winrmgw.Bridge(ctx, h.Log, sh, ws, rec, cols, rows, lim)
-	h.finishRecording(r, actor, s.ID, recRow, rec)
-	if berr != nil {
-		h.Log.Warn("winrm bridge ended with error", "session", s.ID, "err", berr)
-	}
-	endWith(reason)
-	_ = ws.Close(websocket.StatusNormalClosure, reason)
+	run.finish(rec, recRow, reason, berr)
 }

@@ -39,7 +39,7 @@ func TestSPAServesNoDirectoryListings(t *testing.T) {
 // it said connections stay on our origin (L5). 'self' covers our own
 // WebSocket in every browser the bundle is built for.
 func TestCSPConnectsOnlyToItsOwnOrigin(t *testing.T) {
-	for _, d := range strings.Split(uiCSP, ";") {
+	for d := range strings.SplitSeq(uiCSP, ";") {
 		if d = strings.TrimSpace(d); strings.HasPrefix(d, "connect-src") && d != "connect-src 'self'" {
 			t.Fatalf("got %q, want connect-src 'self'", d)
 		}

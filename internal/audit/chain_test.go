@@ -13,7 +13,7 @@ func sample(n int) []Event {
 	var evs []Event
 	prev := ""
 	base := time.Date(2026, 9, 20, 12, 0, 0, 0, time.UTC)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		e := Event{
 			ID:          int64(i + 1),
 			Timestamp:   base.Add(time.Duration(i) * time.Second),

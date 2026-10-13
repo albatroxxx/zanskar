@@ -82,7 +82,7 @@ func reap(ctx context.Context, run runFunc, live func(string) bool, now time.Tim
 // is removed on a guess.
 func stale(listing string, live func(string) bool, now time.Time) []string {
 	var ids []string
-	for _, line := range strings.Split(listing, "\n") {
+	for line := range strings.SplitSeq(listing, "\n") {
 		f := strings.Split(line, "\t")
 		if len(f) != 3 || f[0] == "" {
 			continue

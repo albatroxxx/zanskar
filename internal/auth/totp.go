@@ -290,7 +290,7 @@ func (t *TOTP) consumeRecovery(ctx context.Context, userID, code string) (bool, 
 // only slow down the legitimate user.
 func newRecoveryCodes() (codes, hashes []string, err error) {
 	enc := base32.StdEncoding.WithPadding(base32.NoPadding)
-	for i := 0; i < recoveryCodeCount; i++ {
+	for range recoveryCodeCount {
 		raw := make([]byte, 7)
 		if _, err := rand.Read(raw); err != nil {
 			return nil, nil, err

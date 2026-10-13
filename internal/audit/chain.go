@@ -125,17 +125,27 @@ func Verify(events []Event) error {
 			// Contiguous slice not starting at genesis: trust its stated prev.
 			prev = e.PrevHash
 		}
-		if e.PrevHash != prev {
-			return &VerifyError{Index: i, ID: e.ID, Reason: "prev_hash does not match previous event"}
-		}
-		want, err := ComputeHash(e)
-		if err != nil {
-			return &VerifyError{Index: i, ID: e.ID, Reason: err.Error()}
-		}
-		if want != e.Hash {
-			return &VerifyError{Index: i, ID: e.ID, Reason: "hash does not match content"}
+		if ve := verifyLink(i, e, prev); ve != nil {
+			return ve
 		}
 		prev = e.Hash
+	}
+	return nil
+}
+
+// verifyLink checks one event against the hash of the one before it: its
+// link, then its own hash over its content. Verify and the store's walk
+// both use it, so the chain has one definition (D4).
+func verifyLink(idx int, e Event, prev string) *VerifyError {
+	if e.PrevHash != prev {
+		return &VerifyError{Index: idx, ID: e.ID, Reason: "prev_hash does not match previous event"}
+	}
+	want, err := ComputeHash(e)
+	if err != nil {
+		return &VerifyError{Index: idx, ID: e.ID, Reason: err.Error()}
+	}
+	if want != e.Hash {
+		return &VerifyError{Index: idx, ID: e.ID, Reason: "hash does not match content"}
 	}
 	return nil
 }

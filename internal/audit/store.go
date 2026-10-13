@@ -493,18 +493,8 @@ func (l *Log) walk(ctx context.Context) (VerifyResult, error) {
 			return res, nil
 		}
 		for _, e := range batch {
-			idx := int(res.Checked)
-			if e.PrevHash != prev {
-				res.Broken = &VerifyError{Index: idx, ID: e.ID, Reason: "prev_hash does not match previous event"}
-				return res, nil
-			}
-			want, err := ComputeHash(e)
-			if err != nil {
-				res.Broken = &VerifyError{Index: idx, ID: e.ID, Reason: err.Error()}
-				return res, nil
-			}
-			if want != e.Hash {
-				res.Broken = &VerifyError{Index: idx, ID: e.ID, Reason: "hash does not match content"}
+			if ve := verifyLink(int(res.Checked), e, prev); ve != nil {
+				res.Broken = ve
 				return res, nil
 			}
 			prev = e.Hash

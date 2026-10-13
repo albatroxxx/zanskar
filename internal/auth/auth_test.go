@@ -18,11 +18,10 @@ import (
 	"github.com/pquerna/otp/totp"
 
 	"github.com/albatroxxx/zanskar/internal/audit"
-	"github.com/albatroxxx/zanskar/internal/config"
 	"github.com/albatroxxx/zanskar/internal/crypto"
 	"github.com/albatroxxx/zanskar/internal/httpx"
 	"github.com/albatroxxx/zanskar/internal/keyring"
-	"github.com/albatroxxx/zanskar/internal/store"
+	"github.com/albatroxxx/zanskar/internal/store/storetest"
 	"github.com/albatroxxx/zanskar/internal/user"
 )
 
@@ -38,14 +37,7 @@ type env struct {
 func newEnv(t *testing.T) *env {
 	t.Helper()
 	ctx := context.Background()
-	db, err := store.Open(ctx, config.DriverSQLite, "file::memory:?_pragma=foreign_keys(1)")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = db.Close() })
-	if _, err := store.Migrate(ctx, db); err != nil {
-		t.Fatal(err)
-	}
+	db := storetest.Open(t)
 	kek, _ := crypto.NewLocalKEK(bytes.Repeat([]byte{9}, 32))
 	ring, err := keyring.Open(ctx, db, kek)
 	if err != nil {
@@ -216,7 +208,7 @@ func TestLockoutAfterFailures(t *testing.T) {
 	e := newEnv(t)
 	u := e.createUser(t, "eve", "a perfectly fine passphrase", user.RoleUser)
 	e.handler.MaxFailures = 3
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		e.do("POST", "/api/v1/auth/login", map[string]string{"username": "eve", "password": "not it, not it"}, nil, nil)
 	}
 	got, _ := e.users.GetByID(context.Background(), u.ID)

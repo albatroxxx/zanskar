@@ -12,8 +12,11 @@ import (
 	"fmt"
 	"net"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
+
+	"github.com/albatroxxx/zanskar/internal/protocol"
 )
 
 // Protocol is a way of reaching a target.
@@ -21,11 +24,11 @@ type Protocol string
 
 // Protocols.
 const (
-	SSH      Protocol = "ssh"
-	RDP      Protocol = "rdp"
-	VNC      Protocol = "vnc"
-	WinRM    Protocol = "winrm"
-	Database Protocol = "database" // managed/PaaS database access (ADR 0017)
+	SSH      Protocol = protocol.SSH
+	RDP      Protocol = protocol.RDP
+	VNC      Protocol = protocol.VNC
+	WinRM    Protocol = protocol.WinRM
+	Database Protocol = protocol.Database
 )
 
 // Protocols lists the host protocols probed in a stable order. Database is not
@@ -42,7 +45,7 @@ var DefaultPorts = map[Protocol]int{SSH: 22, RDP: 3389, VNC: 5900, WinRM: 5986}
 
 // EngineDefaultPorts maps a database engine to its default port; a database
 // target's port defaults from its engine (ADR 0017).
-var EngineDefaultPorts = map[string]int{"postgres": 5432, "mysql": 3306, "mariadb": 3306}
+var EngineDefaultPorts = map[string]int{protocol.Postgres: 5432, protocol.MySQL: 3306, protocol.MariaDB: 3306}
 
 // ValidProtocol reports whether p is known.
 func ValidProtocol(p Protocol) bool {
@@ -67,12 +70,7 @@ var TLSModes = []string{TLSDisable, TLSPrefer, TLSRequire, TLSVerifyFull}
 
 // ValidTLSMode reports whether m is a known mode.
 func ValidTLSMode(m string) bool {
-	for _, x := range TLSModes {
-		if x == m {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(TLSModes, m)
 }
 
 // ValidEngine reports whether e is a supported database engine.
@@ -86,7 +84,7 @@ func ValidEngine(e string) bool {
 // gateway's own relay sidecar (ADR 0017). An engine is listed here only
 // once its credential-holding proxy exists, so the console never
 // advertises access that cannot work.
-var ServableEngines = map[string]bool{"postgres": true, "mysql": true, "mariadb": true}
+var ServableEngines = map[string]bool{protocol.Postgres: true, protocol.MySQL: true, protocol.MariaDB: true}
 
 // ServableEngine reports whether the gateway can open sessions to engine.
 func ServableEngine(e string) bool {
@@ -192,16 +190,6 @@ func (t *Target) EffectivePorts() map[Protocol]int {
 		out[p] = t.Port(p)
 	}
 	return out
-}
-
-// HasCapability reports whether the last probe (or the admin) declared p.
-func (t *Target) HasCapability(p Protocol) bool {
-	for _, c := range t.Capabilities {
-		if c == p {
-			return true
-		}
-	}
-	return false
 }
 
 // Errors.

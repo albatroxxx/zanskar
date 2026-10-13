@@ -9,20 +9,13 @@ import (
 	"testing"
 	"time"
 
-	"github.com/albatroxxx/zanskar/internal/config"
 	"github.com/albatroxxx/zanskar/internal/store"
+	"github.com/albatroxxx/zanskar/internal/store/storetest"
 )
 
 func testRepo(t *testing.T) *Repo {
 	t.Helper()
-	db, err := store.Open(context.Background(), config.DriverSQLite, "file::memory:?_pragma=foreign_keys(1)")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = db.Close() })
-	if _, err := store.Migrate(context.Background(), db); err != nil {
-		t.Fatal(err)
-	}
+	db := storetest.Open(t)
 	return NewRepo(db)
 }
 

@@ -50,7 +50,7 @@ function save(store: () => Storage, key: string, v: unknown) {
 }
 
 /** TerminalIcon is a small window with a prompt in it. */
-export function TerminalIcon({ size = 24 }: { size?: number }) {
+function TerminalIcon({ size = 24 }: { size?: number }) {
   return (
     <svg width={size} height={size} viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
       <rect x="1.8" y="2.8" width="16.4" height="14.4" rx="2.6" />

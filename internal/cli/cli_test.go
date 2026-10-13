@@ -18,8 +18,7 @@ import (
 
 	"github.com/albatroxxx/zanskar/internal/audit"
 	"github.com/albatroxxx/zanskar/internal/auth"
-	"github.com/albatroxxx/zanskar/internal/config"
-	"github.com/albatroxxx/zanskar/internal/store"
+	"github.com/albatroxxx/zanskar/internal/store/storetest"
 	"github.com/albatroxxx/zanskar/internal/user"
 )
 
@@ -62,14 +61,7 @@ type env struct {
 func newEnv(t *testing.T) *env {
 	t.Helper()
 	ctx := context.Background()
-	db, err := store.Open(ctx, config.DriverSQLite, "file::memory:?_pragma=foreign_keys(1)")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = db.Close() })
-	if _, err := store.Migrate(ctx, db); err != nil {
-		t.Fatal(err)
-	}
+	db := storetest.Open(t)
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	users := user.NewRepo(db)
 	sessions := auth.NewSessions(db, bytes.Repeat([]byte{7}, 32), false)
@@ -226,7 +218,7 @@ func TestLockedUntilAFreshCode(t *testing.T) {
 // is told to enrol one.
 func TestUnlockGuards(t *testing.T) {
 	e := newEnv(t)
-	for i := 0; i < maxFails; i++ {
+	for i := range maxFails {
 		if code, _ := e.post("/api/v1/admin/cli/unlock", map[string]string{"code": "999999"}, e.admin, e.csrf); code != 422 {
 			t.Fatalf("wrong code %d: %d", i, code)
 		}
@@ -384,7 +376,7 @@ func TestAuditVerifyProblems(t *testing.T) {
 func TestRateLimit(t *testing.T) {
 	e := newEnv(t)
 	e.unlock()
-	for i := 0; i < perMinute; i++ {
+	for range perMinute {
 		e.run("help", "")
 	}
 	if code, out := e.post("/api/v1/admin/cli", map[string]string{"line": "help"}, e.admin, e.csrf); code != 429 {
@@ -508,7 +500,7 @@ func TestSettingSetRefusesOtherTypes(t *testing.T) {
 	mux.HandleFunc("GET /api/v1/admin/settings", func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = io.WriteString(w, `{"runtime":[{"key":"webhook.token","type":"secret","value":""},{"key":"log.level","type":"enum","value":"info","title":"Log level"}]}`)
 	})
-	x := &run{parsed: parsed{args: []string{"webhook.token"}, rest: "hunter2"}, out: &out{}, resolved: map[string]string{},
+	x := &run{args: []string{"webhook.token"}, rest: "hunter2", out: &out{}, resolved: map[string]string{},
 		api: &caller{mux: mux, ctx: context.Background()}}
 	if _, _, err := planSettingSet(x); err == nil || !strings.Contains(err.Error(), "Settings page") {
 		t.Fatalf("a secret-typed setting: %v", err)
@@ -527,7 +519,7 @@ func TestSettingInstallTimeKey(t *testing.T) {
 		_, _ = io.WriteString(w, `{"runtime":[{"key":"log.level","type":"enum","value":"info"}],`+
 			`"boot":[{"key":"log_format","title":"Log format","env_var":"ZANSKAR_LOG_FORMAT","value":"json","description":"json or text."}]}`)
 	})
-	x := &run{parsed: parsed{args: []string{"log_format"}, rest: "text"}, out: &out{}, resolved: map[string]string{},
+	x := &run{args: []string{"log_format"}, rest: "text", out: &out{}, resolved: map[string]string{},
 		api: &caller{mux: mux, ctx: context.Background()}}
 	_, _, err := planSettingSet(x)
 	if err == nil || !strings.Contains(err.Error(), "set at install") || !strings.Contains(err.Error(), "ZANSKAR_LOG_FORMAT") {
@@ -552,7 +544,7 @@ func TestExecSaysWhyACodeIsNeeded(t *testing.T) {
 	if code, out := e.post("/api/v1/admin/cli", line, e.admin, e.csrf); code != 403 || out["code"] != "cli_code_required" {
 		t.Fatalf("no fresh code: %d %v", code, out)
 	}
-	for i := 0; i < maxFails; i++ {
+	for range maxFails {
 		e.post("/api/v1/admin/cli/unlock", map[string]string{"code": "999999"}, e.admin, e.csrf)
 	}
 	if code, out := e.post("/api/v1/admin/cli", line, e.admin, e.csrf); code != 429 || out["code"] != "cli_locked" {

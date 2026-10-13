@@ -27,17 +27,17 @@ const (
 
 type out struct{ lines []Line }
 
-func (o *out) add(style, format string, a ...any) {
+func (o *out) addf(style, format string, a ...any) {
 	text := format
 	if len(a) > 0 {
 		text = fmt.Sprintf(format, a...)
 	}
-	for _, l := range strings.Split(text, "\n") {
+	for l := range strings.SplitSeq(text, "\n") {
 		o.lines = append(o.lines, Line{Text: l, Style: style})
 	}
 }
 
-func (o *out) text(format string, a ...any) { o.add("", format, a...) }
+func (o *out) textf(format string, a ...any) { o.addf("", format, a...) }
 
 // maxCell keeps one long value (a reason, a log message) from pushing every
 // other column off the screen.
@@ -46,7 +46,7 @@ const maxCell = 48
 // table renders rows under a header line.
 func (o *out) table(head []string, rows [][]string) {
 	if len(rows) == 0 {
-		o.add(styleMuted, "(none)")
+		o.addf(styleMuted, "(none)")
 		return
 	}
 	width := make([]int, len(head))
@@ -71,9 +71,9 @@ func (o *out) table(head []string, rows [][]string) {
 		}
 		return strings.TrimRight(b.String(), " ")
 	}
-	o.add(styleHead, "%s", render(head))
+	o.addf(styleHead, "%s", render(head))
 	for _, r := range rows {
-		o.text("%s", render(r))
+		o.textf("%s", render(r))
 	}
 }
 
@@ -90,7 +90,7 @@ func (o *out) pairs(kv [][2]string) {
 		if v == "" {
 			v = "-"
 		}
-		o.text("%s%s  %s", p[0], strings.Repeat(" ", w-len(p[0])), v)
+		o.textf("%s%s  %s", p[0], strings.Repeat(" ", w-len(p[0])), v)
 	}
 }
 

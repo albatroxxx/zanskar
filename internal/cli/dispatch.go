@@ -43,7 +43,7 @@ func (e *apiError) Error() string {
 // exactly what the API lets this user do (ADR 0027).
 type caller struct {
 	mux        http.Handler
-	ctx        context.Context
+	ctx        context.Context //nolint:containedctx // one console request's, for the commands of the one line it carried
 	remoteAddr string
 	calls      []apiCall
 }

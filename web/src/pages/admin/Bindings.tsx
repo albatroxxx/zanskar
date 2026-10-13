@@ -3,11 +3,11 @@ import { errorMessage } from '../../api/client'
 import type { Credential, CredentialType, Protocol } from '../../api/types'
 import { Field } from '../../components/ui'
 
-export interface BindingSlot { protocol: Protocol; label: string }
+interface BindingSlot { protocol: Protocol; label: string }
 export interface BindingChange { protocol: Protocol; credential_id: string }
 
 /** The credential_id that means "prompt the user for their own login at connect time". */
-export const USER_SUPPLIED = 'user_supplied'
+const USER_SUPPLIED = 'user_supplied'
 
 /** Credential types that make sense for each protocol. */
 const suitable: Record<Protocol, CredentialType[]> = {
@@ -46,7 +46,7 @@ export function CredentialBindings(props: Props) {
   return <BindingsEditor key={JSON.stringify(props.current) + ':' + props.credentials.length} {...props} />
 }
 
-/** CredentialSelect is the tri-state control, shared with the autoscaling form. */
+/** CredentialSelect is the tri-state control, shared by the bindings editor and the autoscaling group form. */
 export function CredentialSelect({ id, protocol, value, credentials, disabled, onChange }: { id: string; protocol: Protocol; value: string; credentials: Credential[]; disabled?: boolean; onChange: (v: string) => void }) {
   const fits = (c: Credential) => suitable[protocol].includes(c.type)
   const vaulted = credentials.filter((c) => c.mode === 'vaulted' && fits(c))

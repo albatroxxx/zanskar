@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { desktopEnd, endText } from './session'
+import { desktopEnd, endText, switchedState } from './session'
 
 // The terminal and desktop pages both describe an end with endText (B23).
 describe('endText', () => {
@@ -25,5 +25,22 @@ describe('desktopEnd', () => {
     expect(desktopEnd(0x020b, 'session ended by an administrator')).toEqual({ reason: 'closed', msg: 'session ended by an administrator' })
     expect(desktopEnd(0x0301, 'Authentication failure')).toEqual({ reason: 'error', msg: 'Authentication failure' })
     expect(desktopEnd(undefined, '')).toEqual({ reason: 'error', msg: undefined })
+  })
+})
+
+// D14: the terminal and desktop pages each built the state for the instance
+// a failover moved to. They share switchedState through useSwitched now.
+describe('switchedState', () => {
+  const lost = { ticket: 'tk1', ws_path: '/ws/terminal', target: 'web', protocol: 'ssh', asg_id: 'g1', asg_instance_id: 'i1', instance_label: 'i-0abc', switched_from: 'i-0old' }
+
+  it('opens the new instance under the same target, naming the instance it left', () => {
+    const res = { ticket: 'tk2', expires_at: '2026-10-06T10:01:00Z', ws_path: '/ws/terminal', asg_id: 'g1', asg_instance_id: 'i2', instance_label: 'i-0def' }
+    expect(switchedState(lost, res)).toEqual({
+      ticket: 'tk2', ws_path: '/ws/terminal', target: 'web', protocol: 'ssh', asg_id: 'g1', asg_instance_id: 'i2', instance_label: 'i-0def', switched_from: 'i-0abc',
+    })
+  })
+
+  it('keeps the group when the answer does not name it', () => {
+    expect(switchedState(lost, { ticket: 'tk2', expires_at: '', ws_path: '/ws/terminal' }).asg_id).toBe('g1')
   })
 })

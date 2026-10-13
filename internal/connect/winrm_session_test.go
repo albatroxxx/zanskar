@@ -5,6 +5,8 @@ package connect
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -17,7 +19,9 @@ import (
 	"github.com/albatroxxx/zanskar/internal/gateway"
 	"github.com/albatroxxx/zanskar/internal/gateway/winrmgw/winrmtest"
 	"github.com/albatroxxx/zanskar/internal/recording"
+	"github.com/albatroxxx/zanskar/internal/session"
 	"github.com/albatroxxx/zanskar/internal/target"
+	"github.com/albatroxxx/zanskar/internal/ticket"
 )
 
 // winrmRig is the connect fixture behind a real server with a stand-in WinRM
@@ -209,4 +213,88 @@ func TestWinRMRefusals(t *testing.T) {
 
 	limited := r.winTarget(t, "win-limited", "limited", r.wsm.Fingerprint())
 	refused(limited, http.StatusConflict)
+}
+
+// brokenStorage refuses every new recording, as a full disk or a lost bucket
+// does.
+type brokenStorage struct{ recording.LocalStorage }
+
+func (brokenStorage) Create(context.Context, string) (io.WriteCloser, string, error) {
+	return nil, "", errors.New("no space left on device")
+}
+
+// TestWinRMRecordingRefusal: a WinRM session whose recording cannot start is
+// refused the way the other bridges refuse one, closing as a policy violation
+// whose reason the console shows. It used to close as an internal error,
+// whose reason the console drops, so the user saw a lost connection (D8).
+func TestWinRMRecordingRefusal(t *testing.T) {
+	r := newWinRMRig(t)
+	r.h.Storage = &brokenStorage{}
+	id := r.winTarget(t, "win-1", "admin", r.wsm.Fingerprint())
+	ws, _, err := r.open(t, id) //nolint:bodyclose // the library closes the handshake body
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ws.CloseNow()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	for err == nil {
+		_, _, err = ws.Read(ctx)
+	}
+	var ce websocket.CloseError
+	if !errors.As(err, &ce) || ce.Code != websocket.StatusPolicyViolation || !strings.Contains(ce.Reason, "session refused") {
+		t.Fatalf("closed with %v, want a policy violation saying the session was refused", err)
+	}
+	var end map[string]string
+	_ = json.Unmarshal(lastEvent(t, r.connectFixture, "session.end").Details, &end)
+	if end["reason"] != session.EndError {
+		t.Fatalf("session.end details: %v", end)
+	}
+}
+
+// TestWinRMFailoverKeepsItsLink: a session opened from a failover ticket names
+// the session it replaces whatever its protocol. Only SSH sessions did, so a
+// desktop or WinRM failover lost its link to the session it replaced (D8).
+func TestWinRMFailoverKeepsItsLink(t *testing.T) {
+	r := newWinRMRig(t)
+	id := r.winTarget(t, "win-1", "admin", r.wsm.Fingerprint())
+	tg, err := r.h.Targets.Get(r.ctx, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The session that was lost, closed as the failover route closes it.
+	old := &session.Session{UserID: r.alice.ID, TargetID: id, Protocol: "winrm", ClientIP: "127.0.0.1"}
+	if err := r.h.Sessions.Start(r.ctx, old); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.h.Sessions.End(r.ctx, old.ID, session.EndTargetLost); err != nil {
+		t.Fatal(err)
+	}
+	signIn, err := r.sessions.Lookup(r.ctx, r.cookie.Value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tok, err := r.h.Tickets.Issue(ticket.Grant{UserID: r.alice.ID, Username: r.alice.Username, SessionID: signIn.ID, TargetID: id,
+		Protocol: "winrm", CredentialID: tg.Credentials[target.WinRM], PolicyID: r.policyIDs["test-all"], ClientIP: "127.0.0.1", FailoverFrom: old.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	ws, _, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(r.url, "http")+"/ws/winrm?cols=100&rows=30&ticket="+tok, r.wsOptions()) //nolint:bodyclose // the library closes the handshake body
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ws.CloseNow()
+	sessionID, _, reason := runConsole(t, ctx, ws, nil)
+	if reason != "user_exit" {
+		t.Fatalf("end %q", reason)
+	}
+	got, err := r.h.Sessions.Get(r.ctx, sessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.FailoverFromSessionID != old.ID {
+		t.Fatalf("failover_from_session_id %q, want %q", got.FailoverFromSessionID, old.ID)
+	}
 }

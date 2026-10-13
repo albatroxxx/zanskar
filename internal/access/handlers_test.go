@@ -17,9 +17,8 @@ import (
 	"github.com/albatroxxx/zanskar/internal/asg"
 	"github.com/albatroxxx/zanskar/internal/audit"
 	"github.com/albatroxxx/zanskar/internal/auth"
-	"github.com/albatroxxx/zanskar/internal/config"
 	"github.com/albatroxxx/zanskar/internal/policy"
-	"github.com/albatroxxx/zanskar/internal/store"
+	"github.com/albatroxxx/zanskar/internal/store/storetest"
 	"github.com/albatroxxx/zanskar/internal/target"
 	"github.com/albatroxxx/zanskar/internal/user"
 )
@@ -44,14 +43,7 @@ type env struct {
 func newEnv(t *testing.T) *env {
 	t.Helper()
 	ctx := context.Background()
-	db, err := store.Open(ctx, config.DriverSQLite, "file::memory:?_pragma=foreign_keys(1)")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = db.Close() })
-	if _, err := store.Migrate(ctx, db); err != nil {
-		t.Fatal(err)
-	}
+	db := storetest.Open(t)
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	users := user.NewRepo(db)
 	sessions := auth.NewSessions(db, bytes.Repeat([]byte{5}, 32), false)
@@ -76,10 +68,10 @@ func newEnv(t *testing.T) *env {
 			t.Fatal(err)
 		}
 		if name == "alice" {
-			max := 120
+			most := 120
 			// Eligibility comes through a rule, not the base, so the request
 			// path is proven to use Policy.Covers like the connect gate.
-			pol := &policy.Policy{Name: "prod-ssh-jit", UserID: u.ID, Enabled: true, RequireApproval: true, MaxSessionMinutes: &max,
+			pol := &policy.Policy{Name: "prod-ssh-jit", UserID: u.ID, Enabled: true, RequireApproval: true, MaxSessionMinutes: &most,
 				Rules: []policy.Rule{{Selector: policy.Selector{Tags: map[string]string{"env": "prod"}}, Protocols: []string{"ssh"}}}, IdleTimeoutMinutes: 15}
 			if err := policies.Create(ctx, pol); err != nil {
 				t.Fatal(err)

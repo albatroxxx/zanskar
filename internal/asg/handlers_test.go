@@ -17,7 +17,11 @@ import (
 	"github.com/albatroxxx/zanskar/internal/audit"
 	"github.com/albatroxxx/zanskar/internal/auth"
 	"github.com/albatroxxx/zanskar/internal/cloud"
+	"github.com/albatroxxx/zanskar/internal/cloud/cloudtest"
+	"github.com/albatroxxx/zanskar/internal/credential"
+	"github.com/albatroxxx/zanskar/internal/crypto"
 	"github.com/albatroxxx/zanskar/internal/gateway"
+	"github.com/albatroxxx/zanskar/internal/keyring"
 	"github.com/albatroxxx/zanskar/internal/policy"
 	"github.com/albatroxxx/zanskar/internal/store"
 	"github.com/albatroxxx/zanskar/internal/target"
@@ -34,7 +38,8 @@ type env struct {
 	admin    *http.Cookie
 	csrf     string
 	user     *http.Cookie
-	fake     *cloud.Fake
+	fake     *cloudtest.Fake
+	vault    *credential.Vault
 }
 
 func newEnv(t *testing.T) *env {
@@ -62,12 +67,18 @@ func newEnv(t *testing.T) *env {
 	}
 
 	policies, live := policy.NewRepo(db), gateway.NewRegistry()
-	fake := cloud.NewFake()
-	h := &AdminHandler{Repo: repo, Sync: syncFn, Identity: cloud.NewGatewayIdentity("arn:aws:iam::111111111111:role/zanskar-gateway"), Providers: func(context.Context, *Group) (cloud.Provider, error) { return fake, nil }, Policies: policies, Live: live, Audit: auditLog, Log: log}
+	fake := cloudtest.NewFake()
+	kek, _ := crypto.NewLocalKEK(bytes.Repeat([]byte{7}, 32))
+	ring, err := keyring.Open(ctx, db, kek)
+	if err != nil {
+		t.Fatal(err)
+	}
+	vault := credential.NewVault(db, ring)
+	h := &AdminHandler{Repo: repo, Sync: syncFn, Identity: cloud.NewGatewayIdentity("arn:aws:iam::111111111111:role/zanskar-gateway"), Providers: func(context.Context, *Group) (cloud.Provider, error) { return fake, nil }, Policies: policies, Live: live, Vault: vault, Audit: auditLog, Log: log}
 	mux := http.NewServeMux()
 	h.Register(mux)
 	mw := &auth.Middleware{Sessions: sessions, Users: users, Log: log}
-	e := &env{srv: mw.Authenticate(mw.CSRF(mux)), db: db, repo: repo, audit: auditLog, policies: policies, live: live, fake: fake}
+	e := &env{srv: mw.Authenticate(mw.CSRF(mux)), db: db, repo: repo, audit: auditLog, policies: policies, live: live, fake: fake, vault: vault}
 
 	adminUser := &user.User{Username: "admin", DisplayName: "Admin", Roles: []user.Role{user.RoleAdmin}}
 	if err := users.Create(ctx, adminUser); err != nil {
@@ -297,5 +308,42 @@ func TestDeleteRefusedWhileInUse(t *testing.T) {
 	}
 	if code, _ = e.do("GET", "/api/v1/autoscaling-groups/"+id, nil, e.admin); code != 404 {
 		t.Fatalf("retired group must be gone from the API: %d", code)
+	}
+}
+
+// TestGroupWriteTakesUserSupplied: the console's group form offers "user
+// supplied" for a protocol, as the group's drawer does. Creating or editing a
+// group with it binds the shared row that stands for the user's own login. The
+// write used to store the choice's sentinel as if it were a credential id,
+// which no row has, so the save failed.
+func TestGroupWriteTakesUserSupplied(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	bound := func(g map[string]any) credential.Mode {
+		t.Helper()
+		creds, _ := g["credentials"].(map[string]any)
+		id, _ := creds["ssh"].(string)
+		c, err := e.vault.Get(ctx, id)
+		if err != nil {
+			t.Fatalf("ssh is bound to %q: %v", id, err)
+		}
+		return c.Mode
+	}
+	body := writeBody()
+	body["credentials"] = map[string]string{"ssh": credential.UserSuppliedSentinel}
+	code, g := e.do("POST", "/api/v1/autoscaling-groups", body, e.admin)
+	if code != http.StatusCreated {
+		t.Fatalf("create with a user-supplied login: %d %v", code, g)
+	}
+	if m := bound(g); m != credential.ModeUserSupplied {
+		t.Fatalf("created group binds a %s credential, want user_supplied", m)
+	}
+	body["name"] = "web-2"
+	code, g = e.do("PUT", "/api/v1/autoscaling-groups/"+g["id"].(string), body, e.admin)
+	if code != http.StatusOK {
+		t.Fatalf("update with a user-supplied login: %d %v", code, g)
+	}
+	if m := bound(g); m != credential.ModeUserSupplied {
+		t.Fatalf("updated group binds a %s credential, want user_supplied", m)
 	}
 }

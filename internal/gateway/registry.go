@@ -9,6 +9,8 @@ import (
 	"errors"
 	"sync"
 	"time"
+
+	"github.com/albatroxxx/zanskar/internal/protocol"
 )
 
 // Live is one running bridge.
@@ -55,11 +57,6 @@ func CancelReason(ctx context.Context) (reason, msg string) {
 	}
 }
 
-// isTerminal reports whether a protocol streams bytes a Tap can fan out.
-func isTerminal(protocol string) bool {
-	return protocol == "ssh" || protocol == "winrm"
-}
-
 // Registry tracks live sessions in this gateway process.
 type Registry struct {
 	mu   sync.Mutex
@@ -76,7 +73,7 @@ func (r *Registry) Add(parent context.Context, l Live) context.Context {
 	if l.StartedAt.IsZero() {
 		l.StartedAt = time.Now()
 	}
-	if l.Tap == nil && isTerminal(l.Protocol) {
+	if l.Tap == nil && protocol.Terminal(l.Protocol) {
 		l.Tap = NewTap()
 	}
 	r.mu.Lock()

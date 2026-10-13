@@ -510,19 +510,6 @@ func TestProbeCertificateEdges(t *testing.T) {
 	}
 }
 
-func TestHasCapability(t *testing.T) {
-	tg := &Target{Capabilities: []Protocol{SSH, RDP}}
-	if !tg.HasCapability(SSH) || !tg.HasCapability(RDP) {
-		t.Fatal("declared capabilities must be reported")
-	}
-	if tg.HasCapability(VNC) {
-		t.Fatal("undeclared capability reported")
-	}
-	if (&Target{}).HasCapability(SSH) {
-		t.Fatal("a target never probed has no capabilities")
-	}
-}
-
 // TestCertificateTrustRoute: the administrator confirms a pending RDP
 // certificate by presenting its fingerprint; both the refusal and the
 // confirmation are audited, and only the exact pending one is accepted.

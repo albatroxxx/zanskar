@@ -5,6 +5,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -163,7 +164,7 @@ func TestIsLoopbackAddr(t *testing.T) {
 
 func TestGuacdRunHint(t *testing.T) {
 	lines := guacdRunHint("127.0.0.1:4822")
-	if len(lines) != 2 || !strings.Contains(lines[0], "-p 127.0.0.1:4822:4822") || !strings.Contains(lines[1], "guacamole/guacd:1.6.0") {
+	if len(lines) != 2 || !strings.Contains(lines[0], "-p 127.0.0.1:4822:4822") || !strings.Contains(lines[1], guacdImage) {
 		t.Fatalf("loopback hint: %q", lines)
 	}
 	if lines := guacdRunHint("localhost:5000"); !strings.Contains(lines[0], "-p 127.0.0.1:5000:4822") {
@@ -273,5 +274,40 @@ func TestInitKeepsMasterKeyFile(t *testing.T) {
 		return runInit([]string{"--print", "--non-interactive", "--out", env, "--data-dir", filepath.Join(dir, "data")})
 	}); err == nil || !strings.Contains(err.Error(), "both") {
 		t.Fatalf("both key lines: %v, want a refusal", err)
+	}
+}
+
+// TestGuacdImageInStep: every place that runs guacd names the image the
+// compose file pins, by tag and digest, so an upgrade cannot leave one of them
+// on an older guacd (which, below 1.6, breaks certificate pinning, ADR 0012).
+func TestGuacdImageInStep(t *testing.T) {
+	read := func(path string) string {
+		t.Helper()
+		b, err := os.ReadFile(filepath.Join("..", "..", path)) // #nosec G304 -- fixed paths in the repository
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(b)
+	}
+	m := regexp.MustCompile(`image: (guacamole/guacd:\S+)`).FindStringSubmatch(read("deploy/docker-compose.yml"))
+	if m == nil {
+		t.Fatal("deploy/docker-compose.yml names no guacd image")
+	}
+	want := m[1]
+	if guacdImage != want {
+		t.Errorf("zanskar init prints %s, the compose file runs %s", guacdImage, want)
+	}
+	for _, path := range []string{"deploy/docker-compose.dev.yml", "docs/deploy.md", "deploy/aws/userdata/gateway.sh.tftpl"} {
+		if !strings.Contains(read(path), want) {
+			t.Errorf("%s does not name %s", path, want)
+		}
+	}
+	repo, tagged, _ := strings.Cut(want, ":")
+	tag, digest, _ := strings.Cut(tagged, "@")
+	values := read("deploy/helm/zanskar/values.yaml")
+	for _, line := range []string{"repository: " + repo, `tag: "` + tag + `"`, `digest: "` + digest + `"`} {
+		if !strings.Contains(values, line) {
+			t.Errorf("the chart's guacd.image lacks %s", line)
+		}
 	}
 }

@@ -11,6 +11,7 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -115,12 +116,7 @@ func (c *Credential) PermitsPrincipal(loginUser string) bool {
 	if len(c.CertificatePrincipals) == 0 {
 		return true
 	}
-	for _, p := range c.CertificatePrincipals {
-		if p == loginUser {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(c.CertificatePrincipals, loginUser)
 }
 
 // InUseBy counts the references that block deletion.
@@ -288,8 +284,7 @@ func validPrincipal(p string) bool {
 func normalisePrivateKey(pemText, passphrase string) ([]byte, string, error) {
 	raw := []byte(strings.TrimSpace(pemText) + "\n")
 	key, err := ssh.ParseRawPrivateKey(raw)
-	var pe *ssh.PassphraseMissingError
-	if errors.As(err, &pe) {
+	if _, ok := errors.AsType[*ssh.PassphraseMissingError](err); ok {
 		if passphrase == "" {
 			return nil, "", ErrPassphrase
 		}

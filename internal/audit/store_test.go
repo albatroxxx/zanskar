@@ -12,20 +12,13 @@ import (
 	"testing"
 	"time"
 
-	"github.com/albatroxxx/zanskar/internal/config"
 	"github.com/albatroxxx/zanskar/internal/store"
+	"github.com/albatroxxx/zanskar/internal/store/storetest"
 )
 
 func newTestLog(t *testing.T) (*Log, *store.DB) {
 	t.Helper()
-	db, err := store.Open(context.Background(), config.DriverSQLite, "file::memory:?_pragma=foreign_keys(1)")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = db.Close() })
-	if _, err := store.Migrate(context.Background(), db); err != nil {
-		t.Fatal(err)
-	}
+	db := storetest.Open(t)
 	return NewLog(db), db
 }
 
@@ -37,7 +30,7 @@ func TestRecordListVerify(t *testing.T) {
 
 	base := time.Date(2026, 9, 20, 10, 0, 0, 0, time.UTC)
 	var stored []Event
-	for i := 0; i < 7; i++ {
+	for i := range 7 {
 		actor, action := alice, "user.login"
 		if i%2 == 1 {
 			actor, action = bob, "target.create"
@@ -217,7 +210,7 @@ func TestConcurrentRecordKeepsChainLinear(t *testing.T) {
 	const n = 50
 	var wg sync.WaitGroup
 	errs := make(chan error, n)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
@@ -245,7 +238,7 @@ func TestVerifyBatching(t *testing.T) {
 	ctx := context.Background()
 	log, _ := newTestLog(t)
 	total := verifyBatchSize + 5
-	for i := 0; i < total; i++ {
+	for range total {
 		if _, err := log.Record(ctx, Event{Action: "tick", Outcome: Success}); err != nil {
 			t.Fatal(err)
 		}
@@ -291,7 +284,7 @@ func TestReseal(t *testing.T) {
 	log, db := newTestLog(t)
 
 	actor := Actor{UserID: "alice", IP: "10.0.0.1"}
-	for i := 0; i < 6; i++ {
+	for i := range 6 {
 		e := actor.Event("user.login", "user", fmt.Sprintf("u%d", i), Success, map[string]any{"n": i})
 		if _, err := log.Record(ctx, e); err != nil {
 			t.Fatal(err)

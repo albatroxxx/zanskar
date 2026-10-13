@@ -47,3 +47,28 @@ describe('Events, Load more racing a filter change', () => {
     expect(screen.queryByRole('button', { name: 'Load more' })).toBeNull()
   })
 })
+
+// Reset with no filters set (before any Apply, or pressed twice) emptied the
+// list and set the filters to the same empty object they already held, so
+// nothing read the list again and it stayed on "Loading…".
+describe('Events, Reset', () => {
+  it('reads the list again even when no filter was set', async () => {
+    vi.spyOn(api, 'get').mockImplementation(async (path: string) => {
+      if (path === '/audit/verify') return { intact: true, checked: 1, last_id: 1, last_hash: '' } as never
+      if (path === '/audit/facets') return { actions: [], object_types: [] } as never
+      return { items: [event(1, 'someone')], next_cursor: '' } as never
+    })
+    render(
+      <MemoryRouter>
+        <Events />
+      </MemoryRouter>,
+    )
+    const user = userEvent.setup()
+    expect(await screen.findByText('someone')).toBeDefined()
+
+    await user.click(screen.getByRole('button', { name: 'Reset' }))
+
+    expect(await screen.findByText('someone')).toBeDefined()
+    expect(screen.queryByText('Loading…')).toBeNull()
+  })
+})

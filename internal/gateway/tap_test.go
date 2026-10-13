@@ -43,7 +43,7 @@ func TestTapRingLimitAndDrops(t *testing.T) {
 		t.Fatalf("ring size %d, suffix %q", len(replay), replay[len(replay)-4:])
 	}
 	// A slow subscriber never blocks the writer.
-	for i := 0; i < 300; i++ {
+	for range 300 {
 		tp.Write([]byte("c"))
 	}
 	if tp.Dropped.Load() == 0 {

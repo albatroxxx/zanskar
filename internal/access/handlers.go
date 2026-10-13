@@ -96,10 +96,10 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 			"no approval-gated policy makes you eligible for this target and protocol")
 		return
 	}
-	max := maxMinutes(elig)
-	if in.Minutes > max {
+	most := maxMinutes(elig)
+	if in.Minutes > most {
 		httpx.WriteError(w, r, http.StatusBadRequest, "duration_too_long",
-			fmt.Sprintf("requested duration exceeds the policy maximum of %d minutes", max))
+			fmt.Sprintf("requested duration exceeds the policy maximum of %d minutes", most))
 		return
 	}
 	// One open request per (user, target or group, protocol): a second pending one
@@ -238,9 +238,9 @@ func (h *Handler) approve(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
-		if max := maxMinutes(pol); d.Minutes > max {
+		if most := maxMinutes(pol); d.Minutes > most {
 			httpx.WriteError(w, r, http.StatusBadRequest, "duration_too_long",
-				fmt.Sprintf("granted duration exceeds the policy maximum of %d minutes", max))
+				fmt.Sprintf("granted duration exceeds the policy maximum of %d minutes", most))
 			return
 		}
 		minutes = d.Minutes

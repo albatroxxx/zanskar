@@ -32,6 +32,7 @@ import (
 
 	"github.com/albatroxxx/zanskar/internal/gateway"
 	"github.com/albatroxxx/zanskar/internal/gateway/mysqlrelay"
+	"github.com/albatroxxx/zanskar/internal/protocol"
 	"github.com/albatroxxx/zanskar/internal/recording"
 )
 
@@ -60,17 +61,17 @@ type Spec struct {
 // ClientImage returns the image carrying the version-matched client CLI.
 func ClientImage(engine, version string) string {
 	switch engine {
-	case "postgres":
+	case protocol.Postgres:
 		if version != "" {
 			return "postgres:" + version + "-alpine"
 		}
 		return "postgres:16-alpine"
-	case "mysql":
+	case protocol.MySQL:
 		if version != "" {
 			return "mysql:" + version
 		}
 		return "mysql:8"
-	case "mariadb":
+	case protocol.MariaDB:
 		if version != "" {
 			return "mariadb:" + version
 		}
@@ -87,9 +88,9 @@ func ClientImage(engine, version string) string {
 // (ProxySQL cannot: it holds one password per user for both hops).
 func proxyImage(s Spec) string {
 	switch s.Engine {
-	case "postgres":
+	case protocol.Postgres:
 		return "edoburu/pgbouncer:v1.23.1-p3"
-	case "mysql", "mariadb":
+	case protocol.MySQL, protocol.MariaDB:
 		return s.ProxyImage
 	default:
 		return ""
@@ -99,7 +100,7 @@ func proxyImage(s Spec) string {
 // proxyPort is where the sidecar listens for the client: pgbouncer on its
 // usual port, the MySQL relay on the engine's own so the CLI's defaults hold.
 func proxyPort(engine string) int {
-	if engine == "postgres" {
+	if engine == protocol.Postgres {
 		return 6432
 	}
 	return 3306
@@ -185,7 +186,7 @@ func proxyArgs(s Spec, network, name string) (args []string, env []string, err e
 	if s.Host == "" || s.Port <= 0 || s.Username == "" {
 		return nil, nil, fmt.Errorf("dbgw: host, port and username are required")
 	}
-	if s.Engine != "postgres" {
+	if s.Engine != protocol.Postgres {
 		return mysqlProxyArgs(s, img, network, name)
 	}
 	// pgbouncer authenticates to the upstream — commonly scram-sha-256, as on
@@ -275,17 +276,17 @@ func clientArgs(s Spec, network, name, proxyHost string) ([]string, error) {
 	)
 	port := strconv.Itoa(proxyPort(s.Engine))
 	switch s.Engine {
-	case "postgres":
+	case protocol.Postgres:
 		args = append(args, "psql", "-h", proxyHost, "-p", port, "-U", s.Username, "-w")
 		if s.Database != "" {
 			args = append(args, "-d", s.Database)
 		}
-	case "mysql", "mariadb":
+	case protocol.MySQL, protocol.MariaDB:
 		// No -p: the CLI then sends an empty password, which is what the
 		// relay's trust sign-in expects. The mariadb image ships the client
 		// under its own name; mysql's still answers to mysql.
 		bin := "mysql"
-		if s.Engine == "mariadb" {
+		if s.Engine == protocol.MariaDB {
 			bin = "mariadb"
 		}
 		args = append(args, bin, "--protocol=TCP", "-h", proxyHost, "-P", port, "-u", s.Username)
@@ -547,7 +548,7 @@ func Bridge(ctx context.Context, log *slog.Logger, docker string, spec Spec, ws 
 				if rec != nil {
 					_ = rec.Input([]byte(fr.D))
 				}
-				if _, werr := f.Write([]byte(fr.D)); werr != nil {
+				if _, werr := f.WriteString(fr.D); werr != nil {
 					return
 				}
 			case "r":

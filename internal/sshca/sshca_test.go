@@ -29,9 +29,6 @@ func TestIssueAndVerify(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if s.AuthorityPublicKey() == "" {
-		t.Fatal("authority public key empty")
-	}
 
 	userPub := freshUserKey(t)
 	cert, err := s.Issue(userPub, CertParams{Principals: []string{"alice"}, KeyID: "zanskar:alice:1", Validity: 10 * time.Minute})

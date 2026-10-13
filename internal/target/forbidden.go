@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"slices"
 	"strings"
 )
 
@@ -46,10 +47,8 @@ func (p *Prober) refusal(ip net.IP) string {
 	case p.Self != nil && ip.Equal(p.Self):
 		return "the address the gateway listens on"
 	}
-	for _, m := range metadataAddrs {
-		if ip.Equal(m) {
-			return "a cloud metadata service"
-		}
+	if slices.ContainsFunc(metadataAddrs, ip.Equal) {
+		return "a cloud metadata service"
 	}
 	return ""
 }

@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"maps"
 	"net/http"
 	"regexp"
 	"strconv"
@@ -209,9 +210,7 @@ func (h *Handler) openForReview(w http.ResponseWriter, r *http.Request, action s
 		return nil, nil, nil, false
 	}
 	d := map[string]any{"session_id": rec.SessionID, "format": rec.Format}
-	for k, v := range details {
-		d[k] = v
-	}
+	maps.Copy(d, details)
 	h.record(r, audit.Actor{UserID: p.User.ID, IP: ip}.Event(action, "recording", rec.ID, audit.Success, d))
 	return rec, sess, rc, true
 }
@@ -396,7 +395,7 @@ func (h *Handler) auditEvents(w http.ResponseWriter, r *http.Request) {
 		}
 		f.ActorUserID = id
 	}
-	for _, ex := range strings.Split(q.Get("exclude"), ",") {
+	for ex := range strings.SplitSeq(q.Get("exclude"), ",") {
 		ex = strings.TrimSpace(ex)
 		if ex == "" {
 			continue

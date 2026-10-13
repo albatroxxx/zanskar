@@ -17,6 +17,7 @@ import (
 	"github.com/albatroxxx/zanskar/internal/gateway"
 	"github.com/albatroxxx/zanskar/internal/gateway/guac"
 	"github.com/albatroxxx/zanskar/internal/httpx"
+	"github.com/albatroxxx/zanskar/internal/protocol"
 	"github.com/albatroxxx/zanskar/internal/user"
 )
 
@@ -58,10 +59,10 @@ func (h *ShadowHandler) shadow(w http.ResponseWriter, r *http.Request) {
 	actor := audit.Actor{UserID: p.User.ID, IP: auth.ClientIP(r)}
 	details := map[string]string{"session_id": live.SessionID, "target_id": live.TargetID, "owner_user_id": live.UserID, "protocol": live.Protocol}
 
-	switch live.Protocol {
-	case "ssh", "winrm":
+	switch {
+	case protocol.Terminal(live.Protocol):
 		h.shadowTerminal(w, r, live, actor, details)
-	case "rdp", "vnc":
+	case protocol.Desktop(live.Protocol):
 		h.shadowDesktop(w, r, live, actor, details)
 	default:
 		httpx.WriteError(w, r, http.StatusBadRequest, "bad_request", "protocol cannot be shadowed")
@@ -113,7 +114,7 @@ func (h *ShadowHandler) shadowTerminal(w http.ResponseWriter, r *http.Request, l
 			return
 		case chunk, ok := <-ch:
 			if !ok {
-				wctx, wcancel := context.WithTimeout(context.Background(), 2*time.Second)
+				wctx, wcancel := detach(ctx, frameTimeout)
 				b, _ := json.Marshal(shadowControl{T: "end", Reason: "session_ended"})
 				_ = ws.Write(wctx, websocket.MessageText, b)
 				wcancel()

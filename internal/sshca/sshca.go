@@ -14,6 +14,7 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
+	"maps"
 	"strings"
 	"time"
 
@@ -53,13 +54,6 @@ func NewSigner(caPrivatePEM []byte) (*Signer, error) {
 		return nil, fmt.Errorf("%w: %w", ErrBadCAKey, err)
 	}
 	return &Signer{ca: ca}, nil
-}
-
-// AuthorityPublicKey returns the CA public key in authorized_keys format.
-// This is the value an admin installs in a host's TrustedUserCAKeys file so
-// the host trusts certificates this Signer issues.
-func (s *Signer) AuthorityPublicKey() string {
-	return strings.TrimSpace(string(ssh.MarshalAuthorizedKey(s.ca.PublicKey())))
 }
 
 // CertParams describes the certificate to mint.
@@ -106,9 +100,7 @@ func (s *Signer) Issue(userPub ssh.PublicKey, p CertParams) (*ssh.Certificate, e
 	}
 
 	extensions := map[string]string{"permit-pty": ""}
-	for k, v := range p.Extensions {
-		extensions[k] = v
-	}
+	maps.Copy(extensions, p.Extensions)
 
 	criticalOptions := map[string]string{}
 	if p.SourceAddress != "" {
@@ -124,10 +116,8 @@ func (s *Signer) Issue(userPub ssh.PublicKey, p CertParams) (*ssh.Certificate, e
 		ValidPrincipals: p.Principals,
 		ValidAfter:      uint64(now.Add(-clockSkew).Unix()), // #nosec G115 -- unix seconds fit uint64
 		ValidBefore:     uint64(now.Add(validity).Unix()),   // #nosec G115 -- unix seconds fit uint64
-		Permissions: ssh.Permissions{
-			CriticalOptions: criticalOptions,
-			Extensions:      extensions,
-		},
+		CriticalOptions: criticalOptions,
+		Extensions:      extensions,
 	}
 	if err := cert.SignCert(rand.Reader, s.ca); err != nil {
 		return nil, fmt.Errorf("sshca: sign: %w", err)
@@ -148,7 +138,7 @@ func IssueForSession(caPrivatePEM []byte, p CertParams) (certAuthorizedKey strin
 		return "", "", err
 	}
 
-	pub, priv, err := ed25519.GenerateKey(rand.Reader)
+	_, priv, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		return "", "", err
 	}
@@ -160,7 +150,6 @@ func IssueForSession(caPrivatePEM []byte, p CertParams) (certAuthorizedKey strin
 	if err != nil {
 		return "", "", fmt.Errorf("sshca: user key: %w", err)
 	}
-	_ = pub
 
 	cert, err := signer.Issue(userSigner.PublicKey(), p)
 	if err != nil {

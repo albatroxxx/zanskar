@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/albatroxxx/zanskar/internal/config"
 	"github.com/albatroxxx/zanskar/internal/store"
+	"github.com/albatroxxx/zanskar/internal/store/storetest"
 )
 
 func TestSelectForPurge(t *testing.T) {
@@ -65,14 +65,7 @@ func (f *fakeStorage) Delete(_ context.Context, uri string) error {
 func newRetentionTestRepo(t *testing.T) *Repo {
 	t.Helper()
 	ctx := context.Background()
-	db, err := store.Open(ctx, config.DriverSQLite, "file::memory:?_pragma=foreign_keys(1)")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = db.Close() })
-	if _, err := store.Migrate(ctx, db); err != nil {
-		t.Fatal(err)
-	}
+	db := storetest.Open(t)
 	now := store.TimeArg(time.Now())
 	for _, q := range []string{
 		`INSERT INTO users (id, username, display_name, created_at, updated_at) VALUES ('u1','alice','Alice',?,?)`,

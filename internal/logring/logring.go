@@ -11,6 +11,7 @@ package logring
 import (
 	"context"
 	"log/slog"
+	"maps"
 	"strings"
 	"sync"
 	"time"
@@ -133,9 +134,7 @@ func (h *Handler) Enabled(ctx context.Context, l slog.Level) bool { return h.bas
 // Handle records then forwards.
 func (h *Handler) Handle(ctx context.Context, rec slog.Record) error {
 	attrs := make(map[string]string, len(h.attrs)+rec.NumAttrs())
-	for k, v := range h.attrs {
-		attrs[k] = v
-	}
+	maps.Copy(attrs, h.attrs)
 	prefix := strings.Join(h.groups, ".")
 	if prefix != "" {
 		prefix += "."
@@ -169,9 +168,7 @@ func flatten(into map[string]string, prefix string, a slog.Attr) {
 // WithAttrs implements slog.Handler.
 func (h *Handler) WithAttrs(attrs []slog.Attr) slog.Handler {
 	n := &Handler{ring: h.ring, base: h.base.WithAttrs(attrs), attrs: make(map[string]string, len(h.attrs)+len(attrs)), groups: h.groups}
-	for k, v := range h.attrs {
-		n.attrs[k] = v
-	}
+	maps.Copy(n.attrs, h.attrs)
 	prefix := strings.Join(h.groups, ".")
 	if prefix != "" {
 		prefix += "."

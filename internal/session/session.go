@@ -243,9 +243,7 @@ const selectSessions = `SELECT s.id, s.user_id, s.policy_id, s.target_id, s.asg_
 	LEFT JOIN autoscaling_groups g ON g.id = s.asg_id
 	LEFT JOIN asg_instances ai ON ai.id = s.asg_instance_id`
 
-type scanner interface{ Scan(dest ...any) error }
-
-func scanSession(sc scanner) (*Session, error) {
+func scanSession(sc store.Scanner) (*Session, error) {
 	var (
 		s                                                                                     Session
 		policy, target, asg, inst, cred, reason, failover, recID, username, tname, gname, iid sql.NullString
@@ -340,12 +338,9 @@ func (r *Repo) CountRecordingsByStore(ctx context.Context) (map[string]int, erro
 			return nil, err
 		}
 		key := "local"
-		if strings.HasPrefix(uri, "s3://") {
-			rest := strings.TrimPrefix(uri, "s3://")
-			if i := strings.IndexByte(rest, '/'); i >= 0 {
-				rest = rest[:i]
-			}
-			key = "s3://" + rest
+		if rest, ok := strings.CutPrefix(uri, "s3://"); ok {
+			bucket, _, _ := strings.Cut(rest, "/")
+			key = "s3://" + bucket
 		}
 		out[key]++
 	}

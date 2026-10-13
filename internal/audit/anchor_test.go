@@ -88,7 +88,7 @@ func isolatedPostgres(t *testing.T, dsn string) *store.DB {
 func record(t *testing.T, log *Log, n int) []Event {
 	t.Helper()
 	out := make([]Event, 0, n)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		ev, err := log.Record(context.Background(), Actor{UserID: "alice", IP: "10.0.0.1"}.Event("user.login", "user", fmt.Sprint(i), Success, map[string]any{"n": i}))
 		if err != nil {
 			t.Fatal(err)
@@ -325,7 +325,7 @@ func TestVerifyRejectsForgedAnchors(t *testing.T) {
 			t.Fatalf("an altered anchor: %+v", res)
 		}
 
-		for i := 0; i < maxAnchorReports+3; i++ {
+		for range maxAnchorReports + 3 {
 			exec(t, db, `INSERT INTO audit_anchors (event_id, hash, created_at, mac) VALUES (?, ?, ?, ?)`, evs[0].ID, evs[0].Hash, store.TimeArg(time.Now()), strings.Repeat("0", 64))
 		}
 		res = verify(t, log)

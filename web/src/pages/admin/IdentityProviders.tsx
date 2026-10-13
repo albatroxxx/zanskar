@@ -2,6 +2,7 @@ import { useEffect, useState, type FormEvent } from 'react'
 import { api, errorMessage } from '../../api/client'
 import { fmtTime } from '../../api/format'
 import type { Group, Page, Role } from '../../api/types'
+import { useSubmit } from '../../components/submit'
 import { Alert, Badge, Confirm, Empty, Field, Modal, PageHead } from '../../components/ui'
 import { useList } from './lib'
 import { mappingToText, textToMapping } from './groupMapping'
@@ -154,9 +155,8 @@ function ProviderModal({ existing, onClose, onSaved }: { existing: Provider | nu
   const [scopes, setScopes] = useState(csv(existing?.config?.oidc?.scopes))
   const [domains, setDomains] = useState(csv(existing?.config?.oidc?.allowed_domains))
   const [groups, setGroups] = useState<Group[]>([])
-  const [busy, setBusy] = useState(false)
+  const { busy, err: localErr, setErr: setLocalErr, submit } = useSubmit()
   const [test, setTest] = useState<{ tone: 'ok' | 'warn' | 'danger'; msg: string } | null>(null)
-  const [localErr, setLocalErr] = useState('')
 
   // Editing: fetch the full (redacted) config, which the list may not carry.
   useEffect(() => {
@@ -176,7 +176,7 @@ function ProviderModal({ existing, onClose, onSaved }: { existing: Provider | nu
       }).catch((e) => setLocalErr(errorMessage(e)))
     }
     api.get<Page<Group>>('/groups').then((g) => setGroups(g.items ?? [])).catch(() => {})
-  }, [existing])
+  }, [existing, setLocalErr])
 
   const toggleRole = (r: Role) => setRoles((cur) => (cur.includes(r) ? cur.filter((x) => x !== r) : [...cur, r]))
 
@@ -193,24 +193,18 @@ function ProviderModal({ existing, onClose, onSaved }: { existing: Provider | nu
     return { body: { name: name.trim(), type, enabled, config } }
   }
 
-  const save = async (e: FormEvent) => {
+  const save = (e: FormEvent) => {
     e.preventDefault()
     const { body, error } = build()
     if (error) {
       setLocalErr(error)
       return
     }
-    setBusy(true)
-    setLocalErr('')
-    try {
+    void submit(async () => {
       if (existing) await api.put(`/identity-providers/${existing.id}`, body)
       else await api.post('/identity-providers', body)
       onSaved()
-    } catch (err) {
-      setLocalErr(errorMessage(err))
-    } finally {
-      setBusy(false)
-    }
+    })
   }
 
   const runTest = async () => {

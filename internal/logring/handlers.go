@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -72,7 +73,7 @@ func (h *API) download(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Disposition", `attachment; filename="zanskar-logs.jsonl"`)
 	w.Header().Set("Cache-Control", "no-store")
 	enc := json.NewEncoder(w)
-	for i := len(items) - 1; i >= 0; i-- {
-		_ = enc.Encode(items[i])
+	for _, item := range slices.Backward(items) {
+		_ = enc.Encode(item)
 	}
 }

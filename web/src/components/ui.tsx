@@ -1,5 +1,5 @@
-import { Children, cloneElement, isValidElement, useEffect, useId, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactElement, type ReactNode } from 'react'
-import { errorMessage } from '../api/client'
+import { Children, cloneElement, isValidElement, useEffect, useId, useRef, type KeyboardEvent as ReactKeyboardEvent, type ReactElement, type ReactNode } from 'react'
+import { useSubmit } from './submit'
 
 export function PageHead({ title, lead, children }: { title: string; lead?: string; children?: ReactNode }) {
   return (
@@ -144,8 +144,7 @@ export function Modal({ title, onClose, children, width }: { title: string; onCl
 }
 
 export function Confirm({ title, body, confirmLabel, danger, onConfirm, onClose }: { title: string; body: ReactNode; confirmLabel?: string; danger?: boolean; onConfirm: () => Promise<void> | void; onClose: () => void }) {
-  const [busy, setBusy] = useState(false)
-  const [err, setErr] = useState('')
+  const { busy, err, submit } = useSubmit()
   return (
     <Modal title={title} onClose={onClose}>
       <div>{body}</div>
@@ -155,22 +154,50 @@ export function Confirm({ title, body, confirmLabel, danger, onConfirm, onClose 
         <button
           className={'btn ' + (danger ? 'danger' : 'primary')}
           disabled={busy}
-          onClick={async () => {
-            setBusy(true)
-            setErr('')
-            try {
+          onClick={() =>
+            void submit(async () => {
               await onConfirm()
               onClose()
-            } catch (e) {
-              setErr(errorMessage(e))
-            } finally {
-              setBusy(false)
-            }
-          }}
+            })
+          }
         >
           {confirmLabel ?? 'Confirm'}
         </button>
       </div>
+    </Modal>
+  )
+}
+
+/**
+ * FormModal is a dialog that holds one form: the error from its last
+ * attempt above the fields, and below them Cancel and the submit button,
+ * which is held off while the form is busy. Enter submits, as in any form.
+ */
+export function FormModal({ title, width, err, busy, submitLabel, onSubmit, onClose, children }: {
+  title: string
+  width?: number
+  err: string
+  busy: boolean
+  submitLabel: string
+  onSubmit: () => void
+  onClose: () => void
+  children: ReactNode
+}) {
+  return (
+    <Modal title={title} onClose={onClose} width={width}>
+      {err && <Alert tone="danger">{err}</Alert>}
+      <form
+        onSubmit={(e) => {
+          e.preventDefault()
+          onSubmit()
+        }}
+      >
+        {children}
+        <div className="actions">
+          <button type="button" className="btn" onClick={onClose}>Cancel</button>
+          <button type="submit" className="btn primary" disabled={busy}>{submitLabel}</button>
+        </div>
+      </form>
     </Modal>
   )
 }
@@ -214,6 +241,16 @@ export function Field({ label, hint, children }: { label: string; hint?: string;
 
 export function Empty({ children }: { children: ReactNode }) {
   return <div className="empty">{children}</div>
+}
+
+/** LoadMore is the button under a list read a page at a time; it is shown only while there is a next page. */
+export function LoadMore({ next, busy, onMore }: { next: string; busy?: boolean; onMore: () => void }) {
+  if (!next) return null
+  return (
+    <div className="actions" style={{ padding: 12 }}>
+      <button className="btn sm" disabled={busy} onClick={onMore}>Load more</button>
+    </div>
+  )
 }
 
 export function Tags({ tags }: { tags?: Record<string, string> }) {

@@ -10,7 +10,8 @@ its own.
 make web-dev      # Vite on http://127.0.0.1:5173, proxying /api and /ws to the gateway
 make run          # the gateway on 127.0.0.1:8443, in another terminal
 make web          # production build into web/dist, what `make build` embeds
-npm run lint      # oxlint + type checks, the same as CI
+npm run lint      # oxlint, as CI runs it (the type check is part of `npm run build`)
+npm test          # the console's tests (Vitest)
 ```
 
 Sign in at the Vite URL; the API calls go to the running gateway. Types in `src/api/types.ts`

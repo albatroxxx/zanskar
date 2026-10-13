@@ -5,6 +5,7 @@ package access
 import (
 	"context"
 	"encoding/json"
+	"maps"
 	"net/http"
 	"testing"
 
@@ -41,9 +42,7 @@ func TestRequestValidation(t *testing.T) {
 	ok := map[string]any{"target_id": e.target, "protocol": "ssh", "reason": "incident 7", "minutes": 30}
 	with := func(k string, v any) map[string]any {
 		m := map[string]any{}
-		for kk, vv := range ok {
-			m[kk] = vv
-		}
+		maps.Copy(m, ok)
 		m[k] = v
 		return m
 	}

@@ -1,9 +1,10 @@
-import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
+import { useEffect, useState, type FormEvent } from 'react'
 import { Link } from 'react-router-dom'
 import { api, errorMessage, query } from '../../api/client'
 import { fmtPreciseTime, shortId } from '../../api/format'
 import type { AuditEvent, AuditFacets, AuditVerify, Page } from '../../api/types'
-import { Alert, Badge, Empty, PageHead } from '../../components/ui'
+import { usePaged } from '../../components/paged'
+import { Alert, Badge, Empty, LoadMore, PageHead } from '../../components/ui'
 import { capitalize, describe, detailText, humanAction, typeLabel, who, words } from './eventText'
 import { useRecordingsPath } from './paths'
 
@@ -110,10 +111,21 @@ export function Events() {
   const [draft, setDraft] = useState<Filters>(emptyFilters)
   const [filters, setFilters] = useState<Filters>(emptyFilters)
   const [showRoutine, setShowRoutine] = useState(false)
-  const [items, setItems] = useState<AuditEvent[] | null>(null)
-  const [next, setNext] = useState('')
-  const [err, setErr] = useState('')
-  const [busy, setBusy] = useState(false)
+  const { items, next, err, setErr, busy, load, more, restart } = usePaged((cursor) =>
+    api.get<Page<AuditEvent>>(
+      '/audit/events' +
+        query({
+          actor: filters.actor.trim(),
+          action: filters.action.trim(),
+          object_type: filters.object_type.trim(),
+          from: rangeBounds(filters).from,
+          to: rangeBounds(filters).to,
+          exclude: showRoutine ? '' : routine,
+          cursor,
+          limit: 50,
+        }),
+    ),
+  )
 
   useEffect(() => {
     api
@@ -128,54 +140,19 @@ export function Events() {
       .catch(() => setFacets({ actions: [], object_types: [] }))
   }, [])
 
-  // Each change of filters starts a new generation, and a page that arrives
-  // for an older one is dropped: a Load more still in flight when the filters
-  // changed would otherwise append rows from the old filters to the new list,
-  // and a slow first page for old filters could replace a quick one for new.
-  const generation = useRef(0)
-  const load = useCallback((f: Filters, routineToo: boolean, cursor?: string) => {
-    const mine = generation.current
-    return api
-      .get<Page<AuditEvent>>(
-        '/audit/events' +
-          query({
-            actor: f.actor.trim(),
-            action: f.action.trim(),
-            object_type: f.object_type.trim(),
-            from: rangeBounds(f).from,
-            to: rangeBounds(f).to,
-            exclude: routineToo ? '' : routine,
-            cursor,
-            limit: 50,
-          }),
-      )
-      .then((p) => {
-        if (generation.current !== mine) return
-        setItems((cur) => (cursor && cur ? [...cur, ...p.items] : p.items))
-        setNext(p.next_cursor ?? '')
-      })
-      .catch((e) => {
-        if (generation.current === mine) setErr(errorMessage(e))
-      })
-  }, [])
-
+  // Each change of filters reads the list again from its first page, and a
+  // page still on its way for the old filters is dropped (B30).
   useEffect(() => {
-    generation.current++
-    void load(filters, showRoutine)
+    void load()
   }, [filters, showRoutine, load])
 
-  const more = () => {
-    setBusy(true)
+  const loadMore = () => {
     setErr('')
-    void load(filters, showRoutine, next).finally(() => setBusy(false))
+    more()
   }
-  // The list empties the moment the filters change, so the generation moves
-  // on here too: a page landing before the reload starts has nowhere to go.
-  const restart = () => {
-    generation.current++
-    setErr('')
-    setItems(null)
-  }
+  // The list empties the moment the filters change, and restart moves the
+  // generation on here too: a page landing before the reload starts has
+  // nowhere to go.
   const apply = (e: FormEvent) => {
     e.preventDefault()
     restart()
@@ -184,7 +161,9 @@ export function Events() {
   const reset = () => {
     restart()
     setDraft(emptyFilters)
-    setFilters(emptyFilters)
+    // A new object, so the list is read again even when the filters were
+    // empty already: restart has emptied it either way.
+    setFilters({ ...emptyFilters })
   }
   const toggleRoutine = (on: boolean) => {
     restart()
@@ -331,11 +310,7 @@ export function Events() {
             </tbody>
           </table>
         )}
-        {next && (
-          <div className="actions" style={{ padding: 12 }}>
-            <button className="btn sm" disabled={busy} onClick={more}>Load more</button>
-          </div>
-        )}
+        <LoadMore next={next} busy={busy} onMore={loadMore} />
       </div>
     </>
   )

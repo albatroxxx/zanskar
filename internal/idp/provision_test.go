@@ -12,11 +12,10 @@ import (
 	"testing"
 
 	"github.com/albatroxxx/zanskar/internal/audit"
-	"github.com/albatroxxx/zanskar/internal/config"
 	"github.com/albatroxxx/zanskar/internal/crypto"
 	"github.com/albatroxxx/zanskar/internal/gateway"
 	"github.com/albatroxxx/zanskar/internal/keyring"
-	"github.com/albatroxxx/zanskar/internal/store"
+	"github.com/albatroxxx/zanskar/internal/store/storetest"
 	"github.com/albatroxxx/zanskar/internal/user"
 )
 
@@ -66,14 +65,7 @@ type provisionEnv struct {
 func newProvisionEnv(t *testing.T) *provisionEnv {
 	t.Helper()
 	ctx := context.Background()
-	db, err := store.Open(ctx, config.DriverSQLite, "file::memory:?_pragma=foreign_keys(1)")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = db.Close() })
-	if _, err := store.Migrate(ctx, db); err != nil {
-		t.Fatal(err)
-	}
+	db := storetest.Open(t)
 	kek, err := crypto.NewLocalKEK(bytes.Repeat([]byte{7}, 32))
 	if err != nil {
 		t.Fatal(err)
@@ -332,9 +324,9 @@ func TestResolveGroupDNMappingIsExact(t *testing.T) {
 	if r, err := e.pv.Resolve(ctx, p, planted); err != nil || len(r.GroupsAdded) != 0 {
 		t.Fatalf("a same-named group in another OU joined the mapped group: %+v %v", r.GroupsAdded, err)
 	}
-	real := Identity{ExternalID: "sub-2", Username: "alice", Groups: []string{"zanskar-admins"},
+	mapped := Identity{ExternalID: "sub-2", Username: "alice", Groups: []string{"zanskar-admins"},
 		GroupDNs: []string{"CN=Zanskar-Admins, OU=Groups, DC=corp, DC=example"}}
-	if r, err := e.pv.Resolve(ctx, p, real); err != nil || strings.Join(r.GroupsAdded, ",") != "g-admins" {
+	if r, err := e.pv.Resolve(ctx, p, mapped); err != nil || strings.Join(r.GroupsAdded, ",") != "g-admins" {
 		t.Fatalf("the mapped DN, written differently, must match: %+v %v", r.GroupsAdded, err)
 	}
 	p.Config.GroupMapping = GroupMapping{"zanskar-admins": "g-admins"}

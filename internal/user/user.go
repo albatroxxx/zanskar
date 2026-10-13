@@ -7,6 +7,7 @@ package user
 import (
 	"errors"
 	"regexp"
+	"slices"
 	"time"
 )
 
@@ -61,12 +62,7 @@ type User struct {
 
 // HasRole reports whether the user holds r.
 func (u *User) HasRole(r Role) bool {
-	for _, have := range u.Roles {
-		if have == r {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(u.Roles, r)
 }
 
 // CanConnect reports whether the account may see targets, request access and

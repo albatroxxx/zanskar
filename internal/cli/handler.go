@@ -270,7 +270,7 @@ func allow(s *signIn, now time.Time) bool {
 func (h *Handler) run(r *http.Request, s *signIn, line, confirm string, now time.Time) (execReply, string, string, []apiCall) {
 	o := &out{}
 	fail := func(result, format string, a ...any) (execReply, string, string, []apiCall) {
-		o.add(styleError, "%s", sentence(fmt.Sprintf(format, a...)))
+		o.addf(styleError, "%s", sentence(fmt.Sprintf(format, a...)))
 		return execReply{Status: "error", Lines: o.lines}, "", result, nil
 	}
 	words, err := tokenize(line)
@@ -279,12 +279,12 @@ func (h *Handler) run(r *http.Request, s *signIn, line, confirm string, now time
 	}
 	c, rest := find(h.cmds, words)
 	if c == nil {
-		o.add(styleError, "Unknown command %q. This is not a shell: only Zanskar commands run here. Type help to list them.", words[0])
+		o.addf(styleError, "Unknown command %q. This is not a shell: only Zanskar commands run here. Type help to list them.", words[0])
 		return execReply{Status: "error", Lines: o.lines}, "", resultUnknown, nil
 	}
 	args, err := parseArgs(c, rest)
 	if err != nil {
-		o.add(styleError, "%s", sentence(err.Error()))
+		o.addf(styleError, "%s", sentence(err.Error()))
 		return execReply{Status: "error", Lines: o.lines}, c.name, resultInvalid, nil
 	}
 	x := &run{parsed: args, out: o, now: now, resolved: map[string]string{}, cmds: h.cmds,
@@ -306,16 +306,16 @@ func (h *Handler) run(r *http.Request, s *signIn, line, confirm string, now time
 			h.mu.Lock()
 			s.pending = &pendingConfirm{line: line, expires: now.Add(confirmFor)}
 			h.mu.Unlock()
-			o.add(styleWarn, "%s", prompt)
-			o.text("Type %s to confirm, or anything else to cancel.", expect)
+			o.addf(styleWarn, "%s", prompt)
+			o.textf("Type %s to confirm, or anything else to cancel.", expect)
 			return execReply{Status: "confirm", Lines: o.lines, Expect: expect}, c.name, resultConfirm, x.api.calls
 		}
 		if pend == nil || pend.line != line || now.After(pend.expires) {
-			o.add(styleError, "Nothing to confirm: run the command again.")
+			o.addf(styleError, "Nothing to confirm: run the command again.")
 			return execReply{Status: "error", Lines: o.lines}, c.name, resultInvalid, x.api.calls
 		}
 		if confirm != expect {
-			o.add(styleMuted, "Cancelled.")
+			o.addf(styleMuted, "Cancelled.")
 			return execReply{Status: "cancelled", Lines: o.lines}, c.name, resultCancelled, x.api.calls
 		}
 	}
@@ -327,22 +327,22 @@ func (h *Handler) run(r *http.Request, s *signIn, line, confirm string, now time
 
 func (h *Handler) failed(x *run, c *command, err error) (execReply, string, string, []apiCall) {
 	var (
-		ue errUsage
+		ue usageError
 		ae *apiError
 	)
 	result := resultError
 	switch {
 	case errors.As(err, &ue):
-		x.out.add(styleError, "%s", sentence(ue.msg))
+		x.out.addf(styleError, "%s", sentence(ue.msg))
 		result = resultInvalid
 	case errors.As(err, &ae) && ae.Status == http.StatusForbidden:
-		x.out.add(styleError, "Not allowed: %s", ae.Error())
+		x.out.addf(styleError, "Not allowed: %s", ae.Error())
 		result = resultDenied
 	case errors.As(err, &ae):
-		x.out.add(styleError, "%s", sentence(ae.Error()))
+		x.out.addf(styleError, "%s", sentence(ae.Error()))
 	default:
 		h.Log.Error("cli: command failed", "command", c.name, "err", err)
-		x.out.add(styleError, "The command failed; the gateway log has the details.")
+		x.out.addf(styleError, "The command failed; the gateway log has the details.")
 	}
 	return execReply{Status: "error", Lines: x.out.lines}, c.name, result, x.api.calls
 }

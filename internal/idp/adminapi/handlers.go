@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"maps"
 	"net/http"
 	"time"
 
@@ -222,9 +223,7 @@ func (h *AdminHandler) record(r *http.Request, action string, p *idp.Provider, e
 
 func (h *AdminHandler) recordOutcome(r *http.Request, action string, p *idp.Provider, outcome audit.Outcome, extra map[string]any) {
 	details := map[string]any{"name": p.Name, "type": p.Type, "enabled": p.Enabled}
-	for k, v := range extra {
-		details[k] = v
-	}
+	maps.Copy(details, extra)
 	auth.Recorder{Audit: h.Audit, Log: h.Log}.Record(r, auth.ActorFor(r).Event(action, "identity_provider", p.ID, outcome, details))
 }
 

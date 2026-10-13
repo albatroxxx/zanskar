@@ -189,7 +189,7 @@ func (r *Repo) Update(ctx context.Context, t *Target) error {
 	if err != nil {
 		return mapErr(err)
 	}
-	if err := affected(res); err != nil {
+	if err := store.Affected(res, ErrNotFound); err != nil {
 		return err
 	}
 	if err := replaceCredentialsTx(ctx, tx, r.db, t.ID, t.Credentials); err != nil {
@@ -216,7 +216,7 @@ func (r *Repo) Delete(ctx context.Context, id string) error {
 	if err != nil {
 		return mapErr(err)
 	}
-	if err := affected(res); err != nil {
+	if err := store.Affected(res, ErrNotFound); err != nil {
 		return err
 	}
 	if _, err := tx.ExecContext(ctx, r.db.Rebind(`DELETE FROM target_credentials WHERE target_id = ?`), id); err != nil {
@@ -390,7 +390,7 @@ func (r *Repo) TrustHostKey(ctx context.Context, id, fingerprint string) (*Targe
 	if err != nil {
 		return nil, err
 	}
-	if err := affected(res); err != nil {
+	if err := store.Affected(res, ErrNotFound); err != nil {
 		return nil, ErrFingerprintMismatch
 	}
 	t.HostKeyStatus = HostKeyTrusted
@@ -430,7 +430,7 @@ func (r *Repo) TrustCertificate(ctx context.Context, id string, proto Protocol, 
 	if err != nil {
 		return nil, err
 	}
-	if err := affected(res); err != nil {
+	if err := store.Affected(res, ErrNotFound); err != nil {
 		return nil, ErrFingerprintMismatch
 	}
 	*pinned, *pending = &fingerprint, nil
@@ -445,7 +445,7 @@ func (r *Repo) TrustCertificate(ctx context.Context, id string, proto Protocol, 
 // consumed and closed before it returns, which matters on SQLite where the
 // pool holds a single connection: a follow-up query while rows are open
 // would deadlock.
-func (r *Repo) scanAll(ctx context.Context, q string, tags map[string]string, max int, args ...any) ([]*Target, error) {
+func (r *Repo) scanAll(ctx context.Context, q string, tags map[string]string, limit int, args ...any) ([]*Target, error) {
 	rows, err := r.db.QueryContext(ctx, q, args...)
 	if err != nil {
 		return nil, err
@@ -461,7 +461,7 @@ func (r *Repo) scanAll(ctx context.Context, q string, tags map[string]string, ma
 			continue
 		}
 		out = append(out, t)
-		if max > 0 && len(out) >= max {
+		if limit > 0 && len(out) >= limit {
 			break
 		}
 	}
@@ -505,9 +505,7 @@ func replaceCredentialsTx(ctx context.Context, tx *sql.Tx, db *store.DB, id stri
 	return nil
 }
 
-type scanner interface{ Scan(dest ...any) error }
-
-func scanTarget(s scanner) (*Target, error) {
+func scanTarget(s store.Scanner) (*Target, error) {
 	var (
 		t                       Target
 		osFamily, hkStatus      string
@@ -581,17 +579,6 @@ func nullStr(s *string) any {
 		return nil
 	}
 	return *s
-}
-
-func affected(res sql.Result) error {
-	n, err := res.RowsAffected()
-	if err != nil {
-		return err
-	}
-	if n == 0 {
-		return ErrNotFound
-	}
-	return nil
 }
 
 func mapErr(err error) error {

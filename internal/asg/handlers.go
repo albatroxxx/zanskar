@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"maps"
 	"net/http"
 	"strings"
 	"time"
@@ -135,6 +136,10 @@ func (h *AdminHandler) create(w http.ResponseWriter, r *http.Request) {
 		httpx.BadRequest(w, r, err.Error())
 		return
 	}
+	if err := h.userSupplied(r, body.Credentials); err != nil {
+		h.fail(w, r, err)
+		return
+	}
 	g := &Group{ExternalID: strings.TrimSpace(body.ExternalID)}
 	body.apply(g)
 	if p, ok := auth.FromContext(r.Context()); ok {
@@ -146,6 +151,24 @@ func (h *AdminHandler) create(w http.ResponseWriter, r *http.Request) {
 	}
 	h.record(r, audit.ASGCreate, g, audit.Success, nil)
 	httpx.WriteJSON(w, http.StatusCreated, g)
+}
+
+// userSupplied turns the "user supplied" choice in a write's credentials into
+// the shared row that stands for it, as binding one protocol does: the
+// console's group form offers the same three choices as the group's drawer.
+func (h *AdminHandler) userSupplied(r *http.Request, creds map[target.Protocol]string) error {
+	for proto, id := range creds {
+		if id != credential.UserSuppliedSentinel || h.Vault == nil {
+			continue
+		}
+		p, _ := auth.FromContext(r.Context())
+		cid, err := h.Vault.EnsureUserSupplied(r.Context(), p.User.ID)
+		if err != nil {
+			return err
+		}
+		creds[proto] = cid
+	}
+	return nil
 }
 
 func (h *AdminHandler) get(w http.ResponseWriter, r *http.Request) {
@@ -166,6 +189,10 @@ func (h *AdminHandler) update(w http.ResponseWriter, r *http.Request) {
 	var body Write
 	if err := httpx.DecodeJSON(r, &body); err != nil {
 		httpx.BadRequest(w, r, err.Error())
+		return
+	}
+	if err := h.userSupplied(r, body.Credentials); err != nil {
+		h.fail(w, r, err)
 		return
 	}
 	before := map[string]any{"name": g.Name, "region": g.Region, "external_name": g.ExternalName, "status": g.Status}
@@ -505,9 +532,7 @@ func (h *AdminHandler) unsetCredential(w http.ResponseWriter, r *http.Request) {
 
 func (h *AdminHandler) record(r *http.Request, action string, g *Group, outcome audit.Outcome, extra map[string]any) {
 	details := map[string]any{"name": g.Name, "region": g.Region, "external_name": g.ExternalName}
-	for k, v := range extra {
-		details[k] = v
-	}
+	maps.Copy(details, extra)
 	auth.Recorder{Audit: h.Audit, Log: h.Log}.Record(r, auth.ActorFor(r).Event(action, "autoscaling_group", g.ID, outcome, details))
 }
 

@@ -18,6 +18,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/albatroxxx/zanskar/internal/cloud"
 	"github.com/albatroxxx/zanskar/internal/store"
 	"github.com/albatroxxx/zanskar/internal/target"
 )
@@ -315,7 +316,7 @@ func yamlString(s string) string {
 
 func indent(text, prefix string) string {
 	var b strings.Builder
-	for _, line := range strings.Split(strings.TrimRight(text, "\n"), "\n") {
+	for line := range strings.SplitSeq(strings.TrimRight(text, "\n"), "\n") {
 		b.WriteString(prefix)
 		b.WriteString(line)
 		b.WriteByte('\n')
@@ -391,7 +392,7 @@ func (r *Repo) Update(ctx context.Context, g *Group) error {
 	if err != nil {
 		return mapErr(err)
 	}
-	if err := affected(res); err != nil {
+	if err := store.Affected(res, ErrNotFound); err != nil {
 		return err
 	}
 	if err := setCredentialsTx(ctx, tx, r.db, g.ID, g.Credentials); err != nil {
@@ -463,7 +464,7 @@ func (r *Repo) Delete(ctx context.Context, id string) error {
 	if err != nil {
 		return err
 	}
-	if err := affected(res); err != nil {
+	if err := store.Affected(res, ErrNotFound); err != nil {
 		return err
 	}
 	if _, err := tx.ExecContext(ctx, r.db.Rebind(`DELETE FROM asg_credentials WHERE asg_id = ?`), id); err != nil {
@@ -608,15 +609,14 @@ func (r *Repo) SetCredential(ctx context.Context, groupID string, p target.Proto
 const instanceCols = `id, asg_id, instance_id, private_ip, public_ip, availability_zone, lifecycle_state, lb_health, probe_health,
 	host_key_fingerprint, host_key_source, tls_fingerprint, winrm_tls_fingerprint, launched_at, first_seen_at, last_seen_at, terminated_at`
 
+// derive is an instance's health under ADR 0011: still there, its own
+// probe healthy, and the cloud's view healthy by cloud.Healthy, the one
+// place that rule is written (D5).
 func derive(in *Instance) bool {
-	if in.TerminatedAt != nil || in.LifecycleState != "InService" || in.ProbeHealth != "healthy" {
+	if in.TerminatedAt != nil || in.ProbeHealth != "healthy" {
 		return false
 	}
-	switch strings.ToLower(in.LBHealth) {
-	case "", "healthy":
-		return true
-	}
-	return false
+	return cloud.Healthy(cloud.Instance{LifecycleState: in.LifecycleState, LBHealth: in.LBHealth})
 }
 
 func (r *Repo) instanceByCloudID(ctx context.Context, groupID, instanceID string) (*Instance, error) {
@@ -659,9 +659,7 @@ func setCredentialsTx(ctx context.Context, tx *sql.Tx, db *store.DB, groupID str
 	return nil
 }
 
-type scanner interface{ Scan(dest ...any) error }
-
-func scanGroup(s scanner) (*Group, error) {
+func scanGroup(s store.Scanner) (*Group, error) {
 	var (
 		g                        Group
 		osFamily                 string
@@ -692,7 +690,7 @@ func scanGroup(s scanner) (*Group, error) {
 	return &g, nil
 }
 
-func scanInstance(s scanner) (*Instance, error) {
+func scanInstance(s store.Scanner) (*Instance, error) {
 	var (
 		in                                  Instance
 		priv, pub, az, lb, hk, hks, tf, wtf sql.NullString
@@ -737,17 +735,6 @@ func timeOrNil(t *time.Time) any {
 		return nil
 	}
 	return store.TimeArg(*t)
-}
-
-func affected(res sql.Result) error {
-	n, err := res.RowsAffected()
-	if err != nil {
-		return err
-	}
-	if n == 0 {
-		return ErrNotFound
-	}
-	return nil
 }
 
 func mapErr(err error) error {

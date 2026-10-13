@@ -4,22 +4,10 @@ import type { Client, GuacObject, InputStream, Keyboard } from 'guacamole-common
 import { fmtBytes, fmtSeconds, protocolName } from '../../api/format'
 import { FailoverDialog } from './Failover'
 import { SessionEndedDialog } from './SessionEnded'
-import { desktopEnd, SESSION_ID, type SessionEnd } from './session'
+import { desktopEnd, saveBlob, SESSION_ID, useSwitched, type SessionEnd, type SessionState } from './session'
 import { useFullscreen } from './fullscreen'
 import { FullscreenButton } from './FullscreenButton'
-import type { ConnectResponse } from '../../api/types'
 import { isPasteKey, keyQueue } from './keys'
-
-interface DesktopState {
-  ticket: string
-  ws_path: string
-  target: string
-  protocol: string
-  asg_id?: string
-  asg_instance_id?: string
-  instance_label?: string
-  switched_from?: string
-}
 
 type GuacModule = typeof import('guacamole-common-js')['default']
 
@@ -56,13 +44,13 @@ function typingInField(): boolean {
  */
 export function Desktop() {
   const loc = useLocation()
-  const state = loc.state as DesktopState | null
+  const state = loc.state as SessionState | null
   if (!state) return <Navigate to="/" replace />
   // Keyed on the ticket so a failover rebuilds the whole session.
   return <DesktopSession key={state.ticket} state={state} />
 }
 
-function DesktopSession({ state }: { state: DesktopState }) {
+function DesktopSession({ state }: { state: SessionState }) {
   const nav = useNavigate()
   const host = useRef<HTMLDivElement>(null)
   const pageRef = useRef<HTMLDivElement>(null)
@@ -327,12 +315,7 @@ function DesktopSession({ state }: { state: DesktopState }) {
         setStatus({ text: `downloading ${e.name} (${fmtBytes(total)})` })
       }
       reader.onend = () => {
-        const blob = new Blob(parts, { type: mimetype || 'application/octet-stream' })
-        const a = document.createElement('a')
-        a.href = URL.createObjectURL(blob)
-        a.download = e.name
-        a.click()
-        setTimeout(() => URL.revokeObjectURL(a.href), 10_000)
+        saveBlob(new Blob(parts, { type: mimetype || 'application/octet-stream' }), e.name)
         setStatus({ text: `downloaded ${e.name} (${fmtBytes(total)})` })
       }
       stream.sendAck('Ready', 0x0000)
@@ -384,21 +367,7 @@ function DesktopSession({ state }: { state: DesktopState }) {
   }
 
   const parent = cwd === '/' ? null : cwd.replace(/\/[^/]+\/?$/, '') || '/'
-  const onSwitched = (res: ConnectResponse) => {
-    nav('/desktop', {
-      replace: true,
-      state: {
-        ticket: res.ticket,
-        ws_path: res.ws_path,
-        target: state.target,
-        protocol: state.protocol,
-        asg_id: res.asg_id ?? state.asg_id,
-        asg_instance_id: res.asg_instance_id,
-        instance_label: res.instance_label,
-        switched_from: state.instance_label,
-      } satisfies DesktopState,
-    })
-  }
+  const onSwitched = useSwitched('/desktop', state)
   useEffect(() => { endedRef.current = !!ended }, [ended])
   // An ended session takes no more keys; the dialogs that follow need them.
   useEffect(() => { if (ended) releaseKeyboard() }, [ended, releaseKeyboard])

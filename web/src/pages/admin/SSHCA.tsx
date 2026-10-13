@@ -11,14 +11,14 @@ export const DEFAULT_CERT_TTL = 300
  * certificates from this authority. During a rotation both public keys are
  * written, one per line, which is how sshd overlaps authorities.
  */
-export function caInstallSnippet(publicKeys: string[]): string {
+function caInstallSnippet(publicKeys: string[]): string {
   const keys = publicKeys.filter(Boolean)
   const write = keys.length === 1 ? `echo '${keys[0]}' > /etc/ssh/zanskar_ca.pub` : `printf '%s\\n' ${keys.map((k) => `'${k}'`).join(' ')} > /etc/ssh/zanskar_ca.pub`
   return [write, `echo 'TrustedUserCAKeys /etc/ssh/zanskar_ca.pub' > /etc/ssh/sshd_config.d/zanskar.conf`, `systemctl reload ssh 2>/dev/null || systemctl reload sshd`].join('\n')
 }
 
 /** The public keys a target should trust right now: the signing key plus a prepared next key. */
-export function trustedKeys(c: Credential): string[] {
+function trustedKeys(c: Credential): string[] {
   return [c.public_key ?? '', c.rotation?.pending_public_key ?? ''].filter(Boolean)
 }
 

@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/albatroxxx/zanskar/internal/config"
 	"github.com/albatroxxx/zanskar/internal/store"
+	"github.com/albatroxxx/zanskar/internal/store/storetest"
 	"github.com/albatroxxx/zanskar/internal/user"
 )
 
@@ -71,9 +71,9 @@ func TestTimeWindow(t *testing.T) {
 
 func TestEvaluate(t *testing.T) {
 	now := time.Date(2026, 9, 21, 10, 0, 0, 0, time.UTC) // Monday 10:00
-	max := 60
+	most := 60
 	wide := &Policy{Name: "wide", Enabled: true, Selector: Selector{Tags: map[string]string{"env": "prod"}}, Protocols: []string{"ssh", "rdp"}, IdleTimeoutMinutes: 30, AllowClipboard: true}
-	tight := &Policy{Name: "tight", Enabled: true, Selector: Selector{Targets: []string{"t1"}}, Protocols: []string{"ssh"}, IdleTimeoutMinutes: 10, MaxSessionMinutes: &max, RequireMFA: true}
+	tight := &Policy{Name: "tight", Enabled: true, Selector: Selector{Targets: []string{"t1"}}, Protocols: []string{"ssh"}, IdleTimeoutMinutes: 10, MaxSessionMinutes: &most, RequireMFA: true}
 	off := &Policy{Name: "off", Enabled: false, Selector: Selector{Targets: []string{"t1"}}, Protocols: []string{"vnc"}, IdleTimeoutMinutes: 5}
 	hours := &Policy{Name: "hours", Enabled: true, Selector: Selector{Targets: []string{"t2"}}, Protocols: []string{"ssh"}, IdleTimeoutMinutes: 15,
 		TimeWindows: []TimeWindow{{Days: []string{"sat", "sun"}, From: "00:00", To: "23:59", TZ: "UTC"}}}
@@ -104,14 +104,7 @@ func TestEvaluate(t *testing.T) {
 
 func TestRepo(t *testing.T) {
 	ctx := context.Background()
-	db, err := store.Open(ctx, config.DriverSQLite, "file::memory:?_pragma=foreign_keys(1)")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = db.Close() })
-	if _, err := store.Migrate(ctx, db); err != nil {
-		t.Fatal(err)
-	}
+	db := storetest.Open(t)
 	// Minimal fixtures: a group and a user in it.
 	now := store.TimeArg(time.Now())
 	mustExec := func(q string, args ...any) {
@@ -171,14 +164,7 @@ func TestRepo(t *testing.T) {
 // the user's group policies, and a policy must name exactly one subject.
 func TestRepoUserScopedPolicy(t *testing.T) {
 	ctx := context.Background()
-	db, err := store.Open(ctx, config.DriverSQLite, "file::memory:?_pragma=foreign_keys(1)")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = db.Close() })
-	if _, err := store.Migrate(ctx, db); err != nil {
-		t.Fatal(err)
-	}
+	db := storetest.Open(t)
 	now := store.TimeArg(time.Now())
 	for _, q := range []string{
 		`INSERT INTO groups (id, name, created_at, updated_at) VALUES ('g1', 'ops', ?, ?)`,
@@ -280,14 +266,7 @@ func TestEvaluateRequireApproval(t *testing.T) {
 
 func TestReferencing(t *testing.T) {
 	ctx := context.Background()
-	db, err := store.Open(ctx, config.DriverSQLite, "file::memory:?_pragma=foreign_keys(1)")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = db.Close() })
-	if _, err := store.Migrate(ctx, db); err != nil {
-		t.Fatal(err)
-	}
+	db := storetest.Open(t)
 	now := store.TimeArg(time.Now())
 	if _, err := db.ExecContext(ctx, db.Rebind(`INSERT INTO groups (id, name, created_at, updated_at) VALUES ('g1', 'ops', ?, ?)`), now, now); err != nil {
 		t.Fatal(err)
@@ -393,14 +372,7 @@ func TestRulesCoverAndValidate(t *testing.T) {
 
 func TestRepoRulesRoundTrip(t *testing.T) {
 	ctx := context.Background()
-	db, err := store.Open(ctx, config.DriverSQLite, "file::memory:?_pragma=foreign_keys(1)")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = db.Close() })
-	if _, err := store.Migrate(ctx, db); err != nil {
-		t.Fatal(err)
-	}
+	db := storetest.Open(t)
 	now := store.TimeArg(time.Now())
 	if _, err := db.ExecContext(ctx, db.Rebind(`INSERT INTO groups (id, name, created_at, updated_at) VALUES ('g1', 'ops', ?, ?)`), now, now); err != nil {
 		t.Fatal(err)
@@ -431,14 +403,7 @@ func TestRepoRulesRoundTrip(t *testing.T) {
 // carried into the decision.
 func TestRetentionDays(t *testing.T) {
 	ctx := context.Background()
-	db, err := store.Open(ctx, config.DriverSQLite, "file::memory:?_pragma=foreign_keys(1)")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = db.Close() })
-	if _, err := store.Migrate(ctx, db); err != nil {
-		t.Fatal(err)
-	}
+	db := storetest.Open(t)
 	repo := NewRepo(db)
 	u := &user.User{Username: "uma", DisplayName: "Uma", Roles: []user.Role{user.RoleUser}}
 	if err := user.NewRepo(db).Create(ctx, u); err != nil {

@@ -376,11 +376,11 @@ func emailVerified(v any) (verified, said bool) {
 }
 
 func domainAllowed(email string, domains []string) bool {
-	at := strings.LastIndexByte(email, '@')
-	if at < 0 {
+	_, after, ok := strings.CutLast(email, "@")
+	if !ok {
 		return false
 	}
-	d := strings.ToLower(email[at+1:])
+	d := strings.ToLower(after)
 	for _, allowed := range domains {
 		if strings.EqualFold(strings.TrimSpace(allowed), d) {
 			return true
@@ -448,15 +448,15 @@ func (h *Handler) seal(st state) (string, error) {
 
 func (h *Handler) unseal(v string) (state, error) {
 	var st state
-	dot := strings.LastIndexByte(v, '.')
-	if dot < 0 {
+	before, after, ok := strings.CutLast(v, ".")
+	if !ok {
 		return st, errors.New("bad state cookie")
 	}
-	body, err := base64.RawURLEncoding.DecodeString(v[:dot])
+	body, err := base64.RawURLEncoding.DecodeString(before)
 	if err != nil {
 		return st, err
 	}
-	sig, err := base64.RawURLEncoding.DecodeString(v[dot+1:])
+	sig, err := base64.RawURLEncoding.DecodeString(after)
 	if err != nil {
 		return st, err
 	}

@@ -24,7 +24,7 @@ func TestAuditAnchorAndVerify(t *testing.T) {
 	g := newCLIGateway(t, true)
 	g.with(t, func(ctx context.Context, db *store.DB, _ *keyring.Ring) {
 		log := audit.NewLog(db)
-		for i := 0; i < 6; i++ {
+		for range 6 {
 			if _, err := log.Record(ctx, audit.Event{Action: "tick", Outcome: audit.Success}); err != nil {
 				t.Fatal(err)
 			}

@@ -11,6 +11,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/albatroxxx/zanskar/internal/protocol"
 )
 
 // command is one row of the command table. Every command maps to existing
@@ -72,12 +74,12 @@ type run struct {
 	cmds []*command
 }
 
-// errUsage marks an error in what was typed, as opposed to one from the API.
-type errUsage struct{ msg string }
+// usageError marks an error in what was typed, as opposed to one from the API.
+type usageError struct{ msg string }
 
-func (e errUsage) Error() string { return e.msg }
+func (e usageError) Error() string { return e.msg }
 
-func usagef(format string, a ...any) error { return errUsage{fmt.Sprintf(format, a...)} }
+func usagef(format string, a ...any) error { return usageError{fmt.Sprintf(format, a...)} }
 
 // ---- the table
 
@@ -260,34 +262,34 @@ func cmdHelp(x *run) error {
 		if c == nil {
 			return usagef("no command %q; type help to list them", x.rest)
 		}
-		x.out.add(styleHead, "%s", c.usage())
-		x.out.text("%s", c.summary)
+		x.out.addf(styleHead, "%s", c.usage())
+		x.out.textf("%s", c.summary)
 		for _, f := range c.flags {
 			name := "--" + f.name
 			if f.value != "" {
 				name += " " + f.value
 			}
-			x.out.text("  %-22s %s", name, f.help)
+			x.out.textf("  %-22s %s", name, f.help)
 		}
 		if c.plan != nil {
-			x.out.add(styleMuted, "Asks you to confirm before it runs.")
+			x.out.addf(styleMuted, "Asks you to confirm before it runs.")
 		}
-		x.out.add(styleMuted, "Example: %s", c.example)
+		x.out.addf(styleMuted, "Example: %s", c.example)
 		return nil
 	}
 	group := ""
 	for _, c := range x.cmds {
 		if c.group != group {
 			if group != "" {
-				x.out.text("")
+				x.out.textf("")
 			}
 			group = c.group
-			x.out.add(styleHead, "%s", group)
+			x.out.addf(styleHead, "%s", group)
 		}
-		x.out.text("  %-26s %s", c.name+" "+strings.Join(c.args, " "), c.summary)
+		x.out.textf("  %-26s %s", c.name+" "+strings.Join(c.args, " "), c.summary)
 	}
-	x.out.text("")
-	x.out.add(styleMuted, "Also: clear, history. Type help <command> for its options. This is not a shell: only these commands run.")
+	x.out.textf("")
+	x.out.addf(styleMuted, "Also: clear, history. Type help <command> for its options. This is not a shell: only these commands run.")
 	return nil
 }
 
@@ -318,9 +320,9 @@ func cmdStatus(x *run) error {
 	if err != nil {
 		return err
 	}
-	x.out.add("", "%-9s %s", "gateway", line)
-	x.out.add(auditStyle, "%-9s %s", "audit", auditLine)
-	x.out.add("", "%-9s %d live · %d access requests waiting", "sessions", num(st, "live_sessions"), len(pending))
+	x.out.addf("", "%-9s %s", "gateway", line)
+	x.out.addf(auditStyle, "%-9s %s", "audit", auditLine)
+	x.out.addf("", "%-9s %d live · %d access requests waiting", "sessions", num(st, "live_sessions"), len(pending))
 	return nil
 }
 
@@ -329,7 +331,7 @@ func cmdVersion(x *run) error {
 	if err := x.api.get("/version", &v); err != nil {
 		return err
 	}
-	x.out.text("Zanskar %s", str(v, "version"))
+	x.out.textf("Zanskar %s", str(v, "version"))
 	return nil
 }
 
@@ -366,7 +368,7 @@ func cmdSessions(x *run) error {
 		if str(s, "ended_at") != "" {
 			state = "ended " + when(s, "ended_at")
 		}
-		rows = append(rows, []string{short(str(s, "id")), str(s, "username"), str(s, "target_name") + str(s, "asg_name"), protocolName(str(s, "protocol")), when(s, "started_at"), state})
+		rows = append(rows, []string{short(str(s, "id")), str(s, "username"), str(s, "target_name") + str(s, "asg_name"), protocol.Name(str(s, "protocol")), when(s, "started_at"), state})
 	}
 	x.out.table([]string{"ID", "USER", "TARGET", "PROTOCOL", "STARTED", "STATE"}, rows)
 	return nil
@@ -383,7 +385,7 @@ func cmdSessionShow(x *run) error {
 	}
 	x.out.pairs([][2]string{
 		{"id", str(s, "id")}, {"user", str(s, "username")}, {"target", str(s, "target_name") + str(s, "asg_name")},
-		{"protocol", protocolName(str(s, "protocol"))}, {"from", str(s, "client_ip")}, {"started", when(s, "started_at")},
+		{"protocol", protocol.Name(str(s, "protocol"))}, {"from", str(s, "client_ip")}, {"started", when(s, "started_at")},
 		{"ended", when(s, "ended_at")}, {"end reason", str(s, "end_reason")}, {"recording", str(s, "recording_id")},
 	})
 	return nil
@@ -399,7 +401,7 @@ func planSessionTerminate(x *run) (string, string, error) {
 	}
 	x.resolved["session"] = str(s, "id")
 	return fmt.Sprintf("This ends %s's %s session to %s now. The recording stops at this moment.",
-		str(s, "username"), protocolName(str(s, "protocol")), str(s, "target_name")+str(s, "asg_name")), str(s, "username"), nil
+		str(s, "username"), protocol.Name(str(s, "protocol")), str(s, "target_name")+str(s, "asg_name")), str(s, "username"), nil
 }
 
 func cmdSessionTerminate(x *run) error {
@@ -407,7 +409,7 @@ func cmdSessionTerminate(x *run) error {
 	if err := x.api.do(http.MethodPost, pathf("/sessions/%s/terminate", id), map[string]string{"reason": "terminated from the command line"}, nil); err != nil {
 		return err
 	}
-	x.out.add(styleOK, "✓ Terminated.")
+	x.out.addf(styleOK, "✓ Terminated.")
 	return nil
 }
 
@@ -480,7 +482,7 @@ func cmdUserStatus(status string) func(x *run) error {
 		if err := x.api.do(http.MethodPut, pathf("/users/%s", id), body, nil); err != nil {
 			return err
 		}
-		x.out.add(styleOK, "✓ %s is now %s.", str(u, "username"), status)
+		x.out.addf(styleOK, "✓ %s is now %s.", str(u, "username"), status)
 		return nil
 	}
 }
@@ -493,7 +495,7 @@ func cmdUserResetMFA(x *run) error {
 	if err := x.api.do(http.MethodDelete, pathf("/users/%s/mfa", id), nil, nil); err != nil {
 		return err
 	}
-	x.out.add(styleOK, "✓ Authenticator removed for %s.", x.resolved["user.label"])
+	x.out.addf(styleOK, "✓ Authenticator removed for %s.", x.resolved["user.label"])
 	return nil
 }
 
@@ -505,7 +507,7 @@ func cmdUserSignout(x *run) error {
 	if err := x.api.do(http.MethodDelete, pathf("/users/%s/sessions", id), nil, nil); err != nil {
 		return err
 	}
-	x.out.add(styleOK, "✓ %s is signed out everywhere.", x.resolved["user.label"])
+	x.out.addf(styleOK, "✓ %s is signed out everywhere.", x.resolved["user.label"])
 	return nil
 }
 
@@ -570,7 +572,7 @@ func cmdTargetProbe(x *run) error {
 	if err := x.api.do(http.MethodPost, pathf("/targets/%s/probe", id), nil, &res); err != nil {
 		return err
 	}
-	x.out.add(styleOK, "✓ Probed %s.", x.resolved["target.label"])
+	x.out.addf(styleOK, "✓ Probed %s.", x.resolved["target.label"])
 	keys := make([]string, 0, len(res))
 	for k := range res {
 		keys = append(keys, k)
@@ -581,7 +583,7 @@ func cmdTargetProbe(x *run) error {
 		kv = append(kv, [2]string{strings.ReplaceAll(k, "_", " "), str(res, k)})
 	}
 	x.out.pairs(kv)
-	x.out.add(styleMuted, "Trust is unchanged; trust a new key or certificate from the console.")
+	x.out.addf(styleMuted, "Trust is unchanged; trust a new key or certificate from the console.")
 	return nil
 }
 
@@ -634,7 +636,7 @@ func cmdRequests(x *run) error {
 	}
 	rows := make([][]string, 0, len(items))
 	for _, r := range items {
-		rows = append(rows, []string{short(str(r, "id")), str(r, "username"), str(r, "target_name"), protocolName(str(r, "protocol")), str(r, "requested_minutes") + "m", str(r, "status"), str(r, "reason")})
+		rows = append(rows, []string{short(str(r, "id")), str(r, "username"), str(r, "target_name"), protocol.Name(str(r, "protocol")), str(r, "requested_minutes") + "m", str(r, "status"), str(r, "reason")})
 	}
 	x.out.table([]string{"ID", "USER", "TARGET", "PROTOCOL", "FOR", "STATUS", "REASON"}, rows)
 	return nil
@@ -667,7 +669,7 @@ func cmdDecide(verb string) func(x *run) error {
 			return err
 		}
 		past := map[string]string{"approve": "Approved", "deny": "Denied", "revoke": "Revoked"}[verb]
-		x.out.add(styleOK, "✓ %s.", past)
+		x.out.addf(styleOK, "✓ %s.", past)
 		return nil
 	}
 }
@@ -715,22 +717,22 @@ func cmdAuditVerify(x *run) error {
 	}
 	problems, _ := v["problems"].([]any)
 	if v["intact"] == true {
-		x.out.add(styleOK, "✓ Chain intact: %d events checked, head %s.", num(v, "checked"), short(str(v, "last_hash")))
+		x.out.addf(styleOK, "✓ Chain intact: %d events checked, head %s.", num(v, "checked"), short(str(v, "last_hash")))
 		if warnings, _ := v["warnings"].([]any); len(warnings) > 0 {
-			x.out.add(styleMuted, "Warning: %s", str(v, "warnings"))
+			x.out.addf(styleMuted, "Warning: %s", str(v, "warnings"))
 		}
 		return nil
 	}
 	if b := sub(v, "broken"); len(b) > 0 || len(problems) == 0 {
 		// The API sends the broken event as audit.VerifyError, whose fields
 		// carry no JSON tags: ID and Reason, as the spec documents them.
-		x.out.add(styleError, "✗ Chain broken at event %s: %s", str(b, "ID"), str(b, "Reason"))
-		x.out.add(styleMuted, "Events from there on cannot be shown to be unaltered. Repair is a host-only operation (zanskar audit), on purpose.")
+		x.out.addf(styleError, "✗ Chain broken at event %s: %s", str(b, "ID"), str(b, "Reason"))
+		x.out.addf(styleMuted, "Events from there on cannot be shown to be unaltered. Repair is a host-only operation (zanskar audit), on purpose.")
 	}
 	// The chain can link and still have lost its newest events: the signed
 	// anchors and the id sequence say so (ADR 0008).
 	for _, p := range problems {
-		x.out.add(styleError, "✗ %v", p)
+		x.out.addf(styleError, "✗ %v", p)
 	}
 	return nil
 }
@@ -756,7 +758,7 @@ func cmdLogs(x *run) error {
 		return err
 	}
 	if len(page.Items) == 0 {
-		x.out.add(styleMuted, "(no lines)")
+		x.out.addf(styleMuted, "(no lines)")
 	}
 	for _, l := range page.Items {
 		style := ""
@@ -772,7 +774,7 @@ func cmdLogs(x *run) error {
 		if a := str(l, "attrs"); a != "" {
 			text += "  " + a
 		}
-		x.out.add(style, "%s", text)
+		x.out.addf(style, "%s", text)
 	}
 	return nil
 }
@@ -811,7 +813,7 @@ func cmdStorageTest(x *run) error {
 	if err := x.api.do(http.MethodPost, "/admin/storage/test", nil, &res); err != nil {
 		return err
 	}
-	x.out.add(styleOK, "✓ The recordings store accepted a test object and returned it.")
+	x.out.addf(styleOK, "✓ The recordings store accepted a test object and returned it.")
 	return nil
 }
 
@@ -907,7 +909,7 @@ func cmdSettingSet(x *run) error {
 	if err := x.api.do(http.MethodPut, pathf("/admin/settings/%s", x.args[0]), map[string]string{"value": x.rest}, nil); err != nil {
 		return err
 	}
-	x.out.add(styleOK, "✓ %s is now %q.", x.args[0], x.rest)
+	x.out.addf(styleOK, "✓ %s is now %q.", x.args[0], x.rest)
 	return nil
 }
 
@@ -949,7 +951,7 @@ func cmdRestart(x *run) error {
 	if err := x.api.do(http.MethodPost, "/admin/system/restart", map[string]int{"wait_minutes": wait}, nil); err != nil {
 		return err
 	}
-	x.out.add(styleOK, "✓ Restart started.")
+	x.out.addf(styleOK, "✓ Restart started.")
 	return nil
 }
 
@@ -961,7 +963,7 @@ func cmdRestartCancel(x *run) error {
 		}
 		return err
 	}
-	x.out.add(styleOK, "✓ Restart cancelled.")
+	x.out.addf(styleOK, "✓ Restart cancelled.")
 	return nil
 }
 
@@ -988,18 +990,6 @@ func cmdASGSync(x *run) error {
 	if err := x.api.do(http.MethodPost, pathf("/autoscaling-groups/%s/sync", str(g, "id")), nil, nil); err != nil {
 		return err
 	}
-	x.out.add(styleOK, "✓ Synced %s.", str(g, "name"))
+	x.out.addf(styleOK, "✓ Synced %s.", str(g, "name"))
 	return nil
-}
-
-// protocolName matches the console: SSH, RDP, VNC, WinRM, database.
-func protocolName(p string) string {
-	switch p {
-	case "winrm":
-		return "WinRM"
-	case "database":
-		return "database"
-	default:
-		return strings.ToUpper(p)
-	}
 }

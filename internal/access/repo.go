@@ -193,9 +193,7 @@ func (r *Repo) query(ctx context.Context, where string, args ...any) ([]*Request
 	return out, rows.Err()
 }
 
-type scanner interface{ Scan(dest ...any) error }
-
-func scan(s scanner) (*Request, error) {
+func scan(s store.Scanner) (*Request, error) {
 	var (
 		req                                 Request
 		status                              string

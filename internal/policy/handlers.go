@@ -5,6 +5,7 @@ package policy
 import (
 	"errors"
 	"log/slog"
+	"maps"
 	"net/http"
 
 	"github.com/albatroxxx/zanskar/internal/audit"
@@ -187,9 +188,7 @@ func (h *AdminHandler) del(w http.ResponseWriter, r *http.Request) {
 // record audits a change to p; more adds details beyond the policy's own.
 func (h *AdminHandler) record(r *http.Request, action string, p *Policy, more map[string]any) {
 	details := map[string]any{"name": p.Name, "group_id": p.GroupID, "user_id": p.UserID, "protocols": p.Protocols, "selector": p.Selector, "enabled": p.Enabled}
-	for k, v := range more {
-		details[k] = v
-	}
+	maps.Copy(details, more)
 	auth.Recorder{Audit: h.Audit, Log: h.Log}.Record(r, auth.ActorFor(r).Event(action, "access_policy", p.ID, audit.Success, details))
 }
 

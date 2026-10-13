@@ -7,6 +7,8 @@ import (
 	"database/sql"
 	"fmt"
 	"strings"
+
+	"github.com/albatroxxx/zanskar/internal/protocol"
 )
 
 // nameSources maps an audit object type to the table and column that carry
@@ -90,9 +92,9 @@ func (r *Repo) labels(ctx context.Context, q string, ids []string) (map[string]s
 	defer func() { _ = rows.Close() }()
 	out := make(map[string]string, len(ids))
 	for rows.Next() {
-		var id, protocol string
+		var id, proto string
 		var username, target, instance sql.NullString
-		if err := rows.Scan(&id, &username, &target, &instance, &protocol); err != nil {
+		if err := rows.Scan(&id, &username, &target, &instance, &proto); err != nil {
 			return nil, err
 		}
 		who := username.String
@@ -106,7 +108,7 @@ func (r *Repo) labels(ctx context.Context, q string, ids []string) (map[string]s
 		if where == "" {
 			where = "unknown target"
 		}
-		out[id] = fmt.Sprintf("%s → %s (%s)", who, where, protocolName(protocol))
+		out[id] = fmt.Sprintf("%s → %s (%s)", who, where, protocol.Name(proto))
 	}
 	return out, rows.Err()
 }
@@ -148,17 +150,4 @@ func toArgs(ids []string) []any {
 		args[i] = id
 	}
 	return args
-}
-
-// protocolName is how a protocol reads in a label: SSH, RDP and VNC are
-// acronyms, WinRM keeps its spelling, and "database" is a word, not a code.
-func protocolName(p string) string {
-	switch p {
-	case "winrm":
-		return "WinRM"
-	case "database":
-		return "database"
-	default:
-		return strings.ToUpper(p)
-	}
 }

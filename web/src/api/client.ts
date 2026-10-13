@@ -51,29 +51,27 @@ async function request<T>(method: Method, path: string, body?: unknown): Promise
     body: body === undefined ? undefined : JSON.stringify(body),
   })
   if (res.status === 204) return undefined as T
-  const text = await res.text()
-  let parsed: unknown = null
-  if (text) {
-    try {
-      parsed = JSON.parse(text)
-    } catch {
-      parsed = null
-    }
-  }
-  if (!res.ok) {
-    // A 401 from /auth is a failed sign-in or the unauthenticated probe on
-    // startup, both of which the login page reports itself. Anywhere else it
-    // means the session this page was relying on has gone.
-    const err = new ApiError(res.status, parsed as ApiErrorBody | null, `${res.status} ${res.statusText}`)
-    if (res.status === 401 && !path.startsWith('/auth/')) {
-      err.sessionEnded = true
-      onSessionEnded?.()
-    }
-    throw err
-  }
+  const parsed = parseBody(await res.text())
+  if (!res.ok) raise(res, parsed, path)
   return parsed as T
 }
 
+/** parseBody reads a reply's JSON: null when it has none or it is not JSON. */
+function parseBody(text: string): unknown {
+  if (!text) return null
+  try {
+    return JSON.parse(text)
+  } catch {
+    return null
+  }
+}
+
+/**
+ * raise throws a refused call as an ApiError. A 401 from /auth is a failed
+ * sign-in or the unauthenticated probe on startup, both of which the login
+ * page reports itself. Anywhere else it means the session this page was
+ * relying on has gone.
+ */
 function raise(res: Response, parsed: unknown, path: string): never {
   const err = new ApiError(res.status, parsed as ApiErrorBody | null, `${res.status} ${res.statusText}`)
   if (res.status === 401 && !path.startsWith('/auth/')) {
@@ -87,16 +85,7 @@ function raise(res: Response, parsed: unknown, path: string): never {
  *  cookie. Used for SSH/SFTP file downloads, which are not JSON. */
 async function download(path: string): Promise<Blob> {
   const res = await fetch('/api/v1' + path, { method: 'GET', credentials: 'same-origin' })
-  if (!res.ok) {
-    const text = await res.text().catch(() => '')
-    let parsed: unknown = null
-    try {
-      parsed = text ? JSON.parse(text) : null
-    } catch {
-      parsed = null
-    }
-    raise(res, parsed, path)
-  }
+  if (!res.ok) raise(res, parseBody(await res.text().catch(() => '')), path)
   return res.blob()
 }
 
@@ -106,15 +95,7 @@ async function upload<T>(path: string, body: BodyInit, contentType = 'applicatio
   const headers: Record<string, string> = { Accept: 'application/json', 'Content-Type': contentType }
   if (csrfToken) headers['X-CSRF-Token'] = csrfToken
   const res = await fetch('/api/v1' + path, { method: 'POST', headers, credentials: 'same-origin', body })
-  const text = await res.text()
-  let parsed: unknown = null
-  if (text) {
-    try {
-      parsed = JSON.parse(text)
-    } catch {
-      parsed = null
-    }
-  }
+  const parsed = parseBody(await res.text())
   if (!res.ok) raise(res, parsed, path)
   return parsed as T
 }

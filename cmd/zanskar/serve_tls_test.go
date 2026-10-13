@@ -34,7 +34,7 @@ func TestServeManagedTLSAndRedirect(t *testing.T) {
 	tlsClient := &http.Client{Timeout: 2 * time.Second, Transport: &http.Transport{
 		TLSClientConfig: &tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS12}}} // #nosec G402 -- the certificate is verified explicitly below
 	var resp *http.Response
-	for i := 0; i < 200; i++ {
+	for range 200 {
 		select {
 		case err := <-done:
 			t.Fatalf("serve stopped early: %v", err)

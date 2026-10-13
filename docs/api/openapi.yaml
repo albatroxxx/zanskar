@@ -2166,8 +2166,10 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
-        "504":
-          description: Gateway could not reach the address on any port.
+        "502":
+          description: >-
+            The target's name could not be resolved, or resolved to no address (`probe_failed`).
+            Ports that do not answer are not an error here: the result reports each one.
           content:
             application/json:
               schema:
@@ -4040,7 +4042,7 @@ components:
       enum: [asciicast, guac]
     EndReason:
       type: string
-      enum: [user_exit, idle_timeout, max_duration, admin_terminated, target_lost, failover, error]
+      enum: [user_exit, idle_timeout, max_duration, admin_terminated, policy_revoked, gateway_restart, target_lost, failover, error]
     Ports:
       type: object
       description: Port per protocol. Missing keys use defaults 22, 3389, 5900, 5986.
@@ -5107,7 +5109,11 @@ components:
           $ref: "#/components/schemas/ActiveStatus"
         credentials:
           type: object
-          description: Credential id per protocol. One credential profile serves every instance.
+          description: >
+            Credential id per protocol. One credential profile serves every instance. A value of
+            `user_supplied` has the user asked for their own username and password at connect
+            time, as when binding one protocol: the group then carries the shared prompt
+            credential's id.
           additionalProperties:
             type: string
         rotate_external_id:

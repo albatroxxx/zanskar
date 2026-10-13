@@ -1,17 +1,22 @@
 // SPDX-License-Identifier: Apache-2.0
 
-package cloud
+// Package cloudtest holds an in-memory cloud.Provider for tests. It lives
+// apart from package cloud so that the production binary does not carry it
+// (D1), as winrmgw/winrmtest does for WinRM.
+package cloudtest
 
 import (
 	"context"
 	"fmt"
 	"sync"
+
+	"github.com/albatroxxx/zanskar/internal/cloud"
 )
 
-// Fake is an in-memory Provider for tests and local demos.
+// Fake is an in-memory cloud.Provider for tests.
 type Fake struct {
 	mu       sync.Mutex
-	Groups   map[string]*GroupSnapshot
+	Groups   map[string]*cloud.GroupSnapshot
 	Console  map[string][]string // instance id -> fingerprints
 	SentKeys []SentKey
 	Err      error // returned by every call when set
@@ -25,26 +30,26 @@ type SentKey struct {
 
 // NewFake returns an empty fake.
 func NewFake() *Fake {
-	return &Fake{Groups: map[string]*GroupSnapshot{}, Console: map[string][]string{}}
+	return &Fake{Groups: map[string]*cloud.GroupSnapshot{}, Console: map[string][]string{}}
 }
 
 // Set replaces a group's snapshot.
-func (f *Fake) Set(name string, instances ...Instance) {
+func (f *Fake) Set(name string, instances ...cloud.Instance) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.Groups[name] = &GroupSnapshot{Name: name, Instances: instances, DesiredCapacity: len(instances)}
+	f.Groups[name] = &cloud.GroupSnapshot{Name: name, Instances: instances, DesiredCapacity: len(instances)}
 }
 
-// Check implements Provider: Err fails the assume step; a missing group is
+// Check implements cloud.Provider: Err fails the assume step; a missing group is
 // reported as not found.
-func (f *Fake) Check(ctx context.Context, name string) (*AccessCheck, error) {
+func (f *Fake) Check(ctx context.Context, name string) (*cloud.AccessCheck, error) {
 	f.mu.Lock()
 	err := f.Err
 	f.mu.Unlock()
 	if err != nil {
-		return nil, fmt.Errorf("%w: %w", ErrAssumeRole, err)
+		return nil, fmt.Errorf("%w: %w", cloud.ErrAssumeRole, err)
 	}
-	out := &AccessCheck{AssumedARN: "arn:aws:sts::123456789012:assumed-role/fake/zanskar-gateway"}
+	out := &cloud.AccessCheck{AssumedARN: "arn:aws:sts::123456789012:assumed-role/fake/zanskar-gateway"}
 	snap, err := f.DescribeGroup(ctx, name)
 	if err == nil {
 		out.GroupFound, out.InstanceCount = true, len(snap.Instances)
@@ -52,8 +57,8 @@ func (f *Fake) Check(ctx context.Context, name string) (*AccessCheck, error) {
 	return out, nil
 }
 
-// DescribeGroup implements Provider.
-func (f *Fake) DescribeGroup(_ context.Context, name string) (*GroupSnapshot, error) {
+// DescribeGroup implements cloud.Provider.
+func (f *Fake) DescribeGroup(_ context.Context, name string) (*cloud.GroupSnapshot, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.Err != nil {
@@ -61,14 +66,14 @@ func (f *Fake) DescribeGroup(_ context.Context, name string) (*GroupSnapshot, er
 	}
 	g, ok := f.Groups[name]
 	if !ok {
-		return nil, ErrGroupNotFound
+		return nil, cloud.ErrGroupNotFound
 	}
 	cp := *g
-	cp.Instances = append([]Instance(nil), g.Instances...)
+	cp.Instances = append([]cloud.Instance(nil), g.Instances...)
 	return &cp, nil
 }
 
-// ConsoleHostKeys implements Provider.
+// ConsoleHostKeys implements cloud.Provider.
 func (f *Fake) ConsoleHostKeys(_ context.Context, instanceID string) ([]string, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -77,12 +82,12 @@ func (f *Fake) ConsoleHostKeys(_ context.Context, instanceID string) ([]string, 
 	}
 	fps := f.Console[instanceID]
 	if len(fps) == 0 {
-		return nil, ErrNoConsoleKeys
+		return nil, cloud.ErrNoConsoleKeys
 	}
 	return append([]string(nil), fps...), nil
 }
 
-// SendSSHPublicKey implements Provider.
+// SendSSHPublicKey implements cloud.Provider.
 func (f *Fake) SendSSHPublicKey(_ context.Context, instanceID, az, osUser string, publicKey []byte) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()

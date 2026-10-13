@@ -64,18 +64,19 @@ const statusClientForbidden = 0x0303
 // ended. The console reads 519 (upstream not found) as a lost target and, on
 // an autoscaling group, offers to switch to another instance, so only a lost
 // target may carry it; an end the gateway decided (an administrator, a
-// policy, a restart, a limit) is 523, session closed.
+// policy, a restart, a limit, a refusal before the session began) is 523,
+// session closed.
 const (
-	statusUpstreamNotFound = 0x0207
-	statusSessionClosed    = 0x020B
+	StatusUpstreamNotFound = 0x0207
+	StatusSessionClosed    = 0x020B
 )
 
 // endStatus is the status the end of a session with this reason carries.
 func endStatus(reason string) int {
 	if reason == "target_lost" {
-		return statusUpstreamNotFound
+		return StatusUpstreamNotFound
 	}
-	return statusSessionClosed
+	return StatusSessionClosed
 }
 
 // streamFilter applies the policy to one direction of the relay. Guacamole

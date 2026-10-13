@@ -12,7 +12,7 @@ import type { LoginResponse, Me, Role, User } from '../api/types'
  */
 /** unreachable: the gateway did not answer the session check (restarting,
  *  or the network); the console asks again rather than signing out. */
-export type AuthStatus = 'loading' | 'unreachable' | 'anonymous' | 'partial' | 'full'
+type AuthStatus = 'loading' | 'unreachable' | 'anonymous' | 'partial' | 'full'
 
 interface AuthState {
   status: AuthStatus

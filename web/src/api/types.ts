@@ -70,15 +70,19 @@ export interface Target {
   last_probed_at: string | null
 }
 
-export interface PortResult { reachable: boolean; latency_ms?: number; error?: string }
+export interface PortResult { reachable: boolean; latency_ms: number; error?: string }
 
+/** A probe as the gateway reports it. Mirrors internal/target.ProbeResult. */
 export interface ProbeResult {
   address: string
   resolved_ip: string
   ports: Partial<Record<Protocol, PortResult>>
   capabilities: Protocol[]
   ssh_host_key?: { fingerprint: string; type: string; banner: string }
-  tls?: { fingerprint: string; subject: string; source?: string }
+  /** The RDP listener's certificate. */
+  tls?: { fingerprint: string; subject: string; source: string }
+  /** The WinRM HTTPS listener's certificate. */
+  winrm_tls?: { fingerprint: string; subject: string; source: string }
   vnc_version?: string
   probed_at: string
 }
@@ -396,7 +400,6 @@ export interface AuditFacets {
   object_types: string[]
 }
 
-/** Recording retention policy (admin-editable). Mirrors internal/session. */
 /** One runtime setting resolved with its precedence (ADR 0020). Mirrors internal/settings.Value. */
 export interface RuntimeSetting {
   key: string
@@ -510,6 +513,7 @@ export interface SystemStatus {
   drain?: { requested_at: string; requested_by: string; deadline: string; wait_minutes: number }
 }
 
+/** Recording retention policy (admin-editable). Mirrors internal/session. */
 export interface RetentionPolicy {
   max_age_days: number
   max_total_bytes: number

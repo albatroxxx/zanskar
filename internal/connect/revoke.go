@@ -35,7 +35,7 @@ const revokeTimeout = 30 * time.Second
 // change is made must not leave running the sessions the change withdrew
 // (auth.Recorder detaches its audit insert for the same reason).
 func revokeContext(ctx context.Context) (context.Context, context.CancelFunc) {
-	return context.WithTimeout(context.WithoutCancel(ctx), revokeTimeout)
+	return detach(ctx, revokeTimeout)
 }
 
 // UserRevoked ends every live session of the user.

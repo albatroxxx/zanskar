@@ -14,6 +14,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 
@@ -191,8 +192,8 @@ type middleware func(http.Handler) http.Handler
 
 // chain applies middlewares so that the first listed is the outermost.
 func chain(h http.Handler, mws ...middleware) http.Handler {
-	for i := len(mws) - 1; i >= 0; i-- {
-		h = mws[i](h)
+	for _, mw := range slices.Backward(mws) {
+		h = mw(h)
 	}
 	return h
 }

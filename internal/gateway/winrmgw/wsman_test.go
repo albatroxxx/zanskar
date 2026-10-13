@@ -81,7 +81,7 @@ func TestDialRefusals(t *testing.T) {
 	// would look the name up again, so it is refused rather than ignored.
 	before = f.Requests.Load()
 	host, port := f.Address(t)
-	if _, err := Dial(ctx, Endpoint{Address: "win.zanskar.invalid", IP: host, Port: port, UseTLS: true, Insecure: true}, Auth{Username: "admin", Password: "pw-1"}, time.Second); err == nil {
+	if _, err := Dial(ctx, Endpoint{Address: "win.zanskar.invalid", IP: host, Port: port, UseTLS: true}, Auth{Username: "admin", Password: "pw-1"}, time.Second); err == nil {
 		t.Fatal("a fixed address without a pin was accepted")
 	}
 	if f.Requests.Load() != before {

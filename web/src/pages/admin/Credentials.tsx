@@ -1,8 +1,9 @@
-import { useState, type FormEvent } from 'react'
+import { useState } from 'react'
 import { api, errorMessage } from '../../api/client'
 import { fmtTime } from '../../api/format'
 import type { Credential, CredentialType } from '../../api/types'
-import { Alert, Badge, Confirm, Empty, Field, Modal, PageHead } from '../../components/ui'
+import { useSubmit } from '../../components/submit'
+import { Alert, Badge, Confirm, Empty, Field, FormModal, PageHead } from '../../components/ui'
 import { useList } from './lib'
 import { CAInstall, CASetup, DEFAULT_CERT_TTL, parsePrincipals } from './SSHCA'
 
@@ -204,8 +205,7 @@ function CredentialForm({ onClose, onSaved }: { onClose: () => void; onSaved: (c
   // A certificate authority is normally generated here; pasting an existing
   // CA key is the exception.
   const [generateCA, setGenerateCA] = useState(true)
-  const [err, setErr] = useState('')
-  const [busy, setBusy] = useState(false)
+  const { busy, err, setErr, submit } = useSubmit()
   const set = (k: string) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => setF({ ...f, [k]: e.target.value })
   const put = (k: string, v: string) => setF({ ...f, [k]: v })
   // Every credential created here is vaulted: Zanskar holds the secret and
@@ -217,11 +217,8 @@ function CredentialForm({ onClose, onSaved }: { onClose: () => void; onSaved: (c
   const needsUser = type !== 'ssh_ca'
   const isCA = type === 'ssh_ca'
 
-  const submit = async (e: FormEvent) => {
-    e.preventDefault()
-    setBusy(true)
-    setErr('')
-    try {
+  const save = () =>
+    submit(async () => {
       if (type === 'ssh_key' && generate) {
         const c = await api.post<Credential>('/credentials/generate-ssh-key', { name: f.name.trim(), username: f.username.trim() })
         onSaved(c, true)
@@ -249,90 +246,74 @@ function CredentialForm({ onClose, onSaved }: { onClose: () => void; onSaved: (c
       }
       const c = await api.post<Credential>('/credentials', body)
       onSaved(c, isCA && generateCA)
-    } catch (e) {
-      setErr(errorMessage(e))
-    } finally {
-      setBusy(false)
-    }
-  }
+    })
 
   return (
-    <Modal title="Add credential" onClose={onClose} width={600}>
-      {err && <Alert tone="danger">{err}</Alert>}
-      <form onSubmit={submit}>
-        <Field label="Name">
-          <input id="c-name" value={f.name} onChange={set('name')} required autoFocus />
+    <FormModal title="Add credential" width={600} err={err} busy={busy} submitLabel="Create" onSubmit={save} onClose={onClose}>
+      <Field label="Name">
+        <input id="c-name" value={f.name} onChange={set('name')} required autoFocus />
+      </Field>
+      <div className="form-grid">
+        <Field label="Type" hint="Zanskar stores the secret; users never see it. To let users type their own login instead, choose “User supplied” on the target's credential slot.">
+          <select id="c-type" value={f.type} onChange={set('type')}>
+            {types.map((t) => (
+              <option key={t.v} value={t.v}>{t.label}</option>
+            ))}
+          </select>
         </Field>
+      </div>
+      {needsUser && (
         <div className="form-grid">
-          <Field label="Type" hint="Zanskar stores the secret; users never see it. To let users type their own login instead, choose “User supplied” on the target's credential slot.">
-            <select id="c-type" value={f.type} onChange={set('type')}>
-              {types.map((t) => (
-                <option key={t.v} value={t.v}>{t.label}</option>
-              ))}
-            </select>
+          <Field label="Username on the target">
+            <input id="c-username" value={f.username} onChange={set('username')} required />
           </Field>
+          {type === 'domain' && (
+            <Field label="Domain">
+              <input id="c-domain" value={f.domain} onChange={set('domain')} required />
+            </Field>
+          )}
         </div>
-        {needsUser && (
+      )}
+      {type === 'ssh_key' && (
+        <div className="field inline">
+          <input id="c-generate" type="checkbox" checked={generate} onChange={(e) => setGenerate(e.target.checked)} />
+          <label htmlFor="c-generate">Generate an ed25519 key for me (you will only see the public half)</label>
+        </div>
+      )}
+      {isCA && (
+        <>
+          <p className="muted" style={{ marginTop: 0 }}>
+            Keyless SSH: each session gets a certificate signed by this authority, valid for minutes, and targets trust one public key instead of holding a key per gateway. The recommended way to reach Linux targets.
+          </p>
           <div className="form-grid">
-            <Field label="Username on the target">
-              <input id="c-username" value={f.username} onChange={set('username')} required />
+            <Field label="Login user" hint="Blank: each person logs in as their own Zanskar username. Set it to make everyone use one account, e.g. deploy.">
+              <input id="c-username" value={f.username} onChange={set('username')} placeholder="(each user as themselves)" />
             </Field>
-            {type === 'domain' && (
-              <Field label="Domain">
-                <input id="c-domain" value={f.domain} onChange={set('domain')} required />
-              </Field>
-            )}
+            <Field label="Certificate lifetime (seconds)" hint={`Blank = ${DEFAULT_CERT_TTL}; 60-3600.`}>
+              <input id="c-ttl" inputMode="numeric" value={f.ttl} onChange={set('ttl')} placeholder={String(DEFAULT_CERT_TTL)} />
+            </Field>
           </div>
-        )}
-        {type === 'ssh_key' && (
+          <Field label="Allowed login users" hint="One per line. Blank = any login user.">
+            <textarea id="c-principals" value={f.principals} onChange={set('principals')} placeholder={'deploy\nops'} style={{ minHeight: 50 }} />
+          </Field>
           <div className="field inline">
-            <input id="c-generate" type="checkbox" checked={generate} onChange={(e) => setGenerate(e.target.checked)} />
-            <label htmlFor="c-generate">Generate an ed25519 key for me (you will only see the public half)</label>
+            <input id="c-generate-ca" type="checkbox" checked={generateCA} onChange={(e) => setGenerateCA(e.target.checked)} />
+            <label htmlFor="c-generate-ca">Generate an ed25519 authority key for me (the private key is sealed and never shown)</label>
           </div>
-        )}
-        {isCA && (
-          <>
-            <p className="muted" style={{ marginTop: 0 }}>
-              Keyless SSH: each session gets a certificate signed by this authority, valid for minutes, and targets trust one public key instead of holding a key per gateway. The recommended way to reach Linux targets.
-            </p>
-            <div className="form-grid">
-              <Field label="Login user" hint="Blank: each person logs in as their own Zanskar username. Set it to make everyone use one account, e.g. deploy.">
-                <input id="c-username" value={f.username} onChange={set('username')} placeholder="(each user as themselves)" />
-              </Field>
-              <Field label="Certificate lifetime (seconds)" hint={`Blank = ${DEFAULT_CERT_TTL}; 60-3600.`}>
-                <input id="c-ttl" inputMode="numeric" value={f.ttl} onChange={set('ttl')} placeholder={String(DEFAULT_CERT_TTL)} />
-              </Field>
-            </div>
-            <Field label="Allowed login users" hint="One per line. Blank = any login user.">
-              <textarea id="c-principals" value={f.principals} onChange={set('principals')} placeholder={'deploy\nops'} style={{ minHeight: 50 }} />
-            </Field>
-            <div className="field inline">
-              <input id="c-generate-ca" type="checkbox" checked={generateCA} onChange={(e) => setGenerateCA(e.target.checked)} />
-              <label htmlFor="c-generate-ca">Generate an ed25519 authority key for me (the private key is sealed and never shown)</label>
-            </div>
-          </>
-        )}
-        {needsSecret && !(type === 'ssh_key' && generate) && !(isCA && generateCA) && <SecretFields type={type} f={f} set={set} put={put} />}
-        <div className="actions">
-          <button type="button" className="btn" onClick={onClose}>Cancel</button>
-          <button type="submit" className="btn primary" disabled={busy}>Create</button>
-        </div>
-      </form>
-    </Modal>
+        </>
+      )}
+      {needsSecret && !(type === 'ssh_key' && generate) && !(isCA && generateCA) && <SecretFields type={type} f={f} set={set} put={put} />}
+    </FormModal>
   )
 }
 
 function RotateForm({ credential, onClose, onSaved }: { credential: Credential; onClose: () => void; onSaved: () => void }) {
   const [f, setF] = useState<Record<string, string>>({ password: '', private_key: '', passphrase: '' })
-  const [err, setErr] = useState('')
-  const [busy, setBusy] = useState(false)
+  const { busy, err, submit } = useSubmit()
   const set = (k: string) => (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => setF({ ...f, [k]: e.target.value })
   const put = (k: string, v: string) => setF({ ...f, [k]: v })
-  const submit = async (e: FormEvent) => {
-    e.preventDefault()
-    setBusy(true)
-    setErr('')
-    try {
+  const save = () =>
+    submit(async () => {
       const body: Record<string, string> = {}
       if (credential.type === 'password' || credential.type === 'domain') body.password = f.password
       else {
@@ -341,23 +322,11 @@ function RotateForm({ credential, onClose, onSaved }: { credential: Credential; 
       }
       await api.post(`/credentials/${credential.id}/rotate`, body)
       onSaved()
-    } catch (e) {
-      setErr(errorMessage(e))
-    } finally {
-      setBusy(false)
-    }
-  }
+    })
   return (
-    <Modal title={`Rotate ${credential.name}`} onClose={onClose} width={560}>
-      {err && <Alert tone="danger">{err}</Alert>}
+    <FormModal title={`Rotate ${credential.name}`} width={560} err={err} busy={busy} submitLabel="Rotate" onSubmit={save} onClose={onClose}>
       <p className="muted" style={{ marginTop: 0 }}>The new secret replaces the old one immediately for every target using this credential.</p>
-      <form onSubmit={submit}>
-        <SecretFields type={credential.type} f={f} set={set} put={put} />
-        <div className="actions">
-          <button type="button" className="btn" onClick={onClose}>Cancel</button>
-          <button type="submit" className="btn primary" disabled={busy}>Rotate</button>
-        </div>
-      </form>
-    </Modal>
+      <SecretFields type={credential.type} f={f} set={set} put={put} />
+    </FormModal>
   )
 }

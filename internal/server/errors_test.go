@@ -17,7 +17,7 @@ import (
 	"github.com/albatroxxx/zanskar/internal/auth"
 	"github.com/albatroxxx/zanskar/internal/config"
 	"github.com/albatroxxx/zanskar/internal/httpx"
-	"github.com/albatroxxx/zanskar/internal/store"
+	"github.com/albatroxxx/zanskar/internal/store/storetest"
 	"github.com/albatroxxx/zanskar/internal/user"
 )
 
@@ -45,15 +45,7 @@ func (p probeRoutes) Register(mux *http.ServeMux) {
 // X-Request-Id now, and the 500's log line carries it too, beside the
 // route rather than the caller's path.
 func TestEveryErrorCarriesTheRequestID(t *testing.T) {
-	ctx := context.Background()
-	db, err := store.Open(ctx, config.DriverSQLite, "file::memory:?_pragma=foreign_keys(1)")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = db.Close() })
-	if _, err := store.Migrate(ctx, db); err != nil {
-		t.Fatal(err)
-	}
+	db := storetest.Open(t)
 	var logs bytes.Buffer
 	log := slog.New(slog.NewTextHandler(&logs, nil))
 	mw := &auth.Middleware{Sessions: auth.NewSessions(db, bytes.Repeat([]byte{7}, 32), false), Users: user.NewRepo(db), Log: log}
@@ -97,14 +89,7 @@ func TestEveryErrorCarriesTheRequestID(t *testing.T) {
 // console's command line; the sign-in page never showed it.
 func TestVersionNeedsASignedInCaller(t *testing.T) {
 	ctx := context.Background()
-	db, err := store.Open(ctx, config.DriverSQLite, "file::memory:?_pragma=foreign_keys(1)")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = db.Close() })
-	if _, err := store.Migrate(ctx, db); err != nil {
-		t.Fatal(err)
-	}
+	db := storetest.Open(t)
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	users, sessions := user.NewRepo(db), auth.NewSessions(db, bytes.Repeat([]byte{7}, 32), false)
 	s := New(&config.Config{ListenAddr: "127.0.0.1:0"}, db, log, Deps{AuthMiddleware: &auth.Middleware{Sessions: sessions, Users: users, Log: log}})

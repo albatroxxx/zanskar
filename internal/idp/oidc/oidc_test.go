@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"io"
 	"log/slog"
+	"maps"
 	"net/http"
 	"net/http/cookiejar"
 	"net/http/httptest"
@@ -23,12 +24,11 @@ import (
 
 	"github.com/albatroxxx/zanskar/internal/audit"
 	"github.com/albatroxxx/zanskar/internal/auth"
-	"github.com/albatroxxx/zanskar/internal/config"
 	"github.com/albatroxxx/zanskar/internal/crypto"
 	"github.com/albatroxxx/zanskar/internal/group"
 	"github.com/albatroxxx/zanskar/internal/idp"
 	"github.com/albatroxxx/zanskar/internal/keyring"
-	"github.com/albatroxxx/zanskar/internal/store"
+	"github.com/albatroxxx/zanskar/internal/store/storetest"
 	"github.com/albatroxxx/zanskar/internal/user"
 )
 
@@ -77,9 +77,7 @@ func newFakeIdP(t *testing.T) *fakeIdP {
 			return
 		}
 		claims := map[string]any{"iss": f.srv.URL, "aud": "cid", "sub": "sub-1", "exp": time.Now().Add(time.Hour).Unix(), "iat": time.Now().Unix(), "nonce": f.nonce}
-		for k, v := range f.claims {
-			claims[k] = v
-		}
+		maps.Copy(claims, f.claims)
 		signer, _ := jose.NewSigner(jose.SigningKey{Algorithm: jose.RS256, Key: key}, (&jose.SignerOptions{}).WithHeader("kid", "k1"))
 		payload, _ := json.Marshal(claims)
 		obj, _ := signer.Sign(payload)
@@ -103,14 +101,7 @@ type env struct {
 func newEnv(t *testing.T, f *fakeIdP, cfg idp.Config) (*env, string) {
 	t.Helper()
 	ctx := context.Background()
-	db, err := store.Open(ctx, config.DriverSQLite, "file::memory:?_pragma=foreign_keys(1)")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = db.Close() })
-	if _, err := store.Migrate(ctx, db); err != nil {
-		t.Fatal(err)
-	}
+	db := storetest.Open(t)
 	kek, _ := crypto.NewLocalKEK(bytes.Repeat([]byte{7}, 32))
 	ring, err := keyring.Open(ctx, db, kek)
 	if err != nil {
@@ -303,7 +294,7 @@ func TestPartialSignInKeepsTheFailureCount(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for i := 0; i < 2; i++ {
+	for range 2 {
 		if _, err := e.users.RecordLoginFailure(ctx, u.ID, 5, time.Minute); err != nil {
 			t.Fatal(err)
 		}

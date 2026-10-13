@@ -580,9 +580,15 @@ func guacdRunHint(addr string) []string {
 	}
 	return append(lines,
 		"docker run -d --name guacd --restart unless-stopped -p "+publish+" \\",
-		"  -e HOME=/tmp --read-only --tmpfs /tmp:size=512m,mode=1777 guacamole/guacd:1.6.0",
+		"  -e HOME=/tmp --read-only --tmpfs /tmp:size=512m,mode=1777 "+guacdImage,
 	)
 }
+
+// guacdImage is the guacd the install instructions run: 1.6 or newer for
+// certificate pinning (ADR 0012), pinned by digest. The compose files, the
+// chart, the deploy guide and the AWS user data name the same image, and
+// TestGuacdImageInStep fails when one of them moves without the rest.
+const guacdImage = "guacamole/guacd:1.6.0@sha256:8974eaa9ba32f713daf311e7cc8cd7e4cdfba1edea39eed75524e78ef4b08f4f"
 
 // dataDirServiceUser reports the username that owns dir when init runs as root
 // and that owner is a different, non-root user — the packaged-install case,
@@ -693,7 +699,7 @@ func askBool(r *bufio.Reader, label string, def bool) bool {
 // question. Validation happens in validate, with the other answers.
 func splitHosts(v string) []string {
 	var out []string
-	for _, raw := range strings.Split(v, ",") {
+	for raw := range strings.SplitSeq(v, ",") {
 		if t := strings.TrimSpace(raw); t != "" {
 			out = append(out, t)
 		}
