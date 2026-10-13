@@ -245,7 +245,11 @@ export function Login() {
                 ))}
               </div>
               <div className="actions" style={{ justifyContent: 'flex-end', marginTop: 16 }}>
-                <button className="btn primary" onClick={() => (window.location.href = from)}>I have saved them</button>
+                {/* Leaving this step hands over to the redirect at the top: where the
+                    user was going, now that they are fully signed in, or the next
+                    step still owed. It used to load from as a new page, which sent a
+                    ?next= the page was handed into location.href. */}
+                <button className="btn primary" onClick={() => setStep('password')}>I have saved them</button>
               </div>
             </div>
           )}

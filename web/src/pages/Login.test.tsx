@@ -6,6 +6,9 @@ import { ApiError, api } from '../api/client'
 import { AuthProvider } from '../auth/AuthContext'
 import { Login } from './Login'
 
+// jsdom has no canvas to draw a QR code with; the enrolment step only needs one to show.
+vi.mock('qrcode', () => ({ default: { toDataURL: async () => 'data:image/png;base64,AA==' } }))
+
 afterEach(() => {
   cleanup()
   vi.restoreAllMocks()
@@ -112,6 +115,49 @@ describe('Login after signing in', () => {
       expect(await screen.findByText('at ' + want)).toBeDefined()
       cleanup()
     }
+  })
+})
+
+// Saving the recovery codes went on with window.location.href = from: a new
+// page load fed by the ?next= the page was handed, which CodeQL rightly reads
+// as a URL taken from the address bar and loaded. It goes on through the
+// router now, to the same place.
+describe('Login after setting up an authenticator', () => {
+  it('goes on to ?next= once the recovery codes are saved', async () => {
+    let enrolled = false
+    vi.spyOn(api, 'get').mockImplementation(async (path: string) => {
+      if (path === '/auth/me') {
+        return (enrolled
+          ? { user: { id: 'u1', username: 'alice', display_name: 'Alice', roles: ['user'] }, csrf_token: 't', mfa_enrolled: true }
+          : { csrf_token: 't', mfa_enrolled: false, pending: 'enroll' }) as never
+      }
+      if (path === '/auth/providers') return { items: [] } as never
+      return { text: '' } as never
+    })
+    vi.spyOn(api, 'post').mockImplementation(async (path: string) => {
+      if (path === '/auth/mfa/totp/enroll') return { secret: 'JBSWY3DPEHPK3PXP', otpauth_url: 'otpauth://totp/zanskar:alice' } as never
+      if (path === '/auth/mfa/totp/confirm') {
+        enrolled = true
+        return { recovery_codes: ['aaaa-bbbb'] } as never
+      }
+      throw new Error('no route ' + path)
+    })
+    render(
+      <MemoryRouter initialEntries={['/login?next=' + encodeURIComponent('/admin/targets')]}>
+        <AuthProvider>
+          <Routes>
+            <Route path="/login" element={<Login />} />
+            <Route path="*" element={<Where />} />
+          </Routes>
+        </AuthProvider>
+      </MemoryRouter>,
+    )
+    const user = userEvent.setup()
+    await screen.findByAltText('TOTP enrollment QR code')
+    await user.type(screen.getByLabelText('Code from the app'), '123456{Enter}')
+    await user.click(await screen.findByRole('button', { name: 'I have saved them' }))
+
+    expect(await screen.findByText('at /admin/targets')).toBeDefined()
   })
 })
 
