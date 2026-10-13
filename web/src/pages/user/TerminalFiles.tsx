@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { api, errorMessage, query } from '../../api/client'
 import { fmtBytes } from '../../api/format'
+import { saveBlob } from './session'
 
 interface Entry { name: string; path: string; dir: boolean; size: number; mode: string; mtime: number }
 
@@ -43,11 +44,7 @@ export function TerminalFiles({ sessionId }: { sessionId: string }) {
     setStatus({ text: `downloading ${e.name}…` })
     try {
       const blob = await api.download(`/sessions/${encodeURIComponent(sessionId)}/files/content?path=${encodeURIComponent(e.path)}`)
-      const a = document.createElement('a')
-      a.href = URL.createObjectURL(blob)
-      a.download = e.name
-      a.click()
-      setTimeout(() => URL.revokeObjectURL(a.href), 10_000)
+      saveBlob(blob, e.name)
       setStatus({ text: `downloaded ${e.name} (${fmtBytes(blob.size)})` })
     } catch (err) {
       setStatus({ text: errorMessage(err), err: true })

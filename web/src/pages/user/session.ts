@@ -54,3 +54,13 @@ export function desktopEnd(code: number | undefined, message: string | undefined
   if (code === SESSION_CLOSED) return { reason: 'closed', msg }
   return { reason: 'error', msg }
 }
+
+/** saveBlob hands blob to the browser as a download named name, letting go of
+ *  its object URL once the browser has had time to start the save. */
+export function saveBlob(blob: Blob, name: string) {
+  const a = document.createElement('a')
+  a.href = URL.createObjectURL(blob)
+  a.download = name
+  a.click()
+  setTimeout(() => URL.revokeObjectURL(a.href), 10_000)
+}

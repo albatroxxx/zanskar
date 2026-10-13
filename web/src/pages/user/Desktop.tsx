@@ -4,7 +4,7 @@ import type { Client, GuacObject, InputStream, Keyboard } from 'guacamole-common
 import { fmtBytes, fmtSeconds, protocolName } from '../../api/format'
 import { FailoverDialog } from './Failover'
 import { SessionEndedDialog } from './SessionEnded'
-import { desktopEnd, SESSION_ID, type SessionEnd } from './session'
+import { desktopEnd, saveBlob, SESSION_ID, type SessionEnd } from './session'
 import { useFullscreen } from './fullscreen'
 import { FullscreenButton } from './FullscreenButton'
 import type { ConnectResponse } from '../../api/types'
@@ -327,12 +327,7 @@ function DesktopSession({ state }: { state: DesktopState }) {
         setStatus({ text: `downloading ${e.name} (${fmtBytes(total)})` })
       }
       reader.onend = () => {
-        const blob = new Blob(parts, { type: mimetype || 'application/octet-stream' })
-        const a = document.createElement('a')
-        a.href = URL.createObjectURL(blob)
-        a.download = e.name
-        a.click()
-        setTimeout(() => URL.revokeObjectURL(a.href), 10_000)
+        saveBlob(new Blob(parts, { type: mimetype || 'application/octet-stream' }), e.name)
         setStatus({ text: `downloaded ${e.name} (${fmtBytes(total)})` })
       }
       stream.sendAck('Ready', 0x0000)

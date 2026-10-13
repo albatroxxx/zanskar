@@ -1,13 +1,11 @@
 import { useState } from 'react'
 import { api, errorMessage } from '../../api/client'
 import { dbTLS, engineName, fmtTime, protocolName } from '../../api/format'
-import type { CertificateProbe, Credential, Protocol, Target } from '../../api/types'
+import type { CertificateProbe, Credential, ProbeResponse, Protocol, Target } from '../../api/types'
 import { Alert, Badge, Confirm, Modal, Tags } from '../../components/ui'
-import { hostKeyBadge, protocols, type ProbeWire } from './lib'
+import { hostKeyBadge, protocols } from './lib'
 import { CredentialBindings, type BindingChange } from './Bindings'
 import { TargetForm, targetBody } from './TargetForm'
-
-interface ProbeResponse { target: Target; probe: ProbeWire; host_key_status: string; host_key_fingerprint: string | null; host_key_changed_from?: string | null }
 
 /**
  * TargetDetail is the drawer for one host or database. A host shows its

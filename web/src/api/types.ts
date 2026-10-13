@@ -70,15 +70,19 @@ export interface Target {
   last_probed_at: string | null
 }
 
-export interface PortResult { reachable: boolean; latency_ms?: number; error?: string }
+export interface PortResult { reachable: boolean; latency_ms: number; error?: string }
 
+/** A probe as the gateway reports it. Mirrors internal/target.ProbeResult. */
 export interface ProbeResult {
   address: string
   resolved_ip: string
   ports: Partial<Record<Protocol, PortResult>>
   capabilities: Protocol[]
   ssh_host_key?: { fingerprint: string; type: string; banner: string }
-  tls?: { fingerprint: string; subject: string; source?: string }
+  /** The RDP listener's certificate. */
+  tls?: { fingerprint: string; subject: string; source: string }
+  /** The WinRM HTTPS listener's certificate. */
+  winrm_tls?: { fingerprint: string; subject: string; source: string }
   vnc_version?: string
   probed_at: string
 }

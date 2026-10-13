@@ -53,17 +53,4 @@ export function hostKeyBadge(status: HostKeyStatus) {
   return <Badge tone={tone}>{status}</Badge>
 }
 
-/** Wire shape of a probe as the Go handler returns it (differs from the draft in types.ts). */
-export interface PortResult { reachable: boolean; latency_ms: number; error?: string }
-export interface ProbeWire {
-  address: string
-  resolved_ip: string
-  ports: Partial<Record<Protocol, PortResult>>
-  capabilities: Protocol[]
-  ssh_host_key?: { fingerprint: string; type: string; banner: string }
-  tls?: { fingerprint: string; subject: string; source: string }
-  winrm_tls?: { fingerprint: string; subject: string; source: string }
-  vnc_version?: string
-  probed_at: string
-}
 
