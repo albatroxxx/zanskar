@@ -1,10 +1,52 @@
 // What the terminal and desktop session pages share, so that both say the
 // same thing about a session.
 
+import { useNavigate } from 'react-router-dom'
+import type { ConnectResponse } from '../../api/types'
+
 /** Access-session ids are 16 random bytes, hex-encoded (store.NewID). The
  *  gateway sends a page its session's id, which then goes into API paths
  *  (file transfer, failover), so only that shape is accepted. */
 export const SESSION_ID = /^[0-9a-f]{32}$/
+
+/** The state a terminal or desktop page is opened with: the ticket from the
+ *  connect call, and what the page's bar says about the session. */
+export interface SessionState {
+  ticket: string
+  ws_path: string
+  target: string
+  protocol: string
+  asg_id?: string
+  asg_instance_id?: string
+  instance_label?: string
+  switched_from?: string
+}
+
+/** switchedState is the state for the session a failover moved to: the new
+ *  instance's ticket, under the same target and protocol, naming the
+ *  instance it left. */
+export function switchedState(from: SessionState, res: ConnectResponse): SessionState {
+  return {
+    ticket: res.ticket,
+    ws_path: res.ws_path,
+    target: from.target,
+    protocol: from.protocol,
+    asg_id: res.asg_id ?? from.asg_id,
+    asg_instance_id: res.asg_instance_id,
+    instance_label: res.instance_label,
+    switched_from: from.instance_label,
+  }
+}
+
+/** useSwitched is what a session page does once a failover has moved its
+ *  session to another instance: open the page at path again on the new
+ *  ticket, in place of the session that was lost. */
+export function useSwitched(path: '/terminal' | '/desktop', state: SessionState) {
+  const nav = useNavigate()
+  return (res: ConnectResponse) => {
+    nav(path, { replace: true, state: switchedState(state, res) })
+  }
+}
 
 /** How a session ended: the gateway's reason code, and its own words when it gave any. */
 export interface SessionEnd { reason: string; msg?: string }

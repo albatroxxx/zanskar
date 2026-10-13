@@ -7,34 +7,22 @@ import '@xterm/xterm/css/xterm.css'
 import { fmtSeconds, protocolName } from '../../api/format'
 import { FailoverDialog } from './Failover'
 import { SessionEndedDialog } from './SessionEnded'
-import { SESSION_ID, type SessionEnd } from './session'
+import { SESSION_ID, useSwitched, type SessionEnd, type SessionState } from './session'
 import { TerminalFiles } from './TerminalFiles'
 import { useFullscreen } from './fullscreen'
 import { FullscreenButton } from './FullscreenButton'
-import type { ConnectResponse } from '../../api/types'
 import { terminalTheme } from '../../styles/theme'
-
-interface TerminalState {
-  ticket: string
-  ws_path: string
-  target: string
-  protocol: string
-  asg_id?: string
-  asg_instance_id?: string
-  instance_label?: string
-  switched_from?: string
-}
 
 export function Terminal() {
   const loc = useLocation()
-  const state = loc.state as TerminalState | null
+  const state = loc.state as SessionState | null
   if (!state) return <Navigate to="/" replace />
   // Keyed on the ticket: a failover navigates here with a new ticket and the
   // whole session (socket, xterm) is rebuilt instead of patched.
   return <TerminalSession key={state.ticket} state={state} />
 }
 
-function TerminalSession({ state }: { state: TerminalState }) {
+function TerminalSession({ state }: { state: SessionState }) {
   const nav = useNavigate()
   const host = useRef<HTMLDivElement>(null)
   const pageRef = useRef<HTMLDivElement>(null)
@@ -127,21 +115,7 @@ function TerminalSession({ state }: { state: TerminalState }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state.ticket])
 
-  const onSwitched = (res: ConnectResponse) => {
-    nav('/terminal', {
-      replace: true,
-      state: {
-        ticket: res.ticket,
-        ws_path: res.ws_path,
-        target: state.target,
-        protocol: state.protocol,
-        asg_id: res.asg_id ?? state.asg_id,
-        asg_instance_id: res.asg_instance_id,
-        instance_label: res.instance_label,
-        switched_from: state.instance_label,
-      } satisfies TerminalState,
-    })
-  }
+  const onSwitched = useSwitched('/terminal', state)
   useEffect(() => { endedRef.current = !!ended }, [ended])
   const failover = ended?.reason === 'target_lost' && !!state.asg_id && !!sessionId
   // Drop out of full screen when the session ends so the dialog and the return
