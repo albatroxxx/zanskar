@@ -4606,7 +4606,8 @@ components:
           description: >-
             Hostname or IP. An IP the gateway never connects to is refused with 422
             `address_forbidden`: loopback, link-local, multicast, unspecified, the cloud metadata
-            services outside link-local (`fd00:ec2::254`, `100.100.100.200`), and the address the
+            services outside link-local (`fd00:ec2::254`, `fd00:ec2::23`, `100.100.100.200`,
+            `168.63.129.16`, `192.0.0.192`), and the address the
             gateway listens on when `ZANSKAR_LISTEN_ADDR` names one. A hostname is checked the same
             way each time it is looked up, by the probe and by every session.
         engine:

@@ -21,14 +21,18 @@ type Resolver interface {
 	LookupIPAddr(ctx context.Context, host string) ([]net.IPAddr, error)
 }
 
-// metadataAddrs are cloud metadata services outside the link-local range,
-// which already covers 169.254.169.254 (AWS, Azure, GCP, OCI) and ECS's
-// 169.254.170.2: AWS's IPv6 endpoint, and Alibaba Cloud's, which sits in the
-// shared address space that carrier-grade NAT and Tailscale also use, so only
-// that one address is refused.
+// metadataAddrs are cloud platform services outside the link-local range,
+// which already covers 169.254.169.254 (AWS, Azure, GCP, OCI), ECS's
+// 169.254.170.2 and EKS Pod Identity's 169.254.170.23. Each is refused by its
+// exact address, so a neighbour is still a target: Alibaba's sits in the shared
+// address space that carrier-grade NAT and Tailscale also use, and Oracle's in
+// a block of protocol assignments.
 var metadataAddrs = []net.IP{
-	net.ParseIP("fd00:ec2::254"),
-	net.ParseIP("100.100.100.200"),
+	net.ParseIP("fd00:ec2::254"),   // AWS instance metadata over IPv6
+	net.ParseIP("fd00:ec2::23"),    // EKS Pod Identity over IPv6, which hands pods AWS credentials
+	net.ParseIP("100.100.100.200"), // Alibaba Cloud metadata
+	net.ParseIP("168.63.129.16"),   // Azure WireServer: VM agent and extension settings, sometimes with secrets
+	net.ParseIP("192.0.0.192"),     // Oracle Cloud's legacy metadata endpoint
 }
 
 // refusal says why the gateway must never connect to ip, or is empty when it

@@ -40,7 +40,10 @@ func TestSaveRefusesForbiddenLiterals(t *testing.T) {
 	e := newEnvWith(t, &Prober{})
 	refused := []string{
 		"fd00:ec2::254",          // AWS instance metadata over IPv6
+		"fd00:ec2::23",           // EKS Pod Identity over IPv6
 		"100.100.100.200",        // Alibaba Cloud metadata
+		"168.63.129.16",          // Azure WireServer
+		"192.0.0.192",            // Oracle Cloud's legacy metadata endpoint
 		"169.254.169.254",        // link-local: the metadata service of AWS, Azure, GCP and OCI
 		"::ffff:169.254.169.254", // the same, IPv4-mapped
 		" 127.0.0.1 ",            // loopback; saved trimmed, so checked trimmed
@@ -68,7 +71,7 @@ func TestSaveRefusesForbiddenLiterals(t *testing.T) {
 		t.Fatalf("a refused update was saved: %v", got)
 	}
 
-	for i, addr := range []string{"fd00:ec2::253", "100.100.100.201", "10.0.0.31", "web.internal"} {
+	for i, addr := range []string{"fd00:ec2::253", "fd00:ec2::24", "100.100.100.201", "168.63.129.17", "192.0.0.193", "10.0.0.31", "web.internal"} {
 		if code, out := e.do("POST", "/api/v1/targets", map[string]any{"name": fmt.Sprintf("ok-%d", i), "address": addr, "os_family": "linux"}, e.admin); code != 201 {
 			t.Errorf("create at %q: %d %v, want 201", addr, code, out)
 		}
