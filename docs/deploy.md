@@ -347,7 +347,9 @@ tooling below rather than `zanskar backup`.
 - Keep guacd at 1.6 or newer (certificate pinning, ADR 0012). Its image is pinned by tag
   and digest in the compose files, the chart's `guacd.image`, the command `zanskar init`
   prints, this guide and the AWS user data. A test fails when one of them names a different
-  image from the compose file, so an upgrade changes them together.
+  image from the compose file, so an upgrade changes them together:
+  `hack/bump-guacd.py guacamole/guacd:<tag>@sha256:<digest>` moves every copy at once, and
+  finishes a Dependabot pull request that bumped the compose files alone.
 
 ## The audit log outside the database
 
