@@ -7,7 +7,7 @@ import { usePaged } from '../../components/paged'
 import { Alert, Empty, LoadMore, PageHead, reasonBadge } from '../../components/ui'
 
 export function MySessions() {
-  const { items, next, err, load, more } = usePaged((cursor) => api.get<Page<Session>>('/me/sessions' + query({ cursor, limit: 50 })))
+  const { items, next, err, busy, load, more } = usePaged((cursor) => api.get<Page<Session>>('/me/sessions' + query({ cursor, limit: 50 })))
 
   useEffect(() => {
     void load()
@@ -46,7 +46,7 @@ export function MySessions() {
             </tbody>
           </table>
         )}
-        <LoadMore next={next} onMore={more} />
+        <LoadMore next={next} busy={busy} onMore={more} />
       </div>
     </>
   )
