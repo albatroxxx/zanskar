@@ -9,6 +9,7 @@ import (
 
 	"github.com/albatroxxx/zanskar/internal/audit"
 	"github.com/albatroxxx/zanskar/internal/auth"
+	"github.com/albatroxxx/zanskar/internal/gateway"
 	"github.com/albatroxxx/zanskar/internal/httpx"
 	"github.com/albatroxxx/zanskar/internal/user"
 )
@@ -19,8 +20,11 @@ type AdminHandler struct {
 	// Users lets create and update refuse a review-only subject; nil skips
 	// the check (the connect routes refuse such accounts regardless).
 	Users *user.Repo
-	Audit *audit.Log
-	Log   *slog.Logger
+	// Revoker ends the live sessions an update or a deletion withdraws
+	// (ADR 0013); nil leaves them to their own limits.
+	Revoker gateway.Revoker
+	Audit   *audit.Log
+	Log     *slog.Logger
 }
 
 // Register mounts the routes.
@@ -103,7 +107,7 @@ func (h *AdminHandler) create(w http.ResponseWriter, r *http.Request) {
 		h.fail(w, r, err)
 		return
 	}
-	h.record(r, "policy.create", p)
+	h.record(r, "policy.create", p, nil)
 	httpx.WriteJSON(w, http.StatusCreated, p)
 }
 
@@ -126,7 +130,12 @@ func (h *AdminHandler) update(w http.ResponseWriter, r *http.Request) {
 		h.fail(w, r, err)
 		return
 	}
-	h.record(r, "policy.update", p)
+	// Live sessions the policy admitted end if it no longer grants them.
+	more := map[string]any{}
+	if h.Revoker != nil {
+		more["live_sessions_ended"] = h.Revoker.PolicyChanged(r.Context(), p.ID)
+	}
+	h.record(r, "policy.update", p, more)
 	httpx.WriteJSON(w, http.StatusOK, p)
 }
 
@@ -167,20 +176,21 @@ func (h *AdminHandler) del(w http.ResponseWriter, r *http.Request) {
 		h.fail(w, r, err)
 		return
 	}
-	h.record(r, "policy.delete", p)
+	more := map[string]any{}
+	if h.Revoker != nil {
+		more["live_sessions_ended"] = h.Revoker.PolicyDeleted(p.ID)
+	}
+	h.record(r, "policy.delete", p, more)
 	w.WriteHeader(http.StatusNoContent)
 }
 
-func (h *AdminHandler) record(r *http.Request, action string, p *Policy) {
-	if h.Audit == nil {
-		return
-	}
-	pr, _ := auth.FromContext(r.Context())
-	actor := audit.Actor{UserID: pr.User.ID, IP: auth.ClientIP(r)}
+// record audits a change to p; more adds details beyond the policy's own.
+func (h *AdminHandler) record(r *http.Request, action string, p *Policy, more map[string]any) {
 	details := map[string]any{"name": p.Name, "group_id": p.GroupID, "user_id": p.UserID, "protocols": p.Protocols, "selector": p.Selector, "enabled": p.Enabled}
-	if _, err := h.Audit.Record(r.Context(), actor.Event(action, "access_policy", p.ID, audit.Success, details)); err != nil {
-		h.Log.Error("audit record failed", "action", action, "err", err)
+	for k, v := range more {
+		details[k] = v
 	}
+	auth.Recorder{Audit: h.Audit, Log: h.Log}.Record(r, auth.ActorFor(r).Event(action, "access_policy", p.ID, audit.Success, details))
 }
 
 func (h *AdminHandler) fail(w http.ResponseWriter, r *http.Request, err error) {

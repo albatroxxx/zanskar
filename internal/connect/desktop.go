@@ -34,10 +34,19 @@ import (
 // mapped drive named "Zanskar", and the browser uploads to and downloads from
 // it through Guacamole object streams. The directory lives in guacd's tmpfs and
 // disappears with the session. VNC has no file transfer.
-func desktopParams(t *endpoint, proto target.Protocol, a *credential.Opened, userSecret []byte, username string, allowFiles bool, drivePath string) (guac.Params, error) {
+//
+// The clipboard and file policy is enforced twice (ADR 0012): the bridge drops
+// the instructions, and guacd is told here not to produce them in the first
+// place. disable-copy keeps text copied inside the desktop from being sent to
+// the browser and disable-paste keeps browser text out of the desktop (RDP and
+// VNC); disable-download and disable-upload do the same for the mapped drive
+// (RDP only, VNC has no file transfer).
+func desktopParams(t *endpoint, proto target.Protocol, a *credential.Opened, userSecret []byte, username string, allowFiles, allowClipboard bool, drivePath string) (guac.Params, error) {
 	args := map[string]string{
-		"hostname": t.Address,
-		"port":     strconv.Itoa(t.port(proto)),
+		"hostname":      t.Address,
+		"port":          strconv.Itoa(t.port(proto)),
+		"disable-copy":  strconv.FormatBool(!allowClipboard),
+		"disable-paste": strconv.FormatBool(!allowClipboard),
 	}
 	password := ""
 	if a != nil {
@@ -91,13 +100,13 @@ func desktopParams(t *endpoint, proto target.Protocol, a *credential.Opened, use
 		// own for the desktop to paint, which is the point of an agentless
 		// gateway.
 		args["disable-gfx"] = "true"
+		args["disable-download"] = strconv.FormatBool(!allowFiles)
+		args["disable-upload"] = strconv.FormatBool(!allowFiles)
 		if allowFiles {
 			args["enable-drive"] = "true"
 			args["drive-name"] = "Zanskar"
 			args["drive-path"] = drivePath
 			args["create-drive-path"] = "true"
-			args["disable-download"] = "false"
-			args["disable-upload"] = "false"
 		} else {
 			args["enable-drive"] = "false"
 		}
@@ -162,7 +171,7 @@ func (h *Handler) desktop(w http.ResponseWriter, r *http.Request) {
 	}
 	// Validate the target and credential before upgrading; the drive path is
 	// filled in once the session id exists.
-	params, err := desktopParams(ep, proto, opened, g.UserSecret, g.Username, g.AllowFileTransfer, "")
+	params, err := desktopParams(ep, proto, opened, g.UserSecret, g.Username, g.AllowFileTransfer, g.AllowClipboard, "")
 	if err != nil {
 		httpx.WriteError(w, http.StatusConflict, "target_unavailable", err.Error())
 		return
@@ -249,7 +258,7 @@ func (h *Handler) desktop(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ctx := h.Registry.Add(r.Context(), gateway.Live{SessionID: s.ID, UserID: g.UserID, TargetID: ep.LiveKey, Protocol: g.Protocol})
+	ctx := h.Registry.Add(r.Context(), gateway.Live{SessionID: s.ID, UserID: g.UserID, TargetID: ep.LiveKey, Protocol: g.Protocol, PolicyID: g.PolicyID})
 	h.Registry.SetGuacID(s.ID, gc.ID) // lets auditors join this desktop via guacd
 	defer h.Registry.Remove(s.ID)
 	reason, berr := guac.Bridge(ctx, h.Log, gc, ws, rec, guac.Limits{Idle: g.IdleTimeout, Max: g.MaxSession, AllowClipboard: g.AllowClipboard, AllowFileTransfer: g.AllowFileTransfer})

@@ -122,10 +122,12 @@ func newDesktopRig(t *testing.T) *desktopRig {
 	f.h.Registry = gateway.NewRegistry()
 	f.h.Prober = &target.Prober{AllowLoopback: true}
 	f.h.DialTimeout = 3 * time.Second
-	if err := f.h.Policies.Create(f.ctx, &policy.Policy{Name: "desk", UserID: f.alice.ID, Enabled: true, IdleTimeoutMinutes: 15,
-		Selector: policy.Selector{Tags: map[string]string{"desk": "yes"}}, Protocols: []string{"rdp", "vnc"}}); err != nil {
+	desk := &policy.Policy{Name: "desk", UserID: f.alice.ID, Enabled: true, IdleTimeoutMinutes: 15,
+		Selector: policy.Selector{Tags: map[string]string{"desk": "yes"}}, Protocols: []string{"rdp", "vnc"}}
+	if err := f.h.Policies.Create(f.ctx, desk); err != nil {
 		t.Fatal(err)
 	}
+	f.policyIDs[desk.Name] = desk.ID
 	srv := httptest.NewServer(f.srv)
 	t.Cleanup(srv.Close)
 	return &desktopRig{connectFixture: f, url: srv.URL, accepted: accepted}
@@ -133,9 +135,8 @@ func newDesktopRig(t *testing.T) *desktopRig {
 
 func (r *desktopRig) addTarget(t *testing.T, name string, ports map[target.Protocol]int, pin string) string {
 	t.Helper()
-	cred := r.mustTarget(t, "ok").Credentials[target.SSH]
 	tg := &target.Target{Name: name, Address: "127.0.0.1", OSFamily: target.Windows, Tags: map[string]string{"desk": "yes"},
-		Ports: ports, Credentials: map[target.Protocol]string{target.RDP: cred, target.VNC: cred}}
+		Ports: ports, Credentials: map[target.Protocol]string{target.RDP: r.vaulted, target.VNC: r.vaulted}}
 	if err := r.h.Targets.Create(r.ctx, tg); err != nil {
 		t.Fatal(err)
 	}
@@ -270,10 +271,10 @@ func sessionIDFrom(msg string) string {
 }
 
 // waitEnded blocks until the session's row says it ended.
-func (r *desktopRig) waitEnded(t *testing.T, id string) {
+func (f *connectFixture) waitEnded(t *testing.T, id string) {
 	t.Helper()
 	for i := 0; i < 250; i++ {
-		if s, err := r.h.Sessions.Get(r.ctx, id); err == nil && s.EndedAt != nil {
+		if s, err := f.h.Sessions.Get(f.ctx, id); err == nil && s.EndedAt != nil {
 			return
 		}
 		time.Sleep(20 * time.Millisecond)

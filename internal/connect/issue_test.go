@@ -42,10 +42,16 @@ type connectFixture struct {
 	auditLog *audit.Log
 	access   *access.Repo
 	ids      map[string]string // target name -> id
+	vaulted  string            // id of the vaulted credential, svc / pw-123456
 	mfa      bool              // what MFAEnrolled reports for alice
 	h        *Handler
 	users    *user.Repo
 	sessions *auth.Sessions
+	// groups holds ops, the group alice is in (opsID). policyIDs maps a
+	// policy's name to its id; test-all, mfa and jit are bound to ops.
+	groups    *group.Repo
+	opsID     string
+	policyIDs map[string]string
 }
 
 func newConnectFixture(t *testing.T) *connectFixture {
@@ -65,7 +71,7 @@ func newConnectFixture(t *testing.T) *connectFixture {
 		t.Fatal(err)
 	}
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	f := &connectFixture{ctx: ctx, ids: map[string]string{}, auditLog: audit.NewLog(db), access: access.NewRepo(db)}
+	f := &connectFixture{ctx: ctx, ids: map[string]string{}, auditLog: audit.NewLog(db), access: access.NewRepo(db), policyIDs: map[string]string{}}
 
 	users := user.NewRepo(db)
 	f.alice = &user.User{Username: "alice", DisplayName: "Alice", Roles: []user.Role{user.RoleUser}}
@@ -80,6 +86,7 @@ func newConnectFixture(t *testing.T) *connectFixture {
 	if err := groups.AddMember(ctx, g.ID, f.alice.ID); err != nil {
 		t.Fatal(err)
 	}
+	f.groups, f.opsID = groups, g.ID
 
 	vault := credential.NewVault(db, ring)
 	cred := func(c *credential.Credential, s *credential.Secret) string {
@@ -91,6 +98,7 @@ func newConnectFixture(t *testing.T) *connectFixture {
 	}
 	vaulted := cred(&credential.Credential{Name: "svc", Type: credential.TypePassword, Mode: credential.ModeVaulted, Username: "svc"}, &credential.Secret{Password: "pw-123456"})
 	typed := cred(&credential.Credential{Name: "own", Type: credential.TypePassword, Mode: credential.ModeUserSupplied}, nil)
+	f.vaulted = vaulted
 
 	targets := target.NewRepo(db)
 	const sshFP = "SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
@@ -142,6 +150,7 @@ func newConnectFixture(t *testing.T) *connectFixture {
 		if err := policies.Create(ctx, p); err != nil {
 			t.Fatalf("policy %s: %v", p.Name, err)
 		}
+		f.policyIDs[p.Name] = p.ID
 	}
 	pol(&policy.Policy{Name: "test-all", Selector: policy.Selector{Tags: test}, Protocols: []string{"ssh", "rdp", "winrm", "database"}})
 	pol(&policy.Policy{Name: "mfa", Selector: policy.Selector{Tags: map[string]string{"tier": "mfa"}}, Protocols: []string{"ssh"}, RequireMFA: true})

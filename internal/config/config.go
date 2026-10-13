@@ -12,6 +12,7 @@ import (
 	"net"
 	"net/netip"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -56,6 +57,10 @@ type Config struct {
 	// containers (ADR 0017); empty defaults to "docker" on PATH. Set it to an
 	// absolute path or to "podman" for alternate runtimes.
 	DockerPath string
+	// DatabaseMaxSessions caps the database sessions this gateway runs at
+	// once (ADR 0017), each being two containers and a network on this host;
+	// 0 lifts the cap. A connection past it is refused with 503.
+	DatabaseMaxSessions int
 	// TrustProxyTLS marks cookies Secure when TLS terminates in front of a
 	// loopback-bound Zanskar. Never set it when clients reach Zanskar over
 	// plain HTTP.
@@ -267,6 +272,11 @@ func Load(opts Options) (*Config, error) {
 	}
 	if c.RecordingsS3Endpoint != "" && !strings.HasPrefix(c.RecordingsS3Endpoint, "https://") && !strings.HasPrefix(c.RecordingsS3Endpoint, "http://") {
 		errs = append(errs, errors.New("ZANSKAR_RECORDINGS_S3_ENDPOINT must be an http(s) URL"))
+	}
+	if n, err := strconv.Atoi(envOr("ZANSKAR_DATABASE_MAX_SESSIONS", "20")); err != nil || n < 0 {
+		errs = append(errs, errors.New("ZANSKAR_DATABASE_MAX_SESSIONS must be a whole number of sessions, 0 for no cap"))
+	} else {
+		c.DatabaseMaxSessions = n
 	}
 	switch c.LogLevel {
 	case "debug", "info", "warn", "error":

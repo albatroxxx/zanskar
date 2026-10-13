@@ -64,6 +64,9 @@ type Handler struct {
 	// DockerPath is the docker CLI used to spawn database session containers
 	// (ADR 0017); empty means "docker" on PATH.
 	DockerPath string
+	// DBMaxSessions caps the database sessions running at once on this
+	// gateway, each two containers and a network; 0 lifts the cap.
+	DBMaxSessions int
 	// DBProxyImage returns the image run as the MySQL/MariaDB relay sidecar,
 	// normally the gateway's own; a function so the runtime setting applies
 	// to the next session.
@@ -80,7 +83,8 @@ type Handler struct {
 // connect (user or admin); an auditor-only account is review-only and gets
 // 403 before any policy is consulted (ADR 0006). The WebSocket routes sit
 // outside the CSRF middleware's mutating-method check because they are GETs;
-// the ticket, which only POST /connect issues, is their only credential.
+// the ticket, which only POST /connect issues, is their only credential, and
+// each route redeems only a ticket issued for its own protocol.
 func (h *Handler) Register(mux *http.ServeMux) {
 	if h.Files == nil {
 		h.Files = newFileRegistry()
@@ -460,6 +464,12 @@ func (h *Handler) terminal(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer zero(g.UserSecret)
+	// The policy allowed the ticket's protocol, not this one: a ticket for
+	// RDP must not open an SSH shell with the RDP credential.
+	if target.Protocol(g.Protocol) != target.SSH {
+		httpx.WriteError(w, http.StatusBadRequest, "bad_request", "ticket is not for ssh")
+		return
+	}
 	cols, _ := strconv.Atoi(r.URL.Query().Get("cols"))
 	rows, _ := strconv.Atoi(r.URL.Query().Get("rows"))
 
@@ -621,10 +631,17 @@ func (h *Handler) terminal(w http.ResponseWriter, r *http.Request) {
 	}
 	h.record(r, actor.Event("session.start", "access_session", s.ID, audit.Success, map[string]any{"target_id": ep.LiveKey, "protocol": g.Protocol, "policy_id": g.PolicyID, "recording_id": recRow.ID}))
 
-	ctx := h.Registry.Add(r.Context(), gateway.Live{SessionID: s.ID, UserID: g.UserID, TargetID: ep.LiveKey, Protocol: g.Protocol})
+	ctx := h.Registry.Add(r.Context(), gateway.Live{SessionID: s.ID, UserID: g.UserID, TargetID: ep.LiveKey, Protocol: g.Protocol, PolicyID: g.PolicyID})
 	defer h.Registry.Remove(s.ID)
 
-	reason, berr := sshgw.Bridge(ctx, h.Log, client, ws, rec, cols, rows, sshgw.Limits{Idle: g.IdleTimeout, Max: g.MaxSession, SessionID: s.ID, AllowFiles: g.AllowFileTransfer})
+	lim := sshgw.Limits{Idle: g.IdleTimeout, Max: g.MaxSession, SessionID: s.ID, AllowFiles: g.AllowFileTransfer}
+	// The registry made the tap that shadowing watchers subscribe to (ADR
+	// 0006); the bridge has to write to it or they see nothing. Assigned only
+	// when present: a nil *Tap in the interface would be dereferenced.
+	if tap := h.Registry.Tap(s.ID); tap != nil {
+		lim.Tap = tap
+	}
+	reason, berr := sshgw.Bridge(ctx, h.Log, client, ws, rec, cols, rows, lim)
 	size, sum, cerr := rec.Close()
 	if cerr != nil {
 		h.Log.Error("close recording", "session", s.ID, "err", cerr)
@@ -691,12 +708,7 @@ func (h *Handler) guacd() string {
 }
 
 func (h *Handler) record(r *http.Request, e audit.Event) {
-	if h.Audit == nil {
-		return
-	}
-	if _, err := h.Audit.Record(context.WithoutCancel(r.Context()), e); err != nil {
-		h.Log.Error("audit record failed", "action", e.Action, "err", err)
-	}
+	auth.Recorder{Audit: h.Audit, Log: h.Log}.Record(r, e)
 }
 
 func (h *Handler) fail(w http.ResponseWriter, r *http.Request, err error) {

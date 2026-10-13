@@ -22,6 +22,7 @@ import (
 
 type handlerEnv struct {
 	srv   http.Handler
+	h     *AdminHandler
 	db    *store.DB
 	users *user.Repo
 	admin *http.Cookie
@@ -51,7 +52,7 @@ func newHandlerEnv(t *testing.T) *handlerEnv {
 	mux := http.NewServeMux()
 	h.Register(mux)
 	mw := &auth.Middleware{Sessions: sessions, Users: users, Log: log}
-	e := &handlerEnv{srv: mw.Authenticate(mw.CSRF(mux)), db: db, users: users, audit: auditLog, sessions: sessions}
+	e := &handlerEnv{srv: mw.Authenticate(mw.CSRF(mux)), h: h, db: db, users: users, audit: auditLog, sessions: sessions}
 
 	admin := &user.User{Username: "admin", DisplayName: "Admin", Roles: []user.Role{user.RoleAdmin}}
 	if err := users.Create(ctx, admin); err != nil {

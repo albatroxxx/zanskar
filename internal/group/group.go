@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
-// Package group holds groups and their membership. Access policies bind
-// groups to targets; a user reaches a target only through a group.
+// Package group holds groups and their membership. An access policy binds a
+// group, or a single user (ADR 0013), to targets; a group's members get what
+// its policies grant.
 package group
 
 import (
@@ -137,13 +138,48 @@ func (r *Repo) Update(ctx context.Context, id, name, description string) error {
 	return affected(res)
 }
 
-// Delete removes a group. Policies bound to it cascade away (schema).
-func (r *Repo) Delete(ctx context.Context, id string) error {
-	res, err := r.db.ExecContext(ctx, r.db.Rebind(`DELETE FROM groups WHERE id = ?`), id)
+// Delete removes a group and returns, in name order, the ids of the access
+// policies bound to it. The schema deletes those with the group (ON DELETE
+// CASCADE) and they leave no event of their own, so the caller names them in
+// its audit event; the list is read in the same transaction as the delete.
+func (r *Repo) Delete(ctx context.Context, id string) ([]string, error) {
+	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	return affected(res)
+	defer tx.Rollback() //nolint:errcheck
+
+	rows, err := tx.QueryContext(ctx, r.db.Rebind(`SELECT id FROM access_policies WHERE group_id = ? ORDER BY name`), id)
+	if err != nil {
+		return nil, err
+	}
+	policies := []string{}
+	for rows.Next() {
+		var pid string
+		if err := rows.Scan(&pid); err != nil {
+			_ = rows.Close() //nolint:sqlclosecheck // explicit close: SQLite single connection, writes follow
+			return nil, err
+		}
+		policies = append(policies, pid)
+	}
+	// Close explicitly (not deferred): SQLite runs on one connection and the
+	// delete below would deadlock behind an open cursor.
+	_ = rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	res, err := tx.ExecContext(ctx, r.db.Rebind(`DELETE FROM groups WHERE id = ?`), id)
+	if err != nil {
+		return nil, err
+	}
+	if err := affected(res); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	return policies, nil
 }
 
 // Members lists the users in a group, ordered by username.

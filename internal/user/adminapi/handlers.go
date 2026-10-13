@@ -14,6 +14,7 @@ import (
 
 	"github.com/albatroxxx/zanskar/internal/audit"
 	"github.com/albatroxxx/zanskar/internal/auth"
+	"github.com/albatroxxx/zanskar/internal/gateway"
 	"github.com/albatroxxx/zanskar/internal/httpx"
 	"github.com/albatroxxx/zanskar/internal/user"
 )
@@ -33,8 +34,11 @@ type AdminHandler struct {
 	Users    *user.Repo
 	Sessions SessionRevoker
 	TOTP     MFAResetter
-	Audit    *audit.Log
-	Log      *slog.Logger
+	// Revoker ends the user's live sessions when their access is withdrawn
+	// (ADR 0013); nil leaves them to their own limits.
+	Revoker gateway.Revoker
+	Audit   *audit.Log
+	Log     *slog.Logger
 }
 
 // Register mounts the routes behind the admin role.
@@ -58,9 +62,15 @@ type createRequest struct {
 	Roles            []user.Role `json:"roles"`
 	Password         string      `json:"password"`
 	MustResetOnLogin *bool       `json:"must_change_password"`
-	// PasswordLess creates an account with no password at all, for one
-	// that signs in through an identity provider. Otherwise a one-time
-	// password is generated when none is given.
+	// PasswordLess creates an account with no password at all, for someone
+	// who signs in through an identity provider. Give it the username the
+	// provider asserts: the first time a provider authenticates someone
+	// under that username, it adopts the account (links it to the provider
+	// and the person's external id) and the account keeps the roles set
+	// here, whether or not the provider auto-provisions (see
+	// idp.Provisioner.Resolve and ADR 0005). Otherwise a one-time password
+	// is generated when none is given; an account with a password is never
+	// adopted.
 	PasswordLess bool `json:"password_less"`
 }
 
@@ -123,7 +133,8 @@ func (h *AdminHandler) create(w http.ResponseWriter, r *http.Request) {
 	// one-time password returned once. Either way the user replaces it at
 	// their first sign-in unless the request says otherwise (QA finding
 	// R25). An account that will sign in through an identity provider is
-	// created with password_less: false.
+	// created with password_less: true and no password, so that its
+	// provider adopts it at the first sign-in.
 	initial, source := "", "none"
 	switch {
 	case req.Password != "":
@@ -205,9 +216,13 @@ func (h *AdminHandler) update(w http.ResponseWriter, r *http.Request) {
 			h.Log.Error("revoke sessions after status change", "user_id", id, "err", err)
 		}
 	}
-	h.record(r, "user.update", id, audit.Success, map[string]any{
+	details := map[string]any{
 		"display_name": req.DisplayName, "email": req.Email, "status": req.Status, "previous_status": existing.Status,
-	})
+	}
+	if req.Status == user.StatusDisabled || req.Status == user.StatusLocked {
+		h.endLive(id, details)
+	}
+	h.record(r, "user.update", id, audit.Success, details)
 	u, err := h.Users.GetByID(r.Context(), id)
 	if err != nil {
 		h.writeUserError(w, r, err)
@@ -245,6 +260,9 @@ func (h *AdminHandler) setRoles(w http.ResponseWriter, r *http.Request) {
 	}
 	if len(granted) > 0 {
 		details["roles_granted"] = granted
+	}
+	if !sameRoles(before.Roles, req.Roles) {
+		h.endLive(id, details)
 	}
 	h.record(r, "user.roles.update", id, audit.Success, details)
 	u, err := h.Users.GetByID(r.Context(), id)
@@ -289,7 +307,9 @@ func (h *AdminHandler) setPassword(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		h.Log.Error("revoke sessions after password reset", "user_id", id, "err", err)
 	}
-	h.record(r, "user.password.reset", id, audit.Success, map[string]any{"sessions_revoked": n, "password": source, "must_change_password": mustChange})
+	details := map[string]any{"sessions_revoked": n, "password": source, "must_change_password": mustChange}
+	h.endLive(id, details)
+	h.record(r, "user.password.reset", id, audit.Success, details)
 	out := map[string]any{"status": "ok", "sessions_revoked": n, "must_change_password": mustChange}
 	if req.Generate {
 		out["initial_password"] = pw
@@ -308,7 +328,9 @@ func (h *AdminHandler) revokeSessions(w http.ResponseWriter, r *http.Request) {
 		h.serverError(w, r, err)
 		return
 	}
-	h.record(r, "user.sessions.revoke", id, audit.Success, map[string]any{"sessions_revoked": n})
+	details := map[string]any{"sessions_revoked": n}
+	h.endLive(id, details)
+	h.record(r, "user.sessions.revoke", id, audit.Success, details)
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"status": "ok", "sessions_revoked": n})
 }
 
@@ -322,12 +344,15 @@ func (h *AdminHandler) resetMFA(w http.ResponseWriter, r *http.Request) {
 		h.serverError(w, r, err)
 		return
 	}
-	// A session that passed MFA with the old authenticator should not outlive it.
+	// A session that passed MFA with the old authenticator should not outlive
+	// it, in the console or on a target.
 	n, err := h.Sessions.RevokeAllForUser(r.Context(), id)
 	if err != nil {
 		h.Log.Error("revoke sessions after mfa reset", "user_id", id, "err", err)
 	}
-	h.record(r, "user.mfa.reset", id, audit.Success, map[string]any{"sessions_revoked": n})
+	details := map[string]any{"sessions_revoked": n}
+	h.endLive(id, details)
+	h.record(r, "user.mfa.reset", id, audit.Success, details)
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"status": "ok", "sessions_revoked": n})
 }
 
@@ -345,15 +370,47 @@ func (h *AdminHandler) del(w http.ResponseWriter, r *http.Request) {
 	if _, err := h.Sessions.RevokeAllForUser(r.Context(), id); err != nil {
 		h.Log.Error("revoke sessions before delete", "user_id", id, "err", err)
 	}
+	details := map[string]any{"username": u.Username, "roles": u.Roles}
+	h.endLive(id, details)
 	if err := h.Users.Delete(r.Context(), id); err != nil {
 		h.writeUserError(w, r, err)
 		return
 	}
-	h.record(r, "user.delete", id, audit.Success, map[string]any{"username": u.Username, "roles": u.Roles})
+	h.record(r, "user.delete", id, audit.Success, details)
 	w.WriteHeader(http.StatusNoContent)
 }
 
 // ---- helpers
+
+// endLive ends the user's live sessions through the gateway (ADR 0013) and
+// records how many in details. Without a gateway it does nothing.
+func (h *AdminHandler) endLive(userID string, details map[string]any) {
+	if h.Revoker == nil {
+		return
+	}
+	details["live_sessions_ended"] = h.Revoker.UserRevoked(userID)
+}
+
+// sameRoles reports whether two role lists hold the same roles, in any order.
+func sameRoles(a, b []user.Role) bool {
+	set := func(roles []user.Role) map[user.Role]bool {
+		m := map[user.Role]bool{}
+		for _, role := range roles {
+			m[role] = true
+		}
+		return m
+	}
+	sa, sb := set(a), set(b)
+	if len(sa) != len(sb) {
+		return false
+	}
+	for role := range sa {
+		if !sb[role] {
+			return false
+		}
+	}
+	return true
+}
 
 func privileged(roles []user.Role) []user.Role {
 	var out []user.Role
@@ -372,16 +429,7 @@ func (h *AdminHandler) isSelf(r *http.Request, id string) bool {
 
 //nolint:unparam // outcome is always success today; failure paths will use it
 func (h *AdminHandler) record(r *http.Request, action, objectID string, outcome audit.Outcome, details any) {
-	if h.Audit == nil {
-		return
-	}
-	actor := audit.Actor{IP: auth.ClientIP(r)}
-	if p, ok := auth.FromContext(r.Context()); ok {
-		actor.UserID = p.User.ID
-	}
-	if _, err := h.Audit.Record(r.Context(), actor.Event(action, "user", objectID, outcome, details)); err != nil {
-		h.Log.Error("audit record failed", "action", action, "err", err)
-	}
+	auth.Recorder{Audit: h.Audit, Log: h.Log}.Record(r, auth.ActorFor(r).Event(action, "user", objectID, outcome, details))
 }
 
 func (h *AdminHandler) writeUserError(w http.ResponseWriter, r *http.Request, err error) {

@@ -16,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/albatroxxx/zanskar/internal/audit"
 	"github.com/albatroxxx/zanskar/internal/keyring"
 	"github.com/albatroxxx/zanskar/internal/store"
 	"github.com/albatroxxx/zanskar/internal/user"
@@ -83,8 +84,12 @@ type Config struct {
 	LDAP         *LDAPConfig  `json:"ldap,omitempty"`
 	DefaultRoles []user.Role  `json:"default_roles,omitempty"` // roles for JIT-provisioned users; default ["user"]
 	GroupMapping GroupMapping `json:"group_mapping,omitempty"`
-	// AutoProvision creates a Zanskar user on first successful login. When
-	// false, only pre-created users whose external id matches may sign in.
+	// AutoProvision creates a Zanskar user, with DefaultRoles, the first time
+	// someone signs in through this provider and no account is theirs yet.
+	// Either way, an account an administrator created with no password under
+	// the username the provider asserts is adopted at that first sign-in
+	// (see Provisioner.Resolve). When false, only accounts already linked to
+	// the person and such pre-created accounts may sign in.
 	AutoProvision bool `json:"auto_provision"`
 }
 
@@ -301,7 +306,8 @@ func (r *Repo) List(ctx context.Context, onlyEnabled bool) ([]*Provider, error) 
 
 // Delete removes a provider. Users and groups linked to it keep their rows
 // with idp_id set to NULL (schema ON DELETE SET NULL) and can no longer sign
-// in through it.
+// in through it. Such a user with no password counts as unlinked, so the next
+// provider that asserts its username adopts it (Provisioner.Resolve).
 func (r *Repo) Delete(ctx context.Context, id string) error {
 	res, err := r.db.ExecContext(ctx, r.db.Rebind(`DELETE FROM identity_providers WHERE id = ?`), id)
 	if err != nil {
@@ -332,45 +338,65 @@ type GroupSyncer interface {
 	RemoveMember(ctx context.Context, groupID, userID string) error
 }
 
-// ErrNotProvisioned is returned when auto-provisioning is off and no user
-// matches the external identity.
+// ErrNotProvisioned is returned when auto-provisioning is off and there is
+// neither a user linked to the external identity nor a pre-created account to
+// adopt under the asserted username.
 var ErrNotProvisioned = errors.New("idp: no matching user and auto-provisioning is disabled")
 
-// Resolve finds or creates the user for id under provider p and syncs groups.
-func (pv *Provisioner) Resolve(ctx context.Context, p *Opened, id Identity) (*user.User, error) {
+// ErrAccountConflict is returned when the username a provider asserts belongs
+// to a local account the provider may not adopt (one with a password, or one
+// already linked to another identity), or when a user cannot be created
+// because another account holds the username or email. The wrapped message
+// says which, and nothing is linked or created.
+var ErrAccountConflict = errors.New("idp: account conflict")
+
+var errLocked = errors.New("idp: account is disabled or locked")
+
+// Resolve finds, adopts or creates the user for id under provider p and syncs
+// mapped groups. In order:
+//
+//   - A user already linked to p and id.ExternalID is that person. Later
+//     sign-ins always match here, so a rename in the directory keeps the
+//     account.
+//   - Otherwise the local account with the username the provider asserts
+//     (the one just-in-time provisioning would create) is adopted when it has
+//     no password and no provider: an administrator created it for someone
+//     who signs in through a provider (the admin API's password_less). It is
+//     linked to p and id.ExternalID and nothing else changes; in particular
+//     it keeps the roles the administrator chose. linked reports this, so
+//     the caller records the link (LinkEvent). A local account with a
+//     password, or one linked to another provider or to another subject at
+//     p, is refused with ErrAccountConflict: a sign-in never takes over a
+//     password account nor moves an account between identities. A disabled
+//     or locked account is refused and not linked.
+//   - Otherwise, with AutoProvision a user is created with DefaultRoles;
+//     without it the answer is ErrNotProvisioned.
+func (pv *Provisioner) Resolve(ctx context.Context, p *Opened, id Identity) (u *user.User, linked bool, err error) {
 	if !user.ValidUsername(id.Username) {
-		return nil, fmt.Errorf("%w: provider asserted an unusable username %q", ErrInvalidInput, id.Username)
+		return nil, false, fmt.Errorf("%w: provider asserted an unusable username %q", ErrInvalidInput, id.Username)
 	}
-	u, err := pv.Users.GetByExternalID(ctx, p.ID, id.ExternalID)
-	switch {
-	case err == nil:
-		if u.DisplayName != id.DisplayName || (id.Email != "" && u.Email != id.Email) {
-			name := id.DisplayName
-			if name == "" {
-				name = u.DisplayName
-			}
-			_ = pv.Users.Update(ctx, u.ID, name, firstNonEmpty(id.Email, u.Email), u.Status)
+	created := false
+	u, err = pv.Users.GetByExternalID(ctx, p.ID, id.ExternalID)
+	if errors.Is(err, user.ErrNotFound) {
+		u, err = pv.adopt(ctx, p, id)
+		linked = err == nil
+		if errors.Is(err, user.ErrNotFound) {
+			u, err = pv.create(ctx, p, id)
+			created = err == nil
 		}
-	case errors.Is(err, user.ErrNotFound):
-		if !p.Config.AutoProvision {
-			return nil, ErrNotProvisioned
-		}
+	}
+	if err != nil {
+		return nil, false, err
+	}
+	if !created && (u.DisplayName != id.DisplayName || (id.Email != "" && u.Email != id.Email)) {
 		name := id.DisplayName
 		if name == "" {
-			name = id.Username
+			name = u.DisplayName
 		}
-		u = &user.User{Username: id.Username, DisplayName: name, Email: id.Email, Roles: p.Config.DefaultRoles, IdPID: p.ID, ExternalID: id.ExternalID}
-		if err := pv.Users.Create(ctx, u); err != nil {
-			if errors.Is(err, user.ErrDuplicate) {
-				return nil, fmt.Errorf("%w: username %q already exists locally", ErrInvalidInput, id.Username)
-			}
-			return nil, err
-		}
-	default:
-		return nil, err
+		_ = pv.Users.Update(ctx, u.ID, name, firstNonEmpty(id.Email, u.Email), u.Status)
 	}
 	if u.IsLocked(time.Now()) {
-		return nil, errors.New("idp: account is disabled or locked")
+		return nil, false, errLocked
 	}
 	if pv.Groups != nil && len(p.Config.GroupMapping) > 0 {
 		have := map[string]bool{}
@@ -385,7 +411,66 @@ func (pv *Provisioner) Resolve(ctx context.Context, p *Opened, id Identity) (*us
 			}
 		}
 	}
-	return pv.Users.GetByID(ctx, u.ID)
+	if u, err = pv.Users.GetByID(ctx, u.ID); err != nil {
+		return nil, false, err
+	}
+	return u, linked, nil
+}
+
+// adopt links the local account named id.Username to p and id.ExternalID
+// when Resolve's rules allow it. user.ErrNotFound means there is no such
+// account and the caller decides whether to create one.
+func (pv *Provisioner) adopt(ctx context.Context, p *Opened, id Identity) (*user.User, error) {
+	u, err := pv.Users.GetByUsername(ctx, id.Username)
+	if err != nil {
+		return nil, err
+	}
+	switch {
+	case u.PasswordHash != "":
+		return nil, fmt.Errorf("%w: a local account named %q has a password; remove it or rename one of them", ErrAccountConflict, u.Username)
+	case u.IdPID == p.ID:
+		return nil, fmt.Errorf("%w: the local account %q is linked to a different identity at this provider", ErrAccountConflict, u.Username)
+	case u.IdPID != "":
+		return nil, fmt.Errorf("%w: the local account %q is linked to another identity provider", ErrAccountConflict, u.Username)
+	case u.IsLocked(time.Now()):
+		return nil, errLocked
+	}
+	if err := pv.Users.LinkExternal(ctx, u.ID, p.ID, id.ExternalID); err != nil {
+		return nil, err
+	}
+	u.IdPID, u.ExternalID = p.ID, id.ExternalID
+	return u, nil
+}
+
+// create provisions a new user for id when p allows it.
+func (pv *Provisioner) create(ctx context.Context, p *Opened, id Identity) (*user.User, error) {
+	if !p.Config.AutoProvision {
+		return nil, ErrNotProvisioned
+	}
+	name := id.DisplayName
+	if name == "" {
+		name = id.Username
+	}
+	u := &user.User{Username: id.Username, DisplayName: name, Email: id.Email, Roles: p.Config.DefaultRoles, IdPID: p.ID, ExternalID: id.ExternalID}
+	if err := pv.Users.Create(ctx, u); err != nil {
+		if errors.Is(err, user.ErrDuplicate) {
+			// adopt found no account by this username a moment ago, so this
+			// is the email address, or another sign-in that got there first.
+			return nil, fmt.Errorf("%w: the username %q or its email address is already taken", ErrAccountConflict, id.Username)
+		}
+		return nil, err
+	}
+	return u, nil
+}
+
+// LinkEvent is the audit event for a sign-in that adopted a pre-created
+// account (Resolve reported linked): user.link, with the account as the actor,
+// since the person signing in is who caused it. It is recorded on its own,
+// apart from the user.login that follows, because the link stays even if the
+// sign-in goes no further.
+func LinkEvent(ip string, u *user.User, p *Opened, id Identity) audit.Event {
+	return audit.Actor{UserID: u.ID, IP: ip}.Event("user.link", "user", u.ID, audit.Success,
+		map[string]string{"idp": p.ID, "idp_name": p.Name, "external_id": id.ExternalID})
 }
 
 // ---- helpers

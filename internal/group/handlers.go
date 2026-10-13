@@ -10,6 +10,7 @@ import (
 
 	"github.com/albatroxxx/zanskar/internal/audit"
 	"github.com/albatroxxx/zanskar/internal/auth"
+	"github.com/albatroxxx/zanskar/internal/gateway"
 	"github.com/albatroxxx/zanskar/internal/httpx"
 	"github.com/albatroxxx/zanskar/internal/user"
 )
@@ -17,8 +18,11 @@ import (
 // AdminHandler serves /api/v1/groups.
 type AdminHandler struct {
 	Groups *Repo
-	Audit  *audit.Log
-	Log    *slog.Logger
+	// Revoker ends the live sessions a membership removal or a deletion
+	// withdraws (ADR 0013); nil leaves them to their own limits.
+	Revoker gateway.Revoker
+	Audit   *audit.Log
+	Log     *slog.Logger
 }
 
 // Register mounts the routes behind the admin role.
@@ -121,11 +125,22 @@ func (h *AdminHandler) del(w http.ResponseWriter, r *http.Request) {
 		h.writeGroupError(w, r, err)
 		return
 	}
-	if err := h.Groups.Delete(r.Context(), id); err != nil {
+	// The group's policies are deleted with it, so the live sessions they
+	// admitted are ended first, while those policies can still be found.
+	ended := 0
+	if h.Revoker != nil {
+		ended = h.Revoker.GroupDeleted(r.Context(), id)
+	}
+	policies, err := h.Groups.Delete(r.Context(), id)
+	if err != nil {
 		h.writeGroupError(w, r, err)
 		return
 	}
-	h.record(r, "group.delete", id, map[string]any{"name": g.Name, "member_count": g.MemberCount})
+	details := map[string]any{"name": g.Name, "member_count": g.MemberCount, "policies_removed": policies}
+	if h.Revoker != nil {
+		details["live_sessions_ended"] = ended
+	}
+	h.record(r, "group.delete", id, details)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -154,7 +169,13 @@ func (h *AdminHandler) setMembers(w http.ResponseWriter, r *http.Request) {
 		h.writeGroupError(w, r, err)
 		return
 	}
-	h.record(r, "group.members.update", id, map[string]any{"added": added, "removed": removed})
+	details := map[string]any{"added": added, "removed": removed}
+	// A member taken out loses what the group's policies granted, live
+	// sessions included.
+	if h.Revoker != nil && len(removed) > 0 {
+		details["live_sessions_ended"] = h.Revoker.GroupMembersRemoved(r.Context(), id, removed)
+	}
+	h.record(r, "group.members.update", id, details)
 	members, err := h.Groups.Members(r.Context(), id)
 	if err != nil {
 		h.writeGroupError(w, r, err)
@@ -164,16 +185,7 @@ func (h *AdminHandler) setMembers(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *AdminHandler) record(r *http.Request, action, objectID string, details any) {
-	if h.Audit == nil {
-		return
-	}
-	actor := audit.Actor{IP: auth.ClientIP(r)}
-	if p, ok := auth.FromContext(r.Context()); ok {
-		actor.UserID = p.User.ID
-	}
-	if _, err := h.Audit.Record(r.Context(), actor.Event(action, "group", objectID, audit.Success, details)); err != nil {
-		h.Log.Error("audit record failed", "action", action, "err", err)
-	}
+	auth.Recorder{Audit: h.Audit, Log: h.Log}.Record(r, auth.ActorFor(r).Event(action, "group", objectID, audit.Success, details))
 }
 
 func (h *AdminHandler) writeGroupError(w http.ResponseWriter, r *http.Request, err error) {

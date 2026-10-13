@@ -143,16 +143,7 @@ func (h *Handler) move(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) record(r *http.Request, action string, details map[string]any) {
-	if h.Audit == nil {
-		return
-	}
-	actor := audit.Actor{IP: auth.ClientIP(r)}
-	if p, ok := auth.FromContext(r.Context()); ok {
-		actor.UserID = p.User.ID
-	}
-	if _, err := h.Audit.Record(r.Context(), actor.Event(action, "recording_storage", "gateway", audit.Success, details)); err != nil {
-		h.Log.Error("audit record failed", "action", action, "err", err)
-	}
+	auth.Recorder{Audit: h.Audit, Log: h.Log}.Record(r, auth.ActorFor(r).Event(action, "recording_storage", "gateway", audit.Success, details))
 }
 
 func (h *Handler) fail(w http.ResponseWriter, r *http.Request, err error) {

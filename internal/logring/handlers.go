@@ -67,13 +67,7 @@ func (h *API) list(w http.ResponseWriter, r *http.Request) {
 // and records that it happened.
 func (h *API) download(w http.ResponseWriter, r *http.Request) {
 	items := h.Ring.Snapshot(slog.LevelDebug, "", h.Ring.Capacity())
-	if h.Audit != nil {
-		p, _ := auth.FromContext(r.Context())
-		actor := audit.Actor{UserID: p.User.ID, IP: auth.ClientIP(r)}
-		if _, err := h.Audit.Record(r.Context(), actor.Event("logs.download", "logs", "gateway", audit.Success, map[string]any{"lines": len(items)})); err != nil {
-			h.Log.Error("audit record failed", "action", "logs.download", "err", err)
-		}
-	}
+	auth.Recorder{Audit: h.Audit, Log: h.Log}.Record(r, auth.ActorFor(r).Event("logs.download", "logs", "gateway", audit.Success, map[string]any{"lines": len(items)}))
 	w.Header().Set("Content-Type", "application/x-ndjson")
 	w.Header().Set("Content-Disposition", `attachment; filename="zanskar-logs.jsonl"`)
 	w.Header().Set("Cache-Control", "no-store")

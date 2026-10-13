@@ -30,6 +30,10 @@ func (h *Handler) database(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer zero(g.UserSecret)
+	if target.Protocol(g.Protocol) != target.Database {
+		httpx.WriteError(w, http.StatusBadRequest, "bad_request", "ticket is not for database")
+		return
+	}
 	cols, _ := strconv.Atoi(r.URL.Query().Get("cols"))
 	rows, _ := strconv.Atoi(r.URL.Query().Get("rows"))
 
@@ -66,6 +70,17 @@ func (h *Handler) database(w http.ResponseWriter, r *http.Request) {
 	}
 	if h.DBProxyImage != nil {
 		spec.ProxyImage = h.DBProxyImage()
+	}
+
+	// The cap on concurrent database sessions (ADR 0017), each two containers
+	// and a network on this host. It is counted, not reserved, so a burst of
+	// simultaneous starts can overshoot by the burst. Refused here, before the
+	// upgrade, because no status can follow it.
+	if h.DBMaxSessions > 0 && h.Registry != nil && h.liveDatabaseSessions() >= h.DBMaxSessions {
+		h.record(r, actorFor(g.UserID, ip).Event("session.connect", "target", ep.LiveKey, audit.Failure,
+			map[string]any{"protocol": g.Protocol, "reason": "too_many_sessions", "limit": h.DBMaxSessions}))
+		httpx.WriteError(w, http.StatusServiceUnavailable, "too_many_sessions", "the gateway is running its maximum number of database sessions; try again in a moment")
+		return
 	}
 
 	ws, err := websocket.Accept(w, r, &websocket.AcceptOptions{CompressionMode: websocket.CompressionDisabled})
@@ -109,7 +124,7 @@ func (h *Handler) database(w http.ResponseWriter, r *http.Request) {
 	h.record(r, actor.Event("session.start", "access_session", s.ID, audit.Success,
 		map[string]any{"target_id": ep.LiveKey, "protocol": g.Protocol, "policy_id": g.PolicyID, "recording_id": recRow.ID, "engine": ep.Engine}))
 
-	ctx := h.Registry.Add(r.Context(), gateway.Live{SessionID: s.ID, UserID: g.UserID, TargetID: ep.LiveKey, Protocol: g.Protocol})
+	ctx := h.Registry.Add(r.Context(), gateway.Live{SessionID: s.ID, UserID: g.UserID, TargetID: ep.LiveKey, Protocol: g.Protocol, PolicyID: g.PolicyID})
 	defer h.Registry.Remove(s.ID)
 
 	reason, berr := dbgw.Bridge(ctx, h.Log, h.DockerPath, spec, ws, rec, cols, rows, dbgw.Limits{Idle: g.IdleTimeout, Max: g.MaxSession, SessionID: s.ID})
@@ -128,4 +143,15 @@ func (h *Handler) database(w http.ResponseWriter, r *http.Request) {
 	}
 	endWith(reason, "")
 	_ = ws.Close(websocket.StatusNormalClosure, reason)
+}
+
+// liveDatabaseSessions counts the database sessions this gateway is running.
+func (h *Handler) liveDatabaseSessions() int {
+	n := 0
+	for _, l := range h.Registry.List() {
+		if l.Protocol == string(target.Database) {
+			n++
+		}
+	}
+	return n
 }

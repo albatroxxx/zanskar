@@ -150,3 +150,23 @@ func bytes32() []byte {
 	}
 	return b
 }
+
+// TestDatabaseMaxSessions: the cap on concurrent database sessions defaults
+// to 20, 0 lifts it, and anything that is not a whole number is a
+// configuration error rather than a silent default.
+func TestDatabaseMaxSessions(t *testing.T) {
+	t.Setenv("ZANSKAR_MASTER_KEY", "")
+	for raw, want := range map[string]int{"": 20, "0": 0, "7": 7} {
+		t.Setenv("ZANSKAR_DATABASE_MAX_SESSIONS", raw)
+		c, err := Load(Options{})
+		if err != nil || c.DatabaseMaxSessions != want {
+			t.Errorf("ZANSKAR_DATABASE_MAX_SESSIONS=%q: %+v, %v; want %d", raw, c, err, want)
+		}
+	}
+	for _, bad := range []string{"-1", "many", "1.5"} {
+		t.Setenv("ZANSKAR_DATABASE_MAX_SESSIONS", bad)
+		if _, err := Load(Options{}); err == nil || !strings.Contains(err.Error(), "ZANSKAR_DATABASE_MAX_SESSIONS") {
+			t.Errorf("ZANSKAR_DATABASE_MAX_SESSIONS=%q accepted: %v", bad, err)
+		}
+	}
+}

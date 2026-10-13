@@ -1,13 +1,16 @@
 // SPDX-License-Identifier: Apache-2.0
 
 // Package dbgw brokers access to a managed/PaaS database (ADR 0017) with no
-// credential leak. Per session it creates a private Docker network, starts a
-// proxy sidecar (pgbouncer) that holds the vaulted credential and authenticates
-// upstream, and runs the version-matched client (psql) connected to the sidecar
-// with no password over that private network. The client container never holds
-// a credential, so a shell escape inside the session reveals nothing; access is
-// proxied, recorded and torn down when the session ends. The client's terminal
-// is bridged to the browser over the same protocol as sshgw.
+// credential leak. Per session it creates a private, internal Docker network,
+// starts a proxy sidecar (pgbouncer, or the gateway's own MySQL relay) that
+// holds the vaulted credential and authenticates upstream, and runs the
+// version-matched client (psql, mysql) connected to the sidecar with no
+// password over that network. Only the proxy is also attached to the
+// runtime's default bridge, so the client container can reach nothing but
+// the proxy. It never holds a credential, so a shell escape inside the
+// session reveals nothing; access is proxied, recorded and torn down when
+// the session ends, and Reap removes what a crash left behind. The client's
+// terminal is bridged to the browser over the same protocol as sshgw.
 package dbgw
 
 import (
@@ -18,6 +21,7 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -105,6 +109,41 @@ func names(sessionID string) (network, proxy, client string) {
 	return "zanskar-net-" + sessionID, "zanskar-dbproxy-" + sessionID, "zanskar-dbcli-" + sessionID
 }
 
+// labels marks a Docker object as this gateway's and names its session, so
+// Reap finds leftovers by label and never by guessing names.
+func labels(sessionID string) []string {
+	return []string{"--label", labelManaged + "=1", "--label", labelSession + "=" + sessionID}
+}
+
+// podman reports whether the container CLI is Podman, whose default network
+// is named after it and whose bridge driver knows no Docker options. Not
+// verified against a Podman host.
+func podman(docker string) bool { return filepath.Base(docker) == "podman" }
+
+// egressNetwork is the runtime's default bridge network, the one with a
+// route out, which the proxy alone is attached to.
+func egressNetwork(docker string) string {
+	if podman(docker) {
+		return "podman"
+	}
+	return "bridge"
+}
+
+// networkArgs builds `docker network create` for a session network:
+// internal, so no route leads out of it and the client container reaches
+// nothing but the proxy, and (isolated, Docker 28.1 and newer) in the
+// isolated gateway mode, so the bridge carries no address of the gateway
+// host either and the host's own listeners are out of reach too. The labels
+// let Reap find it.
+func networkArgs(sessionID, network string, isolated bool) []string {
+	args := []string{"network", "create", "--internal"}
+	if isolated {
+		args = append(args, "-o", "com.docker.network.bridge.gateway_mode_ipv4=isolated")
+	}
+	args = append(args, labels(sessionID)...)
+	return append(args, network)
+}
+
 // proxyScript materialises the pgbouncer config from the sidecar's own
 // environment and execs pgbouncer. Writing the config in-container keeps the
 // upstream credential out of the host argument vector (it rides PGB_INI in the
@@ -178,14 +217,14 @@ func proxyArgs(s Spec, network, name string) (args []string, env []string, err e
 	}
 	// Trust ignores the client password, but the connecting user must be listed.
 	userlist := fmt.Sprintf("%q %q\n", s.Username, "x")
-	args = []string{
-		"run", "-d", "--rm", "--name", name, "--network", network,
+	args = append([]string{"run", "-d", "--rm", "--name", name, "--network", network}, labels(s.SessionID)...)
+	args = append(args,
 		"--security-opt", "no-new-privileges", "--cap-drop", "ALL",
 		"--pids-limit", "64", "--memory", "128m",
 		"-e", "PGB_INI", "-e", "PGB_USERLIST", "-e", "PGB_CA",
 		"--entrypoint", "sh", img,
 		"-c", proxyScript,
-	}
+	)
 	env = []string{"PGB_INI=" + ini, "PGB_USERLIST=" + userlist, "PGB_CA=" + s.TLSCA}
 	return args, env, nil
 }
@@ -207,13 +246,13 @@ func mysqlProxyArgs(s Spec, img, network, name string) (args []string, env []str
 	if err != nil {
 		return nil, nil, err
 	}
-	args = []string{
-		"run", "-d", "--rm", "--name", name, "--network", network,
+	args = append([]string{"run", "-d", "--rm", "--name", name, "--network", network}, labels(s.SessionID)...)
+	args = append(args,
 		"--security-opt", "no-new-privileges", "--cap-drop", "ALL", "--read-only",
 		"--pids-limit", "64", "--memory", "128m",
 		"-e", "ZANSKAR_DBPROXY",
 		img, "dbproxy",
-	}
+	)
 	return args, []string{"ZANSKAR_DBPROXY=" + string(raw)}, nil
 }
 
@@ -224,12 +263,12 @@ func clientArgs(s Spec, network, name, proxyHost string) ([]string, error) {
 	if img == "" {
 		return nil, fmt.Errorf("dbgw: unsupported engine %q", s.Engine)
 	}
-	args := []string{
-		"run", "--rm", "-i", "-t", "--name", name, "--network", network,
+	args := append([]string{"run", "--rm", "-i", "-t", "--name", name, "--network", network}, labels(s.SessionID)...)
+	args = append(args,
 		"--security-opt", "no-new-privileges", "--cap-drop", "ALL", "--read-only",
 		"--pids-limit", "256", "--memory", "512m", "--cpus", "1",
 		img,
-	}
+	)
 	port := strconv.Itoa(proxyPort(s.Engine))
 	switch s.Engine {
 	case "postgres":
@@ -279,18 +318,25 @@ type Limits struct {
 	tick      time.Duration
 }
 
-// dockerRun runs a short docker command (network create, container start,
-// teardown) with an optional extra environment and a bounded timeout.
-func dockerRun(ctx context.Context, docker string, env []string, args ...string) error {
+// dockerOutput runs a short docker command (network create, container start,
+// a listing, teardown) with an optional extra environment, bounded by the
+// context, and returns its combined output.
+func dockerOutput(ctx context.Context, docker string, env []string, args ...string) (string, error) {
 	cmd := exec.CommandContext(ctx, docker, args...) // #nosec G204 -- args built from fixed literals + validated fields
 	if len(env) > 0 {
 		cmd.Env = append(os.Environ(), env...)
 	}
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("docker %s: %w: %s", args[0], err, string(out))
+		return string(out), fmt.Errorf("docker %s: %w: %s", args[0], err, string(out))
 	}
-	return nil
+	return string(out), nil
+}
+
+// dockerRun is dockerOutput for a command whose output does not matter.
+func dockerRun(ctx context.Context, docker string, env []string, args ...string) error {
+	_, err := dockerOutput(ctx, docker, env, args...)
+	return err
 }
 
 // Bridge sets up the per-session network + proxy sidecar, runs the client under
@@ -317,7 +363,16 @@ func Bridge(ctx context.Context, log *slog.Logger, docker string, spec Spec, ws 
 	suCtx, suCancel := context.WithTimeout(detached, 30*time.Second)
 	defer suCancel()
 
-	if err := dockerRun(suCtx, docker, nil, "network", "create", network); err != nil {
+	// A daemon that refuses the isolated gateway mode (Docker 28.0) gets a
+	// plain internal network, which still confines egress; one that does not
+	// know the option (older) ignores it. Podman is not offered it.
+	isolated := !podman(docker)
+	err := dockerRun(suCtx, docker, nil, networkArgs(spec.SessionID, network, isolated)...)
+	if err != nil && isolated {
+		log.Warn("session network without the isolated gateway mode: the gateway host's own address stays reachable from the client container (Docker 28.1 or newer fixes this)", "session", spec.SessionID, "err", err)
+		err = dockerRun(suCtx, docker, nil, networkArgs(spec.SessionID, network, false)...)
+	}
+	if err != nil {
 		return "error", err
 	}
 	defer func() {
@@ -338,6 +393,13 @@ func Bridge(ctx context.Context, log *slog.Logger, docker string, spec Spec, ws 
 		defer cancel()
 		_ = dockerRun(tdCtx, docker, nil, "rm", "-f", proxy)
 	}()
+	// Only the proxy gets a way out: the runtime's default bridge, through
+	// which it reaches the upstream database (it dials only when the client
+	// connects, so attaching after start is in time). The client stays on
+	// the internal network, where the proxy is all there is.
+	if err := dockerRun(suCtx, docker, nil, "network", "connect", egressNetwork(docker), proxy); err != nil {
+		return "error", fmt.Errorf("dbgw: proxy egress: %w", err)
+	}
 
 	cargs, err := clientArgs(spec, network, client, proxy)
 	if err != nil {

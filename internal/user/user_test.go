@@ -170,6 +170,57 @@ func TestLockout(t *testing.T) {
 	}
 }
 
+// idpRow stores a bare identity provider row for users.idp_id to reference.
+// Package idp imports user, so the row is written by hand rather than
+// through idp.Repo.
+func idpRow(t *testing.T, r *Repo, name string) string {
+	t.Helper()
+	id, now := store.NewID(), store.TimeArg(time.Now())
+	if _, err := r.db.ExecContext(context.Background(), r.db.Rebind(`INSERT INTO identity_providers (id, name, type, config_enc, enabled, created_at, updated_at)
+		VALUES (?, ?, 'oidc', ?, TRUE, ?, ?)`), id, name, []byte{0}, now, now); err != nil {
+		t.Fatal(err)
+	}
+	return id
+}
+
+// TestLinkExternal: LinkExternal ties an account to an identity provider's
+// subject, so the next sign-in through that provider finds it by external id.
+// It writes the link and nothing else (roles, password, profile and status
+// stay the administrator's), answers not-found for an unknown account, and
+// refuses to give a subject that is already linked a second account.
+func TestLinkExternal(t *testing.T) {
+	r := testRepo(t)
+	ctx := context.Background()
+	corp := idpRow(t, r, "corp")
+	alice := &User{Username: "alice", Email: "alice@example.com", DisplayName: "Alice", Roles: []Role{RoleAdmin}}
+	if err := r.Create(ctx, alice); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := r.LinkExternal(ctx, alice.ID, corp, "sub-1"); err != nil {
+		t.Fatalf("link: %v", err)
+	}
+	got, err := r.GetByExternalID(ctx, corp, "sub-1")
+	if err != nil || got.ID != alice.ID || got.IdPID != corp || got.ExternalID != "sub-1" {
+		t.Fatalf("by external id after the link: %+v %v", got, err)
+	}
+	if got.Username != "alice" || got.DisplayName != "Alice" || got.Email != "alice@example.com" || got.PasswordHash != "" ||
+		got.Status != StatusActive || len(got.Roles) != 1 || got.Roles[0] != RoleAdmin {
+		t.Fatalf("the link changed more than the link: %+v", got)
+	}
+
+	if err := r.LinkExternal(ctx, "no-such-user", corp, "sub-2"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("unknown account: got %v, want ErrNotFound", err)
+	}
+	bob := &User{Username: "bob", DisplayName: "Bob", Roles: []Role{RoleUser}}
+	if err := r.Create(ctx, bob); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.LinkExternal(ctx, bob.ID, corp, "sub-1"); !errors.Is(err, ErrDuplicate) {
+		t.Fatalf("a subject already linked to alice: got %v, want ErrDuplicate", err)
+	}
+}
+
 func TestCanConnect(t *testing.T) {
 	cases := []struct {
 		roles []Role

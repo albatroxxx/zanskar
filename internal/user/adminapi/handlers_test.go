@@ -28,6 +28,7 @@ func (f *fakeTOTP) Reset(_ context.Context, id string) error {
 
 type env struct {
 	srv      http.Handler
+	h        *AdminHandler
 	users    *user.Repo
 	sessions *auth.Sessions
 	audit    *audit.Log
@@ -59,7 +60,7 @@ func newEnv(t *testing.T) *env {
 	mux := http.NewServeMux()
 	h.Register(mux)
 	mw := &auth.Middleware{Sessions: e.sessions, Users: e.users, Log: log}
-	e.srv = mw.Authenticate(mw.CSRF(mux))
+	e.srv, e.h = mw.Authenticate(mw.CSRF(mux)), h
 
 	e.admin = &user.User{Username: "root", DisplayName: "Root", Roles: []user.Role{user.RoleAdmin}}
 	if err := e.users.Create(ctx, e.admin); err != nil {

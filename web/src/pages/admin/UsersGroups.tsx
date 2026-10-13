@@ -125,7 +125,7 @@ function Users() {
           onSaved={(oneTime) => {
             setAction(null)
             if (oneTime) setShowOnce(oneTime)
-            else setNotice(`Password for ${action.u.username} replaced; their sessions were signed out. They must change it at their next sign-in.`)
+            else setNotice(`Password for ${action.u.username} replaced; they were signed out and their live sessions ended. They must change it at their next sign-in.`)
             void reload()
           }}
         />
@@ -133,7 +133,7 @@ function Users() {
       {action?.a === 'sessions' && (
         <Confirm
           title={`Sign ${action.u.username} out everywhere?`}
-          body="Every browser session for this account ends now. Live terminal sessions continue until they end on their own or are terminated."
+          body="Every browser session for this account ends now, and so does every live session it has open to a machine."
           confirmLabel="Revoke sessions"
           onClose={() => setAction(null)}
           onConfirm={async () => {
@@ -145,7 +145,7 @@ function Users() {
       {action?.a === 'mfa' && (
         <Confirm
           title={`Reset ${action.u.username}'s authenticator?`}
-          body="Their TOTP secret and recovery codes are deleted and their sessions signed out. They will enroll a new authenticator at next sign-in."
+          body="Their TOTP secret and recovery codes are deleted, they are signed out, and their live sessions end. They will enroll a new authenticator at next sign-in."
           confirmLabel="Reset authenticator"
           danger
           onClose={() => setAction(null)}
@@ -158,7 +158,7 @@ function Users() {
       {action?.a === 'status' && (
         <Confirm
           title={`${action.u.status === 'active' ? 'Disable' : 'Enable'} ${action.u.username}?`}
-          body={action.u.status === 'active' ? 'They are signed out and cannot sign in until re-enabled.' : 'They can sign in again.'}
+          body={action.u.status === 'active' ? 'They are signed out, their live sessions end, and they cannot sign in until re-enabled.' : 'They can sign in again.'}
           confirmLabel={action.u.status === 'active' ? 'Disable' : 'Enable'}
           danger={action.u.status === 'active'}
           onClose={() => setAction(null)}
@@ -338,7 +338,7 @@ function PasswordForm({ user, onClose, onSaved }: { user: User; onClose: () => v
         {!generate && (
           <Field label="New password" hint="At least 12 characters."><input id={`pw-${user.id}`} type="password" autoComplete="new-password" value={pw} onChange={(e) => setPw(e.target.value)} required autoFocus minLength={12} /></Field>
         )}
-        <p className="muted">Their existing sessions are signed out, and they must replace this password at their next sign-in.</p>
+        <p className="muted">They are signed out, their live sessions end, and they must replace this password at their next sign-in.</p>
         <div className="actions">
           <button type="button" className="btn" onClick={onClose}>Cancel</button>
           <button type="submit" className="btn primary" disabled={busy}>{generate ? 'Generate' : 'Set password'}</button>
@@ -412,7 +412,7 @@ function Groups() {
       {deleting && (
         <Confirm
           title={`Delete group ${deleting.name}?`}
-          body="Policies attached to this group are deleted with it."
+          body="Policies attached to this group are deleted with it, and the live sessions they allowed end now."
           confirmLabel="Delete"
           danger
           onClose={() => setDeleting(null)}

@@ -18,6 +18,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"path"
 	"strings"
 	"sync"
 	"time"
@@ -187,14 +188,20 @@ func (h *Handler) callback(w http.ResponseWriter, r *http.Request) {
 		h.fail(w, r, "", id, "domain_not_allowed", fmt.Errorf("email domain not allowed for %q", ident.Email))
 		return
 	}
-	u, err := h.Provisioner.Resolve(r.Context(), op, ident)
+	u, linked, err := h.Provisioner.Resolve(r.Context(), op, ident)
 	if err != nil {
 		code := "provisioning_failed"
-		if errors.Is(err, idp.ErrNotProvisioned) {
+		switch {
+		case errors.Is(err, idp.ErrNotProvisioned):
 			code = "not_provisioned"
+		case errors.Is(err, idp.ErrAccountConflict):
+			code = "account_conflict"
 		}
 		h.fail(w, r, "", id, code, err)
 		return
+	}
+	if linked {
+		h.record(r, idp.LinkEvent(ip, u, op, ident))
 	}
 
 	mfa := "provider"
@@ -225,8 +232,10 @@ func (h *Handler) callback(w http.ResponseWriter, r *http.Request) {
 	h.Sessions.SetCookie(w, token)
 	h.record(r, audit.Actor{UserID: u.ID, IP: ip}.Event("user.login", "user", u.ID, audit.Success,
 		map[string]string{"idp": id, "mfa": mfa, "session_id": sess.ID, "stage": map[bool]string{true: "complete", false: "password"}[verified]}))
+	// The cookie is sealed, so Next is what start accepted; checking it again
+	// costs nothing and covers a cookie sealed under an older rule.
 	next := "/"
-	if st.Next != "" {
+	if safeNext(st.Next) {
 		next = st.Next
 	}
 	if !verified {
@@ -339,8 +348,40 @@ func domainAllowed(email string, domains []string) bool {
 	return false
 }
 
+// safeNext reports whether next may be used as the post-login redirect. Only a
+// path on this origin qualifies: it starts with exactly one "/", carries no
+// scheme, host or userinfo once parsed, is already clean (no "." or ".."
+// segments; a single trailing slash is fine), and contains no control
+// character or backslash. The control-character rule is what keeps the check
+// honest: browsers strip ASCII tab, CR and LF from a URL before parsing it,
+// so "/" + TAB + "/evil.example" becomes the scheme-relative "//evil.example",
+// and http.Redirect writes a value Go's parser rejects verbatim, with no
+// cleaning. Browsers also read "\" as "/" in http URLs and skip extra slashes
+// after the scheme, so "/\evil" and "///evil" are refused on the raw string
+// rather than on the parsed path. Percent-encoded characters need no rule of
+// their own: the browser keeps them encoded, so "%09" or "%2F" in a path can
+// never turn into a second "/".
 func safeNext(next string) bool {
-	return next != "" && strings.HasPrefix(next, "/") && !strings.HasPrefix(next, "//") && !strings.ContainsAny(next, "\\\r\n")
+	// Exactly one leading "/": a second "/" or "\" makes the rest a host.
+	if len(next) == 0 || next[0] != '/' || (len(next) > 1 && (next[1] == '/' || next[1] == '\\')) {
+		return false
+	}
+	for _, r := range next {
+		if r < 0x20 || r == 0x7f || r == '\\' {
+			return false
+		}
+	}
+	u, err := url.Parse(next)
+	if err != nil || u.Scheme != "" || u.Opaque != "" || u.User != nil || u.Host != "" {
+		return false
+	}
+	if !strings.HasPrefix(u.Path, "/") || strings.HasPrefix(u.Path, "//") {
+		return false
+	}
+	if clean := path.Clean(u.Path); u.Path != clean && u.Path != clean+"/" {
+		return false
+	}
+	return true
 }
 
 func randomString() string {
@@ -394,10 +435,5 @@ func (h *Handler) fail(w http.ResponseWriter, r *http.Request, userID, idpID, co
 }
 
 func (h *Handler) record(r *http.Request, e audit.Event) {
-	if h.Audit == nil {
-		return
-	}
-	if _, err := h.Audit.Record(r.Context(), e); err != nil {
-		h.Log.Error("audit record failed", "action", e.Action, "err", err)
-	}
+	auth.Recorder{Audit: h.Audit, Log: h.Log}.Record(r, e)
 }

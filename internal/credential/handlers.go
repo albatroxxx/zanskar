@@ -326,16 +326,7 @@ func (h *AdminHandler) delete(w http.ResponseWriter, r *http.Request) {
 // ---- helpers
 
 func (h *AdminHandler) record(r *http.Request, action string, c *Credential, details map[string]any) {
-	if h.Audit == nil {
-		return
-	}
-	a := audit.Actor{IP: auth.ClientIP(r)}
-	if p, ok := auth.FromContext(r.Context()); ok {
-		a.UserID = p.User.ID
-	}
-	if _, err := h.Audit.Record(r.Context(), a.Event(action, "credential", c.ID, audit.Success, details)); err != nil {
-		h.Log.Error("audit record failed", "action", action, "err", err)
-	}
+	auth.Recorder{Audit: h.Audit, Log: h.Log}.Record(r, auth.ActorFor(r).Event(action, "credential", c.ID, audit.Success, details))
 }
 
 func (h *AdminHandler) writeErr(w http.ResponseWriter, r *http.Request, err error) {

@@ -359,6 +359,25 @@ func isUnique(err error) bool {
 	return strings.Contains(msg, "unique") || strings.Contains(msg, "duplicate key")
 }
 
+// LinkExternal ties the account to an identity provider's subject, so that
+// sign-ins through idpID find it by externalID (GetByExternalID). It writes
+// the link and nothing else: roles, password, profile and status stay as they
+// are. Whether an account may be linked at all is the caller's decision
+// (idp.Provisioner.Resolve links only one with no password and no provider).
+// ErrNotFound when there is no such account, ErrDuplicate when another
+// account is already linked to that subject.
+func (r *Repo) LinkExternal(ctx context.Context, id, idpID, externalID string) error {
+	res, err := r.db.ExecContext(ctx, r.db.Rebind(`UPDATE users SET idp_id = ?, external_id = ?, updated_at = ? WHERE id = ?`),
+		idpID, externalID, store.TimeArg(time.Now()), id)
+	if err != nil {
+		if isUnique(err) {
+			return ErrDuplicate
+		}
+		return err
+	}
+	return affected(res)
+}
+
 // GetByExternalID finds a user provisioned from an identity provider.
 func (r *Repo) GetByExternalID(ctx context.Context, idpID, externalID string) (*User, error) {
 	row := r.db.QueryRowContext(ctx, r.db.Rebind(`SELECT `+userCols+` FROM users WHERE idp_id = ? AND external_id = ?`), idpID, externalID)

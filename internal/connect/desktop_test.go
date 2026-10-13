@@ -18,6 +18,7 @@ import (
 	"io"
 	"math/big"
 	"net"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -32,7 +33,7 @@ import (
 func TestDesktopParamsRDPPinsAtGateway(t *testing.T) {
 	fp := "abc123"
 	tgt := &endpoint{Address: "10.0.0.5", Ports: map[target.Protocol]int{}, TLSFingerprint: fp}
-	p, err := desktopParams(tgt, target.RDP, nil, []byte("pw"), "Administrator", false, "")
+	p, err := desktopParams(tgt, target.RDP, nil, []byte("pw"), "Administrator", false, false, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -46,8 +47,42 @@ func TestDesktopParamsRDPPinsAtGateway(t *testing.T) {
 		t.Fatalf("security = %q, want nla", p.Args["security"])
 	}
 	// An unprobed target (no pinned fingerprint) is refused, not trusted.
-	if _, err := desktopParams(&endpoint{Address: "10.0.0.5", Ports: map[target.Protocol]int{}}, target.RDP, nil, []byte("pw"), "u", false, ""); err == nil {
+	if _, err := desktopParams(&endpoint{Address: "10.0.0.5", Ports: map[target.Protocol]int{}}, target.RDP, nil, []byte("pw"), "u", false, false, ""); err == nil {
 		t.Fatal("RDP without a pinned certificate must be refused")
+	}
+}
+
+// TestDesktopParamsPolicyFlags: the policy's clipboard and file flags are
+// handed to guacd as well, so the data stops at the source and not only at
+// the bridge (ADR 0012). Clipboard applies to RDP and VNC; the drive
+// parameters are RDP's, since VNC has no file transfer.
+func TestDesktopParamsPolicyFlags(t *testing.T) {
+	tgt := &endpoint{Address: "10.0.0.5", Ports: map[target.Protocol]int{}, TLSFingerprint: "abc123"}
+	for _, tc := range []struct {
+		proto               target.Protocol
+		files, clipboard    bool
+		wantCopy, wantPaste string
+		wantDown, wantUp    string
+	}{
+		{target.RDP, false, false, "true", "true", "true", "true"},
+		{target.RDP, true, true, "false", "false", "false", "false"},
+		{target.RDP, false, true, "false", "false", "true", "true"},
+		{target.RDP, true, false, "true", "true", "false", "false"},
+		{target.VNC, false, false, "true", "true", "", ""},
+		{target.VNC, true, true, "false", "false", "", ""},
+	} {
+		p, err := desktopParams(tgt, tc.proto, nil, []byte("pw"), "u", tc.files, tc.clipboard, "/tmp/d")
+		if err != nil {
+			t.Fatalf("%s files=%v clipboard=%v: %v", tc.proto, tc.files, tc.clipboard, err)
+		}
+		got := []string{p.Args["disable-copy"], p.Args["disable-paste"], p.Args["disable-download"], p.Args["disable-upload"]}
+		want := []string{tc.wantCopy, tc.wantPaste, tc.wantDown, tc.wantUp}
+		if strings.Join(got, ",") != strings.Join(want, ",") {
+			t.Errorf("%s files=%v clipboard=%v: copy,paste,download,upload = %v, want %v", tc.proto, tc.files, tc.clipboard, got, want)
+		}
+		if tc.proto == target.RDP && p.Args["enable-drive"] != strconv.FormatBool(tc.files) {
+			t.Errorf("%s files=%v: enable-drive = %q", tc.proto, tc.files, p.Args["enable-drive"])
+		}
 	}
 }
 

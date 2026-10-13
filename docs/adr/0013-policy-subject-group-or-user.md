@@ -40,6 +40,34 @@ decision every caller uses (the connect gate, the target list, the approval elig
 and `Policy.References` is what the deletion guard scans, so a machine named only inside a rule
 is still protected from deletion.
 
+Amended 2026-10-11, revocation reaches live sessions: a change that took access away only
+stopped new connects, and a session already open ran on until its idle or maximum time ran out
+(security review finding H5). Each live session is now registered under the policy that
+admitted it, and the changes that take access away end the sessions they take it from, at once:
+
+- **Editing a policy** checks each live session it admitted against the saved policy alone. The
+  session ends unless the policy still applies to the user (bound to them, or to a group they
+  are in), is enabled, allows the session's protocol on the session's machine, and has a time
+  window open now. A session that cannot be checked, say because its machine cannot be looked
+  up, is kept, and the gateway logs it.
+- **Deleting a policy** ends every live session it admitted.
+- **Removing a member from a group** ends that member's live sessions admitted by the group's
+  policies. Sessions admitted by a policy bound to the user directly are untouched.
+- **Deleting a group** ends the live sessions admitted by any of its policies, before the
+  policies are deleted with the group. The group's audit event lists the policies that went.
+- **Disabling, locking or deleting an account, changing its roles, or signing it out
+  everywhere** ends all of that user's live sessions.
+
+A session ended by a policy or group change closes as `policy_revoked`; one ended by an account
+change, as `admin_terminated`. The audit event for each change records how many live sessions
+it ended (`live_sessions_ended`). One limitation is by design: a policy change is checked
+against that policy alone. If another policy would still let the user in, the session ends
+anyway, and the user reconnects through the other policy. Nothing re-checks a session on a
+timer, so a time window that closes during a session does not end it (the policy's maximum
+session length bounds it), and an approved request that expires still leaves its sessions
+running (ADR 0018). Like an admin's terminate, revocation reaches the sessions of the gateway
+process that made the change, which is all of them while Zanskar runs as one instance.
+
 ## Consequences
 
 - One-off grants no longer widen a group. A user with no group memberships can still be
