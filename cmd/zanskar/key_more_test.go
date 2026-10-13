@@ -113,7 +113,7 @@ func TestKeyStatusShowsRotatedAndRetired(t *testing.T) {
 	}
 	today := time.Now().UTC().Format("2006-01-02")
 	var v1, v2 string
-	for _, line := range strings.Split(out, "\n") {
+	for line := range strings.SplitSeq(out, "\n") {
 		switch {
 		case strings.HasPrefix(line, "1 "):
 			v1 = line

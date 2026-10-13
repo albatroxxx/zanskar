@@ -338,12 +338,9 @@ func (r *Repo) CountRecordingsByStore(ctx context.Context) (map[string]int, erro
 			return nil, err
 		}
 		key := "local"
-		if strings.HasPrefix(uri, "s3://") {
-			rest := strings.TrimPrefix(uri, "s3://")
-			if i := strings.IndexByte(rest, '/'); i >= 0 {
-				rest = rest[:i]
-			}
-			key = "s3://" + rest
+		if rest, ok := strings.CutPrefix(uri, "s3://"); ok {
+			bucket, _, _ := strings.Cut(rest, "/")
+			key = "s3://" + bucket
 		}
 		out[key]++
 	}

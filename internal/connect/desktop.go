@@ -196,8 +196,7 @@ func (h *Handler) desktop(w http.ResponseWriter, r *http.Request) {
 			h.Log.Warn("rdp certificate pin check failed", "target", ep.LiveKey, "err", err)
 			// A different certificate is the ADR 0012 case and is audited, as
 			// WinRM's and SSH's are; an unreachable target is only logged.
-			var mm *certMismatchError
-			if errors.As(err, &mm) {
+			if mm, ok := errors.AsType[*certMismatchError](err); ok {
 				h.record(r, actorFor(g.UserID, ip).Event(audit.TargetTLSMismatch, "target", ep.LiveKey, audit.Failure,
 					map[string]string{"protocol": protocol.RDP, "expected": mm.want, "seen": mm.got}))
 			}

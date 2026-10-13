@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -232,12 +233,10 @@ func (s *Syncer) probe(ctx context.Context, provider cloud.Provider, g *Group, i
 	consoleKeys, cerr := provider.ConsoleHostKeys(ctx, in.InstanceID)
 	switch cerr {
 	case nil:
-		for _, fp := range consoleKeys {
-			if fp == observed {
-				in.HostKeyFingerprint, in.HostKeySource = observed, "console"
-				s.cleared(in.InstanceID, "console")
-				return
-			}
+		if slices.Contains(consoleKeys, observed) {
+			in.HostKeyFingerprint, in.HostKeySource = observed, "console"
+			s.cleared(in.InstanceID, "console")
+			return
 		}
 		// The console published keys and none match what we saw: MITM or a
 		// rebuilt instance reusing an id. Refuse to pin.

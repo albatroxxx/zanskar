@@ -267,10 +267,10 @@ func TestDesktopRefusesMismatchedRDPCertificate(t *testing.T) {
 // sessionIDFrom reads the session id from the first desktop message,
 // guac.Encode("", id): "0.,<len>.<id>;".
 func sessionIDFrom(msg string) string {
-	if i := strings.Index(msg, ","); i >= 0 {
-		rest := msg[i+1:]
-		if j := strings.Index(rest, "."); j >= 0 {
-			return strings.TrimSuffix(strings.SplitN(rest[j+1:], ";", 2)[0], ";")
+	if _, after, ok := strings.Cut(msg, ","); ok {
+		rest := after
+		if _, after, ok := strings.Cut(rest, "."); ok {
+			return strings.TrimSuffix(strings.SplitN(after, ";", 2)[0], ";")
 		}
 	}
 	return ""
@@ -279,7 +279,7 @@ func sessionIDFrom(msg string) string {
 // waitEnded blocks until the session's row says it ended.
 func (f *connectFixture) waitEnded(t *testing.T, id string) {
 	t.Helper()
-	for i := 0; i < 250; i++ {
+	for range 250 {
 		if s, err := f.h.Sessions.Get(f.ctx, id); err == nil && s.EndedAt != nil {
 			return
 		}

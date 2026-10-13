@@ -33,12 +33,10 @@ func IsCheckViolation(err error) bool {
 }
 
 func violates(err error, sqlstate string, sqliteCodes ...int) bool {
-	var pg *pgconn.PgError
-	if errors.As(err, &pg) {
+	if pg, ok := errors.AsType[*pgconn.PgError](err); ok {
 		return pg.Code == sqlstate
 	}
-	var lite *sqlite.Error
-	if errors.As(err, &lite) {
+	if lite, ok := errors.AsType[*sqlite.Error](err); ok {
 		return slices.Contains(sqliteCodes, lite.Code())
 	}
 	return false

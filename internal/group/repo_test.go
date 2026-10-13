@@ -143,7 +143,7 @@ func TestListPagesThroughNamesThatDifferInCase(t *testing.T) {
 	for _, size := range []int{1, 2, 3} {
 		var got []string
 		after := ""
-		for i := 0; i < 10; i++ {
+		for range 10 {
 			page, next, err := r.List(ctx, after, size)
 			if err != nil {
 				t.Fatal(err)

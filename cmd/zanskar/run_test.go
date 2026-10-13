@@ -43,7 +43,7 @@ func TestRunExitCodes(t *testing.T) {
 // then accepts.
 func TestKeygenAndMigrate(t *testing.T) {
 	keys := map[string]bool{}
-	for i := 0; i < 2; i++ {
+	for range 2 {
 		out, _, err := output(t, runKeygen)
 		key := strings.TrimSpace(out)
 		if raw, derr := base64.StdEncoding.DecodeString(key); err != nil || derr != nil || len(raw) != 32 {

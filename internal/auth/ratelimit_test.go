@@ -19,7 +19,7 @@ func TestLimiterRefusesNewKeysWhenFull(t *testing.T) {
 	l := newIPLimiter(20, 10)
 	l.now = func() time.Time { return now }
 	const full = 1 << 16
-	for i := 0; i < full; i++ {
+	for i := range full {
 		if !l.Allow(fmt.Sprintf("key-%d", i)) {
 			t.Fatalf("key %d refused before the limiter was full", i)
 		}

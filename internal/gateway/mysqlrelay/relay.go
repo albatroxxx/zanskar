@@ -154,11 +154,9 @@ func (r *Relay) Serve(ctx context.Context, ln net.Listener) error {
 			}
 			return err
 		}
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			r.handle(ctx, conn)
-		}()
+		})
 	}
 }
 
@@ -319,7 +317,7 @@ func negotiated(up *client.Conn) uint32 {
 		byName[n] = f
 	}
 	var offered uint32
-	for _, n := range strings.Split(up.CapabilityString(), "|") {
+	for n := range strings.SplitSeq(up.CapabilityString(), "|") {
 		offered |= byName[n]
 	}
 	return requested & offered
@@ -336,8 +334,7 @@ type trustAuth struct {
 
 func (a *trustAuth) GetCredential(username string) (server.Credential, bool, error) {
 	if a.upstreamErr != nil {
-		var my *mysql.MyError
-		if errors.As(a.upstreamErr, &my) {
+		if my, ok := errors.AsType[*mysql.MyError](a.upstreamErr); ok {
 			// The database's own refusal, for example a password the vault
 			// holds that the server no longer accepts.
 			return server.Credential{}, false, my
@@ -476,10 +473,7 @@ func (p *paced) Read(b []byte) (int, error) {
 		}
 	}
 	if p.payLeft > 0 {
-		want := len(b) - n
-		if want > p.payLeft {
-			want = p.payLeft
-		}
+		want := min(len(b)-n, p.payLeft)
 		m, err := p.Conn.Read(b[n : n+want])
 		p.payLeft -= m
 		n += m

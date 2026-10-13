@@ -14,6 +14,7 @@ package policy
 import (
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -214,7 +215,7 @@ func (p *Policy) Covers(t TargetRef, protocol string) bool {
 // group by id anywhere: the base selector or any rule. Tag selectors are not
 // references.
 func (p *Policy) References(targetID, asgID string) bool {
-	sels := []Selector{p.Selector}
+	sels := append(make([]Selector, 0, 1+len(p.Rules)), p.Selector)
 	for _, r := range p.Rules {
 		sels = append(sels, r.Selector)
 	}
@@ -304,17 +305,13 @@ type TargetRef struct {
 // Matches reports whether the selector covers the target.
 func (s Selector) Matches(t TargetRef) bool {
 	if t.ID != "" {
-		for _, id := range s.Targets {
-			if id == t.ID {
-				return true
-			}
+		if slices.Contains(s.Targets, t.ID) {
+			return true
 		}
 	}
 	if t.ASGID != "" {
-		for _, id := range s.ASGs {
-			if id == t.ASGID {
-				return true
-			}
+		if slices.Contains(s.ASGs, t.ASGID) {
+			return true
 		}
 	}
 	if len(s.Tags) == 0 {
@@ -447,10 +444,5 @@ func (p *Policy) matchesAnyRule(t TargetRef) bool {
 }
 
 func contains(list []string, s string) bool {
-	for _, v := range list {
-		if v == s {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(list, s)
 }

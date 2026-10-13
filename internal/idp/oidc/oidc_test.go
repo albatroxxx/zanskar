@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"io"
 	"log/slog"
+	"maps"
 	"net/http"
 	"net/http/cookiejar"
 	"net/http/httptest"
@@ -76,9 +77,7 @@ func newFakeIdP(t *testing.T) *fakeIdP {
 			return
 		}
 		claims := map[string]any{"iss": f.srv.URL, "aud": "cid", "sub": "sub-1", "exp": time.Now().Add(time.Hour).Unix(), "iat": time.Now().Unix(), "nonce": f.nonce}
-		for k, v := range f.claims {
-			claims[k] = v
-		}
+		maps.Copy(claims, f.claims)
 		signer, _ := jose.NewSigner(jose.SigningKey{Algorithm: jose.RS256, Key: key}, (&jose.SignerOptions{}).WithHeader("kid", "k1"))
 		payload, _ := json.Marshal(claims)
 		obj, _ := signer.Sign(payload)
@@ -295,7 +294,7 @@ func TestPartialSignInKeepsTheFailureCount(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for i := 0; i < 2; i++ {
+	for range 2 {
 		if _, err := e.users.RecordLoginFailure(ctx, u.ID, 5, time.Minute); err != nil {
 			t.Fatal(err)
 		}

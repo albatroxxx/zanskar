@@ -265,7 +265,7 @@ func TestResetMFA(t *testing.T) {
 	if err := e.users.Create(ctx, u); err != nil {
 		t.Fatal(err)
 	}
-	for i := 0; i < 2; i++ {
+	for range 2 {
 		if _, _, err := e.sessions.Create(ctx, u.ID, "203.0.113.8", "test", true); err != nil {
 			t.Fatal(err)
 		}

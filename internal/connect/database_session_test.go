@@ -105,7 +105,7 @@ func TestDatabaseSessionEndToEnd(t *testing.T) {
 	if start.ObjectID != sessionID || d["engine"] != "postgres" || d["target_id"] != tg.ID {
 		t.Fatalf("session.start %s %v; browser saw %s", start.ObjectID, d, sessionID)
 	}
-	for i := 0; i < 250; i++ {
+	for range 250 {
 		if s, err := f.h.Sessions.Get(f.ctx, sessionID); err == nil && s.EndedAt != nil {
 			rec, err := f.h.Sessions.GetRecording(f.ctx, d["recording_id"].(string))
 			if err != nil || rec.FinishedAt == nil || rec.SizeBytes == 0 {

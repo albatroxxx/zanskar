@@ -86,7 +86,7 @@ func (rd *Reader) ReadRaw() (string, error) {
 			return "", ErrTooLong
 		}
 		// value: n runes
-		for i := 0; i < n; i++ {
+		for range n {
 			r, _, err := rd.r.ReadRune()
 			if err != nil {
 				return "", err
@@ -137,7 +137,7 @@ func Parse(raw string) (Instruction, error) {
 		rest = rest[dot+1:]
 		// take n runes
 		idx := 0
-		for i := 0; i < n; i++ {
+		for range n {
 			if idx >= len(rest) {
 				return Instruction{}, ErrMalformed
 			}
@@ -218,7 +218,7 @@ func element(raw string, i int) (string, bool) {
 		}
 		rest = rest[dot+1:]
 		end := 0
-		for k := 0; k < n; k++ {
+		for range n {
 			if end >= len(rest) {
 				return "", false
 			}

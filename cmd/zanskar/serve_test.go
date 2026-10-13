@@ -39,7 +39,7 @@ func startServe(t *testing.T, addr string) (base string, done chan error, cancel
 	go func() { done <- serve(ctx) }()
 	base = "http://" + addr
 	client := &http.Client{Timeout: 2 * time.Second}
-	for i := 0; i < 200; i++ {
+	for range 200 {
 		select {
 		case err := <-done:
 			cancel()

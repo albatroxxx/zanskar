@@ -199,7 +199,7 @@ func probeSSH(conn net.Conn, addr string) (*SSHHostKey, error) {
 	br := bufio.NewReader(conn)
 	var banner string
 	// RFC 4253 allows lines before the version string; skip them (bounded).
-	for i := 0; i < 20; i++ {
+	for range 20 {
 		line, err := br.ReadString('\n')
 		if err != nil {
 			return nil, fmt.Errorf("read banner: %w", err)

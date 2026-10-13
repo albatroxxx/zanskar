@@ -69,7 +69,7 @@ func TestSessionsAndRecordings(t *testing.T) {
 		t.Fatal("expected not found")
 	}
 	// Pagination newest-first.
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		if err := r.Start(ctx, &Session{UserID: "u1", TargetID: "t1", Protocol: "ssh", ClientIP: "x"}); err != nil {
 			t.Fatal(err)
 		}

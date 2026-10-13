@@ -5,6 +5,7 @@ package connect
 import (
 	"encoding/json"
 	"net/http"
+	"slices"
 	"testing"
 
 	"github.com/albatroxxx/zanskar/internal/target"
@@ -88,10 +89,5 @@ func TestMyTargets(t *testing.T) {
 }
 
 func contains(xs []string, x string) bool {
-	for _, v := range xs {
-		if v == x {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(xs, x)
 }

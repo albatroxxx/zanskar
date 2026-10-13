@@ -348,7 +348,7 @@ func TestSyncAuditsAMismatchOncePerSighting(t *testing.T) {
 	}
 	fake.Set("web-asg", cloud.Instance{ID: "i-9", PrivateIP: "127.0.0.1", LifecycleState: "InService"})
 	fake.Console["i-9"] = []string{"SHA256:SomethingElseEntirely0000000000000000000000"}
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		sum, err := s.SyncGroup(ctx, g)
 		if err != nil {
 			t.Fatal(err)

@@ -51,8 +51,8 @@ func ParseEnvFile(path string) (map[string]string, error) {
 	for sc.Scan() {
 		line := cont + sc.Text()
 		cont = ""
-		if strings.HasSuffix(line, "\\") {
-			cont = strings.TrimSuffix(line, "\\")
+		if before, ok := strings.CutSuffix(line, "\\"); ok {
+			cont = before
 			continue
 		}
 		line = strings.TrimSpace(line)

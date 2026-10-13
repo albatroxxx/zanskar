@@ -208,7 +208,7 @@ func TestLockoutAfterFailures(t *testing.T) {
 	e := newEnv(t)
 	u := e.createUser(t, "eve", "a perfectly fine passphrase", user.RoleUser)
 	e.handler.MaxFailures = 3
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		e.do("POST", "/api/v1/auth/login", map[string]string{"username": "eve", "password": "not it, not it"}, nil, nil)
 	}
 	got, _ := e.users.GetByID(context.Background(), u.ID)

@@ -32,7 +32,7 @@ func (o *out) addf(style, format string, a ...any) {
 	if len(a) > 0 {
 		text = fmt.Sprintf(format, a...)
 	}
-	for _, l := range strings.Split(text, "\n") {
+	for l := range strings.SplitSeq(text, "\n") {
 		o.lines = append(o.lines, Line{Text: l, Style: style})
 	}
 }

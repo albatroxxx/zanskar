@@ -44,7 +44,7 @@ func (r *terminalRig) liveShell(t *testing.T, ctx context.Context) string {
 // be written, and returns the reason each gives.
 func (f *connectFixture) endedWith(t *testing.T, sessionID string) (row, audited string) {
 	t.Helper()
-	for i := 0; i < 250; i++ {
+	for range 250 {
 		s, err := f.h.Sessions.Get(f.ctx, sessionID)
 		if err == nil && s.EndedAt != nil {
 			evs, _, err := f.auditLog.List(f.ctx, audit.Filter{Action: "session.end", ObjectID: sessionID})
@@ -348,7 +348,7 @@ func TestRevokeReachesDesktopAndWinRM(t *testing.T) {
 // it was registered under.
 func (f *connectFixture) waitLive(t *testing.T, sessionID, policyID string) {
 	t.Helper()
-	for i := 0; i < 250; i++ {
+	for range 250 {
 		if l, ok := f.h.Registry.Get(sessionID); ok {
 			if l.PolicyID != policyID {
 				t.Fatalf("live session %s carries policy %q, want %q", sessionID, l.PolicyID, policyID)

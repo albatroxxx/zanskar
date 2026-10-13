@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"net/netip"
+	"slices"
 	"strings"
 
 	"github.com/albatroxxx/zanskar/internal/httpx"
@@ -90,8 +91,8 @@ func resolveClientIP(r *http.Request, trusted []netip.Prefix) string {
 	for _, v := range r.Header.Values("X-Forwarded-For") {
 		hops = append(hops, strings.Split(v, ",")...)
 	}
-	for i := len(hops) - 1; i >= 0; i-- {
-		addr, ok := parseAddr(strings.TrimSpace(hops[i]))
+	for _, hop := range slices.Backward(hops) {
+		addr, ok := parseAddr(strings.TrimSpace(hop))
 		if !ok || trustedAddr(addr, trusted) {
 			continue
 		}
@@ -234,11 +235,9 @@ func RequireRole(roles ...user.Role) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return RequireAuth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			p, _ := FromContext(r.Context())
-			for _, role := range roles {
-				if p.User.HasRole(role) {
-					next.ServeHTTP(w, r)
-					return
-				}
+			if slices.ContainsFunc(roles, p.User.HasRole) {
+				next.ServeHTTP(w, r)
+				return
 			}
 			httpx.WriteError(w, r, http.StatusForbidden, "forbidden", "insufficient role")
 		}))

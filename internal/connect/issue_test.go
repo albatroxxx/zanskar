@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"io"
 	"log/slog"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -262,9 +263,7 @@ func TestConnectRefusals(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			body := map[string]any{"target_id": f.ids[c.target], "protocol": c.proto}
-			for k, v := range c.extra {
-				body[k] = v
-			}
+			maps.Copy(body, c.extra)
 			status, out := f.connect(t, body)
 			if status != c.status || out["code"] != c.code {
 				t.Fatalf("got %d %v, want %d %s", status, out, c.status, c.code)

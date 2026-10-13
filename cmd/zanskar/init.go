@@ -693,7 +693,7 @@ func askBool(r *bufio.Reader, label string, def bool) bool {
 // question. Validation happens in validate, with the other answers.
 func splitHosts(v string) []string {
 	var out []string
-	for _, raw := range strings.Split(v, ",") {
+	for raw := range strings.SplitSeq(v, ",") {
 		if t := strings.TrimSpace(raw); t != "" {
 			out = append(out, t)
 		}

@@ -219,7 +219,7 @@ func Load(opts Options) (*Config, error) {
 
 	// Loopback by default: the documented deployment terminates TLS in a proxy on
 	// the same host. Set ZANSKAR_TRUSTED_PROXIES to "" to trust nothing.
-	for _, raw := range strings.Split(envOr("ZANSKAR_TRUSTED_PROXIES", "127.0.0.1/32,::1/128"), ",") {
+	for raw := range strings.SplitSeq(envOr("ZANSKAR_TRUSTED_PROXIES", "127.0.0.1/32,::1/128"), ",") {
 		raw = strings.TrimSpace(raw)
 		if raw == "" {
 			continue
@@ -418,7 +418,7 @@ func isLoopback(addr string) bool {
 // splitList reads a comma-separated environment value, trimming blanks.
 func splitList(v string) []string {
 	var out []string
-	for _, raw := range strings.Split(v, ",") {
+	for raw := range strings.SplitSeq(v, ",") {
 		if t := strings.TrimSpace(raw); t != "" {
 			out = append(out, t)
 		}

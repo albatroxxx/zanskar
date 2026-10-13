@@ -17,6 +17,7 @@ import (
 	"net"
 	"os"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -207,10 +208,8 @@ func Validate(d Definition, value string) (string, error) {
 		return "", fmt.Errorf("%w: %s must be true or false", ErrInvalid, d.Key)
 	case TypeEnum:
 		v := strings.ToLower(strings.TrimSpace(value))
-		for _, e := range d.Enum {
-			if v == e {
-				return v, nil
-			}
+		if slices.Contains(d.Enum, v) {
+			return v, nil
 		}
 		return "", fmt.Errorf("%w: %s must be one of %s", ErrInvalid, d.Key, strings.Join(d.Enum, ", "))
 	case TypeHostPort:

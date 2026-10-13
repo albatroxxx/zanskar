@@ -276,7 +276,7 @@ func TestWrongEnrolmentCodesCount(t *testing.T) {
 	xena := e.bareUser(t, "xena", user.RoleUser)
 	r = e.sessionFor(t, xena, false)
 	secret := enrolFrom(r)
-	for i := 0; i < 2; i++ {
+	for range 2 {
 		confirm(r, wrongCode(t, secret, time.Now()))
 	}
 	if n := account(xena.ID).FailedLogins; n != 2 {
@@ -316,17 +316,15 @@ func TestCodesSentAtOnceShareTheBudget(t *testing.T) {
 	_, wrong := enrol(t, e, zora)
 	code := wrong()
 	var signIns []resp
-	for i := 0; i < 4; i++ {
+	for range 4 {
 		signIns = append(signIns, e.sessionFor(t, zora, false))
 	}
 	var wg sync.WaitGroup
 	for _, r := range signIns {
 		for j := 0; j < e.handler.MFAAttempts; j++ {
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
+			wg.Go(func() {
 				e.verifyCode(r, code)
-			}()
+			})
 		}
 	}
 	wg.Wait()
@@ -621,7 +619,7 @@ func TestRateLimitedSignInsAreAuditedOncePerRun(t *testing.T) {
 		if code := try(); code != http.StatusBadRequest {
 			t.Fatalf("the first attempt of a run: %d, want it admitted", code)
 		}
-		for i := 0; i < refused; i++ {
+		for i := range refused {
 			if code := try(); code != http.StatusTooManyRequests {
 				t.Fatalf("attempt %d of a run: %d, want 429", i+2, code)
 			}

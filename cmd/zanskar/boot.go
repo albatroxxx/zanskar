@@ -41,7 +41,7 @@ func describeDSN(driver, dsn string) string {
 			}
 		}
 	} else {
-		for _, tok := range strings.Fields(dsn) {
+		for tok := range strings.FieldsSeq(dsn) {
 			k, v, ok := strings.Cut(tok, "=")
 			if !ok {
 				continue

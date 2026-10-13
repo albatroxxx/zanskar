@@ -212,10 +212,7 @@ func pemEncode(typ string, b []byte) []byte {
 	enc := make([]byte, base64Len(len(b)))
 	base64Encode(enc, b)
 	for i := 0; i < len(enc); i += 64 {
-		end := i + 64
-		if end > len(enc) {
-			end = len(enc)
-		}
+		end := min(i+64, len(enc))
 		buf.Write(enc[i:end])
 		buf.WriteByte('\n')
 	}
@@ -495,13 +492,13 @@ func base64Encode(dst, src []byte) {
 	for i := 0; i < len(src); i += 3 {
 		var v uint32
 		rem := len(src) - i
-		for j := 0; j < 3; j++ {
+		for j := range 3 {
 			v <<= 8
 			if j < rem {
 				v |= uint32(src[i+j])
 			}
 		}
-		for j := 0; j < 4; j++ {
+		for j := range 4 {
 			if j <= rem {
 				dst[di] = b64[(v>>(18-6*j))&63]
 			} else {

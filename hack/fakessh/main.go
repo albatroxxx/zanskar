@@ -106,7 +106,7 @@ func trustedAuthorities(path string) ([]ssh.PublicKey, error) {
 		return nil, err
 	}
 	var out []ssh.PublicKey
-	for _, line := range strings.Split(string(raw), "\n") {
+	for line := range strings.SplitSeq(string(raw), "\n") {
 		if strings.TrimSpace(line) == "" {
 			continue
 		}

@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"maps"
 	"net/http"
 	"strings"
 	"time"
@@ -505,9 +506,7 @@ func (h *AdminHandler) unsetCredential(w http.ResponseWriter, r *http.Request) {
 
 func (h *AdminHandler) record(r *http.Request, action string, g *Group, outcome audit.Outcome, extra map[string]any) {
 	details := map[string]any{"name": g.Name, "region": g.Region, "external_name": g.ExternalName}
-	for k, v := range extra {
-		details[k] = v
-	}
+	maps.Copy(details, extra)
 	auth.Recorder{Audit: h.Audit, Log: h.Log}.Record(r, auth.ActorFor(r).Event(action, "autoscaling_group", g.ID, outcome, details))
 }
 

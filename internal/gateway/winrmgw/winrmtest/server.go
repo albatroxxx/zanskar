@@ -78,8 +78,8 @@ func New(t *testing.T) *Server {
 		case bytes.Contains(body, []byte(shell+"Receive<")):
 			line := f.lastLine.Load().(string)
 			code := 0
-			if i := strings.Index(line, "exit "); i >= 0 {
-				code, _ = strconv.Atoi(strings.TrimSpace(line[i+5:]))
+			if _, after, ok := strings.Cut(line, "exit "); ok {
+				code, _ = strconv.Atoi(strings.TrimSpace(after))
 			}
 			out := base64.StdEncoding.EncodeToString([]byte("ran: " + line + "\r\n"))
 			reply(shell+"ReceiveResponse", `<rsp:ReceiveResponse><rsp:Stream Name="stdout" CommandId="C1">`+out+`</rsp:Stream>`+

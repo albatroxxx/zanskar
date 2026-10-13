@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"net"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 
@@ -69,12 +70,7 @@ var TLSModes = []string{TLSDisable, TLSPrefer, TLSRequire, TLSVerifyFull}
 
 // ValidTLSMode reports whether m is a known mode.
 func ValidTLSMode(m string) bool {
-	for _, x := range TLSModes {
-		if x == m {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(TLSModes, m)
 }
 
 // ValidEngine reports whether e is a supported database engine.

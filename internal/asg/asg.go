@@ -316,7 +316,7 @@ func yamlString(s string) string {
 
 func indent(text, prefix string) string {
 	var b strings.Builder
-	for _, line := range strings.Split(strings.TrimRight(text, "\n"), "\n") {
+	for line := range strings.SplitSeq(strings.TrimRight(text, "\n"), "\n") {
 		b.WriteString(prefix)
 		b.WriteString(line)
 		b.WriteByte('\n')

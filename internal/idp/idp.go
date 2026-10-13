@@ -13,6 +13,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -524,12 +525,7 @@ func holds(key string, names map[string]bool, dns []*goldap.DN) bool {
 		if err != nil {
 			return false
 		}
-		for _, dn := range dns {
-			if want.EqualFold(dn) {
-				return true
-			}
-		}
-		return false
+		return slices.ContainsFunc(dns, want.EqualFold)
 	}
 	return names[strings.ToLower(key)]
 }

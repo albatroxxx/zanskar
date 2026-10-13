@@ -548,7 +548,7 @@ func Bridge(ctx context.Context, log *slog.Logger, docker string, spec Spec, ws 
 				if rec != nil {
 					_ = rec.Input([]byte(fr.D))
 				}
-				if _, werr := f.Write([]byte(fr.D)); werr != nil {
+				if _, werr := f.WriteString(fr.D); werr != nil {
 					return
 				}
 			case "r":
