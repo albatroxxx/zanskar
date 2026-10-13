@@ -20,7 +20,6 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"os/exec"
 	"os/signal"
 	"syscall"
 	"time"
@@ -421,17 +420,23 @@ func serve(ctx context.Context) error {
 	// Database sessions (ADR 0017): the containers and networks a crashed
 	// process or a failed teardown left behind are removed by label, now and
 	// every five minutes; a session this process still runs is never touched.
-	// A host without a container CLI serves no database targets, so that is
-	// not worth a warning every pass.
+	// How loudly a failing pass is reported is reapNotice's: once, not every
+	// pass, and never for a host with no container CLI.
 	go func() {
 		live := func(id string) bool { _, ok := registry.Get(id); return ok }
 		t := time.NewTicker(5 * time.Minute)
 		defer t.Stop()
+		var notice reapNotice
 		for {
-			if n, err := dbgw.Reap(ctx, cfg.DockerPath, live); err != nil && !errors.Is(err, exec.ErrNotFound) {
-				log.Warn("database session reaper", "err", err)
-			} else if n > 0 {
+			n, err := dbgw.Reap(ctx, cfg.DockerPath, live)
+			if ctx.Err() != nil {
+				return // shutting down: a pass cut short says nothing about Docker
+			}
+			if n > 0 {
 				log.Info("database session reaper removed leftovers", "removed", n)
+			}
+			if level, ok := notice.level(err); ok {
+				log.Log(ctx, level, "database session reaper cannot list containers; database sessions will not work until it can", "err", err)
 			}
 			select {
 			case <-ctx.Done():
