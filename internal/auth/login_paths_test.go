@@ -411,6 +411,87 @@ func TestLoginRateLimit(t *testing.T) {
 	}
 }
 
+// TestLoginLimiterKeysIPv6By64: an IPv6 client usually holds a whole /64 and
+// can sign in from any address in it, so the sign-in limit counts the /64,
+// not each address. IPv4 stays per address (M10). The attempts have no
+// username: the limiter spends its token before the body is read, so an
+// admitted attempt is a 400 and no password hash is spent on the test.
+func TestLoginLimiterKeysIPv6By64(t *testing.T) {
+	e := newEnv(t)
+	e.handler.loginLimiter = newIPLimiter(20, 1)
+	try := func(addr string) resp {
+		return e.doFrom(addr, "POST", "/api/v1/auth/login", map[string]string{"username": "", "password": "a guess at it"}, nil, nil)
+	}
+	for _, c := range []struct {
+		addr string
+		want int
+		why  string
+	}{
+		{"[2001:db8:1:2::1]:4444", 400, "the first address of a /64"},
+		{"[2001:db8:1:2:ffff:ffff:ffff:fffe]:4444", 429, "another address in the same /64"},
+		{"[2001:db8:1:3::1]:4444", 400, "an address in the next /64"},
+		{"203.0.113.7:4444", 400, "an IPv4 address"},
+		{"203.0.113.8:4444", 400, "the IPv4 address next to it"},
+	} {
+		if r := try(c.addr); r.code != c.want {
+			t.Fatalf("%s (%s): %d %v, want %d", c.why, c.addr, r.code, r.body, c.want)
+		}
+	}
+}
+
+// TestPasswordHashingIsBounded: each password check takes 64 MiB and a core
+// for about 100 ms, so the sign-in paths run only so many at once. A check
+// that gets no slot within the wait is answered 503 busy, counts nothing and
+// writes no audit row; once a slot is free, sign-in works again (M10).
+func TestPasswordHashingIsBounded(t *testing.T) {
+	e := newEnv(t)
+	unlimited(e)
+	saved := passwordHashing
+	passwordHashing = newHashGate(1, 20*time.Millisecond)
+	t.Cleanup(func() { passwordHashing = saved })
+	const pw = "omar has a long passphrase"
+	omar := e.createUser(t, "omar", pw, user.RoleUser)
+	session := e.sessionFor(t, omar, true)
+	events := func() int {
+		t.Helper()
+		evs, _, err := e.audit.List(context.Background(), audit.Filter{Limit: 500})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return len(evs)
+	}
+
+	leave, ok := passwordHashing.enter(context.Background())
+	if !ok {
+		t.Fatal("the only slot should be free")
+	}
+	before := events()
+	for _, c := range []struct {
+		what string
+		do   func() resp
+	}{
+		{"a sign-in", func() resp { return login(e, "omar", pw) }},
+		{"a sign-in as an unknown user", func() resp { return login(e, "nobody", pw) }},
+		{"a password change", func() resp {
+			return e.do("POST", "/api/v1/auth/password", map[string]string{"current_password": pw, "new_password": "omar picks another phrase"}, session.cookie, csrfOf(session))
+		}},
+	} {
+		if r := c.do(); r.code != 503 || r.body["code"] != "busy" {
+			t.Fatalf("%s with every hashing slot taken: %d %v, want 503 busy", c.what, r.code, r.body)
+		}
+	}
+	if after := events(); after != before {
+		t.Fatalf("%d audit rows for attempts refused as busy, want none", after-before)
+	}
+	if got, err := e.users.GetByID(context.Background(), omar.ID); err != nil || got.FailedLogins != 0 {
+		t.Fatalf("a busy refusal must count nothing against the account: %v", err)
+	}
+	leave()
+	if r := login(e, "omar", pw); r.code != 200 {
+		t.Fatalf("a sign-in once a slot is free: %d %v", r.code, r.body)
+	}
+}
+
 // TestExternalLogin: a directory user signs in on first use and is
 // provisioned; a provisioned user with no local password signs in through
 // the directory; a wrong directory password, or a directory error, is the

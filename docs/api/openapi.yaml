@@ -151,11 +151,15 @@ paths:
       tags: [auth]
       summary: Log in with username and password
       description: |
-        Rate limited per source IP. Wrong passwords and wrong second-factor codes count against the
-        account together: five in a row, from whichever clients, lock it against new sign-ins for
-        15 minutes (`locked_until`), and a locked account gets the same `401` as a wrong password.
-        Sessions already signed in carry on. The count is cleared when a sign-in completes, not by
-        the right password while a second factor is still owed. The response body does not reveal
+        Rate limited per source address, an IPv6 client by its /64; while the limiter is full of
+        other addresses, a new one gets the same `429`. Each attempt checks a password, and only so
+        many checks run at once: one that waits too long for its turn gets `503` with code `busy`.
+
+        Wrong passwords and wrong second-factor codes count against the account together: five in
+        a row, from whichever clients, lock it against new sign-ins for 15 minutes
+        (`locked_until`), and a locked account gets the same `401` as a wrong password. Sessions
+        already signed in carry on. The count is cleared when a sign-in completes, not by the
+        right password while a second factor is still owed. The response body does not reveal
         whether the username exists. On success the `zanskar_session` cookie is set.
       security: []
       requestBody:
@@ -180,6 +184,14 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "429":
           $ref: "#/components/responses/RateLimited"
+        "503":
+          description: >
+            `busy`: too many password checks are running at once; try again in a moment. The
+            attempt was not checked, so it is neither counted against the account nor audited.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
   /auth/mfa/totp/verify:
     post:
       tags: [auth]
@@ -253,6 +265,14 @@ paths:
                 $ref: "#/components/schemas/Error"
         "401":
           description: The current password is wrong.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "503":
+          description: >
+            `busy`: too many password checks are running at once; try again in a moment. Nothing
+            was changed.
           content:
             application/json:
               schema:
