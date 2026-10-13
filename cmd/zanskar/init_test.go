@@ -295,11 +295,11 @@ func TestGuacdImageInStep(t *testing.T) {
 	}
 	want := m[1]
 	if guacdImage != want {
-		t.Errorf("zanskar init prints %s, the compose file runs %s", guacdImage, want)
+		t.Errorf("zanskar init prints %s, the compose file runs %s (hack/bump-guacd.py moves every copy)", guacdImage, want)
 	}
 	for _, path := range []string{"deploy/docker-compose.dev.yml", "docs/deploy.md", "deploy/aws/userdata/gateway.sh.tftpl"} {
 		if !strings.Contains(read(path), want) {
-			t.Errorf("%s does not name %s", path, want)
+			t.Errorf("%s does not name %s (hack/bump-guacd.py moves every copy)", path, want)
 		}
 	}
 	repo, tagged, _ := strings.Cut(want, ":")
@@ -307,7 +307,7 @@ func TestGuacdImageInStep(t *testing.T) {
 	values := read("deploy/helm/zanskar/values.yaml")
 	for _, line := range []string{"repository: " + repo, `tag: "` + tag + `"`, `digest: "` + digest + `"`} {
 		if !strings.Contains(values, line) {
-			t.Errorf("the chart's guacd.image lacks %s", line)
+			t.Errorf("the chart's guacd.image lacks %s (hack/bump-guacd.py moves every copy)", line)
 		}
 	}
 }
