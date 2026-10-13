@@ -955,7 +955,7 @@ paths:
         "403":
           description: >-
             Origin mismatch, or the certificate authority does not issue certificates for the
-            login user (`login_user_not_permitted`).
+            login user (`login_user_not_permitted`). The policies are checked again at redemption, up to thirty seconds after the ticket was issued: `policy_denied`, `mfa_required_by_policy` or `approval_required` as on `/connect`, and `review_only` when the account no longer holds the `user` or `admin` role.
         "409":
           description: The target is no longer available (`target_unavailable`) or the credential could not be opened or issued (`credential_unavailable`).
           content:
@@ -988,7 +988,8 @@ paths:
         "401":
           description: Ticket missing, expired, or already used.
         "403":
-          description: Origin mismatch.
+          description: >-
+            Origin mismatch. The policies are checked again at redemption, up to thirty seconds after the ticket was issued: `policy_denied`, `mfa_required_by_policy` or `approval_required` as on `/connect`, and `review_only` when the account no longer holds the `user` or `admin` role.
         "409":
           description: >-
             The target is no longer available or its name does not resolve
@@ -1046,7 +1047,8 @@ paths:
         "401":
           description: Ticket missing, expired, or already used.
         "403":
-          description: Origin mismatch.
+          description: >-
+            Origin mismatch. The policies are checked again at redemption, up to thirty seconds after the ticket was issued: `policy_denied`, `mfa_required_by_policy` or `approval_required` as on `/connect`, and `review_only` when the account no longer holds the `user` or `admin` role.
         "409":
           description: |
             The connection could not be made before the upgrade. `code` says why:
@@ -1104,7 +1106,8 @@ paths:
         "401":
           description: Ticket missing, expired, or already used.
         "403":
-          description: Origin mismatch.
+          description: >-
+            Origin mismatch. The policies are checked again at redemption, up to thirty seconds after the ticket was issued: `policy_denied`, `mfa_required_by_policy` or `approval_required` as on `/connect`, and `review_only` when the account no longer holds the `user` or `admin` role.
         "409":
           description: The target is no longer available or its name does not resolve (`target_unavailable`), or its credential could not be opened (`credential_unavailable`).
           content:
