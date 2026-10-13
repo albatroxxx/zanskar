@@ -74,7 +74,7 @@ func (a *Authenticator) Authenticate(ctx context.Context, cfg *idp.LDAPConfig, u
 		return nil, fmt.Errorf("%w: service rebind: %v", ErrDirectory, redact(err))
 	}
 
-	groups, err := a.groups(cfg, conn, entry)
+	groups, groupDNs, err := a.groups(cfg, conn, entry)
 	if err != nil {
 		return nil, err
 	}
@@ -84,6 +84,7 @@ func (a *Authenticator) Authenticate(ctx context.Context, cfg *idp.LDAPConfig, u
 		DisplayName: entry.GetAttributeValue(cfg.DisplayNameAttr),
 		Email:       strings.ToLower(entry.GetAttributeValue(cfg.EmailAttr)),
 		Groups:      groups,
+		GroupDNs:    groupDNs,
 	}
 	if id.Username == "" {
 		return nil, fmt.Errorf("%w: entry has no %s attribute", ErrConfig, cfg.UsernameAttr)
@@ -191,18 +192,21 @@ func (a *Authenticator) findUser(cfg *idp.LDAPConfig, conn *goldap.Conn, usernam
 	return nil, ErrInvalidCredentials
 }
 
-func (a *Authenticator) groups(cfg *idp.LDAPConfig, conn *goldap.Conn, entry *goldap.Entry) ([]string, error) {
+// groups returns the user's groups by name and by full DN. Mapping keys
+// written as DNs match the DNs exactly; bare names match the names, which
+// any OU can repeat (idp.GroupMapping).
+func (a *Authenticator) groups(cfg *idp.LDAPConfig, conn *goldap.Conn, entry *goldap.Entry) (names, dns []string, err error) {
 	if cfg.GroupAttr != "" {
-		var out []string
 		for _, dn := range entry.GetAttributeValues(cfg.GroupAttr) {
 			if name := firstRDNValue(dn); name != "" {
-				out = append(out, name)
+				names = append(names, name)
+				dns = append(dns, dn)
 			}
 		}
-		return out, nil
+		return names, dns, nil
 	}
 	if cfg.GroupBaseDN == "" || cfg.GroupFilter == "" {
-		return nil, nil
+		return nil, nil, nil
 	}
 	nameAttr := cfg.GroupNameAttr
 	if nameAttr == "" {
@@ -212,17 +216,17 @@ func (a *Authenticator) groups(cfg *idp.LDAPConfig, conn *goldap.Conn, entry *go
 		fmt.Sprintf(cfg.GroupFilter, goldap.EscapeFilter(entry.DN)), []string{nameAttr}, nil)
 	res, err := conn.Search(req)
 	if err != nil {
-		return nil, fmt.Errorf("%w: group search: %v", ErrDirectory, redact(err))
+		return nil, nil, fmt.Errorf("%w: group search: %v", ErrDirectory, redact(err))
 	}
-	var out []string
 	for _, g := range res.Entries {
 		if v := g.GetAttributeValue(nameAttr); v != "" {
-			out = append(out, v)
+			names = append(names, v)
 		} else if name := firstRDNValue(g.DN); name != "" {
-			out = append(out, name)
+			names = append(names, name)
 		}
+		dns = append(dns, g.DN)
 	}
-	return out, nil
+	return names, dns, nil
 }
 
 // externalID picks the most stable identifier the directory offers.

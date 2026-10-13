@@ -7,6 +7,7 @@ import { FailoverDialog } from './Failover'
 import { useFullscreen } from './fullscreen'
 import { FullscreenButton } from './FullscreenButton'
 import type { ConnectResponse } from '../../api/types'
+import { isPasteKey, keyQueue } from './keys'
 
 interface DesktopState {
   ticket: string
@@ -102,9 +103,11 @@ function DesktopSession({ state }: { state: DesktopState }) {
   }, [])
 
   // pullBrowserClipboard reads the browser clipboard and pushes it to the
-  // desktop. It runs on window focus, the moment the user comes back from
-  // copying something elsewhere. Reading needs a permission the browser may
-  // not grant; then the panel is the way in.
+  // desktop. It runs only on the user's own paste keystroke in the desktop
+  // (Ctrl+V or Cmd+V), never on its own: text copied elsewhere for something
+  // else (a password, say) stays in the browser until the user pastes it
+  // here, as with a native RDP client. Reading needs a permission the
+  // browser may not grant; then the panel is the way in.
   const pullBrowserClipboard = useCallback(async () => {
     if (!clipAllowedRef.current || !navigator.clipboard?.readText) return
     try {
@@ -130,7 +133,6 @@ function DesktopSession({ state }: { state: DesktopState }) {
     let keyboard: Keyboard | null = null
     let ro: ResizeObserver | null = null
     let sizeTimer: ReturnType<typeof setTimeout> | undefined
-    const onFocus = () => { void pullBrowserClipboard() }
     void import('guacamole-common-js').then((mod) => {
       if (disposed) return
       const Guacamole = mod.default
@@ -183,20 +185,27 @@ function DesktopSession({ state }: { state: DesktopState }) {
       const mouse = new Guacamole.Mouse(client.getDisplay().getElement())
       const send = (m: unknown) => client.sendMouseState(m as never)
       mouse.onmousedown = mouse.onmouseup = mouse.onmousemove = send
-      keyboard = new Guacamole.Keyboard(document)
+      const kb = new Guacamole.Keyboard(document)
+      keyboard = kb
+      // Key events go out in order through one queue. A paste keystroke
+      // (V with Ctrl or Cmd held) first reads the browser clipboard and
+      // sends it to the desktop, and only then is the key passed on, so the
+      // remote application pastes what the user meant to paste; the keys
+      // after it wait their turn rather than overtaking it.
+      const sendKey = keyQueue((pressed, k) => client.sendKeyEvent(pressed, k))
       // Keys typed into the clipboard panel (or any other field on this page)
       // belong to that field, not to the desktop: returning true tells the
       // library to leave the browser's default alone instead of preventing it.
-      keyboard.onkeydown = (k: number) => {
+      kb.onkeydown = (k: number) => {
         if (typingInField()) return true
-        client.sendKeyEvent(1, k)
+        const paste = isPasteKey(k, kb.modifiers) && clipAllowedRef.current
+        void sendKey(1, k, paste ? pullBrowserClipboard : undefined)
         return false
       }
-      keyboard.onkeyup = (k: number) => {
+      kb.onkeyup = (k: number) => {
         if (typingInField()) return
-        client.sendKeyEvent(0, k)
+        void sendKey(0, k)
       }
-      window.addEventListener('focus', onFocus)
       client.connect('')
       // connect() installs the client's instruction handler; wrap it so the
       // Zanskar flags instruction is read here and everything else passes on.
@@ -233,7 +242,6 @@ function DesktopSession({ state }: { state: DesktopState }) {
       clearInterval(tick)
       clearTimeout(sizeTimer)
       ro?.disconnect()
-      window.removeEventListener('focus', onFocus)
       if (keyboard) {
         // Release anything still held (sends the key-ups while the client is
         // connected), then stop intercepting the document's key events.
@@ -282,13 +290,11 @@ function DesktopSession({ state }: { state: DesktopState }) {
     if (panelOpen && fsReady) list('/')
   }, [panelOpen, fsReady, list])
 
-  // Once the gateway says the policy allows the clipboard, seed the desktop
-  // with whatever the browser holds, provided the page is focused (reading
-  // an unfocused document's clipboard is refused outright).
+  // The gateway says whether the policy allows the clipboard; until it does,
+  // nothing is read or sent.
   useEffect(() => {
     clipAllowedRef.current = flags.clipboard
-    if (flags.clipboard && document.hasFocus()) void pullBrowserClipboard()
-  }, [flags.clipboard, pullBrowserClipboard])
+  }, [flags.clipboard])
 
   const download = (e: Entry) => {
     const fs = fsRef.current

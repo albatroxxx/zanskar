@@ -316,3 +316,81 @@ func TestDeleteRetiresTarget(t *testing.T) {
 		t.Fatalf("a live name must still be unique, got %v", err)
 	}
 }
+
+// TestPinnedCertificateIsNeverReplacedByAProbe pins ADR 0012: a re-probe that
+// sees a different RDP or WinRM certificate keeps the pinned one, holds the
+// new one as pending (reported once), and only the administrator's
+// confirmation of that exact fingerprint pins it; an address change clears
+// both. A silent re-pin is what an on-path attacker would want.
+func TestPinnedCertificateIsNeverReplacedByAProbe(t *testing.T) {
+	r := NewRepo(testDB(t))
+	ctx := context.Background()
+	tg := &Target{Name: "win-2", Address: "10.0.0.10", OSFamily: Windows}
+	if err := r.Create(ctx, tg); err != nil {
+		t.Fatal(err)
+	}
+	probe := func(rdp, winrm string) *HostKeyChange {
+		t.Helper()
+		_, ch, err := r.RecordProbe(ctx, tg.ID, ProbeResult{Capabilities: []Protocol{RDP, WinRM},
+			TLS: &TLSInfo{Fingerprint: rdp, Source: "rdp"}, WinRMTLS: &TLSInfo{Fingerprint: winrm, Source: "winrm"}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return ch
+	}
+	get := func() *Target {
+		t.Helper()
+		got, err := r.Get(ctx, tg.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return got
+	}
+	str := func(p *string) string {
+		if p == nil {
+			return "<nil>"
+		}
+		return *p
+	}
+
+	if ch := probe("aa11", "bb22"); len(ch.Certificates) != 0 {
+		t.Fatalf("first sight pins without a change: %+v", ch.Certificates)
+	}
+	ch := probe("evil1", "evil2")
+	got := get()
+	if str(got.TLSFingerprint) != "aa11" || str(got.WinRMTLSFingerprint) != "bb22" {
+		t.Fatalf("a probe replaced the pinned certificates: rdp=%s winrm=%s", str(got.TLSFingerprint), str(got.WinRMTLSFingerprint))
+	}
+	if str(got.TLSFingerprintPending) != "evil1" || str(got.WinRMTLSFingerprintPending) != "evil2" || len(ch.Certificates) != 2 {
+		t.Fatalf("pending: rdp=%s winrm=%s changes=%+v", str(got.TLSFingerprintPending), str(got.WinRMTLSFingerprintPending), ch.Certificates)
+	}
+	if ch := probe("evil1", "evil2"); len(ch.Certificates) != 0 {
+		t.Fatalf("the same pending certificate is reported again: %+v", ch.Certificates)
+	}
+
+	if _, err := r.TrustCertificate(ctx, tg.ID, RDP, "something-else"); !errors.Is(err, ErrFingerprintMismatch) {
+		t.Fatalf("trust of another fingerprint: %v", err)
+	}
+	if _, err := r.TrustCertificate(ctx, tg.ID, RDP, "evil1"); err != nil {
+		t.Fatal(err)
+	}
+	if got := get(); str(got.TLSFingerprint) != "evil1" || got.TLSFingerprintPending != nil || str(got.WinRMTLSFingerprintPending) != "evil2" {
+		t.Fatalf("after confirming rdp: %+v", got)
+	}
+	if _, err := r.TrustCertificate(ctx, tg.ID, RDP, "evil1"); !errors.Is(err, ErrNoPendingCertificate) {
+		t.Fatalf("nothing pending: %v", err)
+	}
+	// Seeing the pinned WinRM certificate again drops the stale pending one.
+	probe("evil1", "bb22")
+	if got := get(); got.WinRMTLSFingerprintPending != nil {
+		t.Fatal("a stale pending certificate survived the pinned one coming back")
+	}
+	probe("evil1", "evil3")
+	tg.Address = "10.0.0.11"
+	if err := r.Update(ctx, tg); err != nil {
+		t.Fatal(err)
+	}
+	if got := get(); got.TLSFingerprint != nil || got.WinRMTLSFingerprintPending != nil {
+		t.Fatalf("an address change keeps certificates: %+v", got)
+	}
+}

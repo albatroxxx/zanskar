@@ -78,11 +78,18 @@ func (s *Syncer) SyncGroup(ctx context.Context, g *Group) (Summary, error) {
 		return sum, err
 	}
 
-	previous := map[string]*Instance{}
-	if rows, err := s.Repo.Instances(ctx, g.ID, false); err == nil {
-		for _, in := range rows {
-			previous[in.InstanceID] = in
-		}
+	// What was stored last time decides everything below: a pinned host key
+	// is compared, not re-pinned, and a healthy instance that turned
+	// unhealthy has its sessions retired. Without it every instance would
+	// look new, so a failed read ends the poll rather than guessing.
+	rows, err := s.Repo.Instances(ctx, g.ID, false)
+	if err != nil {
+		_ = s.Repo.RecordSync(ctx, g.ID, err)
+		return sum, err
+	}
+	previous := make(map[string]*Instance, len(rows))
+	for _, in := range rows {
+		previous[in.InstanceID] = in
 	}
 
 	timeout := s.ProbeTimeout

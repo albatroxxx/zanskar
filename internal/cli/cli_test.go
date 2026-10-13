@@ -54,6 +54,7 @@ type env struct {
 	nomfa   *http.Cookie
 	nocsrf  string
 	auditDB *audit.Log
+	verify  string // the fake audit verify reply; guarded by mu
 }
 
 // newEnv builds the command line over a router whose API routes are fakes
@@ -131,7 +132,15 @@ func (e *env) fakeAPI(mux *http.ServeMux) {
 	reply("GET /api/v1/admin/system/status", 200, `{"version":"1.2.2","uptime_seconds":273600,"live_sessions":2,"draining":true}`)
 	reply("POST /api/v1/admin/system/restart", 202, `{}`)
 	reply("DELETE /api/v1/admin/system/restart", 200, `{}`)
-	reply("GET /api/v1/audit/verify", 200, `{"intact":false,"checked":12,"broken":{"id":7,"reason":"hash mismatch"}}`)
+	e.verify = `{"intact":false,"checked":12,"broken":{"id":7,"reason":"hash mismatch"}}`
+	mux.Handle("GET /api/v1/audit/verify", admin(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		e.mu.Lock()
+		e.calls = append(e.calls, r.Method+" "+r.URL.Path)
+		body := e.verify
+		e.mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, body)
+	})))
 	reply("GET /api/v1/admin/logs", 200, `{"items":[{"time":"2026-10-05T09:00:00Z","level":"WARN","msg":"slow probe","attrs":{"target":"web-01"}},{"time":"2026-10-05T09:00:01Z","level":"ERROR","msg":"boom"},{"time":"2026-10-05T09:00:02Z","level":"DEBUG","msg":"tick"}]}`)
 	reply("GET /api/v1/admin/tls", 200, `{"mode":"managed","subject":"CN=gw","hosts":["gw.example.test"],"not_after":"2027-01-01T00:00:00Z"}`)
 	reply("GET /api/v1/users", 200, `{"items":[{"id":"u1","username":"alice","display_name":"Alice","roles":["user"],"status":"active"}]}`)
@@ -341,6 +350,30 @@ func TestConfirmationIsSingleUseAndExpires(t *testing.T) {
 	e.unlock()
 	if status, _ := e.run("user signout alice", "alice"); status != "error" {
 		t.Fatalf("an answer after the prompt expired: %s", status)
+	}
+}
+
+// TestAuditVerifyProblems: a log whose chain links but whose anchors or id
+// sequence show deleted events reads as such, not as a chain broken at no
+// event, in audit verify and in the status line; a warning shows beside an
+// intact chain.
+func TestAuditVerifyProblems(t *testing.T) {
+	e := newEnv(t)
+	e.unlock()
+	e.mu.Lock()
+	e.verify = `{"intact":false,"checked":9,"broken":null,"problems":["the log ends at event 9, but anchor 2 covers event 12: the newest events were deleted"],"warnings":[]}`
+	e.mu.Unlock()
+	if status, text := e.run("audit verify", ""); status != "ok" || !strings.Contains(text, "✗ the log ends at event 9") || strings.Contains(text, "Chain broken") {
+		t.Fatalf("audit verify: %s\n%s", status, text)
+	}
+	if status, text := e.run("status", ""); status != "ok" || !strings.Contains(text, "PROBLEMS FOUND: run audit verify") {
+		t.Fatalf("status: %s\n%s", status, text)
+	}
+	e.mu.Lock()
+	e.verify = `{"intact":true,"checked":9,"last_hash":"abcdef0123456789","broken":null,"problems":[],"warnings":["the id sequence is ahead of the newest event (10 vs 9): the newest events may have been deleted, or an insert failed"]}`
+	e.mu.Unlock()
+	if status, text := e.run("audit verify", ""); status != "ok" || !strings.Contains(text, "Chain intact") || !strings.Contains(text, "Warning: the id sequence is ahead") {
+		t.Fatalf("audit verify with a warning: %s\n%s", status, text)
 	}
 }
 

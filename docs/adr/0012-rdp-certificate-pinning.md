@@ -88,3 +88,16 @@ alongside the drive staying unmapped. The data then stops at guacd and the bridg
 second line, which is what "enforced in the Zanskar bridge rather than trusting guacd
 parameters alone" was meant to be. The auditor's read-only shadow of a desktop session goes
 through the same guacd connection, so the guacd-side parameters cover it as well.
+
+## Addendum 2026-10-11: a changed certificate is held, not pinned
+
+Until now a re-probe that saw a different RDP or WinRM certificate replaced the pinned one
+silently, contrary to the decision above. It now works as the decision says. The pinned
+fingerprint stays, the new one is held as `tls_fingerprint_pending` (or
+`winrm_tls_fingerprint_pending`), and the probe is audited as `target.tls.changed` once per new
+certificate. Connections keep checking against the pinned certificate, so they are refused until an
+administrator accepts the pending one with `POST /targets/{id}/certificate/trust`, echoing its
+fingerprint (`target.tls.trust`). Seeing the pinned certificate again drops a stale pending one;
+an address change clears both, as it clears the SSH host key. An RDP connection refused for a
+certificate mismatch is now audited as `target.tls.mismatch`, as WinRM's already was.
+

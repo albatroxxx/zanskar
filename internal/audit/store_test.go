@@ -113,7 +113,7 @@ func TestRecordListVerify(t *testing.T) {
 	}
 
 	// Verify intact.
-	res, err := log.Verify(ctx)
+	res, err := log.Verify(ctx, testKey)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -125,7 +125,7 @@ func TestRecordListVerify(t *testing.T) {
 	if _, err := db.ExecContext(ctx, `UPDATE audit_events SET actor_user_id = 'mallory' WHERE id = 4`); err != nil {
 		t.Fatal(err)
 	}
-	res, err = log.Verify(ctx)
+	res, err = log.Verify(ctx, testKey)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -140,7 +140,7 @@ func TestRecordListVerify(t *testing.T) {
 	if _, err := db.ExecContext(ctx, `DELETE FROM audit_events WHERE id = 2`); err != nil {
 		t.Fatal(err)
 	}
-	res, err = log.Verify(ctx)
+	res, err = log.Verify(ctx, testKey)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -196,7 +196,7 @@ func TestRecordTimestampTruncatedForPortableHash(t *testing.T) {
 	if want != got.Hash {
 		t.Fatalf("hash not stable across microsecond truncation: got %s want %s", got.Hash, want)
 	}
-	res, err := log.Verify(ctx)
+	res, err := log.Verify(ctx, testKey)
 	if err != nil || res.Broken != nil {
 		t.Fatalf("verify after truncation: %+v %v", res, err)
 	}
@@ -204,7 +204,7 @@ func TestRecordTimestampTruncatedForPortableHash(t *testing.T) {
 
 func TestVerifyEmpty(t *testing.T) {
 	log, _ := newTestLog(t)
-	res, err := log.Verify(context.Background())
+	res, err := log.Verify(context.Background(), testKey)
 	if err != nil || res.Broken != nil || res.Checked != 0 || res.LastHash != GenesisHash {
 		t.Fatalf("empty verify: %+v %v", res, err)
 	}
@@ -231,7 +231,7 @@ func TestConcurrentRecordKeepsChainLinear(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	res, err := log.Verify(ctx)
+	res, err := log.Verify(ctx, testKey)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -249,7 +249,7 @@ func TestVerifyBatching(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	res, err := log.Verify(ctx)
+	res, err := log.Verify(ctx, testKey)
 	if err != nil || res.Broken != nil || res.Checked != int64(total) {
 		t.Fatalf("batching verify: %+v %v", res, err)
 	}
@@ -296,7 +296,7 @@ func TestReseal(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if res, err := log.Verify(ctx); err != nil || res.Broken != nil {
+	if res, err := log.Verify(ctx, testKey); err != nil || res.Broken != nil {
 		t.Fatalf("fresh chain must verify: err=%v broken=%+v", err, res.Broken)
 	}
 
@@ -317,7 +317,7 @@ func TestReseal(t *testing.T) {
 		`{"n":99}`, 2); err != nil {
 		t.Fatal(err)
 	}
-	broken, err := log.Verify(ctx)
+	broken, err := log.Verify(ctx, testKey)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -336,7 +336,7 @@ func TestReseal(t *testing.T) {
 	if res.FirstID != 2 || res.LastID != 6 {
 		t.Fatalf("expected rewrite to span ids 2..6, got %d..%d", res.FirstID, res.LastID)
 	}
-	after, err := log.Verify(ctx)
+	after, err := log.Verify(ctx, testKey)
 	if err != nil {
 		t.Fatal(err)
 	}

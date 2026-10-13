@@ -171,7 +171,7 @@ func validateSelector(s Selector) error {
 		return fmt.Errorf("%w: at most 32 selector tags", ErrInvalidInput)
 	}
 	for k, v := range s.Tags {
-		if k == "" || len(k) > 64 || len(v) > 64 {
+		if k == "" || v == "" || len(k) > 64 || len(v) > 64 {
 			return fmt.Errorf("%w: tag keys and values must be 1-64 characters", ErrInvalidInput)
 		}
 	}
@@ -314,7 +314,9 @@ func (s Selector) Matches(t TargetRef) bool {
 		return false
 	}
 	for k, v := range s.Tags {
-		if t.Tags[k] != v {
+		// A missing key is no match, even for a selector stored before
+		// empty values were refused.
+		if got, ok := t.Tags[k]; !ok || got != v {
 			return false
 		}
 	}
@@ -341,16 +343,18 @@ type Decision struct {
 	RequireApproval bool `json:"require_approval"`
 }
 
-// Evaluate picks the first enabled policy among the caller's policies that
-// covers the target, allows the protocol and is inside a time window (or has
-// none). Policies are ordered most-restrictive-first by the caller? No:
-// order is by name, and the first match wins; admins should keep policies
-// non-overlapping. When several match, the one with the shortest idle
-// timeout is chosen so overlap never widens access.
+// Evaluate decides access from the caller's policies: among the enabled ones
+// that cover the target, allow the protocol and are inside a time window (or
+// have none), standing policies decide when any applies, approval-gated ones
+// otherwise. Of those, the one with the shortest idle timeout sets the
+// session's terms, so overlap never widens access; ties go to the policy that
+// comes first in the caller's order (by name).
 func Evaluate(policies []*Policy, t TargetRef, protocol string, now time.Time) Decision {
-	var best *Policy
-	retention := 0
-	sawStanding := false
+	// Standing and approval-gated grants are weighed apart: when a standing
+	// policy admits the session, an approval-gated one must not lend it its
+	// flags, MFA setting or limits (ADR 0018: the standing path wins), so
+	// the gated policies decide only when no standing one applies.
+	var standing, gated grantSet
 	reason := "no policy grants access to this target"
 	for _, p := range policies {
 		if !p.Enabled {
@@ -377,21 +381,17 @@ func Evaluate(policies []*Policy, t TargetRef, protocol string, now time.Time) D
 				continue
 			}
 		}
-		// A qualifying standing policy means no approval is needed; access is the
-		// union, so any standing grant wins over an approval-gated one.
-		if !p.RequireApproval {
-			sawStanding = true
-		}
-		// Retention is an evidence-keeping obligation: the longest among the
-		// policies that grant this access applies, whichever one is picked
-		// for the session limits below.
-		if p.RetentionDays != nil && *p.RetentionDays > retention {
-			retention = *p.RetentionDays
-		}
-		if best == nil || p.IdleTimeoutMinutes < best.IdleTimeoutMinutes {
-			best = p
+		if p.RequireApproval {
+			gated.add(p)
+		} else {
+			standing.add(p)
 		}
 	}
+	set, requireApproval := standing, false
+	if set.best == nil {
+		set, requireApproval = gated, true
+	}
+	best := set.best
 	if best == nil {
 		return Decision{Allowed: false, Reason: reason}
 	}
@@ -402,13 +402,32 @@ func Evaluate(policies []*Policy, t TargetRef, protocol string, now time.Time) D
 		AllowClipboard:    best.AllowClipboard,
 		AllowFileTransfer: best.AllowFileTransfer,
 		RequireMFA:        best.RequireMFA,
-		RequireApproval:   !sawStanding,
+		RequireApproval:   requireApproval,
 	}
 	if best.MaxSessionMinutes != nil {
 		d.MaxSession = time.Duration(*best.MaxSessionMinutes) * time.Minute
 	}
-	d.RetentionDays = retention
+	d.RetentionDays = set.retention
 	return d
+}
+
+// grantSet collects the policies of one kind (standing or approval-gated)
+// that grant a request. The one with the shortest idle timeout sets the
+// session's terms, ties going to the earlier policy in the caller's order;
+// retention is an evidence-keeping obligation, so the longest among them
+// applies whichever policy is picked.
+type grantSet struct {
+	best      *Policy
+	retention int
+}
+
+func (g *grantSet) add(p *Policy) {
+	if p.RetentionDays != nil && *p.RetentionDays > g.retention {
+		g.retention = *p.RetentionDays
+	}
+	if g.best == nil || p.IdleTimeoutMinutes < g.best.IdleTimeoutMinutes {
+		g.best = p
+	}
 }
 
 func (p *Policy) matchesAnyRule(t TargetRef) bool {

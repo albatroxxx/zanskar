@@ -188,7 +188,7 @@ func (h *Handler) callback(w http.ResponseWriter, r *http.Request) {
 		h.fail(w, r, "", id, "domain_not_allowed", fmt.Errorf("email domain not allowed for %q", ident.Email))
 		return
 	}
-	u, linked, err := h.Provisioner.Resolve(r.Context(), op, ident)
+	res, err := h.Provisioner.Resolve(r.Context(), op, ident)
 	if err != nil {
 		code := "provisioning_failed"
 		switch {
@@ -200,8 +200,9 @@ func (h *Handler) callback(w http.ResponseWriter, r *http.Request) {
 		h.fail(w, r, "", id, code, err)
 		return
 	}
-	if linked {
-		h.record(r, idp.LinkEvent(ip, u, op, ident))
+	u := res.User
+	for _, e := range res.Events(ip, op, ident) {
+		h.record(r, e)
 	}
 
 	mfa := "provider"
@@ -228,7 +229,13 @@ func (h *Handler) callback(w http.ResponseWriter, r *http.Request) {
 		h.fail(w, r, u.ID, id, "internal", err)
 		return
 	}
-	_ = h.Provisioner.Users.RecordLoginSuccess(r.Context(), u.ID)
+	// Only a sign-in that completes clears the account's failure count, which
+	// wrong passwords and wrong authenticator codes share (M7). One that still
+	// owes the code must not hand out a fresh set of guesses at it; the code
+	// step clears the count when it succeeds.
+	if verified {
+		_ = h.Provisioner.Users.RecordLoginSuccess(r.Context(), u.ID)
+	}
 	h.Sessions.SetCookie(w, token)
 	h.record(r, audit.Actor{UserID: u.ID, IP: ip}.Event("user.login", "user", u.ID, audit.Success,
 		map[string]string{"idp": id, "mfa": mfa, "session_id": sess.ID, "stage": map[bool]string{true: "complete", false: "password"}[verified]}))

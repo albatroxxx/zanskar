@@ -405,3 +405,64 @@ func TestCopyBesideCleansUp(t *testing.T) {
 		t.Fatalf("a failed copy left files behind: %v", entries)
 	}
 }
+
+// TestRestoreGivesFilesToTheirOwner: restore runs from a root shell (the
+// documented procedure) while the service runs as its own user, so what it
+// writes must belong to whoever owned what it replaces: the database file,
+// else its directory, and the recordings directory, else its parent.
+func TestRestoreGivesFilesToTheirOwner(t *testing.T) {
+	src := newCLIGateway(t, true)
+	if err := os.MkdirAll(filepath.Join(src.recDir, "2026"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(src.recDir, "2026", "r1.cast"), []byte("cast"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	archive := filepath.Join(t.TempDir(), "b.tar.gz")
+	if _, _, err := output(t, func() error { return runBackup([]string{"-out", archive}) }); err != nil {
+		t.Fatal(err)
+	}
+
+	type call struct {
+		path     string
+		uid, gid int
+	}
+	var calls []call
+	saved, savedEUID := chown, euid
+	t.Cleanup(func() { chown, euid = saved, savedEUID })
+	chown = func(path string, uid, gid int) error {
+		calls = append(calls, call{path, uid, gid})
+		return nil
+	}
+	uid, gid := os.Getuid(), os.Getgid()
+
+	// Not root: nothing to change, and nothing is attempted.
+	euid = func() int { return 1000 }
+	if _, _, err := output(t, func() error { return runRestore([]string{"-in", archive, "-force"}) }); err != nil {
+		t.Fatal(err)
+	}
+	if len(calls) != 0 {
+		t.Fatalf("a non-root restore changed owners: %v", calls)
+	}
+
+	// Root: the database and every restored recording go to their owner.
+	euid = func() int { return 0 }
+	if _, _, err := output(t, func() error { return runRestore([]string{"-in", archive, "-force"}) }); err != nil {
+		t.Fatal(err)
+	}
+	var db, recs int
+	for _, c := range calls {
+		if c.uid != uid || c.gid != gid {
+			t.Errorf("%s given to %d:%d, want the owner %d:%d", c.path, c.uid, c.gid, uid, gid)
+		}
+		switch {
+		case filepath.Dir(c.path) == filepath.Dir(src.dbPath) && strings.HasPrefix(filepath.Base(c.path), ".zanskar-restore-"):
+			db++
+		case strings.HasPrefix(c.path, src.recDir+string(filepath.Separator)):
+			recs++
+		}
+	}
+	if db != 1 || recs < 2 { // the 2026 directory and r1.cast
+		t.Fatalf("chown calls: database %d, recordings %d: %v", db, recs, calls)
+	}
+}

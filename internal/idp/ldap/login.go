@@ -68,14 +68,14 @@ func (l *Login) Login(ctx context.Context, username, password, ip string) (*user
 			}
 			continue
 		}
-		u, linked, err := l.Provisioner.Resolve(ctx, op, *id)
+		res, err := l.Provisioner.Resolve(ctx, op, *id)
 		if err != nil {
 			return nil, err
 		}
-		if linked {
-			l.record(ctx, idp.LinkEvent(ip, u, op, *id))
+		for _, e := range res.Events(ip, op, *id) {
+			l.record(ctx, e)
 		}
-		return u, nil
+		return res.User, nil
 	}
 	if lastErr != nil {
 		return nil, lastErr

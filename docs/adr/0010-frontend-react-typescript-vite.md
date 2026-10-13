@@ -30,7 +30,7 @@ so route gating is a usability feature, not a security control.
 
 The admin route tree is built as a separate chunk and can be served from a separate listener or
 hostname, configured through `ZANSKAR_ADMIN_LISTEN_ADDR`, so that deployments can restrict admin
-access at the network layer.
+access at the network layer. *(Not built: see the amendment below.)*
 
 Terminal sessions use xterm.js over a WebSocket. Desktop sessions use guacamole-common-js over a
 WebSocket that the gateway bridges to guacd.
@@ -46,3 +46,15 @@ The build output is embedded into the Go binary with `embed`. The Content Securi
   route tree keeps the login page small.
 - The UI must never make an authorization decision. Reviewers reject pull requests that hide a
   control without a matching server-side check.
+
+## Amendment, 2026-10-11: no separate admin listener
+
+The separate admin listener was never built. `ZANSKAR_ADMIN_LISTEN_ADDR` was read, validated and
+shown on the console's install-time settings, but no second listener was ever bound, so an
+operator who set it believed the admin console and API were off the main listener when they were
+not. The setting is now refused at start with a message that says so, rather than ignored. The
+admin console and API are served on `ZANSKAR_LISTEN_ADDR` together with everything else; the API
+refuses what a role may not do, whichever listener a request arrives on.
+
+Restricting admin access at the network layer would need either a second listener with every
+route classified as admin or not, or an API split under a path prefix. Neither is planned.

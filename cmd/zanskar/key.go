@@ -256,15 +256,39 @@ func runKeyRotateMaster(args []string) error {
 		return errors.New("refusing to rotate without -yes")
 	}
 
+	// The audit anchor key is derived from the master key; derive both before
+	// anything changes, so a failure here leaves nothing half done.
+	oldAnchorKey, err := audit.AnchorKey(cfg.MasterKey)
+	if err != nil {
+		return err
+	}
+	newAnchorKey, err := audit.AnchorKey(newKey)
+	if err != nil {
+		return err
+	}
+	defer crypto.Zero(newAnchorKey)
+
 	n, err := ring.Rewrap(ctx, newKEK)
 	if err != nil {
 		return fmt.Errorf("%w (nothing was changed)", err)
 	}
-	if _, err := audit.NewLog(db).Record(ctx, audit.Actor{IP: "cli"}.Event("key.rotate_master", "key_versions", "all", audit.Success,
-		map[string]any{"versions_rewrapped": n, "env_file_updated": *envFile != "", "key_file_updated": *keyFile != ""})); err != nil {
+	fmt.Printf("rewrapped %d data-key version(s) under the new master key.\n", n)
+	auditLog := audit.NewLog(db)
+	// Without this every stored anchor would read as forged under the new key.
+	resigned, skipped, err := auditLog.ResignAnchors(ctx, oldAnchorKey, newAnchorKey)
+	switch {
+	case err != nil:
+		fmt.Fprintln(os.Stderr, "warning: the stored audit anchors could not be re-signed under the new key:", err)
+		fmt.Fprintln(os.Stderr, "zanskar audit verify will report each of them as not written by this gateway.")
+	case skipped > 0:
+		fmt.Printf("re-signed %d audit anchor(s); %d did not verify under the old key and were left as they are.\n", resigned, skipped)
+	default:
+		fmt.Printf("re-signed %d audit anchor(s) under the new key.\n", resigned)
+	}
+	if _, err := auditLog.Record(ctx, audit.Actor{IP: "cli"}.Event("key.rotate_master", "key_versions", "all", audit.Success,
+		map[string]any{"versions_rewrapped": n, "anchors_resigned": resigned, "env_file_updated": *envFile != "", "key_file_updated": *keyFile != ""})); err != nil {
 		fmt.Fprintln(os.Stderr, "warning: the rewrap succeeded but the audit event could not be written:", err)
 	}
-	fmt.Printf("rewrapped %d data-key version(s) under the new master key.\n", n)
 
 	switch {
 	case *keyFile != "":
@@ -290,10 +314,13 @@ func runKeyRotateMaster(args []string) error {
 		fmt.Println("put the new key in the service's environment as ZANSKAR_MASTER_KEY.")
 	}
 	fmt.Println()
-	fmt.Println("Next: restart the service (sudo systemctl restart zanskar). The old key now opens nothing")
-	fmt.Println("in this database; escrow the new one where the database backup cannot reach. If the")
-	fmt.Println("database itself may have leaked alongside the old key, the stored secrets were exposed:")
-	fmt.Println("rotate them at their targets; no re-encryption undoes that.")
+	fmt.Println("Next: restart the service now (sudo systemctl restart zanskar); until it restarts it")
+	fmt.Println("still signs audit anchors with the old key, and verify would report those. The old key")
+	fmt.Println("now opens nothing in this database; escrow the new one where the database backup cannot")
+	fmt.Println("reach. Anchor lines kept outside the database from before this rotation were signed with")
+	fmt.Println("the old key and no longer verify; after the restart, run zanskar audit anchor and keep")
+	fmt.Println("the new line. If the database itself may have leaked alongside the old key, the stored")
+	fmt.Println("secrets were exposed: rotate them at their targets; no re-encryption undoes that.")
 	return nil
 }
 

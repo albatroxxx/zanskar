@@ -86,6 +86,30 @@ func (e *env) createUser(t *testing.T, name, pw string, roles ...user.Role) *use
 	return u
 }
 
+// bareUser creates an account with no password. A password costs a full
+// Argon2id hash to set and another to sign in with, which the race
+// detector makes slow; tests not about the password use bareUser and
+// sessionFor instead.
+func (e *env) bareUser(t *testing.T, name string, roles ...user.Role) *user.User {
+	t.Helper()
+	u := &user.User{Username: name, DisplayName: name, Roles: roles}
+	if err := e.users.Create(context.Background(), u); err != nil {
+		t.Fatal(err)
+	}
+	return u
+}
+
+// sessionFor starts a session for u as a sign-in would have, full or still
+// owing a second factor, and returns it the way login does.
+func (e *env) sessionFor(t *testing.T, u *user.User, mfaVerified bool) resp {
+	t.Helper()
+	tok, sess, err := e.sessions.Create(context.Background(), u.ID, "203.0.113.5", "test", mfaVerified)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return resp{code: http.StatusOK, body: map[string]any{"csrf_token": e.sessions.CSRFToken(sess.ID)}, cookie: &http.Cookie{Name: CookieName, Value: tok}}
+}
+
 type resp struct {
 	code   int
 	body   map[string]any
@@ -93,13 +117,18 @@ type resp struct {
 }
 
 func (e *env) do(method, path string, body any, cookie *http.Cookie, headers map[string]string) resp {
+	return e.doFrom("203.0.113.5:4444", method, path, body, cookie, headers)
+}
+
+// doFrom is do from another client address (host:port).
+func (e *env) doFrom(addr, method, path string, body any, cookie *http.Cookie, headers map[string]string) resp {
 	var buf bytes.Buffer
 	if body != nil {
 		_ = json.NewEncoder(&buf).Encode(body)
 	}
 	req := httptest.NewRequest(method, path, &buf)
 	req.Header.Set("Content-Type", "application/json")
-	req.RemoteAddr = "203.0.113.5:4444"
+	req.RemoteAddr = addr
 	if cookie != nil {
 		req.AddCookie(cookie)
 	}
@@ -482,5 +511,45 @@ func TestPasswordChangeAfterSecondFactor(t *testing.T) {
 	}
 	if me := e.do("GET", "/api/v1/auth/me", nil, r.cookie, nil); me.body["pending"] != nil || me.body["user"] == nil {
 		t.Fatalf("full after the change: %v", me.body)
+	}
+}
+
+// TestPasswordChangeEndsOtherSessions: replacing your own password ends every
+// other session of the account, which may be a thief's, and keeps the one
+// that made the change (M9). That includes the change an administrator's
+// reset made due: a second sign-in with the password they handed out must
+// not go on to enrol an authenticator once the owner has replaced it.
+func TestPasswordChangeEndsOtherSessions(t *testing.T) {
+	e := newEnv(t)
+	const old, next = "kira has a long passphrase", "kira chose a new passphrase"
+	kira := e.createUser(t, "kira", old, user.RoleUser)
+	first, second := e.sessionFor(t, kira, true), e.sessionFor(t, kira, true)
+	change := func(r resp, current, next string) resp {
+		return e.do("POST", "/api/v1/auth/password", map[string]string{"current_password": current, "new_password": next}, r.cookie, csrfOf(r))
+	}
+	if x := change(first, old, next); x.code != 200 || x.body["status"] != "ok" {
+		t.Fatalf("change: %d %v", x.code, x.body)
+	}
+	if me := e.do("GET", "/api/v1/auth/me", nil, second.cookie, nil); me.code != 401 {
+		t.Fatalf("the other session after the password change: %d %v, want 401", me.code, me.body)
+	}
+	if me := e.do("GET", "/api/v1/auth/me", nil, first.cookie, nil); me.code != 200 || me.body["user"] == nil {
+		t.Fatalf("the session that changed the password: %d %v, want it kept", me.code, me.body)
+	}
+	if _, d := e.lastEvent(t, "user.password.change"); d["other_sessions_revoked"] != float64(1) {
+		t.Fatalf("audit details %v, want other_sessions_revoked 1", d)
+	}
+
+	const issued, chosen = "lena was handed this one", "lena chose her own phrase"
+	lena := e.createUser(t, "lena", issued, user.RoleUser)
+	if err := e.users.SetPasswordHash(context.Background(), lena.ID, lena.PasswordHash, true); err != nil {
+		t.Fatal(err)
+	}
+	owner, other := e.sessionFor(t, lena, false), e.sessionFor(t, lena, false)
+	if x := change(owner, issued, chosen); x.code != 200 {
+		t.Fatalf("the change a reset made due: %d %v", x.code, x.body)
+	}
+	if x := e.do("POST", "/api/v1/auth/mfa/totp/enroll", nil, other.cookie, csrfOf(other)); x.code != 401 {
+		t.Fatalf("enrolment from the other sign-in with the handed-out password: %d %v, want 401", x.code, x.body)
 	}
 }

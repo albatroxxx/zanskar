@@ -9,9 +9,11 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
+	"github.com/pquerna/otp/totp"
 	"golang.org/x/crypto/argon2"
 
 	"github.com/albatroxxx/zanskar/internal/audit"
@@ -43,13 +45,305 @@ func (d *fakeDirectory) Login(ctx context.Context, username, password, _ string)
 
 func (e *env) lastLogin(t *testing.T) (audit.Event, map[string]any) {
 	t.Helper()
-	evs, _, err := e.audit.List(context.Background(), audit.Filter{Action: "user.login", Limit: 1})
+	return e.lastEvent(t, "user.login")
+}
+
+// lastEvent returns the newest audit event for action and its details.
+func (e *env) lastEvent(t *testing.T, action string) (audit.Event, map[string]any) {
+	t.Helper()
+	evs, _, err := e.audit.List(context.Background(), audit.Filter{Action: action, Limit: 1})
 	if err != nil || len(evs) == 0 {
-		t.Fatalf("no user.login event: %v", err)
+		t.Fatalf("no %s event: %v", action, err)
 	}
 	var d map[string]any
 	_ = json.Unmarshal(evs[0].Details, &d)
 	return evs[0], d
+}
+
+// enrol gives u a confirmed authenticator and pins the clock the TOTP
+// checks read. right returns the code of the next 30-second step (each code
+// works once); wrong returns one that matches no step the current window
+// accepts.
+func enrol(t *testing.T, e *env, u *user.User) (right, wrong func() string) {
+	t.Helper()
+	clock := time.Date(2026, 10, 11, 9, 0, 10, 0, time.UTC)
+	e.totp.now = func() time.Time { return clock }
+	enr, err := e.totp.Enroll(context.Background(), u.ID, u.Username)
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err := totp.GenerateCode(enr.Secret, clock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.totp.Confirm(context.Background(), u.ID, first); err != nil {
+		t.Fatal(err)
+	}
+	right = func() string {
+		clock = clock.Add(30 * time.Second)
+		c, err := totp.GenerateCode(enr.Secret, clock)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return c
+	}
+	wrong = func() string { return wrongCode(t, enr.Secret, clock) }
+	return right, wrong
+}
+
+// wrongCode returns a six-digit code that secret does not produce for the
+// step at, or either step beside it.
+func wrongCode(t *testing.T, secret string, at time.Time) string {
+	t.Helper()
+	near := map[string]bool{}
+	for _, d := range []time.Duration{-30 * time.Second, 0, 30 * time.Second} {
+		c, err := totp.GenerateCode(secret, at.Add(d))
+		if err != nil {
+			t.Fatal(err)
+		}
+		near[c] = true
+	}
+	for _, c := range []string{"000000", "111111", "222222", "333333"} {
+		if !near[c] {
+			return c
+		}
+	}
+	t.Fatal("no wrong code found")
+	return ""
+}
+
+func csrfOf(r resp) map[string]string {
+	return map[string]string{"X-CSRF-Token": r.body["csrf_token"].(string)}
+}
+
+func (e *env) verifyCode(r resp, code string) resp {
+	return e.do("POST", "/api/v1/auth/mfa/totp/verify", map[string]string{"code": code}, r.cookie, csrfOf(r))
+}
+
+// TestWrongCodesShareTheAccountBudget: wrong second-factor codes count
+// against the account with wrong passwords, across sign-ins: five lock it.
+// The code that locks it ends its sign-in; a half-finished sign-in of a
+// locked account is refused without comparing its code, the right one
+// included, as a locked account's password is; and the next sign-in is
+// refused as locked (M7).
+func TestWrongCodesShareTheAccountBudget(t *testing.T) {
+	e := newEnv(t)
+	unlimited(e)
+	const pw = "tess has a long passphrase"
+	u := e.createUser(t, "tess", pw, user.RoleUser)
+	right, wrong := enrol(t, e, u)
+
+	a := login(e, "tess", pw)
+	if a.body["status"] != "mfa_required" {
+		t.Fatalf("sign-in: %d %v", a.code, a.body)
+	}
+	for i := 1; i <= 2; i++ {
+		if v := e.verifyCode(a, wrong()); v.code != 401 || v.body["code"] != "invalid_code" {
+			t.Fatalf("wrong code %d of the first sign-in: %d %v", i, v.code, v.body)
+		}
+	}
+	b := login(e, "tess", pw)
+	for i := 1; i <= 2; i++ {
+		if v := e.verifyCode(b, wrong()); v.code != 401 || v.body["code"] != "invalid_code" {
+			t.Fatalf("wrong code %d of the second sign-in: %d %v", i, v.code, v.body)
+		}
+	}
+	if v := e.verifyCode(b, wrong()); v.code != 401 || v.body["code"] != "sign_in_ended" {
+		t.Fatalf("the account's fifth wrong code, the third of its sign-in: %d %v; want 401 sign_in_ended", v.code, v.body)
+	}
+	if ev, d := e.lastEvent(t, "user.mfa.verify"); ev.Outcome != audit.Failure || d["locked_for"] == nil || d["session_ended"] != true {
+		t.Fatalf("the locking code's audit: %v", d)
+	}
+	if got, err := e.users.GetByID(context.Background(), u.ID); err != nil || !got.IsLocked(time.Now()) {
+		t.Fatalf("five wrong codes across two sign-ins must lock the account: %v", err)
+	}
+	if v := e.verifyCode(a, right()); v.code != 401 || v.body["code"] != "sign_in_ended" {
+		t.Fatalf("the right code in a half-finished sign-in of the locked account: %d %v; want 401 sign_in_ended", v.code, v.body)
+	}
+	if _, d := e.lastEvent(t, "user.mfa.verify"); d["reason"] != "locked" {
+		t.Fatalf("refused on a locked account, audit reason %v", d["reason"])
+	}
+	if r := login(e, "tess", pw); r.code != 401 {
+		t.Fatalf("a password sign-in after five wrong codes: %d %v, want 401", r.code, r.body)
+	}
+	if _, d := e.lastLogin(t); d["reason"] != "locked" {
+		t.Fatalf("refused sign-in audit reason %v, want locked", d["reason"])
+	}
+}
+
+// TestOnlyACompleteSignInClearsTheCount: the right password with a second
+// factor still owed leaves the account's failure count as it is; the right
+// code completes the sign-in and clears it. With no second factor owed the
+// password completes the sign-in and clears it at once (M7).
+func TestOnlyACompleteSignInClearsTheCount(t *testing.T) {
+	e := newEnv(t)
+	unlimited(e)
+	ctx := context.Background()
+	failed := func(id string) int {
+		t.Helper()
+		got, err := e.users.GetByID(ctx, id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return got.FailedLogins
+	}
+	const pw = "una has a long passphrase"
+	u := e.createUser(t, "una", pw, user.RoleUser)
+	right, wrong := enrol(t, e, u)
+	login(e, "una", "not the password of una")
+	r := login(e, "una", pw)
+	if r.body["status"] != "mfa_required" {
+		t.Fatalf("sign-in: %d %v", r.code, r.body)
+	}
+	if n := failed(u.ID); n != 1 {
+		t.Fatalf("a wrong password, then the right one with the code still owed: %d failures on the account, want 1", n)
+	}
+	if v := e.verifyCode(r, wrong()); v.code != 401 {
+		t.Fatalf("wrong code: %d %v", v.code, v.body)
+	}
+	if n := failed(u.ID); n != 2 {
+		t.Fatalf("after a wrong code: %d failures, want 2", n)
+	}
+	if v := e.verifyCode(r, right()); v.code != 200 || v.body["status"] != "ok" {
+		t.Fatalf("right code: %d %v", v.code, v.body)
+	}
+	if n := failed(u.ID); n != 0 {
+		t.Fatalf("after the right code completed the sign-in: %d failures, want 0", n)
+	}
+
+	v := e.createUser(t, "vera", "vera has a long passphrase", user.RoleUser)
+	if _, err := e.users.RecordLoginFailure(ctx, v.ID, e.handler.MaxFailures, e.handler.LockFor); err != nil {
+		t.Fatal(err)
+	}
+	if r := login(e, "vera", "vera has a long passphrase"); r.body["status"] != "ok" {
+		t.Fatalf("password-only sign-in: %d %v", r.code, r.body)
+	}
+	if n := failed(v.ID); n != 0 {
+		t.Fatalf("after a complete password-only sign-in: %d failures, want 0", n)
+	}
+}
+
+// TestWrongEnrolmentCodesCount: the code that confirms a new authenticator
+// counts like any other. During a sign-in that owes enrolment, wrong ones
+// count against the account, the one that locks it ends the sign-in, and a
+// right one completes the sign-in and clears the count. A full session that
+// enrols is not a sign-in: its wrong codes count, but it carries on (M6).
+//
+// The sessions are made directly, as a sign-in owing enrolment (or a full
+// one) would leave them, to spare a password hash per sign-in.
+func TestWrongEnrolmentCodesCount(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	account := func(id string) *user.User {
+		t.Helper()
+		got, err := e.users.GetByID(ctx, id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return got
+	}
+	confirm := func(r resp, code string) resp {
+		return e.do("POST", "/api/v1/auth/mfa/totp/confirm", map[string]string{"code": code}, r.cookie, csrfOf(r))
+	}
+	enrolFrom := func(r resp) string {
+		t.Helper()
+		enr := e.do("POST", "/api/v1/auth/mfa/totp/enroll", nil, r.cookie, csrfOf(r))
+		if enr.code != 200 {
+			t.Fatalf("enroll: %d %v", enr.code, enr.body)
+		}
+		return enr.body["secret"].(string)
+	}
+
+	wade := e.bareUser(t, "wade", user.RoleUser)
+	r := e.sessionFor(t, wade, false)
+	bad := wrongCode(t, enrolFrom(r), time.Now())
+	for i := 1; i < e.handler.MaxFailures; i++ {
+		if c := confirm(r, bad); c.code != 401 || c.body["code"] != "invalid_code" {
+			t.Fatalf("wrong enrolment code %d: %d %v", i, c.code, c.body)
+		}
+	}
+	if n := account(wade.ID).FailedLogins; n != e.handler.MaxFailures-1 {
+		t.Fatalf("after %d wrong enrolment codes: %d failures on the account", e.handler.MaxFailures-1, n)
+	}
+	if c := confirm(r, bad); c.code != 401 || c.body["code"] != "sign_in_ended" {
+		t.Fatalf("the wrong enrolment code that locks the account: %d %v; want 401 sign_in_ended", c.code, c.body)
+	}
+	if !account(wade.ID).IsLocked(time.Now()) {
+		t.Fatal("five wrong enrolment codes must lock the account")
+	}
+
+	xena := e.bareUser(t, "xena", user.RoleUser)
+	r = e.sessionFor(t, xena, false)
+	secret := enrolFrom(r)
+	for i := 0; i < 2; i++ {
+		confirm(r, wrongCode(t, secret, time.Now()))
+	}
+	if n := account(xena.ID).FailedLogins; n != 2 {
+		t.Fatalf("after two wrong enrolment codes: %d failures, want 2", n)
+	}
+	code, _ := totp.GenerateCode(secret, time.Now())
+	if c := confirm(r, code); c.code != 200 {
+		t.Fatalf("right enrolment code: %d %v", c.code, c.body)
+	}
+	if n := account(xena.ID).FailedLogins; n != 0 {
+		t.Fatalf("after enrolment completed the sign-in: %d failures, want 0", n)
+	}
+
+	yann := e.bareUser(t, "yann", user.RoleUser)
+	r = e.sessionFor(t, yann, true)
+	secret = enrolFrom(r)
+	for i := 1; i <= e.handler.MaxFailures; i++ {
+		if c := confirm(r, wrongCode(t, secret, time.Now())); c.code != 401 || c.body["code"] != "invalid_code" {
+			t.Fatalf("wrong enrolment code %d from a full session: %d %v; want invalid_code, the session carries on", i, c.code, c.body)
+		}
+	}
+	if me := e.do("GET", "/api/v1/auth/me", nil, r.cookie, nil); me.code != 200 || me.body["user"] == nil {
+		t.Fatalf("the full session after five wrong enrolment codes: %d %v", me.code, me.body)
+	}
+	if !account(yann.ID).IsLocked(time.Now()) {
+		t.Fatal("five wrong enrolment codes from a full session still lock the account against new sign-ins")
+	}
+}
+
+// TestCodesSentAtOnceShareTheBudget: codes sent all at once, from several
+// half-finished sign-ins, are compared one at a time for the account, each
+// after the failures before it are counted, so no more of them are compared
+// than the account's budget allows (M7).
+func TestCodesSentAtOnceShareTheBudget(t *testing.T) {
+	e := newEnv(t)
+	zora := e.bareUser(t, "zora", user.RoleUser)
+	_, wrong := enrol(t, e, zora)
+	code := wrong()
+	var signIns []resp
+	for i := 0; i < 4; i++ {
+		signIns = append(signIns, e.sessionFor(t, zora, false))
+	}
+	var wg sync.WaitGroup
+	for _, r := range signIns {
+		for j := 0; j < e.handler.MFAAttempts; j++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				e.verifyCode(r, code)
+			}()
+		}
+	}
+	wg.Wait()
+	evs, _, err := e.audit.List(context.Background(), audit.Filter{Action: "user.mfa.verify", Limit: 100})
+	if err != nil {
+		t.Fatal(err)
+	}
+	compared := 0
+	for _, ev := range evs {
+		var d map[string]any
+		_ = json.Unmarshal(ev.Details, &d)
+		if d["reason"] == "bad_code" {
+			compared++
+		}
+	}
+	if sent := len(signIns) * e.handler.MFAAttempts; compared != e.handler.MaxFailures {
+		t.Fatalf("%d of %d codes sent at once were compared; want %d, the account's budget", compared, sent, e.handler.MaxFailures)
+	}
 }
 
 // unlimited lifts the per-address sign-in limit for tests about something
@@ -114,6 +408,87 @@ func TestLoginRateLimit(t *testing.T) {
 	}
 	if _, d := e.lastLogin(t); d["reason"] != "rate_limited" {
 		t.Fatalf("rate limit audit reason %v", d["reason"])
+	}
+}
+
+// TestLoginLimiterKeysIPv6By64: an IPv6 client usually holds a whole /64 and
+// can sign in from any address in it, so the sign-in limit counts the /64,
+// not each address. IPv4 stays per address (M10). The attempts have no
+// username: the limiter spends its token before the body is read, so an
+// admitted attempt is a 400 and no password hash is spent on the test.
+func TestLoginLimiterKeysIPv6By64(t *testing.T) {
+	e := newEnv(t)
+	e.handler.loginLimiter = newIPLimiter(20, 1)
+	try := func(addr string) resp {
+		return e.doFrom(addr, "POST", "/api/v1/auth/login", map[string]string{"username": "", "password": "a guess at it"}, nil, nil)
+	}
+	for _, c := range []struct {
+		addr string
+		want int
+		why  string
+	}{
+		{"[2001:db8:1:2::1]:4444", 400, "the first address of a /64"},
+		{"[2001:db8:1:2:ffff:ffff:ffff:fffe]:4444", 429, "another address in the same /64"},
+		{"[2001:db8:1:3::1]:4444", 400, "an address in the next /64"},
+		{"203.0.113.7:4444", 400, "an IPv4 address"},
+		{"203.0.113.8:4444", 400, "the IPv4 address next to it"},
+	} {
+		if r := try(c.addr); r.code != c.want {
+			t.Fatalf("%s (%s): %d %v, want %d", c.why, c.addr, r.code, r.body, c.want)
+		}
+	}
+}
+
+// TestPasswordHashingIsBounded: each password check takes 64 MiB and a core
+// for about 100 ms, so the sign-in paths run only so many at once. A check
+// that gets no slot within the wait is answered 503 busy, counts nothing and
+// writes no audit row; once a slot is free, sign-in works again (M10).
+func TestPasswordHashingIsBounded(t *testing.T) {
+	e := newEnv(t)
+	unlimited(e)
+	saved := passwordHashing
+	passwordHashing = newHashGate(1, 20*time.Millisecond)
+	t.Cleanup(func() { passwordHashing = saved })
+	const pw = "omar has a long passphrase"
+	omar := e.createUser(t, "omar", pw, user.RoleUser)
+	session := e.sessionFor(t, omar, true)
+	events := func() int {
+		t.Helper()
+		evs, _, err := e.audit.List(context.Background(), audit.Filter{Limit: 500})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return len(evs)
+	}
+
+	leave, ok := passwordHashing.enter(context.Background())
+	if !ok {
+		t.Fatal("the only slot should be free")
+	}
+	before := events()
+	for _, c := range []struct {
+		what string
+		do   func() resp
+	}{
+		{"a sign-in", func() resp { return login(e, "omar", pw) }},
+		{"a sign-in as an unknown user", func() resp { return login(e, "nobody", pw) }},
+		{"a password change", func() resp {
+			return e.do("POST", "/api/v1/auth/password", map[string]string{"current_password": pw, "new_password": "omar picks another phrase"}, session.cookie, csrfOf(session))
+		}},
+	} {
+		if r := c.do(); r.code != 503 || r.body["code"] != "busy" {
+			t.Fatalf("%s with every hashing slot taken: %d %v, want 503 busy", c.what, r.code, r.body)
+		}
+	}
+	if after := events(); after != before {
+		t.Fatalf("%d audit rows for attempts refused as busy, want none", after-before)
+	}
+	if got, err := e.users.GetByID(context.Background(), omar.ID); err != nil || got.FailedLogins != 0 {
+		t.Fatalf("a busy refusal must count nothing against the account: %v", err)
+	}
+	leave()
+	if r := login(e, "omar", pw); r.code != 200 {
+		t.Fatalf("a sign-in once a slot is free: %d %v", r.code, r.body)
 	}
 }
 

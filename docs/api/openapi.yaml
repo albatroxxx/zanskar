@@ -19,6 +19,11 @@ info:
     with `mfa_verified=false`. Such a session may only call the `/auth/mfa/*` endpoints until
     `POST /auth/mfa/totp/verify` succeeds.
 
+    The temporary lock that wrong passwords set (see `POST /auth/login`) stops new sign-ins
+    only; sessions already signed in carry on. When the gateway cannot check a session cookie
+    because its database does not answer, API calls and WebSocket upgrades get `503` with code
+    `unavailable` and the cookie is kept: try again in a moment.
+
     ## CSRF
 
     Every mutating request (`POST`, `PUT`, `PATCH`, `DELETE`) must send the `X-CSRF-Token` header.
@@ -146,9 +151,16 @@ paths:
       tags: [auth]
       summary: Log in with username and password
       description: |
-        Rate limited per source IP and per username. After repeated failures the account is set to
-        `locked` until `locked_until`. The response body does not reveal whether the username
-        exists. On success the `zanskar_session` cookie is set.
+        Rate limited per source address, an IPv6 client by its /64; while the limiter is full of
+        other addresses, a new one gets the same `429`. Each attempt checks a password, and only so
+        many checks run at once: one that waits too long for its turn gets `503` with code `busy`.
+
+        Wrong passwords and wrong second-factor codes count against the account together: five in
+        a row, from whichever clients, lock it against new sign-ins for 15 minutes
+        (`locked_until`), and a locked account gets the same `401` as a wrong password. Sessions
+        already signed in carry on. The count is cleared when a sign-in completes, not by the
+        right password while a second factor is still owed. The response body does not reveal
+        whether the username exists. On success the `zanskar_session` cookie is set.
       security: []
       requestBody:
         required: true
@@ -170,14 +182,16 @@ paths:
                 $ref: "#/components/schemas/LoginResponse"
         "401":
           $ref: "#/components/responses/Unauthorized"
-        "423":
-          description: Account is locked.
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "503":
+          description: >
+            `busy`: too many password checks are running at once; try again in a moment. The
+            attempt was not checked, so it is neither counted against the account nor audited.
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
-        "429":
-          $ref: "#/components/responses/RateLimited"
   /auth/mfa/totp/verify:
     post:
       tags: [auth]
@@ -198,8 +212,10 @@ paths:
                 $ref: "#/components/schemas/Me"
         "401":
           description: |
-            `invalid_code`: the code is wrong; try again. After five wrong codes the half-finished
-            sign-in ends and the reply's `code` is `sign_in_ended`: start again from the password.
+            `invalid_code`: the code is wrong; try again. Wrong codes count against the account
+            together with wrong passwords (see `POST /auth/login`). After five wrong codes the
+            half-finished sign-in ends and the reply's `code` is `sign_in_ended`: start again from
+            the password. A sign-in whose account is locked ends the same way, whatever the code.
             `unauthenticated`: there is no sign-in in progress.
           content:
             application/json:
@@ -214,9 +230,11 @@ paths:
       description: |
         The step owed when an administrator set the password (`password_change_required` at
         sign-in, `pending: password` on `/auth/me`), or a change of the caller's own from a
-        full session. The current password is required either way. Afterwards the sign-in
+        full session. The current password is required either way. Every other session of the
+        account ends; the one that made the change carries on. Afterwards the sign-in
         continues where it would have: the response is a LoginResponse whose status is
-        `mfa_required`, `mfa_enrollment_required` or `ok`. Audited as `user.password.change`.
+        `mfa_required`, `mfa_enrollment_required` or `ok`. Audited as `user.password.change`,
+        with the number of other sessions ended in `other_sessions_revoked`.
       requestBody:
         required: true
         content:
@@ -247,6 +265,14 @@ paths:
                 $ref: "#/components/schemas/Error"
         "401":
           description: The current password is wrong.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "503":
+          description: >
+            `busy`: too many password checks are running at once; try again in a moment. Nothing
+            was changed.
           content:
             application/json:
               schema:
@@ -305,7 +331,12 @@ paths:
         "400":
           $ref: "#/components/responses/BadRequest"
         "401":
-          description: The code is wrong; `code` is `invalid_code`. Audited as a failed `user.mfa.confirm`.
+          description: >
+            The code is wrong; `code` is `invalid_code`. Audited as a failed `user.mfa.confirm`.
+            Wrong codes count against the account together with wrong passwords (see
+            `POST /auth/login`). When enrolment is the step a sign-in still owes and the account is
+            locked, by this code or before it, the sign-in ends instead and `code` is
+            `sign_in_ended`: start again from the password.
           content:
             application/json:
               schema:
@@ -339,6 +370,8 @@ paths:
                 $ref: "#/components/schemas/Me"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "503":
+          $ref: "#/components/responses/Unavailable"
   /auth/providers:
     get:
       tags: [auth]
@@ -2094,6 +2127,50 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
 
+  /targets/{id}/certificate/trust:
+    post:
+      tags: [admin]
+      summary: Accept the RDP or WinRM certificate awaiting confirmation
+      description: |
+        Pins the certificate a probe held as pending (`tls_fingerprint_pending` or
+        `winrm_tls_fingerprint_pending`) for that protocol and clears the pending one. The
+        request must echo the fingerprint it is accepting, so a probe racing this call cannot
+        get a different certificate pinned. Audited as `target.tls.trust`, refusals included.
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [protocol, fingerprint]
+              properties:
+                protocol:
+                  type: string
+                  enum: [rdp, winrm]
+                fingerprint:
+                  type: string
+      responses:
+        "200":
+          description: Accepted; the target as stored now.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Target"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: >
+            `fingerprint_mismatch`: the fingerprint is not the one awaiting confirmation;
+            `no_pending_certificate`: nothing awaits confirmation for that protocol.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
   # ------------------------------------------------------------------ admin: access policies
   /access-policies:
     get:
@@ -2819,14 +2896,19 @@ paths:
   /audit/verify:
     get:
       tags: [auditor]
-      summary: Verify the audit hash chain
+      summary: Verify the audit hash chain, its anchors and the id sequence
       description: >
         Walks the whole log from the first event in id order, checking each event's link to the
-        one before and recomputing its hash. Stops at the first break. Expect this to take
-        seconds on large tables.
+        one before and recomputing its hash; the walk stops at the first break. Then checks every
+        stored anchor (ADR 0008): its signature, made with a key derived from the master key, and
+        that the event it names is still in the log with the hash it signed. Last it compares the
+        id sequence with the newest event, which notices the newest events being deleted before
+        an anchor covers them. Expect this to take seconds on large tables.
       responses:
         "200":
-          description: Verification result. A broken chain is still 200, with `intact=false` and the break in `broken`.
+          description: >
+            Verification result. A broken chain or a problem is still 200, with `intact=false`, the
+            break in `broken` and the findings in `problems`.
           content:
             application/json:
               schema:
@@ -3706,6 +3788,15 @@ components:
         application/json:
           schema:
             $ref: "#/components/schemas/Error"
+    Unavailable:
+      description: >
+        `unavailable`: the gateway cannot check the session cookie right now because its database
+        does not answer. Any API call or WebSocket upgrade that carries a cookie can get this. The
+        cookie is kept; try again in a moment.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
 
   schemas:
     # ---------------------------------------------------------------- common
@@ -4298,6 +4389,19 @@ components:
           $ref: "#/components/schemas/HostKeyStatus"
         tls_fingerprint:
           type: [string, "null"]
+          description: SHA-256 of the RDP listener certificate pinned by the first probe (ADR 0012).
+        winrm_tls_fingerprint:
+          type: [string, "null"]
+          description: SHA-256 of the WinRM HTTPS listener certificate pinned by the first probe.
+        tls_fingerprint_pending:
+          type: [string, "null"]
+          description: >
+            A different RDP certificate a later probe saw. The pinned one stays and RDP
+            connections are refused until an administrator accepts this one with
+            `POST /targets/{id}/certificate/trust`. A probe never replaces a pin.
+        winrm_tls_fingerprint_pending:
+          type: [string, "null"]
+          description: The WinRM counterpart of `tls_fingerprint_pending`.
         tags:
           $ref: "#/components/schemas/Tags"
         status:
@@ -5314,6 +5418,13 @@ components:
           type: boolean
         cert_pem:
           type: string
+        problem:
+          type: string
+          description: >
+            Why a stored certificate cannot serve now (it expired, is not valid yet, or does
+            not allow server authentication). An uploaded certificate with a problem is kept,
+            not deleted; the gateway serves the next certificate in line until it is replaced
+            or removed.
     TLSStatus:
       type: object
       required: [mode]
@@ -5490,11 +5601,13 @@ components:
           type: string
     AuditVerifyResult:
       type: object
-      required: [intact, checked, last_id, last_hash, broken]
+      required: [intact, checked, last_id, last_hash, broken, anchors_checked, last_anchor, problems, warnings]
       properties:
         intact:
           type: boolean
-          description: True when every event checked out.
+          description: >
+            True when every event checked out and `problems` is empty. A log whose newest events
+            were deleted still links, so `broken` can be null while `intact` is false.
         checked:
           type: integer
           format: int64
@@ -5523,3 +5636,56 @@ components:
                 Reason:
                   type: string
                   description: Why it failed, for example `prev_hash does not match previous event` or `hash does not match content`.
+        anchors_checked:
+          type: integer
+          description: How many stored anchors were checked. The gateway writes one at start and every hour.
+        last_anchor:
+          description: >
+            The matching anchor that names the newest event: its signature verifies and its event
+            is still in the log with the hash it signed. Null when no anchor matches.
+          oneOf:
+            - type: "null"
+            - $ref: "#/components/schemas/AuditAnchor"
+        problems:
+          type: array
+          description: >
+            What the anchor and id-sequence checks found, as sentences. Each is evidence that the
+            log was truncated or edited (an anchored event missing or changed, the log ending
+            before an anchored event, on SQLite an id sequence ahead of the newest event) or that
+            an anchor was not written by this gateway. Anchors past the first 20 with a finding of
+            their own are counted in one closing entry.
+          items:
+            type: string
+        warnings:
+          type: array
+          description: >
+            Findings that may be innocent and do not make `intact` false. On PostgreSQL an id
+            sequence ahead of the newest event is a warning, since a failed insert also uses up an id.
+          items:
+            type: string
+    AuditAnchor:
+      type: object
+      description: >
+        The head of the audit chain at one moment, signed with HMAC-SHA256 under a key derived from
+        the master key (ADR 0008). `zanskar audit anchor` prints one as
+        `anchor <event_id> <hash> <created_at> <mac>`.
+      required: [id, event_id, hash, created_at, mac]
+      properties:
+        id:
+          type: integer
+          format: int64
+          description: The stored anchor's id.
+        event_id:
+          type: integer
+          format: int64
+          description: The id of the event the anchor names.
+        hash:
+          type: string
+          description: That event's hash when the anchor was written.
+        created_at:
+          type: string
+          format: date-time
+          description: When the anchor was written.
+        mac:
+          type: string
+          description: The signature, 64 hexadecimal characters.

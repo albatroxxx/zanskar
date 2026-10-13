@@ -25,11 +25,10 @@ const (
 
 // Config is the fully validated runtime configuration.
 type Config struct {
-	ListenAddr      string
-	AdminListenAddr string // optional; empty means admin routes share ListenAddr
-	DBDriver        string
-	DBDSN           string
-	MasterKey       []byte // 32 bytes; nil only when explicitly allowed (e.g. `migrate`)
+	ListenAddr string
+	DBDriver   string
+	DBDSN      string
+	MasterKey  []byte // 32 bytes; nil only when explicitly allowed (e.g. `migrate`)
 	// MasterKeyFile is the file the key was read from when it came from
 	// ZANSKAR_MASTER_KEY_FILE rather than the environment itself.
 	MasterKeyFile string
@@ -143,7 +142,6 @@ type Options struct {
 func Load(opts Options) (*Config, error) {
 	c := &Config{
 		ListenAddr:           envOr("ZANSKAR_LISTEN_ADDR", "127.0.0.1:8443"),
-		AdminListenAddr:      os.Getenv("ZANSKAR_ADMIN_LISTEN_ADDR"),
 		DBDriver:             envOr("ZANSKAR_DB_DRIVER", DriverSQLite),
 		DBDSN:                envOr("ZANSKAR_DB_DSN", "file:zanskar.db?_pragma=journal_mode(WAL)&_pragma=foreign_keys(1)&_pragma=busy_timeout(5000)"),
 		TLSCert:              os.Getenv("ZANSKAR_TLS_CERT"),
@@ -221,10 +219,11 @@ func Load(opts Options) (*Config, error) {
 	if _, _, err := net.SplitHostPort(c.ListenAddr); err != nil {
 		errs = append(errs, fmt.Errorf("ZANSKAR_LISTEN_ADDR: %w", err))
 	}
-	if c.AdminListenAddr != "" {
-		if _, _, err := net.SplitHostPort(c.AdminListenAddr); err != nil {
-			errs = append(errs, fmt.Errorf("ZANSKAR_ADMIN_LISTEN_ADDR: %w", err))
-		}
+	// A separate admin listener was planned (ADR 0010) but never built. The
+	// setting is refused rather than ignored: whoever set it believes the
+	// admin console and API are off the main listener, and they are not.
+	if os.Getenv("ZANSKAR_ADMIN_LISTEN_ADDR") != "" {
+		errs = append(errs, errors.New("ZANSKAR_ADMIN_LISTEN_ADDR is not supported: the admin console and API are served on ZANSKAR_LISTEN_ADDR; remove the setting"))
 	}
 	if c.DBDriver != DriverSQLite && c.DBDriver != DriverPostgres {
 		errs = append(errs, fmt.Errorf("ZANSKAR_DB_DRIVER must be %q or %q", DriverSQLite, DriverPostgres))

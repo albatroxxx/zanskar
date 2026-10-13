@@ -33,6 +33,9 @@ type env struct {
 	ids     map[string]string // username -> user id
 }
 
+// testAnchorKey signs and checks the audit anchors in these tests.
+var testAnchorKey = bytes.Repeat([]byte{5}, 32)
+
 // newEnv wires the session handler behind the real auth middleware with an
 // admin, an auditor and a plain user, local recording storage in a temp
 // directory, and one target with a session.
@@ -51,7 +54,7 @@ func newEnv(t *testing.T) *env {
 	users := user.NewRepo(db)
 	sessions := auth.NewSessions(db, bytes.Repeat([]byte{6}, 32), false)
 	e := &env{db: db, repo: NewRepo(db), audit: audit.NewLog(db), storage: &recording.LocalStorage{Dir: t.TempDir()}, cookies: map[string]*http.Cookie{}, csrf: map[string]string{}, ids: map[string]string{}}
-	h := &Handler{Repo: e.repo, Audit: e.audit, Storage: e.storage, Log: log}
+	h := &Handler{Repo: e.repo, Audit: e.audit, AnchorKey: testAnchorKey, Storage: e.storage, Log: log}
 	mux := http.NewServeMux()
 	h.Register(mux)
 	mw := &auth.Middleware{Sessions: sessions, Users: users, Log: log}

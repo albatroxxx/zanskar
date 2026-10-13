@@ -62,7 +62,8 @@ behind the `webui` build tag.
   same migrations.
 - **Secrets**: every stored credential is sealed with a per-record data key, wrapped by a key ring
   under the master key. The master key is never stored in the database or in backups.
-- **Audit**: insert-only, each event hashed onto the previous one; `zanskar audit verify` checks it.
+- **Audit**: insert-only, each event hashed onto the previous one, and the head signed at start
+  and hourly as an anchor that is also logged (ADR 0008); `zanskar audit verify` checks both.
 - **Recordings**: asciicast for terminals, Guacamole format for desktops, on local disk or in an
   S3-compatible bucket, with retention per policy (ADR 0015).
 

@@ -228,48 +228,65 @@ func (r *Repo) Delete(ctx context.Context, id string) error {
 	return affected(res)
 }
 
-// RecordLoginFailure increments the failure counter and locks the account
-// for lockFor once maxFailures is reached. It returns true when the account
-// is now locked.
+// RecordLoginFailure counts a wrong password or a wrong second-factor code
+// against the account (they share one count) and locks the account for
+// lockFor once maxFailures is reached. It returns true when this failure
+// locked the account.
 func (r *Repo) RecordLoginFailure(ctx context.Context, id string, maxFailures int, lockFor time.Duration) (bool, error) {
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
 		return false, err
 	}
 	defer tx.Rollback() //nolint:errcheck
+	// Increment in place, then read: the update holds the row until commit,
+	// so failures recorded at the same moment each count. Reading first and
+	// writing the sum back let two of them write the same number.
+	res, err := tx.ExecContext(ctx, r.db.Rebind(`UPDATE users SET failed_logins = failed_logins + 1 WHERE id = ?`), id)
+	if err != nil {
+		return false, err
+	}
+	if err := affected(res); err != nil {
+		return false, err
+	}
 	var failed int
 	if err := tx.QueryRowContext(ctx, r.db.Rebind(`SELECT failed_logins FROM users WHERE id = ?`), id).Scan(&failed); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return false, ErrNotFound
-		}
 		return false, err
 	}
-	failed++
-	locked := failed >= maxFailures
-	var lockedUntil any
-	if locked {
-		lockedUntil = store.TimeArg(time.Now().Add(lockFor))
-		failed = 0
+	if failed < maxFailures {
+		return false, tx.Commit()
 	}
-	if _, err := tx.ExecContext(ctx, r.db.Rebind(`UPDATE users SET failed_logins = ?, locked_until = ? WHERE id = ?`), failed, lockedUntil, id); err != nil {
+	if _, err := tx.ExecContext(ctx, r.db.Rebind(`UPDATE users SET failed_logins = 0, locked_until = ? WHERE id = ?`),
+		store.TimeArg(time.Now().Add(lockFor)), id); err != nil {
 		return false, err
 	}
-	return locked, tx.Commit()
+	return true, tx.Commit()
 }
 
 // RecordLoginSuccess clears the failure counter and stamps last_login_at.
+// Call it when a sign-in completes, not at a first factor that still owes a
+// second: the count is the budget for guessing either one.
 func (r *Repo) RecordLoginSuccess(ctx context.Context, id string) error {
 	_, err := r.db.ExecContext(ctx, r.db.Rebind(`UPDATE users SET failed_logins = 0, locked_until = NULL, last_login_at = ? WHERE id = ?`),
 		store.TimeArg(time.Now()), id)
 	return err
 }
 
-// IsLocked reports whether the account is currently locked out.
+// IsLocked reports whether the account may not sign in now: it is blocked,
+// or wrong passwords have locked it until LockedUntil. Sign-in paths use it.
 func (u *User) IsLocked(now time.Time) bool {
-	if u.Status == StatusLocked || u.Status == StatusDisabled {
+	if u.IsBlocked() {
 		return true
 	}
 	return u.LockedUntil != nil && now.Before(*u.LockedUntil)
+}
+
+// IsBlocked reports whether an administrator has disabled or locked the
+// account. It ignores the temporary lock that wrong passwords set: that one
+// refuses new sign-ins only. Anyone who knows a username can set it, so if
+// it also ended the sessions already signed in, anyone could sign the
+// account's owner out (M6). Session checks use this.
+func (u *User) IsBlocked() bool {
+	return u.Status == StatusLocked || u.Status == StatusDisabled
 }
 
 // CountAdmins returns the number of active users holding admin.

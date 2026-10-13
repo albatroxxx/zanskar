@@ -46,7 +46,8 @@ type Spec struct {
 	Password  string // upstream credential; goes to the sidecar only, never the client
 	SessionID string
 	// TLSMode is how the sidecar protects its upstream connection (target
-	// TLSDisable/Prefer/Require/VerifyFull; empty means prefer); TLSCA is
+	// TLSDisable/Prefer/Require/VerifyFull; anything else, empty included,
+	// means verify-full, so a missing mode fails closed, ADR 0025); TLSCA is
 	// an optional PEM bundle trusted for verify-full.
 	TLSMode string
 	TLSCA   string
@@ -210,8 +211,11 @@ func proxyArgs(s Spec, network, name string) (args []string, env []string, err e
 		// insists on TLS, still verifying nothing.
 		"server_tls_sslmode=" + sslMode(s.TLSMode) + "\n" +
 		"ignore_startup_parameters=extra_float_digits\n" +
-		"max_client_conn=50\n" +
-		"admin_users=" + s.Username + "\n"
+		"max_client_conn=50\n"
+	// No admin_users or stats_users: pgbouncer then refuses its admin console
+	// (the "pgbouncer" database) to every client, so the session cannot read
+	// the upstream host, port and user from SHOW SERVERS, or pause and kill
+	// the pool (ADR 0017: the client never learns the upstream).
 	if sslMode(s.TLSMode) == "verify-full" {
 		ini += "server_tls_ca_file=/etc/pgbouncer/ca.pem\n"
 	}

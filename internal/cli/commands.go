@@ -310,6 +310,9 @@ func cmdStatus(x *run) error {
 	auditLine, auditStyle := fmt.Sprintf("chain verified · %d events", num(v, "checked")), styleOK
 	if v["intact"] != true {
 		auditLine, auditStyle = fmt.Sprintf("CHAIN BROKEN at event %s: run audit verify", str(sub(v, "broken"), "id")), styleError
+		if len(sub(v, "broken")) == 0 {
+			auditLine = "PROBLEMS FOUND: run audit verify"
+		}
 	}
 	pending, err := x.listAll("/access-requests?status=pending", 1000)
 	if err != nil {
@@ -710,13 +713,23 @@ func cmdAuditVerify(x *run) error {
 	if err := x.api.get("/audit/verify", &v); err != nil {
 		return err
 	}
+	problems, _ := v["problems"].([]any)
 	if v["intact"] == true {
 		x.out.add(styleOK, "✓ Chain intact: %d events checked, head %s.", num(v, "checked"), short(str(v, "last_hash")))
+		if warnings, _ := v["warnings"].([]any); len(warnings) > 0 {
+			x.out.add(styleMuted, "Warning: %s", str(v, "warnings"))
+		}
 		return nil
 	}
-	b := sub(v, "broken")
-	x.out.add(styleError, "✗ Chain broken at event %s: %s", str(b, "id"), str(b, "reason"))
-	x.out.add(styleMuted, "Events from there on cannot be shown to be unaltered. Repair is a host-only operation (zanskar audit), on purpose.")
+	if b := sub(v, "broken"); len(b) > 0 || len(problems) == 0 {
+		x.out.add(styleError, "✗ Chain broken at event %s: %s", str(b, "id"), str(b, "reason"))
+		x.out.add(styleMuted, "Events from there on cannot be shown to be unaltered. Repair is a host-only operation (zanskar audit), on purpose.")
+	}
+	// The chain can link and still have lost its newest events: the signed
+	// anchors and the id sequence say so (ADR 0008).
+	for _, p := range problems {
+		x.out.add(styleError, "✗ %v", p)
+	}
 	return nil
 }
 

@@ -58,6 +58,9 @@ export interface Target {
   host_key_status: HostKeyStatus
   tls_fingerprint: string | null
   winrm_tls_fingerprint: string | null
+  /** A different certificate a probe saw after one was pinned; awaits confirmation (ADR 0012). */
+  tls_fingerprint_pending?: string | null
+  winrm_tls_fingerprint_pending?: string | null
   tags: Record<string, string>
   status: 'active' | 'disabled'
   notes: string
@@ -283,7 +286,21 @@ export interface AuditEvent {
   hash: string
 }
 
-export interface AuditVerify { intact: boolean; checked: number; last_id: number; last_hash: string; broken?: { Index: number; ID: number; Reason: string } | null }
+export interface AuditAnchor { id: number; event_id: number; hash: string; created_at: string; mac: string }
+
+/** intact is false on a broken chain and on any problem: a log whose newest
+ *  events were deleted still links, so broken can be null while intact is false. */
+export interface AuditVerify {
+  intact: boolean
+  checked: number
+  last_id: number
+  last_hash: string
+  broken?: { Index: number; ID: number; Reason: string } | null
+  anchors_checked?: number
+  last_anchor?: AuditAnchor | null
+  problems?: string[]
+  warnings?: string[]
+}
 
 export interface ConnectResponse {
   ticket: string
@@ -445,6 +462,8 @@ export interface TLSCertInfo {
   fingerprint: string
   self_signed: boolean
   cert_pem?: string
+  /** Why a stored certificate cannot serve now (expired, not valid yet, ...). */
+  problem?: string
 }
 
 /** GET /admin/tls. */

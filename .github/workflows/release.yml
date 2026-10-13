@@ -15,8 +15,36 @@ permissions:
   contents: read
 
 jobs:
+  # The console bundle is built here, by third-party build code (Vite and its
+  # plugins from node_modules), in a job that holds a read-only token and no
+  # OIDC identity. The release job below only downloads the result, so no
+  # build-time package ever runs where it could push an image, edit the
+  # release or sign as this workflow.
+  web:
+    name: web bundle
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: make web
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: web-dist
+          path: web/dist
+          if-no-files-found: error
+          retention-days: 1
+
   goreleaser:
     name: goreleaser
+    needs: [web]
     runs-on: ubuntu-latest
     outputs:
       hashes: ${{ steps.hashes.outputs.hashes }}
@@ -28,15 +56,19 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0 # goreleaser needs full history and tags
+          # goreleaser reads the history locally and talks to GitHub with
+          # GITHUB_TOKEN; it never pushes, so the checkout keeps no token.
+          persist-credentials: false
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
           cache: true
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      # The bundle the web job built; goreleaser's own `make web` hook is
+      # skipped below so nothing from node_modules runs in this job.
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          node-version: 22
-          cache: npm
-          cache-dependency-path: web/package-lock.json
+          name: web-dist
+          path: web/dist
       # THIRD_PARTY_NOTICES.md currency is enforced by the CI 'notices' job on
       # every push to main, so a tag cut from main already carries a current
       # file; goreleaser bundles it into the archives.
@@ -53,7 +85,7 @@ jobs:
         id: goreleaser
         with:
           version: "~> v2"
-          args: release --clean
+          args: release --clean --skip=before
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       # The provenance subjects are exactly the lines of SHA256SUMS: every

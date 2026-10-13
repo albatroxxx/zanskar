@@ -4,12 +4,16 @@ package auth
 
 import (
 	"context"
+	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/albatroxxx/zanskar/internal/store"
 	"github.com/albatroxxx/zanskar/internal/user"
 )
 
@@ -82,5 +86,99 @@ func TestRequireAuthRefusesWhilePasswordChangeOwed(t *testing.T) {
 	h.ServeHTTP(rr, req)
 	if rr.Code != 204 {
 		t.Fatalf("after the change: %d", rr.Code)
+	}
+}
+
+// TestTemporaryLockLeavesLiveSessions: wrong passwords from anywhere lock the
+// account against new sign-ins for a while. They must not end a session that
+// is already signed in, or anyone who knows a username could sign its owner
+// out, again and again (M6). An administrator disabling the account still
+// does.
+func TestTemporaryLockLeavesLiveSessions(t *testing.T) {
+	e := newEnv(t)
+	unlimited(e)
+	// Fewer than the default five: each wrong password costs a full hash.
+	e.handler.MaxFailures = 2
+	ctx := context.Background()
+	u := e.createUser(t, "ruth", "ruth has a long passphrase", user.RoleUser)
+	first := login(e, "ruth", "ruth has a long passphrase")
+	if first.code != 200 || first.body["status"] != "ok" {
+		t.Fatalf("sign-in: %d %v", first.code, first.body)
+	}
+
+	for i := 0; i < e.handler.MaxFailures; i++ {
+		e.doFrom("198.51.100.20:5555", "POST", "/api/v1/auth/login", map[string]string{"username": "ruth", "password": "not ruth's password"}, nil, nil)
+	}
+	if got, err := e.users.GetByID(ctx, u.ID); err != nil || !got.IsLocked(time.Now()) {
+		t.Fatalf("%d wrong passwords must lock the account: %v", e.handler.MaxFailures, err)
+	}
+	if me := e.do("GET", "/api/v1/auth/me", nil, first.cookie, nil); me.code != 200 || me.cookie != nil {
+		t.Fatalf("the signed-in session after another client's wrong passwords: %d %v, cookie cleared: %v; want 200 and the cookie kept", me.code, me.body, me.cookie != nil)
+	}
+	if r := login(e, "ruth", "ruth has a long passphrase"); r.code != 401 {
+		t.Fatalf("a new sign-in while the account is locked: %d %v, want 401", r.code, r.body)
+	}
+	// Once locked_until has passed, new sign-ins work again.
+	if _, err := e.sessions.db.ExecContext(ctx, e.sessions.db.Rebind(`UPDATE users SET locked_until = ? WHERE id = ?`), store.TimeArg(time.Now().Add(-time.Second)), u.ID); err != nil {
+		t.Fatal(err)
+	}
+	if r := login(e, "ruth", "ruth has a long passphrase"); r.code != 200 {
+		t.Fatalf("a sign-in after the lock passed: %d %v", r.code, r.body)
+	}
+
+	// Disabling is an administrator's decision about the account, not a
+	// guess at its password: it ends the session. The status is set
+	// directly, without the admin API's own revocation, so the middleware
+	// is what refuses.
+	if err := e.users.Update(ctx, u.ID, "ruth", "", user.StatusDisabled); err != nil {
+		t.Fatal(err)
+	}
+	if me := e.do("GET", "/api/v1/auth/me", nil, first.cookie, nil); me.code != 401 || me.cookie == nil || me.cookie.MaxAge >= 0 {
+		t.Fatalf("a disabled account's session: %d %v, cookie %+v; want 401 and the cookie cleared", me.code, me.body, me.cookie)
+	}
+}
+
+// TestSessionCheckOutageKeepsTheCookie: when the database cannot answer
+// whether a cookie is good, the gateway does not know that it is bad. API
+// and WebSocket calls get 503 unavailable and the cookie stays; any other
+// path (the console's own files) loads without a principal. When the
+// database answers again, the session carries on (M6).
+func TestSessionCheckOutageKeepsTheCookie(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	r := e.sessionFor(t, e.bareUser(t, "sam", user.RoleUser), true)
+	var principal bool
+	quiet := slog.New(slog.NewTextHandler(io.Discard, nil))
+	static := (&Middleware{Sessions: e.sessions, Users: e.users, Log: quiet}).Authenticate(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, principal = FromContext(r.Context())
+		w.WriteHeader(http.StatusOK)
+	}))
+	rename := func(from, to string) {
+		t.Helper()
+		if _, err := e.sessions.db.ExecContext(ctx, `ALTER TABLE `+from+` RENAME TO `+to); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// The session lookup fails, then the user lookup does.
+	for _, table := range []string{"auth_sessions", "user_roles"} {
+		rename(table, table+"_gone")
+		for _, path := range []string{"/api/v1/auth/me", "/ws/terminal"} {
+			got := e.do("GET", path, nil, r.cookie, nil)
+			if got.code != 503 || got.body["code"] != "unavailable" || got.cookie != nil {
+				t.Fatalf("%s with %s unreadable: %d %v, cookie cleared: %v; want 503 unavailable and the cookie kept", path, table, got.code, got.body, got.cookie != nil)
+			}
+		}
+		req := httptest.NewRequest("GET", "/assets/index.js", nil)
+		req.AddCookie(r.cookie)
+		rr := httptest.NewRecorder()
+		static.ServeHTTP(rr, req)
+		if rr.Code != 200 || principal || len(rr.Result().Cookies()) != 0 {
+			t.Fatalf("a console file with %s unreadable: %d, principal %v, cookies %v; want it served anonymously with the cookie kept", table, rr.Code, principal, rr.Result().Cookies())
+		}
+		rename(table+"_gone", table)
+		if me := e.do("GET", "/api/v1/auth/me", nil, r.cookie, nil); me.code != 200 {
+			t.Fatalf("after the outage of %s the session carries on: %d %v", table, me.code, me.body)
+		}
 	}
 }

@@ -119,6 +119,8 @@ declare module 'guacamole-common-js' {
   }
   export class Keyboard {
     constructor(element: Document | HTMLElement)
+    /** The modifier keys held right now, as the library tracks them. */
+    modifiers: { alt: boolean; ctrl: boolean; shift: boolean; meta: boolean; hyper: boolean }
     onkeydown: ((keysym: number) => boolean | void) | null
     onkeyup: ((keysym: number) => void) | null
     /** Releases every key currently held, firing onkeyup for each. */
