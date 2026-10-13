@@ -1,9 +1,10 @@
 import { protocolName } from '../../api/format'
-import { useState, type FormEvent } from 'react'
+import { useState } from 'react'
 import { api, errorMessage } from '../../api/client'
 import { canConnect } from '../../auth/home'
 import type { Group, Policy, PolicyRule, Protocol, Target, TimeWindow, AutoscalingGroup, User } from '../../api/types'
-import { Alert, Badge, Confirm, Empty, Field, Modal, PageHead } from '../../components/ui'
+import { useSubmit } from '../../components/submit'
+import { Alert, Badge, Confirm, Empty, Field, FormModal, PageHead } from '../../components/ui'
 import { formatTags, parseTags, policyProtocols, useList } from './lib'
 
 const days = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun']
@@ -187,8 +188,7 @@ function PolicyForm({ initial, groups, users, targets, asgs, onClose, onSaved }:
     require_mfa: initial?.require_mfa ?? true,
     require_approval: initial?.require_approval ?? false,
   })
-  const [err, setErr] = useState('')
-  const [busy, setBusy] = useState(false)
+  const { busy, err, setErr, submit } = useSubmit()
   // The server refuses a review-only subject (422); the picker leaves it out.
   const subjects = users.filter(canConnect)
   const up = (patch: Partial<FormState>) => setF({ ...f, ...patch })
@@ -198,8 +198,7 @@ function PolicyForm({ initial, groups, users, targets, asgs, onClose, onSaved }:
   const setWindow = (i: number, patch: Partial<TimeWindow>) => up({ windows: f.windows.map((w, j) => (j === i ? { ...w, ...patch } : w)) })
   const setRule = (i: number, patch: Partial<RuleDraft>) => up({ rules: f.rules.map((r, j) => (j === i ? { ...r, ...patch } : r)) })
 
-  const submit = async (e: FormEvent) => {
-    e.preventDefault()
+  const save = () => {
     const { tags, error } = parseTags(f.tags)
     if (error) return setErr(error)
     if (f.subject === 'group' && !f.group_id) return setErr('choose a group')
@@ -225,9 +224,7 @@ function PolicyForm({ initial, groups, users, targets, asgs, onClose, onSaved }:
       return
     }
     if (max !== null && (!Number.isInteger(max) || max < 1)) return setErr('max session must be a whole number of minutes')
-    setBusy(true)
-    setErr('')
-    try {
+    void submit(async () => {
       const body = {
         name: f.name.trim(),
         description: f.description,
@@ -248,187 +245,176 @@ function PolicyForm({ initial, groups, users, targets, asgs, onClose, onSaved }:
       if (initial) await api.put(`/access-policies/${initial.id}`, body)
       else await api.post('/access-policies', body)
       onSaved()
-    } catch (e) {
-      setErr(errorMessage(e))
-    } finally {
-      setBusy(false)
-    }
+    })
   }
 
   return (
-    <Modal title={initial ? `Edit ${initial.name}` : 'Add policy'} onClose={onClose} width={720}>
-      {err && <Alert tone="danger">{err}</Alert>}
-      <form onSubmit={submit}>
-        <div className="form-grid">
-          <Field label="Name">
-            <input id="p-name" value={f.name} onChange={(e) => up({ name: e.target.value })} required autoFocus />
-          </Field>
-          <Field label="Description">
-            <input id="p-desc" value={f.description} onChange={(e) => up({ description: e.target.value })} />
-          </Field>
-        </div>
-        <Field label="Applies to" hint="A group policy reaches every member. A user policy reaches one person and leaves their groups untouched.">
-          <div className="actions" role="radiogroup" aria-label="Applies to">
-            <span className="field inline" style={{ margin: 0 }}>
-              <input id="p-subject-group" type="radio" name="p-subject" checked={f.subject === 'group'} onChange={() => up({ subject: 'group' })} />
-              <label htmlFor="p-subject-group">A group</label>
-            </span>
-            <span className="field inline" style={{ margin: 0 }}>
-              <input id="p-subject-user" type="radio" name="p-subject" checked={f.subject === 'user'} onChange={() => up({ subject: 'user' })} />
-              <label htmlFor="p-subject-user">One user</label>
-            </span>
-          </div>
+    <FormModal title={initial ? `Edit ${initial.name}` : 'Add policy'} width={720} err={err} busy={busy} submitLabel={initial ? 'Save' : 'Create'} onSubmit={save} onClose={onClose}>
+      <div className="form-grid">
+        <Field label="Name">
+          <input id="p-name" value={f.name} onChange={(e) => up({ name: e.target.value })} required autoFocus />
         </Field>
-        {f.subject === 'group' ? (
-          <Field label="Group">
-            <select id="p-group" value={f.group_id} onChange={(e) => up({ group_id: e.target.value })} required>
-              {groups.length === 0 && <option value="">no groups yet</option>}
-              {groups.map((g) => (
-                <option key={g.id} value={g.id}>{g.name}</option>
-              ))}
-            </select>
-          </Field>
-        ) : (
-          <Field label="User" hint="Accounts that hold only the auditor role are review-only and are not listed; grant them the user role first.">
-            <select id="p-user" value={f.user_id} onChange={(e) => up({ user_id: e.target.value })} required>
-              {subjects.length === 0 && <option value="">no users can be granted access yet</option>}
-              {subjects.map((u) => (
-                <option key={u.id} value={u.id}>{u.username}{u.display_name && u.display_name !== u.username ? ` (${u.display_name})` : ''}</option>
-              ))}
-            </select>
-          </Field>
-        )}
-        <h2>Targets</h2>
-        <div className="form-grid">
-          <Field label="By tag" hint="key=value per line; all must match">
-            <textarea id="p-tags" value={f.tags} onChange={(e) => up({ tags: e.target.value })} placeholder="env=prod" />
-          </Field>
-          <Field label="By name">
-            <div style={{ maxHeight: 120, overflowY: 'auto', border: '1px solid var(--line)', borderRadius: 6, padding: 6 }}>
-              {targets.length === 0 && <span className="muted">no targets defined</span>}
-              {targets.map((t) => (
-                <div key={t.id} className="field inline" style={{ margin: '2px 0' }}>
-                  <input id={`p-target-${t.id}`} type="checkbox" checked={f.targets.includes(t.id)} onChange={() => toggleTarget(t.id)} />
-                  <label htmlFor={`p-target-${t.id}`}>{t.name}</label>
-                </div>
-              ))}
-            </div>
-          </Field>
-          <Field label="Autoscaling groups" hint="Every healthy instance of a selected group">
-            <div style={{ maxHeight: 120, overflowY: 'auto', border: '1px solid var(--line)', borderRadius: 6, padding: 6 }}>
-              {asgs.length === 0 && <span className="muted">no autoscaling groups enrolled</span>}
-              {asgs.map((g) => (
-                <div key={g.id} className="field inline" style={{ margin: '2px 0' }}>
-                  <input id={`p-asg-${g.id}`} type="checkbox" checked={f.asgs.includes(g.id)} onChange={() => toggleAsg(g.id)} />
-                  <label htmlFor={`p-asg-${g.id}`}>{g.name}</label>
-                </div>
-              ))}
-            </div>
-          </Field>
+        <Field label="Description">
+          <input id="p-desc" value={f.description} onChange={(e) => up({ description: e.target.value })} />
+        </Field>
+      </div>
+      <Field label="Applies to" hint="A group policy reaches every member. A user policy reaches one person and leaves their groups untouched.">
+        <div className="actions" role="radiogroup" aria-label="Applies to">
+          <span className="field inline" style={{ margin: 0 }}>
+            <input id="p-subject-group" type="radio" name="p-subject" checked={f.subject === 'group'} onChange={() => up({ subject: 'group' })} />
+            <label htmlFor="p-subject-group">A group</label>
+          </span>
+          <span className="field inline" style={{ margin: 0 }}>
+            <input id="p-subject-user" type="radio" name="p-subject" checked={f.subject === 'user'} onChange={() => up({ subject: 'user' })} />
+            <label htmlFor="p-subject-user">One user</label>
+          </span>
         </div>
-        <Field label="Protocols">
-          <div className="actions">
-            {policyProtocols.map((p) => (
-              <span key={p} className="field inline" style={{ margin: 0 }}>
-                <input id={`p-proto-${p}`} type="checkbox" checked={f.protocols.includes(p)} onChange={() => toggleProto(p)} />
-                <label htmlFor={`p-proto-${p}`}>{protocolName(p)}</label>
-              </span>
+      </Field>
+      {f.subject === 'group' ? (
+        <Field label="Group">
+          <select id="p-group" value={f.group_id} onChange={(e) => up({ group_id: e.target.value })} required>
+            {groups.length === 0 && <option value="">no groups yet</option>}
+            {groups.map((g) => (
+              <option key={g.id} value={g.id}>{g.name}</option>
+            ))}
+          </select>
+        </Field>
+      ) : (
+        <Field label="User" hint="Accounts that hold only the auditor role are review-only and are not listed; grant them the user role first.">
+          <select id="p-user" value={f.user_id} onChange={(e) => up({ user_id: e.target.value })} required>
+            {subjects.length === 0 && <option value="">no users can be granted access yet</option>}
+            {subjects.map((u) => (
+              <option key={u.id} value={u.id}>{u.username}{u.display_name && u.display_name !== u.username ? ` (${u.display_name})` : ''}</option>
+            ))}
+          </select>
+        </Field>
+      )}
+      <h2>Targets</h2>
+      <div className="form-grid">
+        <Field label="By tag" hint="key=value per line; all must match">
+          <textarea id="p-tags" value={f.tags} onChange={(e) => up({ tags: e.target.value })} placeholder="env=prod" />
+        </Field>
+        <Field label="By name">
+          <div style={{ maxHeight: 120, overflowY: 'auto', border: '1px solid var(--line)', borderRadius: 6, padding: 6 }}>
+            {targets.length === 0 && <span className="muted">no targets defined</span>}
+            {targets.map((t) => (
+              <div key={t.id} className="field inline" style={{ margin: '2px 0' }}>
+                <input id={`p-target-${t.id}`} type="checkbox" checked={f.targets.includes(t.id)} onChange={() => toggleTarget(t.id)} />
+                <label htmlFor={`p-target-${t.id}`}>{t.name}</label>
+              </div>
             ))}
           </div>
         </Field>
-        <h2>More rules <span className="muted" style={{ fontWeight: 400, fontSize: '0.85rem' }}>(optional)</span></h2>
-        <p className="muted">Each rule grants its own protocols on its own targets, under this policy's windows, limits and flags. Use them when the same people need different protocols on different machines: ssh to the Linux fleet, rdp to the two jump hosts, one policy. The targets and protocols above are the first rule and may be left empty when rules carry everything.</p>
-        {f.rules.map((r, i) => (
-          <div key={i} className="card" style={{ padding: 12, marginBottom: 8 }}>
-            <div className="form-grid">
-              <Field label="By tag" hint="key=value per line; all must match">
-                <textarea id={`p-r${i}-tags`} value={r.tags} onChange={(e) => setRule(i, { tags: e.target.value })} placeholder="env=prod" />
-              </Field>
-              <Field label="By name">
-                <div style={{ maxHeight: 120, overflowY: 'auto', border: '1px solid var(--line)', borderRadius: 6, padding: 6 }}>
-                  {targets.length === 0 && <span className="muted">no targets defined</span>}
-                  {targets.map((t) => (
-                    <div key={t.id} className="field inline" style={{ margin: '2px 0' }}>
-                      <input id={`p-r${i}-target-${t.id}`} type="checkbox" checked={r.targets.includes(t.id)} onChange={() => setRule(i, { targets: toggleIn(r.targets, t.id) })} />
-                      <label htmlFor={`p-r${i}-target-${t.id}`}>{t.name}</label>
-                    </div>
-                  ))}
-                </div>
-              </Field>
-              <Field label="Autoscaling groups">
-                <div style={{ maxHeight: 120, overflowY: 'auto', border: '1px solid var(--line)', borderRadius: 6, padding: 6 }}>
-                  {asgs.length === 0 && <span className="muted">no autoscaling groups enrolled</span>}
-                  {asgs.map((g) => (
-                    <div key={g.id} className="field inline" style={{ margin: '2px 0' }}>
-                      <input id={`p-r${i}-asg-${g.id}`} type="checkbox" checked={r.asgs.includes(g.id)} onChange={() => setRule(i, { asgs: toggleIn(r.asgs, g.id) })} />
-                      <label htmlFor={`p-r${i}-asg-${g.id}`}>{g.name}</label>
-                    </div>
-                  ))}
-                </div>
-              </Field>
-            </div>
-            <Field label="Protocols">
-              <div className="actions">
-                {policyProtocols.map((p) => (
-                  <span key={p} className="field inline" style={{ margin: 0 }}>
-                    <input id={`p-r${i}-proto-${p}`} type="checkbox" checked={r.protocols.includes(p)} onChange={() => setRule(i, { protocols: toggleIn(r.protocols, p) })} />
-                    <label htmlFor={`p-r${i}-proto-${p}`}>{protocolName(p)}</label>
-                  </span>
-                ))}
+        <Field label="Autoscaling groups" hint="Every healthy instance of a selected group">
+          <div style={{ maxHeight: 120, overflowY: 'auto', border: '1px solid var(--line)', borderRadius: 6, padding: 6 }}>
+            {asgs.length === 0 && <span className="muted">no autoscaling groups enrolled</span>}
+            {asgs.map((g) => (
+              <div key={g.id} className="field inline" style={{ margin: '2px 0' }}>
+                <input id={`p-asg-${g.id}`} type="checkbox" checked={f.asgs.includes(g.id)} onChange={() => toggleAsg(g.id)} />
+                <label htmlFor={`p-asg-${g.id}`}>{g.name}</label>
               </div>
-            </Field>
-            <button type="button" className="btn sm" onClick={() => up({ rules: f.rules.filter((_, j) => j !== i) })}>Remove rule</button>
+            ))}
           </div>
-        ))}
-        <button type="button" className="btn sm" onClick={() => up({ rules: [...f.rules, { tags: '', targets: [], asgs: [], protocols: [] }] })}>Add rule</button>
-        <h2 style={{ marginTop: 16 }}>Time windows <span className="muted" style={{ fontWeight: 400, fontSize: '0.85rem' }}>(none = always)</span></h2>
-        {f.windows.map((w, i) => (
-          <div key={i} className="card" style={{ padding: 12, marginBottom: 8 }}>
-            <div className="actions" style={{ marginBottom: 8 }}>
-              {days.map((d) => (
-                <span key={d} className="field inline" style={{ margin: 0 }}>
-                  <input id={`p-w${i}-${d}`} type="checkbox" checked={w.days.includes(d)} onChange={() => setWindow(i, { days: w.days.includes(d) ? w.days.filter((x) => x !== d) : [...w.days, d] })} />
-                  <label htmlFor={`p-w${i}-${d}`}>{d}</label>
-                </span>
-              ))}
-            </div>
-            <div className="form-grid">
-              <Field label="From (HH:MM)"><input id={`p-w${i}-from`} value={w.from} onChange={(e) => setWindow(i, { from: e.target.value })} placeholder="09:00" required /></Field>
-              <Field label="To (HH:MM)"><input id={`p-w${i}-to`} value={w.to} onChange={(e) => setWindow(i, { to: e.target.value })} placeholder="18:00" required /></Field>
-              <Field label="Time zone"><input id={`p-w${i}-tz`} value={w.tz} onChange={(e) => setWindow(i, { tz: e.target.value })} placeholder="UTC" /></Field>
-            </div>
-            <button type="button" className="btn sm" onClick={() => up({ windows: f.windows.filter((_, j) => j !== i) })}>Remove window</button>
-          </div>
-        ))}
-        <button type="button" className="btn sm" onClick={() => up({ windows: [...f.windows, { days: ['mon', 'tue', 'wed', 'thu', 'fri'], from: '09:00', to: '18:00', tz: 'UTC' }] })}>Add window</button>
-        <h2 style={{ marginTop: 16 }}>Limits</h2>
-        <div className="form-grid">
-          <Field label="Idle timeout (minutes)"><input id="p-idle" inputMode="numeric" value={f.idle} onChange={(e) => up({ idle: e.target.value })} required /></Field>
-          <Field label="Max session (minutes, blank = none)"><input id="p-max" inputMode="numeric" value={f.max} onChange={(e) => up({ max: e.target.value })} /></Field>
-          <Field label="Keep recordings (days, blank = global policy)" hint="A target's own value wins over this"><input id="p-retention" inputMode="numeric" value={f.retention} onChange={(e) => up({ retention: e.target.value })} /></Field>
-        </div>
+        </Field>
+      </div>
+      <Field label="Protocols">
         <div className="actions">
-          {(
-            [
-              ['allow_clipboard', 'Allow clipboard (RDP and VNC)'],
-              ['allow_file_transfer', 'Allow file transfer'],
-              ['require_mfa', 'Require an enrolled authenticator'],
-              ['require_approval', 'Require approval (just-in-time access)'],
-              ['enabled', 'Enabled'],
-            ] as const
-          ).map(([k, label]) => (
-            <span key={k} className="field inline" style={{ margin: 0 }}>
-              <input id={`p-${k}`} type="checkbox" checked={f[k]} onChange={(e) => up({ [k]: e.target.checked } as Partial<FormState>)} />
-              <label htmlFor={`p-${k}`}>{label}</label>
+          {policyProtocols.map((p) => (
+            <span key={p} className="field inline" style={{ margin: 0 }}>
+              <input id={`p-proto-${p}`} type="checkbox" checked={f.protocols.includes(p)} onChange={() => toggleProto(p)} />
+              <label htmlFor={`p-proto-${p}`}>{protocolName(p)}</label>
             </span>
           ))}
         </div>
-        <p className="muted">The clipboard switch lets text cross between the browser and RDP or VNC desktops: text copied in the desktop reaches the browser, and the browser's clipboard goes in only when the user pastes (Ctrl+V or Cmd+V) in the desktop or sends it from the clipboard panel. A terminal's copy and paste is the browser's own and is not gated: pasting into a shell is indistinguishable from typing. File transfer switches on the SFTP panel for SSH and the mapped drive for RDP.</p>
-        <div className="actions">
-          <button type="button" className="btn" onClick={onClose}>Cancel</button>
-          <button type="submit" className="btn primary" disabled={busy}>{initial ? 'Save' : 'Create'}</button>
+      </Field>
+      <h2>More rules <span className="muted" style={{ fontWeight: 400, fontSize: '0.85rem' }}>(optional)</span></h2>
+      <p className="muted">Each rule grants its own protocols on its own targets, under this policy's windows, limits and flags. Use them when the same people need different protocols on different machines: ssh to the Linux fleet, rdp to the two jump hosts, one policy. The targets and protocols above are the first rule and may be left empty when rules carry everything.</p>
+      {f.rules.map((r, i) => (
+        <div key={i} className="card" style={{ padding: 12, marginBottom: 8 }}>
+          <div className="form-grid">
+            <Field label="By tag" hint="key=value per line; all must match">
+              <textarea id={`p-r${i}-tags`} value={r.tags} onChange={(e) => setRule(i, { tags: e.target.value })} placeholder="env=prod" />
+            </Field>
+            <Field label="By name">
+              <div style={{ maxHeight: 120, overflowY: 'auto', border: '1px solid var(--line)', borderRadius: 6, padding: 6 }}>
+                {targets.length === 0 && <span className="muted">no targets defined</span>}
+                {targets.map((t) => (
+                  <div key={t.id} className="field inline" style={{ margin: '2px 0' }}>
+                    <input id={`p-r${i}-target-${t.id}`} type="checkbox" checked={r.targets.includes(t.id)} onChange={() => setRule(i, { targets: toggleIn(r.targets, t.id) })} />
+                    <label htmlFor={`p-r${i}-target-${t.id}`}>{t.name}</label>
+                  </div>
+                ))}
+              </div>
+            </Field>
+            <Field label="Autoscaling groups">
+              <div style={{ maxHeight: 120, overflowY: 'auto', border: '1px solid var(--line)', borderRadius: 6, padding: 6 }}>
+                {asgs.length === 0 && <span className="muted">no autoscaling groups enrolled</span>}
+                {asgs.map((g) => (
+                  <div key={g.id} className="field inline" style={{ margin: '2px 0' }}>
+                    <input id={`p-r${i}-asg-${g.id}`} type="checkbox" checked={r.asgs.includes(g.id)} onChange={() => setRule(i, { asgs: toggleIn(r.asgs, g.id) })} />
+                    <label htmlFor={`p-r${i}-asg-${g.id}`}>{g.name}</label>
+                  </div>
+                ))}
+              </div>
+            </Field>
+          </div>
+          <Field label="Protocols">
+            <div className="actions">
+              {policyProtocols.map((p) => (
+                <span key={p} className="field inline" style={{ margin: 0 }}>
+                  <input id={`p-r${i}-proto-${p}`} type="checkbox" checked={r.protocols.includes(p)} onChange={() => setRule(i, { protocols: toggleIn(r.protocols, p) })} />
+                  <label htmlFor={`p-r${i}-proto-${p}`}>{protocolName(p)}</label>
+                </span>
+              ))}
+            </div>
+          </Field>
+          <button type="button" className="btn sm" onClick={() => up({ rules: f.rules.filter((_, j) => j !== i) })}>Remove rule</button>
         </div>
-      </form>
-    </Modal>
+      ))}
+      <button type="button" className="btn sm" onClick={() => up({ rules: [...f.rules, { tags: '', targets: [], asgs: [], protocols: [] }] })}>Add rule</button>
+      <h2 style={{ marginTop: 16 }}>Time windows <span className="muted" style={{ fontWeight: 400, fontSize: '0.85rem' }}>(none = always)</span></h2>
+      {f.windows.map((w, i) => (
+        <div key={i} className="card" style={{ padding: 12, marginBottom: 8 }}>
+          <div className="actions" style={{ marginBottom: 8 }}>
+            {days.map((d) => (
+              <span key={d} className="field inline" style={{ margin: 0 }}>
+                <input id={`p-w${i}-${d}`} type="checkbox" checked={w.days.includes(d)} onChange={() => setWindow(i, { days: w.days.includes(d) ? w.days.filter((x) => x !== d) : [...w.days, d] })} />
+                <label htmlFor={`p-w${i}-${d}`}>{d}</label>
+              </span>
+            ))}
+          </div>
+          <div className="form-grid">
+            <Field label="From (HH:MM)"><input id={`p-w${i}-from`} value={w.from} onChange={(e) => setWindow(i, { from: e.target.value })} placeholder="09:00" required /></Field>
+            <Field label="To (HH:MM)"><input id={`p-w${i}-to`} value={w.to} onChange={(e) => setWindow(i, { to: e.target.value })} placeholder="18:00" required /></Field>
+            <Field label="Time zone"><input id={`p-w${i}-tz`} value={w.tz} onChange={(e) => setWindow(i, { tz: e.target.value })} placeholder="UTC" /></Field>
+          </div>
+          <button type="button" className="btn sm" onClick={() => up({ windows: f.windows.filter((_, j) => j !== i) })}>Remove window</button>
+        </div>
+      ))}
+      <button type="button" className="btn sm" onClick={() => up({ windows: [...f.windows, { days: ['mon', 'tue', 'wed', 'thu', 'fri'], from: '09:00', to: '18:00', tz: 'UTC' }] })}>Add window</button>
+      <h2 style={{ marginTop: 16 }}>Limits</h2>
+      <div className="form-grid">
+        <Field label="Idle timeout (minutes)"><input id="p-idle" inputMode="numeric" value={f.idle} onChange={(e) => up({ idle: e.target.value })} required /></Field>
+        <Field label="Max session (minutes, blank = none)"><input id="p-max" inputMode="numeric" value={f.max} onChange={(e) => up({ max: e.target.value })} /></Field>
+        <Field label="Keep recordings (days, blank = global policy)" hint="A target's own value wins over this"><input id="p-retention" inputMode="numeric" value={f.retention} onChange={(e) => up({ retention: e.target.value })} /></Field>
+      </div>
+      <div className="actions">
+        {(
+          [
+            ['allow_clipboard', 'Allow clipboard (RDP and VNC)'],
+            ['allow_file_transfer', 'Allow file transfer'],
+            ['require_mfa', 'Require an enrolled authenticator'],
+            ['require_approval', 'Require approval (just-in-time access)'],
+            ['enabled', 'Enabled'],
+          ] as const
+        ).map(([k, label]) => (
+          <span key={k} className="field inline" style={{ margin: 0 }}>
+            <input id={`p-${k}`} type="checkbox" checked={f[k]} onChange={(e) => up({ [k]: e.target.checked } as Partial<FormState>)} />
+            <label htmlFor={`p-${k}`}>{label}</label>
+          </span>
+        ))}
+      </div>
+      <p className="muted">The clipboard switch lets text cross between the browser and RDP or VNC desktops: text copied in the desktop reaches the browser, and the browser's clipboard goes in only when the user pastes (Ctrl+V or Cmd+V) in the desktop or sends it from the clipboard panel. A terminal's copy and paste is the browser's own and is not gated: pasting into a shell is indistinguishable from typing. File transfer switches on the SFTP panel for SSH and the mapped drive for RDP.</p>
+    </FormModal>
   )
 }

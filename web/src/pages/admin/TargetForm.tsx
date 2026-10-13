@@ -1,7 +1,8 @@
 import { protocolName } from '../../api/format'
 import { useState, type FormEvent } from 'react'
-import { api, errorMessage } from '../../api/client'
+import { api } from '../../api/client'
 import type { OSFamily, Protocol, Target } from '../../api/types'
+import { useSubmit } from '../../components/submit'
 import { Alert, Field, Modal, Tabs } from '../../components/ui'
 import { formatTags, parseTags, protocols } from './lib'
 
@@ -76,8 +77,7 @@ export function TargetForm({ initial, kind, onClose, onSaved }: { initial?: Targ
         }
       : emptyForm,
   )
-  const [err, setErr] = useState('')
-  const [busy, setBusy] = useState(false)
+  const { busy, err, setErr, submit } = useSubmit()
   const set = (key: keyof typeof emptyForm) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => setF({ ...f, [key]: e.target.value })
 
   const port = (label: string, raw: string): number | null | undefined => {
@@ -91,7 +91,7 @@ export function TargetForm({ initial, kind, onClose, onSaved }: { initial?: Targ
     return n
   }
 
-  const submit = async (e: FormEvent) => {
+  const save = (e: FormEvent) => {
     e.preventDefault()
     if (!k) return
     const { tags, error } = parseTags(f.tags)
@@ -116,9 +116,7 @@ export function TargetForm({ initial, kind, onClose, onSaved }: { initial?: Targ
       setErr('retention must be 1-3650 days')
       return
     }
-    setBusy(true)
-    setErr('')
-    try {
+    void submit(async () => {
       const database = k === 'database'
       const body = {
         name: f.name.trim(),
@@ -139,11 +137,7 @@ export function TargetForm({ initial, kind, onClose, onSaved }: { initial?: Targ
       }
       const t = initial ? await api.put<Target>(`/targets/${initial.id}`, body) : await api.post<Target>('/targets', body)
       onSaved(t)
-    } catch (e2) {
-      setErr(errorMessage(e2))
-    } finally {
-      setBusy(false)
-    }
+    })
   }
 
   const title = initial ? `Edit ${initial.name}` : k === 'database' ? 'Add database' : k === 'host' ? 'Add host' : 'Add target'
@@ -157,7 +151,7 @@ export function TargetForm({ initial, kind, onClose, onSaved }: { initial?: Targ
         </>
       )}
       {k && (
-        <form onSubmit={submit}>
+        <form onSubmit={save}>
           <div className="form-grid">
             <Field label="Name">
               <input id="t-name" value={f.name} onChange={set('name')} required autoFocus />

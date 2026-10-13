@@ -1,9 +1,10 @@
-import { useEffect, useState, type FormEvent } from 'react'
+import { useEffect, useState } from 'react'
 import { api, errorMessage } from '../../api/client'
 import { fmtTime } from '../../api/format'
 import type { Group, GroupMember, Role, User } from '../../api/types'
 import { useAuth } from '../../auth/AuthContext'
-import { Alert, Badge, Confirm, Empty, Field, Modal, PageHead, Tabs } from '../../components/ui'
+import { useSubmit } from '../../components/submit'
+import { Alert, Badge, Confirm, Empty, Field, FormModal, Modal, PageHead, Tabs } from '../../components/ui'
 import { useList } from './lib'
 
 const roles: Role[] = ['admin', 'auditor', 'user']
@@ -229,119 +230,69 @@ function UserForm({ onClose, onSaved }: { onClose: () => void; onSaved: (oneTime
   const [f, setF] = useState({ username: '', display_name: '', email: '', password: '' })
   const [r, setR] = useState<Role[]>(['user'])
   const [external, setExternal] = useState(false)
-  const [err, setErr] = useState('')
-  const [busy, setBusy] = useState(false)
+  const { busy, err, submit } = useSubmit()
   const set = (k: keyof typeof f) => (e: React.ChangeEvent<HTMLInputElement>) => setF({ ...f, [k]: e.target.value })
-  const submit = async (e: FormEvent) => {
-    e.preventDefault()
-    setBusy(true)
-    setErr('')
-    try {
+  const save = () =>
+    submit(async () => {
       const body: Record<string, unknown> = { username: f.username.trim(), display_name: f.display_name.trim(), email: f.email.trim(), roles: r }
       if (external) body.password_less = true
       else if (f.password) body.password = f.password
       const created = await api.post<User & { initial_password?: string }>('/users', body)
       onSaved(created.initial_password ? { username: created.username, password: created.initial_password } : undefined)
-    } catch (e) {
-      setErr(errorMessage(e))
-    } finally {
-      setBusy(false)
-    }
-  }
+    })
   return (
-    <Modal title="Add user" onClose={onClose}>
-      {err && <Alert tone="danger">{err}</Alert>}
-      <form onSubmit={submit}>
-        <Field label="Username" hint="2-64 characters: letters, digits, . _ -"><input id="nu-username" value={f.username} onChange={set('username')} required autoFocus /></Field>
-        <Field label="Display name"><input id="nu-name" value={f.display_name} onChange={set('display_name')} required /></Field>
-        <Field label="Email (optional)"><input id="nu-email" type="email" value={f.email} onChange={set('email')} /></Field>
-        <div className="field inline">
-          <input id="nu-external" type="checkbox" checked={external} onChange={(e) => setExternal(e.target.checked)} />
-          <label htmlFor="nu-external">Signs in through an identity provider (no password)</label>
-        </div>
-        {!external && (
-          <Field label="Initial password" hint="Leave blank to have a one-time password generated and shown once. Either way they must replace it at their first sign-in, before enrolling an authenticator."><input id="nu-password" type="password" autoComplete="new-password" value={f.password} onChange={set('password')} minLength={12} /></Field>
-        )}
-        <RoleChecks value={r} onChange={setR} prefix="nu" />
-        <div className="actions">
-          <button type="button" className="btn" onClick={onClose}>Cancel</button>
-          <button type="submit" className="btn primary" disabled={busy}>Create</button>
-        </div>
-      </form>
-    </Modal>
+    <FormModal title="Add user" err={err} busy={busy} submitLabel="Create" onSubmit={save} onClose={onClose}>
+      <Field label="Username" hint="2-64 characters: letters, digits, . _ -"><input id="nu-username" value={f.username} onChange={set('username')} required autoFocus /></Field>
+      <Field label="Display name"><input id="nu-name" value={f.display_name} onChange={set('display_name')} required /></Field>
+      <Field label="Email (optional)"><input id="nu-email" type="email" value={f.email} onChange={set('email')} /></Field>
+      <div className="field inline">
+        <input id="nu-external" type="checkbox" checked={external} onChange={(e) => setExternal(e.target.checked)} />
+        <label htmlFor="nu-external">Signs in through an identity provider (no password)</label>
+      </div>
+      {!external && (
+        <Field label="Initial password" hint="Leave blank to have a one-time password generated and shown once. Either way they must replace it at their first sign-in, before enrolling an authenticator."><input id="nu-password" type="password" autoComplete="new-password" value={f.password} onChange={set('password')} minLength={12} /></Field>
+      )}
+      <RoleChecks value={r} onChange={setR} prefix="nu" />
+    </FormModal>
   )
 }
 
 function RolesForm({ user, onClose, onSaved }: { user: User; onClose: () => void; onSaved: () => void }) {
   const [r, setR] = useState<Role[]>(user.roles)
-  const [err, setErr] = useState('')
-  const [busy, setBusy] = useState(false)
+  const { busy, err, submit } = useSubmit()
+  const save = () =>
+    submit(async () => {
+      await api.put(`/users/${user.id}/roles`, { roles: r })
+      onSaved()
+    })
   return (
-    <Modal title={`Roles for ${user.username}`} onClose={onClose}>
-      {err && <Alert tone="danger">{err}</Alert>}
-      <form
-        onSubmit={async (e) => {
-          e.preventDefault()
-          setBusy(true)
-          setErr('')
-          try {
-            await api.put(`/users/${user.id}/roles`, { roles: r })
-            onSaved()
-          } catch (e2) {
-            setErr(errorMessage(e2))
-          } finally {
-            setBusy(false)
-          }
-        }}
-      >
-        <RoleChecks value={r} onChange={setR} prefix={`er-${user.id}`} />
-        <p className="muted">Granting admin or auditor is recorded in the audit log. An account with only auditor is review-only: it sees the audit portal and nothing else, and cannot be granted access to targets.</p>
-        <div className="actions">
-          <button type="button" className="btn" onClick={onClose}>Cancel</button>
-          <button type="submit" className="btn primary" disabled={busy}>Save</button>
-        </div>
-      </form>
-    </Modal>
+    <FormModal title={`Roles for ${user.username}`} err={err} busy={busy} submitLabel="Save" onSubmit={save} onClose={onClose}>
+      <RoleChecks value={r} onChange={setR} prefix={`er-${user.id}`} />
+      <p className="muted">Granting admin or auditor is recorded in the audit log. An account with only auditor is review-only: it sees the audit portal and nothing else, and cannot be granted access to targets.</p>
+    </FormModal>
   )
 }
 
 function PasswordForm({ user, onClose, onSaved }: { user: User; onClose: () => void; onSaved: (oneTime?: { username: string; password: string }) => void }) {
   const [pw, setPw] = useState('')
   const [generate, setGenerate] = useState(true)
-  const [err, setErr] = useState('')
-  const [busy, setBusy] = useState(false)
+  const { busy, err, submit } = useSubmit()
+  const save = () =>
+    submit(async () => {
+      const res = await api.put<{ initial_password?: string }>(`/users/${user.id}/password`, generate ? { generate: true } : { password: pw })
+      onSaved(res.initial_password ? { username: user.username, password: res.initial_password } : undefined)
+    })
   return (
-    <Modal title={`Reset password for ${user.username}`} onClose={onClose}>
-      {err && <Alert tone="danger">{err}</Alert>}
-      <form
-        onSubmit={async (e) => {
-          e.preventDefault()
-          setBusy(true)
-          setErr('')
-          try {
-            const res = await api.put<{ initial_password?: string }>(`/users/${user.id}/password`, generate ? { generate: true } : { password: pw })
-            onSaved(res.initial_password ? { username: user.username, password: res.initial_password } : undefined)
-          } catch (e2) {
-            setErr(errorMessage(e2))
-          } finally {
-            setBusy(false)
-          }
-        }}
-      >
-        <div className="field inline">
-          <input id={`pw-gen-${user.id}`} type="checkbox" checked={generate} onChange={(e) => setGenerate(e.target.checked)} />
-          <label htmlFor={`pw-gen-${user.id}`}>Generate a one-time password and show it once</label>
-        </div>
-        {!generate && (
-          <Field label="New password" hint="At least 12 characters."><input id={`pw-${user.id}`} type="password" autoComplete="new-password" value={pw} onChange={(e) => setPw(e.target.value)} required autoFocus minLength={12} /></Field>
-        )}
-        <p className="muted">They are signed out, their live sessions end, and they must replace this password at their next sign-in.</p>
-        <div className="actions">
-          <button type="button" className="btn" onClick={onClose}>Cancel</button>
-          <button type="submit" className="btn primary" disabled={busy}>{generate ? 'Generate' : 'Set password'}</button>
-        </div>
-      </form>
-    </Modal>
+    <FormModal title={`Reset password for ${user.username}`} err={err} busy={busy} submitLabel={generate ? 'Generate' : 'Set password'} onSubmit={save} onClose={onClose}>
+      <div className="field inline">
+        <input id={`pw-gen-${user.id}`} type="checkbox" checked={generate} onChange={(e) => setGenerate(e.target.checked)} />
+        <label htmlFor={`pw-gen-${user.id}`}>Generate a one-time password and show it once</label>
+      </div>
+      {!generate && (
+        <Field label="New password" hint="At least 12 characters."><input id={`pw-${user.id}`} type="password" autoComplete="new-password" value={pw} onChange={(e) => setPw(e.target.value)} required autoFocus minLength={12} /></Field>
+      )}
+      <p className="muted">They are signed out, their live sessions end, and they must replace this password at their next sign-in.</p>
+    </FormModal>
   )
 }
 
@@ -430,48 +381,30 @@ function Groups() {
 
 function GroupForm({ onClose, onSaved }: { onClose: () => void; onSaved: () => void }) {
   const [f, setF] = useState({ name: '', description: '' })
-  const [err, setErr] = useState('')
-  const [busy, setBusy] = useState(false)
+  const { busy, err, submit } = useSubmit()
+  const save = () =>
+    submit(async () => {
+      await api.post('/groups', { name: f.name.trim(), description: f.description })
+      onSaved()
+    })
   return (
-    <Modal title="Add group" onClose={onClose}>
-      {err && <Alert tone="danger">{err}</Alert>}
-      <form
-        onSubmit={async (e) => {
-          e.preventDefault()
-          setBusy(true)
-          setErr('')
-          try {
-            await api.post('/groups', { name: f.name.trim(), description: f.description })
-            onSaved()
-          } catch (e2) {
-            setErr(errorMessage(e2))
-          } finally {
-            setBusy(false)
-          }
-        }}
-      >
-        <Field label="Name"><input id="g-name" value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} required autoFocus /></Field>
-        <Field label="Description"><input id="g-desc" value={f.description} onChange={(e) => setF({ ...f, description: e.target.value })} /></Field>
-        <div className="actions">
-          <button type="button" className="btn" onClick={onClose}>Cancel</button>
-          <button type="submit" className="btn primary" disabled={busy}>Create</button>
-        </div>
-      </form>
-    </Modal>
+    <FormModal title="Add group" err={err} busy={busy} submitLabel="Create" onSubmit={save} onClose={onClose}>
+      <Field label="Name"><input id="g-name" value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} required autoFocus /></Field>
+      <Field label="Description"><input id="g-desc" value={f.description} onChange={(e) => setF({ ...f, description: e.target.value })} /></Field>
+    </FormModal>
   )
 }
 
 function MembersForm({ group, onClose, onSaved }: { group: Group; onClose: () => void; onSaved: () => void }) {
   const users = useList<User>('/users')
   const [selected, setSelected] = useState<string[] | null>(null)
-  const [err, setErr] = useState('')
-  const [busy, setBusy] = useState(false)
+  const { busy, err, setErr, submit } = useSubmit()
   useEffect(() => {
     api
       .get<{ items: GroupMember[] }>(`/groups/${group.id}/members`)
       .then((r) => setSelected(r.items.map((m) => m.user_id)))
       .catch((e) => setErr(errorMessage(e)))
-  }, [group.id])
+  }, [group.id, setErr])
   return (
     <Modal title={`Members of ${group.name}`} onClose={onClose}>
       {err && <Alert tone="danger">{err}</Alert>}
@@ -494,18 +427,12 @@ function MembersForm({ group, onClose, onSaved }: { group: Group; onClose: () =>
         <button
           className="btn primary"
           disabled={busy || selected === null}
-          onClick={async () => {
-            setBusy(true)
-            setErr('')
-            try {
+          onClick={() =>
+            void submit(async () => {
               await api.put(`/groups/${group.id}/members`, { user_ids: selected })
               onSaved()
-            } catch (e) {
-              setErr(errorMessage(e))
-            } finally {
-              setBusy(false)
-            }
-          }}
+            })
+          }
         >
           Save members
         </button>
