@@ -134,3 +134,46 @@ func TestSyncedGroupRejectsManualMembership(t *testing.T) {
 		t.Fatalf("expected ErrSynced, got %v", err)
 	}
 }
+
+// TestListPagesThroughNamesThatDifferInCase: names are unique as written, so
+// "Ops" and "ops" can both exist, but the list paged by LOWER(name) alone
+// (B6): with the two on either side of a page boundary, the next page began
+// after "ops" and skipped "Ops". Paging by the lower-cased name and then the
+// name itself visits every group exactly once.
+func TestListPagesThroughNamesThatDifferInCase(t *testing.T) {
+	ctx := context.Background()
+	r := NewRepo(testDB(t))
+	want := []string{"alpha", "Ops", "ops", "OPS", "zeta"}
+	for _, n := range want {
+		if err := r.Create(ctx, &Group{Name: n}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, size := range []int{1, 2, 3} {
+		var got []string
+		after := ""
+		for i := 0; i < 10; i++ {
+			page, next, err := r.List(ctx, after, size)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, g := range page {
+				got = append(got, g.Name)
+			}
+			if next == "" {
+				break
+			}
+			after = next
+		}
+		if len(got) != len(want) {
+			t.Fatalf("pages of %d: %v, want all of %v", size, got, want)
+		}
+		seen := map[string]bool{}
+		for _, n := range got {
+			if seen[n] {
+				t.Fatalf("pages of %d: %q listed twice: %v", size, n, got)
+			}
+			seen[n] = true
+		}
+	}
+}

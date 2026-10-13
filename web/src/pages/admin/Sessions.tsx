@@ -34,7 +34,7 @@ export function Sessions() {
           <input id="s-open" type="checkbox" checked={openOnly} onChange={(e) => setOpenOnly(e.target.checked)} />
           <label htmlFor="s-open">Live only</label>
         </span>
-        <input id="s-user" placeholder="filter by username" value={username} onChange={(e) => setUsername(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && setApplied(username.trim())} style={{ padding: '6px 10px', border: '1px solid var(--line-strong)', borderRadius: 6, background: 'var(--bg-raised)' }} />
+        <input id="s-user" className="filter-control" placeholder="filter by username" aria-label="Filter by username" value={username} onChange={(e) => setUsername(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && setApplied(username.trim())} />
         <button className="btn sm" onClick={() => setApplied(username.trim())}>Filter</button>
         <button className="btn sm" onClick={() => void reload()}>Refresh</button>
       </PageHead>

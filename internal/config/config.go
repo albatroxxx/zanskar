@@ -48,6 +48,9 @@ type Config struct {
 	// appears on an interface, so it has to be named here or the certificate
 	// will not carry it.
 	TLSHosts []string
+	// Warnings name variables that are set but do nothing in this
+	// configuration; serve logs each at start.
+	Warnings []string
 	// RedirectAddr, when set, is a plain-HTTP listener that answers every
 	// request with a redirect to the HTTPS listener (":80" on a default
 	// install). Only meaningful when the gateway serves TLS.
@@ -180,7 +183,6 @@ func Load(opts Options) (*Config, error) {
 		TLSHosts:             splitList(os.Getenv("ZANSKAR_TLS_HOSTS")),
 		GuacdAddr:            os.Getenv("ZANSKAR_GUACD_ADDR"),  // empty disables RDP and VNC
 		DockerPath:           os.Getenv("ZANSKAR_DOCKER_PATH"), // empty defaults to "docker" on PATH
-		TrustProxyTLS:        os.Getenv("ZANSKAR_TRUST_PROXY_TLS") == "true",
 		PublicURL:            strings.TrimRight(strings.TrimSpace(os.Getenv("ZANSKAR_PUBLIC_URL")), "/"),
 		ConsoleCLI:           !strings.EqualFold(strings.TrimSpace(os.Getenv("ZANSKAR_CONSOLE_CLI")), "off"),
 		Issuer:               envOr("ZANSKAR_ISSUER", "Zanskar"),
@@ -198,7 +200,6 @@ func Load(opts Options) (*Config, error) {
 		SIEMSyslogCAFile:     os.Getenv("ZANSKAR_SIEM_SYSLOG_CA"),
 		SIEMWebhookURL:       os.Getenv("ZANSKAR_SIEM_WEBHOOK_URL"),
 		SIEMWebhookSecret:    []byte(os.Getenv("ZANSKAR_SIEM_WEBHOOK_SECRET")),
-		AllowPlainHTTP:       os.Getenv("ZANSKAR_ALLOW_PLAIN_HTTP") == "true",
 		TrustedProxies:       nil, // parsed below so a bad entry is a config error
 		LogLevel:             strings.ToLower(envOr("ZANSKAR_LOG_LEVEL", "info")),
 		LogFormat:            strings.ToLower(envOr("ZANSKAR_LOG_FORMAT", "json")),
@@ -214,6 +215,14 @@ func Load(opts Options) (*Config, error) {
 	}
 
 	var errs []error
+	for name, dst := range map[string]*bool{"ZANSKAR_TRUST_PROXY_TLS": &c.TrustProxyTLS, "ZANSKAR_ALLOW_PLAIN_HTTP": &c.AllowPlainHTTP} {
+		v, err := envBool(name)
+		if err != nil {
+			errs = append(errs, err)
+		}
+		*dst = v
+	}
+	c.Warnings = ignoredSettings(c)
 
 	// Loopback by default: the documented deployment terminates TLS in a proxy on
 	// the same host. Set ZANSKAR_TRUSTED_PROXIES to "" to trust nothing.
@@ -465,4 +474,36 @@ func checkPublicURL(raw string) error {
 		return errors.New("must be the origin only, with no path, query or user")
 	}
 	return nil
+}
+
+// envBool reads a yes-or-no environment variable in the words the runtime
+// settings accept: true, 1, yes or on; false, 0, no or off; unset or empty
+// is false. Anything else is an error. These read only the literal "true"
+// before, so "1" or "yes" was false without a word (B13).
+func envBool(name string) (bool, error) {
+	switch v := strings.ToLower(strings.TrimSpace(os.Getenv(name))); v {
+	case "true", "1", "yes", "on":
+		return true, nil
+	case "", "false", "0", "no", "off":
+		return false, nil
+	default:
+		return false, fmt.Errorf("%s must be true or false, got %q", name, v)
+	}
+}
+
+// ignoredSettings names the variables that are set but do nothing in this
+// configuration, so the operator is told at start rather than left to find
+// out (B13).
+func ignoredSettings(c *Config) []string {
+	var out []string
+	if c.TLSMode == TLSProxy && (c.TLSCert != "" || c.TLSKey != "") {
+		out = append(out, "ZANSKAR_TLS_CERT and ZANSKAR_TLS_KEY are ignored: TLS mode is proxy, so the proxy in front holds the certificate")
+	}
+	if c.TLSMode == TLSFile && len(c.TLSHosts) > 0 {
+		out = append(out, "ZANSKAR_TLS_HOSTS is ignored: the certificate comes from ZANSKAR_TLS_CERT, whose names are its own")
+	}
+	if c.AllowPlainHTTP && c.ServesTLS() {
+		out = append(out, "ZANSKAR_ALLOW_PLAIN_HTTP is ignored: the gateway serves TLS")
+	}
+	return out
 }

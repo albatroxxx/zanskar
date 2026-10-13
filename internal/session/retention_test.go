@@ -204,3 +204,86 @@ func TestSelectForPurgeHonoursOwnRetention(t *testing.T) {
 		t.Fatalf("selection: %v", got)
 	}
 }
+
+// finishedRecording makes a finished recording of a session and returns it.
+func finishedRecording(t *testing.T, r *Repo, until *time.Time) *Recording {
+	t.Helper()
+	ctx := context.Background()
+	s := &Session{UserID: "u1", TargetID: "t1", Protocol: "ssh", ClientIP: "10.0.0.1"}
+	if err := r.Start(ctx, s); err != nil {
+		t.Fatal(err)
+	}
+	rec := &Recording{SessionID: s.ID, Format: "asciicast", StorageURI: "file:///rec-" + s.ID + ".cast", RetentionUntil: until}
+	if err := r.CreateRecording(ctx, rec); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.FinishRecording(ctx, rec.ID, 100, "sha"); err != nil {
+		t.Fatal(err)
+	}
+	return rec
+}
+
+// TestOwnRetentionAppliesUnderKeepEverything: a policy's or a target's
+// retention_days fixed each recording's retention date, but the sweep
+// returned at once while the global policy kept everything (B15), the
+// default, so those dates were never applied. A recording past its own
+// date is purged whatever the global policy says; one without a date is
+// kept.
+func TestOwnRetentionAppliesUnderKeepEverything(t *testing.T) {
+	ctx := context.Background()
+	r := newRetentionTestRepo(t)
+	past := time.Now().UTC().Add(-time.Hour)
+	due := finishedRecording(t, r, &past)
+	kept := finishedRecording(t, r, nil)
+	fake := &fakeStorage{}
+	sw := &RetentionSweeper{Repo: r, Storage: fake, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	if n, err := sw.Sweep(ctx); err != nil || n != 1 || len(fake.deleted) != 1 || fake.deleted[0] != due.StorageURI {
+		t.Fatalf("under the default keep-everything policy: purged %d (%v), deleted %v; want only the recording past its own date", n, err, fake.deleted)
+	}
+	if got, _ := r.GetRecording(ctx, kept.ID); got.PurgedAt != nil {
+		t.Fatal("a recording with no date of its own must be kept")
+	}
+}
+
+// movingStorage moves the recording to another store while the sweep is
+// deleting its old copy, as a storage move running at the same time does.
+type movingStorage struct {
+	fakeStorage
+	r      *Repo
+	id, to string
+}
+
+func (m *movingStorage) Delete(ctx context.Context, uri string) error {
+	if err := m.r.UpdateRecordingURI(ctx, m.id, uri, m.to); err != nil {
+		return err
+	}
+	return m.fakeStorage.Delete(ctx, uri)
+}
+
+// TestSweepRacingAMoveLeavesTheNewCopy: a sweep that read a recording's
+// address, then deleted it after a storage move had copied the recording
+// elsewhere and repointed the row, still marked the row purged (B17): the
+// new copy was orphaned, kept forever with nothing pointing at it. The
+// row is now marked only if it still names what was deleted, and the next
+// sweep deletes the new copy.
+func TestSweepRacingAMoveLeavesTheNewCopy(t *testing.T) {
+	ctx := context.Background()
+	r := newRetentionTestRepo(t)
+	past := time.Now().UTC().Add(-time.Hour)
+	rec := finishedRecording(t, r, &past)
+	moved := &movingStorage{r: r, id: rec.ID, to: "s3://bucket/rec.cast"}
+	sw := &RetentionSweeper{Repo: r, Storage: moved, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	if _, err := sw.Sweep(ctx); err != nil {
+		t.Fatal(err)
+	}
+	got, err := r.GetRecording(ctx, rec.ID)
+	if err != nil || got.PurgedAt != nil || got.StorageURI != "s3://bucket/rec.cast" {
+		t.Fatalf("a recording moved while it was swept must stay, pointing at its new copy: %+v %v", got, err)
+	}
+	// The next sweep finds it at its new address.
+	fake := &fakeStorage{}
+	sw.Storage = fake
+	if n, err := sw.Sweep(ctx); err != nil || n != 1 || len(fake.deleted) != 1 || fake.deleted[0] != "s3://bucket/rec.cast" {
+		t.Fatalf("the next sweep: %d %v %v", n, err, fake.deleted)
+	}
+}

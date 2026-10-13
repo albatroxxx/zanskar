@@ -2,7 +2,7 @@ import { protocolName } from '../../api/format'
 import { useState, type FormEvent } from 'react'
 import { api, errorMessage } from '../../api/client'
 import type { OSFamily, Protocol, Target } from '../../api/types'
-import { Alert, Field, Modal } from '../../components/ui'
+import { Alert, Field, Modal, Tabs } from '../../components/ui'
 import { formatTags, parseTags, protocols } from './lib'
 
 export type TargetKind = 'host' | 'database'
@@ -152,10 +152,7 @@ export function TargetForm({ initial, kind, onClose, onSaved }: { initial?: Targ
       {err && <Alert tone="danger">{err}</Alert>}
       {!initial && !kind && (
         <>
-          <div className="tabs" style={{ marginBottom: 12 }}>
-            <button type="button" className={k === 'host' ? 'active' : ''} onClick={() => setK('host')}>Host</button>
-            <button type="button" className={k === 'database' ? 'active' : ''} onClick={() => setK('database')}>Database</button>
-          </div>
+          <Tabs label="Kind of target" value={k ?? ''} onChange={setK} tabs={[{ key: 'host', label: 'Host' }, { key: 'database', label: 'Database' }]} />
           {!k && <p className="muted">A <strong>host</strong> is a machine reached over SSH, RDP, VNC or WinRM. A <strong>database</strong> is an endpoint such as RDS, reached through a client container that never sees the password. Autoscaling groups are added under <em>Autoscaling</em>.</p>}
         </>
       )}

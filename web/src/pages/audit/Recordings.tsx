@@ -10,6 +10,8 @@ import { useRecordingsPath } from './paths'
 export function Recordings() {
   const recordingsPath = useRecordingsPath()
   const [items, setItems] = useState<Session[] | null>(null)
+  // How many sessions have been read so far, recorded or not.
+  const [scanned, setScanned] = useState(0)
   const [next, setNext] = useState('')
   const [err, setErr] = useState('')
   const [busy, setBusy] = useState(false)
@@ -23,6 +25,7 @@ export function Recordings() {
       .then((p) => {
         const withRec = p.items.filter((s) => !!s.recording_id)
         setItems((cur) => (cursor && cur ? [...cur, ...withRec] : withRec))
+        setScanned((n) => (cursor ? n + p.items.length : p.items.length))
         setNext(p.next_cursor ?? '')
       })
       .catch((e) => setErr(errorMessage(e)))
@@ -42,13 +45,22 @@ export function Recordings() {
     if (!needle) return true
     return [s.username, s.target_name, s.protocol, s.asg_instance_id, s.end_reason].some((v) => (v ?? '').toLowerCase().includes(needle))
   })
+  // The API has no search, so the filter runs here over the sessions read so
+  // far. While older ones are still unread, the page says how far back it has
+  // looked instead of answering for sessions it has never seen.
+  let nothing = items?.length === 0 ? 'No recordings yet.' : 'No recordings match.'
+  if (next) {
+    nothing = items?.length === 0
+      ? `No recordings among the newest ${scanned} sessions. Load more to look further back.`
+      : `No recordings among the newest ${scanned} sessions match. Load more to search further back.`
+  }
 
   return (
     <>
       <PageHead title="Recordings" lead="Every session is recorded: the terminal transcript and the commands that were run, or the desktop stream. Playing one is logged with your name.">
         <input
-          className="mono"
-          style={{ padding: '7px 10px', border: '1px solid var(--line-strong)', borderRadius: 'var(--radius)', background: 'var(--bg-raised)', minWidth: 220 }}
+          className="mono filter-control"
+          style={{ minWidth: 220 }}
           placeholder="filter by user, machine, protocol"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
@@ -56,11 +68,14 @@ export function Recordings() {
         />
       </PageHead>
       {err && <Alert tone="danger">{err}</Alert>}
+      {next && visible.length > 0 && (
+        <p className="muted">Showing recordings from the newest {scanned} sessions; the filter searches only these. Load more to go further back.</p>
+      )}
       <div className="card table-wrap">
         {items === null ? (
-          <Empty>Loading…</Empty>
+          <Empty>{err ? 'The recordings could not be listed.' : 'Loading…'}</Empty>
         ) : visible.length === 0 ? (
-          <Empty>{items.length === 0 ? 'No recordings yet.' : 'No recordings match.'}</Empty>
+          <Empty>{nothing}</Empty>
         ) : (
           <table>
             <thead>
@@ -84,11 +99,11 @@ export function Recordings() {
                   <td>{fmtDuration(s.started_at, s.ended_at)}</td>
                   <td>{reasonBadge(s.end_reason)}</td>
                   <td>
-                    <Link className="btn sm" to={`${recordingsPath}/${s.recording_id}`}>Review</Link>{' '}
+                    <Link className="btn sm" to={`${recordingsPath}/${encodeURIComponent(s.recording_id!)}`}>Review</Link>{' '}
                     {/* Downloads are recorded views and audit events, like playback. */}
-                    <a className="btn sm ghost" href={`/api/v1/recordings/${s.recording_id}/download`} download title="Download the recording file (audited)">Download</a>
+                    <a className="btn sm ghost" href={`/api/v1/recordings/${encodeURIComponent(s.recording_id!)}/download`} download title="Download the recording file (audited)">Download</a>
                     {s.protocol !== 'rdp' && s.protocol !== 'vnc' && (
-                      <>{' '}<a className="btn sm ghost" href={`/api/v1/recordings/${s.recording_id}/transcript`} download title="Download the command lines as text (audited)">Transcript</a></>
+                      <>{' '}<a className="btn sm ghost" href={`/api/v1/recordings/${encodeURIComponent(s.recording_id!)}/transcript`} download title="Download the command lines as text (audited)">Transcript</a></>
                     )}
                   </td>
                 </tr>

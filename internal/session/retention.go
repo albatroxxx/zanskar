@@ -99,9 +99,18 @@ func (r *Repo) listPurgeCandidates(ctx context.Context) ([]purgeCandidate, error
 
 // markRecordingPurged records that a recording's blob was deleted, keeping the
 // metadata row so audit events that reference it still resolve.
-func (r *Repo) markRecordingPurged(ctx context.Context, id string, when time.Time) error {
-	_, err := r.db.ExecContext(ctx, r.db.Rebind(`UPDATE recordings SET purged_at = ? WHERE id = ?`), store.TimeArg(when), id)
-	return err
+// markRecordingPurged marks a recording purged, but only while it still
+// names uri, the copy that was deleted. A storage move can repoint the row
+// between the sweep reading it and deleting it; marking it anyway orphaned
+// the new copy (B17). Reports whether the row was marked.
+func (r *Repo) markRecordingPurged(ctx context.Context, id, uri string, when time.Time) (bool, error) {
+	res, err := r.db.ExecContext(ctx, r.db.Rebind(`UPDATE recordings SET purged_at = ? WHERE id = ? AND storage_uri = ? AND purged_at IS NULL`),
+		store.TimeArg(when), id, uri)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n == 1, err
 }
 
 // selectForPurge decides which candidates to delete under the policy and why.
@@ -156,9 +165,10 @@ func (s *RetentionSweeper) Sweep(ctx context.Context) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	if policy.MaxAgeDays == 0 && policy.MaxTotalBytes == 0 {
-		return 0, nil // retention disabled
-	}
+	// No early return when the global policy keeps everything (the
+	// default): a recording can carry its own date, from its policy or its
+	// target, and selectForPurge applies that date whatever the global
+	// policy says. Returning here left every such date inert (B15).
 	cands, err := s.Repo.listPurgeCandidates(ctx)
 	if err != nil {
 		return 0, err
@@ -175,8 +185,15 @@ func (s *RetentionSweeper) Sweep(ctx context.Context) (int, error) {
 			s.Log.Error("retention: delete blob", "recording", c.id, "err", err)
 			continue
 		}
-		if err := s.Repo.markRecordingPurged(ctx, c.id, time.Now().UTC()); err != nil {
+		marked, err := s.Repo.markRecordingPurged(ctx, c.id, c.uri, time.Now().UTC())
+		if err != nil {
 			s.Log.Error("retention: mark purged", "recording", c.id, "err", err)
+			continue
+		}
+		if !marked {
+			// Moved to another store while this sweep held its old address:
+			// the next sweep deletes the copy it points at now.
+			s.Log.Info("retention: recording moved during the sweep; left for the next one", "recording", c.id)
 			continue
 		}
 		if s.Audit != nil {

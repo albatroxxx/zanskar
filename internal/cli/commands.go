@@ -309,7 +309,7 @@ func cmdStatus(x *run) error {
 	}
 	auditLine, auditStyle := fmt.Sprintf("chain verified · %d events", num(v, "checked")), styleOK
 	if v["intact"] != true {
-		auditLine, auditStyle = fmt.Sprintf("CHAIN BROKEN at event %s: run audit verify", str(sub(v, "broken"), "id")), styleError
+		auditLine, auditStyle = fmt.Sprintf("CHAIN BROKEN at event %s: run audit verify", str(sub(v, "broken"), "ID")), styleError
 		if len(sub(v, "broken")) == 0 {
 			auditLine = "PROBLEMS FOUND: run audit verify"
 		}
@@ -722,7 +722,9 @@ func cmdAuditVerify(x *run) error {
 		return nil
 	}
 	if b := sub(v, "broken"); len(b) > 0 || len(problems) == 0 {
-		x.out.add(styleError, "✗ Chain broken at event %s: %s", str(b, "id"), str(b, "reason"))
+		// The API sends the broken event as audit.VerifyError, whose fields
+		// carry no JSON tags: ID and Reason, as the spec documents them.
+		x.out.add(styleError, "✗ Chain broken at event %s: %s", str(b, "ID"), str(b, "Reason"))
 		x.out.add(styleMuted, "Events from there on cannot be shown to be unaltered. Repair is a host-only operation (zanskar audit), on purpose.")
 	}
 	// The chain can link and still have lost its newest events: the signed

@@ -11,7 +11,10 @@ type Step = 'password' | 'change' | 'verify' | 'enroll' | 'recovery'
 export function Login() {
   const auth = useAuth()
   const loc = useLocation()
-  const from = safeReturnPath((loc.state as { from?: unknown } | null)?.from)
+  // Where to go once signed in: what the guard remembered, else the ?next=
+  // the gateway's single sign-on sends while a code is still owed (B20);
+  // either way only a path on this site.
+  const from = safeReturnPath((loc.state as { from?: unknown } | null)?.from ?? new URLSearchParams(loc.search).get('next'))
   const [step, setStep] = useState<Step>('password')
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
@@ -213,7 +216,7 @@ export function Login() {
               <p className="muted" style={{ marginTop: 0 }}>This deployment requires a second factor. Scan the code with your authenticator app, then enter the six-digit code it shows.</p>
               {enroll ? (
                 <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12 }}>
-                  <img src={enroll.qr} alt="TOTP enrollment QR code" width={192} height={192} style={{ borderRadius: 6, background: '#fff' }} />
+                  <img className="qr" src={enroll.qr} alt="TOTP enrollment QR code" width={192} height={192} />
                   <div style={{ textAlign: 'center', maxWidth: '100%' }}>
                     <div className="muted" style={{ fontSize: '0.8rem' }}>Manual entry key</div>
                     <code style={{ wordBreak: 'break-all' }}>{enroll.secret}</code>
@@ -242,7 +245,11 @@ export function Login() {
                 ))}
               </div>
               <div className="actions" style={{ justifyContent: 'flex-end', marginTop: 16 }}>
-                <button className="btn primary" onClick={() => (window.location.href = from)}>I have saved them</button>
+                {/* Leaving this step hands over to the redirect at the top: where the
+                    user was going, now that they are fully signed in, or the next
+                    step still owed. It used to load from as a new page, which sent a
+                    ?next= the page was handed into location.href. */}
+                <button className="btn primary" onClick={() => setStep('password')}>I have saved them</button>
               </div>
             </div>
           )}

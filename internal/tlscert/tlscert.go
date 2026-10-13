@@ -327,6 +327,14 @@ type Manager struct {
 	Hosts []string
 
 	active atomic.Pointer[entry]
+	now    func() time.Time // nil means time.Now; tests move it
+}
+
+func (m *Manager) clock() time.Time {
+	if m.now != nil {
+		return m.now()
+	}
+	return time.Now()
 }
 
 type entry struct {
@@ -369,7 +377,7 @@ func (m *Manager) Load(ctx context.Context) error {
 	}
 	certPEM, keyPEM, err := m.Repo.Get(ctx, SourceGenerated)
 	if err == nil {
-		if cert, leaf, perr := Parse(certPEM, keyPEM); perr == nil && time.Now().Add(30*24*time.Hour).Before(leaf.NotAfter) {
+		if cert, leaf, perr := Parse(certPEM, keyPEM); perr == nil && m.clock().Add(renewBefore).Before(leaf.NotAfter) {
 			// A name added to the configuration after the first start has to
 			// take effect, or the operator sets ZANSKAR_TLS_HOSTS, restarts,
 			// and nothing happens.
@@ -384,12 +392,47 @@ func (m *Manager) Load(ctx context.Context) error {
 		return err
 	}
 	// Nothing uploaded and no file certificate applies, or the two branches
-	// above would have returned, so a generated certificate is what serves.
-	// Clear the previous one first: Regenerate leaves an uploaded or file
-	// certificate in place, and after Reset the uploaded one is still the
-	// active entry even though its row is gone.
-	m.active.Store(nil)
-	return m.Regenerate(ctx, m.Hosts, "")
+	// above would have returned, so a generated certificate is what serves,
+	// whatever served before (after Reset, the deleted upload). It takes
+	// over only once it exists: a failure leaves the previous certificate
+	// serving rather than none (B8).
+	return m.regenerate(ctx, m.Hosts, "", true)
+}
+
+// renewBefore is how long before its end a self-signed certificate is
+// replaced (ADR 0021).
+const renewBefore = 30 * 24 * time.Hour
+
+// Renew replaces the self-signed certificate once it is within thirty days
+// of its end, as Load does at start (B9). It does nothing while an upload or
+// a file certificate serves.
+func (m *Manager) Renew(ctx context.Context) error {
+	e := m.active.Load()
+	if e == nil || e.info.Source != SourceGenerated || m.clock().Add(renewBefore).Before(e.info.NotAfter) {
+		return nil
+	}
+	if err := m.Load(ctx); err != nil {
+		return err
+	}
+	m.Log.Info("renewed the self-signed TLS certificate", "not_after", m.Active().NotAfter)
+	return nil
+}
+
+// Run calls Renew every interval until ctx ends, so a gateway that runs
+// for years still renews its own certificate.
+func (m *Manager) Run(ctx context.Context, every time.Duration) {
+	t := time.NewTicker(every)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			if err := m.Renew(ctx); err != nil {
+				m.Log.Error("renew the self-signed TLS certificate", "err", err)
+			}
+		}
+	}
 }
 
 func (m *Manager) set(source string, cert tls.Certificate, leaf *x509.Certificate, certPEM string) {
@@ -441,6 +484,12 @@ func (m *Manager) Reset(ctx context.Context) (Info, error) {
 // Regenerate makes a new self-signed certificate for hosts and serves it
 // unless an uploaded or file certificate takes precedence.
 func (m *Manager) Regenerate(ctx context.Context, hosts []string, by string) error {
+	return m.regenerate(ctx, hosts, by, false)
+}
+
+// regenerate is Regenerate; with replace the new certificate serves even
+// over an upload or a file certificate, which is what Load decides.
+func (m *Manager) regenerate(ctx context.Context, hosts []string, by string, replace bool) error {
 	if len(hosts) == 0 {
 		hosts = []string{"localhost"}
 	}
@@ -451,7 +500,7 @@ func (m *Manager) Regenerate(ctx context.Context, hosts []string, by string) err
 	if err := m.Repo.Put(ctx, SourceGenerated, certPEM, keyPEM, by); err != nil {
 		return err
 	}
-	if e := m.active.Load(); e != nil && e.info.Source != SourceGenerated {
+	if e := m.active.Load(); !replace && e != nil && e.info.Source != SourceGenerated {
 		return nil
 	}
 	cert, leaf, err := Parse(certPEM, keyPEM)

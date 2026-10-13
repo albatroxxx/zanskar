@@ -6,7 +6,10 @@
 // Every DEK lives in the key_versions table wrapped by the key-encryption key
 // (KEK) provider. The highest non-retired version is active and is used for
 // new encryptions; older versions stay loaded so existing ciphertext can still
-// be decrypted after a rotation. Owners re-encrypt their rows lazily.
+// be decrypted after a rotation. A row keeps the version it was sealed under
+// until it is written again (a rotated credential, a re-entered secret);
+// nothing re-encrypts rows in the background, and `zanskar key status` shows
+// what each version still protects (C4).
 //
 // AAD convention: every ciphertext is bound to its owning row with additional
 // authenticated data of the form "<table>:<row id>", built with AAD. A
@@ -55,7 +58,16 @@ type Ring struct {
 	deks   map[int][]byte
 	active int
 	closed bool
+
+	// lastReload is when Decrypt last read the table for a version it did
+	// not hold; at most one such read a second, so ciphertext under a
+	// version that exists nowhere cannot turn every read into a query.
+	reloadMu   sync.Mutex
+	lastReload time.Time
 }
+
+// errUnknownVersion is a version the ring does not hold.
+var errUnknownVersion = errors.New("keyring: key version is unknown or retired")
 
 // Open loads every non-retired key version, unwrapping each DEK with kek, and
 // bootstraps version 1 when the table is empty.
@@ -197,8 +209,24 @@ func (r *Ring) Encrypt(aad string, plaintext []byte) ([]byte, int, error) {
 	return ct, r.active, nil
 }
 
-// Decrypt opens ciphertext produced under keyVersion with the same aad.
+// Decrypt opens ciphertext produced under keyVersion with the same aad. A
+// version the ring does not hold may have been added since it loaded, by
+// `zanskar key rotate` or another gateway on the same database (B7): the
+// table is read again once before the version is called unknown.
 func (r *Ring) Decrypt(aad string, ciphertext []byte, keyVersion int) ([]byte, error) {
+	pt, err := r.decrypt(aad, ciphertext, keyVersion)
+	if !errors.Is(err, errUnknownVersion) || !r.mayReload() {
+		return pt, err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if lerr := r.load(ctx); lerr != nil {
+		return nil, fmt.Errorf("%w (reloading key versions: %w)", err, lerr)
+	}
+	return r.decrypt(aad, ciphertext, keyVersion)
+}
+
+func (r *Ring) decrypt(aad string, ciphertext []byte, keyVersion int) ([]byte, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	if r.closed {
@@ -206,9 +234,20 @@ func (r *Ring) Decrypt(aad string, ciphertext []byte, keyVersion int) ([]byte, e
 	}
 	dek, ok := r.deks[keyVersion]
 	if !ok {
-		return nil, fmt.Errorf("keyring: key version %d is unknown or retired", keyVersion)
+		return nil, fmt.Errorf("%w: version %d", errUnknownVersion, keyVersion)
 	}
 	return crypto.Decrypt(dek, ciphertext, []byte(aad))
+}
+
+// mayReload reports whether a reload for an unknown version may run now.
+func (r *Ring) mayReload() bool {
+	r.reloadMu.Lock()
+	defer r.reloadMu.Unlock()
+	if time.Since(r.lastReload) < time.Second {
+		return false
+	}
+	r.lastReload = time.Now()
+	return true
 }
 
 // Rotate creates a new DEK version and makes it active. Earlier versions stay

@@ -331,3 +331,107 @@ func TestSyncStopsWhenTheStoredInstancesCannotBeRead(t *testing.T) {
 		t.Fatalf("pinned host key replaced on first use: stored %q, want %q (the new key was %q)", stored, fp, otherFP)
 	}
 }
+
+// TestSyncAuditsAMismatchOncePerSighting: a host key or certificate mismatch
+// was audited on every poll (B3), so one affected instance wrote about 2,880
+// chained events a day at the 30 s default. A mismatch is now recorded when
+// it is first seen; polls that see the same one again add nothing.
+func TestSyncAuditsAMismatchOncePerSighting(t *testing.T) {
+	ctx := context.Background()
+	s, repo, fake, _ := newSyncer(t)
+	port, _ := sshHost(t)
+	g := sample()
+	g.Ports = map[target.Protocol]int{target.SSH: port}
+	if err := repo.Create(ctx, g); err != nil {
+		t.Fatal(err)
+	}
+	fake.Set("web-asg", cloud.Instance{ID: "i-9", PrivateIP: "127.0.0.1", LifecycleState: "InService"})
+	fake.Console["i-9"] = []string{"SHA256:SomethingElseEntirely0000000000000000000000"}
+	for i := 0; i < 3; i++ {
+		sum, err := s.SyncGroup(ctx, g)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if sum.HostKeyMismatches != 1 {
+			t.Fatalf("poll %d: the mismatch must still be counted: %+v", i+1, sum)
+		}
+	}
+	events, _, err := s.Audit.List(ctx, audit.Filter{Action: audit.ASGInstanceHostKeyMismatch})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 1 {
+		t.Fatalf("three polls of one mismatch wrote %d audit events, want 1", len(events))
+	}
+}
+
+// TestPollScheduleBacksOff: the poll loop retried a group whose cloud API
+// failed at its normal interval forever (B4), though ADR 0011 promises
+// exponential backoff, and synced groups one after another, so one slow
+// group held up the rest. A failing group now waits twice as long after
+// each failure in a row, up to ten minutes (or its own interval when that
+// is longer), and is back on its interval after a success; a group whose
+// sync is still running is never started again alongside it.
+func TestPollScheduleBacksOff(t *testing.T) {
+	var sch schedule
+	now := time.Date(2026, 10, 12, 10, 0, 0, 0, time.UTC)
+	every := 30 * time.Second
+	if !sch.start("g1", now) {
+		t.Fatal("a group never synced is due")
+	}
+	if sch.start("g1", now) {
+		t.Fatal("a group whose sync is running must not start again")
+	}
+	failed := errors.New("throttled")
+	wantGaps := []time.Duration{time.Minute, 2 * time.Minute, 4 * time.Minute, 8 * time.Minute, 10 * time.Minute, 10 * time.Minute}
+	for i, want := range wantGaps {
+		sch.done("g1", every, failed, now)
+		if sch.start("g1", now.Add(want-time.Second)) {
+			t.Fatalf("failure %d: due again before %s", i+1, want)
+		}
+		if !sch.start("g1", now.Add(want)) {
+			t.Fatalf("failure %d: not due after %s", i+1, want)
+		}
+	}
+	sch.done("g1", every, nil, now)
+	if sch.start("g1", now.Add(every-time.Second)) || !sch.start("g1", now.Add(every)) {
+		t.Fatal("after a success the group is back on its own interval")
+	}
+	// A long interval is never shortened by the cap.
+	sch.done("g1", time.Hour, failed, now)
+	if sch.start("g1", now.Add(time.Hour-time.Minute)) {
+		t.Fatal("backoff must not undercut a group's own long interval")
+	}
+}
+
+// TestAccessTestAssumesTheRoleAfresh: "Test access" on a saved group used the
+// syncer's cached client (B1), whose credentials are kept for up to fifteen
+// minutes, so a trust policy revoked a minute ago still tested OK. The test
+// gets a factory that builds a new client, and so assumes the role again,
+// on every call; the syncer keeps its cache.
+func TestAccessTestAssumesTheRoleAfresh(t *testing.T) {
+	ctx := context.Background()
+	g := sample()
+	if err := g.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	g.ID = "g1"
+	fresh := AWSFresh()
+	a, err := fresh(ctx, g)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := fresh(ctx, g)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a == b {
+		t.Fatal("the access test's factory must not hand back a cached client")
+	}
+	cached := AWSProviders()
+	c, _ := cached(ctx, g)
+	d, _ := cached(ctx, g)
+	if c != d {
+		t.Fatal("the syncer's factory keeps one client per group")
+	}
+}

@@ -1,4 +1,5 @@
-import { Children, cloneElement, isValidElement, useEffect, useId, useRef, useState, type ReactElement, type ReactNode } from 'react'
+import { Children, cloneElement, isValidElement, useEffect, useId, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactElement, type ReactNode } from 'react'
+import { errorMessage } from '../api/client'
 
 export function PageHead({ title, lead, children }: { title: string; lead?: string; children?: ReactNode }) {
   return (
@@ -8,6 +9,46 @@ export function PageHead({ title, lead, children }: { title: string; lead?: stri
         {lead && <p>{lead}</p>}
       </div>
       {children && <div className="actions">{children}</div>}
+    </div>
+  )
+}
+
+/**
+ * Tabs is a row of tabs that switches what is shown below it. The open tab
+ * is announced as selected, not only drawn so; the arrow keys, Home and End
+ * move between the tabs, and Tab moves on past them, as assistive technology
+ * expects of a tab list. value may be '' when nothing is picked yet.
+ */
+export function Tabs<K extends string>({ label, tabs, value, onChange }: { label: string; tabs: { key: K; label: ReactNode }[]; value: K | ''; onChange: (key: K) => void }) {
+  const buttons = useRef<(HTMLButtonElement | null)[]>([])
+  const open = tabs.findIndex((t) => t.key === value)
+  const onKeyDown = (e: ReactKeyboardEvent<HTMLButtonElement>, i: number) => {
+    const last = tabs.length - 1
+    const to = ({ ArrowRight: i === last ? 0 : i + 1, ArrowLeft: i === 0 ? last : i - 1, Home: 0, End: last } as Record<string, number>)[e.key]
+    if (to === undefined) return
+    e.preventDefault()
+    buttons.current[to]?.focus()
+    onChange(tabs[to].key)
+  }
+  return (
+    <div className="tabs" role="tablist" aria-label={label}>
+      {tabs.map((t, i) => (
+        <button
+          key={t.key}
+          ref={(el) => {
+            buttons.current[i] = el
+          }}
+          type="button"
+          role="tab"
+          aria-selected={i === open}
+          tabIndex={i === Math.max(open, 0) ? 0 : -1}
+          className={i === open ? 'active' : ''}
+          onClick={() => onChange(t.key)}
+          onKeyDown={(e) => onKeyDown(e, i)}
+        >
+          {t.label}
+        </button>
+      ))}
     </div>
   )
 }
@@ -121,7 +162,7 @@ export function Confirm({ title, body, confirmLabel, danger, onConfirm, onClose 
               await onConfirm()
               onClose()
             } catch (e) {
-              setErr(e instanceof Error ? e.message : String(e))
+              setErr(errorMessage(e))
             } finally {
               setBusy(false)
             }

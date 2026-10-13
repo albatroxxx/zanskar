@@ -9,6 +9,12 @@ spec:
   {{- if not .Values.autoscaling.enabled }}
   replicas: {{ .Values.replicaCount }}
   {{- end }}
+  # One gateway at a time. The default rolling update starts the new pod
+  # before the old one stops, so for a while two gateways run against a
+  # database the upgrade hook has already migrated, each holding its own
+  # tickets and live sessions. Recreate stops the old pod first.
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
       {{- include "zanskar.selectorLabels" . | nindent 6 }}

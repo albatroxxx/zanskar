@@ -67,6 +67,12 @@ ciphertext moved to another row fails to decrypt.
 Plaintext lives in a byte slice that is zeroed immediately after use. Types that hold plaintext
 implement a `String()` method that returns `[redacted]` so that they cannot be logged by accident.
 
+*Amended 2026-10-11 (B11):* this holds for private keys, which stay byte slices until the
+connection is made and are zeroed on close. A password is handed to the SSH, WinRM, database
+and desktop libraries as a Go string, which cannot be overwritten: the decrypted bytes are
+zeroed as soon as the string is made, and the string itself is only dropped. The garbage
+collector reclaims it; nothing can erase it sooner.
+
 ## Consequences
 
 - A database dump without the KEK is useless to an attacker.

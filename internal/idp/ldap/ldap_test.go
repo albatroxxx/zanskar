@@ -270,3 +270,36 @@ func TestObjectGUIDFormat(t *testing.T) {
 		t.Fatal("first rdn")
 	}
 }
+
+// TestDialIsBoundedByTheTimeout: the dial ignored Authenticator.Timeout
+// (B21): the context made for it was thrown away and go-ldap dialled with
+// its own 60 s default, so a sign-in against a directory that accepts the
+// connection and never answers hung for a minute. The dial, the TLS
+// handshake included, now gives up after the timeout.
+func TestDialIsBoundedByTheTimeout(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = ln.Close() }()
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			// Accept and say nothing, as a directory stuck mid-handshake.
+			t.Cleanup(func() { _ = c.Close() })
+		}
+	}()
+	a := &Authenticator{Timeout: 300 * time.Millisecond}
+	cfg := &idp.LDAPConfig{URL: "ldaps://" + ln.Addr().String(), InsecureSkipVerify: true, BaseDN: "dc=example,dc=com"}
+	start := time.Now()
+	err = a.Test(context.Background(), cfg)
+	if took := time.Since(start); err == nil || took > 5*time.Second {
+		t.Fatalf("a directory that never answers: %v after %s, want an error within the timeout", err, took)
+	}
+	if !errors.Is(err, ErrDirectory) {
+		t.Fatalf("want ErrDirectory, got %v", err)
+	}
+}

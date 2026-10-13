@@ -520,3 +520,57 @@ type tapBuf struct {
 
 func (t *tapBuf) Write(p []byte) { t.mu.Lock(); t.b = append(t.b, p...); t.mu.Unlock() }
 func (t *tapBuf) String() string { t.mu.Lock(); defer t.mu.Unlock(); return string(t.b) }
+
+// TestBridgeIdleIgnoresResizesAndPings: any frame from the browser counted as
+// input (B18), so a page that sent resize or ping frames on a timer (one line
+// in devtools) kept an idle session open past idle_timeout_minutes. Only
+// keystrokes count now, as in the console's own idle counter.
+func TestBridgeIdleIgnoresResizesAndPings(t *testing.T) {
+	fs := startFakeServer(t)
+	reasonCh := make(chan string, 1)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ws, err := websocket.Accept(w, r, &websocket.AcceptOptions{InsecureSkipVerify: true})
+		if err != nil {
+			return
+		}
+		client, err := Dial(r.Context(), endpoint(fs, true), Auth{Username: "test", Password: "pw"}, time.Second)
+		if err != nil {
+			t.Errorf("dial: %v", err)
+			return
+		}
+		defer func() { _ = client.Close() }()
+		reason, _ := Bridge(r.Context(), nil, client, ws, nil, 80, 24, Limits{Idle: 300 * time.Millisecond, tick: 50 * time.Millisecond})
+		reasonCh <- reason
+		_ = ws.Close(websocket.StatusNormalClosure, "")
+	}))
+	defer srv.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	ws, _, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(srv.URL, "http"), nil) //nolint:bodyclose // library closes the handshake body
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ws.CloseNow()
+	keepAlive, stop := context.WithCancel(ctx)
+	defer stop()
+	go func() {
+		for i := 0; keepAlive.Err() == nil; i++ {
+			frame := `{"t":"r","cols":80,"rows":24}`
+			if i%2 == 1 {
+				frame = `{"t":"p"}`
+			}
+			if ws.Write(keepAlive, websocket.MessageText, []byte(frame)) != nil {
+				return
+			}
+			time.Sleep(40 * time.Millisecond)
+		}
+	}()
+	select {
+	case r := <-reasonCh:
+		if r != "idle_timeout" {
+			t.Fatalf("reason %q, want idle_timeout", r)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("resizes and pings kept an idle session open")
+	}
+}

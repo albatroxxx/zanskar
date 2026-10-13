@@ -222,3 +222,48 @@ func TestRotateMasterKeyFileWhenTheServiceReadsTheEnvironment(t *testing.T) {
 	}
 	r.Close()
 }
+
+// TestKeyStatusCountsEverySealedColumn: key status counted the rows each
+// data-key version protects in three tables (B10) and missed the TLS
+// certificate keys, the recording storage secret and the prepared next key
+// of an SSH authority, so it showed an old version as protecting nothing
+// while it still sealed those. Every column of the schema that names a key
+// version must be in sealedTables, or this fails and names it.
+func TestKeyStatusCountsEverySealedColumn(t *testing.T) {
+	ctx := context.Background()
+	db, err := store.Open(ctx, "sqlite", "file::memory:?_pragma=foreign_keys(1)")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = db.Close() }()
+	if _, err := store.Migrate(ctx, db); err != nil {
+		t.Fatal(err)
+	}
+	listed := map[string]bool{}
+	for _, st := range sealedTables {
+		listed[st.table+"."+st.version] = true
+	}
+	rows, err := db.QueryContext(ctx, `SELECT m.name, p.name FROM sqlite_master m, pragma_table_info(m.name) p
+		WHERE m.type = 'table' AND m.name <> 'key_versions' AND p.name LIKE '%key_version'`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = rows.Close() }()
+	seen := 0
+	for rows.Next() {
+		var table, column string
+		if err := rows.Scan(&table, &column); err != nil {
+			t.Fatal(err)
+		}
+		seen++
+		if !listed[table+"."+column] {
+			t.Errorf("%s.%s names a key version but key status does not count it", table, column)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	if seen == 0 {
+		t.Fatal("found no key-version columns; the query is wrong")
+	}
+}

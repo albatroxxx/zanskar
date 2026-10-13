@@ -167,6 +167,10 @@ func serve(ctx context.Context) error {
 	// (lifecycle.Controller).
 	config.DropSecretEnv()
 	log, logLevel, logs := newLeveledLogger(cfg)
+	// Settings that are set but do nothing here are said out loud (B13).
+	for _, w := range cfg.Warnings {
+		log.Warn(w)
+	}
 	// A console-requested restart cancels this context once live sessions
 	// have drained; serve then returns nil and the supervisor starts a fresh
 	// process that reads the environment file again.
@@ -219,7 +223,11 @@ func serve(ctx context.Context) error {
 
 	// Runtime settings (ADR 0020): the environment gives install-time values,
 	// the console overrides them live. Bind the ones this process applies.
-	runtime := settings.NewService(settings.NewRepo(db), settings.EnvValues(), bootSettings(cfg, ring.ActiveVersion()))
+	envSettings, envErrs := settings.EnvValues()
+	if len(envErrs) > 0 {
+		return fmt.Errorf("settings from the environment: %w", errors.Join(envErrs...))
+	}
+	runtime := settings.NewService(settings.NewRepo(db), envSettings, bootSettings(cfg, ring.ActiveVersion()))
 	if err := runtime.Load(ctx); err != nil {
 		return fmt.Errorf("settings: %w", err)
 	}
@@ -335,7 +343,7 @@ func serve(ctx context.Context) error {
 			&target.AdminHandler{Repo: targets, Prober: prober, Policies: policies, Live: registry, Vault: vault, Audit: auditLog, Log: log},
 			&policy.AdminHandler{Repo: policies, Users: users, Revoker: connectHandler, Audit: auditLog, Log: log},
 			&access.Handler{Requests: accessReqs, Policies: policies, Targets: targets, ASGs: asgRepo, Audit: auditLog, Log: log},
-			&asg.AdminHandler{Repo: asgRepo, Sync: syncer.SyncGroup, Identity: awsIdentity, Providers: cloudProviders, Policies: policies, Live: registry, Vault: vault, Audit: auditLog, Log: log},
+			&asg.AdminHandler{Repo: asgRepo, Sync: syncer.SyncGroup, Identity: awsIdentity, Providers: asg.AWSFresh(), Policies: policies, Live: registry, Vault: vault, Audit: auditLog, Log: log},
 			&session.Handler{Repo: sessionRepo, Audit: auditLog, AnchorKey: anchorKey, Registry: registry, Storage: storage, Log: log},
 			&settings.Handler{Service: runtime, Audit: auditLog, Log: log},
 			&recstorage.Handler{Manager: storageMgr, Audit: auditLog, Log: log},
@@ -362,6 +370,12 @@ func serve(ctx context.Context) error {
 	// Expire lapsed just-in-time access grants and audit each (ADR 0018).
 	grantSweeper := &access.Sweeper{Repo: accessReqs, Audit: auditLog, Log: log}
 	go grantSweeper.Run(ctx, time.Minute)
+
+	// Renew the self-signed certificate inside thirty days of its end while
+	// the gateway runs, not only at start (ADR 0021, B9).
+	if tlsMgr != nil {
+		go tlsMgr.Run(ctx, 6*time.Hour)
+	}
 
 	// SIEM export: ship the audit chain to the configured sinks.
 	var sinks []audit.Sink

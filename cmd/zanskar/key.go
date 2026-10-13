@@ -68,13 +68,18 @@ func openRing(ctx context.Context) (*config.Config, *store.DB, *keyring.Ring, er
 	return cfg, db, ring, nil
 }
 
-// sealedTables lists every table that stores ciphertext under a data key,
-// with the column that says whether a row holds any. status counts rows per
-// key version so an operator can see what an old version still protects.
-var sealedTables = []struct{ table, has string }{
-	{"credentials", "secret_enc IS NOT NULL"},
-	{"identity_providers", "config_enc IS NOT NULL"},
-	{"mfa_totp", "secret_enc IS NOT NULL"},
+// sealedTables lists every column that stores ciphertext under a data key:
+// the table, the column naming its key version, and the condition that says
+// a row holds ciphertext. status counts rows per key version so an operator
+// can see what an old version still protects; a test fails when a column of
+// the schema that names a key version is missing here.
+var sealedTables = []struct{ label, table, version, has string }{
+	{"credentials", "credentials", "key_version", "secret_enc IS NOT NULL"},
+	{"identity_providers", "identity_providers", "key_version", "config_enc IS NOT NULL"},
+	{"mfa_totp", "mfa_totp", "key_version", "secret_enc IS NOT NULL"},
+	{"credentials (prepared CA keys)", "credentials", "pending_key_version", "pending_secret_enc IS NOT NULL"},
+	{"tls_certificates", "tls_certificates", "key_version", "key_enc IS NOT NULL"},
+	{"recording_storage", "recording_storage", "key_version", "secret_enc IS NOT NULL"},
 }
 
 func runKeyStatus() error {
@@ -116,7 +121,7 @@ func runKeyStatus() error {
 	fmt.Println("sealed rows per version:")
 	for _, st := range sealedTables {
 		// Table and column names come from the static list above, not input.
-		q := fmt.Sprintf(`SELECT key_version, COUNT(*) FROM %s WHERE %s GROUP BY key_version ORDER BY key_version`, st.table, st.has) // #nosec G201
+		q := fmt.Sprintf(`SELECT %[1]s, COUNT(*) FROM %[2]s WHERE %[3]s GROUP BY %[1]s ORDER BY %[1]s`, st.version, st.table, st.has) // #nosec G201
 		crow, err := db.QueryContext(ctx, q)
 		if err != nil {
 			return err
@@ -134,7 +139,7 @@ func runKeyStatus() error {
 		if len(parts) == 0 {
 			parts = []string{"none"}
 		}
-		fmt.Printf("  %-20s %s\n", st.table, strings.Join(parts, ", "))
+		fmt.Printf("  %-30s %s\n", st.label, strings.Join(parts, ", "))
 	}
 	return nil
 }
@@ -156,8 +161,9 @@ func runKeyRotate() error {
 	}
 	fmt.Printf("data-key version %d is now active; secrets stored from now on are sealed under it.\n", ver)
 	fmt.Println("Secrets stored earlier stay under their version until they are rotated or re-entered;")
-	fmt.Println("`zanskar key status` shows how many each version still protects. Restart the service so it")
-	fmt.Println("picks up the new version.")
+	fmt.Println("`zanskar key status` shows how many each version still protects. A running gateway takes")
+	fmt.Println("up the new version when it first meets a secret sealed under it; restart every gateway on")
+	fmt.Println("this database to have them all seal new secrets under it from now on.")
 	return nil
 }
 

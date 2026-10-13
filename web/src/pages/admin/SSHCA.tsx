@@ -128,6 +128,9 @@ function CARotation({ credential, onChanged, onError }: { credential: Credential
  */
 function CATargets({ credential }: { credential: Credential }) {
   const [targets, setTargets] = useState<Target[] | null>(null)
+  // A failed read is said as such: read as an empty list, it claimed no host
+  // used the authority while the panel above counted the ones that do.
+  const [loadErr, setLoadErr] = useState('')
   const [results, setResults] = useState<Record<string, CertificateProbe | { error: string }>>({})
   const [busy, setBusy] = useState<string | null>(null)
   const pending = !!credential.rotation?.pending_public_key
@@ -135,7 +138,7 @@ function CATargets({ credential }: { credential: Credential }) {
     api
       .get<{ items: Target[] }>('/targets?kind=host&limit=500')
       .then((p) => setTargets(p.items.filter((t) => t.credentials?.ssh === credential.id)))
-      .catch(() => setTargets([]))
+      .catch((e) => setLoadErr(errorMessage(e)))
   }, [credential.id])
   const test = async (t: Target, key: 'current' | 'pending') => {
     setBusy(t.id + key)
@@ -148,6 +151,14 @@ function CATargets({ credential }: { credential: Credential }) {
     } finally {
       setBusy(null)
     }
+  }
+  if (loadErr) {
+    return (
+      <>
+        <h3>Bound targets</h3>
+        <Alert tone="danger">The bound targets could not be loaded: {loadErr}</Alert>
+      </>
+    )
   }
   if (targets === null) return null
   return (

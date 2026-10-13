@@ -2,8 +2,9 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { Navigate, useLocation, useNavigate } from 'react-router-dom'
 import type { Client, GuacObject, InputStream, Keyboard } from 'guacamole-common-js'
 import { fmtBytes, fmtSeconds, protocolName } from '../../api/format'
-import { Modal } from '../../components/ui'
 import { FailoverDialog } from './Failover'
+import { SessionEndedDialog } from './SessionEnded'
+import { desktopEnd, SESSION_ID, type SessionEnd } from './session'
 import { useFullscreen } from './fullscreen'
 import { FullscreenButton } from './FullscreenButton'
 import type { ConnectResponse } from '../../api/types'
@@ -68,7 +69,8 @@ function DesktopSession({ state }: { state: DesktopState }) {
   const { isFull, toggle: toggleFull, exit: exitFull } = useFullscreen(pageRef)
   const [sessionId, setSessionId] = useState('')
   const [elapsed, setElapsed] = useState(0)
-  const [ended, setEnded] = useState<{ reason: string; msg?: string } | null>(null)
+  const [ended, setEnded] = useState<SessionEnd | null>(null)
+  const endedRef = useRef(false)
   const [flags, setFlags] = useState({ files: false, clipboard: false })
   const [panelOpen, setPanelOpen] = useState(false)
   const [fsReady, setFsReady] = useState(false)
@@ -88,6 +90,23 @@ function DesktopSession({ state }: { state: DesktopState }) {
   // The last text both sides agree on, so a focus sync does not echo back
   // what the desktop just sent, and unchanged text is not resent.
   const lastClipRef = useRef('')
+  // Guacamole.Keyboard listens on the document itself and calls
+  // preventDefault on every key it handles. Leaving its handlers set after
+  // the page was left made every form field on the site deaf (the login page
+  // included) until a full reload; leaving them set once the session ended
+  // swallowed Enter, Space and Tab in the very dialog that says so, and in
+  // the one offering another instance. The library has no detach call:
+  // nulling the handlers is how it is told to stop intercepting.
+  const keyboardRef = useRef<Keyboard | null>(null)
+  const releaseKeyboard = useCallback(() => {
+    const kb = keyboardRef.current
+    if (!kb) return
+    keyboardRef.current = null
+    // Release anything still held (sends the key-ups while the client is
+    // there to take them), then stop intercepting the document's keys.
+    kb.reset()
+    kb.onkeydown = kb.onkeyup = null
+  }, [])
 
   // pushClipboard sends text to the desktop's clipboard through a Guacamole
   // clipboard stream. The bridge drops the instruction when the policy
@@ -122,15 +141,13 @@ function DesktopSession({ state }: { state: DesktopState }) {
     if (!host.current) return
     let disposed = false
     const start = Date.now()
-    const tick = setInterval(() => setElapsed(Math.floor((Date.now() - start) / 1000)), 1000)
+    // The clock stops when the session ends, as on the terminal page: it is a
+    // live reading, and a running clock on a dead session is a lie. endedRef,
+    // not the ended state, so the effect does not rebuild the session.
+    const tick = setInterval(() => {
+      if (!endedRef.current) setElapsed(Math.floor((Date.now() - start) / 1000))
+    }, 1000)
     const el = host.current
-    // Assigned once the library has loaded; released by the effect cleanup
-    // below. Guacamole.Keyboard listens on the document itself and calls
-    // preventDefault on every key it handles, so leaving its handlers set
-    // after the session left every form field on the site deaf (the login
-    // page included) until a full reload. The library has no detach call:
-    // nulling the handlers is how it is told to stop intercepting.
-    let keyboard: Keyboard | null = null
     let ro: ResizeObserver | null = null
     let sizeTimer: ReturnType<typeof setTimeout> | undefined
     void import('guacamole-common-js').then((mod) => {
@@ -146,7 +163,7 @@ function DesktopSession({ state }: { state: DesktopState }) {
       const tunnel = new Guacamole.WebSocketTunnel(url)
       const client = new Guacamole.Client(tunnel)
       el.appendChild(client.getDisplay().getElement())
-      client.onerror = (st) => setEnded((cur) => cur ?? { reason: st.code === 519 ? 'target_lost' : 'error', msg: st.message })
+      client.onerror = (st) => setEnded((cur) => cur ?? desktopEnd(st.code, st.message))
       tunnel.onerror = () => setEnded((cur) => cur ?? { reason: 'target_lost' })
       client.onstatechange = (s: number) => {
         if (s === 5) setEnded((cur) => cur ?? { reason: 'user_exit' })
@@ -186,7 +203,7 @@ function DesktopSession({ state }: { state: DesktopState }) {
       const send = (m: unknown) => client.sendMouseState(m as never)
       mouse.onmousedown = mouse.onmouseup = mouse.onmousemove = send
       const kb = new Guacamole.Keyboard(document)
-      keyboard = kb
+      keyboardRef.current = kb
       // Key events go out in order through one queue. A paste keystroke
       // (V with Ctrl or Cmd held) first reads the browser clipboard and
       // sends it to the desktop, and only then is the key passed on, so the
@@ -212,7 +229,9 @@ function DesktopSession({ state }: { state: DesktopState }) {
       const inner = tunnel.oninstruction
       tunnel.oninstruction = (opcode, args) => {
         // The tunnel's internal opcode carries the Zanskar session id first.
-        if (opcode === '' && args[0]) setSessionId((cur) => cur || args[0])
+        // It addresses the failover endpoint, so only the shape the gateway
+        // generates is taken, as on the terminal page.
+        if (opcode === '' && SESSION_ID.test(args[0] ?? '')) setSessionId((cur) => cur || args[0])
         if (opcode === 'zanskar') {
           const next = { files: false, clipboard: false }
           for (let i = 0; i + 1 < args.length; i += 2) {
@@ -242,12 +261,7 @@ function DesktopSession({ state }: { state: DesktopState }) {
       clearInterval(tick)
       clearTimeout(sizeTimer)
       ro?.disconnect()
-      if (keyboard) {
-        // Release anything still held (sends the key-ups while the client is
-        // connected), then stop intercepting the document's key events.
-        keyboard.reset()
-        keyboard.onkeydown = keyboard.onkeyup = null
-      }
+      releaseKeyboard()
       clientRef.current = null
       disconnectRef.current()
     }
@@ -385,6 +399,9 @@ function DesktopSession({ state }: { state: DesktopState }) {
       } satisfies DesktopState,
     })
   }
+  useEffect(() => { endedRef.current = !!ended }, [ended])
+  // An ended session takes no more keys; the dialogs that follow need them.
+  useEffect(() => { if (ended) releaseKeyboard() }, [ended, releaseKeyboard])
   const failover = ended?.reason === 'target_lost' && !!state.asg_id && !!sessionId
   // Drop out of full screen when the session ends so the dialog shows normally.
   useEffect(() => { if (ended) exitFull() }, [ended, exitFull])
@@ -395,9 +412,13 @@ function DesktopSession({ state }: { state: DesktopState }) {
         {state.instance_label && <span className="stat mono">{state.instance_label}</span>}
         {state.switched_from && <span className="stat switched">switched from {state.switched_from}</span>}
         <span className="stat">{protocolName(state.protocol)}</span>
-        <span className="stat">elapsed {fmtSeconds(elapsed)}</span>
+        <span className="stat">{(ended ? 'ran for ' : 'elapsed ') + fmtSeconds(elapsed)}</span>
         <span className="grow" />
-        <span className="stat rec" title="This session is being recorded"><i className="rec-dot" aria-hidden="true" />Recording</span>
+        {ended ? (
+          <span className="stat">Ended · recording saved</span>
+        ) : (
+          <span className="stat rec" title="This session is being recorded"><i className="rec-dot" aria-hidden="true" />Recording</span>
+        )}
         <FullscreenButton isFull={isFull} onClick={toggleFull} />
         {flags.clipboard && (
           <button className="btn sm" onClick={() => setClipOpen((o) => !o)} aria-pressed={clipOpen}>
@@ -409,7 +430,7 @@ function DesktopSession({ state }: { state: DesktopState }) {
             {panelOpen ? 'Hide files' : 'Files'}
           </button>
         )}
-        <button className="btn sm" onClick={() => disconnectRef.current()}>Disconnect</button>
+        {!ended && <button className="btn sm" onClick={() => disconnectRef.current()}>Disconnect</button>}
       </div>
       <div className="desk-body">
         <div className="term-host" ref={host} style={{ overflow: 'hidden' }} />
@@ -466,12 +487,7 @@ function DesktopSession({ state }: { state: DesktopState }) {
         <FailoverDialog sessionId={sessionId} asgId={state.asg_id!} protocol={state.protocol} lostLabel={state.instance_label} onExit={() => nav('/')} onSwitched={onSwitched} />
       )}
       {ended && !failover && (
-        <Modal title="Session ended" onClose={() => nav('/')}>
-          <p>{ended.msg ?? ended.reason.replace(/_/g, ' ')}</p>
-          <div className="actions">
-            <button className="btn primary" onClick={() => nav('/')}>Back to targets</button>
-          </div>
-        </Modal>
+        <SessionEndedDialog ended={ended} target={state.target} protocol={state.protocol} elapsed={elapsed} onClose={() => nav('/')} />
       )}
     </div>
   )

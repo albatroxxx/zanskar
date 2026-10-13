@@ -31,8 +31,9 @@ type AdminHandler struct {
 	// policy shown to admins (ADR 0023). Nil means unknown: the trust policy
 	// is withheld rather than rendered with a placeholder.
 	Identity *cloud.GatewayIdentity
-	// Providers builds a cloud client for a group, for the access test. Nil
-	// disables the test endpoints.
+	// Providers builds a cloud client for a group, for the access test. It
+	// must not cache (AWSFresh): the test is whether the role can be assumed
+	// now. Nil disables the test endpoints.
 	Providers ProviderFactory
 	// Policies and Live let delete refuse a group that a policy still names
 	// by id or whose instances have sessions open (ADR 0019); nil skips it.

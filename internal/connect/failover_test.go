@@ -8,6 +8,7 @@ import (
 
 	"github.com/albatroxxx/zanskar/internal/asg"
 	"github.com/albatroxxx/zanskar/internal/audit"
+	"github.com/albatroxxx/zanskar/internal/gateway"
 	"github.com/albatroxxx/zanskar/internal/session"
 	"github.com/albatroxxx/zanskar/internal/target"
 )
@@ -79,9 +80,18 @@ func TestFailoverRefusals(t *testing.T) {
 	// then moved to a healthy one.
 	b := inst("i-b", "healthy", e.group.ID)
 	open := start(&session.Session{ASGID: e.group.ID, ASGInstanceID: a.ID})
+	// Its bridge is still running: the failover ends it as a lost target,
+	// as the row says, not as an administrator's terminate (B16).
+	if e.h.Registry == nil {
+		e.h.Registry = gateway.NewRegistry()
+	}
+	live := e.h.Registry.Add(ctx, gateway.Live{SessionID: open.ID, UserID: e.user.ID, Protocol: "ssh"})
 	code, out := failover(open.ID, map[string]any{"asg_instance_id": b.ID})
 	if code != 200 || out["asg_instance_id"] != b.ID {
 		t.Fatalf("failover of an open session on a lost instance: %d %v", code, out)
+	}
+	if reason, _ := gateway.CancelReason(live); live.Err() == nil || reason != "target_lost" {
+		t.Fatalf("the old bridge must end as target_lost, got %q (cancelled: %v)", reason, live.Err() != nil)
 	}
 	if got, _ := e.sessions.Get(ctx, open.ID); got.EndedAt == nil || got.EndReason != session.EndTargetLost {
 		t.Fatalf("the old session must be closed as lost: %+v", got)

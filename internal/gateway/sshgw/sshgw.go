@@ -285,10 +285,13 @@ func Bridge(ctx context.Context, log *slog.Logger, client *ssh.Client, ws *webso
 			if err != nil {
 				return
 			}
-			mu.Lock()
-			lastIn = time.Now()
-			mu.Unlock()
+			// Only keystrokes count as activity, as in the console's own idle
+			// counter: resize and ping frames kept an idle session open when
+			// a page sent them on a timer (B18).
 			if typ == websocket.MessageBinary {
+				mu.Lock()
+				lastIn = time.Now()
+				mu.Unlock()
 				if cmds != nil {
 					cmds.input(data)
 				}
@@ -303,6 +306,9 @@ func Bridge(ctx context.Context, log *slog.Logger, client *ssh.Client, ws *webso
 			}
 			switch f.T {
 			case "i":
+				mu.Lock()
+				lastIn = time.Now()
+				mu.Unlock()
 				if cmds != nil {
 					cmds.input([]byte(f.D))
 				}

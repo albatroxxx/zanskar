@@ -61,20 +61,15 @@ function rawTime(times: number[], compressed: number): number {
   return compressed + shift
 }
 
-async function fetchStream(id: string): Promise<Response> {
-  // Streaming the recording is the audited "view"; GET needs no CSRF token.
-  const res = await fetch(`/api/v1/recordings/${id}/stream`, { credentials: 'same-origin' })
-  if (!res.ok) {
-    let msg = `${res.status} ${res.statusText}`
-    try {
-      const body = (await res.json()) as { message?: string }
-      if (body.message) msg = body.message
-    } catch {
-      /* non-JSON error body */
-    }
-    throw new Error(msg)
-  }
-  return res
+/** Recording ids are 16 random bytes, hex-encoded (store.NewID). The id in
+ *  the address bar goes into API paths, so the player asks for nothing of
+ *  another shape: encoding keeps a slash from adding a path segment, but no
+ *  encoding keeps a bare ".." from climbing one. */
+const RECORDING_ID = /^[0-9a-f]{32}$/
+
+/** recordingPath is a recording's API path, with the id encoded. */
+function recordingPath(id: string): string {
+  return `/recordings/${encodeURIComponent(id)}`
 }
 
 /** typingInField keeps playback shortcuts away from any text field. */
@@ -102,8 +97,12 @@ export function Player() {
   const [loaded, setLoaded] = useState(false)
 
   useEffect(() => {
+    if (!RECORDING_ID.test(id)) {
+      setErr('There is no recording with that id.')
+      return
+    }
     api
-      .get<Recording>(`/recordings/${id}`)
+      .get<Recording>(recordingPath(id))
       .then(setRec)
       .catch((e) => setErr(errorMessage(e)))
   }, [id])
@@ -138,7 +137,10 @@ export function Player() {
   }, [])
 
   const playTerminal = async (r: Recording) => {
-    const text = await (await fetchStream(r.id)).text()
+    // Streaming the recording is the audited "view". It goes through the api
+    // client like every other call, so a session that has ended reaches the
+    // session dialog instead of reading as a broken recording.
+    const text = await (await api.download(recordingPath(r.id) + '/stream')).text()
     const parsed = parseCast(text)
     cast.current = { text, times: parsed.times }
     setCommands(parsed.commands)
@@ -186,7 +188,7 @@ export function Player() {
     // source is the working path — it buffers the stream for seeks — so feed it
     // one. The request is same-origin, so the session cookie rides along, and the
     // GET is itself the audited "view".
-    const tunnel = new Guacamole.StaticHTTPTunnel(`/api/v1/recordings/${r.id}/stream`, false, {})
+    const tunnel = new Guacamole.StaticHTTPTunnel(`/api/v1${recordingPath(r.id)}/stream`, false, {})
     const playback = new Guacamole.SessionRecording(tunnel)
     const display = playback.getDisplay()
     host.current.appendChild(display.getElement())
@@ -204,7 +206,17 @@ export function Player() {
       // playback then sits at 00:00 on a blank display.
       playback.play()
     }
-    playback.onerror = (m) => setErr(String(m))
+    // The tunnel makes its own request, so a refusal reaches the page only as
+    // a status text (none at all over HTTP/2), and an expired session would
+    // read as a broken recording. Asking for the recording again through the
+    // api client sends an expired session to the session dialog; any other
+    // failure shows what the tunnel said.
+    playback.onerror = (m) => {
+      void api.get<Recording>(recordingPath(r.id)).then(
+        () => setErr(m ? String(m) : 'The recording could not be loaded.'),
+        (e) => setErr(errorMessage(e)),
+      )
+    }
     playback.connect()
   }
 
@@ -317,8 +329,8 @@ export function Player() {
         {rec && !rec.purged_at && (
           <>
             {/* Downloads are recorded views and audit events, like pressing Play. */}
-            <a className="btn" href={`/api/v1/recordings/${rec.id}/download`} download title="Download the recording file (audited)">Download recording</a>
-            {rec.format !== 'guac' && <a className="btn" href={`/api/v1/recordings/${rec.id}/transcript`} download title="Download the command lines as text (audited)">Download transcript</a>}
+            <a className="btn" href={`/api/v1${recordingPath(rec.id)}/download`} download title="Download the recording file (audited)">Download recording</a>
+            {rec.format !== 'guac' && <a className="btn" href={`/api/v1${recordingPath(rec.id)}/transcript`} download title="Download the command lines as text (audited)">Download transcript</a>}
           </>
         )}
         <Link className="btn" to={recordingsPath}>Back to recordings</Link>
@@ -415,7 +427,7 @@ export function Player() {
                 <p className="muted" style={{ margin: 0 }}>No command lines were recorded in this session. Recordings made before command capture was added, or sessions where nothing was typed, show none.</p>
               ) : (
                 <>
-                  <p className="muted" style={{ marginTop: 0 }}>Each line the user submitted, in order. Click one to jump the playback to it. Input the remote did not echo, such as a password, is marked hidden and was never stored.</p>
+                  <p className="muted" style={{ marginTop: 0 }}>Each line the user submitted, in order. Choose one to jump the playback to it. Input the remote did not echo, such as a password, is marked hidden and was never stored.</p>
                   {/* Seek by marker INDEX, not the command's original timestamp:
                       the player compresses idle gaps (idleTimeLimit), so its
                       timeline no longer matches recording time and a raw-seconds
@@ -424,9 +436,11 @@ export function Player() {
                       the correct spot on the compressed timeline. */}
                   <ol className="commands">
                     {commands.map((c, i) => (
-                      <li key={i} onClick={() => void term.current?.seek({ marker: i })} title="Jump to this point">
-                        <span className="t">{fmtSeconds(Math.floor(c.t))}</span>
-                        {c.text === '(hidden input)' ? <span className="hidden">{c.text}</span> : <span>{c.text}</span>}
+                      <li key={i}>
+                        <button type="button" onClick={() => void term.current?.seek({ marker: i })} title="Jump to this point">
+                          <span className="t">{fmtSeconds(Math.floor(c.t))}</span>
+                          {c.text === '(hidden input)' ? <span className="hidden">{c.text}</span> : <span>{c.text}</span>}
+                        </button>
                       </li>
                     ))}
                   </ol>

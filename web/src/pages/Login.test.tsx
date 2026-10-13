@@ -1,10 +1,13 @@
 import { cleanup, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { MemoryRouter } from 'react-router-dom'
+import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { ApiError, api } from '../api/client'
 import { AuthProvider } from '../auth/AuthContext'
 import { Login } from './Login'
+
+// jsdom has no canvas to draw a QR code with; the enrolment step only needs one to show.
+vi.mock('qrcode', () => ({ default: { toDataURL: async () => 'data:image/png;base64,AA==' } }))
 
 afterEach(() => {
   cleanup()
@@ -83,3 +86,82 @@ describe('Login after a failed single sign-on', () => {
     window.history.pushState({}, '', '/')
   })
 })
+
+// B20: the gateway's single sign-on sends a sign-in that still owes a code to
+// /login?next=<where the user was going>, and the page read only the router's
+// state, so the deep link was lost. A ?next= that is a path on this site is
+// where the page goes once signed in; anything else goes home (L7's rule).
+describe('Login after signing in', () => {
+  it('goes to ?next= when it is a path on this site', async () => {
+    vi.spyOn(api, 'get').mockImplementation(async (path: string) => {
+      if (path === '/auth/me') return { user: { id: 'u1', username: 'alice', display_name: 'Alice', roles: ['user'] }, csrf_token: 't', mfa_enrolled: true } as never
+      if (path === '/auth/providers') return { items: [] } as never
+      return { text: '' } as never
+    })
+    for (const [next, want] of [
+      ['/admin/targets?tab=2', '/admin/targets?tab=2'],
+      ['//evil.example/x', '/'],
+    ]) {
+      render(
+        <MemoryRouter initialEntries={['/login?next=' + encodeURIComponent(next)]}>
+          <AuthProvider>
+            <Routes>
+              <Route path="/login" element={<Login />} />
+              <Route path="*" element={<Where />} />
+            </Routes>
+          </AuthProvider>
+        </MemoryRouter>,
+      )
+      expect(await screen.findByText('at ' + want)).toBeDefined()
+      cleanup()
+    }
+  })
+})
+
+// Saving the recovery codes went on with window.location.href = from: a new
+// page load fed by the ?next= the page was handed, which CodeQL rightly reads
+// as a URL taken from the address bar and loaded. It goes on through the
+// router now, to the same place.
+describe('Login after setting up an authenticator', () => {
+  it('goes on to ?next= once the recovery codes are saved', async () => {
+    let enrolled = false
+    vi.spyOn(api, 'get').mockImplementation(async (path: string) => {
+      if (path === '/auth/me') {
+        return (enrolled
+          ? { user: { id: 'u1', username: 'alice', display_name: 'Alice', roles: ['user'] }, csrf_token: 't', mfa_enrolled: true }
+          : { csrf_token: 't', mfa_enrolled: false, pending: 'enroll' }) as never
+      }
+      if (path === '/auth/providers') return { items: [] } as never
+      return { text: '' } as never
+    })
+    vi.spyOn(api, 'post').mockImplementation(async (path: string) => {
+      if (path === '/auth/mfa/totp/enroll') return { secret: 'JBSWY3DPEHPK3PXP', otpauth_url: 'otpauth://totp/zanskar:alice' } as never
+      if (path === '/auth/mfa/totp/confirm') {
+        enrolled = true
+        return { recovery_codes: ['aaaa-bbbb'] } as never
+      }
+      throw new Error('no route ' + path)
+    })
+    render(
+      <MemoryRouter initialEntries={['/login?next=' + encodeURIComponent('/admin/targets')]}>
+        <AuthProvider>
+          <Routes>
+            <Route path="/login" element={<Login />} />
+            <Route path="*" element={<Where />} />
+          </Routes>
+        </AuthProvider>
+      </MemoryRouter>,
+    )
+    const user = userEvent.setup()
+    await screen.findByAltText('TOTP enrollment QR code')
+    await user.type(screen.getByLabelText('Code from the app'), '123456{Enter}')
+    await user.click(await screen.findByRole('button', { name: 'I have saved them' }))
+
+    expect(await screen.findByText('at /admin/targets')).toBeDefined()
+  })
+})
+
+function Where() {
+  const loc = useLocation()
+  return <p>at {loc.pathname + loc.search}</p>
+}

@@ -506,3 +506,25 @@ func TestSelectorEmptyTagValue(t *testing.T) {
 		t.Fatal("a target without the key must not match")
 	}
 }
+
+// TestWindowWithEqualEndsIsAllDay: a window from 00:00 to 00:00 never opened
+// (B18): from == to was read as an empty span, and nothing said so. Equal
+// ends now mean the whole of each listed day, which is what 00:00 to 00:00
+// is written to say.
+func TestWindowWithEqualEndsIsAllDay(t *testing.T) {
+	for _, clock := range []string{"00:00", "09:30"} {
+		w := TimeWindow{Days: []string{"mon"}, From: clock, To: clock, TZ: "UTC"}
+		if err := w.validate(); err != nil {
+			t.Fatal(err)
+		}
+		monday := time.Date(2026, 10, 12, 0, 0, 0, 0, time.UTC) // a Monday
+		for _, at := range []time.Duration{0, 9*time.Hour + 29*time.Minute, 23*time.Hour + 59*time.Minute} {
+			if !w.Open(monday.Add(at)) {
+				t.Fatalf("%s to %s: closed on Monday at %s", clock, clock, monday.Add(at).Format("15:04"))
+			}
+		}
+		if w.Open(monday.Add(24*time.Hour + time.Hour)) {
+			t.Fatalf("%s to %s: open on Tuesday, which is not listed", clock, clock)
+		}
+	}
+}

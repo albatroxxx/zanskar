@@ -292,3 +292,25 @@ func TestResetMFA(t *testing.T) {
 		t.Fatalf("user.mfa.reset audit: %+v %v", evs, err)
 	}
 }
+
+// TestUpdateKeepsWhatItIsNotGiven: PUT /users/{id} without an email cleared
+// the stored one (B19), while a missing display name or status kept theirs,
+// so a client changing only the status wiped the address; the console and
+// the command line sent the email back to work around it. A field left out
+// now keeps its value, and an empty email still clears it on purpose.
+func TestUpdateKeepsWhatItIsNotGiven(t *testing.T) {
+	e := newEnv(t)
+	u := &user.User{Username: "vera", DisplayName: "Vera", Email: "vera@corp.example", Roles: []user.Role{user.RoleUser}}
+	if err := e.users.Create(context.Background(), u); err != nil {
+		t.Fatal(err)
+	}
+	if r := e.do("PUT", "/api/v1/users/"+u.ID, map[string]any{"status": "disabled"}); r.code != 200 || r.body["email"] != "vera@corp.example" || r.body["display_name"] != "Vera" {
+		t.Fatalf("a status change: %d %v, want the email and name kept", r.code, r.body)
+	}
+	if r := e.do("PUT", "/api/v1/users/"+u.ID, map[string]any{"email": ""}); r.code != 200 || r.body["email"] != nil && r.body["email"] != "" {
+		t.Fatalf("an empty email: %d %v, want it cleared", r.code, r.body)
+	}
+	if r := e.do("PUT", "/api/v1/users/"+u.ID, map[string]any{"email": "vera@new.example"}); r.code != 200 || r.body["email"] != "vera@new.example" {
+		t.Fatalf("a new email: %d %v", r.code, r.body)
+	}
+}

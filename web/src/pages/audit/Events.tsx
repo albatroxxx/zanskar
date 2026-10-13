@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type FormEvent } from 'react'
+import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
 import { Link } from 'react-router-dom'
 import { api, errorMessage, query } from '../../api/client'
 import { fmtPreciseTime, shortId } from '../../api/format'
@@ -128,7 +128,13 @@ export function Events() {
       .catch(() => setFacets({ actions: [], object_types: [] }))
   }, [])
 
+  // Each change of filters starts a new generation, and a page that arrives
+  // for an older one is dropped: a Load more still in flight when the filters
+  // changed would otherwise append rows from the old filters to the new list,
+  // and a slow first page for old filters could replace a quick one for new.
+  const generation = useRef(0)
   const load = useCallback((f: Filters, routineToo: boolean, cursor?: string) => {
+    const mine = generation.current
     return api
       .get<Page<AuditEvent>>(
         '/audit/events' +
@@ -144,13 +150,17 @@ export function Events() {
           }),
       )
       .then((p) => {
+        if (generation.current !== mine) return
         setItems((cur) => (cursor && cur ? [...cur, ...p.items] : p.items))
         setNext(p.next_cursor ?? '')
       })
-      .catch((e) => setErr(errorMessage(e)))
+      .catch((e) => {
+        if (generation.current === mine) setErr(errorMessage(e))
+      })
   }, [])
 
   useEffect(() => {
+    generation.current++
     void load(filters, showRoutine)
   }, [filters, showRoutine, load])
 
@@ -159,20 +169,25 @@ export function Events() {
     setErr('')
     void load(filters, showRoutine, next).finally(() => setBusy(false))
   }
-  const apply = (e: FormEvent) => {
-    e.preventDefault()
+  // The list empties the moment the filters change, so the generation moves
+  // on here too: a page landing before the reload starts has nowhere to go.
+  const restart = () => {
+    generation.current++
     setErr('')
     setItems(null)
+  }
+  const apply = (e: FormEvent) => {
+    e.preventDefault()
+    restart()
     setFilters({ ...draft })
   }
   const reset = () => {
-    setErr('')
-    setItems(null)
+    restart()
     setDraft(emptyFilters)
     setFilters(emptyFilters)
   }
   const toggleRoutine = (on: boolean) => {
-    setItems(null)
+    restart()
     setShowRoutine(on)
   }
 

@@ -262,3 +262,39 @@ func TestKeyVersionTimesAreStored(t *testing.T) {
 		t.Fatalf("key versions read: %d %v", n, err)
 	}
 }
+
+// TestDecryptPicksUpVersionsAddedElsewhere: a ring loaded its versions once
+// (B7), so after `zanskar key rotate` (or another gateway) added a version,
+// a running gateway reported every secret sealed under it as "unknown or
+// retired" until restarted. Meeting a version it does not hold, the ring
+// reads the table again and decrypts.
+func TestDecryptPicksUpVersionsAddedElsewhere(t *testing.T) {
+	ctx := context.Background()
+	db := newDB(t)
+	k := kek(t, 3)
+	running, err := Open(ctx, db, k)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer running.Close()
+	cli, err := Open(ctx, db, k)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cli.Close()
+	v2, err := cli.Rotate(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ct, ver, err := cli.Encrypt(AAD("credentials", "c1"), []byte("pw-under-v2"))
+	if err != nil || ver != v2 {
+		t.Fatalf("encrypt: version %d (%v), want %d", ver, err, v2)
+	}
+	pt, err := running.Decrypt(AAD("credentials", "c1"), ct, ver)
+	if err != nil || string(pt) != "pw-under-v2" {
+		t.Fatalf("the running ring must pick up version %d: %q %v", ver, pt, err)
+	}
+	if _, err := running.Decrypt(AAD("credentials", "c1"), ct, 99); err == nil {
+		t.Fatal("a version that exists nowhere must still be refused")
+	}
+}

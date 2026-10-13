@@ -7,6 +7,8 @@ import (
 	"context"
 	"encoding/binary"
 	"encoding/json"
+	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -553,4 +555,58 @@ func TestTicketBelongsToItsSignIn(t *testing.T) {
 		}
 		refusedWith(t, tok, r.cookie, http.StatusUnauthorized, "invalid_ticket")
 	})
+}
+
+// failingCloseStorage keeps recordings on disk but fails every Close, as an
+// upload to a bucket that went away would.
+type failingCloseStorage struct{ *recording.LocalStorage }
+
+type failingCloser struct{ io.WriteCloser }
+
+func (failingCloser) Close() error { return errors.New("upload failed: bucket unreachable") }
+
+func (s failingCloseStorage) Create(ctx context.Context, name string) (io.WriteCloser, string, error) {
+	w, uri, err := s.LocalStorage.Create(ctx, name)
+	return failingCloser{w}, uri, err
+}
+
+// TestLostRecordingIsNotMarkedFinished: when a recording could not be closed
+// (its upload failed, say), the session still marked it finished, with size 0
+// and no digest (B14), so it looked like an empty recording and playback
+// failed with no explanation in the log. It now stays unfinished, as the
+// storage documents, and the loss is audited as recording.lost.
+func TestLostRecordingIsNotMarkedFinished(t *testing.T) {
+	port, fp := shellTarget(t)
+	r := newTerminalRig(t, port, fp)
+	r.h.Storage = failingCloseStorage{&recording.LocalStorage{Dir: t.TempDir()}}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	ws, _, err := r.dial(ctx, r.ticket(t)) //nolint:bodyclose // the library closes the handshake body
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ws.CloseNow()
+	sessionID, _, _ := runShell(t, ctx, ws, nil)
+	var ended bool
+	for i := 0; i < 100 && !ended; i++ {
+		s, err := r.h.Sessions.Get(r.ctx, sessionID)
+		ended = err == nil && s.EndedAt != nil
+		if !ended {
+			time.Sleep(20 * time.Millisecond)
+		}
+	}
+	if !ended {
+		t.Fatal("session not ended")
+	}
+	start := lastEvent(t, r.connectFixture, "session.start")
+	var d map[string]any
+	_ = json.Unmarshal(start.Details, &d)
+	recID, _ := d["recording_id"].(string)
+	rec, err := r.h.Sessions.GetRecording(r.ctx, recID)
+	if err != nil || rec.FinishedAt != nil {
+		t.Fatalf("a recording that could not be closed was marked finished: %+v %v", rec, err)
+	}
+	if lost := lastEvent(t, r.connectFixture, "recording.lost"); lost.ObjectID != recID || lost.Outcome != audit.Failure {
+		t.Fatalf("the loss must be audited against the recording: %+v", lost)
+	}
 }

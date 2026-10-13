@@ -668,13 +668,7 @@ func (h *Handler) terminal(w http.ResponseWriter, r *http.Request) {
 		lim.Tap = tap
 	}
 	reason, berr := sshgw.Bridge(ctx, h.Log, client, ws, rec, cols, rows, lim)
-	size, sum, cerr := rec.Close()
-	if cerr != nil {
-		h.Log.Error("close recording", "session", s.ID, "err", cerr)
-	}
-	if err := h.Sessions.FinishRecording(context.Background(), recRow.ID, size, sum); err != nil {
-		h.Log.Error("finish recording", "session", s.ID, "err", err)
-	}
+	h.finishRecording(r, actor, s.ID, recRow, rec)
 	if berr != nil {
 		h.Log.Warn("bridge ended with error", "session", s.ID, "err", berr)
 		if reason == "" || reason == "error" {
@@ -735,6 +729,24 @@ func retentionDays(ep *endpoint, d policy.Decision) int {
 		return ep.RetentionDays
 	}
 	return d.RetentionDays
+}
+
+// finishRecording closes a session's recording and records its size and
+// digest. A recording whose close failed (its upload, say) is not marked
+// finished: its row keeps finished_at empty, as the storage documents, and
+// the loss is audited as recording.lost, so a playback that cannot find it
+// has an explanation. It used to be marked finished with size 0 and no
+// digest, which read as an empty recording (B14).
+func (h *Handler) finishRecording(r *http.Request, actor audit.Actor, sessionID string, recRow *session.Recording, rec interface{ Close() (int64, string, error) }) {
+	size, sum, err := rec.Close()
+	if err != nil {
+		h.Log.Error("close recording", "session", sessionID, "err", err)
+		h.record(r, actor.Event(audit.RecordingLost, "recording", recRow.ID, audit.Failure, map[string]string{"session_id": sessionID, "error": err.Error()}))
+		return
+	}
+	if err := h.Sessions.FinishRecording(context.Background(), recRow.ID, size, sum); err != nil {
+		h.Log.Error("finish recording", "session", sessionID, "err", err)
+	}
 }
 
 // retentionUntil fixes a new recording's retention from its grant.

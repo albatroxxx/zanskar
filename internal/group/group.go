@@ -96,8 +96,12 @@ func (r *Repo) List(ctx context.Context, afterName string, limit int) ([]*Group,
 	if limit <= 0 || limit > 500 {
 		limit = 50
 	}
+	// Names are unique as written, so "Ops" and "ops" can both exist: the
+	// order, and the page cursor, use the lower-cased name and then the name
+	// itself, or a page that ended on one of them would skip the other (B6).
 	rows, err := r.db.QueryContext(ctx, r.db.Rebind(`SELECT `+groupCols+` FROM groups g
-		WHERE LOWER(g.name) > LOWER(?) ORDER BY LOWER(g.name) LIMIT ?`), afterName, limit+1)
+		WHERE LOWER(g.name) > LOWER(?) OR (LOWER(g.name) = LOWER(?) AND g.name > ?)
+		ORDER BY LOWER(g.name), g.name LIMIT ?`), afterName, afterName, afterName, limit+1)
 	if err != nil {
 		return nil, "", err
 	}

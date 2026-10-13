@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"sync"
 	"time"
 
@@ -37,6 +38,40 @@ type Syncer struct {
 
 	mu      sync.Mutex
 	running map[string]bool
+	// reported holds the mismatches already audited, by instance, kind and
+	// what was observed, so a mismatch is recorded when it is first seen
+	// rather than on every poll (B3). An observation that matches the pin
+	// again, or the instance's retirement, forgets it. A restart forgets
+	// everything, so each mismatch still standing is recorded once more.
+	reported map[string]bool
+}
+
+// firstSighting reports whether this mismatch is new, and remembers it.
+func (s *Syncer) firstSighting(instanceID, kind, observed string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.reported == nil {
+		s.reported = map[string]bool{}
+	}
+	key := instanceID + "\x00" + kind + "\x00" + observed
+	if s.reported[key] {
+		return false
+	}
+	s.reported[key] = true
+	return true
+}
+
+// cleared forgets the mismatches of kind on an instance (all kinds when kind
+// is empty): the next one, even the same again, is a new sighting.
+func (s *Syncer) cleared(instanceID, kind string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	prefix := instanceID + "\x00" + kind
+	for k := range s.reported {
+		if strings.HasPrefix(k, prefix) {
+			delete(s.reported, k)
+		}
+	}
 }
 
 // Summary reports one poll.
@@ -139,6 +174,7 @@ func (s *Syncer) SyncGroup(ctx context.Context, g *Group) (Summary, error) {
 		sum.Left++
 		s.record(ctx, audit.ASGInstanceLeft, g, in, nil)
 		s.retire(in)
+		s.cleared(in.InstanceID, "")
 	}
 	return sum, s.Repo.RecordSync(ctx, g.ID, nil)
 }
@@ -180,7 +216,11 @@ func (s *Syncer) probe(ctx context.Context, provider cloud.Provider, g *Group, i
 		if res.SSHHostKey != nil && res.SSHHostKey.Fingerprint != prev.HostKeyFingerprint {
 			in.ProbeHealth = "unhealthy"
 			sum.HostKeyMismatches++
-			s.record(ctx, audit.ASGInstanceHostKeyChanged, g, prev, map[string]any{"pinned": prev.HostKeyFingerprint, "observed": res.SSHHostKey.Fingerprint})
+			if s.firstSighting(in.InstanceID, "hostkey", res.SSHHostKey.Fingerprint) {
+				s.record(ctx, audit.ASGInstanceHostKeyChanged, g, prev, map[string]any{"pinned": prev.HostKeyFingerprint, "observed": res.SSHHostKey.Fingerprint})
+			}
+		} else if res.SSHHostKey != nil {
+			s.cleared(in.InstanceID, "hostkey")
 		}
 		in.HostKeyFingerprint, in.HostKeySource = prev.HostKeyFingerprint, prev.HostKeySource
 		return
@@ -195,6 +235,7 @@ func (s *Syncer) probe(ctx context.Context, provider cloud.Provider, g *Group, i
 		for _, fp := range consoleKeys {
 			if fp == observed {
 				in.HostKeyFingerprint, in.HostKeySource = observed, "console"
+				s.cleared(in.InstanceID, "console")
 				return
 			}
 		}
@@ -202,7 +243,9 @@ func (s *Syncer) probe(ctx context.Context, provider cloud.Provider, g *Group, i
 		// rebuilt instance reusing an id. Refuse to pin.
 		in.ProbeHealth = "unhealthy"
 		sum.HostKeyMismatches++
-		s.record(ctx, audit.ASGInstanceHostKeyMismatch, g, in, map[string]any{"console": consoleKeys, "observed": observed})
+		if s.firstSighting(in.InstanceID, "console", observed) {
+			s.record(ctx, audit.ASGInstanceHostKeyMismatch, g, in, map[string]any{"console": consoleKeys, "observed": observed})
+		}
 	default:
 		in.HostKeyFingerprint, in.HostKeySource = observed, "tofu"
 	}
@@ -218,11 +261,16 @@ func (s *Syncer) pinCertificates(ctx context.Context, g *Group, in, prev *Instan
 			set(observed)
 		case observed == "" || observed == pinned:
 			set(pinned)
+			if observed == pinned {
+				s.cleared(in.InstanceID, "cert:"+string(proto))
+			}
 		default:
 			in.ProbeHealth = "unhealthy"
 			sum.CertificateMismatches++
 			set(pinned)
-			s.record(ctx, audit.ASGInstanceCertificateChanged, g, in, map[string]any{"protocol": string(proto), "pinned": pinned, "observed": observed})
+			if s.firstSighting(in.InstanceID, "cert:"+string(proto), observed) {
+				s.record(ctx, audit.ASGInstanceCertificateChanged, g, in, map[string]any{"protocol": string(proto), "pinned": pinned, "observed": observed})
+			}
 		}
 	}
 	var prevTLS, prevWinRM string
@@ -271,7 +319,10 @@ func (s *Syncer) record(ctx context.Context, action string, g *Group, in *Instan
 // Run polls every active group on its own interval until ctx ends. Groups
 // added later are picked up within one scheduler tick (10 s).
 func (s *Syncer) Run(ctx context.Context) {
-	next := map[string]time.Time{}
+	var sch schedule
+	// Groups sync side by side, a few at a time, so one slow or failing
+	// group does not hold up the others' polls (B4).
+	slots := make(chan struct{}, 4)
 	tick := time.NewTicker(10 * time.Second)
 	defer tick.Stop()
 	for {
@@ -281,26 +332,102 @@ func (s *Syncer) Run(ctx context.Context) {
 				s.Log.Error("list autoscaling groups", "err", err)
 			}
 		}
-		now := time.Now()
 		for _, g := range groups {
-			if t, ok := next[g.ID]; ok && now.Before(t) {
+			if !sch.start(g.ID, time.Now()) {
 				continue
 			}
-			next[g.ID] = now.Add(time.Duration(g.PollIntervalSeconds) * time.Second)
-			sum, err := s.SyncGroup(ctx, g)
-			if s.Log != nil {
-				if err != nil {
-					s.Log.Warn("asg sync failed", "asg", g.Name, "err", err)
-				} else {
-					s.Log.Debug("asg sync", "asg", g.Name, "seen", sum.Seen, "healthy", sum.Healthy, "joined", sum.Joined, "left", sum.Left)
+			go func() {
+				slots <- struct{}{}
+				defer func() { <-slots }()
+				sum, err := s.SyncGroup(ctx, g)
+				sch.done(g.ID, time.Duration(g.PollIntervalSeconds)*time.Second, err, time.Now())
+				if s.Log != nil {
+					if err != nil {
+						s.Log.Warn("asg sync failed", "asg", g.Name, "err", err)
+					} else {
+						s.Log.Debug("asg sync", "asg", g.Name, "seen", sum.Seen, "healthy", sum.Healthy, "joined", sum.Joined, "left", sum.Left)
+					}
 				}
-			}
+			}()
 		}
 		select {
 		case <-ctx.Done():
 			return
 		case <-tick.C:
 		}
+	}
+}
+
+// maxBackoff caps how long a failing group waits between polls, unless its
+// own interval is longer.
+const maxBackoff = 10 * time.Minute
+
+// schedule decides when each group polls next: on its interval after a
+// success, and twice as long after each failure in a row, up to maxBackoff
+// (ADR 0011's exponential backoff, B4). A group whose poll is running is
+// never started again alongside it.
+type schedule struct {
+	mu     sync.Mutex
+	groups map[string]*groupSchedule
+}
+
+type groupSchedule struct {
+	next     time.Time
+	failures int
+	running  bool
+}
+
+// start reports whether the group is due at now, and if so marks it running.
+func (sc *schedule) start(id string, now time.Time) bool {
+	sc.mu.Lock()
+	defer sc.mu.Unlock()
+	if sc.groups == nil {
+		sc.groups = map[string]*groupSchedule{}
+	}
+	g := sc.groups[id]
+	if g == nil {
+		g = &groupSchedule{}
+		sc.groups[id] = g
+	}
+	if g.running || now.Before(g.next) {
+		return false
+	}
+	g.running = true
+	return true
+}
+
+// done records the end of a poll that ended with err and sets the next one.
+func (sc *schedule) done(id string, interval time.Duration, err error, now time.Time) {
+	sc.mu.Lock()
+	defer sc.mu.Unlock()
+	g := sc.groups[id]
+	if g == nil {
+		g = &groupSchedule{}
+		sc.groups[id] = g
+	}
+	g.running = false
+	if err == nil {
+		g.failures = 0
+		g.next = now.Add(interval)
+		return
+	}
+	g.failures++
+	limit := max(maxBackoff, interval)
+	wait := interval
+	for i := 0; i < g.failures && wait < limit; i++ {
+		wait *= 2
+	}
+	g.next = now.Add(min(wait, limit))
+}
+
+// AWSFresh is a ProviderFactory for AWS that builds a new client, and so
+// assumes the role again, on every call. The access test uses it: it must
+// find out whether the role can be assumed now, and a cached client would
+// reuse credentials for up to fifteen minutes and pass a trust policy that
+// was revoked a minute ago (B1).
+func AWSFresh() ProviderFactory {
+	return func(ctx context.Context, g *Group) (cloud.Provider, error) {
+		return cloud.NewAWS(ctx, cloud.AWSAccess{Region: g.Region, RoleARN: g.RoleARN, ExternalID: g.ExternalID})
 	}
 }
 

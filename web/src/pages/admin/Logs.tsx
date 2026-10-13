@@ -50,12 +50,12 @@ export function Logs() {
   return (
     <>
       <PageHead title="Logs" lead="The gateway's most recent log lines, from memory: what the journal shows, without shell access. The runtime log level (Settings) decides what is captured; raise it to debug to see more.">
-        <select id="l-level" value={level} onChange={(e) => setLevel(e.target.value as (typeof levels)[number])} style={{ padding: '6px 10px', border: '1px solid var(--line-strong)', borderRadius: 6, background: 'var(--bg-raised)' }}>
+        <select id="l-level" className="filter-control" aria-label="Lowest level shown" value={level} onChange={(e) => setLevel(e.target.value as (typeof levels)[number])}>
           {levels.map((l) => (
             <option key={l} value={l}>{l} and above</option>
           ))}
         </select>
-        <input id="l-q" placeholder="filter text" value={q} onChange={(e) => setQ(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && setApplied(q.trim())} style={{ padding: '6px 10px', border: '1px solid var(--line-strong)', borderRadius: 6, background: 'var(--bg-raised)' }} />
+        <input id="l-q" className="filter-control" placeholder="filter text" aria-label="Filter log lines" value={q} onChange={(e) => setQ(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && setApplied(q.trim())} />
         <button className="btn sm" onClick={() => setApplied(q.trim())}>Filter</button>
         <span className="field inline" style={{ margin: 0 }}>
           <input id="l-auto" type="checkbox" checked={auto} onChange={(e) => setAuto(e.target.checked)} />

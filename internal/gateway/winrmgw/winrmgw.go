@@ -355,8 +355,9 @@ func Bridge(ctx context.Context, log *slog.Logger, sh Shell, ws *websocket.Conn,
 			if err != nil {
 				return
 			}
-			touch()
+			// Only keystrokes count as activity (B18).
 			if typ == websocket.MessageBinary {
+				touch()
 				if !feed(data) {
 					return
 				}
@@ -368,12 +369,14 @@ func Bridge(ctx context.Context, log *slog.Logger, sh Shell, ws *websocket.Conn,
 			}
 			switch f.T {
 			case "i":
+				touch()
 				if !feed([]byte(f.D)) {
 					return
 				}
 			case "r", "p":
-				// resize is meaningless over WinRM; ping keeps the session
-				// alive. Both already counted as activity via touch().
+				// Resize is meaningless over WinRM, and neither it nor a ping
+				// is activity: a page could send them on a timer and keep an
+				// idle session open (B18).
 			}
 		}
 	}()

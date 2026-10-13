@@ -9,7 +9,8 @@ User=zanskar
 Group=zanskar
 EnvironmentFile=/etc/zanskar/env
 WorkingDirectory=/var/lib/zanskar
-# Migrations are an explicit step; serve refuses to start with any pending.
+# serve refuses to start with migrations pending, so the unit applies them
+# first: a package upgrade and a restart are all an upgrade needs.
 ExecStartPre=/usr/bin/zanskar migrate
 ExecStart=/usr/bin/zanskar serve
 Restart=always

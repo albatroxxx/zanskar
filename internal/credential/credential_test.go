@@ -574,3 +574,59 @@ func TestCertificateAuthorityRotationRoutes(t *testing.T) {
 		t.Fatalf("retire twice: %d %s", code, body)
 	}
 }
+
+// TestUnreadablePrincipalsFailClosed: an SSH authority's principal allowlist
+// that could not be read was taken as empty (B12), and an empty allowlist
+// lets the certificate name any login user, so a damaged row opened every
+// account on every target the authority signs for. It is now an error: the
+// credential is not used until the row is repaired.
+func TestUnreadablePrincipalsFailClosed(t *testing.T) {
+	v, db := testVault(t)
+	ctx := context.Background()
+	caPEM, err := GenerateSSHKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := &Credential{Name: "ca", Type: TypeSSHCA, Mode: ModeVaulted, CertificateTTLSeconds: 120, CertificatePrincipals: []string{"deploy"}}
+	if err := v.Create(ctx, c, &Secret{PrivateKey: caPEM}, ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, `UPDATE credentials SET certificate_principals = '{"deploy"' WHERE id = ?`, c.ID); err != nil {
+		t.Fatal(err)
+	}
+	got, err := v.Get(ctx, c.ID)
+	if err == nil {
+		t.Fatalf("a damaged allowlist read as %v (permits root: %v), want an error", got.CertificatePrincipals, got.PermitsPrincipal("root"))
+	}
+}
+
+// TestOpenedCloseZeroesTheKey: Close must overwrite the private key bytes it
+// was given, not a copy, so nothing of the key outlives the handshake in the
+// slice the caller held (B11 checked what Close really clears).
+func TestOpenedCloseZeroesTheKey(t *testing.T) {
+	v, _ := testVault(t)
+	ctx := context.Background()
+	pem, err := GenerateSSHKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := &Credential{Name: "deploy-key", Type: TypeSSHKey, Mode: ModeVaulted, Username: "deploy"}
+	if err := v.Create(ctx, c, &Secret{PrivateKey: pem}, ""); err != nil {
+		t.Fatal(err)
+	}
+	o, err := v.Open(ctx, c.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	key := o.PrivateKey
+	if len(key) == 0 || !bytes.Contains(key, []byte("PRIVATE KEY")) {
+		t.Fatalf("opened key: %q", key)
+	}
+	o.Close()
+	if !bytes.Equal(key, make([]byte, len(key))) {
+		t.Fatal("the key bytes survive Close")
+	}
+	if o.PrivateKey != nil || o.Password != "" {
+		t.Fatal("Close must drop the secret")
+	}
+}

@@ -203,3 +203,33 @@ func TestDeleteRetiresGroup(t *testing.T) {
 		t.Fatalf("double delete must be not found, got %v", err)
 	}
 }
+
+// TestValidateStoresWhatItChecked: Validate trimmed the region and the
+// cloud-side name to check them but stored them as typed (B2), so a leading
+// space reached the IAM policy's ARN and every sync failed. It also refused
+// role ARNs in the GovCloud and China partitions, and the permissions policy
+// named every instance in the standard partition.
+func TestValidateStoresWhatItChecked(t *testing.T) {
+	g := &Group{Name: "web", Region: " eu-west-2 ", ExternalName: " web-asg\t", RoleARN: " arn:aws:iam::123456789012:role/zanskar-web ", OSFamily: target.Linux}
+	if err := g.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	if g.Region != "eu-west-2" || g.ExternalName != "web-asg" || g.RoleARN != "arn:aws:iam::123456789012:role/zanskar-web" {
+		t.Fatalf("stored as typed: %q %q %q", g.Region, g.ExternalName, g.RoleARN)
+	}
+	for region, partition := range map[string]string{"us-gov-west-1": "aws-us-gov", "cn-north-1": "aws-cn", "ap-south-1": "aws"} {
+		g := &Group{Name: "web", Region: region, ExternalName: "web-asg", RoleARN: "arn:" + partition + ":iam::123456789012:role/zanskar-web", OSFamily: target.Linux}
+		if err := g.Validate(); err != nil {
+			t.Fatalf("%s: %v", partition, err)
+		}
+		if p := g.PermissionsPolicy(); !strings.Contains(p, `"arn:`+partition+`:ec2:`+region+`:*:instance/*"`) {
+			t.Fatalf("%s: the instance ARN must be in the region's partition:\n%s", region, p)
+		}
+	}
+	for _, bad := range []string{"arn:aws:iam::123456789012:user/alice", "arn:azure:iam::123456789012:role/x", "arn:aws:iam::12:role/x", "role/x"} {
+		g := &Group{Name: "web", Region: "eu-west-2", ExternalName: "web-asg", RoleARN: bad, OSFamily: target.Linux}
+		if err := g.Validate(); err == nil {
+			t.Fatalf("%q must be refused", bad)
+		}
+	}
+}

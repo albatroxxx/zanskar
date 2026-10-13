@@ -102,7 +102,10 @@ func (g *Group) Validate() error {
 	if g.Provider != "aws" {
 		return fmt.Errorf("%w: unsupported provider %q", ErrInvalidInput, g.Provider)
 	}
-	if strings.TrimSpace(g.Region) == "" || strings.TrimSpace(g.ExternalName) == "" {
+	// What is checked is what is stored: a space kept here reached the IAM
+	// policy's ARN and failed every sync (B2).
+	g.Region, g.ExternalName, g.RoleARN = strings.TrimSpace(g.Region), strings.TrimSpace(g.ExternalName), strings.TrimSpace(g.RoleARN)
+	if g.Region == "" || g.ExternalName == "" {
 		return fmt.Errorf("%w: region and the cloud-side group name are required", ErrInvalidInput)
 	}
 	// The cloud-side name is shown back in the paste-ready role script and
@@ -111,8 +114,8 @@ func (g *Group) Validate() error {
 	if strings.ContainsFunc(g.Region+g.ExternalName, func(r rune) bool { return r < 0x20 || r == 0x7f }) {
 		return fmt.Errorf("%w: region and the cloud-side group name must not contain control characters", ErrInvalidInput)
 	}
-	if !strings.HasPrefix(g.RoleARN, "arn:aws:iam::") || !strings.Contains(g.RoleARN, ":role/") {
-		return fmt.Errorf("%w: role_arn must be an IAM role ARN", ErrInvalidInput)
+	if !roleARNRe.MatchString(g.RoleARN) {
+		return fmt.Errorf("%w: role_arn must be an IAM role ARN (arn:aws:iam::<account>:role/<name>; aws-us-gov and aws-cn as well)", ErrInvalidInput)
 	}
 	if g.ExternalID == "" {
 		g.ExternalID = NewExternalID()
@@ -230,7 +233,7 @@ func (g *Group) PermissionsPolicy() string {
 				"Sid":      "ZanskarInstanceConnect",
 				"Effect":   "Allow",
 				"Action":   "ec2-instance-connect:SendSSHPublicKey",
-				"Resource": "arn:aws:ec2:" + g.Region + ":*:instance/*",
+				"Resource": "arn:" + partition(g.Region) + ":ec2:" + g.Region + ":*:instance/*",
 				"Condition": map[string]any{"StringEquals": map[string]any{
 					"ec2:ResourceTag/aws:autoscaling:groupName": g.ExternalName,
 				}},
@@ -238,6 +241,22 @@ func (g *Group) PermissionsPolicy() string {
 		},
 	}
 	return renderPolicy(doc)
+}
+
+// roleARNRe is an IAM role ARN in any of the three AWS partitions.
+var roleARNRe = regexp.MustCompile(`^arn:aws(-us-gov|-cn)?:iam::[0-9]{12}:role/[A-Za-z0-9+=,.@_/-]+$`)
+
+// partition is the AWS partition a region belongs to, which every ARN in
+// it names: GovCloud and China are their own.
+func partition(region string) string {
+	switch {
+	case strings.HasPrefix(region, "us-gov-"):
+		return "aws-us-gov"
+	case strings.HasPrefix(region, "cn-"):
+		return "aws-cn"
+	default:
+		return "aws"
+	}
 }
 
 // SuggestedRoleName is the role name the guided enrolment proposes.
