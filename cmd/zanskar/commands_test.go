@@ -60,6 +60,12 @@ func newCLIGateway(t *testing.T, migrate bool) *cliGateway {
 	t.Setenv("ZANSKAR_RECORDINGS_DIR", g.recDir)
 	t.Setenv("ZANSKAR_RECORDINGS_S3_BUCKET", "")
 	t.Setenv("ZANSKAR_ADMIN_PASSWORD", "")
+	// A gateway these tests serve is given its AWS identity rather than
+	// looking it up. The lookup runs in the background through the AWS SDK,
+	// which reads os.Stderr while output captures it around a command run
+	// against the serving gateway (a data race under -race), and it would ask
+	// a cloud metadata service from wherever the tests run.
+	t.Setenv("ZANSKAR_AWS_GATEWAY_PRINCIPAL", "arn:aws:iam::123456789012:role/zanskar-test")
 	if migrate {
 		g.with(t, func(ctx context.Context, db *store.DB, _ *keyring.Ring) {
 			if _, err := store.Migrate(ctx, db); err != nil {
