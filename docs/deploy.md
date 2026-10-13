@@ -432,7 +432,10 @@ command line; the console's audit page shows the same result.
 before a rotation were signed with the old key and no longer verify, so restart the service
 right after rotating, run `zanskar audit anchor` and keep the new line. Until the restart the
 running gateway still holds the old key; rather than write an anchor nothing could verify
-later, it writes none and logs `audit anchor failed` saying so. `zanskar audit reseal` removes the stored anchors over the events it
+later, it writes none and logs `audit anchor failed` saying so. The same refusal, and the
+same log line, follows an anchor that is not this gateway's, such as one restored from
+another install's backup or edited in place: `zanskar audit verify` names it as not written
+by this gateway; remove that row and anchoring resumes. `zanskar audit reseal` removes the stored anchors over the events it
 rewrites and anchors the new head; lines kept for the rewritten events then fail, which is
 the record that the log was rewritten.
 
