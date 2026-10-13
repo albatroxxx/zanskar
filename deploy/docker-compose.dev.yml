@@ -10,8 +10,12 @@ services:
       POSTGRES_USER: zanskar
       POSTGRES_PASSWORD: zanskar
       POSTGRES_DB: zanskar
+    # From PostgreSQL 18 the image keeps its data in /var/lib/postgresql/18/docker
+    # and declares /var/lib/postgresql as its volume. A volume at the old
+    # .../data path would sit beside the data, which would then live in an
+    # anonymous volume and be lost when the container is recreated.
     volumes:
-      - pgdata:/var/lib/postgresql/data
+      - pgdata:/var/lib/postgresql
     # PostgreSQL writes its data volume, its socket directory and /tmp only.
     read_only: true
     tmpfs: [/var/run/postgresql, /tmp]
