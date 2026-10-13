@@ -33,6 +33,14 @@ const anchorDomain = "zanskar-audit-anchor-v1\n"
 // checks, so a caller that forgot the key cannot pass a forged anchor.
 var ErrNoAnchorKey = errors.New("audit: the anchor key is required (derive it from the master key with AnchorKey)")
 
+// ErrAnchorKeyMismatch is returned when the newest stored anchor is not
+// signed with the key offered, so this process must not add one of its own:
+// the master key was rotated and the anchors re-signed while this gateway
+// kept running (restart it), or the anchor was edited (audit verify says).
+// An anchor written under the old key after a rotation would fail every
+// later verification, with nothing left to re-sign it.
+var ErrAnchorKeyMismatch = errors.New("audit: the newest stored anchor is not signed with this gateway's key; the master key was rotated (restart the gateway) or the anchor was edited (run audit verify)")
+
 // Anchor records the head of the chain at one moment: the newest event's id
 // and hash, signed with a key derived from the master key (ADR 0008, amended
 // 2026-10-11). Someone with only database access can delete an anchor but
@@ -146,6 +154,9 @@ func (l *Log) Anchor(ctx context.Context, key []byte) (Anchor, error) {
 	}
 	if empty || (last.EventID == head.EventID && last.Hash == head.Hash && last.Signed(key)) {
 		return last, nil
+	}
+	if last.ID != 0 && !last.Signed(key) {
+		return Anchor{}, ErrAnchorKeyMismatch
 	}
 
 	// PostgreSQL keeps microseconds; sign exactly what the column returns.

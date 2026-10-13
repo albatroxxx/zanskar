@@ -430,8 +430,9 @@ command line; the console's audit page shows the same result.
 
 `zanskar key rotate-master` re-signs the stored anchors under the new key. Lines kept from
 before a rotation were signed with the old key and no longer verify, so restart the service
-right after rotating (until then it still signs with the old key), run `zanskar audit anchor`
-and keep the new line. `zanskar audit reseal` removes the stored anchors over the events it
+right after rotating, run `zanskar audit anchor` and keep the new line. Until the restart the
+running gateway still holds the old key; rather than write an anchor nothing could verify
+later, it writes none and logs `audit anchor failed` saying so. `zanskar audit reseal` removes the stored anchors over the events it
 rewrites and anchors the new head; lines kept for the rewritten events then fail, which is
 the record that the log was rewritten.
 
