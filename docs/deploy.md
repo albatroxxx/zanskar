@@ -60,7 +60,8 @@ guacd address on the console's Settings page, which applies without a restart:
 
 ```sh
 sudo docker run -d --name guacd --restart unless-stopped -p 127.0.0.1:4822:4822 \
-  -e HOME=/tmp --read-only --tmpfs /tmp:size=512m,mode=1777 guacamole/guacd:1.6.0
+  -e HOME=/tmp --read-only --tmpfs /tmp:size=512m,mode=1777 \
+  guacamole/guacd:1.6.0@sha256:8974eaa9ba32f713daf311e7cc8cd7e4cdfba1edea39eed75524e78ef4b08f4f
 ```
 
 **TLS without a certificate.** The gateway refuses plain HTTP on a non-loopback address.
@@ -337,10 +338,10 @@ tooling below rather than `zanskar backup`.
   the audit log's anchors that lives outside the database ([Audit anchors](#audit-anchors)).
 - Verify the audit log on a schedule: `zanskar audit verify` from a CronJob or a timer,
   with `--anchor` and a line kept outside the database.
-- Keep guacd at 1.6 or newer (certificate pinning, ADR 0012). Its image is pinned in the
-  compose files and, separately, in the chart's `guacd.image.tag`; Dependabot's Docker
-  updates cover the Dockerfiles, so check the guacd tag yourself when you upgrade and keep
-  the two in step.
+- Keep guacd at 1.6 or newer (certificate pinning, ADR 0012). Its image is pinned by tag
+  and digest in the compose files, the chart's `guacd.image`, the command `zanskar init`
+  prints, this guide and the AWS user data. A test fails when one of them names a different
+  image from the compose file, so an upgrade changes them together.
 
 ## The audit log outside the database
 
