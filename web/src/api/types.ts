@@ -394,6 +394,8 @@ export interface AutoscalingGroup {
 export interface AwsIdentity {
   principal?: string
   source: 'environment' | 'detected' | 'none'
+  /** Off AWS ("none"), a missing identity is the ordinary case, not an error. */
+  platform: 'aws' | 'none'
   account_id?: string
   raw_arn?: string
   checked_at: string

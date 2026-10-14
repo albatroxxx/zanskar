@@ -32,6 +32,7 @@ func TestGatewayIdentityPrecedence(t *testing.T) {
 	calls := 0
 	env := NewGatewayIdentity(" arn:aws:iam::1:role/gw ")
 	env.detect = func(context.Context) (Identity, error) { calls++; return Identity{}, errors.New("must not run") }
+	env.platform = func(context.Context) string { return PlatformNone }
 	if id := env.Get(ctx); id.Principal != "arn:aws:iam::1:role/gw" || id.Source != SourceEnvironment || calls != 0 {
 		t.Fatalf("override: %+v calls=%d", id, calls)
 	}
@@ -60,5 +61,31 @@ func TestGatewayIdentityPrecedence(t *testing.T) {
 	}
 	if id = det.Get(ctx); id.Source != SourceDetected || calls != 2 {
 		t.Fatalf("cached after refresh: %+v calls=%d", id, calls)
+	}
+}
+
+// TestIdentityPlatform: off AWS a missing identity is the ordinary case and
+// says so plainly; on AWS it keeps the real error, because there it is a
+// misconfiguration worth reading.
+func TestIdentityPlatform(t *testing.T) {
+	ctx := context.Background()
+	off := NewGatewayIdentity("")
+	off.detect = func(context.Context) (Identity, error) { return Identity{}, errors.New("sts: deadline exceeded") }
+	off.platform = func(context.Context) string { return PlatformNone }
+	if id := off.Get(ctx); id.Platform != PlatformNone || id.Source != SourceNone || id.Error != "not running on AWS" {
+		t.Fatalf("off AWS: %+v", id)
+	}
+
+	on := NewGatewayIdentity("")
+	on.detect = func(context.Context) (Identity, error) { return Identity{}, errors.New("sts: access denied") }
+	on.platform = func(context.Context) string { return PlatformAWS }
+	if id := on.Get(ctx); id.Platform != PlatformAWS || id.Error != "sts: access denied" {
+		t.Fatalf("on AWS: %+v", id)
+	}
+
+	over := NewGatewayIdentity("arn:aws:iam::1:role/gw")
+	over.platform = func(context.Context) string { return PlatformNone }
+	if id := over.Get(ctx); id.Platform != PlatformNone || id.Source != SourceEnvironment || id.Error != "" {
+		t.Fatalf("override off AWS: %+v", id)
 	}
 }
