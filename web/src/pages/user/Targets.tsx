@@ -2,6 +2,7 @@ import { useEffect, useState, type FormEvent } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { api, ApiError, errorMessage } from '../../api/client'
 import type { AccessRequest, ConnectResponse, Page, Protocol, ReachableInstance, ReachableTarget, Session } from '../../api/types'
+import { DatabaseIcon, OSIcon, StateIcon } from '../../components/icons'
 import { Alert, Badge, Empty, Field, Modal, PageHead, StatTile, Tabs, Tags } from '../../components/ui'
 import { engineName, protocolName } from '../../api/format'
 import { fmtAgo } from './Failover'
@@ -192,14 +193,14 @@ export function Targets() {
 
   return (
     <>
-      <PageHead title="Targets" lead="What your access policies let you reach. Terminal opens SSH or PowerShell; Desktop opens RDP or VNC when the machine offers it; a database opens its SQL client. Request marks one that needs approval before you can connect." />
+      <PageHead title="Targets" />
       {err && <Alert tone="danger">{err}</Alert>}
       {notice && <Alert tone="ok">{notice}</Alert>}
       {(strip.open > 0 || strip.pending > 0 || strip.expiring > 0) && (
         <div className="stat-grid" style={{ marginBottom: 16 }}>
-          {strip.open > 0 && <StatTile value={strip.open} one="session of yours is still open" many="sessions of yours are still open" to="/sessions" />}
-          {strip.pending > 0 && <StatTile value={strip.pending} one="access request awaiting approval" many="access requests awaiting approval" to="/access" />}
-          {strip.expiring > 0 && <StatTile value={strip.expiring} one="grant expires within the hour" many="grants expire within the hour" to="/access" tone="warn" />}
+          {strip.open > 0 && <StatTile value={strip.open} label="Open sessions" to="/sessions" />}
+          {strip.pending > 0 && <StatTile value={strip.pending} label="Pending requests" to="/access" />}
+          {strip.expiring > 0 && <StatTile value={strip.expiring} label="Grants expiring soon" to="/access" tone="warn" />}
         </div>
       )}
       <Tabs
@@ -235,7 +236,7 @@ export function Targets() {
                   return (
                     <tr key={t.id}>
                       <td><strong>{t.name}</strong></td>
-                      <td>{engineName(t.engine)}</td>
+                      <td><DatabaseIcon label={engineName(t.engine)} /> {engineName(t.engine)}</td>
                       <td><Tags tags={t.tags} /></td>
                       <td>
                         {p && gated(t, p) ? (
@@ -283,11 +284,11 @@ export function Targets() {
                         {notReady && (
                           <>
                             {' '}
-                            <Badge tone="warn">awaiting host key trust</Badge>
+                            <StateIcon state="warn" label="Awaiting host key trust — an administrator must trust this machine's key first" />
                           </>
                         )}
                       </td>
-                      <td>{t.os_family}</td>
+                      <td><OSIcon os={t.os_family} /></td>
                       <td className="mono">{t.private_ip ?? '—'}</td>
                       <td><Tags tags={t.tags} /></td>
                       {protoButtons(t, (p) => void connect(t, { target_id: t.id, protocol: p }), (p) => setReqModal({ target: t, protocol: p }))}
@@ -325,7 +326,7 @@ export function Targets() {
                   return (
                     <tr key={g.id}>
                       <td><strong>{g.name}</strong></td>
-                      <td>{g.os_family}</td>
+                      <td><OSIcon os={g.os_family} /></td>
                       <td><Tags tags={g.tags} /></td>
                       <td>
                         <Badge tone={healthy === 0 ? 'danger' : 'ok'}>{healthy} / {total}</Badge>

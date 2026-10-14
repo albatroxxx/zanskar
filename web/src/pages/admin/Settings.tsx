@@ -39,7 +39,7 @@ export function Settings() {
 
   return (
     <>
-      <PageHead title="Settings" lead="Runtime settings apply the moment they are saved, without a restart. A value set here overrides the environment file; Reset goes back to it. Boot settings are fixed at install and listed below with the variable to edit." />
+      <PageHead title="Settings" lead="Saved values apply at once and override the environment file; Reset returns to it." />
       {err && <Alert tone="danger">{err}</Alert>}
       {categories.map((c) => (
         <div className="card" key={c}>

@@ -15,7 +15,7 @@ export function MySessions() {
 
   return (
     <>
-      <PageHead title="My sessions" lead="When you connected and to what. Recordings are reviewed by auditors and administrators, not shown here." />
+      <PageHead title="My sessions" lead="Sessions are recorded; recordings are reviewed by auditors, not shown here." />
       {err && <Alert tone="danger">{err}</Alert>}
       <div className="card table-wrap">
         {items === null ? (

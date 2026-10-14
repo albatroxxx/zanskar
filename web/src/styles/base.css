@@ -50,7 +50,9 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .sidebar .switch { font-size: 0.8rem; }
 .main { padding: 28px 32px 48px; min-width: 0; }
 .page-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 20px; flex-wrap: wrap; }
-.page-head p { margin: 4px 0 0; color: var(--fg-muted); max-width: 64ch; }
+/* A lead is one sentence now, so it gets one line on a desktop window: the
+   old 64ch cap wrapped it into a narrow ragged block beside empty space. */
+.page-head p { margin: 4px 0 0; color: var(--fg-muted); max-width: 88ch; }
 .actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 @media (max-width: 760px) {
   .shell { grid-template-columns: 1fr; }
@@ -80,6 +82,15 @@ a.stat-tile:hover { border-color: var(--fg-faint); }
 .stat-tile.warn .value { color: var(--warn); }
 .stat-tile.danger .value { color: var(--danger); }
 .stat-tile .label { margin-top: 2px; font-size: 0.82rem; color: var(--fg-muted); }
+
+/* Inline glyphs (components/icons.tsx): meaning stays in aria-label and the
+   hover title; a tone only when the glyph marks a state. */
+.glyph { display: inline-flex; align-items: center; vertical-align: -3px; color: var(--fg-muted); }
+.glyph.warn { color: var(--warn); }
+.glyph.danger { color: var(--danger); }
+.glyph.ok { color: var(--ok); }
+.glyph.muted { color: var(--fg-faint); }
+.glyph + .glyph { margin-left: 6px; }
 
 /* tables */
 table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }

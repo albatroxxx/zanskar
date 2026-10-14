@@ -1,7 +1,9 @@
 import { dbTLS, engineName } from '../../api/format'
+import { DatabaseIcon } from '../../components/icons'
 import type { Credential, Target } from '../../api/types'
 import { Badge, Tags } from '../../components/ui'
 import { TargetsPage } from './TargetsPage'
+import { StateIcon } from '../../components/icons'
 
 /**
  * Databases lists database targets (ADR 0017): managed endpoints such as RDS,
@@ -14,16 +16,16 @@ export function Databases() {
     <TargetsPage
       kind="database"
       title="Databases"
-      lead="PostgreSQL, MySQL and MariaDB endpoints, including RDS. Each session runs the matching client in a container next to a sidecar that holds the credential; the user never sees the password."
+      lead="PostgreSQL, MySQL and MariaDB, including RDS. The user never sees the password."
       addLabel="Add database"
       empty="No databases yet. Add one with its engine, endpoint and a password credential."
       columns={['Engine', 'Endpoint', 'Database', 'TLS', 'Credential', 'Tags']}
       cells={(t, credentials) => (
         <>
-          <td>{engineName(t.engine, t.engine_version)}</td>
+          <td><DatabaseIcon label={engineName(t.engine)} /> {engineName(t.engine, t.engine_version)}</td>
           <td className="mono">{t.address}{t.ports.database ? `:${t.ports.database}` : ''}</td>
           <td>{t.database_name || <span className="muted">—</span>}</td>
-          <td>{dbTLS(t.tls_mode).verified ? dbTLS(t.tls_mode).label : <Badge tone="warn">{dbTLS(t.tls_mode).label}</Badge>}</td>
+          <td><StateIcon state={dbTLS(t.tls_mode).verified ? 'ok' : 'warn'} label={'TLS: ' + dbTLS(t.tls_mode).label} /></td>
           <td>{credentialCell(t, credentials)}</td>
           <td><Tags tags={t.tags} /></td>
         </>
@@ -34,7 +36,7 @@ export function Databases() {
 
 function credentialCell(t: Target, credentials: Credential[]) {
   const id = t.credentials.database
-  if (!id) return <Badge tone="warn">none</Badge>
+  if (!id) return <StateIcon state="warn" label="No credential — database sessions cannot open" />
   const c = credentials.find((x) => x.id === id)
   if (!c) return <span className="muted">…</span>
   return c.mode === 'user_supplied' ? <Badge>user supplied</Badge> : <span>{c.name}</span>

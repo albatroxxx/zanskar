@@ -47,6 +47,28 @@ describe('Targets, an approval-gated autoscaling group', () => {
   })
 })
 
+// A state glyph replaces the words in the row, but never deletes them: the
+// label stays for screen readers and on hover.
+describe('Targets state glyphs', () => {
+  it('marks an untrusted host with a labelled warning, not a sentence badge', async () => {
+    const host: ReachableTarget = {
+      kind: 'target', id: 't1', name: 'orders-db-host', os_family: 'linux', tags: {},
+      capabilities: ['ssh'], allowed_protocols: ['ssh'], requires_approval: [], host_key_ready: false,
+    }
+    vi.spyOn(api, 'get').mockImplementation(async (p: string) => ({ items: p === '/me/targets' ? [host] : [] }) as never)
+    render(
+      <MemoryRouter>
+        <Targets />
+      </MemoryRouter>,
+    )
+
+    await screen.findByText('orders-db-host')
+    expect(screen.getByRole('img', { name: /Awaiting host key trust/ })).toBeDefined()
+    expect(screen.getByRole('img', { name: 'Linux' })).toBeDefined()
+    expect(screen.queryByText('awaiting host key trust')).toBeNull()
+  })
+})
+
 // The overview strip (ADR 0029): a user with something waiting sees it above
 // the list; a user with nothing waiting sees no strip at all.
 describe('Targets overview strip', () => {
@@ -64,11 +86,11 @@ describe('Targets overview strip', () => {
       </MemoryRouter>,
     )
 
-    const open = (await screen.findByText('session of yours is still open')).closest('a')
+    const open = (await screen.findByText('Open sessions')).closest('a')
     expect(open?.getAttribute('href')).toBe('/sessions')
     expect(open?.textContent).toContain('1')
-    expect(screen.getByText('access request awaiting approval').closest('a')?.getAttribute('href')).toBe('/access')
-    expect(screen.getByText('grant expires within the hour').closest('a')?.getAttribute('href')).toBe('/access')
+    expect(screen.getByText('Pending requests').closest('a')?.getAttribute('href')).toBe('/access')
+    expect(screen.getByText('Grants expiring soon').closest('a')?.getAttribute('href')).toBe('/access')
   })
 
   it('is absent when nothing waits', async () => {
@@ -80,8 +102,8 @@ describe('Targets overview strip', () => {
     )
 
     await screen.findByRole('tablist', { name: 'Kinds of target' })
-    expect(screen.queryByText(/still open/)).toBeNull()
-    expect(screen.queryByText(/awaiting approval/)).toBeNull()
+    expect(screen.queryByText('Open sessions')).toBeNull()
+    expect(screen.queryByText('Pending requests')).toBeNull()
   })
 })
 

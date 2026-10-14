@@ -60,7 +60,7 @@ export function Approvals() {
 
   return (
     <>
-      <PageHead title="Approvals" lead="Just-in-time access requests awaiting a decision, and the grants currently active. Approving grants time-bounded access; revoking ends an active grant early." />
+      <PageHead title="Approvals" lead="Requests awaiting a decision, and the grants currently active." />
       {err && <Alert tone="danger">{err}</Alert>}
 
       <div className="card table-wrap">

@@ -6,6 +6,7 @@ import { useAuth } from '../../auth/AuthContext'
 import { useSubmit } from '../../components/submit'
 import { Alert, Badge, Confirm, Empty, Field, FormModal, Modal, PageHead, Tabs } from '../../components/ui'
 import { useList } from './lib'
+import { StateIcon } from '../../components/icons'
 
 const roles: Role[] = ['admin', 'auditor', 'user']
 
@@ -13,7 +14,7 @@ export function UsersGroups() {
   const [tab, setTab] = useState<'users' | 'groups'>('users')
   return (
     <>
-      <PageHead title="Users & groups" lead="People sign in to Zanskar as users; policies grant access to groups. Roles: admin configures, auditor reviews, user connects." />
+      <PageHead title="Users & groups" lead="Roles: admin configures, auditor reviews, user connects." />
       <Tabs label="Users and groups" value={tab} onChange={setTab} tabs={[{ key: 'users', label: 'Users' }, { key: 'groups', label: 'Groups' }]} />
       {tab === 'users' ? <Users /> : <Groups />}
     </>
@@ -66,7 +67,7 @@ function Users() {
                     </td>
                     <td>{u.roles.map((r) => <Badge key={r} tone={r === 'admin' ? 'accent' : undefined}>{r}</Badge>)}</td>
                     <td>
-                      {u.status === 'active' ? <Badge tone="ok">active</Badge> : <Badge tone="warn">{u.status}</Badge>}
+                      <StateIcon state={u.status === 'active' ? 'ok' : 'warn'} label={u.status === 'active' ? 'Active' : u.status === 'locked' ? 'Locked' : 'Disabled'} />
                       {u.must_change_password && (
                         <>
                           {' '}

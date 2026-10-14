@@ -5,6 +5,7 @@ import type { AsgAccessTest, AsgIAMDocs, AsgInstance, AutoscalingGroup, AwsIdent
 import { Alert, Badge, Confirm, Empty, Field, Modal, PageHead, Tags } from '../../components/ui'
 import { formatTags, parseTags, protocols, useList, type PortProtocol } from './lib'
 import { CredentialBindings, CredentialSelect, shownValue, type BindingChange } from './Bindings'
+import { StateIcon } from '../../components/icons'
 
 interface SyncSummary { Seen: number; Healthy: number; Joined: number; Left: number; Retired: number; HostKeyMismatches: number }
 interface SyncResponse { summary: SyncSummary; group: AutoscalingGroup; error?: string }
@@ -20,7 +21,7 @@ export function Autoscaling() {
 
   return (
     <>
-      <PageHead title="Autoscaling groups" lead="Enroll a cloud autoscaling group with a read-only role. Zanskar tracks the healthy pool itself; when the instance you are on is retired you are offered another one instead of a dead terminal.">
+      <PageHead title="Autoscaling groups" lead="Cloud autoscaling groups, enrolled with a read-only role.">
         <button className="btn primary" onClick={() => setAdding(true)}>Enroll group</button>
       </PageHead>
       {err && <Alert tone="danger">{err}</Alert>}
@@ -60,7 +61,7 @@ export function Autoscaling() {
                     {g.last_synced_at ? fmtTime(g.last_synced_at) : 'never'}{' '}
                     {g.last_error && <Badge tone="danger">{g.last_error.length > 40 ? g.last_error.slice(0, 40) + '…' : g.last_error}</Badge>}
                   </td>
-                  <td>{g.status === 'disabled' ? <Badge>disabled</Badge> : <Badge tone="ok">active</Badge>}</td>
+                  <td>{g.status === 'disabled' ? <StateIcon state="unknown" label="Disabled" /> : <StateIcon state="ok" label="Active" />}</td>
                   <td><button className="btn sm" onClick={() => setOpen(g)}>Open</button></td>
                 </tr>
               ))}
@@ -661,10 +662,10 @@ function GroupDetail({ group, credentials, onClose, onChanged, onDeleted, onErro
                   <td>{healthBadge(i.lb_health, 'healthy')}</td>
                   <td>{healthBadge(i.probe_health, 'healthy')}</td>
                   <td>
-                    {i.host_key_source === 'console' ? <Badge tone="ok">console</Badge> : i.host_key_source === 'tofu' ? <Badge tone="warn">tofu</Badge> : <Badge>none</Badge>}
+                    {i.host_key_source === 'console' ? <StateIcon state="ok" label="Host key pinned from the console" /> : i.host_key_source === 'tofu' ? <StateIcon state="warn" label="Trust on first use — not pinned yet" /> : <StateIcon state="unknown" label="No host key" />}
                   </td>
                   <td className="muted">{i.launched_at ? fmtTime(i.launched_at) : '—'}</td>
-                  <td>{i.terminated_at ? <Badge>terminated</Badge> : i.healthy ? <Badge tone="ok">yes</Badge> : <Badge tone="danger">no</Badge>}</td>
+                  <td>{i.terminated_at ? <StateIcon state="unknown" label="Terminated" /> : i.healthy ? <StateIcon state="ok" label="Healthy" /> : <StateIcon state="danger" label="Unhealthy" />}</td>
                 </tr>
               ))}
             </tbody>
