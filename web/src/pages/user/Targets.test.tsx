@@ -63,8 +63,11 @@ describe('Targets state glyphs', () => {
     )
 
     await screen.findByText('orders-db-host')
-    expect(screen.getByRole('img', { name: /Awaiting host key trust/ })).toBeDefined()
-    expect(screen.getByRole('img', { name: 'Linux' })).toBeDefined()
+    const warn = screen.getByRole('button', { name: /Awaiting host key trust/ })
+    expect(warn.getAttribute('aria-expanded')).toBe('false')
+    await userEvent.setup().click(warn)
+    expect(warn.getAttribute('aria-expanded')).toBe('true')
+    expect(screen.getByText('Linux')).toBeDefined()
     expect(screen.queryByText('awaiting host key trust')).toBeNull()
   })
 })

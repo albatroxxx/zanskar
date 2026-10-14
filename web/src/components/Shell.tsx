@@ -1,10 +1,13 @@
 import { Fragment, Suspense, useEffect, useState } from 'react'
 import { Link, NavLink, Outlet, useNavigate } from 'react-router-dom'
+import type { User } from '../api/types'
+import { fmtTime } from '../api/format'
 import { useAuth } from '../auth/AuthContext'
 import { canConnect } from '../auth/home'
 import { AccessNotices } from './AccessNotices'
 import { ConsoleCLI } from './ConsoleCLI'
 import { RestartNotice } from './RestartNotice'
+import { Badge, Modal } from './ui'
 
 export interface NavItem {
   to: string
@@ -29,7 +32,8 @@ function NavBadge({ load }: { load: () => Promise<number> }) {
 
 /** Shell is the sidebar layout shared by the user, admin and auditor portals. */
 export function Shell({ portal, items }: { portal: 'user' | 'admin' | 'audit'; items: NavItem[] }) {
-  const { user, logout, hasRole, refresh } = useAuth()
+  const { user, logout, hasRole, refresh, mfaEnrolled } = useAuth()
+  const [accountOpen, setAccountOpen] = useState(false)
   const nav = useNavigate()
   const sub = portal === 'user' ? 'access' : portal === 'admin' ? 'admin' : 'audit'
   // The brand goes to the first page of the portal you are in. It asks the
@@ -70,11 +74,11 @@ export function Shell({ portal, items }: { portal: 'user' | 'admin' | 'audit'; i
         </nav>
         <div className="spacer" />
         <div className="me">
-          <div>
-            <strong>{user?.display_name}</strong>
-            <br />
-            <span className="mono">{user?.username}</span>
-          </div>
+          {/* Just the username: it is the one line that is always unique. The
+              rest of the account — full name, email, whatever an identity
+              provider fills in — lives behind it. */}
+          <button className="me-user mono" onClick={() => setAccountOpen(true)}>{user?.username}</button>
+
           <div className="switch">
             {others.map((o, i) => (
               <Fragment key={o.to}>
@@ -105,6 +109,41 @@ export function Shell({ portal, items }: { portal: 'user' | 'admin' | 'audit'; i
           <Outlet />
         </Suspense>
       </main>
+      {/* At the root, not in the sidebar: the sticky sidebar is a stacking
+          context, and a fixed dialog inside it paints under the main column. */}
+      {accountOpen && user && <AccountModal user={user} mfaEnrolled={mfaEnrolled} onClose={() => setAccountOpen(false)} />}
     </div>
+  )
+}
+
+/** AccountModal is the account behind the sidebar's username: what Zanskar
+ *  knows today, and where an identity provider's fields (full name, email,
+ *  department and the like) land once one is connected. */
+function AccountModal({ user, mfaEnrolled, onClose }: { user: User; mfaEnrolled: boolean; onClose: () => void }) {
+  return (
+    <Modal title="Account" onClose={onClose} width={420}>
+      <dl className="kv">
+        <dt>Username</dt>
+        <dd className="mono">{user.username}</dd>
+        <dt>Full name</dt>
+        <dd>{user.display_name || <span className="muted">not set</span>}</dd>
+        <dt>Email</dt>
+        <dd>{user.email || <span className="muted">not set</span>}</dd>
+        <dt>Roles</dt>
+        <dd>{user.roles.join(', ')}</dd>
+        <dt>Status</dt>
+        <dd>{user.status}</dd>
+        <dt>Authenticator</dt>
+        <dd>{mfaEnrolled ? <Badge tone="ok">enrolled</Badge> : <Badge>not enrolled</Badge>}</dd>
+        {user.last_login_at && (
+          <>
+            <dt>Last sign-in</dt>
+            <dd>{fmtTime(user.last_login_at)}</dd>
+          </>
+        )}
+        <dt>Created</dt>
+        <dd>{fmtTime(user.created_at)}</dd>
+      </dl>
+    </Modal>
   )
 }
