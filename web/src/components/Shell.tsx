@@ -144,9 +144,6 @@ function AccountModal({ user, mfaEnrolled, onClose }: { user: User; mfaEnrolled:
         <dt>Created</dt>
         <dd>{fmtTime(user.created_at)}</dd>
       </dl>
-      <p className="muted" style={{ marginBottom: 0 }}>
-        A connected identity provider fills in more — full name, email, department — the way directory attributes do.
-      </p>
     </Modal>
   )
 }
