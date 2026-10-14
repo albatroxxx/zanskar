@@ -50,7 +50,9 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .sidebar .switch { font-size: 0.8rem; }
 .main { padding: 28px 32px 48px; min-width: 0; }
 .page-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 20px; flex-wrap: wrap; }
-.page-head p { margin: 4px 0 0; color: var(--fg-muted); max-width: 64ch; }
+/* A lead is one sentence now, so it gets one line on a desktop window: the
+   old 64ch cap wrapped it into a narrow ragged block beside empty space. */
+.page-head p { margin: 4px 0 0; color: var(--fg-muted); max-width: 88ch; }
 .actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 @media (max-width: 760px) {
   .shell { grid-template-columns: 1fr; }

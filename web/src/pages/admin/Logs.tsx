@@ -49,7 +49,7 @@ export function Logs() {
 
   return (
     <>
-      <PageHead title="Logs" lead="Recent log lines, from memory. The runtime log level (Settings) decides what is captured.">
+      <PageHead title="Logs" lead="Recent log lines; the runtime log level (Settings) decides what is captured.">
         <select id="l-level" className="filter-control" aria-label="Lowest level shown" value={level} onChange={(e) => setLevel(e.target.value as (typeof levels)[number])}>
           {levels.map((l) => (
             <option key={l} value={l}>{l} and above</option>

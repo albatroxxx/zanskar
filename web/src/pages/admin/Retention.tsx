@@ -63,7 +63,7 @@ export function Retention() {
     <>
       <PageHead
         title="Recording retention"
-        lead="How long recordings are kept. Each recording's retention is fixed when its session starts; deletions are audited."
+        lead="A recording's retention is fixed when its session starts; deletions are audited."
       />
       {err && <Alert tone="danger">{err}</Alert>}
       {saved && <Alert tone="ok">Retention policy saved.</Alert>}

@@ -77,7 +77,7 @@ export function IdentityProviders() {
 
   return (
     <>
-      <PageHead title="Identity providers" lead="OpenID Connect or LDAP / Active Directory. Secrets are sealed on save and never shown again.">
+      <PageHead title="Identity providers" lead="Secrets are sealed on save and never shown again.">
         <button className="btn primary" onClick={() => setEditing('new')}>Add provider</button>
       </PageHead>
       {err && <Alert tone="danger">{err}</Alert>}

@@ -33,7 +33,7 @@ export function Policies() {
 
   return (
     <>
-      <PageHead title="Access policies" lead="Who may reach which targets, over which protocols. When policies overlap, the shortest idle timeout wins.">
+      <PageHead title="Access policies" lead="When policies overlap, the shortest idle timeout wins.">
         <button className="btn primary" onClick={() => setEditing('new')}>Add policy</button>
       </PageHead>
       {err && <Alert tone="danger">{err}</Alert>}
