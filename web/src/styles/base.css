@@ -47,6 +47,9 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .sidebar .spacer { flex: 1; }
 .sidebar .me { border-top: 1px solid var(--line); padding-top: 12px; font-size: 0.86rem; color: var(--fg-muted); display: flex; flex-direction: column; gap: 6px; }
 .sidebar .me strong { color: var(--fg); font-weight: 500; }
+/* The username is the account's door: a quiet link-weight button. */
+.me-user { background: none; border: 0; padding: 0; color: var(--fg); cursor: pointer; text-align: left; font-size: 0.86rem; align-self: flex-start; }
+.me-user:hover { color: var(--accent); text-decoration: underline; }
 .sidebar .switch { font-size: 0.8rem; }
 .main { padding: 28px 32px 48px; min-width: 0; }
 .page-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 20px; flex-wrap: wrap; }
@@ -83,14 +86,20 @@ a.stat-tile:hover { border-color: var(--fg-faint); }
 .stat-tile.danger .value { color: var(--danger); }
 .stat-tile .label { margin-top: 2px; font-size: 0.82rem; color: var(--fg-muted); }
 
-/* Inline glyphs (components/icons.tsx): meaning stays in aria-label and the
-   hover title; a tone only when the glyph marks a state. */
+/* Inline glyphs (components/icons.tsx): a glyph never deletes information.
+   OS and engine glyphs sit beside a visible name; a state glyph is a button
+   whose words show instantly on hover and pin open on click. */
 .glyph { display: inline-flex; align-items: center; vertical-align: -3px; color: var(--fg-muted); }
-.glyph.warn { color: var(--warn); }
-.glyph.danger { color: var(--danger); }
-.glyph.ok { color: var(--ok); }
-.glyph.muted { color: var(--fg-faint); }
+.glyph.warn, .glyph-btn.warn { color: var(--warn); }
+.glyph.danger, .glyph-btn.danger { color: var(--danger); }
+.glyph.ok, .glyph-btn.ok { color: var(--ok); }
+.glyph.muted, .glyph-btn.muted { color: var(--fg-faint); }
 .glyph + .glyph { margin-left: 6px; }
+.glyph-name { display: inline-flex; align-items: center; gap: 6px; }
+.glyph-wrap { position: relative; display: inline-flex; }
+.glyph-btn { display: inline-flex; align-items: center; background: none; border: 0; padding: 0; cursor: pointer; vertical-align: -3px; }
+.glyph-tip { display: none; position: absolute; bottom: calc(100% + 6px); left: 0; z-index: 30; width: max-content; max-width: 260px; padding: 5px 9px; background: var(--bg-raised); border: 1px solid var(--line-strong); border-radius: var(--radius); font-size: 0.78rem; color: var(--fg); text-align: left; box-shadow: var(--shadow); }
+.glyph-wrap:hover .glyph-tip, .glyph-btn:focus-visible + .glyph-tip, .glyph-tip.open { display: block; }
 
 /* tables */
 table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }

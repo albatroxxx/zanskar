@@ -35,7 +35,7 @@ describe('TargetsPage', () => {
     expect(get).toHaveBeenCalledWith('/targets?limit=500&kind=database')
     expect(within(row).getByText('PostgreSQL 16')).toBeDefined()
     expect(within(row).getByText('orders.rds.example:5432')).toBeDefined()
-    expect(within(row).getByRole('img', { name: 'TLS: Encrypted, not verified' })).toBeDefined()
+    expect(within(row).getByRole('button', { name: 'TLS: Encrypted, not verified' })).toBeDefined()
     expect(screen.getAllByRole('columnheader').map((th) => th.textContent)).toEqual(['Name', 'Engine', 'Endpoint', 'Database', 'TLS', 'Credential', 'Tags', ''])
 
     await userEvent.setup().click(screen.getByRole('button', { name: 'Add database' }))
