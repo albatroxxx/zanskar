@@ -1,8 +1,8 @@
 import { useEffect, useState, type FormEvent } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { api, ApiError, errorMessage } from '../../api/client'
-import type { AccessRequest, ConnectResponse, Page, Protocol, ReachableInstance, ReachableTarget } from '../../api/types'
-import { Alert, Badge, Empty, Field, Modal, PageHead, Tabs, Tags } from '../../components/ui'
+import type { AccessRequest, ConnectResponse, Page, Protocol, ReachableInstance, ReachableTarget, Session } from '../../api/types'
+import { Alert, Badge, Empty, Field, Modal, PageHead, StatTile, Tabs, Tags } from '../../components/ui'
 import { engineName, protocolName } from '../../api/format'
 import { fmtAgo } from './Failover'
 
@@ -41,10 +41,20 @@ export function Targets() {
   const [reqForm, setReqForm] = useState({ reason: '', minutes: 60 })
   const [busy, setBusy] = useState('')
 
+  // The overview strip (ADR 0029): the three things worth a glance before the
+  // list — a session left open, a request still waiting, a grant about to run
+  // out. All scoped to the account; it fails silently because the page's real
+  // content reports its own errors.
+  const [strip, setStrip] = useState({ open: 0, pending: 0, expiring: 0 })
+
   const loadGrants = () =>
     api
       .get<Page<AccessRequest>>('/me/access')
-      .then((p) => setGrants(new Set(p.items.map((g) => `${g.target_id ?? g.asg_id}:${g.protocol}`))))
+      .then((p) => {
+        setGrants(new Set(p.items.map((g) => `${g.target_id ?? g.asg_id}:${g.protocol}`)))
+        const soon = Date.now() + 60 * 60000
+        setStrip((s) => ({ ...s, expiring: p.items.filter((g) => g.expires_at && new Date(g.expires_at).getTime() < soon).length }))
+      })
       .catch(() => {})
 
   useEffect(() => {
@@ -63,6 +73,14 @@ export function Targets() {
       })
       .catch((e) => setErr(errorMessage(e)))
     void loadGrants()
+    api
+      .get<Page<Session>>('/me/sessions?open=true&limit=50')
+      .then((p) => setStrip((s) => ({ ...s, open: p.items.length })))
+      .catch(() => {})
+    api
+      .get<Page<AccessRequest>>('/me/access-requests')
+      .then((p) => setStrip((s) => ({ ...s, pending: p.items.filter((r) => r.status === 'pending').length })))
+      .catch(() => {})
   }, [])
 
   // A protocol is gated when the policy requires approval and the user holds no
@@ -177,6 +195,13 @@ export function Targets() {
       <PageHead title="Targets" lead="What your access policies let you reach. Terminal opens SSH or PowerShell; Desktop opens RDP or VNC when the machine offers it; a database opens its SQL client. Request marks one that needs approval before you can connect." />
       {err && <Alert tone="danger">{err}</Alert>}
       {notice && <Alert tone="ok">{notice}</Alert>}
+      {(strip.open > 0 || strip.pending > 0 || strip.expiring > 0) && (
+        <div className="stat-grid" style={{ marginBottom: 16 }}>
+          {strip.open > 0 && <StatTile value={strip.open} one="session of yours is still open" many="sessions of yours are still open" to="/sessions" />}
+          {strip.pending > 0 && <StatTile value={strip.pending} one="access request awaiting approval" many="access requests awaiting approval" to="/access" />}
+          {strip.expiring > 0 && <StatTile value={strip.expiring} one="grant expires within the hour" many="grants expire within the hour" to="/access" tone="warn" />}
+        </div>
+      )}
       <Tabs
         label="Kinds of target"
         value={tab}

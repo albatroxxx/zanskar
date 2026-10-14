@@ -1,12 +1,14 @@
 import { Route } from 'react-router-dom'
-import { Events, Recordings, Player, Sessions } from './pages'
+import { Dashboard, Events, Recordings, Player, Sessions } from './pages'
 
 // Auditor portal: read-only review of the audit chain, session recordings and
 // live sessions, which an auditor can watch but not end.
-// Every read here is itself audited.
+// Every read of rows here is itself audited; the dashboard's counts are not
+// rows, which is why landing on it writes no audit.read event (ADR 0029).
 export const auditRoutes = (
   <>
-    <Route index element={<Events />} />
+    <Route index element={<Dashboard />} />
+    <Route path="events" element={<Events />} />
     <Route path="recordings" element={<Recordings />} />
     <Route path="recordings/:id" element={<Player />} />
     <Route path="sessions" element={<Sessions />} />

@@ -71,7 +71,7 @@ function DetailRow({ k, v, name }: { k: string; v: unknown; name?: string }) {
   )
 }
 
-function ChainStatus({ verify, err }: { verify: AuditVerify | null; err: string }) {
+export function ChainStatus({ verify, err }: { verify: AuditVerify | null; err: string }) {
   if (err) return <Badge tone="danger">chain check failed: {err}</Badge>
   if (!verify) return <Badge>checking chain…</Badge>
   const problems = verify.problems ?? []

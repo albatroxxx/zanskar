@@ -85,6 +85,14 @@ func (r *Repo) List(ctx context.Context, status Status) ([]*Request, error) {
 	return r.query(ctx, `WHERE r.status = ? ORDER BY r.created_at DESC LIMIT 500`, string(status))
 }
 
+// CountPending returns how many requests await a decision: the number on the
+// admin dashboard and behind the Approvals badge (ADR 0029).
+func (r *Repo) CountPending(ctx context.Context) (int, error) {
+	var n int
+	err := r.db.QueryRowContext(ctx, r.db.Rebind(`SELECT COUNT(*) FROM access_requests WHERE status = ?`), string(StatusPending)).Scan(&n)
+	return n, err
+}
+
 // ActiveForUser returns a user's approved, unexpired grants.
 func (r *Repo) ActiveForUser(ctx context.Context, userID string, now time.Time) ([]*Request, error) {
 	return r.query(ctx, `WHERE r.user_id = ? AND r.status = ? AND r.expires_at > ? ORDER BY r.expires_at`,

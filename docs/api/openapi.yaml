@@ -703,6 +703,11 @@ paths:
       parameters:
         - $ref: "#/components/parameters/Limit"
         - $ref: "#/components/parameters/Cursor"
+        - name: open
+          in: query
+          schema:
+            type: boolean
+          description: "`true` returns only sessions still open."
       responses:
         "200":
           description: Sessions.
@@ -3048,6 +3053,23 @@ paths:
                         type: array
                         items:
                           $ref: "#/components/schemas/AuditEvent"
+  /audit/overview:
+    get:
+      tags: [auditor]
+      summary: Counts for the auditor dashboard
+      description: >
+        The numbers the auditor dashboard shows (ADR 0029): open and last-24-hour session
+        counts, 24-hour event tallies (total, failures, failed logins, refused connects),
+        and how many recordings were viewed and downloaded in the last 24 hours. Counts
+        only, never row data, so reading it records no audit event. Admins and auditors.
+        Never cached.
+      responses:
+        "200":
+          description: The counts.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuditOverview"
   /audit/verify:
     get:
       tags: [auditor]
@@ -3614,6 +3636,24 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
+  /admin/overview:
+    get:
+      tags: [admin]
+      summary: Counts for the admin dashboard
+      description: >
+        The numbers the admin dashboard shows (ADR 0029): open and last-24-hour session
+        counts, how many access requests await a decision, how many targets need an
+        administrator (a host key pending or changed, a certificate pin awaiting
+        confirmation), and 24-hour audit tallies (failed logins, refused connects, failures
+        overall). Counts only, never row data, so reading it records no audit event. Never
+        cached.
+      responses:
+        "200":
+          description: The counts.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminOverview"
   /admin/system/status:
     get:
       tags: [admin]
@@ -5699,6 +5739,77 @@ components:
               type: integer
             last_error:
               type: string
+    SessionCounts:
+      type: object
+      required: [open, started_24h]
+      properties:
+        open:
+          type: integer
+          description: Sessions open now, the number the Sessions pages list.
+        started_24h:
+          type: integer
+          description: Sessions started in the last 24 hours.
+    AuditTallies:
+      type: object
+      required: [events, failures, failed_logins, refused_connects]
+      properties:
+        events:
+          type: integer
+          description: Events recorded in the last 24 hours.
+        failures:
+          type: integer
+          description: Of those, how many recorded a failure outcome.
+        failed_logins:
+          type: integer
+          description: Failed sign-ins (`user.login` failures).
+        refused_connects:
+          type: integer
+          description: Refused connections (`session.connect` failures).
+    AdminOverview:
+      type: object
+      required: [sessions, pending_requests, targets, audit_24h]
+      properties:
+        sessions:
+          $ref: "#/components/schemas/SessionCounts"
+        pending_requests:
+          type: integer
+          description: Access requests awaiting a decision.
+        targets:
+          type: object
+          required: [active, host_key_pending, host_key_changed, certificate_pending]
+          properties:
+            active:
+              type: integer
+              description: Active targets.
+            host_key_pending:
+              type: integer
+              description: Targets whose host key was seen but not yet trusted.
+            host_key_changed:
+              type: integer
+              description: Targets whose host key changed after trust; connections are refused until resolved.
+            certificate_pending:
+              type: integer
+              description: Targets with an RDP or WinRM certificate pin awaiting confirmation.
+        audit_24h:
+          $ref: "#/components/schemas/AuditTallies"
+    AuditOverview:
+      type: object
+      required: [sessions, events_24h, reviews_24h]
+      properties:
+        sessions:
+          $ref: "#/components/schemas/SessionCounts"
+        events_24h:
+          $ref: "#/components/schemas/AuditTallies"
+        reviews_24h:
+          type: object
+          required: [recording_views, recording_downloads]
+          properties:
+            recording_views:
+              type: integer
+              description: Recording playbacks in the last 24 hours.
+            recording_downloads:
+              type: integer
+              description: Recording downloads in the last 24 hours.
     SystemStatus:
       type: object
       required: [version, started_at, uptime_seconds, supervisor, live_sessions, env_file, restart_required, draining]

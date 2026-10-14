@@ -4,6 +4,7 @@ import { lazy } from 'react'
 // the sign-in page and the user portal do not download the admin console.
 // They live apart from the route table, which exports elements rather than
 // components, so fast refresh keeps working on both.
+export const Dashboard = lazy(() => import('./Dashboard').then((m) => ({ default: m.Dashboard })))
 export const Targets = lazy(() => import('./Targets').then((m) => ({ default: m.Targets })))
 export const Databases = lazy(() => import('./Databases').then((m) => ({ default: m.Databases })))
 export const Autoscaling = lazy(() => import('./Autoscaling').then((m) => ({ default: m.Autoscaling })))

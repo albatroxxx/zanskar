@@ -1,4 +1,5 @@
 import { Children, cloneElement, isValidElement, useEffect, useId, useRef, type KeyboardEvent as ReactKeyboardEvent, type ReactElement, type ReactNode } from 'react'
+import { Link } from 'react-router-dom'
 import { useSubmit } from './submit'
 
 export function PageHead({ title, lead, children }: { title: string; lead?: string; children?: ReactNode }) {
@@ -55,6 +56,20 @@ export function Tabs<K extends string>({ label, tabs, value, onChange }: { label
 
 export function Badge({ tone, children }: { tone?: 'ok' | 'warn' | 'danger' | 'accent'; children: ReactNode }) {
   return <span className={'badge' + (tone ? ' ' + tone : '')}>{children}</span>
+}
+
+/** StatTile is one dashboard number (ADR 0029): a value, the words that say
+ *  what it counts (`one` beside a count of exactly one, `many` otherwise), and
+ *  the page that manages it. The words carry the meaning; a tone only
+ *  underlines what they already say, so it shows only on a non-zero count.
+ *  "—" while the value is still loading. */
+export function StatTile({ value, one, many, to, tone }: { value: number | null; one: string; many: string; to: string; tone?: 'warn' | 'danger' }) {
+  return (
+    <Link className={'stat-tile' + (tone && value ? ' ' + tone : '')} to={to}>
+      <div className="value">{value ?? '—'}</div>
+      <div className="label">{value === 1 ? one : many}</div>
+    </Link>
+  )
 }
 
 export function Alert({ tone, children }: { tone?: 'ok' | 'warn' | 'danger'; children: ReactNode }) {
