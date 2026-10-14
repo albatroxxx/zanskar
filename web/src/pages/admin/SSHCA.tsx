@@ -3,6 +3,7 @@ import { api, errorMessage } from '../../api/client'
 import { fmtTime } from '../../api/format'
 import type { CertificateProbe, Credential, Target } from '../../api/types'
 import { Alert, Badge, Confirm, Field, Modal } from '../../components/ui'
+import { hostKeyIcon } from './lib'
 
 export const DEFAULT_CERT_TTL = 300
 
@@ -178,7 +179,7 @@ function CATargets({ credential }: { credential: Credential }) {
                 return (
                   <tr key={t.id}>
                     <td><strong>{t.name}</strong> <span className="mono muted">{t.address}</span></td>
-                    <td>{t.host_key_status === 'trusted' ? <Badge tone="ok">trusted</Badge> : <Badge tone="warn">{t.host_key_status}</Badge>}</td>
+                    <td>{hostKeyIcon(t.host_key_status)}</td>
                     <td>
                       {r && 'accepted' in r && r.accepted && <Badge tone="ok">accepted as {r.login_user} ({r.key} key)</Badge>}
                       {r && 'accepted' in r && r.accepted === false && <span><Badge tone="danger">{r.reason?.replace(/_/g, ' ')}</Badge> <span className="muted">{r.error}</span></span>}

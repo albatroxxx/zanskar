@@ -7,6 +7,7 @@ import { usePaged } from '../../components/paged'
 import { Alert, Badge, Empty, LoadMore, PageHead } from '../../components/ui'
 import { capitalize, describe, detailText, humanAction, typeLabel, who, words } from './eventText'
 import { useRecordingsPath } from './paths'
+import { StateIcon } from '../../components/icons'
 
 interface Filters { actor: string; action: string; object_type: string; range: string; from: string; to: string }
 const emptyFilters: Filters = { actor: '', action: '', object_type: '', range: '', from: '', to: '' }
@@ -302,7 +303,7 @@ export function Events() {
                       </div>
                     </td>
                     <td>
-                      <Badge tone={ev.outcome === 'success' ? 'ok' : 'danger'}>{ev.outcome}</Badge>
+                      <StateIcon state={ev.outcome === 'success' ? 'ok' : 'danger'} label={ev.outcome} />
                     </td>
                   </tr>
                 )

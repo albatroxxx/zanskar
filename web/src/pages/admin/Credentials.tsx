@@ -3,9 +3,10 @@ import { api, errorMessage } from '../../api/client'
 import { fmtTime } from '../../api/format'
 import type { Credential, CredentialType } from '../../api/types'
 import { useSubmit } from '../../components/submit'
-import { Alert, Badge, Confirm, Empty, Field, FormModal, PageHead } from '../../components/ui'
+import { Alert, Confirm, Empty, Field, FormModal, PageHead } from '../../components/ui'
 import { useList } from './lib'
 import { CAInstall, CASetup, DEFAULT_CERT_TTL, parsePrincipals } from './SSHCA'
+import { StateIcon } from '../../components/icons'
 
 const types: { v: CredentialType; label: string }[] = [
   { v: 'password', label: 'Password' },
@@ -72,7 +73,7 @@ export function Credentials() {
                   <td>{c.mode.replace(/_/g, ' ')}</td>
                   <td className="mono">{c.domain ? `${c.domain}\\` : ''}{c.username ?? <span className="muted">—</span>}</td>
                   <td className="mono muted" title={c.public_key}>{c.public_key ? c.public_key.slice(0, 28) + '…' : '—'}</td>
-                  <td>{c.has_secret ? <Badge tone="ok">secret stored</Badge> : <Badge>none</Badge>}</td>
+                  <td>{c.has_secret ? <StateIcon state="ok" label="Secret stored" /> : <StateIcon state="warn" label="No secret stored" />}</td>
                   <td className="muted">{c.rotated_at ? fmtTime(c.rotated_at) : 'never'}</td>
                   <td>{inUse(c)}</td>
                   <td className="actions">

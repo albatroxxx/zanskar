@@ -6,6 +6,7 @@ import { useAuth } from '../../auth/AuthContext'
 import { useSubmit } from '../../components/submit'
 import { Alert, Badge, Confirm, Empty, Field, FormModal, Modal, PageHead, Tabs } from '../../components/ui'
 import { useList } from './lib'
+import { StateIcon } from '../../components/icons'
 
 const roles: Role[] = ['admin', 'auditor', 'user']
 
@@ -66,7 +67,7 @@ function Users() {
                     </td>
                     <td>{u.roles.map((r) => <Badge key={r} tone={r === 'admin' ? 'accent' : undefined}>{r}</Badge>)}</td>
                     <td>
-                      {u.status === 'active' ? <Badge tone="ok">active</Badge> : <Badge tone="warn">{u.status}</Badge>}
+                      <StateIcon state={u.status === 'active' ? 'ok' : 'warn'} label={u.status === 'active' ? 'Active' : u.status === 'locked' ? 'Locked' : 'Disabled'} />
                       {u.must_change_password && (
                         <>
                           {' '}

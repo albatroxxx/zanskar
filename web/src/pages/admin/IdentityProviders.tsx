@@ -6,6 +6,7 @@ import { useSubmit } from '../../components/submit'
 import { Alert, Badge, Confirm, Empty, Field, Modal, PageHead } from '../../components/ui'
 import { useList } from './lib'
 import { mappingToText, textToMapping } from './groupMapping'
+import { StateIcon } from '../../components/icons'
 
 // Shapes mirror internal/idp: the API returns the provider row plus its
 // config with secrets blanked and a single has_secret flag. Secrets are
@@ -102,8 +103,8 @@ export function IdentityProviders() {
                 <tr key={p.id}>
                   <td><strong>{p.name}</strong></td>
                   <td><Badge tone="accent">{p.type.toUpperCase()}</Badge></td>
-                  <td>{p.enabled ? <Badge tone="ok">enabled</Badge> : <Badge>disabled</Badge>}</td>
-                  <td>{p.has_secret ? <Badge tone="ok">stored</Badge> : <span className="muted">none</span>}</td>
+                  <td>{p.enabled ? <StateIcon state="ok" label="Enabled" /> : <StateIcon state="unknown" label="Disabled" />}</td>
+                  <td>{p.has_secret ? <StateIcon state="ok" label="Secret stored" /> : <StateIcon state="warn" label="No secret stored" />}</td>
                   <td>{fmtTime(p.created_at)}</td>
                   <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
                     <button className="btn sm" onClick={() => setEditing(p)}>Edit</button>{' '}

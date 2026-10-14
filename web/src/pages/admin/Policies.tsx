@@ -6,6 +6,7 @@ import type { Group, Policy, PolicyRule, Protocol, Target, TimeWindow, Autoscali
 import { useSubmit } from '../../components/submit'
 import { Alert, Badge, Confirm, Empty, Field, FormModal, PageHead } from '../../components/ui'
 import { formatTags, parseTags, policyProtocols, useList } from './lib'
+import { StateIcon } from '../../components/icons'
 
 const days = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun']
 
@@ -77,7 +78,7 @@ export function Policies() {
                   <td>{selectorSummary(p, targets.items ?? [], asgs.items ?? [])}{(p.rules?.length ?? 0) > 0 && <div className="muted">{p.rules!.map((r, i) => <span key={i}>{i > 0 ? '; ' : ''}{ruleSummary(r, targets.items ?? [], asgs.items ?? [])}</span>)}</div>}</td>
                   <td>{p.time_windows.length === 0 ? <span className="muted">always</span> : p.time_windows.length}</td>
                   <td>{p.idle_timeout_minutes} m / {p.max_session_minutes ? `${p.max_session_minutes} m` : '∞'}</td>
-                  <td>{p.enabled ? <Badge tone="ok">on</Badge> : <Badge>off</Badge>}</td>
+                  <td>{p.enabled ? <StateIcon state="ok" label="Enabled" /> : <StateIcon state="unknown" label="Disabled" />}</td>
                   <td className="actions">
                     <button className="btn sm" onClick={() => setEditing(p)}>Edit</button>
                     <button className="btn sm danger" onClick={() => setDeleting(p)}>Delete</button>
