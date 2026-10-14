@@ -181,6 +181,11 @@ export default function App() {
       >
         {auditRoutes}
       </Route>
+      {/* The sign-in landing: resolves to the portal the account belongs in
+          (ADR 0029). A named route rather than the * fallback, so the login
+          page and the gateway's single sign-on have a stable next= to send
+          an account whose roles they do not know yet. */}
+      <Route path="/home" element={<Home />} />
       <Route path="*" element={<Home />} />
       </Routes>
     </>

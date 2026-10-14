@@ -14,6 +14,11 @@ afterEach(() => {
   vi.restoreAllMocks()
 })
 
+// Landed reports where the router ended up after the sign-in.
+function Landed() {
+  return <div data-testid="landed">{useLocation().pathname}</div>
+}
+
 const wrong = () => new ApiError(401, { code: 'invalid_code', message: 'invalid code' }, '401')
 const ended = () => new ApiError(401, { code: 'sign_in_ended', message: 'too many wrong codes; sign in again' }, '401')
 
@@ -42,6 +47,40 @@ async function atCodeStep(verify: () => Promise<never>) {
 }
 
 describe('Login', () => {
+  // ADR 0029: with no remembered destination, a sign-in goes to /home, which
+  // resolves to the portal the account belongs in — the roles are not known
+  // until the sign-in answers, so Login itself cannot pick the portal.
+  it('sends a sign-in without a destination to /home', async () => {
+    const root = { id: 'u1', username: 'root', display_name: 'Root', roles: ['admin'] }
+    let signedIn = false
+    vi.spyOn(api, 'get').mockImplementation(async (path: string) => {
+      if (path === '/auth/me') {
+        if (signedIn) return { user: root, csrf_token: 't' } as never
+        throw new ApiError(401, { code: 'unauthenticated', message: 'sign in required' }, '401')
+      }
+      if (path === '/auth/providers') return { items: [] } as never
+      return { text: '' } as never
+    })
+    vi.spyOn(api, 'post').mockImplementation(async () => {
+      signedIn = true
+      return { status: 'ok', csrf_token: 't', user: root } as never
+    })
+    render(
+      <MemoryRouter initialEntries={['/login']}>
+        <AuthProvider>
+          <Routes>
+            <Route path="/login" element={<Login />} />
+            <Route path="/home" element={<Landed />} />
+          </Routes>
+        </AuthProvider>
+      </MemoryRouter>,
+    )
+    const user = userEvent.setup()
+    await user.type(await screen.findByLabelText('Username'), 'root')
+    await user.type(screen.getByLabelText('Password'), 'a long enough passphrase{Enter}')
+    expect((await screen.findByTestId('landed')).textContent).toBe('/home')
+  })
+
   it('stays on the code step after a wrong code', async () => {
     const user = await atCodeStep(() => Promise.reject(wrong()))
     await user.type(screen.getByLabelText('Code'), '000000{Enter}')
