@@ -40,23 +40,23 @@ export function Dashboard() {
 
   return (
     <>
-      <PageHead title="Dashboard" lead="What is waiting on you, what is live right now, and how the gateway itself is doing. Each number opens the page that manages it." />
+      <PageHead title="Dashboard" />
       {err && <Alert tone="danger">The dashboard could not be fully loaded: {err}</Alert>}
 
       <h2 className="stat-section">Needs attention</h2>
       <div className="stat-grid">
-        <StatTile value={o && o.pending_requests} one="access request awaiting a decision" many="access requests awaiting a decision" to="/admin/approvals" tone="warn" />
-        <StatTile value={attention} one="host waiting on you: a key or certificate to trust" many="hosts waiting on you: a key or certificate to trust" to="/admin/hosts" tone="warn" />
-        <StatTile value={o && o.audit_24h.failed_logins} one="failed sign-in in the last 24 hours" many="failed sign-ins in the last 24 hours" to="/admin/events" tone="warn" />
-        <StatTile value={o && o.audit_24h.refused_connects} one="refused connection in the last 24 hours" many="refused connections in the last 24 hours" to="/admin/events" tone="warn" />
+        <StatTile value={o && o.pending_requests} label="Pending approvals" to="/admin/approvals" tone="warn" />
+        <StatTile value={attention} label="Hosts needing attention" to="/admin/hosts" tone="warn" />
+        <StatTile value={o && o.audit_24h.failed_logins} label="Failed sign-ins (24h)" to="/admin/events" tone="warn" />
+        <StatTile value={o && o.audit_24h.refused_connects} label="Refused connections (24h)" to="/admin/events" tone="warn" />
       </div>
 
       <h2 className="stat-section">Activity</h2>
       <div className="stat-grid">
-        <StatTile value={o && o.sessions.open} one="session open now" many="sessions open now" to="/admin/sessions" />
-        <StatTile value={o && o.sessions.started_24h} one="session in the last 24 hours" many="sessions in the last 24 hours" to="/admin/sessions" />
-        <StatTile value={o && o.targets.active} one="active target" many="active targets" to="/admin/hosts" />
-        <StatTile value={o && o.audit_24h.events} one="audit event in the last 24 hours" many="audit events in the last 24 hours" to="/admin/events" />
+        <StatTile value={o && o.sessions.open} label="Open sessions" to="/admin/sessions" />
+        <StatTile value={o && o.sessions.started_24h} label="Sessions (24h)" to="/admin/sessions" />
+        <StatTile value={o && o.targets.active} label="Active targets" to="/admin/hosts" />
+        <StatTile value={o && o.audit_24h.events} label="Audit events (24h)" to="/admin/events" />
       </div>
 
       <h2 className="stat-section">Gateway</h2>

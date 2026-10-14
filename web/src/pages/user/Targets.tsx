@@ -197,9 +197,9 @@ export function Targets() {
       {notice && <Alert tone="ok">{notice}</Alert>}
       {(strip.open > 0 || strip.pending > 0 || strip.expiring > 0) && (
         <div className="stat-grid" style={{ marginBottom: 16 }}>
-          {strip.open > 0 && <StatTile value={strip.open} one="session of yours is still open" many="sessions of yours are still open" to="/sessions" />}
-          {strip.pending > 0 && <StatTile value={strip.pending} one="access request awaiting approval" many="access requests awaiting approval" to="/access" />}
-          {strip.expiring > 0 && <StatTile value={strip.expiring} one="grant expires within the hour" many="grants expire within the hour" to="/access" tone="warn" />}
+          {strip.open > 0 && <StatTile value={strip.open} label="Open sessions" to="/sessions" />}
+          {strip.pending > 0 && <StatTile value={strip.pending} label="Pending requests" to="/access" />}
+          {strip.expiring > 0 && <StatTile value={strip.expiring} label="Grants expiring soon" to="/access" tone="warn" />}
         </div>
       )}
       <Tabs

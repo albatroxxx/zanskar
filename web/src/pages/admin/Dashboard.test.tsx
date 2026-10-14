@@ -67,17 +67,17 @@ describe('the admin dashboard', () => {
     serve()
     at('/')
 
-    expect(await screen.findByText('access requests awaiting a decision')).toBeDefined()
-    const approvals = screen.getByText('access requests awaiting a decision').closest('a')
+    expect(await screen.findByText('Pending approvals')).toBeDefined()
+    const approvals = screen.getByText('Pending approvals').closest('a')
     expect(approvals?.getAttribute('href')).toBe('/admin/approvals')
     expect(approvals?.textContent).toContain('3')
 
     // The two host-key states and the pending certificate fold into one tile.
-    const hosts = screen.getByText(/hosts waiting on you/).closest('a')
+    const hosts = screen.getByText('Hosts needing attention').closest('a')
     expect(hosts?.getAttribute('href')).toBe('/admin/hosts')
     expect(hosts?.textContent).toContain('2')
 
-    expect(screen.getByText('sessions open now').closest('a')?.getAttribute('href')).toBe('/admin/sessions')
+    expect(screen.getByText('Open sessions').closest('a')?.getAttribute('href')).toBe('/admin/sessions')
     expect(screen.getByText(/Zanskar 1\.4\.0, up 2 hours under systemd/)).toBeDefined()
   })
 

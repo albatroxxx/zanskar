@@ -31,11 +31,11 @@ describe('the auditor dashboard', () => {
       </MemoryRouter>,
     )
 
-    const failures = (await screen.findByText('failures in the last 24 hours')).closest('a')
+    const failures = (await screen.findByText('Failures (24h)')).closest('a')
     expect(failures?.getAttribute('href')).toBe('/audit/events')
     expect(failures?.textContent).toContain('5')
-    expect(screen.getByText('session open now').closest('a')?.getAttribute('href')).toBe('/audit/sessions')
-    expect(screen.getByText('recordings played in the last 24 hours').closest('a')?.getAttribute('href')).toBe('/audit/recordings')
+    expect(screen.getByText('Open sessions').closest('a')?.getAttribute('href')).toBe('/audit/sessions')
+    expect(screen.getByText('Recordings played (24h)').closest('a')?.getAttribute('href')).toBe('/audit/recordings')
   })
 
   it('checks the chain only when asked, then shows the verdict', async () => {
@@ -50,7 +50,7 @@ describe('the auditor dashboard', () => {
       </MemoryRouter>,
     )
 
-    await screen.findByText('failures in the last 24 hours')
+    await screen.findByText('Failures (24h)')
     expect(get).not.toHaveBeenCalledWith('/audit/verify')
 
     await userEvent.setup().click(screen.getByRole('button', { name: 'Check the chain' }))

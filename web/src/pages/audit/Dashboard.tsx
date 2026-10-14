@@ -33,23 +33,23 @@ export function Dashboard() {
   const o = overview
   return (
     <>
-      <PageHead title="Dashboard" lead="The last 24 hours at a glance. Each number opens the page it is counted from; reading those pages is itself audited." />
+      <PageHead title="Dashboard" />
       {err && <Alert tone="danger">The overview could not be loaded: {err}</Alert>}
 
       <h2 className="stat-section">Worth a look</h2>
       <div className="stat-grid">
-        <StatTile value={o && o.events_24h.failures} one="failure in the last 24 hours" many="failures in the last 24 hours" to="/audit/events" tone="warn" />
-        <StatTile value={o && o.events_24h.failed_logins} one="failed sign-in in the last 24 hours" many="failed sign-ins in the last 24 hours" to="/audit/events" tone="warn" />
-        <StatTile value={o && o.events_24h.refused_connects} one="refused connection in the last 24 hours" many="refused connections in the last 24 hours" to="/audit/events" tone="warn" />
-        <StatTile value={o && o.sessions.open} one="session open now" many="sessions open now" to="/audit/sessions" />
+        <StatTile value={o && o.events_24h.failures} label="Failures (24h)" to="/audit/events" tone="warn" />
+        <StatTile value={o && o.events_24h.failed_logins} label="Failed sign-ins (24h)" to="/audit/events" tone="warn" />
+        <StatTile value={o && o.events_24h.refused_connects} label="Refused connections (24h)" to="/audit/events" tone="warn" />
+        <StatTile value={o && o.sessions.open} label="Open sessions" to="/audit/sessions" />
       </div>
 
       <h2 className="stat-section">Activity</h2>
       <div className="stat-grid">
-        <StatTile value={o && o.sessions.started_24h} one="session in the last 24 hours" many="sessions in the last 24 hours" to="/audit/sessions" />
-        <StatTile value={o && o.events_24h.events} one="audit event in the last 24 hours" many="audit events in the last 24 hours" to="/audit/events" />
-        <StatTile value={o && o.reviews_24h.recording_views} one="recording played in the last 24 hours" many="recordings played in the last 24 hours" to="/audit/recordings" />
-        <StatTile value={o && o.reviews_24h.recording_downloads} one="recording downloaded in the last 24 hours" many="recordings downloaded in the last 24 hours" to="/audit/recordings" />
+        <StatTile value={o && o.sessions.started_24h} label="Sessions (24h)" to="/audit/sessions" />
+        <StatTile value={o && o.events_24h.events} label="Audit events (24h)" to="/audit/events" />
+        <StatTile value={o && o.reviews_24h.recording_views} label="Recordings played (24h)" to="/audit/recordings" />
+        <StatTile value={o && o.reviews_24h.recording_downloads} label="Recordings downloaded (24h)" to="/audit/recordings" />
       </div>
 
       <h2 className="stat-section">Log integrity</h2>

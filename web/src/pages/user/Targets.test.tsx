@@ -64,11 +64,11 @@ describe('Targets overview strip', () => {
       </MemoryRouter>,
     )
 
-    const open = (await screen.findByText('session of yours is still open')).closest('a')
+    const open = (await screen.findByText('Open sessions')).closest('a')
     expect(open?.getAttribute('href')).toBe('/sessions')
     expect(open?.textContent).toContain('1')
-    expect(screen.getByText('access request awaiting approval').closest('a')?.getAttribute('href')).toBe('/access')
-    expect(screen.getByText('grant expires within the hour').closest('a')?.getAttribute('href')).toBe('/access')
+    expect(screen.getByText('Pending requests').closest('a')?.getAttribute('href')).toBe('/access')
+    expect(screen.getByText('Grants expiring soon').closest('a')?.getAttribute('href')).toBe('/access')
   })
 
   it('is absent when nothing waits', async () => {
@@ -80,8 +80,8 @@ describe('Targets overview strip', () => {
     )
 
     await screen.findByRole('tablist', { name: 'Kinds of target' })
-    expect(screen.queryByText(/still open/)).toBeNull()
-    expect(screen.queryByText(/awaiting approval/)).toBeNull()
+    expect(screen.queryByText('Open sessions')).toBeNull()
+    expect(screen.queryByText('Pending requests')).toBeNull()
   })
 })
 
