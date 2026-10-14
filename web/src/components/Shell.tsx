@@ -45,7 +45,7 @@ export function Shell({ portal, items }: { portal: 'user' | 'admin' | 'audit'; i
   // Links to the other portals this account may enter. A review-only account
   // (auditor without user) has no user portal to switch to.
   const others: { to: string; label: string }[] = []
-  if (portal !== 'user' && canConnect(user)) others.push({ to: '/', label: 'User portal' })
+  if (portal !== 'user' && canConnect(user)) others.push({ to: '/', label: 'Access portal' })
   if (portal !== 'admin' && hasRole('admin')) others.push({ to: '/admin', label: 'Admin' })
   // Admins review the log inside their own console (Events, Recordings), so
   // only a non-admin auditor gets a switch to the audit portal.
@@ -84,6 +84,13 @@ export function Shell({ portal, items }: { portal: 'user' | 'admin' | 'audit'; i
             ))}
           </div>
           <button className="btn sm ghost" onClick={() => void logout()} style={{ alignSelf: 'flex-start' }}>
+            {/* The door-and-arrow sign-out glyph; the text stays, so the icon
+                is decoration and hidden from screen readers. */}
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
+              <polyline points="16 17 21 12 16 7" />
+              <line x1="21" y1="12" x2="9" y2="12" />
+            </svg>
             Sign out
           </button>
         </div>

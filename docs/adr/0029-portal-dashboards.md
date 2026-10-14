@@ -84,10 +84,11 @@ Both are out of scope here and left for their own ADR if asked for.
 
 ## Consequences
 
-- Sign-in and the logo land on the dashboard in the admin and audit portals; bookmarks to
-  `/admin` and `/audit` now show the dashboard, and Hosts and Events are one click away at
-  their new paths. An admin following an old `/audit` link is still redirected into the
-  admin console, now to its dashboard.
+- Sign-in and the logo land on the dashboard: an administrator signs in to `/admin`, an
+  account that can connect to the access portal, a review-only account to `/audit`
+  (`homeFor`). Bookmarks to `/admin` and `/audit` now show the dashboard, and Hosts and
+  Events are one click away at their new paths. An admin following an old `/audit` link is
+  still redirected into the admin console, now to its dashboard.
 - Two more unauthenticated-refused, role-guarded GET routes to document and test; neither
   writes, neither records audit events, both answer `Cache-Control: no-store`.
 - The overview queries are counts over indexed columns (`audit_events_ts_idx`,
