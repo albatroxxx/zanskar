@@ -69,7 +69,7 @@ func (h *Handler) Register(mux *http.ServeMux) {
 func (h *Handler) mySessions(w http.ResponseWriter, r *http.Request) {
 	p, _ := auth.FromContext(r.Context())
 	limit, cursor := httpx.Paging(r, 50, 200)
-	items, next, err := h.Repo.List(r.Context(), Filter{UserID: p.User.ID, Limit: limit, Cursor: cursor})
+	items, next, err := h.Repo.List(r.Context(), Filter{UserID: p.User.ID, OpenOnly: r.URL.Query().Get("open") == "true", Limit: limit, Cursor: cursor})
 	if err != nil {
 		h.fail(w, r, err)
 		return

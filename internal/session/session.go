@@ -102,6 +102,26 @@ func (r *Repo) End(ctx context.Context, id, reason string) error {
 	return err
 }
 
+// Counts are the session numbers the dashboards show (ADR 0029). Open is the
+// database's view, the same number the Sessions pages list, so the tile and
+// the page it links to can never disagree.
+type Counts struct {
+	Open         int `json:"open"`
+	StartedSince int `json:"started_24h"`
+}
+
+// Count returns how many sessions are open and how many started at or after
+// since. Two queries, one after another: the single-connection SQLite setup
+// forbids overlapping them.
+func (r *Repo) Count(ctx context.Context, since time.Time) (Counts, error) {
+	var c Counts
+	if err := r.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM access_sessions WHERE ended_at IS NULL`).Scan(&c.Open); err != nil {
+		return Counts{}, err
+	}
+	err := r.db.QueryRowContext(ctx, r.db.Rebind(`SELECT COUNT(*) FROM access_sessions WHERE started_at >= ?`), store.TimeArg(since)).Scan(&c.StartedSince)
+	return c, err
+}
+
 // Get returns a session.
 func (r *Repo) Get(ctx context.Context, id string) (*Session, error) {
 	row := r.db.QueryRowContext(ctx, r.db.Rebind(selectSessions+` WHERE s.id = ?`), id)

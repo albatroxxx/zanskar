@@ -306,6 +306,43 @@ export interface AuditVerify {
   warnings?: string[]
 }
 
+/** Session counts shared by both overviews. Mirrors internal/session.Counts. */
+export interface SessionCounts {
+  open: number
+  started_24h: number
+}
+
+/** The last 24 hours of the audit log, as counts. */
+export interface AuditTallies {
+  events: number
+  failures: number
+  failed_logins: number
+  refused_connects: number
+}
+
+/** GET /admin/overview (ADR 0029). Counts only, never row data. */
+export interface AdminOverview {
+  sessions: SessionCounts
+  pending_requests: number
+  targets: {
+    active: number
+    host_key_pending: number
+    host_key_changed: number
+    certificate_pending: number
+  }
+  audit_24h: AuditTallies
+}
+
+/** GET /audit/overview (ADR 0029). Counts only, never row data. */
+export interface AuditOverview {
+  sessions: SessionCounts
+  events_24h: AuditTallies
+  reviews_24h: {
+    recording_views: number
+    recording_downloads: number
+  }
+}
+
 export interface ConnectResponse {
   ticket: string
   expires_at: string

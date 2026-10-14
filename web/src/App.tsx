@@ -49,13 +49,14 @@ function NoPortal() {
 
 // AdminToConsole sends an admin who follows an old /audit link to the same
 // page inside the admin console, which now holds Events and Recordings; the
-// audit portal is for review-only accounts.
+// audit portal is for review-only accounts. /audit itself is the auditor's
+// dashboard, so an admin landing there goes to their own (ADR 0029).
 function AdminToConsole({ children }: { children: React.ReactNode }) {
   const auth = useAuth()
   const loc = useLocation()
   if (!auth.hasRole('admin')) return <>{children}</>
   const rest = loc.pathname.replace(/^\/audit\/?/, '')
-  return <Navigate to={'/admin/' + (rest || 'events') + loc.search} replace />
+  return <Navigate to={(rest ? '/admin/' + rest : '/admin') + loc.search} replace />
 }
 
 // Home resolves "/" and unknown paths to the portal the account may enter.
@@ -137,7 +138,8 @@ export default function App() {
             <Shell
               portal="admin"
               items={[
-                { to: '/admin', label: 'Hosts', end: true },
+                { to: '/admin', label: 'Dashboard', end: true },
+                { to: '/admin/hosts', label: 'Hosts' },
                 { to: '/admin/databases', label: 'Databases' },
                 { to: '/admin/autoscaling', label: 'Autoscaling' },
                 { to: '/admin/credentials', label: 'Credentials' },
@@ -167,7 +169,8 @@ export default function App() {
               <Shell
                 portal="audit"
                 items={[
-                  { to: '/audit', label: 'Events', end: true },
+                  { to: '/audit', label: 'Dashboard', end: true },
+                  { to: '/audit/events', label: 'Events' },
                   { to: '/audit/recordings', label: 'Recordings' },
                   { to: '/audit/sessions', label: 'Sessions' },
                 ]}
@@ -178,6 +181,11 @@ export default function App() {
       >
         {auditRoutes}
       </Route>
+      {/* The sign-in landing: resolves to the portal the account belongs in
+          (ADR 0029). A named route rather than the * fallback, so the login
+          page and the gateway's single sign-on have a stable next= to send
+          an account whose roles they do not know yet. */}
+      <Route path="/home" element={<Home />} />
       <Route path="*" element={<Home />} />
       </Routes>
     </>

@@ -90,6 +90,32 @@ type ListFilter struct {
 	Query    string // case-insensitive substring of name or address
 }
 
+// AttentionCounts are the target numbers the admin dashboard shows (ADR
+// 0029): how many active targets exist, and how many wait on an
+// administrator — a host key seen but not yet trusted, a host key that
+// changed after trust (connections refused until resolved), or an RDP or
+// WinRM certificate pin awaiting confirmation (ADR 0012).
+type AttentionCounts struct {
+	Active             int `json:"active"`
+	HostKeyPending     int `json:"host_key_pending"`
+	HostKeyChanged     int `json:"host_key_changed"`
+	CertificatePending int `json:"certificate_pending"`
+}
+
+// CountAttention returns AttentionCounts over active, undeleted targets in
+// one query.
+func (r *Repo) CountAttention(ctx context.Context) (AttentionCounts, error) {
+	var c AttentionCounts
+	err := r.db.QueryRowContext(ctx, r.db.Rebind(`SELECT COUNT(*),
+		COALESCE(SUM(CASE WHEN host_key_status = ? THEN 1 ELSE 0 END), 0),
+		COALESCE(SUM(CASE WHEN host_key_status = ? THEN 1 ELSE 0 END), 0),
+		COALESCE(SUM(CASE WHEN tls_fingerprint_pending IS NOT NULL OR winrm_tls_fingerprint_pending IS NOT NULL THEN 1 ELSE 0 END), 0)
+		FROM targets WHERE deleted_at IS NULL AND status = ?`),
+		string(HostKeyPending), string(HostKeyChanged), StatusActive).
+		Scan(&c.Active, &c.HostKeyPending, &c.HostKeyChanged, &c.CertificatePending)
+	return c, err
+}
+
 // List returns targets ordered by name after the cursor, narrowed by f.
 func (r *Repo) List(ctx context.Context, afterName string, limit int, f ListFilter) ([]*Target, string, error) {
 	if limit <= 0 || limit > 500 {

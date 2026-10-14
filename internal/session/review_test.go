@@ -95,6 +95,19 @@ func TestSessionLists(t *testing.T) {
 		t.Errorf("alice listing everyone's sessions: %d, want 403", rr.Code)
 	}
 
+	// The user portal's overview strip asks for open sessions only (ADR
+	// 0029): with one ended and one open session, alice gets just the open
+	// one, and still never anyone else's.
+	mineOpen := &Session{UserID: e.ids["alice"], TargetID: "t1", Protocol: "ssh", ClientIP: "10.0.0.3"}
+	if err := e.repo.Start(context.Background(), mineOpen); err != nil {
+		t.Fatal(err)
+	}
+	if rr, out := e.get("/api/v1/me/sessions?open=true", "alice"); rr.Code != http.StatusOK {
+		t.Errorf("alice's open sessions: %d %v", rr.Code, out)
+	} else if items, _ := out["items"].([]any); len(items) != 1 || items[0].(map[string]any)["id"] != mineOpen.ID {
+		t.Errorf("alice's open sessions = %v, want only %s", out, mineOpen.ID)
+	}
+
 	sid := e.sessionOf(t, recID).ID
 	if rr, out := e.get("/api/v1/sessions/"+sid, "reviewer"); rr.Code != http.StatusOK || out["id"] != sid {
 		t.Errorf("get session: %d %v", rr.Code, out)

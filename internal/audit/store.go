@@ -554,6 +554,37 @@ func (l *Log) Facets(ctx context.Context) (Facets, error) {
 	return f, nil
 }
 
+// Tally is the count of events recorded under one action and outcome.
+type Tally struct {
+	Action  string  `json:"action"`
+	Outcome Outcome `json:"outcome"`
+	Count   int64   `json:"count"`
+}
+
+// TallySince counts events at or after since, grouped by action and outcome:
+// the dashboards' numbers (ADR 0029). It reads counts only — no event content
+// — which is why serving it records no audit.read event. The ts index keeps
+// it a range scan.
+func (l *Log) TallySince(ctx context.Context, since time.Time) ([]Tally, error) {
+	rows, err := l.db.QueryContext(ctx, l.db.Rebind(`SELECT action, outcome, COUNT(*) FROM audit_events WHERE ts >= ? GROUP BY action, outcome`), l.tsArg(since))
+	if err != nil {
+		return nil, fmt.Errorf("audit: tally: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	var out []Tally
+	for rows.Next() {
+		var t Tally
+		if err := rows.Scan(&t.Action, &t.Outcome, &t.Count); err != nil {
+			return nil, fmt.Errorf("audit: tally: %w", err)
+		}
+		out = append(out, t)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("audit: tally: %w", err)
+	}
+	return out, nil
+}
+
 // distinct lists the values held in one column. The column is named by a
 // caller-supplied literal and never by request input, so interpolating it into
 // the statement cannot be turned into an injection. Each result set is drained

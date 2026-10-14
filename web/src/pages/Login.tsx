@@ -13,8 +13,11 @@ export function Login() {
   const loc = useLocation()
   // Where to go once signed in: what the guard remembered, else the ?next=
   // the gateway's single sign-on sends while a code is still owed (B20);
-  // either way only a path on this site.
-  const from = safeReturnPath((loc.state as { from?: unknown } | null)?.from ?? new URLSearchParams(loc.search).get('next'))
+  // either way only a path on this site. With no destination at all, /home
+  // resolves to the portal the account signs in to (ADR 0029) — the roles are
+  // not known until the sign-in answers, so the choice cannot be made here.
+  const stated = (loc.state as { from?: unknown } | null)?.from ?? new URLSearchParams(loc.search).get('next')
+  const from = stated == null ? '/home' : safeReturnPath(stated)
   const [step, setStep] = useState<Step>('password')
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
