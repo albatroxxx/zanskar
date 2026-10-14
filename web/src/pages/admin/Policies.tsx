@@ -32,7 +32,7 @@ export function Policies() {
 
   return (
     <>
-      <PageHead title="Access policies" lead="A policy lets a group, or a single user, reach a set of targets over chosen protocols, inside optional time windows, with session limits. A user's access is the union of their own policies and their groups' policies; when policies overlap, the shortest idle timeout wins.">
+      <PageHead title="Access policies" lead="Who may reach which targets, over which protocols. When policies overlap, the shortest idle timeout wins.">
         <button className="btn primary" onClick={() => setEditing('new')}>Add policy</button>
       </PageHead>
       {err && <Alert tone="danger">{err}</Alert>}

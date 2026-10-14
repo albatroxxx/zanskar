@@ -47,6 +47,28 @@ describe('Targets, an approval-gated autoscaling group', () => {
   })
 })
 
+// A state glyph replaces the words in the row, but never deletes them: the
+// label stays for screen readers and on hover.
+describe('Targets state glyphs', () => {
+  it('marks an untrusted host with a labelled warning, not a sentence badge', async () => {
+    const host: ReachableTarget = {
+      kind: 'target', id: 't1', name: 'orders-db-host', os_family: 'linux', tags: {},
+      capabilities: ['ssh'], allowed_protocols: ['ssh'], requires_approval: [], host_key_ready: false,
+    }
+    vi.spyOn(api, 'get').mockImplementation(async (p: string) => ({ items: p === '/me/targets' ? [host] : [] }) as never)
+    render(
+      <MemoryRouter>
+        <Targets />
+      </MemoryRouter>,
+    )
+
+    await screen.findByText('orders-db-host')
+    expect(screen.getByRole('img', { name: /Awaiting host key trust/ })).toBeDefined()
+    expect(screen.getByRole('img', { name: 'Linux' })).toBeDefined()
+    expect(screen.queryByText('awaiting host key trust')).toBeNull()
+  })
+})
+
 // The overview strip (ADR 0029): a user with something waiting sees it above
 // the list; a user with nothing waiting sees no strip at all.
 describe('Targets overview strip', () => {

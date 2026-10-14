@@ -20,7 +20,7 @@ export function Autoscaling() {
 
   return (
     <>
-      <PageHead title="Autoscaling groups" lead="Enroll a cloud autoscaling group with a read-only role. Zanskar tracks the healthy pool itself; when the instance you are on is retired you are offered another one instead of a dead terminal.">
+      <PageHead title="Autoscaling groups" lead="Cloud autoscaling groups, enrolled with a read-only role.">
         <button className="btn primary" onClick={() => setAdding(true)}>Enroll group</button>
       </PageHead>
       {err && <Alert tone="danger">{err}</Alert>}

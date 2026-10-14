@@ -80,7 +80,7 @@ export function MyAccess() {
 
   return (
     <>
-      <PageHead title="My access" lead="Access you've requested to machines that require approval, and any grants currently active. Approved access lets you connect from Targets until it expires." />
+      <PageHead title="My access" lead="Your requests, and the grants currently active." />
       {err && <Alert tone="danger">{err}</Alert>}
       {notice && <Alert tone="ok">{notice}</Alert>}
       <div className="card table-wrap">

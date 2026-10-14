@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { api, errorMessage, query } from '../../api/client'
 import type { HostKeyStatus, Page, Protocol } from '../../api/types'
+import { StateIcon } from '../../components/icons'
 import { Badge } from '../../components/ui'
 
 /** Protocols that carry a single TCP port and apply to VM targets and ASGs. */
@@ -51,6 +52,22 @@ export function formatTags(tags?: Record<string, string>): string {
 export function hostKeyBadge(status: HostKeyStatus) {
   const tone = status === 'trusted' ? 'ok' : status === 'pending' ? 'warn' : status === 'changed' ? 'danger' : undefined
   return <Badge tone={tone}>{status}</Badge>
+}
+
+/** hostKeyIcon is the table-row form of hostKeyBadge: a state glyph whose
+ *  words live on hover and in the aria-label, with the full story on the
+ *  target's detail page. */
+export function hostKeyIcon(status: HostKeyStatus) {
+  switch (status) {
+    case 'trusted':
+      return <StateIcon state="ok" label="Host key trusted" />
+    case 'pending':
+      return <StateIcon state="warn" label="Awaiting host key trust" />
+    case 'changed':
+      return <StateIcon state="danger" label="Host key changed — connections refused" />
+    default:
+      return <StateIcon state="unknown" label="Never probed" />
+  }
 }
 
 

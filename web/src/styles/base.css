@@ -81,6 +81,15 @@ a.stat-tile:hover { border-color: var(--fg-faint); }
 .stat-tile.danger .value { color: var(--danger); }
 .stat-tile .label { margin-top: 2px; font-size: 0.82rem; color: var(--fg-muted); }
 
+/* Inline glyphs (components/icons.tsx): meaning stays in aria-label and the
+   hover title; a tone only when the glyph marks a state. */
+.glyph { display: inline-flex; align-items: center; vertical-align: -3px; color: var(--fg-muted); }
+.glyph.warn { color: var(--warn); }
+.glyph.danger { color: var(--danger); }
+.glyph.ok { color: var(--ok); }
+.glyph.muted { color: var(--fg-faint); }
+.glyph + .glyph { margin-left: 6px; }
+
 /* tables */
 table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
 th, td { text-align: left; padding: 9px 10px; border-bottom: 1px solid var(--line); vertical-align: middle; }

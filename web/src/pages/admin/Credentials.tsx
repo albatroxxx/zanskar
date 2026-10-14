@@ -28,7 +28,7 @@ export function Credentials() {
 
   return (
     <>
-      <PageHead title="Credentials" lead="How Zanskar authenticates to targets. Secrets are sealed on save and never shown again; only public keys are displayed.">
+      <PageHead title="Credentials" lead="Secrets are sealed on save and never shown again.">
         <button className="btn primary" onClick={() => setAdding(true)}>Add credential</button>
       </PageHead>
       {err && <Alert tone="danger">{err}</Alert>}

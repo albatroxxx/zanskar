@@ -39,7 +39,7 @@ export function Recordings() {
 
   return (
     <>
-      <PageHead title="Recordings" lead="Every session is recorded: the terminal transcript and the commands that were run, or the desktop stream. Playing one is logged with your name.">
+      <PageHead title="Recordings" lead="Playing or downloading a recording is logged with your name.">
         <input
           className="mono filter-control"
           style={{ minWidth: 220 }}

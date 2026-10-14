@@ -1,4 +1,5 @@
 import { dbTLS, engineName } from '../../api/format'
+import { DatabaseIcon } from '../../components/icons'
 import type { Credential, Target } from '../../api/types'
 import { Badge, Tags } from '../../components/ui'
 import { TargetsPage } from './TargetsPage'
@@ -14,13 +15,13 @@ export function Databases() {
     <TargetsPage
       kind="database"
       title="Databases"
-      lead="PostgreSQL, MySQL and MariaDB endpoints, including RDS. Each session runs the matching client in a container next to a sidecar that holds the credential; the user never sees the password."
+      lead="PostgreSQL, MySQL and MariaDB endpoints, including RDS. The user never sees the password."
       addLabel="Add database"
       empty="No databases yet. Add one with its engine, endpoint and a password credential."
       columns={['Engine', 'Endpoint', 'Database', 'TLS', 'Credential', 'Tags']}
       cells={(t, credentials) => (
         <>
-          <td>{engineName(t.engine, t.engine_version)}</td>
+          <td><DatabaseIcon label={engineName(t.engine)} /> {engineName(t.engine, t.engine_version)}</td>
           <td className="mono">{t.address}{t.ports.database ? `:${t.ports.database}` : ''}</td>
           <td>{t.database_name || <span className="muted">—</span>}</td>
           <td>{dbTLS(t.tls_mode).verified ? dbTLS(t.tls_mode).label : <Badge tone="warn">{dbTLS(t.tls_mode).label}</Badge>}</td>

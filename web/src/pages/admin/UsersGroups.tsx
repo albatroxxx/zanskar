@@ -13,7 +13,7 @@ export function UsersGroups() {
   const [tab, setTab] = useState<'users' | 'groups'>('users')
   return (
     <>
-      <PageHead title="Users & groups" lead="People sign in to Zanskar as users; policies grant access to groups. Roles: admin configures, auditor reviews, user connects." />
+      <PageHead title="Users & groups" lead="Roles: admin configures, auditor reviews, user connects." />
       <Tabs label="Users and groups" value={tab} onChange={setTab} tabs={[{ key: 'users', label: 'Users' }, { key: 'groups', label: 'Groups' }]} />
       {tab === 'users' ? <Users /> : <Groups />}
     </>
