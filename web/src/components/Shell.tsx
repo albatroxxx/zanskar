@@ -78,7 +78,7 @@ export function Shell({ portal, items }: { portal: 'user' | 'admin' | 'audit'; i
               rest of the account — full name, email, whatever an identity
               provider fills in — lives behind it. */}
           <button className="me-user mono" onClick={() => setAccountOpen(true)}>{user?.username}</button>
-          {accountOpen && user && <AccountModal user={user} mfaEnrolled={mfaEnrolled} onClose={() => setAccountOpen(false)} />}
+
           <div className="switch">
             {others.map((o, i) => (
               <Fragment key={o.to}>
@@ -109,6 +109,9 @@ export function Shell({ portal, items }: { portal: 'user' | 'admin' | 'audit'; i
           <Outlet />
         </Suspense>
       </main>
+      {/* At the root, not in the sidebar: the sticky sidebar is a stacking
+          context, and a fixed dialog inside it paints under the main column. */}
+      {accountOpen && user && <AccountModal user={user} mfaEnrolled={mfaEnrolled} onClose={() => setAccountOpen(false)} />}
     </div>
   )
 }
