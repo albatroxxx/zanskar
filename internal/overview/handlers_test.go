@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/albatroxxx/zanskar/internal/access"
+	"github.com/albatroxxx/zanskar/internal/asg"
 	"github.com/albatroxxx/zanskar/internal/audit"
 	"github.com/albatroxxx/zanskar/internal/auth"
 	"github.com/albatroxxx/zanskar/internal/session"
@@ -28,6 +29,7 @@ type env struct {
 	sessions *session.Repo
 	requests *access.Repo
 	targets  *target.Repo
+	asgs     *asg.Repo
 	audit    *audit.Log
 	cookies  map[string]*http.Cookie
 	ids      map[string]string
@@ -42,8 +44,8 @@ func newEnv(t *testing.T) *env {
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	users := user.NewRepo(db)
 	sessions := auth.NewSessions(db, []byte("0123456789abcdef0123456789abcdef"), false)
-	e := &env{db: db, sessions: session.NewRepo(db), requests: access.NewRepo(db), targets: target.NewRepo(db), audit: audit.NewLog(db), cookies: map[string]*http.Cookie{}, ids: map[string]string{}}
-	h := &Handler{Sessions: e.sessions, Requests: e.requests, Targets: e.targets, Audit: e.audit, Log: log}
+	e := &env{db: db, sessions: session.NewRepo(db), requests: access.NewRepo(db), targets: target.NewRepo(db), asgs: asg.NewRepo(db), audit: audit.NewLog(db), cookies: map[string]*http.Cookie{}, ids: map[string]string{}}
+	h := &Handler{Sessions: e.sessions, Requests: e.requests, Targets: e.targets, ASGs: e.asgs, Audit: e.audit, Log: log}
 	mux := http.NewServeMux()
 	h.Register(mux)
 	mw := &auth.Middleware{Sessions: sessions, Users: users, Log: log}
@@ -84,6 +86,8 @@ func seed(t *testing.T, e *env) {
 	for _, tg := range []*target.Target{
 		{Name: "web 1", Address: "10.0.0.5", OSFamily: "linux"},
 		{Name: "web 2", Address: "10.0.0.6", OSFamily: "linux"},
+		{Name: "win 1", Address: "10.0.0.7", OSFamily: "windows"},
+		{Name: "orders pg", Address: "10.0.0.8", Engine: "postgres", TLSMode: "require", Ports: map[target.Protocol]int{"database": 5432}},
 	} {
 		if err := e.targets.Create(ctx, tg); err != nil {
 			t.Fatal(err)
@@ -112,6 +116,19 @@ func seed(t *testing.T, e *env) {
 	if err := e.requests.Create(ctx, req); err != nil {
 		t.Fatal(err)
 	}
+	group := &asg.Group{Name: "web-fleet", Region: "eu-central-1", ExternalName: "web-fleet", RoleARN: "arn:aws:iam::123456789012:role/zanskar-read", OSFamily: "linux"}
+	if err := e.asgs.Create(ctx, group); err != nil {
+		t.Fatal(err)
+	}
+	for _, in := range []*asg.Instance{
+		{GroupID: group.ID, InstanceID: "i-1", LifecycleState: "InService", ProbeHealth: "healthy"},
+		{GroupID: group.ID, InstanceID: "i-2", LifecycleState: "InService", ProbeHealth: "unhealthy"},
+	} {
+		if _, _, err := e.asgs.UpsertInstance(ctx, in); err != nil {
+			t.Fatal(err)
+		}
+	}
+
 	actor := audit.Actor{UserID: e.ids["alice"], IP: "10.0.0.1"}
 	for _, ev := range []audit.Event{
 		actor.Event(audit.UserLogin, "user", e.ids["alice"], audit.Failure, map[string]string{"reason": "bad_password"}),
@@ -173,14 +190,32 @@ func TestAdminOverview(t *testing.T) {
 	if got := num(t, out, "pending_requests"); got != 1 {
 		t.Errorf("pending_requests = %v, want 1", got)
 	}
-	if got := num(t, out, "targets", "active"); got != 2 {
-		t.Errorf("targets.active = %v, want 2", got)
+	if got := num(t, out, "targets", "active"); got != 4 {
+		t.Errorf("targets.active = %v, want 4", got)
 	}
 	if got := num(t, out, "targets", "host_key_pending"); got != 1 {
 		t.Errorf("targets.host_key_pending = %v, want 1", got)
 	}
 	if got := num(t, out, "targets", "host_key_changed"); got != 0 {
 		t.Errorf("targets.host_key_changed = %v, want 0", got)
+	}
+	if got := num(t, out, "inventory", "hosts"); got != 3 {
+		t.Errorf("inventory.hosts = %v, want 3", got)
+	}
+	if got := num(t, out, "inventory", "hosts_by_os", "windows"); got != 1 {
+		t.Errorf("inventory.hosts_by_os.windows = %v, want 1", got)
+	}
+	if got := num(t, out, "inventory", "databases_by_engine", "postgres"); got != 1 {
+		t.Errorf("inventory.databases_by_engine.postgres = %v, want 1", got)
+	}
+	if got := num(t, out, "autoscaling", "groups"); got != 1 {
+		t.Errorf("autoscaling.groups = %v, want 1", got)
+	}
+	if got := num(t, out, "autoscaling", "instances"); got != 2 {
+		t.Errorf("autoscaling.instances = %v, want 2", got)
+	}
+	if got := num(t, out, "autoscaling", "healthy_instances"); got != 1 {
+		t.Errorf("autoscaling.healthy_instances = %v, want 1", got)
 	}
 	// Two in-window login failures; the third is 25 hours old.
 	if got := num(t, out, "audit_24h", "failed_logins"); got != 2 {

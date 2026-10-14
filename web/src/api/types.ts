@@ -330,6 +330,17 @@ export interface AdminOverview {
     host_key_changed: number
     certificate_pending: number
   }
+  inventory: {
+    hosts: number
+    hosts_by_os: Record<string, number>
+    databases: number
+    databases_by_engine: Record<string, number>
+  }
+  autoscaling: {
+    groups: number
+    instances: number
+    healthy_instances: number
+  }
   audit_24h: AuditTallies
 }
 

@@ -85,6 +85,7 @@ a.stat-tile:hover { border-color: var(--fg-faint); }
 .stat-tile.warn .value { color: var(--warn); }
 .stat-tile.danger .value { color: var(--danger); }
 .stat-tile .label { margin-top: 2px; font-size: 0.82rem; color: var(--fg-muted); }
+.stat-tile .detail { margin-top: 4px; font-size: 0.78rem; color: var(--fg-faint); }
 
 /* Inline glyphs (components/icons.tsx): a glyph never deletes information.
    OS and engine glyphs sit beside a visible name; a state glyph is a button
@@ -326,7 +327,7 @@ td.actions > * + * { margin-left: 8px; }
 .main { position: relative; }
 .main:has(> .cli-icon) .page-head { padding-right: 44px; }
 /* Bare glyph, no button chrome: the icon is the control. */
-.cli-icon { position: absolute; top: 22px; right: 32px; z-index: 30; padding: 0; display: flex; border: 0; background: none; color: var(--accent); cursor: pointer; }
+.cli-icon { position: absolute; top: 32px; right: 32px; z-index: 30; padding: 0; display: flex; border: 0; background: none; color: var(--accent); cursor: pointer; }
 .cli-icon:hover { color: var(--accent-hover); }
 .cli-icon.on { color: var(--accent-hover); }
 .cli-panel { position: fixed; left: var(--sidebar-w); right: 0; bottom: 0; z-index: 40; display: flex; flex-direction: column; min-height: 180px; background: var(--terminal-bg); color: var(--term-fg); border-top: 1px solid var(--term-line); box-shadow: 0 -12px 32px var(--term-shadow); }
@@ -366,6 +367,6 @@ td.actions > * + * { margin-left: 8px; }
 .cli-row { display: flex; gap: 12px; align-items: center; }
 .cli-link { background: none; border: 0; color: var(--term-fg-muted); font: inherit; font-size: 13px; cursor: pointer; padding: 0; }
 @media (max-width: 760px) {
-  .cli-icon { top: 18px; right: 16px; }
+  .cli-icon { top: 24px; right: 16px; }
   .cli-panel { left: 0; }
 }
