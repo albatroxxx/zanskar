@@ -292,6 +292,13 @@ func (h *Handler) session(w http.ResponseWriter, r *http.Request, label string, 
 		http.Error(w, "your Zanskar session for this application has ended; reload the page to sign in again", http.StatusUnauthorized)
 		return nil
 	}
+	// Applications no longer configured (the public URL removed since the
+	// application was enrolled, say) get the reason, not a redirect to
+	// nowhere that would loop back here.
+	if err := h.Ready(); err != nil {
+		h.page(w, http.StatusServiceUnavailable, "Applications unavailable", "Applications are not configured on this gateway: "+err.Error(), false)
+		return nil
+	}
 	// A name nothing is served under is told so here, not sent to the
 	// console to find out.
 	if t, err := h.Targets.GetByLabel(ctx, label); err != nil || !t.IsApplication() || t.Status != target.StatusActive {

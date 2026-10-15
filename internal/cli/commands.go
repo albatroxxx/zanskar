@@ -534,6 +534,8 @@ func cmdTargets(x *run) error {
 		kind := str(t, "os_family")
 		if e := str(t, "engine"); e != "" {
 			kind = e
+		} else if str(t, "app_upstream") != "" {
+			kind = "application"
 		}
 		rows = append(rows, []string{str(t, "name"), str(t, "address"), kind, str(t, "host_key_status"), str(t, "tags")})
 	}

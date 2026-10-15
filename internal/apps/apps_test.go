@@ -528,6 +528,13 @@ func TestHosts(t *testing.T) {
 	if rr := f.app(http.MethodGet, "http://wiki.apps.test/_zanskar/anything", nil); rr.Code != http.StatusNotFound {
 		t.Errorf("reserved path: %d", rr.Code)
 	}
+	// Configuration that went away after enrolment: the reason, never a
+	// redirect to nowhere that would loop back.
+	f.h.PublicURL = ""
+	rr := f.app(http.MethodGet, "http://wiki.apps.test/", nil)
+	if rr.Code != http.StatusServiceUnavailable || rr.Header().Get("Location") != "" || !strings.Contains(rr.Body.String(), "ZANSKAR_PUBLIC_URL") {
+		t.Errorf("without the public URL: %d %q", rr.Code, rr.Header().Get("Location"))
+	}
 }
 
 // TestLimitsAndSweep: the policy's idle and maximum limits, the sign-in's
