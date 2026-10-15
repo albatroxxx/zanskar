@@ -108,6 +108,9 @@ func (h *Handler) enter(w http.ResponseWriter, r *http.Request, label string) {
 	h.track(s.ID, g.UserID, t.ID, d.Policy.ID, auth.ClientIP(r))
 	h.setCookie(w, h.cookieName(), tok, cookieTTL)
 	w.Header().Set("Cache-Control", "no-store")
+	// #nosec G710 -- safePath admits only a path on this host: one leading
+	// slash, no scheme, host or user, no control characters; anything else
+	// becomes "/".
 	http.Redirect(w, r, safePath(q.Get("next")), http.StatusSeeOther)
 }
 

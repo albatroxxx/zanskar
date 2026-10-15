@@ -363,7 +363,10 @@ func TestWebSocket(t *testing.T) {
 	}}}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	c, _, err := websocket.Dial(ctx, "ws://wiki.apps.test/ws", &websocket.DialOptions{HTTPClient: client, HTTPHeader: http.Header{"Cookie": {appCookie.String()}}})
+	c, resp, err := websocket.Dial(ctx, "ws://wiki.apps.test/ws", &websocket.DialOptions{HTTPClient: client, HTTPHeader: http.Header{"Cookie": {appCookie.String()}}})
+	if resp != nil && resp.Body != nil {
+		_ = resp.Body.Close()
+	}
 	if err != nil {
 		t.Fatalf("dial through the proxy: %v", err)
 	}
@@ -376,7 +379,12 @@ func TestWebSocket(t *testing.T) {
 		t.Fatalf("echo: %q %v", msg, err)
 	}
 	// Without the cookie the upgrade is refused before any upstream is dialled.
-	if _, _, err := websocket.Dial(ctx, "ws://wiki.apps.test/ws", &websocket.DialOptions{HTTPClient: client}); err == nil {
+	c2, resp2, err := websocket.Dial(ctx, "ws://wiki.apps.test/ws", &websocket.DialOptions{HTTPClient: client})
+	if resp2 != nil && resp2.Body != nil {
+		_ = resp2.Body.Close()
+	}
+	if err == nil {
+		c2.CloseNow()
 		t.Fatal("upgrade without a session succeeded")
 	}
 }
