@@ -82,6 +82,10 @@ type Config struct {
 	Issuer string
 	// RecordingsDir is where session recordings are written (local storage).
 	RecordingsDir string
+	// UpdateManifestURL is where the daily version check reads the latest
+	// release from (ADR 0032): the project site by default, or a mirror an
+	// operator keeps for gateways without a route to it.
+	UpdateManifestURL string
 	// RecordingsS3Bucket switches recordings to an S3-compatible bucket.
 	// Empty keeps the local directory backend.
 	RecordingsS3Bucket   string
@@ -181,6 +185,7 @@ func Load(opts Options) (*Config, error) {
 		ConsoleCLI:           !strings.EqualFold(strings.TrimSpace(os.Getenv("ZANSKAR_CONSOLE_CLI")), "off"),
 		Issuer:               envOr("ZANSKAR_ISSUER", "Zanskar"),
 		RecordingsDir:        envOr("ZANSKAR_RECORDINGS_DIR", "data/recordings"),
+		UpdateManifestURL:    envOr("ZANSKAR_UPDATE_MANIFEST_URL", "https://albatroxxx.github.io/zanskar/releases/latest.json"),
 		RecordingsS3Bucket:   os.Getenv("ZANSKAR_RECORDINGS_S3_BUCKET"),
 		RecordingsS3Prefix:   envOr("ZANSKAR_RECORDINGS_S3_PREFIX", "recordings/"),
 		RecordingsS3Region:   os.Getenv("ZANSKAR_RECORDINGS_S3_REGION"),

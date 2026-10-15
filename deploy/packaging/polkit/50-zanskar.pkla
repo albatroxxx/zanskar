@@ -1,0 +1,8 @@
+# Zanskar host actions from the console (ADR 0032), for polkit 0.105 (Ubuntu
+# 22.04): the service user may ask logind to reboot or power off the machine.
+[Zanskar may reboot or power off the host]
+Identity=unix-user:zanskar
+Action=org.freedesktop.login1.reboot;org.freedesktop.login1.reboot-multiple-sessions;org.freedesktop.login1.power-off;org.freedesktop.login1.power-off-multiple-sessions
+ResultAny=yes
+ResultInactive=yes
+ResultActive=yes

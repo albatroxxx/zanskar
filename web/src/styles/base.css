@@ -343,12 +343,16 @@ td.actions > * + * { margin-left: 8px; }
 
 /* console command line (ADR 0027) */
 .main { position: relative; }
-/* The command line lives alone in the very corner, above the page head, so
-   a page's own buttons keep the right edge and the two are never read as one
-   control group. The main column makes a little headroom for it. */
-.main:has(> .cli-icon) { padding-top: 46px; }
+/* The corner strip — bell, gear, command line — lives alone at the very top
+   right, above the page head, so a page's own buttons keep the right edge and
+   are never read as one group with it. The main column makes headroom. */
+.main:has(> .corner) { padding-top: 46px; }
+.corner { position: absolute; top: 12px; right: 32px; z-index: 30; display: flex; align-items: center; gap: 16px; }
+.corner-btn { position: relative; display: inline-flex; padding: 0; border: 0; background: none; color: var(--accent); cursor: pointer; }
+.corner-btn:hover { color: var(--accent-hover); }
+.corner-dot { position: absolute; top: -1px; right: -1px; width: 9px; height: 9px; border-radius: 50%; background: var(--danger); border: 2px solid var(--bg); }
 /* Bare glyph, no button chrome: the icon is the control. */
-.cli-icon { position: absolute; top: 12px; right: 32px; z-index: 30; padding: 0; display: flex; border: 0; background: none; color: var(--accent); cursor: pointer; }
+.cli-icon { display: inline-flex; padding: 0; border: 0; background: none; color: var(--accent); cursor: pointer; }
 .cli-icon:hover { color: var(--accent-hover); }
 .cli-icon.on { color: var(--accent-hover); }
 .cli-panel { position: fixed; left: var(--sidebar-w); right: 0; bottom: 0; z-index: 40; display: flex; flex-direction: column; min-height: 180px; background: var(--terminal-bg); color: var(--term-fg); border-top: 1px solid var(--term-line); box-shadow: 0 -12px 32px var(--term-shadow); }
@@ -388,7 +392,7 @@ td.actions > * + * { margin-left: 8px; }
 .cli-row { display: flex; gap: 12px; align-items: center; }
 .cli-link { background: none; border: 0; color: var(--term-fg-muted); font: inherit; font-size: 13px; cursor: pointer; padding: 0; }
 @media (max-width: 760px) {
-  .cli-icon { top: 8px; right: 16px; }
-  .main:has(> .cli-icon) { padding-top: 40px; }
+  .corner { top: 8px; right: 16px; }
+  .main:has(> .corner) { padding-top: 40px; }
   .cli-panel { left: 0; }
 }

@@ -3,6 +3,7 @@
 package lifecycle
 
 import (
+	"context"
 	"log/slog"
 	"net/http"
 	"time"
@@ -28,6 +29,11 @@ type Handler struct {
 	DatabasePath   string
 	RecordingsPath string
 	GuacdAddr      func() string
+	// For the host actions (ADR 0032); nil means the real host: systemd
+	// detection, os.Hostname, and systemctl.
+	Supervisor func() string
+	Hostname   func() string
+	Run        func(ctx context.Context, name string, args ...string) error
 }
 
 // Register mounts the routes; all admin-only.
@@ -35,6 +41,9 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	admin := auth.RequireRole(user.RoleAdmin)
 	mux.Handle("GET /api/v1/admin/system/status", admin(http.HandlerFunc(h.status)))
 	mux.Handle("GET /api/v1/admin/system/metrics", admin(http.HandlerFunc(h.metrics)))
+	mux.Handle("GET /api/v1/admin/system/host", admin(http.HandlerFunc(h.host)))
+	mux.Handle("POST /api/v1/admin/system/reboot", admin(http.HandlerFunc(h.reboot)))
+	mux.Handle("POST /api/v1/admin/system/poweroff", admin(http.HandlerFunc(h.poweroff)))
 	mux.Handle("POST /api/v1/admin/system/restart", admin(http.HandlerFunc(h.restart)))
 	mux.Handle("DELETE /api/v1/admin/system/restart", admin(http.HandlerFunc(h.cancel)))
 }
@@ -53,7 +62,10 @@ type Status struct {
 }
 
 func (h *Handler) current() Status {
-	rep := h.Drift.Check()
+	var rep Report
+	if h.Drift != nil {
+		rep = h.Drift.Check()
+	}
 	d := h.Controller.Current()
 	return Status{
 		Version: version.Version, StartedAt: h.StartedAt, UptimeSeconds: int64(time.Since(h.StartedAt).Seconds()),

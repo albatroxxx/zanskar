@@ -24,6 +24,11 @@ type Drain struct {
 	RequestedBy string    `json:"requested_by"`
 	Deadline    time.Time `json:"deadline"`
 	WaitMinutes int       `json:"wait_minutes"`
+	// Action names what the drain ends in: restart (the default), reboot or
+	// poweroff (ADR 0032), so the console can say which is coming.
+	Action string `json:"action"`
+	// then runs instead of Exit when set: a host action after the drain.
+	then func()
 }
 
 // Controller restarts the process on request: it stops new sessions from
@@ -68,6 +73,13 @@ func (c *Controller) Current() *Drain {
 // live sessions finish before ending them; zero ends them now. A second
 // call while one is in progress replaces its deadline.
 func (c *Controller) Restart(by string, wait time.Duration) Drain {
+	return c.RestartThen(by, wait, "restart", nil)
+}
+
+// RestartThen is Restart with a different ending: after the drain, then runs
+// in place of Exit — a reboot or power-off of the host (ADR 0032). action
+// is the word the status shows for it.
+func (c *Controller) RestartThen(by string, wait time.Duration, action string, then func()) Drain {
 	if wait < 0 {
 		wait = 0
 	}
@@ -79,7 +91,7 @@ func (c *Controller) Restart(by string, wait time.Duration) Drain {
 		c.cancel()
 	}
 	now := time.Now().UTC()
-	d := Drain{RequestedAt: now, RequestedBy: by, Deadline: now.Add(wait), WaitMinutes: int(wait / time.Minute)}
+	d := Drain{RequestedAt: now, RequestedBy: by, Deadline: now.Add(wait), WaitMinutes: int(wait / time.Minute), Action: action, then: then}
 	c.drain = &d
 	ctx, cancel := context.WithCancel(context.Background())
 	c.cancel = cancel
@@ -140,6 +152,10 @@ func (c *Controller) run(ctx context.Context, d Drain) {
 	}
 	if ended > 0 {
 		time.Sleep(poll)
+	}
+	if d.then != nil {
+		d.then()
+		return
 	}
 	c.Exit()
 }

@@ -1,0 +1,18 @@
+// Zanskar host actions from the console (ADR 0032): the service user may ask
+// logind to reboot or power off the machine, after the gateway has drained
+// its sessions and an administrator proved an authenticator code. Nothing
+// else is granted; the gateway never becomes root.
+polkit.addRule(function (action, subject) {
+  if (subject.user !== "zanskar") {
+    return polkit.Result.NOT_HANDLED;
+  }
+  if (
+    action.id === "org.freedesktop.login1.reboot" ||
+    action.id === "org.freedesktop.login1.reboot-multiple-sessions" ||
+    action.id === "org.freedesktop.login1.power-off" ||
+    action.id === "org.freedesktop.login1.power-off-multiple-sessions"
+  ) {
+    return polkit.Result.YES;
+  }
+  return polkit.Result.NOT_HANDLED;
+});

@@ -55,6 +55,7 @@ import (
 	"github.com/albatroxxx/zanskar/internal/target"
 	"github.com/albatroxxx/zanskar/internal/ticket"
 	"github.com/albatroxxx/zanskar/internal/tlscert"
+	"github.com/albatroxxx/zanskar/internal/update"
 	"github.com/albatroxxx/zanskar/internal/user"
 	"github.com/albatroxxx/zanskar/internal/user/adminapi"
 	"github.com/albatroxxx/zanskar/internal/version"
@@ -331,6 +332,10 @@ func serve(ctx context.Context) error {
 	// A sign-in through an identity provider that removes the user from a
 	// mapped group ends what that group granted, as an admin's removal does.
 	provisioner.Revoker = connectHandler
+	// The bell (ADR 0032): once a day, is there a newer release? The
+	// runtime setting is read before each check so a switch-off applies live.
+	versionCheck := &update.Checker{URL: cfg.UpdateManifestURL, Current: version.Version, Enabled: func() bool { return runtime.Bool(settings.KeyUpdateCheck) }, Log: log}
+	go versionCheck.Run(ctx)
 	deps := server.Deps{
 		TLS:            tlsMgr,
 		AuthMiddleware: &auth.Middleware{Sessions: sessions, Users: users, Log: log},
@@ -348,6 +353,7 @@ func serve(ctx context.Context) error {
 			&asg.AdminHandler{Repo: asgRepo, Sync: syncer.SyncGroup, Identity: awsIdentity, Providers: asg.AWSFresh(), Policies: policies, Live: registry, Vault: vault, Audit: auditLog, Log: log},
 			&session.Handler{Repo: sessionRepo, Audit: auditLog, AnchorKey: anchorKey, Registry: registry, Storage: storage, Log: log},
 			&overview.Handler{Sessions: sessionRepo, Requests: accessReqs, Targets: targets, ASGs: asgRepo, Audit: auditLog, Log: log},
+			&update.Handler{Checker: versionCheck, Log: log},
 			&settings.Handler{Service: runtime, Audit: auditLog, Log: log},
 			&recstorage.Handler{Manager: storageMgr, Audit: auditLog, Log: log},
 			&lifecycle.Handler{Drift: drift, Controller: restarter, Audit: auditLog, Log: log, StartedAt: startedAt,

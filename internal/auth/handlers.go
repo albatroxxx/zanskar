@@ -52,8 +52,10 @@ type Handler struct {
 	ExternalLogin ExternalAuthenticator
 
 	loginLimiter *ipLimiter
-	mfaMu        sync.Mutex
-	mfaAttempts  map[string]int
+	// stepUpLimiter bounds code attempts per session on the step-up route.
+	stepUpLimiter *ipLimiter
+	mfaMu         sync.Mutex
+	mfaAttempts   map[string]int
 	// codeChecks runs second-factor checks one at a time per account.
 	codeChecks accountLocks
 }
@@ -98,8 +100,9 @@ func NewHandler(users *user.Repo, sessions *Sessions, totp *TOTP, auditLog *audi
 	return &Handler{
 		Users: users, Sessions: sessions, TOTP: totp, Audit: auditLog, Log: log,
 		MaxFailures: 5, LockFor: 15 * time.Minute, MFAAttempts: 5,
-		loginLimiter: newIPLimiter(20, 10),
-		mfaAttempts:  map[string]int{},
+		loginLimiter:  newIPLimiter(20, 10),
+		stepUpLimiter: newIPLimiter(10, 5),
+		mfaAttempts:   map[string]int{},
 	}
 }
 
@@ -114,6 +117,9 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.Handle("GET /api/v1/auth/me", RequirePartialAuth(http.HandlerFunc(h.me)))
 	mux.Handle("POST /api/v1/auth/password", RequirePartialAuth(http.HandlerFunc(h.changePassword)))
 	mux.Handle("POST /api/v1/auth/mfa/totp/verify", RequirePartialAuth(http.HandlerFunc(h.totpVerify)))
+	// A signed-in session proves its authenticator again for the actions the
+	// console guards with a recent code (ADR 0032).
+	mux.Handle("POST /api/v1/auth/mfa/step-up", RequireAuth(http.HandlerFunc(h.stepUp)))
 	// Enroll and confirm accept a partial session so a deployment that
 	// requires MFA can make enrollment the first thing a new user does.
 	mux.Handle("POST /api/v1/auth/mfa/totp/enroll", RequirePartialAuth(http.HandlerFunc(h.totpEnroll)))
@@ -812,3 +818,48 @@ func (h *Handler) rotate(w http.ResponseWriter, r *http.Request, p *Principal) b
 // signInBodyLimit caps the bodies of these endpoints, most of which answer
 // callers who have not signed in yet: a name, a password or a code, no more.
 const signInBodyLimit = 64 << 10
+
+// stepUp proves the authenticator again on a full session. It records the
+// proof's time on the session, which the host-action handlers read (ADR
+// 0032); nothing else about the session changes. Attempts are limited per
+// session so a stolen cookie cannot grind codes, and every outcome is
+// audited as a second-factor verification with the purpose named.
+func (h *Handler) stepUp(w http.ResponseWriter, r *http.Request) {
+	p, _ := FromContext(r.Context())
+	actor := audit.Actor{UserID: p.User.ID, IP: ClientIP(r)}
+	if ok, first := h.stepUpLimiter.Take(limiterKey(p.Session.ID)); !ok {
+		if first {
+			h.record(r, actor.Event(audit.UserMFAVerify, "user", p.User.ID, audit.Failure, map[string]string{"purpose": "step_up", "reason": "rate_limited"}))
+		}
+		httpx.WriteError(w, r, http.StatusTooManyRequests, "rate_limited", "too many attempts; try again later")
+		return
+	}
+	var req codeRequest
+	if err := httpx.DecodeJSONLimit(r, &req, signInBodyLimit); err != nil {
+		httpx.WriteError(w, r, http.StatusBadRequest, "bad_request", err.Error())
+		return
+	}
+	recovery, err := h.TOTP.Verify(r.Context(), p.User.ID, req.Code)
+	switch {
+	case errors.Is(err, ErrTOTPNotEnrolled):
+		httpx.WriteError(w, r, http.StatusConflict, "mfa_not_enrolled", "enrol an authenticator first; this action asks for a code from it")
+		return
+	case errors.Is(err, ErrTOTPBadCode):
+		reason := "wrong code"
+		if errors.Is(err, ErrTOTPReused) {
+			reason = "code already used"
+		}
+		h.record(r, actor.Event(audit.UserMFAVerify, "user", p.User.ID, audit.Failure, map[string]string{"purpose": "step_up", "reason": reason}))
+		httpx.WriteError(w, r, http.StatusUnprocessableEntity, "bad_code", "that code is not right")
+		return
+	case err != nil:
+		httpx.Internal(w, r, h.Log, err)
+		return
+	}
+	if err := h.Sessions.MarkMFAProved(r.Context(), p.Session.ID); err != nil {
+		httpx.Internal(w, r, h.Log, err)
+		return
+	}
+	h.record(r, actor.Event(audit.UserMFAVerify, "user", p.User.ID, audit.Success, map[string]any{"purpose": "step_up", "recovery_code_used": recovery}))
+	httpx.WriteJSON(w, http.StatusOK, map[string]bool{"proved": true})
+}

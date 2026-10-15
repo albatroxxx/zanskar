@@ -550,6 +550,28 @@ export interface StorageStatus {
   move: { running: boolean; started_at?: string; finished_at?: string; moved: number; failed: number; total: number; last_error?: string }
 }
 
+/** GET /admin/system/host. Mirrors internal/lifecycle.HostStatus (ADR 0032). */
+export interface HostStatus {
+  hostname: string
+  supervisor: string
+  available: boolean
+  reason?: string
+  mfa_fresh: boolean
+  step_up_minutes: number
+}
+
+/** GET /admin/system/update. Mirrors internal/update.Status (ADR 0032). */
+export interface UpdateStatus {
+  current: string
+  latest?: string
+  notes_url?: string
+  published_at?: string
+  newer: boolean
+  checked_at?: string
+  error?: string
+  enabled: boolean
+}
+
 /** GET /admin/system/metrics. Mirrors internal/lifecycle.Metrics. */
 export interface SystemMetrics {
   load?: { one: number; five: number; fifteen: number }

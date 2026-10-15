@@ -220,3 +220,23 @@ export function TileIcon({ kind }: { kind: 'approvals' | 'attention' | 'key' | '
     </span>
   )
 }
+
+/** BellIcon and GearIcon sit in the admin corner beside the command line,
+ *  drawn at its size and weight. */
+export function BellIcon() {
+  return (
+    <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M6 9a6 6 0 0 1 12 0c0 6 2.5 8 2.5 8h-17S6 15 6 9" />
+      <path d="M10 20.5a2 2 0 0 0 4 0" />
+    </svg>
+  )
+}
+
+export function GearIcon() {
+  return (
+    <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round" aria-hidden="true">
+      <polygon points="19.4,9.0 22.3,10.2 22.3,13.8 19.4,15.0 19.4,15.2 20.6,18.0 18.0,20.6 15.2,19.4 15.0,19.4 13.8,22.3 10.2,22.3 9.0,19.4 8.8,19.4 6.0,20.6 3.4,18.0 4.6,15.2 4.6,15.0 1.7,13.8 1.7,10.2 4.6,9.0 4.6,8.8 3.4,6.0 6.0,3.4 8.8,4.6 9.0,4.6 10.2,1.7 13.8,1.7 15.0,4.6 15.2,4.6 18.0,3.4 20.6,6.0 19.4,8.8" />
+      <circle cx="12" cy="12" r="3.2" />
+    </svg>
+  )
+}
