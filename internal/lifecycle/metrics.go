@@ -51,8 +51,12 @@ type MemoryInfo struct {
 // or both when they share a filesystem. A full recordings volume stops
 // sessions being recorded, which is why it is on the dashboard.
 type DiskSpace struct {
-	What       string `json:"what"`
-	Path       string `json:"path"`
+	What string `json:"what"`
+	Path string `json:"path"`
+	// System says this location sits on the root filesystem, so the numbers
+	// are the OS disk's — the common single-disk install. The console names
+	// it "System disk" then, instead of implying a separate volume.
+	System     bool   `json:"system"`
 	TotalBytes uint64 `json:"total_bytes"`
 	FreeBytes  uint64 `json:"free_bytes"`
 }
@@ -171,6 +175,10 @@ func diskSpace(databasePath, recordingsPath string) []DiskSpace {
 	probes := []probe{{"database", databasePath}, {"recordings", recordingsPath}}
 	var out []DiskSpace
 	seen := map[uint64]int{} // device id -> index in out
+	var rootDev uint64
+	if info, err := os.Stat("/"); err == nil {
+		rootDev = deviceID(info)
+	}
 	for _, p := range probes {
 		if p.path == "" {
 			continue
@@ -192,6 +200,7 @@ func diskSpace(databasePath, recordingsPath string) []DiskSpace {
 		out = append(out, DiskSpace{
 			What:       p.what,
 			Path:       p.path,
+			System:     dev == rootDev,
 			TotalBytes: st.Blocks * uint64(st.Bsize), // #nosec G115 -- a block size, never negative
 			FreeBytes:  st.Bavail * uint64(st.Bsize), // #nosec G115 -- a block size, never negative
 		})

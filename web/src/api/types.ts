@@ -554,7 +554,7 @@ export interface StorageStatus {
 export interface SystemMetrics {
   load?: { one: number; five: number; fifteen: number }
   memory?: { total_bytes: number; available_bytes: number }
-  disks: { what: string; path: string; total_bytes: number; free_bytes: number }[]
+  disks: { what: string; path: string; system: boolean; total_bytes: number; free_bytes: number }[]
   database_sessions: number
   guacd?: { address: string; reachable: boolean }
   cpus: number

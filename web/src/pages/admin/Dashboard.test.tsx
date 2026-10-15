@@ -34,7 +34,7 @@ const metrics: SystemMetrics = {
   load: { one: 0.42, five: 0.2, fifteen: 0.1 },
   memory: { total_bytes: 8 * 1024 ** 3, available_bytes: 6 * 1024 ** 3 },
   disks: [
-    { what: 'database & recordings', path: '/var/lib/zanskar', total_bytes: 100 * 1024 ** 3, free_bytes: 4 * 1024 ** 3 },
+    { what: 'database & recordings', path: '/var/lib/zanskar', system: true, total_bytes: 100 * 1024 ** 3, free_bytes: 4 * 1024 ** 3 },
   ],
   database_sessions: 1,
   guacd: { address: '127.0.0.1:4822', reachable: false },
@@ -108,7 +108,7 @@ describe('the admin dashboard', () => {
     expect(load.getAttribute('aria-valuenow')).toBe('5')
     const memory = screen.getByRole('meter', { name: 'Memory' })
     expect(memory.getAttribute('aria-valuenow')).toBe('25')
-    const disk = screen.getByRole('meter', { name: 'Database & recordings disk' })
+    const disk = screen.getByRole('meter', { name: 'System disk (database & recordings)' })
     expect(disk.getAttribute('aria-valuenow')).toBe('96')
     expect(disk.className).toContain('danger')
     expect(screen.getByText('low space')).toBeDefined()

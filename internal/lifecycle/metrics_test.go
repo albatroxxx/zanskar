@@ -3,6 +3,7 @@
 package lifecycle
 
 import (
+	"os"
 	"testing"
 )
 
@@ -37,6 +38,13 @@ func TestDiskSpace(t *testing.T) {
 	one := diskSpace(dir, "")
 	if len(one) != 1 || one[0].What != "database" || one[0].TotalBytes == 0 {
 		t.Fatalf("one path: %+v", one)
+	}
+	// A temp dir usually shares the root filesystem; when it does, the entry
+	// says so, and the console will call it the system disk.
+	if rootInfo, err := os.Stat("/"); err == nil {
+		if tmpInfo, err2 := os.Stat(dir); err2 == nil && deviceID(rootInfo) == deviceID(tmpInfo) && !one[0].System {
+			t.Fatalf("root-filesystem path not marked system: %+v", one[0])
+		}
 	}
 	both := diskSpace(dir, dir)
 	if len(both) != 1 || both[0].What != "database & recordings" {

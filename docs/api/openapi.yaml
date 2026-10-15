@@ -5895,13 +5895,16 @@ components:
           type: array
           items:
             type: object
-            required: [what, path, total_bytes, free_bytes]
+            required: [what, path, system, total_bytes, free_bytes]
             properties:
               what:
                 type: string
                 description: database, recordings, or "database & recordings" when they share a filesystem.
               path:
                 type: string
+              system:
+                type: boolean
+                description: The location sits on the root filesystem, so the numbers are the OS disk's.
               total_bytes:
                 type: integer
               free_bytes:
