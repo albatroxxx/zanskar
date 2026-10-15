@@ -4,7 +4,7 @@ Date: 2026-10-15
 
 ## Status
 
-Proposed.
+Accepted.
 
 ## Context
 
@@ -23,7 +23,7 @@ provenance and build reproducibly; an in-place updater that trusted anything the
 process downloaded would hand a stolen administrator session a way to install arbitrary
 code as root. The updater must verify on its own.
 
-## Decision (proposed)
+## Decision
 
 **Every host action is a request to systemd, authorised by polkit rules the package
 ships, never a privilege the gateway holds.**

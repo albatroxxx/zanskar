@@ -4,7 +4,7 @@ Date: 2026-10-15
 
 ## Status
 
-Proposed.
+Accepted.
 
 ## Context
 
@@ -20,7 +20,7 @@ the first version: it is what developers reach for daily, it keeps the gateway h
 of a browser runtime, and the isolated browser remains the right follow-up for
 less-trusted audiences, where a recorded session matters more than convenience.
 
-## Decision (proposed)
+## Decision
 
 **An application is a target of a new kind, reached through Zanskar's own reverse proxy
 on a per-application subdomain of a domain that is not the console's.**
