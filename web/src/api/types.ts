@@ -34,7 +34,8 @@ export interface Page<T> { items: T[]; next_cursor?: string }
 
 export interface ApiErrorBody { code: string; message: string; request_id?: string }
 
-export type Protocol = 'ssh' | 'rdp' | 'vnc' | 'winrm' | 'database'
+/** How a target is reached; `http` is a web application through the gateway's proxy (ADR 0033). */
+export type Protocol = 'ssh' | 'rdp' | 'vnc' | 'winrm' | 'database' | 'http'
 export type OSFamily = 'linux' | 'windows' | 'other'
 export type HostKeyStatus = 'unknown' | 'pending' | 'trusted' | 'changed'
 
@@ -51,7 +52,11 @@ export interface Target {
   /** Database targets only: the database to open, and how the sidecar protects its upstream connection. */
   database_name?: string
   tls_mode?: 'disable' | 'prefer' | 'require' | 'verify-full'
+  /** CA bundle the upstream is verified against: a database under verify-full, or an application's https upstream. */
   tls_ca?: string
+  /** Application targets (ADR 0033): the one origin the proxy forwards to, and the subdomain it is served at. */
+  app_upstream?: string
+  app_label?: string
   ports: Partial<Record<Protocol, number>>
   capabilities: Protocol[]
   host_key_fingerprint: string | null
@@ -109,10 +114,13 @@ export interface ReachableTarget {
   private_ip?: string
   /** database engine when this is a database target (ADR 0017). */
   engine?: string
-  /** "target" for a static machine, "asg" for an autoscaling group; missing means "target". */
-  kind?: 'target' | 'asg'
+  /** "target" for a static machine, "asg" for an autoscaling group, "application" for a web app (ADR 0033); missing means "target". */
+  kind?: 'target' | 'asg' | 'application'
   healthy_count?: number
   instance_count?: number
+  /** An application's subdomain and where the browser opens it; the upstream is never shown. */
+  label?: string
+  url?: string
 }
 
 export type AccessStatus = 'pending' | 'approved' | 'denied' | 'expired' | 'revoked'
@@ -335,6 +343,7 @@ export interface AdminOverview {
     hosts_by_os: Record<string, number>
     databases: number
     databases_by_engine: Record<string, number>
+    applications: number
   }
   autoscaling: {
     groups: number
@@ -506,7 +515,7 @@ export interface LogsPage {
 
 /** A TLS certificate as the console sees it; never the key. Mirrors internal/tlscert.Info. */
 export interface TLSCertInfo {
-  source: 'uploaded' | 'file' | 'generated'
+  source: 'uploaded' | 'file' | 'generated' | 'apps'
   subject: string
   issuer: string
   hosts: string[]
@@ -526,6 +535,11 @@ export interface TLSStatus {
   uploaded?: TLSCertInfo
   generated?: TLSCertInfo
   file_hint?: string
+  /** The applications certificate and domain (ADR 0033); apps_problem says why application hosts cannot be served yet. */
+  apps?: TLSCertInfo
+  apps_domain?: string
+  apps_ready?: boolean
+  apps_problem?: string
 }
 
 /** Recording storage as the console edits it; the secret is write-only. Mirrors internal/recstorage.Config. */

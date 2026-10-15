@@ -7,8 +7,8 @@ import { Badge } from '../../components/ui'
 /** Protocols that carry a single TCP port and apply to VM targets and ASGs. */
 export type PortProtocol = 'ssh' | 'rdp' | 'vnc' | 'winrm'
 export const protocols: PortProtocol[] = ['ssh', 'rdp', 'vnc', 'winrm']
-/** Protocols a policy may grant: the port protocols plus brokered database access (ADR 0017). */
-export const policyProtocols: Protocol[] = [...protocols, 'database']
+/** Protocols a policy may grant: the port protocols, brokered database access (ADR 0017) and applications (ADR 0033). */
+export const policyProtocols: Protocol[] = [...protocols, 'database', 'http']
 
 /** useList fetches a paged collection and exposes reload. */
 export function useList<T>(path: string, params: Record<string, string | number | boolean | undefined> = {}) {

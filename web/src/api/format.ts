@@ -64,6 +64,14 @@ export function dbTLS(mode?: string | null): { label: string; verified: boolean 
   }
 }
 
+/** appTLS says how the proxy reaches an application's upstream (ADR 0033):
+ *  verified TLS against the system roots or the given bundle, or plain HTTP
+ *  on a network the administrator trusts. */
+export function appTLS(t: { app_upstream?: string; tls_ca?: string }): { label: string; verified: boolean } {
+  if (!t.app_upstream?.startsWith('https://')) return { label: 'plain HTTP', verified: false }
+  return { label: t.tls_ca ? 'TLS, verified against the CA bundle' : 'TLS, verified against the system roots', verified: true }
+}
+
 export function engineName(engine?: string | null, version?: string | null): string {
   if (!engine) return ''
   const name = engineNames[engine] ?? engine

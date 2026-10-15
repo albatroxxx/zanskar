@@ -1,10 +1,14 @@
 import { cleanup, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { api } from '../../api/client'
 import type { Target } from '../../api/types'
 import { TargetForm } from './TargetForm'
 
-afterEach(cleanup)
+afterEach(() => {
+  cleanup()
+  vi.restoreAllMocks()
+})
 
 const host: Target = {
   id: 't1', name: 'web-1', address: '10.0.0.5', os_family: 'linux', ports: { ssh: 22 }, capabilities: ['ssh'],
@@ -30,6 +34,30 @@ describe('TargetForm address', () => {
     render(<TargetForm kind="host" onClose={() => {}} onSaved={() => {}} />)
     await userEvent.type(document.getElementById('t-address')!, '10.0.0.6')
     expect(screen.queryByText(warning)).toBeNull()
+  })
+})
+
+// An application (ADR 0033) is its upstream and a label; it has no ports,
+// OS or recordings, and its CA bundle appears only for an https upstream.
+describe('TargetForm application', () => {
+  it('asks for the upstream and label, and sends them as an application', async () => {
+    const post = vi.spyOn(api, 'post').mockResolvedValue({ id: 'a1' } as never)
+    const saved = vi.fn()
+    render(<TargetForm onClose={() => {}} onSaved={saved} />)
+    const user = userEvent.setup()
+    await user.click(screen.getByRole('tab', { name: 'Application' }))
+    expect(screen.queryByLabelText('Operating system')).toBeNull()
+    expect(screen.queryByLabelText(/Keep recordings/)).toBeNull()
+    expect(screen.queryByLabelText(/CA bundle/)).toBeNull()
+
+    await user.type(screen.getByLabelText('Name'), 'Wiki')
+    await user.type(screen.getByLabelText('Upstream'), 'https://wiki.internal:8443')
+    expect(screen.getByLabelText(/CA bundle/)).toBeDefined()
+    await user.type(screen.getByLabelText('Label'), 'wiki')
+    await user.click(screen.getByRole('button', { name: 'Create' }))
+
+    expect(post).toHaveBeenCalledWith('/targets', expect.objectContaining({ name: 'Wiki', address: '', os_family: 'other', engine: '', app_upstream: 'https://wiki.internal:8443', app_label: 'wiki', retention_days: null, ports: {} }))
+    expect(saved).toHaveBeenCalled()
   })
 })
 

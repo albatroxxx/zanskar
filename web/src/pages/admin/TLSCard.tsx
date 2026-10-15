@@ -12,9 +12,49 @@ function sourceBadge(c: TLSCertInfo) {
       return <Badge tone="accent">Uploaded</Badge>
     case 'file':
       return <Badge>From ZANSKAR_TLS_CERT</Badge>
+    case 'apps':
+      return <Badge tone="accent">Applications</Badge>
     default:
       return <Badge tone="warn">Self-signed</Badge>
   }
+}
+
+/** CertFacts lists what a certificate says about itself; never its key. */
+function CertFacts({ c, now }: { c: TLSCertInfo; now: number }) {
+  const daysLeft = Math.floor((new Date(c.not_after).getTime() - now) / DAY)
+  return (
+    <dl className="kv">
+      <dt>Subject</dt><dd className="mono">{c.subject}</dd>
+      {c.issuer !== c.subject && (
+        <>
+          <dt>Issuer</dt><dd className="mono">{c.issuer}</dd>
+        </>
+      )}
+      <dt>Names</dt><dd className="mono">{c.hosts.join(', ') || '—'}</dd>
+      <dt>Valid until</dt>
+      <dd>
+        {fmtTime(c.not_after)} {daysLeft < 0 ? <Badge tone="danger">expired</Badge> : daysLeft < 30 ? <Badge tone="warn">{daysLeft} days left</Badge> : null}
+      </dd>
+      <dt>SHA-256</dt><dd className="mono" style={{ wordBreak: 'break-all' }}>{c.fingerprint}</dd>
+    </dl>
+  )
+}
+
+/** PEMFields is the certificate-and-key pair an upload needs, typed or picked
+ *  as files. (The key is `privateKey`: `key` is React's own prop name.) */
+function PEMFields({ id, cert, privateKey, onCert, onKey }: { id: string; cert: string; privateKey: string; onCert: (v: string) => void; onKey: (v: string) => void }) {
+  return (
+    <div className="form-grid">
+      <Field label="Certificate (PEM)">
+        <textarea id={`${id}-cert`} value={cert} onChange={(e) => onCert(e.target.value)} placeholder="-----BEGIN CERTIFICATE-----" />
+        <input type="file" accept=".pem,.crt,.cer" onChange={(e) => e.target.files?.[0] && readFile(e.target.files[0], onCert)} />
+      </Field>
+      <Field label="Private key (PEM)">
+        <textarea id={`${id}-key`} value={privateKey} onChange={(e) => onKey(e.target.value)} placeholder="-----BEGIN PRIVATE KEY-----" />
+        <input type="file" accept=".pem,.key" onChange={(e) => e.target.files?.[0] && readFile(e.target.files[0], onKey)} />
+      </Field>
+    </div>
+  )
 }
 
 function readFile(file: File, cb: (text: string) => void) {
@@ -35,9 +75,11 @@ export function TLSCard() {
   const [ok, setOk] = useState('')
   const [certPEM, setCertPEM] = useState('')
   const [keyPEM, setKeyPEM] = useState('')
+  const [appsCert, setAppsCert] = useState('')
+  const [appsKey, setAppsKey] = useState('')
   const [hosts, setHosts] = useState('')
   const [busy, setBusy] = useState(false)
-  const [confirm, setConfirm] = useState<'reset' | 'regenerate' | null>(null)
+  const [confirm, setConfirm] = useState<'reset' | 'regenerate' | 'resetApps' | null>(null)
   // Taken when the status loads rather than during render, so a render is pure.
   const [now, setNow] = useState(0)
 
@@ -76,9 +118,19 @@ export function TLSCard() {
       'Certificate uploaded and serving.',
     ).catch(() => {})
 
+  const uploadApps = () =>
+    run(
+      () =>
+        api.put<TLSStatus>('/admin/tls/apps', { cert_pem: appsCert, key_pem: appsKey }).then((s) => {
+          setAppsCert('')
+          setAppsKey('')
+          return s
+        }),
+      'Applications certificate uploaded and serving.',
+    ).catch(() => {})
+
   if (!status) return null
   const a = status.active
-  const daysLeft = a ? Math.floor((new Date(a.not_after).getTime() - now) / DAY) : 0
   const fallback = status.file_hint ? 'the certificate from the environment file' : 'its self-signed certificate'
 
   return (
@@ -97,39 +149,47 @@ export function TLSCard() {
             </Alert>
           )}
           {a && (
-            <dl className="kv">
-              <dt>Serving</dt><dd>{sourceBadge(a)}</dd>
-              <dt>Subject</dt><dd className="mono">{a.subject}</dd>
-              {a.issuer !== a.subject && (
-                <>
-                  <dt>Issuer</dt><dd className="mono">{a.issuer}</dd>
-                </>
-              )}
-              <dt>Names</dt><dd className="mono">{a.hosts.join(', ') || '—'}</dd>
-              <dt>Valid until</dt>
-              <dd>
-                {fmtTime(a.not_after)} {daysLeft < 0 ? <Badge tone="danger">expired</Badge> : daysLeft < 30 ? <Badge tone="warn">{daysLeft} days left</Badge> : null}
-              </dd>
-              <dt>SHA-256</dt><dd className="mono" style={{ wordBreak: 'break-all' }}>{a.fingerprint}</dd>
-            </dl>
+            <>
+              <dl className="kv">
+                <dt>Serving</dt><dd>{sourceBadge(a)}</dd>
+              </dl>
+              <CertFacts c={a} now={now} />
+            </>
           )}
           <h3 style={{ marginTop: 16 }}>Upload a certificate</h3>
           <p className="muted">PEM files: the certificate (with any intermediates after it) and its unencrypted private key. The key is sealed by the master key and never shown again.</p>
-          <div className="form-grid">
-            <Field label="Certificate (PEM)">
-              <textarea id="tls-cert" value={certPEM} onChange={(e) => setCertPEM(e.target.value)} placeholder="-----BEGIN CERTIFICATE-----" />
-              <input type="file" accept=".pem,.crt,.cer" onChange={(e) => e.target.files?.[0] && readFile(e.target.files[0], setCertPEM)} />
-            </Field>
-            <Field label="Private key (PEM)">
-              <textarea id="tls-key" value={keyPEM} onChange={(e) => setKeyPEM(e.target.value)} placeholder="-----BEGIN PRIVATE KEY-----" />
-              <input type="file" accept=".pem,.key" onChange={(e) => e.target.files?.[0] && readFile(e.target.files[0], setKeyPEM)} />
-            </Field>
-          </div>
+          <PEMFields id="tls" cert={certPEM} privateKey={keyPEM} onCert={setCertPEM} onKey={setKeyPEM} />
           <div className="actions">
             <button className="btn primary" disabled={busy || !certPEM.trim() || !keyPEM.trim()} onClick={() => void upload()}>Upload and serve</button>
             {status.uploaded && <button className="btn" disabled={busy} onClick={() => setConfirm('reset')}>Remove uploaded certificate</button>}
             <button className="btn" disabled={busy} onClick={() => setConfirm('regenerate')}>Regenerate self-signed…</button>
           </div>
+
+          <h3 style={{ marginTop: 24 }}>Applications</h3>
+          {status.apps_domain ? (
+            <p className="muted">
+              Serves every application host under <span className="mono">*.{status.apps_domain}</span>.{' '}
+              {status.apps_ready ? 'Applications can be enrolled.' : status.apps_problem}
+            </p>
+          ) : (
+            <p className="muted">Set the apps domain under Applications above first. The certificate uploaded here must name *.&lt;that domain&gt;; a self-signed one is not made for it.</p>
+          )}
+          {status.apps && <CertFacts c={status.apps} now={now} />}
+          <PEMFields id="tls-apps" cert={appsCert} privateKey={appsKey} onCert={setAppsCert} onKey={setAppsKey} />
+          <div className="actions">
+            <button className="btn primary" disabled={busy || !appsCert.trim() || !appsKey.trim()} onClick={() => void uploadApps()}>Upload for applications</button>
+            {status.apps && <button className="btn" disabled={busy} onClick={() => setConfirm('resetApps')}>Remove applications certificate</button>}
+          </div>
+          {confirm === 'resetApps' && (
+            <Confirm
+              title="Remove the applications certificate?"
+              body="Application hosts get the console's certificate, which browsers refuse for them, and no application can be enrolled until another is uploaded. Open sessions keep running."
+              confirmLabel="Remove"
+              danger
+              onClose={() => setConfirm(null)}
+              onConfirm={() => run(() => api.del<TLSStatus>('/admin/tls/apps'), 'Applications certificate removed.')}
+            />
+          )}
           {confirm === 'reset' && (
             <Confirm
               title="Remove the uploaded certificate?"

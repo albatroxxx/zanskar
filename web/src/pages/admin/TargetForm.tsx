@@ -6,7 +6,12 @@ import { useSubmit } from '../../components/submit'
 import { Alert, Field, Modal, Tabs } from '../../components/ui'
 import { formatTags, parseTags, protocols } from './lib'
 
-export type TargetKind = 'host' | 'database'
+export type TargetKind = 'host' | 'database' | 'application'
+
+/** kindOf says what kind of target t is: an application has an upstream, a database an engine. */
+export function kindOf(t: Pick<Target, 'engine' | 'app_upstream'>): TargetKind {
+  return t.app_upstream ? 'application' : t.engine ? 'database' : 'host'
+}
 
 /** Body of POST/PUT /targets: every editable field travels on each write. */
 export function targetBody(t: Target, patch: Partial<Target> = {}) {
@@ -20,6 +25,8 @@ export function targetBody(t: Target, patch: Partial<Target> = {}) {
     database_name: u.database_name ?? '',
     tls_mode: u.tls_mode ?? '',
     tls_ca: u.tls_ca ?? '',
+    app_upstream: u.app_upstream ?? '',
+    app_label: u.app_label ?? '',
     retention_days: u.retention_days ?? null,
     ports: u.ports,
     capabilities: u.capabilities,
@@ -43,18 +50,20 @@ const tlsModes = [
 const emptyForm = {
   name: '', address: '', os_family: 'linux' as OSFamily,
   engine: 'postgres', engine_version: '', database_name: '', tls_mode: 'verify-full', tls_ca: '',
+  app_upstream: '', app_label: '',
   ssh: '', rdp: '', vnc: '', winrm: '', database: '', tags: '', notes: '', retention: '',
 }
 
 /**
  * TargetForm creates or edits a target. The first choice is what kind of
- * thing it is: a host reached over SSH, RDP, VNC or WinRM, or a database
+ * thing it is: a host reached over SSH, RDP, VNC or WinRM, a database
  * reached through a client container and a credential-holding sidecar
- * (ADR 0017). Each kind then shows only its own fields (manual QA finding
- * R33). Autoscaling groups have their own page.
+ * (ADR 0017), or a web application served through the proxy at its own
+ * address (ADR 0033). Each kind then shows only its own fields (manual QA
+ * finding R33). Autoscaling groups have their own page.
  */
 export function TargetForm({ initial, kind, onClose, onSaved }: { initial?: Target; kind?: TargetKind; onClose: () => void; onSaved: (t: Target) => void }) {
-  const [k, setK] = useState<TargetKind | null>(initial ? (initial.engine ? 'database' : 'host') : (kind ?? null))
+  const [k, setK] = useState<TargetKind | null>(initial ? kindOf(initial) : (kind ?? null))
   const [f, setF] = useState(
     initial
       ? {
@@ -66,6 +75,8 @@ export function TargetForm({ initial, kind, onClose, onSaved }: { initial?: Targ
           database_name: initial.database_name ?? '',
           tls_mode: initial.tls_mode || 'verify-full',
           tls_ca: initial.tls_ca ?? '',
+          app_upstream: initial.app_upstream ?? '',
+          app_label: initial.app_label ?? '',
           ssh: initial.ports.ssh ? String(initial.ports.ssh) : '',
           rdp: initial.ports.rdp ? String(initial.ports.rdp) : '',
           vnc: initial.ports.vnc ? String(initial.ports.vnc) : '',
@@ -106,7 +117,7 @@ export function TargetForm({ initial, kind, onClose, onSaved }: { initial?: Targ
         if (n === null) return
         if (n !== undefined) ports[p] = n
       }
-    } else {
+    } else if (k === 'database') {
       const n = port('database', f.database)
       if (n === null) return
       if (n !== undefined) ports.database = n
@@ -118,16 +129,21 @@ export function TargetForm({ initial, kind, onClose, onSaved }: { initial?: Targ
     }
     void submit(async () => {
       const database = k === 'database'
+      const application = k === 'application'
+      const secure = application && f.app_upstream.trim().toLowerCase().startsWith('https://')
       const body = {
         name: f.name.trim(),
-        address: f.address.trim(),
-        os_family: database ? 'other' : f.os_family,
+        // An application's address is its upstream's host; the server derives it.
+        address: application ? '' : f.address.trim(),
+        os_family: database || application ? 'other' : f.os_family,
         engine: database ? f.engine : '',
         engine_version: database ? f.engine_version.trim() : '',
         database_name: database ? f.database_name.trim() : '',
         tls_mode: database ? f.tls_mode : '',
-        tls_ca: database ? f.tls_ca.trim() : '',
-        retention_days: retention,
+        tls_ca: database || secure ? f.tls_ca.trim() : '',
+        app_upstream: application ? f.app_upstream.trim() : '',
+        app_label: application ? f.app_label.trim() : '',
+        retention_days: application ? null : retention,
         ports,
         capabilities: initial?.capabilities ?? [],
         tags,
@@ -140,14 +156,15 @@ export function TargetForm({ initial, kind, onClose, onSaved }: { initial?: Targ
     })
   }
 
-  const title = initial ? `Edit ${initial.name}` : k === 'database' ? 'Add database' : k === 'host' ? 'Add host' : 'Add target'
+  const title = initial ? `Edit ${initial.name}` : k === 'database' ? 'Add database' : k === 'host' ? 'Add host' : k === 'application' ? 'Add application' : 'Add target'
+  const secureUpstream = f.app_upstream.trim().toLowerCase().startsWith('https://')
   return (
     <Modal title={title} onClose={onClose} width={620}>
       {err && <Alert tone="danger">{err}</Alert>}
       {!initial && !kind && (
         <>
-          <Tabs label="Kind of target" value={k ?? ''} onChange={setK} tabs={[{ key: 'host', label: 'Host' }, { key: 'database', label: 'Database' }]} />
-          {!k && <p className="muted">A <strong>host</strong> is a machine reached over SSH, RDP, VNC or WinRM. A <strong>database</strong> is an endpoint such as RDS, reached through a client container that never sees the password. Autoscaling groups are added under <em>Autoscaling</em>.</p>}
+          <Tabs label="Kind of target" value={k ?? ''} onChange={setK} tabs={[{ key: 'host', label: 'Host' }, { key: 'database', label: 'Database' }, { key: 'application', label: 'Application' }]} />
+          {!k && <p className="muted">A <strong>host</strong> is a machine reached over SSH, RDP, VNC or WinRM. A <strong>database</strong> is an endpoint such as RDS, reached through a client container that never sees the password. An <strong>application</strong> is a web app served at its own address under the apps domain. Autoscaling groups are added under <em>Autoscaling</em>.</p>}
         </>
       )}
       {k && (
@@ -156,7 +173,16 @@ export function TargetForm({ initial, kind, onClose, onSaved }: { initial?: Targ
             <Field label="Name">
               <input id="t-name" value={f.name} onChange={set('name')} required autoFocus />
             </Field>
-            {k === 'host' ? (
+            {k === 'application' ? (
+              <>
+                <Field label="Upstream" hint="http://host:port or https://host:port reachable from the gateway; nothing else is proxied">
+                  <input id="t-upstream" value={f.app_upstream} onChange={set('app_upstream')} required placeholder="http://10.0.0.5:8080" />
+                </Field>
+                <Field label="Label" hint="The subdomain it is served at, under the apps domain; blank derives from the name">
+                  <input id="t-label" value={f.app_label} onChange={set('app_label')} placeholder="wiki" />
+                </Field>
+              </>
+            ) : k === 'host' ? (
               <>
                 <Field label="Address" hint={initial && f.address.trim() !== initial.address
                   ? 'A new address may be a different machine: saving clears the trusted host key and pinned certificates, so probe and trust it again.'
@@ -222,9 +248,16 @@ export function TargetForm({ initial, kind, onClose, onSaved }: { initial?: Targ
               )}
             </>
           )}
-          <Field label="Keep recordings (days, blank = policy's or global)" hint="Overrides the policy's retention for this target's sessions">
-            <input id="t-retention" inputMode="numeric" value={f.retention} onChange={set('retention')} />
-          </Field>
+          {k === 'application' && secureUpstream && (
+            <Field label="CA bundle (PEM, optional)" hint="The authority that signs the upstream's certificate; blank verifies against the system roots. The connection is always verified.">
+              <textarea id="t-tls-ca" value={f.tls_ca} onChange={set('tls_ca')} placeholder="-----BEGIN CERTIFICATE-----" />
+            </Field>
+          )}
+          {k !== 'application' && (
+            <Field label="Keep recordings (days, blank = policy's or global)" hint="Overrides the policy's retention for this target's sessions">
+              <input id="t-retention" inputMode="numeric" value={f.retention} onChange={set('retention')} />
+            </Field>
+          )}
           <Field label="Tags" hint="One key=value per line; policies select targets by tag">
             <textarea id="t-tags" value={f.tags} onChange={set('tags')} placeholder={'env=prod\nteam=ops'} />
           </Field>

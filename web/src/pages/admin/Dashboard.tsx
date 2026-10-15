@@ -78,6 +78,7 @@ export function Dashboard() {
       <div className="stat-grid">
         <StatTile value={o && o.inventory.hosts} label="Hosts" icon={<TileIcon kind="server" />} detail={o ? mix(o.inventory.hosts_by_os, osLabel) : undefined} to="/admin/hosts" />
         <StatTile value={o && o.inventory.databases} label="Databases" icon={<TileIcon kind="db" />} detail={o ? mix(o.inventory.databases_by_engine, (e) => engineName(e)) : undefined} to="/admin/databases" />
+        <StatTile value={o && o.inventory.applications} label="Applications" icon={<TileIcon kind="app" />} to="/admin/applications" />
         <StatTile
           value={o && o.autoscaling.groups}
           label="Autoscaling groups"

@@ -16,6 +16,8 @@ const suitable: Record<Protocol, CredentialType[]> = {
   vnc: ['password'],
   winrm: ['password', 'domain'],
   database: ['password'],
+  // An application holds no credential (ADR 0033); the slot is never shown.
+  http: [],
 }
 
 /**

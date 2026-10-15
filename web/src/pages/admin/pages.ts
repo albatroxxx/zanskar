@@ -7,6 +7,7 @@ import { lazy } from 'react'
 export const Dashboard = lazy(() => import('./Dashboard').then((m) => ({ default: m.Dashboard })))
 export const Targets = lazy(() => import('./Targets').then((m) => ({ default: m.Targets })))
 export const Databases = lazy(() => import('./Databases').then((m) => ({ default: m.Databases })))
+export const Applications = lazy(() => import('./Applications').then((m) => ({ default: m.Applications })))
 export const Autoscaling = lazy(() => import('./Autoscaling').then((m) => ({ default: m.Autoscaling })))
 export const Credentials = lazy(() => import('./Credentials').then((m) => ({ default: m.Credentials })))
 export const Policies = lazy(() => import('./Policies').then((m) => ({ default: m.Policies })))

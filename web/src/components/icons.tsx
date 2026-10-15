@@ -132,9 +132,19 @@ export function StateIcon({ state, label }: { state: 'warn' | 'danger' | 'ok' | 
 
 /** TileIcon is a tile's identity mark: decorative (the caption carries the
  *  meaning), muted, one simple shape per kind. */
-export function TileIcon({ kind }: { kind: 'approvals' | 'attention' | 'key' | 'ban' | 'session' | 'clock' | 'list' | 'server' | 'db' | 'stack' }) {
+export function TileIcon({ kind }: { kind: 'approvals' | 'attention' | 'key' | 'ban' | 'session' | 'clock' | 'list' | 'server' | 'db' | 'stack' | 'app' }) {
   const shape = (() => {
     switch (kind) {
+      case 'app':
+        // A browser window: the frame, its title bar and one address field.
+        return (
+          <>
+            <rect x="3" y="4" width="18" height="16" rx="2" />
+            <line x1="3" y1="9" x2="21" y2="9" />
+            <line x1="6" y1="6.5" x2="6" y2="6.6" />
+            <rect x="6" y="12" width="12" height="2.5" rx="1" />
+          </>
+        )
       case 'approvals':
         return (
           <>
