@@ -5,14 +5,12 @@
 package server
 
 import (
-	"bufio"
 	"context"
 	"crypto/rand"
 	"crypto/tls"
 	"encoding/hex"
 	"errors"
 	"log/slog"
-	"net"
 	"net/http"
 	"slices"
 	"strings"
@@ -42,6 +40,16 @@ type Registrar interface {
 	Register(mux *http.ServeMux)
 }
 
+// AppHost is the listener's second personality, served by host (ADR 0033):
+// the applications proxy. Its traffic never passes the console's
+// middlewares, since the console's cookie, CSRF rule and security headers
+// are not for an application's pages; it gets the ones every request gets.
+type AppHost interface {
+	http.Handler
+	// Serves reports whether a request's Host header names an application.
+	Serves(host string) bool
+}
+
 // Deps are the domain handlers the server mounts. Nil fields are skipped,
 // which keeps the system routes testable on their own.
 type Deps struct {
@@ -52,6 +60,8 @@ type Deps struct {
 	// upload in the console, the ZANSKAR_TLS_CERT files, or the self-signed
 	// one, so an upload applies without a restart. Nil in proxy mode.
 	TLS *tlscert.Manager
+	// Apps serves the application hosts; nil serves none.
+	Apps AppHost
 }
 
 // New builds a Server with the system routes and the given handlers registered.
@@ -76,14 +86,20 @@ func New(cfg *config.Config, db *store.DB, log *slog.Logger, deps Deps) *Server 
 	// The request id comes first, so even a recovered panic answers and logs
 	// with it. RealIP runs before accessLog and the handlers so the forwarded
 	// client address, not the proxy's, reaches the log and every audit row.
-	mws := []middleware{requestID, s.recoverer, auth.RealIP(cfg.TrustedProxies), s.securityHeaders, s.accessLog}
+	// Those three are for every request; the rest are the console's, and an
+	// application host is dispatched past them.
+	console := []middleware{s.securityHeaders, s.accessLog}
 	if deps.AuthMiddleware != nil {
-		mws = append(mws, deps.AuthMiddleware.Authenticate, deps.AuthMiddleware.CSRF)
+		console = append(console, deps.AuthMiddleware.Authenticate, deps.AuthMiddleware.CSRF)
+	}
+	root := chain(mux, console...)
+	if deps.Apps != nil {
+		root = dispatch(deps.Apps, root)
 	}
 
 	s.http = &http.Server{
 		Addr:              cfg.ListenAddr,
-		Handler:           chain(mux, mws...),
+		Handler:           chain(root, requestID, s.recoverer, auth.RealIP(cfg.TrustedProxies)),
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       30 * time.Second,
 		WriteTimeout:      0, // WebSocket streams are long-lived; per-handler deadlines instead
@@ -96,11 +112,23 @@ func New(cfg *config.Config, db *store.DB, log *slog.Logger, deps Deps) *Server 
 	if cfg.ServesTLS() && cfg.RedirectAddr != "" {
 		var covered func() []string
 		if deps.TLS != nil {
-			covered = func() []string { return deps.TLS.Active().Hosts }
+			covered = func() []string { return slices.Concat(deps.TLS.Active().Hosts, deps.TLS.AppsHosts()) }
 		}
 		s.redirect = newRedirectServer(cfg.RedirectAddr, cfg.ListenAddr, covered)
 	}
 	return s
+}
+
+// dispatch sends a request to the application host its Host header names,
+// else to the console.
+func dispatch(apps AppHost, console http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if apps.Serves(r.Host) {
+			apps.ServeHTTP(w, r)
+			return
+		}
+		console.ServeHTTP(w, r)
+	})
 }
 
 // ListenAndServe blocks until ctx is cancelled, then shuts down gracefully.
@@ -230,36 +258,6 @@ func (s *Server) securityHeaders(next http.Handler) http.Handler {
 	})
 }
 
-type statusRecorder struct {
-	http.ResponseWriter
-	status int
-}
-
-func (r *statusRecorder) WriteHeader(code int) {
-	r.status = code
-	r.ResponseWriter.WriteHeader(code)
-}
-
-// Unwrap lets http.ResponseController reach Hijack and Flush on the real
-// writer, which WebSocket upgrades need.
-func (r *statusRecorder) Unwrap() http.ResponseWriter { return r.ResponseWriter }
-
-// Hijack is kept for libraries that type-assert http.Hijacker directly.
-func (r *statusRecorder) Hijack() (net.Conn, *bufio.ReadWriter, error) {
-	if h, ok := r.ResponseWriter.(http.Hijacker); ok {
-		r.status = http.StatusSwitchingProtocols
-		return h.Hijack()
-	}
-	return nil, nil, http.ErrNotSupported
-}
-
-// Flush passes through streaming flushes.
-func (r *statusRecorder) Flush() {
-	if f, ok := r.ResponseWriter.(http.Flusher); ok {
-		f.Flush()
-	}
-}
-
 // quietPaths are polled by health checks and by the console itself; at
 // info they would flood the log (and the console's in-memory ring) with
 // their own traffic, so they are logged at debug.
@@ -271,10 +269,10 @@ var quietPaths = map[string]bool{
 func (s *Server) accessLog(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
-		rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
+		rec := httpx.NewStatusRecorder(w)
 		next.ServeHTTP(rec, r)
 		level := slog.LevelInfo
-		if quietPaths[r.URL.Path] && rec.status < 400 {
+		if quietPaths[r.URL.Path] && rec.Status < 400 {
 			level = slog.LevelDebug
 		}
 		// Query strings are intentionally not logged: connect tickets travel there.
@@ -282,7 +280,7 @@ func (s *Server) accessLog(next http.Handler) http.Handler {
 			"request_id", httpx.RequestID(r.Context()),
 			"method", r.Method,
 			"path", r.URL.Path,
-			"status", rec.status,
+			"status", rec.Status,
 			"duration_ms", time.Since(start).Milliseconds(),
 			"remote", auth.ClientIP(r),
 		)
