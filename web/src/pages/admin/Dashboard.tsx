@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom'
 import { api, errorMessage } from '../../api/client'
 import { engineName, fmtBytes, fmtTime } from '../../api/format'
 import type { AdminOverview, SystemMetrics, SystemStatus, TLSStatus } from '../../api/types'
+import { StateIcon, TileIcon } from '../../components/icons'
 import { Alert, Badge, PageHead, StatTile } from '../../components/ui'
 
 /** mix says what a count is made of — "2 Linux · 1 Windows" — in a tile's
@@ -59,28 +60,37 @@ export function Dashboard() {
 
       <h2 className="stat-section">Needs attention</h2>
       <div className="stat-grid">
-        <StatTile value={o && o.pending_requests} label="Pending approvals" to="/admin/approvals" tone="warn" />
-        <StatTile value={attention} label="Hosts needing attention" to="/admin/hosts" tone="warn" />
-        <StatTile value={o && o.audit_24h.failed_logins} label="Failed sign-ins (24h)" to="/admin/events" tone="warn" />
-        <StatTile value={o && o.audit_24h.refused_connects} label="Refused connections (24h)" to="/admin/events" tone="warn" />
+        <StatTile value={o && o.pending_requests} label="Pending approvals" icon={<TileIcon kind="approvals" />} to="/admin/approvals" tone="warn" />
+        <StatTile value={attention} label="Hosts needing attention" icon={<TileIcon kind="attention" />} to="/admin/hosts" tone="warn" />
+        <StatTile value={o && o.audit_24h.failed_logins} label="Failed sign-ins (24h)" icon={<TileIcon kind="key" />} to="/admin/events" tone="warn" />
+        <StatTile value={o && o.audit_24h.refused_connects} label="Refused connections (24h)" icon={<TileIcon kind="ban" />} to="/admin/events" tone="warn" />
       </div>
 
       <h2 className="stat-section">Activity</h2>
       <div className="stat-grid">
-        <StatTile value={o && o.sessions.open} label="Open sessions" to="/admin/sessions" />
-        <StatTile value={o && o.sessions.started_24h} label="Sessions (24h)" to="/admin/sessions" />
-        <StatTile value={o && o.audit_24h.failures} label="Failures (24h)" to="/admin/events" />
-        <StatTile value={o && o.audit_24h.events} label="Audit events (24h)" to="/admin/events" />
+        <StatTile value={o && o.sessions.open} label="Open sessions" icon={<TileIcon kind="session" />} to="/admin/sessions" />
+        <StatTile value={o && o.sessions.started_24h} label="Sessions (24h)" icon={<TileIcon kind="clock" />} to="/admin/sessions" />
+        <StatTile value={o && o.audit_24h.failures} label="Failures (24h)" icon={<TileIcon kind="attention" />} to="/admin/events" />
+        <StatTile value={o && o.audit_24h.events} label="Audit events (24h)" icon={<TileIcon kind="list" />} to="/admin/events" />
       </div>
 
       <h2 className="stat-section">Inventory</h2>
       <div className="stat-grid">
-        <StatTile value={o && o.inventory.hosts} label="Hosts" detail={o ? mix(o.inventory.hosts_by_os, osLabel) : undefined} to="/admin/hosts" />
-        <StatTile value={o && o.inventory.databases} label="Databases" detail={o ? mix(o.inventory.databases_by_engine, (e) => engineName(e)) : undefined} to="/admin/databases" />
+        <StatTile value={o && o.inventory.hosts} label="Hosts" icon={<TileIcon kind="server" />} detail={o ? mix(o.inventory.hosts_by_os, osLabel) : undefined} to="/admin/hosts" />
+        <StatTile value={o && o.inventory.databases} label="Databases" icon={<TileIcon kind="db" />} detail={o ? mix(o.inventory.databases_by_engine, (e) => engineName(e)) : undefined} to="/admin/databases" />
         <StatTile
           value={o && o.autoscaling.groups}
           label="Autoscaling groups"
+          icon={<TileIcon kind="stack" />}
           detail={o && o.autoscaling.instances > 0 ? `${o.autoscaling.healthy_instances} of ${o.autoscaling.instances} instances healthy` : undefined}
+          meter={
+            o && o.autoscaling.instances > 0
+              ? {
+                  fraction: o.autoscaling.healthy_instances / o.autoscaling.instances,
+                  tone: o.autoscaling.healthy_instances === 0 ? 'danger' : o.autoscaling.healthy_instances < o.autoscaling.instances ? 'warn' : undefined,
+                }
+              : undefined
+          }
           to="/admin/autoscaling"
         />
       </div>
@@ -170,14 +180,14 @@ function HostFacts({ m }: { m: SystemMetrics }) {
         {m.disks.map((d) => (
           <Gauge
             key={d.path}
-            label={d.system ? `System disk (${d.what})` : `${d.what[0].toUpperCase() + d.what.slice(1)} disk`}
+            label={d.system ? 'System disk' : `${d.what[0].toUpperCase() + d.what.slice(1)} disk`}
             reading={
               <>
                 <b>{fmtBytes(d.free_bytes)}</b> free of {fmtBytes(d.total_bytes)}
                 {diskTone(d) && (
                   <>
                     {' '}
-                    <Badge tone={diskTone(d)}>low space</Badge>
+                    <StateIcon state={diskTone(d) as 'warn' | 'danger'} label={`Low space: ${fmtBytes(d.free_bytes)} free`} />
                   </>
                 )}
               </>

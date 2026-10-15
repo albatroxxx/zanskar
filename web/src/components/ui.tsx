@@ -62,12 +62,29 @@ export function Badge({ tone, children }: { tone?: 'ok' | 'warn' | 'danger' | 'a
  *  naming what it counts, and the page that manages it. The caption is a
  *  label, not a sentence; a tone only underlines what it already says, so it
  *  shows only on a non-zero count. "—" while the value is still loading. */
-export function StatTile({ value, label, detail, to, tone }: { value: number | null; label: string; detail?: ReactNode; to: string; tone?: 'warn' | 'danger' }) {
+export function StatTile({ value, label, detail, icon, meter, to, tone }: {
+  value: number | null
+  label: string
+  detail?: ReactNode
+  /** A decorative identity mark in the corner; the caption carries the meaning. */
+  icon?: ReactNode
+  /** A ratio against a limit, drawn under the caption. */
+  meter?: { fraction: number; tone?: 'warn' | 'danger' }
+  to: string
+  tone?: 'warn' | 'danger'
+}) {
+  const pct = meter ? Math.round(Math.max(0, Math.min(1, meter.fraction)) * 100) : 0
   return (
     <Link className={'stat-tile' + (tone && value ? ' ' + tone : '')} to={to}>
+      {icon && <span className="ticon">{icon}</span>}
       <div className="value">{value ?? '—'}</div>
       <div className="label">{label}</div>
       {detail && <div className="detail">{detail}</div>}
+      {meter && (
+        <div className={'meter' + (meter.tone ? ' ' + meter.tone : '')} role="meter" aria-label={label} aria-valuemin={0} aria-valuemax={100} aria-valuenow={pct}>
+          <i style={{ width: `${pct}%` }} />
+        </div>
+      )}
     </Link>
   )
 }
