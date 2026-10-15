@@ -180,7 +180,7 @@ function HostFacts({ m }: { m: SystemMetrics }) {
         {m.disks.map((d) => (
           <Gauge
             key={d.path}
-            label={d.system ? 'System disk' : `${d.what[0].toUpperCase() + d.what.slice(1)} disk`}
+            label={d.system ? 'System disk' : d.what === 'recordings' ? 'Recording' : `${d.what[0].toUpperCase() + d.what.slice(1)} disk`}
             reading={
               <>
                 <b>{fmtBytes(d.free_bytes)}</b> free of {fmtBytes(d.total_bytes)}
