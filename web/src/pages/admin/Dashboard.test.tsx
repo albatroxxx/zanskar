@@ -2,7 +2,7 @@ import { cleanup, render, screen } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { ApiError, api } from '../../api/client'
-import type { AdminOverview, SystemStatus, TLSStatus } from '../../api/types'
+import type { AdminOverview, SystemMetrics, SystemStatus, TLSStatus } from '../../api/types'
 import { Dashboard } from './Dashboard'
 
 afterEach(() => {
@@ -30,6 +30,17 @@ const status: SystemStatus = {
   draining: false,
 }
 
+const metrics: SystemMetrics = {
+  load: { one: 0.42, five: 0.2, fifteen: 0.1 },
+  memory: { total_bytes: 8 * 1024 ** 3, available_bytes: 6 * 1024 ** 3 },
+  disks: [
+    { what: 'database & recordings', path: '/var/lib/zanskar', system: true, total_bytes: 100 * 1024 ** 3, free_bytes: 4 * 1024 ** 3 },
+  ],
+  database_sessions: 1,
+  guacd: { address: '127.0.0.1:4822', reachable: false },
+  cpus: 8,
+}
+
 const tls: TLSStatus = {
   mode: 'managed',
   active: {
@@ -54,6 +65,7 @@ const serve = (over: Partial<Record<string, unknown>> = {}) =>
     if (path === '/admin/overview') return overview as never
     if (path === '/admin/system/status') return status as never
     if (path === '/admin/tls') return tls as never
+    if (path === '/admin/system/metrics') return metrics as never
     throw new Error('unexpected ' + path)
   })
 
@@ -88,6 +100,20 @@ describe('the admin dashboard', () => {
     expect(screen.getByText('1 PostgreSQL · 1 MySQL').closest('a')?.getAttribute('href')).toBe('/admin/databases')
     expect(screen.getByText('3 of 4 instances healthy').closest('a')?.getAttribute('href')).toBe('/admin/autoscaling')
     expect(screen.getByText(/Zanskar 1\.4\.0, up 2 hours under systemd/)).toBeDefined()
+
+    // The host gauges: each ratio is a meter with its words beside it, the
+    // disk at 4 GB of 100 GB free reads as danger, and the facts that are
+    // not ratios stay in words.
+    const load = screen.getByRole('meter', { name: 'Load (8 cores)' })
+    expect(load.getAttribute('aria-valuenow')).toBe('5')
+    const memory = screen.getByRole('meter', { name: 'Memory' })
+    expect(memory.getAttribute('aria-valuenow')).toBe('25')
+    const disk = screen.getByRole('meter', { name: 'System disk' })
+    expect(disk.getAttribute('aria-valuenow')).toBe('96')
+    expect(disk.className).toContain('danger')
+    expect(screen.getByRole('button', { name: /Low space: 4\.0 GB free/ })).toBeDefined()
+    expect(screen.getByText(/1 database session container/)).toBeDefined()
+    expect(screen.getByText(/unreachable at 127\.0\.0\.1:4822/)).toBeDefined()
   })
 
   it('says the overview failed rather than showing a quiet system', async () => {

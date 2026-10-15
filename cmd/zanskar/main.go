@@ -21,6 +21,7 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -349,7 +350,8 @@ func serve(ctx context.Context) error {
 			&overview.Handler{Sessions: sessionRepo, Requests: accessReqs, Targets: targets, ASGs: asgRepo, Audit: auditLog, Log: log},
 			&settings.Handler{Service: runtime, Audit: auditLog, Log: log},
 			&recstorage.Handler{Manager: storageMgr, Audit: auditLog, Log: log},
-			&lifecycle.Handler{Drift: drift, Controller: restarter, Audit: auditLog, Log: log, StartedAt: startedAt},
+			&lifecycle.Handler{Drift: drift, Controller: restarter, Audit: auditLog, Log: log, StartedAt: startedAt,
+				DatabasePath: dbFileForMetrics(cfg.DBDSN), RecordingsPath: cfg.RecordingsDir, GuacdAddr: guacdAddr},
 			&logring.API{Ring: logs, Audit: auditLog, Log: log},
 			&tlscert.Handler{Manager: tlsMgr, Mode: cfg.TLSMode, Audit: auditLog, Log: log},
 			connectHandler,
@@ -497,4 +499,17 @@ func runKeygen() error {
 	}
 	fmt.Println(base64.StdEncoding.EncodeToString(key))
 	return nil
+}
+
+// dbFileForMetrics is the file behind a SQLite DSN, for the disk-space
+// metric; empty for Postgres, where the volume is not this host's concern.
+func dbFileForMetrics(dsn string) string {
+	if !strings.HasPrefix(dsn, "file:") {
+		return ""
+	}
+	path, err := sqliteFilePath(dsn)
+	if err != nil {
+		return ""
+	}
+	return path
 }

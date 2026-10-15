@@ -183,7 +183,8 @@ func TestRoutes(t *testing.T) {
 	reg.Add(ctx, gateway.Live{SessionID: "live1", Protocol: "ssh"})
 	ctrl := &Controller{Registry: reg, Log: log, Exit: func() {}, Poll: time.Hour}
 	h := &Handler{Drift: &Drift{Path: path, Started: map[string]string{"ZANSKAR_LISTEN_ADDR": "127.0.0.1:8443", "ZANSKAR_MASTER_KEY": "old-secret-value"}},
-		Controller: ctrl, Audit: auditLog, Log: log, StartedAt: time.Now().Add(-time.Hour)}
+		Controller: ctrl, Audit: auditLog, Log: log, StartedAt: time.Now().Add(-time.Hour),
+		DatabasePath: path, GuacdAddr: func() string { return "" }}
 	mux := http.NewServeMux()
 	h.Register(mux)
 	mw := &auth.Middleware{Sessions: sessions, Users: users, Log: log}
@@ -228,6 +229,24 @@ func TestRoutes(t *testing.T) {
 	}
 	if code, _, _ := do("GET", "/api/v1/admin/system/status", nil, plain, pCSRF); code != 403 {
 		t.Fatalf("user status: %d", code)
+	}
+
+	// Metrics: real volumes with sizes, the registry's one ssh session is no
+	// database session, no guacd entry without an address, and admins only.
+	code, out, _ = do("GET", "/api/v1/admin/system/metrics", nil, admin, aCSRF)
+	disks, _ := out["disks"].([]any)
+	if code != 200 || len(disks) == 0 || out["database_sessions"] != float64(0) || out["cpus"].(float64) < 1 {
+		t.Fatalf("metrics: %d %v", code, out)
+	}
+	first := disks[0].(map[string]any)
+	if first["what"] != "database" || first["total_bytes"] == float64(0) {
+		t.Fatalf("metrics disk: %v", first)
+	}
+	if _, has := out["guacd"]; has {
+		t.Fatalf("guacd reported without an address: %v", out)
+	}
+	if code, _, _ := do("GET", "/api/v1/admin/system/metrics", nil, plain, pCSRF); code != 403 {
+		t.Fatalf("user metrics: %d", code)
 	}
 	if code, _, _ := do("POST", "/api/v1/admin/system/restart", map[string]int{"wait_minutes": 30}, plain, pCSRF); code != 403 {
 		t.Fatalf("user restart: %d", code)

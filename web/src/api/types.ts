@@ -550,6 +550,16 @@ export interface StorageStatus {
   move: { running: boolean; started_at?: string; finished_at?: string; moved: number; failed: number; total: number; last_error?: string }
 }
 
+/** GET /admin/system/metrics. Mirrors internal/lifecycle.Metrics. */
+export interface SystemMetrics {
+  load?: { one: number; five: number; fifteen: number }
+  memory?: { total_bytes: number; available_bytes: number }
+  disks: { what: string; path: string; system: boolean; total_bytes: number; free_bytes: number }[]
+  database_sessions: number
+  guacd?: { address: string; reachable: boolean }
+  cpus: number
+}
+
 /** GET /admin/system/status. Mirrors internal/lifecycle.Status. */
 export interface SystemStatus {
   version: string

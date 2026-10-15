@@ -3670,6 +3670,24 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/SystemStatus"
+  /admin/system/metrics:
+    get:
+      tags: [admin]
+      summary: The host's numbers right now
+      description: >
+        Current values for the admin dashboard's gateway card: load averages and memory
+        (Linux hosts; omitted elsewhere), free space on the volumes the gateway writes
+        (the database file and the recordings directory, folded together when they share
+        a filesystem), how many database client containers are running (one per live
+        database session), and whether guacd answers at its configured address. Facts
+        now, never history — time series belong to an exporter. Never cached.
+      responses:
+        "200":
+          description: The metrics.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SystemMetrics"
   /admin/system/restart:
     post:
       tags: [admin]
@@ -5849,6 +5867,63 @@ components:
             recording_downloads:
               type: integer
               description: Recording downloads in the last 24 hours.
+    SystemMetrics:
+      type: object
+      required: [disks, database_sessions]
+      properties:
+        load:
+          type: object
+          required: [one, five, fifteen]
+          description: Load averages; omitted off Linux.
+          properties:
+            one:
+              type: number
+            five:
+              type: number
+            fifteen:
+              type: number
+        memory:
+          type: object
+          required: [total_bytes, available_bytes]
+          description: Host memory; omitted off Linux.
+          properties:
+            total_bytes:
+              type: integer
+            available_bytes:
+              type: integer
+        disks:
+          type: array
+          items:
+            type: object
+            required: [what, path, system, total_bytes, free_bytes]
+            properties:
+              what:
+                type: string
+                description: database, recordings, or "database & recordings" when they share a filesystem.
+              path:
+                type: string
+              system:
+                type: boolean
+                description: The location sits on the root filesystem, so the numbers are the OS disk's.
+              total_bytes:
+                type: integer
+              free_bytes:
+                type: integer
+        database_sessions:
+          type: integer
+          description: Database client containers running now, one per live database session.
+        cpus:
+          type: integer
+          description: Logical CPUs, to scale the load average.
+        guacd:
+          type: object
+          required: [address, reachable]
+          description: Omitted when no guacd address is configured.
+          properties:
+            address:
+              type: string
+            reachable:
+              type: boolean
     SystemStatus:
       type: object
       required: [version, started_at, uptime_seconds, supervisor, live_sessions, env_file, restart_required, draining]

@@ -129,3 +129,94 @@ export function StateIcon({ state, label }: { state: 'warn' | 'danger' | 'ok' | 
     </span>
   )
 }
+
+/** TileIcon is a tile's identity mark: decorative (the caption carries the
+ *  meaning), muted, one simple shape per kind. */
+export function TileIcon({ kind }: { kind: 'approvals' | 'attention' | 'key' | 'ban' | 'session' | 'clock' | 'list' | 'server' | 'db' | 'stack' }) {
+  const shape = (() => {
+    switch (kind) {
+      case 'approvals':
+        return (
+          <>
+            <rect x="5" y="3" width="14" height="18" rx="2" />
+            <polyline points="9 12.5 11.5 15 15.5 9.5" />
+          </>
+        )
+      case 'attention':
+        return (
+          <>
+            <path d="M12 3.5 22 20.5 H2 Z" />
+            <line x1="12" y1="10" x2="12" y2="14.5" />
+            <line x1="12" y1="17.2" x2="12" y2="17.3" />
+          </>
+        )
+      case 'key':
+        return (
+          <>
+            <circle cx="8" cy="15" r="4" />
+            <line x1="11" y1="12" x2="20" y2="3" />
+            <line x1="16" y1="7" x2="19" y2="10" />
+          </>
+        )
+      case 'ban':
+        return (
+          <>
+            <circle cx="12" cy="12" r="9" />
+            <line x1="5.6" y1="5.6" x2="18.4" y2="18.4" />
+          </>
+        )
+      case 'session':
+        return (
+          <>
+            <rect x="3" y="4" width="18" height="13" rx="2" />
+            <line x1="9" y1="20.5" x2="15" y2="20.5" />
+            <line x1="12" y1="17" x2="12" y2="20.5" />
+          </>
+        )
+      case 'clock':
+        return (
+          <>
+            <circle cx="12" cy="12" r="9" />
+            <polyline points="12 7 12 12 15.5 14" />
+          </>
+        )
+      case 'list':
+        return (
+          <>
+            <line x1="5" y1="7" x2="19" y2="7" />
+            <line x1="5" y1="12" x2="19" y2="12" />
+            <line x1="5" y1="17" x2="13" y2="17" />
+          </>
+        )
+      case 'server':
+        return (
+          <>
+            <rect x="3" y="4" width="18" height="7" rx="2" />
+            <rect x="3" y="13" width="18" height="7" rx="2" />
+            <line x1="7" y1="7.5" x2="7" y2="7.6" />
+            <line x1="7" y1="16.5" x2="7" y2="16.6" />
+          </>
+        )
+      case 'db':
+        return (
+          <>
+            <ellipse cx="12" cy="5.5" rx="7.5" ry="2.5" />
+            <path d="M4.5 5.5v13c0 1.4 3.4 2.5 7.5 2.5s7.5-1.1 7.5-2.5v-13" />
+            <path d="M4.5 12c0 1.4 3.4 2.5 7.5 2.5s7.5-1.1 7.5-2.5" />
+          </>
+        )
+      case 'stack':
+        return (
+          <>
+            <rect x="7" y="4" width="14" height="9" rx="1.5" />
+            <path d="M4 8v9a2 2 0 0 0 2 2h11" />
+          </>
+        )
+    }
+  })()
+  return (
+    <span className="glyph" aria-hidden="true">
+      <svg {...svgProps(18)}>{shape}</svg>
+    </span>
+  )
+}
