@@ -115,8 +115,8 @@ a.stat-tile:hover { border-color: var(--fg-faint); }
 .glyph.muted, .glyph-btn.muted { color: var(--fg-faint); }
 .glyph + .glyph { margin-left: 6px; }
 .glyph-name { display: inline-flex; align-items: center; gap: 6px; }
-.glyph-wrap { position: relative; display: inline-flex; }
-.glyph-btn { display: inline-flex; align-items: center; background: none; border: 0; padding: 0; cursor: pointer; vertical-align: -3px; }
+.glyph-wrap { position: relative; display: inline-flex; vertical-align: -4px; }
+.glyph-btn { display: inline-flex; align-items: center; background: none; border: 0; padding: 0; cursor: pointer; }
 .glyph-tip { display: none; position: absolute; bottom: calc(100% + 6px); left: 0; z-index: 30; width: max-content; max-width: 260px; padding: 5px 9px; background: var(--bg-raised); border: 1px solid var(--line-strong); border-radius: var(--radius); font-size: 0.78rem; color: var(--fg); text-align: left; box-shadow: var(--shadow); }
 .glyph-wrap:hover .glyph-tip, .glyph-btn:focus-visible + .glyph-tip, .glyph-tip.open { display: block; }
 
