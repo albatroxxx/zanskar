@@ -102,13 +102,13 @@ describe('the admin dashboard', () => {
     expect(screen.getByText(/Zanskar 1\.4\.0, up 2 hours under systemd/)).toBeDefined()
 
     // The host gauges: each ratio is a meter with its words beside it, the
-    // volume at 4 GB of 100 GB free reads as danger, and the facts that are
+    // disk at 4 GB of 100 GB free reads as danger, and the facts that are
     // not ratios stay in words.
     const load = screen.getByRole('meter', { name: 'Load (8 cores)' })
     expect(load.getAttribute('aria-valuenow')).toBe('5')
     const memory = screen.getByRole('meter', { name: 'Memory' })
     expect(memory.getAttribute('aria-valuenow')).toBe('25')
-    const disk = screen.getByRole('meter', { name: 'Database & recordings volume' })
+    const disk = screen.getByRole('meter', { name: 'Database & recordings disk' })
     expect(disk.getAttribute('aria-valuenow')).toBe('96')
     expect(disk.className).toContain('danger')
     expect(screen.getByText('low space')).toBeDefined()
