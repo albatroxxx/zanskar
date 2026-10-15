@@ -1,9 +1,21 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { api, errorMessage } from '../../api/client'
-import { fmtTime } from '../../api/format'
+import { engineName, fmtTime } from '../../api/format'
 import type { AdminOverview, SystemStatus, TLSStatus } from '../../api/types'
 import { Alert, Badge, PageHead, StatTile } from '../../components/ui'
+
+/** mix says what a count is made of — "2 Linux · 1 Windows" — in a tile's
+ *  detail line, largest first, empty when there is nothing to split. */
+function mix(by: Record<string, number>, name: (key: string) => string): string | undefined {
+  const parts = Object.entries(by)
+    .filter(([, n]) => n > 0)
+    .sort((a, b) => b[1] - a[1])
+    .map(([k, n]) => `${n} ${name(k)}`)
+  return parts.length ? parts.join(' · ') : undefined
+}
+
+const osLabel = (os: string) => (os === 'linux' ? 'Linux' : os === 'windows' ? 'Windows' : os)
 
 /** A certificate inside this window of its expiry is worth a warning. */
 const certWarnDays = 30
@@ -55,8 +67,20 @@ export function Dashboard() {
       <div className="stat-grid">
         <StatTile value={o && o.sessions.open} label="Open sessions" to="/admin/sessions" />
         <StatTile value={o && o.sessions.started_24h} label="Sessions (24h)" to="/admin/sessions" />
-        <StatTile value={o && o.targets.active} label="Active targets" to="/admin/hosts" />
+        <StatTile value={o && o.audit_24h.failures} label="Failures (24h)" to="/admin/events" />
         <StatTile value={o && o.audit_24h.events} label="Audit events (24h)" to="/admin/events" />
+      </div>
+
+      <h2 className="stat-section">Inventory</h2>
+      <div className="stat-grid">
+        <StatTile value={o && o.inventory.hosts} label="Hosts" detail={o ? mix(o.inventory.hosts_by_os, osLabel) : undefined} to="/admin/hosts" />
+        <StatTile value={o && o.inventory.databases} label="Databases" detail={o ? mix(o.inventory.databases_by_engine, (e) => engineName(e)) : undefined} to="/admin/databases" />
+        <StatTile
+          value={o && o.autoscaling.groups}
+          label="Autoscaling groups"
+          detail={o && o.autoscaling.instances > 0 ? `${o.autoscaling.healthy_instances} of ${o.autoscaling.instances} instances healthy` : undefined}
+          to="/admin/autoscaling"
+        />
       </div>
 
       <h2 className="stat-section">Gateway</h2>

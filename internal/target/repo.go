@@ -116,6 +116,48 @@ func (r *Repo) CountAttention(ctx context.Context) (AttentionCounts, error) {
 	return c, err
 }
 
+// Inventory is the fleet the admin dashboard shows (ADR 0029): how many
+// hosts by OS family and how many databases by engine, active and undeleted.
+type Inventory struct {
+	Hosts     int            `json:"hosts"`
+	HostsByOS map[string]int `json:"hosts_by_os"`
+	Databases int            `json:"databases"`
+	ByEngine  map[string]int `json:"databases_by_engine"`
+}
+
+// CountInventory returns the Inventory in two grouped counts, one after the
+// other (single-connection SQLite).
+func (r *Repo) CountInventory(ctx context.Context) (Inventory, error) {
+	inv := Inventory{HostsByOS: map[string]int{}, ByEngine: map[string]int{}}
+	count := func(column, where string, into map[string]int) (int, error) {
+		rows, err := r.db.QueryContext(ctx, `SELECT `+column+`, COUNT(*) FROM targets
+			WHERE deleted_at IS NULL AND status = 'active' AND `+where+` GROUP BY `+column)
+		if err != nil {
+			return 0, err
+		}
+		defer func() { _ = rows.Close() }()
+		total := 0
+		for rows.Next() {
+			var k string
+			var n int
+			if err := rows.Scan(&k, &n); err != nil {
+				return 0, err
+			}
+			into[k] = n
+			total += n
+		}
+		return total, rows.Err()
+	}
+	var err error
+	if inv.Hosts, err = count("os_family", `COALESCE(engine, '') = ''`, inv.HostsByOS); err != nil {
+		return Inventory{}, err
+	}
+	if inv.Databases, err = count("engine", `COALESCE(engine, '') <> ''`, inv.ByEngine); err != nil {
+		return Inventory{}, err
+	}
+	return inv, nil
+}
+
 // List returns targets ordered by name after the cursor, narrowed by f.
 func (r *Repo) List(ctx context.Context, afterName string, limit int, f ListFilter) ([]*Target, string, error) {
 	if limit <= 0 || limit > 500 {

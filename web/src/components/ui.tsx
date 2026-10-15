@@ -62,11 +62,12 @@ export function Badge({ tone, children }: { tone?: 'ok' | 'warn' | 'danger' | 'a
  *  naming what it counts, and the page that manages it. The caption is a
  *  label, not a sentence; a tone only underlines what it already says, so it
  *  shows only on a non-zero count. "—" while the value is still loading. */
-export function StatTile({ value, label, to, tone }: { value: number | null; label: string; to: string; tone?: 'warn' | 'danger' }) {
+export function StatTile({ value, label, detail, to, tone }: { value: number | null; label: string; detail?: ReactNode; to: string; tone?: 'warn' | 'danger' }) {
   return (
     <Link className={'stat-tile' + (tone && value ? ' ' + tone : '')} to={to}>
       <div className="value">{value ?? '—'}</div>
       <div className="label">{label}</div>
+      {detail && <div className="detail">{detail}</div>}
     </Link>
   )
 }

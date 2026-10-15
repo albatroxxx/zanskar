@@ -330,6 +330,17 @@ export interface AdminOverview {
     host_key_changed: number
     certificate_pending: number
   }
+  inventory: {
+    hosts: number
+    hosts_by_os: Record<string, number>
+    databases: number
+    databases_by_engine: Record<string, number>
+  }
+  autoscaling: {
+    groups: number
+    instances: number
+    healthy_instances: number
+  }
   audit_24h: AuditTallies
 }
 
@@ -383,6 +394,8 @@ export interface AutoscalingGroup {
 export interface AwsIdentity {
   principal?: string
   source: 'environment' | 'detected' | 'none'
+  /** Off AWS ("none"), a missing identity is the ordinary case, not an error. */
+  platform: 'aws' | 'none'
   account_id?: string
   raw_arn?: string
   checked_at: string

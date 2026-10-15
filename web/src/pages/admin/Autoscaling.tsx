@@ -369,6 +369,11 @@ function IdentityCard() {
     api.get<AwsIdentity>('/admin/aws/identity').then(setId).catch(() => setId(null))
   }, [])
   if (!id) return null
+  // A gateway that simply does not live on AWS has nothing to warn about:
+  // the card appears only with an identity to show, or on AWS compute where
+  // a missing role is a real misconfiguration. The enroll flow still says
+  // what to set when a trust policy actually needs a principal (ADR 0023).
+  if (!id.principal && id.platform !== 'aws') return null
   const refresh = async () => {
     setBusy(true)
     try {
@@ -389,7 +394,7 @@ function IdentityCard() {
       ) : (
         <>
           <p style={{ margin: 0 }}>
-            <Badge tone="warn">AWS identity unknown</Badge> This gateway is not running with an AWS role, so it cannot tell you what principal a trust policy should name. Run it on EC2 with an instance profile (or on EKS with IRSA), or set <code>ZANSKAR_AWS_GATEWAY_PRINCIPAL</code> in the environment file to the role ARN it should present, then restart.
+            <Badge tone="warn">AWS identity unknown</Badge> This gateway runs on AWS but holds no role, so it cannot tell you what principal a trust policy should name. Give it an instance profile (or IRSA on EKS), or set <code>ZANSKAR_AWS_GATEWAY_PRINCIPAL</code> in the environment file, then restart.
             <button type="button" className="btn sm" style={{ marginLeft: 8 }} disabled={busy} onClick={() => void refresh()}>{busy ? 'Checking…' : 'Check again'}</button>
           </p>
           {id.error && <p className="muted mono" style={{ margin: '6px 0 0', fontSize: 12 }}>{id.error}</p>}

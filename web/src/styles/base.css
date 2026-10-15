@@ -52,7 +52,9 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .me-user:hover { color: var(--accent); text-decoration: underline; }
 .sidebar .switch { font-size: 0.8rem; }
 .main { padding: 28px 32px 48px; min-width: 0; }
-.page-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 20px; flex-wrap: wrap; }
+/* A page's actions sit level with its title block, never up against the
+   command-line glyph in the corner above. */
+.page-head { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 20px; flex-wrap: wrap; }
 /* A lead is one sentence now, so it gets one line on a desktop window: the
    old 64ch cap wrapped it into a narrow ragged block beside empty space. */
 .page-head p { margin: 4px 0 0; color: var(--fg-muted); max-width: 88ch; }
@@ -85,6 +87,7 @@ a.stat-tile:hover { border-color: var(--fg-faint); }
 .stat-tile.warn .value { color: var(--warn); }
 .stat-tile.danger .value { color: var(--danger); }
 .stat-tile .label { margin-top: 2px; font-size: 0.82rem; color: var(--fg-muted); }
+.stat-tile .detail { margin-top: 4px; font-size: 0.78rem; color: var(--fg-faint); }
 
 /* Inline glyphs (components/icons.tsx): a glyph never deletes information.
    OS and engine glyphs sit beside a visible name; a state glyph is a button
@@ -324,9 +327,12 @@ td.actions > * + * { margin-left: 8px; }
 
 /* console command line (ADR 0027) */
 .main { position: relative; }
-.main:has(> .cli-icon) .page-head { padding-right: 44px; }
+/* The command line lives alone in the very corner, above the page head, so
+   a page's own buttons keep the right edge and the two are never read as one
+   control group. The main column makes a little headroom for it. */
+.main:has(> .cli-icon) { padding-top: 46px; }
 /* Bare glyph, no button chrome: the icon is the control. */
-.cli-icon { position: absolute; top: 22px; right: 32px; z-index: 30; padding: 0; display: flex; border: 0; background: none; color: var(--accent); cursor: pointer; }
+.cli-icon { position: absolute; top: 12px; right: 32px; z-index: 30; padding: 0; display: flex; border: 0; background: none; color: var(--accent); cursor: pointer; }
 .cli-icon:hover { color: var(--accent-hover); }
 .cli-icon.on { color: var(--accent-hover); }
 .cli-panel { position: fixed; left: var(--sidebar-w); right: 0; bottom: 0; z-index: 40; display: flex; flex-direction: column; min-height: 180px; background: var(--terminal-bg); color: var(--term-fg); border-top: 1px solid var(--term-line); box-shadow: 0 -12px 32px var(--term-shadow); }
@@ -366,6 +372,7 @@ td.actions > * + * { margin-left: 8px; }
 .cli-row { display: flex; gap: 12px; align-items: center; }
 .cli-link { background: none; border: 0; color: var(--term-fg-muted); font: inherit; font-size: 13px; cursor: pointer; padding: 0; }
 @media (max-width: 760px) {
-  .cli-icon { top: 18px; right: 16px; }
+  .cli-icon { top: 8px; right: 16px; }
+  .main:has(> .cli-icon) { padding-top: 40px; }
   .cli-panel { left: 0; }
 }

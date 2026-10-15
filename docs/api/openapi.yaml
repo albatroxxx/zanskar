@@ -5166,7 +5166,7 @@ components:
           description: On update, issue a new external id. The role's trust policy must then be updated with it.
     AwsIdentity:
       type: object
-      required: [source, checked_at]
+      required: [source, platform, checked_at]
       properties:
         principal:
           type: string
@@ -5174,6 +5174,13 @@ components:
         source:
           type: string
           enum: [environment, detected, none]
+        platform:
+          type: string
+          enum: [aws, none]
+          description: >
+            Where the gateway runs as far as AWS is concerned: "aws" on EC2, EKS or
+            ECS, "none" anywhere else. Off AWS, a missing identity is the ordinary
+            case, not an error.
         account_id:
           type: string
         raw_arn:
@@ -5767,13 +5774,45 @@ components:
           description: Refused connections (`session.connect` failures).
     AdminOverview:
       type: object
-      required: [sessions, pending_requests, targets, audit_24h]
+      required: [sessions, pending_requests, targets, inventory, autoscaling, audit_24h]
       properties:
         sessions:
           $ref: "#/components/schemas/SessionCounts"
         pending_requests:
           type: integer
           description: Access requests awaiting a decision.
+        inventory:
+          type: object
+          required: [hosts, hosts_by_os, databases, databases_by_engine]
+          description: The active fleet, for the dashboard's inventory tiles.
+          properties:
+            hosts:
+              type: integer
+            hosts_by_os:
+              type: object
+              additionalProperties:
+                type: integer
+              description: Active hosts by OS family (linux, windows, other).
+            databases:
+              type: integer
+            databases_by_engine:
+              type: object
+              additionalProperties:
+                type: integer
+              description: Active database targets by engine.
+        autoscaling:
+          type: object
+          required: [groups, instances, healthy_instances]
+          properties:
+            groups:
+              type: integer
+              description: Enrolled autoscaling groups.
+            instances:
+              type: integer
+              description: Live (unterminated) instances across all groups.
+            healthy_instances:
+              type: integer
+              description: Of those, how many are healthy, counted as the Autoscaling page counts them.
         targets:
           type: object
           required: [active, host_key_pending, host_key_changed, certificate_pending]

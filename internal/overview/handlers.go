@@ -8,11 +8,13 @@
 package overview
 
 import (
+	"context"
 	"log/slog"
 	"net/http"
 	"time"
 
 	"github.com/albatroxxx/zanskar/internal/access"
+	"github.com/albatroxxx/zanskar/internal/asg"
 	"github.com/albatroxxx/zanskar/internal/audit"
 	"github.com/albatroxxx/zanskar/internal/auth"
 	"github.com/albatroxxx/zanskar/internal/httpx"
@@ -29,8 +31,43 @@ type Handler struct {
 	Sessions *session.Repo
 	Requests *access.Repo
 	Targets  *target.Repo
+	ASGs     *asg.Repo
 	Audit    *audit.Log
 	Log      *slog.Logger
+}
+
+// asgInventory is the autoscaling slice of the admin inventory: enrolled
+// groups and their live instances, healthy counted the way the Autoscaling
+// page counts them.
+type asgInventory struct {
+	Groups           int `json:"groups"`
+	Instances        int `json:"instances"`
+	HealthyInstances int `json:"healthy_instances"`
+}
+
+func (h *Handler) countASGs(ctx context.Context) (asgInventory, error) {
+	var inv asgInventory
+	groups, err := h.ASGs.List(ctx, false)
+	if err != nil {
+		return inv, err
+	}
+	inv.Groups = len(groups)
+	for _, g := range groups {
+		rows, err := h.ASGs.Instances(ctx, g.ID, false)
+		if err != nil {
+			return inv, err
+		}
+		for _, in := range rows {
+			if in.TerminatedAt != nil {
+				continue
+			}
+			inv.Instances++
+			if in.Healthy {
+				inv.HealthyInstances++
+			}
+		}
+	}
+	return inv, nil
 }
 
 // Register mounts the overviews under their portal's API prefix, so a reverse
@@ -113,6 +150,16 @@ func (h *Handler) adminOverview(w http.ResponseWriter, r *http.Request) {
 		httpx.Internal(w, r, h.Log, err)
 		return
 	}
+	inventory, err := h.Targets.CountInventory(ctx)
+	if err != nil {
+		httpx.Internal(w, r, h.Log, err)
+		return
+	}
+	asgs, err := h.countASGs(ctx)
+	if err != nil {
+		httpx.Internal(w, r, h.Log, err)
+		return
+	}
 	tallies, err := h.Audit.TallySince(ctx, since)
 	if err != nil {
 		httpx.Internal(w, r, h.Log, err)
@@ -123,8 +170,10 @@ func (h *Handler) adminOverview(w http.ResponseWriter, r *http.Request) {
 		Sessions        session.Counts         `json:"sessions"`
 		PendingRequests int                    `json:"pending_requests"`
 		Targets         target.AttentionCounts `json:"targets"`
+		Inventory       target.Inventory       `json:"inventory"`
+		Autoscaling     asgInventory           `json:"autoscaling"`
 		Audit           auditTallies           `json:"audit_24h"`
-	}{sessions, pending, targets, foldTallies(tallies)})
+	}{sessions, pending, targets, inventory, asgs, foldTallies(tallies)})
 }
 
 // auditOverview answers GET /api/v1/audit/overview for admins and auditors.

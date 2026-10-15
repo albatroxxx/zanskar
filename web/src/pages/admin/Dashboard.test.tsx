@@ -14,6 +14,8 @@ const overview: AdminOverview = {
   sessions: { open: 2, started_24h: 7 },
   pending_requests: 3,
   targets: { active: 5, host_key_pending: 1, host_key_changed: 1, certificate_pending: 0 },
+  inventory: { hosts: 3, hosts_by_os: { linux: 2, windows: 1 }, databases: 2, databases_by_engine: { postgres: 1, mysql: 1 } },
+  autoscaling: { groups: 1, instances: 4, healthy_instances: 3 },
   audit_24h: { events: 41, failures: 4, failed_logins: 2, refused_connects: 1 },
 }
 
@@ -78,6 +80,13 @@ describe('the admin dashboard', () => {
     expect(hosts?.textContent).toContain('2')
 
     expect(screen.getByText('Open sessions').closest('a')?.getAttribute('href')).toBe('/admin/sessions')
+
+    // The inventory row: totals with their mix, each linking to its page.
+    const hostsTile = screen.getByText('2 Linux · 1 Windows').closest('a')
+    expect(hostsTile?.getAttribute('href')).toBe('/admin/hosts')
+    expect(hostsTile?.textContent).toContain('3')
+    expect(screen.getByText('1 PostgreSQL · 1 MySQL').closest('a')?.getAttribute('href')).toBe('/admin/databases')
+    expect(screen.getByText('3 of 4 instances healthy').closest('a')?.getAttribute('href')).toBe('/admin/autoscaling')
     expect(screen.getByText(/Zanskar 1\.4\.0, up 2 hours under systemd/)).toBeDefined()
   })
 
