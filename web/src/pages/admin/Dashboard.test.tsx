@@ -38,6 +38,7 @@ const metrics: SystemMetrics = {
   ],
   database_sessions: 1,
   guacd: { address: '127.0.0.1:4822', reachable: false },
+  cpus: 8,
 }
 
 const tls: TLSStatus = {
@@ -100,13 +101,19 @@ describe('the admin dashboard', () => {
     expect(screen.getByText('3 of 4 instances healthy').closest('a')?.getAttribute('href')).toBe('/admin/autoscaling')
     expect(screen.getByText(/Zanskar 1\.4\.0, up 2 hours under systemd/)).toBeDefined()
 
-    // The host facts: numbers in one line, a volume line with a tone only
-    // when the free space asks for action (4 GB of 100 GB left → danger).
-    expect(screen.getByText(/load 0\.42/)).toBeDefined()
+    // The host gauges: each ratio is a meter with its words beside it, the
+    // volume at 4 GB of 100 GB free reads as danger, and the facts that are
+    // not ratios stay in words.
+    const load = screen.getByRole('meter', { name: 'Load (8 cores)' })
+    expect(load.getAttribute('aria-valuenow')).toBe('5')
+    const memory = screen.getByRole('meter', { name: 'Memory' })
+    expect(memory.getAttribute('aria-valuenow')).toBe('25')
+    const disk = screen.getByRole('meter', { name: 'Database & recordings volume' })
+    expect(disk.getAttribute('aria-valuenow')).toBe('96')
+    expect(disk.className).toContain('danger')
+    expect(screen.getByText('low space')).toBeDefined()
     expect(screen.getByText(/1 database session container/)).toBeDefined()
     expect(screen.getByText(/unreachable at 127\.0\.0\.1:4822/)).toBeDefined()
-    expect(screen.getByText(/Database & recordings volume: 4\.0 GB free of 100\.0 GB/)).toBeDefined()
-    expect(screen.getByText('low space')).toBeDefined()
   })
 
   it('says the overview failed rather than showing a quiet system', async () => {

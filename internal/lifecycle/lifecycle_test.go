@@ -235,7 +235,7 @@ func TestRoutes(t *testing.T) {
 	// database session, no guacd entry without an address, and admins only.
 	code, out, _ = do("GET", "/api/v1/admin/system/metrics", nil, admin, aCSRF)
 	disks, _ := out["disks"].([]any)
-	if code != 200 || len(disks) == 0 || out["database_sessions"] != float64(0) {
+	if code != 200 || len(disks) == 0 || out["database_sessions"] != float64(0) || out["cpus"].(float64) < 1 {
 		t.Fatalf("metrics: %d %v", code, out)
 	}
 	first := disks[0].(map[string]any)

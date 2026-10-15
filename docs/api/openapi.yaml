@@ -5909,6 +5909,9 @@ components:
         database_sessions:
           type: integer
           description: Database client containers running now, one per live database session.
+        cpus:
+          type: integer
+          description: Logical CPUs, to scale the load average.
         guacd:
           type: object
           required: [address, reachable]

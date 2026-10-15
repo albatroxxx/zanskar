@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useState, type ReactNode } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import { Link } from 'react-router-dom'
 import { api, errorMessage } from '../../api/client'
 import { engineName, fmtBytes, fmtTime } from '../../api/format'
@@ -119,47 +119,85 @@ export function Dashboard() {
   )
 }
 
-/** lowDisk marks a volume an admin should act on: under 10% or under 5 GB
- *  free. A full recordings volume stops sessions being recorded. */
-function lowDisk(d: { total_bytes: number; free_bytes: number }): boolean {
-  return d.free_bytes < d.total_bytes / 10 || d.free_bytes < 5 * 1024 * 1024 * 1024
+/** diskTone marks a volume an admin should act on: warn under 10% or 5 GB
+ *  free, danger under 5%. A full recordings volume stops sessions being
+ *  recorded. */
+function diskTone(d: { total_bytes: number; free_bytes: number }): 'warn' | 'danger' | undefined {
+  if (d.free_bytes < d.total_bytes / 20) return 'danger'
+  if (d.free_bytes < d.total_bytes / 10 || d.free_bytes < 5 * 1024 ** 3) return 'warn'
+  return undefined
 }
 
-/** HostFacts is the gateway host right now: one line of numbers, one line per
- *  volume, a tone only where the number asks for action. */
+/** Gauge is one ratio against its limit: a label, the reading in words, and
+ *  a meter whose fill escalates with the tone. */
+function Gauge({ label, reading, fraction, tone }: { label: string; reading: ReactNode; fraction: number; tone?: 'warn' | 'danger' }) {
+  const pct = Math.round(Math.max(0, Math.min(1, fraction)) * 100)
+  return (
+    <div className="gauge">
+      <div className="label">{label}</div>
+      <div className="reading">{reading}</div>
+      <div className={'meter' + (tone ? ' ' + tone : '')} role="meter" aria-label={label} aria-valuemin={0} aria-valuemax={100} aria-valuenow={pct}>
+        <i style={{ width: `${pct}%` }} />
+      </div>
+    </div>
+  )
+}
+
+/** HostFacts is the gateway host right now: a gauge per ratio, then a line
+ *  for the facts that are not ratios. Words carry every state the colour
+ *  does. */
 function HostFacts({ m }: { m: SystemMetrics }) {
-  const bits: ReactNode[] = []
-  if (m.load) bits.push(<span key="load">load {m.load.one.toFixed(2)}</span>)
-  if (m.memory) bits.push(<span key="mem">{fmtBytes(m.memory.total_bytes - m.memory.available_bytes)} of {fmtBytes(m.memory.total_bytes)} memory used</span>)
-  bits.push(<span key="db">{m.database_sessions} database session container{m.database_sessions === 1 ? '' : 's'}</span>)
-  if (m.guacd) {
-    bits.push(
-      <span key="guacd">
-        guacd {m.guacd.reachable ? 'reachable' : <Badge tone="danger">unreachable at {m.guacd.address}</Badge>}
-      </span>,
-    )
-  }
+  const used = m.memory ? m.memory.total_bytes - m.memory.available_bytes : 0
   return (
     <>
-      <p className="muted" style={{ margin: '10px 0 0' }}>
-        {bits.map((b, i) => (
-          <Fragment key={i}>
-            {i > 0 && ' · '}
-            {b}
-          </Fragment>
+      <div className="gw-grid">
+        {m.load && m.cpus > 0 && (
+          <Gauge
+            label={`Load (${m.cpus} cores)`}
+            reading={<><b>{m.load.one.toFixed(2)}</b> now · {m.load.fifteen.toFixed(2)} over 15 min</>}
+            fraction={m.load.one / m.cpus}
+            tone={m.load.one >= m.cpus ? 'danger' : m.load.one >= m.cpus * 0.85 ? 'warn' : undefined}
+          />
+        )}
+        {m.memory && (
+          <Gauge
+            label="Memory"
+            reading={<><b>{fmtBytes(used)}</b> used of {fmtBytes(m.memory.total_bytes)}</>}
+            fraction={used / m.memory.total_bytes}
+            tone={used >= m.memory.total_bytes * 0.95 ? 'danger' : used >= m.memory.total_bytes * 0.85 ? 'warn' : undefined}
+          />
+        )}
+        {m.disks.map((d) => (
+          <Gauge
+            key={d.path}
+            label={`${d.what[0].toUpperCase() + d.what.slice(1)} volume`}
+            reading={
+              <>
+                <b>{fmtBytes(d.free_bytes)}</b> free of {fmtBytes(d.total_bytes)}
+                {diskTone(d) && (
+                  <>
+                    {' '}
+                    <Badge tone={diskTone(d)}>low space</Badge>
+                  </>
+                )}
+              </>
+            }
+            fraction={1 - d.free_bytes / d.total_bytes}
+            // The meter's tone follows its own geometry (how full); the badge
+            // alone carries the absolute under-5-GB floor, so a tiny volume
+            // never shows an alarmed near-empty bar.
+            tone={d.free_bytes < d.total_bytes / 20 ? 'danger' : d.free_bytes < d.total_bytes / 10 ? 'warn' : undefined}
+          />
         ))}
+      </div>
+      <p className="muted" style={{ margin: '12px 0 0' }}>
+        {m.database_sessions} database session container{m.database_sessions === 1 ? '' : 's'}
+        {m.guacd && (
+          <>
+            {' · '}guacd {m.guacd.reachable ? 'reachable' : <Badge tone="danger">unreachable at {m.guacd.address}</Badge>}
+          </>
+        )}
       </p>
-      {m.disks.map((d) => (
-        <p className="muted" style={{ margin: '4px 0 0' }} key={d.path}>
-          {d.what[0].toUpperCase() + d.what.slice(1)} volume: {fmtBytes(d.free_bytes)} free of {fmtBytes(d.total_bytes)}
-          {lowDisk(d) && (
-            <>
-              {' '}
-              <Badge tone={d.free_bytes < d.total_bytes / 20 ? 'danger' : 'warn'}>low space</Badge>
-            </>
-          )}
-        </p>
-      ))}
     </>
   )
 }

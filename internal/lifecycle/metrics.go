@@ -6,6 +6,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"runtime"
 	"strconv"
 	"strings"
 	"syscall"
@@ -27,6 +28,9 @@ type Metrics struct {
 	// Counted from the session registry, so no Docker socket is needed.
 	DatabaseSessions int         `json:"database_sessions"`
 	Guacd            *GuacdCheck `json:"guacd,omitempty"`
+	// CPUs scales the load average into a meter: a load of 4 is calm on 16
+	// cores and saturation on 4.
+	CPUs int `json:"cpus"`
 }
 
 // LoadAverages are /proc/loadavg's three numbers.
@@ -69,6 +73,7 @@ func (h *Handler) metrics(w http.ResponseWriter, r *http.Request) {
 		Load:   readLoadavg(),
 		Memory: readMeminfo(),
 		Disks:  diskSpace(h.DatabasePath, h.RecordingsPath),
+		CPUs:   runtime.NumCPU(),
 	}
 	if h.Controller != nil && h.Controller.Registry != nil {
 		for _, l := range h.Controller.Registry.List() {

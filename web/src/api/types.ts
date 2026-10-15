@@ -557,6 +557,7 @@ export interface SystemMetrics {
   disks: { what: string; path: string; total_bytes: number; free_bytes: number }[]
   database_sessions: number
   guacd?: { address: string; reachable: boolean }
+  cpus: number
 }
 
 /** GET /admin/system/status. Mirrors internal/lifecycle.Status. */
