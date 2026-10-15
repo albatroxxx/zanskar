@@ -88,6 +88,13 @@ nfpms:
         dst: /usr/lib/systemd/system/zanskar.service
       - src: deploy/packaging/env.example
         dst: /etc/zanskar/env.example
+      # Host actions from the console (ADR 0032): the zanskar user may ask
+      # logind to reboot or power off; JS rules for polkit >= 0.106 and a
+      # .pkla for the 0.105 still on Ubuntu 22.04.
+      - src: deploy/packaging/polkit/50-zanskar.rules
+        dst: /etc/polkit-1/rules.d/50-zanskar.rules
+      - src: deploy/packaging/polkit/50-zanskar.pkla
+        dst: /etc/polkit-1/localauthority/50-local.d/50-zanskar.pkla
       - src: LICENSE
         dst: /usr/share/doc/zanskar/LICENSE
       - src: THIRD_PARTY_NOTICES.md

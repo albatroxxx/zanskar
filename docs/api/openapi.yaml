@@ -203,6 +203,34 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
+  /auth/mfa/step-up:
+    post:
+      tags: [auth]
+      summary: Prove the authenticator again on a signed-in session
+      description: >
+        For the actions the console guards with a recent code (ADR 0032): records the time of
+        the proof on the session, which the host-action routes check (five minutes). Limited
+        per session; every outcome is audited as `user.mfa.verify` with purpose `step_up`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [code]
+              properties:
+                code:
+                  type: string
+                  description: A six-digit authenticator code or a recovery code.
+      responses:
+        "200":
+          description: Proved.
+        "409":
+          description: No authenticator enrolled (`mfa_not_enrolled`).
+        "422":
+          description: Wrong or already-used code (`bad_code`).
+        "429":
+          description: Too many attempts on this session.
   /auth/mfa/totp/verify:
     post:
       tags: [auth]
@@ -3688,6 +3716,106 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/SystemMetrics"
+  /admin/system/host:
+    get:
+      tags: [admin]
+      summary: What the host actions need to know
+      description: >
+        The hostname an administrator must type to confirm, the supervisor, whether the
+        actions are available (a systemd host; ADR 0032), and whether this session proved
+        an authenticator code recently enough. Never cached.
+      responses:
+        "200":
+          description: The host status.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HostStatus"
+  /admin/system/reboot:
+    post:
+      tags: [admin]
+      summary: Reboot the host after draining live sessions
+      description: >
+        Audited as `system.reboot` before anything happens, then drains like a restart and
+        runs `systemctl reboot`, which logind and polkit allow the service user (the rule
+        ships with the package). Needs a recent authenticator proof on the session
+        (`/auth/mfa/step-up`) and the gateway's hostname typed as confirmation. On a host
+        without systemd the action is refused. A refused `systemctl` cancels the drain and is
+        audited as a failure.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/HostActionRequest"
+      responses:
+        "202":
+          description: The drain has started; the status shows it.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SystemStatus"
+        "400":
+          description: The confirmation does not match the hostname, or wait_minutes is out of range.
+        "403":
+          description: No recent authenticator proof on this session (`step_up_required`).
+        "409":
+          description: Not a systemd host (`unsupported_supervisor`).
+  /admin/system/poweroff:
+    post:
+      tags: [admin]
+      summary: Power the host off after draining live sessions
+      description: >
+        As reboot, audited as `system.poweroff`, running `systemctl poweroff`. Nothing in the
+        portal can start a stopped machine; recovery needs the host or the cloud console, and
+        the console says so before asking for the hostname.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/HostActionRequest"
+      responses:
+        "202":
+          description: The drain has started.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SystemStatus"
+        "400":
+          description: The confirmation does not match the hostname, or wait_minutes is out of range.
+        "403":
+          description: No recent authenticator proof on this session (`step_up_required`).
+        "409":
+          description: Not a systemd host (`unsupported_supervisor`).
+  /admin/system/update:
+    get:
+      tags: [admin]
+      summary: The last version check
+      description: >
+        Whether a newer release exists (ADR 0032): the running version, the latest the project
+        site publishes, its release notes link, when it was checked, and whether the daily
+        check is switched on (`updates.check`). Counts as public information; not audited.
+        Never cached.
+      responses:
+        "200":
+          description: The check.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UpdateStatus"
+  /admin/system/update/check:
+    post:
+      tags: [admin]
+      summary: Check for a new version now
+      description: Fetches the project's version manifest immediately and returns the result.
+      responses:
+        "200":
+          description: The check.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UpdateStatus"
   /admin/system/restart:
     post:
       tags: [admin]
@@ -5867,6 +5995,55 @@ components:
             recording_downloads:
               type: integer
               description: Recording downloads in the last 24 hours.
+    HostStatus:
+      type: object
+      required: [hostname, supervisor, available, mfa_fresh, step_up_minutes]
+      properties:
+        hostname:
+          type: string
+        supervisor:
+          type: string
+        available:
+          type: boolean
+        reason:
+          type: string
+        mfa_fresh:
+          type: boolean
+        step_up_minutes:
+          type: integer
+    HostActionRequest:
+      type: object
+      required: [confirm]
+      properties:
+        wait_minutes:
+          type: integer
+          minimum: 0
+          maximum: 240
+          default: 15
+          description: How long to let live sessions finish; 0 ends them now.
+        confirm:
+          type: string
+          description: The gateway's hostname, typed.
+    UpdateStatus:
+      type: object
+      required: [current, newer, enabled]
+      properties:
+        current:
+          type: string
+        latest:
+          type: string
+        notes_url:
+          type: string
+        published_at:
+          type: string
+        newer:
+          type: boolean
+        checked_at:
+          $ref: "#/components/schemas/Timestamp"
+        error:
+          type: string
+        enabled:
+          type: boolean
     SystemMetrics:
       type: object
       required: [disks, database_sessions]

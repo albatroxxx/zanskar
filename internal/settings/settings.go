@@ -60,6 +60,10 @@ const (
 	// KeyGuacdAddr is the guacd host:port that relays RDP and VNC; empty
 	// disables desktop sessions.
 	KeyGuacdAddr = "desktop.guacd_addr"
+	// KeyUpdateCheck lets the gateway fetch the latest version number from
+	// the project site once a day and light the bell when it is newer
+	// (ADR 0032). Nothing about this gateway is sent.
+	KeyUpdateCheck = "updates.check"
 	// KeyLogLevel is the gateway's log level.
 	KeyLogLevel = "log.level"
 	// KeyDBProxyImage is the image run as the MySQL/MariaDB relay sidecar;
@@ -135,6 +139,8 @@ var Definitions = []Definition{
 		Description: "System-use notification shown above the sign-in form before any credential is entered. Plain text, line breaks kept; empty hides it."},
 	{Key: KeyRequireMFA, Category: "Sign-in", Title: "Require an authenticator", Type: TypeBool, Default: "true", EnvVar: "ZANSKAR_REQUIRE_MFA",
 		Description: "Every password sign-in must enroll an authenticator before the session becomes usable. Turn off only for a throwaway installation."},
+	{Key: KeyUpdateCheck, Category: "Updates", Title: "Check for new versions", Type: TypeBool, Default: "true",
+		Description: "Once a day, fetch the latest version number from the project site and light the bell when it is newer. Nothing about this gateway is sent."},
 	{Key: KeyGuacdAddr, Category: "Desktops", Title: "guacd address", Type: TypeHostPort, EnvVar: "ZANSKAR_GUACD_ADDR",
 		Description: "host:port of the guacd relay for RDP and VNC. Empty disables desktop sessions. Applies to the next session opened."},
 	{Key: KeyLogLevel, Category: "Logging", Title: "Log level", Type: TypeEnum, Default: "info", EnvVar: "ZANSKAR_LOG_LEVEL", Enum: []string{"debug", "info", "warn", "error"},

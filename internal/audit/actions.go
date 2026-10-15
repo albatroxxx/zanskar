@@ -110,6 +110,8 @@ const (
 	// The gateway process.
 	SystemRestart       = "system.restart"
 	SystemRestartCancel = "system.restart_cancel"
+	SystemReboot        = "system.reboot"
+	SystemPowerOff      = "system.poweroff"
 
 	// Targets, their host keys and their certificates.
 	TargetCreate           = "target.create"
