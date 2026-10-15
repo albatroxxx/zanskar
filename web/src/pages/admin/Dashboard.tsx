@@ -1,8 +1,8 @@
-import { useEffect, useState } from 'react'
+import { Fragment, useEffect, useState, type ReactNode } from 'react'
 import { Link } from 'react-router-dom'
 import { api, errorMessage } from '../../api/client'
-import { engineName, fmtTime } from '../../api/format'
-import type { AdminOverview, SystemStatus, TLSStatus } from '../../api/types'
+import { engineName, fmtBytes, fmtTime } from '../../api/format'
+import type { AdminOverview, SystemMetrics, SystemStatus, TLSStatus } from '../../api/types'
 import { Alert, Badge, PageHead, StatTile } from '../../components/ui'
 
 /** mix says what a count is made of — "2 Linux · 1 Windows" — in a tile's
@@ -36,6 +36,7 @@ export function Dashboard() {
   const [overview, setOverview] = useState<AdminOverview | null>(null)
   const [status, setStatus] = useState<SystemStatus | null>(null)
   const [tls, setTls] = useState<TLSStatus | null>(null)
+  const [metrics, setMetrics] = useState<SystemMetrics | null>(null)
   // A failed read must not look like a quiet system (the Approvals rule).
   const [err, setErr] = useState('')
 
@@ -43,6 +44,7 @@ export function Dashboard() {
     api.get<AdminOverview>('/admin/overview').then(setOverview).catch((e) => setErr(errorMessage(e)))
     api.get<SystemStatus>('/admin/system/status').then(setStatus).catch((e) => setErr(errorMessage(e)))
     api.get<TLSStatus>('/admin/tls').then(setTls).catch((e) => setErr(errorMessage(e)))
+    api.get<SystemMetrics>('/admin/system/metrics').then(setMetrics).catch((e) => setErr(errorMessage(e)))
   }, [])
 
   const o = overview
@@ -109,9 +111,55 @@ export function Dashboard() {
                 </>
               )}
             </p>
+            {metrics && <HostFacts m={metrics} />}
           </>
         )}
       </div>
+    </>
+  )
+}
+
+/** lowDisk marks a volume an admin should act on: under 10% or under 5 GB
+ *  free. A full recordings volume stops sessions being recorded. */
+function lowDisk(d: { total_bytes: number; free_bytes: number }): boolean {
+  return d.free_bytes < d.total_bytes / 10 || d.free_bytes < 5 * 1024 * 1024 * 1024
+}
+
+/** HostFacts is the gateway host right now: one line of numbers, one line per
+ *  volume, a tone only where the number asks for action. */
+function HostFacts({ m }: { m: SystemMetrics }) {
+  const bits: ReactNode[] = []
+  if (m.load) bits.push(<span key="load">load {m.load.one.toFixed(2)}</span>)
+  if (m.memory) bits.push(<span key="mem">{fmtBytes(m.memory.total_bytes - m.memory.available_bytes)} of {fmtBytes(m.memory.total_bytes)} memory used</span>)
+  bits.push(<span key="db">{m.database_sessions} database session container{m.database_sessions === 1 ? '' : 's'}</span>)
+  if (m.guacd) {
+    bits.push(
+      <span key="guacd">
+        guacd {m.guacd.reachable ? 'reachable' : <Badge tone="danger">unreachable at {m.guacd.address}</Badge>}
+      </span>,
+    )
+  }
+  return (
+    <>
+      <p className="muted" style={{ margin: '10px 0 0' }}>
+        {bits.map((b, i) => (
+          <Fragment key={i}>
+            {i > 0 && ' · '}
+            {b}
+          </Fragment>
+        ))}
+      </p>
+      {m.disks.map((d) => (
+        <p className="muted" style={{ margin: '4px 0 0' }} key={d.path}>
+          {d.what[0].toUpperCase() + d.what.slice(1)} volume: {fmtBytes(d.free_bytes)} free of {fmtBytes(d.total_bytes)}
+          {lowDisk(d) && (
+            <>
+              {' '}
+              <Badge tone={d.free_bytes < d.total_bytes / 20 ? 'danger' : 'warn'}>low space</Badge>
+            </>
+          )}
+        </p>
+      ))}
     </>
   )
 }

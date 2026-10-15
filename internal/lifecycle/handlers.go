@@ -22,12 +22,19 @@ type Handler struct {
 	Audit      *audit.Log
 	Log        *slog.Logger
 	StartedAt  time.Time
+	// For the metrics endpoint: the volumes the gateway writes (either may
+	// be empty — a Postgres database, recordings in S3) and where the
+	// desktop relay should answer (a runtime setting, read per request).
+	DatabasePath   string
+	RecordingsPath string
+	GuacdAddr      func() string
 }
 
 // Register mounts the routes; all admin-only.
 func (h *Handler) Register(mux *http.ServeMux) {
 	admin := auth.RequireRole(user.RoleAdmin)
 	mux.Handle("GET /api/v1/admin/system/status", admin(http.HandlerFunc(h.status)))
+	mux.Handle("GET /api/v1/admin/system/metrics", admin(http.HandlerFunc(h.metrics)))
 	mux.Handle("POST /api/v1/admin/system/restart", admin(http.HandlerFunc(h.restart)))
 	mux.Handle("DELETE /api/v1/admin/system/restart", admin(http.HandlerFunc(h.cancel)))
 }
