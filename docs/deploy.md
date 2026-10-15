@@ -648,6 +648,36 @@ ends them at once), then exits 0. What starts it again:
 - **Anything else**: make sure your process manager restarts the service, or use
   `systemctl restart zanskar` by hand instead.
 
+## Reboot, stop and update from the console
+
+The admin console's gear offers **Reboot host** and **Stop host** beside the restart; the
+bell offers **Update now** when a newer release is published (ADR 0032). The gateway keeps
+`NoNewPrivileges`; none of this is a privilege it holds:
+
+- Reboot and stop run `systemctl reboot` / `systemctl poweroff`, which logind and polkit
+  allow the `zanskar` user through rules the package installs
+  (`/etc/polkit-1/rules.d/50-zanskar.rules`, and a `.pkla` for the polkit 0.105 still on
+  Ubuntu 22.04). Each action drains live sessions first, needs the hostname typed and an
+  authenticator code proved within five minutes (`POST /auth/mfa/step-up`), and is audited
+  as `system.reboot` / `system.poweroff` before anything happens. A refused `systemctl`
+  cancels the drain, so the gateway keeps serving, and is audited as a failure.
+- The install writes the wanted version to `/var/lib/zanskar/update-request` after the
+  drain; `zanskar-update.path` (root, shipped in the package) starts
+  `zanskar-update.service`, whose script `/usr/libexec/zanskar/zanskar-update` downloads the
+  release itself, verifies the cosign bundle over `SHA256SUMS` against the release
+  workflow's identity, checks the package against those sums, refuses downgrades, installs
+  with dpkg or rpm and restarts the service. Progress goes to `update-status.json` for the
+  bell. The gateway never downloads a binary. `cosign` is a package recommendation; the
+  installer refuses to run without it.
+- The daily version check reads `https://albatroxxx.github.io/zanskar/releases/latest.json`
+  (`ZANSKAR_UPDATE_MANIFEST_URL` for a mirror; the runtime setting under Settings › Updates
+  switches it off). `ZANSKAR_STATE_DIR` (default: the working directory, `/var/lib/zanskar`
+  under the unit) is where the request and status files live.
+- Docker and Kubernetes: the host actions are greyed out and the endpoints answer 409; the
+  bell still reports a new release with the upgrade step for that deployment.
+
+## The environment file check
+
 The check needs the running service to read the env file: `zanskar init` writes it
 `root:zanskar 0640`. A file created by hand as `0600 root` shows "cannot check" in the
 console; fix with `chgrp zanskar /etc/zanskar/env && chmod 0640 /etc/zanskar/env`. If the

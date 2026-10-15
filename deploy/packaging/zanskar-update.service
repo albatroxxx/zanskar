@@ -1,0 +1,14 @@
+[Unit]
+Description=Install a Zanskar release requested from the console
+Documentation=https://github.com/albatroxxx/zanskar
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# Runs as root: it installs a package. It trusts nothing the gateway wrote
+# beyond a version string, fetches the release itself and verifies the
+# cosign bundle over SHA256SUMS before dpkg or rpm see the file.
+ExecStart=/usr/libexec/zanskar/zanskar-update
+PrivateTmp=true
+ProtectHome=true

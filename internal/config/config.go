@@ -86,6 +86,10 @@ type Config struct {
 	// release from (ADR 0032): the project site by default, or a mirror an
 	// operator keeps for gateways without a route to it.
 	UpdateManifestURL string
+	// StateDir is where the gateway keeps its own files beside the database:
+	// the update request the path unit watches and the installer's status
+	// (ADR 0032). The package's unit runs in /var/lib/zanskar.
+	StateDir string
 	// RecordingsS3Bucket switches recordings to an S3-compatible bucket.
 	// Empty keeps the local directory backend.
 	RecordingsS3Bucket   string
@@ -186,6 +190,7 @@ func Load(opts Options) (*Config, error) {
 		Issuer:               envOr("ZANSKAR_ISSUER", "Zanskar"),
 		RecordingsDir:        envOr("ZANSKAR_RECORDINGS_DIR", "data/recordings"),
 		UpdateManifestURL:    envOr("ZANSKAR_UPDATE_MANIFEST_URL", "https://albatroxxx.github.io/zanskar/releases/latest.json"),
+		StateDir:             envOr("ZANSKAR_STATE_DIR", "."),
 		RecordingsS3Bucket:   os.Getenv("ZANSKAR_RECORDINGS_S3_BUCKET"),
 		RecordingsS3Prefix:   envOr("ZANSKAR_RECORDINGS_S3_PREFIX", "recordings/"),
 		RecordingsS3Region:   os.Getenv("ZANSKAR_RECORDINGS_S3_REGION"),

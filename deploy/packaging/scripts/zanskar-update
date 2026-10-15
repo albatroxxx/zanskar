@@ -1,0 +1,112 @@
+#!/bin/sh
+# zanskar-update: install the release the console asked for (ADR 0032).
+#
+# The gateway, after draining its sessions, writes the wanted version to
+# /var/lib/zanskar/update-request; the zanskar-update.path unit starts this
+# script as root. Nothing the gateway downloaded is trusted: the release is
+# fetched here and verified exactly as the install guide verifies by hand —
+# the cosign bundle over SHA256SUMS, pinned to the release workflow's
+# certificate identity and OIDC issuer, then the package against those sums.
+# A downgrade is refused. Progress goes to update-status.json for the bell.
+set -eu
+
+STATE=/var/lib/zanskar
+REQUEST="$STATE/update-request"
+STATUS="$STATE/update-status.json"
+REPO=albatroxxx/zanskar
+IDENTITY='^https://github.com/albatroxxx/zanskar/.github/workflows/release.yml@refs/tags/v'
+ISSUER=https://token.actions.githubusercontent.com
+
+VERSION=""
+TMP=""
+
+status() {
+	# status <state> <message>
+	printf '{"state":"%s","version":"%s","message":"%s","at":"%s"}\n' \
+		"$1" "$VERSION" "$2" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >"$STATUS.tmp"
+	mv "$STATUS.tmp" "$STATUS"
+	chown zanskar:zanskar "$STATUS" 2>/dev/null || true
+	chmod 0640 "$STATUS" 2>/dev/null || true
+}
+
+fail() {
+	status failed "$1"
+	echo "zanskar-update: $1" >&2
+	exit 1
+}
+
+cleanup() {
+	[ -n "$TMP" ] && rm -rf "$TMP"
+}
+trap cleanup EXIT
+
+[ -f "$REQUEST" ] || exit 0
+# One request, one attempt: the file goes first, so a failure never loops.
+VERSION=$(sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$REQUEST" | head -n 1)
+rm -f "$REQUEST"
+
+case "$VERSION" in
+'' | *[!0-9.]* | .* | *. | *..*) fail "the request names no valid version" ;;
+esac
+
+status running "checking the request"
+
+# Package kind and architecture.
+if command -v dpkg >/dev/null 2>&1; then
+	KIND=deb
+	ARCH=$(dpkg --print-architecture)
+	CURRENT=$(dpkg-query -W -f='${Version}' zanskar 2>/dev/null || true)
+elif command -v rpm >/dev/null 2>&1; then
+	KIND=rpm
+	case "$(uname -m)" in
+	x86_64) ARCH=amd64 ;;
+	aarch64) ARCH=arm64 ;;
+	*) fail "unsupported architecture $(uname -m)" ;;
+	esac
+	CURRENT=$(rpm -q --qf '%{VERSION}' zanskar 2>/dev/null || true)
+else
+	fail "neither dpkg nor rpm is available; this host was not installed from a package"
+fi
+
+# Never a downgrade, never the same version again.
+if [ -n "$CURRENT" ]; then
+	newest=$(printf '%s\n%s\n' "$CURRENT" "$VERSION" | sort -V | tail -n 1)
+	if [ "$newest" != "$VERSION" ] || [ "$CURRENT" = "$VERSION" ]; then
+		fail "refusing to install $VERSION over $CURRENT: only a newer release"
+	fi
+fi
+
+command -v cosign >/dev/null 2>&1 || fail "cosign is not installed; install it from its own release, then ask again"
+
+PKG="zanskar_${VERSION}_linux_${ARCH}.${KIND}"
+BASE="https://github.com/$REPO/releases/download/v$VERSION"
+TMP=$(mktemp -d)
+status running "downloading $VERSION"
+for f in SHA256SUMS SHA256SUMS.sigstore.json "$PKG"; do
+	curl -fsSL --retry 3 -o "$TMP/$f" "$BASE/$f" || fail "could not download $f for $VERSION"
+done
+
+status running "verifying the release signature"
+cosign verify-blob --bundle "$TMP/SHA256SUMS.sigstore.json" \
+	--certificate-identity-regexp "${IDENTITY}${VERSION}\$" \
+	--certificate-oidc-issuer "$ISSUER" "$TMP/SHA256SUMS" >/dev/null 2>&1 ||
+	fail "the release signature did not verify; nothing was installed"
+(cd "$TMP" && grep " $PKG\$" SHA256SUMS | sha256sum -c --status) ||
+	fail "the package does not match the signed checksums; nothing was installed"
+# The SLSA provenance covers the same sums; checked when the verifier is here.
+if command -v slsa-verifier >/dev/null 2>&1; then
+	curl -fsSL --retry 3 -o "$TMP/zanskar.intoto.jsonl" "$BASE/zanskar.intoto.jsonl" || fail "could not download the provenance"
+	slsa-verifier verify-artifact "$TMP/SHA256SUMS" --provenance-path "$TMP/zanskar.intoto.jsonl" \
+		--source-uri "github.com/$REPO" --source-tag "v$VERSION" >/dev/null 2>&1 ||
+		fail "the provenance did not verify; nothing was installed"
+fi
+
+status running "installing $PKG"
+if [ "$KIND" = deb ]; then
+	dpkg -i "$TMP/$PKG" >/dev/null 2>&1 || fail "the package did not install (dpkg)"
+else
+	rpm -U "$TMP/$PKG" >/dev/null 2>&1 || fail "the package did not install (rpm)"
+fi
+systemctl daemon-reload >/dev/null 2>&1 || true
+systemctl restart zanskar >/dev/null 2>&1 || fail "installed $VERSION, but the service did not restart"
+status done "installed $VERSION; the gateway restarted"

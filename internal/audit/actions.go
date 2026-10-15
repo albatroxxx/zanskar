@@ -112,6 +112,7 @@ const (
 	SystemRestartCancel = "system.restart_cancel"
 	SystemReboot        = "system.reboot"
 	SystemPowerOff      = "system.poweroff"
+	SystemUpdate        = "system.update"
 
 	// Targets, their host keys and their certificates.
 	TargetCreate           = "target.create"

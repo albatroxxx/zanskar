@@ -11,6 +11,8 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"sync"
 	"testing"
 	"time"
@@ -20,10 +22,12 @@ import (
 	"github.com/albatroxxx/zanskar/internal/gateway"
 	"github.com/albatroxxx/zanskar/internal/store/storetest"
 	"github.com/albatroxxx/zanskar/internal/user"
+	"github.com/albatroxxx/zanskar/internal/version"
 )
 
 type hostEnv struct {
 	t        *testing.T
+	h        *Handler
 	srv      http.Handler
 	sessions *auth.Sessions
 	auditLog *audit.Log
@@ -60,6 +64,7 @@ func newHostEnvUnder(t *testing.T, supervisor string) *hostEnv {
 			return e.fail
 		},
 	}
+	e.h = h
 	mux := http.NewServeMux()
 	h.Register(mux)
 	mw := &auth.Middleware{Sessions: e.sessions, Users: users, Log: log}
@@ -214,5 +219,59 @@ func TestHostActionUnsupported(t *testing.T) {
 	}
 	if len(e.runsSeen()) != 0 || len(e.events(audit.SystemReboot)) != 0 {
 		t.Fatal("a refused action ran or was audited")
+	}
+}
+
+// TestInstallUpdate: the install is guarded like a reboot, refuses a version
+// that is not newer, and — after the drain — writes the request file the
+// package's path unit watches, atomically, naming the version and who asked.
+func TestInstallUpdate(t *testing.T) {
+	// A development build is never behind a release; the test runs as 1.0.0.
+	was := version.Version
+	version.Version = "1.0.0"
+	t.Cleanup(func() { version.Version = was })
+	e := newHostEnv(t)
+	dir := t.TempDir()
+	e.h.StateDir = dir
+	if err := e.sessions.MarkMFAProved(context.Background(), e.sessID); err != nil {
+		t.Fatal(err)
+	}
+	if code, out := e.do("POST", "/api/v1/admin/system/update/install", map[string]any{"version": "0.0.1", "confirm": "gw-test"}); code != 400 || out["code"] != "not_newer" {
+		t.Fatalf("not newer: %d %v", code, out)
+	}
+	if code, out := e.do("POST", "/api/v1/admin/system/update/install", map[string]any{"version": "9.9.9", "confirm": "other"}); code != 400 || out["code"] != "confirm_mismatch" {
+		t.Fatalf("wrong hostname: %d %v", code, out)
+	}
+	code, out := e.do("POST", "/api/v1/admin/system/update/install", map[string]any{"version": "v9.9.9", "confirm": "gw-test", "wait_minutes": 0})
+	if code != 202 || out["draining"] != true {
+		t.Fatalf("install: %d %v", code, out)
+	}
+	if evs := e.events(audit.SystemUpdate); len(evs) != 1 || evs[0].Outcome != audit.Success {
+		t.Fatalf("install audit: %+v", evs)
+	}
+	path := filepath.Join(dir, UpdateRequestFile)
+	e.waitFor(func() bool { _, err := os.Stat(path); return err == nil })
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var req updateRequest
+	if err := json.Unmarshal(b, &req); err != nil || req.Version != "9.9.9" || req.RequestedBy == "" {
+		t.Fatalf("request file: %s (%v)", b, err)
+	}
+	if _, err := os.Stat(path + ".tmp"); err == nil {
+		t.Fatal("temp file left behind")
+	}
+	if len(e.runsSeen()) != 0 {
+		t.Fatalf("an install ran a command: %v", e.runsSeen())
+	}
+
+	// Without a state directory the console cannot ask at all.
+	e2 := newHostEnv(t)
+	if err := e2.sessions.MarkMFAProved(context.Background(), e2.sessID); err != nil {
+		t.Fatal(err)
+	}
+	if code, out := e2.do("POST", "/api/v1/admin/system/update/install", map[string]any{"version": "9.9.9", "confirm": "gw-test"}); code != 409 {
+		t.Fatalf("no state dir: %d %v", code, out)
 	}
 }

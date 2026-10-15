@@ -570,6 +570,10 @@ export interface UpdateStatus {
   checked_at?: string
   error?: string
   enabled: boolean
+  /** The console may ask for the install: a systemd host with a state directory. */
+  installable: boolean
+  /** The installer's last report, when there is one. */
+  install?: { state: 'running' | 'done' | 'failed'; version: string; message: string; at: string }
 }
 
 /** GET /admin/system/metrics. Mirrors internal/lifecycle.Metrics. */

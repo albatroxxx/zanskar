@@ -60,7 +60,8 @@ async function shot(name, url, after, height = 720) {
 }
 
 await as(adminCookie)
-await shot('hosts', '/admin')
+await shot('dashboard', '/admin')
+await shot('hosts', '/admin/hosts')
 await shot('databases', '/admin/databases')
 await shot('policies', '/admin/policies')
 await shot('approvals', '/admin/approvals')
@@ -83,6 +84,9 @@ await shot('console-cli', '/admin/policies', `(async () => {
     await wait(700)
   }
 })()`, 800)
+// The corner strip (ADR 0032): the gear's actions, and the bell's panel.
+await shot('gateway-gear', '/admin', `document.querySelector('button[aria-label="Gateway actions"]').click()`)
+await shot('updates-bell', '/admin', `document.querySelector('button[aria-label^="Zanskar"], button[aria-label="Updates"]').click()`)
 await as(aliceCookie)
 await shot('user-targets', '/')
 ws.close()

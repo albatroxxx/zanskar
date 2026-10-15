@@ -80,6 +80,10 @@ nfpms:
     formats:
       - deb
       - rpm
+    # The installer the console can start verifies releases with cosign,
+    # which no distribution ships; it refuses to run without it.
+    recommends:
+      - cosign
     bindir: /usr/bin
     section: admin
     priority: optional
@@ -95,6 +99,16 @@ nfpms:
         dst: /etc/polkit-1/rules.d/50-zanskar.rules
       - src: deploy/packaging/polkit/50-zanskar.pkla
         dst: /etc/polkit-1/localauthority/50-local.d/50-zanskar.pkla
+      # Updating from the console (ADR 0032): a path unit watches the request
+      # file the gateway writes; the installer verifies the release itself.
+      - src: deploy/packaging/zanskar-update.path
+        dst: /usr/lib/systemd/system/zanskar-update.path
+      - src: deploy/packaging/zanskar-update.service
+        dst: /usr/lib/systemd/system/zanskar-update.service
+      - src: deploy/packaging/scripts/zanskar-update
+        dst: /usr/libexec/zanskar/zanskar-update
+        file_info:
+          mode: 0755
       - src: LICENSE
         dst: /usr/share/doc/zanskar/LICENSE
       - src: THIRD_PARTY_NOTICES.md

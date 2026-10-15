@@ -76,6 +76,7 @@ const actionLabels: Record<string, string> = {
   'system.restart_cancel': 'Gateway restart cancelled',
   'system.reboot': 'Host reboot requested',
   'system.poweroff': 'Host power-off requested',
+  'system.update': 'Gateway update requested',
   'target.create': 'Target created',
   'target.update': 'Target updated',
   'target.delete': 'Target deleted',

@@ -58,6 +58,17 @@ ships, never a privilege the gateway holds.**
   hidden and the endpoints answer 409 `unsupported_supervisor`; the bell still reports a
   new version with the upgrade instructions for that deployment.
 
+## Amendment (2026-10-15, at build time)
+
+Two refinements from building it. The gateway does not ask systemd to start the update
+unit at all: it writes the request file after the drain, and a **path unit**
+(`zanskar-update.path`) the package ships starts `zanskar-update.service` when the file
+appears. The gateway therefore needs no polkit grant for `manage-units` — a rule that, on
+the older polkit still in Ubuntu 22.04, could not have been limited to one unit — and the
+installer removes the file first, so a failure never loops. And `cosign` is a package
+*recommendation* rather than a hard dependency, so the package still installs where it is
+missing; the installer refuses to run without it and says so on the bell.
+
 ## Consequences
 
 - A stolen administrator session with a current TOTP can reboot or stop the gateway and
