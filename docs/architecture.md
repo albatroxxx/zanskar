@@ -37,6 +37,7 @@ The gateway is one process. Its packages under `internal/` are split by domain:
 | Inventory | `target`, `asg`, `cloud`, `credential`, `sshca` | Hosts, databases, autoscaling groups, vaulted credentials, the SSH certificate authority |
 | Decision | `policy`, `access`, `ticket` | Who may reach what over which protocol, just-in-time grants, one-time connect tickets |
 | Sessions | `connect`, `gateway/*`, `session`, `recording`, `recstorage` | Protocol bridges (SSH, WinRM, Guacamole, database relays), live session control, recording and storage |
+| Applications | `apps` | The identity-aware proxy (ADR 0033): application hosts under the apps domain, the hand-off from the console, per-request session checks, the reverse proxy to the upstream |
 | Evidence | `audit`, `logring` | Hash-chained audit log, SIEM export, the in-memory log ring |
 | Secrets and keys | `keyring`, `crypto`, `tlscert` | Envelope encryption under the master key (ADR 0007), key rotation, the managed TLS certificate (ADR 0021) |
 | Platform | `store`, `config`, `settings`, `lifecycle`, `version` | Database access and migrations, install-time and runtime settings (ADR 0020), restart and drain |

@@ -559,6 +559,51 @@ password.
   such in the console. Targets created before 1.2.1 keep the `prefer` they had.
 - Not available inside the Compose stack; use the package install for database targets.
 
+## Applications
+
+Web applications are reached through the gateway's own reverse proxy (ADR 0033): each is a
+target with an upstream origin, served at `https://<label>.<apps domain>` and granted by
+policies under the protocol `http`. The listener answers both the console and the
+application hosts; it tells them apart by the `Host` header and, with managed or file TLS, by
+the name in the handshake.
+
+- **An apps domain of its own.** `apps.example.com` beside a console at
+  `gateway.example.com`: not the console's host and not a parent of it, or the console's own
+  requests would reach the proxy (the setting is refused). Point wildcard DNS for
+  `*.apps.example.com` at the gateway, or at the proxy in front of it.
+- **A wildcard certificate.** With `ZANSKAR_TLS_MODE=managed` or `file`, upload a certificate
+  naming `*.apps.example.com` on the Settings page (TLS certificate, Applications; or `PUT
+  /api/v1/admin/tls/apps`). The gateway serves it to every handshake for a host under the
+  domain and never generates a self-signed one for it. In `proxy` mode the proxy terminates
+  TLS for the application hosts with its own wildcard certificate and must route them to the
+  gateway with the `Host` header intact.
+- **`ZANSKAR_PUBLIC_URL`**, the console's address, so an application host can send a browser
+  back to sign in; applications share its scheme and port.
+- **The setting.** `ZANSKAR_APPS_DOMAIN` in the environment file, or *Apps domain* on the
+  Settings page, which applies live. Until the domain, the public URL and (where the gateway
+  serves TLS) the certificate are in place, enrolling an application is refused with the
+  reason.
+- **What the proxy does per request.** Checks the application's cookie against the sign-in
+  it came from, the access session's end and the policy's idle and maximum limits; strips
+  every Zanskar cookie and any identity header (`X-Forwarded-User`, `X-Remote-User`, ...);
+  sets `X-Forwarded-For`, `X-Forwarded-Host` and `X-Forwarded-Proto`; keeps
+  `Authorization`; forwards the request to the upstream with the upstream's own host name;
+  rewrites a redirect to the upstream's origin onto the public address; drops `Domain` from
+  the application's cookies and any cookie that takes the gateway's names. WebSockets pass
+  through. Paths under `/_zanskar/` are the gateway's own and are not forwarded.
+- **Upstream TLS** is verified against the system roots or the bundle pasted on the target,
+  never switched off, and every dial resolves the upstream's name through the same address
+  rules as any target: no loopback, link-local, cloud metadata service or the gateway's own
+  listener.
+- **Sessions** are access sessions with protocol `http`: on the Sessions pages, terminable
+  there, ended by a policy change, a sign-out, the sweeper (idle or maximum, once a minute)
+  or a drain, and resumed across a restart. The audit chain records `session.connect` (the
+  decision), `app.session.start` and `app.session.end`; each proxied request is one line in
+  the gateway's log with method, path, status, size and time, never the query string or a
+  body.
+- **Not in this version:** a signed identity header for upstreams that want to trust
+  Zanskar's authentication, a read-only mode, CLI tokens, and the isolated browser.
+
 ## Autoscaling groups on AWS
 
 Zanskar reads an autoscaling group through a role in your AWS account that only this gateway

@@ -63,6 +63,7 @@ await as(adminCookie)
 await shot('dashboard', '/admin')
 await shot('hosts', '/admin/hosts')
 await shot('databases', '/admin/databases')
+await shot('applications', '/admin/applications')
 await shot('policies', '/admin/policies')
 await shot('approvals', '/admin/approvals')
 // The certificate authority's Setup panel, opened from its row.
@@ -89,4 +90,6 @@ await shot('gateway-gear', '/admin', `document.querySelector('button[aria-label=
 await shot('updates-bell', '/admin', `document.querySelector('button[aria-label^="Zanskar"], button[aria-label="Updates"]').click()`)
 await as(aliceCookie)
 await shot('user-targets', '/')
+// The Applications tab (ADR 0033): each opens in its own tab at its own address.
+await shot('user-applications', '/', `[...document.querySelectorAll('[role="tab"]')].find((t) => t.textContent.startsWith('Applications'))?.click()`)
 ws.close()

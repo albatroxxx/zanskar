@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 
 	"github.com/albatroxxx/zanskar/internal/audit"
@@ -69,8 +68,10 @@ func (h *Handler) installUpdate(w http.ResponseWriter, r *http.Request) {
 		httpx.BadRequest(w, r, err.Error())
 		return
 	}
-	in.Version = strings.TrimPrefix(strings.TrimSpace(in.Version), "v")
-	if !update.IsVersion(in.Version) {
+	// What is logged, audited and written for the installer is the version
+	// as the parser rebuilt it, never the request's own text.
+	in.Version = update.Canonical(in.Version)
+	if in.Version == "" {
 		httpx.BadRequest(w, r, "version must look like 1.2.3")
 		return
 	}
