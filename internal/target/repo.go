@@ -24,7 +24,8 @@ func NewRepo(db *store.DB) *Repo { return &Repo{db: db} }
 
 const cols = `id, name, address, os_family, ports, capabilities, host_key_fingerprint, host_key_status,
 	tls_fingerprint, tags, status, notes, created_by, created_at, updated_at, last_probed_at, winrm_tls_fingerprint,
-	engine, engine_version, retention_days, database_name, tls_mode, tls_ca, tls_fingerprint_pending, winrm_tls_fingerprint_pending`
+	engine, engine_version, retention_days, database_name, tls_mode, tls_ca, tls_fingerprint_pending, winrm_tls_fingerprint_pending,
+	app_upstream, app_label`
 
 // Create validates and inserts t, including its credential mapping.
 func (r *Repo) Create(ctx context.Context, t *Target) error {
@@ -43,11 +44,15 @@ func (r *Repo) Create(ctx context.Context, t *Target) error {
 		return err
 	}
 	defer tx.Rollback() //nolint:errcheck
+	if err := labelFree(ctx, tx, r.db, t); err != nil {
+		return err
+	}
 	_, err = tx.ExecContext(ctx, r.db.Rebind(`INSERT INTO targets
-		(id, name, address, os_family, ports, capabilities, host_key_status, tags, status, notes, created_by, created_at, updated_at, engine, engine_version, retention_days, database_name, tls_mode, tls_ca)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`),
+		(id, name, address, os_family, ports, capabilities, host_key_status, tags, status, notes, created_by, created_at, updated_at, engine, engine_version, retention_days, database_name, tls_mode, tls_ca, app_upstream, app_label)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`),
 		t.ID, t.Name, t.Address, string(t.OSFamily), ports, capsJSON, string(HostKeyUnknown), tags, t.Status, t.Notes,
-		nullStr(t.CreatedBy), store.TimeArg(now), store.TimeArg(now), t.Engine, t.EngineVersion, nullInt(t.RetentionDays), t.DatabaseName, t.TLSMode, t.TLSCA)
+		nullStr(t.CreatedBy), store.TimeArg(now), store.TimeArg(now), t.Engine, t.EngineVersion, nullInt(t.RetentionDays), t.DatabaseName, t.TLSMode, t.TLSCA,
+		emptyNull(t.AppUpstream), emptyNull(t.AppLabel))
 	if err != nil {
 		return mapErr(err)
 	}
@@ -67,6 +72,30 @@ func (r *Repo) GetByName(ctx context.Context, name string) (*Target, error) {
 	return r.getWhere(ctx, "name = ?", name)
 }
 
+// GetByLabel returns the application served under label (ADR 0033).
+func (r *Repo) GetByLabel(ctx context.Context, label string) (*Target, error) {
+	return r.getWhere(ctx, "app_label = ?", label)
+}
+
+// labelFree refuses an application whose label another live application
+// holds (ErrDuplicateLabel), before the partial unique index would, so the
+// administrator is told which field clashes. It reads through tx, on the one
+// connection SQLite has, and scans before anything else runs on it.
+func labelFree(ctx context.Context, tx *sql.Tx, db *store.DB, t *Target) error {
+	if t.AppLabel == "" {
+		return nil
+	}
+	var one int
+	err := tx.QueryRowContext(ctx, db.Rebind(`SELECT 1 FROM targets WHERE deleted_at IS NULL AND app_label = ? AND id <> ? LIMIT 1`), t.AppLabel, t.ID).Scan(&one)
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+		return nil
+	case err != nil:
+		return err
+	}
+	return ErrDuplicateLabel
+}
+
 // Retired targets (ADR 0019) are invisible to every lookup and listing; only
 // the history queries in package session read past deleted_at.
 func (r *Repo) getWhere(ctx context.Context, where string, arg any) (*Target, error) {
@@ -84,10 +113,25 @@ func (r *Repo) getWhere(ctx context.Context, where string, arg any) (*Target, er
 // ListFilter narrows List. Zero values match everything.
 type ListFilter struct {
 	Tags     map[string]string
-	Kind     string // "host" | "database"
+	Kind     string // "host" | "database" | "application"
 	Status   string // "active" | "disabled"
 	OSFamily string
 	Query    string // case-insensitive substring of name or address
+}
+
+// Kinds of target, as ListFilter.Kind and the admin API's kind= name them.
+const (
+	KindHost        = "host"
+	KindDatabase    = "database"
+	KindApplication = "application"
+)
+
+// kindClauses narrow a targets query to one kind. A host is what is neither
+// a database nor an application.
+var kindClauses = map[string]string{
+	KindHost:        ` AND COALESCE(engine, '') = '' AND COALESCE(app_upstream, '') = ''`,
+	KindDatabase:    ` AND COALESCE(engine, '') <> ''`,
+	KindApplication: ` AND COALESCE(app_upstream, '') <> ''`,
 }
 
 // AttentionCounts are the target numbers the admin dashboard shows (ADR
@@ -117,21 +161,23 @@ func (r *Repo) CountAttention(ctx context.Context) (AttentionCounts, error) {
 }
 
 // Inventory is the fleet the admin dashboard shows (ADR 0029): how many
-// hosts by OS family and how many databases by engine, active and undeleted.
+// hosts by OS family, how many databases by engine and how many applications
+// (ADR 0033), active and undeleted.
 type Inventory struct {
-	Hosts     int            `json:"hosts"`
-	HostsByOS map[string]int `json:"hosts_by_os"`
-	Databases int            `json:"databases"`
-	ByEngine  map[string]int `json:"databases_by_engine"`
+	Hosts        int            `json:"hosts"`
+	HostsByOS    map[string]int `json:"hosts_by_os"`
+	Databases    int            `json:"databases"`
+	ByEngine     map[string]int `json:"databases_by_engine"`
+	Applications int            `json:"applications"`
 }
 
-// CountInventory returns the Inventory in two grouped counts, one after the
-// other (single-connection SQLite).
+// CountInventory returns the Inventory in three counts, one after the other
+// (single-connection SQLite).
 func (r *Repo) CountInventory(ctx context.Context) (Inventory, error) {
 	inv := Inventory{HostsByOS: map[string]int{}, ByEngine: map[string]int{}}
-	count := func(column, where string, into map[string]int) (int, error) {
+	count := func(column, kind string, into map[string]int) (int, error) {
 		rows, err := r.db.QueryContext(ctx, `SELECT `+column+`, COUNT(*) FROM targets
-			WHERE deleted_at IS NULL AND status = 'active' AND `+where+` GROUP BY `+column)
+			WHERE deleted_at IS NULL AND status = 'active'`+kindClauses[kind]+` GROUP BY `+column)
 		if err != nil {
 			return 0, err
 		}
@@ -149,10 +195,14 @@ func (r *Repo) CountInventory(ctx context.Context) (Inventory, error) {
 		return total, rows.Err()
 	}
 	var err error
-	if inv.Hosts, err = count("os_family", `COALESCE(engine, '') = ''`, inv.HostsByOS); err != nil {
+	if inv.Hosts, err = count("os_family", KindHost, inv.HostsByOS); err != nil {
 		return Inventory{}, err
 	}
-	if inv.Databases, err = count("engine", `COALESCE(engine, '') <> ''`, inv.ByEngine); err != nil {
+	if inv.Databases, err = count("engine", KindDatabase, inv.ByEngine); err != nil {
+		return Inventory{}, err
+	}
+	err = r.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM targets WHERE deleted_at IS NULL AND status = 'active'`+kindClauses[KindApplication]).Scan(&inv.Applications)
+	if err != nil {
 		return Inventory{}, err
 	}
 	return inv, nil
@@ -163,14 +213,8 @@ func (r *Repo) List(ctx context.Context, afterName string, limit int, f ListFilt
 	if limit <= 0 || limit > 500 {
 		limit = 50
 	}
-	q := `SELECT ` + cols + ` FROM targets WHERE deleted_at IS NULL AND name > ?`
+	q := `SELECT ` + cols + ` FROM targets WHERE deleted_at IS NULL AND name > ?` + kindClauses[f.Kind]
 	args := []any{afterName}
-	switch f.Kind {
-	case "host":
-		q += ` AND COALESCE(engine, '') = ''`
-	case "database":
-		q += ` AND COALESCE(engine, '') <> ''`
-	}
 	if f.Status != "" {
 		q += ` AND status = ?`
 		args = append(args, f.Status)
@@ -250,10 +294,15 @@ func (r *Repo) Update(ctx context.Context, t *Target) error {
 		t.HostKeyFingerprint, t.HostKeyStatus, t.TLSFingerprint, t.WinRMTLSFingerprint, t.LastProbedAt = nil, HostKeyUnknown, nil, nil, nil
 		t.TLSFingerprintPending, t.WinRMTLSFingerprintPending = nil, nil
 	}
+	if err := labelFree(ctx, tx, r.db, t); err != nil {
+		return err
+	}
 	res, err := tx.ExecContext(ctx, r.db.Rebind(`UPDATE targets SET name = ?, address = ?, os_family = ?, ports = ?, capabilities = ?,
-		tags = ?, status = ?, notes = ?, engine = ?, engine_version = ?, retention_days = ?, database_name = ?, tls_mode = ?, tls_ca = ?, updated_at = ? WHERE id = ? AND deleted_at IS NULL`),
+		tags = ?, status = ?, notes = ?, engine = ?, engine_version = ?, retention_days = ?, database_name = ?, tls_mode = ?, tls_ca = ?,
+		app_upstream = ?, app_label = ?, updated_at = ? WHERE id = ? AND deleted_at IS NULL`),
 		t.Name, t.Address, string(t.OSFamily), mustJSON(t.Ports), mustJSON(t.Capabilities), mustJSON(t.Tags), t.Status, t.Notes,
-		t.Engine, t.EngineVersion, nullInt(t.RetentionDays), t.DatabaseName, t.TLSMode, t.TLSCA, store.TimeArg(now), t.ID)
+		t.Engine, t.EngineVersion, nullInt(t.RetentionDays), t.DatabaseName, t.TLSMode, t.TLSCA,
+		emptyNull(t.AppUpstream), emptyNull(t.AppLabel), store.TimeArg(now), t.ID)
 	if err != nil {
 		return mapErr(err)
 	}
@@ -584,10 +633,12 @@ func scanTarget(s store.Scanner) (*Target, error) {
 		engine, engineVer       sql.NullString
 		retention               sql.NullInt64
 		dbName, tlsMode, tlsCA  sql.NullString
+		appUpstream, appLabel   sql.NullString
 		created, updated, probe store.NullTime
 	)
 	err := s.Scan(&t.ID, &t.Name, &t.Address, &osFamily, &ports, &capsRaw, &hk, &hkStatus, &tlsFP, &tagsRaw,
-		&t.Status, &t.Notes, &createdBy, &created, &updated, &probe, &winrmFP, &engine, &engineVer, &retention, &dbName, &tlsMode, &tlsCA, &tlsPend, &winrmPend)
+		&t.Status, &t.Notes, &createdBy, &created, &updated, &probe, &winrmFP, &engine, &engineVer, &retention, &dbName, &tlsMode, &tlsCA, &tlsPend, &winrmPend,
+		&appUpstream, &appLabel)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound
@@ -596,6 +647,7 @@ func scanTarget(s store.Scanner) (*Target, error) {
 	}
 	t.OSFamily, t.HostKeyStatus = OSFamily(osFamily), HostKeyStatus(hkStatus)
 	t.Engine, t.EngineVersion = engine.String, engineVer.String
+	t.AppUpstream, t.AppLabel = appUpstream.String, appLabel.String
 	if retention.Valid {
 		v := int(retention.Int64)
 		t.RetentionDays = &v
@@ -647,6 +699,15 @@ func nullStr(s *string) any {
 		return nil
 	}
 	return *s
+}
+
+// emptyNull stores "" as NULL: the application columns are absent on every
+// other kind of target, and the label's unique index skips NULL.
+func emptyNull(s string) any {
+	if s == "" {
+		return nil
+	}
+	return s
 }
 
 func mapErr(err error) error {

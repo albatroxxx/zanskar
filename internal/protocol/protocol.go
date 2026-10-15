@@ -16,6 +16,7 @@ const (
 	VNC      = "vnc"
 	WinRM    = "winrm"
 	Database = "database" // managed/PaaS database access (ADR 0017)
+	HTTP     = "http"     // a web application reached through the gateway's proxy (ADR 0033)
 )
 
 // Terminal reports whether p is a text shell, whose output a tap can fan

@@ -11,8 +11,10 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/url"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -29,6 +31,7 @@ const (
 	VNC      Protocol = protocol.VNC
 	WinRM    Protocol = protocol.WinRM
 	Database Protocol = protocol.Database
+	HTTP     Protocol = protocol.HTTP
 )
 
 // Protocols lists the host protocols probed in a stable order. Database is not
@@ -47,9 +50,11 @@ var DefaultPorts = map[Protocol]int{SSH: 22, RDP: 3389, VNC: 5900, WinRM: 5986}
 // target's port defaults from its engine (ADR 0017).
 var EngineDefaultPorts = map[string]int{protocol.Postgres: 5432, protocol.MySQL: 3306, protocol.MariaDB: 3306}
 
-// ValidProtocol reports whether p is known.
+// ValidProtocol reports whether p is known. Database and HTTP are not probed
+// and carry no port of their own: a database's port comes from its engine,
+// an application's from its upstream.
 func ValidProtocol(p Protocol) bool {
-	if p == Database {
+	if p == Database || p == HTTP {
 		return true
 	}
 	_, ok := DefaultPorts[p]
@@ -144,9 +149,17 @@ type Target struct {
 	// MySQL and MariaDB: none selected).
 	DatabaseName string `json:"database_name,omitempty"`
 	// TLSMode says how the sidecar protects its connection to the
-	// database; TLSCA is an optional PEM bundle for verify-full.
-	TLSMode             string           `json:"tls_mode,omitempty"`
-	TLSCA               string           `json:"tls_ca,omitempty"`
+	// database; TLSCA is an optional PEM bundle for verify-full. An
+	// application reuses TLSCA for its https upstream (ADR 0033).
+	TLSMode string `json:"tls_mode,omitempty"`
+	TLSCA   string `json:"tls_ca,omitempty"`
+	// AppUpstream makes the target an application (ADR 0033): the one origin,
+	// scheme://host[:port], the gateway's proxy forwards to, and nothing else
+	// is ever proxied. AppLabel is the subdomain it is served at under the
+	// apps domain, derived from the name when not given. Address holds the
+	// upstream's host, so the address rules apply to it as to any target.
+	AppUpstream         string           `json:"app_upstream,omitempty"`
+	AppLabel            string           `json:"app_label,omitempty"`
 	OSFamily            OSFamily         `json:"os_family"`
 	Ports               map[Protocol]int `json:"ports"`
 	Capabilities        []Protocol       `json:"capabilities"`
@@ -196,6 +209,7 @@ func (t *Target) EffectivePorts() map[Protocol]int {
 var (
 	ErrNotFound             = errors.New("target: not found")
 	ErrDuplicate            = errors.New("target: name already exists")
+	ErrDuplicateLabel       = errors.New("target: an application already uses that label")
 	ErrInvalid              = errors.New("target: invalid")
 	ErrInvalidCredential    = errors.New("target: credential does not exist")
 	ErrFingerprintMismatch  = errors.New("target: fingerprint does not match the key or certificate awaiting trust")
@@ -217,12 +231,101 @@ func ValidAddress(s string) bool {
 	return hostnameRe.MatchString(s)
 }
 
+// labelRe is a DNS label as an application is served under the apps domain:
+// lowercase letters, digits and inner hyphens, at most 63 characters.
+var labelRe = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$`)
+
+// ValidLabel reports whether s can be an application's subdomain.
+func ValidLabel(s string) bool { return labelRe.MatchString(s) }
+
+// Slug derives an application's label from its name: lowercased, every run
+// of anything but letters and digits folded to one hyphen, cut to a label's
+// length. "Wiki (internal)" becomes "wiki-internal".
+func Slug(name string) string {
+	var b strings.Builder
+	hyphen := false
+	for _, r := range strings.ToLower(name) {
+		switch {
+		case r >= 'a' && r <= 'z', r >= '0' && r <= '9':
+			b.WriteRune(r)
+			hyphen = false
+		case !hyphen && b.Len() > 0:
+			b.WriteByte('-')
+			hyphen = true
+		}
+	}
+	s := strings.TrimRight(b.String(), "-")
+	if len(s) > 63 {
+		s = strings.TrimRight(s[:63], "-")
+	}
+	return s
+}
+
+// ParseUpstream reads an application's upstream: http or https, a host, an
+// optional port, and nothing else. No path, query, fragment or user, so the
+// origin is exactly what the administrator wrote and the proxy forwards every
+// path as the browser asked for it. The host is returned lowercased.
+func ParseUpstream(raw string) (*url.URL, error) {
+	u, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" || u.Opaque != "" {
+		return nil, fmt.Errorf("%w: app_upstream must be http://host[:port] or https://host[:port]", ErrInvalid)
+	}
+	if u.User != nil || (u.Path != "" && u.Path != "/") || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" {
+		return nil, fmt.Errorf("%w: app_upstream must be the origin only, with no path, query or user", ErrInvalid)
+	}
+	if !ValidAddress(u.Hostname()) {
+		return nil, fmt.Errorf("%w: app_upstream must name a hostname or IP", ErrInvalid)
+	}
+	if port := u.Port(); port != "" {
+		if n, err := strconv.Atoi(port); err != nil || n < 1 || n > 65535 {
+			return nil, fmt.Errorf("%w: app_upstream port must be 1-65535", ErrInvalid)
+		}
+	}
+	return &url.URL{Scheme: u.Scheme, Host: strings.ToLower(u.Host)}, nil
+}
+
 // Validate checks the editable fields and normalises them.
 func (t *Target) Validate() error {
 	t.Name = strings.TrimSpace(t.Name)
 	t.Address = strings.TrimSpace(t.Address)
 	if t.Name == "" || len(t.Name) > MaxNameLen {
 		return fmt.Errorf("%w: name must be 1-%d characters", ErrInvalid, MaxNameLen)
+	}
+	t.AppUpstream = strings.TrimSpace(t.AppUpstream)
+	if t.AppUpstream != "" {
+		// An application (ADR 0033) is reached through the proxy, never dialled
+		// by a protocol bridge: its address is its upstream's host, which the
+		// address rules check as they check any target's.
+		if t.Engine != "" {
+			return fmt.Errorf("%w: a target is a host, a database or an application, not two of these", ErrInvalid)
+		}
+		u, err := ParseUpstream(t.AppUpstream)
+		if err != nil {
+			return err
+		}
+		t.AppUpstream, t.Address = u.String(), u.Hostname()
+		t.AppLabel = strings.ToLower(strings.TrimSpace(t.AppLabel))
+		if t.AppLabel == "" {
+			t.AppLabel = Slug(t.Name)
+		}
+		if !ValidLabel(t.AppLabel) {
+			return fmt.Errorf("%w: app_label must be a DNS label of 1-63 lowercase letters, digits and hyphens", ErrInvalid)
+		}
+		if t.OSFamily == "" {
+			t.OSFamily = OtherOS
+		}
+		t.TLSCA = strings.TrimSpace(t.TLSCA)
+		if t.TLSCA != "" {
+			if u.Scheme != "https" {
+				return fmt.Errorf("%w: tls_ca applies to an https upstream", ErrInvalid)
+			}
+			if err := validCABundle(t.TLSCA); err != nil {
+				return err
+			}
+		}
+		t.DatabaseName, t.TLSMode = "", ""
+	} else {
+		t.AppLabel = ""
 	}
 	if !ValidAddress(t.Address) {
 		return fmt.Errorf("%w: address must be a hostname or IP without scheme or port", ErrInvalid)
@@ -255,11 +358,8 @@ func (t *Target) Validate() error {
 		}
 		t.TLSCA = strings.TrimSpace(t.TLSCA)
 		if t.TLSCA != "" {
-			if len(t.TLSCA) > 64<<10 {
-				return fmt.Errorf("%w: tls_ca is too large", ErrInvalid)
-			}
-			if !x509.NewCertPool().AppendCertsFromPEM([]byte(t.TLSCA)) {
-				return fmt.Errorf("%w: tls_ca must hold at least one PEM certificate", ErrInvalid)
+			if err := validCABundle(t.TLSCA); err != nil {
+				return err
 			}
 		}
 		// Both sidecars verify against the bundle and nothing else (pgbouncer
@@ -268,7 +368,7 @@ func (t *Target) Validate() error {
 		if t.TLSMode == TLSVerifyFull && t.TLSCA == "" {
 			return fmt.Errorf("%w: tls_mode verify-full (the default) needs tls_ca, the CA bundle that signs the database's certificate; for Amazon RDS, your region's bundle from https://truststore.pki.rds.amazonaws.com/<region>/<region>-bundle.pem. To connect without verifying, set tls_mode to require or prefer", ErrInvalid)
 		}
-	} else {
+	} else if t.AppUpstream == "" {
 		t.DatabaseName, t.TLSMode, t.TLSCA = "", "", ""
 	}
 	if t.RetentionDays != nil && (*t.RetentionDays <= 0 || *t.RetentionDays > 3650) {
@@ -339,8 +439,23 @@ func (t *Target) Validate() error {
 	return nil
 }
 
+// validCABundle checks a PEM bundle a target's upstream is verified against.
+func validCABundle(pem string) error {
+	if len(pem) > 64<<10 {
+		return fmt.Errorf("%w: tls_ca is too large", ErrInvalid)
+	}
+	if !x509.NewCertPool().AppendCertsFromPEM([]byte(pem)) {
+		return fmt.Errorf("%w: tls_ca must hold at least one PEM certificate", ErrInvalid)
+	}
+	return nil
+}
+
 // IsDatabase reports whether the target is a managed database endpoint (ADR 0017).
 func (t *Target) IsDatabase() bool { return t.Engine != "" }
+
+// IsApplication reports whether the target is a web application reached
+// through the proxy (ADR 0033).
+func (t *Target) IsApplication() bool { return t.AppUpstream != "" }
 
 // MatchesTags reports whether every key in want is present with the same value.
 func (t *Target) MatchesTags(want map[string]string) bool {
