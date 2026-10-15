@@ -39,8 +39,8 @@ func (h *Handler) enter(w http.ResponseWriter, r *http.Request, label string) {
 	}
 	q := r.URL.Query()
 	state := q.Get("state")
-	sc, err := r.Cookie(h.stateCookieName())
-	h.clearCookie(w, h.stateCookieName())
+	sc, err := r.Cookie(stateCookieName)
+	clearCookie(w, stateCookieName)
 	if err != nil || !validState(state) || subtle.ConstantTimeCompare([]byte(sc.Value), []byte(state)) != 1 {
 		h.refused(w, r, label, "state")
 		return
@@ -78,7 +78,7 @@ func (h *Handler) enter(w http.ResponseWriter, r *http.Request, label string) {
 			refuse("address_forbidden", http.StatusBadGateway, "Application unavailable", "The gateway does not connect to this application's address; an administrator must correct it.")
 			return
 		}
-		h.log().Warn("application address lookup failed", "app", label, "err", err)
+		h.log().Warn("application address lookup failed", "app", logSafe(label), "err", err)
 		h.page(w, http.StatusBadGateway, "Application unavailable", "The application's address could not be looked up. Try again in a moment.", true)
 		return
 	}
@@ -106,30 +106,29 @@ func (h *Handler) enter(w http.ResponseWriter, r *http.Request, label string) {
 	}
 	h.record(r, actor.Event(audit.AppSessionStart, "access_session", s.ID, audit.Success, map[string]any{"target_id": t.ID, "protocol": protocol.HTTP, "policy_id": d.Policy.ID, "label": label}))
 	h.track(s.ID, g.UserID, t.ID, d.Policy.ID, auth.ClientIP(r))
-	h.setCookie(w, h.cookieName(), tok, cookieTTL)
+	setCookie(w, cookieName, tok, cookieTTL)
 	w.Header().Set("Cache-Control", "no-store")
-	// #nosec G710 -- safePath admits only a path on this host: one leading
-	// slash, no scheme, host or user, no control characters; anything else
-	// becomes "/".
-	http.Redirect(w, r, safePath(q.Get("next")), http.StatusSeeOther)
+	// Where to land came with the code, decided by the console (safePath):
+	// a path on this host, never anything this request said.
+	http.Redirect(w, r, g.Next, http.StatusSeeOther)
 }
 
 // refused answers a hand-off that does not check out. The log says which
 // check failed; the person is only told to start again.
 func (h *Handler) refused(w http.ResponseWriter, r *http.Request, label, what string) {
-	h.log().Info("application hand-off refused", "request_id", requestID(r), "app", label, "check", what, "remote", auth.ClientIP(r))
+	h.log().Info("application hand-off refused", "request_id", requestID(r), "app", logSafe(label), "check", what, "remote", auth.ClientIP(r))
 	h.page(w, http.StatusForbidden, "Link expired", "The link to this application has expired or was not meant for this browser. Open it again from Zanskar.", true)
 }
 
 // signout ends the browser's session on this application and clears its
 // cookie. The console's own sign-in is untouched.
 func (h *Handler) signout(w http.ResponseWriter, r *http.Request, label string) {
-	if c, err := r.Cookie(h.cookieName()); err == nil && c.Value != "" {
+	if c, err := r.Cookie(cookieName); err == nil && c.Value != "" {
 		if row, err := h.Repo.Lookup(r.Context(), hashToken(c.Value)); err == nil && row.EndedAt == nil && row.Target.Label == label {
 			h.end(row, session.EndUserExit)
 		}
 	}
-	h.clearCookie(w, h.cookieName())
+	clearCookie(w, cookieName)
 	h.page(w, http.StatusOK, "Signed out", "You left this application. Open it again from Zanskar when you need it.", true)
 }
 

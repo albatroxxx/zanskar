@@ -5,7 +5,6 @@ package apps
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
@@ -169,18 +168,16 @@ func (f *fixture) app(method, rawURL string, hdr http.Header, cookies ...*http.C
 	return rr
 }
 
-// launch calls the console route as the /launch page does.
-func (f *fixture) launch(body string) (int, map[string]any) {
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/me/applications/launch", strings.NewReader(body))
+// launch navigates to the console route as the /launch page's form does,
+// and returns the status and where the browser is sent.
+func (f *fixture) launch(app, state, next string) (int, string) {
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/me/applications/launch?"+url.Values{"app": {app}, "state": {state}, "next": {next}}.Encode(), nil)
 	req.RemoteAddr = clientAddr
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-CSRF-Token", f.csrf)
+	req.Header.Set("Sec-Fetch-Mode", "navigate")
 	req.AddCookie(f.cookie)
 	rr := httptest.NewRecorder()
 	f.console.ServeHTTP(rr, req)
-	var out map[string]any
-	_ = json.Unmarshal(rr.Body.Bytes(), &out)
-	return rr.Code, out
+	return rr.Code, rr.Header().Get("Location")
 }
 
 func cookieNamed(res *http.Response, name string) *http.Cookie {
@@ -204,27 +201,28 @@ func (f *fixture) open(next string) (*http.Cookie, string) {
 	if err != nil || loc.Host != "gw.test" || loc.Path != LaunchPath || loc.Query().Get("app") != "wiki" || loc.Query().Get("next") != next {
 		f.t.Fatalf("bounce to the console: %q", rr.Header().Get("Location"))
 	}
-	stateCookie := cookieNamed(rr.Result(), stateBase)
-	if stateCookie == nil || stateCookie.Value != loc.Query().Get("state") || !stateCookie.HttpOnly {
+	stateCookie := cookieNamed(rr.Result(), stateCookieName)
+	if stateCookie == nil || stateCookie.Value != loc.Query().Get("state") || !stateCookie.HttpOnly || !stateCookie.Secure {
 		f.t.Fatalf("state cookie: %+v", stateCookie)
 	}
-	code, out := f.launch(fmt.Sprintf(`{"app":"wiki","state":%q,"next":%q}`, stateCookie.Value, next))
-	if code != http.StatusOK {
-		f.t.Fatalf("launch: %d %v", code, out)
+	code, enter := f.launch("wiki", stateCookie.Value, next)
+	if code != http.StatusSeeOther || !strings.HasPrefix(enter, "https://wiki.apps.test"+enterPath+"?") {
+		f.t.Fatalf("launch: %d %q", code, enter)
 	}
-	enter, _ := out["url"].(string)
-	if !strings.HasPrefix(enter, "https://wiki.apps.test"+enterPath+"?") {
+	// The return path stays with the code on the gateway; the address the
+	// host redeems carries the code and the state only.
+	if eu, err := url.Parse(enter); err != nil || eu.Query().Get("next") != "" || eu.Query().Get("code") == "" || eu.Query().Get("state") != stateCookie.Value {
 		f.t.Fatalf("enter url: %q", enter)
 	}
 	rr = f.app(http.MethodGet, enter, nil, stateCookie)
 	if rr.Code != http.StatusSeeOther || rr.Header().Get("Location") != next {
 		f.t.Fatalf("enter: %d %q %s", rr.Code, rr.Header().Get("Location"), rr.Body)
 	}
-	appCookie := cookieNamed(rr.Result(), cookieBase)
-	if appCookie == nil || appCookie.Value == "" || !appCookie.HttpOnly || appCookie.SameSite != http.SameSiteLaxMode || appCookie.Domain != "" {
+	appCookie := cookieNamed(rr.Result(), cookieName)
+	if appCookie == nil || appCookie.Value == "" || !appCookie.HttpOnly || !appCookie.Secure || appCookie.SameSite != http.SameSiteLaxMode || appCookie.Domain != "" {
 		f.t.Fatalf("application cookie: %+v", appCookie)
 	}
-	if cleared := cookieNamed(rr.Result(), stateBase); cleared == nil || cleared.MaxAge >= 0 {
+	if cleared := cookieNamed(rr.Result(), stateCookieName); cleared == nil || cleared.MaxAge >= 0 {
 		f.t.Fatalf("state cookie not cleared: %+v", cleared)
 	}
 	live := f.h.Registry.List()
@@ -396,12 +394,12 @@ func TestHandoffRefusals(t *testing.T) {
 	start := func() (*http.Cookie, string) {
 		t.Helper()
 		rr := f.app(http.MethodGet, "http://wiki.apps.test/", nil)
-		sc := cookieNamed(rr.Result(), stateBase)
-		code, out := f.launch(fmt.Sprintf(`{"app":"wiki","state":%q,"next":"/"}`, sc.Value))
-		if code != http.StatusOK {
-			t.Fatalf("launch: %d %v", code, out)
+		sc := cookieNamed(rr.Result(), stateCookieName)
+		code, enter := f.launch("wiki", sc.Value, "/")
+		if code != http.StatusSeeOther || !strings.Contains(enter, enterPath) {
+			t.Fatalf("launch: %d %q", code, enter)
 		}
-		return sc, out["url"].(string)
+		return sc, enter
 	}
 	sc, enter := start()
 	// No state cookie.
@@ -409,7 +407,7 @@ func TestHandoffRefusals(t *testing.T) {
 		t.Errorf("without the state cookie: %d", rr.Code)
 	}
 	// A state cookie that is not the one in the query.
-	other := &http.Cookie{Name: stateBase, Value: strings.Repeat("x", 43)}
+	other := &http.Cookie{Name: stateCookieName, Value: strings.Repeat("x", 43)}
 	if rr := f.app(http.MethodGet, enter, nil, other); rr.Code != http.StatusForbidden {
 		t.Errorf("mismatched state: %d", rr.Code)
 	}
@@ -450,19 +448,31 @@ func TestHandoffRefusals(t *testing.T) {
 	}
 }
 
-// TestLaunchRefusals: the console route refuses what the gate refuses,
-// audits each refusal as session.connect, and names what is not configured.
+// TestLaunchRefusals: the console route sends the browser back to the
+// /launch page with the gate's refusal, audits each refusal as
+// session.connect, names what is not configured, and answers nothing but a
+// browser navigation.
 func TestLaunchRefusals(t *testing.T) {
 	f := newFixture(t)
 	state := strings.Repeat("s", 43)
-	if code, out := f.launch(`{"app":"Not a label!","state":"` + state + `","next":"/"}`); code != http.StatusBadRequest {
-		t.Errorf("bad label: %d %v", code, out)
+	if code, loc := f.launch("Not a label!", state, "/"); code != http.StatusBadRequest {
+		t.Errorf("bad label: %d %q", code, loc)
 	}
-	if code, out := f.launch(`{"app":"wiki","state":"short","next":"/"}`); code != http.StatusBadRequest {
-		t.Errorf("bad state: %d %v", code, out)
+	if code, loc := f.launch("wiki", "short", "/"); code != http.StatusBadRequest {
+		t.Errorf("bad state: %d %q", code, loc)
 	}
-	if code, out := f.launch(`{"app":"nothing","state":"` + state + `","next":"/"}`); code != http.StatusNotFound {
-		t.Errorf("unknown application: %d %v", code, out)
+	if code, loc := f.launch("nothing", state, "/"); code != http.StatusSeeOther || loc != "/launch?error=not_found" {
+		t.Errorf("unknown application: %d %q", code, loc)
+	}
+	// A fetch, not a navigation, mints nothing.
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/me/applications/launch?app=wiki&state="+state, nil)
+	req.RemoteAddr = clientAddr
+	req.Header.Set("Sec-Fetch-Mode", "cors")
+	req.AddCookie(f.cookie)
+	rr := httptest.NewRecorder()
+	f.console.ServeHTTP(rr, req)
+	if rr.Code != http.StatusBadRequest {
+		t.Errorf("fetch: %d", rr.Code)
 	}
 	// Approval-gated: the policy makes alice eligible, not admitted.
 	p, err := f.policies.Get(f.ctx, f.policyID)
@@ -473,15 +483,15 @@ func TestLaunchRefusals(t *testing.T) {
 	if err := f.policies.Update(f.ctx, p); err != nil {
 		t.Fatal(err)
 	}
-	if code, out := f.launch(`{"app":"wiki","state":"` + state + `","next":"/"}`); code != http.StatusForbidden || out["code"] != access.CodeApprovalRequired {
-		t.Errorf("approval-gated: %d %v", code, out)
+	if code, loc := f.launch("wiki", state, "/"); code != http.StatusSeeOther || loc != "/launch?app=wiki&error="+access.CodeApprovalRequired {
+		t.Errorf("approval-gated: %d %q", code, loc)
 	}
 	// No policy at all.
 	if err := f.policies.Delete(f.ctx, f.policyID); err != nil {
 		t.Fatal(err)
 	}
-	if code, out := f.launch(`{"app":"wiki","state":"` + state + `","next":"/"}`); code != http.StatusForbidden || out["code"] != access.CodePolicyDenied {
-		t.Errorf("no policy: %d %v", code, out)
+	if code, loc := f.launch("wiki", state, "/"); code != http.StatusSeeOther || loc != "/launch?app=wiki&error="+access.CodePolicyDenied {
+		t.Errorf("no policy: %d %q", code, loc)
 	}
 	refusals := 0
 	for _, ev := range f.events(audit.SessionConnect) {
@@ -494,8 +504,8 @@ func TestLaunchRefusals(t *testing.T) {
 	}
 	// Nothing configured: the reason is named.
 	f.h.Domain = func() string { return "" }
-	if code, out := f.launch(`{"app":"wiki","state":"` + state + `","next":"/"}`); code != http.StatusConflict || out["code"] != "apps_not_ready" {
-		t.Errorf("no domain: %d %v", code, out)
+	if code, loc := f.launch("wiki", state, "/"); code != http.StatusSeeOther || loc != "/launch?error=apps_not_ready" {
+		t.Errorf("no domain: %d %q", code, loc)
 	}
 	if f.h.URL(nil, "wiki") != "" {
 		t.Error("an address is given with no domain")

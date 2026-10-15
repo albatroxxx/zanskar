@@ -175,8 +175,8 @@ export function TargetForm({ initial, kind, onClose, onSaved }: { initial?: Targ
             </Field>
             {k === 'application' ? (
               <>
-                <Field label="Upstream" hint="http://host:port or https://host:port reachable from the gateway; nothing else is proxied">
-                  <input id="t-upstream" value={f.app_upstream} onChange={set('app_upstream')} required placeholder="http://10.0.0.5:8080" />
+                <Field label="Upstream" hint="The origin the gateway forwards to, with its scheme and port, reachable from the gateway; nothing else is proxied">
+                  <input id="t-upstream" value={f.app_upstream} onChange={set('app_upstream')} required placeholder="https://wiki.internal:8443" />
                 </Field>
                 <Field label="Label" hint="The subdomain it is served at, under the apps domain; blank derives from the name">
                   <input id="t-label" value={f.app_label} onChange={set('app_label')} placeholder="wiki" />

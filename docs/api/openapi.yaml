@@ -660,67 +660,52 @@ paths:
                         items:
                           $ref: "#/components/schemas/AccessRequest"
   /me/applications/launch:
-    post:
+    get:
       tags: [user]
       summary: Hand the browser off to an application
       description: |
-        Called by the console's `/launch` page (ADR 0033) when an application host sent a
-        browser over to sign in: the host set a `state` cookie and redirected to
-        `/launch?app=<label>&state=<state>&next=<path>`. The policies decide as for any target
-        (`http` on the application; approvals and authenticator requirements apply), and the
-        answer is the address on the application host that carries a one-time code back:
-        `https://<label>.<apps domain>/_zanskar/enter?code=…&state=…&next=…`. The code lives a
-        minute, is redeemed once, and only for this application, this state and this client
-        address; the host then opens the session and sets its own host-only cookie. The
-        decision is audited as `session.connect` with protocol `http`, success or refusal.
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [app, state]
-              properties:
-                app:
-                  type: string
-                  description: The application's label, its subdomain under the apps domain.
-                state:
-                  type: string
-                  description: The value the application host sent the browser with; it must match the host's cookie.
-                next:
-                  type: string
-                  description: Where to land on the application afterwards; a path on it, else `/`.
+        A navigation, not a call (ADR 0033). An application host that finds no session sets a
+        `state` cookie and sends the browser to the console's `/launch` page, which submits
+        the label, the state and the return path here with a plain form, on the console's own
+        origin so the sign-in cookie comes along. The policies decide as for any target
+        (`http` on the application; approvals and authenticator requirements apply). Allowed,
+        the browser is sent on to `https://<label>.<apps domain>/_zanskar/enter?code=…&state=…`:
+        a one-minute, one-use code bound to this sign-in, this application, this state and this
+        client address, with the return path kept beside it on the gateway. The host checks the
+        state against its cookie, asks the policies once more, opens the session, sets its own
+        host-only cookie and lands the browser on that path. Refused, the browser goes back to
+        `/launch?error=<code>`, which explains. The decision is audited as `session.connect`
+        with protocol `http`, success or refusal.
+      parameters:
+        - name: app
+          in: query
+          required: true
+          schema:
+            type: string
+          description: The application's label, its subdomain under the apps domain.
+        - name: state
+          in: query
+          required: true
+          schema:
+            type: string
+          description: The value the application host sent the browser with; it must match the host's cookie.
+        - name: next
+          in: query
+          schema:
+            type: string
+          description: Where to land on the application afterwards; a path on it, else `/`.
       responses:
-        "200":
-          description: The address to send the browser to.
-          content:
-            application/json:
+        "303":
+          description: >-
+            On to the application host with the code, or back to `/launch` with `error`:
+            `policy_denied`, `approval_required`, `mfa_required_by_policy`, `not_found`,
+            `target_disabled`, `apps_not_ready` or `restarting`.
+          headers:
+            Location:
               schema:
-                type: object
-                required: [url]
-                properties:
-                  url:
-                    type: string
+                type: string
         "400":
-          description: Not a label, or not a state the host made.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-        "403":
-          description: Refused; `code` is `policy_denied`, `approval_required` or `mfa_required_by_policy`.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-        "404":
-          description: No application is served under that label.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-        "409":
-          description: Applications are not configured (`apps_not_ready`, the message says what is missing), or the application is disabled (`target_disabled`).
+          description: Not a label, not a state the host made, or not a browser navigation.
           content:
             application/json:
               schema:

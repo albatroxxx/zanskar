@@ -9,7 +9,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/albatroxxx/zanskar/internal/access"
 	"github.com/albatroxxx/zanskar/internal/audit"
 	"github.com/albatroxxx/zanskar/internal/auth"
 	"github.com/albatroxxx/zanskar/internal/httpx"
@@ -20,90 +19,88 @@ import (
 
 const restartingMsg = "the gateway is restarting to apply a configuration change; try again in a minute"
 
-type launchRequest struct {
-	// App is the application's label, State the value its host sent the
-	// browser to the console with, Next where to land on it afterwards.
-	App   string `json:"app"`
-	State string `json:"state"`
-	Next  string `json:"next"`
-}
-
-// launch answers POST /api/v1/me/applications/launch, which the console's
-// /launch page calls for a browser an application host sent over: the
-// policies decide, as for any target, and the answer is the address on the
-// application host that carries the one-time code back. The decision is
-// audited as session.connect with protocol http, success or refusal, like a
-// ticket's.
+// launch answers GET /api/v1/me/applications/launch. It is a navigation,
+// not a call: the console's /launch page sends the browser here, on the
+// console's own origin so the sign-in cookie comes along, after an
+// application host sent it over with a state. The policies decide as for any
+// target, and the browser goes on to the application host with a one-time
+// code, or back to the /launch page with the reason it was refused. The code
+// is all that changes hands, and it is useless without the state cookie that
+// only this browser holds on the application host. The decision is audited
+// as session.connect with protocol http, success or refusal, like a ticket's.
 func (h *Handler) launch(w http.ResponseWriter, r *http.Request) {
 	p, _ := auth.FromContext(r.Context())
 	actor := auth.ActorFor(r)
-	var in launchRequest
-	if err := httpx.DecodeJSON(r, &in); err != nil {
-		httpx.BadRequest(w, r, err.Error())
+	q := r.URL.Query()
+	app := strings.ToLower(strings.TrimSpace(q.Get("app")))
+	state := q.Get("state")
+	if !navigation(r) {
+		httpx.WriteError(w, r, http.StatusBadRequest, "bad_request", "this address is a page to open in the browser, not a call to make")
 		return
 	}
-	in.App = strings.ToLower(strings.TrimSpace(in.App))
-	if !target.ValidLabel(in.App) {
+	if !target.ValidLabel(app) {
 		httpx.BadRequest(w, r, "app must be an application's label")
 		return
 	}
-	if !validState(in.State) {
+	if !validState(state) {
 		httpx.BadRequest(w, r, "state must be the value the application's address sent you with")
 		return
 	}
-	deny := func(status int, code, msg, targetID string) {
-		h.record(r, actor.Event(audit.SessionConnect, "target", targetID, audit.Failure, map[string]any{"protocol": protocol.HTTP, "reason": code, "label": in.App}))
-		httpx.WriteError(w, r, status, code, msg)
+	w.Header().Set("Cache-Control", "no-store")
+	// deny sends the browser back to the console's page with the reason;
+	// the label is named only once the application is known, from its row.
+	deny := func(code string, t *target.Target) {
+		id, back := "", url.Values{"error": {code}}
+		if t != nil {
+			id, back["app"] = t.ID, []string{t.AppLabel}
+		}
+		h.record(r, actor.Event(audit.SessionConnect, "target", id, audit.Failure, map[string]any{"protocol": protocol.HTTP, "reason": code, "label": app}))
+		http.Redirect(w, r, LaunchPath+"?"+back.Encode(), http.StatusSeeOther)
 	}
 	if err := h.Ready(); err != nil {
-		httpx.WriteError(w, r, http.StatusConflict, "apps_not_ready", err.Error())
+		deny("apps_not_ready", nil)
 		return
 	}
 	if h.draining() {
-		deny(http.StatusServiceUnavailable, "restarting", restartingMsg, "")
+		deny("restarting", nil)
 		return
 	}
-	t, err := h.Targets.GetByLabel(r.Context(), in.App)
+	t, err := h.Targets.GetByLabel(r.Context(), app)
 	switch {
 	case errors.Is(err, target.ErrNotFound):
-		deny(http.StatusNotFound, "not_found", "no such application", "")
+		deny("not_found", nil)
 		return
 	case err != nil:
 		httpx.Internal(w, r, h.log(), err)
 		return
 	case !t.IsApplication():
-		deny(http.StatusNotFound, "not_found", "no such application", t.ID)
+		deny("not_found", nil)
 		return
 	case t.Status != target.StatusActive:
-		deny(http.StatusConflict, "target_disabled", "this application is disabled", t.ID)
+		deny("target_disabled", t)
 		return
 	}
-	_, code, msg, err := h.Gate.Admit(r.Context(), p.User.ID, policy.TargetRef{ID: t.ID, Tags: t.Tags}, protocol.HTTP, time.Now())
+	_, code, _, err := h.Gate.Admit(r.Context(), p.User.ID, policy.TargetRef{ID: t.ID, Tags: t.Tags}, protocol.HTTP, time.Now())
 	if err != nil {
 		httpx.Internal(w, r, h.log(), err)
 		return
 	}
 	if code != "" {
-		deny(codeStatus(code), code, msg, t.ID)
+		deny(code, t)
 		return
 	}
-	tok, err := h.store().issue(handoff{AuthSessionID: p.Session.ID, UserID: p.User.ID, TargetID: t.ID, Label: in.App, State: in.State, ClientIP: auth.ClientIP(r)})
+	// The path to land on travels with the code, never in the address the
+	// application host redeems, so that host redirects only to what the
+	// console decided.
+	tok, err := h.store().issue(handoff{AuthSessionID: p.Session.ID, UserID: p.User.ID, TargetID: t.ID, Label: t.AppLabel, State: state, ClientIP: auth.ClientIP(r), Next: safePath(q.Get("next"))})
 	if err != nil {
 		httpx.Internal(w, r, h.log(), err)
 		return
 	}
-	h.record(r, actor.Event(audit.SessionConnect, "target", t.ID, audit.Success, map[string]any{"protocol": protocol.HTTP, "label": in.App}))
-	q := url.Values{"code": {tok}, "state": {in.State}, "next": {safePath(in.Next)}}
-	httpx.WriteJSON(w, http.StatusOK, map[string]string{"url": h.origin(in.App) + enterPath + "?" + q.Encode()})
-}
-
-// codeStatus is the HTTP status of a gate refusal, as the connect route
-// answers the same codes.
-func codeStatus(code string) int {
-	switch code {
-	case access.CodePolicyDenied, access.CodeApprovalRequired, access.CodeMFARequired:
-		return http.StatusForbidden
-	default:
-		return http.StatusConflict
-	}
+	h.record(r, actor.Event(audit.SessionConnect, "target", t.ID, audit.Success, map[string]any{"protocol": protocol.HTTP, "label": t.AppLabel}))
+	// The host is the application's own label from its row under the apps
+	// domain, never the request's text; the state passed validState and
+	// travels in the query, where it names no host.
+	// #nosec G710 -- see above
+	http.Redirect(w, r, h.origin(t.AppLabel)+enterPath+"?"+url.Values{"code": {tok}, "state": {state}}.Encode(), http.StatusSeeOther)
 }

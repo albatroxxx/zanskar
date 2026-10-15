@@ -45,13 +45,15 @@ const (
 // single-page app there asks the API for a code and sends the browser back.
 const LaunchPath = "/launch"
 
-// Cookie names. With TLS they carry the __Host- prefix, which a browser
-// accepts only from the host itself, Secure, with no Domain: a sibling
-// application cannot plant one.
+// Cookie names. Applications are served over TLS (ADR 0033), so both carry
+// the __Host- prefix, which a browser accepts only from the host itself,
+// Secure, with no Domain: a sibling application cannot plant one. On a
+// plain-HTTP development gateway only localhost, which browsers treat as
+// secure, can hold them.
 const (
-	cookieBase = "zanskar_app"
-	stateBase  = "zanskar_app_state"
-	stateTTL   = 5 * time.Minute
+	cookieName      = "__Host-zanskar_app"
+	stateCookieName = "__Host-zanskar_app_state"
+	stateTTL        = 5 * time.Minute
 	// cookieTTL bounds the cookie in the browser; the session itself ends by
 	// the server's rules long before a cookie this old could matter.
 	cookieTTL = 12 * time.Hour
@@ -78,9 +80,6 @@ type Handler struct {
 	// PublicURL is the console's origin (ZANSKAR_PUBLIC_URL): where a browser
 	// is sent to sign in, and whose scheme and port applications share.
 	PublicURL string
-	// Secure says the cookies carry Secure and the __Host- prefix: true
-	// whenever browsers reach the gateway over TLS.
-	Secure bool
 	// TLSReady reports why the apps domain cannot be served over TLS yet (no
 	// certificate for it), or nil; nil skips the check, as in proxy mode.
 	TLSReady func(domain string) error
@@ -96,7 +95,7 @@ type Handler struct {
 // Register mounts the console-side route; the application hosts are served
 // through ServeHTTP, which the server dispatches to by host.
 func (h *Handler) Register(mux *http.ServeMux) {
-	mux.Handle("POST /api/v1/me/applications/launch", auth.RequireConnect(http.HandlerFunc(h.launch)))
+	mux.Handle("GET /api/v1/me/applications/launch", auth.RequireConnect(http.HandlerFunc(h.launch)))
 }
 
 func (h *Handler) store() *codeStore {
@@ -201,33 +200,25 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) draining() bool { return h.Draining != nil && h.Draining() }
 
-func (h *Handler) cookieName() string {
-	if h.Secure {
-		return "__Host-" + cookieBase
-	}
-	return cookieBase
-}
-
-func (h *Handler) stateCookieName() string {
-	if h.Secure {
-		return "__Host-" + stateBase
-	}
-	return stateBase
-}
-
-// setCookie writes a host-only cookie: no Domain, so it never travels to a
-// sibling application or the console, and Lax, so the browser sends it on
-// the navigation that brings a person back from the console.
-func (h *Handler) setCookie(w http.ResponseWriter, name, value string, maxAge time.Duration) {
-	http.SetCookie(w, &http.Cookie{ // #nosec G124 -- Secure follows whether the gateway serves TLS; false only on plain-HTTP development
-		Name: name, Value: value, Path: "/", HttpOnly: true, Secure: h.Secure, SameSite: http.SameSiteLaxMode, MaxAge: int(maxAge / time.Second),
+// setCookie writes a host-only cookie: Secure, no Domain, so it never
+// travels to a sibling application or the console, and Lax, so the browser
+// sends it on the navigation that brings a person back from the console.
+func setCookie(w http.ResponseWriter, name, value string, maxAge time.Duration) {
+	http.SetCookie(w, &http.Cookie{
+		Name: name, Value: value, Path: "/", HttpOnly: true, Secure: true, SameSite: http.SameSiteLaxMode, MaxAge: int(maxAge / time.Second),
 	})
 }
 
-func (h *Handler) clearCookie(w http.ResponseWriter, name string) {
-	http.SetCookie(w, &http.Cookie{ // #nosec G124 -- as setCookie
-		Name: name, Value: "", Path: "/", HttpOnly: true, Secure: h.Secure, SameSite: http.SameSiteLaxMode, MaxAge: -1,
+func clearCookie(w http.ResponseWriter, name string) {
+	http.SetCookie(w, &http.Cookie{
+		Name: name, Value: "", Path: "/", HttpOnly: true, Secure: true, SameSite: http.SameSiteLaxMode, MaxAge: -1,
 	})
+}
+
+// logSafe keeps a value a browser chose on one log line: a line break in it
+// could otherwise forge an entry.
+func logSafe(s string) string {
+	return strings.ReplaceAll(strings.ReplaceAll(s, "\n", ""), "\r", "")
 }
 
 // randomToken is 32 random bytes, URL-safe.

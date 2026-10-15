@@ -239,7 +239,7 @@ func (h *Handler) proxy(w http.ResponseWriter, r *http.Request, label string) {
 	}
 	up, err := h.upstreamFor(&row.Target, row.TargetID)
 	if err != nil {
-		h.log().Error("application upstream", "app", label, "err", err)
+		h.log().Error("application upstream", "app", logSafe(label), "err", err)
 		h.page(w, http.StatusBadGateway, "Application unavailable", "This application's upstream is not usable; an administrator must correct it.", true)
 		return
 	}
@@ -248,11 +248,11 @@ func (h *Handler) proxy(w http.ResponseWriter, r *http.Request, label string) {
 	up.proxy.ServeHTTP(rec, r.WithContext(context.WithValue(ctx, originKey{}, h.origin(label))))
 	h.log().Info("app",
 		"request_id", httpx.RequestID(ctx),
-		"app", label,
+		"app", logSafe(label),
 		"user_id", row.UserID,
 		"session", row.SessionID,
 		"method", r.Method,
-		"path", r.URL.Path,
+		"path", logSafe(r.URL.Path),
 		"status", rec.Status,
 		"bytes", rec.Bytes,
 		"duration_ms", time.Since(now).Milliseconds(),
@@ -265,7 +265,7 @@ func (h *Handler) proxy(w http.ResponseWriter, r *http.Request, label string) {
 // in, a fetch is told the session ended.
 func (h *Handler) session(w http.ResponseWriter, r *http.Request, label string, now time.Time) *Row {
 	ctx := r.Context()
-	if c, err := r.Cookie(h.cookieName()); err == nil && c.Value != "" {
+	if c, err := r.Cookie(cookieName); err == nil && c.Value != "" {
 		row, err := h.Repo.Lookup(ctx, hashToken(c.Value))
 		switch {
 		case err == nil && row.EndedAt != nil:
@@ -286,7 +286,7 @@ func (h *Handler) session(w http.ResponseWriter, r *http.Request, label string, 
 			return nil
 		}
 	}
-	h.clearCookie(w, h.cookieName())
+	clearCookie(w, cookieName)
 	w.Header().Set("Cache-Control", "no-store")
 	if !navigation(r) {
 		http.Error(w, "your Zanskar session for this application has ended; reload the page to sign in again", http.StatusUnauthorized)
@@ -303,7 +303,7 @@ func (h *Handler) session(w http.ResponseWriter, r *http.Request, label string, 
 	// console to find out.
 	if t, err := h.Targets.GetByLabel(ctx, label); err != nil || !t.IsApplication() || t.Status != target.StatusActive {
 		if err != nil && !errors.Is(err, target.ErrNotFound) {
-			h.log().Error("application lookup", "app", label, "err", err)
+			h.log().Error("application lookup", "app", logSafe(label), "err", err)
 		}
 		h.page(w, http.StatusNotFound, "No such application", "Nothing is served at this address.", true)
 		return nil
@@ -313,7 +313,7 @@ func (h *Handler) session(w http.ResponseWriter, r *http.Request, label string, 
 		h.page(w, http.StatusInternalServerError, "Try again", "The gateway could not start a sign-in; try again in a moment.", true)
 		return nil
 	}
-	h.setCookie(w, h.stateCookieName(), state, stateTTL)
+	setCookie(w, stateCookieName, state, stateTTL)
 	q := url.Values{"app": {label}, "state": {state}, "next": {safePath(r.URL.RequestURI())}}
 	http.Redirect(w, r, h.PublicURL+LaunchPath+"?"+q.Encode(), http.StatusFound)
 	return nil

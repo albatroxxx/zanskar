@@ -352,7 +352,7 @@ func serve(ctx context.Context) error {
 	// says when an application may be enrolled.
 	appsHandler := &apps.Handler{Targets: targets, Gate: &access.Gate{Policies: policies, Grants: accessReqs, MFAEnrolled: totp.Enrolled},
 		Sessions: sessionRepo, Auth: sessions, Repo: apps.NewRepo(db), Registry: registry, Audit: auditLog, Log: log, Prober: prober,
-		Domain: appsDomain, PublicURL: cfg.PublicURL, Secure: cfg.SecureCookies(), Draining: restarter.Draining}
+		Domain: appsDomain, PublicURL: cfg.PublicURL, Draining: restarter.Draining}
 	if tlsMgr != nil {
 		appsHandler.TLSReady = tlsMgr.AppsReady
 	}

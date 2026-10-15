@@ -83,8 +83,8 @@ CA_PEM=$(python3 -c 'import json,sys; print(json.dumps(open(sys.argv[1]).read())
 ORDERS=$(host "{\"name\":\"orders-db\",\"address\":\"orders.c7xk2.eu-west-2.rds.amazonaws.com\",\"os_family\":\"linux\",\"engine\":\"postgres\",\"engine_version\":\"16\",\"database_name\":\"orders\",\"tls_mode\":\"verify-full\",\"tls_ca\":$CA_PEM,\"ports\":{\"database\":5432},\"tags\":{\"env\":\"prod\",\"role\":\"db\"},\"credentials\":{\"database\":\"$ORDERS_CRED\"}}")
 BILLING=$(host "{\"name\":\"billing-db\",\"address\":\"billing.internal.example\",\"os_family\":\"linux\",\"engine\":\"mysql\",\"engine_version\":\"8.4\",\"database_name\":\"billing\",\"tls_mode\":\"require\",\"ports\":{\"database\":3306},\"tags\":{\"env\":\"prod\",\"role\":\"db\"},\"credentials\":{\"database\":\"$BILLING_CRED\"}}")
 
-# Applications: an internal wiki over plain HTTP and a dashboard over verified TLS.
-host "{\"name\":\"Wiki\",\"app_upstream\":\"http://10.20.6.30:8080\",\"tags\":{\"env\":\"prod\",\"tier\":\"apps\"}}" >/dev/null
+# Applications: a wiki verified against the system roots, a dashboard against a bundle.
+host "{\"name\":\"Wiki\",\"app_upstream\":\"https://wiki.internal.example:8443\",\"tags\":{\"env\":\"prod\",\"tier\":\"apps\"}}" >/dev/null
 host "{\"name\":\"Grafana\",\"app_upstream\":\"https://grafana.internal.example\",\"tls_ca\":$CA_PEM,\"tags\":{\"env\":\"prod\",\"tier\":\"apps\"}}" >/dev/null
 
 # Policies: standing SSH to staging, approval-gated bastion and databases.

@@ -20,8 +20,9 @@ var stateRe = regexp.MustCompile(`^[A-Za-z0-9_-]{32,128}$`)
 func validState(s string) bool { return stateRe.MatchString(s) }
 
 // handoff is one code: who may enter which application, from where, bound to
-// the state the application host gave that browser. The policy is asked
-// again when the code is redeemed, so nothing of its terms travels here.
+// the state the application host gave that browser, and the path to land on,
+// decided by the console. The policy is asked again when the code is
+// redeemed, so nothing of its terms travels here.
 type handoff struct {
 	AuthSessionID string
 	UserID        string
@@ -29,6 +30,7 @@ type handoff struct {
 	Label         string
 	State         string
 	ClientIP      string
+	Next          string
 	ExpiresAt     time.Time
 }
 
