@@ -1,0 +1,13 @@
+[Unit]
+Description=Zanskar update requests from the console
+Documentation=https://github.com/albatroxxx/zanskar
+
+# The gateway writes /var/lib/zanskar/update-request after draining its
+# sessions (ADR 0032); this unit starts the installer. The gateway itself
+# holds no systemd privilege: it only writes a file in its own directory.
+[Path]
+PathExists=/var/lib/zanskar/update-request
+Unit=zanskar-update.service
+
+[Install]
+WantedBy=multi-user.target

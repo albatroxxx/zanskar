@@ -34,6 +34,9 @@ type Handler struct {
 	Supervisor func() string
 	Hostname   func() string
 	Run        func(ctx context.Context, name string, args ...string) error
+	// StateDir holds the update request the package's path unit watches
+	// (ADR 0032); empty disables installing from the console.
+	StateDir string
 }
 
 // Register mounts the routes; all admin-only.
@@ -44,6 +47,7 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.Handle("GET /api/v1/admin/system/host", admin(http.HandlerFunc(h.host)))
 	mux.Handle("POST /api/v1/admin/system/reboot", admin(http.HandlerFunc(h.reboot)))
 	mux.Handle("POST /api/v1/admin/system/poweroff", admin(http.HandlerFunc(h.poweroff)))
+	mux.Handle("POST /api/v1/admin/system/update/install", admin(http.HandlerFunc(h.installUpdate)))
 	mux.Handle("POST /api/v1/admin/system/restart", admin(http.HandlerFunc(h.restart)))
 	mux.Handle("DELETE /api/v1/admin/system/restart", admin(http.HandlerFunc(h.cancel)))
 }

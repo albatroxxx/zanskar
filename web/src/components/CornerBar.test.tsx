@@ -13,7 +13,7 @@ afterEach(() => {
 
 const off = () => new ApiError(404, { code: 'not_found', message: 'off', request_id: 'r' }, '404')
 
-const newer: UpdateStatus = { current: '1.4.0', latest: '1.5.0', notes_url: 'https://example.test/releases/#v1-5-0', newer: true, checked_at: '2026-10-15T06:00:00Z', enabled: true }
+const newer: UpdateStatus = { current: '1.4.0', latest: '1.5.0', notes_url: 'https://example.test/releases/#v1-5-0', newer: true, checked_at: '2026-10-15T06:00:00Z', enabled: true, installable: false }
 const host: HostStatus = { hostname: 'gw-test', supervisor: 'systemd', available: true, mfa_fresh: false, step_up_minutes: 5 }
 
 function serve(update: UpdateStatus, h: HostStatus) {
@@ -75,6 +75,39 @@ describe('the corner strip', () => {
     expect(await screen.findByText('Rebooting the host after the drain.')).toBeDefined()
     expect(post.mock.calls[0]).toEqual(['/auth/mfa/step-up', { code: '123456' }])
     expect(post.mock.calls[1]).toEqual(['/admin/system/reboot', { wait_minutes: 0, confirm: 'gw-test' }])
+  })
+
+  // ADR 0032: on a systemd host the bell offers the install; it proves the
+  // code, then asks for the version with the typed hostname.
+  it('installs a newer release after proving the authenticator', async () => {
+    serve({ ...newer, installable: true }, host)
+    const post = vi.spyOn(api, 'post').mockResolvedValue({} as never)
+    render(
+      <MemoryRouter>
+        <CornerBar />
+      </MemoryRouter>,
+    )
+    const user = userEvent.setup()
+    await user.click(await screen.findByRole('button', { name: 'Zanskar 1.5.0 is available' }))
+    await user.click(await screen.findByRole('button', { name: 'Update now' }))
+    await user.type(await screen.findByLabelText(/Type the hostname to confirm/), 'gw-test')
+    await user.type(screen.getByLabelText('Authenticator code'), '654321')
+    await user.click(screen.getByRole('button', { name: 'Install' }))
+
+    expect(await screen.findByText(/Installing 1\.5\.0 once live sessions have finished/)).toBeDefined()
+    expect(post.mock.calls[0]).toEqual(['/auth/mfa/step-up', { code: '654321' }])
+    expect(post.mock.calls[1]).toEqual(['/admin/system/update/install', { version: '1.5.0', wait_minutes: 15, confirm: 'gw-test' }])
+  })
+
+  it('shows the installer\'s last report', async () => {
+    serve({ ...newer, installable: true, install: { state: 'failed', version: '1.5.0', message: 'the release signature did not verify; nothing was installed', at: '2026-10-15T10:00:00Z' } }, host)
+    render(
+      <MemoryRouter>
+        <CornerBar />
+      </MemoryRouter>,
+    )
+    await userEvent.setup().click(await screen.findByRole('button', { name: 'Zanskar 1.5.0 is available' }))
+    expect(await screen.findByText(/the release signature did not verify/)).toBeDefined()
   })
 
   it('offers no host actions off systemd, and says why', async () => {

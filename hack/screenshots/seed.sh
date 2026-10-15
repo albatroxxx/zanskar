@@ -34,7 +34,8 @@ id() { jget 'd.get("id") or d'; }
 totp() { python3 -c 'import base64,hmac,struct,sys,time
 k=base64.b32decode(sys.argv[1]+"="*(-len(sys.argv[1])%8)); h=hmac.digest(k,struct.pack(">Q",int(time.time())//30),"sha1")
 o=h[-1]&15; print("%06d"%((struct.unpack(">I",h[o:o+4])[0]&0x7fffffff)%1000000))' "$1"; }
-SECRET=$(api -X POST "$B/auth/mfa/totp/enroll" | jget 'd["secret"]')
+# Enrolling asks for the current password since the sign-in review.
+SECRET=$(api -X POST "$B/auth/mfa/totp/enroll" -d '{"current_password":"screenshot admin passphrase"}' | jget 'd["secret"]')
 CSRF=$(api -X POST "$B/auth/mfa/totp/confirm" -d "{\"code\":\"$(totp "$SECRET")\"}" | jget 'd["csrf_token"]')
 # Open it now, so its audit event sits below the ones the Events shot shows;
 # it stays open for 15 idle minutes, far longer than the shots take. A code

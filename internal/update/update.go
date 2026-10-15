@@ -15,6 +15,8 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -49,6 +51,11 @@ type Status struct {
 	Error       string     `json:"error,omitempty"`
 	// Enabled mirrors the runtime setting; off, the bell only says so.
 	Enabled bool `json:"enabled"`
+	// Installable says the console can ask for the install: a systemd host
+	// with a state directory for the request (ADR 0032).
+	Installable bool `json:"installable"`
+	// Install is the installer's last report, when there is one.
+	Install *InstallState `json:"install,omitempty"`
 }
 
 // Checker fetches the manifest on a schedule and keeps the last answer.
@@ -159,6 +166,41 @@ func (c *Checker) fetch(ctx context.Context) (Manifest, error) {
 		m.NotesURL = ""
 	}
 	return m, nil
+}
+
+// IsVersion reports whether s is a version this package understands.
+func IsVersion(s string) bool {
+	_, ok := parse(s)
+	return ok
+}
+
+// StatusFile is what the package's installer writes under the state dir
+// as it works (ADR 0032); the bell reads it back.
+const StatusFile = "update-status.json"
+
+// InstallState is one line from the installer: where it got to.
+type InstallState struct {
+	State   string `json:"state"` // running | done | failed
+	Version string `json:"version"`
+	Message string `json:"message"`
+	At      string `json:"at"`
+}
+
+// ReadInstallState returns the installer's last report, or nil when there
+// is none or it cannot be read.
+func ReadInstallState(stateDir string) *InstallState {
+	if stateDir == "" {
+		return nil
+	}
+	b, err := os.ReadFile(filepath.Join(stateDir, StatusFile)) // #nosec G304 -- a fixed file name under the configured state directory
+	if err != nil {
+		return nil
+	}
+	var st InstallState
+	if err := json.Unmarshal(b, &st); err != nil || st.State == "" {
+		return nil
+	}
+	return &st
 }
 
 // Newer reports whether latest is a later release than current. A current

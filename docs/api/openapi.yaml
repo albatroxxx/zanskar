@@ -3804,6 +3804,51 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/UpdateStatus"
+  /admin/system/update/install:
+    post:
+      tags: [admin]
+      summary: Install a newer release from the console
+      description: >
+        Audited as `system.update` before anything happens, then drains like a restart and
+        writes the wanted version to the update request file in the state directory, which
+        the package's `zanskar-update.path` unit watches (ADR 0032). The root-owned
+        installer fetches the release itself, verifies the cosign bundle over SHA256SUMS
+        against the release workflow's identity, checks the package against those sums,
+        installs it and restarts the service; its progress appears in the update status.
+        Needs a recent authenticator proof (`/auth/mfa/step-up`), the hostname typed, and a
+        version newer than the running one. Only on a systemd host with a state directory.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [version, confirm]
+              properties:
+                version:
+                  type: string
+                  description: The release to install, such as 1.5.0; must be newer than the running version.
+                wait_minutes:
+                  type: integer
+                  minimum: 0
+                  maximum: 240
+                  default: 15
+                confirm:
+                  type: string
+                  description: The gateway's hostname, typed.
+      responses:
+        "202":
+          description: The drain has started; the request is written when it ends.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SystemStatus"
+        "400":
+          description: Not a version, not newer (`not_newer`), hostname mismatch, or wait_minutes out of range.
+        "403":
+          description: No recent authenticator proof on this session (`step_up_required`).
+        "409":
+          description: Not a systemd host or no state directory (`unsupported_supervisor`).
   /admin/system/update/check:
     post:
       tags: [admin]
@@ -6044,6 +6089,23 @@ components:
           type: string
         enabled:
           type: boolean
+        installable:
+          type: boolean
+          description: The console may ask for the install (a systemd host with a state directory).
+        install:
+          type: object
+          description: The installer's last report, when there is one.
+          required: [state, version, message, at]
+          properties:
+            state:
+              type: string
+              enum: [running, done, failed]
+            version:
+              type: string
+            message:
+              type: string
+            at:
+              type: string
     SystemMetrics:
       type: object
       required: [disks, database_sessions]

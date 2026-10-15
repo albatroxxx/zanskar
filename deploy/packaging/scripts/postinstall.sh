@@ -16,6 +16,8 @@ if [ -f /etc/zanskar/env ]; then
 fi
 
 systemctl daemon-reload >/dev/null 2>&1 || true
+# The console's update request is a file this path unit watches (ADR 0032).
+systemctl enable --now zanskar-update.path >/dev/null 2>&1 || true
 
 # Detect a first install vs an upgrade.
 #   deb:  $1=configure, $2=previously-configured version (empty on first install)

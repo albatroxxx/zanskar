@@ -6,6 +6,8 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"testing"
 )
 
@@ -79,5 +81,30 @@ func TestCheck(t *testing.T) {
 	off := &Checker{URL: srv.URL + "/latest.json", Current: "1.4.0", Enabled: func() bool { return false }}
 	if s := off.Status(); s.Enabled || s.Latest != "" {
 		t.Fatalf("disabled before any check: %+v", s)
+	}
+}
+
+// TestReadInstallState: the installer's report is read back as written, and
+// a missing, empty or broken file reads as none.
+func TestReadInstallState(t *testing.T) {
+	dir := t.TempDir()
+	if ReadInstallState(dir) != nil || ReadInstallState("") != nil {
+		t.Fatal("state from nothing")
+	}
+	if err := os.WriteFile(filepath.Join(dir, StatusFile), []byte(`{"state":"failed","version":"1.5.0","message":"the release signature did not verify; nothing was installed","at":"2026-10-15T10:00:00Z"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	st := ReadInstallState(dir)
+	if st == nil || st.State != "failed" || st.Version != "1.5.0" || st.Message == "" {
+		t.Fatalf("state: %+v", st)
+	}
+	if err := os.WriteFile(filepath.Join(dir, StatusFile), []byte(`{"state":`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if ReadInstallState(dir) != nil {
+		t.Fatal("broken file read as a state")
+	}
+	if !IsVersion("1.5.0") || IsVersion("latest") {
+		t.Fatal("IsVersion")
 	}
 }
