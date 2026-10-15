@@ -210,7 +210,7 @@ func diskSpace(databasePath, recordingsPath string) []DiskSpace {
 
 func deviceID(info os.FileInfo) uint64 {
 	if st, ok := info.Sys().(*syscall.Stat_t); ok {
-		return uint64(st.Dev) // #nosec G115 -- a device id, used as a map key only
+		return statDev(st)
 	}
 	return 0
 }
