@@ -31,9 +31,8 @@ import (
 const UpdateRequestFile = "update-request"
 
 type installRequest struct {
-	Version     string `json:"version"`
-	WaitMinutes *int   `json:"wait_minutes"`
-	Confirm     string `json:"confirm"`
+	hostRequest
+	Version string `json:"version"`
 }
 
 type updateRequest struct {
@@ -79,18 +78,9 @@ func (h *Handler) installUpdate(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, http.StatusBadRequest, "not_newer", fmt.Sprintf("%s is not newer than the running %s", in.Version, version.Version))
 		return
 	}
-	name := h.hostname()
-	if strings.TrimSpace(in.Confirm) != name {
-		httpx.WriteError(w, r, http.StatusBadRequest, "confirm_mismatch", fmt.Sprintf("type the gateway's hostname (%s) to confirm", name))
+	name, wait, ok := h.confirmAndWait(w, r, in.hostRequest)
+	if !ok {
 		return
-	}
-	wait := DefaultWait
-	if in.WaitMinutes != nil {
-		if *in.WaitMinutes < 0 || time.Duration(*in.WaitMinutes)*time.Minute > MaxWait {
-			httpx.BadRequest(w, r, "wait_minutes must be between 0 and 240")
-			return
-		}
-		wait = time.Duration(*in.WaitMinutes) * time.Minute
 	}
 	before := h.current()
 	h.record(r, audit.SystemUpdate, map[string]any{"version": in.Version, "from": version.Version, "wait_minutes": int(wait / time.Minute), "live_sessions": before.LiveSessions, "hostname": name})

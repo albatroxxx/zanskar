@@ -112,18 +112,9 @@ func (h *Handler) hostAction(w http.ResponseWriter, r *http.Request, verb, actio
 		httpx.BadRequest(w, r, err.Error())
 		return
 	}
-	name := h.hostname()
-	if strings.TrimSpace(in.Confirm) != name {
-		httpx.WriteError(w, r, http.StatusBadRequest, "confirm_mismatch", fmt.Sprintf("type the gateway's hostname (%s) to confirm", name))
+	name, wait, ok := h.confirmAndWait(w, r, in)
+	if !ok {
 		return
-	}
-	wait := DefaultWait
-	if in.WaitMinutes != nil {
-		if *in.WaitMinutes < 0 || time.Duration(*in.WaitMinutes)*time.Minute > MaxWait {
-			httpx.BadRequest(w, r, "wait_minutes must be between 0 and 240")
-			return
-		}
-		wait = time.Duration(*in.WaitMinutes) * time.Minute
 	}
 	before := h.current()
 	// Audited before acting: a reboot that succeeds leaves no later chance.
@@ -149,6 +140,26 @@ func (h *Handler) hostAction(w http.ResponseWriter, r *http.Request, verb, actio
 		h.Controller.Cancel()
 	})
 	httpx.WriteJSON(w, http.StatusAccepted, h.current())
+}
+
+// confirmAndWait checks the two things every host action asks of the
+// administrator — the gateway's hostname typed back, and a wait inside the
+// allowed window — and answers the request itself when either is wrong.
+func (h *Handler) confirmAndWait(w http.ResponseWriter, r *http.Request, in hostRequest) (hostname string, wait time.Duration, ok bool) {
+	hostname = h.hostname()
+	if strings.TrimSpace(in.Confirm) != hostname {
+		httpx.WriteError(w, r, http.StatusBadRequest, "confirm_mismatch", fmt.Sprintf("type the gateway's hostname (%s) to confirm", hostname))
+		return "", 0, false
+	}
+	wait = DefaultWait
+	if in.WaitMinutes != nil {
+		if *in.WaitMinutes < 0 || time.Duration(*in.WaitMinutes)*time.Minute > MaxWait {
+			httpx.BadRequest(w, r, "wait_minutes must be between 0 and 240")
+			return "", 0, false
+		}
+		wait = time.Duration(*in.WaitMinutes) * time.Minute
+	}
+	return hostname, wait, true
 }
 
 // runCommand runs a fixed command and folds its output into the error.
