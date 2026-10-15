@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -72,6 +73,19 @@ func TestPrecedenceAndSubscribe(t *testing.T) {
 	if len(svc.All()) != len(Definitions) {
 		t.Fatalf("All must cover every definition")
 	}
+	// A rule beside Validate: what the rest of the configuration forbids.
+	svc.Check(KeyAppsDomain, func(v string) error {
+		if v == "example.com" {
+			return errors.New("holds the console's own host")
+		}
+		return nil
+	})
+	if _, err := svc.Set(ctx, KeyAppsDomain, "example.com", admin.ID); !errors.Is(err, ErrInvalid) || !strings.Contains(err.Error(), "apps.domain holds the console's own host") {
+		t.Fatalf("checked value: %v", err)
+	}
+	if v, err := svc.Set(ctx, KeyAppsDomain, "apps.example.com", admin.ID); err != nil || v.Value != "apps.example.com" {
+		t.Fatalf("allowed value: %+v %v", v, err)
+	}
 }
 
 func TestValidateTypes(t *testing.T) {
@@ -114,6 +128,16 @@ func TestValidateTypes(t *testing.T) {
 		{KeyDBProxyImage, "https://ghcr.io/albatroxxx/zanskar", "", false},
 		{KeyDBProxyImage, "ghcr.io/" + strings.Repeat("a", 250) + "/zanskar", "", false},
 		{KeyDBProxyImage, strings.Repeat("a", 5000), "", false},
+		// The apps domain is matched against request hosts and named in
+		// certificates: one plain domain, lowercased, nothing else.
+		{KeyAppsDomain, " Apps.Example.com. ", "apps.example.com", true},
+		{KeyAppsDomain, "", "", true},
+		{KeyAppsDomain, "apps", "", false},
+		{KeyAppsDomain, "*.apps.example.com", "", false},
+		{KeyAppsDomain, "https://apps.example.com", "", false},
+		{KeyAppsDomain, "apps.example.com:8443", "", false},
+		{KeyAppsDomain, "apps_x.example.com", "", false},
+		{KeyAppsDomain, "-apps.example.com", "", false},
 	}
 	for _, c := range cases {
 		d, _ := Lookup(c.key)

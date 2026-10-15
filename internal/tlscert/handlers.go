@@ -31,6 +31,9 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.Handle("PUT /api/v1/admin/tls", admin(http.HandlerFunc(h.upload)))
 	mux.Handle("DELETE /api/v1/admin/tls", admin(http.HandlerFunc(h.reset)))
 	mux.Handle("POST /api/v1/admin/tls/self-signed", admin(http.HandlerFunc(h.regenerate)))
+	// The certificate for the applications domain (ADR 0033).
+	mux.Handle("PUT /api/v1/admin/tls/apps", admin(http.HandlerFunc(h.uploadApps)))
+	mux.Handle("DELETE /api/v1/admin/tls/apps", admin(http.HandlerFunc(h.resetApps)))
 }
 
 // Status is what the console shows.
@@ -41,6 +44,13 @@ type Status struct {
 	Generated *Info  `json:"generated,omitempty"`
 	// FileHint names the variables for the file certificate, when one is in use.
 	FileHint string `json:"file_hint,omitempty"`
+	// Apps is the certificate for the applications domain, AppsDomain the
+	// domain itself (ADR 0033); AppsProblem says why application hosts
+	// cannot be served over TLS yet, AppsReady that they can.
+	Apps        *Info  `json:"apps,omitempty"`
+	AppsDomain  string `json:"apps_domain,omitempty"`
+	AppsReady   bool   `json:"apps_ready"`
+	AppsProblem string `json:"apps_problem,omitempty"`
 }
 
 func (h *Handler) status(r *http.Request) Status {
@@ -59,7 +69,66 @@ func (h *Handler) status(r *http.Request) Status {
 	if h.Manager.File != nil {
 		s.FileHint = "ZANSKAR_TLS_CERT, ZANSKAR_TLS_KEY"
 	}
+	if apps, ok := h.Manager.Apps(); ok {
+		s.Apps = &apps
+	}
+	if domain := h.Manager.appsDomain(); domain != "" {
+		s.AppsDomain = domain
+		if err := h.Manager.AppsReady(domain); err != nil {
+			s.AppsProblem = err.Error()
+		} else {
+			s.AppsReady = true
+		}
+	}
 	return s
+}
+
+// pem reads the certificate and key of an upload body.
+func (h *Handler) pem(w http.ResponseWriter, r *http.Request) (certPEM, keyPEM string, ok bool) {
+	var in struct {
+		CertPEM string `json:"cert_pem"`
+		KeyPEM  string `json:"key_pem"`
+	}
+	if err := httpx.DecodeJSON(r, &in); err != nil {
+		httpx.BadRequest(w, r, err.Error())
+		return "", "", false
+	}
+	if strings.TrimSpace(in.CertPEM) == "" || strings.TrimSpace(in.KeyPEM) == "" {
+		httpx.BadRequest(w, r, "cert_pem and key_pem are required")
+		return "", "", false
+	}
+	return in.CertPEM, in.KeyPEM, true
+}
+
+func (h *Handler) uploadApps(w http.ResponseWriter, r *http.Request) {
+	if !h.managed(w, r) {
+		return
+	}
+	certPEM, keyPEM, ok := h.pem(w, r)
+	if !ok {
+		return
+	}
+	p, _ := auth.FromContext(r.Context())
+	info, err := h.Manager.UploadApps(r.Context(), certPEM, keyPEM, p.User.ID)
+	if err != nil {
+		h.fail(w, r, err)
+		return
+	}
+	h.record(r, audit.TLSCertificateUpload, map[string]any{"for": SourceApps, "subject": info.Subject, "hosts": info.Hosts, "not_after": info.NotAfter, "fingerprint": info.Fingerprint})
+	httpx.WriteJSON(w, http.StatusOK, h.status(r))
+}
+
+func (h *Handler) resetApps(w http.ResponseWriter, r *http.Request) {
+	if !h.managed(w, r) {
+		return
+	}
+	before, _ := h.Manager.Apps()
+	if err := h.Manager.ResetApps(r.Context()); err != nil {
+		h.fail(w, r, err)
+		return
+	}
+	h.record(r, audit.TLSCertificateReset, map[string]any{"for": SourceApps, "before": before.Fingerprint})
+	httpx.WriteJSON(w, http.StatusOK, h.status(r))
 }
 
 func (h *Handler) get(w http.ResponseWriter, r *http.Request) {
@@ -78,20 +147,12 @@ func (h *Handler) upload(w http.ResponseWriter, r *http.Request) {
 	if !h.managed(w, r) {
 		return
 	}
-	var in struct {
-		CertPEM string `json:"cert_pem"`
-		KeyPEM  string `json:"key_pem"`
-	}
-	if err := httpx.DecodeJSON(r, &in); err != nil {
-		httpx.BadRequest(w, r, err.Error())
-		return
-	}
-	if strings.TrimSpace(in.CertPEM) == "" || strings.TrimSpace(in.KeyPEM) == "" {
-		httpx.BadRequest(w, r, "cert_pem and key_pem are required")
+	certPEM, keyPEM, ok := h.pem(w, r)
+	if !ok {
 		return
 	}
 	p, _ := auth.FromContext(r.Context())
-	info, err := h.Manager.Upload(r.Context(), in.CertPEM, in.KeyPEM, p.User.ID)
+	info, err := h.Manager.Upload(r.Context(), certPEM, keyPEM, p.User.ID)
 	if err != nil {
 		h.fail(w, r, err)
 		return
