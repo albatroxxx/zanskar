@@ -33,6 +33,7 @@ opens a protocol connection to the target, and relays the session while recordin
 | TB5 | Gateway and object storage | Recording files and their integrity hashes |
 | TB6 | Gateway and AWS APIs | STS AssumeRole with ExternalId, Describe calls, optional EC2 Instance Connect key push |
 | TB7 | Gateway and identity providers | OIDC tokens, LDAP bind credentials, user attributes and group membership |
+| TB8 | Gateway and web applications | The hand-off code and state, each application's host-only cookie, the request stream the proxy forwards (ADR 0033) |
 
 The gateway is the only component that holds plaintext target credentials, and only for the lifetime
 of a connect handshake. guacd receives plaintext RDP and VNC credentials because the protocol
@@ -140,6 +141,18 @@ requires it. That fact drives the network isolation requirement on guacd in sect
 | Information disclosure | LDAP bind credentials or client secret leaked | Stored as vaulted secrets under envelope encryption; LDAPS or StartTLS required |
 | Tampering | Group membership manipulated at the provider to gain access | Accepted as out of scope: the provider is the source of truth. Group-to-role mapping is admin-controlled inside Zanskar and audited |
 
+### TB8 Gateway and web applications (ADR 0033)
+
+| Category | Threat | Mitigation |
+|---|---|---|
+| Spoofing | A page on one application reads or sets the console's cookie, or another application's | Each application is served at its own host under an apps domain that must differ from the console's host; cookies are host-only with the `__Host-` prefix; an upstream's `Set-Cookie` loses any `Domain` and may not take the gateway's names |
+| Spoofing | A browser is logged into an application as someone else through a planted hand-off link (login CSRF) | The hand-off code is bound to the sign-in, the application, the client address and a state the application host set in that browser's cookie; one use, one minute |
+| Elevation of privilege | A browser sends `X-Forwarded-User` or the like and the application believes it | Identity headers are stripped before the upstream; the application authenticates the person itself |
+| Server-side request forgery | An administrator points an upstream at the metadata service, loopback or the gateway itself | The upstream is an origin only, checked against the address rules when saved, when a session opens and at every dial |
+| Tampering | A hostile upstream sends the browser elsewhere | Only a redirect to the upstream's own origin is rewritten, to the public address; the proxy never follows redirects itself |
+| Information disclosure | The request log captures secrets | One line per request with method, path, status, size and time; never query strings or bodies, and outside the audit chain |
+| Elevation of privilege | Access is withdrawn while a session is open | Every request checks the access session's end; the session sits in the registry, so an administrator's terminate, a policy change, a sign-out or a drain ends it |
+
 ## 5. Controls we commit to
 
 Each control below is a requirement, not an aspiration. A pull request that weakens one needs a
@@ -158,6 +171,7 @@ threat model update in the same change.
 | Strict CSP and cookie flags | `default-src 'self'`, no inline scripts, `Secure`, `HttpOnly`, `SameSite=Strict` | XSS, CSRF, session theft |
 | CSRF tokens | Double-submit token verified on every state-changing request, `Origin` check on WebSocket upgrade | CSRF |
 | Confined console command line | Fixed command table dispatched through the API's own routes and checks; no shell, no host operations, no secrets as arguments; fresh authenticator code to open; every line audited. See ADR 0027 | Stolen admin session, A3 track covering |
+| Identity-aware proxy isolation | Applications on a domain of their own, host-only `__Host-` cookies, a one-use hand-off code bound to sign-in, application, state and address, identity headers stripped, upstream addresses checked at every dial. See ADR 0033 | TB8 |
 | Rate limiting and lockout | Per-account and per-IP limits on login, MFA and connect; progressive lockout with admin unlock | A1 |
 | No secrets in logs | Structured logging with a redaction layer; credentials, tokens, and MFA secrets are typed so they cannot be formatted by accident | Log leakage |
 | Memory hygiene | Plaintext credentials held in byte slices that are zeroed after use; no plaintext in long-lived structs | Memory disclosure |

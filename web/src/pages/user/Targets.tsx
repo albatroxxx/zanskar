@@ -31,7 +31,7 @@ export function Targets() {
   const [items, setItems] = useState<ReachableTarget[] | null>(null)
   const [err, setErr] = useState('')
   const [notice, setNotice] = useState('')
-  const [tab, setTab] = useState<'static' | 'database' | 'asg'>('static')
+  const [tab, setTab] = useState<'static' | 'database' | 'application' | 'asg'>('static')
   const [prompt, setPrompt] = useState<{ target: ReachableTarget; protocol: Protocol; body: ConnectBody } | null>(null)
   const [chooser, setChooser] = useState<{ group: ReachableTarget; protocol: Protocol; instances: ReachableInstance[] | null } | null>(null)
   const [cred, setCred] = useState({ username: '', password: '' })
@@ -66,9 +66,9 @@ export function Targets() {
         // Land on a tab that has something in it. Opening on an empty Hosts
         // tab while Databases holds entries reads as "you have no access"
         // (manual QA finding 2).
-        const kind = (t: ReachableTarget) => (t.kind === 'asg' ? 'asg' : t.engine ? 'database' : 'static')
+        const kind = (t: ReachableTarget) => (t.kind === 'asg' ? 'asg' : t.kind === 'application' ? 'application' : t.engine ? 'database' : 'static')
         if (!p.items.some((t) => kind(t) === 'static')) {
-          const first = (['database', 'asg'] as const).find((k) => p.items.some((t) => kind(t) === k))
+          const first = (['database', 'application', 'asg'] as const).find((k) => p.items.some((t) => kind(t) === k))
           if (first) setTab(first)
         }
       })
@@ -158,9 +158,10 @@ export function Targets() {
     }
   }
 
-  const kindOf = (t: ReachableTarget) => (t.kind === 'asg' ? 'asg' : t.engine ? 'database' : 'target')
+  const kindOf = (t: ReachableTarget) => (t.kind === 'asg' ? 'asg' : t.kind === 'application' ? 'application' : t.engine ? 'database' : 'target')
   const statics = items?.filter((t) => kindOf(t) === 'target') ?? null
   const databases = items?.filter((t) => kindOf(t) === 'database') ?? null
+  const applications = items?.filter((t) => kindOf(t) === 'application') ?? null
   const groups = items?.filter((t) => kindOf(t) === 'asg') ?? null
 
   // protoButtons renders one cell per protocol family. onRequest, when given,
@@ -210,9 +211,50 @@ export function Targets() {
         tabs={[
           { key: 'static', label: 'Hosts' },
           { key: 'database', label: `Databases${databases && databases.length > 0 ? ` (${databases.length})` : ''}` },
+          { key: 'application', label: `Applications${applications && applications.length > 0 ? ` (${applications.length})` : ''}` },
           { key: 'asg', label: 'Autoscaling' },
         ]}
       />
+
+      {tab === 'application' && (
+        <div className="card table-wrap">
+          {applications === null ? (
+            <Empty>Loading…</Empty>
+          ) : applications.length === 0 ? (
+            <Empty>No applications are assigned to you. Ask an administrator for access.</Empty>
+          ) : (
+            <table>
+              <thead>
+                <tr>
+                  <th>Name</th>
+                  <th>Address</th>
+                  <th>Tags</th>
+                  <th>Open</th>
+                </tr>
+              </thead>
+              <tbody>
+                {applications.map((t) => (
+                  <tr key={t.id}>
+                    <td><strong>{t.name}</strong></td>
+                    <td className="mono">{t.url?.replace(/^https?:\/\//, '').replace(/\/$/, '')}</td>
+                    <td><Tags tags={t.tags} /></td>
+                    <td>
+                      {gated(t, 'http') ? (
+                        <button className="btn sm" onClick={() => setReqModal({ target: t, protocol: 'http' })} title="request access to this application">Request</button>
+                      ) : (
+                        // The application opens in its own tab, at its own
+                        // address; the browser is sent back here to sign in
+                        // when it has no session there yet.
+                        <a className="btn sm proto-app" href={t.url} target="_blank" rel="noopener noreferrer" title="open in a new tab">Open</a>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      )}
 
       {tab === 'database' && (
         <div className="card table-wrap">
@@ -383,7 +425,7 @@ export function Targets() {
 
       {reqModal && (
         <Modal title={`Request access to ${reqModal.target.name}`} onClose={() => setReqModal(null)}>
-          <p className="muted">{reqModal.target.kind === 'asg' ? 'This autoscaling group' : 'This machine'} requires approval for {protocolName(reqModal.protocol)}. Say why and for how long; an administrator approves before you can connect.</p>
+          <p className="muted">{reqModal.target.kind === 'asg' ? 'This autoscaling group' : reqModal.target.kind === 'application' ? 'This application' : 'This machine'} requires approval for {protocolName(reqModal.protocol)}. Say why and for how long; an administrator approves before you can {reqModal.target.kind === 'application' ? 'open it' : 'connect'}.</p>
           <form onSubmit={(e) => void submitRequest(e)}>
             <Field label="Reason">
               <textarea id="req-reason" autoFocus value={reqForm.reason} onChange={(e) => setReqForm({ ...reqForm, reason: e.target.value })} required placeholder="What you need to do" />

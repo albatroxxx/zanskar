@@ -46,6 +46,8 @@
   --proto-desk-soft: #eae8f7;
   --proto-db: #2c6b52;
   --proto-db-soft: #e0efe7;
+  --proto-app: #8a4b1f;
+  --proto-app-soft: #f6e8dc;
 
   /* the terminal and desktop pages are always dark, whatever the theme */
   --terminal-bg: #181a1f;
@@ -111,6 +113,8 @@
     --proto-desk-soft: #24213f;
     --proto-db: #6fc79b;
     --proto-db-soft: #132a20;
+    --proto-app: #e5a876;
+    --proto-app-soft: #33241a;
     --backdrop: rgba(0, 0, 0, 0.62);
     --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 8px 24px rgba(0, 0, 0, 0.35);
   }

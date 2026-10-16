@@ -47,6 +47,49 @@ describe('Targets, an approval-gated autoscaling group', () => {
   })
 })
 
+// An application (ADR 0033) opens in its own tab at its own address; one
+// that needs approval offers Request, and the request names it under http.
+describe('Targets, applications', () => {
+  const wiki: ReachableTarget = {
+    kind: 'application', id: 'a1', name: 'Wiki', os_family: 'other', tags: { team: 'docs' },
+    capabilities: [], allowed_protocols: ['http'], requires_approval: [], host_key_ready: true,
+    label: 'wiki', url: 'https://wiki.apps.example.com/',
+  }
+
+  it('lists the application under its own tab with an Open link to its address', async () => {
+    vi.spyOn(api, 'get').mockImplementation(async (p: string) => ({ items: p === '/me/targets' ? [wiki] : [] }) as never)
+    render(
+      <MemoryRouter>
+        <Targets />
+      </MemoryRouter>,
+    )
+    // With no hosts, the first tab that has something in it is chosen.
+    expect(await screen.findByRole('tab', { name: 'Applications (1)', selected: true })).toBeDefined()
+    const open = screen.getByRole('link', { name: 'Open' })
+    expect(open.getAttribute('href')).toBe('https://wiki.apps.example.com/')
+    expect(open.getAttribute('target')).toBe('_blank')
+    expect(open.getAttribute('rel')).toContain('noopener')
+    expect(screen.getByText('wiki.apps.example.com')).toBeDefined()
+  })
+
+  it('offers Request when the policy requires approval', async () => {
+    vi.spyOn(api, 'get').mockImplementation(async (p: string) => ({ items: p === '/me/targets' ? [{ ...wiki, requires_approval: ['http'] }] : [] }) as never)
+    const post = vi.spyOn(api, 'post').mockResolvedValue({} as never)
+    render(
+      <MemoryRouter>
+        <Targets />
+      </MemoryRouter>,
+    )
+    const user = userEvent.setup()
+    await user.click(await screen.findByRole('button', { name: 'Request' }))
+    expect(screen.getByText(/This application requires approval for HTTP/)).toBeDefined()
+    await user.type(screen.getByLabelText('Reason'), 'edit the runbook')
+    await user.click(screen.getByRole('button', { name: 'Request access' }))
+    expect(post).toHaveBeenCalledWith('/me/access-requests', { target_id: 'a1', protocol: 'http', reason: 'edit the runbook', minutes: 60 })
+    expect(screen.queryByRole('link', { name: 'Open' })).toBeNull()
+  })
+})
+
 // A state glyph replaces the words in the row, but never deletes them: the
 // label stays for screen readers and on hover.
 describe('Targets state glyphs', () => {

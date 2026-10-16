@@ -73,9 +73,12 @@ export function Sessions() {
                   <td>
                     {!s.ended_at && (
                       <span className="actions">
-                        <Link className="btn sm" to={`/audit/shadow/${s.id}?protocol=${s.protocol}&target=${encodeURIComponent(sessionTarget(s))}`} title="Watch live, read-only; the view is audited">
-                          Watch
-                        </Link>
+                        {/* An application session has no stream to watch (ADR 0033): the browser talks to the proxy, not a bridge. */}
+                        {s.protocol !== 'http' && (
+                          <Link className="btn sm" to={`/audit/shadow/${s.id}?protocol=${s.protocol}&target=${encodeURIComponent(sessionTarget(s))}`} title="Watch live, read-only; the view is audited">
+                            Watch
+                          </Link>
+                        )}
                         {admin && (
                           <button className="btn sm danger" onClick={() => setTerminating(s)}>
                             Terminate

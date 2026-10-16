@@ -9,6 +9,7 @@ import { homeFor } from './auth/home'
 import { api } from './api/client'
 import type { AccessRequest, Page } from './api/types'
 import { Login } from './pages/Login'
+import { Launch } from './pages/Launch'
 import { Targets } from './pages/user/Targets'
 import { MySessions } from './pages/user/MySessions'
 import { MyAccess } from './pages/user/MyAccess'
@@ -82,6 +83,16 @@ export default function App() {
       <SessionExpired />
       <Routes>
       <Route path="/login" element={<Login />} />
+      {/* An application host sends a browser here to be let in (ADR 0033);
+          the page asks the API for the hand-off and sends it straight back. */}
+      <Route
+        path="/launch"
+        element={
+          <Guard roles={connectRoles}>
+            <Launch />
+          </Guard>
+        }
+      />
       <Route
         path="/terminal"
         element={
@@ -141,6 +152,7 @@ export default function App() {
                 { to: '/admin', label: 'Dashboard', end: true },
                 { to: '/admin/hosts', label: 'Hosts' },
                 { to: '/admin/databases', label: 'Databases' },
+                { to: '/admin/applications', label: 'Applications' },
                 { to: '/admin/autoscaling', label: 'Autoscaling' },
                 { to: '/admin/credentials', label: 'Credentials' },
                 { to: '/admin/policies', label: 'Policies' },

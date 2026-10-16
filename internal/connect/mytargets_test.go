@@ -6,8 +6,10 @@ import (
 	"encoding/json"
 	"net/http"
 	"slices"
+	"strings"
 	"testing"
 
+	"github.com/albatroxxx/zanskar/internal/policy"
 	"github.com/albatroxxx/zanskar/internal/target"
 )
 
@@ -86,6 +88,69 @@ func TestMyTargets(t *testing.T) {
 	if rr.Code != http.StatusOK || rr.Body.String() != "{\"items\":[]}\n" {
 		t.Fatalf("bob's list: %d %s", rr.Code, rr.Body)
 	}
+}
+
+// TestMyTargetsApplications: an application (ADR 0033) is listed, with the
+// address the browser opens it at and never its upstream, only when a policy
+// grants http on it and the gateway has an apps domain to serve it under.
+func TestMyTargetsApplications(t *testing.T) {
+	f := newConnectFixture(t)
+	wiki := &target.Target{Name: "wiki", AppUpstream: "http://10.0.0.50:8080", Tags: map[string]string{"env": "test"}}
+	if err := f.h.Targets.Create(f.ctx, wiki); err != nil {
+		t.Fatal(err)
+	}
+	list := func() map[string]reachableTarget {
+		t.Helper()
+		rr := f.do("GET", "/api/v1/me/targets", "", nil, f.cookie, f.csrf)
+		if rr.Code != http.StatusOK {
+			t.Fatalf("list: %d %s", rr.Code, rr.Body)
+		}
+		var page struct {
+			Items []reachableTarget `json:"items"`
+		}
+		if err := json.Unmarshal(rr.Body.Bytes(), &page); err != nil {
+			t.Fatal(err)
+		}
+		byName := map[string]reachableTarget{}
+		for _, it := range page.Items {
+			byName[it.Name] = it
+		}
+		return byName
+	}
+	// No apps domain: the application cannot be opened, so it is not offered.
+	if _, ok := list()["wiki"]; ok {
+		t.Fatal("an application is listed with no apps domain to serve it")
+	}
+	f.h.AppURL = func(_ *http.Request, label string) string { return "https://" + label + ".apps.example.com/" }
+	// No policy grants http yet: test-all grants ssh, rdp, winrm and database.
+	if _, ok := list()["wiki"]; ok {
+		t.Fatal("an application is listed without a policy granting http")
+	}
+	p := &policy.Policy{Name: "apps", GroupID: f.opsID, Enabled: true, IdleTimeoutMinutes: 15, Selector: policy.Selector{Tags: map[string]string{"env": "test"}}, Protocols: []string{"http"}}
+	if err := f.h.Policies.Create(f.ctx, p); err != nil {
+		t.Fatal(err)
+	}
+	got, ok := list()["wiki"]
+	if !ok || got.Kind != "application" || got.Label != "wiki" || got.URL != "https://wiki.apps.example.com/" || !contains(got.Allowed, "http") || got.PrivateIP != "" {
+		t.Fatalf("application entry: %+v", got)
+	}
+	if strings.Contains(string(mustJSON(t, got)), "10.0.0.50") {
+		t.Fatalf("the upstream leaked into the listing: %+v", got)
+	}
+	// Opening it goes through the browser, not a ticket.
+	rr := f.do("POST", "/api/v1/connect", "application/json", strings.NewReader(`{"target_id":"`+wiki.ID+`","protocol":"http"}`), f.cookie, f.csrf)
+	if rr.Code != http.StatusNotImplemented {
+		t.Fatalf("connect over http: %d %s", rr.Code, rr.Body)
+	}
+}
+
+func mustJSON(t *testing.T, v any) []byte {
+	t.Helper()
+	b, err := json.Marshal(v)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return b
 }
 
 func contains(xs []string, x string) bool {

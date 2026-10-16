@@ -69,7 +69,16 @@ const (
 	// KeyDBProxyImage is the image run as the MySQL/MariaDB relay sidecar;
 	// by default the gateway's own release image at its own version.
 	KeyDBProxyImage = "database.proxy_image"
+	// KeyAppsDomain is the domain applications are served under (ADR 0033),
+	// one subdomain each; empty means applications are off.
+	KeyAppsDomain = "apps.domain"
 )
+
+// domainRe is a domain name as the apps domain must be written: lowercase
+// labels joined by dots, at least two of them, no wildcard, scheme or port.
+var domainRe = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,62}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,62}[a-z0-9])?)+$`)
+
+func validDomain(s string) bool { return len(s) <= 253 && domainRe.MatchString(s) }
 
 // DefaultDBProxyImage is the gateway's own image at the running version. A
 // development build has no published tag, so it points at latest and the
@@ -147,6 +156,8 @@ var Definitions = []Definition{
 		Description: "Verbosity of the gateway's log. Applies at once; go back to info afterwards."},
 	{Key: KeyDBProxyImage, Category: "Databases", Title: "MySQL relay image", Type: TypeString, Default: DefaultDBProxyImage(), EnvVar: "ZANSKAR_DBPROXY_IMAGE",
 		Description: "Container image started beside each MySQL or MariaDB session to hold the credential and relay the protocol: the gateway's own image, running zanskar dbproxy. Change it only to pin a mirror or test a local build. An image reference: registry/repository, an optional :tag and an optional @sha256 digest, such as registry.example.com/zanskar:1.3.0. Applies to the next session."},
+	{Key: KeyAppsDomain, Category: "Applications", Title: "Apps domain", Type: TypeString, EnvVar: "ZANSKAR_APPS_DOMAIN",
+		Description: "The domain applications are served under, one subdomain each: an application labelled wiki is reached at wiki.<domain>. Needs wildcard DNS for *.<domain> pointing at the gateway and a certificate for it (TLS certificate below). It must not be the console's own host or a parent of it. Empty turns applications off."},
 }
 
 // Lookup returns the definition for key.
@@ -242,6 +253,14 @@ func Validate(d Definition, value string) (string, error) {
 		if d.Key == KeyDBProxyImage {
 			if err := checkImageRef(v); err != nil {
 				return "", fmt.Errorf("%w: %s %w", ErrInvalid, d.Key, err)
+			}
+		}
+		// The apps domain is matched against every request's host and named
+		// in certificates: one plain domain, nothing else.
+		if d.Key == KeyAppsDomain {
+			v = strings.ToLower(strings.TrimSuffix(v, "."))
+			if v != "" && !validDomain(v) {
+				return "", fmt.Errorf("%w: %s must be a domain name such as apps.example.com: lowercase letters, digits and hyphens, at least one dot, no wildcard, scheme or port", ErrInvalid, d.Key)
 			}
 		}
 		return v, nil
@@ -348,9 +367,10 @@ type Service struct {
 	// Logger, when set, names a stored value Load leaves out.
 	Logger *slog.Logger
 
-	mu   sync.RWMutex
-	rows map[string]Setting
-	subs map[string][]func(string)
+	mu     sync.RWMutex
+	rows   map[string]Setting
+	subs   map[string][]func(string)
+	checks map[string]func(string) error
 }
 
 // NewService builds a service over repo. env holds install-time values by
@@ -359,7 +379,17 @@ func NewService(repo *Repo, env map[string]string, boot []Boot) *Service {
 	if env == nil {
 		env = map[string]string{}
 	}
-	return &Service{repo: repo, env: env, boot: boot, rows: map[string]Setting{}, subs: map[string][]func(string){}}
+	return &Service{repo: repo, env: env, boot: boot, rows: map[string]Setting{}, subs: map[string][]func(string){}, checks: map[string]func(string) error{}}
+}
+
+// Check adds a rule for key that Set applies after Validate: what depends on
+// the rest of the configuration, which Validate cannot see, such as the apps
+// domain against the console's own host. The rule's error is shown to the
+// administrator after the key's name.
+func (s *Service) Check(key string, fn func(value string) error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.checks[key] = fn
 }
 
 // Load reads every console row into the cache. Call once after migrations.
@@ -448,6 +478,14 @@ func (s *Service) Set(ctx context.Context, key, value, actorUserID string) (Valu
 	value, err := Validate(d, value)
 	if err != nil {
 		return Value{}, err
+	}
+	s.mu.RLock()
+	check := s.checks[key]
+	s.mu.RUnlock()
+	if check != nil {
+		if err := check(value); err != nil {
+			return Value{}, fmt.Errorf("%w: %s %w", ErrInvalid, key, err)
+		}
 	}
 	row, err := s.repo.Set(ctx, key, value, actorUserID)
 	if err != nil {

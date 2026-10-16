@@ -659,6 +659,57 @@ paths:
                         type: array
                         items:
                           $ref: "#/components/schemas/AccessRequest"
+  /me/applications/launch:
+    get:
+      tags: [user]
+      summary: Hand the browser off to an application
+      description: |
+        A navigation, not a call (ADR 0033). An application host that finds no session sets a
+        `state` cookie and sends the browser to the console's `/launch` page, which submits
+        the label, the state and the return path here with a plain form, on the console's own
+        origin so the sign-in cookie comes along. The policies decide as for any target
+        (`http` on the application; approvals and authenticator requirements apply). Allowed,
+        the browser is sent on to `https://<label>.<apps domain>/_zanskar/enter?code=…&state=…`:
+        a one-minute, one-use code bound to this sign-in, this application, this state and this
+        client address, with the return path kept beside it on the gateway. The host checks the
+        state against its cookie, asks the policies once more, opens the session, sets its own
+        host-only cookie and lands the browser on that path. Refused, the browser goes back to
+        `/launch?error=<code>`, which explains. The decision is audited as `session.connect`
+        with protocol `http`, success or refusal.
+      parameters:
+        - name: app
+          in: query
+          required: true
+          schema:
+            type: string
+          description: The application's label, its subdomain under the apps domain.
+        - name: state
+          in: query
+          required: true
+          schema:
+            type: string
+          description: The value the application host sent the browser with; it must match the host's cookie.
+        - name: next
+          in: query
+          schema:
+            type: string
+          description: Where to land on the application afterwards; a path on it, else `/`.
+      responses:
+        "303":
+          description: >-
+            On to the application host with the code, or back to `/launch` with `error`:
+            `policy_denied`, `approval_required`, `mfa_required_by_policy`, `not_found`,
+            `target_disabled`, `apps_not_ready` or `restarting`.
+          headers:
+            Location:
+              schema:
+                type: string
+        "400":
+          description: Not a label, not a state the host made, or not a browser navigation.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
   /connect:
     post:
       tags: [user]
@@ -1901,8 +1952,8 @@ paths:
           in: query
           schema:
             type: string
-            enum: [host, database]
-          description: Only hosts (no engine) or only database targets (ADR 0017).
+            enum: [host, database, application]
+          description: Only hosts, only database targets (ADR 0017), or only applications (ADR 0033).
         - name: os_family
           in: query
           schema:
@@ -3565,6 +3616,67 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/TLSStatus"
+  /admin/tls/apps:
+    put:
+      tags: [admin]
+      summary: Upload the applications certificate
+      description: >
+        The certificate the gateway serves for the applications domain (ADR 0033): a PEM chain
+        and unencrypted key naming `*.<apps domain>`, which a handshake for any host under the
+        domain receives. Validated like the console's certificate and, when the apps domain is
+        set, refused unless it names the wildcard. Stored with the key sealed and served on the
+        next connection. Audited as `tls.certificate.upload` with `for: apps`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [cert_pem, key_pem]
+              properties:
+                cert_pem:
+                  type: string
+                key_pem:
+                  type: string
+      responses:
+        "200":
+          description: The status after the upload.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TLSStatus"
+        "400":
+          description: The certificate or key was refused; the message says why.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: Proxy mode, nothing to manage; `code` is `tls_proxy`.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+    delete:
+      tags: [admin]
+      summary: Remove the applications certificate
+      description: >
+        Application hosts then get the console's certificate, which browsers refuse for them,
+        and no application can be enrolled until another is uploaded. Audited as
+        `tls.certificate.reset` with `for: apps`.
+      responses:
+        "200":
+          description: The status after the removal.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TLSStatus"
+        "409":
+          description: Proxy mode; `code` is `tls_proxy`.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
   /admin/storage:
     get:
       tags: [admin]
@@ -4255,7 +4367,11 @@ components:
       enum: [linux, windows, other]
     Protocol:
       type: string
-      enum: [ssh, rdp, vnc, winrm, database]
+      description: >-
+        How a target is reached. `database` is brokered access to a database target (ADR 0017);
+        `http` is a web application through the gateway's proxy (ADR 0033), opened in the
+        browser rather than through a ticket.
+      enum: [ssh, rdp, vnc, winrm, database, http]
     CredentialType:
       type: string
       enum: [password, ssh_key, ssh_ca, domain, ec2_instance_connect]
@@ -4779,6 +4895,18 @@ components:
           enum: [disable, prefer, require, verify-full]
         tls_ca:
           type: string
+          description: PEM CA bundle the upstream's certificate is verified against; for a database target under verify-full, or an application's https upstream.
+        app_upstream:
+          type: string
+          description: >-
+            Makes the target an application (ADR 0033): the one origin, `http://host[:port]` or
+            `https://host[:port]`, the gateway's proxy forwards to. Nothing else is ever
+            proxied. Its host becomes `address`.
+        app_label:
+          type: string
+          description: >-
+            The application's subdomain under the apps domain, a DNS label unique among live
+            applications; derived from the name when left blank on a write.
         os_family:
           $ref: "#/components/schemas/OsFamily"
         ports:
@@ -5501,12 +5629,12 @@ components:
     # ---------------------------------------------------------------- user-facing targets and connect
     ReachableTarget:
       type: object
-      description: A target or autoscaling group the caller may reach, as returned by `GET /me/targets`.
+      description: A target, autoscaling group or application the caller may reach, as returned by `GET /me/targets`.
       required: [kind, id, name, os_family, tags, capabilities, allowed_protocols, host_key_ready]
       properties:
         kind:
           type: string
-          enum: [target, asg]
+          enum: [target, asg, application]
         id:
           type: string
         name:
@@ -5553,6 +5681,15 @@ components:
         instance_count:
           type: integer
           description: Total instances in the group. Present only for autoscaling-group rows (`kind` is `asg`).
+        label:
+          type: string
+          description: An application's subdomain under the apps domain (`kind` is `application`, ADR 0033).
+        url:
+          type: string
+          description: >-
+            Where the browser opens an application: `https://<label>.<apps domain>/`. The
+            upstream itself is never shown. Applications are listed only once the gateway can
+            serve them (apps domain, public URL and certificate in place).
     UserSuppliedCredential:
       type: object
       description: Sent only when the target's credential for that protocol has `mode=user_supplied`. Never stored.
@@ -5830,7 +5967,7 @@ components:
       properties:
         source:
           type: string
-          enum: [uploaded, file, generated]
+          enum: [uploaded, file, generated, apps]
         subject:
           type: string
         issuer:
@@ -5873,6 +6010,17 @@ components:
         file_hint:
           type: string
           description: Names the environment variables when a file certificate is in use.
+        apps:
+          $ref: "#/components/schemas/TLSCertInfo"
+        apps_domain:
+          type: string
+          description: The applications domain (ADR 0033), when set.
+        apps_ready:
+          type: boolean
+          description: True when application hosts under the apps domain can be served over TLS.
+        apps_problem:
+          type: string
+          description: Why they cannot yet, when they cannot — no applications certificate, one for another name, or one past its dates.
     StorageConfig:
       type: object
       description: An S3-compatible bucket for recordings. The secret is write-only.
@@ -5974,7 +6122,7 @@ components:
           description: Access requests awaiting a decision.
         inventory:
           type: object
-          required: [hosts, hosts_by_os, databases, databases_by_engine]
+          required: [hosts, hosts_by_os, databases, databases_by_engine, applications]
           description: The active fleet, for the dashboard's inventory tiles.
           properties:
             hosts:
@@ -5991,6 +6139,9 @@ components:
               additionalProperties:
                 type: integer
               description: Active database targets by engine.
+            applications:
+              type: integer
+              description: Active applications (ADR 0033).
         autoscaling:
           type: object
           required: [groups, instances, healthy_instances]

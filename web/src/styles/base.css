@@ -151,6 +151,8 @@ td.actions > * + * { margin-left: 8px; }
 .btn.proto-desktop:hover { background: var(--proto-desk); color: var(--accent-fg); border-color: transparent; }
 .btn.proto-database { background: var(--proto-db-soft); color: var(--proto-db); border-color: transparent; font-weight: 600; }
 .btn.proto-database:hover { background: var(--proto-db); color: var(--accent-fg); border-color: transparent; }
+.btn.proto-app { background: var(--proto-app-soft); color: var(--proto-app); border-color: transparent; font-weight: 600; text-decoration: none; }
+.btn.proto-app:hover { background: var(--proto-app); color: var(--accent-fg); border-color: transparent; }
 .btn.danger { color: var(--danger); border-color: var(--danger); }
 .btn.sm { padding: 4px 9px; font-size: 0.82rem; }
 .btn.ghost { border-color: transparent; background: transparent; }

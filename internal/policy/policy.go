@@ -22,8 +22,9 @@ import (
 )
 
 // Protocols a policy may allow. "database" grants brokered access to a database
-// target (ADR 0017); it is evaluated at connect time like any other protocol.
-var validProtocols = map[string]bool{protocol.SSH: true, protocol.RDP: true, protocol.VNC: true, protocol.WinRM: true, protocol.Database: true}
+// target (ADR 0017) and "http" an application through the proxy (ADR 0033);
+// each is evaluated when a session opens, like any other protocol.
+var validProtocols = map[string]bool{protocol.SSH: true, protocol.RDP: true, protocol.VNC: true, protocol.WinRM: true, protocol.Database: true, protocol.HTTP: true}
 
 // Selector names the targets a policy covers. A target matches when its id is
 // listed, its ASG id is listed, or every selector tag is present on it with

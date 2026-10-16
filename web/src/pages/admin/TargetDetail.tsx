@@ -1,17 +1,18 @@
 import { useState } from 'react'
 import { api, errorMessage } from '../../api/client'
-import { dbTLS, engineName, fmtTime, protocolName } from '../../api/format'
+import { appTLS, dbTLS, engineName, fmtTime, protocolName } from '../../api/format'
 import type { CertificateProbe, Credential, ProbeResponse, Protocol, Target } from '../../api/types'
 import { Alert, Badge, Confirm, Modal, Tags } from '../../components/ui'
 import { hostKeyBadge, protocols } from './lib'
 import { CredentialBindings, type BindingChange } from './Bindings'
-import { TargetForm, targetBody } from './TargetForm'
+import { kindOf, TargetForm, targetBody } from './TargetForm'
 
 /**
- * TargetDetail is the drawer for one host or database. A host shows its
- * probe state, host key and per-protocol credentials; a database shows its
- * engine, endpoint and TLS settings and a single credential slot, since
- * probing and host keys do not apply to it.
+ * TargetDetail is the drawer for one host, database or application. A host
+ * shows its probe state, host key and per-protocol credentials; a database
+ * shows its engine, endpoint and TLS settings and a single credential slot,
+ * since probing and host keys do not apply to it; an application shows its
+ * upstream and label and holds no credential at all (ADR 0033).
  */
 export function TargetDetail({ target, credentials, onClose, onChanged, onDeleted, onError }: { target: Target; credentials: Credential[]; onClose: () => void; onChanged: (t: Target) => void; onDeleted: () => void; onError: (m: string) => void }) {
   const [editing, setEditing] = useState(false)
@@ -25,7 +26,10 @@ export function TargetDetail({ target, credentials, onClose, onChanged, onDelete
   const [trustCert, setTrustCert] = useState<{ protocol: 'rdp' | 'winrm'; pinned: string; seen: string } | null>(null)
   const [err, setErr] = useState('')
   const t = target
-  const database = !!t.engine
+  const kind = kindOf(t)
+  const database = kind === 'database'
+  const application = kind === 'application'
+  const host = kind === 'host'
 
   const run = async (fn: () => Promise<unknown>) => {
     setErr('')
@@ -80,7 +84,7 @@ export function TargetDetail({ target, credentials, onClose, onChanged, onDelete
   // A certificate login test applies when the SSH slot holds an authority
   // and the host key is trusted; it is a real login, so it is a button, not
   // part of the ordinary probe.
-  const sshCA = !database && t.credentials?.ssh ? credentials.find((c) => c.id === t.credentials.ssh && c.type === 'ssh_ca') : undefined
+  const sshCA = host && t.credentials?.ssh ? credentials.find((c) => c.id === t.credentials.ssh && c.type === 'ssh_ca') : undefined
   const testCertificate = () =>
     run(async () => {
       setCertProbing(true)
@@ -92,7 +96,7 @@ export function TargetDetail({ target, credentials, onClose, onChanged, onDelete
     })
 
   const fp = probe?.host_key_fingerprint ?? t.host_key_fingerprint
-  const canTrust = !database && (t.host_key_status === 'pending' || t.host_key_status === 'changed') && !!fp
+  const canTrust = host && (t.host_key_status === 'pending' || t.host_key_status === 'changed') && !!fp
   const port = t.ports.database
 
   return (
@@ -131,6 +135,12 @@ export function TargetDetail({ target, credentials, onClose, onChanged, onDelete
               {dbTLS(t.tls_mode).verified ? <Badge tone="ok">{dbTLS(t.tls_mode).label} against the CA bundle</Badge> : <Badge tone="warn">{dbTLS(t.tls_mode).label}</Badge>}
             </dd>
           </>
+        ) : application ? (
+          <>
+            <dt>Upstream</dt><dd className="mono">{t.app_upstream}</dd>
+            <dt>Label</dt><dd className="mono">{t.app_label}</dd>
+            <dt>Upstream TLS</dt><dd>{appTLS(t).verified ? <Badge tone="ok">{appTLS(t).label}</Badge> : <Badge tone="warn">{appTLS(t).label}</Badge>}</dd>
+          </>
         ) : (
           <>
             <dt>Address</dt><dd className="mono">{t.address}</dd>
@@ -138,7 +148,7 @@ export function TargetDetail({ target, credentials, onClose, onChanged, onDelete
           </>
         )}
         <dt>Status</dt><dd>{t.status}</dd>
-        {!database && (
+        {host && (
           <>
             <dt>Capabilities</dt><dd>{t.capabilities.length ? t.capabilities.join(', ') : <span className="muted">unprobed</span>}</dd>
             <dt>Host key</dt>
@@ -158,7 +168,7 @@ export function TargetDetail({ target, credentials, onClose, onChanged, onDelete
           </>
         )}
         <dt>Tags</dt><dd><Tags tags={t.tags} /></dd>
-        {!database && (
+        {host && (
           <>
             <dt>Last probed</dt><dd>{t.last_probed_at ? fmtTime(t.last_probed_at) : 'never'}</dd>
           </>
@@ -170,16 +180,22 @@ export function TargetDetail({ target, credentials, onClose, onChanged, onDelete
         )}
       </dl>
 
-      <h2 style={{ marginTop: 18 }}>{database ? 'Database credential' : 'Credentials per protocol'}</h2>
-      {/* A database target has one slot, the brokered "database" protocol;
-          the host slots (ssh, rdp, vnc, winrm) do not apply to it. */}
-      <CredentialBindings
-        slots={(database ? (['database'] as Protocol[]) : protocols).map((p) => ({ protocol: p, label: p === 'database' ? `Database (${engineName(t.engine)})` : protocolName(p) }))}
-        current={t.credentials}
-        credentials={credentials}
-        onSave={saveBindings}
-        onError={setErr}
-      />
+      {/* An application holds no credential: people reach it as themselves,
+          and the proxy adds nothing the upstream could trust (ADR 0033). A
+          database target has one slot, the brokered "database" protocol; the
+          host slots (ssh, rdp, vnc, winrm) do not apply to it. */}
+      {!application && (
+        <>
+          <h2 style={{ marginTop: 18 }}>{database ? 'Database credential' : 'Credentials per protocol'}</h2>
+          <CredentialBindings
+            slots={(database ? (['database'] as Protocol[]) : protocols).map((p) => ({ protocol: p, label: p === 'database' ? `Database (${engineName(t.engine)})` : protocolName(p) }))}
+            current={t.credentials}
+            credentials={credentials}
+            onSave={saveBindings}
+            onError={setErr}
+          />
+        </>
+      )}
 
       {certProbe && (
         <Alert tone={certProbe.accepted ? 'ok' : 'danger'}>
@@ -230,7 +246,7 @@ export function TargetDetail({ target, credentials, onClose, onChanged, onDelete
 
       <div className="actions" style={{ marginTop: 18, justifyContent: 'space-between' }}>
         <div className="actions">
-          {!database && (
+          {host && (
             <button className="btn" onClick={() => void doProbe()} disabled={probing}>{probing ? 'Probing…' : 'Probe'}</button>
           )}
           {canTrust && (
@@ -296,7 +312,7 @@ export function TargetDetail({ target, credentials, onClose, onChanged, onDelete
       {confirm === 'delete' && (
         <Confirm
           title={`Delete ${t.name}?`}
-          body={`The ${database ? 'database' : 'target'} leaves every list and its credential bindings are removed; past sessions, recordings and audit events keep its name. Deletion is refused while a policy names it by id or a session is open on it.`}
+          body={`The ${database ? 'database' : application ? 'application' : 'target'} leaves every list${application ? '' : ' and its credential bindings are removed'}; past sessions${application ? '' : ', recordings'} and audit events keep its name. Deletion is refused while a policy names it by id or a session is open on it.`}
           confirmLabel="Delete"
           danger
           onClose={() => setConfirm(null)}

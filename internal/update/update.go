@@ -17,6 +17,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -174,6 +175,23 @@ func IsVersion(s string) bool {
 	return ok
 }
 
+// Canonical writes a version the one way, MAJOR.MINOR.PATCH with its
+// prerelease after a hyphen, rebuilt from the parsed numbers and the
+// prerelease's permitted characters rather than from the text given. A log
+// line or a request file carries this form, never the input. Empty when s
+// is not a version.
+func Canonical(s string) string {
+	v, ok := parse(s)
+	if !ok {
+		return ""
+	}
+	out := fmt.Sprintf("%d.%d.%d", v.nums[0], v.nums[1], v.nums[2])
+	if v.pre != "" {
+		out += "-" + v.pre
+	}
+	return out
+}
+
 // StatusFile is what the package's installer writes under the state dir
 // as it works (ADR 0032); the bell reads it back.
 const StatusFile = "update-status.json"
@@ -223,12 +241,17 @@ type version struct {
 	pre  string
 }
 
+// preRe is a prerelease as semantic versioning writes one: dot-separated
+// runs of letters, digits and hyphens. Nothing else is read into a version,
+// so what comes out of one is never the text that went in.
+var preRe = regexp.MustCompile(`^[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*$`)
+
 // parse reads v?MAJOR.MINOR.PATCH with an optional -prerelease.
 func parse(s string) (version, bool) {
 	s = strings.TrimPrefix(strings.TrimSpace(s), "v")
-	core, pre, _ := strings.Cut(s, "-")
+	core, pre, hasPre := strings.Cut(s, "-")
 	parts := strings.Split(core, ".")
-	if len(parts) != 3 {
+	if len(parts) != 3 || (hasPre && (len(pre) > 64 || !preRe.MatchString(pre))) {
 		return version{}, false
 	}
 	var v version

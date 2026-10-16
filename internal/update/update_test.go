@@ -35,6 +35,20 @@ func TestNewer(t *testing.T) {
 	}
 }
 
+// TestCanonical: a version comes back out the one way, rebuilt from its
+// parts, and nothing that is not a version comes out at all; a prerelease
+// may carry only what semantic versioning allows.
+func TestCanonical(t *testing.T) {
+	for in, want := range map[string]string{
+		"1.4.0": "1.4.0", " v1.4.0 ": "1.4.0", "01.4.0": "1.4.0", "1.4.0-rc.1": "1.4.0-rc.1", "v2.0.0-beta-2": "2.0.0-beta-2",
+		"1.4": "", "dev": "", "1.4.0-rc 1": "", "1.4.0-rc\n1": "", "1.4.0-": "", "1.4.0-rc.1;rm": "",
+	} {
+		if got := Canonical(in); got != want {
+			t.Errorf("Canonical(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
 // TestCheck: a manifest with a newer version lights the bell with its notes
 // link; an unreachable or broken manifest records the reason and never a
 // version; a notes link that is not https is dropped, not shown.

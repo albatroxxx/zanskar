@@ -45,6 +45,12 @@ const (
 	SourceGenerated = "generated" // self-signed, made by the gateway
 )
 
+// SourceApps is the certificate for the applications domain (ADR 0033): one
+// an administrator uploads for *.<apps domain>, served to a handshake that
+// names a host under it. The gateway never generates one, since a
+// self-signed certificate is not acceptable there.
+const SourceApps = "apps"
+
 const table = "tls_certificates"
 
 // Errors.
@@ -325,9 +331,32 @@ type Manager struct {
 	File *tls.Certificate
 	// Hosts are the names a generated certificate carries.
 	Hosts []string
+	// AppsDomain returns the applications domain (ADR 0033): a handshake
+	// naming a host one label under it gets the apps certificate. Nil or
+	// empty means applications are not served.
+	AppsDomain func() string
 
 	active atomic.Pointer[entry]
+	apps   atomic.Pointer[entry]
 	now    func() time.Time // nil means time.Now; tests move it
+}
+
+func (m *Manager) appsDomain() string {
+	if m.AppsDomain == nil {
+		return ""
+	}
+	return strings.ToLower(strings.TrimSpace(m.AppsDomain()))
+}
+
+// underAppsDomain reports whether a handshake's server name is one label
+// under the applications domain.
+func (m *Manager) underAppsDomain(serverName string) bool {
+	domain := m.appsDomain()
+	if domain == "" || serverName == "" {
+		return false
+	}
+	label, ok := strings.CutSuffix(strings.ToLower(serverName), "."+domain)
+	return ok && label != "" && !strings.Contains(label, ".")
 }
 
 func (m *Manager) clock() time.Time {
@@ -344,11 +373,41 @@ type entry struct {
 
 // Load resolves the active certificate: uploaded, else file, else a
 // generated one, made now when there is none or it is within thirty days
-// of its end.
+// of its end. It loads the applications certificate too.
 func (m *Manager) Load(ctx context.Context) error {
 	if m.Log == nil {
 		m.Log = slog.Default()
 	}
+	if err := m.loadApps(ctx); err != nil {
+		return err
+	}
+	return m.loadActive(ctx)
+}
+
+// loadApps fills the applications slot from the stored certificate. One that
+// cannot serve now is kept and left out, like an upload; nothing falls back
+// into the slot, since the console's certificate is never right for the
+// apps domain, and AppsReady says so.
+func (m *Manager) loadApps(ctx context.Context) error {
+	certPEM, keyPEM, err := m.Repo.Get(ctx, SourceApps)
+	switch {
+	case errors.Is(err, ErrNotFound):
+		m.apps.Store(nil)
+		return nil
+	case err != nil:
+		return err
+	}
+	cert, leaf, err := Parse(certPEM, keyPEM)
+	if err != nil {
+		m.Log.Warn("applications TLS certificate cannot serve now; kept, not served", "err", err)
+		m.apps.Store(nil)
+		return nil
+	}
+	m.apps.Store(&entry{cert: cert, info: describe(SourceApps, leaf, certPEM)})
+	return nil
+}
+
+func (m *Manager) loadActive(ctx context.Context) error {
 	if certPEM, keyPEM, err := m.Repo.Get(ctx, SourceUploaded); err == nil {
 		cert, leaf, perr := Parse(certPEM, keyPEM)
 		if perr == nil {
@@ -439,13 +498,86 @@ func (m *Manager) set(source string, cert tls.Certificate, leaf *x509.Certificat
 	m.active.Store(&entry{cert: cert, info: describe(source, leaf, certPEM)})
 }
 
-// GetCertificate is what the listener's tls.Config calls per handshake.
-func (m *Manager) GetCertificate(*tls.ClientHelloInfo) (*tls.Certificate, error) {
+// GetCertificate is what the listener's tls.Config calls per handshake: the
+// applications certificate for a host under the apps domain when there is
+// one, else the active certificate.
+func (m *Manager) GetCertificate(hello *tls.ClientHelloInfo) (*tls.Certificate, error) {
+	if hello != nil && m.underAppsDomain(hello.ServerName) {
+		if a := m.apps.Load(); a != nil {
+			return &a.cert, nil
+		}
+	}
 	e := m.active.Load()
 	if e == nil {
 		return nil, errors.New("tlscert: no certificate loaded")
 	}
 	return &e.cert, nil
+}
+
+// UploadApps validates, stores and serves the applications certificate. With
+// an apps domain set it must name *.<domain>, the one name every application
+// host falls under.
+func (m *Manager) UploadApps(ctx context.Context, certPEM, keyPEM, by string) (Info, error) {
+	cert, leaf, err := Parse(certPEM, keyPEM)
+	if err != nil {
+		return Info{}, err
+	}
+	if domain := m.appsDomain(); domain != "" {
+		if missing := missingHosts(leaf, []string{"*." + domain}); len(missing) > 0 {
+			return Info{}, fmt.Errorf("%w: the certificate does not name *.%s (it names %s)", ErrInvalid, domain, strings.Join(leaf.DNSNames, ", "))
+		}
+	}
+	if err := m.Repo.Put(ctx, SourceApps, certPEM, keyPEM, by); err != nil {
+		return Info{}, err
+	}
+	e := &entry{cert: cert, info: describe(SourceApps, leaf, certPEM)}
+	m.apps.Store(e)
+	return e.info, nil
+}
+
+// ResetApps removes the applications certificate. Application hosts then
+// get the console's certificate, which browsers refuse for them, until
+// another is uploaded; enrolling applications is refused meanwhile.
+func (m *Manager) ResetApps(ctx context.Context) error {
+	if err := m.Repo.Delete(ctx, SourceApps); err != nil {
+		return err
+	}
+	m.apps.Store(nil)
+	return nil
+}
+
+// Apps describes the applications certificate being served, if any.
+func (m *Manager) Apps() (Info, bool) {
+	if e := m.apps.Load(); e != nil {
+		return e.info, true
+	}
+	return Info{}, false
+}
+
+// AppsHosts lists the names the applications certificate carries, for the
+// plain-HTTP redirect.
+func (m *Manager) AppsHosts() []string {
+	if e := m.apps.Load(); e != nil {
+		return e.info.Hosts
+	}
+	return nil
+}
+
+// AppsReady reports why application hosts under domain cannot be served over
+// TLS yet, or nil: no applications certificate, one for another name, or one
+// past its dates.
+func (m *Manager) AppsReady(domain string) error {
+	e := m.apps.Load()
+	if e == nil {
+		return fmt.Errorf("upload a certificate for *.%s first: Settings, TLS certificate, Applications", domain)
+	}
+	if len(missingHosts(e.cert.Leaf, []string{"*." + domain})) > 0 {
+		return fmt.Errorf("the applications certificate names %s, not *.%s; upload one for the apps domain", strings.Join(e.info.Hosts, ", "), domain)
+	}
+	if err := servable(e.cert.Leaf, m.clock()); err != nil {
+		return fmt.Errorf("the applications certificate cannot serve: %s; upload a new one", strings.TrimPrefix(err.Error(), ErrInvalid.Error()+": "))
+	}
+	return nil
 }
 
 // Active describes the certificate being served.

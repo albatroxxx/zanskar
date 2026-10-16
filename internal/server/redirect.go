@@ -44,6 +44,15 @@ func redirectHandler(tlsPort, fallbackHost string, covered func() []string) http
 					host = name
 					break
 				}
+				// A wildcard (the applications certificate, ADR 0033) covers
+				// one label under it; the asked name is then the one to use,
+				// since the certificate's own text cannot spell it.
+				if suffix, ok := strings.CutPrefix(name, "*."); ok {
+					if label, under := strings.CutSuffix(asked, "."+strings.ToLower(suffix)); under && label != "" && !strings.Contains(label, ".") {
+						host = asked
+						break
+					}
+				}
 			}
 		}
 		if host == "" {

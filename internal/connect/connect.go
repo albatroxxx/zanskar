@@ -85,6 +85,11 @@ type Handler struct {
 	// Files holds live SSH sessions that permit SFTP file transfer (ADR 0016);
 	// initialised in Register.
 	Files *fileRegistry
+	// AppURL is where the browser opens an application (ADR 0033): the
+	// address under the apps domain for the given label, built from the
+	// request the user came in on. Nil, or an empty answer, means the apps
+	// domain is not configured and applications are not listed.
+	AppURL func(r *http.Request, label string) string
 }
 
 // Register mounts the routes. Every REST route here is for accounts that may
@@ -113,7 +118,7 @@ func (h *Handler) Register(mux *http.ServeMux) {
 
 // reachableTarget is what a user sees in their target list.
 type reachableTarget struct {
-	Kind         string            `json:"kind"` // target | asg
+	Kind         string            `json:"kind"` // target | asg | application
 	ID           string            `json:"id"`
 	Name         string            `json:"name"`
 	OSFamily     target.OSFamily   `json:"os_family"`
@@ -131,6 +136,10 @@ type reachableTarget struct {
 	Engine       string `json:"engine,omitempty"` // database targets (ADR 0017)
 	HealthyCount int    `json:"healthy_count,omitempty"`
 	InstanceCnt  int    `json:"instance_count,omitempty"`
+	// Label and URL are an application's subdomain and where the browser
+	// opens it (ADR 0033); the upstream itself is never shown.
+	Label string `json:"label,omitempty"`
+	URL   string `json:"url,omitempty"`
 }
 
 func (h *Handler) myTargets(w http.ResponseWriter, r *http.Request) {
@@ -155,6 +164,26 @@ func (h *Handler) myTargets(w http.ResponseWriter, r *http.Request) {
 		}
 		for _, t := range batch {
 			if t.Status != "active" {
+				continue
+			}
+			if t.IsApplication() {
+				// An application is opened in the browser, not through a
+				// ticket, and only once the apps domain exists to serve it.
+				url := ""
+				if h.AppURL != nil {
+					url = h.AppURL(r, t.AppLabel)
+				}
+				if url == "" {
+					continue
+				}
+				allowed, needApproval := reach(pols, policy.TargetRef{ID: t.ID, Tags: t.Tags}, []target.Protocol{target.HTTP}, now)
+				if len(allowed) == 0 {
+					continue
+				}
+				out = append(out, reachableTarget{
+					Kind: "application", ID: t.ID, Name: t.Name, OSFamily: t.OSFamily, Tags: t.Tags, Capabilities: []target.Protocol{},
+					Allowed: allowed, RequiresApproval: needApproval, HostKeyReady: true, Label: t.AppLabel, URL: url,
+				})
 				continue
 			}
 			protos := target.Protocols
@@ -286,6 +315,11 @@ func (h *Handler) connect(w http.ResponseWriter, r *http.Request) {
 			deny(http.StatusNotImplemented, "protocol_unavailable", "desktop sessions are not configured on this gateway")
 			return
 		}
+	case target.HTTP:
+		// An application is opened at its own address (ADR 0033); there is
+		// no bridge for a ticket to start.
+		deny(http.StatusNotImplemented, "protocol_unavailable", "applications are opened from the Applications tab, not through connect")
+		return
 	default:
 		deny(http.StatusNotImplemented, "protocol_unavailable", "protocol not available")
 		return
@@ -326,44 +360,19 @@ func (h *Handler) connect(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, res)
 }
 
-// issueTicket runs policy, pinning and credential checks for an endpoint and
-// issues a connect ticket. A non-empty code is a user-facing refusal.
 // admits applies the access policies to userID reaching ep over proto: when
 // a ticket is issued, and again when it is redeemed, so a policy, a group
 // membership or an approval revoked in between is not outrun. It returns
-// the allowing decision, or the code and message of a refusal.
+// the allowing decision, or the code and message of a refusal. The gate is
+// the one the applications proxy passes too (access.Gate).
 func (h *Handler) admits(ctx context.Context, userID string, ep *endpoint, proto target.Protocol) (policy.Decision, string, string, error) {
-	pols, err := h.Policies.ForUser(ctx, userID)
-	if err != nil {
-		return policy.Decision{}, "", "", err
-	}
 	id, asgID, tags := ep.policyRef()
-	d := policy.Evaluate(pols, policy.TargetRef{ID: id, ASGID: asgID, Tags: tags}, string(proto), time.Now())
-	if !d.Allowed {
-		return d, "policy_denied", d.Reason, nil
-	}
-	// Approval-gated access needs a live grant (ADR 0018); a standing policy
-	// covering the same target would have set RequireApproval false above.
-	if d.RequireApproval && h.Access != nil {
-		granted, err := h.Access.HasActiveGrant(ctx, userID, ep.TargetID, ep.ASGID, string(proto), time.Now())
-		if err != nil {
-			return d, "", "", err
-		}
-		if !granted {
-			return d, "approval_required", "access to this target requires an approved request", nil
-		}
-	}
-	if d.RequireMFA && h.MFAEnrolled != nil {
-		enrolled, err := h.MFAEnrolled(ctx, userID)
-		if err != nil {
-			return d, "", "", err
-		}
-		if !enrolled {
-			return d, "mfa_required_by_policy", "this policy requires an enrolled authenticator", nil
-		}
-	}
-	return d, "", "", nil
+	gate := &access.Gate{Policies: h.Policies, Grants: h.Access, MFAEnrolled: h.MFAEnrolled}
+	return gate.Admit(ctx, userID, policy.TargetRef{ID: id, ASGID: asgID, Tags: tags}, string(proto), time.Now())
 }
+
+// issueTicket runs policy, pinning and credential checks for an endpoint and
+// issues a connect ticket. A non-empty code is a user-facing refusal.
 
 func (h *Handler) issueTicket(ctx context.Context, p *auth.Principal, ip string, ep *endpoint, proto target.Protocol, uc *userCredential, failoverFrom string) (*connectResponse, string, string, error) {
 	if h.draining() {

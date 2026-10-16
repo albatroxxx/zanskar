@@ -1,5 +1,5 @@
 import { Route } from 'react-router-dom'
-import { Dashboard, Targets, Databases, Autoscaling, Credentials, Policies, Approvals, UsersGroups, IdentityProviders, Sessions, Retention, Settings, Logs } from './pages'
+import { Dashboard, Targets, Databases, Applications, Autoscaling, Credentials, Policies, Approvals, UsersGroups, IdentityProviders, Sessions, Retention, Settings, Logs } from './pages'
 
 // Admin pages, one per file. Paths match the sidebar in App.tsx. The console
 // lands on the dashboard (ADR 0029); hosts moved to /admin/hosts.
@@ -8,6 +8,7 @@ export const adminRoutes = (
     <Route index element={<Dashboard />} />
     <Route path="hosts" element={<Targets />} />
     <Route path="databases" element={<Databases />} />
+    <Route path="applications" element={<Applications />} />
     <Route path="autoscaling" element={<Autoscaling />} />
     <Route path="credentials" element={<Credentials />} />
     <Route path="policies" element={<Policies />} />

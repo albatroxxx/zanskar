@@ -18,6 +18,9 @@ rm -rf "$DIR/shots.db"* "$DIR/rec"
 export ZANSKAR_DB_DSN="file:$DIR/shots.db?_pragma=journal_mode(WAL)&_pragma=foreign_keys(1)"
 export ZANSKAR_LISTEN_ADDR=127.0.0.1:$PORT ZANSKAR_REQUIRE_MFA=false ZANSKAR_RECORDINGS_DIR=$DIR/rec ZANSKAR_LOG_FORMAT=text
 export ZANSKAR_MASTER_KEY_FILE= ZANSKAR_TLS_MODE=
+# Applications (ADR 0033) need the console's public address and an apps
+# domain; in proxy mode (no TLS here) no applications certificate is asked for.
+export ZANSKAR_PUBLIC_URL=https://gateway.example.com ZANSKAR_APPS_DOMAIN=apps.example.com
 ./bin/zanskar migrate >/dev/null 2>&1
 ZANSKAR_ADMIN_PASSWORD='screenshot admin passphrase' ./bin/zanskar admin create --username admin --name "Priya Nair" >/dev/null # gitleaks:allow -- a made-up account on a throwaway gateway
 export ZANSKAR_MASTER_KEY=$(./bin/zanskar keygen)
@@ -80,8 +83,13 @@ CA_PEM=$(python3 -c 'import json,sys; print(json.dumps(open(sys.argv[1]).read())
 ORDERS=$(host "{\"name\":\"orders-db\",\"address\":\"orders.c7xk2.eu-west-2.rds.amazonaws.com\",\"os_family\":\"linux\",\"engine\":\"postgres\",\"engine_version\":\"16\",\"database_name\":\"orders\",\"tls_mode\":\"verify-full\",\"tls_ca\":$CA_PEM,\"ports\":{\"database\":5432},\"tags\":{\"env\":\"prod\",\"role\":\"db\"},\"credentials\":{\"database\":\"$ORDERS_CRED\"}}")
 BILLING=$(host "{\"name\":\"billing-db\",\"address\":\"billing.internal.example\",\"os_family\":\"linux\",\"engine\":\"mysql\",\"engine_version\":\"8.4\",\"database_name\":\"billing\",\"tls_mode\":\"require\",\"ports\":{\"database\":3306},\"tags\":{\"env\":\"prod\",\"role\":\"db\"},\"credentials\":{\"database\":\"$BILLING_CRED\"}}")
 
+# Applications: a wiki verified against the system roots, a dashboard against a bundle.
+host "{\"name\":\"Wiki\",\"app_upstream\":\"https://wiki.internal.example:8443\",\"tags\":{\"env\":\"prod\",\"tier\":\"apps\"}}" >/dev/null
+host "{\"name\":\"Grafana\",\"app_upstream\":\"https://grafana.internal.example\",\"tls_ca\":$CA_PEM,\"tags\":{\"env\":\"prod\",\"tier\":\"apps\"}}" >/dev/null
+
 # Policies: standing SSH to staging, approval-gated bastion and databases.
 pol() { api -X POST "$B/access-policies" -d "$1" >/dev/null; }
+pol "{\"name\":\"ops-internal-apps\",\"description\":\"Internal web applications for the platform team\",\"group_id\":\"$OPS\",\"target_selector\":{\"tags\":{\"tier\":\"apps\"}},\"protocols\":[\"http\"],\"idle_timeout_minutes\":30,\"max_session_minutes\":480,\"require_mfa\":false}"
 pol "{\"name\":\"ops-staging-ssh\",\"description\":\"Standing SSH to the staging web tier\",\"group_id\":\"$OPS\",\"target_selector\":{\"tags\":{\"env\":\"staging\"}},\"protocols\":[\"ssh\"],\"idle_timeout_minutes\":15,\"max_session_minutes\":240,\"require_mfa\":false}"
 pol "{\"name\":\"prod-bastion-jit\",\"description\":\"Approval-gated production bastion\",\"group_id\":\"$OPS\",\"target_selector\":{\"tags\":{\"role\":\"bastion\"}},\"protocols\":[\"ssh\"],\"idle_timeout_minutes\":15,\"max_session_minutes\":120,\"require_approval\":true,\"require_mfa\":false}"
 pol "{\"name\":\"prod-db-jit\",\"description\":\"Approval-gated production database access\",\"group_id\":\"$DBA\",\"target_selector\":{\"tags\":{\"role\":\"db\"}},\"protocols\":[\"database\"],\"idle_timeout_minutes\":10,\"max_session_minutes\":60,\"require_approval\":true,\"require_mfa\":false}"
