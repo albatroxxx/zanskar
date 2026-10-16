@@ -153,6 +153,44 @@ func TestControllerDrain(t *testing.T) {
 	}
 }
 
+// TestControllerDrainSkipsApplications: an application session (ADR 0033)
+// never holds the drain — a restart with only one open proceeds at once, and
+// the session ends with the restart reason — while a real session still
+// makes the drain wait, and the application session rides along to the
+// cutover.
+func TestControllerDrainSkipsApplications(t *testing.T) {
+	reg := gateway.NewRegistry()
+	var exits atomic.Int32
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+
+	// Only an application session: the minute-long wait is not honoured.
+	c := &Controller{Registry: reg, Log: log, Exit: func() { exits.Add(1) }, Poll: 10 * time.Millisecond}
+	app := reg.Add(context.Background(), gateway.Live{SessionID: "a1", Protocol: "http"})
+	c.Restart("admin", time.Minute)
+	waitFor(t, func() bool { return exits.Load() == 1 })
+	if reason, _ := gateway.CancelReason(app); reason != "gateway_restart" {
+		t.Fatalf("application session ended with reason %q", reason)
+	}
+	reg.Remove("a1")
+
+	// An application session beside a real one: the real one makes the drain
+	// wait, and both end once it is gone.
+	c2 := &Controller{Registry: reg, Log: log, Exit: func() { exits.Add(1) }, Poll: 10 * time.Millisecond}
+	app2 := reg.Add(context.Background(), gateway.Live{SessionID: "a2", Protocol: "http"})
+	reg.Add(context.Background(), gateway.Live{SessionID: "s1", Protocol: "ssh"})
+	c2.Restart("admin", time.Minute)
+	time.Sleep(50 * time.Millisecond)
+	if exits.Load() != 1 || app2.Err() != nil {
+		t.Fatal("drain exited while an ssh session was live")
+	}
+	reg.Remove("s1")
+	waitFor(t, func() bool { return exits.Load() == 2 })
+	if reason, _ := gateway.CancelReason(app2); reason != "gateway_restart" {
+		t.Fatalf("application session beside ssh ended with reason %q", reason)
+	}
+	reg.Remove("a2")
+}
+
 func waitFor(t *testing.T, cond func() bool) {
 	t.Helper()
 	deadline := time.Now().Add(3 * time.Second)

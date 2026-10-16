@@ -198,3 +198,21 @@ func (r *Registry) Count() int {
 	defer r.mu.Unlock()
 	return len(r.live)
 }
+
+// Waiting reports the live sessions a drain should wait for. An application
+// session (ADR 0033) is not a protocol bridge — each request is its own
+// short exchange and the session is only a cookie binding — so a drain ends
+// it at its cutover rather than waiting its window out for it, and it is not
+// counted here. With only application sessions open, a restart proceeds at
+// once.
+func (r *Registry) Waiting() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	n := 0
+	for _, l := range r.live {
+		if l.Protocol != protocol.HTTP {
+			n++
+		}
+	}
+	return n
+}

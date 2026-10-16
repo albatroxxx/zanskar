@@ -119,7 +119,11 @@ func (c *Controller) run(ctx context.Context, d Drain) {
 	}
 	t := time.NewTicker(poll)
 	defer t.Stop()
-	for c.Registry.Count() > 0 && time.Now().Before(d.Deadline) {
+	// Application sessions (ADR 0033) are not waited on: they hold nothing in
+	// flight, so Waiting() leaves them out and the cutover below ends them
+	// with the same gateway_restart reason as any bridge. A drain with only
+	// application sessions open proceeds at once.
+	for c.Registry.Waiting() > 0 && time.Now().Before(d.Deadline) {
 		select {
 		case <-ctx.Done():
 			return
