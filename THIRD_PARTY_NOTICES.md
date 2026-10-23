@@ -2015,7 +2015,7 @@ SOFTWARE.
 
 ### github.com/aws/aws-sdk-go-v2/service/ec2
 
-* Version: `v1.338.4`
+* Version: `v1.339.0`
 
 ```
 
@@ -5410,7 +5410,7 @@ SOFTWARE.
 
 ### github.com/go-jose/go-jose/v4
 
-* Version: `v4.1.5`
+* Version: `v4.1.6`
 
 ```
 
@@ -11239,7 +11239,7 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 
 ### react
 
-* Version: `19.3.0`
+* Version: `19.3.1`
 * Declared license: `MIT`
 
 ```
@@ -11270,7 +11270,7 @@ SOFTWARE.
 
 ### react-dom
 
-* Version: `19.3.0`
+* Version: `19.3.1`
 * Declared license: `MIT`
 
 ```
