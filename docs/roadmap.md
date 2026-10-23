@@ -24,7 +24,8 @@ What the project intends to do, in order. Dates are targets; the order matters m
    packages in every release (since 1.2.1); fixes found in use; test coverage at 80% (reached
    in 1.2.2). A full review of the code in October 2026 (eight High, thirty-three Medium,
    seventeen Low findings, thirty-one bugs) was fixed in full and shipped as 1.4.0
-   ([release notes](releases/v1.4.0.md)).
+   ([release notes](releases/v1.4.0.md)); 1.4.1 (23 October 2026) rebuilt it on Go 1.27.3 to
+   close a reachable `crypto/x509` certificate-trust flaw ([notes](releases/v1.4.1.md)).
 3. **Restricted admin CLI**: done in 1.3.0. A command line inside the admin console that runs
    only Zanskar commands, through the API's own permission checks, opened with a fresh
    authenticator code and audited line by line ([ADR 0027](adr/0027-restricted-console-cli.md),
