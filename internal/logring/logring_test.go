@@ -53,6 +53,26 @@ func TestRing(t *testing.T) {
 	}
 }
 
+// TestSanitizeStoredAttr: an attribute carrying user input (a request path,
+// say) is stored single-line and legible — a newline cannot forge a line in
+// the ring the console reads, and other control characters are made visible.
+func TestSanitizeStoredAttr(t *testing.T) {
+	ring := New(2)
+	log := slog.New(ring.Wrap(slog.NewTextHandler(io.Discard, nil)))
+	log.Info("http", "path", "/a\nInjected line\r\x00\x1b")
+	snap := ring.Snapshot(slog.LevelInfo, "", 10)
+	if len(snap) != 1 {
+		t.Fatalf("want one record, got %d", len(snap))
+	}
+	got := snap[0].Attrs["path"]
+	if want := `/a\nInjected line\r` + "��"; got != want {
+		t.Fatalf("stored path = %q, want %q", got, want)
+	}
+	if strings.ContainsAny(got, "\n\r\x00\x1b") {
+		t.Fatalf("stored path still holds a control character: %q", got)
+	}
+}
+
 // TestRoutes: listing filters and paginates; a user is refused; download
 // is audited and sends the ring oldest first.
 func TestRoutes(t *testing.T) {

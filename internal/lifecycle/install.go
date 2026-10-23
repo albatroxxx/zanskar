@@ -69,7 +69,9 @@ func (h *Handler) installUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// What is logged, audited and written for the installer is the version
-	// as the parser rebuilt it, never the request's own text.
+	// as the parser rebuilt it, never the request's own text; its charset is
+	// fixed to ^\d+\.\d+\.\d+(-[0-9A-Za-z-.]+)?$ (CodeQL #60, go/log-injection,
+	// dismissed as a false positive: Canonical cannot return a control char).
 	in.Version = update.Canonical(in.Version)
 	if in.Version == "" {
 		httpx.BadRequest(w, r, "version must look like 1.2.3")
