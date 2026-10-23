@@ -102,6 +102,18 @@ Deferred by decision: a multi-pane workspace (browser tabs suffice), rotation of
 keys and of Windows or database passwords (the certificate authority and the owning systems
 do that). Still Phase 4: HA, SAML/SCIM, WebAuthn.
 
+## v1.5 release — shipped (v1.5.0 tagged 2026-10-23)
+
+A feature release, cut after two release candidates (rc.1 2026-10-16 soaked the feature code;
+rc.2 2026-10-23 rebuilt it on Go 1.27.3 to close a reachable `crypto/x509` advisory). It lands
+a landing dashboard for each role ([ADR 0029](adr/0029-portal-dashboards.md)), restart, reboot,
+stop and in-console update guarded by a typed hostname and a fresh authenticator code
+([ADR 0032](adr/0032-host-actions-and-updates-from-the-console.md)), and internal web
+applications through an identity-aware proxy, each served under a dedicated apps domain
+([ADR 0033](adr/0033-applications-identity-aware-proxy.md)). One
+migration (0031) adds the application tables and widens the protocol checks; nothing already
+running needs a new setting ([release notes](releases/v1.5.0.md)).
+
 ## Phase 0 checklist
 
 - [x] Threat model (`docs/threat-model.md`)
