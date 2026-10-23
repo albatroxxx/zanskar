@@ -243,7 +243,10 @@ func (f *fixture) events(action string) []audit.Event {
 
 func (f *fixture) waitEnded(id string) *session.Session {
 	f.t.Helper()
-	deadline := time.Now().Add(3 * time.Second)
+	// Generous headroom: this waits on the idle-timeout reaper, which can slip
+	// past a few seconds on a loaded CI runner (TestFlow flaked here repeatedly
+	// at 3s). f.ctx is context.Background(), so a longer wait is free.
+	deadline := time.Now().Add(10 * time.Second)
 	for {
 		s, err := f.access.Get(f.ctx, id)
 		if err != nil {
