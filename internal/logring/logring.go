@@ -162,8 +162,37 @@ func flatten(into map[string]string, prefix string, a slog.Attr) {
 	if a.Key == "" {
 		return
 	}
-	into[prefix+a.Key] = a.Value.String()
+	into[prefix+a.Key] = sanitizeValue(a.Value.String())
 }
+
+// sanitizeValue keeps a stored attribute single-line and legible. An
+// attribute may carry user input (a request path, say), and the ring is
+// served to the admin console, so a newline or other control character that
+// could forge a log line is made visible rather than stored raw: newlines and
+// carriage returns become the two-character \n and \r, other C0 controls and
+// DEL become the replacement rune. The common clean value is returned as-is.
+func sanitizeValue(s string) string {
+	if !strings.ContainsFunc(s, isLogControl) {
+		return s
+	}
+	var b strings.Builder
+	b.Grow(len(s) + 8)
+	for _, r := range s {
+		switch {
+		case r == '\n':
+			b.WriteString(`\n`)
+		case r == '\r':
+			b.WriteString(`\r`)
+		case isLogControl(r):
+			b.WriteRune('�')
+		default:
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}
+
+func isLogControl(r rune) bool { return r == '\n' || r == '\r' || r < 0x20 || r == 0x7f }
 
 // WithAttrs implements slog.Handler.
 func (h *Handler) WithAttrs(attrs []slog.Attr) slog.Handler {
