@@ -60,9 +60,14 @@ function AdminToConsole({ children }: { children: React.ReactNode }) {
   return <Navigate to={(rest ? '/admin/' + rest : '/admin') + loc.search} replace />
 }
 
-// Home resolves "/" and unknown paths to the portal the account may enter.
+// Home resolves "/home" and unknown paths to the portal the account may
+// enter. It waits for the account to be known: sent to "/" while the probe
+// is still out, an administrator would land in the access portal, which
+// admits them too, instead of the console.
 function Home() {
   const auth = useAuth()
+  if (auth.status === 'loading') return <div className="empty">Loading…</div>
+  if (auth.status === 'unreachable') return <div className="empty">The gateway is not answering; trying again…</div>
   if (auth.status !== 'full') return <Navigate to="/" replace />
   return <Navigate to={homeFor(auth.user)} replace />
 }
