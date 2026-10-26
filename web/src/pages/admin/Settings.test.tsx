@@ -48,18 +48,18 @@ describe('Settings', () => {
     expect(screen.getByRole('heading', { name: 'Logging' })).toBeDefined()
     expect(screen.getByRole('heading', { name: 'Desktops' })).toBeDefined()
 
-    const level = screen.getByText('Log level').closest('.setting-row')!
+    const level = screen.getByText('Log level').closest('.setting-row') as HTMLElement
     expect(within(level).getByText('Set in console')).toBeDefined()
     expect(within(level).getByText(/Changed /)).toBeDefined()
     expect(within(level).getByRole('button', { name: 'Reset' })).toBeDefined()
     expect((within(level).getByLabelText('Log level') as HTMLSelectElement).value).toBe('warn')
 
-    const guacd = screen.getByText('guacd address').closest('.setting-row')!
+    const guacd = screen.getByText('guacd address').closest('.setting-row') as HTMLElement
     expect(within(guacd).getByText('From ZANSKAR_GUACD_ADDR')).toBeDefined()
     expect(within(guacd).queryByRole('button', { name: 'Reset' })).toBeNull()
     expect((within(guacd).getByLabelText('guacd address') as HTMLInputElement).placeholder).toBe('host:port')
 
-    const check = screen.getByText('Check for new versions').closest('.setting-row')!
+    const check = screen.getByText('Check for new versions').closest('.setting-row') as HTMLElement
     expect(within(check).getByText('Default')).toBeDefined()
     expect(within(check).getByText('On')).toBeDefined()
     // Nothing to save until something changes.
@@ -71,7 +71,7 @@ describe('Settings', () => {
     const put = vi.spyOn(api, 'put').mockResolvedValue(setting({ key: 'updates.check', category: 'Updates', title: 'Check for new versions', type: 'bool', default: 'true', value: 'false', source: 'console' }) as never)
     render(<Settings />)
     const user = userEvent.setup()
-    const row = (await screen.findByText('Check for new versions')).closest('.setting-row')!
+    const row = (await screen.findByText('Check for new versions')).closest('.setting-row') as HTMLElement
     await user.click(within(row).getByLabelText('On'))
     expect(within(row).getByText('Off')).toBeDefined()
     await user.click(within(row).getByRole('button', { name: 'Discard' }))
@@ -92,13 +92,13 @@ describe('Settings', () => {
     vi.spyOn(api, 'put').mockRejectedValue(new ApiError(422, { code: 'invalid', message: 'guacd address must be host:port', request_id: 'r' }, '422'))
     render(<Settings />)
     const user = userEvent.setup()
-    const level = (await screen.findByText('Log level')).closest('.setting-row')!
+    const level = (await screen.findByText('Log level')).closest('.setting-row') as HTMLElement
     await user.click(within(level).getByRole('button', { name: 'Reset' }))
     await waitFor(() => expect(del).toHaveBeenCalledWith('/admin/settings/log.level'))
     expect(await within(level).findByText('Default')).toBeDefined()
     expect((within(level).getByLabelText('Log level') as HTMLSelectElement).value).toBe('info')
 
-    const guacd = screen.getByText('guacd address').closest('.setting-row')!
+    const guacd = screen.getByText('guacd address').closest('.setting-row') as HTMLElement
     await user.clear(within(guacd).getByLabelText('guacd address'))
     await user.type(within(guacd).getByLabelText('guacd address'), 'nonsense')
     await user.click(within(guacd).getByRole('button', { name: 'Save' }))
@@ -110,7 +110,7 @@ describe('Settings', () => {
     serve()
     render(<Settings />)
     const user = userEvent.setup()
-    const row = (await screen.findByText('Sign-in banner')).closest('.setting-row')!
+    const row = (await screen.findByText('Sign-in banner')).closest('.setting-row') as HTMLElement
     expect(within(row).queryByText('Preview')).toBeNull()
     await user.type(within(row).getByLabelText('Sign-in banner'), 'Authorised use only.')
     expect(within(row).getByText('Preview')).toBeDefined()
@@ -120,7 +120,7 @@ describe('Settings', () => {
   it('lists install-time settings read-only, marking the ones the file has changed since start', async () => {
     serve(listing, ['ZANSKAR_DB_DSN', 'ZANSKAR_TLS_HOSTS'])
     render(<Settings />)
-    const table = (await screen.findByRole('heading', { name: 'Set at install' })).closest('.card')!
+    const table = (await screen.findByRole('heading', { name: 'Set at install' })).closest('.card') as HTMLElement
     const rows = within(table).getAllByRole('row').slice(1)
     expect(rows.map((r) => within(r).getAllByRole('cell')[2].textContent)).toEqual(['ZANSKAR_LISTEN_ADDR', 'ZANSKAR_DB_DSN', 'ZANSKAR_TLS_*'])
     expect(within(rows[0]).queryByText('changed in file')).toBeNull()
