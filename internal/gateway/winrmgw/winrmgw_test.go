@@ -422,3 +422,43 @@ func TestBridgeRegistryEndWithStalledBrowser(t *testing.T) {
 		t.Fatal("a browser that stopped reading held the session open")
 	}
 }
+
+// TestBridgeLineCapAndBatchedEcho: a frame of two thousand characters is
+// echoed in one write, not one per byte, and the line the shell runs stops
+// at maxLine, so a pasted or scripted megabyte cannot become a million
+// frames and recording events (review finding S2 L4).
+func TestBridgeLineCapAndBatchedEcho(t *testing.T) {
+	sh := &fakeShell{}
+	srv, _ := serve(t, sh, Limits{Idle: time.Minute, tick: 50 * time.Millisecond})
+	ws, ctx, cancel := dial(t, srv)
+	defer cancel()
+	defer ws.CloseNow()
+	readReady(t, ctx, ws)
+	readUntil(t, ctx, ws, "PS> ")
+
+	long := strings.Repeat("a", 2000)
+	sendText(t, ctx, ws, `{"t":"i","d":"`+long+`\r"}`)
+	frames := 0
+	var acc strings.Builder
+	for !strings.Contains(acc.String(), strings.Repeat("A", maxLine)) {
+		typ, data, err := ws.Read(ctx)
+		if err != nil {
+			t.Fatalf("read: %v (got %d bytes in %d frames)", err, acc.Len(), frames)
+		}
+		if typ == websocket.MessageBinary {
+			frames++
+			acc.Write(data)
+		}
+	}
+	got := acc.String()
+	if strings.Contains(got, strings.Repeat("A", maxLine+1)) {
+		t.Fatalf("the shell ran more than %d characters", maxLine)
+	}
+	if !strings.Contains(got, strings.Repeat("a", maxLine)) || strings.Contains(got, strings.Repeat("a", maxLine+1)) {
+		t.Fatalf("echo should be exactly %d characters", maxLine)
+	}
+	// The echo, the newline and the output: a handful of frames, not thousands.
+	if frames > 6 {
+		t.Fatalf("%d frames for one typed line", frames)
+	}
+}

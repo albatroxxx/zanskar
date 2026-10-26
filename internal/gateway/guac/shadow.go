@@ -129,6 +129,11 @@ func Relay(ctx context.Context, c *Conn, ws *websocket.Conn) error {
 				errCh <- nil
 				return
 			}
+			// One message, one instruction (see Bridge): a compound message
+			// would smuggle input past the switch below.
+			if _, err := Parse(string(data)); err != nil {
+				continue
+			}
 			switch Opcode(string(data)) {
 			case "nop", "sync":
 				if _, err := c.Write(data); err != nil {

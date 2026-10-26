@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
-	"strconv"
 	"time"
 
 	"github.com/coder/websocket"
@@ -137,8 +136,7 @@ func (h *ShadowHandler) shadowDesktop(w http.ResponseWriter, r *http.Request, li
 		httpx.WriteError(w, r, http.StatusNotFound, "not_live", "desktop session cannot be joined")
 		return
 	}
-	width, _ := strconv.Atoi(r.URL.Query().Get("width"))
-	height, _ := strconv.Atoi(r.URL.Query().Get("height"))
+	width, height, _ := screenSize(r)
 	timeout := h.DialTimeout
 	if timeout <= 0 {
 		timeout = 10 * time.Second

@@ -133,3 +133,52 @@ func TestRelayForwardsDisplayAndFiltersInput(t *testing.T) {
 		t.Fatalf("expected only sync to reach guacd, got %q", e)
 	}
 }
+
+// TestRelayDropsCompoundMessages: the watcher's socket forwards only nop and
+// sync, and only when the message is exactly one instruction; input hidden
+// behind a sync in the same message never reaches guacd (SEC-7).
+func TestRelayDropsCompoundMessages(t *testing.T) {
+	got := make(chan string, 1)
+	addr := fakeJoinGuacd(t, got)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ws, err := websocket.Accept(w, r, &websocket.AcceptOptions{InsecureSkipVerify: true})
+		if err != nil {
+			return
+		}
+		c, err := Join(r.Context(), addr, "$conn-1", 800, 600, 2*time.Second)
+		if err != nil {
+			t.Errorf("join: %v", err)
+			return
+		}
+		defer c.Close()
+		_ = Relay(r.Context(), c, ws)
+		_ = ws.Close(websocket.StatusNormalClosure, "")
+	}))
+	defer srv.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	ws, _, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(srv.URL, "http"), nil) //nolint:bodyclose // library closes the handshake body
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ws.CloseNow()
+	<-got
+	read := func() string {
+		_, data, err := ws.Read(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(data)
+	}
+	read() // size
+	read() // sync
+	// Input behind a sync, and a sync behind input: neither message may
+	// reach guacd. The fake echoes every opcode it receives, so the first
+	// echo tells which message got through.
+	_ = ws.Write(ctx, websocket.MessageText, []byte(Encode("sync", "1")+Encode("key", "65", "1")))
+	_ = ws.Write(ctx, websocket.MessageText, []byte(Encode("key", "65", "1")+Encode("sync", "1")))
+	_ = ws.Write(ctx, websocket.MessageText, []byte(Encode("nop")))
+	if e := read(); e != Encode("echo", "nop") {
+		t.Fatalf("expected only the lone nop to reach guacd, got %q", e)
+	}
+}

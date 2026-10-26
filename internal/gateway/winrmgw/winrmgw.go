@@ -29,6 +29,10 @@ import (
 	"github.com/albatroxxx/zanskar/internal/recording"
 )
 
+// maxLine bounds one typed line, as sshgw's command reader does; the rest
+// of a longer frame is dropped rather than buffered without end.
+const maxLine = 1024
+
 // Endpoint describes the WinRM listener on the target.
 type Endpoint struct {
 	Address string
@@ -310,11 +314,23 @@ func Bridge(ctx context.Context, log *slog.Logger, sh Shell, ws *websocket.Conn,
 	go func() {
 		defer close(readerDone)
 		var line []byte
+		// feed applies one browser frame to the line. The echo of what was
+		// typed goes back in one write per frame, not one per byte: a pasted
+		// or scripted frame of a megabyte must not become a million frames
+		// and recording events. The line itself stops growing at maxLine, as
+		// the SSH command reader's does, so the transcript stays readable.
 		feed := func(data []byte) bool {
+			var echo []byte
+			flush := func(tail []byte) bool {
+				echo = append(echo, tail...)
+				ok := out(echo)
+				echo = echo[:0]
+				return ok
+			}
 			for _, b := range data {
 				switch b {
 				case '\r', '\n':
-					out([]byte("\r\n"))
+					flush([]byte("\r\n"))
 					select {
 					case lineCh <- string(line):
 					case <-ctx.Done():
@@ -324,19 +340,19 @@ func Bridge(ctx context.Context, log *slog.Logger, sh Shell, ws *websocket.Conn,
 				case 0x7f, 0x08: // backspace / delete
 					if len(line) > 0 {
 						line = line[:len(line)-1]
-						out([]byte("\b \b"))
+						echo = append(echo, "\b \b"...)
 					}
 				case 0x03: // Ctrl-C abandons the line
 					line = line[:0]
-					out([]byte("^C\r\n" + prompt))
+					flush([]byte("^C\r\n" + prompt))
 				default:
-					if b >= 0x20 {
+					if b >= 0x20 && len(line) < maxLine {
 						line = append(line, b)
-						out([]byte{b})
+						echo = append(echo, b)
 					}
 				}
 			}
-			return true
+			return flush(nil)
 		}
 		for {
 			typ, data, err := ws.Read(wsCtx)
