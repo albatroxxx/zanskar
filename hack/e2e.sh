@@ -48,8 +48,11 @@ api -X POST "$B/access-policies" -d "{\"name\":\"ops-test-ssh\",\"group_id\":\"$
 api -X POST "$B/auth/logout" > /dev/null || true
 
 export E2E_BASE_URL="http://127.0.0.1:$PORT"
-cd web && npx playwright test --config e2e/playwright.config.ts "$@"
-status=$?
-cd ..
+# The suite's exit code is kept, not acted on at once: the gateway's own
+# errors are reported whichever way the browser run went, and the logs stay
+# under $S for CI to upload when it fails.
+status=0
+(cd web && npx playwright test --config e2e/playwright.config.ts "$@") || status=$?
 echo "gateway errors: $(grep -c 'level=ERROR' "$S/gateway.log" || true)"; grep 'level=ERROR' "$S/gateway.log" | head -3 | cut -c1-200 || true
+echo "logs: $S"
 exit $status

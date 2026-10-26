@@ -6,6 +6,9 @@ import { expect, test } from '@playwright/test'
 // server) and a policy granting ssh to the signed-in account's group.
 test.describe('An SSH session from the browser', () => {
   test('connects, shows the shell, ends on request, and leaves a reviewable recording', async ({ page }) => {
+    // The longest path in the suite: a fresh runner loads xterm and the
+    // asciinema bundle cold. The budget is against a hang, not a stopwatch.
+    test.slow()
     await page.goto('/')
     const row = page.getByRole('row').filter({ hasText: 'fake-1' })
     await expect(row).toBeVisible()

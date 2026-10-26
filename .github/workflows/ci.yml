@@ -91,7 +91,9 @@ jobs:
         # Sign in, connect to a machine, get a shell, leave, review the
         # recording; administer credentials and policies; the audit chain
         # verifies. hack/e2e.sh stands the gateway and the fake SSH server up.
-        run: hack/e2e.sh
+        env:
+          E2E_TMP: ${{ runner.temp }}/e2e
+        run: mkdir -p "$E2E_TMP" && hack/e2e.sh
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: failure()
         with:
@@ -99,6 +101,8 @@ jobs:
           path: |
             web/playwright-report
             web/test-results
+            ${{ runner.temp }}/e2e/gateway.log
+            ${{ runner.temp }}/e2e/fakessh.log
           retention-days: 7
 
   lint:
