@@ -281,6 +281,7 @@ func (h *Handler) session(w http.ResponseWriter, r *http.Request, label string, 
 			if err := h.Repo.Delete(ctx, row.TokenHash); err != nil {
 				h.log().Error("forget application cookie", "err", err)
 			}
+			h.forget(row.SessionID)
 		case err == nil:
 			if reason := h.verdict(row, label, now); reason != "" {
 				h.end(row, reason)
