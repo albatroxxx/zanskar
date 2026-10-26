@@ -37,7 +37,7 @@ describe('TargetsPage', () => {
     expect(within(row).getByText('PostgreSQL 16')).toBeDefined()
     expect(within(row).getByText('orders.rds.example:5432')).toBeDefined()
     expect(within(row).getByRole('button', { name: 'TLS: Encrypted, not verified' })).toBeDefined()
-    expect(screen.getAllByRole('columnheader').map((th) => th.textContent)).toEqual(['Name', 'Engine', 'Endpoint', 'Database', 'TLS', 'Credential', 'Tags', ''])
+    expect(screen.getAllByRole('columnheader').map((th) => th.textContent)).toEqual(['Name', 'Engine', 'Endpoint', 'Database', 'TLS', 'Credential', 'Tags', 'Actions'])
 
     await userEvent.setup().click(screen.getByRole('button', { name: 'Add database' }))
 
@@ -67,7 +67,7 @@ describe('TargetsPage', () => {
 
     const row = (await screen.findByText('https://wiki.internal:8443')).closest('tr')!
     expect(get).toHaveBeenCalledWith('/targets?limit=500&kind=application')
-    expect(screen.getAllByRole('columnheader').map((th) => th.textContent)).toEqual(['Name', 'Label', 'Upstream', 'TLS', 'Tags', ''])
+    expect(screen.getAllByRole('columnheader').map((th) => th.textContent)).toEqual(['Name', 'Label', 'Upstream', 'TLS', 'Tags', 'Actions'])
     expect(within(row).getByRole('button', { name: 'Upstream: TLS, verified against the system roots' })).toBeDefined()
 
     await userEvent.setup().click(within(row).getByRole('button', { name: 'Open' }))

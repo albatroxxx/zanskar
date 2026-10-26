@@ -99,7 +99,7 @@ export function MyAccess() {
                 <th>Status</th>
                 <th>Granted</th>
                 <th>Expires</th>
-                <th></th>
+                <th><span className="sr-only">Actions</span></th>
               </tr>
             </thead>
             <tbody>

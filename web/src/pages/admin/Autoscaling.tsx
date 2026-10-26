@@ -42,7 +42,7 @@ export function Autoscaling() {
                 <th>Healthy</th>
                 <th>Last synced</th>
                 <th>Status</th>
-                <th></th>
+                <th><span className="sr-only">Actions</span></th>
               </tr>
             </thead>
             <tbody>
@@ -284,12 +284,12 @@ function GroupForm({ initial, credentials, onClose, onSaved }: { initial?: Autos
                 <tr key={p}>
                   <td>
                     <div className="field inline" style={{ margin: 0 }}>
-                      <input id={`asg-cap-${p}`} type="checkbox" checked={f.caps[p]} onChange={(e) => up({ caps: { ...f.caps, [p]: e.target.checked } })} />
+                      <input id={`asg-cap-${p}`} aria-label={protocolName(p)} type="checkbox" checked={f.caps[p]} onChange={(e) => up({ caps: { ...f.caps, [p]: e.target.checked } })} />
                       <label htmlFor={`asg-cap-${p}`}>{protocolName(p)}</label>
                     </div>
                   </td>
                   <td>
-                    <input id={`asg-port-${p}`} type="number" min={1} max={65535} placeholder={String(defaultPorts[p])} value={f.ports[p]} disabled={!f.caps[p]} onChange={(e) => up({ ports: { ...f.ports, [p]: e.target.value } })} style={{ width: 110 }} />
+                    <input id={`asg-port-${p}`} aria-label={protocolName(p) + ' port'} type="number" min={1} max={65535} placeholder={String(defaultPorts[p])} value={f.ports[p]} disabled={!f.caps[p]} onChange={(e) => up({ ports: { ...f.ports, [p]: e.target.value } })} style={{ width: 110 }} />
                   </td>
                   <td>
                     <CredentialSelect id={`asg-cred-${p}`} protocol={p} value={f.credentials[p]} credentials={credentials} disabled={!f.caps[p]} onChange={(v) => up({ credentials: { ...f.credentials, [p]: v } })} />

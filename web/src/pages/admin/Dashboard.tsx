@@ -34,6 +34,9 @@ function uptime(seconds: number): string {
  *  what is live, and whether the gateway itself is healthy. Every number links
  *  to the page that manages it; the dashboard itself changes nothing. */
 export function Dashboard() {
+  // Read once per mount: a clock read during render is impure and would
+  // make re-renders disagree with each other.
+  const [now] = useState(() => Date.now())
   const [overview, setOverview] = useState<AdminOverview | null>(null)
   const [status, setStatus] = useState<SystemStatus | null>(null)
   const [tls, setTls] = useState<TLSStatus | null>(null)
@@ -51,7 +54,7 @@ export function Dashboard() {
   const o = overview
   const attention = o ? o.targets.host_key_pending + o.targets.host_key_changed + o.targets.certificate_pending : null
   const cert = tls?.active
-  const certDays = cert ? Math.floor((new Date(cert.not_after).getTime() - Date.now()) / 86400000) : null
+  const certDays = cert ? Math.floor((new Date(cert.not_after).getTime() - now) / 86400000) : null
 
   return (
     <>

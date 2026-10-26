@@ -53,7 +53,7 @@ export function Policies() {
                 <th>Windows</th>
                 <th>Idle / max</th>
                 <th>Enabled</th>
-                <th></th>
+                <th><span className="sr-only">Actions</span></th>
               </tr>
             </thead>
             <tbody>

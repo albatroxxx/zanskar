@@ -95,7 +95,7 @@ export function IdentityProviders() {
                 <th>Status</th>
                 <th>Secret</th>
                 <th>Created</th>
-                <th></th>
+                <th><span className="sr-only">Actions</span></th>
               </tr>
             </thead>
             <tbody>

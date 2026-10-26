@@ -171,7 +171,7 @@ function CATargets({ credential }: { credential: Credential }) {
         <div className="table-wrap">
           <table>
             <thead>
-              <tr><th>Target</th><th>Host key</th><th>Certificate login</th><th></th></tr>
+              <tr><th>Target</th><th>Host key</th><th>Certificate login</th><th><span className="sr-only">Actions</span></th></tr>
             </thead>
             <tbody>
               {targets.map((t) => {
