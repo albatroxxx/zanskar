@@ -119,7 +119,14 @@ func (h *Handler) newUpstream(a *Application) (*upstream, error) {
 			// travels in X-Forwarded-Host for applications that build links
 			// from it.
 			pr.SetURL(dest)
-			pr.Out.Header.Set("X-Forwarded-For", auth.ClientIP(pr.In))
+			// Every address header an upstream might trust from its proxy
+			// carries the gateway's own answer: the inbound ones were a
+			// browser's to write. Rewrite mode already drops the inbound
+			// X-Forwarded-* trio; X-Real-IP and Forwarded it leaves alone.
+			ip := auth.ClientIP(pr.In)
+			pr.Out.Header.Set("X-Forwarded-For", ip)
+			pr.Out.Header.Set("X-Real-IP", ip)
+			pr.Out.Header.Del("Forwarded")
 			pr.Out.Header.Set("X-Forwarded-Host", pr.In.Host)
 			pr.Out.Header.Set("X-Forwarded-Proto", scheme)
 			for _, name := range identityHeaders {
