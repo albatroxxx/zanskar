@@ -285,6 +285,12 @@ func TestFlow(t *testing.T) {
 	}
 
 	hdr := http.Header{"X-Forwarded-User": {"root"}, "X-Remote-User": {"root"}, "Authorization": {"Bearer abc"}, "Cookie": {"other=1; zanskar_session=stolen"}}
+	// Address headers a browser can forge: an upstream that trusts its proxy
+	// must see the gateway's values, not the client's. Set, not written as
+	// literals, so the keys are canonical as a parsed request's are.
+	hdr.Set("X-Forwarded-For", "127.0.0.1")
+	hdr.Set("X-Real-IP", "127.0.0.1")
+	hdr.Set("Forwarded", "for=127.0.0.1;proto=https")
 	rr := f.app(http.MethodGet, "http://wiki.apps.test/dash?x=1", hdr, appCookie)
 	if rr.Code != http.StatusOK || rr.Body.String() != "hello /dash" {
 		t.Fatalf("proxied: %d %s", rr.Code, rr.Body)
@@ -305,6 +311,9 @@ func TestFlow(t *testing.T) {
 	}
 	if got.Header.Get("X-Forwarded-Host") != "wiki.apps.test" || got.Header.Get("X-Forwarded-Proto") != "https" || got.Header.Get("X-Forwarded-For") != "203.0.113.5" {
 		t.Errorf("forwarded headers: %v", got.Header)
+	}
+	if got.Header.Get("X-Real-IP") != "203.0.113.5" || got.Header.Get("Forwarded") != "" {
+		t.Errorf("client-chosen address headers reached the upstream: X-Real-IP=%q Forwarded=%q", got.Header.Get("X-Real-IP"), got.Header.Get("Forwarded"))
 	}
 
 	rr = f.app(http.MethodGet, "http://wiki.apps.test/redirect", nil, appCookie)

@@ -96,10 +96,23 @@ func DecodeJSONLimit(r *http.Request, v any, limit int64) error {
 	if ct := r.Header.Get("Content-Type"); !strings.HasPrefix(ct, "application/json") {
 		return errors.New("content-type must be application/json")
 	}
-	dec := json.NewDecoder(io.LimitReader(r.Body, limit))
+	// MaxBytesReader, not LimitReader: a body over the limit is named as
+	// such instead of looking like one that ends early. The nil writer only
+	// forgoes the server's close-after-reply hint.
+	dec := json.NewDecoder(http.MaxBytesReader(nil, r.Body, limit))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(v); err != nil {
-		return errors.New("malformed JSON body: " + jsonProblem(err))
+		return errors.New("malformed JSON body: " + jsonProblem(err, limit))
+	}
+	// One value and nothing after it: a second value, or text trailing the
+	// first, would be read by nobody and is a client bug worth telling.
+	var extra json.RawMessage
+	if err := dec.Decode(&extra); !errors.Is(err, io.EOF) {
+		var tooLarge *http.MaxBytesError
+		if errors.As(err, &tooLarge) {
+			return errors.New("malformed JSON body: " + jsonProblem(err, limit))
+		}
+		return errors.New("malformed JSON body: unexpected data after the JSON value")
 	}
 	return nil
 }
@@ -119,10 +132,13 @@ func Paging(r *http.Request, def, ceiling int) (limit int, cursor string) {
 }
 
 // jsonProblem says what is wrong with a body in the client's terms.
-func jsonProblem(err error) string {
+func jsonProblem(err error, limit int64) string {
 	var typeErr *json.UnmarshalTypeError
 	var syntaxErr *json.SyntaxError
+	var tooLarge *http.MaxBytesError
 	switch {
+	case errors.As(err, &tooLarge):
+		return fmt.Sprintf("the body is larger than %d KiB", limit>>10)
 	case errors.As(err, &typeErr):
 		what := "the body"
 		if typeErr.Field != "" {
@@ -135,7 +151,7 @@ func jsonProblem(err error) string {
 	case errors.Is(err, io.EOF):
 		return "the body is empty"
 	case errors.Is(err, io.ErrUnexpectedEOF):
-		return "the body ends early, or is too large"
+		return "the body ends early"
 	}
 	// The decoder's own words for an unknown field, `json: unknown field "x"`,
 	// name only what the client sent.

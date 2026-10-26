@@ -190,6 +190,13 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case r.URL.Path == enterPath:
 		h.enter(w, r, label)
 	case r.URL.Path == signoutPath:
+		// The cookie is SameSite=Lax, so a link anywhere could navigate the
+		// browser here and end the session in the person's name. Only the
+		// application's own pages, or an address typed or bookmarked, may.
+		if site := r.Header.Get("Sec-Fetch-Site"); site != "" && site != "same-origin" && site != "none" {
+			h.page(w, http.StatusForbidden, "Not signed out", "Sign out from the application itself, or open it again from Zanskar.", true)
+			return
+		}
 		h.signout(w, r, label)
 	case strings.HasPrefix(r.URL.Path, reserved):
 		h.page(w, http.StatusNotFound, "Not found", "This path is the gateway's own and is not forwarded to the application.", true)

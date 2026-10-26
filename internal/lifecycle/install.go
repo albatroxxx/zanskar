@@ -3,6 +3,7 @@
 package lifecycle
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -98,7 +99,11 @@ func (h *Handler) installUpdate(w http.ResponseWriter, r *http.Request) {
 			h.Log.Error("update request failed", "version", req.Version, "err", err)
 		}
 		if h.Audit != nil {
-			_, _ = h.Audit.Record(r.Context(), actor.Event(audit.SystemUpdate, "system", "gateway", audit.Failure, map[string]any{"version": req.Version, "error": err.Error()}))
+			// The request that asked for this answered minutes ago and its
+			// context is gone; the failure is recorded under its own.
+			ctx, cancel := context.WithTimeout(context.Background(), hostActionTimeout)
+			defer cancel()
+			_, _ = h.Audit.Record(ctx, actor.Event(audit.SystemUpdate, "system", "gateway", audit.Failure, map[string]any{"version": req.Version, "error": err.Error()}))
 		}
 		h.Controller.Cancel()
 	})

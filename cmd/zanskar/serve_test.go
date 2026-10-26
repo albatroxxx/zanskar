@@ -38,7 +38,10 @@ func startServe(t *testing.T, addr string) (base string, done chan error, cancel
 	done = make(chan error, 1)
 	go func() { done <- serve(ctx) }()
 	base = "http://" + addr
-	client := &http.Client{Timeout: 2 * time.Second}
+	// The sign-in below costs an Argon2id hash; under the race detector on
+	// a loaded runner that alone has taken over two seconds. The timeout is
+	// against a hang, not a budget.
+	client := &http.Client{Timeout: 30 * time.Second}
 	for range 200 {
 		select {
 		case err := <-done:
@@ -75,7 +78,10 @@ func TestServeStartsAndStops(t *testing.T) {
 
 	base, done, cancel := startServe(t, addr)
 	defer cancel()
-	client := &http.Client{Timeout: 2 * time.Second}
+	// The sign-in below costs an Argon2id hash; under the race detector on
+	// a loaded runner that alone has taken over two seconds. The timeout is
+	// against a hang, not a budget.
+	client := &http.Client{Timeout: 30 * time.Second}
 
 	// Once read, the secrets are gone from the process environment, where
 	// every child the gateway starts and every dump of it would find them.

@@ -217,6 +217,18 @@ func (h *Handler) end(row *Row, reason string) {
 	h.finish(row.SessionID, row.UserID, row.TargetID, row.ClientIP, reason)
 }
 
+// forget drops the registry entry and the goroutine waiting on it for a
+// session that ended elsewhere, whose end was written by whoever ended it:
+// an administrator's terminate, or another gateway on the same database.
+func (h *Handler) forget(sessionID string) {
+	if v, ok := h.live.LoadAndDelete(sessionID); ok {
+		v.(*tracked).cancel()
+	}
+	if h.Registry != nil {
+		h.Registry.Remove(sessionID)
+	}
+}
+
 // finish writes a session's end, detached from any request that found it.
 func (h *Handler) finish(sessionID, userID, targetID, clientIP, reason string) {
 	h.live.Delete(sessionID)
@@ -251,6 +263,7 @@ func (h *Handler) Resume(ctx context.Context) error {
 	for _, row := range rows {
 		if row.EndedAt != nil {
 			_ = h.Repo.Delete(ctx, row.TokenHash)
+			h.forget(row.SessionID)
 			continue
 		}
 		h.track(row.SessionID, row.UserID, row.TargetID, row.PolicyID, row.ClientIP)
@@ -271,6 +284,7 @@ func (h *Handler) Sweep(ctx context.Context) (int, error) {
 	for _, row := range rows {
 		if row.EndedAt != nil {
 			_ = h.Repo.Delete(ctx, row.TokenHash)
+			h.forget(row.SessionID)
 			continue
 		}
 		if reason := h.verdict(row, row.Target.Label, now); reason != "" {

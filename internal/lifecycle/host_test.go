@@ -275,3 +275,52 @@ func TestInstallUpdate(t *testing.T) {
 		t.Fatalf("no state dir: %d %v", code, out)
 	}
 }
+
+// TestInstallUpdateFailureIsAudited: the request file is written minutes
+// after the request answered, once the drain is through. When that write
+// fails, the failure must still reach the audit log, which means it cannot
+// be recorded under the request's own context: by then that context is
+// cancelled. The test holds the drain open with a live session, cancels the
+// request context as net/http would, then lets the drain finish.
+func TestInstallUpdateFailureIsAudited(t *testing.T) {
+	was := version.Version
+	version.Version = "1.0.0"
+	t.Cleanup(func() { version.Version = was })
+	e := newHostEnv(t)
+	// A regular file where the state directory should be: the write fails.
+	notDir := filepath.Join(t.TempDir(), "state")
+	if err := os.WriteFile(notDir, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	e.h.StateDir = notDir
+	if err := e.sessions.MarkMFAProved(context.Background(), e.sessID); err != nil {
+		t.Fatal(err)
+	}
+	e.ctrl.Registry.Add(context.Background(), gateway.Live{SessionID: "ssh-1", Protocol: "ssh"})
+
+	body, _ := json.Marshal(map[string]any{"version": "9.9.9", "confirm": "gw-test", "wait_minutes": 1})
+	ctx, cancel := context.WithCancel(context.Background())
+	req := httptest.NewRequest("POST", "/api/v1/admin/system/update/install", bytes.NewReader(body)).WithContext(ctx)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-CSRF-Token", e.csrf)
+	req.RemoteAddr = "203.0.113.9:4321"
+	req.AddCookie(e.cookie)
+	rr := httptest.NewRecorder()
+	e.srv.ServeHTTP(rr, req)
+	cancel() // the response went out; net/http cancels the request context
+	if rr.Code != 202 {
+		t.Fatalf("install: %d %s", rr.Code, rr.Body)
+	}
+	if !e.ctrl.Draining() {
+		t.Fatal("not draining while an ssh session is live")
+	}
+	e.ctrl.Registry.Remove("ssh-1")
+	e.waitFor(func() bool { return !e.ctrl.Draining() })
+	evs := e.events(audit.SystemUpdate)
+	if len(evs) != 2 || evs[0].Outcome != audit.Failure || evs[1].Outcome != audit.Success {
+		t.Fatalf("audit after a failed request write: %+v", evs)
+	}
+	if _, err := os.Stat(filepath.Join(notDir, UpdateRequestFile)); err == nil {
+		t.Fatal("a request file appeared under a non-directory")
+	}
+}
