@@ -140,7 +140,7 @@ type Middleware struct {
 // right now is neither accepted nor thrown away: see unchecked.
 func (m *Middleware) Authenticate(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		c, err := r.Cookie(CookieName)
+		c, err := r.Cookie(m.Sessions.CookieName())
 		if err != nil {
 			next.ServeHTTP(w, r)
 			return
@@ -270,7 +270,7 @@ func (m *Middleware) CSRF(next http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 			return
 		}
-		if !sameOrigin(r) {
+		if !sameOrigin(r, m.Sessions.SecureCookie) {
 			httpx.WriteError(w, r, http.StatusForbidden, "csrf_invalid", "cross-origin request rejected")
 			return
 		}
@@ -284,7 +284,10 @@ func (m *Middleware) CSRF(next http.Handler) http.Handler {
 	})
 }
 
-func sameOrigin(r *http.Request) bool {
+// sameOrigin reports whether a browser request came from this origin.
+// secure says the deployment serves over HTTPS (the cookie is Secure), in
+// which case a plain-HTTP origin is never ours, whatever its host.
+func sameOrigin(r *http.Request, secure bool) bool {
 	if site := r.Header.Get("Sec-Fetch-Site"); site != "" {
 		return site == "same-origin" || site == "none"
 	}
@@ -293,6 +296,9 @@ func sameOrigin(r *http.Request) bool {
 		// Non-browser client (curl, SDK). Cookies are SameSite=Strict, so a
 		// browser could not have produced this without an Origin header.
 		return true
+	}
+	if secure && !strings.HasPrefix(strings.ToLower(origin), "https://") {
+		return false
 	}
 	origin = strings.TrimPrefix(strings.TrimPrefix(origin, "https://"), "http://")
 	return strings.EqualFold(origin, r.Host)

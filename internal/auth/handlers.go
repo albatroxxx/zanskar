@@ -4,6 +4,8 @@ package auth
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"hash/fnv"
 	"log/slog"
@@ -54,8 +56,14 @@ type Handler struct {
 	loginLimiter *ipLimiter
 	// stepUpLimiter bounds code attempts per session on the step-up route.
 	stepUpLimiter *ipLimiter
-	mfaMu         sync.Mutex
-	mfaAttempts   map[string]int
+	// stepUpMu guards stepUpFails: wrong step-up codes per session, which
+	// close the route for that session after MFAAttempts of them (as the
+	// console command line does) rather than charging the account budget,
+	// which a stolen cookie could use to lock its owner out.
+	stepUpMu    sync.Mutex
+	stepUpFails map[string]*stepUpState
+	mfaMu       sync.Mutex
+	mfaAttempts map[string]int
 	// codeChecks runs second-factor checks one at a time per account.
 	codeChecks accountLocks
 }
@@ -103,7 +111,66 @@ func NewHandler(users *user.Repo, sessions *Sessions, totp *TOTP, auditLog *audi
 		loginLimiter:  newIPLimiter(20, 10),
 		stepUpLimiter: newIPLimiter(10, 5),
 		mfaAttempts:   map[string]int{},
+		stepUpFails:   map[string]*stepUpState{},
 	}
+}
+
+// stepUpState counts a session's wrong step-up codes and says until when
+// the route is closed to it.
+type stepUpState struct {
+	fails       int
+	closedUntil time.Time
+}
+
+// stepUpClosed reports whether the session's step-up route is closed. Stale
+// entries are dropped as they are met, so the map tracks only sessions that
+// are guessing now.
+func (h *Handler) stepUpClosed(sessionID string, now time.Time) bool {
+	h.stepUpMu.Lock()
+	defer h.stepUpMu.Unlock()
+	st, ok := h.stepUpFails[sessionID]
+	if !ok {
+		return false
+	}
+	if !st.closedUntil.IsZero() && now.Before(st.closedUntil) {
+		return true
+	}
+	if !st.closedUntil.IsZero() {
+		delete(h.stepUpFails, sessionID)
+	}
+	return false
+}
+
+// stepUpFailed counts a wrong code and reports whether that closed the
+// route for the session.
+func (h *Handler) stepUpFailed(sessionID string, now time.Time) (closed bool) {
+	h.stepUpMu.Lock()
+	defer h.stepUpMu.Unlock()
+	if len(h.stepUpFails) > maxLimiterKeys {
+		for id, st := range h.stepUpFails {
+			if !st.closedUntil.IsZero() && !now.Before(st.closedUntil) {
+				delete(h.stepUpFails, id)
+			}
+		}
+	}
+	st := h.stepUpFails[sessionID]
+	if st == nil {
+		st = &stepUpState{}
+		h.stepUpFails[sessionID] = st
+	}
+	st.fails++
+	if st.fails >= h.MFAAttempts {
+		st.fails, st.closedUntil = 0, now.Add(h.LockFor)
+		return true
+	}
+	return false
+}
+
+// stepUpSucceeded forgets the session's wrong codes.
+func (h *Handler) stepUpSucceeded(sessionID string) {
+	h.stepUpMu.Lock()
+	delete(h.stepUpFails, sessionID)
+	h.stepUpMu.Unlock()
 }
 
 // Register mounts the routes. The middleware chain (Authenticate, CSRF) must
@@ -160,7 +227,10 @@ func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, http.StatusBadRequest, "bad_request", "username and password required")
 		return
 	}
-	attempted := truncate(req.Username, 64)
+	// What was typed into the username box is never stored: a password typed
+	// there by mistake would sit in the insert-only audit chain for good. A
+	// short hash of it still lets an auditor see one name being sprayed.
+	attempted := usernameHash(req.Username)
 
 	u, err := h.Users.GetByUsername(r.Context(), req.Username)
 	if err != nil {
@@ -182,7 +252,7 @@ func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
 		if !h.hashing(w, r, func() { user.BurnPasswordCheck(req.Password) }) {
 			return
 		}
-		h.record(r, actor.Event(audit.UserLogin, "user", "", audit.Failure, map[string]string{"reason": "unknown_user", "username": attempted}))
+		h.record(r, actor.Event(audit.UserLogin, "user", "", audit.Failure, map[string]string{"reason": "unknown_user", "username_hash": attempted}))
 		httpx.WriteError(w, r, http.StatusUnauthorized, "invalid_credentials", "invalid username or password")
 		return
 	}
@@ -232,23 +302,55 @@ func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// External path: the local user has no password (provisioned from an IdP),
-	// so try LDAP providers with the supplied credentials.
+	// so try LDAP providers with the supplied credentials. The account's own
+	// lock applies here as to a local password: wrong directory passwords
+	// count against it, and while it is locked the directory is not asked,
+	// so a sprayer cannot drive the directory's own lockout through the
+	// gateway. Each kind of refusal is audited as what it was.
 	if h.ExternalLogin != nil {
+		if u.IsLocked(time.Now()) {
+			if !h.hashing(w, r, func() { user.BurnPasswordCheck(req.Password) }) {
+				return
+			}
+			h.record(r, actor.Event(audit.UserLogin, "user", u.ID, audit.Failure, map[string]string{"reason": "locked"}))
+			httpx.WriteError(w, r, http.StatusUnauthorized, "invalid_credentials", "invalid username or password")
+			return
+		}
 		eu, eerr := h.ExternalLogin.Login(r.Context(), req.Username, req.Password, ip)
 		if eerr == nil {
 			actor.UserID = eu.ID
 			h.completeLogin(w, r, eu, actor)
 			return
 		}
-		if !errors.Is(eerr, ErrNoExternalIdentity) {
+		details := map[string]any{"reason": "directory_unavailable"}
+		if errors.Is(eerr, ErrNoExternalIdentity) {
+			details["reason"] = "external_bad_credentials"
+			locked, lerr := h.Users.RecordLoginFailure(r.Context(), u.ID, h.MaxFailures, h.LockFor)
+			if lerr != nil {
+				h.Log.Error("record login failure", "err", lerr)
+			}
+			if locked {
+				details["locked_for"] = h.LockFor.String()
+			}
+		} else {
 			h.Log.Warn("external login error", "err", eerr)
 		}
+		h.record(r, actor.Event(audit.UserLogin, "user", u.ID, audit.Failure, details))
+		httpx.WriteError(w, r, http.StatusUnauthorized, "invalid_credentials", "invalid username or password")
+		return
 	}
 	if !h.hashing(w, r, func() { user.BurnPasswordCheck(req.Password) }) {
 		return
 	}
 	h.record(r, actor.Event(audit.UserLogin, "user", u.ID, audit.Failure, map[string]string{"reason": "no_password_no_external"}))
 	httpx.WriteError(w, r, http.StatusUnauthorized, "invalid_credentials", "invalid username or password")
+}
+
+// usernameHash is the first 16 hex characters of the SHA-256 of the typed
+// username, lower-cased: enough to correlate attempts, never the text.
+func usernameHash(username string) string {
+	sum := sha256.Sum256([]byte(strings.ToLower(strings.TrimSpace(username))))
+	return hex.EncodeToString(sum[:8])
 }
 
 // hashing runs fn, which computes password hashes, in a passwordHashing
@@ -266,9 +368,36 @@ func (h *Handler) hashing(w http.ResponseWriter, r *http.Request, fn func()) boo
 	return true
 }
 
+// replaceSession ends the session the request arrived with, when it had
+// one: a browser that signs in again holds one cookie, and the token it
+// held before must not stay valid for whoever else may hold it (S1 L5).
+// It is called once the new sign-in has been accepted, before its session
+// is issued. ReplaceSession is the same for other sign-in handlers.
+func (h *Handler) replaceSession(r *http.Request) {
+	ReplaceSession(r, h.Sessions, h.Audit, h.Log)
+}
+
+// ReplaceSession revokes the session the request carries, if any, and
+// audits it as a sign-out with the reason "replaced".
+func ReplaceSession(r *http.Request, sessions *Sessions, auditLog *audit.Log, log *slog.Logger) {
+	p, ok := FromContext(r.Context())
+	if !ok || p == nil || p.Session == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), recordTimeout)
+	defer cancel()
+	if err := sessions.Revoke(ctx, p.Session.ID); err != nil {
+		log.Error("revoke the session a new sign-in replaces", "err", err)
+		return
+	}
+	Recorder{Audit: auditLog, Log: log}.Record(r, ActorFor(r).Event(audit.UserLogout, "user", p.User.ID, audit.Success,
+		map[string]string{"session_id": p.Session.ID, "reason": "replaced"}))
+}
+
 // completeLogin issues the session and returns the appropriate MFA status.
 func (h *Handler) completeLogin(w http.ResponseWriter, r *http.Request, u *user.User, actor audit.Actor) {
 	ip := ClientIP(r)
+	h.replaceSession(r)
 	enrolled, err := h.TOTP.Enrolled(r.Context(), u.ID)
 	if err != nil {
 		httpx.Internal(w, r, h.Log, err)
@@ -689,10 +818,14 @@ func (h *Handler) totpEnroll(w http.ResponseWriter, r *http.Request) {
 	}
 	// From a full session an authenticator takes the password again (L14):
 	// a stolen cookie must not enrol the thief's device and lock the owner
-	// out of every later sign-in. Enrolling as the step a sign-in owes needs
-	// nothing more, the password was given a moment ago, and an account an
-	// identity provider signs in has no local password to give.
-	if p.Session.MFAVerified && p.User.PasswordHash != "" {
+	// out of every later sign-in, nor gain the proof that guards the host
+	// actions and the command line (ADR 0027, 0032). Enrolling as the step
+	// a sign-in owes needs nothing more, the password was given a moment
+	// ago. An account an identity provider signs in has no local password
+	// to give, so for it the sign-in itself must be recent: within
+	// recentSignIn of the session's start, or the person signs in again
+	// through the provider first (review finding SEC-3).
+	if p.Session.MFAVerified {
 		// One already enrolled is refused below whatever is sent, so it is
 		// not asked for a password first.
 		enrolled, err := h.TOTP.Enrolled(r.Context(), p.User.ID)
@@ -704,6 +837,16 @@ func (h *Handler) totpEnroll(w http.ResponseWriter, r *http.Request) {
 			httpx.WriteError(w, r, http.StatusConflict, "already_enrolled", "an authenticator is already enrolled")
 			return
 		}
+		if p.User.PasswordHash == "" {
+			if time.Since(p.Session.CreatedAt) > recentSignIn {
+				h.record(r, ActorFor(r).Event(audit.UserMFAEnroll, "user", p.User.ID, audit.Failure, map[string]string{"reason": "reauth_required"}))
+				httpx.WriteError(w, r, http.StatusUnauthorized, "reauth_required",
+					"sign in again through your identity provider, then add the authenticator within five minutes")
+				return
+			}
+		}
+	}
+	if p.Session.MFAVerified && p.User.PasswordHash != "" {
 		var req struct {
 			CurrentPassword string `json:"current_password"`
 		}
@@ -793,7 +936,20 @@ func (h *Handler) totpConfirm(w http.ResponseWriter, r *http.Request) {
 	if signIn && !h.rotate(w, r, p) {
 		return
 	}
-	h.record(r, ActorFor(r).Event(audit.UserMFAConfirm, "user", p.User.ID, audit.Success, nil))
+	var details map[string]any
+	if !signIn {
+		// An authenticator added to a full session shuts the account's other
+		// sessions, as a password change does (M9): whoever got in first,
+		// on a cookie that is not this one, does not keep a seat.
+		revokeCtx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), recordTimeout)
+		others, err := h.Sessions.RevokeOthersForUser(revokeCtx, p.User.ID, p.Session.ID)
+		cancel()
+		if err != nil {
+			h.Log.Error("revoke other sessions after enrolment", "err", err)
+		}
+		details = map[string]any{"other_sessions_revoked": others}
+	}
+	h.record(r, ActorFor(r).Event(audit.UserMFAConfirm, "user", p.User.ID, audit.Success, details))
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"recovery_codes": codes, "status": "ok", "csrf_token": h.Sessions.CSRFToken(p.Session.ID)})
 }
 
@@ -819,6 +975,12 @@ func (h *Handler) rotate(w http.ResponseWriter, r *http.Request, p *Principal) b
 // callers who have not signed in yet: a name, a password or a code, no more.
 const signInBodyLimit = 64 << 10
 
+// recentSignIn is how long after its start a session counts as freshly
+// signed in, for an account with no local password to give again before
+// adding an authenticator: the same window the host actions give a step-up
+// proof (ADR 0032).
+const recentSignIn = 5 * time.Minute
+
 // stepUp proves the authenticator again on a full session. It records the
 // proof's time on the session, which the host-action handlers read (ADR
 // 0032); nothing else about the session changes. Attempts are limited per
@@ -827,6 +989,11 @@ const signInBodyLimit = 64 << 10
 func (h *Handler) stepUp(w http.ResponseWriter, r *http.Request) {
 	p, _ := FromContext(r.Context())
 	actor := audit.Actor{UserID: p.User.ID, IP: ClientIP(r)}
+	now := time.Now()
+	if h.stepUpClosed(p.Session.ID, now) {
+		httpx.WriteError(w, r, http.StatusTooManyRequests, "step_up_closed", "too many wrong codes; try again later")
+		return
+	}
 	if ok, first := h.stepUpLimiter.Take(limiterKey(p.Session.ID)); !ok {
 		if first {
 			h.record(r, actor.Event(audit.UserMFAVerify, "user", p.User.ID, audit.Failure, map[string]string{"purpose": "step_up", "reason": "rate_limited"}))
@@ -849,7 +1016,12 @@ func (h *Handler) stepUp(w http.ResponseWriter, r *http.Request) {
 		if errors.Is(err, ErrTOTPReused) {
 			reason = "code already used"
 		}
-		h.record(r, actor.Event(audit.UserMFAVerify, "user", p.User.ID, audit.Failure, map[string]string{"purpose": "step_up", "reason": reason}))
+		closed := h.stepUpFailed(p.Session.ID, now)
+		h.record(r, actor.Event(audit.UserMFAVerify, "user", p.User.ID, audit.Failure, map[string]any{"purpose": "step_up", "reason": reason, "closed": closed}))
+		if closed {
+			httpx.WriteError(w, r, http.StatusTooManyRequests, "step_up_closed", "too many wrong codes; try again later")
+			return
+		}
 		httpx.WriteError(w, r, http.StatusUnprocessableEntity, "bad_code", "that code is not right")
 		return
 	case err != nil:
@@ -860,6 +1032,7 @@ func (h *Handler) stepUp(w http.ResponseWriter, r *http.Request) {
 		httpx.Internal(w, r, h.Log, err)
 		return
 	}
+	h.stepUpSucceeded(p.Session.ID)
 	h.record(r, actor.Event(audit.UserMFAVerify, "user", p.User.ID, audit.Success, map[string]any{"purpose": "step_up", "recovery_code_used": recovery}))
 	httpx.WriteJSON(w, http.StatusOK, map[string]bool{"proved": true})
 }

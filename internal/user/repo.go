@@ -380,7 +380,11 @@ func nullStr(s string) any {
 // ErrNotFound when there is no such account, ErrDuplicate when another
 // account is already linked to that subject.
 func (r *Repo) LinkExternal(ctx context.Context, id, idpID, externalID string) error {
-	res, err := r.db.ExecContext(ctx, r.db.Rebind(`UPDATE users SET idp_id = ?, external_id = ?, updated_at = ? WHERE id = ?`),
+	// The conditions the caller checked are repeated in the UPDATE, so two
+	// first sign-ins asserting the same username at the same moment cannot
+	// both link it: the second finds the row taken (S1 L4).
+	res, err := r.db.ExecContext(ctx, r.db.Rebind(`UPDATE users SET idp_id = ?, external_id = ?, updated_at = ?
+		WHERE id = ? AND (idp_id IS NULL OR idp_id = '') AND (password_hash IS NULL OR password_hash = '')`),
 		idpID, externalID, store.TimeArg(time.Now()), id)
 	if err != nil {
 		if store.IsUniqueViolation(err) {
@@ -388,7 +392,14 @@ func (r *Repo) LinkExternal(ctx context.Context, id, idpID, externalID string) e
 		}
 		return err
 	}
-	return store.Affected(res, ErrNotFound)
+	if err := store.Affected(res, ErrNotFound); err != nil {
+		if _, gerr := r.GetByID(ctx, id); gerr == nil {
+			// The account exists but is linked or has a password by now.
+			return ErrDuplicate
+		}
+		return err
+	}
+	return nil
 }
 
 // GetByExternalID finds a user provisioned from an identity provider.

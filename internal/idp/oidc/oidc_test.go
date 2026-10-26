@@ -569,3 +569,52 @@ func TestUnverifiedEmailMakesNoUsername(t *testing.T) {
 		}
 	}
 }
+
+// TestStateCookieUnderSecureCookies: where cookies are Secure the state
+// cookie is __Host- prefixed on Path=/, so a sibling subdomain cannot plant
+// a sealed state of its own and finish its authorization code in this
+// browser; the callback reads that name (S1 L6).
+func TestStateCookieUnderSecureCookies(t *testing.T) {
+	f := newFakeIdP(t)
+	e, id := newEnv(t, f, idp.Config{OIDC: &idp.OIDCConfig{ClientID: "cid", ClientSecret: "s"}, AutoProvision: true})
+	e.h.Sessions.SecureCookie = true
+	client := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	res, err := client.Get(e.app.URL + "/api/v1/auth/oidc/" + id + "/start")
+	if err != nil {
+		t.Fatal(err)
+	}
+	res.Body.Close()
+	if res.StatusCode != 302 {
+		t.Fatalf("start: %d", res.StatusCode)
+	}
+	var state *http.Cookie
+	for _, c := range res.Cookies() {
+		if strings.Contains(c.Name, "zanskar_oidc") {
+			state = c
+		}
+	}
+	if state == nil || state.Name != "__Host-zanskar_oidc" || state.Path != "/" || !state.Secure || !state.HttpOnly {
+		t.Fatalf("state cookie: %+v", state)
+	}
+	// The callback looks for the prefixed name: with the bare one it sees no state.
+	req, _ := http.NewRequest("GET", e.app.URL+"/api/v1/auth/oidc/"+id+"/callback?state=x&code=y", nil)
+	req.AddCookie(&http.Cookie{Name: "zanskar_oidc", Value: state.Value})
+	res2, err := client.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res2.Body.Close()
+	if loc := res2.Header.Get("Location"); res2.StatusCode != 302 || !strings.Contains(loc, "error=state_missing") {
+		t.Fatalf("callback with the bare cookie name: %d %s", res2.StatusCode, loc)
+	}
+	req, _ = http.NewRequest("GET", e.app.URL+"/api/v1/auth/oidc/"+id+"/callback?state=x&code=y", nil)
+	req.AddCookie(&http.Cookie{Name: state.Name, Value: state.Value})
+	res3, err := client.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res3.Body.Close()
+	if loc := res3.Header.Get("Location"); res3.StatusCode != 302 || !strings.Contains(loc, "error=state_invalid") {
+		t.Fatalf("callback with the prefixed cookie and a wrong state: %d %s", res3.StatusCode, loc)
+	}
+}

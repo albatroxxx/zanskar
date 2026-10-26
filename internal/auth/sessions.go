@@ -237,11 +237,23 @@ func (s *Sessions) CheckCSRF(sessionID, presented string) bool {
 	return subtle.ConstantTimeCompare([]byte(want), []byte(presented)) == 1
 }
 
+// CookieName is the session cookie's name as this deployment sets it: with
+// the __Host- prefix when the cookie is Secure, so a browser accepts it only
+// from this host over HTTPS with Path=/ and a sibling subdomain cannot plant
+// one (S1 L6); the bare name on plain-HTTP loopback, where the prefix is
+// not allowed.
+func (s *Sessions) CookieName() string {
+	if s.SecureCookie {
+		return "__Host-" + CookieName
+	}
+	return CookieName
+}
+
 // SetCookie writes the session cookie. SameSite=Strict means the browser
 // never sends it on cross-site navigations or requests.
 func (s *Sessions) SetCookie(w http.ResponseWriter, token string) {
 	http.SetCookie(w, &http.Cookie{ // #nosec G124 -- Secure comes from config; false only on loopback dev
-		Name:     CookieName,
+		Name:     s.CookieName(),
 		Value:    token,
 		Path:     "/",
 		HttpOnly: true,
@@ -254,7 +266,7 @@ func (s *Sessions) SetCookie(w http.ResponseWriter, token string) {
 // ClearCookie removes the session cookie.
 func (s *Sessions) ClearCookie(w http.ResponseWriter) {
 	http.SetCookie(w, &http.Cookie{ // #nosec G124 -- same as SetCookie
-		Name: CookieName, Value: "", Path: "/", HttpOnly: true, Secure: s.SecureCookie,
+		Name: s.CookieName(), Value: "", Path: "/", HttpOnly: true, Secure: s.SecureCookie,
 		SameSite: http.SameSiteStrictMode, MaxAge: -1,
 	})
 }

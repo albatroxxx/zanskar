@@ -215,6 +215,21 @@ func TestLinkExternal(t *testing.T) {
 	if err := r.LinkExternal(ctx, bob.ID, corp, "sub-1"); !errors.Is(err, ErrDuplicate) {
 		t.Fatalf("a subject already linked to alice: got %v, want ErrDuplicate", err)
 	}
+	// The link is written only while the account is still linkable: an
+	// account linked meanwhile, or given a password meanwhile, is refused
+	// rather than overwritten (S1 L4).
+	if err := r.LinkExternal(ctx, alice.ID, corp, "sub-9"); !errors.Is(err, ErrDuplicate) {
+		t.Fatalf("relinking alice: got %v, want ErrDuplicate", err)
+	}
+	if got, _ := r.GetByID(ctx, alice.ID); got.ExternalID != "sub-1" {
+		t.Fatalf("alice's link changed: %+v", got)
+	}
+	if err := r.SetPasswordHash(ctx, bob.ID, "$argon2id$not-really", false); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.LinkExternal(ctx, bob.ID, corp, "sub-2"); !errors.Is(err, ErrDuplicate) {
+		t.Fatalf("linking an account with a password: got %v, want ErrDuplicate", err)
+	}
 }
 
 func TestCanConnect(t *testing.T) {
