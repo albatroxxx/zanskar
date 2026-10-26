@@ -36,6 +36,9 @@ func TestDecodeJSONNamesFieldsNotGoTypes(t *testing.T) {
 		{`{"minutes":}`, `invalid JSON at byte`},
 		{``, `the body is empty`},
 		{`{"secret_field":1}`, `unknown field "secret_field"`},
+		{`{"minutes":1} {"minutes":2}`, `unexpected data after the JSON value`},
+		{`{"minutes":1} trailing`, `unexpected data after the JSON value`},
+		{`{"name":"` + strings.Repeat("a", 256<<10) + `"}`, `the body is larger than 256 KiB`},
 	} {
 		r := httptest.NewRequest("POST", "/", strings.NewReader(c.body))
 		r.Header.Set("Content-Type", "application/json")
@@ -52,6 +55,21 @@ func TestDecodeJSONNamesFieldsNotGoTypes(t *testing.T) {
 			if strings.Contains(msg, leak) {
 				t.Errorf("%s: %q gives away %q", c.body, msg, leak)
 			}
+		}
+	}
+}
+
+// TestDecodeJSONAcceptsWhitespaceAfterTheValue: a trailing newline, as every
+// JSON encoder and curl -d @file writes, is not "data after the value".
+func TestDecodeJSONAcceptsWhitespaceAfterTheValue(t *testing.T) {
+	var into struct {
+		Minutes int `json:"minutes"`
+	}
+	for _, body := range []string{"{\"minutes\":1}\n", "{\"minutes\":1}\r\n\t ", " {\"minutes\":1}"} {
+		r := httptest.NewRequest("POST", "/", strings.NewReader(body))
+		r.Header.Set("Content-Type", "application/json")
+		if err := DecodeJSON(r, &into); err != nil || into.Minutes != 1 {
+			t.Errorf("%q: %v (minutes=%d)", body, err, into.Minutes)
 		}
 	}
 }
