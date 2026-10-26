@@ -3,7 +3,7 @@ MODULE   := github.com/albatroxxx/zanskar
 VERSION  ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 LDFLAGS  := -s -w -X $(MODULE)/internal/version.Version=$(VERSION)
 
-.PHONY: all setup build build-api web web-dev web-test dist-linux packages release-check notices run test lint vet vuln sec tidy clean migrate-check
+.PHONY: all setup build build-api web web-dev web-test e2e dist-linux packages release-check notices run test lint vet vuln sec tidy clean migrate-check
 
 all: lint test build web-test
 
@@ -31,6 +31,12 @@ web-dev:
 # web-test runs the console tests (Vitest, jsdom). Needs `make web` once for node_modules.
 web-test:
 	cd web && npm test
+
+# e2e drives the console in a real browser against bin/zanskar and bin/fakessh
+# (hack/e2e.sh). Needs `make build`, `go build -o bin/fakessh ./hack/fakessh`
+# and, once, `cd web && ./node_modules/.bin/playwright install chromium`.
+e2e:
+	hack/e2e.sh
 
 run:
 	go run ./cmd/zanskar serve

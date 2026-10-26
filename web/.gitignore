@@ -25,3 +25,8 @@ dist-ssr
 
 # Vitest coverage output (npm test)
 coverage
+
+# Playwright output and the saved sign-in (hack/e2e.sh)
+test-results
+playwright-report
+e2e/.auth
