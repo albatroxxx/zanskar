@@ -84,6 +84,11 @@ describe('Autoscaling group form, credentials', () => {
     const { user, drawer } = await openFleet()
     await user.click(drawer.getByRole('button', { name: 'Edit' }))
 
+    // Every protocol's switch and port field carries its name for assistive
+    // technology, not only the column it sits in.
+    expect(drawer.getByLabelText('SSH port')).toBeDefined()
+    expect(drawer.getByLabelText('RDP port')).toBeDefined()
+
     const ssh = document.getElementById('asg-cred-ssh') as HTMLSelectElement
     expect(Array.from(ssh.options).map((o) => o.textContent)).toEqual([
       '— none —',

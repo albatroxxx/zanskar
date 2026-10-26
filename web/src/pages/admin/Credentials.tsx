@@ -62,7 +62,7 @@ export function Credentials() {
                 <th>Secret</th>
                 <th>Rotated</th>
                 <th>In use</th>
-                <th></th>
+                <th><span className="sr-only">Actions</span></th>
               </tr>
             </thead>
             <tbody>

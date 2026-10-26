@@ -398,3 +398,8 @@ td.actions > * + * { margin-left: 8px; }
   .main:has(> .corner) { padding-top: 40px; }
   .cli-panel { left: 0; }
 }
+
+/* Text for assistive technology only: a column header over row actions, a
+   name an icon-only control would otherwise lack. Not display:none, which
+   screen readers skip too. */
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }

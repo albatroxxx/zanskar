@@ -81,7 +81,7 @@ export function Approvals() {
                 <th>Protocol</th>
                 <th>Reason</th>
                 <th>Duration</th>
-                <th></th>
+                <th><span className="sr-only">Actions</span></th>
               </tr>
             </thead>
             <tbody>
@@ -121,7 +121,7 @@ export function Approvals() {
                 <th>Protocol</th>
                 <th>Granted</th>
                 <th>Expires</th>
-                <th></th>
+                <th><span className="sr-only">Actions</span></th>
               </tr>
             </thead>
             <tbody>

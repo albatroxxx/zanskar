@@ -47,7 +47,7 @@ export function TargetsPage({ kind, title, lead, addLabel, empty, columns, cells
                 {columns.map((c) => (
                   <th key={c}>{c}</th>
                 ))}
-                <th></th>
+                <th><span className="sr-only">Actions</span></th>
               </tr>
             </thead>
             <tbody>

@@ -277,7 +277,7 @@ export function ConsoleCLI() {
         <TerminalIcon size={28} />
       </button>
       {open && (
-        <section id="console-cli" className="cli-panel" style={{ height }} role="region" aria-label="Command line">
+        <section id="console-cli" className="cli-panel" style={{ height }} aria-label="Command line">
           <div className="cli-grip" onPointerDown={startResize} role="separator" aria-orientation="horizontal" aria-label="Resize the command line" />
           <div className="cli-bar">
             <b>

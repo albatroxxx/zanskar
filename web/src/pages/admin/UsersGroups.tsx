@@ -52,7 +52,7 @@ function Users() {
                 <th>Roles</th>
                 <th>Status</th>
                 <th>Last login</th>
-                <th></th>
+                <th><span className="sr-only">Actions</span></th>
               </tr>
             </thead>
             <tbody>
@@ -320,7 +320,7 @@ function Groups() {
                 <th>Name</th>
                 <th>Description</th>
                 <th>Members</th>
-                <th></th>
+                <th><span className="sr-only">Actions</span></th>
               </tr>
             </thead>
             <tbody>

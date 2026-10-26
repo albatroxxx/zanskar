@@ -164,7 +164,7 @@ export function Modal({ title, onClose, children, width }: { title: string; onCl
   }, [onClose])
 
   return (
-    <div className="modal-backdrop" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
+    <div className="modal-backdrop" role="presentation" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
       <div ref={box} className="modal" role="dialog" aria-modal="true" aria-labelledby={titleId} tabIndex={-1} style={width ? { width: `min(${width}px, 100%)` } : undefined}>
         <div className="modal-head">
           <h2 id={titleId}>{title}</h2>
