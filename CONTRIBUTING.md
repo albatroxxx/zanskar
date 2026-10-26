@@ -87,6 +87,11 @@ the rest.
   test is genuinely impractical; say why in the pull request if so.
 - Security-relevant parsing (protocol frames, tokens, configuration) gets a fuzz target alongside
   its unit tests; CI runs the fuzz targets briefly on every change.
+- **Try to break what you built before you open the PR**, and say what you tried in its "What I
+  tried to break" section: forged or oversized input, the wrong role or no session, two clients at
+  once, a disconnect or restart mid-way. A probe that breaks something becomes a regression test.
+- Coverage has floors: 80% of statements for the gateway (CI fails under it) and the console
+  thresholds in `web/vite.config.ts`. Raise them when tests land; never lower them.
 
 ## Conventions
 
