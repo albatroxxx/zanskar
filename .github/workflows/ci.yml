@@ -57,7 +57,7 @@ jobs:
         run: |
           pct=$(awk 'NR>1 { n[$1]=$2; if ($3>0) hit[$1]=1 } END { for (k in n) { t+=n[k]; if (hit[k]) v+=n[k] } printf "%.1f", 100*v/t }' coverage.out)
           echo "statement coverage: $pct%" | tee -a "$GITHUB_STEP_SUMMARY"
-          awk -v p="$pct" 'BEGIN { exit (p+0 < 80) ? 1 : 0 }' || { echo "::error::statement coverage $pct% is under the 80% floor"; exit 1; }
+          awk -v p="$pct" 'BEGIN { if (p+0 < 80) exit 1 }' || { echo "::error::statement coverage $pct% is under the 80% floor"; exit 1; }
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: coverage
