@@ -2,7 +2,7 @@
 # Browser end-to-end test: a real Chromium drives the console against a real
 # gateway binary and the fake SSH server, the way hack/smoke.sh drives the API.
 # Run after building bin/zanskar (with the console: make build) and bin/fakessh,
-# and after `npx playwright install chromium` in web/. The target is enrolled
+# and after `./node_modules/.bin/playwright install chromium` in web/. The target is enrolled
 # by this machine's LAN address, because the gateway refuses loopback ones;
 # set SMOKE_LAN_IP when it cannot be found. The data the browser needs (a
 # group, a credential, a trusted target, a policy) is seeded through the API:
@@ -52,7 +52,7 @@ export E2E_BASE_URL="http://127.0.0.1:$PORT"
 # errors are reported whichever way the browser run went, and the logs stay
 # under $S for CI to upload when it fails.
 status=0
-(cd web && npx playwright test --config e2e/playwright.config.ts "$@") || status=$?
+(cd web && ./node_modules/.bin/playwright test --config e2e/playwright.config.ts "$@") || status=$?
 echo "gateway errors: $(grep -c 'level=ERROR' "$S/gateway.log" || true)"; grep 'level=ERROR' "$S/gateway.log" | head -3 | cut -c1-200 || true
 echo "logs: $S"
 exit $status

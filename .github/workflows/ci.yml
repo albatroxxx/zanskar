@@ -86,7 +86,9 @@ jobs:
           CGO_ENABLED=0 go build -trimpath -tags webui -o bin/zanskar ./cmd/zanskar
           go build -o bin/fakessh ./hack/fakessh
       - name: Install Chromium for Playwright
-        run: cd web && npx playwright install --with-deps chromium
+        # The binary from the lockfile's own install, never npx: npx would fetch
+        # and run whatever version it resolved (SonarCloud S6505, S8543).
+        run: cd web && ./node_modules/.bin/playwright install --with-deps chromium
       - name: Drive the console in a real browser
         # Sign in, connect to a machine, get a shell, leave, review the
         # recording; administer credentials and policies; the audit chain

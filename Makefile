@@ -34,7 +34,7 @@ web-test:
 
 # e2e drives the console in a real browser against bin/zanskar and bin/fakessh
 # (hack/e2e.sh). Needs `make build`, `go build -o bin/fakessh ./hack/fakessh`
-# and, once, `cd web && npx playwright install chromium`.
+# and, once, `cd web && ./node_modules/.bin/playwright install chromium`.
 e2e:
 	hack/e2e.sh
 
