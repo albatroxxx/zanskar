@@ -26,6 +26,9 @@ const (
 	EndError           = "error"
 	EndPolicyRevoked   = "policy_revoked"
 	EndGatewayRestart  = "gateway_restart"
+	// EndTrustLost: the target's pinned host key or certificate changed
+	// while the session ran (ADR 0013).
+	EndTrustLost = "trust_lost"
 )
 
 // Session is one connection from a user to a target.

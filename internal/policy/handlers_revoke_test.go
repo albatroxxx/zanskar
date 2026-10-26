@@ -39,6 +39,26 @@ func (f *liveRevoker) PolicyChanged(_ context.Context, policyID string) int {
 	return f.ended
 }
 
+func (f *liveRevoker) TargetDisabled(string) int {
+	f.unexpected = append(f.unexpected, "TargetDisabled")
+	return 0
+}
+
+func (f *liveRevoker) TargetTrustLost(string) int {
+	f.unexpected = append(f.unexpected, "TargetTrustLost")
+	return 0
+}
+
+func (f *liveRevoker) GrantRevoked(context.Context, string, string, string, string) int {
+	f.unexpected = append(f.unexpected, "GrantRevoked")
+	return 0
+}
+
+func (f *liveRevoker) GrantExpired(context.Context, string, string, string, string) int {
+	f.unexpected = append(f.unexpected, "GrantExpired")
+	return 0
+}
+
 func (f *liveRevoker) GroupMembersRemoved(context.Context, string, []string) int {
 	f.unexpected = append(f.unexpected, "GroupMembersRemoved")
 	return 0

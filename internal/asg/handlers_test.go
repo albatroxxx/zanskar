@@ -40,6 +40,7 @@ type env struct {
 	user     *http.Cookie
 	fake     *cloudtest.Fake
 	vault    *credential.Vault
+	revoker  *fakeRevoker
 }
 
 func newEnv(t *testing.T) *env {
@@ -74,11 +75,12 @@ func newEnv(t *testing.T) *env {
 		t.Fatal(err)
 	}
 	vault := credential.NewVault(db, ring)
-	h := &AdminHandler{Repo: repo, Sync: syncFn, Identity: cloud.NewGatewayIdentity("arn:aws:iam::111111111111:role/zanskar-gateway"), Providers: func(context.Context, *Group) (cloud.Provider, error) { return fake, nil }, Policies: policies, Live: live, Vault: vault, Audit: auditLog, Log: log}
+	revoker := &fakeRevoker{}
+	h := &AdminHandler{Repo: repo, Sync: syncFn, Identity: cloud.NewGatewayIdentity("arn:aws:iam::111111111111:role/zanskar-gateway"), Providers: func(context.Context, *Group) (cloud.Provider, error) { return fake, nil }, Policies: policies, Live: live, Revoker: revoker, Vault: vault, Audit: auditLog, Log: log}
 	mux := http.NewServeMux()
 	h.Register(mux)
 	mw := &auth.Middleware{Sessions: sessions, Users: users, Log: log}
-	e := &env{srv: mw.Authenticate(mw.CSRF(mux)), db: db, repo: repo, audit: auditLog, policies: policies, live: live, fake: fake, vault: vault}
+	e := &env{srv: mw.Authenticate(mw.CSRF(mux)), db: db, repo: repo, audit: auditLog, policies: policies, live: live, fake: fake, vault: vault, revoker: revoker}
 
 	adminUser := &user.User{Username: "admin", DisplayName: "Admin", Roles: []user.Role{user.RoleAdmin}}
 	if err := users.Create(ctx, adminUser); err != nil {

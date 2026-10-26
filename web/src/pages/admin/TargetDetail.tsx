@@ -256,7 +256,7 @@ export function TargetDetail({ target, credentials, onClose, onChanged, onDelete
             <button className="btn" onClick={() => void testCertificate()} disabled={certProbing} title="Signs in once with a certificate from the bound authority, then disconnects">{certProbing ? 'Testing…' : 'Test certificate login'}</button>
           )}
           <button className="btn" onClick={() => setEditing(true)}>Edit</button>
-          <button className="btn" disabled={toggling} onClick={toggleStatus}>{t.status === 'active' ? (toggling ? 'Disabling…' : 'Disable') : toggling ? 'Enabling…' : 'Enable'}</button>
+          <button className="btn" disabled={toggling} onClick={toggleStatus} title={t.status === 'active' ? 'Open sessions on it end' : undefined}>{t.status === 'active' ? (toggling ? 'Disabling…' : 'Disable') : toggling ? 'Enabling…' : 'Enable'}</button>
           <button className="btn ghost" onClick={onClose}>Close</button>
         </div>
         <button className="btn danger" onClick={() => setConfirm('delete')}>Delete</button>

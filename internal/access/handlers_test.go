@@ -26,6 +26,8 @@ import (
 type env struct {
 	srv      http.Handler
 	requests *Repo
+	policies *policy.Repo
+	revoker  *fakeRevoker
 	target   string
 	group    string // an autoscaling group with the same tags as the target
 	alice    *http.Cookie
@@ -51,11 +53,12 @@ func newEnv(t *testing.T) *env {
 
 	auditLog := audit.NewLog(db)
 	asgs := asg.NewRepo(db)
-	h := &Handler{Requests: requests, Policies: policies, Targets: targets, ASGs: asgs, Audit: auditLog, Log: log}
+	revoker := &fakeRevoker{}
+	h := &Handler{Requests: requests, Policies: policies, Targets: targets, ASGs: asgs, Revoker: revoker, Audit: auditLog, Log: log}
 	mux := http.NewServeMux()
 	h.Register(mux)
 	mw := &auth.Middleware{Sessions: sessions, Users: users, Log: log}
-	e := &env{srv: mw.Authenticate(mw.CSRF(mux)), requests: requests, audit: auditLog, ids: map[string]string{}}
+	e := &env{srv: mw.Authenticate(mw.CSRF(mux)), requests: requests, policies: policies, revoker: revoker, audit: auditLog, ids: map[string]string{}}
 
 	login := func(name string, roles ...user.Role) (*http.Cookie, string) {
 		u := &user.User{Username: name, DisplayName: name, Roles: roles}

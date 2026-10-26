@@ -367,8 +367,7 @@ func (h *Handler) connect(w http.ResponseWriter, r *http.Request) {
 // the one the applications proxy passes too (access.Gate).
 func (h *Handler) admits(ctx context.Context, userID string, ep *endpoint, proto target.Protocol) (policy.Decision, string, string, error) {
 	id, asgID, tags := ep.policyRef()
-	gate := &access.Gate{Policies: h.Policies, Grants: h.Access, MFAEnrolled: h.MFAEnrolled}
-	return gate.Admit(ctx, userID, policy.TargetRef{ID: id, ASGID: asgID, Tags: tags}, string(proto), time.Now())
+	return h.gate().Admit(ctx, userID, policy.TargetRef{ID: id, ASGID: asgID, Tags: tags}, string(proto), time.Now())
 }
 
 // issueTicket runs policy, pinning and credential checks for an endpoint and

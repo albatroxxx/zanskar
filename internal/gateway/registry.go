@@ -31,6 +31,9 @@ type Live struct {
 	// desktop bridge via SetGuacID so a watcher can join it read-only.
 	GuacID string
 	cancel context.CancelCauseFunc
+	// ended is set by the first terminate, so two changes that withdraw
+	// the same session at once count it once between them.
+	ended bool
 }
 
 // Cancellation causes. Bridges read them with CancelReason to record why a
@@ -40,6 +43,20 @@ var (
 	ErrTargetLost      = errors.New("target left the healthy pool")
 	ErrPolicyRevoked   = errors.New("access policy no longer grants this session")
 	ErrGatewayRestart  = errors.New("gateway restarting")
+	// ErrGrantRevoked is ErrPolicyRevoked for a just-in-time grant that an
+	// administrator revoked or that expired: the same end reason, worded
+	// for the person who held the grant.
+	ErrGrantRevoked = errors.New("approved access revoked")
+	// ErrGrantExpired ends the sessions a just-in-time grant admitted once
+	// its window has passed; it reads as max_duration, the bound it is.
+	ErrGrantExpired = errors.New("approved access ran out")
+	// ErrTargetDisabled ends the sessions on a target an administrator
+	// disabled or re-addressed; it reads as admin_terminated.
+	ErrTargetDisabled = errors.New("target disabled or changed by an administrator")
+	// ErrTrustLost ends the sessions on a target whose pinned host key or
+	// certificate changed: the host may no longer be the one that was
+	// trusted, so nothing in flight is kept.
+	ErrTrustLost = errors.New("the target's host key or certificate changed")
 )
 
 // CancelReason maps a registry cancellation to an access_sessions end reason
@@ -50,6 +67,14 @@ func CancelReason(ctx context.Context) (reason, msg string) {
 		return "target_lost", "the instance left the healthy pool"
 	case errors.Is(cause, ErrPolicyRevoked):
 		return "policy_revoked", "your access policy changed"
+	case errors.Is(cause, ErrGrantRevoked):
+		return "policy_revoked", "your approved access was revoked"
+	case errors.Is(cause, ErrGrantExpired):
+		return "max_duration", "your approved access ran out"
+	case errors.Is(cause, ErrTargetDisabled):
+		return "admin_terminated", "an administrator disabled or changed the target"
+	case errors.Is(cause, ErrTrustLost):
+		return "trust_lost", "the target's host key or certificate changed; an administrator must trust it again"
 	case errors.Is(cause, ErrGatewayRestart):
 		return "gateway_restart", "the gateway is restarting to apply a configuration change; reconnect in a moment"
 	default:
@@ -123,24 +148,36 @@ func (r *Registry) SetGuacID(sessionID, guacID string) {
 	}
 }
 
-// Terminate cancels a live session. It reports whether one was found.
+// Terminate cancels a live session. It reports whether one was found here,
+// ending already or not: the caller's question is whether this process
+// holds the session, not whether it was first to end it.
 func (r *Registry) Terminate(sessionID string) bool {
 	r.mu.Lock()
 	l, ok := r.live[sessionID]
-	r.mu.Unlock()
-	if !ok {
-		return false
+	first := ok && !l.ended
+	if first {
+		l.ended = true
 	}
-	l.cancel(ErrAdminTerminated)
-	return true
+	r.mu.Unlock()
+	if first {
+		l.cancel(ErrAdminTerminated)
+	}
+	return ok
 }
 
-// TerminateWithCause cancels a live session recording why.
+// TerminateWithCause cancels a live session recording why. It reports
+// whether the session was found and this call is the one that ended it; a
+// session already ending (the bridge has not yet left the registry) is not
+// counted again, so two changes that withdraw it at once report one end.
 func (r *Registry) TerminateWithCause(sessionID string, cause error) bool {
 	r.mu.Lock()
 	l, ok := r.live[sessionID]
+	first := ok && !l.ended
+	if first {
+		l.ended = true
+	}
 	r.mu.Unlock()
-	if !ok {
+	if !first {
 		return false
 	}
 	l.cancel(cause)
@@ -148,12 +185,19 @@ func (r *Registry) TerminateWithCause(sessionID string, cause error) bool {
 }
 
 // TerminateTarget ends every live session on a target or instance id with
-// the given cause and returns how many were ended.
+// the given cause and returns how many this call ended.
 func (r *Registry) TerminateTarget(targetID string, cause error) int {
+	return r.terminateWhere(func(l *Live) bool { return l.TargetID == targetID }, cause)
+}
+
+// terminateWhere ends the live sessions keep selects that are not already
+// ending, and returns how many.
+func (r *Registry) terminateWhere(keep func(*Live) bool, cause error) int {
 	r.mu.Lock()
 	var victims []*Live
 	for _, l := range r.live {
-		if l.TargetID == targetID {
+		if keep(l) && !l.ended {
+			l.ended = true
 			victims = append(victims, l)
 		}
 	}
@@ -167,18 +211,7 @@ func (r *Registry) TerminateTarget(targetID string, cause error) int {
 // TerminateUser ends every live session of a user (account disabled, roles
 // changed). Returns how many were ended.
 func (r *Registry) TerminateUser(userID string) int {
-	r.mu.Lock()
-	var victims []*Live
-	for _, l := range r.live {
-		if l.UserID == userID {
-			victims = append(victims, l)
-		}
-	}
-	r.mu.Unlock()
-	for _, l := range victims {
-		l.cancel(ErrAdminTerminated)
-	}
-	return len(victims)
+	return r.terminateWhere(func(l *Live) bool { return l.UserID == userID }, ErrAdminTerminated)
 }
 
 // List snapshots live sessions.

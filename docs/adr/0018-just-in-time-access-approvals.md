@@ -91,6 +91,14 @@ Terminating live sessions at grant expiry is the first post-v1 hardening (the se
 already supports forced termination); operators who want tighter behaviour set the policy's
 `max_session_minutes` at or below the typical grant duration.
 
+Amended 2026-10-26: the hardening above is done (full review finding SEC-1). A grant that is
+revoked ends the sessions it admitted as `policy_revoked`, and a grant that expires ends them
+as `max_duration` (the grant's window is the bound they reached), unless the connect gate would
+still admit the user because a standing policy covers the same access; the revoke and expiry audit events carry `live_sessions_ended`. Approval also decides
+eligibility and the duration cap from the requester's policies as they stand at that moment
+(finding SEC-2): a maximum lowered since the request bounds the grant, and a policy deleted or
+moved off the requester refuses it with `not_eligible`, leaving the request pending.
+
 **Everything is audited.** `access.request.create`, `access.request.approve`,
 `access.request.deny`, `access.request.revoke`, and `access.grant.expire` are written to the
 existing tamper-evident chain, actor being the requester or the approver; details never contain
