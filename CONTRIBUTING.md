@@ -91,7 +91,9 @@ the rest.
   tried to break" section: forged or oversized input, the wrong role or no session, two clients at
   once, a disconnect or restart mid-way. A probe that breaks something becomes a regression test.
 - Coverage has floors: 80% of statements for the gateway (CI fails under it) and the console
-  thresholds in `web/vite.config.ts`. Raise them when tests land; never lower them.
+  thresholds in `web/vite.config.ts`. Raise them when tests land; never lower them. `npm test` is
+  the gate and measures the whole console; to run one file while you work, use
+  `npx vitest run src/path/to/Thing.test.tsx`, which applies no threshold.
 
 ## Conventions
 
