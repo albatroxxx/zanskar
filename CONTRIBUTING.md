@@ -53,7 +53,7 @@ make vuln          # govulncheck
 gofmt -l .         # should print nothing
 ```
 
-Individual targets: `make test` (race + coverage), `make web-test` (console tests, Vitest), `make lint` (golangci-lint), `make vet`,
+Individual targets: `make test` (race + coverage), `make web-test` (console tests, Vitest), `make e2e` (the console in a real browser against the built gateway, Playwright; CI runs it on every change), `make lint` (golangci-lint), `make vet`,
 `make sec` (gosec), `make vuln` (govulncheck). golangci-lint, gosec and govulncheck must be
 installed locally; CI runs all of them plus a secret scan and a container scan.
 
