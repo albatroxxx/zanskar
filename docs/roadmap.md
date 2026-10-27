@@ -102,6 +102,17 @@ Deferred by decision: a multi-pane workspace (browser tabs suffice), rotation of
 keys and of Windows or database passwords (the certificate authority and the owning systems
 do that). Still Phase 4: HA, SAML/SCIM, WebAuthn.
 
+## v1.6 release — shipped (v1.6.0 tagged 2026-10-27)
+
+A hardening release. It closes every finding of the full security, quality and usability review
+of 2026-10-26: withdrawn access now ends the live sessions it admitted, sign-in hardening
+(enrolment and step-up bounds, directory lockout, `__Host-` cookies on HTTPS, one session per
+browser), one WebSocket message per Guacamole instruction, a key-safe `init --force` and
+`rotate-master`, symlink-safe backups, a bounded drain on restart, and the two runtime settings
+that decide where a credential is sent kept runtime but bounded ([ADR 0020](adr/0020-runtime-settings-console-overrides-environment.md),
+threat model risk 7). Applications gain a readiness checklist and a no-DNS recipe. No migration;
+four operator-visible changes ([release notes](releases/v1.6.0.md)).
+
 ## v1.5 release — shipped (v1.5.0 tagged 2026-10-23)
 
 A feature release, cut after two release candidates (rc.1 2026-10-16 soaked the feature code;
