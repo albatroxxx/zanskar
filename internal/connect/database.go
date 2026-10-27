@@ -4,7 +4,6 @@ package connect
 
 import (
 	"net/http"
-	"strconv"
 
 	"github.com/coder/websocket"
 
@@ -31,8 +30,7 @@ func (h *Handler) database(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, http.StatusBadRequest, "bad_request", "ticket is not for database")
 		return
 	}
-	cols, _ := strconv.Atoi(r.URL.Query().Get("cols"))
-	rows, _ := strconv.Atoi(r.URL.Query().Get("rows"))
+	cols, rows := termSize(r)
 
 	ep, err := h.resolveGrant(r.Context(), g)
 	if err != nil || !ep.Active || ep.Engine == "" {

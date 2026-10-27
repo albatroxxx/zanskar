@@ -710,3 +710,22 @@ func TestStreamIndex(t *testing.T) {
 		}
 	}
 }
+
+// TestBridgeDropsCompoundMessages: one browser message is one instruction.
+// A message carrying several, or one with bytes after its terminator, is
+// dropped whole: before, only the first opcode was checked against the
+// policy and the rest went to guacd unseen (review finding SEC-7).
+func TestBridgeDropsCompoundMessages(t *testing.T) {
+	addr := fakeGuacd(t, nil)
+	send, read := runBridge(t, addr, Limits{Idle: time.Minute, AllowClipboard: false, AllowFileTransfer: false, tick: 50 * time.Millisecond})
+	// A keepalive in front, then a clipboard stream the policy forbids.
+	send(Encode("nop") + Encode("clipboard", "0", "text/plain") + Encode("blob", "0", "c2VjcmV0") + Encode("end", "0"))
+	// A file upload hidden behind a frame ack.
+	send(Encode("sync", "1") + Encode("put", "0", "1", "application/octet-stream", "/x.txt") + Encode("blob", "1", "AAAA") + Encode("end", "1"))
+	// Trailing bytes after a well-formed instruction.
+	send(Encode("key", "65", "1") + "x")
+	send(Encode("mouse", "1", "2", "0"))
+	if got := read(); got != Encode("echo", "mouse", "1", "2", "0") {
+		t.Fatalf("the compound messages must not reach guacd; first echo %q", got)
+	}
+}

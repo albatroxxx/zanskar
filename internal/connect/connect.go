@@ -15,7 +15,6 @@ import (
 	"net/http"
 	"net/netip"
 	"slices"
-	"strconv"
 	"time"
 
 	"github.com/coder/websocket"
@@ -495,8 +494,7 @@ func (h *Handler) terminal(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, http.StatusBadRequest, "bad_request", "ticket is not for ssh")
 		return
 	}
-	cols, _ := strconv.Atoi(r.URL.Query().Get("cols"))
-	rows, _ := strconv.Atoi(r.URL.Query().Get("rows"))
+	cols, rows := termSize(r)
 
 	ep, err := h.resolveGrant(r.Context(), g)
 	if err != nil || !ep.Active || !ep.HostKeyTrusted || ep.HostKeyFingerprint == "" {

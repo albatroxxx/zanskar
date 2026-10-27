@@ -204,9 +204,7 @@ func (h *Handler) desktop(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	params.Width, _ = strconv.Atoi(r.URL.Query().Get("width"))
-	params.Height, _ = strconv.Atoi(r.URL.Query().Get("height"))
-	params.DPI, _ = strconv.Atoi(r.URL.Query().Get("dpi"))
+	params.Width, params.Height, params.DPI = screenSize(r)
 	if tz := r.URL.Query().Get("tz"); tz != "" && len(tz) < 64 {
 		params.Timezone = tz
 	}
@@ -315,7 +313,10 @@ func (e *certMismatchError) Error() string {
 // It sits directly under guacd's tmpfs root (see deploy/docker-compose.yml) so
 // the parent always exists: guacd's create-drive-path is not recursive, and a
 // nested path like /tmp/drives/<id> fails when /tmp/drives is absent, which it
-// is on a fresh tmpfs. The directory is never visible to the gateway process.
+// is on a fresh tmpfs. The directory is never visible to the gateway process,
+// and nothing removes it: guacd has no hook for that, so what was transferred
+// stays in guacd's memory-backed /tmp until guacd restarts (ADR 0016). The
+// name is the session id, so a later session is never handed another's files.
 func drivePathFor(sessionID string) string {
 	return "/tmp/zanskar-drive-" + sessionID
 }

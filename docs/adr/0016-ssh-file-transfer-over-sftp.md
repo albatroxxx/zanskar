@@ -49,6 +49,15 @@ Add an SFTP channel to `sshgw` and surface it through the existing files-panel U
 - File transfers are visible in the audit log but their contents are not recorded, matching
   desktop drive behaviour; teams that need content capture must rely on the target's own
   logging. Documented in `docs/deploy.md`.
+- (Noted 2026-10-26, full review finding SEC-9.) The desktop drive is a per-session directory
+  in guacd's memory-backed `/tmp`, and guacd offers no hook to remove it when the session ends:
+  what was transferred stays there, unaudited and outside any retention rule, until guacd
+  restarts, and every desktop session shares that one size-capped tmpfs with FreeRDP's
+  certificate store. The directory is named by the session id, so a later session is never
+  handed another's files, and the deployments cap `/tmp` at 512 MB. A gateway-owned volume
+  for the drives (so the gateway can remove a session's directory in `run.finish`) and a
+  separate tmpfs for the certificate store are the full fix; both change every guacd
+  deployment artefact and are an owner decision, not made here.
 - No new attack surface beyond the SSH account's existing filesystem access — Zanskar adds
   mediation and audit on top of it, and the policy gate can withhold it entirely.
 - Windows/WinRM file transfer is a separate story (WinRM is not SSH) and is out of scope

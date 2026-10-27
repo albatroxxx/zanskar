@@ -244,12 +244,24 @@ func Bridge(ctx context.Context, log *slog.Logger, c *Conn, ws *websocket.Conn, 
 	go func() {
 		defer close(wsDone)
 		filter := newStreamFilter(clientOpens)
+		malformed := 0
 		for {
 			_, data, err := ws.Read(wsCtx)
 			if err != nil {
 				return
 			}
 			raw := string(data)
+			// One message is one instruction. guacd parses what it is sent
+			// as a stream, so a message carrying several instructions would
+			// have only its first one judged by the policy below and the
+			// rest relayed unseen; a stock client never sends such a thing,
+			// and a message that is not exactly one instruction is dropped.
+			if _, err := Parse(raw); err != nil {
+				if malformed++; malformed == 1 {
+					log.Warn("desktop client sent a malformed or compound instruction; dropped", "bytes", len(raw))
+				}
+				continue
+			}
 			op := Opcode(raw)
 			if pass, _ := filter.check(raw, op, lim); !pass {
 				continue
