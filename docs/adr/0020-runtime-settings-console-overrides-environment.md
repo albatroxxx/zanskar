@@ -69,12 +69,16 @@ for runtime ones; the database holds only what an administrator changed afterwar
   reachability). The same holds for `database.proxy_image` (ADR 0017 addendum), the image
   that receives a vaulted database credential in its environment. An administrator, or a
   stolen administrator session, can therefore receive a credential rather than a session,
-  which is residual risk 7 in the threat model (2026-10-26 review, S3-3). The change is
-  audited like any other setting; alert on `settings.update` for these two keys. Not
-  decided yet: whether to make them install-time again, as `ZANSKAR_CONSOLE_CLI` is, or to
-  bound them (a loopback or private address plus a five-minute authenticator step-up for
-  the guacd address, a digest-pinned image under `ghcr.io/albatroxxx/zanskar` by default for
-  the proxy image), and to give the metrics dial the prober's refused-address rules.
+  which is residual risk 7 in the threat model (2026-10-26 review, S3-3). Decided
+  2026-10-27: they stay runtime, bounded. The console accepts the guacd address only as a
+  loopback or private address, or a name resolving to one, and the relay image only pinned
+  by `@sha256` digest; setting or resetting either asks for an authenticator code proved in
+  the last five minutes (`403 step_up_required`, the host actions' rule, ADR 0032); and the
+  guacd dials, for a session and for the metrics check, go through a dialer that refuses an
+  address outside that network before a packet is sent, so a name that later resolves
+  elsewhere gains nothing. The environment file keeps its freedom: it is root's to edit,
+  and the default relay image is named by tag there. The change is audited like any other
+  setting; alert on `settings.update` for these two keys.
 - A setting is either applied live or it needs a restart; the panel says which, so
   "save and hope" goes away. A boot setting sent to the runtime API is refused with the
   variable to edit instead.

@@ -24,7 +24,7 @@ import (
 // the typed hostname, and an audit event written before anything happens.
 
 // stepUpFor is how recent the session's authenticator proof must be.
-const stepUpFor = 5 * time.Minute
+const stepUpFor = auth.StepUpWindow
 
 // hostActionTimeout bounds the systemctl call itself.
 const hostActionTimeout = 30 * time.Second
@@ -73,7 +73,7 @@ func (h *Handler) hostAvailable() (bool, string) {
 // fresh reports whether the session proved an authenticator code recently
 // enough for a host action.
 func fresh(p *auth.Principal) bool {
-	return p != nil && p.Session != nil && !p.Session.MFAAt.IsZero() && time.Since(p.Session.MFAAt) <= stepUpFor
+	return p.StepUpFresh()
 }
 
 func (h *Handler) host(w http.ResponseWriter, r *http.Request) {

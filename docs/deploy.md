@@ -56,7 +56,8 @@ sudo systemctl enable --now zanskar
 **RDP and VNC need guacd, which the package does not install.** Start the official
 container on loopback only (guacd is unauthenticated; never publish it wider), then set
 `ZANSKAR_GUACD_ADDR=127.0.0.1:4822` (or pass `-guacd` to `init`) and restart, or set the
-guacd address on the console's Settings page, which applies without a restart:
+guacd address on the console's Settings page, which applies without a restart (the console
+accepts a loopback or private address only, and asks for a fresh authenticator code):
 
 ```sh
 sudo docker run -d --name guacd --restart unless-stopped -p 127.0.0.1:4822:4822 \

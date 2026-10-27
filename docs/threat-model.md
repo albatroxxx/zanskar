@@ -203,16 +203,20 @@ We state these plainly so that deployers can decide whether to accept them.
 5. **VNC without TLS is not confidential.** We flag it in the UI and let policy forbid it, but we
    do not refuse it outright because many lab environments rely on it.
 6. **Availability of the health pool depends on AWS API quotas.** Stale data is shown as stale.
-7. **Two runtime settings choose where vaulted secrets go.** `desktop.guacd_addr` names the guacd
-   the gateway hands the vaulted RDP or VNC password to, in clear over guacd's own protocol, and
-   `database.proxy_image` names the image that receives a vaulted database credential in its
-   environment. Both are set from the console by an administrator (ADR 0020, ADR 0017), so an
-   administrator, or a stolen administrator session, can point them at a host or an image of their
-   own and receive the credential itself, usable outside Zanskar. This is risk 1 with more reach,
-   not a new actor; each change is audited with the previous and the new value as `settings.update`,
-   which a SIEM should alert on for these two keys. Making them install-time again, or bounding them
-   (a private address and a step-up for the guacd address, a digest-pinned image under the project's
-   registry for the proxy) is open; see ADR 0020.
+7. **Two runtime settings choose where vaulted secrets go, within bounds.** `desktop.guacd_addr`
+   names the guacd the gateway hands the vaulted RDP or VNC password to, in clear over guacd's own
+   protocol, and `database.proxy_image` names the image that receives a vaulted database credential
+   in its environment. Both can be set from the console by an administrator (ADR 0020, ADR 0017), so
+   they are bounded (decided 2026-10-27): the console accepts a guacd address only on the gateway's
+   own network (loopback or a private range, or a name that resolves there) and a relay image only
+   pinned by digest; changing or resetting either asks for an authenticator code proved in the last
+   five minutes, as the host actions do, so a stolen cookie alone cannot repoint them; and the
+   gateway dials guacd, for sessions and for the metrics check, through a dialer that refuses any
+   address outside that network, whatever the setting says. What remains is risk 1: an
+   administrator with their authenticator can still name a host on the private network or a
+   digest of an image they built. Each change is audited with the previous and the new value as
+   `settings.update`; a SIEM should alert on these two keys. The environment file, root's to edit,
+   is not bounded by the console rules.
 
 ## 7. Compliance mapping
 

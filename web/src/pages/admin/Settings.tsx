@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { api, errorMessage } from '../../api/client'
+import { ApiError, api, errorMessage } from '../../api/client'
 import { fmtTime } from '../../api/format'
 import type { BootSetting, RuntimeSetting, SettingsListing, SystemStatus } from '../../api/types'
 import { Alert, Badge, Empty, Field, PageHead } from '../../components/ui'
@@ -86,6 +86,12 @@ function SettingRow({ setting, onChange }: { setting: RuntimeSetting; onChange: 
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState('')
   const [saved, setSaved] = useState(false)
+  // A setting that decides where a credential is sent asks for a fresh
+  // authenticator code (threat model risk 7): the gateway answers
+  // step_up_required, the row shows a code field, and the next attempt
+  // proves the code first.
+  const [needCode, setNeedCode] = useState(false)
+  const [code, setCode] = useState('')
   const dirty = value !== setting.value
 
   const run = async (fn: () => Promise<RuntimeSetting>) => {
@@ -93,12 +99,20 @@ function SettingRow({ setting, onChange }: { setting: RuntimeSetting; onChange: 
     setSaved(false)
     setBusy(true)
     try {
+      if (needCode && code.trim()) await api.post('/auth/mfa/step-up', { code: code.trim() })
       const v = await fn()
       onChange(v)
       setValue(v.value)
       setSaved(true)
+      setNeedCode(false)
+      setCode('')
     } catch (e) {
-      setErr(errorMessage(e))
+      if (e instanceof ApiError && e.code === 'step_up_required') {
+        setNeedCode(true)
+        setErr('')
+      } else {
+        setErr(errorMessage(e))
+      }
     } finally {
       setBusy(false)
     }
@@ -150,12 +164,17 @@ function SettingRow({ setting, onChange }: { setting: RuntimeSetting; onChange: 
           <div className="login-banner" aria-hidden="true">{value.trim()}</div>
         </Field>
       )}
+      {needCode && (
+        <Field label="Authenticator code" hint="This setting decides where a stored credential is sent; enter a fresh code, then Save or Reset.">
+          <input id={id + '-code'} inputMode="numeric" autoComplete="one-time-code" value={code} onChange={(e) => setCode(e.target.value)} autoFocus />
+        </Field>
+      )}
       {err && <Alert tone="danger">{err}</Alert>}
       <div className="actions">
-        <button type="button" className="btn primary sm" disabled={!dirty || busy} onClick={() => void save()}>{busy ? 'Saving…' : 'Save'}</button>
+        <button type="button" className="btn primary sm" disabled={!dirty || busy || (needCode && !code.trim())} onClick={() => void save()}>{busy ? 'Saving…' : 'Save'}</button>
         <button type="button" className="btn sm" disabled={!dirty || busy} onClick={() => setValue(setting.value)}>Discard</button>
         {setting.source === 'console' && (
-          <button type="button" className="btn sm" disabled={busy} onClick={() => void reset()} title={setting.env_var ? `Go back to ${setting.env_var} from the environment file, or the default` : 'Go back to the default'}>
+          <button type="button" className="btn sm" disabled={busy || (needCode && !code.trim())} onClick={() => void reset()} title={setting.env_var ? `Go back to ${setting.env_var} from the environment file, or the default` : 'Go back to the default'}>
             Reset
           </button>
         )}

@@ -473,6 +473,8 @@ export interface RuntimeSetting {
   source: 'default' | 'environment' | 'console'
   updated_at?: string
   updated_by?: string
+  /** Changing or resetting it asks for an authenticator code proved in the last five minutes: it decides where a vaulted credential is sent. */
+  step_up?: boolean
 }
 
 /** A setting fixed at install from the environment, read-only; secrets masked. */

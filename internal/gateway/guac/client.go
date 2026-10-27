@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/albatroxxx/zanskar/internal/protocol"
+	"github.com/albatroxxx/zanskar/internal/target"
 )
 
 // Params describe one connection guacd should open. Keys follow guacd's
@@ -54,7 +55,9 @@ func Dial(ctx context.Context, addr string, p Params, timeout time.Duration) (*C
 	if !protocol.Desktop(p.Protocol) {
 		return nil, fmt.Errorf("guac: unsupported protocol %q", p.Protocol)
 	}
-	d := net.Dialer{Timeout: timeout}
+	// guacd receives the vaulted desktop credential in clear, so it is only
+	// ever dialled on this gateway's own network (threat model risk 7).
+	d := target.InternalDialer(timeout)
 	nc, err := d.DialContext(ctx, "tcp", addr)
 	if err != nil {
 		return nil, fmt.Errorf("%w at %s: %w", ErrGuacdUnreachable, addr, err)

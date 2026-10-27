@@ -3,7 +3,6 @@
 package lifecycle
 
 import (
-	"net"
 	"net/http"
 	"os"
 	"runtime"
@@ -13,6 +12,7 @@ import (
 	"time"
 
 	"github.com/albatroxxx/zanskar/internal/httpx"
+	"github.com/albatroxxx/zanskar/internal/target"
 )
 
 // Metrics is the host's numbers right now, for the admin dashboard's gateway
@@ -89,7 +89,9 @@ func (h *Handler) metrics(w http.ResponseWriter, r *http.Request) {
 	if h.GuacdAddr != nil {
 		if addr := strings.TrimSpace(h.GuacdAddr()); addr != "" {
 			check := &GuacdCheck{Address: addr}
-			d := net.Dialer{Timeout: guacdDialTimeout}
+			// The same dialer the desktop bridge uses: an address outside the
+			// gateway's own network is refused, not probed (risk 7).
+			d := target.InternalDialer(guacdDialTimeout)
 			if conn, err := d.DialContext(r.Context(), "tcp", addr); err == nil {
 				check.Reachable = true
 				_ = conn.Close()

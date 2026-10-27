@@ -9,6 +9,8 @@ import (
 	"net"
 	"slices"
 	"strings"
+	"syscall"
+	"time"
 )
 
 // ErrAddressForbidden is returned for an address the gateway must never
@@ -141,4 +143,67 @@ func ListenIP(listenAddr string) net.IP {
 		return nil
 	}
 	return ip
+}
+
+// Internal reports whether ip is one the gateway may hand a vaulted
+// credential to over its own network: loopback, or a private range (RFC
+// 1918, IPv6 unique local). Everything else, public addresses above all,
+// is not, whatever a runtime setting says.
+func Internal(ip net.IP) bool {
+	return ip != nil && (ip.IsLoopback() || ip.IsPrivate())
+}
+
+// InternalDialer returns a dialer that refuses, before a packet is sent, any
+// connection to an address that is not Internal. The guacd relay and the
+// metrics check dial through it (threat model residual risk 7): the address
+// comes from a runtime setting, and a name that resolved to a private
+// address when it was set may resolve elsewhere later.
+func InternalDialer(timeout time.Duration) *net.Dialer {
+	return &net.Dialer{Timeout: timeout, Control: func(_, address string, _ syscall.RawConn) error {
+		host, _, err := net.SplitHostPort(address)
+		if err != nil {
+			return fmt.Errorf("%w: %w", ErrAddressForbidden, err)
+		}
+		if ip := net.ParseIP(host); !Internal(ip) {
+			return fmt.Errorf("%w: %s is not a loopback or private address", ErrAddressForbidden, host)
+		}
+		return nil
+	}}
+}
+
+// CheckInternal accepts a host:port whose host is an Internal IP literal or
+// a name that resolves, through r (net.DefaultResolver when nil), to
+// Internal addresses only. It is the check behind the guacd address setting;
+// an empty value, which turns desktop sessions off, passes.
+func CheckInternal(ctx context.Context, r Resolver, hostport string) error {
+	hostport = strings.TrimSpace(hostport)
+	if hostport == "" {
+		return nil
+	}
+	host, _, err := net.SplitHostPort(hostport)
+	if err != nil {
+		return fmt.Errorf("%w: %w", ErrAddressForbidden, err)
+	}
+	if ip := net.ParseIP(host); ip != nil {
+		if !Internal(ip) {
+			return fmt.Errorf("%w: %s is not a loopback or private address", ErrAddressForbidden, host)
+		}
+		return nil
+	}
+	if r == nil {
+		r = net.DefaultResolver
+	}
+	addrs, err := r.LookupIPAddr(ctx, host)
+	if err != nil {
+		return fmt.Errorf("%w: %s could not be resolved: %w", ErrAddressForbidden, host, err)
+	}
+	if len(addrs) == 0 {
+		return fmt.Errorf("%w: %s resolves to no address", ErrAddressForbidden, host)
+	}
+	for _, a := range addrs {
+		if !Internal(a.IP) {
+			return fmt.Errorf("%w: %s resolves to %s, which is not a loopback or private address", ErrAddressForbidden, host, a.IP)
+		}
+	}
+	return nil
 }

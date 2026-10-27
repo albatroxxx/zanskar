@@ -82,6 +82,20 @@ func (h *Handler) key(w http.ResponseWriter, r *http.Request) (string, bool) {
 	return "", false
 }
 
+// stepUp refuses a change to a setting that decides where a vaulted
+// credential goes unless the session proved an authenticator code in the
+// last auth.StepUpWindow, the rule the host actions follow (ADR 0032). A
+// stolen cookie with no authenticator can then not repoint guacd or the
+// relay image (threat model risk 7).
+func (h *Handler) stepUp(w http.ResponseWriter, r *http.Request, key string, p *auth.Principal) bool {
+	d, _ := Lookup(key)
+	if !d.StepUp || p.StepUpFresh() {
+		return true
+	}
+	httpx.WriteError(w, r, http.StatusForbidden, "step_up_required", "prove your authenticator first: this setting decides where a credential is sent and asks for a recent code")
+	return false
+}
+
 func (h *Handler) set(w http.ResponseWriter, r *http.Request) {
 	key, ok := h.key(w, r)
 	if !ok {
@@ -95,6 +109,9 @@ func (h *Handler) set(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	p, _ := auth.FromContext(r.Context())
+	if !h.stepUp(w, r, key, p) {
+		return
+	}
 	before, _ := h.Service.Get(key)
 	v, err := h.Service.Set(r.Context(), key, in.Value, p.User.ID)
 	if err != nil {
@@ -110,6 +127,10 @@ func (h *Handler) set(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) reset(w http.ResponseWriter, r *http.Request) {
 	key, ok := h.key(w, r)
 	if !ok {
+		return
+	}
+	p, _ := auth.FromContext(r.Context())
+	if !h.stepUp(w, r, key, p) {
 		return
 	}
 	before, _ := h.Service.Get(key)
