@@ -109,7 +109,7 @@ of 2026-10-26: withdrawn access now ends the live sessions it admitted, sign-in 
 (enrolment and step-up bounds, directory lockout, `__Host-` cookies on HTTPS, one session per
 browser), one WebSocket message per Guacamole instruction, a key-safe `init --force` and
 `rotate-master`, symlink-safe backups, a bounded drain on restart, and the two runtime settings
-that decide where a credential is sent kept runtime but bounded ([ADR 0020](adr/0020-runtime-settings.md),
+that decide where a credential is sent kept runtime but bounded ([ADR 0020](adr/0020-runtime-settings-console-overrides-environment.md),
 threat model risk 7). Applications gain a readiness checklist and a no-DNS recipe. No migration;
 four operator-visible changes ([release notes](releases/v1.6.0.md)).
 
