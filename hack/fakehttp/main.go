@@ -21,7 +21,13 @@ import (
 	"time"
 )
 
+// origin is the address the application believes it is served at, set at
+// start: /redirect sends the browser there, the way an application with a
+// configured base URL does, and never to anything taken from a request.
+var origin string
+
 func main() {
+	flag.StringVar(&origin, "origin", "", "the application's own origin, such as http://10.0.0.5:8083; /redirect points at it")
 	flag.Parse()
 	addr := "127.0.0.1:8083"
 	if flag.NArg() > 0 {
@@ -60,9 +66,15 @@ func serve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if r.URL.Path == "/redirect" {
-		// A redirect to the application's own origin, which the proxy must
-		// rewrite onto the address the browser used.
-		http.Redirect(w, r, "http://"+r.Host+"/landed", http.StatusFound) // #nosec G710 -- dev tool: redirecting to the request's own host is what this endpoint is for; the proxy under test must rewrite it
+		// A redirect to the application's own origin, as configured at start,
+		// which the proxy under test must rewrite onto the address the
+		// browser used. Nothing from the request goes into the Location.
+		if origin == "" {
+			http.Error(w, "fakehttp was started without -origin", http.StatusNotImplemented)
+			return
+		}
+		w.Header().Set("Location", origin+"/landed")
+		w.WriteHeader(http.StatusFound)
 		return
 	}
 	keys := make([]string, 0, len(s.Headers))

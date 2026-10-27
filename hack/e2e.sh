@@ -23,7 +23,7 @@ rm -rf "$S/e2e.db" "$S/e2e.db-wal" "$S/e2e.db-shm" "$S/rec" "$S/jar" "$S/tls"
 
 ( ./bin/fakessh "0.0.0.0:$SSHPORT" > "$S/fakessh.log" 2>&1 & )
 # The toy web application, reached by the gateway at the LAN address like any upstream.
-( ./bin/fakehttp "0.0.0.0:$HTTPPORT" > "$S/fakehttp.log" 2>&1 & ); sleep 0.5
+( ./bin/fakehttp -origin "http://$LAN:$HTTPPORT" "0.0.0.0:$HTTPPORT" > "$S/fakehttp.log" 2>&1 & ); sleep 0.5
 export ZANSKAR_DB_DSN="file:$S/e2e.db?_pragma=journal_mode(WAL)&_pragma=foreign_keys(1)" ZANSKAR_LOG_FORMAT=text ZANSKAR_LISTEN_ADDR=127.0.0.1:$PORT ZANSKAR_REQUIRE_MFA=false ZANSKAR_RECORDINGS_DIR=$S/rec
 export ZANSKAR_MASTER_KEY_FILE= ZANSKAR_TLS_MODE=
 ./bin/zanskar migrate >/dev/null 2>&1
