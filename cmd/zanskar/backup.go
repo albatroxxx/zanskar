@@ -13,6 +13,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -91,8 +92,12 @@ func runBackup(args []string) error {
 		// S3 is durable and lives outside the box; note it rather than copy it.
 		man.RecordingsBackend = "s3"
 	case dirExists(cfg.RecordingsDir):
-		if err := copyTree(cfg.RecordingsDir, filepath.Join(stage, "recordings"), owner{}); err != nil {
+		skipped, err := copyTree(cfg.RecordingsDir, filepath.Join(stage, "recordings"), owner{})
+		if err != nil {
 			return fmt.Errorf("backup: copy recordings: %w", err)
+		}
+		if skipped > 0 {
+			fmt.Fprintf(os.Stderr, "warning: %d entries in %s are not regular files (symlinks, say) and were not copied; the gateway writes none, so look at who did\n", skipped, cfg.RecordingsDir)
 		}
 		man.RecordingsIncluded = true
 		man.RecordingsBackend = "local"
@@ -206,7 +211,7 @@ func runRestore(args []string) error {
 	}
 
 	if man.RecordingsIncluded {
-		if err := copyTree(filepath.Join(stage, "recordings"), cfg.RecordingsDir, ownerOf(cfg.RecordingsDir)); err != nil {
+		if _, err := copyTree(filepath.Join(stage, "recordings"), cfg.RecordingsDir, ownerOf(cfg.RecordingsDir)); err != nil {
 			return fmt.Errorf("restore: recordings: %w", err)
 		}
 	}
@@ -321,49 +326,79 @@ func copyBeside(src, dst string, mode os.FileMode) (string, error) {
 	return name, nil
 }
 
-func copyFile(src, dst string, mode os.FileMode) error {
-	in, err := os.Open(src) // #nosec G304 -- src is inside our staging dir
-	if err != nil {
-		return err
-	}
-	defer func() { _ = in.Close() }()
-	out, err := os.OpenFile(dst, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, mode) // #nosec G304 -- dst is a config-derived or staging path, not attacker input
-	if err != nil {
-		return err
-	}
-	if _, err := io.Copy(out, in); err != nil { // #nosec G110 -- our own snapshot, not attacker input
-		_ = out.Close()
-		return err
-	}
-	return out.Close()
-}
-
 // copyTree copies a directory tree, preserving relative layout with 0700 dirs
-// and 0600 files (recordings are sensitive).
-func copyTree(src, dst string, o owner) error {
-	return filepath.WalkDir(src, func(path string, d os.DirEntry, err error) error {
+// and 0600 files (recordings are sensitive). Both trees are opened as
+// os.Root, so a symlink planted in either (the recordings directory is
+// writable by the service user; backup and restore usually run as root) is
+// neither read through nor written through: on the source side links and
+// other non-regular entries are skipped and counted, on the destination
+// side an entry that is not a regular file is removed before the file is
+// written (review finding SEC-5). It returns how many entries were skipped.
+func copyTree(src, dst string, o owner) (skipped int, err error) {
+	srcRoot, err := os.OpenRoot(src)
+	if err != nil {
+		return 0, err
+	}
+	defer func() { _ = srcRoot.Close() }()
+	if err := os.MkdirAll(dst, 0o700); err != nil {
+		return 0, err
+	}
+	if err := o.give(dst); err != nil {
+		return 0, err
+	}
+	dstRoot, err := os.OpenRoot(dst)
+	if err != nil {
+		return 0, err
+	}
+	defer func() { _ = dstRoot.Close() }()
+	err = fs.WalkDir(srcRoot.FS(), ".", func(rel string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
-		rel, err := filepath.Rel(src, path)
-		if err != nil {
-			return err
+		if rel == "." {
+			return nil
 		}
-		target := filepath.Join(dst, rel)
-		if d.IsDir() {
-			if err := os.MkdirAll(target, 0o700); err != nil {
+		switch {
+		case d.Type()&fs.ModeSymlink != 0, !d.IsDir() && !d.Type().IsRegular():
+			skipped++
+			return nil
+		case d.IsDir():
+			// A link where the directory should be would send every file
+			// below it elsewhere; it goes first.
+			if info, err := dstRoot.Lstat(rel); err == nil && !info.IsDir() {
+				if err := dstRoot.Remove(rel); err != nil {
+					return err
+				}
+			}
+			if err := dstRoot.Mkdir(rel, 0o700); err != nil && !errors.Is(err, fs.ErrExist) {
 				return err
 			}
-			return o.give(target)
+			return o.give(filepath.Join(dst, rel))
 		}
-		if err := os.MkdirAll(filepath.Dir(target), 0o700); err != nil {
+		if info, err := dstRoot.Lstat(rel); err == nil && !info.Mode().IsRegular() {
+			if err := dstRoot.Remove(rel); err != nil {
+				return err
+			}
+		}
+		in, err := srcRoot.Open(rel)
+		if err != nil {
 			return err
 		}
-		if err := copyFile(path, target, 0o600); err != nil {
+		defer func() { _ = in.Close() }()
+		out, err := dstRoot.OpenFile(rel, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600)
+		if err != nil {
 			return err
 		}
-		return o.give(target)
+		if _, err := io.Copy(out, in); err != nil { // #nosec G110 -- our own snapshot, not attacker input
+			_ = out.Close()
+			return err
+		}
+		if err := out.Close(); err != nil {
+			return err
+		}
+		return o.give(filepath.Join(dst, rel))
 	})
+	return skipped, err
 }
 
 // writeTarGz writes the archive beside outPath and renames it into place

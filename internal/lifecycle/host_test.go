@@ -242,6 +242,14 @@ func TestInstallUpdate(t *testing.T) {
 	if code, out := e.do("POST", "/api/v1/admin/system/update/install", map[string]any{"version": "9.9.9", "confirm": "other"}); code != 400 || out["code"] != "confirm_mismatch" {
 		t.Fatalf("wrong hostname: %d %v", code, out)
 	}
+	// The installer script takes releases only; a prerelease is refused here,
+	// before any session is drained for nothing (S3-8).
+	if code, out := e.do("POST", "/api/v1/admin/system/update/install", map[string]any{"version": "9.9.9-rc.1", "confirm": "gw-test"}); code != 400 || out["code"] != "prerelease_refused" {
+		t.Fatalf("prerelease: %d %v", code, out)
+	}
+	if e.ctrl.Draining() {
+		t.Fatal("a refused prerelease started a drain")
+	}
 	code, out := e.do("POST", "/api/v1/admin/system/update/install", map[string]any{"version": "v9.9.9", "confirm": "gw-test", "wait_minutes": 0})
 	if code != 202 || out["draining"] != true {
 		t.Fatalf("install: %d %v", code, out)

@@ -29,13 +29,21 @@ code as root. The updater must verify on its own.
 ships, never a privilege the gateway holds.**
 
 - **Restart gateway** stays what it is: drain live sessions, exit, systemd starts the
-  process again (`POST /admin/system/restart`). It moves into the gear menu.
+  process again (`POST /admin/system/restart`). It moves into the gear menu. Ending the
+  sessions is not the end of their bridges: a recording still uploads, the session row
+  closes, a database session's containers go. The drain waits for the bridges to leave the
+  registry, up to a grace of 30 seconds, and logs by id whatever is still finishing when it
+  exits regardless; a recording's upload to S3 is itself bounded at ten minutes so a bucket
+  that stopped answering cannot hold a bridge for ever.
 - **Reboot host** and **Stop host** ask `org.freedesktop.login1` over D-Bus for `Reboot`
   and `PowerOff`. A polkit rule installed by the deb allows exactly those two actions for
   the `zanskar` user. Both drain first. Stop carries a warning the dialog states plainly:
   nothing in the portal can start a stopped machine; recovery needs the host or the cloud
   console.
-- **Update** writes the requested version to `/var/lib/zanskar/update-request` and asks
+- **Update** takes a release version only. A prerelease (`1.6.0-rc.1`) is refused with
+  `prerelease_refused` before any session is drained: the installer script accepts digits and
+  dots alone, so it would refuse the request after the drain, and the drain would be wasted.
+  Prereleases are installed by hand. The action writes the requested version to `/var/lib/zanskar/update-request` and asks
   `org.freedesktop.systemd1` to start `zanskar-update.service`, a root-owned oneshot unit
   the deb ships; the polkit rule allows the `zanskar` user to start that one unit and no
   other. The unit's script validates the version string (`v<major>.<minor>.<patch>`,

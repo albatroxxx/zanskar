@@ -23,6 +23,7 @@ import (
 	"path"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
@@ -219,14 +220,21 @@ func (w *s3Spool) Close() error {
 		in.ServerSideEncryption = s3types.ServerSideEncryptionAes256
 	}
 	// The spool is uploaded after the session ended, so its lifetime is not
-	// tied to the request context.
-	_, putErr := w.storage.client.PutObject(context.Background(), in)
+	// tied to the request context; it is bounded all the same, so a bucket
+	// that stopped answering does not hold the bridge, and with it a drain,
+	// for ever.
+	ctx, cancel := context.WithTimeout(context.Background(), uploadTimeout)
+	defer cancel()
+	_, putErr := w.storage.client.PutObject(ctx, in)
 	closeErr := w.f.Close()
 	if putErr != nil {
 		return fmt.Errorf("recording: upload %s: %w", w.key, putErr)
 	}
 	return closeErr
 }
+
+// uploadTimeout bounds one recording's upload at the end of its session.
+const uploadTimeout = 10 * time.Minute
 
 func contentTypeFor(name string) string {
 	switch strings.ToLower(filepath.Ext(name)) {

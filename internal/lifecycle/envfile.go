@@ -8,6 +8,8 @@ package lifecycle
 
 import (
 	"bufio"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"io/fs"
 	"os"
@@ -15,6 +17,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/albatroxxx/zanskar/internal/config"
 )
 
 // Prefix selects the variables the gateway reads.
@@ -30,7 +34,22 @@ func SnapshotEnv() map[string]string {
 			out[k] = v
 		}
 	}
+	hashSecrets(out)
 	return out
+}
+
+// hashSecrets replaces the value of each secret variable in m with a digest
+// of it. The snapshot lives for the process and is only ever compared for
+// equality, so the digest serves; the secret itself, which DropSecretEnv
+// takes out of the environment, is not kept in a second copy (S3-6). The
+// file side of the comparison gets the same treatment.
+func hashSecrets(m map[string]string) {
+	for _, k := range config.SecretEnv {
+		if v, ok := m[k]; ok {
+			sum := sha256.Sum256([]byte(v))
+			m[k] = "sha256:" + hex.EncodeToString(sum[:])
+		}
+	}
 }
 
 // ParseEnvFile reads a file in the syntax systemd's EnvironmentFile= accepts:
@@ -106,7 +125,9 @@ func (r Report) RestartRequired() bool { return r.State == FileChanged }
 
 // Drift compares the environment file with the process's start-up snapshot.
 type Drift struct {
-	Path    string
+	Path string
+	// Started is the environment as SnapshotEnv returned it at start-up:
+	// secret variables hold a digest, never the value.
 	Started map[string]string
 
 	mu      sync.Mutex
@@ -148,6 +169,7 @@ func (d *Drift) Check() Report {
 		d.cached = Report{}
 		return Report{Path: d.Path, State: state, Error: err.Error(), ModTime: &mod, CheckedAt: now}
 	}
+	hashSecrets(file)
 	changed := Diff(d.Started, file)
 	r := Report{Path: d.Path, State: FileUnchanged, Changed: changed, ModTime: &mod, CheckedAt: now}
 	if len(changed) > 0 {

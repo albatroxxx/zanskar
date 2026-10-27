@@ -274,6 +274,41 @@ func runKeyRotateMaster(args []string) error {
 	}
 	defer crypto.Zero(newAnchorKey)
 
+	// A generated key exists nowhere but in this process until the file is
+	// written after the rewrap. A crash in between would leave the database
+	// under a key nobody holds, so the key is put beside the file first
+	// (0600, removed once the file carries it) or, with no file to update,
+	// shown before anything changes (S3-5).
+	stage := ""
+	if *generate {
+		switch {
+		case *keyFile != "":
+			stage = *keyFile + ".next"
+		case *envFile != "":
+			stage = *envFile + ".next"
+		}
+		if stage != "" {
+			if err := os.WriteFile(stage, []byte(newB64+"\n"), 0o600); err != nil {
+				return fmt.Errorf("cannot stage the new key beside the file: %w (nothing was changed)", err)
+			}
+			fmt.Printf("the new key is staged in %s until %s carries it.\n", stage, strings.TrimSuffix(stage, ".next"))
+		} else {
+			fmt.Fprintln(os.Stderr, "The new master key, before anything changes; keep it until the rotation reports success:")
+			fmt.Fprintln(os.Stderr, newB64)
+		}
+	}
+	// The stage file goes only once the file the service reads carries the
+	// key; on a failure after the rewrap it stays, and is the key's one copy.
+	staged := func() {
+		if stage != "" {
+			fmt.Fprintf(os.Stderr, "The new key remains in %s.\n", stage)
+		}
+	}
+	unstage := func() {
+		if stage != "" {
+			_ = os.Remove(stage)
+		}
+	}
 	n, err := ring.Rewrap(ctx, newKEK)
 	if err != nil {
 		return fmt.Errorf("%w (nothing was changed)", err)
@@ -299,19 +334,23 @@ func runKeyRotateMaster(args []string) error {
 	switch {
 	case *keyFile != "":
 		if err := replaceKeyFile(*keyFile, newB64); err != nil {
-			fmt.Fprintln(os.Stderr, "The database is already under the new key, which is not stored anywhere yet. Put it")
+			fmt.Fprintln(os.Stderr, "The database is already under the new key, which the key file does not hold yet. Put it")
 			fmt.Fprintln(os.Stderr, "in the key file the service loads before restarting it:")
 			fmt.Fprintln(os.Stderr, newB64)
+			staged()
 			return fmt.Errorf("updating %s: %w", *keyFile, err)
 		}
+		unstage()
 		fmt.Printf("updated the master key in %s.\n", *keyFile)
 	case *envFile != "":
 		if err := replaceEnvMasterKey(*envFile, newB64); err != nil {
-			fmt.Fprintln(os.Stderr, "The database is already under the new key, which is not stored anywhere yet. Set")
+			fmt.Fprintln(os.Stderr, "The database is already under the new key, which the env file does not hold yet. Set")
 			fmt.Fprintln(os.Stderr, "ZANSKAR_MASTER_KEY to it in the environment the service loads before restarting:")
 			fmt.Fprintln(os.Stderr, newB64)
+			staged()
 			return fmt.Errorf("updating %s: %w", *envFile, err)
 		}
+		unstage()
 		fmt.Printf("updated ZANSKAR_MASTER_KEY in %s.\n", *envFile)
 	case *generate:
 		fmt.Println("new master key (put it in the service's environment now; it is not stored anywhere else):")
@@ -383,8 +422,17 @@ func replaceEnvMasterKey(path, newB64 string) error {
 	s := bufio.NewScanner(f)
 	for s.Scan() {
 		line := s.Text()
-		if strings.HasPrefix(strings.TrimSpace(line), "ZANSKAR_MASTER_KEY=") {
+		// The line as the service reads it: an "export " prefix and quotes
+		// are tolerated there, so they are recognised here and the prefix
+		// is kept (review finding SEC-4).
+		t := strings.TrimSpace(line)
+		exported := strings.HasPrefix(t, "export ")
+		t = strings.TrimSpace(strings.TrimPrefix(t, "export "))
+		if strings.HasPrefix(t, "ZANSKAR_MASTER_KEY=") {
 			line = "ZANSKAR_MASTER_KEY=" + newB64
+			if exported {
+				line = "export " + line
+			}
 			replaced = true
 		}
 		out = append(out, line)

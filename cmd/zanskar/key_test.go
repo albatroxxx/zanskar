@@ -63,6 +63,24 @@ func TestReplaceEnvMasterKey(t *testing.T) {
 	if err := replaceEnvMasterKey(other, newB64); err == nil {
 		t.Fatal("a file without the key line must be refused")
 	}
+
+	// A line the service reads through an export prefix or quotes is the
+	// key line too; the prefix is kept, and the new key is what both the
+	// service's parser and init then see (review finding SEC-4).
+	exported := filepath.Join(dir, "exported")
+	if err := os.WriteFile(exported, []byte("export ZANSKAR_LISTEN_ADDR=x\nexport ZANSKAR_MASTER_KEY=\""+oldB64+"\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := replaceEnvMasterKey(exported, newB64); err != nil {
+		t.Fatalf("exported key line: %v", err)
+	}
+	got, _ = os.ReadFile(exported) // #nosec G304 -- test temp file
+	if string(got) != "export ZANSKAR_LISTEN_ADDR=x\nexport ZANSKAR_MASTER_KEY="+newB64+"\n" {
+		t.Fatalf("exported env after replace:\n%s", got)
+	}
+	if masterKeyFrom(exported) != newB64 {
+		t.Fatal("init's reader must see the new exported key")
+	}
 }
 
 // TestRotateMasterKeyFile: with the key in ZANSKAR_MASTER_KEY_FILE, rotation

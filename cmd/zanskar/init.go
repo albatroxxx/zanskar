@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/albatroxxx/zanskar/internal/config"
+	"github.com/albatroxxx/zanskar/internal/lifecycle"
 	"github.com/albatroxxx/zanskar/internal/tlscert"
 )
 
@@ -62,6 +63,9 @@ func runInit(args []string) error {
 		// An install converted to a key file (ADR 0025) names the file
 		// instead; it is kept as it is, and no key is minted beside it.
 		existingKeyFile = envValueFrom(*out, "ZANSKAR_MASTER_KEY_FILE")
+		if existingKey == "" && existingKeyFile == "" && keyLineUnreadable(*out) {
+			return fmt.Errorf("%s holds a ZANSKAR_MASTER_KEY line this command cannot read, so it will not replace it with a new key; write the line as ZANSKAR_MASTER_KEY=<base64> (an \"export \" prefix and quotes are fine) and run init again", *out)
+		}
 		if existingKey != "" && existingKeyFile != "" {
 			return fmt.Errorf("%s sets both ZANSKAR_MASTER_KEY and ZANSKAR_MASTER_KEY_FILE, which serve refuses; remove the one the service does not use, then run init again", *out)
 		}
@@ -435,21 +439,40 @@ func masterKeyFrom(path string) string {
 }
 
 // envValueFrom returns the value of name in an env file, or "" when the file
-// cannot be read or has no such line.
+// cannot be read or has no such line. It reads the file the way the service
+// does (lifecycle.ParseEnvFile: a leading "export ", quotes, continued
+// lines), so a key the service starts with is a key init preserves (review
+// finding SEC-4).
 func envValueFrom(path, name string) string {
-	f, err := os.Open(path) // #nosec G304 -- path is the operator-specified env file being (re)written; reading it back preserves the master key
+	vals, err := lifecycle.ParseEnvFile(path)
 	if err != nil {
 		return ""
 	}
-	defer func() { _ = f.Close() }()
-	s := bufio.NewScanner(f)
-	for s.Scan() {
-		line := strings.TrimSpace(s.Text())
-		if v, ok := strings.CutPrefix(line, name+"="); ok {
-			return strings.TrimSpace(v)
+	return strings.TrimSpace(vals[name])
+}
+
+// keyLineUnreadable reports whether the file has a ZANSKAR_MASTER_KEY line
+// (not a comment, not the _FILE variant) that the parser yielded no value
+// for. A line init cannot read is a line it must not replace with a fresh
+// key: the running service may well be reading it.
+func keyLineUnreadable(path string) bool {
+	if masterKeyFrom(path) != "" {
+		return false
+	}
+	b, err := os.ReadFile(path) // #nosec G304 -- the operator-specified env file being (re)written
+	if err != nil {
+		return false
+	}
+	for _, line := range strings.Split(string(b), "\n") {
+		t := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(line), "export "))
+		if strings.HasPrefix(t, "#") || strings.HasPrefix(t, ";") {
+			continue
+		}
+		if strings.Contains(t, "ZANSKAR_MASTER_KEY") && !strings.Contains(t, "ZANSKAR_MASTER_KEY_FILE") {
+			return true
 		}
 	}
-	return ""
+	return false
 }
 
 // writeFileAtomic writes via a temp file in the same directory then renames, so
