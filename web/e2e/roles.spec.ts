@@ -18,7 +18,9 @@ test.describe('A plain user', () => {
   test('is kept out of the console, and the API refuses the console reads behind it', async ({ page }) => {
     for (const path of ['/admin', '/admin/credentials', '/admin/policies', '/admin/events', '/audit']) {
       await page.goto(path)
-      await expect(page, `${path} must not open for a user`).not.toHaveURL(new RegExp(`${path.replace(/\//g, '\\/')}$`))
+      // The console sends the user away; waiting for the path to change is
+      // the assertion (a timeout here fails the test and names the path).
+      await page.waitForURL((url) => url.pathname !== path, { timeout: 10_000 })
       await expect(page.locator('body')).not.toContainText(/Add credential|Add policy|Audit events/)
     }
     const codes = await page.evaluate(async () => {
