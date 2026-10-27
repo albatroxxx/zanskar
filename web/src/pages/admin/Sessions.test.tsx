@@ -15,8 +15,8 @@ const live: Session = {
   client_ip: '127.0.0.1', started_at: '2026-10-06T10:00:00Z', recording_id: 'r1',
 }
 
-function at(path: string) {
-  vi.spyOn(api, 'get').mockResolvedValue({ items: [live] } as never)
+function at(path: string, items: Session[] = [live]) {
+  vi.spyOn(api, 'get').mockResolvedValue({ items } as never)
   render(
     <MemoryRouter initialEntries={[path]}>
       <Sessions />
@@ -39,5 +39,13 @@ describe('Sessions', () => {
     expect((await screen.findByRole('link', { name: 'Watch' })).getAttribute('href')).toMatch(/^\/audit\/shadow\/s1/)
     expect(screen.queryByRole('button', { name: 'Terminate' })).toBeNull()
     expect(screen.getByRole('link', { name: 'play' }).getAttribute('href')).toBe('/audit/recordings/r1')
+  })
+
+  // An application session (ADR 0034) is a browser streamed through guacd,
+  // a desktop to the watcher; it is no longer the one kind without Watch.
+  it('offers Watch on an application session, as a desktop', async () => {
+    at('/admin/sessions', [{ ...live, id: 's2', target_name: 'wiki', protocol: 'http' }])
+    const watch = await screen.findByRole('link', { name: 'Watch' })
+    expect(watch.getAttribute('href')).toBe('/audit/shadow/s2?protocol=http&target=wiki')
   })
 })

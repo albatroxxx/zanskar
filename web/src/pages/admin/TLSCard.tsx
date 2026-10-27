@@ -12,8 +12,6 @@ function sourceBadge(c: TLSCertInfo) {
       return <Badge tone="accent">Uploaded</Badge>
     case 'file':
       return <Badge>From ZANSKAR_TLS_CERT</Badge>
-    case 'apps':
-      return <Badge tone="accent">Applications</Badge>
     default:
       return <Badge tone="warn">Self-signed</Badge>
   }
@@ -75,11 +73,9 @@ export function TLSCard() {
   const [ok, setOk] = useState('')
   const [certPEM, setCertPEM] = useState('')
   const [keyPEM, setKeyPEM] = useState('')
-  const [appsCert, setAppsCert] = useState('')
-  const [appsKey, setAppsKey] = useState('')
   const [hosts, setHosts] = useState('')
   const [busy, setBusy] = useState(false)
-  const [confirm, setConfirm] = useState<'reset' | 'regenerate' | 'resetApps' | null>(null)
+  const [confirm, setConfirm] = useState<'reset' | 'regenerate' | null>(null)
   // Taken when the status loads rather than during render, so a render is pure.
   const [now, setNow] = useState(0)
 
@@ -118,17 +114,6 @@ export function TLSCard() {
       'Certificate uploaded and serving.',
     ).catch(() => {})
 
-  const uploadApps = () =>
-    run(
-      () =>
-        api.put<TLSStatus>('/admin/tls/apps', { cert_pem: appsCert, key_pem: appsKey }).then((s) => {
-          setAppsCert('')
-          setAppsKey('')
-          return s
-        }),
-      'Applications certificate uploaded and serving.',
-    ).catch(() => {})
-
   if (!status) return null
   const a = status.active
   const fallback = status.file_hint ? 'the certificate from the environment file' : 'its self-signed certificate'
@@ -165,31 +150,6 @@ export function TLSCard() {
             <button className="btn" disabled={busy} onClick={() => setConfirm('regenerate')}>Regenerate self-signed…</button>
           </div>
 
-          <h3 style={{ marginTop: 24 }}>Applications</h3>
-          {status.apps_domain ? (
-            <p className="muted">
-              Serves every application host under <span className="mono">*.{status.apps_domain}</span>.{' '}
-              {status.apps_ready ? 'Applications can be enrolled.' : status.apps_problem}
-            </p>
-          ) : (
-            <p className="muted">Set the apps domain under Applications above first. The certificate uploaded here must name *.&lt;that domain&gt;; a self-signed one is not made for it.</p>
-          )}
-          {status.apps && <CertFacts c={status.apps} now={now} />}
-          <PEMFields id="tls-apps" cert={appsCert} privateKey={appsKey} onCert={setAppsCert} onKey={setAppsKey} />
-          <div className="actions">
-            <button className="btn primary" disabled={busy || !appsCert.trim() || !appsKey.trim()} onClick={() => void uploadApps()}>Upload for applications</button>
-            {status.apps && <button className="btn" disabled={busy} onClick={() => setConfirm('resetApps')}>Remove applications certificate</button>}
-          </div>
-          {confirm === 'resetApps' && (
-            <Confirm
-              title="Remove the applications certificate?"
-              body="Application hosts get the console's certificate, which browsers refuse for them, and no application can be enrolled until another is uploaded. Open sessions keep running."
-              confirmLabel="Remove"
-              danger
-              onClose={() => setConfirm(null)}
-              onConfirm={() => run(() => api.del<TLSStatus>('/admin/tls/apps'), 'Applications certificate removed.')}
-            />
-          )}
           {confirm === 'reset' && (
             <Confirm
               title="Remove the uploaded certificate?"

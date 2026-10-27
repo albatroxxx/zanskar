@@ -13,9 +13,9 @@ afterEach(() => {
 const notReady: AppsReadiness = {
   ready: false,
   checks: [
-    { key: 'domain', title: 'Apps domain', ok: false, detail: 'set the apps domain in Settings' },
-    { key: 'public_url', title: 'Public address', ok: true, detail: 'the console is reached at https://gw.example.com' },
-    { key: 'certificate', title: 'Certificate for the apps domain', ok: false, detail: 'waits for the apps domain' },
+    { key: 'guacd', title: 'guacd', ok: false, detail: 'set the guacd address' },
+    { key: 'runtime', title: 'Container runtime', ok: false, detail: 'the service cannot reach Docker or Podman; add the service user to the docker group' },
+    { key: 'image', title: 'Browser image', ok: true, detail: 'ghcr.io/albatroxxx/zanskar-browser:1.7.0' },
   ],
 }
 
@@ -34,24 +34,36 @@ function mount(r: AppsReadiness | null) {
   )
 }
 
-// An operator who meets "set the apps domain first" one refusal at a time
-// (2026-10-27) now sees the three prerequisites with their state before
-// trying, each pointing at where it is set.
+// An operator who met a prerequisite one refusal at a time (2026-10-27) sees
+// the three the isolated browser needs (ADR 0034) with their state before
+// trying: the settings link to where they are set, the runtime says what to
+// do on the host.
 describe('Applications, before the first one', () => {
   it('lists what is done and what is left, with a link to each setting', async () => {
     mount(notReady)
     expect(await screen.findByRole('heading', { name: 'Before the first application' })).toBeDefined()
     const items = screen.getAllByRole('listitem')
     expect(items.map((li) => li.textContent)).toEqual([
-      expect.stringContaining('Apps domain'),
-      expect.stringContaining('Public address'),
-      expect.stringContaining('Certificate for the apps domain'),
+      expect.stringContaining('guacd'),
+      expect.stringContaining('Container runtime'),
+      expect.stringContaining('Browser image'),
     ])
-    expect(items[0].textContent).toContain('set the apps domain in Settings')
-    expect(screen.getByRole('link', { name: 'Settings' }).getAttribute('href')).toBe('/admin/settings#settings-applications')
-    expect(screen.getByRole('link', { name: 'Settings, TLS certificate' }).getAttribute('href')).toBe('/admin/settings#settings-tls-certificate')
+    expect(items[0].textContent).toContain('set the guacd address')
+    expect(items[1].textContent).toContain('add the service user to the docker group')
+    expect(screen.getByRole('link', { name: 'Settings, Desktops' }).getAttribute('href')).toBe('/admin/settings#settings-desktops')
+    // The runtime is fixed on the host, not in a setting: no link.
+    expect(screen.getAllByRole('link')).toHaveLength(1)
     expect(screen.getAllByLabelText('to do')).toHaveLength(2)
     expect(screen.getAllByLabelText('done')).toHaveLength(1)
+  })
+
+  it('links the browser image to the Applications settings', async () => {
+    mount({ ready: false, checks: notReady.checks.map((c) => ({ ...c, ok: c.key !== 'image', detail: c.key === 'image' ? 'set the browser image' : c.detail })) })
+    await screen.findByRole('heading', { name: 'Before the first application' })
+    expect(screen.getByRole('link', { name: 'Settings, Applications' }).getAttribute('href')).toBe('/admin/settings#settings-applications')
+    expect(screen.getAllByRole('link')).toHaveLength(1)
+    // Nothing on the page asks for a domain, an address or a certificate any more.
+    expect(screen.queryByText(/domain|certificate/i)).toBeNull()
   })
 
   it('shows nothing of it once the gateway is ready', async () => {

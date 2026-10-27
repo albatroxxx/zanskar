@@ -1,8 +1,8 @@
 import { cleanup, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { MemoryRouter } from 'react-router-dom'
+import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { api } from '../../api/client'
+import { ApiError, api } from '../../api/client'
 import type { ReachableTarget } from '../../api/types'
 import { Targets } from './Targets'
 
@@ -47,29 +47,50 @@ describe('Targets, an approval-gated autoscaling group', () => {
   })
 })
 
-// An application (ADR 0033) opens in its own tab at its own address; one
-// that needs approval offers Request, and the request names it under http.
+// An application (ADR 0034) opens like a desktop: Open asks /connect for a
+// ticket under http and the page is the Desktop one; one that needs
+// approval offers Request, and the request names it under http.
 describe('Targets, applications', () => {
   const wiki: ReachableTarget = {
     kind: 'application', id: 'a1', name: 'Wiki', os_family: 'other', tags: { team: 'docs' },
     capabilities: [], allowed_protocols: ['http'], requires_approval: [], host_key_ready: true,
-    label: 'wiki', url: 'https://wiki.apps.example.com/',
   }
 
-  it('lists the application under its own tab with an Open link to its address', async () => {
+  it('lists the application under its own tab and opens it through /connect as a desktop', async () => {
     vi.spyOn(api, 'get').mockImplementation(async (p: string) => ({ items: p === '/me/targets' ? [wiki] : [] }) as never)
+    const post = vi.spyOn(api, 'post').mockResolvedValue({ ticket: 'tk1', expires_at: '2026-10-27T10:01:00Z', ws_path: '/ws/desktop' } as never)
+    render(
+      <MemoryRouter>
+        <Routes>
+          <Route path="/" element={<Targets />} />
+          <Route path="/desktop" element={<p>desktop page</p>} />
+          <Route path="/terminal" element={<p>terminal page</p>} />
+        </Routes>
+      </MemoryRouter>,
+    )
+    // With no hosts, the first tab that has something in it is chosen.
+    expect(await screen.findByRole('tab', { name: 'Applications (1)', selected: true })).toBeDefined()
+    expect(screen.queryByRole('link', { name: 'Open' })).toBeNull()
+    // No address column: where the browser goes is the gateway's business.
+    expect(screen.getAllByRole('columnheader').map((th) => th.textContent)).toEqual(['Name', 'Tags', 'Open'])
+
+    await userEvent.setup().click(screen.getByRole('button', { name: 'Open' }))
+
+    expect(post).toHaveBeenCalledWith('/connect', { target_id: 'a1', protocol: 'http' })
+    expect(await screen.findByText('desktop page')).toBeDefined()
+  })
+
+  it('shows the refusal when the gateway cannot run the browser', async () => {
+    vi.spyOn(api, 'get').mockImplementation(async (p: string) => ({ items: p === '/me/targets' ? [wiki] : [] }) as never)
+    vi.spyOn(api, 'post').mockRejectedValue(new ApiError(501, { code: 'protocol_unavailable', message: 'applications need guacd and a container runtime', request_id: 'r1' }, '501'))
     render(
       <MemoryRouter>
         <Targets />
       </MemoryRouter>,
     )
-    // With no hosts, the first tab that has something in it is chosen.
-    expect(await screen.findByRole('tab', { name: 'Applications (1)', selected: true })).toBeDefined()
-    const open = screen.getByRole('link', { name: 'Open' })
-    expect(open.getAttribute('href')).toBe('https://wiki.apps.example.com/')
-    expect(open.getAttribute('target')).toBe('_blank')
-    expect(open.getAttribute('rel')).toContain('noopener')
-    expect(screen.getByText('wiki.apps.example.com')).toBeDefined()
+    await userEvent.setup().click(await screen.findByRole('button', { name: 'Open' }))
+    expect(await screen.findByText(/applications need guacd and a container runtime/)).toBeDefined()
+    expect(screen.getByRole('button', { name: 'Open' }).hasAttribute('disabled')).toBe(false)
   })
 
   it('offers Request when the policy requires approval', async () => {
@@ -86,7 +107,7 @@ describe('Targets, applications', () => {
     await user.type(screen.getByLabelText('Reason'), 'edit the runbook')
     await user.click(screen.getByRole('button', { name: 'Request access' }))
     expect(post).toHaveBeenCalledWith('/me/access-requests', { target_id: 'a1', protocol: 'http', reason: 'edit the runbook', minutes: 60 })
-    expect(screen.queryByRole('link', { name: 'Open' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Open' })).toBeNull()
   })
 })
 

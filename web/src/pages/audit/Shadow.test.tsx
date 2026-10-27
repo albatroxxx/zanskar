@@ -5,7 +5,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { Shadow } from './Shadow'
 
 interface FakeTerm { options: Record<string, unknown>; written: Uint8Array[]; disposed: boolean }
-const g = vi.hoisted(() => ({ terms: [] as FakeTerm[], sockets: [] as FakeSocket[] }))
+const g = vi.hoisted(() => ({ terms: [] as FakeTerm[], sockets: [] as FakeSocket[], tunnels: [] as string[], clients: [] as FakeClient[] }))
+interface FakeClient { connected: boolean; disconnected: boolean; onstatechange: ((s: number) => void) | null }
 interface FakeSocket { url: string; closed: { code?: number; reason?: string } | null; onmessage: ((ev: { data: unknown }) => void) | null; onclose: (() => void) | null; onerror: (() => void) | null }
 
 vi.mock('@xterm/xterm', () => ({
@@ -21,6 +22,25 @@ vi.mock('@xterm/xterm', () => ({
   },
 }))
 vi.mock('@xterm/addon-fit', () => ({ FitAddon: class { fit() {} } }))
+// The desktop branch joins the guacd connection read-only; the fake records
+// the tunnel's address and whether the client connected and let go.
+vi.mock('guacamole-common-js', () => {
+  class WebSocketTunnel {
+    onerror: (() => void) | null = null
+    constructor(url: string) { g.tunnels.push(url) }
+  }
+  class Client {
+    connected = false
+    disconnected = false
+    onerror: (() => void) | null = null
+    onstatechange: ((s: number) => void) | null = null
+    constructor() { g.clients.push(this) }
+    getDisplay() { return { getElement: () => document.createElement('div') } }
+    connect() { this.connected = true }
+    disconnect() { this.disconnected = true }
+  }
+  return { default: { WebSocketTunnel, Client } }
+})
 vi.mock('@xterm/xterm/css/xterm.css', () => ({}))
 
 class WS implements FakeSocket {
@@ -37,6 +57,8 @@ class WS implements FakeSocket {
 beforeEach(() => {
   g.terms.length = 0
   g.sockets.length = 0
+  g.tunnels.length = 0
+  g.clients.length = 0
   vi.stubGlobal('WebSocket', WS)
 })
 afterEach(() => {
@@ -90,5 +112,23 @@ describe('Shadow', () => {
     expect(g.sockets[0].closed).toEqual({ code: 1000, reason: 'watcher_left' })
     expect(await screen.findByText('sessions list')).toBeDefined()
     expect(g.terms[0].disposed).toBe(true)
+  })
+
+  // An application session (ADR 0034) is a browser streamed through guacd:
+  // the watcher joins it as a desktop, not as a terminal tap.
+  it('watches an application session as a desktop', async () => {
+    open('/audit/shadow/s3?protocol=http&target=wiki')
+    expect(await screen.findByText('Watching wiki')).toBeDefined()
+    expect(screen.getByText('HTTP · read-only')).toBeDefined()
+    await vi.waitFor(() => expect(g.clients).toHaveLength(1))
+    expect(g.terms).toHaveLength(0)
+    expect(g.sockets).toHaveLength(0)
+    expect(g.tunnels[0]).toMatch(/^ws:\/\/localhost:3000\/ws\/shadow\/s3\?width=\d+&height=\d+$/)
+    expect(g.clients[0].connected).toBe(true)
+    act(() => g.clients[0].onstatechange?.(3))
+    expect(screen.getByText(/watching /)).toBeDefined()
+    await userEvent.setup().click(screen.getByRole('button', { name: 'Stop watching' }))
+    expect(g.clients[0].disconnected).toBe(true)
+    expect(await screen.findByText('sessions list')).toBeDefined()
   })
 })

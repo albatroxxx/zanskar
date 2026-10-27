@@ -24,6 +24,20 @@ function page(items: Session[], next = '') {
   )
 }
 
+// A desktop recording is a pixel stream with no command lines, an
+// application's (ADR 0034) included: Review and Download, no Transcript.
+describe('Recordings of desktops', () => {
+  it('offers no transcript for an application session', async () => {
+    page([session(1, { recording_id: 'r1', protocol: 'http', target_name: 'wiki' }), session(2, { recording_id: 'r2', protocol: 'ssh' })])
+    await screen.findAllByRole('link', { name: 'Review' })
+    const rows = screen.getAllByRole('row').slice(1)
+    expect(rows[0].textContent).toContain('HTTP')
+    expect(rows[0].querySelector('a[href$="/transcript"]')).toBeNull()
+    expect(rows[0].querySelector('a[href$="/download"]')).not.toBeNull()
+    expect(rows[1].querySelector('a[href$="/transcript"]')).not.toBeNull()
+  })
+})
+
 // B24: the page reads the newest sessions a page at a time and filters them
 // in the browser, so with older sessions still unread it said "No recordings
 // yet." or "No recordings match." about sessions it had never looked at.

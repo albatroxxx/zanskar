@@ -114,8 +114,6 @@ group('sign-in, session and recording events read as what happened', () => {
     [{ action: 'session.shadow.start', object_name: 'bob → web-1 (SSH)' }, "started watching bob's SSH session on web-1"],
     [{ action: 'session.shadow.end', object_name: 'bob → web-1 (SSH)' }, "stopped watching bob's session on web-1"],
     [{ action: 'session.failover', object_name: 'bob → web-1 (SSH)' }, 'moved the SSH session on web-1 to another instance'],
-    [{ action: 'app.session.start', object_name: 'bob → wiki (HTTP)' }, 'opened the application wiki'],
-    [{ action: 'app.session.end', object_name: 'bob → wiki (HTTP)', details: { reason: 'signed_out' } }, 'left the application wiki (signed out)'],
     [{ action: 'recording.view', object_name: 'bob → web-1 (SSH)' }, 'played the recording of bob on web-1 (SSH)'],
     [{ action: 'audit.read' }, 'viewed the audit log'],
   ])('%j', (over, want) => {

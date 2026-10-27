@@ -19,7 +19,9 @@ export function Shadow() {
   const nav = useNavigate()
   const protocol = q.get('protocol') ?? 'ssh'
   const target = q.get('target') ?? id ?? ''
-  const isDesktop = protocol === 'rdp' || protocol === 'vnc'
+  // An application session (ADR 0034) is a browser streamed through guacd:
+  // a desktop to the watcher, like RDP and VNC.
+  const isDesktop = protocol === 'rdp' || protocol === 'vnc' || protocol === 'http'
   const host = useRef<HTMLDivElement>(null)
   const [elapsed, setElapsed] = useState(0)
   const [status, setStatus] = useState<'connecting' | 'live'>('connecting')

@@ -37,10 +37,10 @@ describe('TargetForm address', () => {
   })
 })
 
-// An application (ADR 0033) is its upstream and a label; it has no ports,
-// OS or recordings, and its CA bundle appears only for an https upstream.
+// An application (ADR 0034) is its upstream; it has no label, ports, OS or
+// recordings, and its CA bundle appears only for an https upstream.
 describe('TargetForm application', () => {
-  it('asks for the upstream and label, and sends them as an application', async () => {
+  it('asks for the upstream alone, and sends it as an application', async () => {
     const post = vi.spyOn(api, 'post').mockResolvedValue({ id: 'a1' } as never)
     const saved = vi.fn()
     render(<TargetForm onClose={() => {}} onSaved={saved} />)
@@ -53,10 +53,12 @@ describe('TargetForm application', () => {
     await user.type(screen.getByLabelText('Name'), 'Wiki')
     await user.type(screen.getByLabelText('Upstream'), 'https://wiki.internal:8443')
     expect(screen.getByLabelText(/CA bundle/)).toBeDefined()
-    await user.type(screen.getByLabelText('Label'), 'wiki')
+    expect(screen.queryByLabelText('Label')).toBeNull()
+    expect(screen.getByText(/isolated browser beside the gateway/)).toBeDefined()
     await user.click(screen.getByRole('button', { name: 'Create' }))
 
-    expect(post).toHaveBeenCalledWith('/targets', expect.objectContaining({ name: 'Wiki', address: '', os_family: 'other', engine: '', app_upstream: 'https://wiki.internal:8443', app_label: 'wiki', retention_days: null, ports: {} }))
+    expect(post).toHaveBeenCalledWith('/targets', expect.objectContaining({ name: 'Wiki', address: '', os_family: 'other', engine: '', app_upstream: 'https://wiki.internal:8443', retention_days: null, ports: {} }))
+    expect((post.mock.calls[0][1] as Record<string, unknown>)).not.toHaveProperty('app_label')
     expect(saved).toHaveBeenCalled()
   })
 })

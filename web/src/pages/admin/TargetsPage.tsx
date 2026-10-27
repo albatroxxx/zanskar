@@ -30,9 +30,9 @@ export function TargetsPage({ kind, title, lead, addLabel, empty, columns, cells
   const creds = useList<Credential>('/credentials')
   const [adding, setAdding] = useState(false)
   const [open, setOpen] = useState<Target | null>(null)
-  // Applications can be enrolled only once the gateway can serve them; the
-  // page shows the three prerequisites with their state, so an operator sees
-  // what is left instead of one refusal at a time.
+  // Applications open only once the gateway can run the browser beside it
+  // (ADR 0034); the page shows the three prerequisites with their state, so
+  // an operator sees what is left instead of one refusal at a time.
   const [readiness, setReadiness] = useState<AppsReadiness | null>(null)
   useEffect(() => {
     if (kind !== 'application') return
@@ -56,8 +56,8 @@ export function TargetsPage({ kind, title, lead, addLabel, empty, columns, cells
               <li key={c.key}>
                 <StateIcon state={c.ok ? 'ok' : 'warn'} label={c.ok ? 'done' : 'to do'} /> <strong>{c.title}</strong>
                 <span className="muted"> {c.detail}</span>
-                {!c.ok && c.key === 'domain' && <> <Link to="/admin/settings#settings-applications">Settings</Link></>}
-                {!c.ok && c.key === 'certificate' && <> <Link to="/admin/settings#settings-tls-certificate">Settings, TLS certificate</Link></>}
+                {!c.ok && c.key === 'guacd' && <> <Link to="/admin/settings#settings-desktops">Settings, Desktops</Link></>}
+                {!c.ok && c.key === 'image' && <> <Link to="/admin/settings#settings-applications">Settings, Applications</Link></>}
               </li>
             ))}
           </ul>

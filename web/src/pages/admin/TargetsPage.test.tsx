@@ -54,25 +54,26 @@ describe('TargetsPage', () => {
     expect(get).toHaveBeenCalledWith('/targets?limit=500&kind=host')
   })
 
-  // Applications (ADR 0033) are the third kind: the page lists their
-  // upstream, label and how the upstream is reached, and opens one without
-  // a host's probe or credential sections.
+  // Applications (ADR 0034) are the third kind: the page lists their
+  // upstream and how it is reached, and opens one without a host's probe
+  // or credential sections.
   it('lists applications in their own columns and opens one without host notions', async () => {
     const wiki: Target = {
       ...db, id: 'a1', name: 'Wiki', address: 'wiki.internal', engine: undefined, engine_version: undefined, database_name: undefined, tls_mode: undefined,
-      app_upstream: 'https://wiki.internal:8443', app_label: 'wiki', tls_ca: '', ports: {}, capabilities: [], credentials: {},
+      app_upstream: 'https://wiki.internal:8443', tls_ca: '', ports: {}, capabilities: [], credentials: {},
     }
     const get = serve([wiki])
     render(<Applications />)
 
     const row = (await screen.findByText('https://wiki.internal:8443')).closest('tr')!
     expect(get).toHaveBeenCalledWith('/targets?limit=500&kind=application')
-    expect(screen.getAllByRole('columnheader').map((th) => th.textContent)).toEqual(['Name', 'Label', 'Upstream', 'TLS', 'Tags', 'Actions'])
+    expect(screen.getAllByRole('columnheader').map((th) => th.textContent)).toEqual(['Name', 'Upstream', 'TLS', 'Tags', 'Actions'])
     expect(within(row).getByRole('button', { name: 'Upstream: TLS, verified against the system roots' })).toBeDefined()
 
     await userEvent.setup().click(within(row).getByRole('button', { name: 'Open' }))
     const drawer = screen.getByRole('dialog', { name: 'Wiki' })
-    expect(within(drawer).getByText('wiki')).toBeDefined()
+    expect(within(drawer).getByText('https://wiki.internal:8443')).toBeDefined()
+    expect(within(drawer).queryByText('Label')).toBeNull()
     expect(within(drawer).queryByRole('button', { name: 'Probe' })).toBeNull()
     expect(within(drawer).queryByText(/Credentials per protocol/)).toBeNull()
     expect(within(drawer).queryByText(/Host key/)).toBeNull()

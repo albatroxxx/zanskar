@@ -26,7 +26,6 @@ export function targetBody(t: Target, patch: Partial<Target> = {}) {
     tls_mode: u.tls_mode ?? '',
     tls_ca: u.tls_ca ?? '',
     app_upstream: u.app_upstream ?? '',
-    app_label: u.app_label ?? '',
     retention_days: u.retention_days ?? null,
     ports: u.ports,
     capabilities: u.capabilities,
@@ -50,7 +49,7 @@ const tlsModes = [
 const emptyForm = {
   name: '', address: '', os_family: 'linux' as OSFamily,
   engine: 'postgres', engine_version: '', database_name: '', tls_mode: 'verify-full', tls_ca: '',
-  app_upstream: '', app_label: '',
+  app_upstream: '',
   ssh: '', rdp: '', vnc: '', winrm: '', database: '', tags: '', notes: '', retention: '',
 }
 
@@ -58,8 +57,8 @@ const emptyForm = {
  * TargetForm creates or edits a target. The first choice is what kind of
  * thing it is: a host reached over SSH, RDP, VNC or WinRM, a database
  * reached through a client container and a credential-holding sidecar
- * (ADR 0017), or a web application served through the proxy at its own
- * address (ADR 0033). Each kind then shows only its own fields (manual QA
+ * (ADR 0017), or a web application opened in an isolated browser beside the
+ * gateway (ADR 0034). Each kind then shows only its own fields (manual QA
  * finding R33). Autoscaling groups have their own page.
  */
 export function TargetForm({ initial, kind, onClose, onSaved }: { initial?: Target; kind?: TargetKind; onClose: () => void; onSaved: (t: Target) => void }) {
@@ -76,7 +75,6 @@ export function TargetForm({ initial, kind, onClose, onSaved }: { initial?: Targ
           tls_mode: initial.tls_mode || 'verify-full',
           tls_ca: initial.tls_ca ?? '',
           app_upstream: initial.app_upstream ?? '',
-          app_label: initial.app_label ?? '',
           ssh: initial.ports.ssh ? String(initial.ports.ssh) : '',
           rdp: initial.ports.rdp ? String(initial.ports.rdp) : '',
           vnc: initial.ports.vnc ? String(initial.ports.vnc) : '',
@@ -142,7 +140,6 @@ export function TargetForm({ initial, kind, onClose, onSaved }: { initial?: Targ
         tls_mode: database ? f.tls_mode : '',
         tls_ca: database || secure ? f.tls_ca.trim() : '',
         app_upstream: application ? f.app_upstream.trim() : '',
-        app_label: application ? f.app_label.trim() : '',
         retention_days: application ? null : retention,
         ports,
         capabilities: initial?.capabilities ?? [],
@@ -164,7 +161,7 @@ export function TargetForm({ initial, kind, onClose, onSaved }: { initial?: Targ
       {!initial && !kind && (
         <>
           <Tabs label="Kind of target" value={k ?? ''} onChange={setK} tabs={[{ key: 'host', label: 'Host' }, { key: 'database', label: 'Database' }, { key: 'application', label: 'Application' }]} />
-          {!k && <p className="muted">A <strong>host</strong> is a machine reached over SSH, RDP, VNC or WinRM. A <strong>database</strong> is an endpoint such as RDS, reached through a client container that never sees the password. An <strong>application</strong> is a web app served at its own address under the apps domain. Autoscaling groups are added under <em>Autoscaling</em>.</p>}
+          {!k && <p className="muted">A <strong>host</strong> is a machine reached over SSH, RDP, VNC or WinRM. A <strong>database</strong> is an endpoint such as RDS, reached through a client container that never sees the password. An <strong>application</strong> is a web app opened in an isolated browser beside the gateway. Autoscaling groups are added under <em>Autoscaling</em>.</p>}
         </>
       )}
       {k && (
@@ -175,11 +172,8 @@ export function TargetForm({ initial, kind, onClose, onSaved }: { initial?: Targ
             </Field>
             {k === 'application' ? (
               <>
-                <Field label="Upstream" hint="The origin the gateway forwards to, with its scheme and port, reachable from the gateway; nothing else is proxied">
+                <Field label="Upstream" hint="The origin the isolated browser beside the gateway can reach, with its scheme and port; nothing else is reachable from it">
                   <input id="t-upstream" value={f.app_upstream} onChange={set('app_upstream')} required placeholder="https://wiki.internal:8443" />
-                </Field>
-                <Field label="Label" hint="The subdomain it is served at, under the apps domain; blank derives from the name">
-                  <input id="t-label" value={f.app_label} onChange={set('app_label')} placeholder="wiki" />
                 </Field>
               </>
             ) : k === 'host' ? (

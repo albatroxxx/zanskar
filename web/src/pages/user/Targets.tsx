@@ -227,7 +227,6 @@ export function Targets() {
               <thead>
                 <tr>
                   <th>Name</th>
-                  <th>Address</th>
                   <th>Tags</th>
                   <th>Open</th>
                 </tr>
@@ -236,16 +235,15 @@ export function Targets() {
                 {applications.map((t) => (
                   <tr key={t.id}>
                     <td><strong>{t.name}</strong></td>
-                    <td className="mono">{t.url?.replace(/^https?:\/\//, '').replace(/\/$/, '')}</td>
                     <td><Tags tags={t.tags} /></td>
                     <td>
                       {gated(t, 'http') ? (
                         <button className="btn sm" onClick={() => setReqModal({ target: t, protocol: 'http' })} title="request access to this application">Request</button>
                       ) : (
-                        // The application opens in its own tab, at its own
-                        // address; the browser is sent back here to sign in
-                        // when it has no session there yet.
-                        <a className="btn sm proto-app" href={t.url} target="_blank" rel="noopener noreferrer" title="open in a new tab">Open</a>
+                        // The application opens in an isolated browser beside
+                        // the gateway, streamed like a desktop (ADR 0034): the
+                        // ticket comes from /connect and the page is Desktop.
+                        <button className="btn sm proto-app" disabled={busy === t.id + 'http'} onClick={() => void connect(t, { target_id: t.id, protocol: 'http' })} title="open in an isolated browser">Open</button>
                       )}
                     </td>
                   </tr>
