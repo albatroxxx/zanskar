@@ -246,6 +246,16 @@ func serve(ctx context.Context) error {
 	runtime.Subscribe(settings.KeyLogLevel, applyLevel)
 	requireMFA := func() bool { return runtime.Bool(settings.KeyRequireMFA) }
 	guacdAddr := func() string { return runtime.String(settings.KeyGuacdAddr) }
+	// What the console may point a vaulted credential at (threat model risk
+	// 7): guacd only on this gateway's own network, the relay image only by
+	// digest. The environment file, root's to edit, is not bounded here; the
+	// dials themselves refuse an address outside that network either way.
+	runtime.Check(settings.KeyGuacdAddr, func(v string) error {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		return target.CheckInternal(ctx, nil, v)
+	})
+	runtime.Check(settings.KeyDBProxyImage, settings.RequireDigest)
 	// The apps domain (ADR 0033) must not hold the console's own host, or
 	// the console's requests would be dispatched to the proxy. Checked when
 	// the console sets it, and once here for a value already stored or in

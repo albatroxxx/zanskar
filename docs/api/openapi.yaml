@@ -3390,6 +3390,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
+        "403":
+          description: The setting decides where a vaulted credential is sent (`desktop.guacd_addr`, `database.proxy_image`) and the session has not proved an authenticator code in the last five minutes (`step_up_required`); see `POST /auth/mfa/step-up`.
         "404":
           $ref: "#/components/responses/NotFound"
         "409":
@@ -3411,6 +3413,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Setting"
+        "403":
+          description: The setting decides where a vaulted credential is sent (`desktop.guacd_addr`, `database.proxy_image`) and the session has not proved an authenticator code in the last five minutes (`step_up_required`); see `POST /auth/mfa/step-up`.
         "404":
           $ref: "#/components/responses/NotFound"
         "409":

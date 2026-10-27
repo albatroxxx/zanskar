@@ -11,6 +11,7 @@ import (
 	"net/netip"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/albatroxxx/zanskar/internal/httpx"
 	"github.com/albatroxxx/zanskar/internal/user"
@@ -20,6 +21,17 @@ import (
 type Principal struct {
 	Session *Session
 	User    *user.User
+}
+
+// StepUpWindow is how recent a session's authenticator proof must be for an
+// action that asks for one: the host actions (ADR 0032) and the two runtime
+// settings that decide where a vaulted credential is sent (ADR 0020).
+const StepUpWindow = 5 * time.Minute
+
+// StepUpFresh reports whether the session proved an authenticator code
+// within StepUpWindow.
+func (p *Principal) StepUpFresh() bool {
+	return p != nil && p.Session != nil && !p.Session.MFAAt.IsZero() && time.Since(p.Session.MFAAt) <= StepUpWindow
 }
 
 type ctxKey int

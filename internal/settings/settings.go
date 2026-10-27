@@ -126,6 +126,18 @@ func checkImageRef(v string) error {
 	return nil
 }
 
+// RequireDigest is the console-side check on the relay image: a value set
+// over HTTP must pin its content by digest, so what the next database
+// session hands the credential to is exactly what the administrator named
+// (threat model risk 7). The environment file, root's to edit, may name a
+// tag, as the default does.
+func RequireDigest(v string) error {
+	if !strings.Contains(v, "@sha256:") {
+		return errors.New("must be pinned by digest when set from the console: registry/repository@sha256:<64 hex digits>")
+	}
+	return nil
+}
+
 // MaxLoginBanner bounds the banner: long enough for a legal notice, short
 // enough that the sign-in form stays on the page.
 const MaxLoginBanner = 4000
@@ -140,6 +152,11 @@ type Definition struct {
 	Default     string   `json:"default"`
 	EnvVar      string   `json:"env_var,omitempty"`
 	Enum        []string `json:"enum,omitempty"`
+	// StepUp marks a setting that decides where a vaulted credential is
+	// sent; changing or resetting it from the console asks for an
+	// authenticator code proved in the last auth.StepUpWindow (ADR 0020,
+	// threat model risk 7).
+	StepUp bool `json:"step_up,omitempty"`
 }
 
 // Definitions lists every runtime setting, in the order the panel shows them.
@@ -150,12 +167,12 @@ var Definitions = []Definition{
 		Description: "Every password sign-in must enroll an authenticator before the session becomes usable. Turn off only for a throwaway installation."},
 	{Key: KeyUpdateCheck, Category: "Updates", Title: "Check for new versions", Type: TypeBool, Default: "true",
 		Description: "Once a day, fetch the latest version number from the project site and light the bell when it is newer. Nothing about this gateway is sent."},
-	{Key: KeyGuacdAddr, Category: "Desktops", Title: "guacd address", Type: TypeHostPort, EnvVar: "ZANSKAR_GUACD_ADDR",
-		Description: "host:port of the guacd relay for RDP and VNC. Empty disables desktop sessions. Applies to the next session opened."},
+	{Key: KeyGuacdAddr, Category: "Desktops", Title: "guacd address", Type: TypeHostPort, EnvVar: "ZANSKAR_GUACD_ADDR", StepUp: true,
+		Description: "host:port of the guacd relay for RDP and VNC. Empty disables desktop sessions. Applies to the next session opened. guacd receives the desktop credential, so the console accepts a loopback or private address only, and a change asks for a fresh authenticator code."},
 	{Key: KeyLogLevel, Category: "Logging", Title: "Log level", Type: TypeEnum, Default: "info", EnvVar: "ZANSKAR_LOG_LEVEL", Enum: []string{"debug", "info", "warn", "error"},
 		Description: "Verbosity of the gateway's log. Applies at once; go back to info afterwards."},
-	{Key: KeyDBProxyImage, Category: "Databases", Title: "MySQL relay image", Type: TypeString, Default: DefaultDBProxyImage(), EnvVar: "ZANSKAR_DBPROXY_IMAGE",
-		Description: "Container image started beside each MySQL or MariaDB session to hold the credential and relay the protocol: the gateway's own image, running zanskar dbproxy. Change it only to pin a mirror or test a local build. An image reference: registry/repository, an optional :tag and an optional @sha256 digest, such as registry.example.com/zanskar:1.3.0. Applies to the next session."},
+	{Key: KeyDBProxyImage, Category: "Databases", Title: "MySQL relay image", Type: TypeString, Default: DefaultDBProxyImage(), EnvVar: "ZANSKAR_DBPROXY_IMAGE", StepUp: true,
+		Description: "Container image started beside each MySQL or MariaDB session to hold the credential and relay the protocol: the gateway's own image, running zanskar dbproxy. Change it only to pin a mirror or test a local build. The relay receives the database credential, so the console accepts only an image pinned by digest (registry/repository@sha256:<64 hex digits>, a :tag before it is fine) and a change asks for a fresh authenticator code; the environment file may name a tag. Applies to the next session."},
 	{Key: KeyAppsDomain, Category: "Applications", Title: "Apps domain", Type: TypeString, EnvVar: "ZANSKAR_APPS_DOMAIN",
 		Description: "The domain applications are served under, one subdomain each: an application labelled wiki is reached at wiki.<domain>. Needs wildcard DNS for *.<domain> pointing at the gateway and a certificate for it (TLS certificate below). It must not be the console's own host or a parent of it. Empty turns applications off."},
 }

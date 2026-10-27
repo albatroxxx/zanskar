@@ -212,6 +212,10 @@ type env struct {
 	aCSRF string
 	plain *http.Cookie
 	pCSRF string
+	// sessions and adminSess let a test prove the administrator's
+	// authenticator, which the credential-routing settings ask for.
+	sessions  *auth.Sessions
+	adminSess string
 }
 
 func newEnv(t *testing.T) *env {
@@ -231,7 +235,8 @@ func newEnv(t *testing.T) *env {
 	h.Register(mux)
 	mw := &auth.Middleware{Sessions: sessions, Users: users, Log: log}
 	e.srv = mw.Authenticate(mw.CSRF(mux))
-	login := func(name string, role user.Role) (*http.Cookie, string) {
+	e.sessions = sessions
+	login := func(name string, role user.Role) (*http.Cookie, string, string) {
 		u := &user.User{Username: name, DisplayName: name, Roles: []user.Role{role}}
 		if err := users.Create(ctx, u); err != nil {
 			t.Fatal(err)
@@ -240,11 +245,20 @@ func newEnv(t *testing.T) *env {
 		if err != nil {
 			t.Fatal(err)
 		}
-		return &http.Cookie{Name: auth.CookieName, Value: tok}, sessions.CSRFToken(sess.ID)
+		return &http.Cookie{Name: auth.CookieName, Value: tok}, sessions.CSRFToken(sess.ID), sess.ID
 	}
-	e.admin, e.aCSRF = login("root", user.RoleAdmin)
-	e.plain, e.pCSRF = login("alice", user.RoleUser)
+	e.admin, e.aCSRF, e.adminSess = login("root", user.RoleAdmin)
+	e.plain, e.pCSRF, _ = login("alice", user.RoleUser)
 	return e
+}
+
+// proved marks the administrator's session as having proved an authenticator
+// code just now, which the credential-routing settings ask for.
+func (e *env) proved(t *testing.T) {
+	t.Helper()
+	if err := e.sessions.MarkMFAProved(context.Background(), e.adminSess); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func (e *env) do(method, path string, body any, cookie *http.Cookie, csrf string) (int, map[string]any) {
@@ -315,7 +329,10 @@ func TestRoutes(t *testing.T) {
 		t.Fatalf("unknown key: %d %v", code, out)
 	}
 	// The relay image goes into a docker run argument vector: a value that
-	// would read as one of its flags is refused, and saying why.
+	// would read as one of its flags is refused, and saying why. The setting
+	// asks for a fresh authenticator first (risk 7); the step-up itself is
+	// covered in stepup_test.go.
+	e.proved(t)
 	for _, bad := range []string{"--privileged", "zanskar:local --privileged", "-v=/:/host"} {
 		code, out := e.do("PUT", "/api/v1/admin/settings/"+KeyDBProxyImage, map[string]string{"value": bad}, e.admin, e.aCSRF)
 		if msg, _ := out["message"].(string); code != 400 || !strings.Contains(msg, "image reference") {

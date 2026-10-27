@@ -7,11 +7,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net"
 	"strings"
 	"time"
 
 	"github.com/coder/websocket"
+
+	"github.com/albatroxxx/zanskar/internal/target"
 )
 
 // Join attaches a second, read-only client to an existing guacd connection.
@@ -23,7 +24,9 @@ func Join(ctx context.Context, addr, connectionID string, width, height int, tim
 	if !strings.HasPrefix(connectionID, "$") {
 		return nil, errors.New("guac: not a guacd connection id")
 	}
-	d := net.Dialer{Timeout: timeout}
+	// guacd receives the vaulted desktop credential in clear, so it is only
+	// ever dialled on this gateway's own network (threat model risk 7).
+	d := target.InternalDialer(timeout)
 	nc, err := d.DialContext(ctx, "tcp", addr)
 	if err != nil {
 		return nil, fmt.Errorf("guac: dial guacd: %w", err)
