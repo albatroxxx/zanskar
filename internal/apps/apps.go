@@ -29,8 +29,10 @@ import (
 	"github.com/albatroxxx/zanskar/internal/audit"
 	"github.com/albatroxxx/zanskar/internal/auth"
 	"github.com/albatroxxx/zanskar/internal/gateway"
+	"github.com/albatroxxx/zanskar/internal/httpx"
 	"github.com/albatroxxx/zanskar/internal/session"
 	"github.com/albatroxxx/zanskar/internal/target"
+	"github.com/albatroxxx/zanskar/internal/user"
 )
 
 // Paths the proxy answers itself on every application host. An upstream path
@@ -92,10 +94,67 @@ type Handler struct {
 	live      sync.Map // session id → *tracked
 }
 
-// Register mounts the console-side route; the application hosts are served
+// Register mounts the console-side routes; the application hosts are served
 // through ServeHTTP, which the server dispatches to by host.
 func (h *Handler) Register(mux *http.ServeMux) {
 	mux.Handle("GET /api/v1/me/applications/launch", auth.RequireConnect(http.HandlerFunc(h.launch)))
+	mux.Handle("GET /api/v1/admin/applications/readiness", auth.RequireRole(user.RoleAdmin)(http.HandlerFunc(h.readiness)))
+}
+
+// Check is one prerequisite of serving applications, as the console lists
+// them before the first application is enrolled.
+type Check struct {
+	Key    string `json:"key"`
+	Title  string `json:"title"`
+	OK     bool   `json:"ok"`
+	Detail string `json:"detail"`
+}
+
+// Readiness is Ready as a checklist: every prerequisite with its state and,
+// for one not met, what to do. An operator who hits the refusal sees all
+// three at once rather than one sentence per attempt.
+func (h *Handler) Readiness() (ready bool, checks []Check) {
+	domain := h.domain()
+	c := Check{Key: "domain", Title: "Apps domain", OK: domain != ""}
+	if c.OK {
+		c.Detail = "applications are served under *." + domain
+	} else {
+		c.Detail = "set the apps domain in Settings: the domain applications are served under, such as apps.example.com, not the console's own host; point wildcard DNS for it at the gateway, or map the names on the client machines"
+	}
+	checks = append(checks, c)
+	c = Check{Key: "public_url", Title: "Public address", OK: h.PublicURL != ""}
+	if c.OK {
+		c.Detail = "the console is reached at " + h.PublicURL + "; applications share its scheme and port"
+	} else {
+		c.Detail = "set ZANSKAR_PUBLIC_URL in the environment file, the https address people reach the console at, and restart"
+	}
+	checks = append(checks, c)
+	c = Check{Key: "certificate", Title: "Certificate for the apps domain", OK: true}
+	switch {
+	case h.TLSReady == nil:
+		c.Detail = "a proxy in front of the gateway terminates TLS for the application hosts; it must carry a certificate for *." + domain + " and pass the Host header through"
+	case domain == "":
+		c.OK, c.Detail = false, "waits for the apps domain"
+	default:
+		if err := h.TLSReady(domain); err != nil {
+			c.OK, c.Detail = false, err.Error()
+		} else {
+			c.Detail = "a certificate for *." + domain + " is uploaded and can serve"
+		}
+	}
+	checks = append(checks, c)
+	for _, c := range checks {
+		if !c.OK {
+			return false, checks
+		}
+	}
+	return true, checks
+}
+
+func (h *Handler) readiness(w http.ResponseWriter, _ *http.Request) {
+	ready, checks := h.Readiness()
+	w.Header().Set("Cache-Control", "no-store")
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"ready": ready, "checks": checks})
 }
 
 func (h *Handler) store() *codeStore {
