@@ -78,7 +78,12 @@ func TestMigratePostgres(t *testing.T) {
 	}
 	db := openTestDB(t, config.DriverPostgres, dsn)
 	ctx := context.Background()
-	// Start from a clean schema so the test is repeatable.
+	// Start from a clean schema so the test is repeatable. This resets the
+	// public schema of the shared CI database while other packages run
+	// against the same server; it is safe only because every other Postgres
+	// test opens a schema of its own (storetest.OpenPostgres, and this
+	// package's isolatedPostgres). A test that used the DSN directly would
+	// race with this one.
 	if _, err := db.ExecContext(ctx, `DROP SCHEMA public CASCADE; CREATE SCHEMA public`); err != nil {
 		t.Fatalf("reset schema: %v", err)
 	}

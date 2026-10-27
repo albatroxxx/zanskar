@@ -5,14 +5,10 @@ package audit
 import (
 	"bytes"
 	"context"
-	"crypto/rand"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
-	"net/url"
-	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -20,6 +16,7 @@ import (
 
 	"github.com/albatroxxx/zanskar/internal/config"
 	"github.com/albatroxxx/zanskar/internal/store"
+	"github.com/albatroxxx/zanskar/internal/store/storetest"
 )
 
 // testKey signs anchors in these tests; otherKey stands for any other key,
@@ -30,58 +27,11 @@ var (
 )
 
 // forEachBackend runs fn on SQLite in memory and, when
-// ZANSKAR_TEST_POSTGRES_DSN is set, on PostgreSQL in a schema of its own.
+// ZANSKAR_TEST_POSTGRES_DSN is set, on PostgreSQL in a schema of its own
+// (storetest.ForEachBackend); the log is built on the database handed over.
 func forEachBackend(t *testing.T, fn func(t *testing.T, log *Log, db *store.DB)) {
 	t.Helper()
-	t.Run("sqlite", func(t *testing.T) {
-		log, db := newTestLog(t)
-		fn(t, log, db)
-	})
-	dsn := os.Getenv("ZANSKAR_TEST_POSTGRES_DSN")
-	if dsn == "" {
-		return
-	}
-	t.Run("postgres", func(t *testing.T) {
-		db := isolatedPostgres(t, dsn)
-		if _, err := store.Migrate(context.Background(), db); err != nil {
-			t.Fatal(err)
-		}
-		fn(t, NewLog(db), db)
-	})
-}
-
-// isolatedPostgres opens dsn on a fresh schema dropped at cleanup, so these
-// tests share no rows, and no sequence, with anything else.
-func isolatedPostgres(t *testing.T, dsn string) *store.DB {
-	t.Helper()
-	ctx := context.Background()
-	admin, err := store.Open(ctx, config.DriverPostgres, dsn)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var b [6]byte
-	_, _ = rand.Read(b[:])
-	schema := "audit_test_" + hex.EncodeToString(b[:])
-	if _, err := admin.ExecContext(ctx, `CREATE SCHEMA `+schema); err != nil {
-		t.Fatal(err)
-	}
-	u, err := url.Parse(dsn)
-	if err != nil {
-		t.Fatal(err)
-	}
-	q := u.Query()
-	q.Set("search_path", schema)
-	u.RawQuery = q.Encode()
-	db, err := store.Open(ctx, config.DriverPostgres, u.String())
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() {
-		_ = db.Close()
-		_, _ = admin.ExecContext(context.Background(), `DROP SCHEMA `+schema+` CASCADE`)
-		_ = admin.Close()
-	})
-	return db
+	storetest.ForEachBackend(t, func(t *testing.T, db *store.DB) { fn(t, NewLog(db), db) })
 }
 
 // record appends n events and returns them as stored.

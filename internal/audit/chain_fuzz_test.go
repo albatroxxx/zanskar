@@ -14,10 +14,15 @@ import (
 // changing any hashed field of any event afterwards must be detected at
 // that event's index.
 func FuzzChain(f *testing.F) {
-	f.Add("u1", "user.login", "session", "abc", "note", uint8(1))
-	f.Add("", "", "", "", "", uint8(0))
-	f.Add("u\x00", "a\"b", "{}", "]", " ", uint8(2))
-	f.Fuzz(func(t *testing.T, actor, action, objType, objID, detail string, tamperAt uint8) {
+	f.Add("u1", "user.login", "session", "abc", "note", uint8(1), uint8(0))
+	f.Add("", "", "", "", "", uint8(0), uint8(3))
+	f.Add("u\x00", "a\"b", "{}", "]", " ", uint8(2), uint8(7))
+	// One seed per hashed field, so the seed run (CI runs the corpus as unit
+	// tests) covers every case of the switch below.
+	for field := uint8(0); field < 8; field++ {
+		f.Add("u1", "user.login", "session", "abc", "note", uint8(1), field)
+	}
+	f.Fuzz(func(t *testing.T, actor, action, objType, objID, detail string, tamperAt, field uint8) {
 		details, _ := json.Marshal(map[string]string{"k": detail})
 		events := make([]Event, 3)
 		prev := ""
@@ -32,7 +37,26 @@ func FuzzChain(f *testing.F) {
 			t.Fatalf("fresh chain failed to verify: %v", err)
 		}
 		i := int(tamperAt) % len(events)
-		events[i].Action += "x"
+		// Every hashed field must be covered, not only Action: a hash that
+		// stopped covering Details or ObjectID passed the earlier version.
+		switch field % 8 {
+		case 0:
+			events[i].Action += "x"
+		case 1:
+			events[i].ObjectID += "x"
+		case 2:
+			events[i].ObjectType += "x"
+		case 3:
+			events[i].ActorUserID += "x"
+		case 4:
+			events[i].ActorIP += "x"
+		case 5:
+			events[i].Outcome = Outcome(string(events[i].Outcome) + "x")
+		case 6:
+			events[i].Details = json.RawMessage(`{"k":"tampered"}`)
+		default:
+			events[i].Timestamp = events[i].Timestamp.Add(time.Nanosecond)
+		}
 		err := Verify(events)
 		if err == nil {
 			t.Fatalf("tampered event %d was not detected", i)

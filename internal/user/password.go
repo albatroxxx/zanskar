@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"testing"
 
 	"golang.org/x/crypto/argon2"
 )
@@ -30,6 +31,24 @@ const (
 	MaxPasswordLen = 256
 )
 
+// hashParams are what HashPassword uses and NeedsRehash compares against.
+// In a test binary they drop to 8 MiB and one pass, so the suites that sign
+// in are not spent hashing (the auth package alone was 78 s of it); nothing a
+// test can do raises or lowers them at run time, and the production
+// constants above are what every other binary hashes with. One test hashes
+// with the production constants to keep them honest.
+var hashParams = func() phcParams {
+	if testing.Testing() {
+		return phcParams{memory: 8 * 1024, time: 1, threads: argonThreads}
+	}
+	return productionParams()
+}()
+
+// productionParams are the constants above as a parameter set.
+func productionParams() phcParams {
+	return phcParams{memory: argonMemoryKiB, time: argonTime, threads: argonThreads}
+}
+
 // ErrWeakPassword is returned by CheckPasswordPolicy.
 var ErrWeakPassword = errors.New("password does not meet policy")
 
@@ -46,7 +65,9 @@ func CheckPasswordPolicy(pw string) error {
 }
 
 // HashPassword returns a PHC-format argon2id string.
-func HashPassword(pw string) (string, error) {
+func HashPassword(pw string) (string, error) { return hashPasswordWith(pw, hashParams) }
+
+func hashPasswordWith(pw string, p phcParams) (string, error) {
 	if len(pw) > MaxPasswordLen {
 		return "", ErrWeakPassword
 	}
@@ -54,9 +75,9 @@ func HashPassword(pw string) (string, error) {
 	if _, err := rand.Read(salt); err != nil {
 		return "", err
 	}
-	key := argon2.IDKey([]byte(pw), salt, argonTime, argonMemoryKiB, argonThreads, argonKeyLen)
+	key := argon2.IDKey([]byte(pw), salt, p.time, p.memory, p.threads, argonKeyLen)
 	return fmt.Sprintf("$argon2id$v=%d$m=%d,t=%d,p=%d$%s$%s",
-		argon2.Version, argonMemoryKiB, argonTime, argonThreads,
+		argon2.Version, p.memory, p.time, p.threads,
 		base64.RawStdEncoding.EncodeToString(salt),
 		base64.RawStdEncoding.EncodeToString(key)), nil
 }
@@ -85,7 +106,7 @@ func NeedsRehash(hash string) bool {
 	if err != nil {
 		return true
 	}
-	return p.memory < argonMemoryKiB || p.time < argonTime
+	return p.memory < hashParams.memory || p.time < hashParams.time
 }
 
 // dummyHash is verified against when a username does not exist, so a login

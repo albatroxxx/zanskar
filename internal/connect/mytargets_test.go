@@ -59,11 +59,14 @@ func TestMyTargets(t *testing.T) {
 	if got := byName["ok"]; got.PrivateIP != "10.0.0.1" || !got.HostKeyReady {
 		t.Errorf("private target: %+v", got)
 	}
-	if got := byName["public"]; got.ID != public || got.PrivateIP != "" {
-		t.Errorf("a public address must be withheld: %+v", got)
+	// These two were created and never probed: their host key is unknown,
+	// so the portal must not offer them as ready (review Q1, finding 1a: a
+	// listing that said ready for every target passed every test).
+	if got := byName["public"]; got.ID != public || got.PrivateIP != "" || got.HostKeyReady {
+		t.Errorf("a public address must be withheld and an unknown key is not ready: %+v", got)
 	}
-	if got := byName["named"]; got.ID != named || got.PrivateIP != "" {
-		t.Errorf("a hostname must be withheld: %+v", got)
+	if got := byName["named"]; got.ID != named || got.PrivateIP != "" || got.HostKeyReady {
+		t.Errorf("a hostname must be withheld and an unknown key is not ready: %+v", got)
 	}
 	if got := byName["orders"]; got.ID != pg || got.Engine != "postgres" || !contains(got.Allowed, "database") {
 		t.Errorf("database target: %+v", got)

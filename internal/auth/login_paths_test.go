@@ -573,8 +573,10 @@ func TestLoginUpgradesWeakHash(t *testing.T) {
 	unlimited(e)
 	const pw = "an old but correct password"
 	salt := []byte("0123456789abcdef")
-	weak := fmt.Sprintf("$argon2id$v=%d$m=%d,t=%d,p=%d$%s$%s", argon2.Version, 8*1024, 1, 1,
-		base64.RawStdEncoding.EncodeToString(salt), base64.RawStdEncoding.EncodeToString(argon2.IDKey([]byte(pw), salt, 1, 8*1024, 1, 32)))
+	// 4 MiB and one pass: below what this test binary hashes with (8 MiB, one
+	// pass), so it counts as weak here as well as in production.
+	weak := fmt.Sprintf("$argon2id$v=%d$m=%d,t=%d,p=%d$%s$%s", argon2.Version, 4*1024, 1, 1,
+		base64.RawStdEncoding.EncodeToString(salt), base64.RawStdEncoding.EncodeToString(argon2.IDKey([]byte(pw), salt, 1, 4*1024, 1, 32)))
 	if !user.NeedsRehash(weak) {
 		t.Fatal("the test hash must count as weak")
 	}
