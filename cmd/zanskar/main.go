@@ -93,6 +93,8 @@ func run(args []string) int {
 		err = runKey(args[1:])
 	case "dbproxy":
 		err = runDBProxy()
+	case "apprelay":
+		err = runAppRelay()
 	case "healthcheck":
 		err = runHealthcheck()
 	case "version":
@@ -118,7 +120,7 @@ func run(args []string) int {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: zanskar <init|serve|migrate|backup|restore|keygen|key status|key rotate|key rotate-master|admin create|admin reset-mfa|audit verify|audit anchor|audit reseal|dbproxy|healthcheck|version>")
+	fmt.Fprintln(os.Stderr, "usage: zanskar <init|serve|migrate|backup|restore|keygen|key status|key rotate|key rotate-master|admin create|admin reset-mfa|audit verify|audit anchor|audit reseal|dbproxy|apprelay|healthcheck|version>")
 }
 
 func newLogger(cfg *config.Config) *slog.Logger {
