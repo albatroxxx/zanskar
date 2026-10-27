@@ -36,7 +36,7 @@ func (f fakeResolver) LookupIPAddr(_ context.Context, host string) ([]net.IPAddr
 // risk 7, decided 2026-10-27).
 func TestCredentialRoutingSettingsAskForAStepUp(t *testing.T) {
 	e := newEnv(t)
-	for _, key := range []string{KeyGuacdAddr, KeyDBProxyImage} {
+	for _, key := range []string{KeyGuacdAddr, KeyDBProxyImage, KeyBrowserImage} {
 		if code, out := e.do("PUT", "/api/v1/admin/settings/"+key, map[string]string{"value": "x"}, e.admin, e.aCSRF); code != 403 || out["code"] != "step_up_required" {
 			t.Fatalf("set %s without a recent code: %d %v", key, code, out)
 		}
@@ -68,7 +68,7 @@ func TestCredentialRoutingSettingsAskForAStepUp(t *testing.T) {
 			stepUp = append(stepUp, v.Key)
 		}
 	}
-	if strings.Join(stepUp, ",") != KeyGuacdAddr+","+KeyDBProxyImage {
+	if strings.Join(stepUp, ",") != KeyGuacdAddr+","+KeyDBProxyImage+","+KeyBrowserImage {
 		t.Fatalf("settings marked step_up: %v", stepUp)
 	}
 }

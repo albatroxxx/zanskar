@@ -17,6 +17,7 @@ import (
 
 	"github.com/coder/websocket"
 
+	"github.com/albatroxxx/zanskar/internal/gateway/containers"
 	"github.com/albatroxxx/zanskar/internal/gateway/dbgw/dbtest"
 	"github.com/albatroxxx/zanskar/internal/recording"
 )
@@ -246,29 +247,29 @@ func TestReapRemovesLeftoversByLabel(t *testing.T) {
 	dbtest.RequireDocker(t)
 	ghost := "ghost" + strconv.FormatInt(time.Now().UnixNano(), 36)
 	network, proxy, _ := names(ghost)
-	dbtest.Docker(t, networkArgs(ghost, network, false)...)
+	dbtest.Docker(t, containers.NetworkArgs(ghost, network, false)...)
 	t.Cleanup(func() { _ = exec.Command("docker", "network", "rm", network).Run() }) // #nosec G204 -- fixed test arguments
-	dbtest.Docker(t, append(append([]string{"run", "-d", "--rm", "--name", proxy, "--network", network}, labels(ghost)...), "postgres:16-alpine", "sleep", "300")...)
+	dbtest.Docker(t, append(append([]string{"run", "-d", "--rm", "--name", proxy, "--network", network}, containers.Labels(ghost)...), "postgres:16-alpine", "sleep", "300")...)
 	t.Cleanup(func() { _ = exec.Command("docker", "rm", "-f", proxy).Run() })                   // #nosec G204 -- fixed test arguments
 	exists := func(args ...string) bool { return exec.Command("docker", args...).Run() == nil } // #nosec G204 -- fixed test arguments
 	// Every other session on this daemon counts as live, so a test running
 	// beside this one is never touched.
 	dead := func(id string) bool { return id != ghost }
 
-	if n, err := Reap(t.Context(), "docker", dead); err != nil || n != 0 {
+	if n, err := containers.Reap(t.Context(), "docker", dead); err != nil || n != 0 {
 		t.Fatalf("a start still in flight was reaped: %d %v", n, err)
 	}
 	run := func(ctx context.Context, args ...string) (string, error) {
-		return dockerOutput(ctx, "docker", nil, args...)
+		return containers.Output(ctx, "docker", nil, args...)
 	}
-	later := time.Now().Add(reapMinAge + time.Minute)
-	if n, err := reap(t.Context(), run, func(string) bool { return true }, later); err != nil || n != 0 {
+	later := time.Now().Add(containers.ReapMinAge + time.Minute)
+	if n, err := containers.ReapWith(t.Context(), run, func(string) bool { return true }, later); err != nil || n != 0 {
 		t.Fatalf("a live session's objects were reaped: %d %v", n, err)
 	}
 	if !exists("container", "inspect", proxy) || !exists("network", "inspect", network) {
 		t.Fatal("the objects vanished while protected")
 	}
-	if n, err := reap(t.Context(), run, dead, later); err != nil || n != 2 {
+	if n, err := containers.ReapWith(t.Context(), run, dead, later); err != nil || n != 2 {
 		t.Fatalf("reap removed %d, %v", n, err)
 	}
 	if exists("container", "inspect", proxy) || exists("network", "inspect", network) {

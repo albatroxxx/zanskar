@@ -70,6 +70,12 @@ func (d *Duration) UnmarshalJSON(b []byte) error {
 // Config is the relay's whole table.
 type Config struct {
 	Forwards []Forward `json:"forwards"`
+	// InternalSubnet is the session network's subnet, CIDR; an "internal:"
+	// listen binds the relay's address inside it. The gateway attaches the
+	// relay to the bridge right after starting it, so by the time the relay
+	// looks the relay may have two addresses, and the subnet says which.
+	// Empty, the relay expects exactly one address.
+	InternalSubnet string `json:"internal_subnet,omitempty"`
 }
 
 // Parse decodes and validates a configuration document.
@@ -86,6 +92,11 @@ func Parse(raw []byte) (Config, error) {
 func (c *Config) Validate() error {
 	if len(c.Forwards) == 0 {
 		return errors.New("apprelay config: no forwards")
+	}
+	if c.InternalSubnet != "" {
+		if _, _, err := net.ParseCIDR(c.InternalSubnet); err != nil {
+			return fmt.Errorf("apprelay config: internal_subnet: %w", err)
+		}
 	}
 	for i := range c.Forwards {
 		f := &c.Forwards[i]
@@ -243,14 +254,23 @@ func (r *Relay) pump(ctx context.Context, f Forward, c net.Conn) {
 	}
 	go half(b, c)
 	go half(c, b)
-	select {
-	case <-done:
-	case <-ctx.Done():
+	// Each direction ends on its own, with a half-close passed on, so a
+	// backend may still answer after the client has said all it will; the
+	// session's end closes both at once.
+	for pending := 2; pending > 0; {
+		select {
+		case <-done:
+			pending--
+		case <-ctx.Done():
+			_ = c.Close()
+			_ = b.Close()
+			<-done
+			if pending == 2 {
+				<-done
+			}
+			return
+		}
 	}
-	// Closing both ends makes the other copy return too.
-	_ = c.Close()
-	_ = b.Close()
-	<-done
 }
 
 // dialBackend dials f.To, retrying every 250 ms for f.Retry.
@@ -272,8 +292,9 @@ func (r *Relay) dialBackend(ctx context.Context, f Forward) (net.Conn, error) {
 	}
 }
 
-// internalIP is the relay's one non-loopback IPv4 address: at start it is
-// on the session's internal network alone, so there is exactly one.
+// internalIP is the relay's address on the session network: the one inside
+// InternalSubnet, or, with no subnet given, its one non-loopback IPv4
+// address.
 func (r *Relay) internalIP() (string, error) {
 	if r.InternalIP != "" {
 		return r.InternalIP, nil
@@ -282,13 +303,28 @@ func (r *Relay) internalIP() (string, error) {
 	if err != nil {
 		return "", err
 	}
+	var subnet *net.IPNet
+	if r.Config.InternalSubnet != "" {
+		if _, subnet, err = net.ParseCIDR(r.Config.InternalSubnet); err != nil {
+			return "", err
+		}
+	}
 	var found []string
 	for _, a := range addrs {
 		ipn, ok := a.(*net.IPNet)
 		if !ok || ipn.IP.IsLoopback() || ipn.IP.To4() == nil {
 			continue
 		}
+		if subnet != nil {
+			if subnet.Contains(ipn.IP) {
+				return ipn.IP.String(), nil
+			}
+			continue
+		}
 		found = append(found, ipn.IP.String())
+	}
+	if subnet != nil {
+		return "", fmt.Errorf("apprelay: no address inside %s to bind the internal forward to", r.Config.InternalSubnet)
 	}
 	if len(found) != 1 {
 		return "", fmt.Errorf("apprelay: expected one address to bind the internal forward to, found %d (%s)", len(found), strings.Join(found, ", "))

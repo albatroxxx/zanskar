@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/albatroxxx/zanskar/internal/gateway/containers"
 	"github.com/albatroxxx/zanskar/internal/gateway/mysqlrelay"
 )
 
@@ -225,19 +226,19 @@ func TestSSLModeFailsClosed(t *testing.T) {
 // uses the isolated gateway mode when offered it, and carries the labels;
 // the proxy's way out is the runtime's default bridge.
 func TestNetworkArgsInternalAndLabelled(t *testing.T) {
-	got := strings.Join(networkArgs("sess1", "zanskar-net-sess1", true), " ")
+	got := strings.Join(containers.NetworkArgs("sess1", "zanskar-net-sess1", true), " ")
 	want := "network create --internal -o com.docker.network.bridge.gateway_mode_ipv4=isolated --label zanskar.managed=1 --label zanskar.session=sess1 zanskar-net-sess1"
 	if got != want {
 		t.Errorf("isolated:\n got %s\nwant %s", got, want)
 	}
-	got = strings.Join(networkArgs("sess1", "zanskar-net-sess1", false), " ")
+	got = strings.Join(containers.NetworkArgs("sess1", "zanskar-net-sess1", false), " ")
 	want = "network create --internal --label zanskar.managed=1 --label zanskar.session=sess1 zanskar-net-sess1"
 	if got != want {
 		t.Errorf("plain:\n got %s\nwant %s", got, want)
 	}
 	for cli, net := range map[string]string{"docker": "bridge", "/usr/bin/docker": "bridge", "": "bridge", "podman": "podman", "/usr/bin/podman": "podman"} {
-		if got := egressNetwork(cli); got != net {
-			t.Errorf("egressNetwork(%q)=%q want %q", cli, got, net)
+		if got := containers.EgressNetwork(cli); got != net {
+			t.Errorf("containers.EgressNetwork(%q)=%q want %q", cli, got, net)
 		}
 	}
 }

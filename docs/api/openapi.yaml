@@ -668,6 +668,40 @@ paths:
                         type: array
                         items:
                           $ref: "#/components/schemas/AccessRequest"
+  /admin/applications/readiness:
+    get:
+      tags: [admin]
+      summary: What application sessions still need
+      description: >
+        The prerequisites of application sessions (ADR 0034), each with its state and what
+        to do: a guacd address (an application is drawn by guacd like a desktop), a container
+        runtime the service can reach, and a browser image. The Applications page shows this
+        until every check passes. Enrolling an application is never refused for it; opening
+        one answers `501 protocol_unavailable` until guacd and the images are set.
+      responses:
+        "200":
+          description: The checklist.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ready, checks]
+                properties:
+                  ready: { type: boolean }
+                  checks:
+                    type: array
+                    items:
+                      type: object
+                      required: [key, title, ok, detail]
+                      properties:
+                        key: { type: string, enum: [guacd, runtime, image] }
+                        title: { type: string }
+                        ok: { type: boolean }
+                        detail: { type: string }
+        "401":
+          description: Not signed in.
+        "403":
+          description: Not an administrator.
   /connect:
     post:
       tags: [user]

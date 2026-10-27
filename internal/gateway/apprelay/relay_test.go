@@ -46,14 +46,14 @@ func freePort(t *testing.T) int {
 	return port
 }
 
-func serve(t *testing.T, cfg Config) (context.CancelFunc, <-chan error) {
+func serve(t *testing.T, cfg Config) <-chan error {
 	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
 	r := &Relay{Config: cfg, Log: slog.New(slog.NewTextHandler(io.Discard, nil)), InternalIP: "127.0.0.1"}
 	errc := make(chan error, 1)
 	go func() { errc <- r.Serve(ctx) }()
 	t.Cleanup(cancel)
-	return cancel, errc
+	return errc
 }
 
 func waitListening(t *testing.T, addr string) {
@@ -114,7 +114,7 @@ func TestForwardBothWays(t *testing.T) {
 func TestOnceTakesOneConnection(t *testing.T) {
 	be := echoBackend(t)
 	port := freePort(t)
-	_, errc := serve(t, Config{Forwards: []Forward{{Listen: ":" + strconv.Itoa(port), To: be.Addr().String(), Once: true}}})
+	errc := serve(t, Config{Forwards: []Forward{{Listen: ":" + strconv.Itoa(port), To: be.Addr().String(), Once: true}}})
 	addr := net.JoinHostPort("127.0.0.1", strconv.Itoa(port))
 	waitListening(t, addr)
 	// waitListening consumed the one connection; the listener is closed now.
@@ -142,19 +142,22 @@ func TestRetryWaitsForBackend(t *testing.T) {
 	serve(t, Config{Forwards: []Forward{{Listen: ":" + strconv.Itoa(port), To: beAddr, Retry: Duration(5 * time.Second)}}})
 	addr := net.JoinHostPort("127.0.0.1", strconv.Itoa(port))
 	waitListening(t, addr)
+	// The backend appears late and echoes every connection it gets: the
+	// listening probe above left one pump retrying too.
 	go func() {
 		time.Sleep(600 * time.Millisecond)
 		ln, err := net.Listen("tcp", beAddr)
 		if err != nil {
 			return
 		}
-		c, err := ln.Accept()
-		if err != nil {
-			return
+		t.Cleanup(func() { _ = ln.Close() })
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			go func() { _, _ = io.Copy(c, c); _ = c.Close() }()
 		}
-		_, _ = io.Copy(c, c)
-		_ = c.Close()
-		_ = ln.Close()
 	}()
 	if got := roundTrip(t, addr, "late"); got != "late" {
 		t.Fatalf("through a late backend: %q", got)
@@ -194,15 +197,42 @@ func TestParseRefuses(t *testing.T) {
 			t.Errorf("accepted %s", bad)
 		}
 	}
-	c, err := Parse([]byte(`{"forwards":[{"listen":"internal:80","to":"10.0.0.1:80"},{"listen":":5900","to":"browser:5900","once":true,"retry":"15s"}]}`))
-	if err != nil || len(c.Forwards) != 2 || !c.Forwards[1].Once || time.Duration(c.Forwards[1].Retry) != 15*time.Second {
+	if _, err := Parse([]byte(`{"forwards":[{"listen":":80","to":"10.0.0.1:80"}],"internal_subnet":"172.30.0.0"}`)); err == nil {
+		t.Error("accepted a subnet without a prefix length")
+	}
+	c, err := Parse([]byte(`{"forwards":[{"listen":"internal:80","to":"10.0.0.1:80"},{"listen":":5900","to":"browser:5900","once":true,"retry":"15s"}],"internal_subnet":"172.30.0.0/16"}`))
+	if err != nil || len(c.Forwards) != 2 || !c.Forwards[1].Once || time.Duration(c.Forwards[1].Retry) != 15*time.Second || c.InternalSubnet != "172.30.0.0/16" {
 		t.Fatalf("good table: %+v %v", c, err)
 	}
 }
 
-// TestInternalIPNeedsExactlyOne: with no address given, Serve refuses a
-// table that binds "internal:" unless the host has exactly one address; the
-// test only checks the refusal path through an explicit empty list.
+// TestInternalIPPicksTheSubnet: given the session network's subnet, the
+// relay binds the address inside it, whatever else it has; a subnet none
+// of its addresses is in is refused.
+func TestInternalIPPicksTheSubnet(t *testing.T) {
+	addrs, _ := net.InterfaceAddrs()
+	var one *net.IPNet
+	for _, a := range addrs {
+		if ipn, ok := a.(*net.IPNet); ok && !ipn.IP.IsLoopback() && ipn.IP.To4() != nil {
+			one = ipn
+			break
+		}
+	}
+	if one == nil {
+		t.Skip("no IPv4 address on this host")
+	}
+	r := &Relay{Config: Config{InternalSubnet: one.String()}}
+	if ip, err := r.internalIP(); err != nil || !one.Contains(net.ParseIP(ip)) {
+		t.Fatalf("subnet %s gave %q %v", one, ip, err)
+	}
+	r = &Relay{Config: Config{InternalSubnet: "192.0.2.0/24"}}
+	if ip, err := r.internalIP(); err == nil {
+		t.Fatalf("an address outside every interface: %q", ip)
+	}
+}
+
+// TestInternalIPNeedsExactlyOne: with no subnet given, the relay binds its
+// one non-loopback address and refuses when there is not exactly one.
 func TestInternalIPNeedsExactlyOne(t *testing.T) {
 	r := &Relay{Config: Config{Forwards: []Forward{{Listen: "internal:80", To: "10.0.0.1:80"}}}, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
 	ip, err := r.internalIP()

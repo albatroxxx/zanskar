@@ -35,7 +35,8 @@ import (
 	"github.com/albatroxxx/zanskar/internal/credential"
 	"github.com/albatroxxx/zanskar/internal/crypto"
 	"github.com/albatroxxx/zanskar/internal/gateway"
-	"github.com/albatroxxx/zanskar/internal/gateway/dbgw"
+	"github.com/albatroxxx/zanskar/internal/gateway/browsergw"
+	"github.com/albatroxxx/zanskar/internal/gateway/containers"
 	"github.com/albatroxxx/zanskar/internal/group"
 	"github.com/albatroxxx/zanskar/internal/idp"
 	idpadmin "github.com/albatroxxx/zanskar/internal/idp/adminapi"
@@ -256,6 +257,7 @@ func serve(ctx context.Context) error {
 		return target.CheckInternal(ctx, nil, v)
 	})
 	runtime.Check(settings.KeyDBProxyImage, settings.RequireDigest)
+	runtime.Check(settings.KeyBrowserImage, settings.RequireDigest)
 
 	csrfKey, err := crypto.DeriveKey(cfg.MasterKey, "zanskar/csrf")
 	if err != nil {
@@ -340,6 +342,7 @@ func serve(ctx context.Context) error {
 	connectHandler := &connect.Handler{Targets: targets, Policies: policies, Access: accessReqs, Vault: vault, Sessions: sessionRepo, Tickets: ticket.NewStore(),
 		Registry: registry, Storage: storage, Audit: auditLog, Log: log, MFAEnrolled: totp.Enrolled, GuacdAddr: guacdAddr, Draining: restarter.Draining,
 		DockerPath: cfg.DockerPath, DBMaxSessions: cfg.DatabaseMaxSessions, DBProxyImage: func() string { return runtime.String(settings.KeyDBProxyImage) },
+		AppsMaxSessions: cfg.AppsMaxSessions, BrowserImage: func() string { return runtime.String(settings.KeyBrowserImage) }, StateDir: cfg.StateDir,
 		Prober: prober, ASGs: asgRepo, Cloud: cloudProviders}
 	// A sign-in through an identity provider that removes the user from a
 	// mapped group ends what that group granted, as an admin's removal does.
@@ -364,6 +367,7 @@ func serve(ctx context.Context) error {
 			&access.Handler{Requests: accessReqs, Policies: policies, Targets: targets, ASGs: asgRepo, Revoker: connectHandler, Audit: auditLog, Log: log},
 			&asg.AdminHandler{Repo: asgRepo, Sync: syncer.SyncGroup, Identity: awsIdentity, Providers: asg.AWSFresh(), Policies: policies, Live: registry, Revoker: connectHandler, Vault: vault, Audit: auditLog, Log: log},
 			&session.Handler{Repo: sessionRepo, Audit: auditLog, AnchorKey: anchorKey, Registry: registry, Storage: storage, Log: log},
+			&browsergw.Readiness{Guacd: func() string { return runtime.String(settings.KeyGuacdAddr) }, BrowserImage: func() string { return runtime.String(settings.KeyBrowserImage) }, Docker: cfg.DockerPath},
 			&overview.Handler{Sessions: sessionRepo, Requests: accessReqs, Targets: targets, ASGs: asgRepo, Audit: auditLog, Log: log},
 			&update.Handler{Checker: versionCheck, Log: log, StateDir: cfg.StateDir, Supervisor: lifecycle.Supervisor},
 			&settings.Handler{Service: runtime, Audit: auditLog, Log: log},
@@ -451,7 +455,7 @@ func serve(ctx context.Context) error {
 		defer t.Stop()
 		var notice reapNotice
 		for {
-			n, err := dbgw.Reap(ctx, cfg.DockerPath, live)
+			n, err := containers.Reap(ctx, cfg.DockerPath, live)
 			if ctx.Err() != nil {
 				return // shutting down: a pass cut short says nothing about Docker
 			}

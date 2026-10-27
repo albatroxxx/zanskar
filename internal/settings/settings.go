@@ -69,6 +69,9 @@ const (
 	// KeyDBProxyImage is the image run as the MySQL/MariaDB relay sidecar;
 	// by default the gateway's own release image at its own version.
 	KeyDBProxyImage = "database.proxy_image"
+	// KeyBrowserImage is the image an application session's browser runs in
+	// (ADR 0034).
+	KeyBrowserImage = "apps.browser_image"
 )
 
 // DefaultDBProxyImage is the gateway's own image at the running version. A
@@ -82,6 +85,16 @@ func DefaultDBProxyImage() string {
 		v = "latest"
 	}
 	return "ghcr.io/albatroxxx/zanskar:" + v
+}
+
+// DefaultBrowserImage is the published browser image at this gateway's
+// version (ADR 0034); a dev build takes latest.
+func DefaultBrowserImage() string {
+	v := strings.TrimPrefix(version.Version, "v")
+	if v == "" || v == "dev" {
+		v = "latest"
+	}
+	return "ghcr.io/albatroxxx/zanskar-browser:" + v
 }
 
 // Image references as the OCI distribution spec writes them, cut to what a
@@ -162,8 +175,10 @@ var Definitions = []Definition{
 		Description: "host:port of the guacd relay for RDP and VNC. Empty disables desktop sessions. Applies to the next session opened. guacd receives the desktop credential, so the console accepts a loopback or private address only, and a change asks for a fresh authenticator code."},
 	{Key: KeyLogLevel, Category: "Logging", Title: "Log level", Type: TypeEnum, Default: "info", EnvVar: "ZANSKAR_LOG_LEVEL", Enum: []string{"debug", "info", "warn", "error"},
 		Description: "Verbosity of the gateway's log. Applies at once; go back to info afterwards."},
-	{Key: KeyDBProxyImage, Category: "Databases", Title: "MySQL relay image", Type: TypeString, Default: DefaultDBProxyImage(), EnvVar: "ZANSKAR_DBPROXY_IMAGE", StepUp: true,
-		Description: "Container image started beside each MySQL or MariaDB session to hold the credential and relay the protocol: the gateway's own image, running zanskar dbproxy. Change it only to pin a mirror or test a local build. The relay receives the database credential, so the console accepts only an image pinned by digest (registry/repository@sha256:<64 hex digits>, a :tag before it is fine) and a change asks for a fresh authenticator code; the environment file may name a tag. Applies to the next session."},
+	{Key: KeyDBProxyImage, Category: "Databases", Title: "Relay image", Type: TypeString, Default: DefaultDBProxyImage(), EnvVar: "ZANSKAR_DBPROXY_IMAGE", StepUp: true,
+		Description: "The gateway's own image, started beside each MySQL or MariaDB session as the credential-holding relay (zanskar dbproxy) and beside each application session as the forwarder (zanskar apprelay). Change it only to pin a mirror or test a local build. The relay receives the database credential, so the console accepts only an image pinned by digest (registry/repository@sha256:<64 hex digits>, a :tag before it is fine) and a change asks for a fresh authenticator code; the environment file may name a tag. Applies to the next session."},
+	{Key: KeyBrowserImage, Category: "Applications", Title: "Browser image", Type: TypeString, Default: DefaultBrowserImage(), EnvVar: "ZANSKAR_BROWSER_IMAGE", StepUp: true,
+		Description: "Container image an application opens in: Chromium behind a VNC server, started beside each application session and destroyed with it. The browser sees the application's pages, so the console accepts only an image pinned by digest and a change asks for a fresh authenticator code; the environment file may name a tag. Applies to the next session."},
 }
 
 // Lookup returns the definition for key.
@@ -256,7 +271,7 @@ func Validate(d Definition, value string) (string, error) {
 		}
 		// The relay image is an argument of `docker run`; free text there
 		// could be read as one of its flags (--privileged, a host mount).
-		if d.Key == KeyDBProxyImage {
+		if d.Key == KeyDBProxyImage || d.Key == KeyBrowserImage {
 			if err := checkImageRef(v); err != nil {
 				return "", fmt.Errorf("%w: %s %w", ErrInvalid, d.Key, err)
 			}

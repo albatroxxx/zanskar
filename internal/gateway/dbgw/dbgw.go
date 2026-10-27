@@ -19,9 +19,6 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
-	"os"
-	"os/exec"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -31,6 +28,7 @@ import (
 	"github.com/creack/pty"
 
 	"github.com/albatroxxx/zanskar/internal/gateway"
+	"github.com/albatroxxx/zanskar/internal/gateway/containers"
 	"github.com/albatroxxx/zanskar/internal/gateway/mysqlrelay"
 	"github.com/albatroxxx/zanskar/internal/protocol"
 	"github.com/albatroxxx/zanskar/internal/recording"
@@ -111,41 +109,6 @@ func names(sessionID string) (network, proxy, client string) {
 	return "zanskar-net-" + sessionID, "zanskar-dbproxy-" + sessionID, "zanskar-dbcli-" + sessionID
 }
 
-// labels marks a Docker object as this gateway's and names its session, so
-// Reap finds leftovers by label and never by guessing names.
-func labels(sessionID string) []string {
-	return []string{"--label", labelManaged + "=1", "--label", labelSession + "=" + sessionID}
-}
-
-// podman reports whether the container CLI is Podman, whose default network
-// is named after it and whose bridge driver knows no Docker options. Not
-// verified against a Podman host.
-func podman(docker string) bool { return filepath.Base(docker) == "podman" }
-
-// egressNetwork is the runtime's default bridge network, the one with a
-// route out, which the proxy alone is attached to.
-func egressNetwork(docker string) string {
-	if podman(docker) {
-		return "podman"
-	}
-	return "bridge"
-}
-
-// networkArgs builds `docker network create` for a session network:
-// internal, so no route leads out of it and the client container reaches
-// nothing but the proxy, and (isolated, Docker 28.1 and newer) in the
-// isolated gateway mode, so the bridge carries no address of the gateway
-// host either and the host's own listeners are out of reach too. The labels
-// let Reap find it.
-func networkArgs(sessionID, network string, isolated bool) []string {
-	args := []string{"network", "create", "--internal"}
-	if isolated {
-		args = append(args, "-o", "com.docker.network.bridge.gateway_mode_ipv4=isolated")
-	}
-	args = append(args, labels(sessionID)...)
-	return append(args, network)
-}
-
 // proxyScript materialises the pgbouncer config from the sidecar's own
 // environment and execs pgbouncer. Writing the config in-container keeps the
 // upstream credential out of the host argument vector (it rides PGB_INI in the
@@ -222,7 +185,7 @@ func proxyArgs(s Spec, network, name string) (args []string, env []string, err e
 	}
 	// Trust ignores the client password, but the connecting user must be listed.
 	userlist := fmt.Sprintf("%q %q\n", s.Username, "x")
-	args = append([]string{"run", "-d", "--rm", "--name", name, "--network", network}, labels(s.SessionID)...)
+	args = append([]string{"run", "-d", "--rm", "--name", name, "--network", network}, containers.Labels(s.SessionID)...)
 	args = append(args,
 		"--security-opt", "no-new-privileges", "--cap-drop", "ALL",
 		"--pids-limit", "64", "--memory", "128m",
@@ -251,7 +214,7 @@ func mysqlProxyArgs(s Spec, img, network, name string) (args []string, env []str
 	if err != nil {
 		return nil, nil, err
 	}
-	args = append([]string{"run", "-d", "--rm", "--name", name, "--network", network}, labels(s.SessionID)...)
+	args = append([]string{"run", "-d", "--rm", "--name", name, "--network", network}, containers.Labels(s.SessionID)...)
 	args = append(args,
 		"--security-opt", "no-new-privileges", "--cap-drop", "ALL", "--read-only",
 		"--pids-limit", "64", "--memory", "128m",
@@ -268,7 +231,7 @@ func clientArgs(s Spec, network, name, proxyHost string) ([]string, error) {
 	if img == "" {
 		return nil, fmt.Errorf("dbgw: unsupported engine %q", s.Engine)
 	}
-	args := append([]string{"run", "--rm", "-i", "-t", "--name", name, "--network", network}, labels(s.SessionID)...)
+	args := append([]string{"run", "--rm", "-i", "-t", "--name", name, "--network", network}, containers.Labels(s.SessionID)...)
 	args = append(args,
 		"--security-opt", "no-new-privileges", "--cap-drop", "ALL", "--read-only",
 		"--pids-limit", "256", "--memory", "512m", "--cpus", "1",
@@ -323,58 +286,6 @@ type Limits struct {
 	tick      time.Duration
 }
 
-// childEnvVars are the only variables a docker (or podman) child takes from
-// the gateway's environment: where to find programs, the home directory its
-// configuration lives under, and the settings that say which daemon to talk
-// to and how. The gateway's environment can hold the master key, the database
-// DSN, the SIEM webhook secret and cloud credentials, and a child is handed
-// whatever it is given, so it is given this list and nothing else. The Podman
-// names (runtime directory, connection) are not verified against a Podman host.
-var childEnvVars = []string{
-	"PATH", "HOME",
-	"DOCKER_HOST", "DOCKER_CONTEXT", "DOCKER_CONFIG", "DOCKER_CERT_PATH", "DOCKER_TLS_VERIFY", "DOCKER_TLS", "DOCKER_API_VERSION",
-	"XDG_RUNTIME_DIR", "CONTAINER_HOST", "CONTAINER_CONNECTION", "CONTAINERS_CONF",
-}
-
-// childEnv builds a docker child's environment: those of childEnvVars that
-// are set, then extra, a session's own variables (the proxy's configuration,
-// which `docker run -e NAME` reads from here). It is never nil: exec.Cmd
-// takes a nil Env to mean the gateway's whole environment.
-func childEnv(extra []string) []string {
-	env := make([]string, 0, len(childEnvVars)+len(extra))
-	for _, k := range childEnvVars {
-		if v, ok := os.LookupEnv(k); ok {
-			env = append(env, k+"="+v)
-		}
-	}
-	return append(env, extra...)
-}
-
-// dockerCommand is every docker child the gateway starts: the CLI with args,
-// bound to ctx, in the environment childEnv builds.
-func dockerCommand(ctx context.Context, docker string, extra []string, args ...string) *exec.Cmd {
-	cmd := exec.CommandContext(ctx, docker, args...) // #nosec G204 G702 -- args built from fixed literals and validated fields (a stored, validated target), no shell
-	cmd.Env = childEnv(extra)
-	return cmd
-}
-
-// dockerOutput runs a short docker command (network create, container start,
-// a listing, teardown) with an optional extra environment, bounded by the
-// context, and returns its combined output.
-func dockerOutput(ctx context.Context, docker string, env []string, args ...string) (string, error) {
-	out, err := dockerCommand(ctx, docker, env, args...).CombinedOutput()
-	if err != nil {
-		return string(out), fmt.Errorf("docker %s: %w: %s", args[0], err, string(out))
-	}
-	return string(out), nil
-}
-
-// dockerRun is dockerOutput for a command whose output does not matter.
-func dockerRun(ctx context.Context, docker string, env []string, args ...string) error {
-	_, err := dockerOutput(ctx, docker, env, args...)
-	return err
-}
-
 // Bridge sets up the per-session network + proxy sidecar, runs the client under
 // a pty, and pumps it to the WebSocket until one side ends, returning the end
 // reason. docker is the path to the docker CLI; rec may be nil. Once the
@@ -404,11 +315,11 @@ func Bridge(ctx context.Context, log *slog.Logger, docker string, spec Spec, ws 
 	// A daemon that refuses the isolated gateway mode (Docker 28.0) gets a
 	// plain internal network, which still confines egress; one that does not
 	// know the option (older) ignores it. Podman is not offered it.
-	isolated := !podman(docker)
-	err := dockerRun(suCtx, docker, nil, networkArgs(spec.SessionID, network, isolated)...)
+	isolated := !containers.Podman(docker)
+	err := containers.Run(suCtx, docker, nil, containers.NetworkArgs(spec.SessionID, network, isolated)...)
 	if err != nil && isolated {
 		log.Warn("session network without the isolated gateway mode: the gateway host's own address stays reachable from the client container (Docker 28.1 or newer fixes this)", "session", spec.SessionID, "err", err)
-		err = dockerRun(suCtx, docker, nil, networkArgs(spec.SessionID, network, false)...)
+		err = containers.Run(suCtx, docker, nil, containers.NetworkArgs(spec.SessionID, network, false)...)
 	}
 	if err != nil {
 		return "error", err
@@ -416,26 +327,26 @@ func Bridge(ctx context.Context, log *slog.Logger, docker string, spec Spec, ws 
 	defer func() {
 		tdCtx, cancel := context.WithTimeout(detached, 15*time.Second)
 		defer cancel()
-		_ = dockerRun(tdCtx, docker, nil, "network", "rm", network)
+		_ = containers.Run(tdCtx, docker, nil, "network", "rm", network)
 	}()
 
 	pargs, penv, err := proxyArgs(spec, network, proxy)
 	if err != nil {
 		return "error", err
 	}
-	if err := dockerRun(suCtx, docker, penv, pargs...); err != nil {
+	if err := containers.Run(suCtx, docker, penv, pargs...); err != nil {
 		return "error", fmt.Errorf("dbgw: start proxy: %w", err)
 	}
 	defer func() {
 		tdCtx, cancel := context.WithTimeout(detached, 15*time.Second)
 		defer cancel()
-		_ = dockerRun(tdCtx, docker, nil, "rm", "-f", proxy)
+		_ = containers.Run(tdCtx, docker, nil, "rm", "-f", proxy)
 	}()
 	// Only the proxy gets a way out: the runtime's default bridge, through
 	// which it reaches the upstream database (it dials only when the client
 	// connects, so attaching after start is in time). The client stays on
 	// the internal network, where the proxy is all there is.
-	if err := dockerRun(suCtx, docker, nil, "network", "connect", egressNetwork(docker), proxy); err != nil {
+	if err := containers.Run(suCtx, docker, nil, "network", "connect", containers.EgressNetwork(docker), proxy); err != nil {
 		return "error", fmt.Errorf("dbgw: proxy egress: %w", err)
 	}
 
@@ -443,7 +354,7 @@ func Bridge(ctx context.Context, log *slog.Logger, docker string, spec Spec, ws 
 	if err != nil {
 		return "error", err
 	}
-	cmd := dockerCommand(ctx, docker, nil, cargs...)
+	cmd := containers.Command(ctx, docker, nil, cargs...)
 	f, err := pty.StartWithSize(cmd, &pty.Winsize{Cols: uint16(cols), Rows: uint16(rows)})
 	if err != nil {
 		return "error", fmt.Errorf("dbgw: start client: %w", err)
@@ -452,7 +363,7 @@ func Bridge(ctx context.Context, log *slog.Logger, docker string, spec Spec, ws 
 	defer func() {
 		tdCtx, cancel := context.WithTimeout(detached, 15*time.Second)
 		defer cancel()
-		_ = dockerRun(tdCtx, docker, nil, "rm", "-f", client)
+		_ = containers.Run(tdCtx, docker, nil, "rm", "-f", client)
 	}()
 
 	// The client was started under the session's own context, and a

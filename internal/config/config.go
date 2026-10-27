@@ -63,6 +63,10 @@ type Config struct {
 	// once (ADR 0017), each being two containers and a network on this host;
 	// 0 lifts the cap. A connection past it is refused with 503.
 	DatabaseMaxSessions int
+	// AppsMaxSessions caps the application sessions this gateway runs at
+	// once (ADR 0034), each a browser, a relay and a network on this host;
+	// 0 lifts the cap. A connection past it is refused with 503.
+	AppsMaxSessions int
 	// TrustProxyTLS marks cookies Secure when TLS terminates in front of a
 	// loopback-bound Zanskar. Never set it when clients reach Zanskar over
 	// plain HTTP.
@@ -318,6 +322,11 @@ func Load(opts Options) (*Config, error) {
 		errs = append(errs, errors.New("ZANSKAR_DATABASE_MAX_SESSIONS must be a whole number of sessions, 0 for no cap"))
 	} else {
 		c.DatabaseMaxSessions = n
+	}
+	if n, err := strconv.Atoi(envOr("ZANSKAR_APPS_MAX_SESSIONS", "10")); err != nil || n < 0 {
+		errs = append(errs, errors.New("ZANSKAR_APPS_MAX_SESSIONS must be a whole number of sessions, 0 for no cap"))
+	} else {
+		c.AppsMaxSessions = n
 	}
 	switch c.LogLevel {
 	case "debug", "info", "warn", "error":

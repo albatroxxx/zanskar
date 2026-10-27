@@ -78,6 +78,13 @@ type Handler struct {
 	// normally the gateway's own; a function so the runtime setting applies
 	// to the next session.
 	DBProxyImage func() string
+	// AppsMaxSessions caps the application sessions running at once
+	// (ADR 0034), each a browser container; 0 lifts the cap. BrowserImage
+	// returns the image the browser runs in; StateDir is where the browser's
+	// seccomp profile is written for the daemon.
+	AppsMaxSessions int
+	BrowserImage    func() string
+	StateDir        string
 	// ASGs and Cloud enable autoscaling-group targets and EC2 Instance Connect.
 	ASGs  *asg.Repo
 	Cloud asg.ProviderFactory

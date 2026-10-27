@@ -48,11 +48,17 @@ jobs:
       - run: go mod verify
       - run: go vet ./...
       - run: go build -trimpath -tags webui ./...
+      - name: Build the browser image for the application session test
+        # The image an application opens in (ADR 0034), built from
+        # deploy/browser as the release builds it; the end-to-end test below
+        # starts it beside a real guacd and reads the pixels it draws.
+        run: docker build -t zanskar-browser:ci deploy/browser
       - name: Test (SQLite and PostgreSQL)
         env:
           ZANSKAR_TEST_POSTGRES_DSN: postgres://zanskar:zanskar@localhost:5432/zanskar_test?sslmode=disable
           # Database-session tests start real containers (the runner has Docker).
           ZANSKAR_TEST_DOCKER: "1"
+          ZANSKAR_TEST_BROWSER_IMAGE: zanskar-browser:ci
         # Every package's tests run; coverage is measured over the gateway's own
         # code. hack/ holds test tools (fakessh, wsclient) that no release builds.
         run: |
