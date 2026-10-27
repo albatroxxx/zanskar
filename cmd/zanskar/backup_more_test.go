@@ -104,7 +104,7 @@ func TestBackupRecordingsElsewhere(t *testing.T) {
 		t.Setenv("ZANSKAR_RECORDINGS_S3_REGION", "us-east-1")
 		archive := filepath.Join(t.TempDir(), "s3.tar.gz")
 		out, _, err := output(t, func() error { return runBackup([]string{"-out", archive}) })
-		if err != nil || !strings.Contains(out, "Recordings are in S3 and were not copied") || !strings.Contains(out, "NOT in this archive") {
+		if err != nil || !strings.Contains(out, "Recordings are in S3 and were not copied") || !strings.Contains(out, "NOT in this archive") || strings.Contains(out, "in clear") {
 			t.Fatalf("backup: %v\n%s", err, out)
 		}
 		files := readTarGz(t, archive)
@@ -134,7 +134,7 @@ func TestBackupRecordingsElsewhere(t *testing.T) {
 		t.Setenv("ZANSKAR_RECORDINGS_DIR", filepath.Join(g.dir, "no-such-dir"))
 		archive := filepath.Join(t.TempDir(), "none.tar.gz")
 		out, _, err := output(t, func() error { return runBackup([]string{"-out", archive}) })
-		if err != nil || !strings.Contains(out, "No local recordings directory was found") {
+		if err != nil || !strings.Contains(out, "No local recordings directory was found") || strings.Contains(out, "in clear") {
 			t.Fatalf("backup: %v\n%s", err, out)
 		}
 		var man backupManifest

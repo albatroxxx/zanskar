@@ -159,7 +159,8 @@ func TestBackupAndRestore(t *testing.T) {
 	}
 
 	archive := filepath.Join(g.dir, "backup.tar.gz")
-	if out, _, err := output(t, func() error { return runBackup([]string{"-out", archive}) }); err != nil || !strings.Contains(out, "NOT in this archive") {
+	if out, _, err := output(t, func() error { return runBackup([]string{"-out", archive}) }); err != nil || !strings.Contains(out, "NOT in this archive") ||
+		!strings.Contains(out, "recordings are in this archive in clear") {
 		t.Fatalf("backup: %v\n%s", err, out)
 	}
 

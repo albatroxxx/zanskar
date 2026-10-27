@@ -63,6 +63,18 @@ for runtime ones; the database holds only what an administrator changed afterwar
   the requirement can be reset to the install-time value in one click; deployments that
   must keep it fixed should watch for `settings.update` on `auth.require_mfa` in the
   SIEM feed.
+- The guacd address is now chosen over HTTP as well, and the vaulted RDP or VNC password
+  goes to whatever it names, in clear over guacd's own protocol (`internal/connect/desktop.go`
+  dials it at each desktop session; the metrics endpoint dials it on each poll to report
+  reachability). The same holds for `database.proxy_image` (ADR 0017 addendum), the image
+  that receives a vaulted database credential in its environment. An administrator, or a
+  stolen administrator session, can therefore receive a credential rather than a session,
+  which is residual risk 7 in the threat model (2026-10-26 review, S3-3). The change is
+  audited like any other setting; alert on `settings.update` for these two keys. Not
+  decided yet: whether to make them install-time again, as `ZANSKAR_CONSOLE_CLI` is, or to
+  bound them (a loopback or private address plus a five-minute authenticator step-up for
+  the guacd address, a digest-pinned image under `ghcr.io/albatroxxx/zanskar` by default for
+  the proxy image), and to give the metrics dial the prober's refused-address rules.
 - A setting is either applied live or it needs a restart; the panel says which, so
   "save and hope" goes away. A boot setting sent to the runtime API is refused with the
   variable to edit instead.

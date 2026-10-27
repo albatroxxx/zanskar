@@ -47,7 +47,7 @@ requires it. That fact drives the network isolation requirement on guacd in sect
 | 2 | Vaulted target credentials and their DEKs | Direct access to every enrolled machine. | Database, as AES-256-GCM ciphertext plus wrapped DEK. |
 | 3 | ASG role credentials (role ARN, ExternalId, temporary STS credentials) | Lets an attacker enumerate and, with Instance Connect, reach cloud instances. | Database (ARN, ExternalId encrypted); STS credentials in memory only. |
 | 4 | Auth session tokens | Impersonate a logged-in user or admin without knowing their password. | Browser cookie; SHA-256 hash in database. |
-| 5 | Session recordings | Contain everything typed and shown, including secrets users paste into shells. | Object storage or local disk, encrypted. |
+| 5 | Session recordings | Contain everything typed and shown, including secrets users paste into shells. | Local disk, as `0600` files in a `0700` directory owned by the service, or an S3 bucket with server-side encryption (the configured KMS key, else SSE-S3). The gateway does not encrypt them itself; a backup archive carries local recordings in clear. |
 | 6 | Audit log | Evidence for investigations and compliance. Tampering hides intrusions. | Database, hash-chained, with external anchors. |
 | 7 | Policy and target configuration | Editing a policy grants access; editing a target address redirects a user to a hostile host. | Database. |
 | 8 | User directory and MFA secrets | TOTP secrets allow MFA bypass; password hashes enable offline cracking. | Database, TOTP secrets encrypted, passwords hashed with Argon2id. |
@@ -70,7 +70,7 @@ requires it. That fact drives the network isolation requirement on guacd in sect
 
 | Category | Threat | Mitigation |
 |---|---|---|
-| Spoofing | Credential stuffing and password spraying against the login endpoint | Argon2id hashing, per-account and per-IP rate limiting, progressive lockout, mandatory MFA for admin and auditor, MFA available to all |
+| Spoofing | Credential stuffing and password spraying against the login endpoint | Argon2id hashing, per-account and per-IP rate limiting, a fifteen-minute lock after five failed sign-ins, an authenticator required of every account, local or from a provider, while `auth.require_mfa` is on (the default; a runtime setting, each change audited) and required per policy for a target |
 | Spoofing | Stolen session cookie reused from another machine | Opaque 256-bit random tokens stored hashed, `Secure`, `HttpOnly`, `SameSite=Strict`, the `__Host-` prefix on HTTPS deployments so a sibling subdomain cannot plant one, absolute and idle expiry, a new sign-in ends the session the browser held before, binding to the originating IP range is optional per deployment |
 | Spoofing | Phishing or shoulder-surfing of TOTP codes | A code works once: the gateway keeps the last accepted 30-second step per user and refuses that step and every earlier one (RFC 6238 section 5.2), so a code read over a shoulder or a screen share cannot be replayed inside its window; a reused code is audited as such. A real-time phishing proxy can still relay a fresh code; WebAuthn, the phishing-resistant factor, is planned (roadmap phase 4) and not yet built |
 | Tampering | Cross-site request forgery against state-changing endpoints | CSRF token on every non-GET request, `SameSite=Strict`, `Origin` header verification on WebSocket upgrade |
@@ -122,7 +122,7 @@ requires it. That fact drives the network isolation requirement on guacd in sect
 | Category | Threat | Mitigation |
 |---|---|---|
 | Tampering | Recording modified after the fact | SHA-256 of each recording stored in the audit chain at session end; verification on playback |
-| Information disclosure | Bucket misconfiguration exposes recordings | Recordings encrypted client-side by the gateway before upload; bucket policy guidance requires private ACLs and server-side encryption in addition |
+| Information disclosure | Bucket misconfiguration exposes recordings | Objects are written with server-side encryption (the configured KMS key, else SSE-S3) and the deployment guidance requires a private bucket; the gateway does not encrypt recordings itself, so the bucket policy and the key policy are the control. The SHA-256 in the audit chain detects alteration, not exposure |
 | Repudiation | Auditor views a recording without a trace | Every playback request produces an audit event naming the auditor and the recording |
 
 ### TB6 Gateway and AWS APIs
@@ -163,7 +163,7 @@ threat model update in the same change.
 | Control | Detail | Threats addressed |
 |---|---|---|
 | Argon2id password hashing | Parameters at or above OWASP recommendation, per-user salt, constant-time comparison | A1 credential stuffing, offline cracking after a database leak |
-| TOTP MFA, each code accepted once | Required for `admin` and `auditor`, available to `user`, enforceable by policy; WebAuthn planned | A1, phishing, code replay |
+| TOTP MFA, each code accepted once | Required of every account, local, OIDC or LDAP alike, while `auth.require_mfa` is on (the default; a runtime setting an administrator can change, audited with the previous value), not per role; required per policy for a target; WebAuthn planned | A1, phishing, code replay |
 | Envelope encryption | Per-secret DEK, AES-256-GCM, DEKs wrapped by a KEK from a local master key, AWS KMS, or Vault Transit. See ADR 0007 | Database leak, backup leak |
 | Hash-chained audit log | SHA-256 chain over canonical JSON, append-only, external anchors. See ADR 0008 | A3 track covering, database tampering |
 | Host key and certificate pinning | TOFU at enrollment, admin approval, change blocks connections | A4, A6 |
@@ -175,7 +175,7 @@ threat model update in the same change.
 | Confined console command line | Fixed command table dispatched through the API's own routes and checks; no shell, no host operations, no secrets as arguments; fresh authenticator code to open; every line audited. See ADR 0027 | Stolen admin session, A3 track covering |
 | Guarded host actions | Reboot, power off and update only from a systemd host, each on an authenticator code proved in the last five minutes and the hostname typed back, audited before it runs; a polkit rule for the logind reboot and power-off actions only, the install done by a root-owned unit from a request file, never by the web process. See ADR 0032 | Stolen admin session, A3 |
 | Identity-aware proxy isolation | Applications on a domain of their own, host-only `__Host-` cookies, a one-use hand-off code bound to sign-in, application, state and address, identity headers stripped, upstream addresses checked at every dial. See ADR 0033 | TB8 |
-| Rate limiting and lockout | Per-account and per-IP limits on login, MFA and connect; progressive lockout with admin unlock | A1 |
+| Rate limiting and lockout | Per-account and per-IP limits on login, MFA and connect; a fixed lock of fifteen minutes after five failed sign-ins, which clears with time or when an administrator resets the password (that also signs the account out everywhere); there is no separate unlock | A1 |
 | No secrets in logs | Structured logging with a redaction layer; credentials, tokens, and MFA secrets are typed so they cannot be formatted by accident | Log leakage |
 | Memory hygiene | Plaintext credentials held in byte slices that are zeroed after use; no plaintext in long-lived structs | Memory disclosure |
 | Signed releases with SBOM and provenance | Checksums and images signed with cosign; from 1.2.1 an SPDX SBOM per archive and SLSA level 3 build provenance for every release file (1.0.0 and 1.2.0 were signed but carried neither); dependency scanning in CI, `go mod verify` | A7 |
@@ -197,10 +197,22 @@ We state these plainly so that deployers can decide whether to accept them.
    memory-reading attacker on the gateway host would see it. We zero the buffer after use and
    never persist it.
 4. **Recordings capture secrets users type.** A recording is as sensitive as the session was. We
-   encrypt recordings and audit every view, but auditors can still see pasted secrets.
+   hash every recording into the audit chain, keep it as an owner-only file or under the bucket's
+   server-side encryption, and audit every view, but auditors can still see pasted secrets, and the
+   gateway does not encrypt recordings itself: a disk image or a backup archive holds them in clear.
 5. **VNC without TLS is not confidential.** We flag it in the UI and let policy forbid it, but we
    do not refuse it outright because many lab environments rely on it.
 6. **Availability of the health pool depends on AWS API quotas.** Stale data is shown as stale.
+7. **Two runtime settings choose where vaulted secrets go.** `desktop.guacd_addr` names the guacd
+   the gateway hands the vaulted RDP or VNC password to, in clear over guacd's own protocol, and
+   `database.proxy_image` names the image that receives a vaulted database credential in its
+   environment. Both are set from the console by an administrator (ADR 0020, ADR 0017), so an
+   administrator, or a stolen administrator session, can point them at a host or an image of their
+   own and receive the credential itself, usable outside Zanskar. This is risk 1 with more reach,
+   not a new actor; each change is audited with the previous and the new value as `settings.update`,
+   which a SIEM should alert on for these two keys. Making them install-time again, or bounding them
+   (a private address and a step-up for the guacd address, a digest-pinned image under the project's
+   registry for the proxy) is open; see ADR 0020.
 
 ## 7. Compliance mapping
 
@@ -210,11 +222,11 @@ an attestation.
 | Control | SOC 2 | ISO 27001:2022 Annex A | PCI DSS 4.0 | NIST 800-53 r5 |
 |---|---|---|---|---|
 | Role-based access with separation of duties (admin, auditor, user) | CC6.1, CC6.3 | A.5.15, A.5.18, A.8.2 | 7.2, 7.3 | AC-2, AC-3, AC-6 |
-| Policy-driven access to targets, re-evaluated during sessions | CC6.1, CC6.3 | A.5.15, A.8.3 | 7.2.1, 7.2.2 | AC-3, AC-6 |
-| MFA for privileged roles, available to all | CC6.1 | A.5.17, A.8.5 | 8.4, 8.5 | IA-2(1), IA-2(2) |
+| Policy-driven access to targets, evaluated at connect; a change that withdraws access ends the live sessions it affects (not re-evaluated on a timer) | CC6.1, CC6.3 | A.5.15, A.8.3 | 7.2.1, 7.2.2 | AC-3, AC-6 |
+| MFA required of every account by default (a runtime setting), and per policy for a target | CC6.1 | A.5.17, A.8.5 | 8.4, 8.5 | IA-2(1), IA-2(2) |
 | Argon2id password storage, lockout, password policy | CC6.1 | A.5.17 | 8.3.2, 8.3.4, 8.3.6 | IA-5 |
 | Envelope-encrypted credential vault with key rotation | CC6.1, CC6.6 | A.5.16, A.8.24 | 8.6, 3.5 | IA-5, SC-12, SC-28 |
-| Session recording with integrity hashes | CC7.2 | A.8.15 | 10.2, 10.3 | AU-2, AU-9 |
+| Session recording with integrity hashes (owner-only files or server-side encryption in the bucket; not encrypted by the gateway) | CC7.2 | A.8.15 | 10.2, 10.3 | AU-2, AU-9 |
 | Hash-chained, append-only audit log with external anchors | CC7.2, CC7.3 | A.8.15, A.8.16 | 10.2, 10.3.1, 10.3.2 | AU-2, AU-9, AU-10 |
 | Audited viewing of recordings and audit data | CC6.3, CC7.2 | A.8.15 | 10.3.1 | AU-9(4) |
 | TLS on every external connection, host key and certificate pinning | CC6.7 | A.8.20, A.8.24 | 4.2 | SC-8 |
