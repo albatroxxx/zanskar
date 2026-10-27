@@ -53,7 +53,7 @@ sudo bash -c 'set -a; . /etc/zanskar/env; set +a; \
 sudo systemctl enable --now zanskar
 ```
 
-**RDP and VNC need guacd, which the package does not install.** Start the official
+**RDP, VNC and applications need guacd, which the package does not install.** Start the official
 container on loopback only (guacd is unauthenticated; never publish it wider), then set
 `ZANSKAR_GUACD_ADDR=127.0.0.1:4822` (or pass `-guacd` to `init`) and restart, or set the
 guacd address on the console's Settings page, which applies without a restart (the console
@@ -265,6 +265,12 @@ Run `zanskar migrate` yourself only where you start `serve` some other way. Take
 backup first. On an upgrade the chart stops the old pod before it starts the new one
 (`strategy: Recreate`), so two gateways never run at once; `terminationGracePeriodSeconds`
 gives live sessions a minute to close.
+
+Upgrading to 1.7 from 1.5 or 1.6: migration 0032 drops the apps domain setting, the
+applications certificate and the per-application label, since applications now open in an
+isolated browser (ADR 0034) instead of under an apps domain. Applications enrolled under
+1.5 or 1.6 keep their upstream and work through the browser once the gateway host has guacd
+and a container runtime (see [Applications](#applications)).
 
 ## Backups and key custody
 
@@ -579,77 +585,58 @@ password.
 
 ## Applications
 
-Web applications are reached through the gateway's own reverse proxy (ADR 0033): each is a
-target with an upstream origin, served at `https://<label>.<apps domain>` and granted by
-policies under the protocol `http`. The listener answers both the console and the
-application hosts; it tells them apart by the `Host` header and, with managed or file TLS, by
-the name in the handshake.
+Web applications are opened in a browser that runs beside the gateway, in a container made
+for that session, and streamed to the user as pixels through guacd, the way a VNC desktop is
+(ADR 0034). An application is a target with an upstream (`http://host[:port]` or
+`https://...`), granted by policies under the protocol `http`. No apps domain, no
+certificate, no DNS record, nothing installed on the client.
 
-- **An apps domain of its own.** `apps.example.com` beside a console at
-  `gateway.example.com`: not the console's host and not a parent of it, or the console's own
-  requests would reach the proxy (the setting is refused). Point wildcard DNS for
-  `*.apps.example.com` at the gateway, or at the proxy in front of it.
-- **A wildcard certificate.** With `ZANSKAR_TLS_MODE=managed` or `file`, upload a certificate
-  naming `*.apps.example.com` on the Settings page (TLS certificate, Applications; or `PUT
-  /api/v1/admin/tls/apps`). The gateway serves it to every handshake for a host under the
-  domain and never generates a self-signed one for it. In `proxy` mode the proxy terminates
-  TLS for the application hosts with its own wildcard certificate and must route them to the
-  gateway with the `Host` header intact.
-- **`ZANSKAR_PUBLIC_URL`**, the console's address, so an application host can send a browser
-  back to sign in; applications share its scheme and port.
-- **The setting.** `ZANSKAR_APPS_DOMAIN` in the environment file, or *Apps domain* on the
-  Settings page, which applies live. Until the domain, the public URL and (where the gateway
-  serves TLS) the certificate are in place, enrolling an application is refused with the
-  reason, and the Applications page lists the three prerequisites with their state
-  (`GET /api/v1/admin/applications/readiness`).
-
-### Applications on a network without DNS
-
-A test network often has no DNS to put a wildcard record in, and a gateway reached by its
-address alone (`https://10.1.1.9:8443`) has no name an apps domain can sit under. Two ways
-through, neither of which exposes anything: the names resolve to the private address, and
-the application is reachable only through the gateway.
-
-- **Public DNS for a private address.** `sslip.io` answers `anything.10-1-1-9.sslip.io`
-  with 10.1.1.9 from public DNS, so every client that can resolve public names reaches the
-  gateway by name. With the gateway in managed TLS mode:
-  1. In the environment file, `ZANSKAR_PUBLIC_URL=https://10-1-1-9.sslip.io:8443` (the host
-     must be a name, not the bare address) and `ZANSKAR_TLS_HOSTS=10-1-1-9.sslip.io`, so the
-     console's own certificate carries the name; restart.
-  2. Settings, *Apps domain*: `apps.10-1-1-9.sslip.io`.
-  3. A wildcard certificate for `*.apps.10-1-1-9.sslip.io`. A public CA will not issue one
-     for that name, so make it with a private CA installed on the client machines:
-     `mkcert -install` once per client, then `mkcert "*.apps.10-1-1-9.sslip.io"` and upload
-     the pair under Settings, *TLS certificate*, *Applications*. Any private CA does; the
-     browser suite in `hack/e2e.sh` makes one with `openssl` in six lines.
-  4. Add the application with its upstream, `http://10.1.1.5` for a server on port 80, and
-     a label such as `nginx`; a policy granting `http` on it makes it appear in the user
-     portal, where it opens at `https://nginx.apps.10-1-1-9.sslip.io:8443`.
-- **No public DNS either.** The clients' hosts files cannot express a wildcard, so each
-  application needs its own line on each client (`10.1.1.9 nginx.apps.gateway.test`), plus
-  one for the console host; fine for a demonstration, not for a fleet. Chromium can also be
-  started with `--host-resolver-rules="MAP *.apps.gateway.test 10.1.1.9"`, which is what the
-  browser suite does.
-- **What the proxy does per request.** Checks the application's cookie against the sign-in
-  it came from, the access session's end and the policy's idle and maximum limits; strips
-  every Zanskar cookie and any identity header (`X-Forwarded-User`, `X-Remote-User`, ...);
-  sets `X-Forwarded-For`, `X-Forwarded-Host` and `X-Forwarded-Proto`; keeps
-  `Authorization`; forwards the request to the upstream with the upstream's own host name;
-  rewrites a redirect to the upstream's origin onto the public address; drops `Domain` from
-  the application's cookies and any cookie that takes the gateway's names. WebSockets pass
-  through. Paths under `/_zanskar/` are the gateway's own and are not forwarded.
-- **Upstream TLS** is verified against the system roots or the bundle pasted on the target,
-  never switched off, and every dial resolves the upstream's name through the same address
-  rules as any target: no loopback, link-local, cloud metadata service or the gateway's own
-  listener.
-- **Sessions** are access sessions with protocol `http`: on the Sessions pages, terminable
-  there, ended by a policy change, a sign-out, the sweeper (idle or maximum, once a minute)
-  or a drain, and resumed across a restart. The audit chain records `session.connect` (the
-  decision), `app.session.start` and `app.session.end`; each proxied request is one line in
-  the gateway's log with method, path, status, size and time, never the query string or a
-  body.
-- **Not in this version:** a signed identity header for upstreams that want to trust
-  Zanskar's authentication, a read-only mode, CLI tokens, and the isolated browser.
+- **The gateway host needs guacd and a container runtime.** The guacd address is the one
+  RDP and VNC use (`ZANSKAR_GUACD_ADDR` or the Settings page). The runtime is Docker or
+  Podman reachable by the `zanskar` service user: the same `SupplementaryGroups=docker`
+  drop-in as [database access](#database-access), or `ZANSKAR_DOCKER_PATH=podman`. guacd
+  must be on the runtime's default bridge, which is where the `docker run` above puts it (no
+  `--network` flag); the AWS reference install connects its guacd to the bridge by hand.
+  Until these are in place the Applications page shows a checklist (guacd, container
+  runtime, browser image) and a connect answers 501 `protocol_unavailable`.
+- **Enrolment.** Applications, *Add*: a name, the upstream, an optional CA bundle for an
+  https upstream, and tags; then a policy granting `http` on it. An https upstream is
+  verified by the browser against the system roots or against the bundle, never switched
+  off. The upstream's address follows the same rules as any target: no loopback, link-local,
+  cloud metadata service or the gateway's own listener.
+- **What a session starts.** An internal network with no route out. A browser container,
+  `ghcr.io/albatroxxx/zanskar-browser` (Debian's Chromium and TigerVNC), on that network
+  alone: kiosk mode, an unprivileged user, Chromium's own sandbox on, a read-only filesystem,
+  no capabilities, `no-new-privileges`, pid and memory limits, and a seccomp profile that is
+  Docker's default plus the namespace and chroot calls the sandbox needs. A relay container,
+  the gateway's own image running `zanskar apprelay`, on that network and on the default
+  bridge: it forwards the upstream's port, and only that port, to the resolved upstream
+  address, and exposes the browser's VNC port on the bridge side, where guacd connects to it
+  with a password made for the session; it accepts exactly one VNC connection. The browser's
+  resolver maps the upstream's host name to the relay and everything else to nothing.
+  Chromium policy allows the upstream's origin only and blocks downloads, printing,
+  developer tools, extensions, sign-in, sync, password saving, autofill, safe browsing and
+  metrics. Everything is destroyed when the session ends; a reaper removes what a crash
+  leaves behind.
+- **Sessions** are desktop sessions with protocol `http`: on the Sessions pages, terminable
+  there, shadowable, recorded as a pixel stream and replayable, with the policy's idle and
+  maximum limits and its clipboard rule. The audit chain records `session.connect`,
+  `session.start` and `session.end`, as for a desktop. An application holds no credential:
+  the application's own sign-in, if it has one, is the user's.
+- **Settings.** `apps.browser_image` (`ZANSKAR_BROWSER_IMAGE` in the environment file)
+  names the browser image; the default is the published image at the gateway's version.
+  From the console it takes a digest-pinned reference only, behind a fresh authenticator
+  code, under the same rules as the relay image. `database.proxy_image`, titled *Relay
+  image* on the Settings page, is the gateway's own image and serves both the MySQL relay and
+  the application relay. `ZANSKAR_APPS_MAX_SESSIONS` (default 10) caps open application
+  sessions; a user past it is answered 503 `too_many_sessions` and told to retry.
+- **Cost.** Each open application is a Chromium: about half a gigabyte of memory and a core
+  under load. The cap bounds it.
+- **Not in this version:** resizing after the session opens (the screen is the size the
+  user's window had when they opened it), sound, file upload into the application, and
+  credential autofill from the vault.
+- Not available inside the Compose stack or on Kubernetes, where the gateway container has
+  no container runtime; use the package install, as for database targets.
 
 ## Autoscaling groups on AWS
 

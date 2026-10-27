@@ -113,6 +113,11 @@ that decide where a credential is sent kept runtime but bounded ([ADR 0020](adr/
 threat model risk 7). Applications gain a readiness checklist and a no-DNS recipe. No migration;
 four operator-visible changes ([release notes](releases/v1.6.0.md)).
 
+Next, decided 2026-10-27: v1.7 moves applications to an **isolated browser**. A web
+application opens in a sandboxed Chromium container beside the gateway, streamed through
+guacd and recorded like a desktop; the identity-aware proxy, the apps domain, the wildcard
+certificate and the hand-off go ([ADR 0034](adr/0034-applications-isolated-browser.md)).
+
 ## v1.5 release — shipped (v1.5.0 tagged 2026-10-23)
 
 A feature release, cut after two release candidates (rc.1 2026-10-16 soaked the feature code;

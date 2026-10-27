@@ -33,7 +33,7 @@ opens a protocol connection to the target, and relays the session while recordin
 | TB5 | Gateway and object storage | Recording files and their integrity hashes |
 | TB6 | Gateway and AWS APIs | STS AssumeRole with ExternalId, Describe calls, optional EC2 Instance Connect key push |
 | TB7 | Gateway and identity providers | OIDC tokens, LDAP bind credentials, user attributes and group membership |
-| TB8 | Gateway and web applications | The hand-off code and state, each application's host-only cookie, the request stream the proxy forwards (ADR 0033) |
+| TB8 | The browser container and web applications | The pages an application serves to the sandboxed browser, the browser's VNC stream to guacd through the relay, the clipboard where policy allows it (ADR 0034) |
 
 The gateway is the only component that holds plaintext target credentials, and only for the lifetime
 of a connect handshake. guacd receives plaintext RDP and VNC credentials because the protocol
@@ -143,17 +143,24 @@ requires it. That fact drives the network isolation requirement on guacd in sect
 | Information disclosure | LDAP bind credentials or client secret leaked | Stored as vaulted secrets under envelope encryption; LDAPS or StartTLS required |
 | Tampering | Group membership manipulated at the provider to gain access | Accepted as out of scope: the provider is the source of truth. Group-to-role mapping is admin-controlled inside Zanskar and audited |
 
-### TB8 Gateway and web applications (ADR 0033)
+### TB8 The browser container and web applications (ADR 0034)
+
+An application is opened in a Chromium that runs in a container made for the session, on an
+internal network with no route out, beside a relay that forwards one port to the upstream and
+the browser's VNC port to guacd. The user sees pixels; their own browser never talks to the
+application.
 
 | Category | Threat | Mitigation |
 |---|---|---|
-| Spoofing | A page on one application reads or sets the console's cookie, or another application's | Each application is served at its own host under an apps domain that must differ from the console's host; cookies are host-only with the `__Host-` prefix; an upstream's `Set-Cookie` loses any `Domain` and may not take the gateway's names |
-| Spoofing | A browser is logged into an application as someone else through a planted hand-off link (login CSRF) | The hand-off code is bound to the sign-in, the application, the client address and a state the application host set in that browser's cookie; one use, one minute |
-| Elevation of privilege | A browser sends `X-Forwarded-User` or the like and the application believes it | Identity headers are stripped before the upstream; the application authenticates the person itself |
-| Server-side request forgery | An administrator points an upstream at the metadata service, loopback or the gateway itself | The upstream is an origin only, checked against the address rules when saved, when a session opens and at every dial |
-| Tampering | A hostile upstream sends the browser elsewhere | Only a redirect to the upstream's own origin is rewritten, to the public address; the proxy never follows redirects itself |
-| Information disclosure | The request log captures secrets | One line per request with method, path, status, size and time; never query strings or bodies, and outside the audit chain |
-| Elevation of privilege | Access is withdrawn while a session is open | Every request checks the access session's end; the session sits in the registry, so an administrator's terminate, a policy change, a sign-out or a drain ends it |
+| Elevation of privilege | A hostile page exploits the renderer and takes the browser process | Chromium's own sandbox stays on (a seccomp profile that is Docker's default plus the namespace and chroot calls the sandbox needs); the container is read-only, without capabilities, with `no-new-privileges`, a pid and a memory limit, running an unprivileged user; it is destroyed at session end and a reaper removes what a crash leaves |
+| Information disclosure | A compromised browser reaches the gateway, the database, guacd or the rest of the network | The browser sits on an internal network with no route out; the relay forwards the upstream's port and nothing else; the browser's resolver maps the upstream's host name to the relay and every other name to nothing |
+| Spoofing | A page reads the console's cookie, another application's session, or the user's own browser state | The sandboxed browser holds no Zanskar session and no state from the user's browser; Chromium policy allows the upstream's origin only; nothing of the session outlives the container |
+| Server-side request forgery | An administrator points an upstream at the metadata service, loopback or the gateway itself | The upstream is an origin only, checked against the address rules when saved, when a session opens and when the relay resolves it |
+| Information disclosure | The application is used to pull data off the gateway host or push it to the user's machine | Downloads, printing, developer tools, extensions, sign-in, sync, password saving and autofill are off by Chromium policy, and file upload into the application is not available in this version; the clipboard follows the policy, as for a desktop |
+| Spoofing | A second VNC client attaches to the browser | The VNC password is made for the session and handed only to guacd; the relay accepts exactly one VNC connection |
+| Tampering | A hostile upstream presents a forged certificate | An https upstream is verified against the system roots or the bundle pasted on the target, installed in the browser's store for that session; verification is never switched off |
+| Denial of service | Application sessions exhaust the host | Each browser carries a pid and a memory limit; `ZANSKAR_APPS_MAX_SESSIONS` caps open application sessions |
+| Elevation of privilege | Access is withdrawn while a session is open | The session is a desktop session in the registry: an administrator's terminate, a policy change, a sign-out, the policy's limits or a drain ends it, and the containers go with it |
 
 ## 5. Controls we commit to
 
@@ -174,7 +181,7 @@ threat model update in the same change.
 | CSRF tokens | Double-submit token verified on every state-changing request, `Origin` check on WebSocket upgrade | CSRF |
 | Confined console command line | Fixed command table dispatched through the API's own routes and checks; no shell, no host operations, no secrets as arguments; fresh authenticator code to open; every line audited. See ADR 0027 | Stolen admin session, A3 track covering |
 | Guarded host actions | Reboot, power off and update only from a systemd host, each on an authenticator code proved in the last five minutes and the hostname typed back, audited before it runs; a polkit rule for the logind reboot and power-off actions only, the install done by a root-owned unit from a request file, never by the web process. See ADR 0032 | Stolen admin session, A3 |
-| Identity-aware proxy isolation | Applications on a domain of their own, host-only `__Host-` cookies, a one-use hand-off code bound to sign-in, application, state and address, identity headers stripped, upstream addresses checked at every dial. See ADR 0033 | TB8 |
+| Browser sandbox for applications | Each application session is a disposable Chromium container on an internal network with no route out, reachable by guacd only through a relay that forwards the upstream's one port and takes one VNC connection on a per-session password; Chromium's sandbox on, read-only, no capabilities, `no-new-privileges`, pid and memory limits, a seccomp profile of Docker's default plus the sandbox's calls; policy allows the upstream's origin only; upstream addresses checked at save, open and resolve. See ADR 0034 | TB8 |
 | Rate limiting and lockout | Per-account and per-IP limits on login, MFA and connect; a fixed lock of fifteen minutes after five failed sign-ins, which clears with time or when an administrator resets the password (that also signs the account out everywhere); there is no separate unlock | A1 |
 | No secrets in logs | Structured logging with a redaction layer; credentials, tokens, and MFA secrets are typed so they cannot be formatted by accident | Log leakage |
 | Memory hygiene | Plaintext credentials held in byte slices that are zeroed after use; no plaintext in long-lived structs | Memory disclosure |

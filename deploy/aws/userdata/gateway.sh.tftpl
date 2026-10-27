@@ -29,6 +29,8 @@ docker run -d --name postgres --restart unless-stopped --network zanskar -p 127.
 docker run -d --name guacd --restart unless-stopped --network zanskar -p 127.0.0.1:4822:4822 \
   -e HOME=/tmp --read-only --tmpfs /tmp:size=512m,mode=1777 \
   guacamole/guacd:1.6.0@sha256:8974eaa9ba32f713daf311e7cc8cd7e4cdfba1edea39eed75524e78ef4b08f4f
+# Application sessions reach guacd over the default bridge (ADR 0034).
+docker network connect bridge guacd
 
 MASTER_KEY=$(/usr/local/bin/zanskar keygen)
 %{ if principal_override ~}
