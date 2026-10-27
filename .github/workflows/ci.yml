@@ -94,7 +94,6 @@ jobs:
           cd web && npm ci --ignore-scripts --no-fund --no-audit && npm run build && cd ..
           CGO_ENABLED=0 go build -trimpath -tags webui -o bin/zanskar ./cmd/zanskar
           go build -o bin/fakessh ./hack/fakessh
-          go build -o bin/fakehttp ./hack/fakehttp
       - name: Install Chromium for Playwright
         # The binary from the lockfile's own install, never npx: npx would fetch
         # and run whatever version it resolved (SonarCloud S6505, S8543).
@@ -117,9 +116,7 @@ jobs:
             web/playwright-report
             web/test-results
             ${{ runner.temp }}/e2e/gateway.log
-            ${{ runner.temp }}/e2e/gateway-tls.log
             ${{ runner.temp }}/e2e/fakessh.log
-            ${{ runner.temp }}/e2e/fakehttp.log
           retention-days: 3
 
   lint:

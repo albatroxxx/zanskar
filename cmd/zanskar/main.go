@@ -19,7 +19,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"net/url"
 	"os"
 	"os/signal"
 	"strings"
@@ -27,7 +26,6 @@ import (
 	"time"
 
 	"github.com/albatroxxx/zanskar/internal/access"
-	"github.com/albatroxxx/zanskar/internal/apps"
 	"github.com/albatroxxx/zanskar/internal/asg"
 	"github.com/albatroxxx/zanskar/internal/audit"
 	"github.com/albatroxxx/zanskar/internal/auth"
@@ -256,19 +254,6 @@ func serve(ctx context.Context) error {
 		return target.CheckInternal(ctx, nil, v)
 	})
 	runtime.Check(settings.KeyDBProxyImage, settings.RequireDigest)
-	// The apps domain (ADR 0033) must not hold the console's own host, or
-	// the console's requests would be dispatched to the proxy. Checked when
-	// the console sets it, and once here for a value already stored or in
-	// the environment.
-	appsDomain := func() string { return runtime.String(settings.KeyAppsDomain) }
-	appsDomainCheck := appsDomainChecker(cfg.PublicURL)
-	runtime.Check(settings.KeyAppsDomain, appsDomainCheck)
-	if err := appsDomainCheck(appsDomain()); err != nil {
-		return fmt.Errorf("apps domain %q %w", appsDomain(), err)
-	}
-	if tlsMgr != nil {
-		tlsMgr.AppsDomain = appsDomain
-	}
 
 	csrfKey, err := crypto.DeriveKey(cfg.MasterKey, "zanskar/csrf")
 	if err != nil {
@@ -357,38 +342,22 @@ func serve(ctx context.Context) error {
 	// A sign-in through an identity provider that removes the user from a
 	// mapped group ends what that group granted, as an admin's removal does.
 	provisioner.Revoker = connectHandler
-	// Applications (ADR 0033): the proxy shares the connect flow's admission
-	// gate and registry, lists its applications through /me/targets, and
-	// says when an application may be enrolled.
-	appsHandler := &apps.Handler{Targets: targets, Gate: &access.Gate{Policies: policies, Grants: accessReqs, MFAEnrolled: totp.Enrolled},
-		Sessions: sessionRepo, Auth: sessions, Repo: apps.NewRepo(db), Registry: registry, Audit: auditLog, Log: log, Prober: prober,
-		Domain: appsDomain, PublicURL: cfg.PublicURL, Draining: restarter.Draining}
-	if tlsMgr != nil {
-		appsHandler.TLSReady = tlsMgr.AppsReady
-	}
-	connectHandler.AppURL = appsHandler.URL
-	if err := appsHandler.Resume(ctx); err != nil {
-		return fmt.Errorf("application sessions: %w", err)
-	}
-	go appsHandler.Run(ctx, time.Minute)
 	// The bell (ADR 0032): once a day, is there a newer release? The
 	// runtime setting is read before each check so a switch-off applies live.
 	versionCheck := &update.Checker{URL: cfg.UpdateManifestURL, Current: version.Version, Enabled: func() bool { return runtime.Bool(settings.KeyUpdateCheck) }, Log: log}
 	go versionCheck.Run(ctx)
 	deps := server.Deps{
 		TLS:            tlsMgr,
-		Apps:           appsHandler,
 		AuthMiddleware: &auth.Middleware{Sessions: sessions, Users: users, Log: log},
 		Auth:           authHandler,
 		Handlers: []server.Registrar{
-			appsHandler,
 			&adminapi.AdminHandler{Users: users, Sessions: sessions, TOTP: totp, Revoker: connectHandler, Audit: auditLog, Log: log},
 			&group.AdminHandler{Groups: groups, Revoker: connectHandler, Audit: auditLog, Log: log},
 			&idpadmin.AdminHandler{Providers: idpRepo, Audit: auditLog, Log: log, LDAPTester: &ldap.Authenticator{}},
 			&oidc.Handler{Providers: idpRepo, Provisioner: provisioner, Sessions: sessions, Audit: auditLog, Log: log, StateKey: stateKey, MFAEnrolled: totp.Enrolled, RequireMFA: requireMFA,
 				BaseURL: cfg.PublicURL},
 			&credential.AdminHandler{Vault: vault, Audit: auditLog, Log: log},
-			&target.AdminHandler{Repo: targets, Prober: prober, Policies: policies, Live: registry, Revoker: connectHandler, Vault: vault, AppsReady: appsHandler.Ready, Audit: auditLog, Log: log},
+			&target.AdminHandler{Repo: targets, Prober: prober, Policies: policies, Live: registry, Revoker: connectHandler, Vault: vault, Audit: auditLog, Log: log},
 			&policy.AdminHandler{Repo: policies, Users: users, Revoker: connectHandler, Audit: auditLog, Log: log},
 			&access.Handler{Requests: accessReqs, Policies: policies, Targets: targets, ASGs: asgRepo, Revoker: connectHandler, Audit: auditLog, Log: log},
 			&asg.AdminHandler{Repo: asgRepo, Sync: syncer.SyncGroup, Identity: awsIdentity, Providers: asg.AWSFresh(), Policies: policies, Live: registry, Revoker: connectHandler, Vault: vault, Audit: auditLog, Log: log},
@@ -546,28 +515,6 @@ func runKeygen() error {
 	}
 	fmt.Println(base64.StdEncoding.EncodeToString(key))
 	return nil
-}
-
-// appsDomainChecker returns the rule the apps domain (ADR 0033) must pass
-// beside its shape: it must not be, or be a parent of, the console's own
-// host from ZANSKAR_PUBLIC_URL, or the console's own requests would reach the
-// applications proxy. With no public URL there is nothing to compare, and
-// the proxy is not served anyway (apps.Handler.Ready).
-func appsDomainChecker(publicURL string) func(domain string) error {
-	host := ""
-	if u, err := url.Parse(publicURL); err == nil {
-		host = strings.ToLower(u.Hostname())
-	}
-	return func(domain string) error {
-		domain = strings.ToLower(strings.TrimSpace(domain))
-		if domain == "" || host == "" {
-			return nil
-		}
-		if host == domain || strings.HasSuffix(host, "."+domain) {
-			return fmt.Errorf("holds the console's own host %s; applications must live under a domain of their own, such as apps.%s", host, host)
-		}
-		return nil
-	}
 }
 
 // dbFileForMetrics is the file behind a SQLite DSN, for the disk-space

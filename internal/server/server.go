@@ -40,16 +40,6 @@ type Registrar interface {
 	Register(mux *http.ServeMux)
 }
 
-// AppHost is the listener's second personality, served by host (ADR 0033):
-// the applications proxy. Its traffic never passes the console's
-// middlewares, since the console's cookie, CSRF rule and security headers
-// are not for an application's pages; it gets the ones every request gets.
-type AppHost interface {
-	http.Handler
-	// Serves reports whether a request's Host header names an application.
-	Serves(host string) bool
-}
-
 // Deps are the domain handlers the server mounts. Nil fields are skipped,
 // which keeps the system routes testable on their own.
 type Deps struct {
@@ -60,8 +50,6 @@ type Deps struct {
 	// upload in the console, the ZANSKAR_TLS_CERT files, or the self-signed
 	// one, so an upload applies without a restart. Nil in proxy mode.
 	TLS *tlscert.Manager
-	// Apps serves the application hosts; nil serves none.
-	Apps AppHost
 }
 
 // New builds a Server with the system routes and the given handlers registered.
@@ -86,16 +74,12 @@ func New(cfg *config.Config, db *store.DB, log *slog.Logger, deps Deps) *Server 
 	// The request id comes first, so even a recovered panic answers and logs
 	// with it. RealIP runs before accessLog and the handlers so the forwarded
 	// client address, not the proxy's, reaches the log and every audit row.
-	// Those three are for every request; the rest are the console's, and an
-	// application host is dispatched past them.
+	// Those three are for every request; the rest are the console's.
 	console := []middleware{s.securityHeaders, s.accessLog}
 	if deps.AuthMiddleware != nil {
 		console = append(console, deps.AuthMiddleware.Authenticate, deps.AuthMiddleware.CSRF)
 	}
 	root := chain(mux, console...)
-	if deps.Apps != nil {
-		root = dispatch(deps.Apps, root)
-	}
 
 	s.http = &http.Server{
 		Addr:              cfg.ListenAddr,
@@ -112,23 +96,11 @@ func New(cfg *config.Config, db *store.DB, log *slog.Logger, deps Deps) *Server 
 	if cfg.ServesTLS() && cfg.RedirectAddr != "" {
 		var covered func() []string
 		if deps.TLS != nil {
-			covered = func() []string { return slices.Concat(deps.TLS.Active().Hosts, deps.TLS.AppsHosts()) }
+			covered = func() []string { return deps.TLS.Active().Hosts }
 		}
 		s.redirect = newRedirectServer(cfg.RedirectAddr, cfg.ListenAddr, covered)
 	}
 	return s
-}
-
-// dispatch sends a request to the application host its Host header names,
-// else to the console.
-func dispatch(apps AppHost, console http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if apps.Serves(r.Host) {
-			apps.ServeHTTP(w, r)
-			return
-		}
-		console.ServeHTTP(w, r)
-	})
 }
 
 // ListenAndServe blocks until ctx is cancelled, then shuts down gracefully.

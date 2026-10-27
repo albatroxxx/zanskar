@@ -20,7 +20,7 @@ export ZANSKAR_LISTEN_ADDR=127.0.0.1:$PORT ZANSKAR_REQUIRE_MFA=false ZANSKAR_REC
 export ZANSKAR_MASTER_KEY_FILE= ZANSKAR_TLS_MODE=
 # Applications (ADR 0033) need the console's public address and an apps
 # domain; in proxy mode (no TLS here) no applications certificate is asked for.
-export ZANSKAR_PUBLIC_URL=https://gateway.example.com ZANSKAR_APPS_DOMAIN=apps.example.com
+export ZANSKAR_PUBLIC_URL=https://gateway.example.com
 ./bin/zanskar migrate >/dev/null 2>&1
 ZANSKAR_ADMIN_PASSWORD='screenshot admin passphrase' ./bin/zanskar admin create --username admin --name "Priya Nair" >/dev/null # gitleaks:allow -- a made-up account on a throwaway gateway
 export ZANSKAR_MASTER_KEY=$(./bin/zanskar keygen)

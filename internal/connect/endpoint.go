@@ -40,6 +40,9 @@ type endpoint struct {
 	DatabaseName  string
 	TLSMode       string
 	TLSCA         string
+	// AppUpstream is an application's one origin (ADR 0034); set, the
+	// endpoint is opened in an isolated browser rather than dialled.
+	AppUpstream string
 
 	// Exactly one of TargetID or (ASGID, ASGInstanceID) is set.
 	TargetID      string
@@ -75,7 +78,7 @@ func (e *endpoint) policyRef() (id, asgID string, tags map[string]string) {
 func fromTarget(t *target.Target) *endpoint {
 	e := &endpoint{Name: t.Name, Address: t.Address, Ports: t.Ports, Tags: t.Tags, Credentials: t.Credentials,
 		HostKeyTrusted: t.HostKeyStatus == target.HostKeyTrusted, Active: t.Status == "active", TargetID: t.ID, LiveKey: t.ID,
-		Engine: t.Engine, EngineVersion: t.EngineVersion, DatabaseName: t.DatabaseName, TLSMode: t.TLSMode, TLSCA: t.TLSCA}
+		Engine: t.Engine, EngineVersion: t.EngineVersion, DatabaseName: t.DatabaseName, TLSMode: t.TLSMode, TLSCA: t.TLSCA, AppUpstream: t.AppUpstream}
 	if t.RetentionDays != nil {
 		e.RetentionDays = *t.RetentionDays
 	}

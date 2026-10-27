@@ -61,7 +61,8 @@ func (h *ShadowHandler) shadow(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case protocol.Terminal(live.Protocol):
 		h.shadowTerminal(w, r, live, actor, details)
-	case protocol.Desktop(live.Protocol):
+	case protocol.Desktop(live.Protocol), live.Protocol == protocol.HTTP:
+		// An application session (ADR 0034) is drawn through guacd too.
 		h.shadowDesktop(w, r, live, actor, details)
 	default:
 		httpx.WriteError(w, r, http.StatusBadRequest, "bad_request", "protocol cannot be shadowed")

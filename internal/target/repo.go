@@ -25,7 +25,7 @@ func NewRepo(db *store.DB) *Repo { return &Repo{db: db} }
 const cols = `id, name, address, os_family, ports, capabilities, host_key_fingerprint, host_key_status,
 	tls_fingerprint, tags, status, notes, created_by, created_at, updated_at, last_probed_at, winrm_tls_fingerprint,
 	engine, engine_version, retention_days, database_name, tls_mode, tls_ca, tls_fingerprint_pending, winrm_tls_fingerprint_pending,
-	app_upstream, app_label`
+	app_upstream`
 
 // Create validates and inserts t, including its credential mapping.
 func (r *Repo) Create(ctx context.Context, t *Target) error {
@@ -44,15 +44,12 @@ func (r *Repo) Create(ctx context.Context, t *Target) error {
 		return err
 	}
 	defer tx.Rollback() //nolint:errcheck
-	if err := labelFree(ctx, tx, r.db, t); err != nil {
-		return err
-	}
 	_, err = tx.ExecContext(ctx, r.db.Rebind(`INSERT INTO targets
-		(id, name, address, os_family, ports, capabilities, host_key_status, tags, status, notes, created_by, created_at, updated_at, engine, engine_version, retention_days, database_name, tls_mode, tls_ca, app_upstream, app_label)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`),
+		(id, name, address, os_family, ports, capabilities, host_key_status, tags, status, notes, created_by, created_at, updated_at, engine, engine_version, retention_days, database_name, tls_mode, tls_ca, app_upstream)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`),
 		t.ID, t.Name, t.Address, string(t.OSFamily), ports, capsJSON, string(HostKeyUnknown), tags, t.Status, t.Notes,
 		nullStr(t.CreatedBy), store.TimeArg(now), store.TimeArg(now), t.Engine, t.EngineVersion, nullInt(t.RetentionDays), t.DatabaseName, t.TLSMode, t.TLSCA,
-		emptyNull(t.AppUpstream), emptyNull(t.AppLabel))
+		emptyNull(t.AppUpstream))
 	if err != nil {
 		return mapErr(err)
 	}
@@ -70,30 +67,6 @@ func (r *Repo) Get(ctx context.Context, id string) (*Target, error) {
 // GetByName returns a target by name.
 func (r *Repo) GetByName(ctx context.Context, name string) (*Target, error) {
 	return r.getWhere(ctx, "name = ?", name)
-}
-
-// GetByLabel returns the application served under label (ADR 0033).
-func (r *Repo) GetByLabel(ctx context.Context, label string) (*Target, error) {
-	return r.getWhere(ctx, "app_label = ?", label)
-}
-
-// labelFree refuses an application whose label another live application
-// holds (ErrDuplicateLabel), before the partial unique index would, so the
-// administrator is told which field clashes. It reads through tx, on the one
-// connection SQLite has, and scans before anything else runs on it.
-func labelFree(ctx context.Context, tx *sql.Tx, db *store.DB, t *Target) error {
-	if t.AppLabel == "" {
-		return nil
-	}
-	var one int
-	err := tx.QueryRowContext(ctx, db.Rebind(`SELECT 1 FROM targets WHERE deleted_at IS NULL AND app_label = ? AND id <> ? LIMIT 1`), t.AppLabel, t.ID).Scan(&one)
-	switch {
-	case errors.Is(err, sql.ErrNoRows):
-		return nil
-	case err != nil:
-		return err
-	}
-	return ErrDuplicateLabel
 }
 
 // Retired targets (ADR 0019) are invisible to every lookup and listing; only
@@ -294,15 +267,12 @@ func (r *Repo) Update(ctx context.Context, t *Target) error {
 		t.HostKeyFingerprint, t.HostKeyStatus, t.TLSFingerprint, t.WinRMTLSFingerprint, t.LastProbedAt = nil, HostKeyUnknown, nil, nil, nil
 		t.TLSFingerprintPending, t.WinRMTLSFingerprintPending = nil, nil
 	}
-	if err := labelFree(ctx, tx, r.db, t); err != nil {
-		return err
-	}
 	res, err := tx.ExecContext(ctx, r.db.Rebind(`UPDATE targets SET name = ?, address = ?, os_family = ?, ports = ?, capabilities = ?,
 		tags = ?, status = ?, notes = ?, engine = ?, engine_version = ?, retention_days = ?, database_name = ?, tls_mode = ?, tls_ca = ?,
-		app_upstream = ?, app_label = ?, updated_at = ? WHERE id = ? AND deleted_at IS NULL`),
+		app_upstream = ?, updated_at = ? WHERE id = ? AND deleted_at IS NULL`),
 		t.Name, t.Address, string(t.OSFamily), mustJSON(t.Ports), mustJSON(t.Capabilities), mustJSON(t.Tags), t.Status, t.Notes,
 		t.Engine, t.EngineVersion, nullInt(t.RetentionDays), t.DatabaseName, t.TLSMode, t.TLSCA,
-		emptyNull(t.AppUpstream), emptyNull(t.AppLabel), store.TimeArg(now), t.ID)
+		emptyNull(t.AppUpstream), store.TimeArg(now), t.ID)
 	if err != nil {
 		return mapErr(err)
 	}
@@ -633,12 +603,12 @@ func scanTarget(s store.Scanner) (*Target, error) {
 		engine, engineVer       sql.NullString
 		retention               sql.NullInt64
 		dbName, tlsMode, tlsCA  sql.NullString
-		appUpstream, appLabel   sql.NullString
+		appUpstream             sql.NullString
 		created, updated, probe store.NullTime
 	)
 	err := s.Scan(&t.ID, &t.Name, &t.Address, &osFamily, &ports, &capsRaw, &hk, &hkStatus, &tlsFP, &tagsRaw,
 		&t.Status, &t.Notes, &createdBy, &created, &updated, &probe, &winrmFP, &engine, &engineVer, &retention, &dbName, &tlsMode, &tlsCA, &tlsPend, &winrmPend,
-		&appUpstream, &appLabel)
+		&appUpstream)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound
@@ -647,7 +617,7 @@ func scanTarget(s store.Scanner) (*Target, error) {
 	}
 	t.OSFamily, t.HostKeyStatus = OSFamily(osFamily), HostKeyStatus(hkStatus)
 	t.Engine, t.EngineVersion = engine.String, engineVer.String
-	t.AppUpstream, t.AppLabel = appUpstream.String, appLabel.String
+	t.AppUpstream = appUpstream.String
 	if retention.Valid {
 		v := int(retention.Int64)
 		t.RetentionDays = &v

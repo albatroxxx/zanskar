@@ -336,7 +336,7 @@ func FlagsInstruction(files, clipboard bool) string {
 // ticketPathFor reports which WebSocket endpoint serves a protocol.
 func ticketPathFor(p target.Protocol) string {
 	switch p {
-	case target.RDP, target.VNC:
+	case target.RDP, target.VNC, target.HTTP:
 		return "/ws/desktop"
 	case target.WinRM:
 		return "/ws/winrm"

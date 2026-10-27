@@ -93,9 +93,9 @@ func TestMyTargets(t *testing.T) {
 	}
 }
 
-// TestMyTargetsApplications: an application (ADR 0033) is listed, with the
-// address the browser opens it at and never its upstream, only when a policy
-// grants http on it and the gateway has an apps domain to serve it under.
+// TestMyTargetsApplications: an application (ADR 0034) is listed, never with
+// its upstream, only when a policy grants http on it; opening it issues a
+// desktop ticket with no credential attached.
 func TestMyTargetsApplications(t *testing.T) {
 	f := newConnectFixture(t)
 	wiki := &target.Target{Name: "wiki", AppUpstream: "http://10.0.0.50:8080", Tags: map[string]string{"env": "test"}}
@@ -120,11 +120,6 @@ func TestMyTargetsApplications(t *testing.T) {
 		}
 		return byName
 	}
-	// No apps domain: the application cannot be opened, so it is not offered.
-	if _, ok := list()["wiki"]; ok {
-		t.Fatal("an application is listed with no apps domain to serve it")
-	}
-	f.h.AppURL = func(_ *http.Request, label string) string { return "https://" + label + ".apps.example.com/" }
 	// No policy grants http yet: test-all grants ssh, rdp, winrm and database.
 	if _, ok := list()["wiki"]; ok {
 		t.Fatal("an application is listed without a policy granting http")
@@ -134,15 +129,16 @@ func TestMyTargetsApplications(t *testing.T) {
 		t.Fatal(err)
 	}
 	got, ok := list()["wiki"]
-	if !ok || got.Kind != "application" || got.Label != "wiki" || got.URL != "https://wiki.apps.example.com/" || !contains(got.Allowed, "http") || got.PrivateIP != "" {
+	if !ok || got.Kind != "application" || !contains(got.Allowed, "http") || got.PrivateIP != "" {
 		t.Fatalf("application entry: %+v", got)
 	}
 	if strings.Contains(string(mustJSON(t, got)), "10.0.0.50") {
 		t.Fatalf("the upstream leaked into the listing: %+v", got)
 	}
-	// Opening it goes through the browser, not a ticket.
+	// Opening it is a desktop-style ticket with no credential behind it:
+	// the application's own sign-in, if any, is the user's.
 	rr := f.do("POST", "/api/v1/connect", "application/json", strings.NewReader(`{"target_id":"`+wiki.ID+`","protocol":"http"}`), f.cookie, f.csrf)
-	if rr.Code != http.StatusNotImplemented {
+	if rr.Code != http.StatusOK || !strings.Contains(rr.Body.String(), `"ws_path":"/ws/desktop"`) {
 		t.Fatalf("connect over http: %d %s", rr.Code, rr.Body)
 	}
 }
