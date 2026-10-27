@@ -34,8 +34,8 @@ import (
 )
 
 const (
-	stateCookie = "zanskar_oidc"
-	stateTTL    = 10 * time.Minute
+	stateCookieName = "zanskar_oidc"
+	stateTTL        = 10 * time.Minute
 )
 
 // Handler serves the public provider list and the OIDC start/callback pair.
@@ -119,8 +119,9 @@ func (h *Handler) start(w http.ResponseWriter, r *http.Request) {
 		h.fail(w, r, "", id, "internal", err)
 		return
 	}
+	name, path := h.stateCookie()
 	http.SetCookie(w, &http.Cookie{ // #nosec G124 -- Secure follows the session cookie setting
-		Name: stateCookie, Value: sealed, Path: "/api/v1/auth/oidc/", HttpOnly: true,
+		Name: name, Value: sealed, Path: path, HttpOnly: true,
 		Secure: h.Sessions.SecureCookie, SameSite: http.SameSiteLaxMode, MaxAge: int(stateTTL / time.Second),
 	})
 	oc := h.oauthConfig(r, prov, op, cfg)
@@ -133,12 +134,13 @@ func (h *Handler) start(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) callback(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	ip := auth.ClientIP(r)
-	c, err := r.Cookie(stateCookie)
+	name, path := h.stateCookie()
+	c, err := r.Cookie(name)
 	if err != nil {
 		h.fail(w, r, "", id, "state_missing", errors.New("no state cookie"))
 		return
 	}
-	http.SetCookie(w, &http.Cookie{Name: stateCookie, Value: "", Path: "/api/v1/auth/oidc/", HttpOnly: true, Secure: h.Sessions.SecureCookie, SameSite: http.SameSiteLaxMode, MaxAge: -1}) // #nosec G124
+	http.SetCookie(w, &http.Cookie{Name: name, Value: "", Path: path, HttpOnly: true, Secure: h.Sessions.SecureCookie, SameSite: http.SameSiteLaxMode, MaxAge: -1}) // #nosec G124
 	st, err := h.unseal(c.Value)
 	if err != nil || st.IdP != id || time.Now().Unix() > st.Exp || st.State == "" || st.State != r.URL.Query().Get("state") {
 		h.fail(w, r, "", id, "state_invalid", errors.New("state mismatch or expired"))
@@ -233,6 +235,7 @@ func (h *Handler) callback(w http.ResponseWriter, r *http.Request) {
 			mfa = "none"
 		}
 	}
+	auth.ReplaceSession(r, h.Sessions, h.Audit, h.Log)
 	token, sess, err := h.Sessions.Create(r.Context(), u.ID, ip, r.UserAgent(), verified)
 	if err != nil {
 		h.fail(w, r, u.ID, id, "internal", err)
@@ -261,6 +264,17 @@ func (h *Handler) callback(w http.ResponseWriter, r *http.Request) {
 }
 
 // ---- helpers
+
+// stateCookie names the state cookie and its path: with the __Host- prefix
+// and Path=/ when cookies are Secure, so that a sibling subdomain cannot
+// plant a sealed state of its own and finish its authorization code in
+// this browser (S1 L6); the bare name on its own path otherwise.
+func (h *Handler) stateCookie() (name, path string) {
+	if h.Sessions.SecureCookie {
+		return "__Host-" + stateCookieName, "/"
+	}
+	return stateCookieName, "/api/v1/auth/oidc/"
+}
 
 func (h *Handler) open(ctx context.Context, id string) (*idp.Opened, *gooidc.Provider, *idp.OIDCConfig, error) {
 	op, err := h.Providers.Open(ctx, id)

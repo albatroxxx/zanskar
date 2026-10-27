@@ -549,6 +549,9 @@ func (pv *Provisioner) adopt(ctx context.Context, p *Opened, id Identity) (*user
 		return nil, errLocked
 	}
 	if err := pv.Users.LinkExternal(ctx, u.ID, p.ID, id.ExternalID); err != nil {
+		if errors.Is(err, user.ErrDuplicate) {
+			return nil, fmt.Errorf("%w: the local account %q was linked or given a password meanwhile", ErrAccountConflict, u.Username)
+		}
 		return nil, err
 	}
 	u.IdPID, u.ExternalID = p.ID, id.ExternalID

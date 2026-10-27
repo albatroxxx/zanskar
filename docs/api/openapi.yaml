@@ -10,9 +10,12 @@ info:
 
     ## Authentication
 
-    Every authenticated request carries the `zanskar_session` cookie. The cookie value is an
-    opaque random token; the server stores only its SHA-256 hash (`auth_sessions.token_hash`).
-    The cookie is set with `HttpOnly`, `Secure`, `SameSite=Strict` and `Path=/`.
+    Every authenticated request carries the session cookie: `__Host-zanskar_session` where the
+    gateway serves HTTPS (or trusts a TLS-terminating proxy), `zanskar_session` on plain-HTTP
+    loopback, where the prefix is not allowed. The cookie value is an opaque random token; the
+    server stores only its SHA-256 hash (`auth_sessions.token_hash`). The cookie is set with
+    `HttpOnly`, `Secure`, `SameSite=Strict` and `Path=/`. A sign-in made from a browser that
+    already holds a session ends that session and audits it as a sign-out with reason `replaced`.
 
     Sessions are created by `POST /auth/login`. When the account has TOTP enrolled, or the
     deployment requires MFA, the login response returns `mfa_required` and the session is created
@@ -186,7 +189,7 @@ paths:
             Set-Cookie:
               schema:
                 type: string
-              description: "`zanskar_session=<opaque>; HttpOnly; Secure; SameSite=Strict; Path=/`"
+              description: "`__Host-zanskar_session=<opaque>; HttpOnly; Secure; SameSite=Strict; Path=/` (`zanskar_session` on plain-HTTP loopback)"
           content:
             application/json:
               schema:
@@ -230,7 +233,10 @@ paths:
         "422":
           description: Wrong or already-used code (`bad_code`).
         "429":
-          description: Too many attempts on this session.
+          description: >-
+            Too many attempts on this session (`rate_limited`), or five wrong codes closed the
+            route for this session for fifteen minutes (`step_up_closed`); the account's own
+            sign-in budget is not charged by step-up guesses.
   /auth/mfa/totp/verify:
     post:
       tags: [auth]
@@ -341,8 +347,11 @@ paths:
         stolen session cannot enrol another device and lock the owner out: `401
         password_required` without it, `401 invalid_credentials` when it is wrong (counted like a
         wrong sign-in password), `429 too_many_attempts` while the account is locked. Enrolling
-        as the step a sign-in still owes needs no password, and an account that signs in through
-        an identity provider has no local password to give.
+        as the step a sign-in still owes needs no password. An account that signs in through an
+        identity provider has no local password to give, so from a full session it may enrol only
+        within five minutes of signing in; later it is `401 reauth_required` and the person signs
+        in through the provider again first. Confirming an authenticator from a full session ends
+        the account's other sessions, as a password change does.
       requestBody:
         content:
           application/json:
@@ -4215,8 +4224,8 @@ components:
     cookieAuth:
       type: apiKey
       in: cookie
-      name: zanskar_session
-      description: Opaque session token. Mutating requests also require the `X-CSRF-Token` header.
+      name: __Host-zanskar_session
+      description: Opaque session token (`zanskar_session` on plain-HTTP loopback). Mutating requests also require the `X-CSRF-Token` header.
 
   parameters:
     Id:

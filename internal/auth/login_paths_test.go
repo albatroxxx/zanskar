@@ -27,9 +27,11 @@ type fakeDirectory struct {
 	users     *user.Repo
 	passwords map[string]string
 	err       error // returned instead of a verdict, when set
+	asked     int   // how many times the directory was consulted
 }
 
 func (d *fakeDirectory) Login(ctx context.Context, username, password, _ string) (*user.User, error) {
+	d.asked++
 	if d.err != nil {
 		return nil, d.err
 	}
@@ -367,7 +369,9 @@ func TestLoginRefusalsLookAlike(t *testing.T) {
 	if wrong.code != 401 || unknown.code != 401 || fmt.Sprint(wrong.body) != fmt.Sprint(unknown.body) {
 		t.Fatalf("wrong password %d %v vs unknown user %d %v: must be identical", wrong.code, wrong.body, unknown.code, unknown.body)
 	}
-	if ev, d := e.lastLogin(t); ev.Outcome != audit.Failure || d["reason"] != "unknown_user" || d["username"] != "mallory" {
+	// The typed name is audited as a short hash, never as text: a password
+	// typed into the username box must not sit in the chain for good (S1 L3).
+	if ev, d := e.lastLogin(t); ev.Outcome != audit.Failure || d["reason"] != "unknown_user" || d["username_hash"] != usernameHash("Mallory") || d["username"] != nil {
 		t.Fatalf("unknown user audit: %v", d)
 	}
 
@@ -519,15 +523,43 @@ func TestExternalLogin(t *testing.T) {
 		t.Fatalf("directory sign-in audit: actor %s %v", ev.ActorUserID, d)
 	}
 
+	// A wrong directory password counts against the account like a wrong
+	// local one, and is audited as what it was (S1 L2).
 	if r := login(e, "erin", "wrong"); r.code != 401 {
 		t.Fatalf("wrong directory password: %d", r.code)
 	}
-	if _, d := e.lastLogin(t); d["reason"] != "no_password_no_external" {
+	if _, d := e.lastLogin(t); d["reason"] != "external_bad_credentials" {
 		t.Fatalf("refusal reason %v", d["reason"])
+	}
+	if u, _ := e.users.GetByID(context.Background(), erin.ID); u.FailedLogins != 1 {
+		t.Fatalf("a wrong directory password must count: %d", u.FailedLogins)
 	}
 	dir.err = errors.New("ldap: connection refused")
 	if r := login(e, "erin", "directory pass 2"); r.code != 401 {
 		t.Fatalf("directory down: %d, want the ordinary refusal", r.code)
+	}
+	if _, d := e.lastLogin(t); d["reason"] != "directory_unavailable" {
+		t.Fatalf("directory down reason %v", d["reason"])
+	}
+	dir.err = nil
+	// Enough wrong passwords lock the account; while it is locked the
+	// directory is not asked, even with the right password, so the gateway
+	// cannot be used to drive the directory's own lockout.
+	for i := 1; i < e.handler.MaxFailures; i++ {
+		login(e, "erin", "wrong")
+	}
+	if _, d := e.lastLogin(t); d["locked_for"] == nil {
+		t.Fatalf("the locking attempt should say so: %v", d)
+	}
+	asked := dir.asked
+	if r := login(e, "erin", "directory pass 2"); r.code != 401 {
+		t.Fatalf("locked account with the right directory password: %d", r.code)
+	}
+	if _, d := e.lastLogin(t); d["reason"] != "locked" {
+		t.Fatalf("locked reason %v", d["reason"])
+	}
+	if dir.asked != asked {
+		t.Fatalf("the directory was asked while the account was locked")
 	}
 	if r := login(e, "frank", "anything"); r.code != 401 {
 		t.Fatalf("unknown to everyone: %d", r.code)

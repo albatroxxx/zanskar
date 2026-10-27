@@ -76,7 +76,9 @@ func TestStepUp(t *testing.T) {
 
 	// Attempts are bounded per session: a stolen cookie cannot grind codes.
 	// A fresh session starts with the limiter's burst; the refusals are
-	// audited once, not once per attempt.
+	// audited once, not once per attempt. The close after a few wrong codes
+	// (tested below) is switched off here so the limiter alone is seen.
+	e.handler.MFAAttempts = 1000
 	r2 := e.sessionFor(t, u, true)
 	hdr2 := csrfOf(r2)
 	refused := 0
@@ -109,5 +111,42 @@ func TestStepUp(t *testing.T) {
 	r3 := e.sessionFor(t, u, true)
 	if c := e.do("POST", path, map[string]string{"code": wrong()}, r3.cookie, csrfOf(r3)); c.code != 422 {
 		t.Fatalf("a third session after the second was limited: %d %v", c.code, c.body)
+	}
+
+	// Five wrong codes close the route for the session for LockFor, as the
+	// command line's unlock does, and the close is audited once; the right
+	// code is refused while it is closed; the account's own budget is not
+	// charged, so the owner is not locked out by a thief's guessing (S1 L1).
+	e.handler.MFAAttempts, e.handler.LockFor = 5, 200*time.Millisecond
+	e.handler.stepUpLimiter = newIPLimiter(100000, 100000) // the limiter was seen above; here the close alone
+	r4 := e.sessionFor(t, u, true)
+	hdr4 := csrfOf(r4)
+	for i := 1; i <= 4; i++ {
+		if c := e.do("POST", path, map[string]string{"code": wrong()}, r4.cookie, hdr4); c.code != 422 {
+			t.Fatalf("wrong code %d: %d %v", i, c.code, c.body)
+		}
+	}
+	if c := e.do("POST", path, map[string]string{"code": wrong()}, r4.cookie, hdr4); c.code != 429 || c.body["code"] != "step_up_closed" {
+		t.Fatalf("fifth wrong code: %d %v, want 429 step_up_closed", c.code, c.body)
+	}
+	if _, d := e.lastEvent(t, audit.UserMFAVerify); d["closed"] != true {
+		t.Fatalf("the closing code should be audited as such: %v", d)
+	}
+	if c := e.do("POST", path, map[string]string{"code": right()}, r4.cookie, hdr4); c.code != 429 {
+		t.Fatalf("right code while closed: %d %v", c.code, c.body)
+	}
+	if got, _ := e.users.GetByID(context.Background(), u.ID); got.FailedLogins != 0 {
+		t.Fatalf("step-up guesses charged the account: %d", got.FailedLogins)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		c := e.do("POST", path, map[string]string{"code": right()}, r4.cookie, hdr4)
+		if c.code == 200 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("still closed after LockFor: %d %v", c.code, c.body)
+		}
+		time.Sleep(20 * time.Millisecond)
 	}
 }
