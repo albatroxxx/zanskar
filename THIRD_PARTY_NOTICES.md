@@ -116,7 +116,7 @@ SOFTWARE.
 
 ### github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream
 
-* Version: `v1.7.22`
+* Version: `v1.7.24`
 
 ```
 
@@ -327,7 +327,7 @@ SOFTWARE.
 
 ### github.com/aws/aws-sdk-go-v2/config
 
-* Version: `v1.33.9`
+* Version: `v1.33.10`
 
 ```
 
@@ -538,7 +538,7 @@ SOFTWARE.
 
 ### github.com/aws/aws-sdk-go-v2/credentials
 
-* Version: `v1.20.9`
+* Version: `v1.20.10`
 
 ```
 
@@ -749,7 +749,7 @@ SOFTWARE.
 
 ### github.com/aws/aws-sdk-go-v2/feature/ec2/imds
 
-* Version: `v1.20.3`
+* Version: `v1.20.4`
 
 ```
 
@@ -960,7 +960,7 @@ SOFTWARE.
 
 ### github.com/aws/aws-sdk-go-v2/internal/configsources
 
-* Version: `v1.5.6`
+* Version: `v1.5.7`
 
 ```
 
@@ -1171,7 +1171,7 @@ SOFTWARE.
 
 ### github.com/aws/aws-sdk-go-v2/internal/endpoints/v2
 
-* Version: `v2.8.6`
+* Version: `v2.8.7`
 
 ```
 
@@ -1382,7 +1382,7 @@ SOFTWARE.
 
 ### github.com/aws/aws-sdk-go-v2/internal/v4a
 
-* Version: `v1.5.6`
+* Version: `v1.5.7`
 
 ```
 
@@ -1593,7 +1593,7 @@ SOFTWARE.
 
 ### github.com/aws/aws-sdk-go-v2/service/autoscaling
 
-* Version: `v1.78.4`
+* Version: `v1.79.1`
 
 ```
 
@@ -1804,7 +1804,7 @@ SOFTWARE.
 
 ### github.com/aws/aws-sdk-go-v2/service/ec2instanceconnect
 
-* Version: `v1.44.1`
+* Version: `v1.44.2`
 
 ```
 
@@ -2015,7 +2015,7 @@ SOFTWARE.
 
 ### github.com/aws/aws-sdk-go-v2/service/ec2
 
-* Version: `v1.339.0`
+* Version: `v1.341.0`
 
 ```
 
@@ -2226,7 +2226,7 @@ SOFTWARE.
 
 ### github.com/aws/aws-sdk-go-v2/service/elasticloadbalancingv2
 
-* Version: `v1.63.4`
+* Version: `v1.63.5`
 
 ```
 
@@ -2437,7 +2437,7 @@ SOFTWARE.
 
 ### github.com/aws/aws-sdk-go-v2/service/internal/accept-encoding
 
-* Version: `v1.13.21`
+* Version: `v1.13.22`
 
 ```
 
@@ -2648,7 +2648,7 @@ SOFTWARE.
 
 ### github.com/aws/aws-sdk-go-v2/service/internal/checksum
 
-* Version: `v1.11.7`
+* Version: `v1.11.8`
 
 ```
 
@@ -2859,7 +2859,7 @@ SOFTWARE.
 
 ### github.com/aws/aws-sdk-go-v2/service/internal/presigned-url
 
-* Version: `v1.14.6`
+* Version: `v1.14.7`
 
 ```
 
@@ -3070,7 +3070,7 @@ SOFTWARE.
 
 ### github.com/aws/aws-sdk-go-v2/service/internal/s3shared
 
-* Version: `v1.20.6`
+* Version: `v1.20.7`
 
 ```
 
@@ -3281,7 +3281,7 @@ SOFTWARE.
 
 ### github.com/aws/aws-sdk-go-v2/service/s3
 
-* Version: `v1.114.3`
+* Version: `v1.114.5`
 
 ```
 
@@ -3492,7 +3492,7 @@ SOFTWARE.
 
 ### github.com/aws/aws-sdk-go-v2/service/signin
 
-* Version: `v1.10.4`
+* Version: `v1.10.5`
 
 ```
 
@@ -3703,7 +3703,7 @@ SOFTWARE.
 
 ### github.com/aws/aws-sdk-go-v2/service/ssooidc
 
-* Version: `v1.43.4`
+* Version: `v1.43.5`
 
 ```
 
@@ -3914,7 +3914,7 @@ SOFTWARE.
 
 ### github.com/aws/aws-sdk-go-v2/service/sso
 
-* Version: `v1.38.4`
+* Version: `v1.38.5`
 
 ```
 
@@ -4125,7 +4125,7 @@ SOFTWARE.
 
 ### github.com/aws/aws-sdk-go-v2/service/sts
 
-* Version: `v1.51.4`
+* Version: `v1.51.5`
 
 ```
 
@@ -4336,7 +4336,7 @@ SOFTWARE.
 
 ### github.com/aws/aws-sdk-go-v2
 
-* Version: `v1.47.3`
+* Version: `v1.47.4`
 
 ```
 
@@ -4555,7 +4555,7 @@ Copyright 2014-2015 Stripe, Inc.
 
 ### github.com/aws/smithy-go
 
-* Version: `v1.28.5`
+* Version: `v1.28.6`
 
 ```
 
@@ -5349,7 +5349,7 @@ SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 ### github.com/dustin/go-humanize
 
-* Version: `v1.0.1`
+* Version: `v1.1.0`
 
 ```
 Copyright (c) 2005-2008  Dustin Sallings <dustin@spy.net>
@@ -9165,7 +9165,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 ### github.com/pkg/sftp
 
-* Version: `v1.13.11`
+* Version: `v1.13.12`
 
 ```
 Copyright (c) 2013, Dave Cheney
@@ -9883,7 +9883,7 @@ SOFTWARE.```
 
 ### modernc.org/libc
 
-* Version: `v1.77.1`
+* Version: `v1.79.0`
 
 ```
 Copyright (c) 2017 The Libc Authors. All rights reserved.
@@ -9991,7 +9991,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 ### modernc.org/sqlite
 
-* Version: `v1.60.1`
+* Version: `v1.61.0`
 
 ```
 Copyright (c) 2017 The Sqlite Authors. All rights reserved.
