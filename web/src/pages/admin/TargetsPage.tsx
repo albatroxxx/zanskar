@@ -36,7 +36,7 @@ export function TargetsPage({ kind, title, lead, addLabel, empty, columns, cells
       {err && <Alert tone="danger">{err}</Alert>}
       <div className="card table-wrap">
         {items === null ? (
-          <Empty>Loading…</Empty>
+          err ? null : <Empty>Loading…</Empty>
         ) : items.length === 0 ? (
           <Empty>{empty}</Empty>
         ) : (

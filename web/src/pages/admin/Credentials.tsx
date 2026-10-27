@@ -47,7 +47,7 @@ export function Credentials() {
       )}
       <div className="card table-wrap">
         {items === null ? (
-          <Empty>Loading…</Empty>
+          err ? null : <Empty>Loading…</Empty>
         ) : items.length === 0 ? (
           <Empty>No credentials yet.</Empty>
         ) : (

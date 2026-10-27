@@ -6,7 +6,7 @@ describe('endText', () => {
   it('says each reason the gateway reports in a sentence, with its words after', () => {
     expect(endText({ reason: 'admin_terminated', msg: 'session ended by an administrator' })).toEqual({ lead: 'An administrator ended the session.', detail: 'session ended by an administrator' })
     expect(endText({ reason: 'idle_timeout' }).lead).toBe('Disconnected after a period without input, as the access policy requires.')
-    expect(endText({ reason: 'user_exit' }).lead).toBe('You closed the session, or it ended on the target.')
+    expect(endText({ reason: 'user_exit' }).lead).toBe('You closed the session.')
     expect(endText({ reason: 'trust_lost' }).lead).toBe("The target's host key or certificate changed; an administrator must trust it again.")
   })
 

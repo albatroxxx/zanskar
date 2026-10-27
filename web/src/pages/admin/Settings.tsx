@@ -41,8 +41,13 @@ export function Settings() {
     <>
       <PageHead title="Settings" lead="Saved values apply at once and override the environment file; Reset returns to it." />
       {err && <Alert tone="danger">{err}</Alert>}
+      <nav className="jump" aria-label="Sections">
+        {[...categories, 'TLS certificate', 'Recording storage', 'Set at install'].map((c) => (
+          <a key={c} href={'#' + sectionId(c)}>{c}</a>
+        ))}
+      </nav>
       {categories.map((c) => (
-        <div className="card" key={c}>
+        <div className="card" key={c} id={sectionId(c)}>
           <h2>{c}</h2>
           {listing?.runtime
             .filter((s) => s.category === c)
@@ -54,6 +59,11 @@ export function Settings() {
       {listing && <BootTable boot={listing.boot} changed={changed} />}
     </>
   )
+}
+
+/** sectionId is the anchor of a section card, from its heading. */
+function sectionId(heading: string): string {
+  return 'settings-' + heading.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')
 }
 
 function sourceBadge(s: RuntimeSetting) {
@@ -163,7 +173,7 @@ function changedIn(envVar: string, changed: string[]) {
 
 function BootTable({ boot, changed }: { boot: BootSetting[]; changed: string[] }) {
   return (
-    <div className="card table-wrap">
+    <div className="card table-wrap" id="settings-set-at-install">
       <h2>Set at install</h2>
       <p className="muted">Read once when the gateway starts, from the environment file (usually <code>/etc/zanskar/env</code>). To change one, edit the variable and restart the service; the banner above offers the restart once the file differs. Secrets are not shown.</p>
       <table>

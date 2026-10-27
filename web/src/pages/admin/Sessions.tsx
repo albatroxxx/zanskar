@@ -41,9 +41,9 @@ export function Sessions() {
       {err && <Alert tone="danger">{err}</Alert>}
       <div className="card table-wrap">
         {items === null ? (
-          <Empty>Loading…</Empty>
+          err ? null : <Empty>Loading…</Empty>
         ) : items.length === 0 ? (
-          <Empty>No sessions match.</Empty>
+          <Empty>{applied || openOnly ? 'No sessions match.' : 'No sessions yet.'}</Empty>
         ) : (
           <table>
             <thead>

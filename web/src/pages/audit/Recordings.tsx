@@ -43,7 +43,7 @@ export function Recordings() {
         <input
           className="mono filter-control"
           style={{ minWidth: 220 }}
-          placeholder="filter by user, machine, protocol"
+          placeholder="filter"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           aria-label="Filter recordings"

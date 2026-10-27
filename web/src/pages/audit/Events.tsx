@@ -239,7 +239,7 @@ export function Events() {
 
       <div className="card table-wrap">
         {items === null ? (
-          <Empty>Loading…</Empty>
+          err ? null : <Empty>Loading…</Empty>
         ) : visible.length === 0 ? (
           <Empty>No events match.</Empty>
         ) : (

@@ -136,3 +136,24 @@ describe('Settings', () => {
     expect(screen.queryByText('Loading…')).toBeNull()
   })
 })
+
+
+// Review U8: the settings page is one long scroll; a list of its sections at
+// the top jumps to each, and every link has a section to land on.
+describe('Settings, the section list', () => {
+  it('links to every category card, the TLS and storage cards and the install table', async () => {
+    serve()
+    render(<Settings />)
+    await screen.findByRole('heading', { name: 'Updates' })
+    // The TLS and storage cards render their heading once their own read lands.
+    await screen.findByRole('heading', { name: 'TLS certificate' })
+    await screen.findByRole('heading', { name: 'Recording storage' })
+    const nav = screen.getByRole('navigation', { name: 'Sections' })
+    const links = within(nav).getAllByRole('link')
+    expect(links.map((a) => a.textContent)).toEqual(['Updates', 'Sign-in', 'Logging', 'Desktops', 'TLS certificate', 'Recording storage', 'Set at install'])
+    for (const a of links) {
+      const id = a.getAttribute('href')!.slice(1)
+      expect(document.getElementById(id), `${a.textContent} has a section`).not.toBeNull()
+    }
+  })
+})

@@ -17,6 +17,9 @@ function levelBadge(l: string) {
  * narrows what is shown; the runtime log.level setting decides what is
  * captured. Newest first; the download carries the whole ring.
  */
+const FIRST_PAGE = 100
+const MORE = 200
+
 export function Logs() {
   const [level, setLevel] = useState<(typeof levels)[number]>('info')
   const [q, setQ] = useState('')
@@ -24,12 +27,15 @@ export function Logs() {
   const [auto, setAuto] = useState(true)
   const [page, setPage] = useState<LogsPage | null>(null)
   const [err, setErr] = useState('')
+  // How many of the newest lines are asked for: a page of 100 to start, as the
+  // Events page does, and more on request (review U8; 500 was a 20,000 px page).
+  const [limit, setLimit] = useState(FIRST_PAGE)
 
   useEffect(() => {
     let cancelled = false
     const load = () =>
       api
-        .get<LogsPage>('/admin/logs' + query({ level, q: applied || undefined, limit: 500 }))
+        .get<LogsPage>('/admin/logs' + query({ level, q: applied || undefined, limit }))
         .then((p) => {
           if (!cancelled) setPage(p)
         })
@@ -45,7 +51,7 @@ export function Logs() {
       cancelled = true
       clearInterval(t)
     }
-  }, [level, applied, auto])
+  }, [level, applied, auto, limit])
 
   return (
     <>
@@ -99,6 +105,11 @@ export function Logs() {
           </table>
         )}
       </div>
+      {page && page.items.length >= limit && limit < page.capacity && (
+        <div className="actions" style={{ marginTop: 12 }}>
+          <button className="btn sm" onClick={() => setLimit((n) => Math.min(n + MORE, page.capacity))}>Show more</button>
+        </div>
+      )}
     </>
   )
 }
