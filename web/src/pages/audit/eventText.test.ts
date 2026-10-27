@@ -87,3 +87,44 @@ group('detailText', () => {
     expect(detailText('database')).toEqual({ text: 'database' })
   })
 })
+
+// Review finding F1: the failed sign-in branch replaced by "signed in" passed
+// all 26 tests, which covered none of the sign-in, session or recording
+// sentences. These are what an auditor reads; each branch is pinned.
+group('sign-in, session and recording events read as what happened', () => {
+  it.each([
+    [{ action: 'user.login', outcome: 'failure' as const, details: { username: 'bob', reason: 'bad_password' } }, 'failed to sign in as bob (bad password)'],
+    [{ action: 'user.login', outcome: 'failure' as const, details: { reason: 'locked' } }, 'failed to sign in (locked)'],
+    [{ action: 'user.login', outcome: 'failure' as const }, 'failed to sign in'],
+    [{ action: 'user.login', details: { stage: 'password', next: 'mfa_enrollment' } }, 'entered a valid password; authenticator enrollment pending'],
+    [{ action: 'user.login', details: { stage: 'password' } }, 'entered a valid password; second factor pending'],
+    [{ action: 'user.login', details: { mfa: 'totp' } }, 'signed in with TOTP'],
+    [{ action: 'user.login', details: { mfa: 'none' } }, 'signed in'],
+    [{ action: 'user.login' }, 'signed in'],
+    [{ action: 'user.logout' }, 'signed out'],
+    [{ action: 'user.mfa.enroll' }, 'started enrolling an authenticator'],
+    [{ action: 'user.mfa.confirm' }, 'enrolled an authenticator'],
+    [{ action: 'user.mfa.confirm', outcome: 'failure' as const }, 'failed to confirm an authenticator'],
+    [{ action: 'user.mfa.verify' }, 'passed the second factor'],
+    [{ action: 'session.connect', object_name: 'web-1', details: { protocol: 'ssh' } }, 'requested SSH access to web-1'],
+    [{ action: 'session.connect', outcome: 'failure' as const, object_name: 'web-1', details: { protocol: 'ssh', reason: 'not_allowed' } }, 'was refused SSH access to web-1 (not allowed)'],
+    [{ action: 'session.start', object_name: 'bob → web-1 (SSH)' }, 'opened a SSH session on web-1'],
+    [{ action: 'session.end', object_name: 'bob → web-1 (SSH)', details: { reason: 'idle_timeout' } }, 'ended the SSH session on web-1 (idle timeout)'],
+    [{ action: 'session.terminate', object_name: 'bob → web-1 (SSH)' }, "terminated bob's SSH session on web-1"],
+    [{ action: 'session.shadow.start', object_name: 'bob → web-1 (SSH)' }, "started watching bob's SSH session on web-1"],
+    [{ action: 'session.shadow.end', object_name: 'bob → web-1 (SSH)' }, "stopped watching bob's session on web-1"],
+    [{ action: 'session.failover', object_name: 'bob → web-1 (SSH)' }, 'moved the SSH session on web-1 to another instance'],
+    [{ action: 'app.session.start', object_name: 'bob → wiki (HTTP)' }, 'opened the application wiki'],
+    [{ action: 'app.session.end', object_name: 'bob → wiki (HTTP)', details: { reason: 'signed_out' } }, 'left the application wiki (signed out)'],
+    [{ action: 'recording.view', object_name: 'bob → web-1 (SSH)' }, 'played the recording of bob on web-1 (SSH)'],
+    [{ action: 'audit.read' }, 'viewed the audit log'],
+  ])('%j', (over, want) => {
+    expect(describe(event(over as Partial<AuditEvent>))).toBe(want)
+  })
+
+  it('a failed sign-in never reads as a success', () => {
+    const text = describe(event({ action: 'user.login', outcome: 'failure', details: { username: 'bob' } }))
+    expect(text).not.toMatch(/^signed in/)
+    expect(text).toMatch(/^failed to sign in/)
+  })
+})
