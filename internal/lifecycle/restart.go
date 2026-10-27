@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/albatroxxx/zanskar/internal/gateway"
+	"github.com/albatroxxx/zanskar/internal/protocol"
 )
 
 // Wait limits for a drain.
@@ -44,6 +45,12 @@ type Controller struct {
 	Exit func()
 	// Poll is how often the drain re-checks the registry; tests shorten it.
 	Poll time.Duration
+	// Grace is how long, after the sessions are ended, the drain waits for
+	// their bridges to finish: the end frame to the browser, the recording's
+	// upload, the session row, the audit event, a database session's
+	// containers. Zero means DefaultGrace. What is still running after
+	// that is logged and abandoned (review finding SEC-10).
+	Grace time.Duration
 
 	mu     sync.Mutex
 	drain  *Drain
@@ -154,8 +161,34 @@ func (c *Controller) run(ctx context.Context, d Drain) {
 			ended++
 		}
 	}
-	if ended > 0 {
-		time.Sleep(poll)
+	// Ending a session is not the end of its bridge: the recording still
+	// uploads, the row closes, the audit event is written, a database
+	// session's containers go. Wait for the bridges to leave the registry,
+	// within Grace, before the process goes away under them (SEC-10).
+	// Application sessions are left out here as above: a cutover ends them
+	// and nothing of theirs is in flight.
+	grace := c.Grace
+	if grace <= 0 {
+		grace = DefaultGrace
+	}
+	deadline := time.Now().Add(grace)
+	for c.Registry.Waiting() > 0 && time.Now().Before(deadline) {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+		}
+	}
+	if c.Log != nil {
+		var ids []string
+		for _, l := range c.Registry.List() {
+			if l.Protocol != protocol.HTTP {
+				ids = append(ids, l.SessionID)
+			}
+		}
+		if len(ids) > 0 {
+			c.Log.Warn("restarting with sessions still finishing; their recordings or rows may be incomplete", "sessions", ids, "waited", grace.String())
+		}
 	}
 	if d.then != nil {
 		d.then()
@@ -163,6 +196,10 @@ func (c *Controller) run(ctx context.Context, d Drain) {
 	}
 	c.Exit()
 }
+
+// DefaultGrace is how long a drain waits for ended sessions' bridges to
+// finish before the process exits regardless.
+const DefaultGrace = 30 * time.Second
 
 // Supervisor names what will start the process again after it exits, when
 // that can be told from the environment.

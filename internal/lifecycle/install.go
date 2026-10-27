@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/albatroxxx/zanskar/internal/audit"
@@ -76,6 +77,12 @@ func (h *Handler) installUpdate(w http.ResponseWriter, r *http.Request) {
 	in.Version = update.Canonical(in.Version)
 	if in.Version == "" {
 		httpx.BadRequest(w, r, "version must look like 1.2.3")
+		return
+	}
+	// The packaged installer accepts release versions only; a prerelease
+	// would fail there after every session had been drained (S3-8).
+	if strings.Contains(in.Version, "-") {
+		httpx.WriteError(w, r, http.StatusBadRequest, "prerelease_refused", fmt.Sprintf("%s is a prerelease; the console installs releases only, install it by hand", in.Version))
 		return
 	}
 	if !update.Newer(version.Version, in.Version) {

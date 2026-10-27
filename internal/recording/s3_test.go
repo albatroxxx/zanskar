@@ -27,12 +27,16 @@ type fakeObject struct {
 }
 
 type fakeS3 struct {
-	mu      sync.Mutex
-	objects map[string]fakeObject // bucket/key
-	putErr  error
+	hadDeadline bool // the last upload ran under a deadline
+	mu          sync.Mutex
+	objects     map[string]fakeObject // bucket/key
+	putErr      error
 }
 
-func (f *fakeS3) PutObject(_ context.Context, in *s3.PutObjectInput, _ ...func(*s3.Options)) (*s3.PutObjectOutput, error) {
+func (f *fakeS3) PutObject(ctx context.Context, in *s3.PutObjectInput, _ ...func(*s3.Options)) (*s3.PutObjectOutput, error) {
+	f.mu.Lock()
+	_, f.hadDeadline = ctx.Deadline()
+	f.mu.Unlock()
 	if f.putErr != nil {
 		return nil, f.putErr
 	}
@@ -101,6 +105,9 @@ func TestS3StorageRoundTrip(t *testing.T) {
 	}
 	if left, _ := filepath.Glob(filepath.Join(spool, "rec-*")); len(left) != 0 {
 		t.Fatalf("spool file not removed: %v", left)
+	}
+	if !fake.hadDeadline {
+		t.Fatal("the upload ran under no deadline; a bucket that stops answering would hold the bridge, and a drain, for ever")
 	}
 	obj, ok := fake.objects["recs/sessions/s1.cast"]
 	want := `{"version":2}` + "\n" + `[0.1,"o","hi"]` + "\n"

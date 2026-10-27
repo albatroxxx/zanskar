@@ -84,6 +84,10 @@ func TestDriftNamesButNeverValues(t *testing.T) {
 		_ = os.Chtimes(path, future, future)
 	}
 	started := map[string]string{"ZANSKAR_LISTEN_ADDR": "127.0.0.1:8443", "ZANSKAR_MASTER_KEY": secret, "ZANSKAR_LOG_LEVEL": "info"}
+	hashSecrets(started) // as SnapshotEnv hands it over: the snapshot holds no secret (S3-6)
+	if started["ZANSKAR_MASTER_KEY"] == secret || !strings.HasPrefix(started["ZANSKAR_MASTER_KEY"], "sha256:") || started["ZANSKAR_LISTEN_ADDR"] != "127.0.0.1:8443" {
+		t.Fatalf("snapshot: %v", started)
+	}
 	d := &Drift{Path: path, Started: started}
 	if r := d.Check(); r.State != FileMissing || r.RestartRequired() {
 		t.Fatalf("missing file: %+v", r)
@@ -129,9 +133,11 @@ func TestControllerDrain(t *testing.T) {
 	reg.Remove("s1")
 	waitFor(t, func() bool { return exits.Load() == 1 })
 
-	// Immediate: the live session is ended with the restart cause.
+	// Immediate: the live session is ended with the restart cause, and its
+	// bridge leaves the registry when it sees the cancel, as bridges do.
 	c2 := &Controller{Registry: reg, Exit: func() { exits.Add(1) }, Poll: 10 * time.Millisecond}
 	ctx2 := reg.Add(context.Background(), gateway.Live{SessionID: "s2", Protocol: "rdp"})
+	go func() { <-ctx2.Done(); reg.Remove("s2") }()
 	c2.Restart("admin", 0)
 	waitFor(t, func() bool { return exits.Load() == 2 })
 	if reason, _ := gateway.CancelReason(ctx2); reason != "gateway_restart" {
@@ -189,6 +195,127 @@ func TestControllerDrainSkipsApplications(t *testing.T) {
 		t.Fatalf("application session beside ssh ended with reason %q", reason)
 	}
 	reg.Remove("a2")
+}
+
+// TestControllerDrainWaitsForBridges: ending a session is not the end of
+// its bridge (the recording still uploads, the row closes). The exit waits
+// for the bridges to leave the registry, up to Grace, then goes regardless
+// and logs who was still finishing; an application session never holds it
+// (review finding SEC-10).
+func TestControllerDrainWaitsForBridges(t *testing.T) {
+	reg := gateway.NewRegistry()
+	var logged bytes.Buffer
+	log := slog.New(slog.NewTextHandler(&logged, nil))
+	var exits atomic.Int32
+	var waitingAtExit atomic.Int32
+	exit := func() { waitingAtExit.Store(int32(reg.Waiting())); exits.Add(1) }
+
+	// A bridge that finishes 60 ms after the cancel: the exit waits for it.
+	c := &Controller{Registry: reg, Log: log, Exit: exit, Poll: 5 * time.Millisecond, Grace: 2 * time.Second}
+	ctx := reg.Add(context.Background(), gateway.Live{SessionID: "s1", Protocol: "ssh"})
+	go func() { <-ctx.Done(); time.Sleep(60 * time.Millisecond); reg.Remove("s1") }()
+	started := time.Now()
+	c.Restart("admin", 0)
+	waitFor(t, func() bool { return exits.Load() == 1 })
+	if waitingAtExit.Load() != 0 {
+		t.Fatal("exited while the bridge was still finishing")
+	}
+	if time.Since(started) < 60*time.Millisecond {
+		t.Fatal("exited before the bridge could finish")
+	}
+	if strings.Contains(logged.String(), "still finishing") {
+		t.Fatalf("a bridge that finished in time was reported: %s", logged.String())
+	}
+
+	// A bridge that never finishes: the exit comes after Grace, not before,
+	// and the session is named in the log.
+	logged.Reset()
+	c2 := &Controller{Registry: reg, Log: log, Exit: exit, Poll: 5 * time.Millisecond, Grace: 150 * time.Millisecond}
+	reg.Add(context.Background(), gateway.Live{SessionID: "stuck", Protocol: "rdp"})
+	reg.Add(context.Background(), gateway.Live{SessionID: "app", Protocol: "http"})
+	started = time.Now()
+	c2.Restart("admin", 0)
+	waitFor(t, func() bool { return exits.Load() == 2 })
+	if since := time.Since(started); since < 150*time.Millisecond {
+		t.Fatalf("exited after %v, before the grace was up", since)
+	}
+	if waitingAtExit.Load() != 1 {
+		t.Fatalf("waiting at exit = %d, want the one stuck bridge", waitingAtExit.Load())
+	}
+	if l := logged.String(); !strings.Contains(l, "still finishing") || !strings.Contains(l, "stuck") || strings.Contains(l, "sessions=[app") || strings.Contains(l, " app]") {
+		t.Fatalf("log after a stuck bridge: %s", l)
+	}
+	reg.Remove("stuck")
+	reg.Remove("app")
+
+	// Only an application session left behind: nothing to wait for.
+	c3 := &Controller{Registry: reg, Log: log, Exit: exit, Poll: 5 * time.Millisecond, Grace: 2 * time.Second}
+	reg.Add(context.Background(), gateway.Live{SessionID: "app2", Protocol: "http"})
+	started = time.Now()
+	c3.Restart("admin", 0)
+	waitFor(t, func() bool { return exits.Load() == 3 })
+	if since := time.Since(started); since > time.Second {
+		t.Fatalf("an application session held the exit for %v", since)
+	}
+	reg.Remove("app2")
+}
+
+// TestSnapshotEnvHoldsNoSecret: the start-up snapshot that drift detection
+// keeps for the life of the process carries a digest of each secret
+// variable, never the value DropSecretEnv takes out of the environment.
+func TestSnapshotEnvHoldsNoSecret(t *testing.T) {
+	const secret = "a-master-key-nobody-should-find-in-a-heap-dump"
+	t.Setenv("ZANSKAR_MASTER_KEY", secret)
+	t.Setenv("ZANSKAR_DB_DSN", "postgres://zanskar:"+secret+"@db/zanskar")
+	t.Setenv("ZANSKAR_LISTEN_ADDR", "127.0.0.1:8443")
+	snap := SnapshotEnv()
+	for _, k := range []string{"ZANSKAR_MASTER_KEY", "ZANSKAR_DB_DSN"} {
+		if v := snap[k]; strings.Contains(v, secret) || !strings.HasPrefix(v, "sha256:") {
+			t.Errorf("%s in the snapshot: %q", k, v)
+		}
+	}
+	if snap["ZANSKAR_LISTEN_ADDR"] != "127.0.0.1:8443" {
+		t.Errorf("a plain setting was altered: %q", snap["ZANSKAR_LISTEN_ADDR"])
+	}
+	// The same file compares as unchanged, a different key as changed, with
+	// neither value anywhere in the report. The file carries every ZANSKAR_*
+	// variable of this process, with the secrets as set above: CI sets
+	// others (the Postgres DSN, the Docker switch) that a file naming only
+	// three would report as changed.
+	fileWith := func(masterKey string) string {
+		var b strings.Builder
+		for _, kv := range os.Environ() {
+			k, v, _ := strings.Cut(kv, "=")
+			if !strings.HasPrefix(k, Prefix) {
+				continue
+			}
+			if k == "ZANSKAR_MASTER_KEY" {
+				v = masterKey
+			}
+			b.WriteString(k + "=" + v + "\n")
+		}
+		return b.String()
+	}
+	path := filepath.Join(t.TempDir(), "env")
+	if err := os.WriteFile(path, []byte(fileWith(secret)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	d := &Drift{Path: path, Started: snap}
+	if r := d.Check(); r.State != FileUnchanged || len(r.Changed) != 0 {
+		t.Fatalf("same file: %+v", r)
+	}
+	future := time.Now().Add(2 * time.Second)
+	if err := os.WriteFile(path, []byte(fileWith("other")), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_ = os.Chtimes(path, future, future)
+	r := d.Check()
+	if !r.RestartRequired() || strings.Join(r.Changed, ",") != "ZANSKAR_MASTER_KEY" {
+		t.Fatalf("changed key: %+v", r)
+	}
+	if js, _ := json.Marshal(r); strings.Contains(string(js), secret) || strings.Contains(string(js), "other") {
+		t.Fatalf("report leaks a value: %s", js)
+	}
 }
 
 func waitFor(t *testing.T, cond func() bool) {

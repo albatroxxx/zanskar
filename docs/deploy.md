@@ -279,7 +279,9 @@ It snapshots the database with SQLite's `VACUUM INTO` — a single transactional
 is safe to take while the gateway is running — and includes the local recordings
 directory. When recordings live in S3 the archive records the backend instead of copying
 them; the object store is their backup. The **master key is never written to the
-archive**, only a fingerprint of it, so restore can warn on a mismatch.
+archive**, only a fingerprint of it, so restore can warn on a mismatch. Only regular files
+are copied: a symbolic link in the recordings directory is skipped (and counted in a warning),
+since the gateway writes none there and backup usually runs as root.
 
 Restore into a stopped service, then start it:
 
@@ -290,7 +292,9 @@ systemctl start zanskar
 ```
 
 Run as root, restore gives the database and recordings it writes to the owner of the files they
-replace (or of the directory they land in), so the service's own user can open them.
+replace (or of the directory they land in), so the service's own user can open them. A symbolic
+link already sitting where a restored file or directory goes is removed first, never written
+through.
 
 Restore refuses to overwrite an existing database without `--force`, and warns when the
 archive was sealed under a different `ZANSKAR_MASTER_KEY` — its stored credentials would
@@ -320,6 +324,11 @@ tooling below rather than `zanskar backup`.
   key always goes where the service reads the old one: with the key in the environment, pass
   `-env-file /etc/zanskar/env`; with a key file, name no file at all (or that one). Any other
   file is refused, since the service would start with a key that no longer opens anything.
+  With `-generate`, the new key is staged in `<file>.next` (mode 0600) before the database is
+  rewrapped and removed once the file carries it, so a crash in between leaves the key on disk
+  rather than nowhere; with no file to update, the key is printed first instead. An env file
+  line written as `export ZANSKAR_MASTER_KEY=...` or with quotes is read and rewritten as such,
+  by `rotate-master` and by `init --force` alike.
 
 ## Security checklist
 

@@ -3969,7 +3969,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/SystemStatus"
         "400":
-          description: Not a version, not newer (`not_newer`), hostname mismatch, or wait_minutes out of range.
+          description: Not a version, a prerelease (`prerelease_refused`; the installer takes releases only), not newer (`not_newer`), hostname mismatch, or wait_minutes out of range.
         "403":
           description: No recent authenticator proof on this session (`step_up_required`).
         "409":

@@ -250,13 +250,41 @@ func TestRotateMasterEnvFile(t *testing.T) {
 		t.Fatalf("anchor before the rotation: %v %q", err, line)
 	}
 
+	// The generated key is staged beside the file before the rewrap (S3-5):
+	// with a directory in the way of the stage file, nothing is rewrapped
+	// and the old key still opens the ring.
+	if err := os.Mkdir(envPath+".next", 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := output(t, func() error { return runKeyRotateMaster([]string{"-env-file", envPath, "-generate", "-yes"}) }); err == nil ||
+		!strings.Contains(err.Error(), "cannot stage the new key") || !strings.Contains(err.Error(), "nothing was changed") {
+		t.Fatalf("want the staging refusal, got %v", err)
+	}
+	if masterKeyFrom(envPath) != g.keyB64 {
+		t.Fatal("the env file changed under a refused rotation")
+	}
+	if err := os.Remove(envPath + ".next"); err != nil {
+		t.Fatal(err)
+	}
+	g.with(t, func(ctx context.Context, db *store.DB, ring *keyring.Ring) {
+		if ring == nil {
+			t.Fatal("the old key no longer opens the ring after a refused rotation")
+		}
+		if opened, err := credential.NewVault(db, ring).Open(ctx, credID); err != nil || opened.Password != "survives-rewrap" {
+			t.Fatalf("credential after a refused rotation: %v", err)
+		}
+	})
+
 	out, stderr, err := output(t, func() error { return runKeyRotateMaster([]string{"-env-file", envPath, "-generate", "-yes"}) })
 	if err != nil {
 		t.Fatalf("rotate-master: %v\n%s", err, stderr)
 	}
 	if !strings.Contains(out, "rewrapped 1 data-key version(s)") || !strings.Contains(out, "updated ZANSKAR_MASTER_KEY in "+envPath) ||
-		!strings.Contains(out, "re-signed 1 audit anchor(s) under the new key") {
+		!strings.Contains(out, "re-signed 1 audit anchor(s) under the new key") || !strings.Contains(out, "staged in "+envPath+".next") {
 		t.Fatalf("output:\n%s", out)
+	}
+	if _, err := os.Lstat(envPath + ".next"); err == nil {
+		t.Fatal("the stage file must be removed once the env file carries the key")
 	}
 	newB64 := masterKeyFrom(envPath)
 	newKey, err := base64.StdEncoding.DecodeString(newB64)

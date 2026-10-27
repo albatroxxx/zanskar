@@ -18,6 +18,12 @@ updates:
     directory: /deploy
     schedule:
       interval: weekly
+    ignore:
+      # The console is built with the Node major CI and the release use
+      # (node-version in ci.yml and release.yml); the three move together,
+      # by hand, so an image built from source embeds the released bundle.
+      - dependency-name: node
+        update-types: ["version-update:semver-major"]
   # The compose files pin caddy, guacd and postgres by digest; the docker
   # ecosystem above reads only the Dockerfiles.
   - package-ecosystem: docker-compose
