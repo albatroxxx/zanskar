@@ -102,6 +102,15 @@ Deferred by decision: a multi-pane workspace (browser tabs suffice), rotation of
 keys and of Windows or database passwords (the certificate authority and the owning systems
 do that). Still Phase 4: HA, SAML/SCIM, WebAuthn.
 
+## v1.7 release — shipped (v1.7.0 tagged 2026-10-28)
+
+Applications change shape: the identity-aware proxy of 1.5 and 1.6 (apps domain, wildcard
+certificate, client trust) goes, and an application opens in an isolated Chromium container
+beside the gateway, streamed through guacd like a VNC desktop and recorded like one
+([ADR 0034](adr/0034-applications-isolated-browser.md), superseding 0033). The gateway host needs
+a container runtime for it, as for databases; migration 0032 drops what the proxy needed
+([release notes](releases/v1.7.0.md)).
+
 ## v1.6 release — shipped (v1.6.0 tagged 2026-10-27)
 
 A hardening release. It closes every finding of the full security, quality and usability review
@@ -112,11 +121,6 @@ browser), one WebSocket message per Guacamole instruction, a key-safe `init --fo
 that decide where a credential is sent kept runtime but bounded ([ADR 0020](adr/0020-runtime-settings-console-overrides-environment.md),
 threat model risk 7). Applications gain a readiness checklist and a no-DNS recipe. No migration;
 four operator-visible changes ([release notes](releases/v1.6.0.md)).
-
-Next, decided 2026-10-27: v1.7 moves applications to an **isolated browser**. A web
-application opens in a sandboxed Chromium container beside the gateway, streamed through
-guacd and recorded like a desktop; the identity-aware proxy, the apps domain, the wildcard
-certificate and the hand-off go ([ADR 0034](adr/0034-applications-isolated-browser.md)).
 
 ## v1.5 release — shipped (v1.5.0 tagged 2026-10-23)
 
