@@ -278,9 +278,26 @@ func TestSnapshotEnvHoldsNoSecret(t *testing.T) {
 		t.Errorf("a plain setting was altered: %q", snap["ZANSKAR_LISTEN_ADDR"])
 	}
 	// The same file compares as unchanged, a different key as changed, with
-	// neither value anywhere in the report.
+	// neither value anywhere in the report. The file carries every ZANSKAR_*
+	// variable of this process, with the secrets as set above: CI sets
+	// others (the Postgres DSN, the Docker switch) that a file naming only
+	// three would report as changed.
+	fileWith := func(masterKey string) string {
+		var b strings.Builder
+		for _, kv := range os.Environ() {
+			k, v, _ := strings.Cut(kv, "=")
+			if !strings.HasPrefix(k, Prefix) {
+				continue
+			}
+			if k == "ZANSKAR_MASTER_KEY" {
+				v = masterKey
+			}
+			b.WriteString(k + "=" + v + "\n")
+		}
+		return b.String()
+	}
 	path := filepath.Join(t.TempDir(), "env")
-	if err := os.WriteFile(path, []byte("ZANSKAR_MASTER_KEY="+secret+"\nZANSKAR_DB_DSN=postgres://zanskar:"+secret+"@db/zanskar\nZANSKAR_LISTEN_ADDR=127.0.0.1:8443\n"), 0o600); err != nil {
+	if err := os.WriteFile(path, []byte(fileWith(secret)), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	d := &Drift{Path: path, Started: snap}
@@ -288,7 +305,7 @@ func TestSnapshotEnvHoldsNoSecret(t *testing.T) {
 		t.Fatalf("same file: %+v", r)
 	}
 	future := time.Now().Add(2 * time.Second)
-	if err := os.WriteFile(path, []byte("ZANSKAR_MASTER_KEY=other\nZANSKAR_DB_DSN=postgres://zanskar:"+secret+"@db/zanskar\nZANSKAR_LISTEN_ADDR=127.0.0.1:8443\n"), 0o600); err != nil {
+	if err := os.WriteFile(path, []byte(fileWith("other")), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	_ = os.Chtimes(path, future, future)
