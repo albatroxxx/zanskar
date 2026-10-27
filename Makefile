@@ -109,9 +109,6 @@ FUZZ_TARGETS := \
 	internal/cloud:FuzzParseConsoleHostKeys \
 	internal/auth:FuzzParseAddr \
 	internal/cli:FuzzTokenize \
-	internal/apps:FuzzSafePath \
-	internal/apps:FuzzSanitizeSetCookies \
-	internal/apps:FuzzRewriteLocation \
 	internal/update:FuzzVersionParse
 
 .PHONY: fuzz

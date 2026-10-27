@@ -75,7 +75,7 @@ var ChildEnvVars = []string{
 // which `docker run -e NAME` reads from here). It is never nil: exec.Cmd
 // takes a nil Env to mean the gateway's whole environment.
 func ChildEnv(extra []string) []string {
-	env := make([]string, 0, len(ChildEnvVars)+len(extra))
+	env := make([]string, 0, len(ChildEnvVars))
 	for _, k := range ChildEnvVars {
 		if v, ok := os.LookupEnv(k); ok {
 			env = append(env, k+"="+v)

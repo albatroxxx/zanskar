@@ -14,7 +14,8 @@ RUN apt-get update \
  && useradd -m -u 10001 -s /usr/sbin/nologin browser \
  && mkdir -p /etc/chromium/policies/managed
 COPY entrypoint.sh /entrypoint.sh
+# The VNC server listens on 5900 for the session relay alone; nothing is
+# published and there is no EXPOSE: the relay reaches it on the session network.
 USER browser
 ENV HOME=/tmp/home
-EXPOSE 5900
 ENTRYPOINT ["/entrypoint.sh"]
