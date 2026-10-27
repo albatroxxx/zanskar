@@ -20,7 +20,14 @@ Agentless VM access gateway in Go. Module path `github.com/albatroxxx/zanskar`. 
 - Secrets are sealed with `keyring.Ring.Encrypt(keyring.AAD(table, id), ...)` and the key version
   is stored beside the ciphertext.
 - Tests use SQLite in-memory (`file::memory:?_pragma=foreign_keys(1)`) plus `store.Migrate`.
-  Postgres tests run when `ZANSKAR_TEST_POSTGRES_DSN` is set (CI does this).
+  Postgres tests run when `ZANSKAR_TEST_POSTGRES_DSN` is set (CI does this). A repository test
+  that touches an engine-sensitive statement (`ON CONFLICT`, `LOWER()`, `LIKE ... ESCAPE`, JSON
+  columns, timestamp comparisons) runs through `storetest.ForEachBackend`, which gives each test
+  a migrated schema of its own on Postgres. Locally: `docker run -d --name zanskar-pg-test
+  -e POSTGRES_USER=zanskar -e POSTGRES_PASSWORD=zanskar -e POSTGRES_DB=zanskar_test -p 5433:5432
+  postgres:16-alpine` and `ZANSKAR_TEST_POSTGRES_DSN='postgres://zanskar:zanskar@127.0.0.1:5433/zanskar_test?sslmode=disable'`.
+- Tests hash passwords with reduced argon2id parameters (`internal/user/password.go`, gated on
+  `testing.Testing()`); nothing a test does can change what a built binary hashes with.
 
 ## Before committing
 

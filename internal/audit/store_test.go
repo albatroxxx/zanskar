@@ -406,7 +406,7 @@ func testBackends(t *testing.T) []testBackend {
 	}}}
 	if dsn := os.Getenv("ZANSKAR_TEST_POSTGRES_DSN"); dsn != "" {
 		backends = append(backends, testBackend{"postgres", func(t *testing.T) *store.DB {
-			db := isolatedPostgres(t, dsn)
+			db := storetest.OpenPostgres(t, dsn)
 			if _, err := store.Migrate(context.Background(), db); err != nil {
 				t.Fatal(err)
 			}

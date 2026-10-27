@@ -462,7 +462,7 @@ func TestFormat(t *testing.T) {
 }
 
 func FuzzTokenize(f *testing.F) {
-	for _, s := range []string{"users", `a "b c" 'd'`, "x;y", "\x00", `"`} {
+	for _, s := range []string{"users", `a "b c" 'd'`, "x;y", "\x00", `"`, `"b c"`, `"x;y | z"`, `""`} {
 		f.Add(s)
 	}
 	f.Fuzz(func(t *testing.T, s string) {
@@ -476,6 +476,16 @@ func FuzzTokenize(f *testing.F) {
 		for _, tok := range toks {
 			if strings.ContainsAny(tok, "\x00\n\r") {
 				t.Fatalf("tokenize(%q) kept a control character in %q", s, tok)
+			}
+		}
+		// One double-quoted run is one token, holding exactly what was
+		// quoted: a tokenizer that split on the spaces inside, or dropped the
+		// quoted text, passed the count check above.
+		// A tab is a space to the tokenizer, inside quotes as well (the
+		// fuzzer found "\t" quoted; the corpus keeps it).
+		if len(s) >= 2 && s[0] == '"' && s[len(s)-1] == '"' && !strings.Contains(s[1:len(s)-1], "\"") {
+			if want := strings.ReplaceAll(s[1:len(s)-1], "\t", " "); len(toks) != 1 || toks[0] != want {
+				t.Fatalf("tokenize(%q) = %q, want %q as one token", s, toks, want)
 			}
 		}
 	})

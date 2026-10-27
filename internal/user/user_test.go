@@ -5,6 +5,7 @@ package user
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -24,7 +25,7 @@ func TestPasswordHashing(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.HasPrefix(h, "$argon2id$v=19$m=65536,t=3,p=1$") {
+	if want := fmt.Sprintf("$argon2id$v=19$m=%d,t=%d,p=%d$", hashParams.memory, hashParams.time, hashParams.threads); !strings.HasPrefix(h, want) {
 		t.Fatalf("unexpected PHC prefix: %s", h)
 	}
 	if !VerifyPassword(h, "correct horse battery staple") {
