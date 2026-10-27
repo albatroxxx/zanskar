@@ -51,7 +51,10 @@ test.describe('Administering from the console', () => {
     await expect(page.getByRole('heading', { name: 'Audit events' })).toBeVisible()
     await expect(page.getByRole('row').filter({ hasText: /signed in|login/i }).first()).toBeVisible()
     const verify = await page.evaluate(() => fetch('/api/v1/audit/verify').then((r) => r.json()))
-    expect(verify.broken ?? null).toBeNull()
+    // The positive claim: a renamed field or a chain reporting problems must
+    // fail here, which "broken is absent" never did.
+    expect(verify.intact).toBe(true)
+    expect(verify.problems ?? []).toEqual([])
     expect(verify.checked).toBeGreaterThan(0)
   })
 })

@@ -23,6 +23,8 @@ export default defineConfig({
     // Sign in once; every project but the sign-in tests starts from that state.
     { name: 'setup', testMatch: /auth\.setup\.ts/ },
     { name: 'signin', testMatch: /signin\.spec\.ts/, use: { ...devices['Desktop Chrome'] } },
-    { name: 'chromium', testIgnore: /signin\.spec\.ts/, dependencies: ['setup'], use: { ...devices['Desktop Chrome'], storageState: 'e2e/.auth/admin.json' } },
+    { name: 'chromium', testIgnore: /(signin|roles)\.spec\.ts/, dependencies: ['setup'], use: { ...devices['Desktop Chrome'], storageState: 'e2e/.auth/admin.json' } },
+    // The plain user's half: what the user role reaches and what it is refused.
+    { name: 'user', testMatch: /roles\.spec\.ts/, dependencies: ['setup'], use: { ...devices['Desktop Chrome'], storageState: 'e2e/.auth/user.json' } },
   ],
 })

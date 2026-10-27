@@ -37,7 +37,11 @@ ROOT=$(echo "$login" | python3 -c 'import sys,json; print(json.load(sys.stdin)["
 api() { curl -s -b "$J" -H "X-CSRF-Token: $CSRF" -H 'Content-Type: application/json' "$@"; }
 jget() { python3 -c "import sys,json; d=json.load(sys.stdin); print($1)"; }
 GRP=$(api -X POST "$B/groups" -d '{"name":"ops","description":"operators"}' | jget 'd["id"]')
-api -X PUT "$B/groups/$GRP/members" -d "{\"user_ids\":[\"$ROOT\"]}" > /dev/null
+# A second account with the user role alone, in the same group, so the browser
+# suite can prove what a non-administrator cannot reach. The password is kept
+# as set (must_change_password false) so the suite signs in with it directly.
+ALICE=$(api -X POST "$B/users" -d '{"username":"alice","display_name":"Alice","roles":["user"],"password":"alice passphrase 2026","must_change_password":false}' | jget 'd["user"]["id"] if "user" in d else d["id"]')
+api -X PUT "$B/groups/$GRP/members" -d "{\"user_ids\":[\"$ROOT\",\"$ALICE\"]}" > /dev/null
 CRED=$(api -X POST "$B/credentials" -d '{"name":"fake-pw","type":"password","mode":"vaulted","username":"test","password":"pw"}' | jget 'd["id"]')
 TID=$(api -X POST "$B/targets" -d "{\"name\":\"fake-1\",\"address\":\"$LAN\",\"os_family\":\"linux\",\"ports\":{\"ssh\":$SSHPORT},\"tags\":{\"env\":\"test\"}}" | jget 'd["id"]')
 api -X PUT "$B/targets/$TID/credentials/ssh" -d "{\"credential_id\":\"$CRED\"}" > /dev/null
@@ -53,6 +57,10 @@ export E2E_BASE_URL="http://127.0.0.1:$PORT"
 # under $S for CI to upload when it fails.
 status=0
 (cd web && ./node_modules/.bin/playwright test --config e2e/playwright.config.ts "$@") || status=$?
-echo "gateway errors: $(grep -c 'level=ERROR' "$S/gateway.log" || true)"; grep 'level=ERROR' "$S/gateway.log" | head -3 | cut -c1-200 || true
+# A gateway error during the run fails it even when every browser test
+# passed: an error on each connect is a bug the suite would otherwise hide.
+errors=$(grep -c 'level=ERROR' "$S/gateway.log" || true)
+echo "gateway errors: $errors"; grep 'level=ERROR' "$S/gateway.log" | head -5 | cut -c1-200 || true
+if [[ "$errors" != "0" && "$status" == "0" ]]; then echo "the browser suite passed but the gateway logged errors; failing"; status=1; fi
 echo "logs: $S"
 exit $status

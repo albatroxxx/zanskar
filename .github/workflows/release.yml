@@ -15,6 +15,56 @@ permissions:
   contents: read
 
 jobs:
+  # A tag builds a release only from a commit that is on main and whose CI
+  # run passed. Without this, any v* tag pushed from any branch published an
+  # image to ghcr.io and moved :latest before the draft release was looked at.
+  # The repository's tag ruleset on v* is the other half (who may push a tag);
+  # this is the half the workflow can check for itself.
+  gate:
+    name: tag is on main with green CI
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      actions: read # list the CI workflow's runs for the commit
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: The tagged commit is an ancestor of main
+        id: commit
+        # An annotated tag's own object is peeled to the commit it names, so
+        # both checks look at the commit whichever kind of tag was pushed.
+        run: |
+          set -euo pipefail
+          sha=$(git rev-parse "${GITHUB_SHA}^{commit}")
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          git fetch --no-tags origin main
+          if ! git merge-base --is-ancestor "$sha" origin/main; then
+            echo "::error::${GITHUB_REF_NAME} points at ${sha::12}, which is not on main; releases are cut from main only"
+            exit 1
+          fi
+      - name: CI passed for the tagged commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ steps.commit.outputs.sha }}
+        # The CI workflow's own run for this commit, the one its push to main
+        # started, must have completed with success. Only ci.yml is asked,
+        # not every check on the commit: this gate is itself a check run on
+        # it, still in progress, and so are the release jobs behind it, and a
+        # scheduled scan that failed on the commit is no reason to hold a
+        # release. A commit whose CI never ran, is still running, or failed
+        # is refused.
+        run: |
+          set -euo pipefail
+          runs=$(gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/ci.yml/runs?head_sha=${SHA}&per_page=20" --jq '.workflow_runs[] | "\(.event)\t\(.status)\t\(.conclusion)\t\(.html_url)"')
+          printf 'CI runs for %s:\n%s\n' "${SHA::12}" "${runs:-none}"
+          if ! grep -qP '^push\tcompleted\tsuccess\t' <<<"$runs"; then
+            echo "::error::no successful CI run for the push of ${SHA::12} to main; wait for CI or fix it before tagging"
+            exit 1
+          fi
+
   # The console bundle is built here, by third-party build code (Vite and its
   # plugins from node_modules), in a job that holds a read-only token and no
   # OIDC identity. The release job below only downloads the result, so no
@@ -22,7 +72,9 @@ jobs:
   # release or sign as this workflow.
   web:
     name: web bundle
+    needs: [gate]
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       contents: read
     steps:
@@ -44,8 +96,9 @@ jobs:
 
   goreleaser:
     name: goreleaser
-    needs: [web]
+    needs: [gate, web]
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     outputs:
       hashes: ${{ steps.hashes.outputs.hashes }}
     permissions:

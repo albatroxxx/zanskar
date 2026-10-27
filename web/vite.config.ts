@@ -29,15 +29,15 @@ export default defineConfig({
     // Coverage over every console source file, rendered or not: istanbul
     // instruments at transform time, so a page no test ever opens counts as
     // 0%, where the v8 provider reported it as 100% of nothing. The
-    // thresholds are a floor just under the figures of 2026-10-26 (72.9% of
-    // lines after the page tests landed); raise them as tests land, never
-    // lower them.
+    // thresholds are a floor just under the figures of 2026-10-27 (76.0% of
+    // lines after the feature tests for the nine pages the review named
+    // landed); raise them as tests land, never lower them.
     coverage: {
       provider: 'istanbul',
       include: ['src/**/*.{ts,tsx}'],
       exclude: ['src/**/*.test.{ts,tsx}', 'src/**/*.d.ts', 'src/main.tsx'],
       reporter: ['text-summary', 'json-summary'],
-      thresholds: { lines: 71, statements: 68, branches: 63, functions: 61 },
+      thresholds: { lines: 74, statements: 71, branches: 66, functions: 64 },
     },
   },
 })
