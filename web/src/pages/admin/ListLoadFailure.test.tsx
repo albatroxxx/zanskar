@@ -18,12 +18,16 @@ const locked = () => new ApiError(500, { code: 'internal', message: 'database is
 // contradict each other. The error stands alone now.
 describe('A list page whose read failed', () => {
   it.each([
-    ['Policies', <Policies />],
-    ['Sessions', <Sessions />],
-    ['Credentials', <Credentials />],
-  ])('%s names the failure and does not say Loading', async (_name, page) => {
+    ['Policies', Policies],
+    ['Sessions', Sessions],
+    ['Credentials', Credentials],
+  ])('%s names the failure and does not say Loading', async (_name, Page) => {
     vi.spyOn(api, 'get').mockRejectedValue(locked())
-    render(<MemoryRouter initialEntries={['/admin/x']}>{page}</MemoryRouter>)
+    render(
+      <MemoryRouter initialEntries={['/admin/x']}>
+        <Page />
+      </MemoryRouter>,
+    )
     expect(await screen.findByText(/database is locked \(reference req-7\)/)).toBeDefined()
     expect(screen.queryByText('Loading…')).toBeNull()
   })
