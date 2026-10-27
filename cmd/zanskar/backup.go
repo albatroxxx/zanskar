@@ -124,6 +124,9 @@ func runBackup(args []string) error {
 	} else if !man.RecordingsIncluded {
 		fmt.Println("No local recordings directory was found; none were included.")
 	}
+	if man.RecordingsIncluded {
+		fmt.Println("Local recordings are in this archive in clear, as they are on disk; store the archive encrypted.")
+	}
 	fmt.Println("The master key is NOT in this archive. Back up ZANSKAR_MASTER_KEY separately;")
 	fmt.Println("without the same key, a restored database's stored credentials are unreadable.")
 	return nil

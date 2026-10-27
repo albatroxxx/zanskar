@@ -65,7 +65,12 @@ user is told ten minutes before a grant ends so they can ask in time. The approv
 different duration than was asked (`minutes` on approve, capped by the policy); the requested
 figure stays on the record beside the granted one, and the requester is told what was granted.
 
-**Approver model (v1): any admin.** Approve / deny / revoke are admin-only; auditors may view.
+**Approver model (v1): any admin.** Approve / deny / revoke are admin-only, and so is the queue:
+the API refuses auditors on `GET /api/v1/access-requests` and the audit portal has no approvals
+page (the ADR said "auditors may view" until 2026-10-26; the route has been admin-only since its first
+commit, #31). What an auditor gets
+is the `access.request.*` events in the audit log, which name requester, approver and request. A
+read-only approvals view for auditors is an open product question.
 Designated per-target or per-policy approvers, and multi-step chains, are deferred.
 
 **An admin may approve their own request** (decided 2026-10-04). An admin also holds the user

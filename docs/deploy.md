@@ -502,6 +502,14 @@ again, and the card says so. The gateway refuses to start when a stored storage
 configuration cannot be built or its secret unsealed (recordings must not quietly go
 elsewhere); the way out is `DELETE FROM recording_storage;` in the database, then start.
 
+Keep the bucket private, with public access blocked and a bucket policy that admits the
+gateway's role or key alone. The gateway writes every object with server-side encryption,
+under the KMS key you name or else the bucket's own AES-256, and does not encrypt recordings
+itself before upload; so the bucket policy and the key policy are what keeps a recording from
+anyone who can reach the bucket. Local recordings are `0600` files in a `0700` directory owned
+by the service, and `zanskar backup` copies them into the archive as they are: store the
+archive encrypted.
+
 ### Retention
 
 Recordings are deleted by an audited hourly sweep. The global policy on the console's
