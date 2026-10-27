@@ -39,6 +39,18 @@ export type Protocol = 'ssh' | 'rdp' | 'vnc' | 'winrm' | 'database' | 'http'
 export type OSFamily = 'linux' | 'windows' | 'other'
 export type HostKeyStatus = 'unknown' | 'pending' | 'trusted' | 'changed'
 
+/** One prerequisite of serving applications, from GET /admin/applications/readiness. */
+export interface AppsCheck {
+  key: 'domain' | 'public_url' | 'certificate'
+  title: string
+  ok: boolean
+  detail: string
+}
+export interface AppsReadiness {
+  ready: boolean
+  checks: AppsCheck[]
+}
+
 export interface Target {
   id: string
   name: string

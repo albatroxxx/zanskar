@@ -600,7 +600,36 @@ the name in the handshake.
 - **The setting.** `ZANSKAR_APPS_DOMAIN` in the environment file, or *Apps domain* on the
   Settings page, which applies live. Until the domain, the public URL and (where the gateway
   serves TLS) the certificate are in place, enrolling an application is refused with the
-  reason.
+  reason, and the Applications page lists the three prerequisites with their state
+  (`GET /api/v1/admin/applications/readiness`).
+
+### Applications on a network without DNS
+
+A test network often has no DNS to put a wildcard record in, and a gateway reached by its
+address alone (`https://10.1.1.9:8443`) has no name an apps domain can sit under. Two ways
+through, neither of which exposes anything: the names resolve to the private address, and
+the application is reachable only through the gateway.
+
+- **Public DNS for a private address.** `sslip.io` answers `anything.10-1-1-9.sslip.io`
+  with 10.1.1.9 from public DNS, so every client that can resolve public names reaches the
+  gateway by name. With the gateway in managed TLS mode:
+  1. In the environment file, `ZANSKAR_PUBLIC_URL=https://10-1-1-9.sslip.io:8443` (the host
+     must be a name, not the bare address) and `ZANSKAR_TLS_HOSTS=10-1-1-9.sslip.io`, so the
+     console's own certificate carries the name; restart.
+  2. Settings, *Apps domain*: `apps.10-1-1-9.sslip.io`.
+  3. A wildcard certificate for `*.apps.10-1-1-9.sslip.io`. A public CA will not issue one
+     for that name, so make it with a private CA installed on the client machines:
+     `mkcert -install` once per client, then `mkcert "*.apps.10-1-1-9.sslip.io"` and upload
+     the pair under Settings, *TLS certificate*, *Applications*. Any private CA does; the
+     browser suite in `hack/e2e.sh` makes one with `openssl` in six lines.
+  4. Add the application with its upstream, `http://10.1.1.5` for a server on port 80, and
+     a label such as `nginx`; a policy granting `http` on it makes it appear in the user
+     portal, where it opens at `https://nginx.apps.10-1-1-9.sslip.io:8443`.
+- **No public DNS either.** The clients' hosts files cannot express a wildcard, so each
+  application needs its own line on each client (`10.1.1.9 nginx.apps.gateway.test`), plus
+  one for the console host; fine for a demonstration, not for a fleet. Chromium can also be
+  started with `--host-resolver-rules="MAP *.apps.gateway.test 10.1.1.9"`, which is what the
+  browser suite does.
 - **What the proxy does per request.** Checks the application's cookie against the sign-in
   it came from, the access session's end and the policy's idle and maximum limits; strips
   every Zanskar cookie and any identity header (`X-Forwarded-User`, `X-Remote-User`, ...);

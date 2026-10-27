@@ -23,8 +23,27 @@ export default defineConfig({
     // Sign in once; every project but the sign-in tests starts from that state.
     { name: 'setup', testMatch: /auth\.setup\.ts/ },
     { name: 'signin', testMatch: /signin\.spec\.ts/, use: { ...devices['Desktop Chrome'] } },
-    { name: 'chromium', testIgnore: /(signin|roles)\.spec\.ts/, dependencies: ['setup'], use: { ...devices['Desktop Chrome'], storageState: 'e2e/.auth/admin.json' } },
+    { name: 'chromium', testIgnore: /(signin|roles|apps)\.spec\.ts/, dependencies: ['setup'], use: { ...devices['Desktop Chrome'], storageState: 'e2e/.auth/admin.json' } },
     // The plain user's half: what the user role reaches and what it is refused.
     { name: 'user', testMatch: /roles\.spec\.ts/, dependencies: ['setup'], use: { ...devices['Desktop Chrome'], storageState: 'e2e/.auth/user.json' } },
+    // Applications (ADR 0033) live at their own host names. The browser
+    // resolves console.test and *.apps.test to the gateway itself, so the run
+    // needs no DNS; the console cookie is for console.test here, so this
+    // project signs in on its own rather than reusing the saved state.
+    // The browser resolves console.test and *.apps.test to the gateway itself,
+    // so the run needs no DNS; the gateway's console certificate is
+    // self-signed and the apps certificate comes from a throwaway CA, so
+    // certificate errors are ignored for this project alone; the console
+    // cookie is for console.test here, so this project signs in on its own.
+    {
+      name: 'apps',
+      testMatch: /apps\.spec\.ts/,
+      use: {
+        ...devices['Desktop Chrome'],
+        baseURL: process.env.E2E_TLS_BASE_URL ?? 'https://console.test:18445',
+        ignoreHTTPSErrors: true,
+        launchOptions: { args: ['--host-resolver-rules=MAP console.test 127.0.0.1, MAP *.apps.test 127.0.0.1'] },
+      },
+    },
   ],
 })

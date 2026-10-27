@@ -668,6 +668,39 @@ paths:
                         type: array
                         items:
                           $ref: "#/components/schemas/AccessRequest"
+  /admin/applications/readiness:
+    get:
+      tags: [admin]
+      summary: What serving applications still needs
+      description: >
+        The prerequisites of serving applications, each with its state and what to do
+        (ADR 0033): the apps domain, the console's public address and, where the gateway
+        terminates TLS, a certificate for the apps domain. The Applications page shows this
+        until every check passes; enrolling an application is refused until then.
+      responses:
+        "200":
+          description: The checklist.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ready, checks]
+                properties:
+                  ready: { type: boolean }
+                  checks:
+                    type: array
+                    items:
+                      type: object
+                      required: [key, title, ok, detail]
+                      properties:
+                        key: { type: string, enum: [domain, public_url, certificate] }
+                        title: { type: string }
+                        ok: { type: boolean }
+                        detail: { type: string }
+        "401":
+          description: Not signed in.
+        "403":
+          description: Not an administrator.
   /me/applications/launch:
     get:
       tags: [user]
