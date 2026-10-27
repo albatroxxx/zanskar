@@ -59,6 +59,7 @@ const reasonText: Record<string, string> = {
   max_duration: 'The session reached the maximum duration the access policy allows.',
   admin_terminated: 'An administrator ended the session.',
   target_lost: 'The connection to the target was lost.',
+  trust_lost: "The target's host key or certificate changed; an administrator must trust it again.",
   error: 'The session ended because of an error.',
 }
 

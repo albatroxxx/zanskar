@@ -40,8 +40,11 @@ type AdminHandler struct {
 	// by id or whose instances have sessions open (ADR 0019); nil skips it.
 	Policies *policy.Repo
 	Live     *gateway.Registry
-	Audit    *audit.Log
-	Log      *slog.Logger
+	// Revoker ends the live sessions on the group's instances when the
+	// group is disabled (ADR 0013); nil leaves them to their own limits.
+	Revoker gateway.Revoker
+	Audit   *audit.Log
+	Log     *slog.Logger
 	// Vault resolves the user_supplied sentinel when a slot is set to
 	// prompt; nil disables the sentinel.
 	Vault *credential.Vault
@@ -206,7 +209,22 @@ func (h *AdminHandler) update(w http.ResponseWriter, r *http.Request) {
 		h.fail(w, r, err)
 		return
 	}
-	h.record(r, audit.ASGUpdate, g, audit.Success, map[string]any{"before": before})
+	details := map[string]any{"before": before}
+	// A group taken out of service keeps no session on any of its
+	// instances; the registry keys them by instance row id.
+	if h.Revoker != nil && before["status"] == "active" && g.Status == "disabled" {
+		ended := 0
+		instances, err := h.Repo.Instances(r.Context(), g.ID, false)
+		if err != nil {
+			h.fail(w, r, err)
+			return
+		}
+		for _, in := range instances {
+			ended += h.Revoker.TargetDisabled(in.ID)
+		}
+		details["live_sessions_ended"] = ended
+	}
+	h.record(r, audit.ASGUpdate, g, audit.Success, details)
 	if rotated {
 		h.record(r, audit.ASGExternalIDRotate, g, audit.Success, nil)
 	}

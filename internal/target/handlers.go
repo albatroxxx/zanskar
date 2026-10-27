@@ -36,6 +36,9 @@ type AdminHandler struct {
 	// Vault resolves the user_supplied sentinel when a slot is set to
 	// prompt; nil disables the sentinel.
 	Vault *credential.Vault
+	// Revoker ends the live sessions a disable, an address change or a
+	// changed pin withdraws (ADR 0013); nil leaves them to their own limits.
+	Revoker gateway.Revoker
 	// AppsReady says whether the gateway can serve applications (ADR 0033):
 	// an apps domain is set and, where the gateway terminates TLS, a
 	// certificate for it is loaded. Its error is the reason an application
@@ -193,6 +196,12 @@ func (h *AdminHandler) update(w http.ResponseWriter, r *http.Request) {
 		// Repo.Update cleared the host key and certificate pins with it.
 		details["trust_reset"] = true
 	}
+	// A target taken out of service, or moved to an address nobody has
+	// trusted yet, keeps no session: what was admitted to the old target
+	// ends now rather than at its own limits.
+	if h.Revoker != nil && ((before["status"] == StatusActive && t.Status == StatusDisabled) || before["address"] != t.Address) {
+		details["live_sessions_ended"] = h.Revoker.TargetDisabled(t.ID)
+	}
 	h.record(r, audit.TargetUpdate, t.ID, audit.Success, details)
 	httpx.WriteJSON(w, http.StatusOK, t)
 }
@@ -301,16 +310,22 @@ func (h *AdminHandler) probe(w http.ResponseWriter, r *http.Request) {
 		"host_key_fingerprint": change.New, "tls_fingerprint": t.TLSFingerprint,
 	})
 	out := ProbeResponse{Target: t, Probe: res, HostKeyStatus: t.HostKeyStatus, HostKeyFingerprint: t.HostKeyFingerprint}
+	// A pin that moved is the signal that the host may not be the one that
+	// was trusted; the sessions already open on it end with it (ADR 0013).
+	ended := 0
+	if h.Revoker != nil && (change.Changed || len(change.Certificates) > 0) {
+		ended = h.Revoker.TargetTrustLost(t.ID)
+	}
 	for _, c := range change.Certificates {
 		h.record(r, audit.TargetTLSChanged, t.ID, audit.Failure, map[string]any{
-			"address": t.Address, "protocol": c.Protocol, "pinned": c.Pinned, "seen": c.Seen,
+			"address": t.Address, "protocol": c.Protocol, "pinned": c.Pinned, "seen": c.Seen, "live_sessions_ended": ended,
 		})
 		h.Log.Warn("pinned certificate changed; the new one awaits confirmation", "target", t.Name, "protocol", c.Protocol, "pinned", c.Pinned, "seen", c.Seen)
 	}
 	if change.Changed {
 		out.HostKeyChangedFrom = change.Old
 		h.record(r, audit.TargetHostKeyChanged, t.ID, audit.Failure, map[string]any{
-			"address": t.Address, "old": change.Old, "new": change.New,
+			"address": t.Address, "old": change.Old, "new": change.New, "live_sessions_ended": ended,
 			"note": "trusted host key replaced; connections refused until an admin re-trusts",
 		})
 		h.Log.Warn("ssh host key changed", "target", t.Name, "address", t.Address, "old", change.Old, "new", change.New)

@@ -35,6 +35,7 @@ type env struct {
 	admin    *http.Cookie
 	csrf     string
 	user     *http.Cookie
+	revoker  *fakeRevoker
 }
 
 func newEnv(t *testing.T) *env {
@@ -63,11 +64,12 @@ func newEnvWith(t *testing.T, prober *Prober) *env {
 	}
 	t.Cleanup(ring.Close)
 	vault := credential.NewVault(db, ring)
-	h := &AdminHandler{Repo: NewRepo(db), Prober: prober, Policies: policies, Live: live, Vault: vault, Audit: auditLog, Log: log}
+	revoker := &fakeRevoker{}
+	h := &AdminHandler{Repo: NewRepo(db), Prober: prober, Policies: policies, Live: live, Revoker: revoker, Vault: vault, Audit: auditLog, Log: log}
 	mux := http.NewServeMux()
 	h.Register(mux)
 	mw := &auth.Middleware{Sessions: sessions, Users: users, Log: log}
-	e := &env{srv: mw.Authenticate(mw.CSRF(mux)), db: db, audit: auditLog, policies: policies, live: live, vault: vault}
+	e := &env{srv: mw.Authenticate(mw.CSRF(mux)), db: db, audit: auditLog, policies: policies, live: live, vault: vault, revoker: revoker}
 
 	adminUser := &user.User{Username: "admin", DisplayName: "Admin", Roles: []user.Role{user.RoleAdmin}}
 	if err := users.Create(ctx, adminUser); err != nil {

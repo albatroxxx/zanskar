@@ -58,6 +58,26 @@ admitted it, and the changes that take access away end the sessions they take it
 - **Disabling, locking or deleting an account, changing its roles, or signing it out
   everywhere** ends all of that user's live sessions.
 
+Amended 2026-10-26, four more changes reach live sessions (full review finding SEC-1). The
+list above left four admin actions that read as "stop now" ending nothing:
+
+- **Disabling a target or an autoscaling group, or moving a target's address** ends every
+  session on it (on each of the group's instances), as `admin_terminated`. Nothing has trusted
+  the host at a new address yet, and a target out of service keeps no session.
+- **A probe that finds a trusted host key or pinned certificate replaced** ends every session
+  on the target, as `trust_lost`: the host may no longer be the one that was trusted, and a
+  session already open is the one thing the connect-time pin check cannot protect. An
+  autoscaling instance whose pin changes was already retired by the sync as `target_lost`.
+- **Revoking a just-in-time grant, and a grant expiring** (ADR 0018, amended the same day)
+  end the sessions the grant admitted, as `policy_revoked` and `max_duration` respectively,
+  unless the connect gate would still admit them because a standing policy covers the same
+  access.
+- **Switching a policy to require approval or an authenticator** is now judged the way a fresh
+  connect is: the check a policy edit runs is the connect gate given that one policy, so a
+  session whose user holds no active grant, or has no authenticator enrolled, ends. Before,
+  the edit check looked only at whether the policy still *covered* the session, which a gated
+  policy does.
+
 A session ended by a policy or group change closes as `policy_revoked`; one ended by an account
 change, as `admin_terminated`. The audit event for each change records how many live sessions
 it ended (`live_sessions_ended`). One limitation is by design: a policy change is checked

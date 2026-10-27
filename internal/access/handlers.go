@@ -13,6 +13,7 @@ import (
 	"github.com/albatroxxx/zanskar/internal/asg"
 	"github.com/albatroxxx/zanskar/internal/audit"
 	"github.com/albatroxxx/zanskar/internal/auth"
+	"github.com/albatroxxx/zanskar/internal/gateway"
 	"github.com/albatroxxx/zanskar/internal/httpx"
 	"github.com/albatroxxx/zanskar/internal/policy"
 	"github.com/albatroxxx/zanskar/internal/target"
@@ -27,9 +28,12 @@ type Handler struct {
 	Targets  *target.Repo
 	// ASGs finds the autoscaling group a request names; nil refuses such
 	// requests as not found.
-	ASGs  *asg.Repo
-	Audit *audit.Log
-	Log   *slog.Logger
+	ASGs *asg.Repo
+	// Revoker ends the live sessions a revoked grant admitted (ADR 0013,
+	// ADR 0018); nil leaves them to their own limits.
+	Revoker gateway.Revoker
+	Audit   *audit.Log
+	Log     *slog.Logger
 }
 
 // Register mounts the routes. Creating and viewing one's own requests needs an
@@ -223,6 +227,24 @@ func (h *Handler) approve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	d := h.decision(r)
+	// Eligibility and the cap are decided by the policies as they stand now,
+	// not as they stood when the request was made: a policy lowered, deleted
+	// or moved off the requester since then bounds or refuses the grant.
+	ref, ok := h.subject(w, r, createInput{TargetID: cur.TargetID, ASGID: cur.ASGID})
+	if !ok {
+		return
+	}
+	pols, err := h.Policies.ForUser(r.Context(), cur.UserID)
+	if err != nil {
+		h.fail(w, r, err)
+		return
+	}
+	elig := eligiblePolicy(pols, ref, cur.Protocol)
+	if elig == nil {
+		httpx.WriteError(w, r, http.StatusConflict, "not_eligible",
+			"the requester is no longer eligible: no approval-gated policy of theirs covers this target and protocol")
+		return
+	}
 	// The approver may grant less or more than was asked, inside the policy's
 	// maximum; the requested figure stays on the record beside the granted one.
 	minutes := cur.RequestedMinutes
@@ -231,19 +253,12 @@ func (h *Handler) approve(w http.ResponseWriter, r *http.Request) {
 			httpx.BadRequest(w, r, "minutes must be at least 1")
 			return
 		}
-		var pol *policy.Policy
-		if cur.PolicyID != "" {
-			if pol, err = h.Policies.Get(r.Context(), cur.PolicyID); err != nil && !errors.Is(err, policy.ErrNotFound) {
-				h.fail(w, r, err)
-				return
-			}
-		}
-		if most := maxMinutes(pol); d.Minutes > most {
-			httpx.WriteError(w, r, http.StatusBadRequest, "duration_too_long",
-				fmt.Sprintf("granted duration exceeds the policy maximum of %d minutes", most))
-			return
-		}
 		minutes = d.Minutes
+	}
+	if most := maxMinutes(elig); minutes > most {
+		httpx.WriteError(w, r, http.StatusBadRequest, "duration_too_long",
+			fmt.Sprintf("granted duration exceeds the policy maximum of %d minutes", most))
+		return
 	}
 	// An extension runs on from the grant it extends while that grant is
 	// still active, so back-to-back grants leave no gap; otherwise from now.
@@ -281,7 +296,13 @@ func (h *Handler) revoke(w http.ResponseWriter, r *http.Request) {
 		h.fail(w, r, err)
 		return
 	}
-	h.record(r, audit.AccessRequestRevoke, req, nil)
+	// Revoke means stop now: the sessions the grant admitted end with it,
+	// unless standing access still covers them (ADR 0013).
+	more := map[string]any{}
+	if h.Revoker != nil {
+		more["live_sessions_ended"] = h.Revoker.GrantRevoked(r.Context(), req.UserID, req.TargetID, req.ASGID, req.Protocol)
+	}
+	h.record(r, audit.AccessRequestRevoke, req, more)
 	httpx.WriteJSON(w, http.StatusOK, req)
 }
 

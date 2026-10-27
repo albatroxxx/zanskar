@@ -378,10 +378,10 @@ func serve(ctx context.Context) error {
 			&oidc.Handler{Providers: idpRepo, Provisioner: provisioner, Sessions: sessions, Audit: auditLog, Log: log, StateKey: stateKey, MFAEnrolled: totp.Enrolled, RequireMFA: requireMFA,
 				BaseURL: cfg.PublicURL},
 			&credential.AdminHandler{Vault: vault, Audit: auditLog, Log: log},
-			&target.AdminHandler{Repo: targets, Prober: prober, Policies: policies, Live: registry, Vault: vault, AppsReady: appsHandler.Ready, Audit: auditLog, Log: log},
+			&target.AdminHandler{Repo: targets, Prober: prober, Policies: policies, Live: registry, Revoker: connectHandler, Vault: vault, AppsReady: appsHandler.Ready, Audit: auditLog, Log: log},
 			&policy.AdminHandler{Repo: policies, Users: users, Revoker: connectHandler, Audit: auditLog, Log: log},
-			&access.Handler{Requests: accessReqs, Policies: policies, Targets: targets, ASGs: asgRepo, Audit: auditLog, Log: log},
-			&asg.AdminHandler{Repo: asgRepo, Sync: syncer.SyncGroup, Identity: awsIdentity, Providers: asg.AWSFresh(), Policies: policies, Live: registry, Vault: vault, Audit: auditLog, Log: log},
+			&access.Handler{Requests: accessReqs, Policies: policies, Targets: targets, ASGs: asgRepo, Revoker: connectHandler, Audit: auditLog, Log: log},
+			&asg.AdminHandler{Repo: asgRepo, Sync: syncer.SyncGroup, Identity: awsIdentity, Providers: asg.AWSFresh(), Policies: policies, Live: registry, Revoker: connectHandler, Vault: vault, Audit: auditLog, Log: log},
 			&session.Handler{Repo: sessionRepo, Audit: auditLog, AnchorKey: anchorKey, Registry: registry, Storage: storage, Log: log},
 			&overview.Handler{Sessions: sessionRepo, Requests: accessReqs, Targets: targets, ASGs: asgRepo, Audit: auditLog, Log: log},
 			&update.Handler{Checker: versionCheck, Log: log, StateDir: cfg.StateDir, Supervisor: lifecycle.Supervisor},
@@ -409,7 +409,7 @@ func serve(ctx context.Context) error {
 	go retention.Run(ctx, time.Hour)
 
 	// Expire lapsed just-in-time access grants and audit each (ADR 0018).
-	grantSweeper := &access.Sweeper{Repo: accessReqs, Audit: auditLog, Log: log}
+	grantSweeper := &access.Sweeper{Repo: accessReqs, Revoker: connectHandler, Audit: auditLog, Log: log}
 	go grantSweeper.Run(ctx, time.Minute)
 
 	// Renew the self-signed certificate inside thirty days of its end while

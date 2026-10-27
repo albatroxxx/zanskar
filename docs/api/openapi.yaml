@@ -1010,7 +1010,7 @@ paths:
         when the session starts (`files` is true when the policy allows file transfer through
         `/api/v1/sessions/{id}/files`), and `{"t":"end","reason":"...","msg":"..."}` when it
         ends. `reason` is an end reason such as `user_exit`, `admin_terminated`,
-        `policy_revoked`, `gateway_restart` or `target_lost`; after `target_lost` on an
+        `policy_revoked`, `trust_lost`, `gateway_restart` or `target_lost`; after `target_lost` on an
         autoscaling instance the browser may call `POST /sessions/{id}/failover`. If the dial
         fails after the upgrade, the socket closes with a message such as
         `host key mismatch; connection refused`. Just before the dial the target's address is
@@ -2540,9 +2540,11 @@ paths:
       tags: [admin]
       summary: Approve a pending request
       description: >-
-        Turns a pending request into a time-bounded grant. The grant expires `requested_minutes`
-        after approval; a background sweeper then marks it `expired` and `/connect` stops issuing
-        tickets for it (a session already open runs to its own session and idle limits).
+        Turns a pending request into a time-bounded grant. Eligibility and the duration cap are
+        taken from the requester's policies as they stand at approval, not as they stood at the
+        request. The grant expires `requested_minutes` after approval; a background sweeper then
+        marks it `expired`, `/connect` stops issuing tickets for it, and the sessions the grant
+        admitted end as `max_duration` unless standing access still covers them.
       requestBody:
         required: false
         content:
@@ -2559,7 +2561,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/AccessRequest"
         "400":
-          description: "`minutes` below 1 or over the policy maximum (`duration_too_long`)."
+          description: "`minutes` below 1, or the granted duration over the policy's current maximum (`duration_too_long`)."
           content:
             application/json:
               schema:
@@ -2567,7 +2569,9 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
         "409":
-          description: The request is not pending.
+          description: >-
+            The request is not pending (`conflict`), or no approval-gated policy of the requester's
+            covers the target and protocol any more (`not_eligible`); the request stays pending.
           content:
             application/json:
               schema:
@@ -2605,7 +2609,7 @@ paths:
     post:
       tags: [admin]
       summary: Revoke an active grant
-      description: Ends an approved grant early. `/connect` stops issuing tickets for it at once; a live session runs to its own limits.
+      description: Ends an approved grant early. `/connect` stops issuing tickets for it at once, and the sessions the grant admitted end as `policy_revoked` unless standing access still covers them; the audit event counts them as `live_sessions_ended`.
       requestBody:
         required: false
         content:
@@ -4392,7 +4396,7 @@ components:
       enum: [asciicast, guac]
     EndReason:
       type: string
-      enum: [user_exit, idle_timeout, max_duration, admin_terminated, policy_revoked, gateway_restart, target_lost, failover, error]
+      enum: [user_exit, idle_timeout, max_duration, admin_terminated, policy_revoked, trust_lost, gateway_restart, target_lost, failover, error]
     Ports:
       type: object
       description: Port per protocol. Missing keys use defaults 22, 3389, 5900, 5986.

@@ -494,6 +494,8 @@ func msgFor(reason string) string {
 		return "session ended by an administrator"
 	case "gateway_restart":
 		return "the gateway is restarting to apply a configuration change; reconnect in a moment"
+	case "trust_lost":
+		return "the target's host key or certificate changed; an administrator must trust it again"
 	default:
 		return ""
 	}

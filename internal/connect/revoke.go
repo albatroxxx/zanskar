@@ -7,6 +7,7 @@ import (
 	"errors"
 	"time"
 
+	"github.com/albatroxxx/zanskar/internal/access"
 	"github.com/albatroxxx/zanskar/internal/gateway"
 	"github.com/albatroxxx/zanskar/internal/policy"
 	"github.com/albatroxxx/zanskar/internal/ticket"
@@ -95,8 +96,12 @@ func (h *Handler) PolicyChanged(ctx context.Context, policyID string) int {
 }
 
 // stillGrants reports whether p, on its own, still grants the live session:
-// it applies to the session's user, and Evaluate finds it enabled, covering
-// the session's protocol on the session's target, inside a window now.
+// it applies to the session's user, and the connect gate, given that one
+// policy, would admit the session's protocol on the session's target now.
+// Running the gate rather than Evaluate alone means a policy switched to
+// require approval ends the sessions of users without a live grant, and one
+// switched to require an authenticator ends those of users without one, the
+// same refusals a fresh connect would meet.
 func (h *Handler) stillGrants(ctx context.Context, p *policy.Policy, l gateway.Live, now time.Time) (bool, error) {
 	applies, err := h.appliesTo(ctx, p.ID, l.UserID)
 	if err != nil || !applies {
@@ -106,7 +111,98 @@ func (h *Handler) stillGrants(ctx context.Context, p *policy.Policy, l gateway.L
 	if err != nil {
 		return false, err
 	}
-	return policy.Evaluate([]*policy.Policy{p}, ref, l.Protocol, now).Allowed, nil
+	_, code, _, err := h.gate().AdmitPolicies(ctx, l.UserID, []*policy.Policy{p}, ref, l.Protocol, now)
+	return code == "" && err == nil, err
+}
+
+// gate is the admission every connect passes (access.Gate), shared with the
+// applications proxy so the two cannot drift.
+func (h *Handler) gate() *access.Gate {
+	return &access.Gate{Policies: h.Policies, Grants: h.Access, MFAEnrolled: h.MFAEnrolled}
+}
+
+// TargetDisabled ends every live session on the target or instance: an
+// administrator disabled it or moved its address, so nothing may stay
+// connected to it.
+func (h *Handler) TargetDisabled(targetID string) int {
+	if h.Registry == nil {
+		return 0
+	}
+	n := h.Registry.TerminateTarget(targetID, gateway.ErrTargetDisabled)
+	h.logRevoked(n, "target disabled or changed", "target_id", targetID)
+	return n
+}
+
+// TargetTrustLost ends every live session on the target whose pinned host
+// key or certificate changed: the host may no longer be the one that was
+// trusted, and a session already open is the one thing the connect-time
+// pin check cannot protect.
+func (h *Handler) TargetTrustLost(targetID string) int {
+	if h.Registry == nil {
+		return 0
+	}
+	n := h.Registry.TerminateTarget(targetID, gateway.ErrTrustLost)
+	h.logRevoked(n, "host key or certificate changed", "target_id", targetID)
+	return n
+}
+
+// GrantRevoked ends the user's live sessions over proto on the target or
+// group whose just-in-time grant was revoked, unless the connect gate would
+// still admit them (a standing policy covers the same access, or another
+// grant is active). The gate is the same one a fresh connect passes.
+func (h *Handler) GrantRevoked(ctx context.Context, userID, targetID, asgID, proto string) int {
+	n := h.grantWithdrawn(ctx, userID, targetID, asgID, proto, gateway.ErrGrantRevoked)
+	h.logRevoked(n, "grant revoked", "user_id", userID)
+	return n
+}
+
+// GrantExpired is GrantRevoked for a grant whose window has passed; the
+// sessions end as max_duration, the bound the grant was.
+func (h *Handler) GrantExpired(ctx context.Context, userID, targetID, asgID, proto string) int {
+	n := h.grantWithdrawn(ctx, userID, targetID, asgID, proto, gateway.ErrGrantExpired)
+	h.logRevoked(n, "grant expired", "user_id", userID)
+	return n
+}
+
+func (h *Handler) grantWithdrawn(ctx context.Context, userID, targetID, asgID, proto string, cause error) int {
+	// A session on a plain target is registered under that target's id; one
+	// on an autoscaling instance under the instance's, so a group is matched
+	// once the session's subject is resolved below.
+	sessions := h.live(func(l gateway.Live) bool {
+		return l.UserID == userID && l.Protocol == proto && (targetID == "" || l.TargetID == targetID)
+	})
+	if len(sessions) == 0 {
+		return 0
+	}
+	ctx, cancel := revokeContext(ctx)
+	defer cancel()
+	now := time.Now()
+	var withdrawn []gateway.Live
+	for _, l := range sessions {
+		ref, err := h.sessionRef(ctx, l.SessionID)
+		if err != nil {
+			h.Log.Warn("grant revoked; live session kept, it could not be checked", "session", l.SessionID, "err", err)
+			continue
+		}
+		if asgID != "" && ref.ASGID != asgID {
+			continue
+		}
+		_, code, _, err := h.gate().Admit(ctx, userID, ref, proto, now)
+		if err != nil {
+			h.Log.Warn("grant revoked; live session kept, it could not be checked", "session", l.SessionID, "err", err)
+			continue
+		}
+		if code != "" {
+			withdrawn = append(withdrawn, l)
+		}
+	}
+	n := 0
+	for _, l := range withdrawn {
+		if h.Registry.TerminateWithCause(l.SessionID, cause) {
+			n++
+		}
+	}
+	return n
 }
 
 // GroupMembersRemoved ends the live sessions of those users that a policy

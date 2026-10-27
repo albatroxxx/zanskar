@@ -39,6 +39,14 @@ func (g *Gate) Admit(ctx context.Context, userID string, ref policy.TargetRef, p
 	if err != nil {
 		return policy.Decision{}, "", "", err
 	}
+	return g.AdmitPolicies(ctx, userID, pols, ref, proto, now)
+}
+
+// AdmitPolicies is Admit over a given set of policies instead of the user's
+// own: the revocation path judges a live session by the one policy that
+// admitted it (ADR 0013) and must apply the same grant and authenticator
+// checks a fresh connect would.
+func (g *Gate) AdmitPolicies(ctx context.Context, userID string, pols []*policy.Policy, ref policy.TargetRef, proto string, now time.Time) (policy.Decision, string, string, error) {
 	d := policy.Evaluate(pols, ref, proto, now)
 	if !d.Allowed {
 		return d, CodePolicyDenied, d.Reason, nil

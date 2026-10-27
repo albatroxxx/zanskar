@@ -132,7 +132,7 @@ export function Approvals() {
                   <td>{protocolName(r.protocol)}</td>
                   <td>{r.approved_minutes || r.requested_minutes} min{r.approved_minutes && r.approved_minutes !== r.requested_minutes ? <span className="muted"> (asked {r.requested_minutes})</span> : null}{r.extends_request_id && <> <Badge tone="warn">extension</Badge></>}</td>
                   <td className="muted">{r.expires_at ? fmtTime(r.expires_at) : '—'}</td>
-                  <td><button className="btn sm" disabled={busy === r.id} onClick={() => void act(r.id, 'revoke')}>Revoke</button></td>
+                  <td><button className="btn sm" disabled={busy === r.id} onClick={() => void act(r.id, 'revoke')} title="Open sessions on the grant end">Revoke</button></td>
                 </tr>
               ))}
             </tbody>

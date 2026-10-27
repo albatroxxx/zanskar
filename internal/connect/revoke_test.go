@@ -174,25 +174,39 @@ func windowAround(at time.Time) policy.TimeWindow {
 func TestRevokePolicyChanged(t *testing.T) {
 	cases := []struct {
 		name string
-		edit func(r *terminalRig, p *policy.Policy)
+		edit func(t *testing.T, r *terminalRig, p *policy.Policy)
 		ends bool
 	}{
-		{"protocol dropped", func(_ *terminalRig, p *policy.Policy) { p.Protocols = []string{"rdp", "winrm", "database"} }, true},
-		{"policy disabled", func(_ *terminalRig, p *policy.Policy) { p.Enabled = false }, true},
-		{"window closed now", func(_ *terminalRig, p *policy.Policy) {
+		{"protocol dropped", func(_ *testing.T, _ *terminalRig, p *policy.Policy) {
+			p.Protocols = []string{"rdp", "winrm", "database"}
+		}, true},
+		{"policy disabled", func(_ *testing.T, _ *terminalRig, p *policy.Policy) { p.Enabled = false }, true},
+		{"window closed now", func(_ *testing.T, _ *terminalRig, p *policy.Policy) {
 			p.TimeWindows = []policy.TimeWindow{windowAround(time.Now().Add(12 * time.Hour))}
 		}, true},
-		{"selector moved off the target", func(_ *terminalRig, p *policy.Policy) {
+		{"selector moved off the target", func(_ *testing.T, _ *terminalRig, p *policy.Policy) {
 			p.Selector = policy.Selector{Tags: map[string]string{"env": "prod"}}
 		}, true},
-		{"subject moved to another user", func(r *terminalRig, p *policy.Policy) {
+		{"subject moved to another user", func(t *testing.T, r *terminalRig, p *policy.Policy) {
 			bob := &user.User{Username: "bob", DisplayName: "Bob", Roles: []user.Role{user.RoleUser}}
 			if err := r.users.Create(r.ctx, bob); err != nil {
 				t.Fatal(err)
 			}
 			p.GroupID, p.UserID = "", bob.ID
 		}, true},
-		{"still granted", func(r *terminalRig, p *policy.Policy) {
+		// Gating the policy is a refusal a fresh connect would meet, so it
+		// reaches the live session too; what would be admitted stays.
+		{"approval now required, no grant", func(_ *testing.T, _ *terminalRig, p *policy.Policy) { p.RequireApproval = true }, true},
+		{"approval now required, grant active", func(t *testing.T, r *terminalRig, p *policy.Policy) {
+			p.RequireApproval = true
+			r.grant(t, r.targetID)
+		}, false},
+		{"authenticator now required, none enrolled", func(_ *testing.T, _ *terminalRig, p *policy.Policy) { p.RequireMFA = true }, true},
+		{"authenticator now required, one enrolled", func(_ *testing.T, r *terminalRig, p *policy.Policy) {
+			p.RequireMFA = true
+			r.mfa = true
+		}, false},
+		{"still granted", func(_ *testing.T, r *terminalRig, p *policy.Policy) {
 			p.IdleTimeoutMinutes = 30
 			p.Protocols = append(p.Protocols, "vnc")
 			p.Selector = policy.Selector{Targets: []string{r.targetID}}
@@ -209,7 +223,7 @@ func TestRevokePolicyChanged(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			tc.edit(r, p)
+			tc.edit(t, r, p)
 			if err := r.h.Policies.Update(r.ctx, p); err != nil {
 				t.Fatal(err)
 			}
