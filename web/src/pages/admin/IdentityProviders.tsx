@@ -83,7 +83,7 @@ export function IdentityProviders() {
       {err && <Alert tone="danger">{err}</Alert>}
       <div className="card table-wrap">
         {items === null ? (
-          <Empty>Loading…</Empty>
+          err ? null : <Empty>Loading…</Empty>
         ) : items.length === 0 ? (
           <Empty>No identity providers yet. Add one to let users sign in with your directory.</Empty>
         ) : (

@@ -25,7 +25,7 @@ function Guard({ roles, children }: { roles?: Role[]; children: React.ReactNode 
   const auth = useAuth()
   const loc = useLocation()
   if (auth.status === 'loading') return <div className="empty">Loading…</div>
-  if (auth.status === 'unreachable') return <div className="empty">The gateway is not answering; trying again…</div>
+  if (auth.status === 'unreachable') return <Unreachable />
   // The query string is part of where the user was going (a filter, a tab).
   if (auth.status !== 'full') return <Navigate to="/login" state={{ from: loc.pathname + loc.search }} replace />
   if (roles && !auth.hasRole(...roles)) {
@@ -36,6 +36,19 @@ function Guard({ roles, children }: { roles?: Role[]; children: React.ReactNode 
     return <Navigate to={home} replace />
   }
   return <>{children}</>
+}
+
+/** Unreachable is the first load while the gateway does not answer: the brand
+ *  and the sentence, so the page is recognisably ours while the console asks
+ *  again (review U4). Once a portal is open the shell stays and the API
+ *  client's own notices take over. */
+function Unreachable() {
+  return (
+    <div className="unreachable" role="status">
+      <div className="brand"><img src="/logo-mark.svg" alt="" /><span>ZANSKAR</span></div>
+      <p>The gateway is not answering; trying again…</p>
+    </div>
+  )
 }
 
 function NoPortal() {
@@ -67,7 +80,7 @@ function AdminToConsole({ children }: { children: React.ReactNode }) {
 function Home() {
   const auth = useAuth()
   if (auth.status === 'loading') return <div className="empty">Loading…</div>
-  if (auth.status === 'unreachable') return <div className="empty">The gateway is not answering; trying again…</div>
+  if (auth.status === 'unreachable') return <Unreachable />
   if (auth.status !== 'full') return <Navigate to="/" replace />
   return <Navigate to={homeFor(auth.user)} replace />
 }

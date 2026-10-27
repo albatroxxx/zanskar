@@ -10,6 +10,7 @@ type Handler<T extends unknown[]> = ((...args: T) => void) | null
 
 /** What the tests drive in place of a guacd connection. */
 interface FakeClient {
+  keys: number[]
   onerror: Handler<[Status]>
   onstatechange: Handler<[number]>
   tunnel: { oninstruction: Handler<[string, string[]]> }
@@ -56,7 +57,8 @@ vi.mock('guacamole-common-js', async (importOriginal) => {
     disconnect() {
       this.onstatechange?.(5)
     }
-    sendKeyEvent() {}
+    keys: number[] = []
+    sendKeyEvent(_pressed: number, k: number) { this.keys.push(k) }
     sendMouseState() {}
     sendSize() {}
   }
@@ -122,7 +124,7 @@ describe('Desktop, when the session ends', () => {
   })
 
   it.each([
-    ['the user disconnects', (c: FakeClient) => c.disconnect(), 'You closed the session, or it ended on the target.', null],
+    ['the user disconnects', (c: FakeClient) => c.disconnect(), 'You closed the session.', null],
     ['the gateway ends it (523)', (c: FakeClient) => c.onerror?.({ code: 0x020b, message: 'session ended by an administrator' }), 'Session ended by an administrator.', null],
     ['the target is lost (519)', (c: FakeClient) => c.onerror?.({ code: 0x0207, message: 'connection to the target was lost' }), 'The connection to the target was lost.', 'connection to the target was lost'],
     ['guacd refuses the login', (c: FakeClient) => c.onerror?.({ code: 0x0301, message: 'Authentication failure' }), 'The session ended because of an error.', 'Authentication failure'],
@@ -210,5 +212,26 @@ describe('Desktop, the session id from the gateway', () => {
 
     expect(screen.getByRole('dialog').querySelector('h2')?.textContent).toBe('Session ended')
     expect(get).not.toHaveBeenCalled()
+  })
+})
+
+
+// Review U2: the Guacamole keyboard holds the whole document, so a
+// keyboard-only person could not reach Disconnect. F6 moves focus to the
+// bar and is not sent to the remote machine; the browser keeps the key.
+describe('Desktop, leaving by keyboard', () => {
+  it('moves focus to the controls on F6', async () => {
+    start()
+    const client = await connected()
+    const kb = g.keyboards[0] as unknown as { onkeydown: (k: number) => boolean }
+    const sentBefore = client.keys.length
+    let kept = false
+    act(() => { kept = kb.onkeydown(0xffc3) })
+    expect(kept).toBe(true)
+    expect(client.keys.length).toBe(sentBefore)
+    const active = document.activeElement
+    expect(active?.tagName).toBe('BUTTON')
+    expect(active?.closest('.term-bar')).not.toBeNull()
+    expect(screen.getByText('F6: controls')).toBeDefined()
   })
 })

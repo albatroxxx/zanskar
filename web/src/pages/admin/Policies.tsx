@@ -39,7 +39,7 @@ export function Policies() {
       {err && <Alert tone="danger">{err}</Alert>}
       <div className="card table-wrap">
         {items === null ? (
-          <Empty>Loading…</Empty>
+          err ? null : <Empty>Loading…</Empty>
         ) : items.length === 0 ? (
           <Empty>No policies yet. Nobody can connect until a policy grants access.</Empty>
         ) : (

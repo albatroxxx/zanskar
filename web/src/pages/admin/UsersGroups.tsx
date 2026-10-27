@@ -40,7 +40,7 @@ function Users() {
       </div>
       <div className="card table-wrap">
         {items === null ? (
-          <Empty>Loading…</Empty>
+          err ? null : <Empty>Loading…</Empty>
         ) : items.length === 0 ? (
           <Empty>No users.</Empty>
         ) : (
@@ -310,7 +310,7 @@ function Groups() {
       </div>
       <div className="card table-wrap">
         {items === null ? (
-          <Empty>Loading…</Empty>
+          err ? null : <Empty>Loading…</Empty>
         ) : items.length === 0 ? (
           <Empty>No groups. Policies attach to groups, so create one first.</Empty>
         ) : (

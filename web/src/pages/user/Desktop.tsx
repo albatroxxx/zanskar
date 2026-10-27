@@ -204,6 +204,12 @@ function DesktopSession({ state }: { state: SessionState }) {
       // library to leave the browser's default alone instead of preventing it.
       kb.onkeydown = (k: number) => {
         if (typingInField()) return true
+        // F6 (keysym 0xffc3) leaves the desktop for its controls instead of
+        // going to the remote machine (review U2); the browser keeps the key.
+        if (k === 0xffc3) {
+          pageRef.current?.querySelector<HTMLElement>('.term-bar button')?.focus()
+          return true
+        }
         const paste = isPasteKey(k, kb.modifiers) && clipAllowedRef.current
         void sendKey(1, k, paste ? pullBrowserClipboard : undefined)
         return false
@@ -384,6 +390,7 @@ function DesktopSession({ state }: { state: SessionState }) {
         <span className="stat">{protocolName(state.protocol)}</span>
         <span className="stat">{(ended ? 'ran for ' : 'elapsed ') + fmtSeconds(elapsed)}</span>
         <span className="grow" />
+        {!ended && <span className="stat hint" title="Press F6 to move from the desktop to these controls">F6: controls</span>}
         {ended ? (
           <span className="stat">Ended · recording saved</span>
         ) : (

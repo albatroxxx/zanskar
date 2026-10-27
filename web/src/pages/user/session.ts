@@ -54,7 +54,7 @@ export interface SessionEnd { reason: string; msg?: string }
 // The end-of-session dialog's first sentence for each reason the gateway
 // reports.
 const reasonText: Record<string, string> = {
-  user_exit: 'You closed the session, or it ended on the target.',
+  user_exit: 'You closed the session.',
   idle_timeout: 'Disconnected after a period without input, as the access policy requires.',
   max_duration: 'The session reached the maximum duration the access policy allows.',
   admin_terminated: 'An administrator ended the session.',

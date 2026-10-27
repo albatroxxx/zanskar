@@ -37,6 +37,9 @@ function TerminalSession({ state }: { state: SessionState }) {
   const [panelOpen, setPanelOpen] = useState(false)
   const wsRef = useRef<WebSocket | null>(null)
 
+  // Where F6 lands: the first control in the bar.
+  const leaveTerminal = () => pageRef.current?.querySelector<HTMLElement>('.term-bar button')?.focus()
+
   useEffect(() => {
     if (!host.current) return
     const term = new XTerm({ cursorBlink: true, fontFamily: 'ui-monospace, SF Mono, Menlo, Consolas, monospace', fontSize: 13, theme: terminalTheme(), scrollback: 5000 })
@@ -45,6 +48,16 @@ function TerminalSession({ state }: { state: SessionState }) {
     term.loadAddon(new WebLinksAddon())
     term.open(host.current)
     fit.fit()
+    // Tab is a shell key, so xterm keeps it; F6, which no shell needs, moves
+    // focus from the terminal to its controls (review U2, WCAG 2.1.2).
+    term.attachCustomKeyEventHandler((e) => {
+      if (e.type === 'keydown' && e.key === 'F6') {
+        e.preventDefault()
+        leaveTerminal()
+        return false
+      }
+      return true
+    })
 
     const scheme = location.protocol === 'https:' ? 'wss' : 'ws'
     const url = `${scheme}://${location.host}${state.ws_path}?ticket=${encodeURIComponent(state.ticket)}&cols=${term.cols}&rows=${term.rows}`
@@ -132,6 +145,8 @@ function TerminalSession({ state }: { state: SessionState }) {
         <span className="stat">{status === 'connecting' ? 'connecting…' : (ended ? 'ran for ' : 'elapsed ') + fmtSeconds(elapsed)}</span>
         {!ended && <span className={'stat' + (idle > 600 ? ' warn' : '')}>idle {fmtSeconds(idle)}</span>}
         <span className="grow" />
+        {!ended && <span className="stat hint" title="Press F6 to move from the terminal to these controls">F6: controls</span>}
+        <span className="sr-only" role="status">{status === 'live' && !ended ? 'Connected. Press F6 to move from the terminal to the controls.' : ''}</span>
         {ended ? (
           <span className="stat">Ended · recording saved</span>
         ) : (

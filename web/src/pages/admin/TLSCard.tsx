@@ -134,7 +134,7 @@ export function TLSCard() {
   const fallback = status.file_hint ? 'the certificate from the environment file' : 'its self-signed certificate'
 
   return (
-    <div className="card">
+    <div className="card" id="settings-tls-certificate">
       <h2>TLS certificate</h2>
       {status.mode === 'proxy' ? (
         <p className="muted">TLS is terminated by the proxy in front of the gateway (ZANSKAR_TLS_MODE=proxy); manage the certificate there. To have Zanskar serve TLS itself, set ZANSKAR_TLS_MODE=managed and restart.</p>

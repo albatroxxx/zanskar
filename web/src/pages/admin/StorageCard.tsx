@@ -62,7 +62,7 @@ export function StorageCard() {
   const elsewhere = Object.entries(status.counts).filter(([k]) => k !== 'local' && k !== activeBucket).reduce((n, [, v]) => n + v, 0)
 
   return (
-    <div className="card">
+    <div className="card" id="settings-recording-storage">
       <h2>Recording storage</h2>
       <p className="muted">Where session recordings are written. New recordings go to the active store; every recording is read from wherever it was written.</p>
       {err && <Alert tone="danger">{err}</Alert>}

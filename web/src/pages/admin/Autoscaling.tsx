@@ -28,7 +28,7 @@ export function Autoscaling() {
       <IdentityCard />
       <div className="card table-wrap">
         {items === null ? (
-          <Empty>Loading…</Empty>
+          err ? null : <Empty>Loading…</Empty>
         ) : items.length === 0 ? (
           <Empty>No autoscaling groups enrolled yet.</Empty>
         ) : (
