@@ -50,4 +50,5 @@ and update the status of the old one.
 | [0030](0030-off-cloud-aws-enrolment.md) | A gateway outside AWS enrolls autoscaling groups with a certificate | Proposed |
 | [0031](0031-monitoring-current-state-console-time-series-exporter.md) | Monitoring: current state in the console, time series through an exporter | Proposed |
 | [0032](0032-host-actions-and-updates-from-the-console.md) | Host actions and updates from the console, through systemd and polkit | Accepted |
-| [0033](0033-applications-identity-aware-proxy.md) | Applications: web apps reached through an identity-aware proxy | Accepted |
+| [0033](0033-applications-identity-aware-proxy.md) | Applications: web apps reached through an identity-aware proxy | Superseded by 0034 |
+| [0034](0034-applications-isolated-browser.md) | Applications: web apps opened in an isolated browser | Accepted |

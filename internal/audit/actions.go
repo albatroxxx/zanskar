@@ -18,13 +18,6 @@ const (
 	AccessRequestDeny    = "access.request.deny"
 	AccessRequestRevoke  = "access.request.revoke"
 
-	// Web applications reached through the gateway's proxy (ADR 0033). A
-	// session opens when the browser's hand-off code is exchanged for the
-	// application's cookie and ends when it is signed out, times out, or the
-	// access that admitted it is withdrawn.
-	AppSessionStart = "app.session.start"
-	AppSessionEnd   = "app.session.end"
-
 	// Autoscaling groups and the instances the sync loop sees come and go.
 	ASGCreate                     = "asg.create"
 	ASGUpdate                     = "asg.update"

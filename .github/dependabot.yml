@@ -24,6 +24,12 @@ updates:
       # by hand, so an image built from source embeds the released bundle.
       - dependency-name: node
         update-types: ["version-update:semver-major"]
+  # The browser image (deploy/browser, ADR 0034): its Debian base moves on
+  # its own schedule, and Chromium's fixes ride on it.
+  - package-ecosystem: docker
+    directory: /deploy/browser
+    schedule:
+      interval: weekly
   # The compose files pin caddy, guacd and postgres by digest; the docker
   # ecosystem above reads only the Dockerfiles.
   - package-ecosystem: docker-compose

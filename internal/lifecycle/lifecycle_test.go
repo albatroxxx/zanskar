@@ -159,49 +159,10 @@ func TestControllerDrain(t *testing.T) {
 	}
 }
 
-// TestControllerDrainSkipsApplications: an application session (ADR 0033)
-// never holds the drain — a restart with only one open proceeds at once, and
-// the session ends with the restart reason — while a real session still
-// makes the drain wait, and the application session rides along to the
-// cutover.
-func TestControllerDrainSkipsApplications(t *testing.T) {
-	reg := gateway.NewRegistry()
-	var exits atomic.Int32
-	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-
-	// Only an application session: the minute-long wait is not honoured.
-	c := &Controller{Registry: reg, Log: log, Exit: func() { exits.Add(1) }, Poll: 10 * time.Millisecond}
-	app := reg.Add(context.Background(), gateway.Live{SessionID: "a1", Protocol: "http"})
-	c.Restart("admin", time.Minute)
-	waitFor(t, func() bool { return exits.Load() == 1 })
-	if reason, _ := gateway.CancelReason(app); reason != "gateway_restart" {
-		t.Fatalf("application session ended with reason %q", reason)
-	}
-	reg.Remove("a1")
-
-	// An application session beside a real one: the real one makes the drain
-	// wait, and both end once it is gone.
-	c2 := &Controller{Registry: reg, Log: log, Exit: func() { exits.Add(1) }, Poll: 10 * time.Millisecond}
-	app2 := reg.Add(context.Background(), gateway.Live{SessionID: "a2", Protocol: "http"})
-	reg.Add(context.Background(), gateway.Live{SessionID: "s1", Protocol: "ssh"})
-	c2.Restart("admin", time.Minute)
-	time.Sleep(50 * time.Millisecond)
-	if exits.Load() != 1 || app2.Err() != nil {
-		t.Fatal("drain exited while an ssh session was live")
-	}
-	reg.Remove("s1")
-	waitFor(t, func() bool { return exits.Load() == 2 })
-	if reason, _ := gateway.CancelReason(app2); reason != "gateway_restart" {
-		t.Fatalf("application session beside ssh ended with reason %q", reason)
-	}
-	reg.Remove("a2")
-}
-
 // TestControllerDrainWaitsForBridges: ending a session is not the end of
 // its bridge (the recording still uploads, the row closes). The exit waits
 // for the bridges to leave the registry, up to Grace, then goes regardless
-// and logs who was still finishing; an application session never holds it
-// (review finding SEC-10).
+// and logs who was still finishing (review finding SEC-10).
 func TestControllerDrainWaitsForBridges(t *testing.T) {
 	reg := gateway.NewRegistry()
 	var logged bytes.Buffer
@@ -232,7 +193,6 @@ func TestControllerDrainWaitsForBridges(t *testing.T) {
 	logged.Reset()
 	c2 := &Controller{Registry: reg, Log: log, Exit: exit, Poll: 5 * time.Millisecond, Grace: 150 * time.Millisecond}
 	reg.Add(context.Background(), gateway.Live{SessionID: "stuck", Protocol: "rdp"})
-	reg.Add(context.Background(), gateway.Live{SessionID: "app", Protocol: "http"})
 	started = time.Now()
 	c2.Restart("admin", 0)
 	waitFor(t, func() bool { return exits.Load() == 2 })
@@ -242,22 +202,10 @@ func TestControllerDrainWaitsForBridges(t *testing.T) {
 	if waitingAtExit.Load() != 1 {
 		t.Fatalf("waiting at exit = %d, want the one stuck bridge", waitingAtExit.Load())
 	}
-	if l := logged.String(); !strings.Contains(l, "still finishing") || !strings.Contains(l, "stuck") || strings.Contains(l, "sessions=[app") || strings.Contains(l, " app]") {
+	if l := logged.String(); !strings.Contains(l, "still finishing") || !strings.Contains(l, "stuck") {
 		t.Fatalf("log after a stuck bridge: %s", l)
 	}
 	reg.Remove("stuck")
-	reg.Remove("app")
-
-	// Only an application session left behind: nothing to wait for.
-	c3 := &Controller{Registry: reg, Log: log, Exit: exit, Poll: 5 * time.Millisecond, Grace: 2 * time.Second}
-	reg.Add(context.Background(), gateway.Live{SessionID: "app2", Protocol: "http"})
-	started = time.Now()
-	c3.Restart("admin", 0)
-	waitFor(t, func() bool { return exits.Load() == 3 })
-	if since := time.Since(started); since > time.Second {
-		t.Fatalf("an application session held the exit for %v", since)
-	}
-	reg.Remove("app2")
 }
 
 // TestSnapshotEnvHoldsNoSecret: the start-up snapshot that drift detection

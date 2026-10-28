@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
-package dbgw
+package containers
 
 import (
 	"context"
@@ -57,7 +57,7 @@ func TestReapRemovesOnlyStaleObjectsOfDeadSessions(t *testing.T) {
 			"n-live-old\tlive\t" + at(time.Hour) + "\n",
 	}
 	live := func(id string) bool { return id == "live" }
-	n, err := reap(context.Background(), fd.run, live, now)
+	n, err := ReapWith(context.Background(), fd.run, live, now)
 	if err != nil || n != 3 {
 		t.Fatalf("reap removed %d, err %v", n, err)
 	}
@@ -82,7 +82,7 @@ func TestReapKeepsGoingPastARemovalFailure(t *testing.T) {
 	old := now.Add(-time.Hour).Format(createdLayout)
 	fd := &fakeDocker{containers: "c1\ts1\t" + old + "\nc2\ts2\t" + old + "\n", networks: "n1\ts1\t" + old + "\n",
 		failRemove: map[string]bool{"c1": true}}
-	n, err := reap(context.Background(), fd.run, nil, now)
+	n, err := ReapWith(context.Background(), fd.run, nil, now)
 	if n != 2 || err == nil || !strings.Contains(err.Error(), "no such object") {
 		t.Fatalf("removed %d, err %v", n, err)
 	}
@@ -92,7 +92,7 @@ func TestReapKeepsGoingPastARemovalFailure(t *testing.T) {
 	down := func(_ context.Context, _ ...string) (string, error) {
 		return "", errors.New("cannot connect to the docker daemon")
 	}
-	if n, err := reap(context.Background(), down, nil, now); n != 0 || err == nil {
+	if n, err := ReapWith(context.Background(), down, nil, now); n != 0 || err == nil {
 		t.Fatalf("a failed listing removed %d, err %v", n, err)
 	}
 }

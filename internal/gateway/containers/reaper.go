@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
-package dbgw
+package containers
 
 import (
 	"context"
@@ -10,16 +10,9 @@ import (
 	"time"
 )
 
-// Labels on every Docker object a session creates, so leftovers are found
-// by label and never by guessing names.
-const (
-	labelManaged = "zanskar.managed"
-	labelSession = "zanskar.session"
-)
-
-// reapMinAge is how old an object must be before Reap may remove it, so a
+// ReapMinAge is how old an object must be before Reap may remove it, so a
 // session still starting is never torn down under it.
-const reapMinAge = 2 * time.Minute
+const ReapMinAge = 2 * time.Minute
 
 // createdLayout is how `docker ps` and `docker network ls` print CreatedAt
 // ("2026-10-11 15:03:56 +0530 IST"); the network listing adds fractional
@@ -27,7 +20,7 @@ const reapMinAge = 2 * time.Minute
 const createdLayout = "2006-01-02 15:04:05 -0700 MST"
 
 // listFormat has both listings print one object per line: id, session, created.
-const listFormat = `{{.ID}}\t{{.Label "` + labelSession + `"}}\t{{.CreatedAt}}`
+const listFormat = `{{.ID}}\t{{.Label "` + LabelSession + `"}}\t{{.CreatedAt}}`
 
 // runFunc runs one docker command and returns its combined output.
 type runFunc func(ctx context.Context, args ...string) (string, error)
@@ -47,16 +40,16 @@ func Reap(ctx context.Context, docker string, live func(sessionID string) bool) 
 	ctx, cancel := context.WithTimeout(ctx, time.Minute)
 	defer cancel()
 	run := func(ctx context.Context, args ...string) (string, error) {
-		return dockerOutput(ctx, docker, nil, args...)
+		return Output(ctx, docker, nil, args...)
 	}
-	return reap(ctx, run, live, time.Now())
+	return ReapWith(ctx, run, live, time.Now())
 }
 
-// reap is Reap over an injectable runner and clock.
-func reap(ctx context.Context, run runFunc, live func(string) bool, now time.Time) (int, error) {
+// ReapWith is Reap over an injectable runner and clock.
+func ReapWith(ctx context.Context, run runFunc, live func(string) bool, now time.Time) (int, error) {
 	kinds := []struct{ list, rm []string }{
-		{list: []string{"ps", "-a", "--filter", "label=" + labelManaged + "=1", "--format", listFormat}, rm: []string{"rm", "-f"}},
-		{list: []string{"network", "ls", "--filter", "label=" + labelManaged + "=1", "--format", listFormat}, rm: []string{"network", "rm"}},
+		{list: []string{"ps", "-a", "--filter", "label=" + LabelManaged + "=1", "--format", listFormat}, rm: []string{"rm", "-f"}},
+		{list: []string{"network", "ls", "--filter", "label=" + LabelManaged + "=1", "--format", listFormat}, rm: []string{"network", "rm"}},
 	}
 	removed := 0
 	var errs []error
@@ -78,7 +71,7 @@ func reap(ctx context.Context, run runFunc, live func(string) bool, now time.Tim
 
 // stale picks from a listing (one object per line: id, session, created,
 // tab separated) the ids Reap may remove: the session is not live and the
-// object is at least reapMinAge old. A line it cannot read is kept; nothing
+// object is at least ReapMinAge old. A line it cannot read is kept; nothing
 // is removed on a guess.
 func stale(listing string, live func(string) bool, now time.Time) []string {
 	var ids []string
@@ -88,7 +81,7 @@ func stale(listing string, live func(string) bool, now time.Time) []string {
 			continue
 		}
 		created, err := time.Parse(createdLayout, strings.TrimSpace(f[2]))
-		if err != nil || now.Sub(created) < reapMinAge {
+		if err != nil || now.Sub(created) < ReapMinAge {
 			continue
 		}
 		if live != nil && f[1] != "" && live(f[1]) {

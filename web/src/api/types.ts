@@ -34,14 +34,15 @@ export interface Page<T> { items: T[]; next_cursor?: string }
 
 export interface ApiErrorBody { code: string; message: string; request_id?: string }
 
-/** How a target is reached; `http` is a web application through the gateway's proxy (ADR 0033). */
+/** How a target is reached; `http` is a web application opened in an isolated browser beside the gateway (ADR 0034). */
 export type Protocol = 'ssh' | 'rdp' | 'vnc' | 'winrm' | 'database' | 'http'
 export type OSFamily = 'linux' | 'windows' | 'other'
 export type HostKeyStatus = 'unknown' | 'pending' | 'trusted' | 'changed'
 
-/** One prerequisite of serving applications, from GET /admin/applications/readiness. */
+/** One prerequisite of opening applications, from GET /admin/applications/readiness (ADR 0034):
+ *  a guacd address, a container runtime the service can reach, and the browser image. */
 export interface AppsCheck {
-  key: 'domain' | 'public_url' | 'certificate'
+  key: 'guacd' | 'runtime' | 'image'
   title: string
   ok: boolean
   detail: string
@@ -66,9 +67,8 @@ export interface Target {
   tls_mode?: 'disable' | 'prefer' | 'require' | 'verify-full'
   /** CA bundle the upstream is verified against: a database under verify-full, or an application's https upstream. */
   tls_ca?: string
-  /** Application targets (ADR 0033): the one origin the proxy forwards to, and the subdomain it is served at. */
+  /** Application targets (ADR 0034): the one origin the isolated browser can reach. */
   app_upstream?: string
-  app_label?: string
   ports: Partial<Record<Protocol, number>>
   capabilities: Protocol[]
   host_key_fingerprint: string | null
@@ -126,13 +126,12 @@ export interface ReachableTarget {
   private_ip?: string
   /** database engine when this is a database target (ADR 0017). */
   engine?: string
-  /** "target" for a static machine, "asg" for an autoscaling group, "application" for a web app (ADR 0033); missing means "target". */
+  /** "target" for a static machine, "asg" for an autoscaling group, "application" for a web app (ADR 0034); missing means "target". */
   kind?: 'target' | 'asg' | 'application'
   healthy_count?: number
   instance_count?: number
-  /** An application's subdomain and where the browser opens it; the upstream is never shown. */
-  label?: string
-  url?: string
+  /** An application's upstream, when the gateway chooses to show it; it opens through POST /connect like a desktop. */
+  app_upstream?: string
 }
 
 export type AccessStatus = 'pending' | 'approved' | 'denied' | 'expired' | 'revoked'
@@ -529,7 +528,7 @@ export interface LogsPage {
 
 /** A TLS certificate as the console sees it; never the key. Mirrors internal/tlscert.Info. */
 export interface TLSCertInfo {
-  source: 'uploaded' | 'file' | 'generated' | 'apps'
+  source: 'uploaded' | 'file' | 'generated'
   subject: string
   issuer: string
   hosts: string[]
@@ -549,11 +548,6 @@ export interface TLSStatus {
   uploaded?: TLSCertInfo
   generated?: TLSCertInfo
   file_hint?: string
-  /** The applications certificate and domain (ADR 0033); apps_problem says why application hosts cannot be served yet. */
-  apps?: TLSCertInfo
-  apps_domain?: string
-  apps_ready?: boolean
-  apps_problem?: string
 }
 
 /** Recording storage as the console edits it; the secret is write-only. Mirrors internal/recstorage.Config. */

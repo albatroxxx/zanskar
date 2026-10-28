@@ -137,14 +137,6 @@ func (s *Sessions) Lookup(ctx context.Context, token string) (*Session, error) {
 	return &sess, nil
 }
 
-// Touch refreshes a live session's last_seen_at, as Lookup does when the
-// console is used. The applications proxy (ADR 0033) calls it while a person
-// works in an application, so a sign-in in use does not go idle behind them.
-func (s *Sessions) Touch(ctx context.Context, id string) error {
-	_, err := s.db.ExecContext(ctx, s.db.Rebind(`UPDATE auth_sessions SET last_seen_at = ? WHERE id = ? AND revoked_at IS NULL`), store.TimeArg(s.now().UTC()), id)
-	return err
-}
-
 // Rotate gives a live session a new token and returns it; the old one stops
 // working at once. A sign-in that becomes full rotates (L13): a cookie that
 // was planted in the browser before the sign-in, from a sibling subdomain

@@ -78,17 +78,19 @@ type Handler struct {
 	// normally the gateway's own; a function so the runtime setting applies
 	// to the next session.
 	DBProxyImage func() string
+	// AppsMaxSessions caps the application sessions running at once
+	// (ADR 0034), each a browser container; 0 lifts the cap. BrowserImage
+	// returns the image the browser runs in; StateDir is where the browser's
+	// seccomp profile is written for the daemon.
+	AppsMaxSessions int
+	BrowserImage    func() string
+	StateDir        string
 	// ASGs and Cloud enable autoscaling-group targets and EC2 Instance Connect.
 	ASGs  *asg.Repo
 	Cloud asg.ProviderFactory
 	// Files holds live SSH sessions that permit SFTP file transfer (ADR 0016);
 	// initialised in Register.
 	Files *fileRegistry
-	// AppURL is where the browser opens an application (ADR 0033): the
-	// address under the apps domain for the given label, built from the
-	// request the user came in on. Nil, or an empty answer, means the apps
-	// domain is not configured and applications are not listed.
-	AppURL func(r *http.Request, label string) string
 }
 
 // Register mounts the routes. Every REST route here is for accounts that may
@@ -135,10 +137,6 @@ type reachableTarget struct {
 	Engine       string `json:"engine,omitempty"` // database targets (ADR 0017)
 	HealthyCount int    `json:"healthy_count,omitempty"`
 	InstanceCnt  int    `json:"instance_count,omitempty"`
-	// Label and URL are an application's subdomain and where the browser
-	// opens it (ADR 0033); the upstream itself is never shown.
-	Label string `json:"label,omitempty"`
-	URL   string `json:"url,omitempty"`
 }
 
 func (h *Handler) myTargets(w http.ResponseWriter, r *http.Request) {
@@ -166,22 +164,15 @@ func (h *Handler) myTargets(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 			if t.IsApplication() {
-				// An application is opened in the browser, not through a
-				// ticket, and only once the apps domain exists to serve it.
-				url := ""
-				if h.AppURL != nil {
-					url = h.AppURL(r, t.AppLabel)
-				}
-				if url == "" {
-					continue
-				}
+				// An application (ADR 0034) opens in an isolated browser
+				// through a ticket like a desktop; nothing of it is probed.
 				allowed, needApproval := reach(pols, policy.TargetRef{ID: t.ID, Tags: t.Tags}, []target.Protocol{target.HTTP}, now)
 				if len(allowed) == 0 {
 					continue
 				}
 				out = append(out, reachableTarget{
 					Kind: "application", ID: t.ID, Name: t.Name, OSFamily: t.OSFamily, Tags: t.Tags, Capabilities: []target.Protocol{},
-					Allowed: allowed, RequiresApproval: needApproval, HostKeyReady: true, Label: t.AppLabel, URL: url,
+					Allowed: allowed, RequiresApproval: needApproval, HostKeyReady: true,
 				})
 				continue
 			}
@@ -309,16 +300,13 @@ func (h *Handler) connect(w http.ResponseWriter, r *http.Request) {
 	case target.SSH, target.WinRM, target.Database:
 		// database sessions are brokered through an ephemeral container (ADR 0017);
 		// like SSH, reachability is resolved when the ticket is redeemed.
-	case target.RDP, target.VNC:
+	case target.RDP, target.VNC, target.HTTP:
+		// An application (ADR 0034) is a desktop session too: its browser
+		// runs in a container beside the gateway and is streamed by guacd.
 		if h.guacd() == "" {
 			deny(http.StatusNotImplemented, "protocol_unavailable", "desktop sessions are not configured on this gateway")
 			return
 		}
-	case target.HTTP:
-		// An application is opened at its own address (ADR 0033); there is
-		// no bridge for a ticket to start.
-		deny(http.StatusNotImplemented, "protocol_unavailable", "applications are opened from the Applications tab, not through connect")
-		return
 	default:
 		deny(http.StatusNotImplemented, "protocol_unavailable", "protocol not available")
 		return
@@ -415,6 +403,14 @@ func (h *Handler) issueTicket(ctx context.Context, p *auth.Principal, ip string,
 		if !target.ServableEngine(ep.Engine) {
 			return nil, "engine_unavailable", ep.Engine + " database access ships in a later release", nil
 		}
+	case target.HTTP:
+		// An application (ADR 0034) opens in a browser of its own; the
+		// application's sign-in, if any, is the user's, so no credential is
+		// attached and none is required.
+		if ep.AppUpstream == "" {
+			return nil, "not_an_application", "target is not an application", nil
+		}
+		return h.issueCredentialless(p, ep, proto, d, ip, failoverFrom)
 	}
 	credID := ep.Credentials[proto]
 	if credID == "" {
@@ -463,6 +459,25 @@ func (h *Handler) issueTicket(ctx context.Context, p *auth.Principal, ip string,
 	}
 	return &connectResponse{Ticket: tok, ExpiresAt: time.Now().Add(ticket.TTL), Path: ticketPathFor(proto),
 		ASGID: ep.ASGID, ASGInstanceID: ep.ASGInstanceID, InstanceLabel: ep.Label}, "", "", nil
+}
+
+// issueCredentialless issues a ticket for a protocol that carries no
+// credential: an application session, whose browser has nothing to sign in
+// with on the user's behalf.
+func (h *Handler) issueCredentialless(p *auth.Principal, ep *endpoint, proto target.Protocol, d policy.Decision, ip, failoverFrom string) (*connectResponse, string, string, error) {
+	grant := ticket.Grant{
+		UserID: p.User.ID, Username: p.User.Username, SessionID: p.Session.ID,
+		TargetID: ep.TargetID, ASGID: ep.ASGID, ASGInstanceID: ep.ASGInstanceID,
+		Protocol: string(proto), PolicyID: d.Policy.ID,
+		IdleTimeout: d.IdleTimeout, MaxSession: d.MaxSession, RetentionDays: retentionDays(ep, d),
+		AllowClipboard: d.AllowClipboard, AllowFileTransfer: d.AllowFileTransfer,
+		ClientIP: ip, FailoverFrom: failoverFrom,
+	}
+	tok, err := h.Tickets.Issue(grant)
+	if err != nil {
+		return nil, "", "", err
+	}
+	return &connectResponse{Ticket: tok, ExpiresAt: time.Now().Add(ticket.TTL), Path: ticketPathFor(proto)}, "", "", nil
 }
 
 func codeStatus(code string) int {

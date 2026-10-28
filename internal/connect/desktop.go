@@ -21,6 +21,7 @@ import (
 	"github.com/albatroxxx/zanskar/internal/protocol"
 	"github.com/albatroxxx/zanskar/internal/session"
 	"github.com/albatroxxx/zanskar/internal/target"
+	"github.com/albatroxxx/zanskar/internal/ticket"
 )
 
 // desktopParams builds the guacd connection parameters for a target. The
@@ -143,7 +144,7 @@ func (h *Handler) desktop(w http.ResponseWriter, r *http.Request) {
 	}
 	defer zero(g.UserSecret)
 	proto := target.Protocol(g.Protocol)
-	if proto != target.RDP && proto != target.VNC {
+	if proto != target.RDP && proto != target.VNC && proto != target.HTTP {
 		httpx.WriteError(w, r, http.StatusBadRequest, "bad_request", "ticket is not for a desktop protocol")
 		return
 	}
@@ -155,6 +156,12 @@ func (h *Handler) desktop(w http.ResponseWriter, r *http.Request) {
 	ep, err := h.resolveGrant(r.Context(), g)
 	if err != nil || !ep.Active {
 		httpx.WriteError(w, r, http.StatusConflict, "target_unavailable", "target is no longer available")
+		return
+	}
+	if proto == target.HTTP {
+		// An application (ADR 0034): a browser of its own beside the
+		// gateway, drawn by guacd like any VNC desktop.
+		h.browser(w, r, g, ep, ip, guacdAddr)
 		return
 	}
 	// guacd is handed the name and looks it up again itself, so this refuses
@@ -234,6 +241,13 @@ func (h *Handler) desktop(w http.ResponseWriter, r *http.Request) {
 	if g.AllowFileTransfer && proto == target.RDP {
 		params.Args["drive-path"] = drivePathFor(run.s.ID)
 	}
+	h.serveGuac(r, ws, run, g, ep, params, guacdAddr)
+}
+
+// serveGuac dials guacd for a session whose row exists, records and bridges
+// it until it ends, and closes it out. It is the tail every guacd-drawn
+// session shares: RDP, VNC and an application's browser.
+func (h *Handler) serveGuac(r *http.Request, ws *websocket.Conn, run *sessionRun, g *ticket.Grant, ep *endpoint, params guac.Params, guacdAddr string) {
 	timeout := h.DialTimeout
 	if timeout <= 0 {
 		timeout = 10 * time.Second
@@ -336,7 +350,7 @@ func FlagsInstruction(files, clipboard bool) string {
 // ticketPathFor reports which WebSocket endpoint serves a protocol.
 func ticketPathFor(p target.Protocol) string {
 	switch p {
-	case target.RDP, target.VNC:
+	case target.RDP, target.VNC, target.HTTP:
 		return "/ws/desktop"
 	case target.WinRM:
 		return "/ws/winrm"

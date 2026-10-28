@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/albatroxxx/zanskar/internal/gateway"
-	"github.com/albatroxxx/zanskar/internal/protocol"
 )
 
 // Wait limits for a drain.
@@ -126,10 +125,6 @@ func (c *Controller) run(ctx context.Context, d Drain) {
 	}
 	t := time.NewTicker(poll)
 	defer t.Stop()
-	// Application sessions (ADR 0033) are not waited on: they hold nothing in
-	// flight, so Waiting() leaves them out and the cutover below ends them
-	// with the same gateway_restart reason as any bridge. A drain with only
-	// application sessions open proceeds at once.
 	for c.Registry.Waiting() > 0 && time.Now().Before(d.Deadline) {
 		select {
 		case <-ctx.Done():
@@ -165,8 +160,6 @@ func (c *Controller) run(ctx context.Context, d Drain) {
 	// uploads, the row closes, the audit event is written, a database
 	// session's containers go. Wait for the bridges to leave the registry,
 	// within Grace, before the process goes away under them (SEC-10).
-	// Application sessions are left out here as above: a cutover ends them
-	// and nothing of theirs is in flight.
 	grace := c.Grace
 	if grace <= 0 {
 		grace = DefaultGrace
@@ -182,9 +175,7 @@ func (c *Controller) run(ctx context.Context, d Drain) {
 	if c.Log != nil {
 		var ids []string
 		for _, l := range c.Registry.List() {
-			if l.Protocol != protocol.HTTP {
-				ids = append(ids, l.SessionID)
-			}
+			ids = append(ids, l.SessionID)
 		}
 		if len(ids) > 0 {
 			c.Log.Warn("restarting with sessions still finishing; their recordings or rows may be incomplete", "sessions", ids, "waited", grace.String())

@@ -1,8 +1,9 @@
 name: Image scan
 
-# Weekly Trivy scan of the published container image. The image is fixed at
-# release time but advisories keep arriving, so this catches a CVE in the
-# shipped base layer or binary that appeared after the tag. Results go to the
+# Weekly Trivy scan of the published container images: the gateway and the
+# browser an application opens in (ADR 0034). An image is fixed at release
+# time but advisories keep arriving, so this catches a CVE in a shipped base
+# layer, in Chromium or in the binary that appeared after the tag. Results go to the
 # repository's Security tab; a failed run also emails the maintainers.
 on:
   schedule:
@@ -37,3 +38,28 @@ jobs:
         with:
           sarif_file: trivy-image.sarif
           category: trivy-image
+
+  scan-browser:
+    name: Trivy scan of ghcr.io/albatroxxx/zanskar-browser:latest
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write # upload the SARIF to code scanning
+    steps:
+      - uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: image
+          image-ref: ghcr.io/albatroxxx/zanskar-browser:latest
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          format: sarif
+          # Without this the action drops the severity filter for SARIF, so a
+          # low or unknown advisory (a tzdata refresh, say) fails the run.
+          limit-severities-for-sarif: true
+          output: trivy-browser-image.sarif
+          exit-code: "1"
+      - uses: github/codeql-action/upload-sarif@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
+        if: always()
+        with:
+          sarif_file: trivy-browser-image.sarif
+          category: trivy-browser-image

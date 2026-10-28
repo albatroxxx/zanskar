@@ -12,7 +12,7 @@ import { kindOf, TargetForm, targetBody } from './TargetForm'
  * shows its probe state, host key and per-protocol credentials; a database
  * shows its engine, endpoint and TLS settings and a single credential slot,
  * since probing and host keys do not apply to it; an application shows its
- * upstream and label and holds no credential at all (ADR 0033).
+ * upstream and how it is verified, and holds no credential at all (ADR 0034).
  */
 export function TargetDetail({ target, credentials, onClose, onChanged, onDeleted, onError }: { target: Target; credentials: Credential[]; onClose: () => void; onChanged: (t: Target) => void; onDeleted: () => void; onError: (m: string) => void }) {
   const [editing, setEditing] = useState(false)
@@ -138,7 +138,6 @@ export function TargetDetail({ target, credentials, onClose, onChanged, onDelete
         ) : application ? (
           <>
             <dt>Upstream</dt><dd className="mono">{t.app_upstream}</dd>
-            <dt>Label</dt><dd className="mono">{t.app_label}</dd>
             <dt>Upstream TLS</dt><dd>{appTLS(t).verified ? <Badge tone="ok">{appTLS(t).label}</Badge> : <Badge tone="warn">{appTLS(t).label}</Badge>}</dd>
           </>
         ) : (
@@ -180,8 +179,8 @@ export function TargetDetail({ target, credentials, onClose, onChanged, onDelete
         )}
       </dl>
 
-      {/* An application holds no credential: people reach it as themselves,
-          and the proxy adds nothing the upstream could trust (ADR 0033). A
+      {/* An application holds no credential: people sign in to it as
+          themselves, inside the isolated browser (ADR 0034). A
           database target has one slot, the brokered "database" protocol; the
           host slots (ssh, rdp, vnc, winrm) do not apply to it. */}
       {!application && (

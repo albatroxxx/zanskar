@@ -69,16 +69,10 @@ const (
 	// KeyDBProxyImage is the image run as the MySQL/MariaDB relay sidecar;
 	// by default the gateway's own release image at its own version.
 	KeyDBProxyImage = "database.proxy_image"
-	// KeyAppsDomain is the domain applications are served under (ADR 0033),
-	// one subdomain each; empty means applications are off.
-	KeyAppsDomain = "apps.domain"
+	// KeyBrowserImage is the image an application session's browser runs in
+	// (ADR 0034).
+	KeyBrowserImage = "apps.browser_image"
 )
-
-// domainRe is a domain name as the apps domain must be written: lowercase
-// labels joined by dots, at least two of them, no wildcard, scheme or port.
-var domainRe = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,62}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,62}[a-z0-9])?)+$`)
-
-func validDomain(s string) bool { return len(s) <= 253 && domainRe.MatchString(s) }
 
 // DefaultDBProxyImage is the gateway's own image at the running version. A
 // development build has no published tag, so it points at latest and the
@@ -91,6 +85,16 @@ func DefaultDBProxyImage() string {
 		v = "latest"
 	}
 	return "ghcr.io/albatroxxx/zanskar:" + v
+}
+
+// DefaultBrowserImage is the published browser image at this gateway's
+// version (ADR 0034); a dev build takes latest.
+func DefaultBrowserImage() string {
+	v := strings.TrimPrefix(version.Version, "v")
+	if v == "" || v == "dev" {
+		v = "latest"
+	}
+	return "ghcr.io/albatroxxx/zanskar-browser:" + v
 }
 
 // Image references as the OCI distribution spec writes them, cut to what a
@@ -171,10 +175,10 @@ var Definitions = []Definition{
 		Description: "host:port of the guacd relay for RDP and VNC. Empty disables desktop sessions. Applies to the next session opened. guacd receives the desktop credential, so the console accepts a loopback or private address only, and a change asks for a fresh authenticator code."},
 	{Key: KeyLogLevel, Category: "Logging", Title: "Log level", Type: TypeEnum, Default: "info", EnvVar: "ZANSKAR_LOG_LEVEL", Enum: []string{"debug", "info", "warn", "error"},
 		Description: "Verbosity of the gateway's log. Applies at once; go back to info afterwards."},
-	{Key: KeyDBProxyImage, Category: "Databases", Title: "MySQL relay image", Type: TypeString, Default: DefaultDBProxyImage(), EnvVar: "ZANSKAR_DBPROXY_IMAGE", StepUp: true,
-		Description: "Container image started beside each MySQL or MariaDB session to hold the credential and relay the protocol: the gateway's own image, running zanskar dbproxy. Change it only to pin a mirror or test a local build. The relay receives the database credential, so the console accepts only an image pinned by digest (registry/repository@sha256:<64 hex digits>, a :tag before it is fine) and a change asks for a fresh authenticator code; the environment file may name a tag. Applies to the next session."},
-	{Key: KeyAppsDomain, Category: "Applications", Title: "Apps domain", Type: TypeString, EnvVar: "ZANSKAR_APPS_DOMAIN",
-		Description: "The domain applications are served under, one subdomain each: an application labelled wiki is reached at wiki.<domain>. Needs wildcard DNS for *.<domain> pointing at the gateway and a certificate for it (TLS certificate below). It must not be the console's own host or a parent of it. Empty turns applications off."},
+	{Key: KeyDBProxyImage, Category: "Databases", Title: "Relay image", Type: TypeString, Default: DefaultDBProxyImage(), EnvVar: "ZANSKAR_DBPROXY_IMAGE", StepUp: true,
+		Description: "The gateway's own image, started beside each MySQL or MariaDB session as the credential-holding relay (zanskar dbproxy) and beside each application session as the forwarder (zanskar apprelay). Change it only to pin a mirror or test a local build. The relay receives the database credential, so the console accepts only an image pinned by digest (registry/repository@sha256:<64 hex digits>, a :tag before it is fine) and a change asks for a fresh authenticator code; the environment file may name a tag. Applies to the next session."},
+	{Key: KeyBrowserImage, Category: "Applications", Title: "Browser image", Type: TypeString, Default: DefaultBrowserImage(), EnvVar: "ZANSKAR_BROWSER_IMAGE", StepUp: true,
+		Description: "Container image an application opens in: Chromium behind a VNC server, started beside each application session and destroyed with it. The browser sees the application's pages, so the console accepts only an image pinned by digest and a change asks for a fresh authenticator code; the environment file may name a tag. Applies to the next session."},
 }
 
 // Lookup returns the definition for key.
@@ -267,17 +271,9 @@ func Validate(d Definition, value string) (string, error) {
 		}
 		// The relay image is an argument of `docker run`; free text there
 		// could be read as one of its flags (--privileged, a host mount).
-		if d.Key == KeyDBProxyImage {
+		if d.Key == KeyDBProxyImage || d.Key == KeyBrowserImage {
 			if err := checkImageRef(v); err != nil {
 				return "", fmt.Errorf("%w: %s %w", ErrInvalid, d.Key, err)
-			}
-		}
-		// The apps domain is matched against every request's host and named
-		// in certificates: one plain domain, nothing else.
-		if d.Key == KeyAppsDomain {
-			v = strings.ToLower(strings.TrimSuffix(v, "."))
-			if v != "" && !validDomain(v) {
-				return "", fmt.Errorf("%w: %s must be a domain name such as apps.example.com: lowercase letters, digits and hyphens, at least one dot, no wildcard, scheme or port", ErrInvalid, d.Key)
 			}
 		}
 		return v, nil

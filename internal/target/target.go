@@ -153,13 +153,11 @@ type Target struct {
 	// application reuses TLSCA for its https upstream (ADR 0033).
 	TLSMode string `json:"tls_mode,omitempty"`
 	TLSCA   string `json:"tls_ca,omitempty"`
-	// AppUpstream makes the target an application (ADR 0033): the one origin,
-	// scheme://host[:port], the gateway's proxy forwards to, and nothing else
-	// is ever proxied. AppLabel is the subdomain it is served at under the
-	// apps domain, derived from the name when not given. Address holds the
-	// upstream's host, so the address rules apply to it as to any target.
+	// AppUpstream makes the target an application (ADR 0034): the one origin,
+	// scheme://host[:port], the session's isolated browser can reach, and
+	// nothing else. Address holds the upstream's host, so the address rules
+	// apply to it as to any target.
 	AppUpstream         string           `json:"app_upstream,omitempty"`
-	AppLabel            string           `json:"app_label,omitempty"`
 	OSFamily            OSFamily         `json:"os_family"`
 	Ports               map[Protocol]int `json:"ports"`
 	Capabilities        []Protocol       `json:"capabilities"`
@@ -209,7 +207,6 @@ func (t *Target) EffectivePorts() map[Protocol]int {
 var (
 	ErrNotFound             = errors.New("target: not found")
 	ErrDuplicate            = errors.New("target: name already exists")
-	ErrDuplicateLabel       = errors.New("target: an application already uses that label")
 	ErrInvalid              = errors.New("target: invalid")
 	ErrInvalidCredential    = errors.New("target: credential does not exist")
 	ErrFingerprintMismatch  = errors.New("target: fingerprint does not match the key or certificate awaiting trust")
@@ -229,36 +226,6 @@ func ValidAddress(s string) bool {
 		return true
 	}
 	return hostnameRe.MatchString(s)
-}
-
-// labelRe is a DNS label as an application is served under the apps domain:
-// lowercase letters, digits and inner hyphens, at most 63 characters.
-var labelRe = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$`)
-
-// ValidLabel reports whether s can be an application's subdomain.
-func ValidLabel(s string) bool { return labelRe.MatchString(s) }
-
-// Slug derives an application's label from its name: lowercased, every run
-// of anything but letters and digits folded to one hyphen, cut to a label's
-// length. "Wiki (internal)" becomes "wiki-internal".
-func Slug(name string) string {
-	var b strings.Builder
-	hyphen := false
-	for _, r := range strings.ToLower(name) {
-		switch {
-		case r >= 'a' && r <= 'z', r >= '0' && r <= '9':
-			b.WriteRune(r)
-			hyphen = false
-		case !hyphen && b.Len() > 0:
-			b.WriteByte('-')
-			hyphen = true
-		}
-	}
-	s := strings.TrimRight(b.String(), "-")
-	if len(s) > 63 {
-		s = strings.TrimRight(s[:63], "-")
-	}
-	return s
 }
 
 // ParseUpstream reads an application's upstream: http or https, a host, an
@@ -293,9 +260,9 @@ func (t *Target) Validate() error {
 	}
 	t.AppUpstream = strings.TrimSpace(t.AppUpstream)
 	if t.AppUpstream != "" {
-		// An application (ADR 0033) is reached through the proxy, never dialled
-		// by a protocol bridge: its address is its upstream's host, which the
-		// address rules check as they check any target's.
+		// An application (ADR 0034) is reached by the session's browser, never
+		// dialled by a protocol bridge: its address is its upstream's host,
+		// which the address rules check as they check any target's.
 		if t.Engine != "" {
 			return fmt.Errorf("%w: a target is a host, a database or an application, not two of these", ErrInvalid)
 		}
@@ -304,13 +271,6 @@ func (t *Target) Validate() error {
 			return err
 		}
 		t.AppUpstream, t.Address = u.String(), u.Hostname()
-		t.AppLabel = strings.ToLower(strings.TrimSpace(t.AppLabel))
-		if t.AppLabel == "" {
-			t.AppLabel = Slug(t.Name)
-		}
-		if !ValidLabel(t.AppLabel) {
-			return fmt.Errorf("%w: app_label must be a DNS label of 1-63 lowercase letters, digits and hyphens", ErrInvalid)
-		}
 		if t.OSFamily == "" {
 			t.OSFamily = OtherOS
 		}
@@ -324,8 +284,6 @@ func (t *Target) Validate() error {
 			}
 		}
 		t.DatabaseName, t.TLSMode = "", ""
-	} else {
-		t.AppLabel = ""
 	}
 	if !ValidAddress(t.Address) {
 		return fmt.Errorf("%w: address must be a hostname or IP without scheme or port", ErrInvalid)

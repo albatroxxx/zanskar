@@ -74,16 +74,16 @@ func TestPrecedenceAndSubscribe(t *testing.T) {
 		t.Fatalf("All must cover every definition")
 	}
 	// A rule beside Validate: what the rest of the configuration forbids.
-	svc.Check(KeyAppsDomain, func(v string) error {
-		if v == "example.com" {
-			return errors.New("holds the console's own host")
+	svc.Check(KeyGuacdAddr, func(v string) error {
+		if v == "10.0.0.9:4822" {
+			return errors.New("is not on the gateway's network")
 		}
 		return nil
 	})
-	if _, err := svc.Set(ctx, KeyAppsDomain, "example.com", admin.ID); !errors.Is(err, ErrInvalid) || !strings.Contains(err.Error(), "apps.domain holds the console's own host") {
+	if _, err := svc.Set(ctx, KeyGuacdAddr, "10.0.0.9:4822", admin.ID); !errors.Is(err, ErrInvalid) || !strings.Contains(err.Error(), "desktop.guacd_addr is not on the gateway's network") {
 		t.Fatalf("checked value: %v", err)
 	}
-	if v, err := svc.Set(ctx, KeyAppsDomain, "apps.example.com", admin.ID); err != nil || v.Value != "apps.example.com" {
+	if v, err := svc.Set(ctx, KeyGuacdAddr, "127.0.0.1:4822", admin.ID); err != nil || v.Value != "127.0.0.1:4822" {
 		t.Fatalf("allowed value: %+v %v", v, err)
 	}
 }
@@ -128,16 +128,6 @@ func TestValidateTypes(t *testing.T) {
 		{KeyDBProxyImage, "https://ghcr.io/albatroxxx/zanskar", "", false},
 		{KeyDBProxyImage, "ghcr.io/" + strings.Repeat("a", 250) + "/zanskar", "", false},
 		{KeyDBProxyImage, strings.Repeat("a", 5000), "", false},
-		// The apps domain is matched against request hosts and named in
-		// certificates: one plain domain, lowercased, nothing else.
-		{KeyAppsDomain, " Apps.Example.com. ", "apps.example.com", true},
-		{KeyAppsDomain, "", "", true},
-		{KeyAppsDomain, "apps", "", false},
-		{KeyAppsDomain, "*.apps.example.com", "", false},
-		{KeyAppsDomain, "https://apps.example.com", "", false},
-		{KeyAppsDomain, "apps.example.com:8443", "", false},
-		{KeyAppsDomain, "apps_x.example.com", "", false},
-		{KeyAppsDomain, "-apps.example.com", "", false},
 	}
 	for _, c := range cases {
 		d, _ := Lookup(c.key)

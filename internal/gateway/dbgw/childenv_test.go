@@ -15,6 +15,8 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
+
+	"github.com/albatroxxx/zanskar/internal/gateway/containers"
 )
 
 // callMark starts each docker call in the dump envDumpDocker writes.
@@ -60,12 +62,12 @@ func dockerCalls(t *testing.T, dump string) (calls []struct{ args, env string })
 // of the gateway's. With none of them set it is empty but not nil, since a nil
 // Env would hand the child the gateway's whole environment.
 func TestDockerCommandEnv(t *testing.T) {
-	for _, k := range childEnvVars {
+	for _, k := range containers.ChildEnvVars {
 		t.Setenv(k, "")
 		_ = os.Unsetenv(k)
 	}
 	t.Setenv("ZANSKAR_MASTER_KEY", "canary-master-key")
-	cmd := dockerCommand(t.Context(), "docker", nil, "ps")
+	cmd := containers.Command(t.Context(), "docker", nil, "ps")
 	if cmd.Env == nil || len(cmd.Env) != 0 {
 		t.Fatalf("with nothing to pass, Env = %#v; want empty and not nil", cmd.Env)
 	}
@@ -74,7 +76,7 @@ func TestDockerCommandEnv(t *testing.T) {
 	t.Setenv("HOME", "/var/lib/zanskar")
 	t.Setenv("DOCKER_CONTEXT", "colima")
 	t.Setenv("XDG_RUNTIME_DIR", "/run/user/990")
-	cmd = dockerCommand(t.Context(), "docker", []string{"ZANSKAR_DBPROXY={}"}, "run")
+	cmd = containers.Command(t.Context(), "docker", []string{"ZANSKAR_DBPROXY={}"}, "run")
 	want := []string{"PATH=/usr/bin:/bin", "HOME=/var/lib/zanskar", "DOCKER_CONTEXT=colima", "XDG_RUNTIME_DIR=/run/user/990", "ZANSKAR_DBPROXY={}"}
 	if strings.Join(cmd.Env, "\n") != strings.Join(want, "\n") {
 		t.Fatalf("Env = %q\nwant  %q", cmd.Env, want)
@@ -141,7 +143,7 @@ func TestDockerChildrenGetNoGatewaySecrets(t *testing.T) {
 	if err := <-done; err != nil {
 		t.Fatalf("bridge: %v", err)
 	}
-	if _, err := Reap(ctx, docker, nil); err != nil {
+	if _, err := containers.Reap(ctx, docker, nil); err != nil {
 		t.Fatalf("reap: %v", err)
 	}
 

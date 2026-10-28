@@ -4,7 +4,7 @@ Date: 2026-10-15
 
 ## Status
 
-Accepted.
+Superseded by [ADR 0034](0034-applications-isolated-browser.md) on 2026-10-27.
 
 ## Context
 

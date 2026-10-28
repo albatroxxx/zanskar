@@ -13,8 +13,6 @@ const actionLabels: Record<string, string> = {
   'access.request.create': 'Access requested',
   'access.request.deny': 'Access request denied',
   'access.request.revoke': 'Access request revoked',
-  'app.session.start': 'Application session started',
-  'app.session.end': 'Application session ended',
   'asg.create': 'Autoscaling group created',
   'asg.update': 'Autoscaling group updated',
   'asg.delete': 'Autoscaling group deleted',
@@ -185,9 +183,6 @@ export function describe(ev: AuditEvent): string {
     case 'session.connect': return fail ? `was refused ${proto} access to ${name}${reason ? ` (${words(reason)})` : ''}` : `requested ${proto} access to ${name}`
     case 'session.start': return s ? `opened a ${s.proto} session on ${s.target}` : `opened a session ${name}`
     case 'session.end': return s ? `ended the ${s.proto} session on ${s.target}${reason ? ` (${words(reason)})` : ''}` : `ended session ${name}`
-    // An application session is labelled like any other, "user → app (HTTP)".
-    case 'app.session.start': return s ? `opened the application ${s.target}` : `opened an application session ${name}`
-    case 'app.session.end': return s ? `left the application ${s.target}${reason ? ` (${words(reason)})` : ''}` : `ended application session ${name}`
     case 'session.terminate': return s ? `terminated ${s.user}'s ${s.proto} session on ${s.target}` : `terminated session ${name}`
     case 'session.shadow.start': return s ? `started watching ${s.user}'s ${s.proto} session on ${s.target}` : `started watching session ${name}`
     case 'session.shadow.end': return s ? `stopped watching ${s.user}'s session on ${s.target}` : `stopped watching session ${name}`

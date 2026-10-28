@@ -39,13 +39,8 @@ type AdminHandler struct {
 	// Revoker ends the live sessions a disable, an address change or a
 	// changed pin withdraws (ADR 0013); nil leaves them to their own limits.
 	Revoker gateway.Revoker
-	// AppsReady says whether the gateway can serve applications (ADR 0033):
-	// an apps domain is set and, where the gateway terminates TLS, a
-	// certificate for it is loaded. Its error is the reason an application
-	// cannot be enrolled yet; nil skips the check.
-	AppsReady func() error
-	Audit     *audit.Log
-	Log       *slog.Logger
+	Audit   *audit.Log
+	Log     *slog.Logger
 }
 
 // Register mounts the routes; every one requires the admin role.
@@ -74,8 +69,7 @@ type Write struct {
 	DatabaseName  string              `json:"database_name"`  // database targets
 	TLSMode       string              `json:"tls_mode"`       // database targets
 	TLSCA         string              `json:"tls_ca"`         // database and application targets
-	AppUpstream   string              `json:"app_upstream"`   // application targets (ADR 0033)
-	AppLabel      string              `json:"app_label"`      // application targets; blank derives from the name
+	AppUpstream   string              `json:"app_upstream"`   // application targets (ADR 0034)
 	OSFamily      OSFamily            `json:"os_family"`
 	Ports         map[Protocol]int    `json:"ports"`
 	Capabilities  []Protocol          `json:"capabilities"`
@@ -90,7 +84,7 @@ func (w Write) apply(t *Target) {
 	t.Engine, t.EngineVersion = w.Engine, w.EngineVersion
 	t.RetentionDays = w.RetentionDays
 	t.DatabaseName, t.TLSMode, t.TLSCA = w.DatabaseName, w.TLSMode, w.TLSCA
-	t.AppUpstream, t.AppLabel = w.AppUpstream, w.AppLabel
+	t.AppUpstream = w.AppUpstream
 	t.Ports, t.Capabilities, t.Tags = w.Ports, w.Capabilities, w.Tags
 	t.Status, t.Notes, t.Credentials = w.Status, w.Notes, w.Credentials
 }
@@ -137,29 +131,15 @@ func (h *AdminHandler) create(w http.ResponseWriter, r *http.Request) {
 	p, _ := auth.FromContext(r.Context())
 	t := &Target{CreatedBy: &p.User.ID}
 	body.apply(t)
-	if !h.addressAllowed(w, r, audit.TargetCreate, "", t) || !h.appsAllowed(w, r, t) {
+	if !h.addressAllowed(w, r, audit.TargetCreate, "", t) {
 		return
 	}
 	if err := h.Repo.Create(r.Context(), t); err != nil {
 		h.fail(w, r, err)
 		return
 	}
-	h.record(r, audit.TargetCreate, t.ID, audit.Success, map[string]any{"name": t.Name, "address": t.Address, "os_family": t.OSFamily, "app_label": t.AppLabel})
+	h.record(r, audit.TargetCreate, t.ID, audit.Success, map[string]any{"name": t.Name, "address": t.Address, "os_family": t.OSFamily})
 	httpx.WriteJSON(w, http.StatusCreated, t)
-}
-
-// appsAllowed refuses an application while the gateway cannot serve one
-// (AppsReady), answering with the reason: nothing is saved that would sit in
-// the list with nowhere to open.
-func (h *AdminHandler) appsAllowed(w http.ResponseWriter, r *http.Request, t *Target) bool {
-	if strings.TrimSpace(t.AppUpstream) == "" || h.AppsReady == nil {
-		return true
-	}
-	if err := h.AppsReady(); err != nil {
-		httpx.WriteError(w, r, http.StatusConflict, "apps_not_ready", err.Error())
-		return false
-	}
-	return true
 }
 
 func (h *AdminHandler) get(w http.ResponseWriter, r *http.Request) {
@@ -184,7 +164,7 @@ func (h *AdminHandler) update(w http.ResponseWriter, r *http.Request) {
 	}
 	before := map[string]any{"name": t.Name, "address": t.Address, "status": t.Status}
 	body.apply(t)
-	if !h.addressAllowed(w, r, audit.TargetUpdate, t.ID, t) || !h.appsAllowed(w, r, t) {
+	if !h.addressAllowed(w, r, audit.TargetUpdate, t.ID, t) {
 		return
 	}
 	if err := h.Repo.Update(r.Context(), t); err != nil {
@@ -580,8 +560,6 @@ func (h *AdminHandler) fail(w http.ResponseWriter, r *http.Request, err error) {
 		httpx.WriteError(w, r, http.StatusNotFound, "not_found", "target not found")
 	case errors.Is(err, ErrDuplicate):
 		httpx.WriteError(w, r, http.StatusConflict, "conflict", "a target with that name exists")
-	case errors.Is(err, ErrDuplicateLabel):
-		httpx.WriteError(w, r, http.StatusConflict, "conflict", "an application with that label exists; choose another label")
 	case errors.Is(err, ErrInvalid):
 		httpx.BadRequest(w, r, strings.TrimPrefix(err.Error(), "target: invalid: "))
 	case errors.Is(err, ErrInvalidCredential):

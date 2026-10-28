@@ -84,7 +84,8 @@ export function Recordings() {
                     <Link className="btn sm" to={`${recordingsPath}/${encodeURIComponent(s.recording_id!)}`}>Review</Link>{' '}
                     {/* Downloads are recorded views and audit events, like playback. */}
                     <a className="btn sm ghost" href={`/api/v1/recordings/${encodeURIComponent(s.recording_id!)}/download`} download title="Download the recording file (audited)">Download</a>
-                    {s.protocol !== 'rdp' && s.protocol !== 'vnc' && (
+                    {/* A desktop recording, an application's included (ADR 0034), is a pixel stream: it has no command lines. */}
+                    {s.protocol !== 'rdp' && s.protocol !== 'vnc' && s.protocol !== 'http' && (
                       <>{' '}<a className="btn sm ghost" href={`/api/v1/recordings/${encodeURIComponent(s.recording_id!)}/transcript`} download title="Download the command lines as text (audited)">Transcript</a></>
                     )}
                   </td>
