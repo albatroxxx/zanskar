@@ -6175,6 +6175,19 @@ components:
       type: object
       required: [disks, database_sessions]
       properties:
+        cpu:
+          type: object
+          required: [percent, window_seconds]
+          description: >-
+            How busy the processors were over the last sampling window, as a
+            share of all of them (0 to 100); the first request measures a
+            short window of its own, later ones measure since the previous
+            request. Omitted off Linux.
+          properties:
+            percent:
+              type: number
+            window_seconds:
+              type: number
         load:
           type: object
           required: [one, five, fifteen]

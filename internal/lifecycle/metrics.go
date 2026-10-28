@@ -8,6 +8,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -20,6 +21,10 @@ import (
 // belong to an exporter (ADR 0031, proposed). Fields the host cannot answer
 // (no /proc off Linux, no guacd address configured) are omitted, not faked.
 type Metrics struct {
+	// CPU is how busy the processors were over the last sampling window,
+	// as a share of all of them; the load average beside it is the queue
+	// length, which says little on a lightly used box.
+	CPU    *CPUUsage     `json:"cpu,omitempty"`
 	Load   *LoadAverages `json:"load,omitempty"`
 	Memory *MemoryInfo   `json:"memory,omitempty"`
 	Disks  []DiskSpace   `json:"disks"`
@@ -31,6 +36,115 @@ type Metrics struct {
 	// CPUs scales the load average into a meter: a load of 4 is calm on 16
 	// cores and saturation on 4.
 	CPUs int `json:"cpus"`
+}
+
+// CPUUsage is the share of processor time that was not idle between two
+// readings of /proc/stat, 0 to 100 across all processors.
+type CPUUsage struct {
+	Percent       float64 `json:"percent"`
+	WindowSeconds float64 `json:"window_seconds"`
+}
+
+// cpuSample is one reading of /proc/stat's first line: jiffies busy and in
+// all, and when it was taken.
+type cpuSample struct {
+	busy, total uint64
+	at          time.Time
+}
+
+// cpuSampler turns readings of /proc/stat into a percentage over the time
+// between two of them. The first request takes two readings a moment apart;
+// later ones measure since the previous request, so a dashboard that asks
+// every few seconds sees that interval, and a request within a second of
+// the last gets the last answer rather than a noisy one.
+type cpuSampler struct {
+	mu   sync.Mutex
+	last *cpuSample
+	out  *CPUUsage
+	// read and sleep stand in for /proc/stat and time in tests.
+	read  func() (*cpuSample, bool)
+	sleep func(time.Duration)
+}
+
+// cpuFirstWindow is how long the first request waits between its two
+// readings; cpuMinWindow is the shortest interval a later request measures.
+const (
+	cpuFirstWindow = 200 * time.Millisecond
+	cpuMinWindow   = time.Second
+)
+
+func (c *cpuSampler) usage() *CPUUsage {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	read, sleep := c.read, c.sleep
+	if read == nil {
+		read = readCPUStat
+	}
+	if sleep == nil {
+		sleep = time.Sleep
+	}
+	if c.last == nil {
+		first, ok := read()
+		if !ok {
+			return nil
+		}
+		c.last = first
+		sleep(cpuFirstWindow)
+	} else if time.Since(c.last.at) < cpuMinWindow {
+		return c.out
+	}
+	now, ok := read()
+	if !ok {
+		return nil
+	}
+	if now.total > c.last.total && now.busy >= c.last.busy {
+		window := now.at.Sub(c.last.at)
+		c.out = &CPUUsage{
+			Percent:       100 * float64(now.busy-c.last.busy) / float64(now.total-c.last.total),
+			WindowSeconds: window.Seconds(),
+		}
+	}
+	c.last = now
+	return c.out
+}
+
+// readCPUStat reads /proc/stat's aggregate cpu line; false anywhere the
+// file does not exist.
+func readCPUStat() (*cpuSample, bool) {
+	b, err := os.ReadFile("/proc/stat")
+	if err != nil {
+		return nil, false
+	}
+	return parseCPUStat(string(b), time.Now())
+}
+
+// parseCPUStat sums the aggregate "cpu" line: user nice system idle iowait
+// irq softirq steal, in jiffies. Busy is everything but idle and iowait.
+func parseCPUStat(s string, at time.Time) (*cpuSample, bool) {
+	for _, line := range strings.Split(s, "\n") {
+		f := strings.Fields(line)
+		if len(f) < 5 || f[0] != "cpu" {
+			continue
+		}
+		var vals []uint64
+		for _, x := range f[1:] {
+			v, err := strconv.ParseUint(x, 10, 64)
+			if err != nil {
+				return nil, false
+			}
+			vals = append(vals, v)
+		}
+		var total uint64
+		for _, v := range vals {
+			total += v
+		}
+		idle := vals[3]
+		if len(vals) > 4 {
+			idle += vals[4]
+		}
+		return &cpuSample{busy: total - idle, total: total, at: at}, true
+	}
+	return nil, false
 }
 
 // LoadAverages are /proc/loadavg's three numbers.
@@ -74,6 +188,7 @@ const guacdDialTimeout = 800 * time.Millisecond
 
 func (h *Handler) metrics(w http.ResponseWriter, r *http.Request) {
 	m := Metrics{
+		CPU:    h.cpu.usage(),
 		Load:   readLoadavg(),
 		Memory: readMeminfo(),
 		Disks:  diskSpace(h.DatabasePath, h.RecordingsPath),

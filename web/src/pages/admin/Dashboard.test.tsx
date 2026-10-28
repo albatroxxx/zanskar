@@ -1,4 +1,4 @@
-import { cleanup, render, screen } from '@testing-library/react'
+import { act, cleanup, render, screen } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { ApiError, api } from '../../api/client'
@@ -31,6 +31,7 @@ const status: SystemStatus = {
 }
 
 const metrics: SystemMetrics = {
+  cpu: { percent: 37.4, window_seconds: 10 },
   load: { one: 0.42, five: 0.2, fifteen: 0.1 },
   memory: { total_bytes: 8 * 1024 ** 3, available_bytes: 6 * 1024 ** 3 },
   disks: [
@@ -107,8 +108,10 @@ describe('the admin dashboard', () => {
     // The host gauges: each ratio is a meter with its words beside it, the
     // disk at 4 GB of 100 GB free reads as danger, and the facts that are
     // not ratios stay in words.
-    const load = screen.getByRole('meter', { name: 'Load (8 cores)' })
-    expect(load.getAttribute('aria-valuenow')).toBe('5')
+    const cpu = screen.getByRole('meter', { name: 'CPU (8 cores)' })
+    expect(cpu.getAttribute('aria-valuenow')).toBe('37')
+    expect(cpu.parentElement?.textContent).toContain('37% busy')
+    expect(cpu.parentElement?.textContent).toContain('load 0.10 over 15 min')
     const memory = screen.getByRole('meter', { name: 'Memory' })
     expect(memory.getAttribute('aria-valuenow')).toBe('25')
     const disk = screen.getByRole('meter', { name: 'System disk' })
@@ -145,5 +148,36 @@ describe('the admin dashboard', () => {
 
     expect(await screen.findByText(/Zanskar 1\.4\.0/)).toBeDefined()
     expect(screen.queryByText(/TLS certificate/)).toBeNull()
+  })
+
+  // A host that cannot say how busy its processors are (no /proc/stat)
+  // still shows the load average, as before.
+  it('falls back to the load average without a CPU reading', async () => {
+    serve({ '/admin/system/metrics': { ...metrics, cpu: undefined } })
+    at('/')
+    const load = await screen.findByRole('meter', { name: 'Load (8 cores)' })
+    expect(load.getAttribute('aria-valuenow')).toBe('5')
+    expect(screen.queryByRole('meter', { name: 'CPU (8 cores)' })).toBeNull()
+  })
+
+  // The gateway card used to read its numbers once, so the CPU stood where
+  // the page had found it until a reload.
+  it('reads the host numbers again every ten seconds while open', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] })
+    try {
+      const get = serve()
+      const view = at('/')
+      expect(await screen.findByRole('meter', { name: 'CPU (8 cores)' })).toBeDefined()
+      const before = get.mock.calls.filter(([p]) => p === '/admin/system/metrics').length
+      await act(async () => { vi.advanceTimersByTime(10_000) })
+      await act(async () => { vi.advanceTimersByTime(10_000) })
+      const after = get.mock.calls.filter(([p]) => p === '/admin/system/metrics').length
+      expect(after).toBe(before + 2)
+      view.unmount()
+      await act(async () => { vi.advanceTimersByTime(30_000) })
+      expect(get.mock.calls.filter(([p]) => p === '/admin/system/metrics').length).toBe(after)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })

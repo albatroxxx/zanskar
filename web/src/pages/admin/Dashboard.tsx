@@ -33,6 +33,9 @@ function uptime(seconds: number): string {
 /** Dashboard is where an admin lands (ADR 0029): what waits on a decision,
  *  what is live, and whether the gateway itself is healthy. Every number links
  *  to the page that manages it; the dashboard itself changes nothing. */
+/** How often the gateway card's numbers are read again while the page is open. */
+const METRICS_EVERY_MS = 10_000
+
 export function Dashboard() {
   // Read once per mount: a clock read during render is impure and would
   // make re-renders disagree with each other.
@@ -48,7 +51,13 @@ export function Dashboard() {
     api.get<AdminOverview>('/admin/overview').then(setOverview).catch((e) => setErr(errorMessage(e)))
     api.get<SystemStatus>('/admin/system/status').then(setStatus).catch((e) => setErr(errorMessage(e)))
     api.get<TLSStatus>('/admin/tls').then(setTls).catch((e) => setErr(errorMessage(e)))
-    api.get<SystemMetrics>('/admin/system/metrics').then(setMetrics).catch((e) => setErr(errorMessage(e)))
+    // The host's numbers are live: read again every ten seconds while the
+    // page is open, so a gauge moves instead of standing where the page
+    // found it.
+    const metrics = () => api.get<SystemMetrics>('/admin/system/metrics').then(setMetrics).catch((e) => setErr(errorMessage(e)))
+    void metrics()
+    const every = setInterval(() => void metrics(), METRICS_EVERY_MS)
+    return () => clearInterval(every)
   }, [])
 
   const o = overview
@@ -165,14 +174,21 @@ function HostFacts({ m }: { m: SystemMetrics }) {
   return (
     <>
       <div className="gw-grid">
-        {m.load && m.cpus > 0 && (
+        {m.cpu && m.cpus > 0 ? (
+          <Gauge
+            label={`CPU (${m.cpus} cores)`}
+            reading={<><b>{Math.round(m.cpu.percent)}%</b> busy{m.load && <> · load {m.load.fifteen.toFixed(2)} over 15 min</>}</>}
+            fraction={m.cpu.percent / 100}
+            tone={m.cpu.percent >= 95 ? 'danger' : m.cpu.percent >= 85 ? 'warn' : undefined}
+          />
+        ) : m.load && m.cpus > 0 ? (
           <Gauge
             label={`Load (${m.cpus} cores)`}
             reading={<><b>{m.load.one.toFixed(2)}</b> now · {m.load.fifteen.toFixed(2)} over 15 min</>}
             fraction={m.load.one / m.cpus}
             tone={m.load.one >= m.cpus ? 'danger' : m.load.one >= m.cpus * 0.85 ? 'warn' : undefined}
           />
-        )}
+        ) : null}
         {m.memory && (
           <Gauge
             label="Memory"
