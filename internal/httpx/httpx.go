@@ -69,8 +69,17 @@ func Internal(w http.ResponseWriter, r *http.Request, log *slog.Logger, err erro
 	if log == nil {
 		log = slog.Default()
 	}
-	log.Error("request failed", "request_id", RequestID(r.Context()), "route", Route(r),
-		"err", strings.NewReplacer("\n", " ", "\r", " ").Replace(err.Error()))
+	msg := strings.NewReplacer("\n", " ", "\r", " ").Replace(err.Error())
+	// A client that left mid-request (a page navigated away, a tab closed)
+	// cancels the request's context, and whatever the handler was doing
+	// fails with that cancellation. Nothing is wrong with the gateway, so
+	// it is not an error in the log; the answer still goes out in case the
+	// socket is somehow still there.
+	if r.Context().Err() != nil && errors.Is(err, context.Canceled) {
+		log.Info("request abandoned by the client", "request_id", RequestID(r.Context()), "route", Route(r), "err", msg)
+	} else {
+		log.Error("request failed", "request_id", RequestID(r.Context()), "route", Route(r), "err", msg)
+	}
 	WriteError(w, r, http.StatusInternalServerError, "internal", "internal error")
 }
 
