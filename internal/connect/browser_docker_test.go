@@ -140,6 +140,24 @@ func TestApplicationSessionThroughRealBrowser(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer ws.CloseNow()
+	// A stock client answers guacd's sync and sends nop keepalives, and guacd
+	// drops a user that says nothing for fifteen seconds. The first frame can
+	// take longer than that on a loaded runner, so this client keeps talking
+	// until it hangs up.
+	keepalive, hangUp := context.WithCancel(ctx)
+	defer hangUp()
+	go func() {
+		beat := time.NewTicker(3 * time.Second)
+		defer beat.Stop()
+		for {
+			select {
+			case <-keepalive.Done():
+				return
+			case <-beat.C:
+				_ = ws.Write(keepalive, websocket.MessageText, []byte(guac.Encode("nop")))
+			}
+		}
+	}()
 
 	// Pixels: guacd sends image instructions (png, jpeg or webp blobs, or
 	// img streams) once the browser has drawn something.
@@ -208,11 +226,13 @@ func TestApplicationSessionThroughRealBrowser(t *testing.T) {
 	if !strings.Contains(logs, "GET / HTTP/1.1") {
 		// The session is ended first, so that a failing assertion does not
 		// leave the handler writing to a closed database and recording.
+		hangUp()
 		_ = ws.Write(ctx, websocket.MessageText, []byte(guac.Encode("disconnect")))
 		time.Sleep(2 * time.Second)
 		t.Fatalf("nginx never saw the browser's request in 30 s: %s", logs)
 	}
 
+	hangUp()
 	if err := ws.Write(ctx, websocket.MessageText, []byte(guac.Encode("disconnect"))); err != nil {
 		t.Fatal(err)
 	}
