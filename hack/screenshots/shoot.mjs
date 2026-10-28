@@ -39,7 +39,10 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
 await send('Network.enable')
 await send('Emulation.setDeviceMetricsOverride', { width: 1568, height: 720, deviceScaleFactor: 1, mobile: false })
-await send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-color-scheme', value: 'dark' }] })
+// The guide's shots are dark; the front page and the README take the
+// dashboard in both schemes, so the light one sits flush on the site's paper.
+const scheme = (value) => send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-color-scheme', value }] })
+await scheme('dark')
 
 async function as(cookie) {
   await send('Network.clearBrowserCookies')
@@ -57,10 +60,20 @@ async function shot(name, url, after, height = 720) {
   const file = path.join(outDir, `${name}-${version}.jpg`)
   fs.writeFileSync(file, Buffer.from(result.data, 'base64'))
   console.log(file)
+  // The README shows a few of these under names without a version, so a
+  // release never means a README edit; refresh those copies when the
+  // repository's directory for them is beside this script.
+  const readmeDir = path.join(path.dirname(new URL(import.meta.url).pathname), '..', '..', 'docs', 'assets', 'screenshots')
+  if (fs.existsSync(path.join(readmeDir, `${name}.jpg`))) fs.copyFileSync(file, path.join(readmeDir, `${name}.jpg`))
 }
 
 await as(adminCookie)
-await shot('dashboard', '/admin')
+// The dashboard is the hero: taller, so the gateway card is whole, and at
+// the 1.91:1 ratio social cards want; once per scheme.
+await shot('dashboard', '/admin', undefined, 824)
+await scheme('light')
+await shot('dashboard-light', '/admin', undefined, 824)
+await scheme('dark')
 await shot('hosts', '/admin/hosts')
 await shot('databases', '/admin/databases')
 await shot('applications', '/admin/applications')

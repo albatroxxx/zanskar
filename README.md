@@ -17,186 +17,198 @@
   <a href="LICENSE"><img alt="License: Apache 2.0" src="https://img.shields.io/badge/license-Apache%202.0-0E9F8E.svg"></a>
 </p>
 
-# Zanskar
+<h1 align="center">Zanskar</h1>
 
-Zanskar is an open-source, **agentless** access gateway for machines and managed databases. Users open
-a browser, pick a target, and get a terminal (SSH, WinRM), a desktop (RDP, VNC), or a database session
-(PostgreSQL, MySQL, MariaDB) — without installing anything on the target. Every session is
-policy-controlled, recorded, and audited, and access can be standing or granted just-in-time on approval.
+<p align="center"><strong>Browser sessions to the machines, databases and web applications you already run. Nothing to install on them.</strong></p>
 
-Zanskar is named after the [Zanskar Valley](https://en.wikipedia.org/wiki/Zanskar) in Ladakh, in the
-Himalayas of northern India. The logo is a shell prompt redrawn as a summit and a cursor.
+<p align="center">
+  <a href="https://albatroxxx.github.io/zanskar/docs/">Install</a> ·
+  <a href="https://albatroxxx.github.io/zanskar/guide/">How-to guide</a> ·
+  <a href="https://albatroxxx.github.io/zanskar/concepts/">Concepts</a> ·
+  <a href="docs/architecture.md">Architecture</a> ·
+  <a href="docs/threat-model.md">Threat model</a> ·
+  <a href="https://albatroxxx.github.io/zanskar/releases/">Releases</a>
+</p>
 
-## Why another one?
+Zanskar is an open-source, **agentless** access gateway. People sign in once, pick a target, and
+get a terminal (SSH, WinRM), a desktop (RDP, VNC), a database session (PostgreSQL, MySQL,
+MariaDB) or a web application, in the browser. The gateway authenticates to the target with a
+credential the person never sees, records the session, and writes every step to a hash-chained
+audit log. Access can be standing or granted just in time on approval, and it ends the moment
+it is taken away.
 
-Most access gateways assume a fixed set of servers. Zanskar treats
-**autoscaling groups as first-class targets**: enroll an AWS Auto Scaling group with a read-only IAM
-role, Zanskar tracks the healthy pool, and when the instance you are on is terminated you are offered
-a switch to another healthy instance instead of a dead terminal.
+<p align="center">
+  <a href="https://albatroxxx.github.io/zanskar/">
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset="docs/assets/screenshots/dashboard.jpg">
+      <img alt="The Zanskar admin dashboard: what needs attention, activity, the inventory of hosts, databases and applications, and the gateway host's CPU, memory and disk" src="docs/assets/screenshots/dashboard-light.jpg" width="100%">
+    </picture>
+  </a>
+</p>
+
+## Why Zanskar
+
+- **Agentless, and the browser never touches the target.** Targets are reached over SSH, RDP, VNC,
+  WinRM or the database's own protocol, from the gateway only. No agent, no inbound exposure, no
+  client software.
+- **Fleets that change are first-class.** Enrol an AWS Auto Scaling group through a read-only
+  role; Zanskar tracks the healthy pool and, when the instance you are on is terminated, offers a
+  switch to another instead of a dead terminal.
+- **Evidence for everything.** Recorded sessions, audited reads of those recordings, a
+  hash-chained audit log anchored by signatures and verifiable from the command line, SIEM export,
+  and releases signed with Sigstore.
 
 ## What you get
 
-- **Terminals** — SSH and Windows (WinRM), streamed to the browser over WebSocket and recorded as asciicast.
-- **Desktops** — RDP and VNC through a guacd sidecar, with session recording and live shadowing.
-- **Managed databases** — `psql`, `mysql` or `mariadb` sessions to PostgreSQL, MySQL and MariaDB (Amazon
-  RDS or self-managed) through an ephemeral, per-session client container. The database credential is
-  held by a sidecar (pgbouncer, or the gateway's own relay) and **never reaches the user's client**; TLS
-  to the database is per target, up to `verify-full` with your CA bundle.
-- **Autoscaling groups as targets** — enroll an AWS Auto Scaling group with a read-only cross-account
-  role. The gateway knows its own AWS principal, prints the CLI script or CloudFormation template that
-  creates the role, and tests the role before saving. Zanskar then tracks the healthy pool and offers
-  failover when the instance you are on goes away.
-- **Just-in-time access** — a policy can grant *eligibility* instead of standing access: a user requests
-  a target with a reason and a duration, an administrator approves, and the grant is time-boxed, can be
-  extended, and expires on its own. Policies carry per-target protocol rules, session limits and a
-  recording retention of their own.
-- **File transfer and clipboard** — SFTP for SSH and drive redirection for RDP, each gated by policy.
-- **Keyless SSH** — an SSH certificate authority is the recommended way to reach Linux targets: Zanskar
-  generates the authority, prints the one `TrustedUserCAKeys` line each target needs, mints a
-  minutes-long certificate per session naming the Zanskar user in the target's auth log, and rotates the
-  authority in two steps without breaking a host that has not learned the new key yet.
-- **Identity, kept separate** — local accounts (Argon2id + TOTP, onboarding with a one-time password
-  replaced at first sign-in), OIDC and LDAP/AD sign-in.
-- **Recorded and audited** — every session is recorded; recordings and command transcripts can be
-  downloaded, with every view and download audited; the audit log is hash-chained, anchored by a
-  signature every hour so that even its newest events cannot be removed unnoticed, checked with a
-  `verify` command, and streamed to a SIEM.
-- **Access taken away ends the session** — disabling an account, changing its roles or groups, or
-  revoking a policy ends the live sessions that access allowed, with the reason shown to the user;
-  terminal sessions can be shadowed live, as desktops already could.
-- **Operated from the console** — HTTPS out of the box with a gateway-managed certificate you replace
-  on the Settings page, runtime settings applied live, a restart-required banner when the environment
-  file drifts, recording storage moved to an S3-compatible bucket without a restart, and the gateway's
-  recent log lines on a Logs page.
+| Capability | What it does |
+|---|---|
+| **Terminals** | SSH to Linux and PowerShell over WinRM to Windows, streamed over WebSocket and recorded as asciicast. SFTP beside the terminal, gated per policy. |
+| **Desktops** | RDP and VNC through a guacd sidecar, recorded as a pixel stream, shadowable live by auditors. Clipboard and drive redirection are policy switches. |
+| **Databases** | `psql`, `mysql` and `mariadb` sessions through a per-session client container. The database credential lives in a sidecar and never reaches the client, not even from a shell escape. TLS to the database is per target, up to `verify-full` with your CA bundle. |
+| **Web applications** | An internal web application opens in a sandboxed Chromium container beside the gateway, streamed and recorded like a desktop, on a private network that reaches the application's one port and nothing else. Needs a container runtime on the gateway host, as database sessions do. |
+| **Keyless SSH** | An SSH certificate authority that mints a minutes-long certificate per session, naming the Zanskar user in the target's own log. One `TrustedUserCAKeys` line per target, and a two-step rotation that never locks a host out. Vaulted passwords and keys remain for everything else. |
+| **Just-in-time access** | A policy can grant eligibility instead of standing access: the user asks with a reason and a duration, an administrator approves, and the grant is time-boxed, extendable and expires on its own. |
+| **Identity, kept separate** | Local accounts with Argon2id and TOTP, or OIDC and LDAP / Active Directory sign-in with audited group-to-role mapping. Who you are to Zanskar is distinct from how Zanskar reaches a target. Three roles: admin, auditor, user. |
+| **Access taken away ends the session** | Disabling an account, changing its groups or revoking a policy ends the live sessions that access allowed, and tells the user why. |
+| **Operated from the console** | HTTPS out of the box with a certificate the gateway manages, runtime settings applied live, recordings on local disk or an S3-compatible bucket, restart, update and host actions behind a fresh authenticator code, a Logs page, and an audited command line inside the console. |
 
-## Principles
+## Install
 
-- **Agentless.** Targets are reached over SSH, RDP, VNC or WinRM; a managed database needs only a
-  reachable endpoint. There is no agent to install on the target.
-- **The browser never touches the target.** Only the gateway does, so targets need no inbound internet exposure.
-- **Two authentications, kept separate.** Who you are to Zanskar (local, OIDC, LDAP/AD, MFA) is
-  distinct from how Zanskar authenticates to a target (password, SSH key, SSH certificate, domain credentials).
-- **Three roles.** `admin` configures and reviews, `auditor` reviews only, `user` connects. Every
-  view of a recording or the audit log is itself audited.
-- **Least standing privilege.** Sensitive targets can be made eligible-only, so no one holds standing
-  access — it exists only as a time-boxed, approved, audited grant.
-- **Secure by default.** Envelope-encrypted secrets, a hash-chained audit log, MFA, and signed releases.
+Zanskar is one static binary with the console inside it. On a Linux server:
 
-## Quick start (development)
+1. Download the `.deb` or `.rpm` for your architecture from the [latest release](https://github.com/albatroxxx/zanskar/releases/latest) and install it. Checksums are signed with Sigstore; the [install guide](https://albatroxxx.github.io/zanskar/docs/) has the `cosign verify` lines.
+2. Run `sudo zanskar init`. It writes the configuration, serves HTTPS on 443 with a certificate it manages, creates the first administrator and prints what to do next.
+3. Open the gateway's address in a browser, sign in, enrol your authenticator, and add a target.
 
-```sh
-cp .env.example .env
-export ZANSKAR_MASTER_KEY=$(go run ./cmd/zanskar keygen)
-go run ./cmd/zanskar migrate
-go run ./cmd/zanskar admin create --username admin --name "Your Name"   # prompts for a password
-make build          # builds the web UI and a single binary with it embedded
-./bin/zanskar serve # SQLite, plain HTTP on 127.0.0.1:8443
-```
+For a container: `ghcr.io/albatroxxx/zanskar` with [`deploy/docker-compose.yml`](deploy/docker-compose.yml) brings up the gateway, guacd and Caddy for TLS. Desktops need the guacd sidecar; database and application sessions need Docker or Podman on the gateway host. The full picture, from topology to backups, is in [docs/deploy.md](docs/deploy.md).
 
-Open http://127.0.0.1:8443, sign in, and enroll your authenticator when prompted. For UI work run
-`make web-dev` (Vite on :5173, proxying to the API) beside `make run`. `zanskar audit verify`
-checks the audit chain and its signed anchors from the command line, and `zanskar audit anchor`
-prints an anchor to keep outside the database. If the only admin loses their authenticator,
-`zanskar admin reset-mfa --username <name>` on the gateway host clears it and audits the reset;
-the next login enrolls a new one. `zanskar key status`, `key rotate` and `key rotate-master`
-manage the key ring and the master key; `zanskar dbproxy` is the MySQL/MariaDB relay the gateway
-runs beside a database session, not something to start by hand. `zanskar healthcheck` asks the
-running gateway's `/readyz` and exits 0 when it is ready, for a container's health check (the
-image has no shell, curl or wget).
+To build from source you need Go 1.27 or newer and Node 22 or newer; [CONTRIBUTING.md](CONTRIBUTING.md) has the development setup.
 
-Requires Go 1.27+ and Node 22+ to build.
+## A look inside
 
-Run the single-instance stack (gateway on SQLite, guacd, Caddy TLS) on one box:
-`docker compose -f deploy/docker-compose.yml up -d`. For a Postgres-backed
-development stack instead, use `deploy/docker-compose.dev.yml`.
+<details>
+<summary><strong>Hosts</strong>: Linux and Windows machines with their capabilities, host-key trust and tags</summary>
+<br>
+<img alt="The Hosts page: four machines with OS, capabilities, host-key state, tags and last probe time" src="docs/assets/screenshots/hosts.jpg" width="100%">
+</details>
 
-## Deploying
+<details>
+<summary><strong>Approvals</strong>: just-in-time requests waiting on a decision, and the grants in force</summary>
+<br>
+<img alt="The Approvals page: two pending requests with reason and duration, each with Approve and Deny, and one active time-boxed grant" src="docs/assets/screenshots/approvals.jpg" width="100%">
+</details>
 
-The product site at <https://albatroxxx.github.io/zanskar/> has the installation guide,
-the how-to guide and release notes in one place.
+<details>
+<summary><strong>SSH certificate authority</strong>: the one line each target needs, and a per-target test</summary>
+<br>
+<img alt="The certificate authority's setup panel on the Credentials page, with the TrustedUserCAKeys line to paste and a test per target" src="docs/assets/screenshots/ssh-ca.jpg" width="100%">
+</details>
 
-Zanskar runs as a **single instance**: one gateway, embedded SQLite or PostgreSQL, and a
-guacd sidecar for RDP/VNC. High availability is planned. Two supported install paths, both
-from the [releases page](https://github.com/albatroxxx/zanskar/releases):
+<details>
+<summary><strong>Web applications</strong>: enrolled by address, opened in an isolated browser</summary>
+<br>
+<img alt="The Applications page: the checklist of what the gateway host still needs, then two applications with their upstream, TLS state and tags" src="docs/assets/screenshots/applications.jpg" width="100%">
+</details>
 
-- **Packages** (recommended): `.deb` / `.rpm` for amd64 and arm64, then `sudo zanskar init`
-  writes the configuration, serves HTTPS on 443 with a certificate it manages (upload yours on the
-  Settings page), and prints the next steps. It asks which address people will reach the gateway
-  by: a cloud instance's public address is translated upstream, so nothing can guess it, and a
-  certificate without it means a browser warning and no HTTP-to-HTTPS redirect. `zanskar init -behind-proxy` keeps the gateway on
-  loopback behind your own TLS proxy. Plain tarballs are there too.
-- **Container**: `ghcr.io/albatroxxx/zanskar:latest`, or a pinned `:<version>`, with
-  `deploy/docker-compose.yml` (gateway + guacd + Caddy TLS). `ZANSKAR_VERSION` in `deploy/.env`
-  pins it; it defaults to `latest`. The same image is the MySQL/MariaDB relay sidecar, so a
-  gateway that serves database targets needs Docker or Podman.
+<details>
+<summary><strong>The console's command line</strong>: audited, unlocked with an authenticator code</summary>
+<br>
+<img alt="The command line panel open over the Policies page, after a status command and a listing of pending requests" src="docs/assets/screenshots/console-cli.jpg" width="100%">
+</details>
 
-Checksums and the image are signed with Sigstore; the release notes carry the `cosign verify`
-commands. `cosign` is not in the Ubuntu, Debian or RHEL repositories, so install it from
-[its own release](https://github.com/sigstore/cosign/releases/latest) first (the
-[install page](https://albatroxxx.github.io/zanskar/docs/#cosign) has the commands). The Helm chart in `deploy/helm/zanskar` is a **preview**: it deploys one gateway pod. Zanskar
-runs as a single instance; high availability is planned. Topology,
-upgrades, backups, TLS, recording storage, database access, AWS enrolment, the certificate
-authority and the security checklist are in [docs/deploy.md](docs/deploy.md).
+<details>
+<summary><strong>The access portal</strong>: what a user sees</summary>
+<br>
+<img alt="The access portal: the targets a user's policies grant, with Open buttons, and a count of their pending requests" src="docs/assets/screenshots/user-targets.jpg" width="100%">
+</details>
 
-## Layout
+## How it works
 
 ```
-cmd/zanskar/      entrypoint
-internal/         application code (not importable by other modules)
-migrations/       SQL migrations, one set per database driver
-docs/             threat model, API spec, design decisions (ADRs), wireframes
-deploy/           Dockerfile, docker-compose, Helm chart
-web/              React + TypeScript frontend, embedded into the binary at build time
+ Browser ──HTTPS/WSS──▶ zanskar gateway ──SSH / WinRM / SFTP──────────────▶ Linux, Windows
+                         │    │    │
+                         │    │    └──Guacamole protocol──▶ guacd ──RDP/VNC─▶ Windows, VNC hosts
+                         │    │                                    └─VNC──▶ isolated browser ──▶ web applications
+                         │    └── per-session client container ─▶ relay sidecar ─PG / MySQL─▶ databases
+                         │        (internal network; only the relay, which holds the
+                         │         credential, reaches the database)
+                         │
+                         ├── SQLite or PostgreSQL (state, sealed secrets, audit chain)
+                         ├── recordings: local disk or S3-compatible storage
+                         ├── identity providers: OIDC, LDAP / Active Directory
+                         └── AWS APIs: STS AssumeRole, Auto Scaling, EC2
 ```
+
+One Go process: the API, the embedded React console, the protocol bridges and the audit chain.
+Secrets are sealed under a versioned master key; the audit log is hash-chained and anchored by
+signatures, so even its newest events cannot be removed unnoticed. Every design choice links to an
+[architecture decision record](docs/adr/), and [docs/architecture.md](docs/architecture.md) walks
+through a session end to end.
+
+**Status.** Zanskar runs as a single instance: one gateway, embedded SQLite or your PostgreSQL,
+a guacd sidecar for desktops. High availability is planned; the Helm chart deploys one pod and is
+a preview until live sessions can be ended and watched across gateways.
+
+## Documentation
+
+| Where | What it covers |
+|---|---|
+| [Install](https://albatroxxx.github.io/zanskar/docs/) | Packages, the container, `zanskar init`, TLS, updates |
+| [How-to guide](https://albatroxxx.github.io/zanskar/guide/) | Every console page, from the first host to the audit log |
+| [Concepts](https://albatroxxx.github.io/zanskar/concepts/) | Targets, credentials, policies, grants, sessions, recordings |
+| [Troubleshooting](https://albatroxxx.github.io/zanskar/troubleshooting/) | The exact messages a tester meets, and what they mean |
+| [docs/deploy.md](docs/deploy.md) | Topology, backups, recording storage, database access, AWS enrolment, the certificate authority, the security checklist |
+| [docs/architecture.md](docs/architecture.md) | How the gateway is built, package by package |
+| [docs/threat-model.md](docs/threat-model.md) | Trust boundaries, what is defended against, what is not |
+| [docs/adr/](docs/adr/) | The decisions behind the design, with their reasoning |
+| [docs/api/openapi.yaml](docs/api/openapi.yaml) | The HTTP API the console uses, which is the API you get |
+| [docs/console-cli.md](docs/console-cli.md) | Every command of the console's command line |
+| [Release notes](https://albatroxxx.github.io/zanskar/releases/) | What changed, and how to upgrade |
 
 ## Quality and security signals
 
-Every badge above is computed from this repository by an open-source tool and links to its evidence.
+Every badge at the top is computed from this repository by an open-source tool and links to its evidence.
 
 | Badge | What it measures | Source |
 |---|---|---|
-| CI | Build, `go vet`, race tests on SQLite and PostgreSQL, golangci-lint, govulncheck, gosec, gitleaks, OSV-Scanner, Trivy on the source tree and the built container image, third-party-notice check, all on every push and PR | [`ci.yml`](.github/workflows/ci.yml) |
-| CodeQL | Static analysis of the Go server and TypeScript UI with the `security-extended` query suite; alerts appear in the Security tab | [`codeql.yml`](.github/workflows/codeql.yml) |
-| OpenSSF Scorecard | Supply-chain hygiene scored 0 to 10 by the [OpenSSF](https://scorecard.dev): pinned dependencies, token permissions, branch protection, SAST, vulnerability status, and more. Weekly and on every push to main | [`scorecard.yml`](.github/workflows/scorecard.yml) |
-| OpenSSF Best Practices | The [OpenSSF Best Practices](https://www.bestpractices.dev/) criteria for FLOSS projects: documented contribution and vulnerability-reporting process, tests and CI, static and dynamic analysis, published cryptography, secure delivery. Answers are public and linked to their evidence | [project 14924](https://www.bestpractices.dev/projects/14924) |
-| Test coverage | Statement coverage of the gateway's own code (every package but the `hack/` test tools) from the CI test run, written to the `badges` branch after each push to main | [`ci.yml`](.github/workflows/ci.yml) |
+| CI | Build, `go vet`, race tests on SQLite and PostgreSQL, golangci-lint, govulncheck, gosec, gitleaks, OSV-Scanner, Trivy on the source tree and the built container image, a browser end-to-end suite, the third-party-notice check, on every push and pull request | [`ci.yml`](.github/workflows/ci.yml) |
+| CodeQL | Static analysis of the Go server and the TypeScript console with the `security-extended` query suite; alerts appear in the Security tab | [`codeql.yml`](.github/workflows/codeql.yml) |
+| OpenSSF Scorecard | Supply-chain hygiene scored 0 to 10 by the [OpenSSF](https://scorecard.dev): pinned dependencies, token permissions, branch protection, SAST, vulnerability status, and more | [`scorecard.yml`](.github/workflows/scorecard.yml) |
+| OpenSSF Best Practices | The [OpenSSF Best Practices](https://www.bestpractices.dev/) criteria for open-source projects: a documented contribution and vulnerability-reporting process, tests and CI, static and dynamic analysis, published cryptography, secure delivery. The answers are public and linked to their evidence | [project 14924](https://www.bestpractices.dev/projects/14924) |
+| Test coverage | Statement coverage of the gateway's own code from the CI test run, written to the `badges` branch after each push to main | [`ci.yml`](.github/workflows/ci.yml) |
 | Go version | Read from `go.mod` | shields.io |
 
-The published image `ghcr.io/albatroxxx/zanskar:latest` is also re-scanned by Trivy every week,
-because new advisories appear after a release; findings land in the Security tab
-([`image-scan.yml`](.github/workflows/image-scan.yml)).
-
-Vulnerability handling and the current advisory triage are in [SECURITY.md](SECURITY.md).
+The published images are re-scanned by Trivy every week, because new advisories appear after a
+release; findings land in the Security tab ([`image-scan.yml`](.github/workflows/image-scan.yml)).
+Releases carry an SBOM, SLSA provenance and Sigstore signatures, and the builds are reproducible
+across machines.
 
 ## Contributing
 
-Contributions are welcome. To report a bug or suggest something, open an issue — the **bug report**
-and **feature request** forms will walk you through what to include. Please do not file security
-problems as public issues; see [Security](#security) below.
-
-To work on the code, [CONTRIBUTING.md](CONTRIBUTING.md) has the setup, the checks that must pass,
-and the project conventions. The short version:
+Contributions are welcome. To report a bug or suggest something, open an issue; the bug report
+and feature request forms walk you through what to include. [CONTRIBUTING.md](CONTRIBUTING.md)
+has the development setup, the checks that must pass before a pull request, and the project's
+conventions. The short version:
 
 ```sh
-make all   # runs the linters, the race-detector tests, builds the UI + binary, and runs the console tests
+make all   # linters, race-detector tests, the console build and its tests, the binary
 ```
 
-How the project is run, who holds which role and how decisions are made is in
-[GOVERNANCE.md](GOVERNANCE.md); everyone taking part follows the
-[code of conduct](CODE_OF_CONDUCT.md). The high-level design is in
-[docs/architecture.md](docs/architecture.md), every command of the console's command line in
-[docs/console-cli.md](docs/console-cli.md), and the answers behind the project's OpenSSF Best
-Practices Silver badge are in [docs/best-practices.md](docs/best-practices.md).
+How the project is run and how decisions are made is in [GOVERNANCE.md](GOVERNANCE.md); everyone
+taking part follows the [code of conduct](CODE_OF_CONDUCT.md). The answers behind the project's
+OpenSSF Best Practices badge are in [docs/best-practices.md](docs/best-practices.md).
 
 ## Security
 
-Zanskar is an access gateway, so security reports matter. See [SECURITY.md](SECURITY.md) for how to
-report a vulnerability privately — never open a public issue for a security problem. The
-[threat model](docs/threat-model.md) describes what Zanskar defends against.
+Zanskar is an access gateway, so security reports matter. [SECURITY.md](SECURITY.md) says how to
+report a vulnerability privately; never open a public issue for one. The
+[threat model](docs/threat-model.md) describes what Zanskar defends against and what it does not.
 
 ## License
 
-Apache License 2.0. See [LICENSE](LICENSE). The third-party components compiled into
-the binary and their license texts are in
-[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) (generated by `hack/gen-notices.sh`);
-bundled non-code assets are listed in [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md).
+Apache License 2.0; see [LICENSE](LICENSE). The third-party components compiled into the binary
+and their license texts are in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md), and the bundled
+non-code assets in [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md).
+
+Zanskar is named after the [Zanskar Valley](https://en.wikipedia.org/wiki/Zanskar) in Ladakh, in
+the Himalayas of northern India. The logo is a shell prompt redrawn as a summit and a cursor.
