@@ -48,17 +48,25 @@ async function as(cookie) {
   await send('Network.clearBrowserCookies')
   await send('Network.setCookies', { cookies: [{ name: 'zanskar_session', value: cookie, domain: host, path: '/' }] })
 }
+// Every shot is taken in both schemes: the guide shows the dark set
+// (`name-version.jpg`), the front page the light one (`name-light-version.jpg`).
 async function shot(name, url, after, height = 720) {
-  await send('Emulation.setDeviceMetricsOverride', { width: 1568, height, deviceScaleFactor: 1, mobile: false })
-  await send('Page.navigate', { url: base + url })
-  await sleep(2000)
-  if (after) {
-    await send('Runtime.evaluate', { expression: after, awaitPromise: true })
-    await sleep(800)
+  for (const value of ['dark', 'light']) {
+    await scheme(value)
+    await send('Emulation.setDeviceMetricsOverride', { width: 1568, height, deviceScaleFactor: 1, mobile: false })
+    await send('Page.navigate', { url: base + url })
+    await sleep(2000)
+    if (after) {
+      await send('Runtime.evaluate', { expression: after, awaitPromise: true })
+      await sleep(800)
+    }
+    const { result } = await send('Page.captureScreenshot', { format: 'jpeg', quality: 85 })
+    await save(value === 'dark' ? name : `${name}-light`, result.data)
   }
-  const { result } = await send('Page.captureScreenshot', { format: 'jpeg', quality: 85 })
+}
+async function save(name, data) {
   const file = path.join(outDir, `${name}-${version}.jpg`)
-  fs.writeFileSync(file, Buffer.from(result.data, 'base64'))
+  fs.writeFileSync(file, Buffer.from(data, 'base64'))
   console.log(file)
   // The README shows a few of these under names without a version, so a
   // release never means a README edit; refresh those copies when the
@@ -68,12 +76,8 @@ async function shot(name, url, after, height = 720) {
 }
 
 await as(adminCookie)
-// The dashboard is the hero: taller, so the gateway card is whole, and at
-// the 1.91:1 ratio social cards want; once per scheme.
+// The dashboard is taken taller, so the gateway card is whole.
 await shot('dashboard', '/admin', undefined, 824)
-await scheme('light')
-await shot('dashboard-light', '/admin', undefined, 824)
-await scheme('dark')
 await shot('hosts', '/admin/hosts')
 await shot('databases', '/admin/databases')
 await shot('applications', '/admin/applications')
