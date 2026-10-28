@@ -45,6 +45,9 @@ describe('Users', () => {
   it('shows each account, marks the signed-in one, and keeps disable and delete away from it', async () => {
     serve()
     await show()
+    // The marker comes from the sign-in lookup, the row from the users
+    // list; the two answer in either order, so wait for the marker too.
+    await screen.findByText('(you)')
     const mine = screen.getByText('alice').closest('tr')!
     expect(within(mine).getByText('(you)')).toBeDefined()
     expect(within(mine).getByText('admin')).toBeDefined()

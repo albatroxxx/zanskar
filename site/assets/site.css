@@ -22,7 +22,9 @@ nav { display: flex; flex-wrap: wrap; align-items: center; gap: 28px; font-size:
 nav a { color: var(--muted); text-decoration: none; }
 nav a:hover, nav a[aria-current="page"] { color: var(--green); text-decoration: underline; }
 .hero { background: var(--soft); border-bottom: 1px solid var(--line); }
-.hero-copy { max-width: 760px; margin: auto; text-align: center; padding: 52px 24px 30px; }
+.hero-copy { max-width: 760px; margin: auto; text-align: center; padding: 64px 24px 60px; }
+.hero h1 { margin: 0 0 22px; }
+.hero-logo { width: min(520px, 100%); height: auto; margin: auto; }
 .eyebrow { color: var(--green); font-size: 11px; font-weight: 700; margin-bottom: 10px; }
 .hero h1 { font-size: 56px; margin: 0 0 10px; }
 .lead { font-size: 19px; margin-bottom: 18px; }
@@ -31,8 +33,9 @@ nav a:hover, nav a[aria-current="page"] { color: var(--green); text-decoration: 
 .button:hover { background: #ECE8DF; }
 .button.primary { color: white; background: var(--green); border-color: var(--green); }
 .button.primary:hover { background: #26329A; }
-.hero-media { display: block; max-width: 1232px; margin: auto; padding: 0 32px 56px; }
-.hero-media img { width: 100%; border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 18px 40px -24px rgba(18, 19, 24, .35); background: white; }
+figure img { border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 18px 40px -24px rgba(18, 19, 24, .35); background: white; }
+.gallery { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 28px 40px; margin-top: 8px; }
+.gallery figure { margin-top: 28px; }
 .band { max-width: 1232px; margin: auto; padding: 58px 32px; border-bottom: 1px solid var(--line); }
 .intro { display: grid; grid-template-columns: 1fr 1fr; gap: 60px; align-items: center; }
 .intro h2, .intro p:last-child { margin-bottom: 0; }
@@ -77,11 +80,10 @@ pre { font-size: 12px; line-height: 1.8; margin: 0; padding: 48px 18px 18px; ove
   .brand img { width: 28px; }
   nav { gap: 14px; font-size: 12px; }
   .site-header nav a:nth-child(2) { display: none; }
-  .hero-copy { padding: 32px 18px 22px; }
-  .hero h1 { font-size: 42px; }
+  .hero-copy { padding: 40px 18px 36px; }
   .lead { font-size: 17px; }
-  .hero-media { padding: 0 18px 32px; }
-  .hero-media img { border-radius: 6px; }
+  .gallery { grid-template-columns: 1fr; gap: 0; }
+  figure img { border-radius: 6px; }
   .band { padding: 36px 20px; }
   .intro, .principles { grid-template-columns: 1fr; gap: 20px; }
   h2 { font-size: 29px; }
