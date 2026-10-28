@@ -8,6 +8,7 @@
 | `logo-dark.svg` | Horizontal lockup for dark backgrounds. |
 | `badge.svg` | 20 px flat badge for README files of projects that use Zanskar. |
 | `favicon/` | `favicon.svg` plus PNG icons at 16, 32, 48, 180 (Apple touch), 192 and 512 px. |
+| `social-preview.png` | The lockup on paper at 1280 by 640 px, the size GitHub's repository social preview takes; rendered from `logo.svg` with headless Chrome. |
 
 ## The mark
 
