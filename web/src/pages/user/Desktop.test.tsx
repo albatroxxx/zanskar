@@ -104,6 +104,18 @@ afterEach(() => {
   vi.unstubAllGlobals()
 })
 
+// An application's browser can take a while to start, and the pane is black
+// until guacd draws; the bar says so until the client reports it connected.
+describe('Desktop, while connecting', () => {
+  it('says so until the first frame, and not after', async () => {
+    start()
+    const c = await connected()
+    expect(screen.getByRole('status').textContent).toContain('Connecting')
+    act(() => c.onstatechange?.(3))
+    expect(screen.queryByRole('status')).toBeNull()
+  })
+})
+
 // B23: the desktop page's clock kept running after the session ended, and
 // its end dialog printed the gateway's raw words or a reason code where the
 // terminal page explains in sentences.

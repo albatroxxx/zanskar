@@ -33,10 +33,16 @@ type Readiness struct {
 	// Probe answers whether the container runtime is reachable; nil runs
 	// `docker info`. Its answer is kept for a short while.
 	Probe func(ctx context.Context) error
+	// Inspect answers whether an image is present on the host; nil runs
+	// `docker image inspect`. Its answer is kept like the probe's.
+	Inspect func(ctx context.Context, image string) error
 
-	mu      sync.Mutex
-	probed  time.Time
-	probeOK error
+	mu        sync.Mutex
+	probed    time.Time
+	probeOK   error
+	inspected time.Time
+	imageSeen string
+	imageOK   error
 }
 
 // Register mounts the route.
@@ -65,6 +71,26 @@ func (h *Readiness) runtime(ctx context.Context) error {
 	return h.probeOK
 }
 
+// present answers whether image is on the host, from the cache when the
+// same image was asked about a moment ago.
+func (h *Readiness) present(ctx context.Context, image string) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if image == h.imageSeen && !h.inspected.IsZero() && time.Since(h.inspected) < probeCacheTTL {
+		return h.imageOK
+	}
+	inspect := h.Inspect
+	if inspect == nil {
+		inspect = func(ctx context.Context, image string) error {
+			ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+			defer cancel()
+			return containers.Run(ctx, h.Docker, nil, "image", "inspect", "--format", "{{.Id}}", image)
+		}
+	}
+	h.imageOK, h.imageSeen, h.inspected = inspect(ctx, image), image, time.Now()
+	return h.imageOK
+}
+
 // Checks evaluates every prerequisite.
 func (h *Readiness) Checks(ctx context.Context) []Check {
 	guacd := ""
@@ -86,15 +112,27 @@ func (h *Readiness) Checks(ctx context.Context) []Check {
 		out[0].Detail = guacd
 	}
 	rt := Check{Key: "runtime", Title: "Container runtime"}
-	if err := h.runtime(ctx); err != nil {
+	runtimeErr := h.runtime(ctx)
+	if runtimeErr != nil {
 		rt.Detail = "The service cannot reach " + docker + ": add the service user to the docker group (systemctl edit zanskar, SupplementaryGroups=docker) or set ZANSKAR_DOCKER_PATH, then restart."
 	} else {
 		rt.OK, rt.Detail = true, docker+" answers"
 	}
 	out = append(out, rt)
 	img := Check{Key: "image", Title: "Browser image", OK: image != "", Detail: image}
-	if image == "" {
+	switch {
+	case image == "":
 		img.Detail = "Set the browser image under Settings, Applications."
+	case runtimeErr != nil:
+		// Whether the host has it cannot be known until the runtime answers.
+	case h.present(ctx, image) != nil:
+		// The first session pulls it, with its own deadline; the checklist
+		// says so, because that first session is slow and an operator may
+		// rather pull ahead.
+		img.OK = false
+		img.Detail = image + " is not on this host yet. Run `" + docker + " pull " + image + "` on the gateway host, or the first session pulls it (a few hundred megabytes)."
+	default:
+		img.Detail = image + " (on this host)"
 	}
 	return append(out, img)
 }

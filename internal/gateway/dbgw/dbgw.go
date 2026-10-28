@@ -306,6 +306,18 @@ func Bridge(ctx context.Context, log *slog.Logger, docker string, spec Spec, ws 
 	}
 	network, proxy, client := names(spec.SessionID)
 
+	// The images come first, under a deadline of their own: the first
+	// session on a host pulls the sidecar and the client image, which the
+	// set-up's budget of seconds is not for. An engine without an image is
+	// refused by proxyArgs and clientArgs below, as before.
+	for _, img := range []string{proxyImage(spec), ClientImage(spec.Engine, spec.Version)} {
+		if img == "" {
+			continue
+		}
+		if err := containers.EnsureImage(ctx, log, docker, img); err != nil {
+			return "error", err
+		}
+	}
 	// Set-up and teardown are detached from the session's cancellation (but
 	// keep its values) so teardown still runs after the session ends.
 	detached := context.WithoutCancel(ctx)

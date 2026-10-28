@@ -166,6 +166,8 @@ func TestStartOrdersAndTearsDown(t *testing.T) {
 	b, _ := os.ReadFile(calls) // #nosec G304 -- test temp dir
 	log := string(b)
 	order := []string{
+		"image inspect --format {{.Id}} " + spec(t).RelayImage,
+		"image inspect --format {{.Id}} " + spec(t).BrowserImage,
 		"network create --internal -o com.docker.network.bridge.gateway_mode_ipv4=isolated --label zanskar.managed=1 --label zanskar.session=s1 zanskar-net-s1",
 		"network inspect -f",
 		"run -d --rm --name zanskar-apprelay-s1 --network zanskar-net-s1",
@@ -193,6 +195,46 @@ func TestStartOrdersAndTearsDown(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(spec(t).StateDir, SeccompFile)); err == nil {
 		t.Fatal("the profile went to a different directory than the spec's")
+	}
+}
+
+// TestStartPullsAbsentImages: an image the host lacks is pulled before any
+// session object is made; a pull that fails makes nothing.
+func TestStartPullsAbsentImages(t *testing.T) {
+	docker, calls := stubDocker(t)
+	script := "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '" + calls + "'\n" +
+		"if [ \"$1\" = image ]; then exit 1; fi\n" +
+		"if [ \"$1\" = pull ]; then exit ${PULL_EXIT:-0}; fi\n" +
+		"if [ \"$1\" = inspect ]; then printf 'bridge=172.17.0.9\\nzanskar-net-s1=172.30.0.2\\n'; fi\n" +
+		"if [ \"$1\" = network ] && [ \"$2\" = inspect ]; then printf '172.30.0.0/16\\n'; fi\nexit 0\n"
+	if err := os.WriteFile(docker, []byte(script), 0o700); err != nil { // #nosec G306 -- test stub
+		t.Fatal(err)
+	}
+	quiet := slog.New(slog.NewTextHandler(io.Discard, nil))
+	s, err := Start(context.Background(), quiet, docker, spec(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.Close()
+	b, _ := os.ReadFile(calls) // #nosec G304 -- test temp dir
+	log := string(b)
+	pull := strings.Index(log, "pull --quiet "+spec(t).BrowserImage)
+	run := strings.Index(log, "network create")
+	if pull < 0 || run < 0 || pull > run || !strings.Contains(log, "pull --quiet "+spec(t).RelayImage) {
+		t.Fatalf("both images are pulled before the network is made:\n%s", log)
+	}
+	// The child gets none of the test's environment (that is the point of
+	// containers.ChildEnv), so the failing pull is a second script.
+	docker2, calls2 := stubDocker(t)
+	failing := strings.ReplaceAll(strings.ReplaceAll(script, calls, calls2), "exit ${PULL_EXIT:-0}", "exit 1")
+	if err := os.WriteFile(docker2, []byte(failing), 0o700); err != nil { // #nosec G306 -- test stub
+		t.Fatal(err)
+	}
+	if _, err := Start(context.Background(), quiet, docker2, spec(t)); err == nil || !strings.Contains(err.Error(), "pull") {
+		t.Fatalf("a failed pull started a session: %v", err)
+	}
+	if b, _ := os.ReadFile(calls2); strings.Contains(string(b), "network create") { // #nosec G304 -- test temp dir
+		t.Fatalf("a session object was made after a failed pull:\n%s", b)
 	}
 }
 
@@ -244,9 +286,17 @@ func TestReadinessChecks(t *testing.T) {
 	r.Guacd = func() string { return "127.0.0.1:4822" }
 	r.BrowserImage = DefaultBrowserImageForTest
 	r.Probe = func(context.Context) error { probes++; return nil }
+	inspects := 0
+	r.Inspect = func(_ context.Context, image string) error {
+		inspects++
+		if image != DefaultBrowserImageForTest() {
+			t.Errorf("inspected %q", image)
+		}
+		return os.ErrNotExist
+	}
 	cs = r.Checks(context.Background())
-	if cs[0].OK != true || cs[1].OK || cs[2].OK != true {
-		t.Fatalf("cached runtime answer expected to stand: %+v", cs)
+	if cs[0].OK != true || cs[1].OK || cs[2].OK != true || inspects != 0 {
+		t.Fatalf("cached runtime answer expected to stand, and the image not asked about until the runtime answers: %+v inspects=%d", cs, inspects)
 	}
 	if probes != 1 {
 		t.Fatalf("probes = %d, want the first answer kept", probes)
@@ -254,6 +304,19 @@ func TestReadinessChecks(t *testing.T) {
 	r.probed = r.probed.Add(-2 * probeCacheTTL)
 	if cs = r.Checks(context.Background()); !cs[1].OK || probes != 2 {
 		t.Fatalf("after the cache: %+v probes=%d", cs, probes)
+	}
+	// With the runtime answering, an image the host lacks is reported with
+	// the pull to run; the answer is kept like the probe's.
+	if cs[2].OK || !strings.Contains(cs[2].Detail, "podman pull "+DefaultBrowserImageForTest()) || inspects != 1 {
+		t.Fatalf("absent image: %+v inspects=%d", cs[2], inspects)
+	}
+	if _ = r.Checks(context.Background()); inspects != 1 {
+		t.Fatalf("inspect not cached: %d", inspects)
+	}
+	r.inspected = r.inspected.Add(-2 * probeCacheTTL)
+	r.Inspect = func(context.Context, string) error { inspects++; return nil }
+	if cs = r.Checks(context.Background()); !cs[2].OK || !strings.Contains(cs[2].Detail, "(on this host)") || inspects != 2 {
+		t.Fatalf("present image: %+v inspects=%d", cs[2], inspects)
 	}
 }
 

@@ -544,7 +544,18 @@ password.
   SupplementaryGroups=docker
   ```
 
-  For Podman, point `ZANSKAR_DOCKER_PATH` at the `podman` binary.
+  Or without an editor, as root:
+
+  ```
+  mkdir -p /etc/systemd/system/zanskar.service.d
+  printf '[Service]\nSupplementaryGroups=docker\n' > /etc/systemd/system/zanskar.service.d/docker.conf
+  systemctl daemon-reload && systemctl restart zanskar
+  ```
+
+  Check with `sudo -u zanskar -g docker docker info`. This is a decision for the host's root:
+  the Docker socket is root-equivalent, so neither the console nor the `zanskar` command can
+  grant the service that group. For Podman, point `ZANSKAR_DOCKER_PATH` at the `podman`
+  binary.
 - **What the container CLI is given:** it starts with `PATH`, `HOME` and the variables that
   say which daemon to reach and how (`DOCKER_HOST`, `DOCKER_CONTEXT`, `DOCKER_CONFIG`,
   `DOCKER_CERT_PATH`, `DOCKER_TLS_VERIFY`, `DOCKER_TLS`, `DOCKER_API_VERSION`, and for Podman
@@ -568,7 +579,9 @@ password.
   it is told the gateway is full and to retry.
 - **Images pulled on first use:** `postgres:<version>-alpine` and `edoburu/pgbouncer` for
   PostgreSQL; `mysql:<version>` or `mariadb:<version>` and `ghcr.io/albatroxxx/zanskar:<your
-  version>` for MySQL and MariaDB. Pull them ahead of time on an air-gapped host; the relay
+  version>` for MySQL and MariaDB. The first session that needs one pulls it before its
+  set-up starts, under a deadline of its own (ten minutes), so that session takes as long as
+  the pull. Pull them ahead of time to spare the first user, and on an air-gapped host; the relay
   image can be pointed at a mirror with `ZANSKAR_DBPROXY_IMAGE` or the console's Settings
   page. It must be an image reference: `registry/repository`, an optional `:tag` and an
   optional `@sha256:<64 hex digits>` to pin it by digest. The console refuses anything else,
@@ -623,6 +636,17 @@ certificate, no DNS record, nothing installed on the client.
   maximum limits and its clipboard rule. The audit chain records `session.connect`,
   `session.start` and `session.end`, as for a desktop. An application holds no credential:
   the application's own sign-in, if it has one, is the user's.
+- **The first session pulls the images.** A host that has never run an application pulls
+  the relay (the gateway's own image) and the browser image (about 320 MB) before the first
+  session starts, under a deadline of its own, and the console shows *Connecting* until the
+  first frame; on a slow link that first session takes minutes. The Applications checklist
+  says when the browser image is not on the host yet. To spare the first user, pull ahead on
+  the gateway host:
+
+  ```
+  docker pull ghcr.io/albatroxxx/zanskar-browser:<version>
+  docker pull ghcr.io/albatroxxx/zanskar:<version>
+  ```
 - **Settings.** `apps.browser_image` (`ZANSKAR_BROWSER_IMAGE` in the environment file)
   names the browser image; the default is the published image at the gateway's version.
   From the console it takes a digest-pinned reference only, behind a fresh authenticator

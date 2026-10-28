@@ -151,6 +151,59 @@ func TestApplicationSessionEndToEnd(t *testing.T) {
 	}
 }
 
+// TestApplicationSessionKeepsTheTunnelWhileStarting: the console's tunnel
+// drops a socket silent for fifteen seconds, and the containers can take
+// longer to start; the socket hears a nop while they do, before the tunnel
+// id instruction, and the session opens as usual after it. The stub's VNC
+// server is not ready for the first few polls.
+func TestApplicationSessionKeepsTheTunnelWhileStarting(t *testing.T) {
+	r, id, calls := appRig(t)
+	r.h.StartKeepalive = 50 * time.Millisecond
+	// The ready mark appears on the fourth poll (the handler polls every
+	// 250 ms), so set-up takes about a second.
+	polls := filepath.Join(filepath.Dir(calls), "polls")
+	script, _ := os.ReadFile(r.h.DockerPath) // #nosec G304 -- test temp dir
+	patched := strings.Replace(string(script), "exit 0\n",
+		"if [ \"$1\" = exec ]; then n=$(cat '"+polls+"' 2>/dev/null || echo 0); n=$((n+1)); echo $n > '"+polls+"'; [ $n -ge 4 ] || exit 1; fi\nexit 0\n", 1)
+	if err := os.WriteFile(r.h.DockerPath, []byte(patched), 0o700); err != nil { // #nosec G306 -- test stub
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	ws, _, err := r.dial(ctx, r.ticket(t, id, "http")) //nolint:bodyclose // the library closes the handshake body
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ws.CloseNow()
+	var seen string
+	for !strings.Contains(seen, "7.zanskar,") {
+		_, data, err := ws.Read(ctx)
+		if err != nil {
+			t.Fatalf("read: %v (got %q)", err, seen)
+		}
+		seen += string(data)
+	}
+	nop, tid := strings.Index(seen, "3.nop;"), strings.Index(seen, "0.,")
+	if nop < 0 || tid < 0 || nop > tid {
+		t.Fatalf("want nops before the tunnel id, got %q", seen)
+	}
+	if err := ws.Write(ctx, websocket.MessageText, []byte(guac.Encode("disconnect"))); err != nil {
+		t.Fatal(err)
+	}
+	start := lastEvent(t, r.connectFixture, "session.start")
+	ended := false
+	for i := 0; i < 300 && !ended; i++ {
+		s, err := r.h.Sessions.Get(r.ctx, start.ObjectID)
+		ended = err == nil && s.EndedAt != nil
+		if !ended {
+			time.Sleep(20 * time.Millisecond)
+		}
+	}
+	if !ended {
+		t.Fatal("the application session never ended")
+	}
+}
+
 // TestApplicationSessionCap: past ZANSKAR_APPS_MAX_SESSIONS the socket is
 // refused with 503 too_many_sessions and no container is started; a
 // terminal session does not count against it.

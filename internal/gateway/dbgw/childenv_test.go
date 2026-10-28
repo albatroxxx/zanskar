@@ -148,10 +148,10 @@ func TestDockerChildrenGetNoGatewaySecrets(t *testing.T) {
 	}
 
 	calls := dockerCalls(t, dump)
-	// network create, proxy run, network connect, client run, the three
-	// removals, and the reaper's two listings.
-	if len(calls) != 9 {
-		t.Fatalf("%d docker calls, want 9: %v", len(calls), calls)
+	// the two image inspections, network create, proxy run, network connect,
+	// client run, the three removals, and the reaper's two listings.
+	if len(calls) != 11 {
+		t.Fatalf("%d docker calls, want 11: %v", len(calls), calls)
 	}
 	proxyEnv := false
 	for _, c := range calls {
