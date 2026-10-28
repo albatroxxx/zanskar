@@ -3,6 +3,12 @@
 package httpx
 
 import (
+	"bytes"
+	"context"
+	"errors"
+	"fmt"
+	"log/slog"
+	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -71,5 +77,38 @@ func TestDecodeJSONAcceptsWhitespaceAfterTheValue(t *testing.T) {
 		if err := DecodeJSON(r, &into); err != nil || into.Minutes != 1 {
 			t.Errorf("%q: %v (minutes=%d)", body, err, into.Minutes)
 		}
+	}
+}
+
+// TestInternalTellsAnAbandonedRequestFromAFailure: a handler that fails
+// because the client cancelled the request (a page navigated away) is not
+// a gateway error, so it is logged at Info; every other failure stays an
+// Error. The browser suite fails a run on any Error the gateway logs, and a
+// targets read abandoned by a page change tripped it on main.
+func TestInternalTellsAnAbandonedRequestFromAFailure(t *testing.T) {
+	var buf bytes.Buffer
+	log := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	rec := httptest.NewRecorder()
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	r := httptest.NewRequest(http.MethodGet, "/api/v1/me/targets", nil).WithContext(ctx)
+	Internal(rec, r, log, fmt.Errorf("list: %w", context.Canceled))
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status %d", rec.Code)
+	}
+	if !strings.Contains(buf.String(), "level=INFO") || strings.Contains(buf.String(), "level=ERROR") || !strings.Contains(buf.String(), "abandoned") {
+		t.Fatalf("an abandoned request was not logged at Info:\n%s", buf.String())
+	}
+	// The same error with the request still live is a real failure.
+	buf.Reset()
+	Internal(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/x", nil), log, context.Canceled)
+	if !strings.Contains(buf.String(), "level=ERROR") {
+		t.Fatalf("a failure on a live request was not an error:\n%s", buf.String())
+	}
+	// A different error on a cancelled request is a failure too.
+	buf.Reset()
+	Internal(httptest.NewRecorder(), r, log, errors.New("disk full"))
+	if !strings.Contains(buf.String(), "level=ERROR") || !strings.Contains(buf.String(), "disk full") {
+		t.Fatalf("a real failure on an abandoned request was hidden:\n%s", buf.String())
 	}
 }
