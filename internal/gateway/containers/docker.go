@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"time"
 )
 
 // Labels on every Docker object a session creates, so leftovers are found
@@ -89,6 +90,10 @@ func ChildEnv(extra []string) []string {
 func Command(ctx context.Context, docker string, extra []string, args ...string) *exec.Cmd {
 	cmd := exec.CommandContext(ctx, docker, args...) // #nosec G204 G702 -- args built from fixed literals and validated fields (a stored, validated target), no shell
 	cmd.Env = ChildEnv(extra)
+	// When ctx ends the CLI is killed, but a grandchild it started (a
+	// credential helper, a plugin) may still hold its output pipe; the
+	// wait gives up on that pipe after a moment instead of hanging.
+	cmd.WaitDelay = 2 * time.Second
 	return cmd
 }
 

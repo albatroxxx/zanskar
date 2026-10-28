@@ -73,7 +73,10 @@ func TestEnsureImageStopsWithTheSession(t *testing.T) {
 	}
 	dir := t.TempDir()
 	docker := filepath.Join(dir, "docker")
-	if err := os.WriteFile(docker, []byte("#!/bin/sh\nif [ \"$1\" = pull ]; then sleep 30; fi\nexit 1\n"), 0o700); err != nil { // #nosec G306 -- test stub
+	// The sleep is the process itself (exec), so that killing the child
+	// ends it; a sleep forked by the shell would outlive it and hold the
+	// output pipe, which the command's wait delay then gives up on.
+	if err := os.WriteFile(docker, []byte("#!/bin/sh\nif [ \"$1\" = pull ]; then exec sleep 30; fi\nexit 1\n"), 0o700); err != nil { // #nosec G306 -- test stub
 		t.Fatal(err)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
@@ -84,5 +87,25 @@ func TestEnsureImageStopsWithTheSession(t *testing.T) {
 	}
 	if time.Since(start) > 5*time.Second {
 		t.Fatal("the pull outlived its context")
+	}
+}
+
+// TestCommandGivesUpOnAHeldPipe: a grandchild that keeps the output pipe
+// after the CLI is killed does not hold the gateway for its lifetime.
+func TestCommandGivesUpOnAHeldPipe(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the stand-in docker CLI is a shell script")
+	}
+	dir := t.TempDir()
+	docker := filepath.Join(dir, "docker")
+	if err := os.WriteFile(docker, []byte("#!/bin/sh\nsleep 30 &\nwait\n"), 0o700); err != nil { // #nosec G306 -- test stub
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	start := time.Now()
+	_ = Run(ctx, docker, nil, "pull", "x")
+	if time.Since(start) > 10*time.Second {
+		t.Fatal("a held pipe outlived the wait delay")
 	}
 }
