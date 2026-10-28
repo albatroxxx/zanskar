@@ -109,7 +109,10 @@ certificate, client trust) goes, and an application opens in an isolated Chromiu
 beside the gateway, streamed through guacd like a VNC desktop and recorded like one
 ([ADR 0034](adr/0034-applications-isolated-browser.md), superseding 0033). The gateway host needs
 a container runtime for it, as for databases; migration 0032 drops what the proxy needed
-([release notes](releases/v1.7.0.md)).
+([release notes](releases/v1.7.0.md)). 1.7.1 (28 October 2026) keeps the console's tunnel open
+while an application's containers start, pulls images before a session's set-up under a
+deadline of their own, and gives the dashboard's gateway card CPU use that refreshes
+([notes](releases/v1.7.1.md)).
 
 ## v1.6 release — shipped (v1.6.0 tagged 2026-10-27)
 

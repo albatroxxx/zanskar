@@ -243,6 +243,14 @@ func Start(ctx context.Context, log *slog.Logger, docker string, spec Spec) (*Se
 		return nil, err
 	}
 	network, relay, browser := names(spec.SessionID)
+	// The images come first, under a deadline of their own: the first
+	// session on a host pulls the relay and the browser (hundreds of
+	// megabytes), which the set-up's budget of seconds is not for.
+	for _, img := range []string{spec.RelayImage, spec.BrowserImage} {
+		if err := containers.EnsureImage(ctx, log, docker, img); err != nil {
+			return nil, err
+		}
+	}
 	// Set-up and teardown are detached from the session's cancellation (but
 	// keep its values) so teardown still runs after the session ends.
 	detached := context.WithoutCancel(ctx)

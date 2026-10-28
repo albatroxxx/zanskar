@@ -85,6 +85,9 @@ type Handler struct {
 	AppsMaxSessions int
 	BrowserImage    func() string
 	StateDir        string
+	// StartKeepalive is how often the socket hears a nop while an
+	// application's containers start; zero means every three seconds.
+	StartKeepalive time.Duration
 	// ASGs and Cloud enable autoscaling-group targets and EC2 Instance Connect.
 	ASGs  *asg.Repo
 	Cloud asg.ProviderFactory

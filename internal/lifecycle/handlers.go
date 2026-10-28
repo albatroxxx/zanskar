@@ -29,6 +29,7 @@ type Handler struct {
 	DatabasePath   string
 	RecordingsPath string
 	GuacdAddr      func() string
+	cpu            cpuSampler
 	// For the host actions (ADR 0032); nil means the real host: systemd
 	// detection, os.Hostname, and systemctl.
 	Supervisor func() string

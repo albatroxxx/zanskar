@@ -59,6 +59,9 @@ function DesktopSession({ state }: { state: SessionState }) {
   const [sessionId, setSessionId] = useState('')
   const [elapsed, setElapsed] = useState(0)
   const [ended, setEnded] = useState<SessionEnd | null>(null)
+  // False until guacd has drawn the first frame; an application's browser
+  // can take a while to start, and the pane is black until then.
+  const [connected, setConnected] = useState(false)
   const endedRef = useRef(false)
   const [flags, setFlags] = useState({ files: false, clipboard: false })
   const [panelOpen, setPanelOpen] = useState(false)
@@ -155,6 +158,7 @@ function DesktopSession({ state }: { state: SessionState }) {
       client.onerror = (st) => setEnded((cur) => cur ?? desktopEnd(st.code, st.message))
       tunnel.onerror = () => setEnded((cur) => cur ?? { reason: 'target_lost' })
       client.onstatechange = (s: number) => {
+        if (s === 3) setConnected(true)
         if (s === 5) setEnded((cur) => cur ?? { reason: 'user_exit' })
       }
       client.onfilesystem = (obj) => {
@@ -390,6 +394,7 @@ function DesktopSession({ state }: { state: SessionState }) {
         <span className="stat">{protocolName(state.protocol)}</span>
         <span className="stat">{(ended ? 'ran for ' : 'elapsed ') + fmtSeconds(elapsed)}</span>
         <span className="grow" />
+        {!ended && !connected && <span className="stat hint" role="status">Connecting…</span>}
         {!ended && <span className="stat hint" title="Press F6 to move from the desktop to these controls">F6: controls</span>}
         {ended ? (
           <span className="stat">Ended · recording saved</span>
