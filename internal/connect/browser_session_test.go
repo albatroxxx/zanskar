@@ -96,7 +96,16 @@ func TestApplicationSessionEndToEnd(t *testing.T) {
 	if d["protocol"] != "http" || d["target_id"] != id {
 		t.Fatalf("session.start %v", d)
 	}
-	if live := r.h.Registry.List(); len(live) != 1 || live[0].Protocol != "http" || live[0].GuacID == "" {
+	// The flags reach the socket a moment before the handler registers the
+	// session as live, so the registry is given that moment.
+	var live []gateway.Live
+	for i := 0; i < 200; i++ {
+		if live = r.h.Registry.List(); len(live) == 1 && live[0].GuacID != "" {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if len(live) != 1 || live[0].Protocol != "http" || live[0].GuacID == "" {
 		t.Fatalf("registry: %+v", live)
 	}
 	if err := ws.Write(ctx, websocket.MessageText, []byte(guac.Encode("disconnect"))); err != nil {

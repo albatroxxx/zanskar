@@ -65,14 +65,14 @@ func buildGatewayImage(t *testing.T) string {
 	return tag
 }
 
-// container starts an image on the default bridge and returns its address
-// there; it is removed with the test.
-func container(t *testing.T, name string, args ...string) string {
+// container starts an image on the default bridge and returns its name and
+// its address there; it is removed with the test.
+func container(t *testing.T, name string, args ...string) (containerName, ip string) {
 	t.Helper()
 	name += "-" + strconv.FormatInt(time.Now().UnixNano(), 36)
 	dbtest.Docker(t, append([]string{"run", "-d", "--rm", "--name", name}, args...)...)
 	t.Cleanup(func() { _ = exec.Command("docker", "rm", "-f", name).Run() }) // #nosec G204 -- fixed test arguments
-	return dbtest.Docker(t, "inspect", "-f", "{{.NetworkSettings.Networks.bridge.IPAddress}}", name)
+	return name, dbtest.Docker(t, "inspect", "-f", "{{.NetworkSettings.Networks.bridge.IPAddress}}", name)
 }
 
 // TestApplicationSessionThroughRealBrowser: with a real guacd, the browser
@@ -89,7 +89,7 @@ func TestApplicationSessionThroughRealBrowser(t *testing.T) {
 		t.Skip("set ZANSKAR_TEST_BROWSER_IMAGE to a built deploy/browser image")
 	}
 	relayImage := buildGatewayImage(t)
-	upstreamIP := container(t, "zanskar-test-nginx", "nginx:alpine")
+	nginxName, upstreamIP := container(t, "zanskar-test-nginx", "nginx:alpine")
 	// guacd on the default bridge, as the install guide starts it, published
 	// on a loopback port the gateway (this process) dials. A developer whose
 	// daemon runs in a VM that does not forward published ports (Colima)
@@ -194,9 +194,23 @@ func TestApplicationSessionThroughRealBrowser(t *testing.T) {
 	if got := dbtest.Docker(t, "inspect", "-f", "{{json .HostConfig.SecurityOpt}}", browserName); !strings.Contains(got, "seccomp=") {
 		t.Errorf("the browser runs without the seccomp profile: %s", got)
 	}
-	// The request reached nginx through the relay: its log has the GET.
-	if logs := dbtest.Docker(t, "logs", strings.TrimSpace(dbtest.Docker(t, "ps", "-q", "--filter", "ancestor=nginx:alpine"))); !strings.Contains(logs, "GET / HTTP/1.1") {
-		t.Fatalf("nginx never saw the browser's request: %s", logs)
+	// The request reached nginx through the relay: its log has the GET. guacd
+	// draws the first pixels as soon as the VNC server paints, which can be
+	// before Chromium has fetched the page, so the log is given time to
+	// show it. Only this test's nginx is read, by name.
+	var logs string
+	for i := 0; i < 60 && !strings.Contains(logs, "GET / HTTP/1.1"); i++ {
+		if i > 0 {
+			time.Sleep(500 * time.Millisecond)
+		}
+		logs = dbtest.Docker(t, "logs", nginxName)
+	}
+	if !strings.Contains(logs, "GET / HTTP/1.1") {
+		// The session is ended first, so that a failing assertion does not
+		// leave the handler writing to a closed database and recording.
+		_ = ws.Write(ctx, websocket.MessageText, []byte(guac.Encode("disconnect")))
+		time.Sleep(2 * time.Second)
+		t.Fatalf("nginx never saw the browser's request in 30 s: %s", logs)
 	}
 
 	if err := ws.Write(ctx, websocket.MessageText, []byte(guac.Encode("disconnect"))); err != nil {
