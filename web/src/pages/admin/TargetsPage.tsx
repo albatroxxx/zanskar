@@ -4,7 +4,7 @@ import { api } from '../../api/client'
 import type { AppsReadiness, Credential, Target } from '../../api/types'
 import { StateIcon } from '../../components/icons'
 import { Alert, Badge, Empty, PageHead } from '../../components/ui'
-import { useList } from './lib'
+import { useDebounced, useList } from './lib'
 import { TargetDetail } from './TargetDetail'
 import { TargetForm, type TargetKind } from './TargetForm'
 
@@ -26,7 +26,14 @@ export function TargetsPage({ kind, title, lead, addLabel, empty, columns, cells
   /** One target's cells for those columns. The credentials are there to name what it is bound to. */
   cells: (t: Target, credentials: Credential[]) => ReactNode
 }) {
-  const { items, err, setErr, reload } = useList<Target>('/targets', { kind })
+  // The server does the matching (name or address, case-insensitive, wildcard
+  // characters escaped — internal/target/repo.go), so search covers the whole
+  // fleet, not just the first page held here. Debounced so a fetch fires once
+  // typing pauses rather than on every keystroke.
+  const [q, setQ] = useState('')
+  const dq = useDebounced(q.trim())
+  const { items, err, setErr, reload } = useList<Target>('/targets', { kind, q: dq })
+  const noun = title.toLowerCase()
   const creds = useList<Credential>('/credentials')
   const [adding, setAdding] = useState(false)
   const [open, setOpen] = useState<Target | null>(null)
@@ -64,10 +71,19 @@ export function TargetsPage({ kind, title, lead, addLabel, empty, columns, cells
         </div>
       )}
       <div className="card table-wrap">
+        <div className="list-search">
+          <input
+            type="search"
+            placeholder={`Search ${noun} by name or address`}
+            aria-label={`Search ${noun}`}
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+          />
+        </div>
         {items === null ? (
           err ? null : <Empty>Loading…</Empty>
         ) : items.length === 0 ? (
-          <Empty>{empty}</Empty>
+          <Empty>{dq ? `No ${noun} match ‘${dq}’.` : empty}</Empty>
         ) : (
           <table>
             <thead>
