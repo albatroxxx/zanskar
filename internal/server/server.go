@@ -223,7 +223,11 @@ func (s *Server) securityHeaders(next http.Handler) http.Handler {
 		} else {
 			h.Set("Content-Security-Policy", uiCSP)
 		}
-		if s.cfg.ServesTLS() {
+		// HSTS whenever the browser reaches the gateway over HTTPS: either we
+		// terminate TLS ourselves or a trusted proxy does (SecureCookies covers
+		// both). Gating on ServesTLS alone left the reverse-proxy topology, the
+		// one the install guide recommends, without HSTS.
+		if s.cfg.SecureCookies() {
 			h.Set("Strict-Transport-Security", "max-age=63072000; includeSubDomains")
 		}
 		next.ServeHTTP(w, r)
