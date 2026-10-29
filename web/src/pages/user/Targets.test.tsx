@@ -194,3 +194,44 @@ describe('Targets tabs', () => {
     expect(screen.getByRole('tab', { name: 'Hosts' }).getAttribute('aria-selected')).toBe('false')
   })
 })
+
+describe('Targets search', () => {
+  const web: ReachableTarget = {
+    kind: 'target', id: 'h1', name: 'web01', os_family: 'linux', tags: {},
+    capabilities: ['ssh'], allowed_protocols: ['ssh'], host_key_ready: true, private_ip: '10.0.0.5',
+  }
+  const dbHost: ReachableTarget = {
+    kind: 'target', id: 'h2', name: 'db-primary', os_family: 'linux', tags: {},
+    capabilities: ['ssh'], allowed_protocols: ['ssh'], host_key_ready: true, private_ip: '10.0.0.9',
+  }
+
+  it('filters the loaded list by name or IP as the user types, with a named empty state', async () => {
+    vi.spyOn(api, 'get').mockImplementation(async (p: string) => ({ items: p === '/me/targets' ? [web, dbHost] : [] }) as never)
+    render(
+      <MemoryRouter>
+        <Targets />
+      </MemoryRouter>,
+    )
+    await screen.findByText('web01')
+    expect(screen.getByText('db-primary')).toBeDefined()
+    const user = userEvent.setup()
+    const box = screen.getByRole('searchbox', { name: 'Search targets by name or IP' })
+
+    // By name: typing narrows instantly, no refetch.
+    await user.type(box, 'web')
+    expect(screen.getByText('web01')).toBeDefined()
+    expect(screen.queryByText('db-primary')).toBeNull()
+
+    // By private IP.
+    await user.clear(box)
+    await user.type(box, '10.0.0.9')
+    expect(screen.getByText('db-primary')).toBeDefined()
+    expect(screen.queryByText('web01')).toBeNull()
+
+    // No match -> named empty state.
+    await user.clear(box)
+    await user.type(box, 'zzz')
+    expect(screen.getByText(/No hosts match/)).toBeDefined()
+    expect(screen.queryByText('web01')).toBeNull()
+  })
+})

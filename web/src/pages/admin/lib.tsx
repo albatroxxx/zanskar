@@ -10,6 +10,19 @@ export const protocols: PortProtocol[] = ['ssh', 'rdp', 'vnc', 'winrm']
 /** Protocols a policy may grant: the port protocols, brokered database access (ADR 0017) and applications (ADR 0034). */
 export const policyProtocols: Protocol[] = [...protocols, 'database', 'http']
 
+/**
+ * useDebounced returns value only after it has stopped changing for delayMs,
+ * so a search box fetches once the user pauses rather than on every keystroke.
+ */
+export function useDebounced<T>(value: T, delayMs = 200): T {
+  const [settled, setSettled] = useState(value)
+  useEffect(() => {
+    const id = setTimeout(() => setSettled(value), delayMs)
+    return () => clearTimeout(id)
+  }, [value, delayMs])
+  return settled
+}
+
 /** useList fetches a paged collection and exposes reload. */
 export function useList<T>(path: string, params: Record<string, string | number | boolean | undefined> = {}) {
   const [items, setItems] = useState<T[] | null>(null)

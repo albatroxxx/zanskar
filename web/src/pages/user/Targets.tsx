@@ -41,6 +41,11 @@ export function Targets() {
   const [reqModal, setReqModal] = useState<{ target: ReachableTarget; protocol: Protocol } | null>(null)
   const [reqForm, setReqForm] = useState({ reason: '', minutes: 60 })
   const [busy, setBusy] = useState('')
+  // Live filter over the already-loaded reachable list: matching is instant, no
+  // refetch. Only name and the private IP are searchable because the portal is
+  // the only place a public address is deliberately withheld (see
+  // ReachableTarget.private_ip); searching cannot reveal what the list hides.
+  const [search, setSearch] = useState('')
 
   // The overview strip (ADR 0029): the three things worth a glance before the
   // list — a session left open, a request still waiting, a grant about to run
@@ -159,10 +164,15 @@ export function Targets() {
   }
 
   const kindOf = (t: ReachableTarget) => (t.kind === 'asg' ? 'asg' : t.kind === 'application' ? 'application' : t.engine ? 'database' : 'target')
-  const statics = items?.filter((t) => kindOf(t) === 'target') ?? null
-  const databases = items?.filter((t) => kindOf(t) === 'database') ?? null
-  const applications = items?.filter((t) => kindOf(t) === 'application') ?? null
-  const groups = items?.filter((t) => kindOf(t) === 'asg') ?? null
+  const term = search.trim().toLowerCase()
+  const matches = (t: ReachableTarget) => term === '' || t.name.toLowerCase().includes(term) || (t.private_ip?.toLowerCase().includes(term) ?? false)
+  const shown = items?.filter(matches) ?? null
+  const statics = shown?.filter((t) => kindOf(t) === 'target') ?? null
+  const databases = shown?.filter((t) => kindOf(t) === 'database') ?? null
+  const applications = shown?.filter((t) => kindOf(t) === 'application') ?? null
+  const groups = shown?.filter((t) => kindOf(t) === 'asg') ?? null
+  // Empty-state text for a tab: the search message while filtering, else the tab's own "nothing assigned" line.
+  const emptyFor = (noun: string, assigned: string) => (term ? `No ${noun} match ‘${search.trim()}’.` : assigned)
 
   // protoButtons renders one cell per protocol family. onRequest, when given,
   // turns a gated protocol into a Request button.
@@ -196,6 +206,17 @@ export function Targets() {
     <>
       <PageHead title="Targets" />
       {err && <Alert tone="danger">{err}</Alert>}
+      {items && items.length > 0 && (
+        <div className="list-search">
+          <input
+            type="search"
+            placeholder="Search by name or IP"
+            aria-label="Search targets by name or IP"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+          />
+        </div>
+      )}
       {notice && <Alert tone="ok">{notice}</Alert>}
       {(strip.open > 0 || strip.pending > 0 || strip.expiring > 0) && (
         <div className="stat-grid" style={{ marginBottom: 16 }}>
@@ -221,7 +242,7 @@ export function Targets() {
           {applications === null ? (
             <Empty>Loading…</Empty>
           ) : applications.length === 0 ? (
-            <Empty>No applications are assigned to you. Ask an administrator for access.</Empty>
+            <Empty>{emptyFor('applications', 'No applications are assigned to you. Ask an administrator for access.')}</Empty>
           ) : (
             <table>
               <thead>
@@ -259,7 +280,7 @@ export function Targets() {
           {databases === null ? (
             <Empty>Loading…</Empty>
           ) : databases.length === 0 ? (
-            <Empty>No databases are assigned to you. Ask an administrator for access.</Empty>
+            <Empty>{emptyFor('databases', 'No databases are assigned to you. Ask an administrator for access.')}</Empty>
           ) : (
             <table>
               <thead>
@@ -301,7 +322,7 @@ export function Targets() {
           {statics === null ? (
             <Empty>Loading…</Empty>
           ) : statics.length === 0 ? (
-            <Empty>No hosts are assigned to you yet. Ask an administrator for access.</Empty>
+            <Empty>{emptyFor('hosts', 'No hosts are assigned to you yet. Ask an administrator for access.')}</Empty>
           ) : (
             <table>
               <thead>
@@ -346,7 +367,7 @@ export function Targets() {
           {groups === null ? (
             <Empty>Loading…</Empty>
           ) : groups.length === 0 ? (
-            <Empty>No autoscaling groups are assigned to you. Ask an administrator for access.</Empty>
+            <Empty>{emptyFor('autoscaling groups', 'No autoscaling groups are assigned to you. Ask an administrator for access.')}</Empty>
           ) : (
             <table>
               <thead>

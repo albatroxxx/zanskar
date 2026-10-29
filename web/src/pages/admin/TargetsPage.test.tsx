@@ -78,4 +78,25 @@ describe('TargetsPage', () => {
     expect(within(drawer).queryByText(/Credentials per protocol/)).toBeNull()
     expect(within(drawer).queryByText(/Host key/)).toBeNull()
   })
+
+  it('searches the whole fleet server-side as the user types (debounced)', async () => {
+    const get = serve([db])
+    render(<Databases />)
+    await screen.findByText('orders-admin')
+
+    await userEvent.setup().type(screen.getByRole('searchbox', { name: 'Search databases' }), 'orders')
+    // The backend does the matching, so search rides the list fetch as ?q=.
+    await vi.waitFor(() => expect(get).toHaveBeenCalledWith(expect.stringContaining('q=orders')))
+  })
+
+  it('shows a named empty state when the search matches nothing', async () => {
+    vi.spyOn(api, 'get').mockImplementation(async (path: string) =>
+      ({ items: path.startsWith('/credentials') ? [cred] : path.includes('q=') ? [] : [db] }) as never,
+    )
+    render(<Databases />)
+    await screen.findByText('orders-admin')
+
+    await userEvent.setup().type(screen.getByRole('searchbox', { name: 'Search databases' }), 'zzz')
+    expect(await screen.findByText(/No databases match/)).toBeDefined()
+  })
 })

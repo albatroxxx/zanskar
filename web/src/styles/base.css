@@ -153,6 +153,11 @@ td.actions { display: table-cell; white-space: nowrap; }
 td.actions > * + * { margin-left: 8px; }
 .empty { padding: 32px; text-align: center; color: var(--fg-muted); }
 
+/* A standalone search box above a list (targets). Mirrors .field input but is
+   not wrapped in a .field, and caps its width so it reads as a filter. */
+.list-search { margin-bottom: 14px; }
+.list-search input { padding: 7px 10px; border: 1px solid var(--line-strong); border-radius: var(--radius); background: var(--bg-raised); width: 100%; max-width: 360px; }
+
 /* controls */
 .btn { display: inline-flex; align-items: center; gap: 6px; padding: 7px 12px; border-radius: var(--radius); border: 1px solid var(--line-strong); background: var(--bg-raised); color: var(--fg); cursor: pointer; white-space: nowrap; line-height: 1.2; }
 .btn:hover { border-color: var(--fg-faint); }
