@@ -50,6 +50,23 @@ func TestHealthAndHeaders(t *testing.T) {
 	}
 }
 
+// TestHSTSBehindTrustedProxy: when TLS is terminated by a trusted proxy in
+// front of the gateway (ZANSKAR_TRUST_PROXY_TLS=true, the recommended install
+// topology), the browser still reaches us over HTTPS, so HSTS must be sent even
+// though the gateway itself does not serve TLS.
+func TestHSTSBehindTrustedProxy(t *testing.T) {
+	s := newTestServer(t, true)
+	s.cfg.TrustProxyTLS = true
+	if s.cfg.ServesTLS() {
+		t.Fatal("precondition: gateway should not serve TLS itself in this case")
+	}
+	rr := httptest.NewRecorder()
+	s.http.Handler.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/healthz", nil))
+	if got := rr.Header().Get("Strict-Transport-Security"); got == "" {
+		t.Error("HSTS must be sent when a trusted proxy terminates TLS")
+	}
+}
+
 func TestReadyzReportsPendingMigrations(t *testing.T) {
 	s := newTestServer(t, false)
 	rr := httptest.NewRecorder()
