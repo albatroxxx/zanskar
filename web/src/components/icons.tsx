@@ -281,3 +281,56 @@ export function ThemeIcon() {
     </svg>
   )
 }
+
+/** CommandsIcon is the command line's list of commands. */
+export function CommandsIcon() {
+  return (
+    <svg {...svgProps(16)}>
+      <line x1="9" y1="6" x2="20" y2="6" />
+      <line x1="9" y1="12" x2="20" y2="12" />
+      <line x1="9" y1="18" x2="20" y2="18" />
+      <circle cx="4.5" cy="6" r="1" />
+      <circle cx="4.5" cy="12" r="1" />
+      <circle cx="4.5" cy="18" r="1" />
+    </svg>
+  )
+}
+
+/** MinimiseIcon folds a panel away, keeping what it holds. */
+export function MinimiseIcon() {
+  return (
+    <svg {...svgProps(16)}>
+      <line x1="5" y1="18" x2="19" y2="18" />
+    </svg>
+  )
+}
+
+/** CloseIcon shuts a panel. */
+export function CloseIcon() {
+  return (
+    <svg {...svgProps(16)}>
+      <line x1="6" y1="6" x2="18" y2="18" />
+      <line x1="18" y1="6" x2="6" y2="18" />
+    </svg>
+  )
+}
+
+/** AuditIcon marks something every use of which is recorded: a shield with a tick. */
+export function AuditIcon() {
+  return (
+    <svg {...svgProps(16)}>
+      <path d="M12 3l7 3v5c0 4.5-3 8-7 10-4-2-7-5.5-7-10V6z" />
+      <polyline points="9 12 11 14 15 10" />
+    </svg>
+  )
+}
+
+/** LockIcon is shut until a code is verified, then open. */
+export function LockIcon({ open }: { open: boolean }) {
+  return (
+    <svg {...svgProps(16)}>
+      <rect x="5" y="11" width="14" height="9" rx="2" />
+      <path d={open ? 'M8 11V8a4 4 0 0 1 7.5-2' : 'M8 11V8a4 4 0 0 1 8 0v3'} />
+    </svg>
+  )
+}

@@ -136,6 +136,23 @@ describe('ConsoleCLI', () => {
     expect(screen.queryByText(/Enter a fresh code/)).toBeNull()
   })
 
+  // 2026-10-30: the header said "Zanskar commands only · every line is
+  // audited", "Code needed", "Commands", "Minimise" and "Close" in words.
+  it('keeps the header to glyphs whose words are their names', async () => {
+    vi.spyOn(api, 'get').mockResolvedValue(state({ unlocked: false }) as never)
+    render(<ConsoleCLI />)
+    await openPanel()
+    expect(screen.getByRole('img', { name: 'Zanskar commands only; every line is audited' })).toBeDefined()
+    expect(screen.getByRole('img', { name: 'Code needed' })).toBeDefined()
+    for (const name of ['Commands', 'Minimise', 'Close']) {
+      const b = screen.getByRole('button', { name })
+      expect(b.textContent).toBe('')
+      expect(b.getAttribute('title')).toBe(name)
+    }
+    expect(screen.queryByText(/every line is audited/)).toBeNull()
+    expect(screen.getByText('Enter a code from your authenticator.')).toBeDefined()
+  })
+
   it('opens and closes with Ctrl+`, and Close clears the transcript', async () => {
     vi.spyOn(api, 'get').mockResolvedValue(state() as never)
     vi.spyOn(api, 'post').mockResolvedValue({ status: 'ok', lines: [{ text: 'kept until closed' }] } as never)

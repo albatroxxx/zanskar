@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { ApiError, api, errorMessage } from '../api/client'
+import { AuditIcon, CloseIcon, CommandsIcon, LockIcon, MinimiseIcon } from './icons'
 
 /**
  * The console's command line (ADR 0027): an icon at the top right of every
@@ -50,6 +51,9 @@ function save(store: () => Storage, key: string, v: unknown) {
 }
 
 /** TerminalIcon is a small window with a prompt in it. */
+/** auditNote is the command line's one rule, behind its shield glyph. */
+const auditNote = 'Zanskar commands only; every line is audited'
+
 function TerminalIcon({ size = 24 }: { size?: number }) {
   return (
     <svg width={size} height={size} viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -286,27 +290,39 @@ export function ConsoleCLI() {
               </span>
               Command line
             </b>
-            <span className="cli-sub">Zanskar commands only · every line is audited</span>
+            <span className="cli-flag" role="img" aria-label={auditNote} title={auditNote}>
+              <AuditIcon />
+            </span>
             <span className="cli-spacer" />
-            <span className={'cli-pill' + (state.unlocked ? ' ok' : '')}>{state.unlocked ? 'Code verified' : 'Code needed'}</span>
-            <button type="button" disabled={!state.unlocked || busy} onClick={() => {
-              append([{ text: 'zanskar> help', style: 'prompt' }])
-              void send('help')
-            }}>
-              Commands
+            <span className={'cli-flag' + (state.unlocked ? ' ok' : '')} role="img" aria-label={state.unlocked ? 'Code verified' : 'Code needed'} title={state.unlocked ? 'Code verified' : 'Code needed'}>
+              <LockIcon open={state.unlocked} />
+            </span>
+            <button
+              type="button"
+              className="cli-ibtn"
+              aria-label="Commands"
+              title="Commands"
+              disabled={!state.unlocked || busy}
+              onClick={() => {
+                append([{ text: 'zanskar> help', style: 'prompt' }])
+                void send('help')
+              }}
+            >
+              <CommandsIcon />
             </button>
-            <button type="button" onClick={minimise}>Minimise</button>
-            <button type="button" onClick={close}>Close</button>
+            <button type="button" className="cli-ibtn" aria-label="Minimise" title="Minimise" onClick={minimise}>
+              <MinimiseIcon />
+            </button>
+            <button type="button" className="cli-ibtn" aria-label="Close" title="Close" onClick={close}>
+              <CloseIcon />
+            </button>
           </div>
           {!state.unlocked ? (
             <div className="cli-mfa">
               {state.mfa_enrolled ? (
                 <form className="cli-card" onSubmit={(e) => void unlock(e)}>
                   <h3>Confirm it's you</h3>
-                  <p>
-                    The command line needs a fresh code from your authenticator app. It stays open while you use it, and asks again after {state.idle_minutes} minutes without a
-                    command.
-                  </p>
+                  <p>Enter a code from your authenticator.</p>
                   <label htmlFor="cli-code">Authenticator code</label>
                   <input
                     id="cli-code"

@@ -456,11 +456,15 @@ td.actions > * + * { margin-left: 8px; }
 .cli-bar b { display: flex; align-items: center; gap: 7px; color: var(--term-fg); font-size: 14px; }
 .cli-bar-icon { display: flex; color: var(--periwinkle); }
 .cli-spacer { flex: 1; }
-.cli-pill { font-size: 12px; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--term-btn-line); }
-.cli-pill.ok { color: var(--term-ok); border-color: var(--term-ok-line); }
 .cli-bar button { background: var(--term-btn-bg); border: 1px solid var(--term-btn-line); color: var(--term-fg); border-radius: 5px; padding: 3px 10px; font: inherit; font-size: 12px; cursor: pointer; }
 .cli-bar button:hover:not(:disabled) { background: var(--term-btn-hover); }
 .cli-bar button:disabled { opacity: .5; cursor: default; }
+/* Header controls are glyphs; their words are in the tooltip and the
+   accessible name (2026-10-30). */
+.cli-bar .cli-ibtn { display: inline-flex; padding: 4px; border: 0; background: none; color: var(--term-fg-muted); }
+.cli-bar .cli-ibtn:hover:not(:disabled) { background: var(--term-btn-hover); color: var(--term-fg); }
+.cli-flag { display: inline-flex; color: var(--term-fg-muted); }
+.cli-flag.ok { color: var(--term-ok); }
 .cli-body { flex: 1; overflow-y: auto; padding: 12px 16px; font-family: var(--mono); font-size: 13.5px; line-height: 21px; }
 .cli-line { white-space: pre-wrap; word-break: break-word; }
 .cli-line.prompt { color: var(--term-fg); }
