@@ -18,6 +18,7 @@ import (
 
 	"github.com/albatroxxx/zanskar/internal/audit"
 	"github.com/albatroxxx/zanskar/internal/auth"
+	"github.com/albatroxxx/zanskar/internal/policy"
 	"github.com/albatroxxx/zanskar/internal/store/storetest"
 	"github.com/albatroxxx/zanskar/internal/user"
 )
@@ -116,7 +117,29 @@ func (e *env) fakeAPI(mux *http.ServeMux) {
 	}
 	reply("GET /api/v1/targets", 200, `{"items":[{"id":"t1","name":"web-01","address":"10.0.0.5","os_family":"linux","host_key_status":"trusted","tags":{"env":"prod"}},{"id":"t2","name":"orders-db","address":"db.internal","os_family":"linux","engine":"postgres","tags":{"env":"staging"}}]}`)
 	reply("POST /api/v1/targets/{id}/probe", 200, `{"host_key_fingerprint":"SHA256:abc","capabilities":["ssh"]}`)
-	reply("GET /api/v1/access-policies", 200, `{"items":[{"id":"p1","name":"prod-db-jit","protocols":["database"],"target_selector":{"tags":{"role":"db"}},"require_approval":true,"enabled":true,"max_session_minutes":60,"idle_timeout_minutes":10},{"id":"p2","name":"old","enabled":false}]}`)
+	// Built from the policy package's types (ADR 0036), so the reply has the
+	// shape the API sends: an audience and grants, each with its conditions.
+	most, keep := 60, 365
+	pols, _ := json.Marshal(map[string]any{"items": []policy.Policy{
+		{ID: "p1", Name: "prod-db-jit", Enabled: true, CreatedAt: time.Date(2026, 10, 1, 8, 0, 0, 0, time.UTC), UpdatedAt: time.Date(2026, 10, 30, 9, 15, 0, 0, time.UTC),
+			Subjects: []policy.Subject{{Kind: policy.SubjectGroup, ID: "grp-dba"}, {Kind: policy.SubjectUser, ID: "u1"}},
+			Grants: []policy.Grant{
+				{ID: "gr-1", Kind: "database", Targets: []policy.GrantTarget{{ID: "t2", Protocols: []string{"database"}}},
+					Tags:   &policy.TagMatch{Match: map[string][]string{"role": {"db"}}, Protocols: []string{"database"}},
+					Access: policy.AccessApproval, SignIn: policy.SignInTarget, RequireMFA: true, IdleTimeoutMinutes: 10, MaxSessionMinutes: &most,
+					TimeWindows:   []policy.TimeWindow{{Days: []string{"mon", "tue", "wed", "thu", "fri"}, From: "08:00", To: "20:00", TZ: "Europe/Berlin"}},
+					RetentionDays: &keep},
+				{ID: "gr-2", Kind: "host", Targets: []policy.GrantTarget{{ID: "t1", Protocols: []string{"ssh", "vnc"}}, {ID: "t-retired", Protocols: []string{"ssh"}}},
+					Tags:   &policy.TagMatch{Match: map[string][]string{"tier": {"web"}, "env": {"prod", "staging"}}, Protocols: []string{"ssh"}},
+					Access: policy.AccessStanding, SignIn: policy.SignInOwn, AllowClipboard: true, IdleTimeoutMinutes: 15, TimeWindows: []policy.TimeWindow{}},
+			}},
+		// A group deleted leaves its policies with no one in them (ADR 0036).
+		{ID: "p2", Name: "old", Enabled: false, Subjects: []policy.Subject{},
+			Grants: []policy.Grant{{ID: "gr-3", Kind: "autoscaling", Targets: []policy.GrantTarget{{ID: "g1", Protocols: []string{"rdp", "ssh"}}},
+				Access: policy.AccessStanding, SignIn: policy.SignInTarget, IdleTimeoutMinutes: 15, TimeWindows: []policy.TimeWindow{{Days: []string{"sat"}, From: "00:00", To: "00:00", TZ: "UTC"}}}}},
+	}})
+	reply("GET /api/v1/access-policies", 200, string(pols))
+	reply("GET /api/v1/groups", 200, `{"items":[{"id":"grp-dba","name":"dba","member_count":2}]}`)
 	reply("GET /api/v1/autoscaling-groups", 200, `{"items":[{"id":"g1","name":"web-fleet","provider":"aws","region":"eu-west-2","external_name":"web-asg","os_family":"linux","status":"ok","last_synced_at":"2026-10-05T09:00:00Z"}]}`)
 	reply("POST /api/v1/autoscaling-groups/{id}/sync", 200, `{}`)
 	reply("POST /api/v1/admin/storage/test", 200, `{"ok":true}`)
@@ -264,8 +287,14 @@ func TestCommandsOverTheAPI(t *testing.T) {
 		{"targets --search web", "", "ok", []string{"web-01", "postgres"}},
 		{"targets --tag env", "", "error", []string{"key=value"}},
 		{"target probe web-01", "", "ok", []string{"Probed web-01", "SHA256:abc", "Trust is unchanged"}},
-		{"policies", "", "ok", []string{"prod-db-jit", "approval", "off"}},
-		{"policy show prod-db-jit", "", "ok", []string{"60 min", "role"}},
+		{"policies", "", "ok", []string{"NAME         WHO", "prod-db-jit", "dba +1 user", "database (1 target, role=db) · host SSH, VNC", "standing, approval", "on",
+			"old", "no one", "autoscaling SSH, RDP (1 group)", "off"}},
+		{"policy show prod-db-jit", "", "ok", []string{"groups       dba", "users        alice", "updated      2026-10-30 09:15 UTC",
+			"Grant 1 · database", "targets        orders-db\n", "tags           role=db\n", "access         approval", "needs MFA      yes",
+			"max session    60 min", "idle timeout   10 min", "windows        mon,tue,wed,thu,fri 08:00-20:00 Europe/Berlin", "retention      365 days", "sign-in        as the target sets it",
+			"Grant 2 · host", "targets        web-01 (SSH, VNC), t-retired (SSH)", "tags           env=prod|staging tier=web (SSH)", "access         standing",
+			"sign-in        their own login", "clipboard      yes", "file transfer  no", "max session    none", "windows        any time", "retention      the global setting", "gr-2"}},
+		{"policy show old", "", "ok", []string{"Applies to no one", "Grant 1 · autoscaling", "web-fleet (RDP, SSH)", "sat all day UTC"}},
 		{"asgs", "", "ok", []string{"web-fleet", "aws eu-west-2"}},
 		{"asg sync web-fleet", "", "ok", []string{"Synced web-fleet"}},
 		{"storage", "", "ok", []string{"running: 2 of 4 moved, 1 failed"}},
