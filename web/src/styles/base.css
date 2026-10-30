@@ -536,6 +536,7 @@ td.actions > * + * { margin-left: 8px; }
 .chip-toggle.unfound label { cursor: not-allowed; text-decoration: none; }
 .chip-toggle.stale label, .chip-toggle.stale input:checked + label { background: var(--warn-soft); border-color: var(--warn); color: var(--warn); }
 .bulk-chips { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 8px; font-size: 0.86rem; }
+.pick-row.locked label { color: var(--fg-faint); }
 .pick-all { border-bottom: 1px solid var(--line); padding-top: 6px; padding-bottom: 6px; font-size: 0.88rem; }
 .pick-all input[type=checkbox] { width: auto; padding: 0; flex: none; }
 .pick-row { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; padding: 4px 10px; }

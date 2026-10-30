@@ -7,6 +7,8 @@ export interface PickOption {
   detail?: string
   /** Disabled, or no longer found: shown, and removable, but never picked by Select all. */
   inactive?: boolean
+  /** Why this row cannot be picked at all; it shows greyed with the reason. */
+  locked?: string
 }
 
 /**
@@ -37,7 +39,7 @@ export function PickList({ label, options, selected, onToggle, onSelect, extra, 
   const shown = options
     .filter((o) => !needle || o.label.toLowerCase().includes(needle) || (o.detail ?? '').toLowerCase().includes(needle))
     .sort((a, b) => Number(selected.includes(b.id)) - Number(selected.includes(a.id)))
-  const pickable = shown.filter((o) => !o.inactive)
+  const pickable = shown.filter((o) => !o.inactive && !o.locked)
   const chosenShown = pickable.filter((o) => selected.includes(o.id)).length
   const all = pickable.length > 0 && chosenShown === pickable.length
   const some = chosenShown > 0 && !all
@@ -67,10 +69,11 @@ export function PickList({ label, options, selected, onToggle, onSelect, extra, 
           const on = selected.includes(o.id)
           const id = `${idPrefix}-${o.id}`
           return (
-            <div key={o.id} className={on ? 'pick-row on' : 'pick-row'}>
-              <input id={id} type="checkbox" checked={on} onChange={() => onToggle(o.id)} />
+            <div key={o.id} className={'pick-row' + (on ? ' on' : '') + (o.locked ? ' locked' : '')} title={o.locked}>
+              <input id={id} type="checkbox" checked={on} disabled={!!o.locked && !on} onChange={() => onToggle(o.id)} />
               <label htmlFor={id}>{o.label}</label>
               {o.detail && <span className="muted">{o.detail}</span>}
+              {o.locked && <span className="muted">{o.locked}</span>}
               {on && extra && <span className="pick-extra">{extra(o.id)}</span>}
             </div>
           )

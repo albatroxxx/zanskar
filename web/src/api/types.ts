@@ -217,6 +217,8 @@ export interface Group {
   id: string
   name: string
   description: string
+  /** Set when an identity provider owns the group and its members (SCIM, ADR 0035). */
+  idp_id?: string
   member_count?: number
   created_at: string
   updated_at: string

@@ -56,6 +56,9 @@ func (h *AdminHandler) Register(mux *http.ServeMux) {
 }
 
 type createRequest struct {
+	// GroupIDs makes the new user a member of these groups in the same
+	// transaction; optional (2026-10-30).
+	GroupIDs         []string    `json:"group_ids"`
 	Username         string      `json:"username"`
 	DisplayName      string      `json:"display_name"`
 	Email            string      `json:"email"`
@@ -162,11 +165,14 @@ func (h *AdminHandler) create(w http.ResponseWriter, r *http.Request) {
 		u.PasswordHash = hash
 		u.MustResetOnLogin = req.MustResetOnLogin == nil || *req.MustResetOnLogin
 	}
-	if err := h.Users.Create(r.Context(), u); err != nil {
+	if err := h.Users.CreateInGroups(r.Context(), u, req.GroupIDs); err != nil {
 		h.fail(w, r, err)
 		return
 	}
 	details := map[string]any{"username": u.Username, "roles": u.Roles, "has_password": u.PasswordHash != "", "initial_password": source, "must_change_password": u.MustResetOnLogin}
+	if len(req.GroupIDs) > 0 {
+		details["group_ids"] = req.GroupIDs
+	}
 	if granted := privileged(u.Roles); len(granted) > 0 {
 		details["roles_granted"] = granted
 	}
@@ -458,6 +464,8 @@ func (h *AdminHandler) fail(w http.ResponseWriter, r *http.Request, err error) {
 		httpx.WriteError(w, r, http.StatusConflict, "last_admin", "this is the last active admin")
 	case errors.Is(err, user.ErrHasHistory):
 		httpx.WriteError(w, r, http.StatusConflict, "has_history", "this account has sessions on record, which keep it; disable it instead of deleting it")
+	case errors.Is(err, user.ErrUnknownGroup):
+		httpx.WriteError(w, r, http.StatusUnprocessableEntity, "invalid_group", err.Error())
 	case errors.Is(err, user.ErrInvalidRole), errors.Is(err, user.ErrUsernameShape),
 		errors.Is(err, user.ErrInvalidInput), errors.Is(err, user.ErrWeakPassword):
 		httpx.BadRequest(w, r, err.Error())

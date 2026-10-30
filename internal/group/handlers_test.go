@@ -110,4 +110,16 @@ func TestGroupHandlers(t *testing.T) {
 	if !bytes.Contains(ev[0].Details, []byte(member.ID)) {
 		t.Fatalf("members audit should name the added id: %s", ev[0].Details)
 	}
+	// Members can come with the group (2026-10-30); an unknown one refuses
+	// the group as well.
+	if code, body := do("POST", "/api/v1/groups", map[string]any{"name": "sre", "user_ids": []string{member.ID, "nobody"}}); code != 422 || body["code"] != "invalid_user" {
+		t.Fatalf("unknown member: %d %v", code, body)
+	}
+	code, body = do("POST", "/api/v1/groups", map[string]any{"name": "sre", "user_ids": []string{member.ID}})
+	if code != 201 {
+		t.Fatalf("create with a member: %d %v", code, body)
+	}
+	if code, got := do("GET", "/api/v1/groups/"+body["id"].(string)+"/members", nil); code != 200 || len(got["items"].([]any)) != 1 {
+		t.Fatalf("members of a group made with one: %d %v", code, got)
+	}
 }
