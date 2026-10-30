@@ -311,6 +311,25 @@ export function MinimiseIcon() {
   )
 }
 
+/** MaximiseIcon gives a panel the whole window. */
+export function MaximiseIcon() {
+  return (
+    <svg {...svgProps(16)}>
+      <rect x="5" y="5" width="14" height="14" rx="1.5" />
+    </svg>
+  )
+}
+
+/** RestoreIcon brings a maximised panel back to its own height. */
+export function RestoreIcon() {
+  return (
+    <svg {...svgProps(16)}>
+      <rect x="4" y="9" width="11" height="11" rx="1.5" />
+      <path d="M9 9V5.5A1.5 1.5 0 0 1 10.5 4h8A1.5 1.5 0 0 1 20 5.5v8a1.5 1.5 0 0 1-1.5 1.5H15" />
+    </svg>
+  )
+}
+
 /** CloseIcon shuts a panel. */
 export function CloseIcon() {
   return (

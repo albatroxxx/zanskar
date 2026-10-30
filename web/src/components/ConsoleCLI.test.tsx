@@ -1,4 +1,4 @@
-import { cleanup, render, screen, waitFor } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { ApiError, api } from '../api/client'
@@ -8,6 +8,7 @@ afterEach(() => {
   cleanup()
   vi.restoreAllMocks()
   sessionStorage.clear()
+  localStorage.clear()
 })
 
 const state = (over: object = {}) => ({ enabled: true, unlocked: true, mfa_enrolled: true, idle_minutes: 15, ...over })
@@ -144,13 +145,84 @@ describe('ConsoleCLI', () => {
     await openPanel()
     expect(screen.getByRole('img', { name: 'Zanskar commands only; every line is audited' })).toBeDefined()
     expect(screen.getByRole('img', { name: 'Code needed' })).toBeDefined()
-    for (const name of ['Commands', 'Minimise', 'Close']) {
+    for (const name of ['Commands', 'Maximise', 'Minimise', 'Close']) {
       const b = screen.getByRole('button', { name })
       expect(b.textContent).toBe('')
       expect(b.getAttribute('title')).toBe(name)
     }
     expect(screen.queryByText(/every line is audited/)).toBeNull()
     expect(screen.getByText('Enter a code from your authenticator.')).toBeDefined()
+  })
+
+  // 2026-10-30: the panel could be pulled up no further than 80 px short of
+  // the top. Maximise gives it the window, and the header bar is a handle.
+  it('maximises with the button, and restores to the height it had', async () => {
+    vi.spyOn(api, 'get').mockResolvedValue(state() as never)
+    render(<ConsoleCLI />)
+    const user = await openPanel()
+    const panel = screen.getByRole('region', { name: 'Command line' })
+    expect(panel.style.height).toBe('420px')
+    await user.click(screen.getByRole('button', { name: 'Maximise' }))
+    expect(panel.classList.contains('max')).toBe(true)
+    expect(panel.style.height).toBe('')
+    expect(localStorage.getItem('zanskar.cli.maximised')).toBe('true')
+    // Remembered: closed and opened again, it is still maximised.
+    await user.click(screen.getByRole('button', { name: 'Close' }))
+    await user.click(screen.getByRole('button', { name: 'Command line' }))
+    await user.click(screen.getByRole('button', { name: 'Restore' }))
+    const again = screen.getByRole('region', { name: 'Command line' })
+    expect(again.classList.contains('max')).toBe(false)
+    expect(again.style.height).toBe('420px')
+    expect(localStorage.getItem('zanskar.cli.maximised')).toBe('false')
+  })
+
+  it('maximises when the header is pulled to the top, and restores when pulled down', async () => {
+    vi.spyOn(api, 'get').mockResolvedValue(state() as never)
+    render(<ConsoleCLI />)
+    await openPanel()
+    const panel = screen.getByRole('region', { name: 'Command line' })
+    const bar = panel.querySelector('.cli-bar') as HTMLElement
+    const top = window.innerHeight
+    // Pulled up part of the way: a new height, remembered.
+    fireEvent.pointerDown(bar, { button: 0, clientY: top - 420 })
+    fireEvent.pointerMove(window, { clientY: top - 520 })
+    fireEvent.pointerUp(window)
+    expect(panel.style.height).toBe('520px')
+    expect(localStorage.getItem('zanskar.cli.height')).toBe('520')
+    // Pulled to the top: maximised, and the 520 kept for Restore.
+    fireEvent.pointerDown(bar, { button: 0, clientY: top - 520 })
+    fireEvent.pointerMove(window, { clientY: 10 })
+    fireEvent.pointerUp(window)
+    expect(panel.classList.contains('max')).toBe(true)
+    expect(localStorage.getItem('zanskar.cli.height')).toBe('520')
+    // Pulled down from the top: a height again.
+    fireEvent.pointerDown(bar, { button: 0, clientY: 0 })
+    fireEvent.pointerMove(window, { clientY: top - 300 })
+    fireEvent.pointerUp(window)
+    expect(panel.classList.contains('max')).toBe(false)
+    expect(panel.style.height).toBe('300px')
+    // A press on a header button is no drag, and a press that does not move
+    // changes nothing.
+    fireEvent.pointerDown(screen.getByRole('button', { name: 'Commands' }), { button: 0, clientY: top - 300 })
+    fireEvent.pointerMove(window, { clientY: 10 })
+    fireEvent.pointerUp(window)
+    fireEvent.pointerDown(bar, { button: 0, clientY: top - 300 })
+    fireEvent.pointerUp(window)
+    expect(panel.style.height).toBe('300px')
+    expect(panel.classList.contains('max')).toBe(false)
+  })
+
+  it('maximises and restores on a double click on the header, not on its buttons', async () => {
+    vi.spyOn(api, 'get').mockResolvedValue(state() as never)
+    render(<ConsoleCLI />)
+    await openPanel()
+    const panel = screen.getByRole('region', { name: 'Command line' })
+    fireEvent.dblClick(screen.getByRole('button', { name: 'Commands' }))
+    expect(panel.classList.contains('max')).toBe(false)
+    fireEvent.dblClick(panel.querySelector('.cli-bar') as HTMLElement)
+    expect(panel.classList.contains('max')).toBe(true)
+    fireEvent.dblClick(panel.querySelector('.cli-bar b') as HTMLElement)
+    expect(panel.classList.contains('max')).toBe(false)
   })
 
   it('opens and closes with Ctrl+`, and Close clears the transcript', async () => {

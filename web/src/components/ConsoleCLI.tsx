@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { ApiError, api, errorMessage } from '../api/client'
-import { AuditIcon, CloseIcon, CommandsIcon, LockIcon, MinimiseIcon } from './icons'
+import { AuditIcon, CloseIcon, CommandsIcon, LockIcon, MaximiseIcon, MinimiseIcon, RestoreIcon } from './icons'
 
 /**
  * The console's command line (ADR 0027): an icon at the top right of every
@@ -29,6 +29,9 @@ interface Reply {
 
 const HISTORY_KEY = 'zanskar.cli.history'
 const HEIGHT_KEY = 'zanskar.cli.height'
+const MAX_KEY = 'zanskar.cli.maximised'
+// A resize that ends this close to the top of the window maximises.
+const SNAP_PX = 32
 const MAX_HISTORY = 100
 const MAX_TRANSCRIPT = 2000
 
@@ -92,12 +95,14 @@ export function ConsoleCLI() {
   const [code, setCode] = useState('')
   const [codeError, setCodeError] = useState('')
   const [height, setHeight] = useState(() => load(() => localStorage, HEIGHT_KEY, 420))
+  const [maximised, setMaximised] = useState(() => load(() => localStorage, MAX_KEY, false))
   const history = useRef<string[]>(load(() => sessionStorage, HISTORY_KEY, []))
   const cursor = useRef(-1)
   const inputRef = useRef<HTMLInputElement>(null)
   const codeRef = useRef<HTMLInputElement>(null)
   const iconRef = useRef<HTMLButtonElement>(null)
   const bodyRef = useRef<HTMLDivElement>(null)
+  const barRef = useRef<HTMLDivElement>(null)
 
   const refresh = useCallback(() => fetchState().then(setState), [])
   useEffect(() => {
@@ -245,24 +250,66 @@ export function ConsoleCLI() {
     iconRef.current?.focus()
   }
 
-  // Drag the grip to resize; the height is remembered on this browser.
-  const startResize = (e: React.PointerEvent) => {
+  const maximise = (m: boolean) => {
+    setMaximised(m)
+    save(() => localStorage, MAX_KEY, m)
+  }
+
+  // Drag the grip, or the header bar, to resize (2026-10-30). Pulled to the
+  // top of the window it maximises, and pulled down from there it restores;
+  // a maximise keeps the height it had, for Restore. Both are remembered on
+  // this browser.
+  const startResize = (e: PointerEvent | React.PointerEvent) => {
     e.preventDefault()
     const startY = e.clientY
-    const startH = height
+    const startH = maximised ? window.innerHeight : height
+    const restoreH = height
     let h = startH
+    let moved = false
     const move = (ev: PointerEvent) => {
-      h = Math.min(Math.max(startH + (startY - ev.clientY), 180), window.innerHeight - 80)
+      if (!moved && Math.abs(ev.clientY - startY) < 3) return
+      moved = true
+      h = Math.min(Math.max(startH + (startY - ev.clientY), 180), window.innerHeight)
+      setMaximised(false)
       setHeight(h)
     }
     const up = () => {
       window.removeEventListener('pointermove', move)
       window.removeEventListener('pointerup', up)
+      if (!moved) return
+      if (h >= window.innerHeight - SNAP_PX) {
+        setHeight(restoreH)
+        maximise(true)
+        return
+      }
+      maximise(false)
       save(() => localStorage, HEIGHT_KEY, h)
     }
     window.addEventListener('pointermove', move)
     window.addEventListener('pointerup', up)
   }
+
+  // The header bar is a handle too, but not its buttons; a double click on
+  // it maximises or restores, as a window's title bar does. Listeners on the
+  // element, since the bar is no control of its own: the Maximise button is
+  // the way in from the keyboard.
+  useEffect(() => {
+    const bar = barRef.current
+    if (!bar) return
+    const onButton = (t: EventTarget | null) => t instanceof Element && t.closest('button') !== null
+    const down = (e: PointerEvent) => {
+      if (e.button === 0 && !onButton(e.target)) startResize(e)
+    }
+    const dbl = (e: MouseEvent) => {
+      if (!onButton(e.target)) maximise(!maximised)
+    }
+    bar.addEventListener('pointerdown', down)
+    bar.addEventListener('dblclick', dbl)
+    return () => {
+      bar.removeEventListener('pointerdown', down)
+      bar.removeEventListener('dblclick', dbl)
+    }
+  })
 
   if (!state?.enabled) return null
 
@@ -281,9 +328,9 @@ export function ConsoleCLI() {
         <TerminalIcon size={25} />
       </button>
       {open && (
-        <section id="console-cli" className="cli-panel" style={{ height }} aria-label="Command line">
+        <section id="console-cli" className={'cli-panel' + (maximised ? ' max' : '')} style={maximised ? undefined : { height }} aria-label="Command line">
           <div className="cli-grip" onPointerDown={startResize} role="separator" aria-orientation="horizontal" aria-label="Resize the command line" />
-          <div className="cli-bar">
+          <div className="cli-bar" ref={barRef}>
             <b>
               <span className="cli-bar-icon">
                 <TerminalIcon size={17} />
@@ -309,6 +356,9 @@ export function ConsoleCLI() {
               }}
             >
               <CommandsIcon />
+            </button>
+            <button type="button" className="cli-ibtn" aria-label={maximised ? 'Restore' : 'Maximise'} title={maximised ? 'Restore' : 'Maximise'} onClick={() => maximise(!maximised)}>
+              {maximised ? <RestoreIcon /> : <MaximiseIcon />}
             </button>
             <button type="button" className="cli-ibtn" aria-label="Minimise" title="Minimise" onClick={minimise}>
               <MinimiseIcon />

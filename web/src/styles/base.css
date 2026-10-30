@@ -467,10 +467,13 @@ td.actions > * + * { margin-left: 8px; }
 .cli-icon { display: inline-flex; padding: 0; border: 0; background: none; color: var(--accent); cursor: pointer; }
 .cli-icon:hover { color: var(--accent-hover); }
 .cli-icon.on { color: var(--accent-hover); }
-.cli-panel { position: fixed; left: var(--sidebar-w); right: 0; bottom: 0; z-index: 40; display: flex; flex-direction: column; min-height: 180px; background: var(--terminal-bg); color: var(--term-fg); border-top: 1px solid var(--term-line); box-shadow: 0 -12px 32px var(--term-shadow); }
+.cli-panel { position: fixed; left: var(--sidebar-w); right: 0; bottom: 0; z-index: 40; display: flex; flex-direction: column; min-height: 180px; max-height: 100vh; background: var(--terminal-bg); color: var(--term-fg); border-top: 1px solid var(--term-line); box-shadow: 0 -12px 32px var(--term-shadow); }
+/* Maximised, the panel runs to the top of the window (2026-10-30). */
+.cli-panel.max { top: 0; }
 .cli-grip { height: 8px; flex: none; cursor: ns-resize; display: flex; align-items: center; justify-content: center; touch-action: none; }
 .cli-grip::after { content: ""; width: 44px; height: 3px; border-radius: 2px; background: var(--term-btn-line); }
-.cli-bar { display: flex; align-items: center; gap: 12px; padding: 4px 14px 8px; border-bottom: 1px solid var(--term-line); font-size: 13px; color: var(--term-fg-muted); flex-wrap: wrap; }
+.cli-bar { display: flex; align-items: center; gap: 12px; padding: 4px 14px 8px; border-bottom: 1px solid var(--term-line); font-size: 13px; color: var(--term-fg-muted); flex-wrap: wrap; cursor: ns-resize; user-select: none; touch-action: none; }
+.cli-bar button { cursor: pointer; }
 .cli-bar b { display: flex; align-items: center; gap: 7px; color: var(--term-fg); font-size: 14px; }
 .cli-bar-icon { display: flex; color: var(--periwinkle); }
 .cli-spacer { flex: 1; }
