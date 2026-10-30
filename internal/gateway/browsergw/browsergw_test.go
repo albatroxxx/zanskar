@@ -330,10 +330,12 @@ func DefaultBrowserImageForTest() string { return "ghcr.io/albatroxxx/zanskar-br
 // it asked `docker info`, which fails on things a session never touches (a
 // broken CLI plugin, a slow registry lookup). The probe asks the daemon its
 // version, the one round trip a session needs, through the real command.
+// The stand-in fails `version` given a format, as a local Podman does for a
+// template naming .Server (it has no server part): the probe must not ask.
 func TestReadinessProbesTheDaemonNotInfo(t *testing.T) {
 	dir := t.TempDir()
 	fake := dir + "/docker"
-	script := "#!/bin/sh\ncase \"$1\" in\n  version) echo 27.3.1 ;;\n  info) echo 'errors pretty printing info' >&2; exit 1 ;;\n  *) exit 3 ;;\nesac\n"
+	script := "#!/bin/sh\ncase \"$1\" in\n  version) [ $# -eq 1 ] || { echo 'template: version:1:9: executing at <.Server.Version>: nil pointer' >&2; exit 125; }; echo 27.3.1 ;;\n  info) echo 'errors pretty printing info' >&2; exit 1 ;;\n  *) exit 3 ;;\nesac\n"
 	if err := os.WriteFile(fake, []byte(script), 0o700); err != nil {
 		t.Fatal(err)
 	}

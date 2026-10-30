@@ -160,7 +160,7 @@ function UpdateBell() {
                 </Field>
               )}
               {needsCode && (
-                <Field label="Authenticator code" hint={`Proved within ${host?.step_up_minutes ?? 5} minutes`}>
+                <Field label="Authenticator code" hint={`Covers host actions for ${host?.step_up_minutes ?? 5} minutes`}>
                   <input id="bell-code" value={code} onChange={(e) => setCode(e.target.value)} inputMode="numeric" autoComplete="one-time-code" />
                 </Field>
               )}
@@ -287,7 +287,7 @@ function GearMenu() {
                 </Field>
               )}
               {needsCode && (
-                <Field label="Authenticator code" hint={`Proved within ${host?.step_up_minutes ?? 5} minutes`}>
+                <Field label="Authenticator code" hint={`Covers host actions for ${host?.step_up_minutes ?? 5} minutes`}>
                   <input id="gear-code" value={code} onChange={(e) => setCode(e.target.value)} inputMode="numeric" autoComplete="one-time-code" />
                 </Field>
               )}

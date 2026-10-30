@@ -67,11 +67,14 @@ func (h *Readiness) runtime(ctx context.Context) error {
 		// `docker info` it was, until a host where sessions ran fine showed
 		// the runtime as unreachable (2026-10-30): info also loads every CLI
 		// plugin, asks after registries and swarm, can take seconds, and
-		// fails on a warning a session never meets.
+		// fails on a warning a session never meets. Plain `version`, judged
+		// by its exit status: Docker's exits non-zero when it cannot reach
+		// the daemon, and a template naming .Server would fail on a local
+		// Podman, whose version has no server part.
 		probe = func(ctx context.Context) error {
 			ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 			defer cancel()
-			return containers.Run(ctx, h.Docker, nil, "version", "--format", "{{.Server.Version}}")
+			return containers.Run(ctx, h.Docker, nil, "version")
 		}
 	}
 	h.probeOK, h.probed = probe(ctx), time.Now()
