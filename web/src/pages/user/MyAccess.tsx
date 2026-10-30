@@ -6,6 +6,7 @@ import { fmtTime, protocolName } from '../../api/format'
 import type { AccessRequest, AccessStatus, Page } from '../../api/types'
 import { FilterChips } from '../../components/FilterChips'
 import { Alert, Badge, Empty, Field, Modal, PageHead } from '../../components/ui'
+import { badgesChanged } from '../../components/badges'
 
 const tone: Record<AccessStatus, 'ok' | 'warn' | 'danger' | undefined> = {
   approved: 'ok',
@@ -71,6 +72,7 @@ export function MyAccess() {
         minutes: Number(ext.minutes),
         extends_request_id: extending.id,
       })
+      badgesChanged()
       setNotice(`Asked to extend ${protocolName(extending.protocol)} access to ${extending.target_name || extending.asg_name || 'the target'} by ${ext.minutes} minutes. An administrator must approve it; the current grant continues until it expires.`)
       setExtending(null)
       void load()

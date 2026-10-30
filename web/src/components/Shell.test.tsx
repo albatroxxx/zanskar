@@ -1,9 +1,10 @@
-import { cleanup, render, screen } from '@testing-library/react'
+import { act, cleanup, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router-dom'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { api } from '../api/client'
 import { AuthProvider } from '../auth/AuthContext'
+import { badgesChanged } from './badges'
 import { Shell } from './Shell'
 
 afterEach(() => {
@@ -48,5 +49,37 @@ describe('the sidebar account', () => {
     expect(screen.getByText('Alice Verma')).toBeDefined()
     expect(screen.getByText('alice@example.internal')).toBeDefined()
     expect(screen.getByText('enrolled')).toBeDefined()
+  })
+})
+
+// 2026-10-30 walkthrough: the Approvals badge kept a decided request's count
+// until a reload. A badge reads again when the page says its count changed,
+// and on every move to another page, not only on its minute.
+describe('a nav badge', () => {
+  it('reads again on badgesChanged and on navigation, and hides at zero', async () => {
+    vi.spyOn(api, 'get').mockImplementation(async (path: string) => {
+      if (path === '/auth/me') return { user: alice, csrf_token: 't', mfa_enrolled: true } as never
+      return { items: [] } as never
+    })
+    let pending = 2
+    const load = vi.fn(async () => pending)
+    render(
+      <MemoryRouter initialEntries={['/']}>
+        <AuthProvider>
+          <Shell portal="user" items={[{ to: '/', label: 'Targets', end: true }, { to: '/approvals', label: 'Approvals', badge: load }]} />
+        </AuthProvider>
+      </MemoryRouter>,
+    )
+    expect(await screen.findByLabelText('2 pending')).toBeDefined()
+
+    pending = 1
+    act(() => badgesChanged())
+    expect(await screen.findByLabelText('1 pending')).toBeDefined()
+
+    pending = 0
+    const calls = load.mock.calls.length
+    await userEvent.setup().click(screen.getByRole('link', { name: /Approvals/ }))
+    await waitFor(() => expect(load.mock.calls.length).toBeGreaterThan(calls))
+    await waitFor(() => expect(screen.queryByLabelText(/pending$/)).toBeNull())
   })
 })

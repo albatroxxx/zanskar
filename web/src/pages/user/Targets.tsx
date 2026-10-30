@@ -5,6 +5,7 @@ import { accessDrill, expiresSoon } from '../../api/drilldown'
 import type { AccessRequest, ConnectResponse, Page, Protocol, ReachableInstance, ReachableTarget, Session } from '../../api/types'
 import { DatabaseIcon, OSIcon, StateIcon } from '../../components/icons'
 import { Alert, Badge, Empty, Field, Modal, PageHead, StatTile, Tabs, Tags } from '../../components/ui'
+import { badgesChanged } from '../../components/badges'
 import { engineName, protocolName } from '../../api/format'
 import { fmtAgo } from './Failover'
 
@@ -141,6 +142,7 @@ export function Targets() {
         reason: reqForm.reason,
         minutes: Number(reqForm.minutes),
       })
+      badgesChanged()
       setNotice(`Requested ${protocolName(reqModal.protocol)} access to ${reqModal.target.name}. An administrator must approve it — track it under Access.`)
       setReqModal(null)
       setReqForm({ reason: '', minutes: 60 })

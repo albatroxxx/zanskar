@@ -3,6 +3,7 @@ import { api, errorMessage } from '../../api/client'
 import { fmtTime, protocolName } from '../../api/format'
 import type { AccessRequest, Page } from '../../api/types'
 import { Alert, Badge, Empty, Field, Modal, PageHead } from '../../components/ui'
+import { badgesChanged } from '../../components/badges'
 
 /** Approvals is the admin queue for just-in-time access requests (ADR 0018):
  *  approve or deny what's pending, and revoke grants that are still active. */
@@ -47,6 +48,9 @@ export function Approvals() {
       return false
     } finally {
       setBusy('')
+      // A refusal (decided elsewhere meanwhile) changes the count as surely
+      // as a decision does.
+      badgesChanged()
     }
   }
   const openApprove = (r: AccessRequest) => {
