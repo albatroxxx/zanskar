@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -265,10 +266,11 @@ func TestCreateGetListSyncIAMRotateDelete(t *testing.T) {
 	}
 }
 
-// TestDeleteRefusedWhileInUse covers ADR 0019 for groups: a policy naming
-// the group by id, or a session open on one of its instances, makes delete
-// answer 409 in_use with the blockers named; once free, delete retires it.
-func TestDeleteRefusedWhileInUse(t *testing.T) {
+// TestDeleteCascades (ADR 0036, amended 2026-10-30): deleting a group takes
+// it out of the autoscaling grants that name it, keeping a policy left with
+// no grant, and ends the sessions on its instances (keyed by instance row
+// id), after a preview that says so. It used to answer 409 in_use.
+func TestDeleteCascades(t *testing.T) {
 	e := newEnv(t)
 	ctx := context.Background()
 	code, out := e.do("POST", "/api/v1/autoscaling-groups", writeBody(), e.admin)
@@ -287,31 +289,28 @@ func TestDeleteRefusedWhileInUse(t *testing.T) {
 	if err := e.policies.Create(ctx, pol); err != nil {
 		t.Fatal(err)
 	}
-	code, out = e.do("DELETE", "/api/v1/autoscaling-groups/"+id, nil, e.admin)
-	if code != 409 || out["code"] != "in_use" || !strings.Contains(out["message"].(string), "policy fleet-ssh names it") {
-		t.Fatalf("delete while a policy names it: %d %v", code, out)
-	}
-	if err := e.policies.Delete(ctx, pol.ID); err != nil {
-		t.Fatal(err)
-	}
-
-	// Sessions on instances are keyed by the instance row id in the registry.
 	instances, err := e.repo.Instances(ctx, id, false)
 	if err != nil || len(instances) == 0 {
 		t.Fatalf("instances: %d %v", len(instances), err)
 	}
-	e.live.Add(ctx, gateway.Live{SessionID: "s1", UserID: alice.ID, TargetID: instances[0].ID, Protocol: "ssh"})
-	code, out = e.do("DELETE", "/api/v1/autoscaling-groups/"+id, nil, e.admin)
-	if code != 409 || !strings.Contains(out["message"].(string), "1 session is open on it") {
-		t.Fatalf("delete while a session is open: %d %v", code, out)
-	}
-	e.live.Remove("s1")
+	session := e.live.Add(ctx, gateway.Live{SessionID: "s1", UserID: alice.ID, TargetID: instances[0].ID, Protocol: "ssh"})
 
+	code, out = e.do("GET", "/api/v1/autoscaling-groups/"+id+"/usage", nil, e.admin)
+	if code != 200 || out["live_sessions"] != float64(1) || len(out["policies"].([]any)) != 1 {
+		t.Fatalf("usage: %d %v", code, out)
+	}
 	if code, out = e.do("DELETE", "/api/v1/autoscaling-groups/"+id, nil, e.admin); code != 204 {
-		t.Fatalf("delete once free: %d %v", code, out)
+		t.Fatalf("delete: %d %v", code, out)
 	}
 	if code, _ = e.do("GET", "/api/v1/autoscaling-groups/"+id, nil, e.admin); code != 404 {
-		t.Fatalf("retired group must be gone from the API: %d", code)
+		t.Fatalf("deleted group must be gone from the API: %d", code)
+	}
+	got, err := e.policies.Get(ctx, pol.ID)
+	if err != nil || len(got.Grants) != 0 {
+		t.Fatalf("fleet-ssh is kept with no grant: %+v %v", got, err)
+	}
+	if !errors.Is(context.Cause(session), gateway.ErrTargetDeleted) {
+		t.Fatalf("the session on an instance: %v", context.Cause(session))
 	}
 }
 

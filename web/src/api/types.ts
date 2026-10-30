@@ -653,3 +653,10 @@ export interface RetentionPolicy {
   updated_at?: string
   updated_by?: string
 }
+
+/** What deleting a target or autoscaling group changes (GET …/usage; ADR 0036, amended 2026-10-30). */
+export interface AssetUsage {
+  policies: { policy_id: string; name: string; grants_removed: number; no_grants_left: boolean }[]
+  live_sessions: number
+  open_requests: number
+}

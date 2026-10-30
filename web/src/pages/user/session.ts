@@ -60,6 +60,7 @@ const reasonText: Record<string, string> = {
   admin_terminated: 'An administrator ended the session.',
   target_lost: 'The connection to the target was lost.',
   trust_lost: "The target's host key or certificate changed; an administrator must trust it again.",
+  target_deleted: 'An administrator deleted the target.',
   error: 'The session ended because of an error.',
 }
 

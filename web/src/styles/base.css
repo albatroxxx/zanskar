@@ -584,3 +584,6 @@ td.actions > * + * { margin-left: 8px; }
 .policy-who-full { margin: 0 0 8px; font-size: 0.88rem; }
 .grants-table { width: 100%; font-size: 0.86rem; }
 .grants-table th { font-size: 0.72rem; }
+/* What deleting a target takes with it, listed before the name is typed. */
+.delete-effects { margin: 0 0 14px; padding-left: 18px; }
+.delete-effects li { margin: 3px 0; }

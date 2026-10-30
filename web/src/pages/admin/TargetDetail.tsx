@@ -3,6 +3,7 @@ import { api, errorMessage } from '../../api/client'
 import { appTLS, dbTLS, engineName, fmtTime, protocolName } from '../../api/format'
 import type { CertificateProbe, Credential, ProbeResponse, Protocol, Target } from '../../api/types'
 import { Alert, Badge, Confirm, Modal, Tags } from '../../components/ui'
+import { DeleteAsset } from './DeleteAsset'
 import { hostKeyBadge, protocols } from './lib'
 import { CredentialBindings, type BindingChange } from './Bindings'
 import { kindOf, TargetForm, targetBody } from './TargetForm'
@@ -14,7 +15,7 @@ import { kindOf, TargetForm, targetBody } from './TargetForm'
  * since probing and host keys do not apply to it; an application shows its
  * upstream and how it is verified, and holds no credential at all (ADR 0034).
  */
-export function TargetDetail({ target, credentials, onClose, onChanged, onDeleted, onError }: { target: Target; credentials: Credential[]; onClose: () => void; onChanged: (t: Target) => void; onDeleted: () => void; onError: (m: string) => void }) {
+export function TargetDetail({ target, credentials, onClose, onChanged, onDeleted }: { target: Target; credentials: Credential[]; onClose: () => void; onChanged: (t: Target) => void; onDeleted: () => void; onError: (m: string) => void }) {
   const [editing, setEditing] = useState(false)
   const [probe, setProbe] = useState<ProbeResponse | null>(null)
   const [probing, setProbing] = useState(false)
@@ -308,24 +309,7 @@ export function TargetDetail({ target, credentials, onClose, onChanged, onDelete
           }}
         />
       )}
-      {confirm === 'delete' && (
-        <Confirm
-          title={`Delete ${t.name}?`}
-          body="Refused while a policy names it or a session is open on it."
-          confirmLabel="Delete"
-          danger
-          onClose={() => setConfirm(null)}
-          onConfirm={async () => {
-            try {
-              await api.del(`/targets/${t.id}`)
-              onDeleted()
-            } catch (e) {
-              onError(errorMessage(e))
-              throw e
-            }
-          }}
-        />
-      )}
+      {confirm === 'delete' && <DeleteAsset name={t.name} path={`/targets/${t.id}`} onClose={() => setConfirm(null)} onDeleted={onDeleted} />}
     </Modal>
   )
 }

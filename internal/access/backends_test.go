@@ -74,3 +74,66 @@ func TestRepoOnEachBackend(t *testing.T) {
 		}
 	})
 }
+
+// TestCloseForTargetOnEachBackend (ADR 0036, amended 2026-10-30): deleting a
+// target revokes its pending and approved requests inside the deletion's
+// transaction, with the reason, and leaves decided ones and another
+// target's alone; the count before matches.
+func TestCloseForTargetOnEachBackend(t *testing.T) {
+	storetest.ForEachBackend(t, func(t *testing.T, db *store.DB) {
+		ctx := context.Background()
+		stamp := store.TimeArg(time.Now())
+		for _, q := range []string{
+			`INSERT INTO users (id, username, display_name, created_at, updated_at) VALUES ('u1', 'alice', 'Alice', ?, ?)`,
+			`INSERT INTO users (id, username, display_name, created_at, updated_at) VALUES ('u2', 'bob', 'Bob', ?, ?)`,
+			`INSERT INTO targets (id, name, address, os_family, created_at, updated_at) VALUES ('t1', 'web1', '10.0.0.1', 'linux', ?, ?)`,
+			`INSERT INTO targets (id, name, address, os_family, created_at, updated_at) VALUES ('t2', 'web2', '10.0.0.2', 'linux', ?, ?)`,
+		} {
+			if _, err := db.ExecContext(ctx, db.Rebind(q), stamp, stamp); err != nil {
+				t.Fatal(err)
+			}
+		}
+		r := NewRepo(db)
+		mk := func(target string) *Request {
+			req := &Request{UserID: "u1", TargetID: target, Protocol: "ssh", Reason: "deploy", RequestedMinutes: 60}
+			if err := r.Create(ctx, req); err != nil {
+				t.Fatal(err)
+			}
+			return req
+		}
+		pending, approved, denied, other := mk("t1"), mk("t1"), mk("t1"), mk("t2")
+		exp := time.Now().Add(time.Hour)
+		if _, err := r.Decide(ctx, approved.ID, "u2", StatusApproved, "ok", &exp, 60); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := r.Decide(ctx, denied.ID, "u2", StatusDenied, "no", nil, 0); err != nil {
+			t.Fatal(err)
+		}
+		if n, err := r.OpenForTarget(ctx, "t1", ""); err != nil || n != 2 {
+			t.Fatalf("open for t1: %d %v", n, err)
+		}
+		tx, err := db.BeginTx(ctx, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		n, err := r.CloseForTargetTx(ctx, tx, "t1", "", "target deleted")
+		if err != nil || n != 2 {
+			t.Fatalf("closed: %d %v", n, err)
+		}
+		if err := tx.Commit(); err != nil {
+			t.Fatal(err)
+		}
+		for _, c := range []struct {
+			req  *Request
+			want Status
+		}{{pending, StatusRevoked}, {approved, StatusRevoked}, {denied, StatusDenied}, {other, StatusPending}} {
+			got, err := r.Get(ctx, c.req.ID)
+			if err != nil || got.Status != c.want {
+				t.Fatalf("%s: %+v %v, want %s", c.req.ID, got, err, c.want)
+			}
+		}
+		if got, _ := r.Get(ctx, pending.ID); got.DecisionNote != "target deleted" {
+			t.Fatalf("note: %q", got.DecisionNote)
+		}
+	})
+}
