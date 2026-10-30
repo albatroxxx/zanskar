@@ -38,6 +38,9 @@ type Handler struct {
 	// StateDir holds the update request the package's path unit watches
 	// (ADR 0032); empty disables installing from the console.
 	StateDir string
+	// installPoll and installLimit pace watchInstall; zero means 2 seconds
+	// and installWatchLimit. Tests shorten them.
+	installPoll, installLimit time.Duration
 }
 
 // Register mounts the routes; all admin-only.

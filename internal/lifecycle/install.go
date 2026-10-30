@@ -100,6 +100,7 @@ func (h *Handler) installUpdate(w http.ResponseWriter, r *http.Request) {
 	h.Controller.RestartThen(p.User.ID, wait, "update", func() {
 		err := writeRequest(filepath.Join(h.StateDir, UpdateRequestFile), req)
 		if err == nil {
+			go h.watchInstall(req, actor)
 			return
 		}
 		if h.Log != nil {
@@ -115,6 +116,58 @@ func (h *Handler) installUpdate(w http.ResponseWriter, r *http.Request) {
 		h.Controller.Cancel()
 	})
 	httpx.WriteJSON(w, http.StatusAccepted, h.current())
+}
+
+// installWatchLimit is how long the gateway waits, draining, for the
+// installer to replace it before it gives up and serves again.
+const installWatchLimit = 20 * time.Minute
+
+// watchInstall ends the drain when the installer reports that this request
+// failed, or reports nothing in time. Until 1.9.0 a failed update (a
+// download that did not verify, a package that would not install) left the
+// gateway draining, refusing every new session, until an administrator
+// cancelled the restart by hand. A successful install restarts the service,
+// which ends this process and the watch with it.
+func (h *Handler) watchInstall(req updateRequest, actor audit.Actor) {
+	poll, limit := h.installPoll, h.installLimit
+	if poll <= 0 {
+		poll = 2 * time.Second
+	}
+	if limit <= 0 {
+		limit = installWatchLimit
+	}
+	since := req.RequestedAt.Truncate(time.Second)
+	deadline := time.Now().Add(limit)
+	for time.Now().Before(deadline) {
+		time.Sleep(poll)
+		if d := h.Controller.Current(); d == nil || d.Action != "update" {
+			return // cancelled, or replaced by another restart
+		}
+		st := update.ReadInstallState(h.StateDir)
+		if st == nil || st.Version != req.Version || st.State != "failed" {
+			continue
+		}
+		if at, err := time.Parse(time.RFC3339, st.At); err != nil || at.Before(since) {
+			continue // a report from an earlier attempt
+		}
+		h.endFailedInstall(req, actor, st.Message)
+		return
+	}
+	h.endFailedInstall(req, actor, fmt.Sprintf("the installer did not finish within %s", limit))
+}
+
+// endFailedInstall records why an update did not happen and lets sessions
+// start again.
+func (h *Handler) endFailedInstall(req updateRequest, actor audit.Actor, why string) {
+	if h.Log != nil {
+		h.Log.Error("update failed; serving again", "version", req.Version, "reason", why)
+	}
+	if h.Audit != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), hostActionTimeout)
+		defer cancel()
+		_, _ = h.Audit.Record(ctx, actor.Event(audit.SystemUpdate, "system", "gateway", audit.Failure, map[string]any{"version": req.Version, "error": why}))
+	}
+	h.Controller.Cancel()
 }
 
 // writeRequest writes the file atomically, so the path unit never reads a

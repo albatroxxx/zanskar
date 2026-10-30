@@ -261,3 +261,13 @@ export function GearIcon() {
     </svg>
   )
 }
+
+/** DoneIcon is the large tick a finished host action shows beside its words. */
+export function DoneIcon() {
+  return (
+    <svg {...svgProps(28)}>
+      <circle cx="12" cy="12" r="9" />
+      <polyline points="8 12.5 11 15.5 16 9.5" />
+    </svg>
+  )
+}

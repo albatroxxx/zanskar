@@ -411,6 +411,40 @@ td.actions > * + * { margin-left: 8px; }
 .corner-btn { position: relative; display: inline-flex; padding: 0; border: 0; background: none; color: var(--accent); cursor: pointer; }
 .corner-btn:hover { color: var(--accent-hover); }
 .corner-dot { position: absolute; top: -1px; right: -1px; width: 9px; height: 9px; border-radius: 50%; background: var(--danger); border: 2px solid var(--bg); }
+.corner-btn.on { color: var(--accent-hover); }
+/* A corner button's menu or panel drops from it and stays attached, right
+   edges aligned, as the cloud consoles' Actions menus do (2026-10-30). */
+.corner-pop { position: relative; display: inline-flex; }
+.corner-panel { position: absolute; top: calc(100% + 10px); right: -6px; z-index: 45; min-width: 210px; padding: 6px; background: var(--bg-raised); color: var(--fg); border: 1px solid var(--line); border-radius: var(--radius-lg); box-shadow: var(--shadow); text-align: left; }
+.corner-panel:focus { outline: none; }
+.corner-panel.dialog { padding: 14px 16px; }
+.corner-panel .kv { margin: 0 0 10px; }
+.corner-panel .actions { margin-top: 10px; }
+.corner-panel-title { margin: 0 0 10px; font-size: 0.95rem; }
+.menu-item { display: flex; align-items: center; gap: 8px; width: 100%; padding: 7px 10px; border: 0; border-radius: var(--radius); background: none; color: var(--fg); font: inherit; font-size: 0.9rem; text-align: left; cursor: pointer; }
+.menu-item:hover, .menu-item:focus-visible { background: var(--bg-sunken); outline: none; }
+.menu-item:focus-visible { box-shadow: inset 0 0 0 2px var(--focus); }
+.menu-item.danger { color: var(--danger); }
+.menu-item[aria-disabled="true"] { color: var(--fg-faint); cursor: default; background: none; }
+.menu-check { width: 1em; color: var(--accent); }
+.menu-sep { height: 1px; margin: 6px 4px; border: 0; background: var(--line); }
+.menu-note { margin: 4px 10px 2px; font-size: 0.8rem; color: var(--fg-muted); }
+/* A host action's progress: one row per stage, a mark that fills as each
+   one is passed, and a green tick at the end. */
+.action-steps { list-style: none; margin: 4px 0 12px; padding: 0; }
+.action-step { display: flex; align-items: baseline; gap: 10px; padding: 6px 0; color: var(--fg-muted); }
+.action-step.now { color: var(--fg); font-weight: 600; }
+.action-step.done { color: var(--fg); }
+.action-step.failed { color: var(--danger); }
+.action-mark { flex: none; width: 12px; height: 12px; border-radius: 50%; border: 2px solid var(--line-strong); transform: translateY(1px); }
+.action-step.done .action-mark { background: var(--ok); border-color: var(--ok); }
+.action-step.now .action-mark { border-color: var(--accent); border-top-color: transparent; animation: action-spin 0.9s linear infinite; }
+.action-step.failed .action-mark { background: var(--danger); border-color: var(--danger); }
+@keyframes action-spin { to { transform: translateY(1px) rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .action-step.now .action-mark { animation: none; border-top-color: var(--accent); } }
+.action-done { display: flex; align-items: center; gap: 12px; margin: 6px 0 14px; font-size: 1.05rem; color: var(--ok); }
+.action-done svg { width: 28px; height: 28px; }
+.action-done p { margin: 2px 0 0; font-size: 0.85rem; }
 /* Bare glyph, no button chrome: the icon is the control. */
 .cli-icon { display: inline-flex; padding: 0; border: 0; background: none; color: var(--accent); cursor: pointer; }
 .cli-icon:hover { color: var(--accent-hover); }

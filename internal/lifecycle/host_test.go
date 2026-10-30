@@ -7,12 +7,14 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -330,5 +332,74 @@ func TestInstallUpdateFailureIsAudited(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(notDir, UpdateRequestFile)); err == nil {
 		t.Fatal("a request file appeared under a non-directory")
+	}
+}
+
+// TestFailedInstallEndsTheDrain (2026-10-30): when the installer reports
+// that this request failed, the gateway serves again and says why; until
+// 1.9.0 it stayed draining, refusing every session, until someone cancelled
+// by hand. A report from an earlier attempt, or for another version, is
+// not this one's.
+func TestFailedInstallEndsTheDrain(t *testing.T) {
+	was := version.Version
+	version.Version = "1.0.0"
+	t.Cleanup(func() { version.Version = was })
+	e := newHostEnv(t)
+	dir := t.TempDir()
+	e.h.StateDir, e.h.installPoll = dir, 5*time.Millisecond
+	if err := e.sessions.MarkMFAProved(context.Background(), e.sessID); err != nil {
+		t.Fatal(err)
+	}
+	report := func(state, ver string, at time.Time) {
+		b, _ := json.Marshal(map[string]string{"state": state, "version": ver, "message": "the release signature did not verify", "at": at.UTC().Format(time.RFC3339)})
+		if err := os.WriteFile(filepath.Join(dir, "update-status.json"), b, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	report("failed", "9.9.9", time.Now().Add(-time.Hour)) // an earlier attempt
+	if code, out := e.do("POST", "/api/v1/admin/system/update/install", map[string]any{"version": "9.9.9", "confirm": "gw-test", "wait_minutes": 0}); code != 202 {
+		t.Fatalf("install: %d %v", code, out)
+	}
+	e.waitFor(func() bool { _, err := os.Stat(filepath.Join(dir, UpdateRequestFile)); return err == nil })
+	time.Sleep(50 * time.Millisecond)
+	if !e.ctrl.Draining() {
+		t.Fatal("an old report ended the drain")
+	}
+	report("failed", "9.9.8", time.Now()) // another version
+	time.Sleep(50 * time.Millisecond)
+	if !e.ctrl.Draining() {
+		t.Fatal("another version's report ended the drain")
+	}
+	report("running", "9.9.9", time.Now())
+	time.Sleep(50 * time.Millisecond)
+	if !e.ctrl.Draining() {
+		t.Fatal("a running installer ended the drain")
+	}
+	report("failed", "9.9.9", time.Now())
+	e.waitFor(func() bool { return !e.ctrl.Draining() })
+	evs := e.events(audit.SystemUpdate)
+	if len(evs) != 2 || evs[0].Outcome != audit.Failure || !strings.Contains(fmt.Sprint(evs[0].Details), "signature did not verify") {
+		t.Fatalf("audit after a failed install: %+v", evs)
+	}
+}
+
+// TestSilentInstallerEndsTheDrain: an installer that never reports (the path
+// unit missing or stopped) cannot keep the gateway closed for good.
+func TestSilentInstallerEndsTheDrain(t *testing.T) {
+	was := version.Version
+	version.Version = "1.0.0"
+	t.Cleanup(func() { version.Version = was })
+	e := newHostEnv(t)
+	e.h.StateDir, e.h.installPoll, e.h.installLimit = t.TempDir(), 5*time.Millisecond, 60*time.Millisecond
+	if err := e.sessions.MarkMFAProved(context.Background(), e.sessID); err != nil {
+		t.Fatal(err)
+	}
+	if code, out := e.do("POST", "/api/v1/admin/system/update/install", map[string]any{"version": "9.9.9", "confirm": "gw-test", "wait_minutes": 0}); code != 202 {
+		t.Fatalf("install: %d %v", code, out)
+	}
+	e.waitFor(func() bool { return !e.ctrl.Draining() })
+	evs := e.events(audit.SystemUpdate)
+	if len(evs) != 2 || evs[0].Outcome != audit.Failure || !strings.Contains(fmt.Sprint(evs[0].Details), "did not finish") {
+		t.Fatalf("audit after a silent installer: %+v", evs)
 	}
 }

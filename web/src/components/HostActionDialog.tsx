@@ -1,0 +1,190 @@
+import { useEffect, useRef, useState, type FormEvent } from 'react'
+import { ApiError, api, errorMessage } from '../api/client'
+import { fmtTime } from '../api/format'
+import type { HostStatus, SystemStatus, UpdateStatus } from '../api/types'
+import { DoneIcon } from './icons'
+import { deadlineFor, doneTitle, initialProgress, observe, pacing, progressWatch, stepLabel, stepsFor, type HostAction, type Observation, type Progress, type Start } from './hostAction'
+import { Alert, Field, Modal } from './ui'
+
+const titles: Record<HostAction, { title: string; verb: string; danger?: boolean }> = {
+  update: { title: 'Update', verb: 'Install' },
+  restart: { title: 'Restart gateway', verb: 'Restart' },
+  reboot: { title: 'Reboot host', verb: 'Reboot' },
+  poweroff: { title: 'Stop host', verb: 'Stop', danger: true },
+}
+
+/**
+ * HostActionDialog asks for an update, a restart, a reboot or a stop (ADR
+ * 0032), then follows it to the end: the drain, the install or restart, the
+ * gateway away, and back (2026-10-30: the dialog used to say "Installing…"
+ * and stop, and the admin refreshed and ran `version` to learn the outcome).
+ * It ends with a green tick or the reason it did not happen.
+ */
+export function HostActionDialog({ action, version, onClose }: { action: HostAction; version?: string; onClose: () => void }) {
+  const [host, setHost] = useState<HostStatus | null>(null)
+  const [wait, setWait] = useState(15)
+  const [confirm, setConfirm] = useState('')
+  const [code, setCode] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState('')
+  const [start, setStart] = useState<Start | null>(null)
+  const [progress, setProgress] = useState<Progress>(initialProgress)
+  const words = titles[action]
+
+  useEffect(() => {
+    api.get<HostStatus>('/admin/system/host').then(setHost).catch(() => setHost(null))
+  }, [])
+
+  // While the view follows an action, the restart banner leaves the page alone.
+  useEffect(() => {
+    if (!start) return
+    progressWatch.begin()
+    return () => progressWatch.end()
+  }, [start])
+
+  const latest = useRef(progress)
+  useEffect(() => {
+    latest.current = progress
+  }, [progress])
+  useEffect(() => {
+    if (!start) return
+    let stop = false
+    const tick = async () => {
+      const o: Observation = { at: Date.now() }
+      try {
+        o.status = await api.get<SystemStatus>('/admin/system/status')
+        if (start.action === 'update') o.update = await api.get<UpdateStatus>('/admin/system/update').catch(() => null)
+      } catch (e) {
+        o.error = e instanceof ApiError && e.status === 401 ? 'signed_out' : 'offline'
+      }
+      if (stop) return
+      const next = observe(start, latest.current, o)
+      setProgress(next)
+      if (next.state === 'running') timer = setTimeout(() => void tick(), pacing.pollMs)
+    }
+    let timer = setTimeout(() => void tick(), pacing.pollMs)
+    return () => {
+      stop = true
+      clearTimeout(timer)
+    }
+  }, [start])
+
+  const needsCode = action !== 'restart' && host !== null && !host.mfa_fresh
+  const typed = action !== 'restart'
+  const submit = async (e: FormEvent) => {
+    e.preventDefault()
+    setBusy(true)
+    setErr('')
+    try {
+      const before = await api.get<SystemStatus>('/admin/system/status')
+      const installBefore = action === 'update' ? (await api.get<UpdateStatus>('/admin/system/update').catch(() => null))?.install?.at : undefined
+      if (needsCode) await api.post('/auth/mfa/step-up', { code: code.trim() })
+      const body = typed ? { wait_minutes: wait, confirm: confirm.trim() } : { wait_minutes: wait }
+      if (action === 'update') await api.post('/admin/system/update/install', { version, ...body })
+      else await api.post(`/admin/system/${action}`, body)
+      const now = Date.now()
+      setProgress(initialProgress)
+      setStart({ action, target: version, startedAt: before.started_at, installBefore, at: now, deadline: deadlineFor(action, wait, now) })
+    } catch (e2) {
+      setErr(errorMessage(e2))
+    } finally {
+      setBusy(false)
+    }
+  }
+  const cancel = async () => {
+    try {
+      await api.del('/admin/system/restart')
+      setProgress((p) => ({ ...p, state: 'cancelled' }))
+    } catch (e2) {
+      setErr(errorMessage(e2))
+    }
+  }
+
+  const title = action === 'update' ? `Update to ${version}` : words.title
+  if (start) {
+    const steps = stepsFor[action]
+    const at = steps.indexOf(progress.step)
+    return (
+      <Modal title={title} onClose={onClose} width={440}>
+        {progress.state === 'done' ? (
+          <div className="action-done" role="status">
+            <DoneIcon />
+            <div>
+              <strong>{doneTitle(start)}</strong>
+              {action === 'poweroff' && <p className="muted">Start it again from the host or the cloud console.</p>}
+            </div>
+          </div>
+        ) : (
+          <ol className="action-steps" aria-live="polite">
+            {steps.map((s, i) => {
+              const state = progress.state === 'failed' && i === at ? 'failed' : i < at ? 'done' : i === at && progress.state === 'running' ? 'now' : 'todo'
+              return (
+                <li key={s} className={'action-step ' + state} aria-current={state === 'now' ? 'step' : undefined}>
+                  <span className="action-mark" aria-hidden="true" />
+                  <span>
+                    {stepLabel(s, start)}
+                    {state === 'now' && s === 'drain' && progress.live ? (
+                      <span className="muted">
+                        {' '}
+                        · {progress.live} live{progress.until ? `, until ${fmtTime(progress.until)}` : ''}
+                      </span>
+                    ) : null}
+                    {state === 'now' && s === 'install' && progress.message ? <span className="muted"> · {progress.message}</span> : null}
+                  </span>
+                </li>
+              )
+            })}
+          </ol>
+        )}
+        {progress.state === 'failed' && <Alert tone="danger">{progress.message}</Alert>}
+        {progress.state === 'cancelled' && <Alert tone="ok">Cancelled; the gateway carries on.</Alert>}
+        {err && <Alert tone="danger">{err}</Alert>}
+        <div className="actions">
+          {progress.state === 'running' && progress.step === 'drain' && (
+            <button type="button" className="btn ghost" onClick={() => void cancel()}>
+              Cancel {action === 'poweroff' ? 'stop' : action}
+            </button>
+          )}
+          {progress.state === 'done' && action === 'update' ? (
+            <button type="button" className="btn primary" onClick={() => window.location.reload()}>
+              Reload console
+            </button>
+          ) : (
+            <button type="button" className={'btn' + (progress.state === 'running' ? ' ghost' : ' primary')} onClick={onClose}>
+              Close
+            </button>
+          )}
+        </div>
+      </Modal>
+    )
+  }
+  return (
+    <Modal title={title} onClose={onClose} width={440}>
+      {action === 'poweroff' && <Alert tone="warn">Starting it again needs the host or the cloud console.</Alert>}
+      {err && <Alert tone="danger">{err}</Alert>}
+      <form onSubmit={(e) => void submit(e)}>
+        <Field label="Let live sessions finish for" hint="Minutes; 0 ends them now.">
+          <input id="action-wait" type="number" min={0} max={240} value={wait} onChange={(e) => setWait(Number(e.target.value))} />
+        </Field>
+        {typed && host && (
+          <Field label={`Type the hostname to confirm: ${host.hostname}`}>
+            <input id="action-confirm" value={confirm} onChange={(e) => setConfirm(e.target.value)} autoComplete="off" />
+          </Field>
+        )}
+        {needsCode && (
+          <Field label="Authenticator code" hint={`Covers host actions for ${host?.step_up_minutes ?? 5} minutes`}>
+            <input id="action-code" value={code} onChange={(e) => setCode(e.target.value)} inputMode="numeric" autoComplete="one-time-code" />
+          </Field>
+        )}
+        <div className="actions">
+          <button type="button" className="btn ghost" onClick={onClose} disabled={busy}>
+            Cancel
+          </button>
+          <button type="submit" className={'btn ' + (words.danger ? 'danger' : 'primary')} disabled={busy || (typed && !confirm.trim()) || (needsCode && !code.trim())}>
+            {busy ? 'Working…' : words.verb}
+          </button>
+        </div>
+      </form>
+    </Modal>
+  )
+}
