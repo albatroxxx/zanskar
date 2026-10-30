@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { ApiError, api, errorMessage } from '../../api/client'
 import { fmtTime, setDisplayZone } from '../../api/format'
-import type { BootSetting, RuntimeSetting, SettingsListing, SystemMetrics, SystemStatus } from '../../api/types'
+import type { BootSetting, HostStatus, RuntimeSetting, SettingsListing, SystemMetrics, SystemStatus } from '../../api/types'
 import { HostActionDialog, type BootChange } from '../../components/HostActionDialog'
 import { Alert, Badge, Empty, Field, Modal, PageHead } from '../../components/ui'
 import { TLSCard } from './TLSCard'
@@ -269,11 +269,19 @@ function changedIn(envVar: string, changed: string[]) {
 function BootTable({ boot, changed }: { boot: BootSetting[]; changed: string[] }) {
   const [editing, setEditing] = useState<BootSetting | null>(null)
   const [change, setChange] = useState<BootChange | null>(null)
+  // The host check the gear uses: where no root helper can apply a change
+  // (Docker, Kubernetes, no systemd), Edit is greyed with the reason instead
+  // of answering 409 after the dialog.
+  const [host, setHost] = useState<HostStatus | null>(null)
+  useEffect(() => {
+    api.get<HostStatus>('/admin/system/host').then(setHost).catch(() => setHost(null))
+  }, [])
+  const hostOff = host !== null && !host.available
   return (
     <div className="card table-wrap" id="settings-set-at-install">
       <h2>Set at install</h2>
       <p className="muted">
-        From <code>/etc/zanskar/env</code>. Some can be changed here; the gateway restarts to apply them.
+        From <code>/etc/zanskar/env</code>. {hostOff ? `Edit: ${host?.reason ?? 'Needs a systemd host.'}` : 'Some can be changed here; the gateway restarts to apply them.'}
       </p>
       <table>
         <thead>
@@ -305,7 +313,7 @@ function BootTable({ boot, changed }: { boot: BootSetting[]; changed: string[] }
               <td className="mono muted">{b.env_var}</td>
               <td className="actions">
                 {b.editable ? (
-                  <button type="button" className="btn sm" onClick={() => setEditing(b)}>
+                  <button type="button" className="btn sm" onClick={() => setEditing(b)} disabled={hostOff} title={hostOff ? host?.reason : undefined}>
                     Edit
                   </button>
                 ) : (

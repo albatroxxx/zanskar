@@ -162,6 +162,22 @@ describe('Settings', () => {
     await waitFor(() => expect(post).toHaveBeenCalledWith('/admin/settings/boot', { values: { ZANSKAR_PUBLIC_URL: 'https://gw.example.com' }, tls_mode: undefined, wait_minutes: 15 }))
   })
 
+  it('greys Edit with the reason where the host cannot apply a change', async () => {
+    const boot = [{ key: 'public_url', title: 'Public URL', env_var: 'ZANSKAR_PUBLIC_URL', value: '(not set)', description: '', editable: 'value' as const, raw: '' }]
+    serve({ ...listing, boot })
+    const get = api.get as unknown as ReturnType<typeof vi.fn>
+    const base = get.getMockImplementation() as (path: string) => Promise<unknown>
+    get.mockImplementation(async (path: string) => {
+      if (path === '/admin/system/host') return { hostname: 'gw', supervisor: 'docker', available: false, reason: 'Needs a systemd host.', mfa_fresh: true, step_up_minutes: 5 } as never
+      return base(path)
+    })
+    render(<Settings />)
+    const urlRow = (await screen.findByText('Public URL')).closest('tr') as HTMLElement
+    await waitFor(() => expect((within(urlRow).getByRole('button', { name: 'Edit' }) as HTMLButtonElement).disabled).toBe(true))
+    expect(within(urlRow).getByRole('button', { name: 'Edit' }).getAttribute('title')).toBe('Needs a systemd host.')
+    expect(screen.getByText(/Edit: Needs a systemd host\./)).toBeDefined()
+  })
+
   it('resets a console value with DELETE and shows a refused save in its own row', async () => {
     serve()
     const del = vi.spyOn(api, 'del').mockResolvedValue(setting({ key: 'log.level', category: 'Logging', title: 'Log level', type: 'enum', enum: ['debug', 'info', 'warn', 'error'], default: 'info', value: 'info', source: 'default' }) as never)
