@@ -71,7 +71,7 @@ describe('TargetsPage', () => {
     expect(screen.getAllByRole('columnheader').map((th) => th.textContent)).toEqual(['Name', 'Upstream', 'TLS', 'Tags', 'Actions'])
     expect(within(row).getByRole('button', { name: 'Upstream: TLS, verified against the system roots' })).toBeDefined()
 
-    await userEvent.setup().click(within(row).getByRole('button', { name: 'Open' }))
+    await userEvent.setup().click(within(row).getByRole('button', { name: 'Manage' }))
     const drawer = screen.getByRole('dialog', { name: 'Wiki' })
     expect(within(drawer).getByText('https://wiki.internal:8443')).toBeDefined()
     expect(within(drawer).queryByText('Label')).toBeNull()

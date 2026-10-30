@@ -13,7 +13,7 @@ import { TargetForm, type TargetKind } from './TargetForm'
  * TargetsPage is the page for one kind of target: the list with an Add
  * button, the form that adds one of that kind, and the drawer that opens
  * one. Hosts and databases differ only in their words and in the columns
- * between a target's name and its Open button.
+ * between a target's name and its Manage button.
  */
 export function TargetsPage({ kind, title, lead, addLabel, empty, columns, cells }: {
   kind: TargetKind
@@ -22,7 +22,7 @@ export function TargetsPage({ kind, title, lead, addLabel, empty, columns, cells
   addLabel: string
   /** What the list says while it has no target of this kind. */
   empty: string
-  /** Headers of the columns between Name and the Open button. */
+  /** Headers of the columns between Name and the Manage button. */
   columns: string[]
   /** One target's cells for those columns. The credentials are there to name what it is bound to. */
   cells: (t: Target, credentials: Credential[]) => ReactNode
@@ -121,7 +121,10 @@ export function TargetsPage({ kind, title, lead, addLabel, empty, columns, cells
                   </td>
                   {cells(t, creds.items ?? [])}
                   <td>
-                    <button className="btn sm" onClick={() => setOpen(t)}>Open</button>
+                    {/* Manage, not Open: in the console it opens the record (details,
+                        edit, disable, delete), never a session to the target, which is what
+                        Open means in the access portal (2026-10-30). */}
+                    <button className="btn sm" onClick={() => setOpen(t)}>Manage</button>
                   </td>
                 </tr>
               ))}

@@ -62,7 +62,7 @@ export function Autoscaling() {
                     {g.last_error && <Badge tone="danger">{g.last_error.length > 40 ? g.last_error.slice(0, 40) + '…' : g.last_error}</Badge>}
                   </td>
                   <td>{g.status === 'disabled' ? <StateIcon state="unknown" label="Disabled" /> : <StateIcon state="ok" label="Active" />}</td>
-                  <td><button className="btn sm" onClick={() => setOpen(g)}>Open</button></td>
+                  <td><button className="btn sm" onClick={() => setOpen(g)}>Manage</button></td>
                 </tr>
               ))}
             </tbody>

@@ -4,11 +4,13 @@ package browsergw
 
 import (
 	"context"
+	"errors"
 	"io"
 	"log/slog"
 	"net"
 	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -322,3 +324,41 @@ func TestReadinessChecks(t *testing.T) {
 
 // DefaultBrowserImageForTest stands in for the settings default.
 func DefaultBrowserImageForTest() string { return "ghcr.io/albatroxxx/zanskar-browser:test" }
+
+// TestReadinessProbesTheDaemonNotInfo (2026-10-30): on a host where
+// sessions ran fine the checklist said the runtime was unreachable, because
+// it asked `docker info`, which fails on things a session never touches (a
+// broken CLI plugin, a slow registry lookup). The probe asks the daemon its
+// version, the one round trip a session needs, through the real command.
+func TestReadinessProbesTheDaemonNotInfo(t *testing.T) {
+	dir := t.TempDir()
+	fake := dir + "/docker"
+	script := "#!/bin/sh\ncase \"$1\" in\n  version) echo 27.3.1 ;;\n  info) echo 'errors pretty printing info' >&2; exit 1 ;;\n  *) exit 3 ;;\nesac\n"
+	if err := os.WriteFile(fake, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	r := &Readiness{Guacd: func() string { return "127.0.0.1:4822" }, BrowserImage: func() string { return "" }, Docker: fake}
+	if cs := r.Checks(context.Background()); !cs[1].OK {
+		t.Fatalf("a daemon that answers its version is reachable: %+v", cs[1])
+	}
+}
+
+// TestRuntimeAdviceSaysWhy: a failed probe names its cause and the fix for
+// it, never the same sentence whatever went wrong.
+func TestRuntimeAdviceSaysWhy(t *testing.T) {
+	for _, tc := range []struct {
+		err  error
+		want string
+	}{
+		{exec.ErrNotFound, "not installed"},
+		{errors.New(`docker version: exit status 1: permission denied while trying to connect to the Docker daemon socket at unix:///var/run/docker.sock`), "restart the service so the group applies"},
+		{errors.New(`docker version: exit status 1: Cannot connect to the Docker daemon at unix:///var/run/docker.sock. Is the docker daemon running?`), "daemon is not running"},
+		{context.DeadlineExceeded, "within 10 seconds"},
+		{errors.New("docker version: exit status 125: something new\nand more"), "cannot use docker: docker version: exit status 125: something new"},
+	} {
+		got := runtimeAdvice("docker", tc.err)
+		if !strings.Contains(got, tc.want) || strings.Contains(got, "and more") {
+			t.Errorf("%v: %q, want it to say %q", tc.err, got, tc.want)
+		}
+	}
+}

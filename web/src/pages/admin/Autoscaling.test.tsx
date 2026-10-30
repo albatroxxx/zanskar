@@ -34,7 +34,7 @@ function gateway(put: (body: AutoscalingGroup) => Promise<AutoscalingGroup>, cre
 async function openFleet() {
   render(<Autoscaling />)
   const user = userEvent.setup()
-  await user.click(await screen.findByRole('button', { name: 'Open' }))
+  await user.click(await screen.findByRole('button', { name: 'Manage' }))
   return { user, drawer: within(screen.getByRole('dialog')) }
 }
 
