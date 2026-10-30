@@ -159,7 +159,7 @@ func (h *configHelper) apply(ctx context.Context, req bootedit.Request, perr err
 		if rerr := writeLike(h.Env, cur, st); rerr != nil {
 			return bootedit.Result{State: bootedit.RolledBack, Changed: names, Message: fmt.Sprintf("the gateway did not come back (%v), and the previous file could not be put back (%v): restore %s from %s by hand", err, rerr, h.Env, previous)}
 		}
-		_ = h.run(ctx, "systemctl", "restart", "zanskar")
+		_ = h.run(ctx, systemctl(), "restart", "zanskar")
 		return bootedit.Result{State: bootedit.RolledBack, Changed: names, Message: fmt.Sprintf("the gateway did not come back with the new settings (%v); the previous file is back", err)}
 	}
 	return bootedit.Result{State: bootedit.Applied, Changed: names}
@@ -168,7 +168,7 @@ func (h *configHelper) apply(ctx context.Context, req bootedit.Request, perr err
 // restartAndWait restarts the service and waits for its new process to
 // listen where the new file says.
 func (h *configHelper) restartAndWait(ctx context.Context, cfg *config.Config) error {
-	if err := h.run(ctx, "systemctl", "restart", "zanskar"); err != nil {
+	if err := h.run(ctx, systemctl(), "restart", "zanskar"); err != nil {
 		return err
 	}
 	wait := h.Wait
@@ -208,7 +208,7 @@ func (h *configHelper) health(ctx context.Context, port string) error {
 	if h.Health != nil {
 		return h.Health(ctx, port)
 	}
-	out, err := exec.CommandContext(ctx, "systemctl", "show", "--property=MainPID", "--value", "zanskar").Output() // #nosec G204 -- systemctl with fixed arguments
+	out, err := exec.CommandContext(ctx, systemctl(), "show", "--property=MainPID", "--value", "zanskar").Output() // #nosec G204 -- systemctl with fixed arguments
 	if err != nil {
 		return err
 	}
@@ -217,6 +217,18 @@ func (h *configHelper) health(ctx context.Context, port string) error {
 		return errors.New("the gateway service has no running process")
 	}
 	return listens("/proc", pid, port)
+}
+
+// systemctl is systemd's CLI by absolute path: the helper runs as root, so
+// it takes no program from PATH (Sonar S4036). /bin is for a system whose
+// /usr is not merged.
+func systemctl() string {
+	for _, p := range []string{"/usr/bin/systemctl", "/bin/systemctl"} {
+		if _, err := os.Stat(p); err == nil {
+			return p
+		}
+	}
+	return "/usr/bin/systemctl"
 }
 
 // listens reports whether process pid holds a TCP socket listening on port,

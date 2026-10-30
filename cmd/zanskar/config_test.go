@@ -114,7 +114,7 @@ func TestConfigApply(t *testing.T) {
 	if st, _ := os.Stat(env); st.Mode().Perm() != 0o640 {
 		t.Fatalf("mode %v, want 0640", st.Mode().Perm())
 	}
-	if len(host.runs) != 1 || strings.Join(host.runs[0], " ") != "systemctl restart zanskar" {
+	if len(host.runs) != 1 || strings.Join(host.runs[0], " ") != systemctl()+" restart zanskar" || !filepath.IsAbs(host.runs[0][0]) {
 		t.Fatalf("runs: %v", host.runs)
 	}
 	if len(host.asked) == 0 || host.asked[0] != "443" {
