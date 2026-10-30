@@ -58,7 +58,7 @@ export function Dashboard() {
         setStatus(st)
         // The gateway's clock against the browser's, halfway through the
         // round trip; the clock shows the gateway's time.
-        const at = st.now ? Date.parse(st.now) : NaN
+        const at = st.now ? Date.parse(st.now) : Number.NaN
         if (!Number.isNaN(at)) setSkew(at - (asked + Date.now()) / 2)
       })
       .catch((e) => setErr(errorMessage(e)))

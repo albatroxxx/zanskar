@@ -25,7 +25,7 @@ packages=$(docker run --rm --platform "linux/$arch" -v "$dir/packages:/packages:
 echo "browser image packages: $packages" >&2
 
 from=()
-if [ -n "$cache" ]; then
+if [[ -n "$cache" ]]; then
   if docker pull --quiet --platform "linux/$arch" "$cache" >/dev/null 2>&1; then
     from=(--cache-from "$cache")
   else
