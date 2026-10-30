@@ -755,3 +755,55 @@ the same branch.
 onward against the shape in this ADR. Before the merge: the full gate from `CLAUDE.md`,
 `hack/smoke.sh` against a fresh database, and `hack/smoke.sh` against a database migrated from
 the previous release with the seed policies of `hack/screenshots/seed.sh` loaded first.
+
+## Amendment (2026-10-30): the list shows the loosest terms; deleting a target takes it out of its grants
+
+Accepted by the product owner on 2026-10-30, after a walkthrough of the live 1.8.0 console. Two
+parts of this record change.
+
+**The list.** One line per grant (UI, above) does not scale. A policy of twelve grants filled
+twelve lines and repeated its terms on each. The cells now summarise; the detail opens in place.
+
+- **Grants** reads `3 grants · Host 2 · Autoscaling 1`, with a muted second line,
+  `N targets · tag env test` (or `N tag rules`).
+- **A new Access column** shows the **loosest** term across the grants. Each grant admits on its
+  own, so one grant without MFA is enough to sign in without it, and the strictest-of rule only
+  applies once several grants admit the same session.
+  - `Standing` or `Approval`, or `Standing ×7 · Approval ×5` when they are mixed;
+  - `MFA` only when every grant requires it;
+  - a danger badge `standing, no MFA ×N` for grants that admit at once with no second factor;
+  - a warning badge `no MFA ×N` for approval grants without MFA;
+  - `clipboard`, `files` and `own login` only when some grant turns them on (`×N` unless all
+    do).
+  - Idle, maximum, windows and retention stay out of the list.
+- **Expanding a policy** (a button with `aria-expanded`; Enter or Space) opens a full-width row
+  under it holding a table of its grants. The columns are kind, targets or tags with their
+  protocols (the first few, then `+N`), access, MFA (`no MFA` written out), clipboard and files,
+  sign-in, idle and maximum, windows, and retention.
+- **Who** shortens to `ops, sre +28 · 4 users` and opens the same way.
+- **Edge cases:**
+  - `no one` and `no grants` are badges;
+  - a disabled policy is muted but keeps its badges' tone;
+  - a target that is not found is counted only once every list has loaded, never printed as an
+    id fragment.
+
+**Deleting a target.** The deletion guard (`Referencing`, 409 `in_use`) is gone for hosts,
+databases, applications and autoscaling groups. An administrator with many policies had to edit
+each one before retiring a machine. Deleting now takes the target out of its grants, the way
+deleting a group takes it out of its policies (decision 2):
+
+- **A preview first.** `GET /targets/{id}/usage` (and the autoscaling equivalent) lists the
+  policies that name the target, the grants it would empty, its live sessions, and its pending
+  and approved access requests. The console shows that list and asks for the name.
+- **One transaction.** The id leaves every grant's `targets`. A grant left with no target and no
+  tag goes. **A policy left with no grant stays**, marked `no grants`, and grants nobody, as a
+  policy left with no one does. Then the target is deleted. Tag grants are untouched.
+- **Afterwards:**
+  - its live sessions end with the reason `target_deleted`;
+  - its pending and approved requests are cancelled;
+  - `target.delete` carries `policies_updated` (names), and each policy changed gets its own
+    `policy.update` with `removed_target`.
+  - Nobody else's access changes: a removed id only ever narrowed a grant.
+
+In the revocation table above, "target deleted" joins the rows: the sessions on that target end,
+and nothing else is re-checked.

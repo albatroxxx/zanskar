@@ -129,3 +129,65 @@ notices and restarts).
   under systemd, the container's restart policy under Docker and Kubernetes. Without a
   supervisor the gateway simply stops; the console says which case it detected. A drain
   can be cancelled until the last moment.
+
+## Amendment (2026-10-30): the console edits an allowlist of boot settings, through a root helper
+
+Accepted by the product owner on 2026-10-30, after a walkthrough of the live console: an
+administrator who can already restart the gateway from the console should not have to open a
+shell to change its public address. The rule above stands for the process: **the gateway
+never writes the environment file.** A change is a request that a root helper applies.
+
+- **The request.** An administrator with a fresh authenticator code (the step-up of ADR 0032)
+  submits new values for allowlisted keys. The gateway audits `settings.boot_requested` with
+  the names and the new values (none of the allowlisted keys holds a secret), writes
+  `/var/lib/zanskar/config-request` (JSON, at most 16 KiB), and a path unit the package ships,
+  `zanskar-config.path`, starts `zanskar-config.service`. The gateway holds no systemd
+  privilege, as for updates.
+- **The helper treats the request as hostile.** It runs as root, removes the request first
+  (no loop), and refuses the whole request on any key outside the allowlist or any value its
+  validator rejects. Values may not contain a newline, NUL, quote or backslash; each key has a
+  validator (an `https://` URL without a path, a list of DNS names and IP addresses, an
+  integer in range, a printable issuer of at most 64 bytes, an enum). It writes the new file
+  beside the old one, `fsync`s it, keeps the old one as `/etc/zanskar/env.previous`, renames
+  it into place with the same owner and mode (`root:zanskar 0640`), and writes its answer to
+  `/var/lib/zanskar/config-result`, which the console shows.
+- **Applying it is the restart we have.** Drift detection already names the changed
+  variables, and the banner restarts with a drain.
+- **A change that stops the gateway is rolled back.** The service runs `zanskar config check`
+  before `serve` (`ExecStartPre`); when it fails right after a helper write (a marker file
+  says so), `OnFailure=` restores `env.previous` and starts the service again, and the
+  console reports the rollback with the check's reason.
+- **The allowlist:**
+  - `ZANSKAR_APPS_MAX_SESSIONS` and `ZANSKAR_DATABASE_MAX_SESSIONS`;
+  - `ZANSKAR_PUBLIC_URL`;
+  - `ZANSKAR_TLS_HOSTS`;
+  - `ZANSKAR_LOG_FORMAT`;
+  - `ZANSKAR_ISSUER`, with a warning that enrolled authenticators keep the old name;
+  - `ZANSKAR_AWS_GATEWAY_PRINCIPAL`;
+  - the TLS mode.
+- **The TLS mode is a preset, not a free-form edit.** Switching it must change the listen
+  address and the proxy trust together, or the gateway would come up unreachable:
+  - `proxy` writes `ZANSKAR_TLS_MODE=proxy`, `LISTEN_ADDR=127.0.0.1:8443`,
+    `TRUST_PROXY_TLS=true` and no redirect;
+  - `managed` writes `ZANSKAR_TLS_MODE=managed`, `LISTEN_ADDR=:443`,
+    `HTTP_REDIRECT_ADDR=:80` and `TRUST_PROXY_TLS=false`.
+  - The console warns that a proxy still holding those ports must be stopped first. If it is
+    not, the rollback catches it.
+- **Install-only, with the reason shown beside each in the console:**
+  - the database driver and DSN: its credentials, and a different database is a different
+    gateway;
+  - the master key: it seals every secret, so `zanskar key rotate-master` changes it;
+  - the container runtime: any program path would run as the service user;
+  - the listen address outside the presets: the console could lock itself out;
+  - allow plain HTTP;
+  - trusted proxies and proxy TLS trust: they decide which client addresses and cookies are
+    believed;
+  - the TLS certificate file paths;
+  - the recordings directory: a path the service writes anywhere;
+  - SIEM export: it would ship the audit stream elsewhere.
+- **Systemd package installs only.** Elsewhere, as for host actions, the endpoints answer 409
+  `unsupported_supervisor` and the table stays read-only.
+
+A stolen administrator session with a current code can therefore change how the gateway
+names itself and how many sessions it runs. It cannot change what the gateway trusts, where it
+keeps data, or what it executes.
