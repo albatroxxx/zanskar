@@ -4,6 +4,7 @@ import QRCode from 'qrcode'
 import { useAuth } from '../auth/AuthContext'
 import { api, ApiError, errorMessage, signInEnded } from '../api/client'
 import { Alert, Field } from '../components/ui'
+import { SignInIcon } from '../components/icons'
 import { safeReturnPath, signInError } from './loginErrors'
 
 type Step = 'password' | 'change' | 'verify' | 'enroll' | 'recovery'
@@ -33,6 +34,8 @@ export function Login() {
   const [newPw, setNewPw] = useState('')
   const [confirmPw, setConfirmPw] = useState('')
 
+  // Single sign-on providers get a button each; LDAP signs in through the form.
+  const sso = providers.filter((p) => p.type === 'oidc')
   // A partial session that survived a reload lands on the right step.
   const effectiveStep: Step = step === 'password' && auth.status === 'partial' ? (auth.pending === 'enroll' ? 'enroll' : auth.pending === 'password' ? 'change' : 'verify') : step
 
@@ -166,13 +169,13 @@ export function Login() {
               <button type="submit" className="btn primary" disabled={busy} style={{ width: '100%', justifyContent: 'center' }}>
                 {busy ? 'Signing in…' : 'Sign in'}
               </button>
-              {providers.filter((p) => p.type === 'oidc').length > 0 && (
-                <div style={{ marginTop: 16 }}>
-                  <div className="muted" style={{ textAlign: 'center', fontSize: '0.8rem', margin: '0 0 10px' }}>or</div>
-                  {providers.filter((p) => p.type === 'oidc').map((p) => (
-                    <a key={p.id} className="btn" style={{ width: '100%', justifyContent: 'center', marginBottom: 8 }}
-                       href={`/api/v1/auth/oidc/${p.id}/start?next=${encodeURIComponent(from)}`}>
-                      Sign in with {p.name}
+              {sso.length > 0 && (
+                <div className="sso">
+                  <div className="sso-divider" role="separator" aria-label="or"><span aria-hidden="true">or</span></div>
+                  {sso.map((p) => (
+                    <a key={p.id} className="btn sso-btn" href={`/api/v1/auth/oidc/${p.id}/start?next=${encodeURIComponent(from)}`}>
+                      <SignInIcon />
+                      <span>Continue with {p.name}</span>
                     </a>
                   ))}
                 </div>

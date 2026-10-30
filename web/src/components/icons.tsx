@@ -233,6 +233,17 @@ export function TileIcon({ kind }: { kind: 'approvals' | 'attention' | 'key' | '
 
 /** BellIcon and GearIcon sit in the admin corner beside the command line,
  *  drawn at its size and weight. */
+/** Signing in through another system: an arrow going in at a door. */
+export function SignInIcon() {
+  return (
+    <svg {...svgProps(18)}>
+      <path d="M14 4h4a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-4" />
+      <polyline points="10 8 14 12 10 16" />
+      <line x1="14" y1="12" x2="3" y2="12" />
+    </svg>
+  )
+}
+
 export function BellIcon() {
   return (
     <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">

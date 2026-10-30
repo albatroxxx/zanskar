@@ -204,3 +204,29 @@ function Where() {
   const loc = useLocation()
   return <p>at {loc.pathname + loc.search}</p>
 }
+
+// 2026-10-30: one full-width button per single sign-on provider, under an
+// "or" rule, worded with the provider's name; LDAP signs in through the form
+// and gets no button. The button is a link styled as a button (sso-btn),
+// which never underlines.
+describe('Login with single sign-on providers', () => {
+  it('offers a button per OIDC provider', async () => {
+    vi.spyOn(api, 'get').mockImplementation(async (path: string) => {
+      if (path === '/auth/me') throw new ApiError(401, { code: 'unauthenticated', message: 'sign in required' }, '401')
+      if (path === '/auth/providers') return { items: [{ id: 'kc1', name: 'Keycloak', type: 'oidc' }, { id: 'ad1', name: 'Corp AD', type: 'ldap' }] } as never
+      return { text: '' } as never
+    })
+    render(
+      <MemoryRouter>
+        <AuthProvider>
+          <Login />
+        </AuthProvider>
+      </MemoryRouter>,
+    )
+    const link = await screen.findByRole('link', { name: 'Continue with Keycloak' })
+    expect(link.getAttribute('href')).toBe('/api/v1/auth/oidc/kc1/start?next=%2Fhome')
+    expect(link.className).toBe('btn sso-btn')
+    expect(screen.getByRole('separator', { name: 'or' })).toBeDefined()
+    expect(screen.queryByRole('link', { name: /Corp AD/ })).toBeNull()
+  })
+})
