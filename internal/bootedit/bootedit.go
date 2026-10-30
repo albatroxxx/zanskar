@@ -118,7 +118,7 @@ func ParseRequest(r io.Reader) (Request, error) {
 	dec.DisallowUnknownFields()
 	var req Request
 	if err := dec.Decode(&req); err != nil {
-		return Request{}, fmt.Errorf("%w: %v", ErrInvalid, err)
+		return Request{}, fmt.Errorf("%w: %w", ErrInvalid, err)
 	}
 	if dec.More() {
 		return Request{}, fmt.Errorf("%w: more than one JSON value", ErrInvalid)
@@ -151,11 +151,11 @@ func Changes(req Request) (map[string]string, error) {
 			return nil, fmt.Errorf("%w: %s cannot be changed from the console", ErrInvalid, safeName(k))
 		}
 		if err := plain(v); err != nil {
-			return nil, fmt.Errorf("%w: %s %v", ErrInvalid, k, err)
+			return nil, fmt.Errorf("%w: %s %w", ErrInvalid, k, err)
 		}
 		if v != "" {
 			if err := check(v); err != nil {
-				return nil, fmt.Errorf("%w: %s %v", ErrInvalid, k, err)
+				return nil, fmt.Errorf("%w: %s %w", ErrInvalid, k, err)
 			}
 		}
 		out[k] = v
@@ -211,7 +211,7 @@ func tlsHosts(v string) error {
 	}
 	for _, h := range parts {
 		if err := tlscert.ValidHost(strings.TrimSpace(h)); err != nil {
-			return fmt.Errorf("must list host names or IP addresses, comma-separated: %v", err)
+			return fmt.Errorf("must list host names or IP addresses, comma-separated: %w", err)
 		}
 	}
 	return nil
