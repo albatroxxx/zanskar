@@ -1,0 +1,15 @@
+[Unit]
+Description=Apply an install-setting change requested from the console
+Documentation=https://github.com/albatroxxx/zanskar
+
+[Service]
+Type=oneshot
+# Runs as root: it writes /etc/zanskar/env and restarts the gateway. It
+# trusts nothing the gateway wrote: it reads the request (and removes it, so
+# a failure never loops), refuses any variable outside its allowlist and any
+# value its own checks reject, checks the new file as serve would load it,
+# keeps the previous one as env.previous, and puts it back when the gateway
+# does not answer on the new file.
+ExecStart=/usr/bin/zanskar config apply --env /etc/zanskar/env --state /var/lib/zanskar
+PrivateTmp=true
+ProtectHome=true

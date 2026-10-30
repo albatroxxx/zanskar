@@ -5,9 +5,11 @@ package main
 import (
 	"fmt"
 	"net/url"
+	"os"
 	"strconv"
 	"strings"
 
+	"github.com/albatroxxx/zanskar/internal/bootedit"
 	"github.com/albatroxxx/zanskar/internal/config"
 	"github.com/albatroxxx/zanskar/internal/settings"
 )
@@ -72,6 +74,20 @@ func describeDSN(driver, dsn string) string {
 // read-only section. Secrets are masked: the master key is named by its
 // active version, the DSN loses any password.
 func bootSettings(cfg *config.Config, keyVersion int) []settings.Boot {
+	out := bootRows(cfg, keyVersion)
+	for i := range out {
+		switch {
+		case out[i].Key == "tls":
+			out[i].Editable, out[i].Raw = "preset", cfg.TLSMode
+		case bootedit.Editable(out[i].EnvVar):
+			out[i].Editable, out[i].Raw = "value", os.Getenv(out[i].EnvVar)
+		}
+	}
+	return out
+}
+
+// bootRows lists the boot settings as the console shows them.
+func bootRows(cfg *config.Config, keyVersion int) []settings.Boot {
 	yesno := func(b bool) string {
 		if b {
 			return "true"

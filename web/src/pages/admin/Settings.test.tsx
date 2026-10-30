@@ -133,6 +133,35 @@ describe('Settings', () => {
     expect(screen.getAllByText(/does not follow upgrades/)).toHaveLength(1)
   })
 
+  // ADR 0020, amended 2026-10-30: allowlisted install settings change
+  // through the root helper; the rest say why they cannot.
+  it('edits an allowlisted install setting through the helper, and says why others are install-only', async () => {
+    const boot = [
+      { key: 'public_url', title: 'Public URL', env_var: 'ZANSKAR_PUBLIC_URL', value: '(not set)', description: '', editable: 'value' as const, raw: '' },
+      { key: 'db', title: 'Database', env_var: 'ZANSKAR_DB_DRIVER, ZANSKAR_DB_DSN', value: 'sqlite', description: '' },
+    ]
+    serve({ ...listing, boot })
+    const get = api.get as unknown as ReturnType<typeof vi.fn>
+    const base = get.getMockImplementation() as (path: string) => Promise<unknown>
+    get.mockImplementation(async (path: string) => {
+      if (path === '/admin/system/host') return { hostname: 'gw', supervisor: 'systemd', available: true, mfa_fresh: true, step_up_minutes: 5 } as never
+      if (path === '/admin/system/status') return { started_at: 'A', draining: false, live_sessions: 0, env_file: { state: 'unchanged' } } as never
+      return base(path)
+    })
+    const post = vi.spyOn(api, 'post').mockResolvedValue({ id: 'req-1' } as never)
+    render(<Settings />)
+    const user = userEvent.setup()
+    const dbRow = (await screen.findByText('Database')).closest('tr') as HTMLElement
+    expect(within(dbRow).getByText('Install only').getAttribute('title')).toMatch(/different database is a different gateway/)
+    const urlRow = screen.getByText('Public URL').closest('tr') as HTMLElement
+    await user.click(within(urlRow).getByRole('button', { name: 'Edit' }))
+    await user.type(screen.getByLabelText('ZANSKAR_PUBLIC_URL'), 'https://gw.example.com')
+    await user.click(screen.getByRole('button', { name: 'Continue' }))
+    expect(await screen.findByText('ZANSKAR_PUBLIC_URL = https://gw.example.com')).toBeDefined()
+    await user.click(screen.getByRole('button', { name: 'Apply and restart' }))
+    await waitFor(() => expect(post).toHaveBeenCalledWith('/admin/settings/boot', { values: { ZANSKAR_PUBLIC_URL: 'https://gw.example.com' }, tls_mode: undefined, wait_minutes: 15 }))
+  })
+
   it('resets a console value with DELETE and shows a refused save in its own row', async () => {
     serve()
     const del = vi.spyOn(api, 'del').mockResolvedValue(setting({ key: 'log.level', category: 'Logging', title: 'Log level', type: 'enum', enum: ['debug', 'info', 'warn', 'error'], default: 'info', value: 'info', source: 'default' }) as never)

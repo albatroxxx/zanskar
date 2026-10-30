@@ -54,6 +54,8 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.Handle("POST /api/v1/admin/system/update/install", admin(http.HandlerFunc(h.installUpdate)))
 	mux.Handle("POST /api/v1/admin/system/restart", admin(http.HandlerFunc(h.restart)))
 	mux.Handle("DELETE /api/v1/admin/system/restart", admin(http.HandlerFunc(h.cancel)))
+	mux.Handle("POST /api/v1/admin/settings/boot", admin(http.HandlerFunc(h.bootChange)))
+	mux.Handle("GET /api/v1/admin/settings/boot/result", admin(http.HandlerFunc(h.bootResult)))
 }
 
 // Status is what the console polls.

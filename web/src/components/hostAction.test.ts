@@ -96,6 +96,31 @@ describe('host action progress', () => {
     expect(observe(start('restart'), done, { at: t0, error: 'offline' })).toBe(done)
   })
 
+  // ADR 0020, amended 2026-10-30: a change to the environment file is
+  // judged by the root helper's answer for this request.
+  it('follows a config change by the helper\'s answer', () => {
+    const s = start('config', { target: 'req-1' })
+    const answer = (state: 'applied' | 'refused' | 'rolled_back', id = 'req-1') => ({ id, state, message: `${state} because`, at: 'now' })
+    const seen = run(s, [
+      { at: t0 + 2000, status: status({ live_sessions: 1 }) },
+      { at: t0 + 4000, status: status() },
+      { at: t0 + 6000, error: 'offline' },
+      { at: t0 + 8000, status: status({ started_at: 'later', draining: false }), config: answer('applied', 'an-older-one') },
+      { at: t0 + 10000, status: status({ started_at: 'later', draining: false }), config: answer('applied') },
+    ])
+    expect(seen.map((p) => [p.state, p.step])).toEqual([
+      ['running', 'drain'],
+      ['running', 'install'],
+      ['running', 'restart'],
+      ['running', 'restart'],
+      ['done', 'back'],
+    ])
+    expect(observe(s, initialProgress, { at: t0 + 1, status: status({ draining: false }), config: answer('refused') })).toMatchObject({ state: 'failed', message: 'refused because' })
+    expect(observe(s, initialProgress, { at: t0 + 1, status: status({ started_at: 'later' }), config: answer('rolled_back') })).toMatchObject({ state: 'failed', step: 'back', message: 'rolled_back because' })
+    expect(stepLabel('install', s)).toBe('Applying the settings')
+    expect(doneTitle(s)).toBe('Install settings applied')
+  })
+
   it('names the steps and the outcome', () => {
     expect(stepLabel('install', { action: 'update', target: '1.9.0' })).toBe('Installing 1.9.0')
     expect(stepLabel('restart', { action: 'reboot' })).toBe('Rebooting the host')

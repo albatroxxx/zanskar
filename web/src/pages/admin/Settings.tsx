@@ -2,7 +2,8 @@ import { useEffect, useState } from 'react'
 import { ApiError, api, errorMessage } from '../../api/client'
 import { fmtTime, setDisplayZone } from '../../api/format'
 import type { BootSetting, RuntimeSetting, SettingsListing, SystemMetrics, SystemStatus } from '../../api/types'
-import { Alert, Badge, Empty, Field, PageHead } from '../../components/ui'
+import { HostActionDialog, type BootChange } from '../../components/HostActionDialog'
+import { Alert, Badge, Empty, Field, Modal, PageHead } from '../../components/ui'
 import { TLSCard } from './TLSCard'
 import { StorageCard } from './StorageCard'
 import { RetentionCard } from './RetentionCard'
@@ -266,16 +267,23 @@ function changedIn(envVar: string, changed: string[]) {
 }
 
 function BootTable({ boot, changed }: { boot: BootSetting[]; changed: string[] }) {
+  const [editing, setEditing] = useState<BootSetting | null>(null)
+  const [change, setChange] = useState<BootChange | null>(null)
   return (
     <div className="card table-wrap" id="settings-set-at-install">
       <h2>Set at install</h2>
-      <p className="muted">From <code>/etc/zanskar/env</code>; edit and restart to change.</p>
+      <p className="muted">
+        From <code>/etc/zanskar/env</code>. Some can be changed here; the gateway restarts to apply them.
+      </p>
       <table>
         <thead>
           <tr>
             <th>Setting</th>
             <th>Value</th>
             <th>Variable</th>
+            <th>
+              <span className="sr-only">Edit</span>
+            </th>
           </tr>
         </thead>
         <tbody>
@@ -295,11 +303,92 @@ function BootTable({ boot, changed }: { boot: BootSetting[]; changed: string[] }
                 )}
               </td>
               <td className="mono muted">{b.env_var}</td>
+              <td className="actions">
+                {b.editable ? (
+                  <button type="button" className="btn sm" onClick={() => setEditing(b)}>
+                    Edit
+                  </button>
+                ) : (
+                  <span className="muted" title={installOnly[b.key] ?? 'Changed in the environment file only.'}>
+                    Install only
+                  </span>
+                )}
+              </td>
             </tr>
           ))}
         </tbody>
       </table>
+      {editing && (
+        <BootEdit
+          setting={editing}
+          onClose={() => setEditing(null)}
+          onNext={(c) => {
+            setEditing(null)
+            setChange(c)
+          }}
+        />
+      )}
+      {change && <HostActionDialog action="config" change={change} onClose={() => setChange(null)} />}
     </div>
+  )
+}
+
+/** installOnly says why a boot setting is not offered for editing (ADR 0020, amended 2026-10-30). */
+const installOnly: Record<string, string> = {
+  db: 'Its credentials, and a different database is a different gateway.',
+  master_key: 'It seals every secret; zanskar key rotate-master changes it.',
+  docker_path: 'Any program path would run as the service user.',
+  listen_addr: 'The console could lock itself out; the TLS mode presets set it.',
+  recordings_s3: 'The Recording storage card above changes it, at once.',
+  allow_plain_http: 'Plain HTTP stays a decision made on the host.',
+  trusted_proxies: 'It decides which client addresses are believed.',
+  trust_proxy_tls: 'It decides which cookies are believed; the TLS mode presets set it.',
+  http_redirect: 'The TLS mode presets set it.',
+  recordings_dir: 'A path the service writes anywhere.',
+  siem: 'It would ship the audit stream elsewhere.',
+}
+
+/** BootEdit takes the new value of one editable boot setting, then hands on to the progress dialog. */
+function BootEdit({ setting, onClose, onNext }: { setting: BootSetting; onClose: () => void; onNext: (c: BootChange) => void }) {
+  const [value, setValue] = useState(setting.raw ?? '')
+  const preset = setting.editable === 'preset'
+  const [mode, setMode] = useState<'managed' | 'proxy'>(setting.raw === 'proxy' ? 'proxy' : 'managed')
+  return (
+    <Modal title={`Change ${setting.title}`} onClose={onClose} width={480}>
+      <form
+        onSubmit={(e) => {
+          e.preventDefault()
+          if (preset) onNext({ tls_mode: mode, summary: mode === 'managed' ? 'TLS mode: managed. The gateway serves HTTPS on 443 and redirects 80.' : 'TLS mode: proxy. The gateway listens on 127.0.0.1:8443 behind a TLS proxy.' })
+          else onNext({ values: { [setting.env_var]: value.trim() }, summary: `${setting.env_var} = ${value.trim() || '(unset)'}` })
+        }}
+      >
+        {preset ? (
+          <>
+            <Field label="TLS mode">
+              <select id="boot-tls-mode" value={mode} onChange={(e) => setMode(e.target.value as 'managed' | 'proxy')}>
+                <option value="managed">Managed: the gateway serves HTTPS itself</option>
+                <option value="proxy">Proxy: a TLS proxy in front</option>
+              </select>
+            </Field>
+            {mode === 'managed' && setting.raw !== 'managed' && (
+              <Alert tone="warn">Stop the proxy in front first: the gateway takes ports 443 and 80. If it cannot, the change is rolled back.</Alert>
+            )}
+          </>
+        ) : (
+          <Field label={setting.env_var}>
+            <input id="boot-value" value={value} onChange={(e) => setValue(e.target.value)} autoComplete="off" spellCheck={false} />
+          </Field>
+        )}
+        <div className="actions">
+          <button type="button" className="btn ghost" onClick={onClose}>
+            Cancel
+          </button>
+          <button type="submit" className="btn primary">
+            Continue
+          </button>
+        </div>
+      </form>
+    </Modal>
   )
 }
 

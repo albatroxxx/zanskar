@@ -3871,6 +3871,89 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
+  /admin/settings/boot:
+    post:
+      tags: [admin]
+      summary: Change install settings through the root helper
+      description: |
+        ADR 0020, amended 2026-10-30. New values for the allowlisted variables
+        (`ZANSKAR_APPS_MAX_SESSIONS`, `ZANSKAR_DATABASE_MAX_SESSIONS`, `ZANSKAR_PUBLIC_URL`,
+        `ZANSKAR_TLS_HOSTS`, `ZANSKAR_LOG_FORMAT`, `ZANSKAR_ISSUER`, `ZANSKAR_AWS_GATEWAY_PRINCIPAL`),
+        or a TLS preset (`managed` or `proxy`, which set the mode, the listen address, the redirect
+        and the proxy trust together). The gateway never writes the environment file: after the
+        drain it writes a request that `zanskar config apply`, run as root by a path unit, checks
+        again, writes beside the old file (kept as `env.previous`), and applies with a restart; if
+        the gateway does not come back on the new file, the previous one goes back. Needs a
+        systemd host and a recent authenticator code. Audited as `settings.boot_request`, and the
+        outcome as `settings.boot_apply`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                values:
+                  type: object
+                  additionalProperties: { type: string }
+                  description: Allowlisted variables and their new values; "" takes a line out.
+                tls_mode:
+                  type: string
+                  enum: [managed, proxy]
+                wait_minutes:
+                  type: integer
+                  minimum: 0
+                  maximum: 240
+      responses:
+        "202":
+          description: Draining; the request is written after the drain.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id: { type: string, description: The request; the result names it. }
+                  status: { $ref: "#/components/schemas/SystemStatus" }
+        "400":
+          description: >-
+            `invalid_change`: a variable outside the allowlist, a preset's variable given on its
+            own, or a value the helper would refuse. Nothing is drained.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: "`step_up_required`: prove an authenticator code first."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: "`unsupported_supervisor`: not a systemd host with a state directory."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /admin/settings/boot/result:
+    get:
+      tags: [admin]
+      summary: The root helper's last answer
+      responses:
+        "200":
+          description: Result.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [id, state, at]
+                properties:
+                  id: { type: string }
+                  state: { type: string, enum: [applied, refused, rolled_back] }
+                  message: { type: string }
+                  changed: { type: array, items: { type: string }, description: Variable names only. }
+                  at: { type: string, format: date-time }
+        "404":
+          $ref: "#/components/responses/NotFound"
   /admin/settings/login-banner:
     get:
       tags: [admin]
@@ -6764,6 +6847,13 @@ components:
         value:
           type: string
           description: Masked where it is a secret.
+        editable:
+          type: string
+          enum: [value, preset]
+          description: How the console may change it through the root helper (ADR 0020, amended 2026-10-30); absent, install-only.
+        raw:
+          type: string
+          description: An editable variable's value as the file has it; allowlisted variables hold no secret.
         description:
           type: string
     EnvFileReport:

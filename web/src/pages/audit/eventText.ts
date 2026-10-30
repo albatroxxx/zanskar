@@ -75,6 +75,8 @@ const actionLabels: Record<string, string> = {
   'session.shadow.end': 'Stopped watching a session',
   'settings.update': 'Settings updated',
   'settings.reset': 'Settings reset',
+  'settings.boot_request': 'Install settings change requested',
+  'settings.boot_apply': 'Install settings change applied',
   'system.restart': 'Gateway restart requested',
   'system.restart_cancel': 'Gateway restart cancelled',
   'system.reboot': 'Host reboot requested',

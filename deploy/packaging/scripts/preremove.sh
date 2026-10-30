@@ -8,5 +8,6 @@ case "$1" in
 	remove | purge | 0)
 		systemctl disable --now zanskar >/dev/null 2>&1 || true
 		systemctl disable --now zanskar-update.path >/dev/null 2>&1 || true
+		systemctl disable --now zanskar-config.path >/dev/null 2>&1 || true
 		;;
 esac

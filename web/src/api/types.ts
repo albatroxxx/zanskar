@@ -517,6 +517,19 @@ export interface BootSetting {
   env_var: string
   value: string
   description: string
+  /** How the console may change it through the root helper (ADR 0020, amended 2026-10-30). */
+  editable?: 'value' | 'preset'
+  /** An editable variable's value as the file has it. */
+  raw?: string
+}
+
+/** The root helper's answer to a change of the environment file. */
+export interface ConfigResult {
+  id: string
+  state: 'applied' | 'refused' | 'rolled_back'
+  message?: string
+  changed?: string[]
+  at: string
 }
 
 export interface SettingsListing {

@@ -88,6 +88,8 @@ func run(args []string) int {
 		err = runInit(args[1:])
 	case "backup":
 		err = runBackup(args[1:])
+	case "config":
+		err = runConfig(args[1:])
 	case "restore":
 		err = runRestore(args[1:])
 	case "keygen":
@@ -123,7 +125,7 @@ func run(args []string) int {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: zanskar <init|serve|migrate|backup|restore|keygen|key status|key rotate|key rotate-master|admin create|admin reset-mfa|audit verify|audit anchor|audit reseal|dbproxy|apprelay|healthcheck|version>")
+	fmt.Fprintln(os.Stderr, "usage: zanskar <init|serve|migrate|backup|restore|config check|config apply|keygen|key status|key rotate|key rotate-master|admin create|admin reset-mfa|audit verify|audit anchor|audit reseal|dbproxy|apprelay|healthcheck|version>")
 }
 
 func newLogger(cfg *config.Config) *slog.Logger {
@@ -288,6 +290,9 @@ func serve(ctx context.Context) error {
 		log.Warn("session cookies are not marked Secure; fine on loopback, never in production")
 	}
 	auditLog := audit.NewLog(db)
+	// How the root helper's last change to the environment file ended: it
+	// restarted this service, so the process that asked never saw it.
+	lifecycle.AckConfigResult(ctx, cfg.StateDir, auditLog)
 	// Signs the audit anchors (ADR 0008), derived from the master key like
 	// the CSRF key; `zanskar key rotate-master` re-signs the stored anchors.
 	anchorKey, err := audit.AnchorKey(cfg.MasterKey)

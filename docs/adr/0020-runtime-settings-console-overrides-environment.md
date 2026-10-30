@@ -151,12 +151,18 @@ never writes the environment file.** A change is a request that a root helper ap
   beside the old one, `fsync`s it, keeps the old one as `/etc/zanskar/env.previous`, renames
   it into place with the same owner and mode (`root:zanskar 0640`), and writes its answer to
   `/var/lib/zanskar/config-result`, which the console shows.
-- **Applying it is the restart we have.** Drift detection already names the changed
-  variables, and the banner restarts with a drain.
-- **A change that stops the gateway is rolled back.** The service runs `zanskar config check`
-  before `serve` (`ExecStartPre`); when it fails right after a helper write (a marker file
-  says so), `OnFailure=` restores `env.previous` and starts the service again, and the
-  console reports the rollback with the check's reason.
+- **The helper applies it and checks the outcome itself.** It runs `zanskar config check` on
+  the new file, which loads it as `serve` would. It keeps the old file as
+  `/etc/zanskar/env.previous`, renames the new one into place and restarts the gateway, then
+  waits up to a minute for `/readyz` where the new file says the gateway listens. If the gateway
+  does not answer, it puts the previous file back, restarts again, and reports `rolled_back`;
+  otherwise it reports `applied`. While the gateway drains, it watches the result, and a refused
+  request ends the drain. The process that starts after the restart audits the outcome, once
+  (`settings.boot_apply`).
+  - Built that way (2026-10-30) rather than with `ExecStartPre=` and `OnFailure=` on the main
+    unit. That unit restarts every three seconds without a start limit, so it never reaches the
+    failed state that `OnFailure=` waits for, and a bad file would have restarted it forever.
+    The helper follows the update flow of ADR 0032 instead, and `zanskar.service` is unchanged.
 - **The allowlist:**
   - `ZANSKAR_APPS_MAX_SESSIONS` and `ZANSKAR_DATABASE_MAX_SESSIONS`;
   - `ZANSKAR_PUBLIC_URL`;

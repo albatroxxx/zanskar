@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { ApiError, api, errorMessage } from '../api/client'
 import { fmtTime } from '../api/format'
-import type { HostStatus, SystemStatus, UpdateStatus } from '../api/types'
+import type { ConfigResult, HostStatus, SystemStatus, UpdateStatus } from '../api/types'
 import { DoneIcon } from './icons'
 import { deadlineFor, doneTitle, initialProgress, observe, pacing, progressWatch, stepLabel, stepsFor, type HostAction, type Observation, type Progress, type Start } from './hostAction'
 import { Alert, Field, Modal } from './ui'
@@ -11,6 +11,15 @@ const titles: Record<HostAction, { title: string; verb: string; danger?: boolean
   restart: { title: 'Restart gateway', verb: 'Restart' },
   reboot: { title: 'Reboot host', verb: 'Reboot' },
   poweroff: { title: 'Stop host', verb: 'Stop', danger: true },
+  config: { title: 'Change install settings', verb: 'Apply and restart' },
+}
+
+/** BootChange is a change to the environment file the root helper applies (ADR 0020, amended 2026-10-30). */
+export interface BootChange {
+  values?: Record<string, string>
+  tls_mode?: 'managed' | 'proxy'
+  /** The change in words, shown above the form. */
+  summary: string
 }
 
 /**
@@ -20,7 +29,7 @@ const titles: Record<HostAction, { title: string; verb: string; danger?: boolean
  * and stop, and the admin refreshed and ran `version` to learn the outcome).
  * It ends with a green tick or the reason it did not happen.
  */
-export function HostActionDialog({ action, version, onClose }: { action: HostAction; version?: string; onClose: () => void }) {
+export function HostActionDialog({ action, version, change, onClose }: { action: HostAction; version?: string; change?: BootChange; onClose: () => void }) {
   const [host, setHost] = useState<HostStatus | null>(null)
   const [wait, setWait] = useState(15)
   const [confirm, setConfirm] = useState('')
@@ -54,6 +63,7 @@ export function HostActionDialog({ action, version, onClose }: { action: HostAct
       try {
         o.status = await api.get<SystemStatus>('/admin/system/status')
         if (start.action === 'update') o.update = await api.get<UpdateStatus>('/admin/system/update').catch(() => null)
+        if (start.action === 'config') o.config = await api.get<ConfigResult>('/admin/settings/boot/result').catch(() => null)
       } catch (e) {
         o.error = e instanceof ApiError && e.status === 401 ? 'signed_out' : 'offline'
       }
@@ -70,7 +80,7 @@ export function HostActionDialog({ action, version, onClose }: { action: HostAct
   }, [start])
 
   const needsCode = action !== 'restart' && host !== null && !host.mfa_fresh
-  const typed = action !== 'restart'
+  const typed = action !== 'restart' && action !== 'config'
   const submit = async (e: FormEvent) => {
     e.preventDefault()
     setBusy(true)
@@ -80,11 +90,13 @@ export function HostActionDialog({ action, version, onClose }: { action: HostAct
       const installBefore = action === 'update' ? (await api.get<UpdateStatus>('/admin/system/update').catch(() => null))?.install?.at : undefined
       if (needsCode) await api.post('/auth/mfa/step-up', { code: code.trim() })
       const body = typed ? { wait_minutes: wait, confirm: confirm.trim() } : { wait_minutes: wait }
+      let target = version
       if (action === 'update') await api.post('/admin/system/update/install', { version, ...body })
+      else if (action === 'config') target = (await api.post<{ id: string }>('/admin/settings/boot', { values: change?.values, tls_mode: change?.tls_mode, wait_minutes: wait })).id
       else await api.post(`/admin/system/${action}`, body)
       const now = Date.now()
       setProgress(initialProgress)
-      setStart({ action, target: version, startedAt: before.started_at, installBefore, at: now, deadline: deadlineFor(action, wait, now) })
+      setStart({ action, target, startedAt: before.started_at, installBefore, at: now, deadline: deadlineFor(action, wait, now) })
     } catch (e2) {
       setErr(errorMessage(e2))
     } finally {
@@ -142,7 +154,7 @@ export function HostActionDialog({ action, version, onClose }: { action: HostAct
         <div className="actions">
           {progress.state === 'running' && progress.step === 'drain' && (
             <button type="button" className="btn ghost" onClick={() => void cancel()}>
-              Cancel {action === 'poweroff' ? 'stop' : action}
+              Cancel {action === 'poweroff' ? 'stop' : action === 'config' ? 'change' : action}
             </button>
           )}
           {progress.state === 'done' && action === 'update' ? (
@@ -161,6 +173,7 @@ export function HostActionDialog({ action, version, onClose }: { action: HostAct
   return (
     <Modal title={title} onClose={onClose} width={440}>
       {action === 'poweroff' && <Alert tone="warn">Starting it again needs the host or the cloud console.</Alert>}
+      {change && <p className="config-change">{change.summary}</p>}
       {err && <Alert tone="danger">{err}</Alert>}
       <form onSubmit={(e) => void submit(e)}>
         <Field label="Let live sessions finish for" hint="Minutes; 0 ends them now.">

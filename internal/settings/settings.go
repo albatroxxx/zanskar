@@ -233,6 +233,13 @@ type Boot struct {
 	EnvVar      string `json:"env_var"`
 	Value       string `json:"value"` // masked where it is a secret
 	Description string `json:"description"`
+	// Editable says how the console may change it through the root helper
+	// (ADR 0020, amended 2026-10-30): "value" for an allowlisted variable,
+	// "preset" for the TLS mode; empty, it is install-only.
+	Editable string `json:"editable,omitempty"`
+	// Raw is an editable variable's value as the file has it, for the edit
+	// field; allowlisted variables hold no secret.
+	Raw string `json:"raw,omitempty"`
 }
 
 // Setting is one stored console row.

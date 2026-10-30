@@ -1,7 +1,7 @@
-import type { SystemStatus, UpdateStatus } from '../api/types'
+import type { ConfigResult, SystemStatus, UpdateStatus } from '../api/types'
 
 /** What the gear and the bell can ask the gateway to do (ADR 0032). */
-export type HostAction = 'update' | 'restart' | 'reboot' | 'poweroff'
+export type HostAction = 'update' | 'restart' | 'reboot' | 'poweroff' | 'config'
 
 /** A stage the progress view lists; 'restart' also covers the gateway being away. */
 export type Step = 'drain' | 'install' | 'restart' | 'back'
@@ -12,12 +12,13 @@ export const stepsFor: Record<HostAction, Step[]> = {
   restart: ['drain', 'restart', 'back'],
   reboot: ['drain', 'restart', 'back'],
   poweroff: ['drain', 'restart'],
+  config: ['drain', 'install', 'restart', 'back'],
 }
 
 /** Start is what was asked, and of which process. */
 export interface Start {
   action: HostAction
-  /** The version an update installs. */
+  /** The version an update installs; the request id of a config change. */
   target?: string
   /** started_at of the process that was asked: a different one is the fresh process. */
   startedAt: string
@@ -45,6 +46,8 @@ export interface Observation {
   at: number
   status?: SystemStatus
   update?: UpdateStatus | null
+  /** The root helper's last answer, for a config change. */
+  config?: ConfigResult | null
   error?: 'offline' | 'signed_out'
 }
 
@@ -79,6 +82,7 @@ export function observe(start: Start, prev: Progress, o: Observation): Progress 
     return { ...prev, step: 'restart', live: undefined, until: undefined, offlineSince }
   }
   const s = o.status
+  if (start.action === 'config') return observeConfig(start, prev, o, s)
   const inst = thisInstall(start, o.update)
   if (s.started_at !== start.startedAt) {
     if (start.action === 'update' && s.version !== start.target) {
@@ -95,6 +99,28 @@ export function observe(start: Start, prev: Progress, o: Observation): Progress 
   }
   // The same process, serving again: cancelled, or the action failed.
   return { state: 'failed', step: prev.step, message: `The ${noun(start)} did not go ahead. Events has the reason.` }
+}
+
+/**
+ * observeConfig follows a change of the environment file (ADR 0020, amended
+ * 2026-10-30): the helper's answer for this request decides. Refused, it
+ * never restarted; rolled back, the gateway is back on the previous file;
+ * applied, done once a fresh process answers.
+ */
+function observeConfig(start: Start, prev: Progress, o: Observation, s: SystemStatus): Progress {
+  const res = o.config && o.config.id === start.target ? o.config : undefined
+  if (res?.state === 'refused') return { state: 'failed', step: 'install', message: res.message || 'The change was refused.' }
+  if (res?.state === 'rolled_back') return { state: 'failed', step: 'back', message: res.message || 'The gateway did not come back; the previous settings are back.' }
+  if (o.at > start.deadline) return timedOut(start, prev)
+  if (s.started_at !== start.startedAt) {
+    // A fresh process: done once the helper says the change held.
+    return res?.state === 'applied' ? { state: 'done', step: 'back' } : { state: 'running', step: 'restart' }
+  }
+  if (s.draining) {
+    if (s.live_sessions > 0) return { state: 'running', step: 'drain', live: s.live_sessions, until: s.drain?.deadline }
+    return { state: 'running', step: 'install' }
+  }
+  return { state: 'failed', step: prev.step, message: 'The change did not go ahead. Events has the reason.' }
 }
 
 /** thisInstall is the installer's report for this request, if it has written one. */
@@ -119,11 +145,11 @@ export function stepLabel(step: Step, start: Pick<Start, 'action' | 'target'>): 
     case 'drain':
       return 'Waiting for live sessions'
     case 'install':
-      return `Installing ${start.target}`
+      return start.action === 'config' ? 'Applying the settings' : `Installing ${start.target}`
     case 'restart':
       return start.action === 'reboot' ? 'Rebooting the host' : start.action === 'poweroff' ? 'Stopping the host' : 'Restarting'
     case 'back':
-      return start.action === 'update' ? `Back on ${start.target}` : 'Back online'
+      return start.action === 'update' ? `Back on ${start.target}` : start.action === 'config' ? 'Back with the new settings' : 'Back online'
   }
 }
 
@@ -138,6 +164,8 @@ export function doneTitle(start: Pick<Start, 'action' | 'target'>): string {
       return 'Host rebooted'
     case 'poweroff':
       return 'Host stopped'
+    case 'config':
+      return 'Install settings applied'
   }
 }
 
