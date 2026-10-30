@@ -7,6 +7,7 @@ import { Alert, Badge, Confirm, Empty, Field, Modal, PageHead } from '../../comp
 import { useList } from './lib'
 import { mappingToText, textToMapping } from './groupMapping'
 import { StateIcon } from '../../components/icons'
+import { CopyButton } from '../../components/CopyButton'
 
 // Shapes mirror internal/idp: the API returns the provider row plus its
 // config with secrets blanked and a single has_secret flag. Secrets are
@@ -25,6 +26,8 @@ interface OIDCConfig {
   trust_email?: boolean
   /** The provider does no MFA: ask for a Zanskar authenticator after it. */
   zanskar_mfa?: boolean
+  /** Signing out of Zanskar leaves the provider's session alone. */
+  keep_provider_session?: boolean
 }
 interface LDAPConfig {
   url?: string
@@ -144,6 +147,29 @@ export function IdentityProviders() {
   )
 }
 
+/** The two addresses an OIDC provider must have registered for this
+ *  gateway: where it sends the browser after sign-in, and after sign-out. */
+function RegisterURIs({ id }: { id: string }) {
+  const origin = window.location.origin
+  const uris = [
+    { key: 'redirect', label: 'Redirect URI', value: `${origin}/api/v1/auth/oidc/${id}/callback` },
+    { key: 'logout', label: 'Post-logout redirect URI', value: `${origin}/login` },
+  ]
+  return (
+    <div className="register-uris">
+      {uris.map((u) => (
+        <div key={u.key} className="field">
+          <label htmlFor={`oidc-uri-${u.key}`}>{u.label}</label>
+          <div className="copy-row">
+            <input id={`oidc-uri-${u.key}`} readOnly value={u.value} onFocus={(e) => e.target.select()} />
+            <CopyButton text={u.value} name={u.label} />
+          </div>
+        </div>
+      ))}
+    </div>
+  )
+}
+
 function ProviderModal({ existing, onClose, onSaved }: { existing: Provider | null; onClose: () => void; onSaved: () => void }) {
   const [loaded, setLoaded] = useState<Provider | null>(existing && !existing.config ? null : existing)
   const [type, setType] = useState<IdPType>(existing?.type ?? 'oidc')
@@ -257,6 +283,8 @@ function ProviderModal({ existing, onClose, onSaved }: { existing: Provider | nu
             </div>
             <div className="field inline"><input id="oidc-trustemail" type="checkbox" checked={!!oidc.trust_email} onChange={(e) => setOidc({ ...oidc, trust_email: e.target.checked })} /><label htmlFor="oidc-trustemail">Trust email addresses the provider does not mark as verified (for one that never says, such as Entra ID, when your directory assigns the addresses)</label></div>
             <div className="field inline"><input id="oidc-zanskarmfa" type="checkbox" checked={!!oidc.zanskar_mfa} onChange={(e) => setOidc({ ...oidc, zanskar_mfa: e.target.checked })} /><label htmlFor="oidc-zanskarmfa">Also ask for a Zanskar authenticator (only for a provider with no MFA of its own)</label></div>
+            <div className="field inline"><input id="oidc-endsession" type="checkbox" checked={!oidc.keep_provider_session} onChange={(e) => setOidc({ ...oidc, keep_provider_session: !e.target.checked })} /><label htmlFor="oidc-endsession">Signing out ends the provider session too</label></div>
+            {existing && <RegisterURIs id={existing.id} />}
           </>
         )}
 

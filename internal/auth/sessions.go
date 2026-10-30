@@ -174,6 +174,33 @@ func (s *Sessions) MarkMFAProved(ctx context.Context, id string) error {
 	return err
 }
 
+// SetProvider records the identity provider a session signed in through,
+// with the ID token it issued sealed under keyVersion (ADR 0035). Signing
+// out reads them back to end the provider's session as well.
+func (s *Sessions) SetProvider(ctx context.Context, id, idpID string, idTokenEnc []byte, keyVersion int) error {
+	var ver any
+	if idTokenEnc != nil {
+		ver = keyVersion
+	}
+	_, err := s.db.ExecContext(ctx, s.db.Rebind(`UPDATE auth_sessions SET idp_id = ?, id_token_enc = ?, key_version = ? WHERE id = ?`), idpID, idTokenEnc, ver, id)
+	return err
+}
+
+// Provider returns what SetProvider recorded for a session: an empty idpID
+// for one that signed in any other way, or whose provider was deleted.
+// Revoked sessions answer too, since signing out revokes first.
+func (s *Sessions) Provider(ctx context.Context, id string) (idpID string, idTokenEnc []byte, keyVersion int, err error) {
+	var (
+		idp sql.NullString
+		ver sql.NullInt64
+	)
+	err = s.db.QueryRowContext(ctx, s.db.Rebind(`SELECT idp_id, id_token_enc, key_version FROM auth_sessions WHERE id = ?`), id).Scan(&idp, &idTokenEnc, &ver)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil, 0, ErrNoSession
+	}
+	return idp.String, idTokenEnc, int(ver.Int64), err
+}
+
 // Revoke ends one session.
 func (s *Sessions) Revoke(ctx context.Context, id string) error {
 	_, err := s.db.ExecContext(ctx, s.db.Rebind(`UPDATE auth_sessions SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL`), store.TimeArg(s.now()), id)

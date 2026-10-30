@@ -71,6 +71,11 @@ type OIDCConfig struct {
 	// (ADR 0035). It replaced skip_mfa, whose default was the opposite: a
 	// configuration sealed before reads as off.
 	ZanskarMFA bool `json:"zanskar_mfa,omitempty"`
+	// KeepProviderSession leaves the provider's session alone when someone
+	// signs out of Zanskar. Off, the default, signing out ends it too
+	// (RP-initiated logout, ADR 0035), so the next sign-in asks for the
+	// password again; set it for a realm other applications share.
+	KeepProviderSession bool `json:"keep_provider_session,omitempty"`
 }
 
 // LDAPConfig configures an LDAP or Active Directory bind-and-search provider.

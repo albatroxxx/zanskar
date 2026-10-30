@@ -28,6 +28,7 @@ import (
 	"github.com/albatroxxx/zanskar/internal/group"
 	"github.com/albatroxxx/zanskar/internal/idp"
 	"github.com/albatroxxx/zanskar/internal/keyring"
+	"github.com/albatroxxx/zanskar/internal/store"
 	"github.com/albatroxxx/zanskar/internal/store/storetest"
 	"github.com/albatroxxx/zanskar/internal/user"
 )
@@ -40,6 +41,11 @@ type fakeIdP struct {
 	claims map[string]any // extra claims for the next id_token
 	nonce  string
 	codes  map[string]bool
+	// endSession is the end_session_endpoint discovery publishes: "" for
+	// the provider's own /logout, "-" for none.
+	endSession string
+	// idToken is the last ID token the token endpoint issued.
+	idToken string
 }
 
 func newFakeIdP(t *testing.T) *fakeIdP {
@@ -52,11 +58,19 @@ func newFakeIdP(t *testing.T) *fakeIdP {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/.well-known/openid-configuration", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]any{
+		doc := map[string]any{
 			"issuer": f.srv.URL, "authorization_endpoint": f.srv.URL + "/authorize", "token_endpoint": f.srv.URL + "/token",
 			"jwks_uri": f.srv.URL + "/jwks", "id_token_signing_alg_values_supported": []string{"RS256"},
 			"response_types_supported": []string{"code"}, "subject_types_supported": []string{"public"},
-		})
+		}
+		switch f.endSession {
+		case "":
+			doc["end_session_endpoint"] = f.srv.URL + "/logout?kc=1"
+		case "-":
+		default:
+			doc["end_session_endpoint"] = f.endSession
+		}
+		_ = json.NewEncoder(w).Encode(doc)
 	})
 	mux.HandleFunc("/jwks", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -82,6 +96,7 @@ func newFakeIdP(t *testing.T) *fakeIdP {
 		payload, _ := json.Marshal(claims)
 		obj, _ := signer.Sign(payload)
 		tok, _ := obj.CompactSerialize()
+		f.idToken = tok
 		_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "at", "token_type": "Bearer", "id_token": tok})
 	})
 	f.srv = httptest.NewTLSServer(mux)
@@ -90,12 +105,15 @@ func newFakeIdP(t *testing.T) *fakeIdP {
 }
 
 type env struct {
-	app     *httptest.Server
-	users   *user.Repo
-	groups  *group.Repo
-	repo    *idp.Repo
-	h       *Handler
-	groupID string
+	app      *httptest.Server
+	db       *store.DB
+	sessions *auth.Sessions
+	auth     *auth.Handler
+	users    *user.Repo
+	groups   *group.Repo
+	repo     *idp.Repo
+	h        *Handler
+	groupID  string
 }
 
 func newEnv(t *testing.T, f *fakeIdP, cfg idp.Config) (*env, string) {
@@ -126,10 +144,14 @@ func newEnv(t *testing.T, f *fakeIdP, cfg idp.Config) (*env, string) {
 	e.h = &Handler{
 		Providers: e.repo, Provisioner: &idp.Provisioner{Users: e.users, Groups: e.groups}, Sessions: sessions,
 		Audit: audit.NewLog(db), Log: log, StateKey: bytes.Repeat([]byte{5}, 32), HTTPClient: f.srv.Client(),
-		MFAEnrolled: func(context.Context, string) (bool, error) { return false, nil },
+		MFAEnrolled: func(context.Context, string) (bool, error) { return false, nil }, Ring: ring,
 	}
+	e.sessions, e.db = sessions, db
+	e.auth = auth.NewHandler(e.users, sessions, auth.NewTOTP(db, ring, "test"), e.h.Audit, log)
+	e.auth.ProviderLogout = e.h.LogoutURL
 	mux := http.NewServeMux()
 	e.h.Register(mux)
+	e.auth.Register(mux)
 	mw := &auth.Middleware{Sessions: sessions, Users: e.users, Log: log}
 	e.app = httptest.NewServer(mw.Authenticate(mux))
 	t.Cleanup(e.app.Close)

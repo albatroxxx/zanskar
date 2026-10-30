@@ -1,6 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { ApiError, api, setCsrf, signInEnded } from '../api/client'
 import type { LoginResponse, Me, Role, User } from '../api/types'
+import { browser, providerSignOut } from './signOut'
 
 /**
  * Auth state machine:
@@ -140,12 +141,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [refresh, dropIfEnded])
 
   const logout = useCallback(async () => {
+    let redirect: unknown
     try {
-      await api.post('/auth/logout')
+      redirect = (await api.post<{ redirect?: string }>('/auth/logout'))?.redirect
     } finally {
       setCsrf('')
       setState({ status: 'anonymous', user: null, mfaEnrolled: false, pending: null })
     }
+    // A session from a single sign-on provider ends there too (ADR 0035):
+    // the provider signs the person out and sends them back to /login.
+    const to = providerSignOut(redirect)
+    if (to) browser.assign(to)
   }, [])
 
   const hasRole = useCallback((...roles: Role[]) => !!state.user && roles.some((r) => state.user!.roles.includes(r)), [state.user])

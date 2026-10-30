@@ -31,6 +31,7 @@ import (
 	"github.com/albatroxxx/zanskar/internal/auth"
 	"github.com/albatroxxx/zanskar/internal/httpx"
 	"github.com/albatroxxx/zanskar/internal/idp"
+	"github.com/albatroxxx/zanskar/internal/keyring"
 )
 
 const (
@@ -58,6 +59,10 @@ type Handler struct {
 	// HTTPClient is used for discovery and token exchange; defaults to a
 	// 10 second timeout client.
 	HTTPClient *http.Client
+	// Ring seals the ID token a session keeps for signing out at the
+	// provider (ADR 0035); nil keeps none, and signing out then asks the
+	// provider to confirm.
+	Ring *keyring.Ring
 
 	cache sync.Map // idp id -> *cached
 }
@@ -250,6 +255,12 @@ func (h *Handler) callback(w http.ResponseWriter, r *http.Request) {
 	if verified {
 		_ = h.Provisioner.Users.RecordLoginSuccess(r.Context(), u.ID)
 	}
+	// The session remembers the provider and its ID token so that signing
+	// out ends the provider's session too (ADR 0035). Failing to costs only
+	// that, so the sign-in goes on.
+	if err := h.rememberProvider(r.Context(), sess.ID, op.ID, rawID); err != nil {
+		h.Log.Warn("oidc: keep the provider for sign-out", "idp", id, "err", err)
+	}
 	h.Sessions.SetCookie(w, token)
 	h.record(r, audit.Actor{UserID: u.ID, IP: ip}.Event(audit.UserLogin, "user", u.ID, audit.Success,
 		map[string]string{"idp": id, "mfa": mfa, "session_id": sess.ID, "stage": map[bool]string{true: "complete", false: "password"}[verified]}))
@@ -263,6 +274,70 @@ func (h *Handler) callback(w http.ResponseWriter, r *http.Request) {
 		next = "/login?next=" + url.QueryEscape(next)
 	}
 	http.Redirect(w, r, next, http.StatusFound)
+}
+
+// rememberProvider records on the session the provider it signed in
+// through and the ID token, sealed to that session.
+func (h *Handler) rememberProvider(ctx context.Context, sessionID, idpID, rawIDToken string) error {
+	var (
+		enc []byte
+		ver int
+	)
+	if h.Ring != nil {
+		var err error
+		if enc, ver, err = h.Ring.Encrypt(keyring.AAD("auth_sessions", sessionID), []byte(rawIDToken)); err != nil {
+			return err
+		}
+	}
+	return h.Sessions.SetProvider(ctx, sessionID, idpID, enc, ver)
+}
+
+// LogoutURL is where the browser goes once a session has signed out, when
+// it signed in through a provider (ADR 0035): the provider's
+// end_session_endpoint (OpenID Connect RP-Initiated Logout) with the
+// session's ID token as id_token_hint, the client id, and the sign-in page
+// as post_logout_redirect_uri, which the provider must have registered. It
+// is empty when the session signed in some other way, the provider keeps
+// its session (keep_provider_session), or it publishes no https
+// end_session_endpoint. It never stands in the way of signing out: a
+// problem is logged and the answer is empty.
+func (h *Handler) LogoutURL(r *http.Request, sessionID string) string {
+	ctx := r.Context()
+	idpID, enc, ver, err := h.Sessions.Provider(ctx, sessionID)
+	if err != nil || idpID == "" {
+		return ""
+	}
+	op, prov, cfg, err := h.open(ctx, idpID)
+	if err != nil {
+		h.Log.Warn("oidc: sign out at the provider", "idp", idpID, "err", err)
+		return ""
+	}
+	if cfg.KeepProviderSession {
+		return ""
+	}
+	var meta struct {
+		EndSession string `json:"end_session_endpoint"`
+	}
+	if err := prov.Claims(&meta); err != nil || meta.EndSession == "" {
+		return ""
+	}
+	u, err := url.Parse(meta.EndSession)
+	if err != nil || u.Scheme != "https" || u.Host == "" {
+		h.Log.Warn("oidc: provider's end_session_endpoint is not an https URL", "idp", idpID)
+		return ""
+	}
+	q := u.Query()
+	q.Set("client_id", cfg.ClientID)
+	q.Set("post_logout_redirect_uri", h.baseURL(r)+"/login")
+	if enc != nil && h.Ring != nil {
+		if raw, err := h.Ring.Decrypt(keyring.AAD("auth_sessions", sessionID), enc, ver); err == nil {
+			q.Set("id_token_hint", string(raw))
+		} else {
+			h.Log.Warn("oidc: unseal the session's ID token", "idp", op.ID, "err", err)
+		}
+	}
+	u.RawQuery = q.Encode()
+	return u.String()
 }
 
 // ---- helpers

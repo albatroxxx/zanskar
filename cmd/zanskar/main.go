@@ -289,6 +289,9 @@ func serve(ctx context.Context) error {
 		return err
 	}
 	authHandler.ExternalLogin = ldapExternalAuth{ldap.NewLogin(idpRepo, provisioner, auditLog, log)}
+	oidcHandler := &oidc.Handler{Providers: idpRepo, Provisioner: provisioner, Sessions: sessions, Audit: auditLog, Log: log, StateKey: stateKey, MFAEnrolled: totp.Enrolled, RequireMFA: requireMFA,
+		BaseURL: cfg.PublicURL, Ring: ring}
+	authHandler.ProviderLogout = oidcHandler.LogoutURL
 	vault := credential.NewVault(db, ring)
 	targets := target.NewRepo(db)
 	policies := policy.NewRepo(db)
@@ -359,8 +362,7 @@ func serve(ctx context.Context) error {
 			&adminapi.AdminHandler{Users: users, Sessions: sessions, TOTP: totp, Revoker: connectHandler, Audit: auditLog, Log: log},
 			&group.AdminHandler{Groups: groups, Revoker: connectHandler, Audit: auditLog, Log: log},
 			&idpadmin.AdminHandler{Providers: idpRepo, Audit: auditLog, Log: log, LDAPTester: &ldap.Authenticator{}},
-			&oidc.Handler{Providers: idpRepo, Provisioner: provisioner, Sessions: sessions, Audit: auditLog, Log: log, StateKey: stateKey, MFAEnrolled: totp.Enrolled, RequireMFA: requireMFA,
-				BaseURL: cfg.PublicURL},
+			oidcHandler,
 			&credential.AdminHandler{Vault: vault, Audit: auditLog, Log: log},
 			&target.AdminHandler{Repo: targets, Prober: prober, Policies: policies, Live: registry, Revoker: connectHandler, Vault: vault, Audit: auditLog, Log: log},
 			&policy.AdminHandler{Repo: policies, Users: users, Revoker: connectHandler, Audit: auditLog, Log: log},
