@@ -167,7 +167,21 @@ func TestLoginLogoutAndRoles(t *testing.T) {
 
 	if me := e.do("GET", "/api/v1/auth/me", nil, r.cookie, nil); me.code != 200 || me.body["user"].(map[string]any)["username"] != "alice" {
 		t.Fatalf("me: %d %v", me.code, me.body)
+	} else if _, has := me.body["time_zone"]; has {
+		t.Fatalf("a time zone without the setting wired: %v", me.body)
 	}
+	// Every portal reads the console's time zone here (2026-10-30), at each
+	// request, so a change in Settings applies on the next page load.
+	zone := "Asia/Kolkata"
+	e.handler.TimeZone = func() string { return zone }
+	if me := e.do("GET", "/api/v1/auth/me", nil, r.cookie, nil); me.body["time_zone"] != "Asia/Kolkata" {
+		t.Fatalf("me time zone: %v", me.body)
+	}
+	zone = "Europe/London"
+	if me := e.do("GET", "/api/v1/auth/me", nil, r.cookie, nil); me.body["time_zone"] != "Europe/London" {
+		t.Fatalf("me time zone after a change: %v", me.body)
+	}
+	e.handler.TimeZone = nil
 	if adm := e.do("GET", "/api/v1/admin-only", nil, r.cookie, nil); adm.code != 200 {
 		t.Fatalf("admin route: %d %v", adm.code, adm.body)
 	}

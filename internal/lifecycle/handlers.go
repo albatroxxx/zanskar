@@ -67,6 +67,9 @@ type Status struct {
 	RestartRequired bool      `json:"restart_required"`
 	Draining        bool      `json:"draining"`
 	Drain           *Drain    `json:"drain,omitempty"`
+	// Now is the gateway's clock, so the dashboard's clock shows the
+	// gateway's time even when the browser's runs off.
+	Now time.Time `json:"now"`
 }
 
 func (h *Handler) current() Status {
@@ -78,7 +81,7 @@ func (h *Handler) current() Status {
 	return Status{
 		Version: version.Version, StartedAt: h.StartedAt, UptimeSeconds: int64(time.Since(h.StartedAt).Seconds()),
 		Supervisor: Supervisor(), LiveSessions: h.Controller.Registry.Count(), EnvFile: rep,
-		RestartRequired: rep.RestartRequired(), Draining: d != nil, Drain: d,
+		RestartRequired: rep.RestartRequired(), Draining: d != nil, Drain: d, Now: time.Now().UTC(),
 	}
 }
 

@@ -40,6 +40,7 @@ const (
 	TypeBool     Type = "bool"     // "true" | "false"
 	TypeEnum     Type = "enum"     // one of Definition.Enum
 	TypeHostPort Type = "hostport" // host:port, or empty
+	TypeTimeZone Type = "timezone" // an IANA zone name
 )
 
 // Sources of an effective value, from lowest to highest precedence.
@@ -72,6 +73,9 @@ const (
 	// KeyBrowserImage is the image an application session's browser runs in
 	// (ADR 0034).
 	KeyBrowserImage = "apps.browser_image"
+	// KeyTimeZone is the zone every time in the console is shown in, and
+	// the dashboard's clock (2026-10-30); by default the gateway host's.
+	KeyTimeZone = "display.time_zone"
 )
 
 // DefaultDBProxyImage is the gateway's own image at the running version. A
@@ -179,6 +183,8 @@ var Definitions = []Definition{
 		Description: "Relay for database and application sessions. Pinned by digest (repository@sha256:…)."},
 	{Key: KeyBrowserImage, Category: "Applications", Title: "Browser image", Type: TypeString, Default: DefaultBrowserImage(), EnvVar: "ZANSKAR_BROWSER_IMAGE", StepUp: true,
 		Description: "Isolated browser for application sessions. Pinned by digest (repository@sha256:…)."},
+	{Key: KeyTimeZone, Category: "Display", Title: "Time zone", Type: TypeTimeZone, Default: HostZone(),
+		Description: "Every time in the console and the dashboard clock. The default is the gateway host's."},
 }
 
 // Lookup returns the definition for key.
@@ -251,6 +257,12 @@ func Validate(d Definition, value string) (string, error) {
 			return v, nil
 		}
 		return "", fmt.Errorf("%w: %s must be one of %s", ErrInvalid, d.Key, strings.Join(d.Enum, ", "))
+	case TypeTimeZone:
+		v := strings.TrimSpace(value)
+		if !validZone(v) {
+			return "", fmt.Errorf("%w: %s must be a time zone name such as Europe/London or Asia/Kolkata", ErrInvalid, d.Key)
+		}
+		return v, nil
 	case TypeHostPort:
 		v := strings.TrimSpace(value)
 		if v == "" {

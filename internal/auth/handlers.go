@@ -54,6 +54,10 @@ type Handler struct {
 	// It is read at every sign-in so the runtime setting applies live; nil
 	// means not required.
 	RequireMFA func() bool
+	// TimeZone is the zone the console shows every time in (the runtime
+	// setting display.time_zone), read at each /auth/me; nil leaves it out
+	// and the browser's own zone applies.
+	TimeZone func() string
 	// ExternalLogin, when set, authenticates users against LDAP providers
 	// after local password authentication does not apply.
 	ExternalLogin ExternalAuthenticator
@@ -667,7 +671,7 @@ func (h *Handler) me(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{
+	out := map[string]any{
 		"user":         p.User,
 		"csrf_token":   h.Sessions.CSRFToken(p.Session.ID),
 		"mfa_enrolled": enrolled,
@@ -675,7 +679,11 @@ func (h *Handler) me(w http.ResponseWriter, r *http.Request) {
 		"session": map[string]any{
 			"id": p.Session.ID, "created_at": p.Session.CreatedAt, "expires_at": p.Session.ExpiresAt,
 		},
-	})
+	}
+	if h.TimeZone != nil {
+		out["time_zone"] = h.TimeZone()
+	}
+	httpx.WriteJSON(w, http.StatusOK, out)
 }
 
 type codeRequest struct {

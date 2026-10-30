@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { ApiError, api, errorMessage } from '../../api/client'
-import { fmtTime } from '../../api/format'
+import { fmtTime, setDisplayZone } from '../../api/format'
 import type { BootSetting, RuntimeSetting, SettingsListing, SystemStatus } from '../../api/types'
 import { Alert, Badge, Empty, Field, PageHead } from '../../components/ui'
 import { TLSCard } from './TLSCard'
@@ -111,6 +111,8 @@ function SettingRow({ setting, onChange }: { setting: RuntimeSetting; onChange: 
       const v = await fn()
       onChange(v)
       setValue(v.value)
+      // Every time on the page follows the zone from the next render on.
+      if (v.key === 'display.time_zone') setDisplayZone(v.value)
       setSaved(true)
       setNeedCode(false)
       setCode('')
@@ -148,6 +150,21 @@ function SettingRow({ setting, onChange }: { setting: RuntimeSetting; onChange: 
             </option>
           ))}
         </select>
+      )
+      break
+    case 'timezone':
+      // Typed, with every zone the browser knows offered as it is typed.
+      input = (
+        <>
+          <input id={id} value={value} onChange={(e) => setValue(e.target.value)} list={id + '-zones'} autoComplete="off" spellCheck={false} />
+          <datalist id={id + '-zones'}>
+            {timeZones().map((z) => (
+              <option key={z} value={z}>
+                {z}
+              </option>
+            ))}
+          </datalist>
+        </>
       )
       break
     case 'text':
@@ -234,4 +251,14 @@ function BootTable({ boot, changed }: { boot: BootSetting[]; changed: string[] }
       </table>
     </div>
   )
+}
+
+/** timeZones lists the zones this browser can show, for the time zone setting. */
+function timeZones(): string[] {
+  const intl = Intl as unknown as { supportedValuesOf?: (key: string) => string[] }
+  try {
+    return intl.supportedValuesOf?.('timeZone') ?? []
+  } catch {
+    return []
+  }
 }

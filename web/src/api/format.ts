@@ -1,8 +1,63 @@
+// The zone every time in the console is shown in: the display.time_zone
+// setting, from /auth/me (2026-10-30). Unset, the browser's own applies.
+let displayZone: string | undefined
+
+/** setDisplayZone sets the console's time zone; an unknown name is ignored. */
+export function setDisplayZone(zone?: string | null) {
+  displayZone = zone && knownZone(zone) ? zone : undefined
+}
+
+/** consoleZone is the zone times are shown in now. */
+export function consoleZone(): string {
+  return displayZone ?? Intl.DateTimeFormat().resolvedOptions().timeZone
+}
+
+function knownZone(zone: string): boolean {
+  try {
+    new Intl.DateTimeFormat(undefined, { timeZone: zone })
+    return true
+  } catch {
+    return false
+  }
+}
+
+/** zoneOffsetMs is how far zone runs ahead of UTC at instant t, in milliseconds. */
+export function zoneOffsetMs(t: number, zone: string): number {
+  const parts = new Intl.DateTimeFormat('en-US', { timeZone: zone, hourCycle: 'h23', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' }).formatToParts(new Date(t))
+  const get = (type: string) => Number(parts.find((p) => p.type === type)?.value)
+  const wall = Date.UTC(get('year'), get('month') - 1, get('day'), get('hour'), get('minute'), get('second'))
+  return wall - (t - (((t % 1000) + 1000) % 1000))
+}
+
+/** zoneLabel writes a zone's offset at t the way people read it: UTC+05:30. */
+export function zoneLabel(t: number, zone: string): string {
+  const off = Math.round(zoneOffsetMs(t, zone) / 60000)
+  const sign = off < 0 ? '-' : '+'
+  const abs = Math.abs(off)
+  return `UTC${sign}${String(Math.floor(abs / 60)).padStart(2, '0')}:${String(abs % 60).padStart(2, '0')}`
+}
+
+/**
+ * zonedInputToISO reads a datetime-local value ("2026-10-30T14:30") as a
+ * time in the console's zone and returns it in UTC, so a filter typed as
+ * 14:30 finds the events shown at 14:30. Twice round: the offset at the
+ * guess and at the answer differ across a daylight-saving change.
+ */
+export function zonedInputToISO(local: string, zone: string = consoleZone()): string {
+  const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2}))?$/.exec(local)
+  if (!m) return ''
+  const [y, mo, d, h, mi, s] = m.slice(1).map((x) => Number(x ?? 0))
+  const wall = Date.UTC(y, mo - 1, d, h, mi, s)
+  let t = wall - zoneOffsetMs(wall, zone)
+  t = wall - zoneOffsetMs(t, zone)
+  return new Date(t).toISOString()
+}
+
 export function fmtTime(iso?: string | null): string {
   if (!iso) return ''
   const d = new Date(iso)
   if (Number.isNaN(d.getTime())) return iso
-  return d.toLocaleString(undefined, { year: 'numeric', month: 'short', day: '2-digit', hour: '2-digit', minute: '2-digit' })
+  return d.toLocaleString(undefined, { year: 'numeric', month: 'short', day: '2-digit', hour: '2-digit', minute: '2-digit', timeZone: displayZone })
 }
 
 /**
@@ -14,7 +69,7 @@ export function fmtPreciseTime(iso?: string | null): string {
   if (!iso) return ''
   const d = new Date(iso)
   if (Number.isNaN(d.getTime())) return iso
-  return d.toLocaleString(undefined, { year: 'numeric', month: 'short', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' })
+  return d.toLocaleString(undefined, { year: 'numeric', month: 'short', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', timeZone: displayZone })
 }
 
 export function fmtDuration(startIso: string, endIso?: string | null): string {

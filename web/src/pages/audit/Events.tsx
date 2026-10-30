@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState, type FormEvent } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { api, errorMessage, query } from '../../api/client'
 import { ranges, sinceFor } from '../../api/ranges'
-import { fmtPreciseTime, shortId } from '../../api/format'
+import { consoleZone, fmtPreciseTime, shortId, zonedInputToISO } from '../../api/format'
 import type { AuditEvent, AuditFacets, AuditVerify, Page } from '../../api/types'
 import { usePaged } from '../../components/paged'
 import { Alert, Badge, Empty, LoadMore, PageHead } from '../../components/ui'
@@ -47,11 +47,10 @@ function rangeBounds(f: Filters): { from: string; to: string } {
  *  successful ticket issue that precedes every session (its refusals stay). */
 const routine = 'audit.read,session.connect:success'
 
-/** toRFC3339 converts a datetime-local value (browser local time) to UTC RFC 3339. */
+/** toRFC3339 reads a datetime-local value in the console's time zone, the
+ *  one the events are shown in, and returns it in UTC. */
 function toRFC3339(local: string): string {
-  if (!local) return ''
-  const d = new Date(local)
-  return Number.isNaN(d.getTime()) ? '' : d.toISOString()
+  return local ? zonedInputToISO(local) : ''
 }
 
 /** DetailRow renders one key of an event's details for a reader: ids that
@@ -245,11 +244,15 @@ export function Events() {
           {draft.range === 'custom' && (
             <>
               <div className="field">
-                <label htmlFor="f-from">From</label>
+                <label htmlFor="f-from">
+                  From <span className="muted">{consoleZone()}</span>
+                </label>
                 <input id="f-from" type="datetime-local" value={draft.from} onChange={(e) => setDraft({ ...draft, from: e.target.value })} />
               </div>
               <div className="field">
-                <label htmlFor="f-to">To</label>
+                <label htmlFor="f-to">
+                  To <span className="muted">{consoleZone()}</span>
+                </label>
                 <input id="f-to" type="datetime-local" value={draft.to} onChange={(e) => setDraft({ ...draft, to: e.target.value })} />
               </div>
             </>

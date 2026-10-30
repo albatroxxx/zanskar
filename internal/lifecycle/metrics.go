@@ -71,6 +71,12 @@ type cpuSampler struct {
 const (
 	cpuFirstWindow = 200 * time.Millisecond
 	cpuMinWindow   = time.Second
+	// cpuStaleAfter is how old a reading may be and still start the next
+	// window. The dashboard asks every 10 seconds while it is open; a
+	// longer gap means nobody was looking, and measuring across it showed
+	// the hour's average as the first figure after the page was reopened
+	// (2026-10-30). Past it, a fresh pair is taken as on the first request.
+	cpuStaleAfter = 30 * time.Second
 )
 
 func (c *cpuSampler) usage() *CPUUsage {
@@ -83,7 +89,7 @@ func (c *cpuSampler) usage() *CPUUsage {
 	if sleep == nil {
 		sleep = time.Sleep
 	}
-	if c.last == nil {
+	if c.last == nil || time.Since(c.last.at) > cpuStaleAfter {
 		first, ok := read()
 		if !ok {
 			return nil
@@ -173,6 +179,11 @@ type DiskSpace struct {
 	System     bool   `json:"system"`
 	TotalBytes uint64 `json:"total_bytes"`
 	FreeBytes  uint64 `json:"free_bytes"`
+	// UsedBytes is what df calls Used: blocks not free at all. With
+	// FreeBytes it gives df's Use%, which counts the root-reserved blocks
+	// as neither used nor available, so the console's percentage is the
+	// one an administrator sees in a terminal.
+	UsedBytes uint64 `json:"used_bytes"`
 }
 
 // GuacdCheck says whether the desktop relay answers at its configured
@@ -318,8 +329,9 @@ func diskSpace(databasePath, recordingsPath string) []DiskSpace {
 			What:       p.what,
 			Path:       p.path,
 			System:     dev == rootDev,
-			TotalBytes: st.Blocks * uint64(st.Bsize), // #nosec G115 -- a block size, never negative
-			FreeBytes:  st.Bavail * uint64(st.Bsize), // #nosec G115 -- a block size, never negative
+			TotalBytes: st.Blocks * uint64(st.Bsize),              // #nosec G115 -- a block size, never negative
+			FreeBytes:  st.Bavail * uint64(st.Bsize),              // #nosec G115 -- a block size, never negative
+			UsedBytes:  (st.Blocks - st.Bfree) * uint64(st.Bsize), // #nosec G115 -- a block size, never negative
 		})
 	}
 	return out

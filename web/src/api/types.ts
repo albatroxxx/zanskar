@@ -25,6 +25,8 @@ export interface Me {
   pending?: 'verify' | 'enroll' | 'password' | null
   user?: User
   session?: { id: string; created_at: string; expires_at: string }
+  /** The console's time zone (display.time_zone); absent on a partial session. */
+  time_zone?: string
 }
 
 export type LoginStatus = 'ok' | 'mfa_required' | 'mfa_enrollment_required' | 'password_change_required'
@@ -494,7 +496,7 @@ export interface RuntimeSetting {
   category: string
   title: string
   description: string
-  type: 'string' | 'text' | 'bool' | 'enum' | 'hostport'
+  type: 'string' | 'text' | 'bool' | 'enum' | 'hostport' | 'timezone'
   default: string
   env_var?: string
   enum?: string[]
@@ -621,7 +623,7 @@ export interface SystemMetrics {
   cpu?: { percent: number; window_seconds: number }
   load?: { one: number; five: number; fifteen: number }
   memory?: { total_bytes: number; available_bytes: number }
-  disks: { what: string; path: string; system: boolean; total_bytes: number; free_bytes: number }[]
+  disks: { what: string; path: string; system: boolean; total_bytes: number; free_bytes: number; used_bytes?: number }[]
   database_sessions: number
   guacd?: { address: string; reachable: boolean }
   cpus: number
@@ -638,6 +640,8 @@ export interface SystemStatus {
   restart_required: boolean
   draining: boolean
   drain?: { requested_at: string; requested_by: string; deadline: string; wait_minutes: number }
+  /** The gateway's clock when it answered. */
+  now?: string
 }
 
 /** Recording retention policy (admin-editable). Mirrors internal/session. */

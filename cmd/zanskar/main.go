@@ -279,6 +279,7 @@ func serve(ctx context.Context) error {
 	totp := auth.NewTOTP(db, ring, cfg.Issuer)
 	authHandler := auth.NewHandler(users, sessions, totp, auditLog, log)
 	authHandler.RequireMFA = requireMFA
+	authHandler.TimeZone = func() string { return runtime.String(settings.KeyTimeZone) }
 	if !requireMFA() {
 		log.Warn("authenticator not required: password-only logins are allowed (auth.require_mfa)")
 	}

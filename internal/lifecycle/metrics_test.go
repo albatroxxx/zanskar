@@ -40,6 +40,11 @@ func TestDiskSpace(t *testing.T) {
 	if len(one) != 1 || one[0].What != "database" || one[0].TotalBytes == 0 {
 		t.Fatalf("one path: %+v", one)
 	}
+	// df's Used and Avail: neither exceeds the size, and together they
+	// leave out at most the root-reserved blocks.
+	if d := one[0]; d.UsedBytes == 0 || d.UsedBytes+d.FreeBytes > d.TotalBytes {
+		t.Fatalf("used and free do not fit the size: %+v", d)
+	}
 	// A temp dir usually shares the root filesystem; when it does, the entry
 	// says so, and the console will call it the system disk.
 	if rootInfo, err := os.Stat("/"); err == nil {
@@ -78,7 +83,7 @@ func TestParseCPUStat(t *testing.T) {
 // a second repeats the last answer, and a host without /proc/stat answers
 // nothing.
 func TestCPUSamplerWindows(t *testing.T) {
-	base := time.Now().Add(-time.Minute)
+	base := time.Now().Add(-10 * time.Second)
 	seq := []cpuSample{
 		{busy: 100, total: 1000, at: base},
 		{busy: 150, total: 1100, at: base.Add(200 * time.Millisecond)},  // 50 of 100 busy
@@ -95,8 +100,8 @@ func TestCPUSamplerWindows(t *testing.T) {
 	if u == nil || u.Percent != 50 || slept != cpuFirstWindow || u.WindowSeconds < 0.19 || u.WindowSeconds > 0.21 {
 		t.Fatalf("first: %+v slept %v", u, slept)
 	}
-	// The second sample is a minute old by the clock, so the next request
-	// measures against it.
+	// The second sample is ten seconds old by the clock, so the next
+	// request measures against it.
 	u = c.usage()
 	if u == nil || u.Percent != 10 || u.WindowSeconds < 4.9 || u.WindowSeconds > 5.1 {
 		t.Fatalf("second: %+v", u)
@@ -109,5 +114,31 @@ func TestCPUSamplerWindows(t *testing.T) {
 	none := &cpuSampler{read: func() (*cpuSample, bool) { return nil, false }, sleep: func(time.Duration) {}}
 	if u := none.usage(); u != nil {
 		t.Fatalf("no /proc/stat answered %+v", u)
+	}
+}
+
+// TestCPUSamplerRebaselinesAStaleReading (2026-10-30): reopening the
+// dashboard after an hour showed the hour's average as the first figure,
+// because the window ran from the last request, whenever that was. A
+// reading older than cpuStaleAfter starts a fresh pair instead.
+func TestCPUSamplerRebaselinesAStaleReading(t *testing.T) {
+	now := time.Now()
+	seq := []cpuSample{
+		{busy: 100, total: 1000, at: now.Add(-time.Hour)},
+		{busy: 900, total: 2000, at: now},                             // the hour: 80% busy
+		{busy: 910, total: 2100, at: now.Add(200 * time.Millisecond)}, // now: 10% busy
+	}
+	i := 0
+	var slept time.Duration
+	c := &cpuSampler{read: func() (*cpuSample, bool) {
+		s := seq[i]
+		i++
+		return &s, true
+	}, sleep: func(d time.Duration) { slept += d }}
+	c.last = &seq[0]
+	i = 1
+	u := c.usage()
+	if u == nil || u.Percent != 10 || slept != cpuFirstWindow {
+		t.Fatalf("a stale baseline was measured across: %+v slept %v", u, slept)
 	}
 }

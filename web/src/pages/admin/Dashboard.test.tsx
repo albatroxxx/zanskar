@@ -1,5 +1,6 @@
-import { act, cleanup, render, screen } from '@testing-library/react'
+import { act, cleanup, render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
+import { setDisplayZone } from '../../api/format'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { ApiError, api } from '../../api/client'
 import type { AdminOverview, SystemMetrics, SystemStatus, TLSStatus } from '../../api/types'
@@ -122,9 +123,13 @@ describe('the admin dashboard', () => {
     expect(cpu.parentElement?.textContent).toContain('load 0.10 over 15 min')
     const memory = screen.getByRole('meter', { name: 'Memory' })
     expect(memory.getAttribute('aria-valuenow')).toBe('25')
+    // 2026-10-30: every gauge leads with its percentage, as CPU did.
+    expect(memory.parentElement?.textContent).toContain('25% used · 2.0 GB of 8.0 GB')
     const disk = screen.getByRole('meter', { name: 'System disk' })
     expect(disk.getAttribute('aria-valuenow')).toBe('96')
     expect(disk.className).toContain('danger')
+    expect(disk.parentElement?.textContent).toContain('96% used · 4.0 GB free of 100.0 GB')
+    expect(disk.parentElement?.querySelector('.gauge-pct')?.className).toContain('danger')
     expect(screen.getByRole('button', { name: /Low space: 4\.0 GB free/ })).toBeDefined()
     expect(screen.getByText(/1 database session container/)).toBeDefined()
     expect(screen.getByText(/unreachable at 127\.0\.0\.1:4822/)).toBeDefined()
@@ -160,6 +165,40 @@ describe('the admin dashboard', () => {
 
   // A host that cannot say how busy its processors are (no /proc/stat)
   // still shows the load average, as before.
+  // df's Use% counts the blocks kept for root as neither used nor free; the
+  // console's percentage must be the one a terminal shows (2026-10-30).
+  it('works out a disk\'s percentage the way df does', async () => {
+    serve({ '/admin/system/metrics': { ...metrics, disks: [{ what: 'database', path: '/', system: true, total_bytes: 100 * 1024 ** 3, free_bytes: 10 * 1024 ** 3, used_bytes: 80 * 1024 ** 3 }] } })
+    render(
+      <MemoryRouter>
+        <Dashboard />
+      </MemoryRouter>,
+    )
+    const disk = await screen.findByRole('meter', { name: 'System disk' })
+    // 100 GB with 10 kept for root: df says 80 / (80 + 10) = 88.9%, rounded
+    // up to 89%; 1 - free/total would have said 90%.
+    expect(disk.parentElement?.textContent).toContain('89% used')
+    expect(disk.getAttribute('aria-valuenow')).toBe('89')
+  })
+
+  it('shows the gateway\'s time in the console\'s zone, from the gateway\'s clock', async () => {
+    setDisplayZone('Asia/Kolkata')
+    const gatewayNow = Date.now() + 3 * 3600_000 // the browser's clock runs three hours behind
+    serve({ '/admin/system/status': { ...status, now: new Date(gatewayNow).toISOString() } })
+    render(
+      <MemoryRouter>
+        <Dashboard />
+      </MemoryRouter>,
+    )
+    const clock = await screen.findByRole('region', { name: 'Gateway time' })
+    await waitFor(() => {
+      const shown = clock.querySelector('time')!.getAttribute('datetime')!
+      expect(Math.abs(Date.parse(shown) - gatewayNow)).toBeLessThan(5000)
+    })
+    expect(clock.textContent).toContain('Asia/Kolkata · UTC+05:30')
+    setDisplayZone(undefined)
+  })
+
   it('falls back to the load average without a CPU reading', async () => {
     serve({ '/admin/system/metrics': { ...metrics, cpu: undefined } })
     at('/')

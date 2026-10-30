@@ -2,6 +2,7 @@ import { cleanup, render, screen, waitFor, within } from '@testing-library/react
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { ApiError, api } from '../../api/client'
+import { consoleZone, setDisplayZone } from '../../api/format'
 import type { RuntimeSetting, SettingsListing } from '../../api/types'
 import { Settings } from './Settings'
 
@@ -85,6 +86,24 @@ describe('Settings', () => {
     expect(await within(row).findByText('Applied.')).toBeDefined()
     expect(within(row).getByText('Set in console')).toBeDefined()
     expect(within(row).getByRole('button', { name: 'Reset' })).toBeDefined()
+  })
+
+  // 2026-10-30: a time zone for every time in the console, typed with the
+  // browser's zones offered, applied to the page the moment it is saved.
+  it('offers time zones and applies a saved one at once', async () => {
+    const tz = setting({ key: 'display.time_zone', category: 'Display', title: 'Time zone', type: 'timezone', default: 'UTC', value: 'UTC', source: 'default' })
+    serve({ ...listing, runtime: [...listing.runtime, tz] })
+    vi.spyOn(api, 'put').mockResolvedValue({ ...tz, value: 'Asia/Kolkata', source: 'console' } as never)
+    render(<Settings />)
+    const user = userEvent.setup()
+    const field = await screen.findByLabelText('Time zone')
+    const list = document.getElementById(field.getAttribute('list') ?? '')
+    expect(list?.tagName).toBe('DATALIST')
+    await user.clear(field)
+    await user.type(field, 'Asia/Kolkata')
+    await user.click(within(field.closest('.setting-row') as HTMLElement).getByRole('button', { name: 'Save' }))
+    await waitFor(() => expect(consoleZone()).toBe('Asia/Kolkata'))
+    setDisplayZone(undefined)
   })
 
   it('resets a console value with DELETE and shows a refused save in its own row', async () => {

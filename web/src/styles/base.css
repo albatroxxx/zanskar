@@ -108,6 +108,16 @@ a.stat-tile:hover { border-color: var(--fg-faint); }
    lighter track of the same ramp; the words beside it carry the state too,
    so colour is never alone. */
 .gw-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 14px 24px; margin-top: 14px; }
+.gauge-pct.warn { color: var(--warn); }
+.gauge-pct.danger { color: var(--danger); }
+/* The dashboard's tiles on the left, the gateway's clock in the space on
+   their right (2026-10-30); the clock drops below them on a narrow page. */
+.dash-top { display: flex; gap: 24px; align-items: flex-start; flex-wrap: wrap; }
+.dash-tiles { flex: 0 1 auto; min-width: 0; }
+.dash-clock { flex: 0 0 240px; margin-top: 42px; padding: 18px 20px; text-align: center; }
+.clock-time { display: block; font-size: 2.2rem; font-weight: 600; letter-spacing: 0.02em; font-variant-numeric: tabular-nums; color: var(--fg); }
+.clock-date { margin-top: 4px; font-size: 0.95rem; color: var(--fg); }
+.clock-zone { margin-top: 6px; font-size: 0.8rem; }
 .gauge .label { font-size: 0.78rem; color: var(--fg-muted); }
 .gauge .reading { margin: 2px 0 7px; font-size: 0.92rem; }
 .meter { height: 6px; border-radius: 3px; background: var(--accent-soft); overflow: hidden; }
