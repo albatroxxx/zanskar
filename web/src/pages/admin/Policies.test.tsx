@@ -200,4 +200,20 @@ describe('the policy editor', () => {
     expect(body.grants).toHaveLength(1)
     expect(body.grants[0]).toMatchObject({ id: 'gr1', kind: 'autoscaling', targets: [{ id: 'a1', protocols: ['ssh'] }] })
   })
+
+  it('shows a target the grant names that no list holds, so it can be removed', async () => {
+    serve([policy({ grants: [grant({ targets: [{ id: 't1', protocols: ['ssh'] }, { id: 'gone-1', protocols: ['ssh'] }] })] })])
+    const put = vi.spyOn(api, 'put').mockResolvedValue({} as never)
+    at('/admin/policies/p1')
+    const user = userEvent.setup()
+    const card = await screen.findByRole('region', { name: 'Grant 1' })
+    const gone = within(card).getByLabelText('gone-1') as HTMLInputElement
+    expect(gone.checked).toBe(true)
+    expect(within(card).getByText('not found')).toBeDefined()
+    await user.click(gone)
+    await user.click(screen.getByRole('button', { name: 'Save' }))
+    await waitFor(() => expect(put).toHaveBeenCalledTimes(1))
+    const [, body] = put.mock.calls[0] as [string, { grants: PolicyGrant[] }]
+    expect(body.grants[0].targets).toEqual([{ id: 't1', protocols: ['ssh'] }])
+  })
 })

@@ -181,12 +181,19 @@ function GrantCard({ index, draft: d, open, onToggleOpen, onChange, onRemove, on
   const up = (patch: Partial<GrantDraft>) => onChange({ ...d, ...patch })
   const implicit = d.kind === 'database' || d.kind === 'application'
   const ofKind = useMemo(
-    () => (d.kind === 'autoscaling' ? [] : targets.filter((t) => t.status === 'active' && kindOf(t) === d.kind)),
+    () => (d.kind === 'autoscaling' ? [] : targets.filter((t) => kindOf(t) === d.kind)),
     [targets, d.kind],
   )
-  const options = d.kind === 'autoscaling'
-    ? asgs.map((g) => ({ id: g.id, label: g.name, detail: g.os_family }))
-    : ofKind.map((t) => ({ id: t.id, label: t.name, detail: d.kind === 'database' ? t.engine : d.kind === 'host' ? t.os_family : undefined }))
+  const listed = d.kind === 'autoscaling'
+    ? asgs.map((g) => ({ id: g.id, label: g.name, detail: g.status === 'disabled' ? `${g.os_family} · disabled` : g.os_family }))
+    : ofKind.map((t) => {
+      const what = d.kind === 'database' ? t.engine : d.kind === 'host' ? t.os_family : undefined
+      return { id: t.id, label: t.name, detail: t.status === 'disabled' ? [what, 'disabled'].filter(Boolean).join(' · ') : what }
+    })
+  // A target the grant names that the lists do not hold (retired since, or
+  // beyond the first page) stays visible, so it can be seen and removed
+  // rather than kept in silence.
+  const options = [...listed, ...Object.keys(d.targets).filter((tid) => !listed.some((o) => o.id === tid)).map((tid) => ({ id: tid, label: nameOf(tid), detail: 'not found' }))]
   const chips = (tid: string): Protocol[] => {
     if (d.kind === 'autoscaling') {
       const g = asgs.find((x) => x.id === tid)
