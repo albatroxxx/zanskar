@@ -210,7 +210,7 @@ td.actions > * + * { margin-left: 8px; }
 .tag { display: inline-block; font-family: var(--mono); font-size: 0.74rem; background: var(--bg-sunken); border-radius: 4px; padding: 1px 6px; margin-right: 4px; }
 /* A tag reads as key, then value, split by a hairline: no "=" to parse. */
 .tag .tag-k { color: var(--fg-muted); }
-.tag .tag-k + .tag-v { border-left: 1px solid var(--line); margin-left: 5px; padding-left: 5px; }
+.tag .tag-k ~ .tag-v { border-left: 1px solid var(--line); margin-left: 5px; padding-left: 5px; }
 /* The tag editor: rows of Key and Value boxes with a remove button, as
    cloud consoles lay them out. */
 .tag-editor { display: grid; gap: 6px; }
