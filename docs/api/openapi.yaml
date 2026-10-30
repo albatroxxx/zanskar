@@ -432,9 +432,29 @@ paths:
     post:
       tags: [auth]
       summary: Revoke the current session
+      description: |
+        Revokes the session and clears the cookie. A session that signed in through an OIDC
+        provider is signed out there too (ADR 0035), unless the provider is set to
+        `keep_provider_session`: the answer names the provider's `end_session_endpoint` with
+        `id_token_hint`, `client_id`, `state=signed-out` and the provider's callback as
+        `post_logout_redirect_uri`, and the console sends the browser there. The provider
+        sends it back to the callback, which goes on to `/login`.
       responses:
-        "204":
+        "200":
           description: Session revoked and cookie cleared.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status]
+                properties:
+                  status:
+                    type: string
+                    enum: [ok]
+                  redirect:
+                    type: string
+                    format: uri
+                    description: The provider's sign-out page to visit next; absent for a local sign-out.
   /auth/me:
     get:
       tags: [auth]
@@ -508,7 +528,11 @@ paths:
       description: |
         The provider sends the browser back here. On success the session cookie is set and the
         browser goes to `next` (or the portal). On failure the browser goes to
-        `/login?error=<reason>` and a failed `user.login` is audited.
+        `/login?error=<reason>` and a failed `user.login` is audited. An OIDC sign-in asks for no
+        Zanskar second factor unless the provider is marked `zanskar_mfa` (ADR 0035).
+
+        After the provider's sign-out (`POST /auth/logout`) the browser comes back here with
+        `state=signed-out` and no `code`; it goes on to `/login`, and nothing is recorded.
       security: []
       parameters:
         - $ref: "#/components/parameters/IdpId"
@@ -1760,6 +1784,67 @@ paths:
                     type: string
         "404":
           $ref: "#/components/responses/NotFound"
+  /identity-providers/{id}/sync:
+    get:
+      tags: [admin]
+      summary: State of the provider's directory user sync
+      description: |
+        Whether the sync is on, its interval, whether a run is going now, and the last run
+        since the gateway started (ADR 0035).
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: The sync's state.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IdentityProviderSync"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    post:
+      tags: [admin]
+      summary: Run the directory user sync now
+      description: |
+        Lists the provider's directory while the caller waits (a Keycloak realm through its
+        admin API, or an LDAP directory) and brings the accounts in line: people who joined
+        get accounts, people who left are disabled and their sessions end, people who came back
+        are enabled again. A run that would disable more than half the provider's accounts at
+        once, or that listed no one, holds the removals back and says so in `last`;
+        `apply_removals` applies the ones the size guard held. Audited as `idp.sync` under the
+        caller, even when nothing changed. A run that failed still answers 200 with the error
+        in `last`.
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                apply_removals:
+                  type: boolean
+                  default: false
+      responses:
+        "200":
+          description: The run happened; `last` says what it did.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IdentityProviderSync"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: |
+            `sync_off`: the provider is disabled or its sync is off. `sync_running`: a run is
+            going. `sync_unavailable`: the provider cannot be listed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
 
   # ------------------------------------------------------------------ admin: credentials
   /credentials:
@@ -4460,6 +4545,11 @@ components:
           type: [string, "null"]
         external_id:
           type: [string, "null"]
+        directory_removed_at:
+          description: When the directory user sync disabled the account because the person left the directory (ADR 0035).
+          oneOf:
+            - $ref: "#/components/schemas/Timestamp"
+            - type: "null"
         mfa_enrolled:
           type: boolean
         failed_logins:
@@ -4614,13 +4704,13 @@ components:
     # ---------------------------------------------------------------- identity providers
     IdentityProvider:
       type: object
-      required: [id, name, type, enabled, config, created_at, updated_at]
+      required: [id, name, type, enabled, config, has_secret, created_at, updated_at]
       properties:
         id:
           type: string
+          description: Used in `/auth/oidc/{idp}/...` paths.
         name:
           type: string
-          description: Used in `/auth/oidc/{idp}/...` paths.
         type:
           type: string
           enum: [oidc, ldap]
@@ -4628,57 +4718,186 @@ components:
           type: boolean
         config:
           $ref: "#/components/schemas/IdentityProviderConfigPublic"
+        has_secret:
+          type: boolean
+          description: A client secret or bind password is stored. It is never returned.
+        sync:
+          $ref: "#/components/schemas/IdentityProviderSync"
+          description: In listings, for a provider with its user sync on.
         created_at:
           $ref: "#/components/schemas/Timestamp"
         updated_at:
           $ref: "#/components/schemas/Timestamp"
     IdentityProviderConfigPublic:
       type: object
-      description: The non-secret part of the provider configuration. Stored encrypted alongside the secrets; secrets are never returned.
+      description: |
+        The provider's configuration, stored sealed. Exactly one of `oidc` and `ldap` is set.
+        Secrets (`client_secret`, `bind_password`) are write-only: always returned empty, and
+        left empty on update they keep the stored value.
       properties:
-        issuer_url:
-          type: string
-          format: uri
-          description: OIDC discovery issuer.
-        client_id:
-          type: string
-        scopes:
-          type: array
-          items:
-            type: string
-        groups_claim:
-          type: string
-          description: OIDC claim that carries group names.
-        ldap_url:
-          type: string
-          description: "`ldaps://host:636`. Plain `ldap://` is rejected unless `starttls` is true."
-        starttls:
-          type: boolean
-        bind_dn:
-          type: string
-        user_base_dn:
-          type: string
-        user_filter:
-          type: string
-        group_base_dn:
-          type: string
-        group_filter:
-          type: string
-        ca_certificate:
-          type: string
-          description: PEM bundle to pin the provider's TLS chain.
+        oidc:
+          type: object
+          properties:
+            issuer:
+              type: string
+              format: uri
+              description: https issuer; discovery finds the rest. For user sync, a Keycloak realm (`https://host/realms/name`).
+            client_id:
+              type: string
+            client_secret:
+              type: string
+              writeOnly: true
+            scopes:
+              type: array
+              items:
+                type: string
+              description: Default openid, profile, email.
+            username_claim:
+              type: string
+              description: Default `preferred_username`. With user sync, `preferred_username` or `sub`.
+            groups_claim:
+              type: string
+              description: Claim carrying group names for the group mapping; empty turns group mapping off.
+            allowed_domains:
+              type: array
+              items:
+                type: string
+              description: Only addresses the provider has verified in these domains may sign in.
+            trust_email:
+              type: boolean
+              description: Accept an email the provider never marks verified or not (Entra ID).
+            zanskar_mfa:
+              type: boolean
+              description: |
+                The provider does no MFA of its own: ask for a Zanskar authenticator after it. Off
+                by default; the provider's sign-in is then the second factor (ADR 0035).
+            keep_provider_session:
+              type: boolean
+              description: Signing out of Zanskar leaves the provider's session alone. Off by default.
+        ldap:
+          type: object
+          properties:
+            url:
+              type: string
+              description: "`ldaps://host:636`, or `ldap://` with `start_tls`."
+            start_tls:
+              type: boolean
+            ca_cert_pem:
+              type: string
+              description: PEM bundle the directory's certificate must chain to.
+            insecure_skip_verify:
+              type: boolean
+            bind_dn:
+              type: string
+            bind_password:
+              type: string
+              writeOnly: true
+            base_dn:
+              type: string
+            user_filter:
+              type: string
+              description: Exactly one `%s`, the login name. The user sync lists it with `*` in its place.
+            username_attr:
+              type: string
+            display_name_attr:
+              type: string
+            email_attr:
+              type: string
+            group_attr:
+              type: string
+            group_base_dn:
+              type: string
+            group_filter:
+              type: string
+            group_name_attr:
+              type: string
+            username_suffix:
+              type: string
         default_roles:
           type: array
           items:
             $ref: "#/components/schemas/Role"
-          description: Roles granted to users provisioned through this provider on first login.
+          description: Roles for accounts the provider creates. Default `[user]`.
+        group_mapping:
+          type: object
+          additionalProperties:
+            type: string
+          description: External group (claim value, or LDAP group DN or name) to Zanskar group id, applied at each sign-in.
+        auto_provision:
+          type: boolean
+          description: Create an account for a person the provider asserts and Zanskar does not know, at sign-in or by the sync.
+        sync_users:
+          type: boolean
+          description: |
+            List the directory every `sync_minutes`: a Keycloak realm (the client's service account
+            needs `realm-management` `view-users`) or an LDAP directory. People who join get accounts,
+            people who leave are disabled and their sessions end (ADR 0035). Groups are not synced.
+        sync_minutes:
+          type: integer
+          minimum: 5
+          maximum: 1440
+          default: 15
+    IdentityProviderSync:
+      type: object
+      required: [enabled, interval_minutes, running, last]
+      properties:
+        enabled:
+          type: boolean
+        interval_minutes:
+          type: integer
+        running:
+          type: boolean
+        last:
+          description: The last run since the gateway started; null before the first.
+          oneOf:
+            - type: "null"
+            - type: object
+              required: [at, ok, listed, created, linked, updated, enabled, disabled, not_created, held, live_sessions_ended]
+              properties:
+                at:
+                  $ref: "#/components/schemas/Timestamp"
+                ok:
+                  type: boolean
+                error:
+                  type: string
+                listed:
+                  type: integer
+                  description: People the directory listed.
+                created:
+                  type: integer
+                linked:
+                  type: integer
+                  description: Pre-created accounts adopted.
+                updated:
+                  type: integer
+                  description: Accounts whose name or address changed.
+                enabled:
+                  type: integer
+                  description: Accounts enabled again, their person back in the directory.
+                disabled:
+                  type: integer
+                  description: Accounts disabled, their person gone from the directory.
+                not_created:
+                  type: integer
+                  description: People without an account who were not given one (auto_provision off).
+                conflicts:
+                  type: array
+                  items:
+                    type: string
+                  description: Usernames that could not be linked or created (at most 20).
+                held:
+                  type: integer
+                  description: Accounts whose person left but which this run did not disable.
+                held_reason:
+                  type: string
+                live_sessions_ended:
+                  type: integer
     IdentityProviderWrite:
       type: object
       required: [name, type, config]
       properties:
         name:
           type: string
-          pattern: "^[a-z0-9-]+$"
           maxLength: 64
         type:
           type: string
@@ -4687,16 +4906,7 @@ components:
           type: boolean
           default: true
         config:
-          allOf:
-            - $ref: "#/components/schemas/IdentityProviderConfigPublic"
-            - type: object
-              properties:
-                client_secret:
-                  type: string
-                  writeOnly: true
-                bind_password:
-                  type: string
-                  writeOnly: true
+          $ref: "#/components/schemas/IdentityProviderConfigPublic"
 
     # ---------------------------------------------------------------- credentials
     Credential:
