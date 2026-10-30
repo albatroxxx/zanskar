@@ -493,6 +493,46 @@ upstream and is on no interface, so name it with `ZANSKAR_TLS_HOSTS` (comma sepa
 regenerates the self-signed certificate so it carries it; an uploaded or file certificate is
 never touched.
 
+### A certificate from Let's Encrypt
+
+In `managed` (or `file`) mode the gateway can get its certificate from an ACME CA itself,
+Let's Encrypt by default, instead of running Caddy or another proxy only to hold one (ADR
+0021, amended 2026-10-30). Three runtime settings under Settings › Let's Encrypt turn it on:
+`tls.acme` (*Certificate from Let's Encrypt*, off by default), `tls.acme_email` (the account
+email the CA writes to about the certificate) and `tls.acme_directory` (the ACME directory,
+`https://acme-v02.api.letsencrypt.org/directory` by default; Let's Encrypt's staging
+directory or a private ACME CA, `https://` only).
+
+- **What it orders.** The host of `ZANSKAR_PUBLIC_URL` and the DNS names among
+  `ZANSKAR_TLS_HOSTS`, and nothing else: IP addresses, bare words and `localhost` are left
+  out, and a TLS handshake naming anything else never starts an order, so a stranger's SNI
+  cannot make the gateway ask the CA for a certificate. The names are read at start; a
+  change to either variable takes effect with the restart it needs anyway.
+- **The challenge.** The CA must reach the gateway from the internet on that name. TLS-ALPN-01
+  is answered on the TLS listener (443 in the default install) and HTTP-01 on the
+  `ZANSKAR_HTTP_REDIRECT_ADDR` listener (80), before its redirect. A gateway reachable only
+  on a private network cannot use Let's Encrypt; upload a certificate from your own CA.
+- **Which certificate is served.** An uploaded certificate first, for every name; then ACME's,
+  for the names it covers, while it is on; then the file (`file` mode); then the self-signed
+  one. Turning ACME off goes back to the next in that order at once.
+- **Orders and failures.** An order runs in the background. A handshake waits for it at most
+  10 seconds and is then served the next certificate in the order above, so a CA outage never
+  holds connections; one order per name runs at a time, and a name whose order failed is not
+  tried again for 10 minutes. Certificates are renewed 30 days before they expire.
+- **Where it is kept.** The ACME account key and the certificates are sealed with the master
+  key in the `acme_cache` table (migration 0038, on SQLite and PostgreSQL), so a second
+  gateway on the same database serves the same certificate instead of ordering its own;
+  `zanskar key status` counts its rows by key version like every other sealed table.
+- **What the console shows.** The TLS certificate card says what Let's Encrypt serves and
+  until when, or why it could not get one. In `proxy` mode the card says the proxy holds the
+  certificate and how to switch the mode (see the next section).
+
+Moving from Caddy to the gateway's own certificate on a package install: set the public URL
+to the name Caddy served, turn Let's Encrypt on, stop and disable Caddy
+(`sudo systemctl disable --now caddy`), then switch the TLS mode to *managed* under Settings
+› Set at install. Caddy must be stopped first: the gateway takes 443 and 80, and if it cannot
+bind them the change is rolled back after about a minute.
+
 ## Recording storage
 
 Recordings go to the local directory by default. To keep them in an S3-compatible bucket,
@@ -767,6 +807,76 @@ ends them at once), then exits 0. What starts it again:
 - **Anything else**: make sure your process manager restarts the service, or use
   `systemctl restart zanskar` by hand instead.
 
+`zanskar config check --env /etc/zanskar/env` says whether the gateway would start with a
+file, without opening the database or touching the running service: it reads the file as
+systemd does and loads it as `serve` would, printing `ok: the gateway would start with …`
+or the error `serve` would stop on. Run it after editing the file by hand and before the
+restart.
+
+### Changing them from the console
+
+On a package install some install-time settings can be changed from Settings › Set at
+install, without a shell (ADR 0020, amended 2026-10-30). The gateway never writes its own
+environment file: it asks, and a helper running as root on the host decides and writes.
+
+- **What can be changed.** `ZANSKAR_PUBLIC_URL` (an `https://` address with no path),
+  `ZANSKAR_TLS_HOSTS` (host names or IP addresses, comma separated, at most 32),
+  `ZANSKAR_ISSUER` (at most 64 printable characters; authenticators enrolled before keep the
+  old name), `ZANSKAR_LOG_FORMAT` (`json` or `text`), `ZANSKAR_APPS_MAX_SESSIONS` and
+  `ZANSKAR_DATABASE_MAX_SESSIONS` (0 to 1000) and `ZANSKAR_AWS_GATEWAY_PRINCIPAL` (an IAM
+  role or user ARN). An empty value takes the line out. The **TLS mode** changes only as a
+  preset, so the mode, the listen address and the proxy trust move together and the gateway
+  never comes up unreachable: *managed* sets `ZANSKAR_TLS_MODE=managed`,
+  `ZANSKAR_LISTEN_ADDR=:443`, `ZANSKAR_HTTP_REDIRECT_ADDR=:80` and
+  `ZANSKAR_TRUST_PROXY_TLS=false`; *proxy* sets `ZANSKAR_TLS_MODE=proxy`,
+  `ZANSKAR_LISTEN_ADDR=127.0.0.1:8443`, `ZANSKAR_TRUST_PROXY_TLS=true` and takes the redirect
+  out.
+- **What stays install-only, and why.** The database (its credentials, and a different
+  database is a different gateway), the master key (`zanskar key rotate-master` changes
+  it), the container runtime path (any program path would run as the service user), the
+  listen address outside the presets (the console could lock itself out), plain HTTP, the
+  trusted proxies and the proxy trust outside the presets (they decide which client
+  addresses and cookies are believed), the recordings directory and storage, and the SIEM
+  export. The console marks these *Install only*, with the reason on hover.
+- **The request.** `POST /api/v1/admin/settings/boot` takes `values` and/or `tls_mode` and
+  `wait_minutes`. It needs an authenticator code proved within five minutes (403
+  `step_up_required`), refuses at once what the helper would refuse (400 `invalid_change`,
+  from the same checks), and is audited as `settings.boot_request` with the values (none of
+  the allowlisted variables is a secret) before anything happens. The gateway then drains
+  like a restart and writes `/var/lib/zanskar/config-request`.
+- **The helper.** `zanskar-config.path` sees the file and starts `zanskar-config.service`,
+  which runs `zanskar config apply --env /etc/zanskar/env --state /var/lib/zanskar` as root.
+  It trusts nothing the gateway wrote: it removes the request first so a failure never
+  loops, reads one JSON object of at most 16 KiB with no field it does not know, refuses the
+  whole request on any variable outside the list above, a preset's variable given on its own,
+  or a value with a quote, backslash, `$`, backtick or control character, and checks each
+  value as above. It merges the change into the file, keeping every other line (comments,
+  the master key, variables it does not know) byte for byte, and runs the result through
+  `config check` before it replaces anything. It keeps the old file as
+  `/etc/zanskar/env.previous`, with the same owner and mode, restarts the service, and waits
+  up to 60 seconds for `/readyz` where the new file says the gateway listens.
+- **Rollback.** If the gateway does not answer, the previous file goes back and the service
+  restarts on it. The helper writes `/var/lib/zanskar/config-result`: `applied`, `refused` or
+  `rolled_back`, with the names it changed and why, never a value. The console's progress
+  view follows it (`GET /api/v1/admin/settings/boot/result`); a refusal ends the drain at
+  once. The gateway audits the outcome once, as `settings.boot_apply` under the
+  administrator who asked: the process that asked was restarted, so the next one records it
+  at start.
+- **Where it works.** The deb and rpm packages install `zanskar-config.path` and
+  `zanskar-config.service` and enable the path unit on every install and upgrade. On a host
+  without systemd (Docker, Kubernetes) the request is refused, 409 `unsupported_supervisor`,
+  as the host actions are; change the environment where the container is defined. A gateway
+  started from the release tarball, or by the AWS reference deployment's user data, has
+  systemd but not the path unit: there the request waits, nothing changes, and after 10
+  minutes the drain ends with *the helper did not answer within 10m0s; is
+  zanskar-config.path enabled?*. To add it by hand, copy the two units from
+  `deploy/packaging/` in the source (or from the package) to `/etc/systemd/system/`, change
+  the service's `ExecStart=` if the binary is not `/usr/bin/zanskar` (the AWS reference
+  install puts it in `/usr/local/bin`), then
+  `sudo systemctl daemon-reload && sudo systemctl enable --now zanskar-config.path`. The path
+  unit watches `/var/lib/zanskar`; a gateway with another `ZANSKAR_STATE_DIR` needs the
+  unit's `PathExists=` and the service's `--state` changed to match.
+
 ## Reboot, stop and update from the console
 
 The admin console's gear offers **Reboot host** and **Stop host** beside the restart; the
@@ -785,8 +895,16 @@ bell offers **Update now** when a newer release is published (ADR 0032). The gat
   `zanskar-update.service`, whose script `/usr/libexec/zanskar/zanskar-update` downloads the
   release itself, verifies the cosign bundle over `SHA256SUMS` against the release
   workflow's identity, checks the package against those sums, refuses downgrades, installs
-  with dpkg or rpm and restarts the service. Progress goes to `update-status.json` for the
-  bell. The gateway never downloads a binary. `cosign` is a package recommendation; the
+  with dpkg or rpm and restarts the service. Progress goes to `update-status.json`, which the
+  console's progress view reads. The gateway never downloads a binary. It watches that
+  report while it drains: when the installer reports this request failed, or has not
+  finished within 20 minutes, the gateway serves again and audits `system.update` as a
+  failure with the reason, instead of refusing new sessions until someone cancels by hand.
+- Every action shows its progress in the console until it ends: waiting for live sessions,
+  installing, restarting or rebooting, and back. Success is judged by the gateway's own
+  answers (`GET /api/v1/admin/system/status`): a fresh process on the version asked for after
+  an update, a fresh process after a restart or reboot, a gateway that stays away after a
+  stop. `cosign` is a package recommendation; the
   installer refuses to run without it.
 - The daily version check reads `https://albatroxxx.github.io/zanskar/releases/latest.json`
   (`ZANSKAR_UPDATE_MANIFEST_URL` for a mirror; the runtime setting under Settings › Updates

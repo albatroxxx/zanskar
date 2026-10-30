@@ -1359,6 +1359,12 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "409":
           $ref: "#/components/responses/Conflict"
+        "422":
+          description: "`invalid_group`: a group in `group_ids` does not exist or is synced from an identity provider; nothing was created."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
   /users/{id}:
     parameters:
       - $ref: "#/components/parameters/Id"
@@ -1582,6 +1588,12 @@ paths:
                 $ref: "#/components/schemas/Group"
         "409":
           $ref: "#/components/responses/Conflict"
+        "422":
+          description: "`invalid_user`: a user in `user_ids` does not exist; nothing was created."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
   /groups/{id}:
     parameters:
       - $ref: "#/components/parameters/Id"
@@ -3774,8 +3786,8 @@ paths:
       description: >
         Runtime settings resolved with their precedence (built-in default, then the
         environment variable written at install, then the console value), and the boot
-        settings fixed at install, read-only with the variable to edit and secrets masked
-        (ADR 0020).
+        settings fixed at install, with the variable to edit and secrets masked (ADR 0020);
+        `editable` marks those the console may change through the root helper.
       responses:
         "200":
           description: Both sections.
@@ -3952,6 +3964,8 @@ paths:
                   message: { type: string }
                   changed: { type: array, items: { type: string }, description: Variable names only. }
                   at: { type: string, format: date-time }
+                  requested_by: { type: string, description: User id of the administrator who asked. }
+                  acknowledged: { type: boolean, description: The gateway has audited this outcome as `settings.boot_apply`. }
         "404":
           $ref: "#/components/responses/NotFound"
   /admin/settings/login-banner:
@@ -5056,6 +5070,11 @@ components:
           type: string
         session_expires_at:
           $ref: "#/components/schemas/Timestamp"
+        time_zone:
+          type: string
+          description: >
+            The IANA zone every time in the console is shown in (runtime setting
+            `display.time_zone`; by default the gateway host's zone). 1.9.0.
 
     # ---------------------------------------------------------------- users and groups
     User:
@@ -5159,6 +5178,15 @@ components:
           type: boolean
           default: true
           description: The user must replace the password at their next sign-in, before the second factor (QA finding R25).
+        group_ids:
+          type: array
+          items:
+            type: string
+          description: >
+            Groups to put the user in, written in the same transaction as the account (1.9.0).
+            Repeats and blanks are dropped. A group that does not exist, or whose members come
+            from an identity provider, refuses the whole request with `422 invalid_group` naming
+            it, and no account is made.
     UserUpdate:
       type: object
       additionalProperties: false
@@ -5251,6 +5279,14 @@ components:
         description:
           type: string
           maxLength: 2000
+        user_ids:
+          type: array
+          items:
+            type: string
+          description: >
+            On create only: members added in the same transaction as the group (1.9.0). An
+            unknown user refuses the whole request with `422 invalid_user` naming it, and no
+            group is made. Ignored on update; members have their own routes.
 
     # ---------------------------------------------------------------- identity providers
     IdentityProvider:
@@ -6807,8 +6843,8 @@ components:
           type: string
         type:
           type: string
-          enum: [string, text, bool, enum, hostport]
-          description: How the value is edited and validated; `bool` values are the strings `true` and `false`.
+          enum: [string, text, bool, enum, hostport, timezone]
+          description: How the value is edited and validated; `bool` values are the strings `true` and `false`; `timezone` is an IANA zone name the gateway can load.
         default:
           type: string
           description: The built-in default.
@@ -6834,7 +6870,9 @@ components:
           description: User id of the administrator who set the console value; present only when `source` is `console`.
     BootSetting:
       type: object
-      description: A setting fixed at install from the environment; the console shows it read-only.
+      description: >-
+        A setting fixed at install from the environment. Most are read-only in the console;
+        those with `editable` can be changed through `POST /admin/settings/boot`.
       required: [key, title, env_var, value]
       properties:
         key:
@@ -7179,7 +7217,8 @@ components:
             How busy the processors were over the last sampling window, as a
             share of all of them (0 to 100); the first request measures a
             short window of its own, later ones measure since the previous
-            request. Omitted off Linux.
+            request, and a previous reading older than 30 seconds starts a
+            fresh short window instead. Omitted off Linux.
           properties:
             percent:
               type: number
@@ -7223,6 +7262,13 @@ components:
                 type: integer
               free_bytes:
                 type: integer
+                description: Available to the service, as df's Avail.
+              used_bytes:
+                type: integer
+                description: >
+                  Blocks in use, as df's Used. The console's percentage is df's Use%,
+                  used / (used + free), rounded up, so the root-reserved blocks count as
+                  neither (1.9.0).
         database_sessions:
           type: integer
           description: Database client containers running now, one per live database session.
@@ -7260,6 +7306,9 @@ components:
           type: boolean
         draining:
           type: boolean
+        now:
+          $ref: "#/components/schemas/Timestamp"
+          description: The gateway's clock, for the dashboard's clock (1.9.0).
         drain:
           type: object
           description: The restart in progress, when there is one.
