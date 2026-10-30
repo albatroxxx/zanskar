@@ -13,7 +13,8 @@ H=${SCREEN_H:-800}
 export HOME=/tmp/home
 mkdir -p "$HOME" /tmp/policies
 
-# Chromium policy: the application's origin and nothing else; no downloads,
+# Chromium policy: the application's origin and nothing else, with its start
+# page as the home page (the console's Home button sends Alt+Home); no downloads,
 # printing, developer tools, extensions, sign-in, sync, saved passwords,
 # autofill, safe browsing, metrics or translation. Written where Chromium
 # reads managed policy on Linux, a tmpfs the gateway mounts.
@@ -27,7 +28,8 @@ cat > /etc/chromium/policies/managed/zanskar.json <<JSON
  "DnsOverHttpsMode":"off","BackgroundModeEnabled":false,
  "AudioCaptureAllowed":false,"VideoCaptureAllowed":false,"ScreenCaptureAllowed":false,
  "DefaultGeolocationSetting":2,"DefaultNotificationsSetting":2,
- "IncognitoModeAvailability":1,"BrowserGuestModeEnabled":false,"BrowserAddPersonEnabled":false}
+ "IncognitoModeAvailability":1,"BrowserGuestModeEnabled":false,"BrowserAddPersonEnabled":false,
+ "HomepageLocation":"$APP_URL","HomepageIsNewTabPage":false}
 JSON
 
 # A private CA for an https upstream, trusted for this session only.
@@ -55,7 +57,10 @@ export DISPLAY=:1
 vncconfig -nowin >/dev/null 2>&1 &
 touch /tmp/ready
 
-exec chromium --kiosk --app="$APP_URL" --no-first-run --no-default-browser-check \
+# Kiosk mode opening the start page in an ordinary window, not an --app one:
+# an app window ignores Alt+Home, and the console's Home button sends it.
+# Confinement is the policy above either way.
+exec chromium --kiosk "$APP_URL" --no-first-run --no-default-browser-check \
   --window-position=0,0 --window-size="${W},${H}" --user-data-dir="$HOME/profile" \
   --host-resolver-rules="$RESOLVER_RULES" --password-store=basic \
   --disable-dev-shm-usage --disable-gpu --disable-background-networking \

@@ -1,4 +1,4 @@
-import { act, cleanup, render, screen, within } from '@testing-library/react'
+import { act, cleanup, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -245,5 +245,34 @@ describe('Desktop, leaving by keyboard', () => {
     expect(active?.tagName).toBe('BUTTON')
     expect(active?.closest('.term-bar')).not.toBeNull()
     expect(screen.getByText('F6: controls')).toBeDefined()
+  })
+})
+
+// 2026-10-30 walkthrough: an application's browser runs in kiosk mode with
+// no controls, so a page the policy blocked was a dead end. The bar offers
+// Back, Forward, Reload and Home, sent as the browser's own shortcuts once
+// the browser is up; a desktop session has none of them.
+describe('Desktop, an application', () => {
+  it('moves the browser back, forward, home and reloads it', async () => {
+    start({ ticket: 'tk2', ws_path: '/ws/desktop', target: 'Wiki', protocol: 'http' })
+    const c = await connected()
+    const back = screen.getByRole('button', { name: 'Back' }) as HTMLButtonElement
+    expect(back.disabled).toBe(true)
+    act(() => c.onstatechange?.(3))
+    expect(back.disabled).toBe(false)
+    const user = userEvent.setup()
+    await user.click(back)
+    await waitFor(() => expect(c.keys).toEqual([0xffe9, 0xff51, 0xff51, 0xffe9]))
+    c.keys.length = 0
+    await user.click(screen.getByRole('button', { name: 'Forward' }))
+    await user.click(screen.getByRole('button', { name: 'Reload' }))
+    await user.click(screen.getByRole('button', { name: 'Home' }))
+    await waitFor(() => expect(c.keys).toEqual([0xffe9, 0xff53, 0xff53, 0xffe9, 0xffc2, 0xffc2, 0xffe9, 0xff50, 0xff50, 0xffe9]))
+  })
+
+  it('is not offered on a desktop session', async () => {
+    start()
+    await connected()
+    expect(screen.queryByRole('group', { name: 'Browser' })).toBeNull()
   })
 })
