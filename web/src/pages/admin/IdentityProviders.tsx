@@ -5,7 +5,7 @@ import type { Group, Page, Role } from '../../api/types'
 import { useSubmit } from '../../components/submit'
 import { Alert, Badge, Confirm, Empty, Field, Modal, PageHead } from '../../components/ui'
 import { useList } from './lib'
-import { mappingToText, textToMapping } from './groupMapping'
+import { mappingRows, rowsToMapping, type MappingRow } from './groupMapping'
 import { StateIcon } from '../../components/icons'
 import { CopyButton } from '../../components/CopyButton'
 
@@ -142,7 +142,7 @@ export function IdentityProviders() {
 
   return (
     <>
-      <PageHead title="Identity providers" lead="Secrets are sealed on save and never shown again.">
+      <PageHead title="Identity providers">
         <button className="btn primary" onClick={() => setEditing('new')}>Add provider</button>
       </PageHead>
       {err && <Alert tone="danger">{err}</Alert>}
@@ -151,7 +151,7 @@ export function IdentityProviders() {
         {items === null ? (
           err ? null : <Empty>Loading…</Empty>
         ) : items.length === 0 ? (
-          <Empty>No identity providers yet. Add one to let users sign in with your directory.</Empty>
+          <Empty>No identity providers yet.</Empty>
         ) : (
           <table>
             <thead>
@@ -214,7 +214,7 @@ export function IdentityProviders() {
           title="Delete provider"
           danger
           confirmLabel="Delete"
-          body={<p>Delete <strong>{deleting.name}</strong>? Users provisioned through it keep their accounts but can no longer sign in with it.</p>}
+          body={<p>Delete <strong>{deleting.name}</strong>? Its users keep their accounts but cannot sign in through it.</p>}
           onConfirm={async () => {
             await api.del(`/identity-providers/${deleting.id}`)
             void reload()
@@ -358,7 +358,7 @@ function ProviderModal({ existing, onClose, onSaved }: { existing: Provider | nu
   const [arrival, setArrival] = useState<Arrival>(arrivalOf(existing?.config))
   const [syncMinutes, setSyncMinutes] = useState(String(existing?.config?.sync_minutes || 15))
   const [roles, setRoles] = useState<Role[]>(existing?.config?.default_roles ?? ['user'])
-  const [mapping, setMapping] = useState(mappingToText(existing?.config?.group_mapping))
+  const [mapping, setMapping] = useState<MappingRow[]>(mappingRows(existing?.config?.group_mapping))
   const [oidc, setOidc] = useState<OIDCConfig>(existing?.config?.oidc ?? {})
   const [ldap, setLdap] = useState<LDAPConfig>(existing?.config?.ldap ?? {})
   const [scopes, setScopes] = useState(csv(existing?.config?.oidc?.scopes))
@@ -379,7 +379,7 @@ function ProviderModal({ existing, onClose, onSaved }: { existing: Provider | nu
         setArrival(arrivalOf(p.config))
         setSyncMinutes(String(p.config?.sync_minutes || 15))
         setRoles(p.config?.default_roles ?? ['user'])
-        setMapping(mappingToText(p.config?.group_mapping))
+        setMapping(mappingRows(p.config?.group_mapping))
         setOidc(p.config?.oidc ?? {})
         setLdap(p.config?.ldap ?? {})
         setScopes(csv(p.config?.oidc?.scopes))
@@ -393,7 +393,7 @@ function ProviderModal({ existing, onClose, onSaved }: { existing: Provider | nu
 
   const build = (): { body?: Record<string, unknown>; error?: string } => {
     if (!name.trim()) return { error: 'name is required' }
-    const { mapping: gm, error } = textToMapping(mapping)
+    const { mapping: gm, error } = rowsToMapping(mapping)
     if (error) return { error }
     const config: IdPConfig = { default_roles: roles, group_mapping: gm, auto_provision: autoProvision }
     if (arrival === 'scim') config.scim = true
@@ -469,11 +469,11 @@ function ProviderModal({ existing, onClose, onSaved }: { existing: Provider | nu
               </Field>
               <Field label="Scopes" hint="comma separated; default openid, profile, email"><input id="oidc-scopes" value={scopes} onChange={(e) => setScopes(e.target.value)} /></Field>
               <Field label="Username claim" hint="default preferred_username"><input id="oidc-uclaim" value={oidc.username_claim ?? ''} onChange={(e) => setOidc({ ...oidc, username_claim: e.target.value })} /></Field>
-              <Field label="Groups claim" hint="e.g. groups; empty turns group mapping off"><input id="oidc-gclaim" value={oidc.groups_claim ?? ''} onChange={(e) => setOidc({ ...oidc, groups_claim: e.target.value })} /></Field>
-              <Field label="Allowed email domains" hint="comma separated; empty allows all; the provider must have verified the address"><input id="oidc-domains" value={domains} onChange={(e) => setDomains(e.target.value)} /></Field>
+              <Field label="Groups claim" hint="e.g. groups"><input id="oidc-gclaim" value={oidc.groups_claim ?? ''} onChange={(e) => setOidc({ ...oidc, groups_claim: e.target.value })} /></Field>
+              <Field label="Allowed email domains" hint="comma separated; empty = any"><input id="oidc-domains" value={domains} onChange={(e) => setDomains(e.target.value)} /></Field>
             </div>
-            <div className="field inline"><input id="oidc-trustemail" type="checkbox" checked={!!oidc.trust_email} onChange={(e) => setOidc({ ...oidc, trust_email: e.target.checked })} /><label htmlFor="oidc-trustemail">Trust email addresses the provider does not mark as verified (for one that never says, such as Entra ID, when your directory assigns the addresses)</label></div>
-            <div className="field inline"><input id="oidc-zanskarmfa" type="checkbox" checked={!!oidc.zanskar_mfa} onChange={(e) => setOidc({ ...oidc, zanskar_mfa: e.target.checked })} /><label htmlFor="oidc-zanskarmfa">Also ask for a Zanskar authenticator (only for a provider with no MFA of its own)</label></div>
+            <div className="field inline"><input id="oidc-trustemail" type="checkbox" checked={!!oidc.trust_email} onChange={(e) => setOidc({ ...oidc, trust_email: e.target.checked })} /><label htmlFor="oidc-trustemail">Trust unverified email addresses (e.g. Entra ID)</label></div>
+            <div className="field inline"><input id="oidc-zanskarmfa" type="checkbox" checked={!!oidc.zanskar_mfa} onChange={(e) => setOidc({ ...oidc, zanskar_mfa: e.target.checked })} /><label htmlFor="oidc-zanskarmfa">Also ask for a Zanskar authenticator</label></div>
             <div className="field inline"><input id="oidc-endsession" type="checkbox" checked={!oidc.keep_provider_session} onChange={(e) => setOidc({ ...oidc, keep_provider_session: !e.target.checked })} /><label htmlFor="oidc-endsession">Signing out ends the provider session too</label></div>
             <div className="field inline"><input id="oidc-prompt" type="checkbox" checked={!!oidc.prompt_login} onChange={(e) => setOidc({ ...oidc, prompt_login: e.target.checked })} /><label htmlFor="oidc-prompt">Ask for the password at every sign-in (not Google)</label></div>
             {existing && <RegisterURI id={existing.id} />}
@@ -484,7 +484,7 @@ function ProviderModal({ existing, onClose, onSaved }: { existing: Provider | nu
           <>
             <Field label="URL" hint="ldaps://host:636 or ldap://host:389 with StartTLS"><input id="ldap-url" value={ldap.url ?? ''} onChange={(e) => setLdap({ ...ldap, url: e.target.value })} placeholder="ldaps://..." /></Field>
             <div className="field inline"><input id="ldap-starttls" type="checkbox" checked={!!ldap.start_tls} onChange={(e) => setLdap({ ...ldap, start_tls: e.target.checked })} /><label htmlFor="ldap-starttls">Use StartTLS (for ldap://)</label></div>
-            <Field label="CA certificate (PEM)" hint="pins the directory's certificate; required unless skipping verification"><textarea id="ldap-ca" value={ldap.ca_cert_pem ?? ''} onChange={(e) => setLdap({ ...ldap, ca_cert_pem: e.target.value })} /></Field>
+            <Field label="CA certificate (PEM)" hint="pins the directory's certificate"><textarea id="ldap-ca" value={ldap.ca_cert_pem ?? ''} onChange={(e) => setLdap({ ...ldap, ca_cert_pem: e.target.value })} /></Field>
             <div className="field inline"><input id="ldap-insecure" type="checkbox" checked={!!ldap.insecure_skip_verify} onChange={(e) => setLdap({ ...ldap, insecure_skip_verify: e.target.checked })} /><label htmlFor="ldap-insecure">Skip certificate verification (development only)</label></div>
             <div className="form-grid">
               <Field label="Bind DN"><input id="ldap-binddn" value={ldap.bind_dn ?? ''} onChange={(e) => setLdap({ ...ldap, bind_dn: e.target.value })} /></Field>
@@ -528,14 +528,9 @@ function ProviderModal({ existing, onClose, onSaved }: { existing: Provider | nu
             ))}
           </div>
         </Field>
-        <Field label="Group mapping" hint="One per line: externalGroup=zanskarGroupId. For LDAP use the group's full DN (cn=ops,ou=groups,dc=…): a plain name matches every group of that name in any OU.">
-          <textarea id="idp-mapping" value={mapping} onChange={(e) => setMapping(e.target.value)} placeholder="ops-team=abc123..." />
+        <Field label="Group mapping" hint={type === 'ldap' ? "Use the group's full DN; a plain name matches that name in any OU." : undefined}>
+          <GroupMappingEditor rows={mapping} groups={groups} onChange={setMapping} placeholder={type === 'ldap' ? 'cn=ops,ou=groups,dc=…' : 'ops-team'} />
         </Field>
-        {groups.length > 0 && (
-          <div className="hint" style={{ marginTop: -8, marginBottom: 12 }}>
-            Groups: {groups.map((g) => <span key={g.id} className="tag">{g.name}={g.id}</span>)}
-          </div>
-        )}
 
         <div className="actions" style={{ justifyContent: 'space-between' }}>
           <span>{existing && <button type="button" className="btn" onClick={runTest}>Test connection</button>}</span>
@@ -546,5 +541,40 @@ function ProviderModal({ existing, onClose, onSaved }: { existing: Provider | nu
         </div>
       </form>
     </Modal>
+  )
+}
+
+/**
+ * GroupMappingEditor maps provider groups onto Zanskar groups, one row each:
+ * the provider's name for the group in a box, the Zanskar group from a list.
+ */
+function GroupMappingEditor({ rows, groups, onChange, placeholder }: { rows: MappingRow[]; groups: Group[]; onChange: (rows: MappingRow[]) => void; placeholder: string }) {
+  const set = (i: number, patch: Partial<MappingRow>) => onChange(rows.map((r, j) => (j === i ? { ...r, ...patch } : r)))
+  return (
+    <div className="tag-editor">
+      {rows.length > 0 && (
+        <div className="tag-row tag-head" aria-hidden="true">
+          <span>Provider group</span>
+          <span>Zanskar group</span>
+        </div>
+      )}
+      {rows.map((r, i) => (
+        <div className="tag-row" key={i}>
+          <input id={`idp-map-ext${i}`} aria-label={`Mapping ${i + 1} provider group`} value={r.external} autoComplete="off" placeholder={placeholder} onChange={(e) => set(i, { external: e.target.value })} />
+          <select id={`idp-map-grp${i}`} aria-label={`Mapping ${i + 1} Zanskar group`} value={r.group} onChange={(e) => set(i, { group: e.target.value })}>
+            <option value="">Choose…</option>
+            {/* A mapping onto a group since deleted stays visible rather than
+                quietly turning into another choice. */}
+            {r.group && groups.length > 0 && !groups.some((g) => g.id === r.group) && <option value={r.group}>{r.group} (not found)</option>}
+            {r.group && groups.length === 0 && <option value={r.group}>{r.group}</option>}
+            {groups.map((g) => <option key={g.id} value={g.id}>{g.name}</option>)}
+          </select>
+          <button type="button" className="btn sm ghost" aria-label={`Remove mapping ${r.external.trim() || i + 1}`} onClick={() => onChange(rows.filter((_, j) => j !== i))}>×</button>
+        </div>
+      ))}
+      <div>
+        <button type="button" className="btn sm" onClick={() => onChange([...rows, { external: '', group: '' }])}>Add mapping</button>
+      </div>
+    </div>
   )
 }

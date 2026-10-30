@@ -197,7 +197,7 @@ export function Events() {
 
   return (
     <>
-      <PageHead title="Audit events" lead="Every event is hash-chained, and reading this page is itself recorded.">
+      <PageHead title="Audit events" lead="Viewing is logged.">
         <ChainStatus verify={verify} err={verifyErr} />
       </PageHead>
       {err && <Alert tone="danger">{err}</Alert>}

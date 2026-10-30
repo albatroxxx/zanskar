@@ -3,7 +3,9 @@ import { api, errorMessage } from '../../api/client'
 import { fmtTime, protocolName } from '../../api/format'
 import type { AsgAccessTest, AsgIAMDocs, AsgInstance, AutoscalingGroup, AwsIdentity, Credential, OSFamily, Protocol } from '../../api/types'
 import { Alert, Badge, Confirm, Empty, Field, Modal, PageHead, Tags } from '../../components/ui'
-import { formatTags, parseTags, protocols, useList, type PortProtocol } from './lib'
+import { protocols, useList, type PortProtocol } from './lib'
+import { TagEditor } from '../../components/TagEditor'
+import { rowsToTags, tagRows, type TagRow } from '../../components/tags'
 import { CredentialBindings, CredentialSelect, shownValue, type BindingChange } from './Bindings'
 import { StateIcon } from '../../components/icons'
 
@@ -21,7 +23,7 @@ export function Autoscaling() {
 
   return (
     <>
-      <PageHead title="Autoscaling groups" lead="Cloud autoscaling groups, enrolled with a read-only role.">
+      <PageHead title="Autoscaling groups">
         <button className="btn primary" onClick={() => setAdding(true)}>Enroll group</button>
       </PageHead>
       {err && <Alert tone="danger">{err}</Alert>}
@@ -111,7 +113,7 @@ interface FormState {
   ports: Record<Protocol, string>
   address_preference: 'private' | 'public'
   poll: string
-  tags: string
+  tags: TagRow[]
   credentials: Record<Protocol, string>
 }
 
@@ -134,13 +136,13 @@ function initialForm(g?: AutoscalingGroup, all: Credential[] = []): FormState {
     ports,
     address_preference: g?.address_preference ?? 'private',
     poll: String(g?.poll_interval_seconds ?? 30),
-    tags: formatTags(g?.tags),
+    tags: tagRows(g?.tags),
     credentials,
   }
 }
 
 function toBody(f: FormState, status: string, extra: Record<string, unknown> = {}) {
-  const { tags, error } = parseTags(f.tags)
+  const { tags, error } = rowsToTags(f.tags)
   if (error) throw new Error(error)
   const capabilities = protocols.filter((p) => f.caps[p])
   const ports: Partial<Record<Protocol, number>> = {}
@@ -229,13 +231,13 @@ function GroupForm({ initial, credentials, onClose, onSaved }: { initial?: Autos
       {err && <Alert tone="danger">{err}</Alert>}
       <form onSubmit={submit}>
         <div className="form-grid">
-          <Field label="Name" hint="How it appears in Zanskar">
+          <Field label="Name">
             <input id="asg-name" value={f.name} onChange={(e) => up({ name: e.target.value })} required autoFocus />
           </Field>
           <Field label="Region">
             <input id="asg-region" value={f.region} onChange={(e) => up({ region: e.target.value })} placeholder="ap-south-1" required />
           </Field>
-          <Field label="Auto Scaling group name" hint="The cloud-side name">
+          <Field label="Auto Scaling group name">
             <input id="asg-external" value={f.external_name} onChange={(e) => up({ external_name: e.target.value })} required />
           </Field>
           {initial && (
@@ -261,13 +263,9 @@ function GroupForm({ initial, credentials, onClose, onSaved }: { initial?: Autos
           </Field>
         </div>
         <h2>Capabilities</h2>
-        <p className="muted" style={{ marginTop: 0 }}>Protocols the instances offer. Each needs a port (blank = default) and a credential shared by every instance.</p>
         {f.os_family === 'windows' && (
           <Alert tone="warn">
-            Instances have to arrive ready: nothing configures a machine that may be gone in an hour. Bake the HTTPS WinRM listener on 5986,
-            its firewall rule and the domain join into the image or the launch template&rsquo;s user data. A WinRM credential must be a local
-            administrator on the instances, because Zanskar opens a WinRS shell and WinRM grants that to administrators only. Each instance is
-            pinned to the certificate it first presents; a certificate that changes under us takes that instance out of the pool.
+            Bake the HTTPS WinRM listener (5986) and the domain join into the image. The WinRM credential must be a local administrator.
           </Alert>
         )}
         <div className="table-wrap">
@@ -299,15 +297,12 @@ function GroupForm({ initial, credentials, onClose, onSaved }: { initial?: Autos
             </tbody>
           </table>
         </div>
-        <Field label="Tags" hint="One key=value per line; policies can select groups by tag">
-          <textarea id="asg-tags" value={f.tags} onChange={(e) => up({ tags: e.target.value })} placeholder="env=prod" />
+        <Field label="Tags">
+          <TagEditor idPrefix="asg-tag" rows={f.tags} onChange={(tags) => up({ tags })} />
         </Field>
         {!initial && (
           <>
             <h2>Access from this gateway</h2>
-            <p className="muted" style={{ marginTop: 0 }}>
-              Zanskar reads the group through a role in your AWS account that only this gateway can assume. Show the IAM setup, create the role with it, paste the role's ARN, and test before enrolling.
-            </p>
             {!docs ? (
               <div className="actions">
                 <button type="button" className="btn" disabled={!canPreview || docsBusy} onClick={() => void preview()} title={canPreview ? '' : 'fill in the region and the group name first'}>{docsBusy ? 'Preparing…' : '1. Show IAM setup'}</button>
@@ -316,7 +311,7 @@ function GroupForm({ initial, credentials, onClose, onSaved }: { initial?: Autos
               <IAMDocsView docs={docs} onRefresh={() => void preview()} />
             )}
             <div className="form-grid" style={{ marginTop: 12 }}>
-              <Field label="2. Role ARN" hint="The ARN the script or template printed, e.g. arn:aws:iam::123456789012:role/zanskar-web">
+              <Field label="2. Role ARN">
                 <input id="asg-role" className="mono" value={f.role_arn} onChange={(e) => up({ role_arn: e.target.value })} placeholder="arn:aws:iam::123456789012:role/zanskar-web" required />
               </Field>
             </div>
@@ -394,7 +389,7 @@ function IdentityCard() {
       ) : (
         <>
           <p style={{ margin: 0 }}>
-            <Badge tone="warn">AWS identity unknown</Badge> This gateway runs on AWS but holds no role, so it cannot tell you what principal a trust policy should name. Give it an instance profile (or IRSA on EKS), or set <code>ZANSKAR_AWS_GATEWAY_PRINCIPAL</code> in the environment file, then restart.
+            <Badge tone="warn">AWS identity unknown</Badge> Give the gateway an instance profile (or IRSA), or set <code>ZANSKAR_AWS_GATEWAY_PRINCIPAL</code>, then restart.
             <button type="button" className="btn sm" style={{ marginLeft: 8 }} disabled={busy} onClick={() => void refresh()}>{busy ? 'Checking…' : 'Check again'}</button>
           </p>
           {id.error && <p className="muted mono" style={{ margin: '6px 0 0', fontSize: 12 }}>{id.error}</p>}
@@ -408,7 +403,7 @@ function IdentityCard() {
 function IAMDocsView({ docs, onRefresh }: { docs: AsgIAMDocs; onRefresh?: () => void }) {
   return (
     <>
-      <Field label="ExternalId" hint="Zanskar generated it for this group; the trust policy requires it, so knowing the role's ARN is not enough to assume it.">
+      <Field label="ExternalId">
         <div className="actions">
           <code style={{ wordBreak: 'break-all' }}>{docs.external_id}</code>
           <CopyButton text={docs.external_id} label="Copy" />
@@ -444,7 +439,7 @@ function IAMDocsView({ docs, onRefresh }: { docs: AsgIAMDocs; onRefresh?: () => 
       ) : (
         <>
           <Alert tone="warn">
-            The trust policy cannot be written yet: this gateway does not know which AWS principal it is, and a policy with a made-up ARN would not work. Run the gateway with an AWS role (an EC2 instance profile or IRSA) or set <code>ZANSKAR_AWS_GATEWAY_PRINCIPAL</code> to the role ARN it presents, restart, then come back here.
+            Gateway principal unknown. Give the gateway an AWS role (instance profile or IRSA), or set <code>ZANSKAR_AWS_GATEWAY_PRINCIPAL</code>, then restart.
             {docs.principal_error && <div className="mono muted" style={{ marginTop: 6, fontSize: 12 }}>{docs.principal_error}</div>}
             {onRefresh && <div style={{ marginTop: 6 }}><button type="button" className="btn sm" onClick={onRefresh}>Check again</button></div>}
           </Alert>
@@ -692,7 +687,7 @@ function GroupDetail({ group, credentials, onClose, onChanged, onDeleted, onErro
       {confirmRotate && (
         <Confirm
           title="Rotate ExternalId?"
-          body={<p>The role's trust policy must be updated with the new value before the next sync succeeds. Existing sessions are unaffected.</p>}
+          body={<p>Update the role's trust policy before the next sync.</p>}
           confirmLabel="Rotate"
           danger
           onClose={() => setConfirmRotate(false)}
@@ -706,7 +701,7 @@ function GroupDetail({ group, credentials, onClose, onChanged, onDeleted, onErro
       {confirmDelete && (
         <Confirm
           title={`Delete ${g.name}?`}
-          body={<p>The group leaves every list and the sync loop and its credential mappings are removed; past sessions keep the group and instance names. Deletion is refused while a policy names it by id or a session is open on one of its instances.</p>}
+          body={<p>Refused while a policy names it or a session is open on it.</p>}
           confirmLabel="Delete"
           danger
           onClose={() => setConfirmDelete(false)}

@@ -41,11 +41,7 @@ export function Sessions() {
     <>
       <PageHead
         title="Sessions"
-        lead={
-          admin
-            ? "Every connection through the gateway. Terminating a live session closes the user's terminal immediately."
-            : 'Every connection through the gateway. Watch a live session read-only; each view is audited.'
-        }
+        lead={admin ? undefined : 'Watching is logged.'}
       >
         <span className="field inline" style={{ margin: 0 }}>
           <input id="s-open" type="checkbox" checked={openOnly} onChange={(e) => set('open', e.target.checked ? '1' : '')} />

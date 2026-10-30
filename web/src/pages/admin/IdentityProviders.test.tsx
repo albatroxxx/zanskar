@@ -72,15 +72,22 @@ describe('Adding a provider', () => {
     await user.type(within(form).getByLabelText('Allowed email domains'), 'example.com')
     await user.click(within(form).getByLabelText(/Also ask for a Zanskar authenticator/))
     await user.click(within(form).getByLabelText('auditor'))
-    await user.type(within(form).getByLabelText('Group mapping'), 'ops-team=g1\ncn=dba,ou=groups,dc=corp=g2')
-    expect(within(form).getByText('ops=g1')).toBeDefined()
+    // Mappings are rows: the provider's group in a box, the Zanskar group
+    // picked by name, never an id typed after an "=".
+    await user.click(within(form).getByRole('button', { name: 'Add mapping' }))
+    await user.type(within(form).getByLabelText('Mapping 1 provider group'), 'ops-team')
+    await user.selectOptions(within(form).getByLabelText('Mapping 1 Zanskar group'), 'ops')
+    await user.click(within(form).getByRole('button', { name: 'Add mapping' }))
+    await user.type(within(form).getByLabelText('Mapping 2 provider group'), 'cn=dba,ou=groups,dc=corp')
+    await user.selectOptions(within(form).getByLabelText('Mapping 2 Zanskar group'), 'ops')
+    await user.click(within(form).getByRole('button', { name: 'Add mapping' }))
     await user.click(within(form).getByRole('button', { name: 'Save' }))
     await waitFor(() => expect(post).toHaveBeenCalledTimes(1))
     expect(post.mock.calls[0]).toEqual(['/identity-providers', {
       name: 'Okta', type: 'oidc', enabled: true,
       config: {
         default_roles: ['user', 'auditor'],
-        group_mapping: { 'ops-team': 'g1', 'cn=dba,ou=groups,dc=corp': 'g2' },
+        group_mapping: { 'ops-team': 'g1', 'cn=dba,ou=groups,dc=corp': 'g1' },
         auto_provision: true,
         oidc: { issuer: 'https://login.example.com', client_id: 'zanskar', client_secret: 's3cr3t', scopes: ['openid', 'email', 'groups'], allowed_domains: ['example.com'], zanskar_mfa: true },
       },
@@ -88,18 +95,19 @@ describe('Adding a provider', () => {
     expect(document.body.textContent).not.toContain('s3cr3t')
   })
 
-  it('refuses a mapping line it cannot read, and an empty name, before sending', async () => {
+  it('refuses a half-filled mapping before sending, and drops a removed one', async () => {
     const post = vi.spyOn(api, 'post').mockResolvedValue({} as never)
     const { user, form } = await openAdd()
     await user.type(within(form).getByLabelText('Name'), 'x')
-    await user.type(within(form).getByLabelText('Group mapping'), 'ops-team')
+    await user.click(within(form).getByRole('button', { name: 'Add mapping' }))
+    await user.type(within(form).getByLabelText('Mapping 1 provider group'), 'ops-team')
     await user.click(within(form).getByRole('button', { name: 'Save' }))
-    expect(await within(form).findByText('line "ops-team" must be externalGroup=groupId')).toBeDefined()
-    await user.clear(within(form).getByLabelText('Group mapping'))
-    await user.type(within(form).getByLabelText('Group mapping'), 'ops-team=')
-    await user.click(within(form).getByRole('button', { name: 'Save' }))
-    expect(await within(form).findByText('line "ops-team=" must be externalGroup=groupId')).toBeDefined()
+    expect(await within(form).findByText('mapping ops-team: choose a Zanskar group')).toBeDefined()
     expect(post).not.toHaveBeenCalled()
+    await user.click(within(form).getByRole('button', { name: 'Remove mapping ops-team' }))
+    await user.click(within(form).getByRole('button', { name: 'Save' }))
+    await waitFor(() => expect(post).toHaveBeenCalledTimes(1))
+    expect(post.mock.calls[0][1]).toMatchObject({ config: { group_mapping: {} } })
   })
 
   it('switches to the LDAP fields and sends them under ldap', async () => {
@@ -146,7 +154,8 @@ describe('Editing, testing and deleting a provider', () => {
     expect(secret.placeholder).toBe('••••••••')
     expect(within(form).getByText('leave blank to keep the stored secret')).toBeDefined()
     expect((within(form).getByLabelText('Scopes') as HTMLInputElement).value).toBe('openid, email')
-    expect((within(form).getByLabelText('Group mapping') as HTMLTextAreaElement).value).toBe('ops-team=g1')
+    expect((within(form).getByLabelText('Mapping 1 provider group') as HTMLInputElement).value).toBe('ops-team')
+    expect((within(form).getByLabelText('Mapping 1 Zanskar group') as HTMLSelectElement).value).toBe('g1')
     await user.click(within(form).getByLabelText('Enabled'))
     await user.click(within(form).getByRole('button', { name: 'Save' }))
     await waitFor(() => expect(put).toHaveBeenCalledTimes(1))
@@ -211,7 +220,7 @@ describe('Editing, testing and deleting a provider', () => {
     const user = userEvent.setup()
     await user.click((await screen.findAllByRole('button', { name: 'Delete' }))[0])
     const dialog = screen.getByRole('dialog', { name: 'Delete provider' })
-    expect(within(dialog).getByText(/keep their accounts but can no longer sign in with it/)).toBeDefined()
+    expect(within(dialog).getByText(/keep their accounts but cannot sign in through it/)).toBeDefined()
     await user.click(within(dialog).getByRole('button', { name: 'Delete' }))
     expect(await within(dialog).findByText('sessions still open through it')).toBeDefined()
     await user.click(within(dialog).getByRole('button', { name: 'Delete' }))

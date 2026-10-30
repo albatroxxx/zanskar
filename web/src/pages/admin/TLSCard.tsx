@@ -122,10 +122,9 @@ export function TLSCard() {
     <div className="card" id="settings-tls-certificate">
       <h2>TLS certificate</h2>
       {status.mode === 'proxy' ? (
-        <p className="muted">TLS is terminated by the proxy in front of the gateway (ZANSKAR_TLS_MODE=proxy); manage the certificate there. To have Zanskar serve TLS itself, set ZANSKAR_TLS_MODE=managed and restart.</p>
+        <p className="muted">Terminated by the proxy in front of the gateway (<code>ZANSKAR_TLS_MODE=proxy</code>).</p>
       ) : (
         <>
-          <p className="muted">What browsers see when they connect. An uploaded certificate applies to the next connection, no restart. Until one is uploaded the gateway serves {status.file_hint ? 'the certificate from the environment file' : 'a self-signed certificate: browsers warn about it, and the SHA-256 below is what to check on first visit'}.</p>
           {err && <Alert tone="danger">{err}</Alert>}
           {ok && <Alert tone="ok">{ok}</Alert>}
           {status.uploaded?.problem && (
@@ -142,7 +141,7 @@ export function TLSCard() {
             </>
           )}
           <h3 style={{ marginTop: 16 }}>Upload a certificate</h3>
-          <p className="muted">PEM files: the certificate (with any intermediates after it) and its unencrypted private key. The key is sealed by the master key and never shown again.</p>
+          <p className="muted">PEM: the certificate with its chain, and the unencrypted key.</p>
           <PEMFields id="tls" cert={certPEM} privateKey={keyPEM} onCert={setCertPEM} onKey={setKeyPEM} />
           <div className="actions">
             <button className="btn primary" disabled={busy || !certPEM.trim() || !keyPEM.trim()} onClick={() => void upload()}>Upload and serve</button>
@@ -165,8 +164,8 @@ export function TLSCard() {
               title="Regenerate the self-signed certificate?"
               body={
                 <div>
-                  <p>A new self-signed certificate is made for these names. It serves only while no uploaded or file certificate takes precedence; browsers will warn again and its fingerprint changes.</p>
-                  <Field label="Names (one per line: host names and IPs users type)" hint="Blank keeps the names the gateway detected on start.">
+                  <p>Its fingerprint changes and browsers warn again.</p>
+                  <Field label="Names (host names and IPs, one per line)" hint="Blank = the names detected on start">
                     <textarea id="tls-hosts" value={hosts} onChange={(e) => setHosts(e.target.value)} placeholder={(status.generated?.hosts ?? []).join('\n')} />
                   </Field>
                 </div>

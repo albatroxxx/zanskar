@@ -50,10 +50,7 @@ export function CAInstall({ credential }: { credential: Credential }) {
   const snippet = caInstallSnippet(keys)
   return (
     <>
-      <p className="muted" style={{ marginTop: 0 }}>
-        Run this once on each Linux target, as root. It installs the authority's public key{keys.length > 1 ? 's (the current one and the prepared next one)' : ''} and tells sshd to trust
-        certificates {keys.length > 1 ? 'they sign' : 'it signs'}. Older sshd without <code>sshd_config.d</code>: put the <code>TrustedUserCAKeys</code> line in <code>/etc/ssh/sshd_config</code> instead.
-      </p>
+      <p className="muted" style={{ marginTop: 0 }}>Run once on each Linux target, as root.</p>
       <pre className="mono" style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-all', margin: 0 }}>{snippet}</pre>
       <div className="actions" style={{ marginTop: 8 }}>
         <CopyButton text={snippet} label="Copy commands" />
@@ -85,18 +82,16 @@ function CARotation({ credential, onChanged, onError }: { credential: Credential
     <>
       <h3>Key rotation</h3>
       {!pending && !retired && (
-        <p className="muted">
-          Rotating the authority is two steps, so no session breaks on a host that has not learned the new key: prepare a next key and install both public keys on every target, then cut over. There is no schedule; rotate when the key may have been exposed or when policy says so.
-        </p>
+        <p className="muted">Prepare a next key, install it on every target, then cut over.</p>
       )}
       {pending && (
         <Alert tone="warn">
-          A next key is prepared{credential.rotation?.pending_since ? ` (${fmtTime(credential.rotation.pending_since)})` : ''}. The install commands above now write both public keys. Once every target trusts the next key (test below), cut over; until then sessions keep using the current key.
+          Next key prepared{credential.rotation?.pending_since ? ` ${fmtTime(credential.rotation.pending_since)}` : ''}. Install it on every target, test, then cut over.
         </Alert>
       )}
       {retired && (
         <Alert tone="warn">
-          Cut over{credential.rotation?.retired_at ? ` on ${fmtTime(credential.rotation.retired_at)}` : ''}. Sessions now use the new key. Remove the old public key from each target's <code>/etc/ssh/zanskar_ca.pub</code> (the install commands above write only the new one), then confirm here.
+          Cut over{credential.rotation?.retired_at ? ` ${fmtTime(credential.rotation.retired_at)}` : ''}. Remove the old key from each target's <code>/etc/ssh/zanskar_ca.pub</code>, then confirm.
           <pre className="mono" style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-all', margin: '8px 0 0' }}>{retired}</pre>
         </Alert>
       )}
@@ -107,16 +102,16 @@ function CARotation({ credential, onChanged, onError }: { credential: Credential
         {retired && <button type="button" className="btn" onClick={() => setConfirm('retire')}>Old key removed from targets</button>}
       </div>
       {confirm === 'prepare' && (
-        <Confirm title="Prepare a next key?" body="A new ed25519 authority key is generated and sealed beside the current one. Nothing changes for sessions until you cut over." confirmLabel="Prepare" onClose={() => setConfirm(null)} onConfirm={() => step(() => api.post<Credential>(`/credentials/${credential.id}/rotate`, {}))} />
+        <Confirm title="Prepare a next key?" body="Sessions are unaffected until you cut over." confirmLabel="Prepare" onClose={() => setConfirm(null)} onConfirm={() => step(() => api.post<Credential>(`/credentials/${credential.id}/rotate`, {}))} />
       )}
       {confirm === 'cutover' && (
-        <Confirm title="Cut over to the next key?" body="From the next session on, certificates are signed with the next key. A target that does not trust it yet will refuse logins. Test every bound target first." confirmLabel="Cut over" danger onClose={() => setConfirm(null)} onConfirm={() => step(() => api.post<Credential>(`/credentials/${credential.id}/rotate/cut-over`))} />
+        <Confirm title="Cut over to the next key?" body="A target that does not trust the next key will refuse logins." confirmLabel="Cut over" danger onClose={() => setConfirm(null)} onConfirm={() => step(() => api.post<Credential>(`/credentials/${credential.id}/rotate/cut-over`))} />
       )}
       {confirm === 'cancel' && (
-        <Confirm title="Discard the prepared key?" body="The next key is destroyed; targets that already trust it keep a harmless extra line." confirmLabel="Discard" danger onClose={() => setConfirm(null)} onConfirm={() => step(() => api.del<Credential>(`/credentials/${credential.id}/rotate`))} />
+        <Confirm title="Discard the prepared key?" body="The prepared key is destroyed." confirmLabel="Discard" danger onClose={() => setConfirm(null)} onConfirm={() => step(() => api.del<Credential>(`/credentials/${credential.id}/rotate`))} />
       )}
       {confirm === 'retire' && (
-        <Confirm title="Old key removed from every target?" body="This only clears the reminder; Zanskar cannot check that the old public key is gone." confirmLabel="Confirm" onClose={() => setConfirm(null)} onConfirm={() => step(() => api.post<Credential>(`/credentials/${credential.id}/rotate/retire`))} />
+        <Confirm title="Old key removed from every target?" body="Clears the reminder only." confirmLabel="Confirm" onClose={() => setConfirm(null)} onConfirm={() => step(() => api.post<Credential>(`/credentials/${credential.id}/rotate/retire`))} />
       )}
     </>
   )
@@ -166,7 +161,7 @@ function CATargets({ credential }: { credential: Credential }) {
     <>
       <h3>Bound targets</h3>
       {targets.length === 0 ? (
-        <p className="muted">No host uses this authority on its SSH slot yet. Bind it on a target, then test the login here.</p>
+        <p className="muted">No host uses this authority yet.</p>
       ) : (
         <div className="table-wrap">
           <table>
@@ -248,21 +243,21 @@ export function CASetup({ credential, onClose, onSaved }: { credential: Credenti
       <h3 style={{ marginTop: 0 }}>Install on targets</h3>
       <CAInstall credential={credential} />
       <p className="muted">
-        Bound to {bound} {bound === 1 ? 'target or group' : 'targets and groups'}. Each session gets a fresh certificate signed by this authority; nothing is stored on the target and there is no key to rotate there.
+        Bound to {bound} {bound === 1 ? 'target or group' : 'targets and groups'}.
       </p>
       <CATargets credential={credential} />
       <CARotation credential={credential} onChanged={onSaved} onError={setErr} />
       <h3>Settings</h3>
       <form onSubmit={save}>
         <div className="form-grid">
-          <Field label="Login user" hint="Blank: each person logs in as their own Zanskar username. Set it to make everyone use one account, e.g. deploy.">
+          <Field label="Login user" hint="Blank = each user's own username">
             <input id="ca-username" value={username} onChange={(e) => setUsername(e.target.value)} placeholder="(each user as themselves)" />
           </Field>
-          <Field label="Certificate lifetime (seconds)" hint={`Blank = ${DEFAULT_CERT_TTL}. It only needs to outlive the connection handshake; 60-3600.`}>
+          <Field label="Certificate lifetime (seconds)" hint={`Blank = ${DEFAULT_CERT_TTL}; 60–3600`}>
             <input id="ca-ttl" inputMode="numeric" value={ttl} onChange={(e) => setTtl(e.target.value)} placeholder={String(DEFAULT_CERT_TTL)} />
           </Field>
         </div>
-        <Field label="Allowed login users" hint="One per line. Blank = any. A connect for a login user not listed is refused before a certificate is minted.">
+        <Field label="Allowed login users" hint="One per line; blank = any">
           <textarea id="ca-principals" value={principals} onChange={(e) => setPrincipals(e.target.value)} placeholder={'deploy\nops'} />
         </Field>
         <div className="actions">

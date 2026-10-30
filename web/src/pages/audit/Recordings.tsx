@@ -39,7 +39,7 @@ export function Recordings() {
 
   return (
     <>
-      <PageHead title="Recordings" lead="Playing or downloading a recording is logged with your name.">
+      <PageHead title="Recordings" lead="Playback and downloads are logged.">
         <input
           className="mono filter-control"
           style={{ minWidth: 220 }}

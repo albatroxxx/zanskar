@@ -278,7 +278,7 @@ export function TargetDetail({ target, credentials, onClose, onChanged, onDelete
             <div>
               <p>Zanskar will only connect to <strong>{t.name}</strong> when it presents this key:</p>
               <p className="mono" style={{ wordBreak: 'break-all' }}>{fp}</p>
-              {t.host_key_status === 'changed' && <Alert tone="danger">This replaces a previously trusted key. Only proceed if you confirmed the change with the machine's owner.</Alert>}
+              {t.host_key_status === 'changed' && <Alert tone="danger">Replaces a previously trusted key. Confirm the change with the machine's owner first.</Alert>}
             </div>
           }
           confirmLabel="Trust"
@@ -311,7 +311,7 @@ export function TargetDetail({ target, credentials, onClose, onChanged, onDelete
       {confirm === 'delete' && (
         <Confirm
           title={`Delete ${t.name}?`}
-          body={`The ${database ? 'database' : application ? 'application' : 'target'} leaves every list${application ? '' : ' and its credential bindings are removed'}; past sessions${application ? '' : ', recordings'} and audit events keep its name. Deletion is refused while a policy names it by id or a session is open on it.`}
+          body="Refused while a policy names it or a session is open on it."
           confirmLabel="Delete"
           danger
           onClose={() => setConfirm(null)}

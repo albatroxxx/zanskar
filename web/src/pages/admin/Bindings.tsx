@@ -108,7 +108,7 @@ function BindingsEditor({ slots, current, credentials, onSave, onError }: Props)
     <>
       <div className="form-grid">
         {slots.map((s) => (
-          <Field key={s.protocol} label={s.label} hint={draft[s.protocol] === USER_SUPPLIED ? 'Zanskar forwards what the user types and stores nothing' : undefined}>
+          <Field key={s.protocol} label={s.label} hint={draft[s.protocol] === USER_SUPPLIED ? 'Typed by the user; not stored' : undefined}>
             <CredentialSelect id={`cred-${s.protocol}`} protocol={s.protocol} value={draft[s.protocol] ?? ''} credentials={credentials} disabled={busy} onChange={(v) => setDraft({ ...draft, [s.protocol]: v })} />
           </Field>
         ))}

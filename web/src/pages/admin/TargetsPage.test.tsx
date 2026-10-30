@@ -51,7 +51,7 @@ describe('TargetsPage', () => {
     const get = serve([])
     render(<MemoryRouter><Targets /></MemoryRouter>)
 
-    expect(await screen.findByText('No hosts yet. Add one to get started; databases are added under Databases.')).toBeDefined()
+    expect(await screen.findByText('No hosts yet.')).toBeDefined()
     expect(get).toHaveBeenCalledWith('/targets?limit=500&kind=host')
   })
 

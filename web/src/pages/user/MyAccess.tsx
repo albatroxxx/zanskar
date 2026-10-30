@@ -86,7 +86,7 @@ export function MyAccess() {
 
   return (
     <>
-      <PageHead title="Access" lead="Your requests, and the grants currently active." />
+      <PageHead title="Access" />
       {err && <Alert tone="danger">{err}</Alert>}
       {notice && <Alert tone="ok">{notice}</Alert>}
       <FilterChips chips={show ? [{ label: show === 'pending' ? 'Pending' : 'Expiring within the hour', onClear: () => setParams({}, { replace: true }) }] : []} />

@@ -160,7 +160,7 @@ function UpdateBell() {
                 </Field>
               )}
               {needsCode && (
-                <Field label="Authenticator code" hint={`This action asks for a code proved within the last ${host?.step_up_minutes ?? 5} minutes.`}>
+                <Field label="Authenticator code" hint={`Proved within ${host?.step_up_minutes ?? 5} minutes`}>
                   <input id="bell-code" value={code} onChange={(e) => setCode(e.target.value)} inputMode="numeric" autoComplete="one-time-code" />
                 </Field>
               )}
@@ -276,7 +276,7 @@ function GearMenu() {
             <form onSubmit={(e) => void submit(e)}>
               <h3 style={{ marginBottom: 8 }}>{actionWords[action].title}</h3>
               {action === 'poweroff' && (
-                <Alert tone="warn">Nothing here can start a stopped machine. Starting it again needs the host or the cloud console.</Alert>
+                <Alert tone="warn">Starting it again needs the host or the cloud console.</Alert>
               )}
               <Field label="Let live sessions finish for" hint="Minutes; 0 ends them now.">
                 <input id="gear-wait" type="number" min={0} max={240} value={wait} onChange={(e) => setWait(Number(e.target.value))} />
@@ -287,7 +287,7 @@ function GearMenu() {
                 </Field>
               )}
               {needsCode && (
-                <Field label="Authenticator code" hint={`This action asks for a code proved within the last ${host?.step_up_minutes ?? 5} minutes.`}>
+                <Field label="Authenticator code" hint={`Proved within ${host?.step_up_minutes ?? 5} minutes`}>
                   <input id="gear-code" value={code} onChange={(e) => setCode(e.target.value)} inputMode="numeric" autoComplete="one-time-code" />
                 </Field>
               )}

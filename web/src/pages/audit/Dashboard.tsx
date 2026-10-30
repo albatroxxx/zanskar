@@ -56,9 +56,6 @@ export function Dashboard() {
 
       <h2 className="stat-section">Log integrity</h2>
       <div className="card">
-        <p className="muted" style={{ marginTop: 0 }}>
-          Every event is hash-chained and anchored; the check walks the whole log.
-        </p>
         {(verify || verifyErr) && (
           <p style={{ margin: '0 0 12px' }}>
             <ChainStatus verify={verify} err={verifyErr} />

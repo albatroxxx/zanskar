@@ -15,10 +15,9 @@ import { TargetForm, type TargetKind } from './TargetForm'
  * one. Hosts and databases differ only in their words and in the columns
  * between a target's name and its Manage button.
  */
-export function TargetsPage({ kind, title, lead, addLabel, empty, columns, cells }: {
+export function TargetsPage({ kind, title, addLabel, empty, columns, cells }: {
   kind: TargetKind
   title: string
-  lead: string
   addLabel: string
   /** What the list says while it has no target of this kind. */
   empty: string
@@ -65,7 +64,7 @@ export function TargetsPage({ kind, title, lead, addLabel, empty, columns, cells
 
   return (
     <>
-      <PageHead title={title} lead={lead}>
+      <PageHead title={title}>
         <button className="btn primary" onClick={() => setAdding(true)}>{addLabel}</button>
       </PageHead>
       {err && <Alert tone="danger">{err}</Alert>}

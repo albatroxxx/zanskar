@@ -423,7 +423,7 @@ function DesktopSession({ state }: { state: SessionState }) {
               <span className="grow" />
               <button className="btn sm" onClick={() => setClipOpen(false)}>Close</button>
             </header>
-            <div className="hint">Text copied inside the session shows up here. Paste text below and send it to make it available inside the session; it syncs on its own when the browser allows.</div>
+            <div className="hint">Copied in the session shows here; send text below into it.</div>
             <textarea value={clipText} onChange={(e) => setClipText(e.target.value)} spellCheck={false} aria-label="Clipboard text" />
             <div className="row">
               <button className="btn sm primary" disabled={!clipText} onClick={() => pushClipboard(clipText)}>Send to session</button>
@@ -441,7 +441,7 @@ function DesktopSession({ state }: { state: SessionState }) {
               <button className="btn sm" disabled={!fsReady} onClick={() => fileInput.current?.click()}>Upload</button>
             </header>
             {!fsReady ? (
-              <div className="hint">The drive appears once the desktop session has started. Inside the session it is the "Zanskar" drive; files placed there show up here.</div>
+              <div className="hint">Available once the session starts, as the "Zanskar" drive.</div>
             ) : (
               <div className="list">
                 <div className="entry dir">{cwd}</div>
@@ -449,7 +449,7 @@ function DesktopSession({ state }: { state: SessionState }) {
                   <button type="button" className="entry dir" title="parent folder" onClick={() => list(parent)}>..</button>
                 )}
                 {entries === null && <div className="hint">Loading…</div>}
-                {entries?.length === 0 && <div className="hint">Empty. Upload a file, or save one to the Zanskar drive in the session.</div>}
+                {entries?.length === 0 && <div className="hint">Empty.</div>}
                 {entries?.map((e) => (
                   <button type="button" key={e.path} className={'entry' + (e.dir ? ' dir' : '')} onClick={() => (e.dir ? list(e.path) : download(e))} title={e.dir ? 'open folder' : 'download'}>
                     <span aria-hidden="true">{e.dir ? '📁' : '📄'}</span>

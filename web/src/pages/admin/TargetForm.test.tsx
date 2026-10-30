@@ -54,7 +54,7 @@ describe('TargetForm application', () => {
     await user.type(screen.getByLabelText('Upstream'), 'https://wiki.internal:8443')
     expect(screen.getByLabelText(/CA bundle/)).toBeDefined()
     expect(screen.queryByLabelText('Label')).toBeNull()
-    expect(screen.getByText(/isolated browser beside the gateway/)).toBeDefined()
+    expect(screen.getByText('The only origin the isolated browser can reach')).toBeDefined()
     await user.click(screen.getByRole('button', { name: 'Create' }))
 
     expect(post).toHaveBeenCalledWith('/targets', expect.objectContaining({ name: 'Wiki', address: '', os_family: 'other', engine: '', app_upstream: 'https://wiki.internal:8443', retention_days: null, ports: {} }))
@@ -77,5 +77,35 @@ describe('TargetForm kind', () => {
 
     expect(screen.getByRole('tab', { name: 'Database', selected: true })).toBeDefined()
     expect(screen.getByLabelText('Engine')).toBeDefined()
+  })
+})
+
+// 2026-10-30: tags are rows of a Key and a Value box, not key=value lines.
+describe('TargetForm tags', () => {
+  it('shows a host\'s tags as rows and sends what the rows say', async () => {
+    const put = vi.spyOn(api, 'put').mockResolvedValue(host as never)
+    render(<TargetForm initial={{ ...host, tags: { env: 'prod', team: 'ops' } }} onClose={() => {}} onSaved={() => {}} />)
+    const user = userEvent.setup()
+    expect((screen.getByLabelText('Tag 1 key') as HTMLInputElement).value).toBe('env')
+    expect((screen.getByLabelText('Tag 2 value') as HTMLInputElement).value).toBe('ops')
+    await user.click(screen.getByRole('button', { name: 'Remove tag team' }))
+    await user.click(screen.getByRole('button', { name: 'Add tag' }))
+    await user.type(screen.getByLabelText('Tag 2 key'), 'role')
+    await user.type(screen.getByLabelText('Tag 2 value'), 'web')
+    await user.click(screen.getByRole('button', { name: 'Save' }))
+    expect(put).toHaveBeenCalledWith('/targets/t1', expect.objectContaining({ tags: { env: 'prod', role: 'web' } }))
+  })
+
+  it('names the bad row and sends nothing', async () => {
+    const post = vi.spyOn(api, 'post').mockResolvedValue({ id: 'x' } as never)
+    render(<TargetForm kind="host" onClose={() => {}} onSaved={() => {}} />)
+    const user = userEvent.setup()
+    await user.type(screen.getByLabelText('Name'), 'web-2')
+    await user.type(document.getElementById('t-address')!, '10.0.0.7')
+    await user.click(screen.getByRole('button', { name: 'Add tag' }))
+    await user.type(screen.getByLabelText('Tag 1 value'), 'prod')
+    await user.click(screen.getByRole('button', { name: 'Create' }))
+    expect(await screen.findByText('tag 1: key is empty')).toBeDefined()
+    expect(post).not.toHaveBeenCalled()
   })
 })

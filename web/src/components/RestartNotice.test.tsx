@@ -83,7 +83,7 @@ describe('RestartNotice', () => {
     vi.spyOn(api, 'get').mockResolvedValue(status({ restart_required: true, env_file: { state: 'changed', path: '/etc/zanskar/env', changed: ['ZANSKAR_MASTER_KEY'], checked_at: 'x' } }) as never)
     const { unmount } = render(<RestartNotice />)
     expect(await screen.findByText('ZANSKAR_MASTER_KEY differs.')).toBeDefined()
-    expect(screen.getByText(/A restart will fail to open every stored secret/)).toBeDefined()
+    expect(screen.getByText(/a restart cannot open stored secrets/)).toBeDefined()
     unmount()
     vi.spyOn(api, 'get').mockResolvedValue(status({ env_file: { state: 'unreadable', path: '/etc/zanskar/env', error: 'permission denied', checked_at: 'x' } }) as never)
     render(<RestartNotice />)

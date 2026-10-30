@@ -14,7 +14,7 @@ export function UsersGroups() {
   const [tab, setTab] = useState<'users' | 'groups'>('users')
   return (
     <>
-      <PageHead title="Users & groups" lead="Roles: admin configures, auditor reviews, user connects." />
+      <PageHead title="Users & groups" />
       <Tabs label="Users and groups" value={tab} onChange={setTab} tabs={[{ key: 'users', label: 'Users' }, { key: 'groups', label: 'Groups' }]} />
       {tab === 'users' ? <Users /> : <Groups />}
     </>
@@ -124,7 +124,7 @@ function Users() {
           onSaved={(oneTime) => {
             setAction(null)
             if (oneTime) setShowOnce(oneTime)
-            else setNotice(`Password for ${action.u.username} replaced; they were signed out and their live sessions ended. They must change it at their next sign-in.`)
+            else setNotice(`Password for ${action.u.username} reset.`)
             void reload()
           }}
         />
@@ -132,7 +132,7 @@ function Users() {
       {action?.a === 'sessions' && (
         <Confirm
           title={`Sign ${action.u.username} out everywhere?`}
-          body="Every browser session for this account ends now, and so does every live session it has open to a machine."
+          body="Ends every sign-in and live session of this account."
           confirmLabel="Revoke sessions"
           onClose={() => setAction(null)}
           onConfirm={async () => {
@@ -144,7 +144,7 @@ function Users() {
       {action?.a === 'mfa' && (
         <Confirm
           title={`Reset ${action.u.username}'s authenticator?`}
-          body="Their TOTP secret and recovery codes are deleted, they are signed out, and their live sessions end. They will enroll a new authenticator at next sign-in."
+          body="They are signed out and enrol again at their next sign-in."
           confirmLabel="Reset authenticator"
           danger
           onClose={() => setAction(null)}
@@ -175,7 +175,7 @@ function Users() {
       {action?.a === 'delete' && (
         <Confirm
           title={`Delete ${action.u.username}?`}
-          body="The account is removed. Audit entries keep the user id so history stays intact. An account that has ever opened a session is kept for the record and cannot be deleted: disable it instead."
+          body="An account with session history cannot be deleted; disable it instead."
           confirmLabel="Delete"
           danger
           onClose={() => setAction(null)}
@@ -217,7 +217,7 @@ function OneTimePassword({ username, password, onClose }: { username: string; pa
   const [copied, setCopied] = useState(false)
   return (
     <Modal title={`One-time password for ${username}`} onClose={onClose}>
-      <p>Pass this on now; it is not stored and will not be shown again. They must replace it at their first sign-in, then enrol an authenticator.</p>
+      <p>Shown once. They replace it at their first sign-in.</p>
       <p className="mono" style={{ fontSize: '1.2rem', letterSpacing: 1, wordBreak: 'break-all', padding: '10px 12px', background: 'var(--bg-sunken)', borderRadius: 6 }}>{password}</p>
       <div className="actions">
         <button className="btn" onClick={() => void navigator.clipboard?.writeText(password).then(() => setCopied(true)).catch(() => {})}>{copied ? 'Copied' : 'Copy'}</button>
@@ -251,7 +251,7 @@ function UserForm({ onClose, onSaved }: { onClose: () => void; onSaved: (oneTime
         <label htmlFor="nu-external">Signs in through an identity provider (no password)</label>
       </div>
       {!external && (
-        <Field label="Initial password" hint="Leave blank to have a one-time password generated and shown once. Either way they must replace it at their first sign-in, before enrolling an authenticator."><input id="nu-password" type="password" autoComplete="new-password" value={f.password} onChange={set('password')} minLength={12} /></Field>
+        <Field label="Initial password" hint="Blank = generate a one-time password"><input id="nu-password" type="password" autoComplete="new-password" value={f.password} onChange={set('password')} minLength={12} /></Field>
       )}
       <RoleChecks value={r} onChange={setR} prefix="nu" />
     </FormModal>
@@ -269,7 +269,7 @@ function RolesForm({ user, onClose, onSaved }: { user: User; onClose: () => void
   return (
     <FormModal title={`Roles for ${user.username}`} err={err} busy={busy} submitLabel="Save" onSubmit={save} onClose={onClose}>
       <RoleChecks value={r} onChange={setR} prefix={`er-${user.id}`} />
-      <p className="muted">Granting admin or auditor is recorded in the audit log. An account with only auditor is review-only: it sees the audit portal and nothing else, and cannot be granted access to targets.</p>
+      <p className="muted">Auditor alone is review-only.</p>
     </FormModal>
   )
 }
@@ -292,7 +292,7 @@ function PasswordForm({ user, onClose, onSaved }: { user: User; onClose: () => v
       {!generate && (
         <Field label="New password" hint="At least 12 characters."><input id={`pw-${user.id}`} type="password" autoComplete="new-password" value={pw} onChange={(e) => setPw(e.target.value)} required autoFocus minLength={12} /></Field>
       )}
-      <p className="muted">They are signed out, their live sessions end, and they must replace this password at their next sign-in.</p>
+      <p className="muted">They are signed out and replace it at their next sign-in.</p>
     </FormModal>
   )
 }
@@ -361,7 +361,7 @@ function Groups() {
       {deleting && (
         <Confirm
           title={`Delete group ${deleting.name}?`}
-          body="Policies attached to this group are deleted with it, and the live sessions they allowed end now."
+          body="Its policies are deleted and the sessions they allowed end."
           confirmLabel="Delete"
           danger
           onClose={() => setDeleting(null)}

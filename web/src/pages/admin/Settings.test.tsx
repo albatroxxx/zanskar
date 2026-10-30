@@ -134,7 +134,9 @@ describe('Settings', () => {
     vi.spyOn(api, 'get').mockRejectedValue(new ApiError(500, { code: 'internal', message: 'database is locked', request_id: 'req-5' }, '500'))
     render(<Settings />)
     expect(await screen.findByText('database is locked (reference req-5)')).toBeDefined()
-    expect(screen.queryByText('Loading…')).toBeNull()
+    // The recording retention card reads on its own and settles a moment
+    // later; nothing on the page is left loading.
+    await waitFor(() => expect(screen.queryByText('Loading…')).toBeNull())
   })
 })
 

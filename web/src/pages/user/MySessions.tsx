@@ -23,7 +23,7 @@ export function MySessions() {
 
   return (
     <>
-      <PageHead title="Sessions" lead="Sessions are recorded; recordings are reviewed by auditors, not shown here." />
+      <PageHead title="Sessions" lead="Sessions are recorded." />
       {err && <Alert tone="danger">{err}</Alert>}
       <FilterChips chips={openOnly ? [{ label: 'Open only', onClear: () => setSp(new URLSearchParams(), { replace: true }) }] : []} />
       <div className="card table-wrap">

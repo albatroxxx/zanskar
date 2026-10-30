@@ -4,7 +4,9 @@ import { api } from '../../api/client'
 import type { OSFamily, Protocol, Target } from '../../api/types'
 import { useSubmit } from '../../components/submit'
 import { Alert, Field, Modal, Tabs } from '../../components/ui'
-import { formatTags, parseTags, protocols } from './lib'
+import { protocols } from './lib'
+import { TagEditor } from '../../components/TagEditor'
+import { rowsToTags, tagRows, type TagRow } from '../../components/tags'
 
 export type TargetKind = 'host' | 'database' | 'application'
 
@@ -40,17 +42,17 @@ const enginePorts: Record<string, string> = { postgres: '5432', mysql: '3306', m
 // Verified is the default (ADR 0025); the others are an explicit choice to
 // connect without checking who answers.
 const tlsModes = [
-  { v: 'verify-full', label: 'Verified (recommended)', hint: 'TLS, with the certificate chain and host name checked against the CA bundle below' },
-  { v: 'require', label: 'Encrypted, not verified', hint: 'TLS or refuse, but anyone who can intercept the connection can impersonate the database' },
-  { v: 'prefer', label: 'Encrypted if offered, not verified', hint: 'TLS when the database offers it, otherwise plain; nothing is verified' },
-  { v: 'disable', label: 'Not encrypted', hint: 'never TLS; only for a database on a private network' },
+  { v: 'verify-full', label: 'Verified (recommended)', hint: 'Chain and host name checked' },
+  { v: 'require', label: 'Encrypted, not verified', hint: 'Open to impersonation' },
+  { v: 'prefer', label: 'Encrypted if offered, not verified', hint: 'May fall back to plain text' },
+  { v: 'disable', label: 'Not encrypted', hint: 'Private networks only' },
 ]
 
 const emptyForm = {
   name: '', address: '', os_family: 'linux' as OSFamily,
   engine: 'postgres', engine_version: '', database_name: '', tls_mode: 'verify-full', tls_ca: '',
   app_upstream: '',
-  ssh: '', rdp: '', vnc: '', winrm: '', database: '', tags: '', notes: '', retention: '',
+  ssh: '', rdp: '', vnc: '', winrm: '', database: '', tags: [] as TagRow[], notes: '', retention: '',
 }
 
 /**
@@ -80,7 +82,7 @@ export function TargetForm({ initial, kind, onClose, onSaved }: { initial?: Targ
           vnc: initial.ports.vnc ? String(initial.ports.vnc) : '',
           winrm: initial.ports.winrm ? String(initial.ports.winrm) : '',
           database: initial.ports.database ? String(initial.ports.database) : '',
-          tags: formatTags(initial.tags),
+          tags: tagRows(initial.tags),
           notes: initial.notes,
           retention: initial.retention_days ? String(initial.retention_days) : '',
         }
@@ -103,7 +105,7 @@ export function TargetForm({ initial, kind, onClose, onSaved }: { initial?: Targ
   const save = (e: FormEvent) => {
     e.preventDefault()
     if (!k) return
-    const { tags, error } = parseTags(f.tags)
+    const { tags, error } = rowsToTags(f.tags)
     if (error) {
       setErr(error)
       return
@@ -161,7 +163,6 @@ export function TargetForm({ initial, kind, onClose, onSaved }: { initial?: Targ
       {!initial && !kind && (
         <>
           <Tabs label="Kind of target" value={k ?? ''} onChange={setK} tabs={[{ key: 'host', label: 'Host' }, { key: 'database', label: 'Database' }, { key: 'application', label: 'Application' }]} />
-          {!k && <p className="muted">A <strong>host</strong> is a machine reached over SSH, RDP, VNC or WinRM. A <strong>database</strong> is an endpoint such as RDS, reached through a client container that never sees the password. An <strong>application</strong> is a web app opened in an isolated browser beside the gateway. Autoscaling groups are added under <em>Autoscaling</em>.</p>}
         </>
       )}
       {k && (
@@ -172,15 +173,15 @@ export function TargetForm({ initial, kind, onClose, onSaved }: { initial?: Targ
             </Field>
             {k === 'application' ? (
               <>
-                <Field label="Upstream" hint="The origin the isolated browser beside the gateway can reach, with its scheme and port; nothing else is reachable from it">
+                <Field label="Upstream" hint="The only origin the isolated browser can reach">
                   <input id="t-upstream" value={f.app_upstream} onChange={set('app_upstream')} required placeholder="https://wiki.internal:8443" />
                 </Field>
               </>
             ) : k === 'host' ? (
               <>
                 <Field label="Address" hint={initial && f.address.trim() !== initial.address
-                  ? 'A new address may be a different machine: saving clears the trusted host key and pinned certificates, so probe and trust it again.'
-                  : 'Hostname or IP reachable from the gateway'}>
+                  ? 'New address: saving clears the trusted host key and pinned certificates.'
+                  : undefined}>
                   <input id="t-address" value={f.address} onChange={set('address')} required />
                 </Field>
                 <Field label="Operating system">
@@ -193,14 +194,14 @@ export function TargetForm({ initial, kind, onClose, onSaved }: { initial?: Targ
               </>
             ) : (
               <>
-                <Field label="Engine" hint="Selects the client and the sidecar">
+                <Field label="Engine">
                   <select id="t-engine" value={f.engine} onChange={set('engine')}>
                     <option value="postgres">PostgreSQL</option>
                     <option value="mysql">MySQL</option>
                     <option value="mariadb">MariaDB</option>
                   </select>
                 </Field>
-                <Field label="Endpoint" hint="Hostname reachable from the gateway, e.g. the RDS endpoint">
+                <Field label="Endpoint" hint="e.g. the RDS endpoint">
                   <input id="t-address" value={f.address} onChange={set('address')} required />
                 </Field>
                 <Field label="Port" hint="blank = engine default">
@@ -221,10 +222,10 @@ export function TargetForm({ initial, kind, onClose, onSaved }: { initial?: Targ
           {k === 'database' && (
             <>
               <div className="form-grid">
-                <Field label="Engine version" hint="e.g. 16 or 8.4; selects the matching client image">
+                <Field label="Engine version" hint="e.g. 16 or 8.4">
                   <input id="t-engine-version" value={f.engine_version} onChange={set('engine_version')} placeholder={f.engine === 'postgres' ? '16' : '8'} />
                 </Field>
-                <Field label="Database" hint={f.engine === 'postgres' ? 'blank = a database named after the login role' : 'blank = none selected; users pick one with USE'}>
+                <Field label="Database" hint={f.engine === 'postgres' ? 'blank = the login role\'s name' : 'blank = none'}>
                   <input id="t-database-name" value={f.database_name} onChange={set('database_name')} />
                 </Field>
                 <Field label="TLS to the database" hint={tlsModes.find((m) => m.v === f.tls_mode)?.hint}>
@@ -236,24 +237,24 @@ export function TargetForm({ initial, kind, onClose, onSaved }: { initial?: Targ
                 </Field>
               </div>
               {f.tls_mode === 'verify-full' && (
-                <Field label="CA bundle (PEM)" hint="The certificate authority that signs the database's certificate. For Amazon RDS, paste your region's bundle from truststore.pki.rds.amazonaws.com/<region>/<region>-bundle.pem (the global bundle is too large). Kept if you switch modes later.">
+                <Field label="CA bundle (PEM)" hint="For RDS: truststore.pki.rds.amazonaws.com/<region>/<region>-bundle.pem">
                   <textarea id="t-tls-ca" value={f.tls_ca} onChange={set('tls_ca')} placeholder="-----BEGIN CERTIFICATE-----" required />
                 </Field>
               )}
             </>
           )}
           {k === 'application' && secureUpstream && (
-            <Field label="CA bundle (PEM, optional)" hint="The authority that signs the upstream's certificate; blank verifies against the system roots. The connection is always verified.">
+            <Field label="CA bundle (PEM, optional)" hint="Blank = system roots">
               <textarea id="t-tls-ca" value={f.tls_ca} onChange={set('tls_ca')} placeholder="-----BEGIN CERTIFICATE-----" />
             </Field>
           )}
           {k !== 'application' && (
-            <Field label="Keep recordings (days, blank = policy's or global)" hint="Overrides the policy's retention for this target's sessions">
+            <Field label="Keep recordings (days)" hint="Blank = the policy's or global">
               <input id="t-retention" inputMode="numeric" value={f.retention} onChange={set('retention')} />
             </Field>
           )}
-          <Field label="Tags" hint="One key=value per line; policies select targets by tag">
-            <textarea id="t-tags" value={f.tags} onChange={set('tags')} placeholder={'env=prod\nteam=ops'} />
+          <Field label="Tags">
+            <TagEditor idPrefix="t-tag" rows={f.tags} onChange={(tags) => setF({ ...f, tags })} />
           </Field>
           <Field label="Notes">
             <textarea id="t-notes" value={f.notes} onChange={set('notes')} style={{ minHeight: 50 }} />

@@ -138,7 +138,7 @@ describe('Users', () => {
 
     await act(user, 'bob', 'sessions')
     let dialog = screen.getByRole('dialog', { name: 'Sign bob out everywhere?' })
-    expect(within(dialog).getByText(/every live session it has open to a machine/)).toBeDefined()
+    expect(within(dialog).getByText(/every sign-in and live session/)).toBeDefined()
     await user.click(within(dialog).getByRole('button', { name: 'Revoke sessions' }))
     await waitFor(() => expect(del).toHaveBeenCalledWith('/users/u2/sessions'))
     expect(await screen.findByText('Revoked 3 session(s) for bob.')).toBeDefined()
@@ -162,7 +162,7 @@ describe('Users', () => {
 
     await act(user, 'bob', 'delete')
     dialog = screen.getByRole('dialog', { name: 'Delete bob?' })
-    expect(within(dialog).getByText(/An account that has ever opened a session is kept for the record/)).toBeDefined()
+    expect(within(dialog).getByText(/An account with session history cannot be deleted/)).toBeDefined()
     await user.click(within(dialog).getByRole('button', { name: 'Delete' }))
     await waitFor(() => expect(del).toHaveBeenCalledWith('/users/u2'))
   })
@@ -211,7 +211,7 @@ describe('Groups', () => {
 
     await user.click(within(row).getByRole('button', { name: 'Delete' }))
     const confirm = screen.getByRole('dialog', { name: 'Delete group ops?' })
-    expect(within(confirm).getByText(/Policies attached to this group are deleted with it/)).toBeDefined()
+    expect(within(confirm).getByText(/Its policies are deleted/)).toBeDefined()
     await user.click(within(confirm).getByRole('button', { name: 'Delete' }))
     await waitFor(() => expect(del).toHaveBeenCalledWith('/groups/g1'))
   })

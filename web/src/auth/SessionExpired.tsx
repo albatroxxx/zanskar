@@ -42,8 +42,7 @@ export function SessionExpired() {
   return (
     <Modal title="Session expired" onClose={() => void signIn()}>
       <p>
-        You have been signed out, either after a period of inactivity or because the session was
-        ended somewhere else.
+        You have been signed out.
       </p>
       <p className="muted">Signing in again brings you back to this page.</p>
       <div className="actions">

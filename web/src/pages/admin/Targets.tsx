@@ -10,9 +10,8 @@ export function Targets() {
     <TargetsPage
       kind="host"
       title="Hosts"
-      lead="Machines reached over SSH, RDP, VNC or WinRM."
       addLabel="Add host"
-      empty="No hosts yet. Add one to get started; databases are added under Databases."
+      empty="No hosts yet."
       columns={['Address', 'OS', 'Capabilities', 'Host key', 'Tags', 'Last probed']}
       cells={(t) => (
         <>

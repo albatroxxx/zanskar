@@ -407,7 +407,7 @@ export function Targets() {
 
       {chooser && (
         <Modal title={`Connect to ${chooser.group.name}`} onClose={() => setChooser(null)} width={560}>
-          <p className="muted">Instances come and go with scaling. Connect to the newest healthy one, or pick a specific instance.</p>
+          <p className="muted">Newest healthy instance, or pick one.</p>
           {chooser.instances === null && <p className="muted">Loading healthy instances…</p>}
           {chooser.instances !== null && chooser.instances.length === 0 && (
             <Alert tone="warn">This group has no healthy instance right now.</Alert>
@@ -465,7 +465,7 @@ export function Targets() {
 
       {prompt && (
         <Modal title={`Credentials for ${prompt.target.name}`} onClose={() => setPrompt(null)}>
-          <p className="muted">This target uses your own account. Zanskar forwards these to the machine and does not store them.</p>
+          <p className="muted">Sent to the machine; not stored.</p>
           <form
             onSubmit={(e) => {
               e.preventDefault()

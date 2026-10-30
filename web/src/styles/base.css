@@ -208,6 +208,15 @@ td.actions > * + * { margin-left: 8px; }
 .kv dt { color: var(--fg-muted); }
 .kv dd { margin: 0; word-break: break-all; }
 .tag { display: inline-block; font-family: var(--mono); font-size: 0.74rem; background: var(--bg-sunken); border-radius: 4px; padding: 1px 6px; margin-right: 4px; }
+/* A tag reads as key, then value, split by a hairline: no "=" to parse. */
+.tag .tag-k { color: var(--fg-muted); }
+.tag .tag-k + .tag-v { border-left: 1px solid var(--line); margin-left: 5px; padding-left: 5px; }
+/* The tag editor: rows of Key and Value boxes with a remove button, as
+   cloud consoles lay them out. */
+.tag-editor { display: grid; gap: 6px; }
+.tag-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 2rem; gap: 8px; align-items: center; }
+.tag-row input, .tag-row select { width: 100%; min-width: 0; }
+.tag-head { font-size: 0.78rem; color: var(--fg-muted); }
 
 /* modal
    The dialog never exceeds the viewport: the title stays put, the body scrolls,

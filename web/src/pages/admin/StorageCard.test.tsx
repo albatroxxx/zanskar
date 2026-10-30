@@ -73,7 +73,7 @@ describe('StorageCard', () => {
 
     await user.click(screen.getByRole('button', { name: 'Move 2 local recordings to the bucket…' }))
     const move = screen.getByRole('dialog', { name: 'Move 2 local recordings?' })
-    expect(within(move).getByText(/its digest checked, its record repointed/)).toBeDefined()
+    expect(within(move).getByText(/copied, verified and removed locally/)).toBeDefined()
     setStatus({ ...bucket, move: { running: true, moved: 1, failed: 0, total: 2 } })
     await user.click(within(move).getByRole('button', { name: 'Move' }))
     await waitFor(() => expect(post).toHaveBeenCalledWith('/admin/storage/move'))

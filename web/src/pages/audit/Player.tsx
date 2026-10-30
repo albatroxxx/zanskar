@@ -371,7 +371,7 @@ export function Player() {
             <h2>{isDesktop ? 'Desktop playback' : 'Terminal playback'}</h2>
             {phase === 'idle' && (
               <>
-                <Alert tone="warn">Pressing Play records a view: your name, this recording and its session are written to the audit log.</Alert>
+                <Alert tone="warn">Playing is logged with your name.</Alert>
                 <div className="actions">
                   <button id="play" className="btn primary" onClick={() => void play()}>Play</button>
                 </div>
@@ -415,7 +415,7 @@ export function Player() {
                     ? 'Space play/pause · ← → back/forward 10 s · Home/End. Desktop recordings play at real time; guacd streams carry no speed control.'
                     : 'On the player: Space play/pause · ← → 5 s · [ ] previous/next command · 0–9 jump to a tenth. Speed applies from the current point.'}
                 </p>
-                {isDesktop && loaded && duration === 0 && <p className="muted" style={{ marginTop: 10 }}>This recording holds no screen frames: the desktop session ended before anything was drawn.</p>}
+                {isDesktop && loaded && duration === 0 && <p className="muted" style={{ marginTop: 10 }}>No screen frames recorded.</p>}
               </>
             )}
           </div>
@@ -424,10 +424,10 @@ export function Player() {
             <div className="card">
               <h2>Commands</h2>
               {commands.length === 0 ? (
-                <p className="muted" style={{ margin: 0 }}>No command lines were recorded in this session. Recordings made before command capture was added, or sessions where nothing was typed, show none.</p>
+                <p className="muted" style={{ margin: 0 }}>No command lines recorded.</p>
               ) : (
                 <>
-                  <p className="muted" style={{ marginTop: 0 }}>Each line the user submitted, in order. Choose one to jump the playback to it. Input the remote did not echo, such as a password, is marked hidden and was never stored.</p>
+                  <p className="muted" style={{ marginTop: 0 }}>Choose a line to jump to it. Unechoed input is hidden.</p>
                   {/* Seek by marker INDEX, not the command's original timestamp:
                       the player compresses idle gaps (idleTimeLimit), so its
                       timeline no longer matches recording time and a raw-seconds

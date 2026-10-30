@@ -62,24 +62,22 @@ export function RetentionCard() {
   return (
     <form className="card" id="settings-recording-retention" onSubmit={save}>
       <h2>Recording retention</h2>
-      <p className="muted" style={{ marginTop: 0 }}>A recording's retention is fixed when its session starts; deletions are audited.</p>
       {err && <Alert tone="danger">{err}</Alert>}
       {saved && <Alert tone="ok">Retention policy saved.</Alert>}
       {!loaded && !err ? (
         <p className="muted">Loading…</p>
       ) : (
         <>
-          <Field label="Keep recordings for (days)" hint="0 keeps recordings indefinitely by age.">
+          <Field label="Keep recordings for (days)" hint="0 = no age limit">
             <input type="number" min={0} step={1} value={days} onChange={(e) => setDays(Number(e.target.value))} />
           </Field>
-          <Field label="Total size cap (GiB)" hint="A backstop: when recordings exceed this, the oldest are deleted early even if within the day limit. 0 means no cap.">
+          <Field label="Total size cap (GiB)" hint="Oldest go first past the cap; 0 = no cap">
             <input type="number" min={0} step={0.5} value={gib} onChange={(e) => setGib(Number(e.target.value))} />
           </Field>
 
           {off && (
             <Alert tone="warn">
-              Retention is off: recordings are kept forever and the disk will grow without bound. Set a day
-              limit, a size cap, or both.
+              Retention is off: recordings are kept forever.
             </Alert>
           )}
 

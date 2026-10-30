@@ -146,7 +146,7 @@ describe('the admin dashboard', () => {
     })
     at('/')
 
-    expect(await screen.findByText(/a restart applies it/)).toBeDefined()
+    expect(await screen.findByText(/The environment file changed/)).toBeDefined()
     expect(screen.getByText(/days left/)).toBeDefined()
   })
 

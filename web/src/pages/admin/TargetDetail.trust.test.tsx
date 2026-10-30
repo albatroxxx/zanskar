@@ -52,7 +52,7 @@ describe('TargetDetail, trusting a host key', () => {
     const user = userEvent.setup()
     await user.click(screen.getByRole('button', { name: 'Trust host key' }))
     const dialog = screen.getByRole('dialog', { name: 'Trust this host key?' })
-    expect(dialog.textContent).toMatch(/replaces a previously trusted key/)
+    expect(dialog.textContent).toMatch(/Replaces a previously trusted key/)
     await user.click(within(dialog).getByRole('button', { name: 'Trust' }))
     expect(post).toHaveBeenCalledWith('/targets/t1/host-key/trust', { host_key_fingerprint: fp })
     expect(await screen.findByText('key trusted')).toBeDefined()

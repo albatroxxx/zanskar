@@ -118,7 +118,7 @@ export function Dashboard() {
         ) : (
           <>
             {status.restart_required && (
-              <Alert tone="warn">The environment file changed since the gateway started; a restart applies it. Restart from <Link to="/admin/settings">Settings</Link>.</Alert>
+              <Alert tone="warn">The environment file changed; <Link to="/admin/settings">restart</Link> to apply it.</Alert>
             )}
             {status.draining && <Alert tone="warn">A restart is in progress: the gateway is draining live sessions.</Alert>}
             <p style={{ margin: 0 }}>
