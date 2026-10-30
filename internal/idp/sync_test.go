@@ -394,3 +394,39 @@ func TestSyncTick(t *testing.T) {
 		t.Fatalf("listings after the interval: %d", e.dir.calls)
 	}
 }
+
+// TestSyncSurvivesABadDirectory (break-it, 2026-10-30): a listing with a
+// username no account can have, a person with no id, and one listed twice
+// creates what it can, names the conflict, and never counts anyone twice.
+// A provider pointed at another realm, where no one is the same person,
+// holds every removal back rather than disabling everyone.
+func TestSyncSurvivesABadDirectory(t *testing.T) {
+	e := newSyncEnv(t, nil)
+	e.dir.people = []Identity{
+		{ExternalID: "ext-a", Username: "alice"},
+		{ExternalID: "ext-a", Username: "alice-again"},
+		{ExternalID: "", Username: "ghost"},
+		{ExternalID: "ext-b", Username: "bad name!"},
+		{ExternalID: "ext-c", Username: "carol"},
+		{ExternalID: "ext-d", Username: "dave"},
+		{ExternalID: "ext-e", Username: "erin"},
+	}
+	st := e.run(t, SyncOptions{})
+	if st.Created != 4 || len(st.Conflicts) != 1 || st.Conflicts[0] != "bad name!" {
+		t.Fatalf("status: %+v", st)
+	}
+	for _, missing := range []string{"alice-again", "ghost"} {
+		if _, err := e.users.GetByUsername(context.Background(), missing); !errors.Is(err, user.ErrNotFound) {
+			t.Fatalf("%s must not be created", missing)
+		}
+	}
+	// Everyone has a new id: another realm.
+	e.dir.set("alice", "carol", "dave", "erin")
+	for i := range e.dir.people {
+		e.dir.people[i].ExternalID = "other-" + e.dir.people[i].ExternalID
+	}
+	st = e.run(t, SyncOptions{})
+	if st.Disabled != 0 || st.Held != 4 || len(st.Conflicts) != 4 {
+		t.Fatalf("another realm: %+v", st)
+	}
+}
