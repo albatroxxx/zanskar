@@ -102,6 +102,18 @@ Deferred by decision: a multi-pane workspace (browser tabs suffice), rotation of
 keys and of Windows or database passwords (the certificate authority and the owning systems
 do that). Still Phase 4: HA, SAML/SCIM, WebAuthn.
 
+## v1.9 release — shipped (v1.9.0 tagged 2026-10-31)
+
+Fifteen findings from walking the live 1.8.0 console. Host actions and updates show progress
+to a green tick or the reason; install settings change from the console through a root helper
+that checks and rolls back ([ADR 0020](adr/0020-runtime-settings-console-overrides-environment.md),
+amended); a managed gateway gets its own Let's Encrypt certificate
+([ADR 0021](adr/0021-managed-tls-certificate.md), amended); deleting a target takes it out of
+its policies ([ADR 0036](adr/0036-access-policy-grants.md), amended); one time zone for every
+time shown; percentages and a clock on the dashboard; a policy list that sums up and an editor
+for dozens of targets; a theme menu; a lighter browser image and old images removed after an
+upgrade ([release notes](releases/v1.9.0.md)).
+
 ## v1.8 release — shipped (v1.8.0 tagged 2026-10-30)
 
 Access policies are redesigned ([ADR 0036](adr/0036-access-policy-grants.md)): a policy names
