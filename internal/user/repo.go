@@ -411,30 +411,35 @@ func (r *Repo) LinkExternal(ctx context.Context, id, idpID, externalID string) e
 // ListByIdP returns every account linked to an identity provider, with its
 // roles, read in full before it returns (one connection on SQLite).
 func (r *Repo) ListByIdP(ctx context.Context, idpID string) ([]*User, error) {
-	rows, err := r.db.QueryContext(ctx, r.db.Rebind(`SELECT `+userCols+` FROM users WHERE idp_id = ? ORDER BY id`), idpID)
+	out, err := r.scanAll(ctx, `SELECT `+userCols+` FROM users WHERE idp_id = ? ORDER BY id`, idpID)
 	if err != nil {
 		return nil, err
 	}
-	var out []*User
-	for rows.Next() {
-		u, err := scanUser(rows)
-		if err != nil {
-			_ = rows.Close()
-			return nil, err
-		}
-		out = append(out, u)
-	}
-	if err := rows.Err(); err != nil {
-		_ = rows.Close()
-		return nil, err
-	}
-	_ = rows.Close()
 	for _, u := range out {
 		if u.Roles, err = r.roles(ctx, u.ID); err != nil {
 			return nil, err
 		}
 	}
 	return out, nil
+}
+
+// scanAll reads every row of a users query and closes the cursor before it
+// returns, so the caller may query again (one connection on SQLite).
+func (r *Repo) scanAll(ctx context.Context, query string, args ...any) ([]*User, error) {
+	rows, err := r.db.QueryContext(ctx, r.db.Rebind(query), args...)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	var out []*User
+	for rows.Next() {
+		u, err := scanUser(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, u)
+	}
+	return out, rows.Err()
 }
 
 // DisableRemoved disables an active account because the person has left
