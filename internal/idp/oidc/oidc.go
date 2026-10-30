@@ -216,9 +216,11 @@ func (h *Handler) callback(w http.ResponseWriter, r *http.Request) {
 		h.record(r, e)
 	}
 
+	// The provider's sign-in is the second factor (ADR 0035), unless the
+	// provider is marked as doing none and Zanskar asks for its own.
 	mfa := "provider"
 	verified := true
-	if !cfg.SkipMFA {
+	if cfg.ZanskarMFA {
 		enrolled := false
 		if h.MFAEnrolled != nil {
 			if enrolled, err = h.MFAEnrolled(r.Context(), u.ID); err != nil {

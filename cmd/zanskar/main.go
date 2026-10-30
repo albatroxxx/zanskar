@@ -340,7 +340,7 @@ func serve(ctx context.Context) error {
 	// The connect handler runs the bridges; the user, group and policy admin
 	// handlers hand it the changes that end live sessions (ADR 0013).
 	connectHandler := &connect.Handler{Targets: targets, Policies: policies, Access: accessReqs, Vault: vault, Sessions: sessionRepo, Tickets: ticket.NewStore(),
-		Registry: registry, Storage: storage, Audit: auditLog, Log: log, MFAEnrolled: totp.Enrolled, GuacdAddr: guacdAddr, Draining: restarter.Draining,
+		Registry: registry, Storage: storage, Audit: auditLog, Log: log, MFAEnrolled: idp.SecondFactor(users, idpRepo, totp.Enrolled), GuacdAddr: guacdAddr, Draining: restarter.Draining,
 		DockerPath: cfg.DockerPath, DBMaxSessions: cfg.DatabaseMaxSessions, DBProxyImage: func() string { return runtime.String(settings.KeyDBProxyImage) },
 		AppsMaxSessions: cfg.AppsMaxSessions, BrowserImage: func() string { return runtime.String(settings.KeyBrowserImage) }, StateDir: cfg.StateDir,
 		Prober: prober, ASGs: asgRepo, Cloud: cloudProviders}

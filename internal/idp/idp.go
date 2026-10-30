@@ -65,8 +65,12 @@ type OIDCConfig struct {
 	// its own directory assigns. An address the provider marks unverified is
 	// never used, whatever this says.
 	TrustEmail bool `json:"trust_email,omitempty"`
-	// SkipMFA trusts the provider's own MFA and does not require TOTP in Zanskar.
-	SkipMFA bool `json:"skip_mfa"`
+	// ZanskarMFA asks for a Zanskar authenticator after the provider's
+	// sign-in, for a provider that does no MFA of its own. Off, the default,
+	// the second factor is the provider's job and Zanskar asks for none
+	// (ADR 0035). It replaced skip_mfa, whose default was the opposite: a
+	// configuration sealed before reads as off.
+	ZanskarMFA bool `json:"zanskar_mfa,omitempty"`
 }
 
 // LDAPConfig configures an LDAP or Active Directory bind-and-search provider.
@@ -131,7 +135,7 @@ func AccessSummary(c *Config) map[string]any {
 		d["group_mapping"] = GroupMapping{}
 	}
 	if o := c.OIDC; o != nil {
-		d["issuer"], d["client_id"], d["skip_mfa"] = o.Issuer, o.ClientID, o.SkipMFA
+		d["issuer"], d["client_id"], d["zanskar_mfa"] = o.Issuer, o.ClientID, o.ZanskarMFA
 		d["allowed_domains"], d["username_claim"], d["groups_claim"] = orEmpty(o.AllowedDomains), o.UsernameClaim, o.GroupsClaim
 		d["trust_email"] = o.TrustEmail
 	}
@@ -141,6 +145,41 @@ func AccessSummary(c *Config) map[string]any {
 		d["group_attr"], d["group_base_dn"], d["group_filter"] = l.GroupAttr, l.GroupBaseDN, l.GroupFilter
 	}
 	return d
+}
+
+// ProviderOwnsMFA reports whether the provider's own sign-in is the second
+// factor for the people it signs in (ADR 0035): an OIDC provider, unless it
+// is marked as doing no MFA of its own (zanskar_mfa). A directory reached
+// over LDAP checks only a password, so its people need a Zanskar
+// authenticator.
+func (c *Config) ProviderOwnsMFA() bool { return c.OIDC != nil && !c.OIDC.ZanskarMFA }
+
+// SecondFactor returns the check behind a policy's "require MFA": an
+// enrolled Zanskar authenticator (enrolled), or an account linked to a
+// provider whose sign-in is the second factor. Such an account has no
+// password, so the provider is the only way it signs in.
+func SecondFactor(users *user.Repo, providers *Repo, enrolled func(context.Context, string) (bool, error)) func(context.Context, string) (bool, error) {
+	return func(ctx context.Context, userID string) (bool, error) {
+		ok, err := enrolled(ctx, userID)
+		if err != nil || ok {
+			return ok, err
+		}
+		u, err := users.GetByID(ctx, userID)
+		if err != nil {
+			return false, err
+		}
+		if u.IdPID == "" || u.PasswordHash != "" {
+			return false, nil
+		}
+		op, err := providers.Open(ctx, u.IdPID)
+		if errors.Is(err, ErrNotFound) {
+			return false, nil
+		}
+		if err != nil {
+			return false, err
+		}
+		return op.Enabled && op.Config.ProviderOwnsMFA(), nil
+	}
 }
 
 // Opened is a provider with its decrypted configuration.

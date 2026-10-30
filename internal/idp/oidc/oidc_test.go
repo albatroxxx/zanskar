@@ -262,18 +262,70 @@ func TestDomainAndStateChecks(t *testing.T) {
 func TestPartialSessionWhenEnrolled(t *testing.T) {
 	f := newFakeIdP(t)
 	f.claims = map[string]any{"preferred_username": "carol", "email": "carol@corp.example"}
-	e, id := newEnv(t, f, idp.Config{OIDC: &idp.OIDCConfig{ClientID: "cid", ClientSecret: "s"}, AutoProvision: true})
+	e, id := newEnv(t, f, idp.Config{OIDC: &idp.OIDCConfig{ClientID: "cid", ClientSecret: "s", ZanskarMFA: true}, AutoProvision: true})
 	e.h.MFAEnrolled = func(context.Context, string) (bool, error) { return true, nil }
 	status, location, cookies := drive(t, e, f, id)
 	if status != 302 || !strings.HasPrefix(location, "/login?next=") || !hasSession(cookies) {
 		t.Fatalf("expected partial session redirect to login: %d %s", status, location)
 	}
-	// SkipMFA trusts the provider.
+	// Without zanskar_mfa the provider's sign-in is the second factor.
 	e.h.cache = sync.Map{}
-	e2, id2 := newEnv(t, f, idp.Config{OIDC: &idp.OIDCConfig{ClientID: "cid", ClientSecret: "s", SkipMFA: true}, AutoProvision: true})
+	e2, id2 := newEnv(t, f, idp.Config{OIDC: &idp.OIDCConfig{ClientID: "cid", ClientSecret: "s"}, AutoProvision: true})
 	e2.h.MFAEnrolled = func(context.Context, string) (bool, error) { return true, nil }
 	if _, location2, _ := drive(t, e2, f, id2); location2 != "/admin" {
-		t.Fatalf("skip_mfa should complete the session: %s", location2)
+		t.Fatalf("the provider's MFA should complete the session: %s", location2)
+	}
+}
+
+// TestProviderOwnsMFAByDefault (ADR 0035): a provider sign-in asks for no
+// Zanskar authenticator, neither a code from one already enrolled nor an
+// enrolment when the deployment requires MFA. The requirement is for local
+// and directory (LDAP) accounts; the provider enforces its own.
+func TestProviderOwnsMFAByDefault(t *testing.T) {
+	f := newFakeIdP(t)
+	f.claims = map[string]any{"preferred_username": "erin", "email": "erin@corp.example"}
+	e, id := newEnv(t, f, idp.Config{OIDC: &idp.OIDCConfig{ClientID: "cid", ClientSecret: "s"}, AutoProvision: true})
+	e.h.RequireMFA = func() bool { return true }
+	for _, enrolled := range []bool{false, true} {
+		e.h.MFAEnrolled = func(context.Context, string) (bool, error) { return enrolled, nil }
+		status, location, cookies := drive(t, e, f, id)
+		if status != 302 || location != "/admin" || !hasSession(cookies) {
+			t.Fatalf("enrolled=%v: want a complete sign-in, got %d %s", enrolled, status, location)
+		}
+	}
+	events, _, err := e.h.Audit.List(context.Background(), audit.Filter{Action: audit.UserLogin, Limit: 10})
+	if err != nil || len(events) != 2 {
+		t.Fatalf("login events: %d %v", len(events), err)
+	}
+	for _, ev := range events {
+		var d map[string]string
+		_ = json.Unmarshal(ev.Details, &d)
+		if d["stage"] != "complete" || d["mfa"] != "provider" {
+			t.Fatalf("login event %v: want stage complete, mfa provider", d)
+		}
+	}
+
+	// With zanskar_mfa and MFA required, a person with no authenticator is
+	// sent to enrol one, as before.
+	e2, id2 := newEnv(t, f, idp.Config{OIDC: &idp.OIDCConfig{ClientID: "cid", ClientSecret: "s", ZanskarMFA: true}, AutoProvision: true})
+	e2.h.RequireMFA = func() bool { return true }
+	if _, loc, _ := drive(t, e2, f, id2); !strings.HasPrefix(loc, "/login?next=") {
+		t.Fatalf("zanskar_mfa with MFA required: want the enrolment step, got %s", loc)
+	}
+}
+
+// TestSkipMFASealedBeforeReadsAsProviderMFA: a configuration sealed with
+// the old skip_mfa field, whatever its value, reads as the provider owning
+// MFA, so an upgrade needs no edit to every provider.
+func TestSkipMFASealedBeforeReadsAsProviderMFA(t *testing.T) {
+	for _, raw := range []string{`{"oidc":{"issuer":"https://x","skip_mfa":false}}`, `{"oidc":{"issuer":"https://x","skip_mfa":true}}`} {
+		var c idp.Config
+		if err := json.Unmarshal([]byte(raw), &c); err != nil {
+			t.Fatal(err)
+		}
+		if c.OIDC.ZanskarMFA {
+			t.Fatalf("%s: read as zanskar_mfa", raw)
+		}
 	}
 }
 
@@ -285,7 +337,7 @@ func TestPartialSessionWhenEnrolled(t *testing.T) {
 func TestPartialSignInKeepsTheFailureCount(t *testing.T) {
 	f := newFakeIdP(t)
 	f.claims = map[string]any{"preferred_username": "dora", "email": "dora@corp.example"}
-	e, id := newEnv(t, f, idp.Config{OIDC: &idp.OIDCConfig{ClientID: "cid", ClientSecret: "s"}, AutoProvision: true})
+	e, id := newEnv(t, f, idp.Config{OIDC: &idp.OIDCConfig{ClientID: "cid", ClientSecret: "s", ZanskarMFA: true}, AutoProvision: true})
 	if st, _, _ := drive(t, e, f, id); st != 302 {
 		t.Fatalf("first sign-in: %d", st)
 	}

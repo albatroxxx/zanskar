@@ -41,14 +41,17 @@ type Handler struct {
 	Policies *policy.Repo
 	// Access holds the just-in-time grants that gate approval-required policies
 	// (ADR 0018); nil leaves every policy standing.
-	Access      *access.Repo
-	Vault       *credential.Vault
-	Sessions    *session.Repo
-	Tickets     *ticket.Store
-	Registry    *gateway.Registry
-	Storage     recording.Storage
-	Audit       *audit.Log
-	Log         *slog.Logger
+	Access   *access.Repo
+	Vault    *credential.Vault
+	Sessions *session.Repo
+	Tickets  *ticket.Store
+	Registry *gateway.Registry
+	Storage  recording.Storage
+	Audit    *audit.Log
+	Log      *slog.Logger
+	// MFAEnrolled reports whether the user has a second factor, for a
+	// policy that requires one: an authenticator, or a provider whose sign-in
+	// is the second factor (idp.SecondFactor).
 	MFAEnrolled func(ctx context.Context, userID string) (bool, error)
 	// Prober holds the address rules a session's target must pass when it
 	// is dialled (checkAddress); nil applies them with no exception. It also

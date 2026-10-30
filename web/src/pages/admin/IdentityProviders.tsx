@@ -23,7 +23,8 @@ interface OIDCConfig {
   allowed_domains?: string[]
   /** Accept the email claim when the provider never says it is verified (Entra ID). */
   trust_email?: boolean
-  skip_mfa?: boolean
+  /** The provider does no MFA: ask for a Zanskar authenticator after it. */
+  zanskar_mfa?: boolean
 }
 interface LDAPConfig {
   url?: string
@@ -255,7 +256,7 @@ function ProviderModal({ existing, onClose, onSaved }: { existing: Provider | nu
               <Field label="Allowed email domains" hint="comma separated; empty allows all; the provider must have verified the address"><input id="oidc-domains" value={domains} onChange={(e) => setDomains(e.target.value)} /></Field>
             </div>
             <div className="field inline"><input id="oidc-trustemail" type="checkbox" checked={!!oidc.trust_email} onChange={(e) => setOidc({ ...oidc, trust_email: e.target.checked })} /><label htmlFor="oidc-trustemail">Trust email addresses the provider does not mark as verified (for one that never says, such as Entra ID, when your directory assigns the addresses)</label></div>
-            <div className="field inline"><input id="oidc-skipmfa" type="checkbox" checked={!!oidc.skip_mfa} onChange={(e) => setOidc({ ...oidc, skip_mfa: e.target.checked })} /><label htmlFor="oidc-skipmfa">Trust the provider's MFA (do not require a Zanskar authenticator)</label></div>
+            <div className="field inline"><input id="oidc-zanskarmfa" type="checkbox" checked={!!oidc.zanskar_mfa} onChange={(e) => setOidc({ ...oidc, zanskar_mfa: e.target.checked })} /><label htmlFor="oidc-zanskarmfa">Also ask for a Zanskar authenticator (only for a provider with no MFA of its own)</label></div>
           </>
         )}
 

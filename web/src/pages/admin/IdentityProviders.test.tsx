@@ -70,7 +70,7 @@ describe('Adding a provider', () => {
     await user.type(secret, 's3cr3t')
     await user.type(within(form).getByLabelText('Scopes'), 'openid, email ,groups')
     await user.type(within(form).getByLabelText('Allowed email domains'), 'example.com')
-    await user.click(within(form).getByLabelText(/Trust the provider's MFA/))
+    await user.click(within(form).getByLabelText(/Also ask for a Zanskar authenticator/))
     await user.click(within(form).getByLabelText('auditor'))
     await user.type(within(form).getByLabelText('Group mapping'), 'ops-team=g1\ncn=dba,ou=groups,dc=corp=g2')
     expect(within(form).getByText('ops=g1')).toBeDefined()
@@ -82,7 +82,7 @@ describe('Adding a provider', () => {
         default_roles: ['user', 'auditor'],
         group_mapping: { 'ops-team': 'g1', 'cn=dba,ou=groups,dc=corp': 'g2' },
         auto_provision: true,
-        oidc: { issuer: 'https://login.example.com', client_id: 'zanskar', client_secret: 's3cr3t', scopes: ['openid', 'email', 'groups'], allowed_domains: ['example.com'], skip_mfa: true },
+        oidc: { issuer: 'https://login.example.com', client_id: 'zanskar', client_secret: 's3cr3t', scopes: ['openid', 'email', 'groups'], allowed_domains: ['example.com'], zanskar_mfa: true },
       },
     }])
     expect(document.body.textContent).not.toContain('s3cr3t')
