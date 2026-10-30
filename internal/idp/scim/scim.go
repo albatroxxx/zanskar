@@ -65,20 +65,22 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	if h.Limiter == nil {
 		h.Limiter = auth.NewIPLimiter(30, 10)
 	}
-	const base = "/api/v1/scim/{idp}"
-	mux.Handle("GET "+base+"/ServiceProviderConfig", h.guard(h.serviceProviderConfig))
-	mux.Handle("GET "+base+"/ResourceTypes", h.guard(h.resourceTypes))
-	mux.Handle("GET "+base+"/ResourceTypes/{name}", h.guard(h.resourceType))
-	mux.Handle("GET "+base+"/Schemas", h.guard(h.schemas))
-	mux.Handle("GET "+base+"/Schemas/{uri}", h.guard(h.schema))
-	mux.Handle("GET "+base+"/Users", h.guard(h.listUsers))
-	mux.Handle("POST "+base+"/Users", h.guard(h.createUser))
-	mux.Handle("GET "+base+"/Users/{id}", h.guard(h.getUser))
-	mux.Handle("PUT "+base+"/Users/{id}", h.guard(h.replaceUser))
-	mux.Handle("PATCH "+base+"/Users/{id}", h.guard(h.patchUser))
-	mux.Handle("DELETE "+base+"/Users/{id}", h.guard(h.deleteUser))
-	mux.Handle(base+"/Groups", h.guard(h.noGroups))
-	mux.Handle(base+"/Groups/{id}", h.guard(h.noGroups))
+	// Written out whole, so the API description's test sees every route.
+	mux.Handle("GET /api/v1/scim/{idp}/ServiceProviderConfig", h.guard(h.serviceProviderConfig))
+	mux.Handle("GET /api/v1/scim/{idp}/ResourceTypes", h.guard(h.resourceTypes))
+	mux.Handle("GET /api/v1/scim/{idp}/ResourceTypes/{name}", h.guard(h.resourceType))
+	mux.Handle("GET /api/v1/scim/{idp}/Schemas", h.guard(h.schemas))
+	mux.Handle("GET /api/v1/scim/{idp}/Schemas/{uri}", h.guard(h.schema))
+	mux.Handle("GET /api/v1/scim/{idp}/Users", h.guard(h.listUsers))
+	mux.Handle("POST /api/v1/scim/{idp}/Users", h.guard(h.createUser))
+	mux.Handle("GET /api/v1/scim/{idp}/Users/{id}", h.guard(h.getUser))
+	mux.Handle("PUT /api/v1/scim/{idp}/Users/{id}", h.guard(h.replaceUser))
+	mux.Handle("PATCH /api/v1/scim/{idp}/Users/{id}", h.guard(h.patchUser))
+	mux.Handle("DELETE /api/v1/scim/{idp}/Users/{id}", h.guard(h.deleteUser))
+	// Groups, any method: not provisioned (501), so a client that tries
+	// them carries on with users.
+	mux.Handle("/api/v1/scim/{idp}/Groups", h.guard(h.noGroups))
+	mux.Handle("/api/v1/scim/{idp}/Groups/{id}", h.guard(h.noGroups))
 }
 
 func (h *Handler) clock() time.Time {
@@ -134,7 +136,7 @@ func (h *Handler) guard(next handlerFunc) http.Handler {
 func (h *Handler) serviceProviderConfig(w http.ResponseWriter, r *http.Request, _ *idp.Opened) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"schemas":          []string{"urn:ietf:params:scim:schemas:core:2.0:ServiceProviderConfig"},
-		"documentationUri": "https://albatroxxx.github.io/zanskar/guide/#idp-sync",
+		"documentationUri": "https://albatroxxx.github.io/zanskar/guide/#idp-arrive",
 		"patch":            map[string]bool{"supported": true},
 		"bulk":             map[string]any{"supported": false, "maxOperations": 0, "maxPayloadSize": 0},
 		"filter":           map[string]any{"supported": true, "maxResults": maxCount},

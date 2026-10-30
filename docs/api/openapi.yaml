@@ -83,6 +83,13 @@ servers:
 tags:
   - name: system
     description: Unauthenticated liveness and version endpoints.
+  - name: scim
+    description: |
+      SCIM 2.0 (RFC 7643, RFC 7644) for identity providers that push their people to Zanskar:
+      Okta, Entra ID, OneLogin, JumpCloud, PingOne, Authentik. Each provider has its own base,
+      `/api/v1/scim/{idp}`, and authenticates with the bearer token the console made for it
+      (`POST /identity-providers/{id}/scim-token`). Users only; `/Groups` answers 501 for any
+      method. Requests and answers are `application/scim+json` (plain JSON is accepted).
   - name: auth
     description: Login, MFA, and session endpoints for any authenticated user.
   - name: user
@@ -1845,6 +1852,315 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
+
+  /identity-providers/{id}/scim-token:
+    post:
+      tags: [admin]
+      summary: Make the provider's SCIM token
+      description: |
+        Makes a bearer token for the provider's SCIM client and answers with it, once: only its
+        hash is kept. Any earlier token stops working. Audited as `idp.scim_token`, never with the
+        token.
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: The token, shown this once.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [token, created_at, base_path]
+                properties:
+                  token:
+                    type: string
+                    description: Starts with `zscim_`.
+                  created_at:
+                    $ref: "#/components/schemas/Timestamp"
+                  base_path:
+                    type: string
+                    description: "`/api/v1/scim/{id}`, to give the provider with this gateway's origin."
+        "404":
+          $ref: "#/components/responses/NotFound"
+    delete:
+      tags: [admin]
+      summary: Revoke the provider's SCIM token
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "204":
+          description: Revoked; the provider's SCIM client is refused until a new token is made.
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  # ------------------------------------------------------------------ scim
+  /scim/{idp}/ServiceProviderConfig:
+    get:
+      tags: [scim]
+      summary: What this SCIM service supports
+      description: PATCH and filtering (`eq` on `userName`, `externalId`, `id`); no bulk, sort, ETags or password changes.
+      security:
+        - scimBearer: []
+      parameters:
+        - $ref: "#/components/parameters/ScimIdp"
+      responses:
+        "200":
+          description: The service provider configuration.
+          content:
+            application/scim+json:
+              schema:
+                type: object
+        "401":
+          $ref: "#/components/responses/ScimError"
+  /scim/{idp}/ResourceTypes:
+    get:
+      tags: [scim]
+      summary: The resource types provisioned (User)
+      security:
+        - scimBearer: []
+      parameters:
+        - $ref: "#/components/parameters/ScimIdp"
+      responses:
+        "200":
+          description: A list response holding the User resource type.
+          content:
+            application/scim+json:
+              schema:
+                $ref: "#/components/schemas/ScimListResponse"
+  /scim/{idp}/ResourceTypes/{name}:
+    get:
+      tags: [scim]
+      summary: One resource type
+      security:
+        - scimBearer: []
+      parameters:
+        - $ref: "#/components/parameters/ScimIdp"
+        - name: name
+          in: path
+          required: true
+          schema:
+            type: string
+            enum: [User]
+      responses:
+        "200":
+          description: The resource type.
+          content:
+            application/scim+json:
+              schema:
+                type: object
+        "404":
+          $ref: "#/components/responses/ScimError"
+  /scim/{idp}/Schemas:
+    get:
+      tags: [scim]
+      summary: The schemas provisioned (the core User schema)
+      security:
+        - scimBearer: []
+      parameters:
+        - $ref: "#/components/parameters/ScimIdp"
+      responses:
+        "200":
+          description: A list response holding the User schema.
+          content:
+            application/scim+json:
+              schema:
+                $ref: "#/components/schemas/ScimListResponse"
+  /scim/{idp}/Schemas/{uri}:
+    get:
+      tags: [scim]
+      summary: One schema
+      security:
+        - scimBearer: []
+      parameters:
+        - $ref: "#/components/parameters/ScimIdp"
+        - name: uri
+          in: path
+          required: true
+          schema:
+            type: string
+            enum: ["urn:ietf:params:scim:schemas:core:2.0:User"]
+      responses:
+        "200":
+          description: The schema.
+          content:
+            application/scim+json:
+              schema:
+                type: object
+        "404":
+          $ref: "#/components/responses/ScimError"
+  /scim/{idp}/Users:
+    get:
+      tags: [scim]
+      summary: List or find the people this provider provisions
+      description: |
+        Only accounts linked to this provider and not deleted over SCIM. A client finds a person
+        before creating them with `filter=userName eq "..."` (any case), or `externalId eq` /
+        `id eq`; any other filter is `400 invalidFilter`. Paged by `startIndex` (from 1) and
+        `count` (at most 200).
+      security:
+        - scimBearer: []
+      parameters:
+        - $ref: "#/components/parameters/ScimIdp"
+        - name: filter
+          in: query
+          schema:
+            type: string
+        - name: startIndex
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+        - name: count
+          in: query
+          schema:
+            type: integer
+            minimum: 0
+            maximum: 200
+      responses:
+        "200":
+          description: A page of users.
+          content:
+            application/scim+json:
+              schema:
+                $ref: "#/components/schemas/ScimListResponse"
+        "400":
+          $ref: "#/components/responses/ScimError"
+        "401":
+          $ref: "#/components/responses/ScimError"
+    post:
+      tags: [scim]
+      summary: Provision a person
+      description: |
+        `userName` is the Zanskar username (a plain name or an email address) and must equal the
+        username claim the provider asserts at sign-in: the first sign-in binds its subject to this
+        account. An account an administrator made with no password under that name is taken over
+        with its roles; one with a password, another provider's, or one this provider already has
+        is `409 uniqueness`; a new person gets the provider's default roles when the provider
+        creates accounts (otherwise `403`). A person this provider deleted before comes back as the
+        same account. `active: false` creates the account disabled. A `password` is ignored.
+      security:
+        - scimBearer: []
+      parameters:
+        - $ref: "#/components/parameters/ScimIdp"
+      requestBody:
+        required: true
+        content:
+          application/scim+json:
+            schema:
+              $ref: "#/components/schemas/ScimUser"
+      responses:
+        "201":
+          description: Provisioned.
+          content:
+            application/scim+json:
+              schema:
+                $ref: "#/components/schemas/ScimUser"
+        "400":
+          $ref: "#/components/responses/ScimError"
+        "403":
+          $ref: "#/components/responses/ScimError"
+        "409":
+          $ref: "#/components/responses/ScimError"
+  /scim/{idp}/Users/{id}:
+    get:
+      tags: [scim]
+      summary: One provisioned person
+      security:
+        - scimBearer: []
+      parameters:
+        - $ref: "#/components/parameters/ScimIdp"
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: The user.
+          content:
+            application/scim+json:
+              schema:
+                $ref: "#/components/schemas/ScimUser"
+        "404":
+          $ref: "#/components/responses/ScimError"
+    put:
+      tags: [scim]
+      summary: Replace a person's attributes
+      description: |
+        A changed `userName` renames the account. `active: false` disables it, marks it as the
+        provider's doing and ends its browser and live sessions; `active: true` enables an account
+        the provider disabled (never one an administrator disabled). The last active administrator
+        is never disabled (`409 mutability`).
+      security:
+        - scimBearer: []
+      parameters:
+        - $ref: "#/components/parameters/ScimIdp"
+        - $ref: "#/components/parameters/Id"
+      requestBody:
+        required: true
+        content:
+          application/scim+json:
+            schema:
+              $ref: "#/components/schemas/ScimUser"
+      responses:
+        "200":
+          description: The user as it now stands.
+          content:
+            application/scim+json:
+              schema:
+                $ref: "#/components/schemas/ScimUser"
+        "400":
+          $ref: "#/components/responses/ScimError"
+        "404":
+          $ref: "#/components/responses/ScimError"
+        "409":
+          $ref: "#/components/responses/ScimError"
+    patch:
+      tags: [scim]
+      summary: Change some of a person's attributes
+      description: |
+        A PatchOp: `add`, `replace` or `remove` in any case, with a path (`active`, `userName`,
+        `displayName`, `name.givenName`, `emails[type eq "work"].value`, ...) or an object of
+        attributes. Booleans may be strings (`"False"`). Attributes Zanskar keeps nothing of are
+        accepted and ignored. The effects are those of PUT.
+      security:
+        - scimBearer: []
+      parameters:
+        - $ref: "#/components/parameters/ScimIdp"
+        - $ref: "#/components/parameters/Id"
+      requestBody:
+        required: true
+        content:
+          application/scim+json:
+            schema:
+              $ref: "#/components/schemas/ScimPatchOp"
+      responses:
+        "200":
+          description: The user as it now stands.
+          content:
+            application/scim+json:
+              schema:
+                $ref: "#/components/schemas/ScimUser"
+        "400":
+          $ref: "#/components/responses/ScimError"
+        "404":
+          $ref: "#/components/responses/ScimError"
+        "409":
+          $ref: "#/components/responses/ScimError"
+    delete:
+      tags: [scim]
+      summary: Deprovision a person
+      description: |
+        Disables the account and ends its sessions, as `active: false` does, and hides it from this
+        provider (404 from then on). The account and its history stay; nothing is deleted.
+      security:
+        - scimBearer: []
+      parameters:
+        - $ref: "#/components/parameters/ScimIdp"
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "204":
+          description: Deprovisioned.
+        "404":
+          $ref: "#/components/responses/ScimError"
+        "409":
+          $ref: "#/components/responses/ScimError"
 
   # ------------------------------------------------------------------ admin: credentials
   /credentials:
@@ -4237,8 +4553,19 @@ components:
       in: cookie
       name: __Host-zanskar_session
       description: Opaque session token (`zanskar_session` on plain-HTTP loopback). Mutating requests also require the `X-CSRF-Token` header.
+    scimBearer:
+      type: http
+      scheme: bearer
+      description: The provider's SCIM token, made in the console. A wrong one is 401, and an address that keeps sending wrong ones gets 429.
 
   parameters:
+    ScimIdp:
+      name: idp
+      in: path
+      required: true
+      description: The identity provider's id.
+      schema:
+        type: string
     Id:
       name: id
       in: path
@@ -4291,6 +4618,27 @@ components:
         application/json:
           schema:
             $ref: "#/components/schemas/Error"
+    ScimError:
+      description: A SCIM error (RFC 7644 section 3.12).
+      content:
+        application/scim+json:
+          schema:
+            type: object
+            required: [schemas, status]
+            properties:
+              schemas:
+                type: array
+                items:
+                  type: string
+                  enum: ["urn:ietf:params:scim:api:messages:2.0:Error"]
+              status:
+                type: string
+                description: The HTTP status, as a string.
+              scimType:
+                type: string
+                enum: [uniqueness, invalidFilter, invalidValue, invalidSyntax, mutability]
+              detail:
+                type: string
     NotFound:
       description: No such resource, or not visible to the caller.
       content:
@@ -4545,6 +4893,14 @@ components:
           type: [string, "null"]
         external_id:
           type: [string, "null"]
+        scim_external_id:
+          type: string
+          description: The provider's own id for the person, as its SCIM client sent it.
+        scim_deleted_at:
+          description: When the provider's SCIM client deleted the account; it is kept, disabled.
+          oneOf:
+            - $ref: "#/components/schemas/Timestamp"
+            - type: "null"
         directory_removed_at:
           description: When the directory user sync disabled the account because the person left the directory (ADR 0035).
           oneOf:
@@ -4724,6 +5080,9 @@ components:
         sync:
           $ref: "#/components/schemas/IdentityProviderSync"
           description: In listings, for a provider with its user sync on.
+        scim_token_created_at:
+          $ref: "#/components/schemas/Timestamp"
+          description: When the provider's SCIM token was made; absent when it has none.
         created_at:
           $ref: "#/components/schemas/Timestamp"
         updated_at:
@@ -4754,7 +5113,10 @@ components:
               description: Default openid, profile, email.
             username_claim:
               type: string
-              description: Default `preferred_username`. With user sync, `preferred_username` or `sub`.
+              description: |
+                Default `preferred_username`; Okta and Entra ID put an email address there, which is a
+                valid username. `email` is used only when the provider has verified the address. With
+                user sync, `preferred_username`, `email` or `sub`.
             groups_claim:
               type: string
               description: Claim carrying group names for the group mapping; empty turns group mapping off.
@@ -4774,6 +5136,12 @@ components:
             keep_provider_session:
               type: boolean
               description: Signing out of Zanskar leaves the provider's session alone. Off by default.
+            prompt_login:
+              type: boolean
+              description: |
+                Ask the provider for a fresh sign-in every time (`prompt=login` and `max_age=0`), and
+                refuse one whose `auth_time` is older than the sign-in (`reauth_not_done`). For a
+                provider whose sign-out keeps its own session. Google takes no `prompt=login`.
         ldap:
           type: object
           properties:
@@ -4837,6 +5205,9 @@ components:
           minimum: 5
           maximum: 1440
           default: 15
+        scim:
+          type: boolean
+          description: The provider pushes its people over SCIM 2.0 (`/scim/{idp}`). Not with `sync_users`.
     IdentityProviderSync:
       type: object
       required: [enabled, interval_minutes, running, last]
@@ -4907,6 +5278,89 @@ components:
           default: true
         config:
           $ref: "#/components/schemas/IdentityProviderConfigPublic"
+
+    ScimUser:
+      type: object
+      description: A person as SCIM shows them (core User schema). Attribute names are case-insensitive on input.
+      properties:
+        schemas:
+          type: array
+          items:
+            type: string
+        id:
+          type: string
+          readOnly: true
+        externalId:
+          type: string
+          description: The provider's own id for the person.
+        userName:
+          type: string
+          description: The Zanskar username; a plain name or an email address.
+        displayName:
+          type: string
+        name:
+          type: object
+          properties:
+            formatted:
+              type: string
+            givenName:
+              type: string
+            familyName:
+              type: string
+        emails:
+          type: array
+          items:
+            type: object
+            properties:
+              value:
+                type: string
+              type:
+                type: string
+              primary:
+                type: boolean
+        active:
+          type: boolean
+        meta:
+          type: object
+          readOnly: true
+    ScimListResponse:
+      type: object
+      required: [schemas, totalResults, Resources]
+      properties:
+        schemas:
+          type: array
+          items:
+            type: string
+        totalResults:
+          type: integer
+        itemsPerPage:
+          type: integer
+        startIndex:
+          type: integer
+        Resources:
+          type: array
+          items:
+            type: object
+    ScimPatchOp:
+      type: object
+      required: [Operations]
+      properties:
+        schemas:
+          type: array
+          items:
+            type: string
+        Operations:
+          type: array
+          items:
+            type: object
+            required: [op]
+            properties:
+              op:
+                type: string
+                description: add, replace or remove, in any case.
+              path:
+                type: string
+              value: {}
 
     # ---------------------------------------------------------------- credentials
     Credential:
