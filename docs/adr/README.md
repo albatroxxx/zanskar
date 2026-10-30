@@ -52,4 +52,4 @@ and update the status of the old one.
 | [0032](0032-host-actions-and-updates-from-the-console.md) | Host actions and updates from the console, through systemd and polkit | Accepted |
 | [0033](0033-applications-identity-aware-proxy.md) | Applications: web apps reached through an identity-aware proxy | Superseded by 0034 |
 | [0034](0034-applications-isolated-browser.md) | Applications: web apps opened in an isolated browser | Accepted |
-| [0035](0035-identity-provider-owns-the-person.md) | A single sign-on provider owns the person: second factor, session, joining and leaving | Proposed |
+| [0035](0035-identity-provider-owns-the-person.md) | A single sign-on provider owns the person: second factor, session, joining and leaving | Accepted |

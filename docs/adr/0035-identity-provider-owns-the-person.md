@@ -4,7 +4,7 @@ Date: 2026-10-30
 
 ## Status
 
-Proposed. Amends the identity-provider behaviour first described in
+Accepted (2026-10-30, at the operator's request). Amends the identity-provider behaviour first described in
 [ADR 0005](0005-separate-identity-auth-from-target-credentials.md) and leaves the step-up rule of
 [ADR 0027](0027-restricted-console-cli.md) as it is.
 

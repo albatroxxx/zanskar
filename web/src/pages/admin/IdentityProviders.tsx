@@ -374,7 +374,7 @@ function ProviderModal({ existing, onClose, onSaved }: { existing: Provider | nu
               </Field>
               <Field label="Scopes" hint="comma separated; default openid, profile, email"><input id="oidc-scopes" value={scopes} onChange={(e) => setScopes(e.target.value)} /></Field>
               <Field label="Username claim" hint="default preferred_username"><input id="oidc-uclaim" value={oidc.username_claim ?? ''} onChange={(e) => setOidc({ ...oidc, username_claim: e.target.value })} /></Field>
-              <Field label="Groups claim" hint="e.g. groups; empty disables group sync"><input id="oidc-gclaim" value={oidc.groups_claim ?? ''} onChange={(e) => setOidc({ ...oidc, groups_claim: e.target.value })} /></Field>
+              <Field label="Groups claim" hint="e.g. groups; empty turns group mapping off"><input id="oidc-gclaim" value={oidc.groups_claim ?? ''} onChange={(e) => setOidc({ ...oidc, groups_claim: e.target.value })} /></Field>
               <Field label="Allowed email domains" hint="comma separated; empty allows all; the provider must have verified the address"><input id="oidc-domains" value={domains} onChange={(e) => setDomains(e.target.value)} /></Field>
             </div>
             <div className="field inline"><input id="oidc-trustemail" type="checkbox" checked={!!oidc.trust_email} onChange={(e) => setOidc({ ...oidc, trust_email: e.target.checked })} /><label htmlFor="oidc-trustemail">Trust email addresses the provider does not mark as verified (for one that never says, such as Entra ID, when your directory assigns the addresses)</label></div>
