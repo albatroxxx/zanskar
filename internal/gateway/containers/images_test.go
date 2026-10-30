@@ -109,3 +109,15 @@ func TestCommandGivesUpOnAHeldPipe(t *testing.T) {
 		t.Fatal("a held pipe outlived the wait delay")
 	}
 }
+
+// TestCommandDefaultsTheCLI: an empty CLI path is "docker" on PATH for every
+// caller, never exec's "no command".
+func TestCommandDefaultsTheCLI(t *testing.T) {
+	cmd := Command(context.Background(), "", nil, "version")
+	if cmd.Args[0] != DefaultCLI {
+		t.Fatalf("args %q, want %q first", cmd.Args, DefaultCLI)
+	}
+	if cmd := Command(context.Background(), "/opt/podman", nil, "version"); cmd.Args[0] != "/opt/podman" {
+		t.Fatalf("a set path is kept: %q", cmd.Args)
+	}
+}

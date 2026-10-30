@@ -115,7 +115,7 @@ func (h *Readiness) Checks(ctx context.Context) []Check {
 	}
 	docker := h.Docker
 	if docker == "" {
-		docker = "docker"
+		docker = containers.DefaultCLI
 	}
 	out := []Check{{Key: "guacd", Title: "guacd address", OK: guacd != ""}}
 	if guacd == "" {
