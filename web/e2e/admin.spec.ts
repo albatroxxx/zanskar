@@ -34,15 +34,18 @@ test.describe('Administering from the console', () => {
     await expect(page.getByRole('row').filter({ hasText: name })).toHaveCount(0)
   })
 
-  test('shows the seeded policy and refuses a policy that grants nothing', async ({ page }) => {
+  test('shows the seeded policy, and the editor refuses one that names no one or grants nothing', async ({ page }) => {
     await page.goto('/admin/policies')
     await expect(page.getByRole('row').filter({ hasText: 'ops-test-ssh' })).toBeVisible()
-    await page.getByRole('button', { name: 'Add policy' }).click()
-    const form = page.getByRole('dialog', { name: 'Add policy' })
-    await form.getByLabel('Name', { exact: true }).fill('e2e-empty')
-    await form.getByRole('button', { name: 'Create' }).click()
-    await expect(form).toContainText('the main rule has protocols but no targets')
-    await form.getByRole('button', { name: 'Cancel' }).click()
+    await page.getByRole('link', { name: 'Add policy' }).click()
+    await expect(page).toHaveURL(/\/admin\/policies\/new$/)
+    await page.getByLabel('Name', { exact: true }).fill('e2e-empty')
+    await page.getByRole('button', { name: 'Create' }).click()
+    await expect(page.getByText('Choose at least one group or user')).toBeVisible()
+    await page.getByLabel('ops', { exact: true }).check()
+    await page.getByRole('button', { name: 'Create' }).click()
+    await expect(page.getByText('Grant 1: choose targets, or match tags')).toBeVisible()
+    await page.getByRole('link', { name: 'Cancel' }).click()
     await expect(page.getByRole('row').filter({ hasText: 'e2e-empty' })).toHaveCount(0)
   })
 

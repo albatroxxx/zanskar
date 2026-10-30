@@ -114,7 +114,7 @@ export function PolicyEditor() {
         <div className="form-grid">
           <Field label="Groups">
             <PickList label="groups" idPrefix="pe-group" selected={groupIDs} onToggle={(gid) => setGroupIDs(toggle(groupIDs, gid))}
-              options={(groups.items ?? []).map((g) => ({ id: g.id, label: g.name, detail: g.member_count !== undefined ? `${g.member_count} members` : undefined }))} />
+              options={(groups.items ?? []).map((g) => ({ id: g.id, label: g.name, detail: g.member_count !== undefined ? `${g.member_count} ${g.member_count === 1 ? 'member' : 'members'}` : undefined }))} />
           </Field>
           <Field label="Users" hint="Review-only accounts are not offered">
             <PickList label="users" idPrefix="pe-user" selected={userIDs} onToggle={(uid) => setUserIDs(toggle(userIDs, uid))}
@@ -205,7 +205,7 @@ function GrantCard({ index, draft: d, open, onToggleOpen, onChange, onRemove, on
         <span className="grow" />
         <button type="button" className="btn sm" onClick={onDuplicate}>Duplicate</button>
         <button type="button" className="btn sm" onClick={onRemove}>Remove</button>
-        <button type="button" className="btn sm" aria-expanded={open} aria-label={open ? `Collapse grant ${index + 1}` : `Expand grant ${index + 1}`} onClick={onToggleOpen}>{open ? '▴' : '▾'}</button>
+        <button type="button" className="btn sm" aria-expanded={open} aria-label={open ? `Done with grant ${index + 1}` : `Edit grant ${index + 1}`} onClick={onToggleOpen}>{open ? 'Done' : 'Edit'}</button>
       </div>
       {open && (
         <>
@@ -263,24 +263,30 @@ function GrantCard({ index, draft: d, open, onToggleOpen, onChange, onRemove, on
           </div>
           <h4>Conditions</h4>
           <div className="conditions">
-            <div className="seg" role="radiogroup" aria-label={`Grant ${index + 1} access`}>
-              {(['standing', 'approval'] as const).map((a) => (
-                <span key={a} className="field inline">
-                  <input id={`${p}-access-${a}`} type="radio" name={`${p}-access`} checked={d.access === a} onChange={() => up({ access: a })} />
-                  <label htmlFor={`${p}-access-${a}`}>{a === 'standing' ? 'Standing' : 'Approval (just-in-time)'}</label>
-                </span>
-              ))}
+            <div className="form-grid">
+              <Field label="Access">
+                <div className="seg" role="radiogroup" aria-label={`Grant ${index + 1} access`}>
+                  {(['standing', 'approval'] as const).map((a) => (
+                    <span key={a} className="field inline">
+                      <input id={`${p}-access-${a}`} type="radio" name={`${p}-access`} checked={d.access === a} onChange={() => up({ access: a })} />
+                      <label htmlFor={`${p}-access-${a}`}>{a === 'standing' ? 'Standing' : 'Approval (just-in-time)'}</label>
+                    </span>
+                  ))}
+                </div>
+              </Field>
+              {d.kind !== 'application' && (
+                <Field label="Sign in with">
+                  <div className="seg" role="radiogroup" aria-label={`Grant ${index + 1} sign-in`}>
+                    {(['target', 'own'] as const).map((s) => (
+                      <span key={s} className="field inline">
+                        <input id={`${p}-signin-${s}`} type="radio" name={`${p}-signin`} checked={d.sign_in === s} onChange={() => up({ sign_in: s })} />
+                        <label htmlFor={`${p}-signin-${s}`}>{s === 'target' ? "The target's credential" : 'Their own login'}</label>
+                      </span>
+                    ))}
+                  </div>
+                </Field>
+              )}
             </div>
-            {d.kind !== 'application' && (
-              <div className="seg" role="radiogroup" aria-label={`Grant ${index + 1} sign-in`}>
-                {(['target', 'own'] as const).map((s) => (
-                  <span key={s} className="field inline">
-                    <input id={`${p}-signin-${s}`} type="radio" name={`${p}-signin`} checked={d.sign_in === s} onChange={() => up({ sign_in: s })} />
-                    <label htmlFor={`${p}-signin-${s}`}>{s === 'target' ? "Target's credential" : 'Their own login'}</label>
-                  </span>
-                ))}
-              </div>
-            )}
             <div className="actions">
               {([
                 ['require_mfa', 'Authenticator'],
