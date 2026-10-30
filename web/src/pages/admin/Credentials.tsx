@@ -20,7 +20,14 @@ function inUse(c: Credential) {
 }
 
 export function Credentials() {
-  const { items, err, setErr, reload } = useList<Credential>('/credentials')
+  const list = useList<Credential>('/credentials')
+  const { err, setErr, reload } = list
+  // The secrets an administrator vaults, nothing else. "User supplied" is
+  // stored as one shared row that a target's slot points at (the user types
+  // their own login at connect time); it is not a credential, so it is not
+  // listed, and with it gone every row is vaulted and needs no Mode column
+  // (2026-10-30). Target slots still offer it.
+  const items = list.items?.filter((c) => c.mode !== 'user_supplied') ?? null
   const [adding, setAdding] = useState(false)
   const [rotating, setRotating] = useState<Credential | null>(null)
   const [deleting, setDeleting] = useState<Credential | null>(null)
@@ -56,7 +63,6 @@ export function Credentials() {
               <tr>
                 <th>Name</th>
                 <th>Type</th>
-                <th>Mode</th>
                 <th>Username</th>
                 <th>Public key</th>
                 <th>Secret</th>
@@ -70,7 +76,6 @@ export function Credentials() {
                 <tr key={c.id}>
                   <td><strong>{c.name}</strong></td>
                   <td>{c.type === 'ssh_ca' ? 'ssh certificate authority' : c.type}</td>
-                  <td>{c.mode.replace(/_/g, ' ')}</td>
                   <td className="mono">{c.domain ? `${c.domain}\\` : ''}{c.username ?? <span className="muted">—</span>}</td>
                   <td className="mono muted" title={c.public_key}>{c.public_key ? c.public_key.slice(0, 28) + '…' : '—'}</td>
                   <td>{c.has_secret ? <StateIcon state="ok" label="Secret stored" /> : <StateIcon state="warn" label="No secret stored" />}</td>
