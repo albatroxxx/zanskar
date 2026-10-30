@@ -41,3 +41,6 @@ gofmt -l . && go vet ./... && go test -race ./... && ~/go/bin/golangci-lint run 
 admin-to-terminal flow against `bin/zanskar` with `hack/wsclient`. Build the helpers first:
 `go build -o bin/fakessh ./hack/fakessh && go build -o bin/wsclient ./hack/wsclient`.
 For a local demo target, run `./bin/fakessh` and enroll `<your LAN IP>:2222` as a Linux target.
+
+`hack/keycloak/run.sh` checks single sign-on against a real Keycloak in Docker (ADR 0035): user
+sync, sign-in with Keycloak's OTP and nothing from Zanskar, and sign-out ending Keycloak's session.
