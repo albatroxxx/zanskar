@@ -430,3 +430,31 @@ func TestSyncSurvivesABadDirectory(t *testing.T) {
 		t.Fatalf("another realm: %+v", st)
 	}
 }
+
+// TestSyncAdoptsPushedAccounts (break-it, 2026-10-30): a provider switched
+// from SCIM to a listing finds accounts SCIM made, linked to it with no
+// subject yet. The listing binds each to its person by username and keeps
+// it; it must not take them for people who left and disable them.
+func TestSyncAdoptsPushedAccounts(t *testing.T) {
+	e := newSyncEnv(t, nil)
+	ctx := context.Background()
+	var pushed []string
+	for _, n := range []string{"alice", "bob", "carol", "dave"} {
+		u := &user.User{Username: n, DisplayName: n, Roles: []user.Role{user.RoleUser}, IdPID: e.op.ID, SCIMExternalID: "scim-" + n}
+		if err := e.users.Create(ctx, u); err != nil {
+			t.Fatal(err)
+		}
+		pushed = append(pushed, u.ID)
+	}
+	e.dir.set("alice", "bob", "carol", "dave")
+	st := e.run(t, SyncOptions{})
+	if st.Linked != 4 || st.Disabled != 0 || st.Held != 0 || st.Created != 0 {
+		t.Fatalf("status: %+v", st)
+	}
+	for i, n := range []string{"alice", "bob", "carol", "dave"} {
+		u := e.byName(t, n)
+		if u.ID != pushed[i] || u.ExternalID != "ext-"+n || u.Status != user.StatusActive {
+			t.Fatalf("%s: %+v", n, u)
+		}
+	}
+}
