@@ -9,12 +9,17 @@ import { TagEditor } from '../../components/TagEditor'
 import { tagSuggestions } from '../../components/tags'
 import { Alert, Empty, Field, PageHead } from '../../components/ui'
 import { useList } from './lib'
-import { chipsFor, fromDraft, grantSummary, kindOf, kinds, newGrant, toDraft, type GrantDraft } from './policyModel'
+import { chipsFor, fromDraft, grantSummary, kindOf, kinds, newGrant, toDraft, unfound, type GrantDraft } from './policyModel'
 
 const days = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun']
 
 function toggle<T>(list: T[], v: T): T[] {
   return list.includes(v) ? list.filter((x) => x !== v) : [...list, v]
+}
+
+/** pickMany adds ids to list, or takes them out. */
+function pickMany(list: string[], ids: string[], on: boolean): string[] {
+  return on ? [...new Set([...list, ...ids])] : list.filter((x) => !ids.includes(x))
 }
 
 /**
@@ -115,11 +120,11 @@ export function PolicyEditor() {
         <h2>Who</h2>
         <div className="form-grid">
           <Field label="Groups">
-            <PickList label="groups" idPrefix="pe-group" selected={groupIDs} onToggle={(gid) => setGroupIDs(toggle(groupIDs, gid))}
+            <PickList label="groups" idPrefix="pe-group" selected={groupIDs} onToggle={(gid) => setGroupIDs(toggle(groupIDs, gid))} onSelect={(ids, on) => setGroupIDs(pickMany(groupIDs, ids, on))}
               options={(groups.items ?? []).map((g) => ({ id: g.id, label: g.name, detail: g.member_count !== undefined ? `${g.member_count} ${g.member_count === 1 ? 'member' : 'members'}` : undefined }))} />
           </Field>
           <Field label="Users" hint="Review-only accounts are not offered">
-            <PickList label="users" idPrefix="pe-user" selected={userIDs} onToggle={(uid) => setUserIDs(toggle(userIDs, uid))}
+            <PickList label="users" idPrefix="pe-user" selected={userIDs} onToggle={(uid) => setUserIDs(toggle(userIDs, uid))} onSelect={(ids, on) => setUserIDs(pickMany(userIDs, ids, on))}
               options={people.map((u) => ({ id: u.id, label: u.username, detail: u.display_name && u.display_name !== u.username ? u.display_name : undefined }))} />
           </Field>
         </div>
@@ -185,15 +190,15 @@ function GrantCard({ index, draft: d, open, onToggleOpen, onChange, onRemove, on
     [targets, d.kind],
   )
   const listed = d.kind === 'autoscaling'
-    ? asgs.map((g) => ({ id: g.id, label: g.name, detail: g.status === 'disabled' ? `${g.os_family} · disabled` : g.os_family }))
+    ? asgs.map((g) => ({ id: g.id, label: g.name, detail: g.status === 'disabled' ? `${g.os_family} · disabled` : g.os_family, inactive: g.status === 'disabled' }))
     : ofKind.map((t) => {
       const what = d.kind === 'database' ? t.engine : d.kind === 'host' ? t.os_family : undefined
-      return { id: t.id, label: t.name, detail: t.status === 'disabled' ? [what, 'disabled'].filter(Boolean).join(' · ') : what }
+      return { id: t.id, label: t.name, detail: t.status === 'disabled' ? [what, 'disabled'].filter(Boolean).join(' · ') : what, inactive: t.status === 'disabled' }
     })
   // A target the grant names that the lists do not hold (retired since, or
   // beyond the first page) stays visible, so it can be seen and removed
   // rather than kept in silence.
-  const options = [...listed, ...Object.keys(d.targets).filter((tid) => !listed.some((o) => o.id === tid)).map((tid) => ({ id: tid, label: nameOf(tid), detail: 'not found' }))]
+  const options = [...listed, ...Object.keys(d.targets).filter((tid) => !listed.some((o) => o.id === tid)).map((tid) => ({ id: tid, label: nameOf(tid), detail: 'not found', inactive: true }))]
   const chips = (tid: string): Protocol[] => {
     if (d.kind === 'autoscaling') {
       const g = asgs.find((x) => x.id === tid)
@@ -202,6 +207,14 @@ function GrantCard({ index, draft: d, open, onToggleOpen, onChange, onRemove, on
     const t = ofKind.find((x) => x.id === tid)
     return t ? chipsFor(d.kind, t) : []
   }
+  // Picking a target picks its one protocol for the admin; with several, none.
+  const firstPick = (tid: string): Protocol[] => {
+    const c = chips(tid)
+    return c.length === 1 ? [...c] : []
+  }
+  const chosenIDs = Object.keys(d.targets)
+  // The protocols any chosen target serves, for setting them on all at once.
+  const bulk = implicit || chosenIDs.length < 2 ? [] : [...new Set(chosenIDs.flatMap((tid) => chips(tid)))]
   const suggest = tagSuggestions(d.kind === 'autoscaling' ? asgs : ofKind)
   const summary = fromDraft(d, nameOf).grant
   const setWindow = (i: number, patch: Partial<TimeWindow>) => up({ windows: d.windows.map((w, j) => (j === i ? { ...w, ...patch } : w)) })
@@ -234,25 +247,64 @@ function GrantCard({ index, draft: d, open, onToggleOpen, onChange, onRemove, on
                 onToggle={(tid) => {
                   const next = { ...d.targets }
                   if (tid in next) delete next[tid]
-                  else {
-                    // One possible protocol is chosen for the admin; with several, none is.
-                    const c = chips(tid)
-                    next[tid] = c.length === 1 ? [...c] : []
+                  else next[tid] = firstPick(tid)
+                  up({ targets: next })
+                }}
+                onSelect={(ids, on) => {
+                  const next = { ...d.targets }
+                  for (const tid of ids) {
+                    if (!on) delete next[tid]
+                    else if (!(tid in next)) next[tid] = firstPick(tid)
                   }
                   up({ targets: next })
                 }}
-                extra={implicit ? undefined : (tid) => (
-                  <span className="chips">
-                    {chips(tid).map((proto) => (
+                extra={implicit ? undefined : (tid) => {
+                  const chosen = d.targets[tid] ?? []
+                  const host = d.kind === 'host' ? ofKind.find((x) => x.id === tid) : undefined
+                  const { missing, stale } = host ? unfound(host, chosen) : { missing: [], stale: [] }
+                  return (
+                    <span className="chips">
+                      {[...chips(tid), ...stale].map((proto) => {
+                        const off = stale.includes(proto)
+                        return (
+                          <span key={proto} className={'chip-toggle' + (off ? ' stale' : '')} title={off ? 'Not found by the last probe' : undefined}>
+                            <input id={`${p}-t-${tid}-${proto}`} type="checkbox" checked={chosen.includes(proto)}
+                              onChange={() => up({ targets: { ...d.targets, [tid]: toggle(chosen, proto) } })}
+                              aria-label={`${protocolName(proto)} on ${nameOf(tid)}${off ? ', not found by the last probe' : ''}`} />
+                            <label htmlFor={`${p}-t-${tid}-${proto}`} aria-hidden="true">{protocolName(proto)}</label>
+                          </span>
+                        )
+                      })}
+                      {missing.map((proto) => (
+                        <span key={proto} className="chip-toggle unfound" title="Not found by the last probe; probe again">
+                          <input id={`${p}-t-${tid}-${proto}`} type="checkbox" checked={false} disabled
+                            aria-label={`${protocolName(proto)} on ${nameOf(tid)}, not found by the last probe; probe again`} />
+                          <label htmlFor={`${p}-t-${tid}-${proto}`} aria-hidden="true">{protocolName(proto)}</label>
+                        </span>
+                      ))}
+                    </span>
+                  )
+                }} />
+              {bulk.length > 0 && (
+                <div className="chips bulk-chips" role="group" aria-label={`Grant ${index + 1} protocols for every chosen target`}>
+                  <span className="muted">All chosen</span>
+                  {bulk.map((proto) => {
+                    const serving = chosenIDs.filter((tid) => chips(tid).includes(proto))
+                    const on = serving.every((tid) => (d.targets[tid] ?? []).includes(proto))
+                    return (
                       <span key={proto} className="chip-toggle">
-                        <input id={`${p}-t-${tid}-${proto}`} type="checkbox" checked={(d.targets[tid] ?? []).includes(proto)}
-                          onChange={() => up({ targets: { ...d.targets, [tid]: toggle(d.targets[tid] ?? [], proto) } })}
-                          aria-label={`${protocolName(proto)} on ${nameOf(tid)}`} />
-                        <label htmlFor={`${p}-t-${tid}-${proto}`} aria-hidden="true">{protocolName(proto)}</label>
+                        <input id={`${p}-bulk-${proto}`} type="checkbox" checked={on}
+                          onChange={() => {
+                            const next = { ...d.targets }
+                            for (const tid of serving) next[tid] = on ? (next[tid] ?? []).filter((x) => x !== proto) : [...new Set([...(next[tid] ?? []), proto])]
+                            up({ targets: next })
+                          }} />
+                        <label htmlFor={`${p}-bulk-${proto}`}>{protocolName(proto)}</label>
                       </span>
-                    ))}
-                  </span>
-                )} />
+                    )
+                  })}
+                </div>
+              )}
             </Field>
             <Field label="Tags" hint="Every key must match; a repeated key matches any of its values">
               <>

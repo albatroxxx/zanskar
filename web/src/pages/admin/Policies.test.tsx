@@ -201,6 +201,54 @@ describe('the policy editor', () => {
     expect(body.grants[0]).toMatchObject({ id: 'gr1', kind: 'autoscaling', targets: [{ id: 'a1', protocols: ['ssh'] }] })
   })
 
+  // 2026-10-30: WinRM was missing from a Windows host with no word of why,
+  // and a converted 1.7 policy kept RDP on a Linux box. A probed host shows
+  // its usual protocols the probe did not find greyed, and a chosen one it
+  // did not find in warning, so it can be unticked.
+  it('greys the usual protocols a probe did not find and flags a chosen one it did not', async () => {
+    serve([policy({ grants: [grant({ targets: [{ id: 't1', protocols: ['ssh', 'rdp'] }, { id: 't2', protocols: ['rdp'] }] })] })])
+    const put = vi.spyOn(api, 'put').mockResolvedValue({} as never)
+    at('/admin/policies/p1')
+    const user = userEvent.setup()
+    const card = await screen.findByRole('region', { name: 'Grant 1' })
+    // web-1 (Linux, probed: ssh): VNC is usual but was not found.
+    const vnc = within(card).getByLabelText('VNC on web-1, not found by the last probe; probe again') as HTMLInputElement
+    expect(vnc.disabled).toBe(true)
+    const rdp = within(card).getByLabelText('RDP on web-1, not found by the last probe') as HTMLInputElement
+    expect(rdp.checked).toBe(true)
+    expect(rdp.closest('.chip-toggle')?.className).toContain('stale')
+    // dc-1 (Windows, never probed): what Windows usually serves, nothing greyed.
+    expect(within(card).getByLabelText('WinRM on dc-1')).toBeDefined()
+    expect(within(card).queryByLabelText(/on dc-1, not found/)).toBeNull()
+    await user.click(rdp)
+    expect(within(card).queryByLabelText('RDP on web-1, not found by the last probe')).toBeNull()
+    await user.click(screen.getByRole('button', { name: 'Save' }))
+    await waitFor(() => expect(put).toHaveBeenCalledTimes(1))
+    const [, body] = put.mock.calls[0] as [string, { grants: PolicyGrant[] }]
+    expect(body.grants[0].targets).toEqual([{ id: 't1', protocols: ['ssh'] }, { id: 't2', protocols: ['rdp'] }])
+  })
+
+  it('selects every host at once and sets a protocol on all of them', async () => {
+    serve([policy({ grants: [grant({ targets: [] })] })])
+    const put = vi.spyOn(api, 'put').mockResolvedValue({} as never)
+    at('/admin/policies/p1')
+    const user = userEvent.setup()
+    const card = await screen.findByRole('region', { name: 'Grant 1' })
+    await user.click(within(card).getByLabelText('Select all hosts'))
+    expect(within(card).getByText('3 of 3 chosen')).toBeDefined()
+    const bulk = within(card).getByRole('group', { name: 'Grant 1 protocols for every chosen target' })
+    await user.click(within(bulk).getByLabelText('SSH'))
+    await user.click(screen.getByRole('button', { name: 'Save' }))
+    await waitFor(() => expect(put).toHaveBeenCalledTimes(1))
+    const [, body] = put.mock.calls[0] as [string, { grants: PolicyGrant[] }]
+    // web-1 had SSH picked for it (its one protocol); dc-1 and build gain it.
+    expect(body.grants[0].targets).toEqual([
+      { id: 't1', protocols: ['ssh'] },
+      { id: 't2', protocols: ['ssh'] },
+      { id: 't3', protocols: ['ssh'] },
+    ])
+  })
+
   it('shows a target the grant names that no list holds, so it can be removed', async () => {
     serve([policy({ grants: [grant({ targets: [{ id: 't1', protocols: ['ssh'] }, { id: 'gone-1', protocols: ['ssh'] }] })] })])
     const put = vi.spyOn(api, 'put').mockResolvedValue({} as never)

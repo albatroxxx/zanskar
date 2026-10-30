@@ -38,12 +38,32 @@ export function chipsFor(kind: TargetKind, t: Pick<Target, 'capabilities' | 'os_
   const served = kindProtocols[kind]
   const caps = (t.capabilities ?? []).filter((p) => served.includes(p))
   if (caps.length) return caps
-  if (kind === 'autoscaling') return served
+  return usualFor(kind, t)
+}
+
+/** usualFor is what a target of this kind and operating system usually serves, probed or not. */
+export function usualFor(kind: TargetKind, t: Pick<Target, 'os_family'> | Pick<AutoscalingGroup, 'os_family'>): Protocol[] {
+  const served = kindProtocols[kind]
+  if (kind !== 'host') return served
   switch (t.os_family) {
     case 'linux': return ['ssh', 'vnc']
     case 'windows': return ['rdp', 'winrm', 'ssh']
     default: return served
   }
+}
+
+/**
+ * unfound splits a host's chips by what its last probe said (2026-10-30):
+ * missing are the usual protocols the probe did not find, shown greyed so
+ * the admin knows why one is absent; stale are chosen protocols it did not
+ * find (a 1.7 policy converted with RDP on a Linux box), shown in warning so
+ * they can be unticked. A host never probed has neither.
+ */
+export function unfound(t: Pick<Target, 'capabilities' | 'os_family'>, chosen: Protocol[]): { missing: Protocol[]; stale: Protocol[] } {
+  const found = (t.capabilities ?? []).filter((p) => kindProtocols.host.includes(p))
+  if (found.length === 0) return { missing: [], stale: [] }
+  const stale = chosen.filter((p) => !found.includes(p))
+  return { missing: usualFor('host', t).filter((p) => !found.includes(p) && !stale.includes(p)), stale }
 }
 
 /** A new grant of kind, with the defaults the server would fill. */
