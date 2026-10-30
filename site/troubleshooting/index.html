@@ -9,7 +9,7 @@
   <meta property="og:title" content="Troubleshooting">
   <meta property="og:description" content="Where Zanskar logs, what its log lines and error codes mean, and the fix for each: guacd down, host key mismatch, wrong version number, invalid ticket, approval required.">
   <meta property="og:type" content="website"><meta property="og:url" content="https://albatroxxx.github.io/zanskar/troubleshooting/">
-  <meta property="og:image" content="https://albatroxxx.github.io/zanskar/assets/policies-1.7.1.jpg"><meta name="twitter:card" content="summary_large_image">
+  <meta property="og:image" content="https://albatroxxx.github.io/zanskar/assets/policies-1.8.0.jpg"><meta name="twitter:card" content="summary_large_image">
   <link rel="icon" href="../assets/logo.svg" type="image/svg+xml"><link rel="stylesheet" href="../assets/site.css"><script src="../assets/site.js" defer></script>
 </head>
 <body>
@@ -50,7 +50,7 @@ ls -la /var/lib/zanskar/recordings | tail        # recordings land here as sessi
     <tr><td><code>csrf_invalid</code></td><td>A state-changing request without the session's <code>X-CSRF-Token</code>, or whose <code>Origin</code> does not match the gateway's host, typically a reverse proxy rewriting <code>Host</code>.</td><td>Make the proxy pass the original <code>Host</code> (Caddy and nginx <code>proxy_set_header Host $host</code> do); reload the page to refresh the token.</td></tr>
     <tr><td><code>mfa_required</code>, <code>mfa_required_by_policy</code></td><td>The sign-in still owes a second factor, or the policy demands an enrolled authenticator.</td><td>Finish enrolment; admins can reset a lost authenticator with <code>zanskar admin reset-mfa</code>.</td></tr>
     <tr><td><code>review_only</code></td><td>The account holds only the auditor role, which cannot see or connect to targets.</td><td>Grant the user role as well if this person should connect; auditors review only.</td></tr>
-    <tr><td><code>policy_denied</code></td><td>No enabled policy grants this user this protocol on this target right now (selector, protocol list or time window).</td><td>Check the policy's targets or tags, protocols and time windows, and the user's group membership.</td></tr>
+    <tr><td><code>policy_denied</code></td><td>No enabled grant gives this user this protocol on this target right now (its targets or tags, protocols or time windows).</td><td>Check the grants that name the target, their protocols and time windows, and that the user or one of their groups is in the policy's Who.</td></tr>
     <tr><td><code>approval_required</code></td><td>The only policy covering this target requires approval and there is no active grant.</td><td>Request access from the Targets page; an administrator approves under Approvals.</td></tr>
     <tr><td><code>duplicate_request</code>, <code>already_granted</code>, <code>not_extendable</code></td><td>One open request per target and protocol: one is pending, a grant is already active (extend it instead), or the extension names something that is not your active grant.</td><td>Wait for the decision, or use <em>Extend</em> on My access.</td></tr>
     <tr><td><code>host_key_untrusted</code>, <code>host_key_unverified</code></td><td>The SSH host key has not been trusted yet (or, for an autoscaling instance, not yet captured).</td><td>Probe and trust in the target drawer; for instances, wait for the next sync.</td></tr>
