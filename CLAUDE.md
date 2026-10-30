@@ -44,3 +44,6 @@ For a local demo target, run `./bin/fakessh` and enroll `<your LAN IP>:2222` as 
 
 `hack/keycloak/run.sh` checks single sign-on against a real Keycloak in Docker (ADR 0035): user
 sync, sign-in with Keycloak's OTP and nothing from Zanskar, and sign-out ending Keycloak's session.
+`hack/authentik/run.sh` checks the same against Authentik, a second vendor: SCIM 2.0 push, an
+email-form username, sign-out, and `prompt_login` with a provider that ignores it. Keep features
+vendor-neutral (OIDC, SCIM, LDAP); a vendor adapter only beside the standard path.
