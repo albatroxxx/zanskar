@@ -11,16 +11,81 @@ import (
 	"path"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/albatroxxx/zanskar/internal/config"
 	"github.com/albatroxxx/zanskar/migrations"
 )
 
-// Migrate applies every embedded migration for the DB's driver that has not
-// been applied yet, each in its own transaction, in lexical order. It returns
-// the names applied in this run.
+// Step is a migration written in Go, for a change SQL cannot make portably
+// on both engines (ADR 0036: stored policies rewritten into a new shape). It
+// runs in version order among the SQL files, in its own transaction, and is
+// recorded in schema_migrations like a file.
+type Step struct {
+	Version string
+	Run     func(ctx context.Context, db *DB, tx *sql.Tx) error
+}
+
+var (
+	stepsMu sync.Mutex
+	steps   = map[string]Step{}
+)
+
+// RegisterStep adds a step to every migration from now on. The package that
+// owns the data registers its step when it is loaded, as database/sql
+// drivers register, so no caller of Migrate can run the files without it.
+// Registering the same version twice panics.
+func RegisterStep(s Step) {
+	stepsMu.Lock()
+	defer stepsMu.Unlock()
+	if s.Version == "" || s.Run == nil {
+		panic("store: RegisterStep needs a version and a function")
+	}
+	if _, dup := steps[s.Version]; dup {
+		panic("store: step " + s.Version + " registered twice")
+	}
+	steps[s.Version] = s
+}
+
+// migration is one entry of the ordered set: a SQL file or a Go step.
+type migration struct {
+	version string
+	file    string
+	step    *Step
+}
+
+// all lists the driver's SQL files and the registered steps in version order.
+func all(driver string) ([]migration, error) {
+	names, err := fs.Glob(migrations.FS, path.Join(driver, "*.sql"))
+	if err != nil {
+		return nil, fmt.Errorf("migrate: glob: %w", err)
+	}
+	var out []migration
+	for _, name := range names {
+		out = append(out, migration{version: strings.TrimSuffix(path.Base(name), ".sql"), file: name})
+	}
+	stepsMu.Lock()
+	for _, s := range steps {
+		out = append(out, migration{version: s.Version, step: &s})
+	}
+	stepsMu.Unlock()
+	sort.Slice(out, func(i, j int) bool { return out[i].version < out[j].version })
+	return out, nil
+}
+
+// Migrate applies every embedded migration for the DB's driver, and every
+// registered step, that has not been applied yet, each in its own
+// transaction, in lexical order of version. It returns the versions applied
+// in this run.
 func Migrate(ctx context.Context, db *DB) ([]string, error) {
+	return MigrateTo(ctx, db, "")
+}
+
+// MigrateTo is Migrate stopping after version last, for tests that put rows
+// in an older schema and then watch the rest of the migrations convert
+// them. An empty last applies everything.
+func MigrateTo(ctx context.Context, db *DB, last string) ([]string, error) {
 	if _, err := db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS schema_migrations (
 		version    TEXT PRIMARY KEY,
 		applied_at TEXT NOT NULL
@@ -33,28 +98,67 @@ func Migrate(ctx context.Context, db *DB) ([]string, error) {
 		return nil, err
 	}
 
-	names, err := fs.Glob(migrations.FS, path.Join(db.Driver, "*.sql"))
+	list, err := all(db.Driver)
 	if err != nil {
-		return nil, fmt.Errorf("migrate: glob: %w", err)
+		return nil, err
 	}
-	sort.Strings(names)
-
 	var ran []string
-	for _, name := range names {
-		version := strings.TrimSuffix(path.Base(name), ".sql")
-		if applied[version] {
+	for _, m := range list {
+		if last != "" && m.version > last {
+			break
+		}
+		if applied[m.version] {
 			continue
 		}
-		body, err := fs.ReadFile(migrations.FS, name)
-		if err != nil {
-			return ran, fmt.Errorf("migrate: read %s: %w", name, err)
+		if m.step != nil {
+			if err := applyStep(ctx, db, *m.step); err != nil {
+				return ran, err
+			}
+			ran = append(ran, m.version)
+			continue
 		}
-		if err := applyWithDirectives(ctx, db, version, string(body)); err != nil {
+		body, err := fs.ReadFile(migrations.FS, m.file)
+		if err != nil {
+			return ran, fmt.Errorf("migrate: read %s: %w", m.file, err)
+		}
+		if err := applyWithDirectives(ctx, db, m.version, string(body)); err != nil {
 			return ran, err
 		}
-		ran = append(ran, version)
+		ran = append(ran, m.version)
 	}
 	return ran, nil
+}
+
+// applyStep runs a Go step in its own transaction and records it.
+func applyStep(ctx context.Context, db *DB, s Step) (err error) {
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("migrate %s: begin: %w", s.Version, err)
+	}
+	defer func() {
+		if err != nil {
+			_ = tx.Rollback()
+		}
+	}()
+	if err = s.Run(ctx, db, tx); err != nil {
+		return fmt.Errorf("migrate %s: %w", s.Version, err)
+	}
+	if err = record(ctx, db, tx, s.Version); err != nil {
+		return err
+	}
+	if err = tx.Commit(); err != nil {
+		return fmt.Errorf("migrate %s: commit: %w", s.Version, err)
+	}
+	return nil
+}
+
+func record(ctx context.Context, db *DB, tx *sql.Tx, version string) error {
+	_, err := tx.ExecContext(ctx, db.Rebind(`INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)`), // #nosec G701 -- constant statement, bound args
+		version, time.Now().UTC().Format(time.RFC3339))
+	if err != nil {
+		return fmt.Errorf("migrate %s: record: %w", version, err)
+	}
+	return nil
 }
 
 // fkOffDirective, on the first line of a SQLite migration, asks for foreign
@@ -101,16 +205,14 @@ func Pending(ctx context.Context, db *DB) ([]string, error) {
 			return nil, err
 		}
 	}
-	names, err := fs.Glob(migrations.FS, path.Join(db.Driver, "*.sql"))
+	list, err := all(db.Driver)
 	if err != nil {
 		return nil, err
 	}
-	sort.Strings(names)
 	var pending []string
-	for _, name := range names {
-		v := strings.TrimSuffix(path.Base(name), ".sql")
-		if !applied[v] {
-			pending = append(pending, v)
+	for _, m := range list {
+		if !applied[m.version] {
+			pending = append(pending, m.version)
 		}
 	}
 	return pending, nil
@@ -130,10 +232,8 @@ func applyOne(ctx context.Context, db *DB, version, body string) (err error) {
 	if _, err = tx.ExecContext(ctx, body); err != nil { // #nosec G701
 		return fmt.Errorf("migrate %s: exec: %w", version, err)
 	}
-	_, err = tx.ExecContext(ctx, db.Rebind(`INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)`), // #nosec G701 -- constant statement, bound args
-		version, time.Now().UTC().Format(time.RFC3339))
-	if err != nil {
-		return fmt.Errorf("migrate %s: record: %w", version, err)
+	if err = record(ctx, db, tx, version); err != nil {
+		return err
 	}
 	if err = tx.Commit(); err != nil {
 		return fmt.Errorf("migrate %s: commit: %w", version, err)

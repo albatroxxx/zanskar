@@ -31,7 +31,7 @@ and update the status of the old one.
 | [0010](0010-frontend-react-typescript-vite.md) | Frontend: React, TypeScript, Vite | Accepted |
 | [0011](0011-autoscaling-health-model.md) | Autoscaling health model | Accepted |
 | [0012](0012-rdp-certificate-pinning.md) | RDP and VNC trust through guacd | Accepted |
-| [0013](0013-policy-subject-group-or-user.md) | Access policies bind to a group or to a single user | Accepted |
+| [0013](0013-policy-subject-group-or-user.md) | Access policies bind to a group or to a single user | Accepted, amended by 0036 |
 | [0014](0014-guided-install-writes-env-file.md) | Guided install writes the environment file | Accepted |
 | [0015](0015-recording-retention-policy.md) | Recording retention is admin-editable runtime policy | Accepted |
 | [0016](0016-ssh-file-transfer-over-sftp.md) | SSH file transfer over SFTP | Accepted |
@@ -53,4 +53,4 @@ and update the status of the old one.
 | [0033](0033-applications-identity-aware-proxy.md) | Applications: web apps reached through an identity-aware proxy | Superseded by 0034 |
 | [0034](0034-applications-isolated-browser.md) | Applications: web apps opened in an isolated browser | Accepted |
 | [0035](0035-identity-provider-owns-the-person.md) | A single sign-on provider owns the person: second factor, session, joining and leaving | Accepted |
-| [0036](0036-access-policy-grants.md) | An access policy is an audience and a list of grants, each with its own conditions | Proposed |
+| [0036](0036-access-policy-grants.md) | An access policy is an audience and a list of grants, each with its own conditions | Accepted |

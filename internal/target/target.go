@@ -411,6 +411,18 @@ func validCABundle(pem string) error {
 // IsDatabase reports whether the target is a managed database endpoint (ADR 0017).
 func (t *Target) IsDatabase() bool { return t.Engine != "" }
 
+// Kind is the target's kind for access policies (ADR 0036): a database when
+// it has an engine, an application when it has an upstream, else a host.
+func (t *Target) Kind() string {
+	switch {
+	case t.IsDatabase():
+		return protocol.KindDatabase
+	case t.IsApplication():
+		return protocol.KindApplication
+	}
+	return protocol.KindHost
+}
+
 // IsApplication reports whether the target is a web application reached
 // through the proxy (ADR 0033).
 func (t *Target) IsApplication() bool { return t.AppUpstream != "" }

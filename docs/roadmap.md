@@ -102,6 +102,17 @@ Deferred by decision: a multi-pane workspace (browser tabs suffice), rotation of
 keys and of Windows or database passwords (the certificate authority and the owning systems
 do that). Still Phase 4: HA, SAML/SCIM, WebAuthn.
 
+## v1.8 release — shipped (v1.8.0 tagged 2026-10-30)
+
+Access policies are redesigned ([ADR 0036](adr/0036-access-policy-grants.md)): a policy names
+any number of groups and users and holds grants; each grant picks a type of target, then the
+targets with a protocol each or tags, then its own conditions (approval, sign-in, authenticator,
+clipboard, file transfer, limits, windows, recordings). Where grants overlap, standing beats
+approval and each term is the strictest; one recheck of live sessions replaces four revocation
+paths. The policy API changes shape at the same path and refuses the old one. Migrations
+0035 to 0037 convert every stored policy with the same access, checked against a frozen copy of
+the 1.7 evaluator ([release notes](releases/v1.8.0.md)).
+
 ## v1.7 release — shipped (v1.7.0 tagged 2026-10-28)
 
 Applications change shape: the identity-aware proxy of 1.5 and 1.6 (apps domain, wildcard
@@ -115,8 +126,7 @@ deadline of their own, and gives the dashboard's gateway card CPU use that refre
 ([notes](releases/v1.7.1.md)). 1.7.2 (30 October 2026) lets single sign-on work with any
 provider (SCIM 2.0, provider-owned MFA and sign-out, email usernames; ADR 0035) and carries
 the first fixes from a walkthrough of the live console: dashboard numbers open their filtered
-lists, tags are key and value boxes, the console says less ([notes](releases/v1.7.2.md)). The
-policy form's redesign is [ADR 0036](adr/0036-access-policy-grants.md), proposed for 1.8.
+lists, tags are key and value boxes, the console says less ([notes](releases/v1.7.2.md)).
 
 ## v1.6 release — shipped (v1.6.0 tagged 2026-10-27)
 

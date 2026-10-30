@@ -45,7 +45,9 @@ FP=$(echo "$probe" | jget 'd["host_key_fingerprint"]')
 code=$(api -X POST $B/connect -d "{\"target_id\":\"$TID\",\"protocol\":\"ssh\"}" | jget 'd["code"]'); echo "connect before trust: $code"
 echo "trust: $(api -X POST $B/targets/$TID/host-key/trust -d "{\"host_key_fingerprint\":\"$FP\"}" | jget 'd["host_key_status"]')"
 code=$(api -X POST $B/connect -d "{\"target_id\":\"$TID\",\"protocol\":\"ssh\"}" | jget 'd["code"]'); echo "connect before policy: $code"
-api -X POST $B/access-policies -d "{\"name\":\"ops-test-ssh\",\"group_id\":\"$GRP\",\"target_selector\":{\"tags\":{\"env\":\"test\"}},\"protocols\":[\"ssh\"],\"idle_timeout_minutes\":15,\"require_mfa\":false}" > /dev/null
+# A tag grant (ADR 0036), so the CA target enrolled further down is covered too.
+api -X POST $B/access-policies -d "{\"name\":\"ops-test-ssh\",\"subjects\":[{\"kind\":\"group\",\"id\":\"$GRP\"}],\"grants\":[{\"kind\":\"host\",\"tags\":{\"match\":{\"env\":[\"test\"]},\"protocols\":[\"ssh\"]},\"idle_timeout_minutes\":15,\"require_mfa\":false}]}" \
+  | jget '[(g["kind"], g["tags"], g["access"]) for g in d["grants"]] if "grants" in d else d' | sed 's/^/policy: /'
 echo "me/targets: $(api $B/me/targets | jget '[(t["name"], t["allowed_protocols"], t["host_key_ready"]) for t in d["items"]]')"
 TICKET=$(api -X POST $B/connect -d "{\"target_id\":\"$TID\",\"protocol\":\"ssh\"}" | jget 'd["ticket"]')
 echo "ticket length: ${#TICKET}"

@@ -337,18 +337,18 @@ func TestResolveGroupDNMappingIsExact(t *testing.T) {
 
 // sessionEnder records what a sign-in asked the gateway to end.
 type sessionEnder struct {
-	gateway.Revoker // only GroupMembersRemoved is used here
+	gateway.Revoker // only Recheck is used here
 	calls           []string
 }
 
-func (s *sessionEnder) GroupMembersRemoved(_ context.Context, groupID string, userIDs []string) int {
-	s.calls = append(s.calls, groupID+":"+strings.Join(userIDs, ","))
+func (s *sessionEnder) Recheck(_ context.Context, userIDs []string) int {
+	s.calls = append(s.calls, strings.Join(userIDs, ","))
 	return 3
 }
 
 // TestResolveReportsWhatItDid: a provisioned account and the group changes
 // a sign-in makes come back to the caller, which audits them; a removal
-// from a mapped group ends the sessions that group granted.
+// from a mapped group re-checks the person's live sessions (ADR 0036).
 func TestResolveReportsWhatItDid(t *testing.T) {
 	e := newProvisionEnv(t)
 	ctx := context.Background()
@@ -378,7 +378,7 @@ func TestResolveReportsWhatItDid(t *testing.T) {
 	if err != nil || r.Created || len(r.GroupsAdded) != 0 || strings.Join(r.GroupsRemoved, ",") != "g-ops" || r.LiveSessionsEnded != 3 {
 		t.Fatalf("second sign-in: %+v %v", r, err)
 	}
-	if strings.Join(ender.calls, ";") != "g-ops:"+r.User.ID {
+	if strings.Join(ender.calls, ";") != r.User.ID {
 		t.Fatalf("sessions ended: %v", ender.calls)
 	}
 	evs = r.Events("192.0.2.7", p, Identity{ExternalID: "sub-1"})

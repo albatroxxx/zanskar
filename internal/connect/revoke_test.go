@@ -13,6 +13,8 @@ import (
 	"github.com/albatroxxx/zanskar/internal/audit"
 	"github.com/albatroxxx/zanskar/internal/gateway"
 	"github.com/albatroxxx/zanskar/internal/policy"
+	"github.com/albatroxxx/zanskar/internal/policy/policytest"
+	"github.com/albatroxxx/zanskar/internal/protocol"
 	"github.com/albatroxxx/zanskar/internal/session"
 	"github.com/albatroxxx/zanskar/internal/target"
 	"github.com/albatroxxx/zanskar/internal/user"
@@ -97,11 +99,11 @@ func revokeCtx(t *testing.T) context.Context {
 	return ctx
 }
 
-// TestRevokeGroupMemberRemoved: alice reaches the shell through test-all,
-// a policy bound to her group. Once she is out of the group nothing grants
-// her that session, so it ends as policy_revoked, on its row and in its
-// session.end event. Another member's session under the same policy stays.
-func TestRevokeGroupMemberRemoved(t *testing.T) {
+// TestRecheckGroupMemberRemoved (ADR 0036): alice reaches the shell through
+// test-all, which names her group. Once she is out of the group nothing
+// grants her that session, so the re-check ends it as policy_revoked, on its
+// row and in its session.end event. Another user's session is not looked at.
+func TestRecheckGroupMemberRemoved(t *testing.T) {
 	port, fp := shellTarget(t)
 	r := newTerminalRig(t, port, fp)
 	ctx := revokeCtx(t)
@@ -115,45 +117,47 @@ func TestRevokeGroupMemberRemoved(t *testing.T) {
 	if err := r.groups.RemoveMember(r.ctx, r.opsID, r.alice.ID); err != nil {
 		t.Fatal(err)
 	}
-	if n := r.h.GroupMembersRemoved(r.ctx, r.opsID, []string{r.alice.ID}); n != 1 {
-		t.Fatalf("GroupMembersRemoved ended %d session(s), want 1", n)
+	if n := r.h.Recheck(r.ctx, []string{r.alice.ID}); n != 1 {
+		t.Fatalf("Recheck ended %d session(s), want 1", n)
 	}
 	r.revoked(t, id)
 	if other.Err() != nil {
-		t.Fatal("a member still in the group lost their session")
+		t.Fatal("another user's session was ended")
 	}
 }
 
-// TestRevokePolicyDeleted: deleting the policy that admitted a session ends
-// it as policy_revoked.
-func TestRevokePolicyDeleted(t *testing.T) {
+// TestRecheckPolicyDeleted: once the policy that admitted a session is gone
+// and nothing else covers it, the re-check ends it as policy_revoked.
+func TestRecheckPolicyDeleted(t *testing.T) {
 	port, fp := shellTarget(t)
 	r := newTerminalRig(t, port, fp)
 	ctx := revokeCtx(t)
 	id := r.liveShell(t, ctx)
-	testAll := r.policyIDs["test-all"]
-	if err := r.h.Policies.Delete(r.ctx, testAll); err != nil {
+	if err := r.h.Policies.Delete(r.ctx, r.policyIDs["test-all"]); err != nil {
 		t.Fatal(err)
 	}
-	if n := r.h.PolicyDeleted(testAll); n != 1 {
-		t.Fatalf("PolicyDeleted ended %d session(s), want 1", n)
+	if n := r.h.Recheck(r.ctx, []string{r.alice.ID}); n != 1 {
+		t.Fatalf("Recheck ended %d session(s), want 1", n)
 	}
 	r.revoked(t, id)
 }
 
-// TestRevokeGroupDeleted: deleting alice's group deletes test-all with it,
-// so her session under it ends; the revoker is told while the group (and so
-// the policy) still exists.
-func TestRevokeGroupDeleted(t *testing.T) {
+// TestRecheckGroupDeleted: deleting alice's group takes it out of test-all,
+// which stays (ADR 0036); her session, re-checked once the group is gone,
+// ends.
+func TestRecheckGroupDeleted(t *testing.T) {
 	port, fp := shellTarget(t)
 	r := newTerminalRig(t, port, fp)
 	ctx := revokeCtx(t)
 	id := r.liveShell(t, ctx)
-	if n := r.h.GroupDeleted(r.ctx, r.opsID); n != 1 {
-		t.Fatalf("GroupDeleted ended %d session(s), want 1", n)
-	}
 	if _, err := r.groups.Delete(r.ctx, r.opsID); err != nil {
 		t.Fatal(err)
+	}
+	if _, err := r.h.Policies.Get(r.ctx, r.policyIDs["test-all"]); err != nil {
+		t.Fatalf("test-all went with the group: %v", err)
+	}
+	if n := r.h.Recheck(r.ctx, []string{r.alice.ID}); n != 1 {
+		t.Fatalf("Recheck ended %d session(s), want 1", n)
 	}
 	r.revoked(t, id)
 }
@@ -166,51 +170,77 @@ func windowAround(at time.Time) policy.TimeWindow {
 		From: at.Add(-30 * time.Minute).Format("15:04"), To: at.Add(30 * time.Minute).Format("15:04"), TZ: "UTC"}
 }
 
-// TestRevokePolicyChanged: an edit to the policy that admitted a session is
-// checked against that session. When the policy alone no longer grants it
-// (protocol dropped, policy disabled, window closed, selector moved off the
-// target, subject moved off the user) the session ends as policy_revoked; an
-// edit that still grants it leaves it running.
-func TestRevokePolicyChanged(t *testing.T) {
+// hostGrant is test-all's host grant, the one alice's shell runs under.
+func hostGrant(p *policy.Policy) *policy.Grant {
+	for i := range p.Grants {
+		if p.Grants[i].Kind == protocol.KindHost {
+			return &p.Grants[i]
+		}
+	}
+	return nil
+}
+
+// TestRecheckAfterEdit (ADR 0036): an edit to test-all re-checks alice's
+// session against all her access as it stands. A refusal a fresh connect
+// would meet (protocol dropped, policy disabled, tags moved off the target,
+// subject moved off her, approval or an authenticator now required and not
+// held) ends it, and so does the clipboard turned off; a shorter idle
+// timeout or maximum, a window shut now, or an edit that still grants it
+// leaves it running.
+func TestRecheckAfterEdit(t *testing.T) {
 	cases := []struct {
-		name string
-		edit func(t *testing.T, r *terminalRig, p *policy.Policy)
-		ends bool
+		name   string
+		before func(p *policy.Policy) // applied before the session opens
+		edit   func(t *testing.T, r *terminalRig, p *policy.Policy)
+		ends   bool
 	}{
-		{"protocol dropped", func(_ *testing.T, _ *terminalRig, p *policy.Policy) {
-			p.Protocols = []string{"rdp", "winrm", "database"}
+		{"protocol dropped", nil, func(_ *testing.T, _ *terminalRig, p *policy.Policy) {
+			hostGrant(p).Tags.Protocols = []string{"rdp", "winrm"}
 		}, true},
-		{"policy disabled", func(_ *testing.T, _ *terminalRig, p *policy.Policy) { p.Enabled = false }, true},
-		{"window closed now", func(_ *testing.T, _ *terminalRig, p *policy.Policy) {
-			p.TimeWindows = []policy.TimeWindow{windowAround(time.Now().Add(12 * time.Hour))}
+		{"policy disabled", nil, func(_ *testing.T, _ *terminalRig, p *policy.Policy) { p.Enabled = false }, true},
+		{"tags moved off the target", nil, func(_ *testing.T, _ *terminalRig, p *policy.Policy) {
+			hostGrant(p).Tags.Match = map[string][]string{"env": {"prod"}}
 		}, true},
-		{"selector moved off the target", func(_ *testing.T, _ *terminalRig, p *policy.Policy) {
-			p.Selector = policy.Selector{Tags: map[string]string{"env": "prod"}}
-		}, true},
-		{"subject moved to another user", func(t *testing.T, r *terminalRig, p *policy.Policy) {
+		{"subject moved to another user", nil, func(t *testing.T, r *terminalRig, p *policy.Policy) {
 			bob := &user.User{Username: "bob", DisplayName: "Bob", Roles: []user.Role{user.RoleUser}}
 			if err := r.users.Create(r.ctx, bob); err != nil {
 				t.Fatal(err)
 			}
-			p.GroupID, p.UserID = "", bob.ID
+			p.Subjects = []policy.Subject{policytest.User(bob.ID)}
 		}, true},
-		// Gating the policy is a refusal a fresh connect would meet, so it
-		// reaches the live session too; what would be admitted stays.
-		{"approval now required, no grant", func(_ *testing.T, _ *terminalRig, p *policy.Policy) { p.RequireApproval = true }, true},
-		{"approval now required, grant active", func(t *testing.T, r *terminalRig, p *policy.Policy) {
-			p.RequireApproval = true
+		{"approval now required, no grant", nil, func(_ *testing.T, _ *terminalRig, p *policy.Policy) {
+			hostGrant(p).Access = policy.AccessApproval
+		}, true},
+		{"approval now required, grant active", nil, func(t *testing.T, r *terminalRig, p *policy.Policy) {
+			hostGrant(p).Access = policy.AccessApproval
 			r.grant(t, r.targetID)
 		}, false},
-		{"authenticator now required, none enrolled", func(_ *testing.T, _ *terminalRig, p *policy.Policy) { p.RequireMFA = true }, true},
-		{"authenticator now required, one enrolled", func(_ *testing.T, r *terminalRig, p *policy.Policy) {
-			p.RequireMFA = true
+		{"authenticator now required, none enrolled", nil, func(_ *testing.T, _ *terminalRig, p *policy.Policy) {
+			hostGrant(p).RequireMFA = true
+		}, true},
+		{"authenticator now required, one enrolled", nil, func(_ *testing.T, r *terminalRig, p *policy.Policy) {
+			hostGrant(p).RequireMFA = true
 			r.mfa = true
 		}, false},
-		{"still granted", func(_ *testing.T, r *terminalRig, p *policy.Policy) {
-			p.IdleTimeoutMinutes = 30
-			p.Protocols = append(p.Protocols, "vnc")
-			p.Selector = policy.Selector{Targets: []string{r.targetID}}
-			p.TimeWindows = []policy.TimeWindow{windowAround(time.Now())}
+		{"clipboard turned off", func(p *policy.Policy) { hostGrant(p).AllowClipboard = true }, func(_ *testing.T, _ *terminalRig, p *policy.Policy) {
+			hostGrant(p).AllowClipboard = false
+		}, true},
+		{"file transfer turned off", func(p *policy.Policy) { hostGrant(p).AllowFileTransfer = true }, func(_ *testing.T, _ *terminalRig, p *policy.Policy) {
+			hostGrant(p).AllowFileTransfer = false
+		}, true},
+		{"a window shut now", nil, func(_ *testing.T, _ *terminalRig, p *policy.Policy) {
+			hostGrant(p).TimeWindows = []policy.TimeWindow{windowAround(time.Now().Add(12 * time.Hour))}
+		}, false},
+		{"idle and maximum shortened", nil, func(_ *testing.T, _ *terminalRig, p *policy.Policy) {
+			g, one := hostGrant(p), 1
+			g.IdleTimeoutMinutes, g.MaxSessionMinutes = 1, &one
+		}, false},
+		{"still granted", nil, func(_ *testing.T, r *terminalRig, p *policy.Policy) {
+			g := hostGrant(p)
+			g.IdleTimeoutMinutes = 30
+			g.Tags = nil
+			g.Targets = []policy.GrantTarget{{ID: r.targetID, Protocols: []string{"ssh", "vnc"}}}
+			g.TimeWindows = []policy.TimeWindow{windowAround(time.Now())}
 		}, false},
 	}
 	for _, tc := range cases {
@@ -218,61 +248,100 @@ func TestRevokePolicyChanged(t *testing.T) {
 			port, fp := shellTarget(t)
 			r := newTerminalRig(t, port, fp)
 			ctx := revokeCtx(t)
-			id := r.liveShell(t, ctx)
-			p, err := r.h.Policies.Get(r.ctx, r.policyIDs["test-all"])
-			if err != nil {
-				t.Fatal(err)
+			load := func() *policy.Policy {
+				p, err := r.h.Policies.Get(r.ctx, r.policyIDs["test-all"])
+				if err != nil {
+					t.Fatal(err)
+				}
+				return p
 			}
+			if tc.before != nil {
+				p := load()
+				tc.before(p)
+				if err := r.h.Policies.Update(r.ctx, p); err != nil {
+					t.Fatal(err)
+				}
+			}
+			id := r.liveShell(t, ctx)
+			p := load()
 			tc.edit(t, r, p)
 			if err := r.h.Policies.Update(r.ctx, p); err != nil {
 				t.Fatal(err)
 			}
-			n := r.h.PolicyChanged(r.ctx, p.ID)
+			n := r.h.Recheck(r.ctx, []string{r.alice.ID})
 			if !tc.ends {
 				if n != 0 {
-					t.Fatalf("PolicyChanged ended %d session(s), want none", n)
+					t.Fatalf("Recheck ended %d session(s), want none", n)
 				}
 				r.stillLive(t, id)
 				return
 			}
 			if n != 1 {
-				t.Fatalf("PolicyChanged ended %d session(s), want 1", n)
+				t.Fatalf("Recheck ended %d session(s), want 1", n)
 			}
 			r.revoked(t, id)
 		})
 	}
 }
 
-// TestRevokeUserPolicyUntouchedByGroupChanges: a session admitted by a policy
-// bound to alice herself does not depend on her groups, so neither leaving
-// the group nor deleting it ends it.
-func TestRevokeUserPolicyUntouchedByGroupChanges(t *testing.T) {
+// TestRecheckAnotherPolicyKeepsTheSession (ADR 0036): a session is judged by
+// all of alice's access, not by the policy that admitted it. With a policy
+// naming her directly over the same target, leaving the group and deleting
+// it end nothing.
+func TestRecheckAnotherPolicyKeepsTheSession(t *testing.T) {
 	port, fp := shellTarget(t)
 	r := newTerminalRig(t, port, fp)
 	ctx := revokeCtx(t)
-	// The shorter idle timeout makes this the policy the session runs under.
-	direct := &policy.Policy{Name: "alice-direct", UserID: r.alice.ID, Enabled: true, IdleTimeoutMinutes: 5,
-		Selector: policy.Selector{Tags: map[string]string{"env": "test"}}, Protocols: []string{"ssh"}}
+	direct := policytest.Policy("alice-direct", []policy.Subject{policytest.User(r.alice.ID)},
+		policytest.Tagged(protocol.KindHost, map[string]string{"env": "test"}, "ssh"))
 	if err := r.h.Policies.Create(r.ctx, direct); err != nil {
 		t.Fatal(err)
 	}
 	id := r.liveShell(t, ctx)
-	if l, _ := r.h.Registry.Get(id); l.PolicyID != direct.ID {
-		t.Fatalf("live session carries policy %q, want alice-direct (%s)", l.PolicyID, direct.ID)
-	}
 	if err := r.groups.RemoveMember(r.ctx, r.opsID, r.alice.ID); err != nil {
 		t.Fatal(err)
 	}
-	if n := r.h.GroupMembersRemoved(r.ctx, r.opsID, []string{r.alice.ID}); n != 0 {
-		t.Fatalf("GroupMembersRemoved ended %d session(s), want none", n)
-	}
-	if n := r.h.GroupDeleted(r.ctx, r.opsID); n != 0 {
-		t.Fatalf("GroupDeleted ended %d session(s), want none", n)
+	if n := r.h.Recheck(r.ctx, []string{r.alice.ID}); n != 0 {
+		t.Fatalf("Recheck after leaving the group ended %d session(s), want none", n)
 	}
 	if _, err := r.groups.Delete(r.ctx, r.opsID); err != nil {
 		t.Fatal(err)
 	}
+	if n := r.h.Recheck(r.ctx, []string{r.alice.ID}); n != 0 {
+		t.Fatalf("Recheck after deleting the group ended %d session(s), want none", n)
+	}
 	r.stillLive(t, id)
+}
+
+// TestRecheckANewPolicyCanTighten (ADR 0036): of the grants that admit a
+// session, the clipboard is allowed only if every one allows it, so adding a
+// policy whose grant has it off, while alice runs with it on, ends that
+// session. Adding never loosens; it can tighten.
+func TestRecheckANewPolicyCanTighten(t *testing.T) {
+	port, fp := shellTarget(t)
+	r := newTerminalRig(t, port, fp)
+	ctx := revokeCtx(t)
+	p, err := r.h.Policies.Get(r.ctx, r.policyIDs["test-all"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	hostGrant(p).AllowClipboard = true
+	if err := r.h.Policies.Update(r.ctx, p); err != nil {
+		t.Fatal(err)
+	}
+	id := r.liveShell(t, ctx)
+	if l, _ := r.h.Registry.Get(id); !l.AllowClipboard {
+		t.Fatal("the session does not record its clipboard switch")
+	}
+	strict := policytest.Policy("no-clipboard", []policy.Subject{policytest.User(r.alice.ID)},
+		policytest.Tagged(protocol.KindHost, map[string]string{"env": "test"}, "ssh"))
+	if err := r.h.Policies.Create(r.ctx, strict); err != nil {
+		t.Fatal(err)
+	}
+	if n := r.h.Recheck(r.ctx, []string{r.alice.ID}); n != 1 {
+		t.Fatalf("Recheck ended %d session(s), want 1", n)
+	}
+	r.revoked(t, id)
 }
 
 // TestRevokeUserEndsEverySession: when alice's account changes (disabled,
@@ -321,8 +390,8 @@ func TestRevokeReachesDesktopAndWinRM(t *testing.T) {
 		if err := r.h.Policies.Delete(r.ctx, desk); err != nil {
 			t.Fatal(err)
 		}
-		if n := r.h.PolicyDeleted(desk); n != 1 {
-			t.Fatalf("PolicyDeleted ended %d session(s), want 1", n)
+		if n := r.h.Recheck(r.ctx, []string{r.alice.ID}); n != 1 {
+			t.Fatalf("Recheck ended %d session(s), want 1", n)
 		}
 		r.revoked(t, id)
 	})
@@ -351,8 +420,8 @@ func TestRevokeReachesDesktopAndWinRM(t *testing.T) {
 		if err := r.h.Policies.Delete(r.ctx, testAll); err != nil {
 			t.Fatal(err)
 		}
-		if n := r.h.PolicyDeleted(testAll); n != 1 {
-			t.Fatalf("PolicyDeleted ended %d session(s), want 1", n)
+		if n := r.h.Recheck(r.ctx, []string{r.alice.ID}); n != 1 {
+			t.Fatalf("Recheck ended %d session(s), want 1", n)
 		}
 		r.revoked(t, id)
 	})

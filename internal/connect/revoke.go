@@ -4,7 +4,6 @@ package connect
 
 import (
 	"context"
-	"errors"
 	"time"
 
 	"github.com/albatroxxx/zanskar/internal/access"
@@ -13,17 +12,15 @@ import (
 	"github.com/albatroxxx/zanskar/internal/ticket"
 )
 
-// Revocation (ADR 0013, amended 2026-10-11). The admin routes that withdraw
-// access call the Handler as a gateway.Revoker, and it ends the live sessions
-// that access admitted. Every bridge registers its session under the policy
-// that admitted it (gateway.Live.PolicyID), so a policy, group or membership
-// change finds exactly those sessions, which close as policy_revoked; an
-// account change ends all of the user's sessions as admin_terminated.
-//
-// A session is judged by the policy that admitted it alone. Access is the
-// union of a user's policies, but when the admitting policy stops granting the
-// session it ends even if another policy would let the user straight back in;
-// they reconnect, and that connect is decided afresh.
+// Revocation (ADR 0013, 0036). The admin routes that change who may connect
+// call the Handler as a gateway.Revoker, and it ends the live sessions the
+// change withdrew. A policy, group or membership change re-checks every live
+// session of the users it touches against the access they hold now, through
+// the same gate a fresh connect passes (Recheck): a session ends when that
+// connect would be refused, or when its clipboard or file transfer would now
+// be off, and closes as policy_revoked. A shorter idle timeout, maximum or
+// window does not end it. An account change ends all of the user's sessions
+// as admin_terminated.
 
 var _ gateway.Revoker = (*Handler)(nil)
 
@@ -49,70 +46,40 @@ func (h *Handler) UserRevoked(userID string) int {
 	return n
 }
 
-// PolicyDeleted ends every live session the policy admitted.
-func (h *Handler) PolicyDeleted(policyID string) int {
-	n := h.revoke(h.live(func(l gateway.Live) bool { return l.PolicyID == policyID }))
-	h.logRevoked(n, "policy deleted", "policy_id", policyID)
-	return n
-}
-
-// PolicyChanged ends the live sessions the policy admitted that its stored
-// version, on its own, no longer grants: it no longer applies to the user
-// (bound to them or to a group they are in), it is disabled, it no longer
-// allows the session's protocol on the session's target, or none of its time
-// windows is open now. A session that cannot be checked, say because its
-// target no longer resolves, is kept and logged; if the policy is gone its
-// sessions end as for PolicyDeleted.
-func (h *Handler) PolicyChanged(ctx context.Context, policyID string) int {
-	sessions := h.live(func(l gateway.Live) bool { return l.PolicyID == policyID })
+// Recheck re-checks every live session of the users against the access
+// they hold now. A session that cannot be checked, say because its target
+// no longer resolves, is kept and logged.
+func (h *Handler) Recheck(ctx context.Context, userIDs []string) int {
+	want := map[string]bool{}
+	for _, id := range userIDs {
+		want[id] = true
+	}
+	sessions := h.live(func(l gateway.Live) bool { return want[l.UserID] })
 	if len(sessions) == 0 {
 		return 0
 	}
 	ctx, cancel := revokeContext(ctx)
 	defer cancel()
-	p, err := h.Policies.Get(ctx, policyID)
-	if errors.Is(err, policy.ErrNotFound) {
-		return h.PolicyDeleted(policyID)
-	}
-	if err != nil {
-		h.Log.Error("policy changed; its live sessions were not checked", "policy_id", policyID, "err", err)
-		return 0
-	}
 	now := time.Now()
 	var withdrawn []gateway.Live
 	for _, l := range sessions {
-		ok, err := h.stillGrants(ctx, p, l, now)
+		ref, err := h.sessionRef(ctx, l.SessionID)
 		if err != nil {
-			h.Log.Warn("policy changed; live session kept, it could not be checked", "session", l.SessionID, "policy_id", policyID, "err", err)
+			h.Log.Warn("access changed; live session kept, it could not be checked", "session", l.SessionID, "err", err)
 			continue
 		}
-		if !ok {
+		d, code, _, err := h.gate().AdmitLive(ctx, l.UserID, ref, l.Protocol, now)
+		if err != nil {
+			h.Log.Warn("access changed; live session kept, it could not be checked", "session", l.SessionID, "err", err)
+			continue
+		}
+		if code != "" || (l.AllowClipboard && !d.AllowClipboard) || (l.AllowFileTransfer && !d.AllowFileTransfer) {
 			withdrawn = append(withdrawn, l)
 		}
 	}
 	n := h.revoke(withdrawn)
-	h.logRevoked(n, "policy changed", "policy_id", policyID)
+	h.logRevoked(n, "access changed")
 	return n
-}
-
-// stillGrants reports whether p, on its own, still grants the live session:
-// it applies to the session's user, and the connect gate, given that one
-// policy, would admit the session's protocol on the session's target now.
-// Running the gate rather than Evaluate alone means a policy switched to
-// require approval ends the sessions of users without a live grant, and one
-// switched to require an authenticator ends those of users without one, the
-// same refusals a fresh connect would meet.
-func (h *Handler) stillGrants(ctx context.Context, p *policy.Policy, l gateway.Live, now time.Time) (bool, error) {
-	applies, err := h.appliesTo(ctx, p.ID, l.UserID)
-	if err != nil || !applies {
-		return false, err
-	}
-	ref, err := h.sessionRef(ctx, l.SessionID)
-	if err != nil {
-		return false, err
-	}
-	_, code, _, err := h.gate().AdmitPolicies(ctx, l.UserID, []*policy.Policy{p}, ref, l.Protocol, now)
-	return code == "" && err == nil, err
 }
 
 // gate is the admission every connect passes (access.Gate), shared with the
@@ -205,68 +172,6 @@ func (h *Handler) grantWithdrawn(ctx context.Context, userID, targetID, asgID, p
 	return n
 }
 
-// GroupMembersRemoved ends the live sessions of those users that a policy
-// bound to the group admitted. It is called once they are out of the group.
-func (h *Handler) GroupMembersRemoved(ctx context.Context, groupID string, userIDs []string) int {
-	out := map[string]bool{}
-	for _, id := range userIDs {
-		out[id] = true
-	}
-	n := h.revokeGroupSessions(ctx, groupID, h.live(func(l gateway.Live) bool { return out[l.UserID] && l.PolicyID != "" }))
-	h.logRevoked(n, "removed from group", "group_id", groupID)
-	return n
-}
-
-// GroupDeleted ends the live sessions admitted by any policy bound to the
-// group. It is called before the group is deleted, which deletes those
-// policies too.
-func (h *Handler) GroupDeleted(ctx context.Context, groupID string) int {
-	n := h.revokeGroupSessions(ctx, groupID, h.live(func(l gateway.Live) bool { return l.PolicyID != "" }))
-	h.logRevoked(n, "group deleted", "group_id", groupID)
-	return n
-}
-
-// revokeGroupSessions ends those of sessions that a policy bound to the group
-// admitted.
-func (h *Handler) revokeGroupSessions(ctx context.Context, groupID string, sessions []gateway.Live) int {
-	if len(sessions) == 0 {
-		return 0
-	}
-	ctx, cancel := revokeContext(ctx)
-	defer cancel()
-	pols, err := h.Policies.ForGroup(ctx, groupID)
-	if err != nil {
-		h.Log.Error("group changed; its live sessions were not checked", "group_id", groupID, "err", err)
-		return 0
-	}
-	bound := map[string]bool{}
-	for _, p := range pols {
-		bound[p.ID] = true
-	}
-	var withdrawn []gateway.Live
-	for _, l := range sessions {
-		if bound[l.PolicyID] {
-			withdrawn = append(withdrawn, l)
-		}
-	}
-	return h.revoke(withdrawn)
-}
-
-// appliesTo reports whether the policy is enabled and bound to the user or to
-// a group they are in: ForUser, the question the connect gate asks.
-func (h *Handler) appliesTo(ctx context.Context, policyID, userID string) (bool, error) {
-	pols, err := h.Policies.ForUser(ctx, userID)
-	if err != nil {
-		return false, err
-	}
-	for _, p := range pols {
-		if p.ID == policyID {
-			return true, nil
-		}
-	}
-	return false, nil
-}
-
 // sessionRef puts what a live session is connected to in the policy engine's
 // terms. Its row names the target or the autoscaling instance, resolved the
 // way the bridge resolved its ticket.
@@ -279,8 +184,7 @@ func (h *Handler) sessionRef(ctx context.Context, sessionID string) (policy.Targ
 	if err != nil {
 		return policy.TargetRef{}, err
 	}
-	id, asgID, tags := ep.policyRef()
-	return policy.TargetRef{ID: id, ASGID: asgID, Tags: tags}, nil
+	return ep.policyRef(), nil
 }
 
 // live snapshots the registered sessions keep selects.

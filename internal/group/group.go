@@ -142,10 +142,11 @@ func (r *Repo) Update(ctx context.Context, id, name, description string) error {
 	return store.Affected(res, ErrNotFound)
 }
 
-// Delete removes a group and returns, in name order, the ids of the access
-// policies bound to it. The schema deletes those with the group (ON DELETE
-// CASCADE) and they leave no event of their own, so the caller names them in
-// its audit event; the list is read in the same transaction as the delete.
+// Delete removes a group and returns, in name order, the names of the access
+// policies that named it. The group leaves those policies (the schema
+// deletes its subject rows, ON DELETE CASCADE); the policies stay, a policy
+// left with no one marked so in the console (ADR 0036). The caller names
+// them in its audit event; the list is read in the same transaction.
 func (r *Repo) Delete(ctx context.Context, id string) ([]string, error) {
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -153,7 +154,8 @@ func (r *Repo) Delete(ctx context.Context, id string) ([]string, error) {
 	}
 	defer tx.Rollback() //nolint:errcheck
 
-	rows, err := tx.QueryContext(ctx, r.db.Rebind(`SELECT id FROM access_policies WHERE group_id = ? ORDER BY name`), id)
+	rows, err := tx.QueryContext(ctx, r.db.Rebind(`SELECT p.name FROM access_policies p
+		JOIN access_policy_subjects s ON s.policy_id = p.id WHERE s.group_id = ? ORDER BY p.name`), id)
 	if err != nil {
 		return nil, err
 	}

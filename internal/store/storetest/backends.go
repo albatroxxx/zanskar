@@ -27,12 +27,20 @@ const PostgresDSN = "ZANSKAR_TEST_POSTGRES_DSN"
 // JSONB columns and TIMESTAMPTZ comparisons all differ between them.
 func ForEachBackend(t *testing.T, fn func(t *testing.T, db *store.DB)) {
 	t.Helper()
-	t.Run("sqlite", func(t *testing.T) { fn(t, Open(t)) })
+	ForEachBackendUpTo(t, "", fn)
+}
+
+// ForEachBackendUpTo is ForEachBackend with the databases migrated only up
+// to version last, for a test that stores rows in an older schema and then
+// watches the rest of the migrations convert them.
+func ForEachBackendUpTo(t *testing.T, last string, fn func(t *testing.T, db *store.DB)) {
+	t.Helper()
+	t.Run("sqlite", func(t *testing.T) { fn(t, openSQLite(t, last)) })
 	dsn := os.Getenv(PostgresDSN)
 	if dsn == "" {
 		return
 	}
-	t.Run("postgres", func(t *testing.T) { fn(t, OpenPostgres(t, dsn)) })
+	t.Run("postgres", func(t *testing.T) { fn(t, openPostgres(t, dsn, last)) })
 }
 
 var schemaChars = regexp.MustCompile(`[^a-z0-9_]+`)
@@ -43,6 +51,11 @@ var schemaChars = regexp.MustCompile(`[^a-z0-9_]+`)
 // CI server. The migration test resets the public schema; nothing here uses
 // it.
 func OpenPostgres(tb testing.TB, dsn string) *store.DB {
+	tb.Helper()
+	return openPostgres(tb, dsn, "")
+}
+
+func openPostgres(tb testing.TB, dsn, last string) *store.DB {
 	tb.Helper()
 	ctx := context.Background()
 	admin, err := store.Open(ctx, config.DriverPostgres, dsn)
@@ -75,7 +88,7 @@ func OpenPostgres(tb testing.TB, dsn string) *store.DB {
 		tb.Fatal(err)
 	}
 	tb.Cleanup(func() { _ = db.Close() })
-	if _, err := store.Migrate(ctx, db); err != nil {
+	if _, err := store.MigrateTo(ctx, db, last); err != nil {
 		tb.Fatal(err)
 	}
 	return db

@@ -25,16 +25,6 @@ func (f *liveRevoker) UserRevoked(userID string) int {
 	return f.ended
 }
 
-func (f *liveRevoker) PolicyDeleted(string) int {
-	f.unexpected = append(f.unexpected, "PolicyDeleted")
-	return 0
-}
-
-func (f *liveRevoker) PolicyChanged(context.Context, string) int {
-	f.unexpected = append(f.unexpected, "PolicyChanged")
-	return 0
-}
-
 func (f *liveRevoker) TargetDisabled(string) int {
 	f.unexpected = append(f.unexpected, "TargetDisabled")
 	return 0
@@ -55,13 +45,8 @@ func (f *liveRevoker) GrantExpired(context.Context, string, string, string, stri
 	return 0
 }
 
-func (f *liveRevoker) GroupMembersRemoved(context.Context, string, []string) int {
-	f.unexpected = append(f.unexpected, "GroupMembersRemoved")
-	return 0
-}
-
-func (f *liveRevoker) GroupDeleted(context.Context, string) int {
-	f.unexpected = append(f.unexpected, "GroupDeleted")
+func (f *liveRevoker) Recheck(context.Context, []string) int {
+	f.unexpected = append(f.unexpected, "Recheck")
 	return 0
 }
 

@@ -18,6 +18,8 @@ import (
 	"github.com/albatroxxx/zanskar/internal/gateway"
 	"github.com/albatroxxx/zanskar/internal/gateway/guac"
 	"github.com/albatroxxx/zanskar/internal/policy"
+	"github.com/albatroxxx/zanskar/internal/policy/policytest"
+	"github.com/albatroxxx/zanskar/internal/protocol"
 	"github.com/albatroxxx/zanskar/internal/target"
 )
 
@@ -52,8 +54,9 @@ func appRig(t *testing.T) (*desktopRig, string, string) {
 	r.h.BrowserImage = func() string { return "ghcr.io/albatroxxx/zanskar-browser:test" }
 	r.h.DBProxyImage = func() string { return "ghcr.io/albatroxxx/zanskar:test" }
 	r.h.AppsMaxSessions = 1
-	apps := &policy.Policy{Name: "apps", UserID: r.alice.ID, Enabled: true, IdleTimeoutMinutes: 15, AllowClipboard: true,
-		Selector: policy.Selector{Tags: map[string]string{"app": "yes"}}, Protocols: []string{"http"}}
+	appGrant := policytest.Tagged(protocol.KindApplication, map[string]string{"app": "yes"}, "http")
+	appGrant.AllowClipboard = true
+	apps := policytest.Policy("apps", []policy.Subject{policytest.User(r.alice.ID)}, appGrant)
 	if err := r.h.Policies.Create(r.ctx, apps); err != nil {
 		t.Fatal(err)
 	}

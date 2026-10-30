@@ -31,9 +31,13 @@ const DefaultMaxGrantMinutes = 480 // 8 hours
 // Request is an access request and, once approved, the time-bounded grant it
 // becomes. Exactly one of TargetID and ASGID is set.
 type Request struct {
-	ID               string `json:"id"`
-	UserID           string `json:"user_id"`
-	PolicyID         string `json:"policy_id,omitempty"`
+	ID       string `json:"id"`
+	UserID   string `json:"user_id"`
+	PolicyID string `json:"policy_id,omitempty"`
+	// GrantID names the approval grant whose maximum capped the request
+	// (ADR 0036). A record, not an authority: approval and connect judge
+	// the policies as they stand then.
+	GrantID          string `json:"grant_id,omitempty"`
 	TargetID         string `json:"target_id,omitempty"`
 	ASGID            string `json:"asg_id,omitempty"`
 	Protocol         string `json:"protocol"`

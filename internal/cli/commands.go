@@ -3,15 +3,19 @@
 package cli
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"net/http"
 	"net/url"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/albatroxxx/zanskar/internal/policy"
 	"github.com/albatroxxx/zanskar/internal/protocol"
 )
 
@@ -591,40 +595,349 @@ func cmdTargetProbe(x *run) error {
 
 // ---- Access
 
+// A policy is an audience and a list of grants, each complete with its own
+// conditions (ADR 0036). The nested parts are read into the policy package's
+// own types, so the command line reads exactly the shape the API sends.
+
 func cmdPolicies(x *run) error {
 	items, err := x.listAll("/access-policies", 5000)
 	if err != nil {
 		return err
 	}
-	rows := make([][]string, 0, len(items))
-	for _, p := range items {
-		gate := "standing"
-		if p["require_approval"] == true {
-			gate = "approval"
+	pols := make([]policy.Policy, 0, len(items))
+	for _, it := range items {
+		p, err := asPolicy(it)
+		if err != nil {
+			return err
+		}
+		pols = append(pols, p)
+	}
+	groups, users, err := x.audience(pols...)
+	if err != nil {
+		return err
+	}
+	rows := make([][]string, 0, len(pols))
+	for _, p := range pols {
+		lines := make([]string, 0, len(p.Grants))
+		for _, g := range p.Grants {
+			lines = append(lines, grantLine(g))
 		}
 		state := "on"
-		if p["enabled"] != true {
+		if !p.Enabled {
 			state = "off"
 		}
-		rows = append(rows, []string{str(p, "name"), str(p, "protocols"), str(p, "target_selector"), gate, state})
+		rows = append(rows, []string{p.Name, who(p, groups, users), strings.Join(lines, " · "), accessOf(p), state})
 	}
-	x.out.table([]string{"NAME", "PROTOCOLS", "TARGETS", "ACCESS", "ENABLED"}, rows)
+	x.out.table([]string{"NAME", "WHO", "GRANTS", "ACCESS", "ENABLED"}, rows)
 	return nil
 }
 
 func cmdPolicyShow(x *run) error {
-	p, err := x.byName("policy", "/access-policies", "name", x.args[0])
+	it, err := x.byName("policy", "/access-policies", "name", x.args[0])
 	if err != nil {
 		return err
 	}
+	p, err := asPolicy(it)
+	if err != nil {
+		return err
+	}
+	groups, users, err := x.audience(p)
+	if err != nil {
+		return err
+	}
+	targets, asgs, err := x.inventory(p)
+	if err != nil {
+		return err
+	}
+	gs, us := subjectNames(p, groups, users)
 	x.out.pairs([][2]string{
-		{"name", str(p, "name")}, {"description", str(p, "description")}, {"enabled", str(p, "enabled")},
-		{"group", str(p, "group_id")}, {"targets", str(p, "target_selector")}, {"protocols", str(p, "protocols")},
-		{"needs approval", str(p, "require_approval")}, {"needs MFA", str(p, "require_mfa")},
-		{"max session", str(p, "max_session_minutes") + " min"}, {"idle timeout", str(p, "idle_timeout_minutes") + " min"},
-		{"clipboard", str(p, "allow_clipboard")}, {"file transfer", str(p, "allow_file_transfer")}, {"id", str(p, "id")},
+		{"name", str(it, "name")}, {"description", str(it, "description")}, {"enabled", str(it, "enabled")},
+		{"groups", strings.Join(gs, ", ")}, {"users", strings.Join(us, ", ")},
+		{"created", when(it, "created_at")}, {"updated", when(it, "updated_at")}, {"id", str(it, "id")},
 	})
+	if len(p.Subjects) == 0 {
+		// A group deleted leaves its policies (ADR 0036); one it was the
+		// only audience of grants no one until someone is added.
+		x.out.addf(styleMuted, "Applies to no one: add a group or user from the console.")
+	}
+	for i, g := range p.Grants {
+		x.out.textf("")
+		x.out.addf(styleHead, "Grant %d · %s", i+1, g.Kind)
+		x.out.pairs(grantPairs(g, targets, asgs))
+	}
 	return nil
+}
+
+// asPolicy reads a policy from a list item.
+func asPolicy(it obj) (policy.Policy, error) {
+	var p policy.Policy
+	b, err := json.Marshal(it)
+	if err != nil {
+		return p, err
+	}
+	err = json.Unmarshal(b, &p)
+	return p, err
+}
+
+// names maps the ids a list route returns to the value of key; label falls
+// back to the id for one it does not hold, such as a target retired since.
+func (x *run) names(path, key string) (map[string]string, error) {
+	items, err := x.listAll(path, 5000)
+	if err != nil {
+		return nil, err
+	}
+	m := make(map[string]string, len(items))
+	for _, it := range items {
+		m[str(it, "id")] = str(it, key)
+	}
+	return m, nil
+}
+
+func label(names map[string]string, id string) string {
+	if n := names[id]; n != "" {
+		return n
+	}
+	return id
+}
+
+// audience names the groups and users the policies apply to, asking for
+// each list only when some policy names one of its kind.
+func (x *run) audience(pols ...policy.Policy) (groups, users map[string]string, err error) {
+	var wantGroups, wantUsers bool
+	for _, p := range pols {
+		for _, s := range p.Subjects {
+			wantGroups = wantGroups || s.Kind == policy.SubjectGroup
+			wantUsers = wantUsers || s.Kind == policy.SubjectUser
+		}
+	}
+	if wantGroups {
+		if groups, err = x.names("/groups", "name"); err != nil {
+			return nil, nil, err
+		}
+	}
+	if wantUsers {
+		if users, err = x.names("/users", "username"); err != nil {
+			return nil, nil, err
+		}
+	}
+	return groups, users, nil
+}
+
+// inventory names the targets and autoscaling groups the policy's grants
+// name, asking for each list only when a grant names one of its kind.
+func (x *run) inventory(p policy.Policy) (targets, asgs map[string]string, err error) {
+	var wantTargets, wantASGs bool
+	for _, g := range p.Grants {
+		if len(g.Targets) == 0 {
+			continue
+		}
+		if g.Kind == protocol.KindAutoscaling {
+			wantASGs = true
+		} else {
+			wantTargets = true
+		}
+	}
+	if wantTargets {
+		if targets, err = x.names("/targets", "name"); err != nil {
+			return nil, nil, err
+		}
+	}
+	if wantASGs {
+		if asgs, err = x.names("/autoscaling-groups", "name"); err != nil {
+			return nil, nil, err
+		}
+	}
+	return targets, asgs, nil
+}
+
+// who is a policy's audience in a few words: its groups by name, then its
+// users, counted beside groups and named when they are all there is.
+func who(p policy.Policy, groups, users map[string]string) string {
+	gs, us := subjectNames(p, groups, users)
+	switch {
+	case len(gs) == 0 && len(us) == 0:
+		return "no one"
+	case len(gs) == 0:
+		return strings.Join(us, ", ")
+	case len(us) == 0:
+		return strings.Join(gs, ", ")
+	}
+	return strings.Join(gs, ", ") + " +" + count(len(us), "user")
+}
+
+// subjectNames splits a policy's audience into its groups' and its users'
+// names, in the policy's order.
+func subjectNames(p policy.Policy, groups, users map[string]string) (gs, us []string) {
+	for _, s := range p.Subjects {
+		if s.Kind == policy.SubjectGroup {
+			gs = append(gs, label(groups, s.ID))
+		} else {
+			us = append(us, label(users, s.ID))
+		}
+	}
+	return gs, us
+}
+
+// accessOf says whether a policy's grants admit at once, after approval, or
+// some of each.
+func accessOf(p policy.Policy) string {
+	var standing, approval bool
+	for _, g := range p.Grants {
+		if g.Access == policy.AccessApproval {
+			approval = true
+		} else {
+			standing = true
+		}
+	}
+	switch {
+	case standing && approval:
+		return "standing, approval"
+	case approval:
+		return "approval"
+	case standing:
+		return "standing"
+	}
+	return ""
+}
+
+// grantLine is one grant in a few words: its kind, the protocols it gives
+// where the kind has a choice, then how many it names and the tags it
+// matches, as in "host SSH (2 targets, env=prod)".
+func grantLine(g policy.Grant) string {
+	s := g.Kind
+	if protos := grantProtocols(g); len(protos) > 0 {
+		s += " " + strings.Join(protos, ", ")
+	}
+	var what []string
+	if n := len(g.Targets); n > 0 {
+		noun := "target"
+		if g.Kind == protocol.KindAutoscaling {
+			noun = "group"
+		}
+		what = append(what, count(n, noun))
+	}
+	if g.Tags != nil {
+		what = append(what, tagText(g.Tags.Match))
+	}
+	if len(what) > 0 {
+		s += " (" + strings.Join(what, ", ") + ")"
+	}
+	return s
+}
+
+// grantPairs is one grant in full, for policy show.
+func grantPairs(g policy.Grant, targets, asgs map[string]string) [][2]string {
+	names := targets
+	if g.Kind == protocol.KindAutoscaling {
+		names = asgs
+	}
+	named := make([]string, 0, len(g.Targets))
+	for _, t := range g.Targets {
+		named = append(named, label(names, t.ID)+protoSuffix(g.Kind, t.Protocols))
+	}
+	tags := ""
+	if g.Tags != nil {
+		tags = tagText(g.Tags.Match) + protoSuffix(g.Kind, g.Tags.Protocols)
+	}
+	signIn := "as the target sets it"
+	if g.SignIn == policy.SignInOwn {
+		signIn = "their own login"
+	}
+	most := "none"
+	if g.MaxSessionMinutes != nil {
+		most = fmt.Sprintf("%d min", *g.MaxSessionMinutes)
+	}
+	keep := "the global setting"
+	if g.RetentionDays != nil {
+		keep = fmt.Sprintf("%d days", *g.RetentionDays)
+	}
+	return [][2]string{
+		{"targets", strings.Join(named, ", ")}, {"tags", tags}, {"access", g.Access}, {"sign-in", signIn},
+		{"needs MFA", yesNo(g.RequireMFA)}, {"clipboard", yesNo(g.AllowClipboard)}, {"file transfer", yesNo(g.AllowFileTransfer)},
+		{"idle timeout", fmt.Sprintf("%d min", g.IdleTimeoutMinutes)}, {"max session", most},
+		{"windows", windowsText(g.TimeWindows)}, {"retention", keep}, {"id", g.ID},
+	}
+}
+
+// grantProtocols lists, by name and in the kind's own order, the protocols
+// a grant gives on anything, for a kind with more than one to give: a
+// database grant gives database and an application grant http, always.
+func grantProtocols(g policy.Grant) []string {
+	if len(protocol.KindProtocols(g.Kind)) < 2 {
+		return nil
+	}
+	given := map[string]bool{}
+	for _, t := range g.Targets {
+		for _, p := range t.Protocols {
+			given[p] = true
+		}
+	}
+	if g.Tags != nil {
+		for _, p := range g.Tags.Protocols {
+			given[p] = true
+		}
+	}
+	var out []string
+	for _, p := range protocol.KindProtocols(g.Kind) {
+		if given[p] {
+			out = append(out, protocol.Name(p))
+		}
+	}
+	return out
+}
+
+// protoSuffix is " (SSH, RDP)" after a target or a tag match, for a kind
+// with a choice of protocols; nothing for one without.
+func protoSuffix(kind string, protos []string) string {
+	if len(protocol.KindProtocols(kind)) < 2 {
+		return ""
+	}
+	labels := make([]string, 0, len(protos))
+	for _, p := range protos {
+		labels = append(labels, protocol.Name(p))
+	}
+	return " (" + strings.Join(labels, ", ") + ")"
+}
+
+// tagText renders a tag match as "env=prod tier=web|api", keys in order:
+// every key must be present, with one of its values.
+func tagText(match map[string][]string) string {
+	parts := make([]string, 0, len(match))
+	for _, k := range slices.Sorted(maps.Keys(match)) {
+		parts = append(parts, k+"="+strings.Join(match[k], "|"))
+	}
+	return strings.Join(parts, " ")
+}
+
+// windowsText renders time windows as "mon,tue 09:00-18:00 Europe/Berlin";
+// none means at any time.
+func windowsText(ws []policy.TimeWindow) string {
+	if len(ws) == 0 {
+		return "any time"
+	}
+	parts := make([]string, 0, len(ws))
+	for _, w := range ws {
+		hours := w.From + "-" + w.To
+		if w.From == w.To {
+			hours = "all day"
+		}
+		parts = append(parts, strings.Join(w.Days, ",")+" "+hours+" "+w.TZ)
+	}
+	return strings.Join(parts, "; ")
+}
+
+func count(n int, noun string) string {
+	if n == 1 {
+		return "1 " + noun
+	}
+	return fmt.Sprintf("%d %ss", n, noun)
+}
+
+func yesNo(b bool) string {
+	if b {
+		return "yes"
+	}
+	return "no"
 }
 
 func cmdRequests(x *run) error {

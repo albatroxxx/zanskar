@@ -10,6 +10,8 @@ import (
 	"testing"
 
 	"github.com/albatroxxx/zanskar/internal/policy"
+	"github.com/albatroxxx/zanskar/internal/policy/policytest"
+	"github.com/albatroxxx/zanskar/internal/protocol"
 	"github.com/albatroxxx/zanskar/internal/target"
 )
 
@@ -126,7 +128,7 @@ func TestMyTargetsApplications(t *testing.T) {
 	if _, ok := list()["wiki"]; ok {
 		t.Fatal("an application is listed without a policy granting http")
 	}
-	p := &policy.Policy{Name: "apps", GroupID: f.opsID, Enabled: true, IdleTimeoutMinutes: 15, Selector: policy.Selector{Tags: map[string]string{"env": "test"}}, Protocols: []string{"http"}}
+	p := policytest.Policy("apps", []policy.Subject{policytest.Group(f.opsID)}, policytest.Tagged(protocol.KindApplication, map[string]string{"env": "test"}, "http"))
 	if err := f.h.Policies.Create(f.ctx, p); err != nil {
 		t.Fatal(err)
 	}

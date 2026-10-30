@@ -20,9 +20,14 @@ type Live struct {
 	TargetID  string
 	Protocol  string
 	// PolicyID is the access policy that admitted the session, the one its
-	// access_sessions row names, so a change to that policy can find it.
-	PolicyID  string
-	StartedAt time.Time
+	// access_sessions row names; a label, which revocation does not key on.
+	PolicyID string
+	// AllowClipboard and AllowFileTransfer are the switches the session runs
+	// with. A re-check ends the session when either would now be off
+	// (ADR 0036): they are exfiltration controls, not limits that can wait.
+	AllowClipboard    bool
+	AllowFileTransfer bool
+	StartedAt         time.Time
 	// Tap carries the output stream for shadowing. Terminal protocols get
 	// one automatically in Add; desktop sessions are shadowed through guacd
 	// instead (see GuacID).

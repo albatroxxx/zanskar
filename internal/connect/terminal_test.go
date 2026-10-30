@@ -24,6 +24,8 @@ import (
 	"github.com/albatroxxx/zanskar/internal/auth"
 	"github.com/albatroxxx/zanskar/internal/gateway"
 	"github.com/albatroxxx/zanskar/internal/policy"
+	"github.com/albatroxxx/zanskar/internal/policy/policytest"
+	"github.com/albatroxxx/zanskar/internal/protocol"
 	"github.com/albatroxxx/zanskar/internal/recording"
 	"github.com/albatroxxx/zanskar/internal/session"
 	"github.com/albatroxxx/zanskar/internal/target"
@@ -420,8 +422,8 @@ func TestTerminalRefusesTicketForAnotherProtocol(t *testing.T) {
 	if _, err := r.h.Targets.TrustHostKey(r.ctx, tg.ID, fp); err != nil {
 		t.Fatal(err)
 	}
-	if err := r.h.Policies.Create(r.ctx, &policy.Policy{Name: "rdp-only", UserID: r.alice.ID, Enabled: true, IdleTimeoutMinutes: 15,
-		Selector: policy.Selector{Tags: map[string]string{"role": "rdp-only"}}, Protocols: []string{"rdp"}}); err != nil {
+	if err := r.h.Policies.Create(r.ctx, policytest.Policy("rdp-only", []policy.Subject{policytest.User(r.alice.ID)},
+		policytest.Tagged(protocol.KindHost, map[string]string{"role": "rdp-only"}, "rdp"))); err != nil {
 		t.Fatal(err)
 	}
 	if code, out := r.postConnect(t, r.url, tg.ID, "ssh"); code != http.StatusForbidden || out["code"] != "policy_denied" {
@@ -542,7 +544,7 @@ func TestTicketBelongsToItsSignIn(t *testing.T) {
 	})
 
 	t.Run("after the connect role is taken away", func(t *testing.T) {
-		pol := &policy.Policy{Name: "test-all-again", GroupID: r.opsID, Enabled: true, Selector: policy.Selector{Tags: map[string]string{"env": "test"}}, Protocols: []string{"ssh"}, IdleTimeoutMinutes: 15}
+		pol := policytest.Policy("test-all-again", []policy.Subject{policytest.Group(r.opsID)}, policytest.Tagged(protocol.KindHost, map[string]string{"env": "test"}, "ssh"))
 		if err := r.h.Policies.Create(ctx, pol); err != nil {
 			t.Fatal(err)
 		}

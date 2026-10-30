@@ -34,15 +34,10 @@ func (f *fakeRevoker) GrantExpired(_ context.Context, userID, targetID, asgID, p
 	f.expired = append(f.expired, fmt.Sprintf("%s %s %s %s", userID, targetID, asgID, proto))
 	return f.ended
 }
-func (f *fakeRevoker) UserRevoked(string) int                    { return f.other("UserRevoked") }
-func (f *fakeRevoker) PolicyDeleted(string) int                  { return f.other("PolicyDeleted") }
-func (f *fakeRevoker) PolicyChanged(context.Context, string) int { return f.other("PolicyChanged") }
-func (f *fakeRevoker) GroupMembersRemoved(context.Context, string, []string) int {
-	return f.other("GroupMembersRemoved")
-}
-func (f *fakeRevoker) GroupDeleted(context.Context, string) int { return f.other("GroupDeleted") }
-func (f *fakeRevoker) TargetDisabled(string) int                { return f.other("TargetDisabled") }
-func (f *fakeRevoker) TargetTrustLost(string) int               { return f.other("TargetTrustLost") }
+func (f *fakeRevoker) UserRevoked(string) int                { return f.other("UserRevoked") }
+func (f *fakeRevoker) Recheck(context.Context, []string) int { return f.other("Recheck") }
+func (f *fakeRevoker) TargetDisabled(string) int             { return f.other("TargetDisabled") }
+func (f *fakeRevoker) TargetTrustLost(string) int            { return f.other("TargetTrustLost") }
 func (f *fakeRevoker) other(name string) int {
 	f.unexpected = append(f.unexpected, name)
 	return 0
@@ -84,7 +79,9 @@ func TestApproveUsesThePolicyAsItStandsNow(t *testing.T) {
 	}
 	pol := pols[0]
 	most := 20
-	pol.MaxSessionMinutes = &most
+	for i := range pol.Grants {
+		pol.Grants[i].MaxSessionMinutes = &most
+	}
 	if err := e.policies.Update(ctx, pol); err != nil {
 		t.Fatal(err)
 	}

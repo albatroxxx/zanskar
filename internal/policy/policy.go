@@ -1,14 +1,15 @@
 // SPDX-License-Identifier: Apache-2.0
 
 // Package policy decides who may open which protocol to which target, and
-// under what constraints. A policy binds one subject, a group or a single
-// user (ADR 0013), to a selector of targets. Evaluation happens server-side on
-// every connect. An open session is not re-evaluated on a timer; instead the
-// changes that take access away end the live sessions they affect at once: an
-// edit after which the admitting policy alone no longer grants the session,
-// that policy's deletion, the user's removal from its group or the group's
-// deletion, and an account disabled, locked, deleted, signed out everywhere or
-// given new roles.
+// under what conditions (ADR 0036). A policy names its audience, any number
+// of groups and users, and lists grants. Each grant is complete on its own:
+// a kind of target, which targets of that kind (by name, with protocols per
+// target, or by tag), and the conditions a session opens and runs under.
+// Evaluation happens server-side on every connect. When several grants
+// admit the same session, standing access wins over approval, and each term
+// is the strictest among them. A live session is re-checked whenever the
+// access that admitted it may have changed, and ends when a fresh connect
+// would be refused or its clipboard or file transfer would now be off.
 package policy
 
 import (
@@ -21,37 +22,73 @@ import (
 	"github.com/albatroxxx/zanskar/internal/protocol"
 )
 
-// Protocols a policy may allow. "database" grants brokered access to a database
-// target (ADR 0017) and "http" an application through the proxy (ADR 0033);
-// each is evaluated when a session opens, like any other protocol.
-var validProtocols = map[string]bool{protocol.SSH: true, protocol.RDP: true, protocol.VNC: true, protocol.WinRM: true, protocol.Database: true, protocol.HTTP: true}
+// Subject kinds: a policy names groups and users.
+const (
+	SubjectGroup = "group"
+	SubjectUser  = "user"
+)
 
-// Selector names the targets a policy covers. A target matches when its id is
-// listed, its ASG id is listed, or every selector tag is present on it with
-// the same value. An empty selector matches nothing.
-type Selector struct {
-	Targets []string          `json:"targets,omitempty"`
-	ASGs    []string          `json:"asgs,omitempty"`
-	Tags    map[string]string `json:"tags,omitempty"`
+// Access: a standing grant admits at once; an approval grant makes the
+// person eligible to request access (just-in-time, ADR 0018).
+const (
+	AccessStanding = "standing"
+	AccessApproval = "approval"
+)
+
+// Sign-in: SignInTarget lets the target's slot decide (its vaulted
+// credential, its SSH authority, or User supplied); SignInOwn asks for the
+// person's own login whatever the slot holds.
+const (
+	SignInTarget = "target"
+	SignInOwn    = "own"
+)
+
+// Bounds.
+const (
+	MaxSubjects     = 64
+	MaxGrants       = 32
+	MaxGrantTargets = 200
+	MaxTagKeys      = 32
+	MaxTagValues    = 16
+	maxTagLen       = 64
+)
+
+// Subject is one group or user a policy applies to.
+type Subject struct {
+	Kind string `json:"kind"`
+	ID   string `json:"id"`
 }
 
-// Empty reports whether the selector can never match.
-func (s Selector) Empty() bool {
-	return len(s.Targets) == 0 && len(s.ASGs) == 0 && len(s.Tags) == 0
-}
-
-// Rule pairs a selector with the protocols it grants. A policy's own
-// target_selector and protocols form its first rule; Rules adds more, so one
-// policy can say "ssh to the Linux fleet, rdp to the two jump hosts" without
-// a second policy for the same people and limits. Every rule shares the
-// policy's windows, limits and flags.
-type Rule struct {
-	Selector  Selector `json:"target_selector"`
+// GrantTarget is one named target (or autoscaling group) with the
+// protocols granted on it.
+type GrantTarget struct {
+	ID        string   `json:"id"`
 	Protocols []string `json:"protocols"`
 }
 
-// MaxRules bounds the extra rules on one policy.
-const MaxRules = 32
+// TagMatch selects every target of the grant's kind that carries every key
+// with one of its values, now or later, with the protocols granted on them.
+type TagMatch struct {
+	Match     map[string][]string `json:"match"`
+	Protocols []string            `json:"protocols"`
+}
+
+// Grant is one complete grant: what, and under which conditions.
+type Grant struct {
+	ID                 string        `json:"id"`
+	Kind               string        `json:"kind"`
+	Targets            []GrantTarget `json:"targets"`
+	Tags               *TagMatch     `json:"tags,omitempty"`
+	Access             string        `json:"access"`
+	SignIn             string        `json:"sign_in"`
+	RequireMFA         bool          `json:"require_mfa"`
+	AllowClipboard     bool          `json:"allow_clipboard"`
+	AllowFileTransfer  bool          `json:"allow_file_transfer"`
+	IdleTimeoutMinutes int           `json:"idle_timeout_minutes"`
+	MaxSessionMinutes  *int          `json:"max_session_minutes"`
+	TimeWindows        []TimeWindow  `json:"time_windows"`
+	RetentionDays      *int          `json:"retention_days"`
+}
 
 // TimeWindow is a recurring weekly window in a named zone.
 type TimeWindow struct {
@@ -61,39 +98,17 @@ type TimeWindow struct {
 	TZ   string   `json:"tz"`   // IANA zone, default UTC
 }
 
-// Policy is one access rule.
+// Policy is an audience and the grants it holds.
 type Policy struct {
-	ID          string `json:"id"`
-	Name        string `json:"name"`
-	Description string `json:"description"`
-	Enabled     bool   `json:"enabled"`
-	// Exactly one of GroupID and UserID is set: a policy applies to every
-	// member of a group, or to one user directly (ADR 0013).
-	GroupID   string   `json:"group_id,omitempty"`
-	UserID    string   `json:"user_id,omitempty"`
-	Selector  Selector `json:"target_selector"`
-	Protocols []string `json:"protocols"`
-	// Rules are further selector/protocol pairs granted by this policy, on
-	// top of the base Selector and Protocols (which may be empty when Rules
-	// carry everything).
-	Rules              []Rule       `json:"rules"`
-	TimeWindows        []TimeWindow `json:"time_windows"`
-	MaxSessionMinutes  *int         `json:"max_session_minutes,omitempty"`
-	IdleTimeoutMinutes int          `json:"idle_timeout_minutes"`
-	// RetentionDays keeps this policy's session recordings for that many
-	// days; nil leaves the global retention policy in charge. A target's
-	// own value wins over it.
-	RetentionDays     *int `json:"retention_days,omitempty"`
-	AllowClipboard    bool `json:"allow_clipboard"`
-	AllowFileTransfer bool `json:"allow_file_transfer"`
-	RequireMFA        bool `json:"require_mfa"`
-	// RequireApproval makes this policy grant eligibility, not standing access:
-	// the user must request access and be approved before connect is permitted
-	// (just-in-time / PIM, ADR 0018).
-	RequireApproval bool      `json:"require_approval"`
-	CreatedBy       string    `json:"created_by,omitempty"`
-	CreatedAt       time.Time `json:"created_at"`
-	UpdatedAt       time.Time `json:"updated_at"`
+	ID          string    `json:"id"`
+	Name        string    `json:"name"`
+	Description string    `json:"description"`
+	Enabled     bool      `json:"enabled"`
+	Subjects    []Subject `json:"subjects"`
+	Grants      []Grant   `json:"grants"`
+	CreatedBy   string    `json:"created_by,omitempty"`
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
 }
 
 // Errors.
@@ -101,127 +116,399 @@ var (
 	ErrNotFound     = errors.New("policy: not found")
 	ErrDuplicate    = errors.New("policy: name already exists")
 	ErrInvalidInput = errors.New("policy: invalid input")
+	// ErrProtocolNotForKind and ErrUnknownSubject are invalid input of a kind
+	// the API names with codes of their own.
+	ErrProtocolNotForKind = errors.New("protocol not served by the kind")
+	ErrUnknownSubject     = errors.New("subject not found")
 )
 
 var dayIndex = map[string]time.Weekday{"sun": time.Sunday, "mon": time.Monday, "tue": time.Tuesday, "wed": time.Wednesday, "thu": time.Thursday, "fri": time.Friday, "sat": time.Saturday}
 
-// Validate checks a policy before it is stored.
+// Validate checks a policy before it is stored, filling the defaults a
+// grant may leave out (access standing, sign-in target, idle 15 minutes).
 func (p *Policy) Validate() error {
 	p.Name = strings.TrimSpace(p.Name)
 	if p.Name == "" || len(p.Name) > 64 {
 		return fmt.Errorf("%w: name must be 1-64 characters", ErrInvalidInput)
 	}
-	if (p.GroupID == "") == (p.UserID == "") {
-		return fmt.Errorf("%w: exactly one of group_id or user_id is required", ErrInvalidInput)
+	// No subject is allowed: a policy whose last group or user was deleted
+	// grants nobody and may still be edited or switched off. A new policy
+	// needs someone (the handler asks).
+	if len(p.Subjects) > MaxSubjects {
+		return fmt.Errorf("%w: at most %d groups and users", ErrInvalidInput, MaxSubjects)
 	}
-	// The base selector and protocols may be empty only when rules carry the
-	// grants; a policy that grants nothing anywhere is a mistake, not a policy.
-	if p.Selector.Empty() != (len(p.Protocols) == 0) {
-		return fmt.Errorf("%w: target_selector and protocols go together; give both or neither", ErrInvalidInput)
+	seen := map[Subject]bool{}
+	for _, s := range p.Subjects {
+		if (s.Kind != SubjectGroup && s.Kind != SubjectUser) || s.ID == "" {
+			return fmt.Errorf("%w: a subject is a group or a user, by id", ErrInvalidInput)
+		}
+		if seen[s] {
+			return fmt.Errorf("%w: %s %s is named twice", ErrInvalidInput, s.Kind, s.ID)
+		}
+		seen[s] = true
 	}
-	if p.Selector.Empty() && len(p.Rules) == 0 {
-		return fmt.Errorf("%w: target_selector must name targets, asgs or tags", ErrInvalidInput)
+	if len(p.Grants) == 0 {
+		return fmt.Errorf("%w: a policy needs at least one grant", ErrInvalidInput)
 	}
-	if !p.Selector.Empty() {
-		if err := validateSelector(p.Selector); err != nil {
+	if len(p.Grants) > MaxGrants {
+		return fmt.Errorf("%w: at most %d grants", ErrInvalidInput, MaxGrants)
+	}
+	ids := map[string]bool{}
+	for i := range p.Grants {
+		g := &p.Grants[i]
+		if err := g.validate(); err != nil {
+			return fmt.Errorf("grant %d: %w", i+1, err)
+		}
+		if g.ID != "" {
+			if ids[g.ID] {
+				return fmt.Errorf("%w: grant %d repeats grant id %s", ErrInvalidInput, i+1, g.ID)
+			}
+			ids[g.ID] = true
+		}
+	}
+	return nil
+}
+
+func (g *Grant) validate() error {
+	if !protocol.ValidKind(g.Kind) {
+		return fmt.Errorf("%w: kind must be one of %s", ErrInvalidInput, strings.Join(protocol.Kinds, ", "))
+	}
+	if len(g.Targets) == 0 && g.Tags == nil {
+		return fmt.Errorf("%w: name targets or match tags", ErrInvalidInput)
+	}
+	if len(g.Targets) > MaxGrantTargets {
+		return fmt.Errorf("%w: at most %d targets", ErrInvalidInput, MaxGrantTargets)
+	}
+	named := map[string]bool{}
+	for _, t := range g.Targets {
+		if t.ID == "" {
+			return fmt.Errorf("%w: a target needs its id", ErrInvalidInput)
+		}
+		if named[t.ID] {
+			return fmt.Errorf("%w: target %s is named twice", ErrInvalidInput, t.ID)
+		}
+		named[t.ID] = true
+		if err := g.validProtocols(t.Protocols); err != nil {
+			return fmt.Errorf("target %s: %w", t.ID, err)
+		}
+	}
+	if g.Tags != nil {
+		if err := g.Tags.validate(); err != nil {
 			return err
 		}
-		if err := validateProtocols(p.Protocols); err != nil {
-			return err
+		if err := g.validProtocols(g.Tags.Protocols); err != nil {
+			return fmt.Errorf("tags: %w", err)
 		}
 	}
-	if len(p.Rules) > MaxRules {
-		return fmt.Errorf("%w: at most %d rules", ErrInvalidInput, MaxRules)
+	if g.Targets == nil {
+		g.Targets = []GrantTarget{}
 	}
-	for i, rule := range p.Rules {
-		if rule.Selector.Empty() {
-			return fmt.Errorf("%w: rule %d must name targets, asgs or tags", ErrInvalidInput, i+1)
-		}
-		if err := validateSelector(rule.Selector); err != nil {
-			return fmt.Errorf("rule %d: %w", i+1, err)
-		}
-		if len(rule.Protocols) == 0 {
-			return fmt.Errorf("%w: rule %d needs at least one protocol", ErrInvalidInput, i+1)
-		}
-		if err := validateProtocols(rule.Protocols); err != nil {
-			return fmt.Errorf("rule %d: %w", i+1, err)
-		}
+	switch g.Access {
+	case "":
+		g.Access = AccessStanding
+	case AccessStanding, AccessApproval:
+	default:
+		return fmt.Errorf("%w: access must be standing or approval", ErrInvalidInput)
 	}
-	if p.Rules == nil {
-		p.Rules = []Rule{}
+	switch g.SignIn {
+	case "":
+		g.SignIn = SignInTarget
+	case SignInTarget, SignInOwn:
+	default:
+		return fmt.Errorf("%w: sign_in must be target or own", ErrInvalidInput)
 	}
-	if p.IdleTimeoutMinutes <= 0 || p.IdleTimeoutMinutes > 24*60 {
+	if g.SignIn == SignInOwn && g.Kind == protocol.KindApplication {
+		return fmt.Errorf("%w: an application has no login of its own; sign_in must be target", ErrInvalidInput)
+	}
+	if g.IdleTimeoutMinutes == 0 {
+		g.IdleTimeoutMinutes = 15
+	}
+	if g.IdleTimeoutMinutes < 1 || g.IdleTimeoutMinutes > 24*60 {
 		return fmt.Errorf("%w: idle_timeout_minutes must be 1-1440", ErrInvalidInput)
 	}
-	if p.MaxSessionMinutes != nil && (*p.MaxSessionMinutes <= 0 || *p.MaxSessionMinutes > 7*24*60) {
+	if g.MaxSessionMinutes != nil && (*g.MaxSessionMinutes < 1 || *g.MaxSessionMinutes > 7*24*60) {
 		return fmt.Errorf("%w: max_session_minutes must be 1-10080", ErrInvalidInput)
 	}
-	if p.RetentionDays != nil && (*p.RetentionDays <= 0 || *p.RetentionDays > 3650) {
+	if g.RetentionDays != nil && (*g.RetentionDays < 1 || *g.RetentionDays > 3650) {
 		return fmt.Errorf("%w: retention_days must be 1-3650", ErrInvalidInput)
 	}
-	for i := range p.TimeWindows {
-		if err := p.TimeWindows[i].validate(); err != nil {
+	for i := range g.TimeWindows {
+		if err := g.TimeWindows[i].validate(); err != nil {
 			return err
 		}
 	}
-	if p.TimeWindows == nil {
-		p.TimeWindows = []TimeWindow{}
+	if g.TimeWindows == nil {
+		g.TimeWindows = []TimeWindow{}
 	}
 	return nil
 }
 
-func validateSelector(s Selector) error {
-	if len(s.Tags) > 32 {
-		return fmt.Errorf("%w: at most 32 selector tags", ErrInvalidInput)
+// validProtocols checks a protocol list against what the grant's kind serves.
+func (g *Grant) validProtocols(protos []string) error {
+	if len(protos) == 0 {
+		return fmt.Errorf("%w: choose at least one protocol", ErrInvalidInput)
 	}
-	for k, v := range s.Tags {
-		if k == "" || v == "" || len(k) > 64 || len(v) > 64 {
-			return fmt.Errorf("%w: tag keys and values must be 1-64 characters", ErrInvalidInput)
-		}
-	}
-	return nil
-}
-
-func validateProtocols(protocols []string) error {
 	seen := map[string]bool{}
-	for _, proto := range protocols {
-		if !validProtocols[proto] {
-			return fmt.Errorf("%w: unknown protocol %q", ErrInvalidInput, proto)
+	for _, p := range protos {
+		if !protocol.KindServes(g.Kind, p) {
+			return fmt.Errorf("%w: %w: a %s does not serve %q (it serves %s)", ErrInvalidInput, ErrProtocolNotForKind, g.Kind, p, strings.Join(protocol.KindProtocols(g.Kind), ", "))
 		}
-		if seen[proto] {
-			return fmt.Errorf("%w: duplicate protocol %q", ErrInvalidInput, proto)
+		if seen[p] {
+			return fmt.Errorf("%w: %s is given twice", ErrInvalidInput, p)
 		}
-		seen[proto] = true
+		seen[p] = true
 	}
 	return nil
 }
 
-// Covers reports whether the policy grants protocol on the target: through
-// its base selector and protocols, or through any of its rules. Every
-// caller that decides access must use this and nothing looser, or a rule
-// would grant in one place and be ignored in another.
-func (p *Policy) Covers(t TargetRef, protocol string) bool {
-	if p.Selector.Matches(t) && contains(p.Protocols, protocol) {
-		return true
+func (m *TagMatch) validate() error {
+	if len(m.Match) == 0 {
+		return fmt.Errorf("%w: a tag match needs at least one key", ErrInvalidInput)
 	}
-	for _, r := range p.Rules {
-		if r.Selector.Matches(t) && contains(r.Protocols, protocol) {
-			return true
+	if len(m.Match) > MaxTagKeys {
+		return fmt.Errorf("%w: at most %d tag keys", ErrInvalidInput, MaxTagKeys)
+	}
+	for k, vs := range m.Match {
+		if k == "" || len(k) > maxTagLen {
+			return fmt.Errorf("%w: tag keys are 1-%d characters", ErrInvalidInput, maxTagLen)
+		}
+		if len(vs) == 0 || len(vs) > MaxTagValues {
+			return fmt.Errorf("%w: tag %s needs 1-%d values", ErrInvalidInput, k, MaxTagValues)
+		}
+		seen := map[string]bool{}
+		for _, v := range vs {
+			if v == "" || len(v) > maxTagLen {
+				return fmt.Errorf("%w: tag %s: values are 1-%d characters", ErrInvalidInput, k, maxTagLen)
+			}
+			if seen[v] {
+				return fmt.Errorf("%w: tag %s: value %s is given twice", ErrInvalidInput, k, v)
+			}
+			seen[v] = true
+		}
+	}
+	return nil
+}
+
+// TargetRef is what the evaluator needs to know about a connection target.
+type TargetRef struct {
+	Kind  string            // protocol.Kind*: host, database, application, autoscaling
+	ID    string            // static target id, or empty
+	ASGID string            // autoscaling group id, or empty
+	Tags  map[string]string // tags of the target or of its group
+}
+
+// id is the id a grant's named targets are matched against: the group's for
+// an autoscaling grant, the target's otherwise.
+func (t TargetRef) id() string {
+	if t.Kind == protocol.KindAutoscaling {
+		return t.ASGID
+	}
+	return t.ID
+}
+
+// Covers reports whether the grant admits protocol on the target, windows
+// aside: same kind, and the target named with the protocol, or matched by
+// the tag rule with it.
+func (g *Grant) Covers(t TargetRef, proto string) bool {
+	if g.Kind != t.Kind || !protocol.KindServes(g.Kind, proto) {
+		return false
+	}
+	if id := t.id(); id != "" {
+		for _, gt := range g.Targets {
+			if gt.ID == id && slices.Contains(gt.Protocols, proto) {
+				return true
+			}
+		}
+	}
+	return g.Tags != nil && slices.Contains(g.Tags.Protocols, proto) && g.Tags.matches(t.Tags)
+}
+
+// selects reports whether the grant points at the target at all, whatever
+// the protocol: for telling a protocol refusal from no access.
+func (g *Grant) selects(t TargetRef) bool {
+	if g.Kind != t.Kind {
+		return false
+	}
+	if id := t.id(); id != "" {
+		for _, gt := range g.Targets {
+			if gt.ID == id {
+				return true
+			}
+		}
+	}
+	return g.Tags != nil && g.Tags.matches(t.Tags)
+}
+
+// matches: every key present with one of its values.
+func (m *TagMatch) matches(tags map[string]string) bool {
+	if len(m.Match) == 0 {
+		return false
+	}
+	for k, vs := range m.Match {
+		got, ok := tags[k]
+		if !ok || !slices.Contains(vs, got) {
+			return false
+		}
+	}
+	return true
+}
+
+// References reports whether the policy names the target or the autoscaling
+// group by id in any grant. Tag rules are not references.
+func (p *Policy) References(targetID, asgID string) bool {
+	for _, g := range p.Grants {
+		want := targetID
+		if g.Kind == protocol.KindAutoscaling {
+			want = asgID
+		}
+		if want == "" {
+			continue
+		}
+		for _, gt := range g.Targets {
+			if gt.ID == want {
+				return true
+			}
 		}
 	}
 	return false
 }
 
-// References reports whether the policy names the target or the autoscaling
-// group by id anywhere: the base selector or any rule. Tag selectors are not
-// references.
-func (p *Policy) References(targetID, asgID string) bool {
-	sels := append(make([]Selector, 0, 1+len(p.Rules)), p.Selector)
-	for _, r := range p.Rules {
-		sels = append(sels, r.Selector)
+// HasSubject reports whether the policy names the subject.
+func (p *Policy) HasSubject(kind, id string) bool {
+	return slices.Contains(p.Subjects, Subject{Kind: kind, ID: id})
+}
+
+// GrantRef names one grant that decided an evaluation.
+type GrantRef struct {
+	PolicyID   string `json:"policy_id"`
+	PolicyName string `json:"policy_name"`
+	GrantID    string `json:"grant_id"`
+}
+
+// Decision is the outcome of an evaluation.
+type Decision struct {
+	Allowed bool   `json:"allowed"`
+	Reason  string `json:"reason,omitempty"` // when denied
+	// Policy and GrantID name the deciding grant with the shortest idle
+	// timeout (ties: the policy first by name, then the grant first in it).
+	// They label the session; revocation does not key on them.
+	Policy  *Policy `json:"policy,omitempty"`
+	GrantID string  `json:"grant_id,omitempty"`
+	// Grants lists every grant that decided, for the audit trail.
+	Grants []GrantRef `json:"grants,omitempty"`
+	// The session's terms: each the strictest among the deciding grants.
+	IdleTimeout time.Duration `json:"-"`
+	MaxSession  time.Duration `json:"-"`
+	// RetentionDays is the longest among the deciding grants; 0 leaves the
+	// global retention policy in charge.
+	RetentionDays     int  `json:"-"`
+	AllowClipboard    bool `json:"allow_clipboard"`
+	AllowFileTransfer bool `json:"allow_file_transfer"`
+	RequireMFA        bool `json:"require_mfa"`
+	// RequireApproval is true when only approval grants admit, so the
+	// person needs an active grant to connect (ADR 0018).
+	RequireApproval bool `json:"require_approval"`
+	// SignInTarget: a deciding grant lets the target's slot decide.
+	// SignInOwn: a deciding grant allows the person's own login. When only
+	// SignInOwn is set, the person's own login is asked for.
+	SignInTarget bool `json:"sign_in_target"`
+	SignInOwn    bool `json:"sign_in_own"`
+}
+
+// Evaluate decides access from the caller's policies, given in name order.
+// It collects the grants of enabled policies that cover the target and
+// protocol and have a window open now (or none). If any is standing, the
+// standing ones decide and no approval is needed; otherwise the approval
+// ones decide. Of the deciding grants, the idle timeout and maximum are the
+// shortest, clipboard and file transfer are allowed only if every grant
+// allows them, an authenticator is required if any grant requires one, and
+// retention is the longest. Adding a grant can add access; it never loosens
+// a term of access that already exists.
+func Evaluate(policies []*Policy, t TargetRef, proto string, now time.Time) Decision {
+	return evaluate(policies, t, proto, now, true)
+}
+
+// EvaluateLive is Evaluate for a session already running: every time window
+// counts as open. A window that shuts, or one narrowed by an edit, does not
+// pull a running session (ADR 0036); its maximum bounds it instead.
+func EvaluateLive(policies []*Policy, t TargetRef, proto string, now time.Time) Decision {
+	return evaluate(policies, t, proto, now, false)
+}
+
+func evaluate(policies []*Policy, t TargetRef, proto string, now time.Time, windows bool) Decision {
+	reason := "no policy grants access to this target"
+	var standing, approval []decider
+	for _, p := range policies {
+		if !p.Enabled {
+			continue
+		}
+		for i := range p.Grants {
+			g := &p.Grants[i]
+			if !g.Covers(t, proto) {
+				if g.selects(t) {
+					reason = "protocol not allowed by policy"
+				}
+				continue
+			}
+			if windows && len(g.TimeWindows) > 0 && !anyOpen(g.TimeWindows, now) {
+				reason = "outside the policy's access window"
+				continue
+			}
+			if g.Access == AccessApproval {
+				approval = append(approval, decider{p, g})
+			} else {
+				standing = append(standing, decider{p, g})
+			}
+		}
 	}
-	for _, s := range sels {
-		if (targetID != "" && contains(s.Targets, targetID)) || (asgID != "" && contains(s.ASGs, asgID)) {
+	set, requireApproval := standing, false
+	if len(set) == 0 {
+		set, requireApproval = approval, true
+	}
+	if len(set) == 0 {
+		return Decision{Reason: reason}
+	}
+	d := Decision{Allowed: true, RequireApproval: requireApproval, AllowClipboard: true, AllowFileTransfer: true}
+	var best *decider
+	maxSet := false
+	for i := range set {
+		c := &set[i]
+		g := c.g
+		d.Grants = append(d.Grants, GrantRef{PolicyID: c.p.ID, PolicyName: c.p.Name, GrantID: g.ID})
+		if best == nil || g.IdleTimeoutMinutes < best.g.IdleTimeoutMinutes {
+			best = c
+		}
+		d.AllowClipboard = d.AllowClipboard && g.AllowClipboard
+		d.AllowFileTransfer = d.AllowFileTransfer && g.AllowFileTransfer
+		d.RequireMFA = d.RequireMFA || g.RequireMFA
+		if g.MaxSessionMinutes != nil {
+			m := time.Duration(*g.MaxSessionMinutes) * time.Minute
+			if !maxSet || m < d.MaxSession {
+				d.MaxSession, maxSet = m, true
+			}
+		}
+		if g.RetentionDays != nil && *g.RetentionDays > d.RetentionDays {
+			d.RetentionDays = *g.RetentionDays
+		}
+		if g.SignIn == SignInOwn {
+			d.SignInOwn = true
+		} else {
+			d.SignInTarget = true
+		}
+	}
+	d.Policy, d.GrantID = best.p, best.g.ID
+	d.IdleTimeout = time.Duration(best.g.IdleTimeoutMinutes) * time.Minute
+	return d
+}
+
+type decider struct {
+	p *Policy
+	g *Grant
+}
+
+func anyOpen(windows []TimeWindow, now time.Time) bool {
+	for _, w := range windows {
+		if w.Open(now) {
 			return true
 		}
 	}
@@ -294,156 +581,4 @@ func (w TimeWindow) hasDay(d time.Weekday) bool {
 		}
 	}
 	return false
-}
-
-// TargetRef is what the engine needs to know about a connection target.
-type TargetRef struct {
-	ID    string            // static target id, or empty
-	ASGID string            // autoscaling group id, or empty
-	Tags  map[string]string // tags of the target or of its ASG
-}
-
-// Matches reports whether the selector covers the target.
-func (s Selector) Matches(t TargetRef) bool {
-	if t.ID != "" {
-		if slices.Contains(s.Targets, t.ID) {
-			return true
-		}
-	}
-	if t.ASGID != "" {
-		if slices.Contains(s.ASGs, t.ASGID) {
-			return true
-		}
-	}
-	if len(s.Tags) == 0 {
-		return false
-	}
-	for k, v := range s.Tags {
-		// A missing key is no match, even for a selector stored before
-		// empty values were refused.
-		if got, ok := t.Tags[k]; !ok || got != v {
-			return false
-		}
-	}
-	return true
-}
-
-// Decision is the outcome of an evaluation.
-type Decision struct {
-	Allowed bool    `json:"allowed"`
-	Reason  string  `json:"reason,omitempty"` // when denied
-	Policy  *Policy `json:"policy,omitempty"` // the policy that allowed it
-	// Effective constraints, taken from the allowing policy.
-	IdleTimeout time.Duration `json:"-"`
-	MaxSession  time.Duration `json:"-"`
-	// RetentionDays is the allowing policy's recording retention; 0 means
-	// the global policy.
-	RetentionDays     int  `json:"-"`
-	AllowClipboard    bool `json:"allow_clipboard"`
-	AllowFileTransfer bool `json:"allow_file_transfer"`
-	RequireMFA        bool `json:"require_mfa"`
-	// RequireApproval is true when every policy granting this access is
-	// approval-gated, so the caller holds no standing access and needs an active
-	// grant to connect (ADR 0018). False when any standing policy also grants it.
-	RequireApproval bool `json:"require_approval"`
-}
-
-// Evaluate decides access from the caller's policies: among the enabled ones
-// that cover the target, allow the protocol and are inside a time window (or
-// have none), standing policies decide when any applies, approval-gated ones
-// otherwise. Of those, the one with the shortest idle timeout sets the
-// session's terms, so overlap never widens access; ties go to the policy that
-// comes first in the caller's order (by name).
-func Evaluate(policies []*Policy, t TargetRef, protocol string, now time.Time) Decision {
-	// Standing and approval-gated grants are weighed apart: when a standing
-	// policy admits the session, an approval-gated one must not lend it its
-	// flags, MFA setting or limits (ADR 0018: the standing path wins), so
-	// the gated policies decide only when no standing one applies.
-	var standing, gated grantSet
-	reason := "no policy grants access to this target"
-	for _, p := range policies {
-		if !p.Enabled {
-			continue
-		}
-		if !p.Covers(t, protocol) {
-			// Tell a protocol refusal from a target the policy never covers,
-			// since the user sees the reason.
-			if p.Selector.Matches(t) || p.matchesAnyRule(t) {
-				reason = "protocol not allowed by policy"
-			}
-			continue
-		}
-		if len(p.TimeWindows) > 0 {
-			open := false
-			for _, w := range p.TimeWindows {
-				if w.Open(now) {
-					open = true
-					break
-				}
-			}
-			if !open {
-				reason = "outside the policy's access window"
-				continue
-			}
-		}
-		if p.RequireApproval {
-			gated.add(p)
-		} else {
-			standing.add(p)
-		}
-	}
-	set, requireApproval := standing, false
-	if set.best == nil {
-		set, requireApproval = gated, true
-	}
-	best := set.best
-	if best == nil {
-		return Decision{Allowed: false, Reason: reason}
-	}
-	d := Decision{
-		Allowed:           true,
-		Policy:            best,
-		IdleTimeout:       time.Duration(best.IdleTimeoutMinutes) * time.Minute,
-		AllowClipboard:    best.AllowClipboard,
-		AllowFileTransfer: best.AllowFileTransfer,
-		RequireMFA:        best.RequireMFA,
-		RequireApproval:   requireApproval,
-	}
-	if best.MaxSessionMinutes != nil {
-		d.MaxSession = time.Duration(*best.MaxSessionMinutes) * time.Minute
-	}
-	d.RetentionDays = set.retention
-	return d
-}
-
-// grantSet collects the policies of one kind (standing or approval-gated)
-// that grant a request. The one with the shortest idle timeout sets the
-// session's terms, ties going to the earlier policy in the caller's order;
-// retention is an evidence-keeping obligation, so the longest among them
-// applies whichever policy is picked.
-type grantSet struct {
-	best      *Policy
-	retention int
-}
-
-func (g *grantSet) add(p *Policy) {
-	if p.RetentionDays != nil && *p.RetentionDays > g.retention {
-		g.retention = *p.RetentionDays
-	}
-	if g.best == nil || p.IdleTimeoutMinutes < g.best.IdleTimeoutMinutes {
-		g.best = p
-	}
-}
-
-func (p *Policy) matchesAnyRule(t TargetRef) bool {
-	for _, r := range p.Rules {
-		if r.Selector.Matches(t) {
-			return true
-		}
-	}
-	return false
-}
-
-func contains(list []string, s string) bool {
-	return slices.Contains(list, s)
 }

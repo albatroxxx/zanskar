@@ -1,6 +1,8 @@
 # 0013. Access policies bind to a group or to a single user
 
-Status: Accepted (2026-09-21)
+Status: Accepted (2026-09-21). Amended by [ADR 0036](0036-access-policy-grants.md) (1.8.0): a policy names
+many groups and users, and grants with their own conditions replace its one selector, rules
+and flags.
 
 ## Context
 

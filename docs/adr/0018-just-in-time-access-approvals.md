@@ -4,7 +4,8 @@ Date: 2026-09-24
 
 ## Status
 
-Accepted
+Accepted. Eligibility amended by [ADR 0036](0036-access-policy-grants.md) (1.8.0): a request is eligible
+under the approval grants that cover it, and its cap is the shortest of their maximums.
 
 ## Context
 

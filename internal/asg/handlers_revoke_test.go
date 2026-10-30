@@ -26,14 +26,9 @@ func (f *fakeRevoker) TargetDisabled(id string) int {
 	f.disabled = append(f.disabled, id)
 	return f.ended
 }
-func (f *fakeRevoker) UserRevoked(string) int                    { return f.other("UserRevoked") }
-func (f *fakeRevoker) PolicyDeleted(string) int                  { return f.other("PolicyDeleted") }
-func (f *fakeRevoker) PolicyChanged(context.Context, string) int { return f.other("PolicyChanged") }
-func (f *fakeRevoker) GroupMembersRemoved(context.Context, string, []string) int {
-	return f.other("GroupMembersRemoved")
-}
-func (f *fakeRevoker) GroupDeleted(context.Context, string) int { return f.other("GroupDeleted") }
-func (f *fakeRevoker) TargetTrustLost(string) int               { return f.other("TargetTrustLost") }
+func (f *fakeRevoker) UserRevoked(string) int                { return f.other("UserRevoked") }
+func (f *fakeRevoker) Recheck(context.Context, []string) int { return f.other("Recheck") }
+func (f *fakeRevoker) TargetTrustLost(string) int            { return f.other("TargetTrustLost") }
 func (f *fakeRevoker) GrantRevoked(context.Context, string, string, string, string) int {
 	return f.other("GrantRevoked")
 }

@@ -27,6 +27,7 @@ import (
 	"github.com/albatroxxx/zanskar/internal/gateway/sshgw"
 	"github.com/albatroxxx/zanskar/internal/httpx"
 	"github.com/albatroxxx/zanskar/internal/policy"
+	"github.com/albatroxxx/zanskar/internal/protocol"
 	"github.com/albatroxxx/zanskar/internal/recording"
 	"github.com/albatroxxx/zanskar/internal/session"
 	"github.com/albatroxxx/zanskar/internal/sshca"
@@ -134,7 +135,11 @@ type reachableTarget struct {
 	// RequiresApproval lists the allowed protocols that are approval-gated
 	// (ADR 0018): the user requests access rather than connecting directly.
 	RequiresApproval []string `json:"requires_approval,omitempty"`
-	HostKeyReady     bool     `json:"host_key_ready"`
+	// OwnLogin lists the allowed protocols on which the user may sign in with
+	// their own login instead of the target's (ADR 0036, sign_in own): the
+	// portal offers "Use my own login" beside them.
+	OwnLogin     []string `json:"own_login,omitempty"`
+	HostKeyReady bool     `json:"host_key_ready"`
 	// PrivateIP is shown only when the target's address is a private (RFC1918 /
 	// ULA) IP, to help users tell their machines apart. A public address or a
 	// hostname is never surfaced to users; empty then.
@@ -171,7 +176,7 @@ func (h *Handler) myTargets(w http.ResponseWriter, r *http.Request) {
 			if t.IsApplication() {
 				// An application (ADR 0034) opens in an isolated browser
 				// through a ticket like a desktop; nothing of it is probed.
-				allowed, needApproval := reach(pols, policy.TargetRef{ID: t.ID, Tags: t.Tags}, []target.Protocol{target.HTTP}, now)
+				allowed, needApproval, _ := reach(pols, policy.TargetRef{Kind: t.Kind(), ID: t.ID, Tags: t.Tags}, []target.Protocol{target.HTTP}, now)
 				if len(allowed) == 0 {
 					continue
 				}
@@ -193,7 +198,7 @@ func (h *Handler) myTargets(w http.ResponseWriter, r *http.Request) {
 				}
 				protos = []target.Protocol{target.Database}
 			}
-			allowed, needApproval := reach(pols, policy.TargetRef{ID: t.ID, Tags: t.Tags}, protos, now)
+			allowed, needApproval, ownLogin := reach(pols, policy.TargetRef{Kind: t.Kind(), ID: t.ID, Tags: t.Tags}, protos, now)
 			if len(allowed) == 0 {
 				continue
 			}
@@ -206,7 +211,7 @@ func (h *Handler) myTargets(w http.ResponseWriter, r *http.Request) {
 			}
 			out = append(out, reachableTarget{
 				Kind: "target", ID: t.ID, Name: t.Name, OSFamily: t.OSFamily, Tags: t.Tags, Capabilities: t.Capabilities,
-				Allowed: allowed, RequiresApproval: needApproval, HostKeyReady: t.HostKeyStatus == target.HostKeyTrusted, PrivateIP: privateIP, Engine: t.Engine,
+				Allowed: allowed, RequiresApproval: needApproval, OwnLogin: ownLogin, HostKeyReady: t.HostKeyStatus == target.HostKeyTrusted, PrivateIP: privateIP, Engine: t.Engine,
 			})
 		}
 		if next == "" {
@@ -221,7 +226,7 @@ func (h *Handler) myTargets(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		for _, g := range groups {
-			allowed, needApproval := reach(pols, policy.TargetRef{ASGID: g.ID, Tags: g.Tags}, g.Capabilities, now)
+			allowed, needApproval, ownLogin := reach(pols, policy.TargetRef{Kind: protocol.KindAutoscaling, ASGID: g.ID, Tags: g.Tags}, g.Capabilities, now)
 			if len(allowed) == 0 {
 				continue
 			}
@@ -239,16 +244,17 @@ func (h *Handler) myTargets(w http.ResponseWriter, r *http.Request) {
 			}
 			out = append(out, reachableTarget{
 				Kind: "asg", ID: g.ID, Name: g.Name, OSFamily: g.OSFamily, Tags: g.Tags, Capabilities: g.Capabilities,
-				Allowed: allowed, RequiresApproval: needApproval, HostKeyReady: true, HealthyCount: healthy, InstanceCnt: live,
+				Allowed: allowed, RequiresApproval: needApproval, OwnLogin: ownLogin, HostKeyReady: true, HealthyCount: healthy, InstanceCnt: live,
 			})
 		}
 	}
 	httpx.WriteJSON(w, http.StatusOK, httpx.Page[reachableTarget]{Items: out})
 }
 
-// reach returns the protocols of protos the policies allow on ref and, of
-// those, the ones that need an approved request first (ADR 0018).
-func reach(pols []*policy.Policy, ref policy.TargetRef, protos []target.Protocol, now time.Time) (allowed, needApproval []string) {
+// reach returns the protocols of protos the policies allow on ref, the ones
+// of those that need an approved request first (ADR 0018), and the ones on
+// which the user may sign in with their own login (ADR 0036).
+func reach(pols []*policy.Policy, ref policy.TargetRef, protos []target.Protocol, now time.Time) (allowed, needApproval, ownLogin []string) {
 	for _, proto := range protos {
 		d := policy.Evaluate(pols, ref, string(proto), now)
 		if !d.Allowed {
@@ -258,8 +264,11 @@ func reach(pols []*policy.Policy, ref policy.TargetRef, protos []target.Protocol
 		if d.RequireApproval {
 			needApproval = append(needApproval, string(proto))
 		}
+		if d.SignInOwn {
+			ownLogin = append(ownLogin, string(proto))
+		}
 	}
-	return allowed, needApproval
+	return allowed, needApproval, ownLogin
 }
 
 type connectRequest struct {
@@ -373,8 +382,7 @@ func (h *Handler) connect(w http.ResponseWriter, r *http.Request) {
 // the allowing decision, or the code and message of a refusal. The gate is
 // the one the applications proxy passes too (access.Gate).
 func (h *Handler) admits(ctx context.Context, userID string, ep *endpoint, proto target.Protocol) (policy.Decision, string, string, error) {
-	id, asgID, tags := ep.policyRef()
-	return h.gate().Admit(ctx, userID, policy.TargetRef{ID: id, ASGID: asgID, Tags: tags}, string(proto), time.Now())
+	return h.gate().Admit(ctx, userID, ep.policyRef(), string(proto), time.Now())
 }
 
 // issueTicket runs policy, pinning and credential checks for an endpoint and
@@ -432,13 +440,23 @@ func (h *Handler) issueTicket(ctx context.Context, p *auth.Principal, ip string,
 		}
 		return h.issueCredentialless(p, ep, proto, d, ip, failoverFrom)
 	}
+	// How the person signs in (ADR 0036): the target's slot decides when a
+	// deciding grant lets it; the person's own login is asked for when every
+	// deciding grant says so, and used when they bring it where a grant
+	// allows it. Their own login needs nothing bound to the slot.
+	own := !d.SignInTarget || (uc != nil && d.SignInOwn)
 	credID := ep.Credentials[proto]
-	if credID == "" {
-		return nil, "no_credential", "no credential is configured for " + string(proto) + " on this target", nil
-	}
-	cred, err := h.Vault.Get(ctx, credID)
-	if err != nil {
-		return nil, "", "", err
+	var cred *credential.Credential
+	if own {
+		cred, credID = &credential.Credential{Mode: credential.ModeUserSupplied}, ""
+	} else {
+		if credID == "" {
+			return nil, "no_credential", "no credential is configured for " + string(proto) + " on this target", nil
+		}
+		var err error
+		if cred, err = h.Vault.Get(ctx, credID); err != nil {
+			return nil, "", "", err
+		}
 	}
 	grant := ticket.Grant{
 		UserID: p.User.ID, Username: p.User.Username, SessionID: p.Session.ID,

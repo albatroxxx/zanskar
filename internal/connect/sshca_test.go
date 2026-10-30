@@ -20,6 +20,8 @@ import (
 	"github.com/albatroxxx/zanskar/internal/group"
 	"github.com/albatroxxx/zanskar/internal/keyring"
 	"github.com/albatroxxx/zanskar/internal/policy"
+	"github.com/albatroxxx/zanskar/internal/policy/policytest"
+	"github.com/albatroxxx/zanskar/internal/protocol"
 	"github.com/albatroxxx/zanskar/internal/session"
 	"github.com/albatroxxx/zanskar/internal/store/storetest"
 	"github.com/albatroxxx/zanskar/internal/target"
@@ -74,7 +76,7 @@ func TestCertificateAuthorityPrincipalAllowlist(t *testing.T) {
 	if _, err := targets.TrustHostKey(ctx, tg.ID, fp); err != nil {
 		t.Fatal(err)
 	}
-	pol := &policy.Policy{Name: "ops-web", GroupID: g.ID, Enabled: true, Selector: policy.Selector{Targets: []string{tg.ID}}, Protocols: []string{"ssh"}, IdleTimeoutMinutes: 15}
+	pol := policytest.Policy("ops-web", []policy.Subject{policytest.Group(g.ID)}, policytest.Named(protocol.KindHost, []string{tg.ID}, "ssh"))
 	if err := policy.NewRepo(db).Create(ctx, pol); err != nil {
 		t.Fatal(err)
 	}

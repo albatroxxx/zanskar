@@ -10,26 +10,55 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"slices"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/albatroxxx/zanskar/internal/audit"
 	"github.com/albatroxxx/zanskar/internal/auth"
+	"github.com/albatroxxx/zanskar/internal/gateway"
+	"github.com/albatroxxx/zanskar/internal/protocol"
 	"github.com/albatroxxx/zanskar/internal/store"
 	"github.com/albatroxxx/zanskar/internal/store/storetest"
 	"github.com/albatroxxx/zanskar/internal/user"
 )
 
+// fakeInventory knows a few targets by kind and one autoscaling group.
+type fakeInventory struct{}
+
+func (fakeInventory) TargetKind(_ context.Context, id string) (string, bool, error) {
+	k, ok := map[string]string{"web-1": protocol.KindHost, "web-2": protocol.KindHost, "orders": protocol.KindDatabase, "wiki": protocol.KindApplication}[id]
+	return k, ok, nil
+}
+
+func (fakeInventory) GroupExists(_ context.Context, id string) (bool, error) {
+	return id == "fleet", nil
+}
+
+// recorder stands in for the gateway's revoker: it notes whom it was asked
+// to re-check.
+type recorder struct {
+	gateway.Revoker // only Recheck is used here
+	rechecked       [][]string
+}
+
+func (r *recorder) Recheck(_ context.Context, users []string) int {
+	r.rechecked = append(r.rechecked, slices.Clone(users))
+	return len(users)
+}
+
 type handlerEnv struct {
 	srv   http.Handler
-	h     *AdminHandler
 	db    *store.DB
 	users *user.Repo
+	audit *audit.Log
+	rv    *recorder
 	admin *http.Cookie
 	csrf  string
-	audit *audit.Log
-	// sessions signs in other users for role checks.
-	sessions *auth.Sessions
+	group string
+	ann   *user.User
+	ben   *user.User
 }
 
 func newHandlerEnv(t *testing.T) *handlerEnv {
@@ -39,24 +68,34 @@ func newHandlerEnv(t *testing.T) *handlerEnv {
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	users := user.NewRepo(db)
 	sessions := auth.NewSessions(db, bytes.Repeat([]byte{3}, 32), false)
-
-	auditLog := audit.NewLog(db)
-	h := &AdminHandler{Repo: NewRepo(db), Users: users, Audit: auditLog, Log: log}
+	e := &handlerEnv{db: db, users: users, audit: audit.NewLog(db), rv: &recorder{}}
+	h := &AdminHandler{Repo: NewRepo(db), Users: users, Inventory: fakeInventory{}, Revoker: e.rv, Audit: e.audit, Log: log}
 	mux := http.NewServeMux()
 	h.Register(mux)
 	mw := &auth.Middleware{Sessions: sessions, Users: users, Log: log}
-	e := &handlerEnv{srv: mw.Authenticate(mw.CSRF(mux)), h: h, db: db, users: users, audit: auditLog, sessions: sessions}
-
-	admin := &user.User{Username: "admin", DisplayName: "Admin", Roles: []user.Role{user.RoleAdmin}}
-	if err := users.Create(ctx, admin); err != nil {
+	e.srv = mw.Authenticate(mw.CSRF(mux))
+	mk := func(name string, roles ...user.Role) *user.User {
+		u := &user.User{Username: name, DisplayName: name, Roles: roles}
+		if err := users.Create(ctx, u); err != nil {
+			t.Fatal(err)
+		}
+		return u
+	}
+	admin := mk("admin", user.RoleAdmin)
+	e.ann, e.ben = mk("ann", user.RoleUser), mk("ben", user.RoleUser)
+	now := store.TimeArg(nowUTC())
+	if _, err := db.ExecContext(ctx, db.Rebind(`INSERT INTO groups (id, name, created_at, updated_at) VALUES ('g-ops', 'ops', ?, ?)`), now, now); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := db.ExecContext(ctx, db.Rebind(`INSERT INTO group_members (group_id, user_id, added_at) VALUES ('g-ops', ?, ?)`), e.ann.ID, now); err != nil {
+		t.Fatal(err)
+	}
+	e.group = "g-ops"
 	tok, sess, err := sessions.Create(ctx, admin.ID, "127.0.0.1", "test", true)
 	if err != nil {
 		t.Fatal(err)
 	}
-	e.admin = &http.Cookie{Name: auth.CookieName, Value: tok}
-	e.csrf = sessions.CSRFToken(sess.ID)
+	e.admin, e.csrf = &http.Cookie{Name: auth.CookieName, Value: tok}, sessions.CSRFToken(sess.ID)
 	return e
 }
 
@@ -77,99 +116,178 @@ func (e *handlerEnv) do(method, path string, body any) (int, map[string]any) {
 	return rr.Code, out
 }
 
-func (e *handlerEnv) createUser(t *testing.T, name string, roles ...user.Role) *user.User {
+func (e *handlerEnv) lastEvent(t *testing.T, action string) map[string]any {
 	t.Helper()
-	u := &user.User{Username: name, DisplayName: name, Roles: roles}
-	if err := e.users.Create(context.Background(), u); err != nil {
-		t.Fatal(err)
+	evs, _, err := e.audit.List(context.Background(), audit.Filter{Action: action, Limit: 1})
+	if err != nil || len(evs) != 1 {
+		t.Fatalf("no %s event: %v", action, err)
 	}
-	return u
+	var d map[string]any
+	_ = json.Unmarshal(evs[0].Details, &d)
+	return d
 }
 
-// TestPolicySubjectMustBeAbleToConnect covers the review-only rule of ADR
-// 0006 at the policy layer: a user-scoped policy cannot name an account that
-// holds only auditor, because such an account is refused at connect time and
-// the policy would only mislead. Granting the user role lifts the refusal, and
-// group policies are not inspected.
-func TestPolicySubjectMustBeAbleToConnect(t *testing.T) {
-	e := newHandlerEnv(t)
-	ctx := context.Background()
-	reviewer := e.createUser(t, "reviewer", user.RoleAuditor)
-	operator := e.createUser(t, "operator", user.RoleUser)
-
-	body := func(userID string) map[string]any {
-		return map[string]any{"name": "p-" + userID[:6], "user_id": userID,
-			"target_selector": map[string]any{"tags": map[string]string{"env": "prod"}}, "protocols": []string{"ssh"}}
-	}
-
-	code, out := e.do("POST", "/api/v1/access-policies", body(reviewer.ID))
-	if code != http.StatusUnprocessableEntity || out["code"] != "review_only_subject" {
-		t.Fatalf("auditor-only subject: got %d %v, want 422 review_only_subject", code, out)
-	}
-	code, out = e.do("POST", "/api/v1/access-policies", body("00000000000000000000000000000000"))
-	if code != http.StatusUnprocessableEntity || out["code"] != "invalid_subject" {
-		t.Fatalf("unknown subject: got %d %v, want 422 invalid_subject", code, out)
-	}
-	code, out = e.do("POST", "/api/v1/access-policies", body(operator.ID))
-	if code != http.StatusCreated {
-		t.Fatalf("user subject: got %d %v, want 201", code, out)
-	}
-	policyID, _ := out["id"].(string)
-
-	// Updating an existing policy onto a review-only subject is refused too.
-	code, out = e.do("PUT", "/api/v1/access-policies/"+policyID, body(reviewer.ID))
-	if code != http.StatusUnprocessableEntity || out["code"] != "review_only_subject" {
-		t.Fatalf("update to auditor-only subject: got %d %v, want 422", code, out)
-	}
-
-	// Once the account can connect, the same policy is accepted.
-	if err := e.users.SetRoles(ctx, reviewer.ID, []user.Role{user.RoleAuditor, user.RoleUser}); err != nil {
-		t.Fatal(err)
-	}
-	if code, out = e.do("PUT", "/api/v1/access-policies/"+policyID, body(reviewer.ID)); code != http.StatusOK {
-		t.Fatalf("update after granting user: got %d %v, want 200", code, out)
-	}
-
-	// Group subjects are not inspected: membership is checked at connect time.
-	now := store.TimeArg(time.Now())
-	if _, err := e.db.ExecContext(ctx, e.db.Rebind(`INSERT INTO groups (id, name, created_at, updated_at) VALUES ('g1', 'ops', ?, ?)`), now, now); err != nil {
-		t.Fatal(err)
-	}
-	code, out = e.do("POST", "/api/v1/access-policies", map[string]any{"name": "grp", "group_id": "g1",
-		"target_selector": map[string]any{"tags": map[string]string{"env": "prod"}}, "protocols": []string{"ssh"}})
-	if code != http.StatusCreated {
-		t.Fatalf("group policy: got %d %v, want 201", code, out)
+// body is a valid new policy: ops on web-1 over ssh, standing.
+func (e *handlerEnv) body() map[string]any {
+	return map[string]any{
+		"name":     "ops-web",
+		"subjects": []map[string]string{{"kind": "group", "id": e.group}},
+		"grants": []map[string]any{{
+			"kind": "host", "targets": []map[string]any{{"id": "web-1", "protocols": []string{"ssh"}}},
+		}},
 	}
 }
 
-// TestPolicyAPIAcceptsRulesAndRetention: the request body decoder refuses
-// unknown fields, so every field the console sends must be declared. Rules
-// (#78) and retention_days (#88) were on the model but not on the input,
-// and every policy save from the console failed with "unknown field rules".
-func TestPolicyAPIAcceptsRulesAndRetention(t *testing.T) {
+// TestPolicyAPI (ADR 0036): a policy is written and read in the new shape,
+// with the defaults a grant leaves out; the audit event summarises it
+// without anything secret; the people it covers are re-checked.
+func TestPolicyAPI(t *testing.T) {
 	e := newHandlerEnv(t)
-	body := map[string]any{
-		"name": "web", "group_id": "", "user_id": "", "description": "",
-		"target_selector": map[string]any{"tags": map[string]string{"env": "prod"}},
-		"protocols":       []string{"ssh"},
-		"rules":           []map[string]any{{"target_selector": map[string]any{"tags": map[string]string{"role": "jump"}}, "protocols": []string{"rdp"}}},
-		"time_windows":    []any{}, "max_session_minutes": nil, "idle_timeout_minutes": 15, "retention_days": 45,
-		"allow_clipboard": false, "allow_file_transfer": false, "require_mfa": true, "require_approval": false, "enabled": true,
-	}
-	u := e.createUser(t, "alice", user.RoleUser)
-	body["user_id"] = u.ID
-	code, out := e.do("POST", "/api/v1/access-policies", body)
+	code, out := e.do("POST", "/api/v1/access-policies", e.body())
 	if code != http.StatusCreated {
-		t.Fatalf("create with rules and retention: %d %v", code, out)
-	}
-	rules, _ := out["rules"].([]any)
-	if len(rules) != 1 || out["retention_days"] != float64(45) {
-		t.Fatalf("round trip: rules=%v retention=%v", out["rules"], out["retention_days"])
+		t.Fatalf("create: %d %v", code, out)
 	}
 	id := out["id"].(string)
-	body["rules"] = []any{}
-	body["retention_days"] = nil
-	if code, out = e.do("PUT", "/api/v1/access-policies/"+id, body); code != http.StatusOK || len(out["rules"].([]any)) != 0 || out["retention_days"] != nil {
-		t.Fatalf("update clearing them: %d %v", code, out)
+	grants := out["grants"].([]any)
+	g := grants[0].(map[string]any)
+	if g["id"] == "" || g["access"] != "standing" || g["sign_in"] != "target" || g["require_mfa"] != true || g["idle_timeout_minutes"] != float64(15) {
+		t.Fatalf("defaults: %v", g)
+	}
+	d := e.lastEvent(t, audit.PolicyCreate)
+	if d["name"] != "ops-web" || len(d["grants"].([]any)) != 1 {
+		t.Fatalf("create event: %v", d)
+	}
+	if len(e.rv.rechecked) != 1 || !slices.Equal(e.rv.rechecked[0], []string{e.ann.ID}) {
+		t.Fatalf("a new policy re-checked %v, want ann (it can tighten)", e.rv.rechecked)
+	}
+
+	// An edit keeps the grant by its id, moves the subject to ben, and
+	// re-checks both: the one it left and the one it reached.
+	edit := e.body()
+	edit["subjects"] = []map[string]string{{"kind": "user", "id": e.ben.ID}}
+	eg := edit["grants"].([]map[string]any)
+	eg[0]["id"] = g["id"]
+	eg[0]["allow_clipboard"] = true
+	if code, out := e.do("PUT", "/api/v1/access-policies/"+id, edit); code != http.StatusOK || out["grants"].([]any)[0].(map[string]any)["id"] != g["id"] {
+		t.Fatalf("update: %d %v", code, out)
+	}
+	if got := e.rv.rechecked[1]; !slices.Equal(sorted(got), sorted([]string{e.ann.ID, e.ben.ID})) {
+		t.Fatalf("an edit re-checked %v, want ann and ben", got)
+	}
+	if code, out := e.do("GET", "/api/v1/access-policies/"+id, nil); code != http.StatusOK || out["subjects"].([]any)[0].(map[string]any)["kind"] != "user" {
+		t.Fatalf("get: %d %v", code, out)
+	}
+
+	// A delete re-checks whom it covered, read before the delete.
+	if code, _ := e.do("DELETE", "/api/v1/access-policies/"+id, nil); code != http.StatusNoContent {
+		t.Fatalf("delete: %d", code)
+	}
+	if got := e.rv.rechecked[2]; !slices.Equal(got, []string{e.ben.ID}) {
+		t.Fatalf("a delete re-checked %v, want ben", got)
+	}
+	if d := e.lastEvent(t, audit.PolicyDelete); d["live_sessions_ended"] != float64(1) {
+		t.Fatalf("delete event: %v", d)
+	}
+}
+
+func sorted(s []string) []string {
+	out := slices.Clone(s)
+	slices.Sort(out)
+	return out
+}
+
+// TestPolicyAPIRefusals: every refusal names what is wrong, and nothing is
+// stored.
+func TestPolicyAPIRefusals(t *testing.T) {
+	e := newHandlerEnv(t)
+	auditor := &user.User{Username: "aud", DisplayName: "aud", Roles: []user.Role{user.RoleAuditor}}
+	if err := e.users.Create(context.Background(), auditor); err != nil {
+		t.Fatal(err)
+	}
+	cases := []struct {
+		name   string
+		edit   func(b map[string]any)
+		status int
+		code   string
+		says   string
+	}{
+		{"the old shape", func(b map[string]any) { b["group_id"] = e.group }, 400, "legacy_policy_shape", "group_id is gone"},
+		{"an old condition", func(b map[string]any) { b["require_approval"] = true }, 400, "legacy_policy_shape", "require_approval"},
+		{"an unknown field", func(b map[string]any) { b["colour"] = "red" }, 400, "bad_request", "unknown field"},
+		{"no subject", func(b map[string]any) { b["subjects"] = []any{} }, 400, "bad_request", "at least one group or user"},
+		{"a review-only user", func(b map[string]any) {
+			b["subjects"] = []map[string]string{{"kind": "user", "id": auditor.ID}}
+		}, 422, "review_only_subject", "review-only"},
+		{"a user that does not exist", func(b map[string]any) {
+			b["subjects"] = []map[string]string{{"kind": "user", "id": "nobody"}}
+		}, 422, "invalid_subject", "not found"},
+		{"a group that does not exist", func(b map[string]any) {
+			b["subjects"] = []map[string]string{{"kind": "group", "id": "no-group"}}
+		}, 422, "invalid_subject", "group no-group not found"},
+		{"a target that does not exist", func(b map[string]any) {
+			b["grants"].([]map[string]any)[0]["targets"] = []map[string]any{{"id": "gone", "protocols": []string{"ssh"}}}
+		}, 422, "unknown_target", "gone is not a live host"},
+		{"a database in a host grant", func(b map[string]any) {
+			b["grants"].([]map[string]any)[0]["targets"] = []map[string]any{{"id": "orders", "protocols": []string{"ssh"}}}
+		}, 422, "kind_mismatch", "orders is a database, not a host"},
+		{"ssh on a database", func(b map[string]any) {
+			b["grants"] = []map[string]any{{"kind": "database", "targets": []map[string]any{{"id": "orders", "protocols": []string{"ssh"}}}}}
+		}, 400, "protocol_not_for_kind", `a database does not serve "ssh"`},
+		{"a group that does not exist", func(b map[string]any) {
+			b["grants"] = []map[string]any{{"kind": "autoscaling", "targets": []map[string]any{{"id": "no-fleet", "protocols": []string{"ssh"}}}}}
+		}, 422, "unknown_target", "no-fleet is not a live autoscaling"},
+		{"a grant id on a new policy", func(b map[string]any) { b["grants"].([]map[string]any)[0]["id"] = "g-123" }, 422, "unknown_grant", "carry no id"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			b := e.body()
+			c.edit(b)
+			code, out := e.do("POST", "/api/v1/access-policies", b)
+			if code != c.status || out["code"] != c.code || !strings.Contains(out["message"].(string), c.says) {
+				t.Fatalf("got %d %v, want %d %s saying %q", code, out, c.status, c.code, c.says)
+			}
+		})
+	}
+	if code, out := e.do("GET", "/api/v1/access-policies", nil); code != 200 || len(out["items"].([]any)) != 0 {
+		t.Fatalf("a refused policy was stored: %v", out)
+	}
+
+	// An edit may not bring a grant id of its own invention.
+	code, out := e.do("POST", "/api/v1/access-policies", e.body())
+	if code != 201 {
+		t.Fatalf("create: %d %v", code, out)
+	}
+	b := e.body()
+	b["grants"].([]map[string]any)[0]["id"] = "not-ours"
+	if code, out := e.do("PUT", "/api/v1/access-policies/"+out["id"].(string), b); code != 422 || out["code"] != "unknown_grant" {
+		t.Fatalf("a foreign grant id: %d %v", code, out)
+	}
+}
+
+func nowUTC() time.Time { return time.Now().UTC() }
+
+// TestPolicyWithNoOneLeft (ADR 0036): a policy whose last group was deleted
+// reads back with no subjects and may be saved as it is, switched off or
+// not; a new policy still needs someone.
+func TestPolicyWithNoOneLeft(t *testing.T) {
+	e := newHandlerEnv(t)
+	code, out := e.do("POST", "/api/v1/access-policies", e.body())
+	if code != http.StatusCreated {
+		t.Fatalf("create: %d %v", code, out)
+	}
+	id := out["id"].(string)
+	if _, err := e.db.ExecContext(context.Background(), e.db.Rebind(`DELETE FROM groups WHERE id = ?`), e.group); err != nil {
+		t.Fatal(err)
+	}
+	code, got := e.do("GET", "/api/v1/access-policies/"+id, nil)
+	if code != 200 || len(got["subjects"].([]any)) != 0 {
+		t.Fatalf("read back: %d %v", code, got)
+	}
+	got["enabled"] = false
+	for _, k := range []string{"id", "created_at", "updated_at", "created_by"} {
+		delete(got, k)
+	}
+	if code, out := e.do("PUT", "/api/v1/access-policies/"+id, got); code != 200 || out["enabled"] != false {
+		t.Fatalf("saving it as read, switched off: %d %v", code, out)
 	}
 }

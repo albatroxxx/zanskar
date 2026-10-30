@@ -561,9 +561,10 @@ paths:
       tags: [user]
       summary: Targets the caller may reach
       description: |
-        Evaluates every enabled policy of every group the caller belongs to. Returns static
-        targets and autoscaling groups with the union of allowed protocols, intersected with the
-        target's probed capabilities.
+        Evaluates the grants of every enabled policy that names the caller or a group they
+        belong to (ADR 0036). Returns static targets, applications and autoscaling groups with
+        the union of the protocols those grants give, intersected with the target's probed
+        capabilities.
       parameters:
         - $ref: "#/components/parameters/Limit"
         - $ref: "#/components/parameters/Cursor"
@@ -621,7 +622,7 @@ paths:
       summary: Request just-in-time access to a target or an autoscaling group
       description: |
         Ask for time-bounded access to a target or an autoscaling group the caller is *eligible*
-        for — one matched by an enabled policy with `require_approval` set (ADR 0018). The request starts `pending` until
+        for — one an `approval` grant of an enabled policy of theirs covers (ADR 0018, ADR 0036). The request starts `pending` until
         an admin approves or denies it. Standing access needs no request: a user who already has
         it connects directly through `/connect`.
       requestBody:
@@ -640,13 +641,13 @@ paths:
         "400":
           description: >-
             Missing field, both or neither of `target_id` and `asg_id`, `minutes` below 1, or
-            `duration_too_long` (over the policy maximum).
+            `duration_too_long` (over the grant's maximum).
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
         "403":
-          description: The caller is not eligible — no approval-gated policy covers this target or group and protocol (`not_eligible`).
+          description: The caller is not eligible — no approval grant of theirs covers this target or group and protocol (`not_eligible`).
           content:
             application/json:
               schema:
@@ -738,15 +739,15 @@ paths:
       tags: [user]
       summary: Request a connect ticket
       description: |
-        Server-side policy evaluation happens here: role, group membership, target selector,
-        protocol, time window, and MFA requirement. On success a one-time ticket is returned; the
-        `access_sessions` row is created when it is redeemed. The ticket must be presented to the
+        Server-side policy evaluation happens here: role, group membership, the grants that
+        cover the target and protocol, their time windows, and their MFA requirement. On success
+        a one-time ticket is returned; the `access_sessions` row is created when it is redeemed. The ticket must be presented to the
         returned `ws_path` within `expires_at` (30 seconds), from the same address and with the
         same sign-in's cookie (a browser sends it with the upgrade), and is spent by its first use,
         right or wrong. The policies are applied again at that moment, so a revocation in between
         refuses the upgrade (`403 policy_denied`). Credentials supplied in the body are held in
         memory only for the life of the ticket. When every
-        policy that grants the caller this target is approval-gated (ADR 0018), the caller needs
+        grant that gives the caller this target is an approval grant (ADR 0018), the caller needs
         an active grant: without one the request is refused with `403 approval_required` and the
         UI offers to request access instead.
       requestBody:
@@ -767,7 +768,7 @@ paths:
         "403":
           description: >-
             Denied by role, policy, time window, or CSRF check; or, when the target is reachable
-            only through an approval-gated policy and the caller holds no active grant,
+            only through approval grants and the caller holds no active grant,
             `approval_required` (ADR 0018).
           content:
             application/json:
@@ -783,8 +784,9 @@ paths:
                 $ref: "#/components/schemas/Error"
         "422":
           description: >-
-            `credential_required`: the target uses the caller's own account for this protocol, so
-            the request must carry `credential` (a private key is for `ssh` only).
+            `credential_required`: the target uses the caller's own account for this protocol, or
+            every grant that admits the caller says `sign_in: own`, so the request must carry
+            `credential` (a private key is for `ssh` only).
             `credential_invalid`: the private key cannot be read, is too large, or is encrypted and
             its passphrase is missing or wrong.
           content:
@@ -1617,7 +1619,10 @@ paths:
     delete:
       tags: [admin]
       summary: Delete a group
-      description: Policies bound to the group are deleted with it. Confirmation is the client's job.
+      description: >-
+        The group leaves every policy that names it; the policies stay, and one it was the only
+        subject of applies to no one until someone is added (ADR 0036). Its members' live
+        sessions are re-checked once it is gone. Confirmation is the client's job.
       responses:
         "204":
           description: Deleted.
@@ -2813,17 +2818,12 @@ paths:
     get:
       tags: [admin]
       summary: List access policies
+      description: >-
+        Every policy, in name order, a page at a time. There is no filter: the list is small,
+        and the console filters it itself.
       parameters:
         - $ref: "#/components/parameters/Limit"
         - $ref: "#/components/parameters/Cursor"
-        - name: group_id
-          in: query
-          schema:
-            type: string
-        - name: enabled
-          in: query
-          schema:
-            type: boolean
       responses:
         "200":
           description: Policies.
@@ -2841,6 +2841,11 @@ paths:
     post:
       tags: [admin]
       summary: Create an access policy
+      description: >-
+        Grants carry no `id`; the server makes one for each. The live sessions of everyone the
+        policy names are re-checked at once: a new grant never loosens a term of access someone
+        already holds, but it can tighten one (its clipboard off where theirs was on), and a
+        session it now refuses ends with `policy_revoked`.
       requestBody:
         required: true
         content:
@@ -2855,9 +2860,11 @@ paths:
               schema:
                 $ref: "#/components/schemas/AccessPolicy"
         "400":
-          $ref: "#/components/responses/BadRequest"
+          $ref: "#/components/responses/PolicyBadRequest"
         "409":
           $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/PolicyUnprocessable"
   /access-policies/{id}:
     parameters:
       - $ref: "#/components/parameters/Id"
@@ -2876,12 +2883,13 @@ paths:
     put:
       tags: [admin]
       summary: Update an access policy
-      description: >
-        Replaces the whole policy: read it, change it, and send all of it back. A left-out
-        switch takes its default, not its current value: `enabled` and `require_mfa` on,
-        `allow_clipboard`, `allow_file_transfer` and `require_approval` off, and
-        `idle_timeout_minutes` 15. Live sessions this policy admitted are checked against the
-        saved policy at once, and those it no longer grants end with `policy_revoked`.
+      description: >-
+        Replaces the whole policy, subjects and grants included: read it, change it, and send all
+        of it back, each kept grant with its `id`. A grant left out is removed; one without an
+        `id` is new. A left-out switch takes its default, not its current value (see
+        `PolicyGrant`). The live sessions of everyone the policy named before or names now are
+        checked against the saved policies at once, and those no longer granted end with
+        `policy_revoked`.
       requestBody:
         required: true
         content:
@@ -2895,11 +2903,20 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/AccessPolicy"
+        "400":
+          $ref: "#/components/responses/PolicyBadRequest"
         "404":
           $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/PolicyUnprocessable"
     delete:
       tags: [admin]
       summary: Delete an access policy
+      description: >-
+        The live sessions of everyone the policy named are checked against the policies left,
+        and those no longer granted end with `policy_revoked`.
       responses:
         "204":
           description: Deleted.
@@ -2961,7 +2978,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/AccessRequest"
         "400":
-          description: "`minutes` below 1, or the granted duration over the policy's current maximum (`duration_too_long`)."
+          description: "`minutes` below 1, or the granted duration over the approval grant's current maximum (`duration_too_long`)."
           content:
             application/json:
               schema:
@@ -2970,7 +2987,7 @@ paths:
           $ref: "#/components/responses/NotFound"
         "409":
           description: >-
-            The request is not pending (`conflict`), or no approval-gated policy of the requester's
+            The request is not pending (`conflict`), or no approval grant of the requester's
             covers the target and protocol any more (`not_eligible`); the request stays pending.
           content:
             application/json:
@@ -4619,6 +4636,30 @@ components:
         application/json:
           schema:
             $ref: "#/components/schemas/Error"
+    PolicyBadRequest:
+      description: >-
+        `bad_request`: the body is malformed, carries an unknown field, or fails a rule of
+        `AccessPolicyWrite` or `PolicyGrant`, the grant and the field named in the message; a
+        new policy names no group or user. `protocol_not_for_kind`: a grant offers a protocol
+        its kind does not serve (ssh on a database). `legacy_policy_shape`: the body carries a
+        field of the policy shape before 1.8 (ADR 0036), named in the message; nothing is read
+        from it.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    PolicyUnprocessable:
+      description: >-
+        The policy is well formed but names something it cannot. `invalid_subject`: a group or
+        user subject does not exist. `review_only_subject`: a user subject holds only the auditor
+        role, which cannot connect. `unknown_target`: a named target or autoscaling group does
+        not exist or is retired. `kind_mismatch`: a named target is of another kind than its
+        grant. `unknown_grant`: on create a grant carries an `id`, or on update an `id` is not a
+        grant of this policy. The last three name the grant by its place in the list.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
     Unauthorized:
       description: Not authenticated, MFA not completed, or bad credentials.
       content:
@@ -5600,7 +5641,7 @@ components:
           nullable: true
           minimum: 1
           maximum: 3650
-          description: Recording retention for this target's sessions, over the policy's; null defers.
+          description: Recording retention for this target's sessions, over the grant's; null defers.
         database_name:
           type: string
           maxLength: 128
@@ -5696,43 +5737,173 @@ components:
         tz:
           type: string
           description: IANA zone name.
-    TargetSelector:
-      type: object
-      description: A target matches if it is listed by id or if every tag pair matches. An autoscaling group matches the same way.
-      properties:
-        targets:
-          type: array
-          items:
-            type: string
-        asgs:
-          type: array
-          items:
-            type: string
-        tags:
-          $ref: "#/components/schemas/Tags"
-    PolicyRule:
-      type: object
+    TargetKind:
+      type: string
       description: >-
-        One further selector/protocol pair a policy grants beyond its base `target_selector`
-        and `protocols`. Every rule shares the policy's time windows, session limits and flags.
-      required: [target_selector, protocols]
+        What a grant gives access to (ADR 0036). A target's kind is derived, never stored: a
+        target with an `engine` is a `database`, one with an `app_upstream` an `application`, any
+        other a `host`; an autoscaling group is `autoscaling`. Each kind serves its own protocols
+        and no others: `host` and `autoscaling` ssh, rdp, vnc and winrm; `database` database;
+        `application` http.
+      enum: [host, database, application, autoscaling]
+    PolicySubject:
+      type: object
+      description: One group or user a policy applies to.
+      required: [kind, id]
       properties:
-        target_selector:
-          $ref: "#/components/schemas/TargetSelector"
+        kind:
+          type: string
+          enum: [group, user]
+        id:
+          type: string
+          description: >-
+            The group's or the user's id. A user must be able to connect: an account holding only
+            the auditor role is refused (`422 review_only_subject`).
+    GrantTarget:
+      type: object
+      description: One named target, or autoscaling group, and the protocols granted on it.
+      required: [id, protocols]
+      properties:
+        id:
+          type: string
+          description: >-
+            A target id, or for an `autoscaling` grant an autoscaling group id. It must be live
+            (not retired or deleted) and of the grant's kind.
         protocols:
           type: array
           minItems: 1
+          uniqueItems: true
+          description: One or more of the protocols the grant's kind serves.
           items:
             $ref: "#/components/schemas/Protocol"
+    TagMatch:
+      type: object
+      description: >-
+        Selects every target of the grant's kind that carries every key with one of its values,
+        judged at each connect: a target tagged later joins, one untagged leaves at its next
+        connect. A host grant's tags match hosts only.
+      required: [match, protocols]
+      properties:
+        match:
+          type: object
+          minProperties: 1
+          maxProperties: 32
+          description: Tag keys of 1-64 characters, each with the values it may have.
+          additionalProperties:
+            type: array
+            minItems: 1
+            maxItems: 16
+            uniqueItems: true
+            items:
+              type: string
+              minLength: 1
+              maxLength: 64
+          examples:
+            - env: [prod]
+              tier: [web, api]
+        protocols:
+          type: array
+          minItems: 1
+          uniqueItems: true
+          description: One or more of the protocols the grant's kind serves.
+          items:
+            $ref: "#/components/schemas/Protocol"
+    PolicyGrant:
+      type: object
+      description: >-
+        One complete grant (ADR 0036): a kind of target, which targets of that kind (named, by
+        tag, or both), and every condition a session opens and runs under; nothing is inherited
+        from the policy. When several grants admit the same session, standing access wins over
+        approval, and each term is the strictest among the deciding grants: the shortest idle
+        and maximum, clipboard and file transfer only if every one allows them, an authenticator
+        if any requires one; retention is the longest. In a write everything but `kind` may be
+        left out and takes the default shown. A read carries every field, `tags` only when set.
+      required: [kind]
+      properties:
+        id:
+          type: string
+          description: >-
+            Made by the server. Send it back on update, so access requests and the audit trail
+            keep pointing at the same grant; leave it out for a new grant. On create no grant may
+            carry one, and on update an id that is not a grant of this policy is refused; both
+            are `422 unknown_grant`.
+        kind:
+          $ref: "#/components/schemas/TargetKind"
+        targets:
+          type: array
+          maxItems: 200
+          default: []
+          description: Named targets, none twice. A grant names targets, matches tags, or both.
+          items:
+            $ref: "#/components/schemas/GrantTarget"
+        tags:
+          $ref: "#/components/schemas/TagMatch"
+        access:
+          type: string
+          enum: [standing, approval]
+          default: standing
+          description: >-
+            `standing` admits at once. `approval` makes the person eligible to request access
+            (ADR 0018), and `/connect` issues a ticket only while they hold an active, approved
+            grant. Where a standing grant also admits, it wins.
+        sign_in:
+          type: string
+          enum: [target, own]
+          default: target
+          description: >-
+            `target`: the target's credential slot decides (its vaulted credential, its SSH
+            authority, or the person's own account when the slot is user supplied). `own`: the
+            person signs in with their own login whatever the slot holds, typed at connect time
+            and never stored. If any deciding grant says `target` the slot decides, and the person
+            may still bring their own login where another says `own`; if all say `own`, their own
+            login is asked for. Not allowed on an `application` grant.
+        require_mfa:
+          type: boolean
+          default: true
+        allow_clipboard:
+          type: boolean
+          default: false
+        allow_file_transfer:
+          type: boolean
+          default: false
+        idle_timeout_minutes:
+          type: integer
+          minimum: 1
+          maximum: 1440
+          default: 15
+        max_session_minutes:
+          type: [integer, "null"]
+          minimum: 1
+          maximum: 10080
+          description: >-
+            The longest a session may run; null for no limit. On an approval grant it also caps
+            the duration a request may ask for, 480 minutes when null.
+        time_windows:
+          type: array
+          default: []
+          description: >-
+            When a connect is admitted; empty means at any time. A window that shuts, or one
+            narrowed by an edit, does not end a running session; its maximum bounds it instead.
+          items:
+            $ref: "#/components/schemas/TimeWindow"
+        retention_days:
+          type: [integer, "null"]
+          minimum: 1
+          maximum: 3650
+          description: >-
+            Keep the recordings of the sessions this grant admits for that many days; null defers
+            to the global retention policy. A target's own `retention_days` wins over it. Fixed on
+            each recording when its session starts.
     AccessPolicy:
       type: object
       description: >-
-        One access rule. It applies to every member of a group (`group_id`) or to a single
-        user (`user_id`); exactly one of the two is set. A user's effective access is the union
-        of the policies bound to them and to any group they belong to. The base
-        `target_selector` and `protocols` are the policy's first rule; `rules` adds more pairs,
-        and the base may be empty when `rules` carry everything.
-      required: [id, name, description, enabled, target_selector, protocols, time_windows, idle_timeout_minutes, allow_clipboard, allow_file_transfer, require_mfa, require_approval, created_at, updated_at]
+        An audience and the grants it holds (ADR 0036). The policy says who, any number of groups
+        and users, and whether it is on; each grant says, completely and on its own, what and on
+        which terms. A person's access is the union of the grants of every enabled policy that
+        names them or a group they belong to. A deleted group leaves the policies that named it,
+        so a policy can be read back with no subjects: it grants no one, and a write must name
+        someone again.
+      required: [id, name, description, enabled, subjects, grants, created_at, updated_at]
       properties:
         id:
           type: string
@@ -5742,127 +5913,100 @@ components:
           type: string
         enabled:
           type: boolean
-        group_id:
-          type: string
-          description: The group this policy applies to. Absent when bound to a user.
-        user_id:
-          type: string
-          description: The single user this policy applies to. Absent when bound to a group.
-        target_selector:
-          $ref: "#/components/schemas/TargetSelector"
-        protocols:
+          description: Off, the policy grants nothing, and the live sessions it admitted are re-checked.
+        subjects:
           type: array
           items:
-            $ref: "#/components/schemas/Protocol"
-        rules:
-          type: array
-          maxItems: 32
-          description: Further selector/protocol pairs; see PolicyRule.
-          items:
-            $ref: "#/components/schemas/PolicyRule"
-        time_windows:
+            $ref: "#/components/schemas/PolicySubject"
+        grants:
           type: array
           items:
-            $ref: "#/components/schemas/TimeWindow"
-        max_session_minutes:
-          type: [integer, "null"]
-        retention_days:
-          type: integer
-          nullable: true
-          minimum: 1
-          maximum: 3650
-          description: >
-            Keep this policy's session recordings for that many days; null defers to the global
-            retention policy. A target's own retention_days wins over it. Fixed on each recording
-            when its session starts.
-        idle_timeout_minutes:
-          type: integer
-        allow_clipboard:
-          type: boolean
-        allow_file_transfer:
-          type: boolean
-        require_mfa:
-          type: boolean
-        require_approval:
-          type: boolean
-          description: >-
-            When true this policy grants eligibility only, not standing access. A user matched
-            solely by approval-gated policies must request access and hold an active, unexpired
-            grant before `/connect` will issue a ticket. A single standing (non-approval) policy
-            for the same target wins and gives immediate access.
+            $ref: "#/components/schemas/PolicyGrant"
         created_by:
-          type: [string, "null"]
+          type: string
+          description: The admin who created the policy; absent when not known.
         created_at:
           $ref: "#/components/schemas/Timestamp"
         updated_at:
           $ref: "#/components/schemas/Timestamp"
+      examples:
+        - id: 4f1c0a9e2b7d4e8f9a6b3c2d1e0f7a8b
+          name: platform-prod
+          description: ""
+          enabled: true
+          subjects:
+            - {kind: group, id: 9d2e41c07b3a4f5e8c6d1a2b3c4d5e6f}
+            - {kind: user, id: 7a8b9c0d1e2f4a5b6c7d8e9f0a1b2c3d}
+          grants:
+            - id: 0b1c2d3e4f5a4b6c8d7e9f0a1b2c3d4e
+              kind: host
+              targets:
+                - {id: 1e2d3c4b5a6f4e7d8c9b0a1f2e3d4c5b, protocols: [ssh]}
+                - {id: 2f3e4d5c6b7a4f8e9d0c1b2a3f4e5d6c, protocols: [rdp, winrm]}
+              tags: {match: {env: [prod], tier: [web, api]}, protocols: [ssh]}
+              access: approval
+              sign_in: target
+              require_mfa: true
+              allow_clipboard: false
+              allow_file_transfer: false
+              idle_timeout_minutes: 15
+              max_session_minutes: 120
+              time_windows:
+                - {days: [mon, tue, wed, thu, fri], from: "08:00", to: "20:00", tz: Europe/Berlin}
+              retention_days: 365
+            - id: 5c6d7e8f9a0b4c1d2e3f4a5b6c7d8e9f
+              kind: database
+              targets:
+                - {id: 3a4b5c6d7e8f4a9b0c1d2e3f4a5b6c7d, protocols: [database]}
+              access: standing
+              sign_in: target
+              require_mfa: true
+              allow_clipboard: false
+              allow_file_transfer: false
+              idle_timeout_minutes: 30
+              max_session_minutes: null
+              time_windows: []
+              retention_days: null
+          created_by: 8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e
+          created_at: "2026-10-30T09:00:00Z"
+          updated_at: "2026-10-30T09:00:00Z"
     AccessPolicyWrite:
       type: object
-      description: Exactly one of `group_id` and `user_id` must be given.
-      required: [name, target_selector, protocols]
+      description: >-
+        The body of create and update: a policy without `id`, `created_by`, `created_at` and
+        `updated_at`. Update replaces the whole policy, subjects and grants included, and a
+        switch left out takes its default, not its current value. A field of the shape before
+        1.8 (`group_id`, `user_id`, `target_selector`, `protocols`, `rules`, or a condition now
+        on each grant: `require_approval`, `require_mfa`, `allow_clipboard`,
+        `allow_file_transfer`, `idle_timeout_minutes`, `max_session_minutes`, `time_windows`,
+        `retention_days`) is refused by name with `400 legacy_policy_shape`; any other unknown
+        field, here or in a grant, with `400 bad_request`.
+      required: [name, subjects, grants]
+      additionalProperties: false
       properties:
         name:
           type: string
           minLength: 1
-          maxLength: 255
+          maxLength: 64
+          description: Unique. Leading and trailing spaces are dropped.
         description:
           type: string
-          maxLength: 2000
         enabled:
           type: boolean
           default: true
-        group_id:
-          type: string
-          description: Apply to every member of this group.
-        user_id:
-          type: string
-          description: Apply to this one user, without touching any group.
-        target_selector:
-          $ref: "#/components/schemas/TargetSelector"
-        protocols:
+        subjects:
           type: array
-          description: May be empty when `rules` carry every grant; otherwise at least one.
+          minItems: 1
+          maxItems: 64
+          uniqueItems: true
           items:
-            $ref: "#/components/schemas/Protocol"
-        rules:
+            $ref: "#/components/schemas/PolicySubject"
+        grants:
           type: array
+          minItems: 1
           maxItems: 32
-          description: Further selector/protocol pairs; see PolicyRule.
           items:
-            $ref: "#/components/schemas/PolicyRule"
-        time_windows:
-          type: array
-          items:
-            $ref: "#/components/schemas/TimeWindow"
-        max_session_minutes:
-          type: [integer, "null"]
-          minimum: 1
-        retention_days:
-          type: integer
-          nullable: true
-          minimum: 1
-          maximum: 3650
-          description: >
-            Keep this policy's session recordings for that many days; null defers to the global
-            retention policy. A target's own retention_days wins over it. Fixed on each recording
-            when its session starts.
-        idle_timeout_minutes:
-          type: integer
-          minimum: 1
-          default: 15
-        allow_clipboard:
-          type: boolean
-          default: false
-        allow_file_transfer:
-          type: boolean
-          default: false
-        require_mfa:
-          type: boolean
-          default: true
-        require_approval:
-          type: boolean
-          default: false
-          description: Grant eligibility only, gated by just-in-time approval. Defaults to standing (immediate) access.
+            $ref: "#/components/schemas/PolicyGrant"
 
     AccessRequestStatus:
       type: string
@@ -5888,7 +6032,14 @@ components:
           description: Resolved at read time; present once decided.
         policy_id:
           type: string
-          description: The eligibility policy that justified the request.
+          description: The policy whose approval grant made the request eligible.
+        grant_id:
+          type: string
+          description: >-
+            The approval grant, in `policy_id`, that made the request eligible and capped its
+            duration: of several, the one with the shortest maximum (ADR 0036). A record, not an
+            authority: approval and `/connect` judge the policies as they stand then. Absent on
+            requests made before 1.8.
         target_id:
           type: string
         target_name:
@@ -5949,7 +6100,9 @@ components:
         minutes:
           type: integer
           minimum: 1
-          description: Requested grant duration. Capped at the policy's `max_session_minutes`, or 480 when the policy sets none.
+          description: >-
+            Requested grant duration. Capped at the approval grant's `max_session_minutes`, the
+            shortest when several grants make the caller eligible, or 480 when it sets none.
         extends_request_id:
           type: string
           description: >-
@@ -5967,7 +6120,7 @@ components:
           minimum: 1
           description: >-
             Approve only: grant this many minutes instead of `requested_minutes`. Must not exceed
-            the policy's maximum (`400 duration_too_long`). The requested figure stays on the record.
+            the approval grant's maximum (`400 duration_too_long`). The requested figure stays on the record.
     # ---------------------------------------------------------------- autoscaling
     AutoscalingGroup:
       type: object
@@ -6262,16 +6415,25 @@ components:
             $ref: "#/components/schemas/Protocol"
         allowed_protocols:
           type: array
-          description: Intersection of policy protocols and capabilities. The UI enables a button only for protocols listed here.
+          description: The protocols the caller's grants give on it, intersected with its capabilities. The UI enables a button only for protocols listed here.
           items:
             $ref: "#/components/schemas/Protocol"
         requires_approval:
           type: array
           description: >-
             Protocols the caller may reach only through just-in-time approval (ADR 0018) — the
-            target is matched for them by approval-gated policies alone. The UI shows a Request
+            target is covered for them by approval grants alone. The UI shows a Request
             button rather than Connect. Absent or empty when every allowed protocol has standing
             access.
+          items:
+            $ref: "#/components/schemas/Protocol"
+        own_login:
+          type: array
+          description: >-
+            Protocols on which the caller may sign in with their own login instead of the
+            target's (ADR 0036): a grant that admits them says `sign_in: own`. Where another
+            grant lets the target decide, the UI offers *Use my own login* beside the protocol;
+            where none does, the connect must carry `credential`. Absent when there are none.
           items:
             $ref: "#/components/schemas/Protocol"
         host_key_ready:
@@ -6296,7 +6458,8 @@ components:
     UserSuppliedCredential:
       type: object
       description: >-
-        Sent only when the target's credential for that protocol has `mode=user_supplied`. Never
+        Sent only when the target's credential for that protocol has `mode=user_supplied`, or
+        when the caller signs in with their own login on a protocol `own_login` lists. Never
         stored. A username with a `password`, or, for `ssh` only, with the person's own
         `private_key` (OpenSSH, PKCS#8 or PKCS#1, at most 16 KiB) and its
         `private_key_passphrase` when it is encrypted; the key is unlocked when the ticket is

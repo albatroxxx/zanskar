@@ -684,7 +684,7 @@ func (pv *Provisioner) syncGroups(ctx context.Context, p *Opened, id Identity, u
 			res.GroupsRemoved = append(res.GroupsRemoved, gid)
 			delete(before, gid)
 			if pv.Revoker != nil {
-				res.LiveSessionsEnded += pv.Revoker.GroupMembersRemoved(ctx, gid, []string{userID})
+				res.LiveSessionsEnded += pv.Revoker.Recheck(ctx, []string{userID})
 			}
 		}
 	}

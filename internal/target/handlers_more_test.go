@@ -20,6 +20,8 @@ import (
 	"github.com/albatroxxx/zanskar/internal/credential"
 	"github.com/albatroxxx/zanskar/internal/gateway"
 	"github.com/albatroxxx/zanskar/internal/policy"
+	"github.com/albatroxxx/zanskar/internal/policy/policytest"
+	"github.com/albatroxxx/zanskar/internal/protocol"
 	"github.com/albatroxxx/zanskar/internal/store"
 	"github.com/albatroxxx/zanskar/internal/user"
 )
@@ -149,7 +151,7 @@ func TestDeleteMissingAndManyBlockers(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, name := range []string{"ops-a", "ops-b"} {
-		pol := &policy.Policy{Name: name, UserID: alice.ID, Enabled: true, Selector: policy.Selector{Targets: []string{id}}, Protocols: []string{"ssh"}, IdleTimeoutMinutes: 15}
+		pol := policytest.Policy(name, []policy.Subject{policytest.User(alice.ID)}, policytest.Named(protocol.KindHost, []string{id}, "ssh"))
 		if err := e.policies.Create(ctx, pol); err != nil {
 			t.Fatal(err)
 		}

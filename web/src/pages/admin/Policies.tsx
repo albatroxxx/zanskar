@@ -1,42 +1,31 @@
-import { protocolName } from '../../api/format'
 import { useState } from 'react'
+import { Link } from 'react-router-dom'
 import { api, errorMessage } from '../../api/client'
-import { canConnect } from '../../auth/home'
-import type { Group, Policy, PolicyRule, Protocol, Target, TimeWindow, AutoscalingGroup, User } from '../../api/types'
-import { useSubmit } from '../../components/submit'
-import { Alert, Badge, Confirm, Empty, Field, FormModal, PageHead } from '../../components/ui'
-import { policyProtocols, useList } from './lib'
-import { TagEditor } from '../../components/TagEditor'
-import { rowsToTags, tagRows, tagSuggestions, type TagRow } from '../../components/tags'
+import type { AutoscalingGroup, Group, Policy, Target, User } from '../../api/types'
 import { StateIcon } from '../../components/icons'
+import { Alert, Badge, Confirm, Empty, PageHead } from '../../components/ui'
+import { useList } from './lib'
+import { grantSummary, whoSummary } from './policyModel'
 
-const days = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun']
-
-function selectorSummary(p: Policy, targets: Target[], asgs: AutoscalingGroup[]) {
-  const parts: string[] = []
-  const tags = Object.entries(p.target_selector.tags ?? {})
-  if (tags.length) parts.push(tags.map(([k, v]) => `${k}: ${v}`).join(', '))
-  const ids = p.target_selector.targets ?? []
-  if (ids.length) parts.push(ids.map((id) => targets.find((t) => t.id === id)?.name ?? id.slice(0, 8)).join(', '))
-  if (p.target_selector.asgs?.length) parts.push(p.target_selector.asgs.map((id) => 'ASG ' + (asgs.find((g) => g.id === id)?.name ?? id.slice(0, 8))).join(', '))
-  return parts.join(' · ') || '—'
-}
-
+/**
+ * Policies lists the access policies (ADR 0036): who each applies to and one
+ * line per grant. Adding and editing happen on a page of their own.
+ */
 export function Policies() {
   const { items, err, setErr, reload } = useList<Policy>('/access-policies')
   const groups = useList<Group>('/groups')
   const users = useList<User>('/users')
-  const targets = useList<Target>('/targets')
+  const targets = useList<Target>('/targets', { limit: 500 })
   const asgs = useList<AutoscalingGroup>('/autoscaling-groups')
-  const [editing, setEditing] = useState<Policy | 'new' | null>(null)
   const [deleting, setDeleting] = useState<Policy | null>(null)
   const groupName = (id: string) => groups.items?.find((g) => g.id === id)?.name ?? id.slice(0, 8)
   const userName = (id: string) => users.items?.find((u) => u.id === id)?.username ?? id.slice(0, 8)
+  const nameOf = (id: string) => targets.items?.find((t) => t.id === id)?.name ?? asgs.items?.find((g) => g.id === id)?.name ?? id.slice(0, 8)
 
   return (
     <>
-      <PageHead title="Access policies" lead="When policies overlap, the shortest idle timeout wins.">
-        <button className="btn primary" onClick={() => setEditing('new')}>Add policy</button>
+      <PageHead title="Access policies" lead="Standing access wins over approval; where grants overlap, each limit is the strictest.">
+        <Link className="btn primary" to="/admin/policies/new">Add policy</Link>
       </PageHead>
       {err && <Alert tone="danger">{err}</Alert>}
       <div className="card table-wrap">
@@ -49,11 +38,8 @@ export function Policies() {
             <thead>
               <tr>
                 <th>Name</th>
-                <th>Applies to</th>
-                <th>Protocols</th>
-                <th>Targets</th>
-                <th>Windows</th>
-                <th>Idle / max</th>
+                <th>Who</th>
+                <th>Grants</th>
                 <th>Enabled</th>
                 <th><span className="sr-only">Actions</span></th>
               </tr>
@@ -65,24 +51,17 @@ export function Policies() {
                     <strong>{p.name}</strong>
                     {p.description && <div className="muted">{p.description}</div>}
                   </td>
+                  <td>{p.subjects.length === 0 ? <Badge tone="warn">no one</Badge> : whoSummary(p, groupName, userName)}</td>
                   <td>
-                    {p.user_id ? (
-                      <>
-                        <strong>{userName(p.user_id)}</strong> <Badge>user</Badge>
-                      </>
+                    {p.grants.length === 0 ? (
+                      <Badge tone="warn">no grants</Badge>
                     ) : (
-                      <>
-                        {groupName(p.group_id ?? '')} <Badge>group</Badge>
-                      </>
+                      p.grants.map((g, i) => <div key={g.id ?? i} className="grant-line">{grantSummary(g, nameOf)}</div>)
                     )}
                   </td>
-                  <td>{p.protocols.map((x) => <Badge key={x} tone="accent">{x}</Badge>)}{(p.rules?.length ?? 0) > 0 && <div className="muted">+ {p.rules!.length} {p.rules!.length === 1 ? 'rule' : 'rules'}</div>}</td>
-                  <td>{selectorSummary(p, targets.items ?? [], asgs.items ?? [])}{(p.rules?.length ?? 0) > 0 && <div className="muted">{p.rules!.map((r, i) => <span key={i}>{i > 0 ? '; ' : ''}{ruleSummary(r, targets.items ?? [], asgs.items ?? [])}</span>)}</div>}</td>
-                  <td>{p.time_windows.length === 0 ? <span className="muted">always</span> : p.time_windows.length}</td>
-                  <td>{p.idle_timeout_minutes} m / {p.max_session_minutes ? `${p.max_session_minutes} m` : '∞'}</td>
                   <td>{p.enabled ? <StateIcon state="ok" label="Enabled" /> : <StateIcon state="unknown" label="Disabled" />}</td>
                   <td className="actions">
-                    <button className="btn sm" onClick={() => setEditing(p)}>Edit</button>
+                    <Link className="btn sm" to={`/admin/policies/${p.id}`}>Edit</Link>
                     <button className="btn sm danger" onClick={() => setDeleting(p)}>Delete</button>
                   </td>
                 </tr>
@@ -91,24 +70,10 @@ export function Policies() {
           </table>
         )}
       </div>
-      {editing && (
-        <PolicyForm
-          initial={editing === 'new' ? undefined : editing}
-          groups={groups.items ?? []}
-          users={users.items ?? []}
-          targets={targets.items ?? []}
-          asgs={asgs.items ?? []}
-          onClose={() => setEditing(null)}
-          onSaved={() => {
-            setEditing(null)
-            void reload()
-          }}
-        />
-      )}
       {deleting && (
         <Confirm
           title={`Delete policy ${deleting.name}?`}
-          body={deleting.user_id ? `${userName(deleting.user_id)} loses the access it granted, and any live session it allowed ends now.` : 'Users in its group lose the access it granted, and any live session it allowed ends now.'}
+          body="Its people lose this access; their live sessions are re-checked and end if nothing else admits them."
           confirmLabel="Delete"
           danger
           onClose={() => setDeleting(null)}
@@ -124,300 +89,5 @@ export function Policies() {
         />
       )}
     </>
-  )
-}
-
-type Subject = 'group' | 'user'
-
-/** A rule as edited: tags as rows, ids as lists, like the base fields. */
-interface RuleDraft { tags: TagRow[]; targets: string[]; asgs: string[]; protocols: Protocol[] }
-
-function toggleIn<T>(list: T[], v: T): T[] {
-  return list.includes(v) ? list.filter((x) => x !== v) : [...list, v]
-}
-
-/** ruleSummary reads one rule for the list: its protocols, then what it selects. */
-function ruleSummary(r: PolicyRule, targets: Target[], asgs: AutoscalingGroup[]): string {
-  const sel = r.target_selector
-  const parts: string[] = []
-  if (sel.tags && Object.keys(sel.tags).length) parts.push(Object.entries(sel.tags).map(([k, v]) => `${k}: ${v}`).join(', '))
-  if (sel.targets?.length) parts.push(sel.targets.map((id) => targets.find((t) => t.id === id)?.name ?? id.slice(0, 8)).join(', '))
-  if (sel.asgs?.length) parts.push(sel.asgs.map((id) => asgs.find((g) => g.id === id)?.name ?? id.slice(0, 8)).join(', '))
-  return `${r.protocols.join('/')} → ${parts.join(' · ')}`
-}
-
-interface FormState {
-  name: string
-  description: string
-  enabled: boolean
-  subject: Subject
-  group_id: string
-  user_id: string
-  tags: TagRow[]
-  targets: string[]
-  asgs: string[]
-  protocols: Protocol[]
-  /** Extra rules, edited with the same pickers as the base. */
-  rules: RuleDraft[]
-  windows: TimeWindow[]
-  idle: string
-  max: string
-  retention: string
-  allow_clipboard: boolean
-  allow_file_transfer: boolean
-  require_mfa: boolean
-  require_approval: boolean
-}
-
-function PolicyForm({ initial, groups, users, targets, asgs, onClose, onSaved }: { initial?: Policy; groups: Group[]; users: User[]; targets: Target[]; asgs: AutoscalingGroup[]; onClose: () => void; onSaved: () => void }) {
-  const [f, setF] = useState<FormState>({
-    name: initial?.name ?? '',
-    description: initial?.description ?? '',
-    enabled: initial?.enabled ?? true,
-    subject: initial?.user_id ? 'user' : 'group',
-    group_id: initial?.group_id ?? groups[0]?.id ?? '',
-    user_id: initial?.user_id ?? users.find(canConnect)?.id ?? '',
-    tags: tagRows(initial?.target_selector.tags),
-    targets: initial?.target_selector.targets ?? [],
-    asgs: initial?.target_selector.asgs ?? [],
-    protocols: initial?.protocols ?? (initial?.rules?.length ? [] : ['ssh']),
-    rules: (initial?.rules ?? []).map((r) => ({ tags: tagRows(r.target_selector.tags), targets: r.target_selector.targets ?? [], asgs: r.target_selector.asgs ?? [], protocols: r.protocols })),
-    windows: initial?.time_windows ?? [],
-    idle: String(initial?.idle_timeout_minutes ?? 15),
-    max: initial?.max_session_minutes ? String(initial.max_session_minutes) : '',
-    retention: initial?.retention_days ? String(initial.retention_days) : '',
-    allow_clipboard: initial?.allow_clipboard ?? false,
-    allow_file_transfer: initial?.allow_file_transfer ?? false,
-    require_mfa: initial?.require_mfa ?? true,
-    require_approval: initial?.require_approval ?? false,
-  })
-  const { busy, err, setErr, submit } = useSubmit()
-  // The server refuses a review-only subject (422); the picker leaves it out.
-  const subjects = users.filter(canConnect)
-  // The tags in use, so a match is picked from what targets carry rather than retyped.
-  const suggest = tagSuggestions([...targets, ...asgs])
-  const up = (patch: Partial<FormState>) => setF({ ...f, ...patch })
-  const toggleProto = (p: Protocol) => up({ protocols: f.protocols.includes(p) ? f.protocols.filter((x) => x !== p) : [...f.protocols, p] })
-  const toggleTarget = (id: string) => up({ targets: f.targets.includes(id) ? f.targets.filter((x) => x !== id) : [...f.targets, id] })
-  const toggleAsg = (id: string) => up({ asgs: f.asgs.includes(id) ? f.asgs.filter((x) => x !== id) : [...f.asgs, id] })
-  const setWindow = (i: number, patch: Partial<TimeWindow>) => up({ windows: f.windows.map((w, j) => (j === i ? { ...w, ...patch } : w)) })
-  const setRule = (i: number, patch: Partial<RuleDraft>) => up({ rules: f.rules.map((r, j) => (j === i ? { ...r, ...patch } : r)) })
-
-  const save = () => {
-    const { tags, error } = rowsToTags(f.tags, { valueRequired: true })
-    if (error) return setErr(error)
-    if (f.subject === 'group' && !f.group_id) return setErr('choose a group')
-    if (f.subject === 'user' && !f.user_id) return setErr('choose a user')
-    const baseEmpty = Object.keys(tags).length === 0 && f.targets.length === 0 && f.asgs.length === 0
-    if (baseEmpty !== (f.protocols.length === 0)) return setErr(baseEmpty ? 'the main rule has protocols but no targets: pick targets, or clear its protocols and use rules only' : 'the main rule has targets but no protocol')
-    if (baseEmpty && f.rules.length === 0) return setErr('select targets by tag, by name, or an autoscaling group, or add a rule')
-    const rules: PolicyRule[] = []
-    for (const [i, r] of f.rules.entries()) {
-      const parsed = rowsToTags(r.tags, { valueRequired: true })
-      if (parsed.error) return setErr(`rule ${i + 1}: ${parsed.error}`)
-      const empty = Object.keys(parsed.tags).length === 0 && r.targets.length === 0 && r.asgs.length === 0
-      if (empty) return setErr(`rule ${i + 1}: select targets by tag, by name, or an autoscaling group`)
-      if (r.protocols.length === 0) return setErr(`rule ${i + 1}: choose at least one protocol`)
-      rules.push({ target_selector: { ...(Object.keys(parsed.tags).length ? { tags: parsed.tags } : {}), ...(r.targets.length ? { targets: r.targets } : {}), ...(r.asgs.length ? { asgs: r.asgs } : {}) }, protocols: r.protocols })
-    }
-    const idle = Number(f.idle)
-    if (!Number.isInteger(idle) || idle < 1) return setErr('idle timeout must be a whole number of minutes')
-    const max = f.max.trim() ? Number(f.max) : null
-    const retention = f.retention.trim() ? Number(f.retention) : null
-    if (retention !== null && (!Number.isInteger(retention) || retention < 1 || retention > 3650)) {
-      setErr('retention must be 1-3650 days')
-      return
-    }
-    if (max !== null && (!Number.isInteger(max) || max < 1)) return setErr('max session must be a whole number of minutes')
-    void submit(async () => {
-      const body = {
-        name: f.name.trim(),
-        description: f.description,
-        enabled: f.enabled,
-        ...(f.subject === 'group' ? { group_id: f.group_id } : { user_id: f.user_id }),
-        target_selector: { ...(Object.keys(tags).length ? { tags } : {}), ...(f.targets.length ? { targets: f.targets } : {}), ...(f.asgs.length ? { asgs: f.asgs } : {}) },
-        protocols: f.protocols,
-        rules,
-        time_windows: f.windows.map((w) => ({ ...w, tz: w.tz || 'UTC' })),
-        idle_timeout_minutes: idle,
-        max_session_minutes: max,
-        retention_days: retention,
-        allow_clipboard: f.allow_clipboard,
-        allow_file_transfer: f.allow_file_transfer,
-        require_mfa: f.require_mfa,
-        require_approval: f.require_approval,
-      }
-      if (initial) await api.put(`/access-policies/${initial.id}`, body)
-      else await api.post('/access-policies', body)
-      onSaved()
-    })
-  }
-
-  return (
-    <FormModal title={initial ? `Edit ${initial.name}` : 'Add policy'} width={720} err={err} busy={busy} submitLabel={initial ? 'Save' : 'Create'} onSubmit={save} onClose={onClose}>
-      <div className="form-grid">
-        <Field label="Name">
-          <input id="p-name" value={f.name} onChange={(e) => up({ name: e.target.value })} required autoFocus />
-        </Field>
-        <Field label="Description">
-          <input id="p-desc" value={f.description} onChange={(e) => up({ description: e.target.value })} />
-        </Field>
-      </div>
-      <Field label="Applies to">
-        <div className="actions" role="radiogroup" aria-label="Applies to">
-          <span className="field inline" style={{ margin: 0 }}>
-            <input id="p-subject-group" type="radio" name="p-subject" checked={f.subject === 'group'} onChange={() => up({ subject: 'group' })} />
-            <label htmlFor="p-subject-group">A group</label>
-          </span>
-          <span className="field inline" style={{ margin: 0 }}>
-            <input id="p-subject-user" type="radio" name="p-subject" checked={f.subject === 'user'} onChange={() => up({ subject: 'user' })} />
-            <label htmlFor="p-subject-user">One user</label>
-          </span>
-        </div>
-      </Field>
-      {f.subject === 'group' ? (
-        <Field label="Group">
-          <select id="p-group" value={f.group_id} onChange={(e) => up({ group_id: e.target.value })} required>
-            {groups.length === 0 && <option value="">no groups yet</option>}
-            {groups.map((g) => (
-              <option key={g.id} value={g.id}>{g.name}</option>
-            ))}
-          </select>
-        </Field>
-      ) : (
-        <Field label="User" hint="Review-only accounts are not listed">
-          <select id="p-user" value={f.user_id} onChange={(e) => up({ user_id: e.target.value })} required>
-            {subjects.length === 0 && <option value="">no users can be granted access yet</option>}
-            {subjects.map((u) => (
-              <option key={u.id} value={u.id}>{u.username}{u.display_name && u.display_name !== u.username ? ` (${u.display_name})` : ''}</option>
-            ))}
-          </select>
-        </Field>
-      )}
-      <h2>Targets</h2>
-      <div className="form-grid">
-        <Field label="By tag" hint="All must match">
-          <TagEditor idPrefix="p-tag" rows={f.tags} onChange={(tags) => up({ tags })} suggest={suggest} />
-        </Field>
-        <Field label="By name">
-          <div style={{ maxHeight: 120, overflowY: 'auto', border: '1px solid var(--line)', borderRadius: 6, padding: 6 }}>
-            {targets.length === 0 && <span className="muted">no targets defined</span>}
-            {targets.map((t) => (
-              <div key={t.id} className="field inline" style={{ margin: '2px 0' }}>
-                <input id={`p-target-${t.id}`} type="checkbox" checked={f.targets.includes(t.id)} onChange={() => toggleTarget(t.id)} />
-                <label htmlFor={`p-target-${t.id}`}>{t.name}</label>
-              </div>
-            ))}
-          </div>
-        </Field>
-        <Field label="Autoscaling groups" hint="Every healthy instance of a selected group">
-          <div style={{ maxHeight: 120, overflowY: 'auto', border: '1px solid var(--line)', borderRadius: 6, padding: 6 }}>
-            {asgs.length === 0 && <span className="muted">no autoscaling groups enrolled</span>}
-            {asgs.map((g) => (
-              <div key={g.id} className="field inline" style={{ margin: '2px 0' }}>
-                <input id={`p-asg-${g.id}`} type="checkbox" checked={f.asgs.includes(g.id)} onChange={() => toggleAsg(g.id)} />
-                <label htmlFor={`p-asg-${g.id}`}>{g.name}</label>
-              </div>
-            ))}
-          </div>
-        </Field>
-      </div>
-      <Field label="Protocols">
-        <div className="actions">
-          {policyProtocols.map((p) => (
-            <span key={p} className="field inline" style={{ margin: 0 }}>
-              <input id={`p-proto-${p}`} type="checkbox" checked={f.protocols.includes(p)} onChange={() => toggleProto(p)} />
-              <label htmlFor={`p-proto-${p}`}>{protocolName(p)}</label>
-            </span>
-          ))}
-        </div>
-      </Field>
-      <h2>More rules <span className="muted" style={{ fontWeight: 400, fontSize: '0.85rem' }}>(optional)</span></h2>
-      {f.rules.map((r, i) => (
-        <div key={i} className="card" style={{ padding: 12, marginBottom: 8 }}>
-          <div className="form-grid">
-            <Field label="By tag" hint="All must match">
-              <TagEditor idPrefix={`p-r${i}-tag`} rows={r.tags} onChange={(tags) => setRule(i, { tags })} suggest={suggest} />
-            </Field>
-            <Field label="By name">
-              <div style={{ maxHeight: 120, overflowY: 'auto', border: '1px solid var(--line)', borderRadius: 6, padding: 6 }}>
-                {targets.length === 0 && <span className="muted">no targets defined</span>}
-                {targets.map((t) => (
-                  <div key={t.id} className="field inline" style={{ margin: '2px 0' }}>
-                    <input id={`p-r${i}-target-${t.id}`} type="checkbox" checked={r.targets.includes(t.id)} onChange={() => setRule(i, { targets: toggleIn(r.targets, t.id) })} />
-                    <label htmlFor={`p-r${i}-target-${t.id}`}>{t.name}</label>
-                  </div>
-                ))}
-              </div>
-            </Field>
-            <Field label="Autoscaling groups">
-              <div style={{ maxHeight: 120, overflowY: 'auto', border: '1px solid var(--line)', borderRadius: 6, padding: 6 }}>
-                {asgs.length === 0 && <span className="muted">no autoscaling groups enrolled</span>}
-                {asgs.map((g) => (
-                  <div key={g.id} className="field inline" style={{ margin: '2px 0' }}>
-                    <input id={`p-r${i}-asg-${g.id}`} type="checkbox" checked={r.asgs.includes(g.id)} onChange={() => setRule(i, { asgs: toggleIn(r.asgs, g.id) })} />
-                    <label htmlFor={`p-r${i}-asg-${g.id}`}>{g.name}</label>
-                  </div>
-                ))}
-              </div>
-            </Field>
-          </div>
-          <Field label="Protocols">
-            <div className="actions">
-              {policyProtocols.map((p) => (
-                <span key={p} className="field inline" style={{ margin: 0 }}>
-                  <input id={`p-r${i}-proto-${p}`} type="checkbox" checked={r.protocols.includes(p)} onChange={() => setRule(i, { protocols: toggleIn(r.protocols, p) })} />
-                  <label htmlFor={`p-r${i}-proto-${p}`}>{protocolName(p)}</label>
-                </span>
-              ))}
-            </div>
-          </Field>
-          <button type="button" className="btn sm" onClick={() => up({ rules: f.rules.filter((_, j) => j !== i) })}>Remove rule</button>
-        </div>
-      ))}
-      <button type="button" className="btn sm" onClick={() => up({ rules: [...f.rules, { tags: [], targets: [], asgs: [], protocols: [] }] })}>Add rule</button>
-      <h2 style={{ marginTop: 16 }}>Time windows <span className="muted" style={{ fontWeight: 400, fontSize: '0.85rem' }}>(none = always)</span></h2>
-      {f.windows.map((w, i) => (
-        <div key={i} className="card" style={{ padding: 12, marginBottom: 8 }}>
-          <div className="actions" style={{ marginBottom: 8 }}>
-            {days.map((d) => (
-              <span key={d} className="field inline" style={{ margin: 0 }}>
-                <input id={`p-w${i}-${d}`} type="checkbox" checked={w.days.includes(d)} onChange={() => setWindow(i, { days: w.days.includes(d) ? w.days.filter((x) => x !== d) : [...w.days, d] })} />
-                <label htmlFor={`p-w${i}-${d}`}>{d}</label>
-              </span>
-            ))}
-          </div>
-          <div className="form-grid">
-            <Field label="From (HH:MM)"><input id={`p-w${i}-from`} value={w.from} onChange={(e) => setWindow(i, { from: e.target.value })} placeholder="09:00" required /></Field>
-            <Field label="To (HH:MM)"><input id={`p-w${i}-to`} value={w.to} onChange={(e) => setWindow(i, { to: e.target.value })} placeholder="18:00" required /></Field>
-            <Field label="Time zone"><input id={`p-w${i}-tz`} value={w.tz} onChange={(e) => setWindow(i, { tz: e.target.value })} placeholder="UTC" /></Field>
-          </div>
-          <button type="button" className="btn sm" onClick={() => up({ windows: f.windows.filter((_, j) => j !== i) })}>Remove window</button>
-        </div>
-      ))}
-      <button type="button" className="btn sm" onClick={() => up({ windows: [...f.windows, { days: ['mon', 'tue', 'wed', 'thu', 'fri'], from: '09:00', to: '18:00', tz: 'UTC' }] })}>Add window</button>
-      <h2 style={{ marginTop: 16 }}>Limits</h2>
-      <div className="form-grid">
-        <Field label="Idle timeout (minutes)"><input id="p-idle" inputMode="numeric" value={f.idle} onChange={(e) => up({ idle: e.target.value })} required /></Field>
-        <Field label="Max session (minutes, blank = none)"><input id="p-max" inputMode="numeric" value={f.max} onChange={(e) => up({ max: e.target.value })} /></Field>
-        <Field label="Keep recordings (days, blank = global policy)" hint="A target's own value wins over this"><input id="p-retention" inputMode="numeric" value={f.retention} onChange={(e) => up({ retention: e.target.value })} /></Field>
-      </div>
-      <div className="actions">
-        {(
-          [
-            ['allow_clipboard', 'Allow clipboard (RDP and VNC)'],
-            ['allow_file_transfer', 'Allow file transfer'],
-            ['require_mfa', 'Require an enrolled authenticator'],
-            ['require_approval', 'Require approval (just-in-time access)'],
-            ['enabled', 'Enabled'],
-          ] as const
-        ).map(([k, label]) => (
-          <span key={k} className="field inline" style={{ margin: 0 }}>
-            <input id={`p-${k}`} type="checkbox" checked={f[k]} onChange={(e) => up({ [k]: e.target.checked } as Partial<FormState>)} />
-            <label htmlFor={`p-${k}`}>{label}</label>
-          </span>
-        ))}
-      </div>
-    </FormModal>
   )
 }

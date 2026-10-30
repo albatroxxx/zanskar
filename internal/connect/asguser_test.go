@@ -25,6 +25,8 @@ import (
 	"github.com/albatroxxx/zanskar/internal/group"
 	"github.com/albatroxxx/zanskar/internal/keyring"
 	"github.com/albatroxxx/zanskar/internal/policy"
+	"github.com/albatroxxx/zanskar/internal/policy/policytest"
+	"github.com/albatroxxx/zanskar/internal/protocol"
 	"github.com/albatroxxx/zanskar/internal/session"
 	"github.com/albatroxxx/zanskar/internal/store"
 	"github.com/albatroxxx/zanskar/internal/store/storetest"
@@ -78,7 +80,7 @@ func newASGEnv(t *testing.T) *asgEnv {
 	if err := asgs.Create(ctx, ag); err != nil {
 		t.Fatal(err)
 	}
-	pol := &policy.Policy{Name: "ops-web", GroupID: g.ID, Enabled: true, Selector: policy.Selector{ASGs: []string{ag.ID}}, Protocols: []string{"ssh"}, IdleTimeoutMinutes: 15}
+	pol := policytest.Policy("ops-web", []policy.Subject{policytest.Group(g.ID)}, policytest.Named(protocol.KindAutoscaling, []string{ag.ID}, "ssh"))
 	if err := policy.NewRepo(db).Create(ctx, pol); err != nil {
 		t.Fatal(err)
 	}
@@ -247,7 +249,9 @@ func TestASGWindowsSessionAllowed(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	pols[0].Protocols = []string{"rdp", "winrm"}
+	for i := range pols[0].Grants[0].Targets {
+		pols[0].Grants[0].Targets[i].Protocols = []string{"rdp", "winrm"}
+	}
 	if err := e.h.Policies.Update(ctx, pols[0]); err != nil {
 		t.Fatal(err)
 	}
@@ -304,7 +308,7 @@ func TestASGApprovalGated(t *testing.T) {
 	if err != nil || len(pols) != 1 {
 		t.Fatalf("policies: %v %v", pols, err)
 	}
-	pols[0].RequireApproval = true
+	pols[0].Grants[0].Access = policy.AccessApproval
 	if err := e.h.Policies.Update(ctx, pols[0]); err != nil {
 		t.Fatal(err)
 	}

@@ -13,6 +13,7 @@ import (
 	"github.com/albatroxxx/zanskar/internal/gateway"
 	"github.com/albatroxxx/zanskar/internal/httpx"
 	"github.com/albatroxxx/zanskar/internal/policy"
+	"github.com/albatroxxx/zanskar/internal/protocol"
 	"github.com/albatroxxx/zanskar/internal/session"
 	"github.com/albatroxxx/zanskar/internal/target"
 )
@@ -50,7 +51,7 @@ func (h *Handler) myInstances(w http.ResponseWriter, r *http.Request) {
 	}
 	allowed := false
 	for _, proto := range g.Capabilities {
-		if policy.Evaluate(pols, policy.TargetRef{ASGID: g.ID, Tags: g.Tags}, string(proto), time.Now()).Allowed {
+		if policy.Evaluate(pols, policy.TargetRef{Kind: protocol.KindAutoscaling, ASGID: g.ID, Tags: g.Tags}, string(proto), time.Now()).Allowed {
 			allowed = true
 			break
 		}
