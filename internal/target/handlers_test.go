@@ -274,6 +274,12 @@ func TestDeleteCascades(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	// The stored time, not Create's: the database keeps less precision than
+	// a Linux clock, so the two never compare equal there.
+	stored, err := e.policies.Get(ctx, untouched.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
 	e.requests.open = 2
 	onWeb1 := e.live.Add(ctx, gateway.Live{SessionID: "s1", UserID: alice.ID, TargetID: id, Protocol: "ssh"})
 	onWeb2 := e.live.Add(ctx, gateway.Live{SessionID: "s2", UserID: alice.ID, TargetID: other, Protocol: "ssh"})
@@ -312,7 +318,7 @@ func TestDeleteCascades(t *testing.T) {
 	if g := got(tagged).Grants; len(g) != 1 || g[0].Tags == nil {
 		t.Fatalf("tagged keeps its tag rule and loses the emptied grant: %+v", g)
 	}
-	if !got(untouched).UpdatedAt.Equal(untouched.UpdatedAt) {
+	if !got(untouched).UpdatedAt.Equal(stored.UpdatedAt) {
 		t.Fatal("a policy that never named the target was rewritten")
 	}
 	if len(e.requests.closed) != 1 || e.requests.closed[0] != id+":target deleted" {

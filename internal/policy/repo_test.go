@@ -224,6 +224,12 @@ func TestRemoveTargetOnEachBackend(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
+		// The stored time, not Create's: the database keeps less precision
+		// than a Linux clock, so the two never compare equal there.
+		stored, err := r.Get(ctx, ps[3].ID)
+		if err != nil {
+			t.Fatal(err)
+		}
 		tx, err := db.BeginTx(ctx, nil)
 		if err != nil {
 			t.Fatal(err)
@@ -259,7 +265,7 @@ func TestRemoveTargetOnEachBackend(t *testing.T) {
 		if g := get(2).Grants; len(g) != 1 || g[0].Tags == nil || len(g[0].Targets) != 0 {
 			t.Fatalf("c-tagged: %+v", g)
 		}
-		if p := get(3); !p.UpdatedAt.Equal(ps[3].UpdatedAt) || len(p.Grants[0].Targets) != 1 {
+		if p := get(3); !p.UpdatedAt.Equal(stored.UpdatedAt) || len(p.Grants[0].Targets) != 1 {
 			t.Fatalf("d-other was rewritten: %+v", p)
 		}
 		if g := get(4).Grants; len(g) != 1 || g[0].Targets[0].ID != "t1" {

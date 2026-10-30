@@ -98,11 +98,19 @@ func TestACMEFallsBackAndBacksOff(t *testing.T) {
 	// handshake must not wait for that (2026-10-30, found by this test).
 	m.ACME.Wait = 200 * time.Millisecond
 	start := time.Now()
-	if serve("gw.example.com") != self || asked.Load() == 0 {
-		t.Fatal("a covered name must try the CA, then fall back")
+	if serve("gw.example.com") != self {
+		t.Fatal("a covered name must fall back while the CA fails")
 	}
 	if took := time.Since(start); took > 3*time.Second {
 		t.Fatalf("a handshake waited %s for a failing CA", took)
+	}
+	// The order runs on in the background; on a loaded runner it can reach
+	// the CA after the handshake has fallen back (CI, 2026-10-31).
+	for end := time.Now().Add(10 * time.Second); asked.Load() == 0 && time.Now().Before(end); {
+		time.Sleep(20 * time.Millisecond)
+	}
+	if asked.Load() == 0 {
+		t.Fatal("a covered name must try the CA")
 	}
 	// While that order runs, another handshake falls back at once rather
 	// than starting a second order.
