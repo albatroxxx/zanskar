@@ -289,6 +289,9 @@ func serve(ctx context.Context) error {
 		return err
 	}
 	authHandler.ExternalLogin = ldapExternalAuth{ldap.NewLogin(idpRepo, provisioner, auditLog, log)}
+	oidcHandler := &oidc.Handler{Providers: idpRepo, Provisioner: provisioner, Sessions: sessions, Audit: auditLog, Log: log, StateKey: stateKey, MFAEnrolled: totp.Enrolled, RequireMFA: requireMFA,
+		BaseURL: cfg.PublicURL, Ring: ring}
+	authHandler.ProviderLogout = oidcHandler.LogoutURL
 	vault := credential.NewVault(db, ring)
 	targets := target.NewRepo(db)
 	policies := policy.NewRepo(db)
@@ -340,13 +343,18 @@ func serve(ctx context.Context) error {
 	// The connect handler runs the bridges; the user, group and policy admin
 	// handlers hand it the changes that end live sessions (ADR 0013).
 	connectHandler := &connect.Handler{Targets: targets, Policies: policies, Access: accessReqs, Vault: vault, Sessions: sessionRepo, Tickets: ticket.NewStore(),
-		Registry: registry, Storage: storage, Audit: auditLog, Log: log, MFAEnrolled: totp.Enrolled, GuacdAddr: guacdAddr, Draining: restarter.Draining,
+		Registry: registry, Storage: storage, Audit: auditLog, Log: log, MFAEnrolled: idp.SecondFactor(users, idpRepo, totp.Enrolled), GuacdAddr: guacdAddr, Draining: restarter.Draining,
 		DockerPath: cfg.DockerPath, DBMaxSessions: cfg.DatabaseMaxSessions, DBProxyImage: func() string { return runtime.String(settings.KeyDBProxyImage) },
 		AppsMaxSessions: cfg.AppsMaxSessions, BrowserImage: func() string { return runtime.String(settings.KeyBrowserImage) }, StateDir: cfg.StateDir,
 		Prober: prober, ASGs: asgRepo, Cloud: cloudProviders}
 	// A sign-in through an identity provider that removes the user from a
 	// mapped group ends what that group granted, as an admin's removal does.
 	provisioner.Revoker = connectHandler
+	// The directory user sync (ADR 0035): people who join a Keycloak realm
+	// or an LDAP directory get an account before their first sign-in, and
+	// those who leave are disabled with their sessions ended.
+	userSync := &idp.Syncer{Providers: idpRepo, Provisioner: provisioner, Sessions: sessions, Audit: auditLog, Log: log,
+		Directories: map[idp.Type]idp.Directory{idp.TypeOIDC: &oidc.KeycloakDirectory{}, idp.TypeLDAP: &ldap.Authenticator{}}}
 	// The bell (ADR 0032): once a day, is there a newer release? The
 	// runtime setting is read before each check so a switch-off applies live.
 	versionCheck := &update.Checker{URL: cfg.UpdateManifestURL, Current: version.Version, Enabled: func() bool { return runtime.Bool(settings.KeyUpdateCheck) }, Log: log}
@@ -358,9 +366,8 @@ func serve(ctx context.Context) error {
 		Handlers: []server.Registrar{
 			&adminapi.AdminHandler{Users: users, Sessions: sessions, TOTP: totp, Revoker: connectHandler, Audit: auditLog, Log: log},
 			&group.AdminHandler{Groups: groups, Revoker: connectHandler, Audit: auditLog, Log: log},
-			&idpadmin.AdminHandler{Providers: idpRepo, Audit: auditLog, Log: log, LDAPTester: &ldap.Authenticator{}},
-			&oidc.Handler{Providers: idpRepo, Provisioner: provisioner, Sessions: sessions, Audit: auditLog, Log: log, StateKey: stateKey, MFAEnrolled: totp.Enrolled, RequireMFA: requireMFA,
-				BaseURL: cfg.PublicURL},
+			&idpadmin.AdminHandler{Providers: idpRepo, Audit: auditLog, Log: log, LDAPTester: &ldap.Authenticator{}, Sync: userSync},
+			oidcHandler,
 			&credential.AdminHandler{Vault: vault, Audit: auditLog, Log: log},
 			&target.AdminHandler{Repo: targets, Prober: prober, Policies: policies, Live: registry, Revoker: connectHandler, Vault: vault, Audit: auditLog, Log: log},
 			&policy.AdminHandler{Repo: policies, Users: users, Revoker: connectHandler, Audit: auditLog, Log: log},
@@ -387,6 +394,9 @@ func serve(ctx context.Context) error {
 
 	// Autoscaling: keep instance membership and health current (ADR 0011).
 	go syncer.Run(ctx)
+
+	// Directory users: joiners and leavers, per provider (ADR 0035).
+	go userSync.Run(ctx)
 
 	// Recording retention: delete recordings past the admin-configured policy
 	// (ADR 0015). Off until an admin sets a policy in the console.

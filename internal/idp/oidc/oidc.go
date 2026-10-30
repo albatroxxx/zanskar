@@ -31,11 +31,15 @@ import (
 	"github.com/albatroxxx/zanskar/internal/auth"
 	"github.com/albatroxxx/zanskar/internal/httpx"
 	"github.com/albatroxxx/zanskar/internal/idp"
+	"github.com/albatroxxx/zanskar/internal/keyring"
 )
 
 const (
 	stateCookieName = "zanskar_oidc"
 	stateTTL        = 10 * time.Minute
+	// signedOutState is the state a provider echoes when it sends the
+	// browser back to the callback after signing it out (LogoutURL).
+	signedOutState = "signed-out"
 )
 
 // Handler serves the public provider list and the OIDC start/callback pair.
@@ -58,6 +62,10 @@ type Handler struct {
 	// HTTPClient is used for discovery and token exchange; defaults to a
 	// 10 second timeout client.
 	HTTPClient *http.Client
+	// Ring seals the ID token a session keeps for signing out at the
+	// provider (ADR 0035); nil keeps none, and signing out then asks the
+	// provider to confirm.
+	Ring *keyring.Ring
 
 	cache sync.Map // idp id -> *cached
 }
@@ -133,6 +141,13 @@ func (h *Handler) start(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) callback(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
+	// Back from the provider's sign-out (LogoutURL): no code, no error, the
+	// sign-out state. On to the sign-in page; nothing was attempted, so
+	// nothing is recorded, and no session changes.
+	if q := r.URL.Query(); q.Get("state") == signedOutState && q.Get("code") == "" && q.Get("error") == "" {
+		http.Redirect(w, r, "/login", http.StatusFound)
+		return
+	}
 	ip := auth.ClientIP(r)
 	name, path := h.stateCookie()
 	c, err := r.Cookie(name)
@@ -186,18 +201,9 @@ func (h *Handler) callback(w http.ResponseWriter, r *http.Request) {
 		h.fail(w, r, "", id, "claims_invalid", err)
 		return
 	}
-	if len(cfg.AllowedDomains) > 0 {
-		// The gate means something only for an address the provider vouches
-		// for: on one where people edit their own, anyone could type in an
-		// allowed domain.
-		if !emailTrusted {
-			h.fail(w, r, "", id, "email_unverified", errors.New("the provider has not verified the email address"))
-			return
-		}
-		if !domainAllowed(ident.Email, cfg.AllowedDomains) {
-			h.fail(w, r, "", id, "domain_not_allowed", fmt.Errorf("email domain not allowed for %q", ident.Email))
-			return
-		}
+	if code, err := admit(ident, emailTrusted, cfg); err != nil {
+		h.fail(w, r, "", id, code, err)
+		return
 	}
 	res, err := h.Provisioner.Resolve(r.Context(), op, ident)
 	if err != nil {
@@ -216,9 +222,11 @@ func (h *Handler) callback(w http.ResponseWriter, r *http.Request) {
 		h.record(r, e)
 	}
 
+	// The provider's sign-in is the second factor (ADR 0035), unless the
+	// provider is marked as doing none and Zanskar asks for its own.
 	mfa := "provider"
 	verified := true
-	if !cfg.SkipMFA {
+	if cfg.ZanskarMFA {
 		enrolled := false
 		if h.MFAEnrolled != nil {
 			if enrolled, err = h.MFAEnrolled(r.Context(), u.ID); err != nil {
@@ -248,6 +256,12 @@ func (h *Handler) callback(w http.ResponseWriter, r *http.Request) {
 	if verified {
 		_ = h.Provisioner.Users.RecordLoginSuccess(r.Context(), u.ID)
 	}
+	// The session remembers the provider and its ID token so that signing
+	// out ends the provider's session too (ADR 0035). Failing to costs only
+	// that, so the sign-in goes on.
+	if err := h.rememberProvider(r.Context(), sess.ID, op.ID, rawID); err != nil {
+		h.Log.Warn("oidc: keep the provider for sign-out", "idp", id, "err", err)
+	}
 	h.Sessions.SetCookie(w, token)
 	h.record(r, audit.Actor{UserID: u.ID, IP: ip}.Event(audit.UserLogin, "user", u.ID, audit.Success,
 		map[string]string{"idp": id, "mfa": mfa, "session_id": sess.ID, "stage": map[bool]string{true: "complete", false: "password"}[verified]}))
@@ -261,6 +275,75 @@ func (h *Handler) callback(w http.ResponseWriter, r *http.Request) {
 		next = "/login?next=" + url.QueryEscape(next)
 	}
 	http.Redirect(w, r, next, http.StatusFound)
+}
+
+// rememberProvider records on the session the provider it signed in
+// through and the ID token, sealed to that session.
+func (h *Handler) rememberProvider(ctx context.Context, sessionID, idpID, rawIDToken string) error {
+	var (
+		enc []byte
+		ver int
+	)
+	if h.Ring != nil {
+		var err error
+		if enc, ver, err = h.Ring.Encrypt(keyring.AAD("auth_sessions", sessionID), []byte(rawIDToken)); err != nil {
+			return err
+		}
+	}
+	return h.Sessions.SetProvider(ctx, sessionID, idpID, enc, ver)
+}
+
+// LogoutURL is where the browser goes once a session has signed out, when
+// it signed in through a provider (ADR 0035): the provider's
+// end_session_endpoint (OpenID Connect RP-Initiated Logout) with the
+// session's ID token as id_token_hint and the client id. The way back,
+// post_logout_redirect_uri, is the provider's own callback with the
+// sign-out state, which the callback sends on to the sign-in page: a
+// provider accepts only an address it has registered, and refuses the
+// whole sign-out otherwise (Keycloak answers "Invalid redirect uri" and
+// keeps its session), while the callback is registered already, or no
+// sign-in would work. It is empty when the session signed in some other
+// way, the provider keeps its session (keep_provider_session), or it
+// publishes no https end_session_endpoint. It never stands in the way of
+// signing out: a problem is logged and the answer is empty.
+func (h *Handler) LogoutURL(r *http.Request, sessionID string) string {
+	ctx := r.Context()
+	idpID, enc, ver, err := h.Sessions.Provider(ctx, sessionID)
+	if err != nil || idpID == "" {
+		return ""
+	}
+	op, prov, cfg, err := h.open(ctx, idpID)
+	if err != nil {
+		h.Log.Warn("oidc: sign out at the provider", "idp", idpID, "err", err)
+		return ""
+	}
+	if cfg.KeepProviderSession {
+		return ""
+	}
+	var meta struct {
+		EndSession string `json:"end_session_endpoint"`
+	}
+	if err := prov.Claims(&meta); err != nil || meta.EndSession == "" {
+		return ""
+	}
+	u, err := url.Parse(meta.EndSession)
+	if err != nil || u.Scheme != "https" || u.Host == "" {
+		h.Log.Warn("oidc: provider's end_session_endpoint is not an https URL", "idp", idpID)
+		return ""
+	}
+	q := u.Query()
+	q.Set("client_id", cfg.ClientID)
+	q.Set("post_logout_redirect_uri", h.baseURL(r)+"/api/v1/auth/oidc/"+op.ID+"/callback")
+	q.Set("state", signedOutState)
+	if enc != nil && h.Ring != nil {
+		if raw, err := h.Ring.Decrypt(keyring.AAD("auth_sessions", sessionID), enc, ver); err == nil {
+			q.Set("id_token_hint", string(raw))
+		} else {
+			h.Log.Warn("oidc: unseal the session's ID token", "idp", op.ID, "err", err)
+		}
+	}
+	u.RawQuery = q.Encode()
+	return u.String()
 }
 
 // ---- helpers
@@ -343,8 +426,20 @@ func identityFromToken(idt *gooidc.IDToken, cfg *idp.OIDCConfig) (ident idp.Iden
 	if err := idt.Claims(&all); err != nil {
 		return idp.Identity{}, false, err
 	}
+	if idt.Subject == "" {
+		return idp.Identity{}, false, errors.New("no subject")
+	}
+	return identityFromClaims(idt.Subject, all, cfg)
+}
+
+// identityFromClaims is identityFromToken over claims already read: the
+// directory sync (KeycloakDirectory) builds them from the admin API, so that
+// a person listed there is asserted exactly as their sign-in would be.
+func identityFromClaims(subject string, all map[string]any, cfg *idp.OIDCConfig) (ident idp.Identity, emailTrusted bool, err error) {
 	var c claims
-	_ = idt.Claims(&c)
+	if raw, err := json.Marshal(all); err == nil {
+		_ = json.Unmarshal(raw, &c)
+	}
 	email := strings.ToLower(strings.TrimSpace(c.Email))
 	verified, said := emailVerified(c.EmailVerified)
 	if said && !verified {
@@ -362,7 +457,7 @@ func identityFromToken(idt *gooidc.IDToken, cfg *idp.OIDCConfig) (ident idp.Iden
 	if username == "" {
 		return idp.Identity{}, false, errors.New("no usable username claim")
 	}
-	ident = idp.Identity{ExternalID: idt.Subject, Username: username, DisplayName: c.Name, Email: email}
+	ident = idp.Identity{ExternalID: subject, Username: username, DisplayName: c.Name, Email: email}
 	if cfg.GroupsClaim != "" {
 		if raw, ok := all[cfg.GroupsClaim].([]any); ok {
 			for _, g := range raw {
@@ -373,6 +468,25 @@ func identityFromToken(idt *gooidc.IDToken, cfg *idp.OIDCConfig) (ident idp.Iden
 		}
 	}
 	return ident, emailTrusted, nil
+}
+
+// admit applies the provider's own gate on who may sign in: with allowed
+// email domains, an address the provider vouches for (emailTrusted) in one
+// of them. It answers the failure code a sign-in reports.
+func admit(ident idp.Identity, emailTrusted bool, cfg *idp.OIDCConfig) (string, error) {
+	if len(cfg.AllowedDomains) == 0 {
+		return "", nil
+	}
+	// The gate means something only for an address the provider vouches
+	// for: on one where people edit their own, anyone could type in an
+	// allowed domain.
+	if !emailTrusted {
+		return "email_unverified", errors.New("the provider has not verified the email address")
+	}
+	if !domainAllowed(ident.Email, cfg.AllowedDomains) {
+		return "domain_not_allowed", fmt.Errorf("email domain not allowed for %q", ident.Email)
+	}
+	return "", nil
 }
 
 // emailVerified reads the email_verified claim, a boolean or the string some

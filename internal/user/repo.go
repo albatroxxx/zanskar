@@ -22,7 +22,7 @@ type Repo struct {
 func NewRepo(db *store.DB) *Repo { return &Repo{db: db} }
 
 const userCols = `id, username, email, display_name, password_hash, status, idp_id, external_id,
-	failed_logins, locked_until, created_at, updated_at, last_login_at, must_change_password`
+	failed_logins, locked_until, created_at, updated_at, last_login_at, must_change_password, directory_removed_at`
 
 // Create inserts u with the given roles. u.ID, CreatedAt and UpdatedAt are set.
 // PasswordHash may be empty for externally authenticated users.
@@ -127,7 +127,10 @@ func (r *Repo) List(ctx context.Context, afterUsername string, limit int) ([]*Us
 	return out, next, nil
 }
 
-// Update changes display name, email and status.
+// Update changes display name, email and status. A change of status is an
+// administrator's decision and takes the account over from the directory
+// sync: the mark that the sync disabled it goes, so the sync no longer
+// enables it again (ADR 0035). Writing the status it already has keeps it.
 func (r *Repo) Update(ctx context.Context, id, displayName, email string, status Status) error {
 	if strings.TrimSpace(displayName) == "" {
 		return fmt.Errorf("%w: display name required", ErrInvalidInput)
@@ -137,8 +140,9 @@ func (r *Repo) Update(ctx context.Context, id, displayName, email string, status
 	default:
 		return fmt.Errorf("%w: bad status", ErrInvalidInput)
 	}
-	res, err := r.db.ExecContext(ctx, r.db.Rebind(`UPDATE users SET display_name = ?, email = ?, status = ?, updated_at = ? WHERE id = ?`),
-		displayName, nullStr(strings.ToLower(strings.TrimSpace(email))), string(status), store.TimeArg(time.Now()), id)
+	res, err := r.db.ExecContext(ctx, r.db.Rebind(`UPDATE users SET display_name = ?, email = ?, status = ?, updated_at = ?,
+		directory_removed_at = CASE WHEN status <> ? THEN NULL ELSE directory_removed_at END WHERE id = ?`),
+		displayName, nullStr(strings.ToLower(strings.TrimSpace(email))), string(status), store.TimeArg(time.Now()), string(status), id)
 	if err != nil {
 		if store.IsUniqueViolation(err) {
 			return ErrDuplicate
@@ -350,9 +354,10 @@ func scanUser(s store.Scanner) (*User, error) {
 		email, hash, idp, ext               sql.NullString
 		status                              string
 		lockedUntil, created, updated, last store.NullTime
+		removed                             store.NullTime
 	)
 	err := s.Scan(&u.ID, &u.Username, &email, &u.DisplayName, &hash, &status, &idp, &ext,
-		&u.FailedLogins, &lockedUntil, &created, &updated, &last, &u.MustResetOnLogin)
+		&u.FailedLogins, &lockedUntil, &created, &updated, &last, &u.MustResetOnLogin, &removed)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound
@@ -362,6 +367,7 @@ func scanUser(s store.Scanner) (*User, error) {
 	u.Email, u.PasswordHash, u.IdPID, u.ExternalID = email.String, hash.String, idp.String, ext.String
 	u.Status = Status(status)
 	u.LockedUntil, u.CreatedAt, u.UpdatedAt, u.LastLoginAt = lockedUntil.Ptr(), created.Time, updated.Time, last.Ptr()
+	u.DirectoryRemovedAt = removed.Ptr()
 	return &u, nil
 }
 
@@ -400,6 +406,66 @@ func (r *Repo) LinkExternal(ctx context.Context, id, idpID, externalID string) e
 		return err
 	}
 	return nil
+}
+
+// ListByIdP returns every account linked to an identity provider, with its
+// roles, read in full before it returns (one connection on SQLite).
+func (r *Repo) ListByIdP(ctx context.Context, idpID string) ([]*User, error) {
+	out, err := r.scanAll(ctx, `SELECT `+userCols+` FROM users WHERE idp_id = ? ORDER BY id`, idpID)
+	if err != nil {
+		return nil, err
+	}
+	for _, u := range out {
+		if u.Roles, err = r.roles(ctx, u.ID); err != nil {
+			return nil, err
+		}
+	}
+	return out, nil
+}
+
+// scanAll reads every row of a users query and closes the cursor before it
+// returns, so the caller may query again (one connection on SQLite).
+func (r *Repo) scanAll(ctx context.Context, query string, args ...any) ([]*User, error) {
+	rows, err := r.db.QueryContext(ctx, r.db.Rebind(query), args...)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	var out []*User
+	for rows.Next() {
+		u, err := scanUser(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, u)
+	}
+	return out, rows.Err()
+}
+
+// DisableRemoved disables an active account because the person has left
+// the directory, and marks it so (ADR 0035). It reports false when the
+// account was not active: an administrator's decision stands.
+func (r *Repo) DisableRemoved(ctx context.Context, id string, at time.Time) (bool, error) {
+	res, err := r.db.ExecContext(ctx, r.db.Rebind(`UPDATE users SET status = 'disabled', directory_removed_at = ?, updated_at = ? WHERE id = ? AND status = 'active'`),
+		store.TimeArg(at), store.TimeArg(at), id)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n == 1, err
+}
+
+// EnableReturned enables an account the directory sync disabled, now the
+// person is back in the directory. It reports false for any other account,
+// so one an administrator disabled stays disabled.
+func (r *Repo) EnableReturned(ctx context.Context, id string) (bool, error) {
+	res, err := r.db.ExecContext(ctx, r.db.Rebind(`UPDATE users SET status = 'active', directory_removed_at = NULL, updated_at = ?
+		WHERE id = ? AND status = 'disabled' AND directory_removed_at IS NOT NULL`), store.TimeArg(time.Now()), id)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n == 1, err
 }
 
 // GetByExternalID finds a user provisioned from an identity provider.

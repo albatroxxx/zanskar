@@ -63,7 +63,11 @@ func (a Actor) Event(action, objectType, objectID string, outcome Outcome, detai
 	case []byte:
 		e.Details = json.RawMessage(d)
 	default:
-		if b, err := json.Marshal(d); err == nil {
+		// A nil map or pointer arrives typed, so it is not the nil case
+		// above, and marshals to null, which Record refuses: the event was
+		// lost (user.mfa.confirm at every sign-in that enrolled an
+		// authenticator, until 2026-10-30). No details is what it means.
+		if b, err := json.Marshal(d); err == nil && string(b) != "null" {
 			e.Details = b
 		}
 	}

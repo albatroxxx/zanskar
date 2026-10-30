@@ -7,6 +7,7 @@ import { Alert, Badge, Confirm, Empty, Field, Modal, PageHead } from '../../comp
 import { useList } from './lib'
 import { mappingToText, textToMapping } from './groupMapping'
 import { StateIcon } from '../../components/icons'
+import { CopyButton } from '../../components/CopyButton'
 
 // Shapes mirror internal/idp: the API returns the provider row plus its
 // config with secrets blanked and a single has_secret flag. Secrets are
@@ -23,7 +24,10 @@ interface OIDCConfig {
   allowed_domains?: string[]
   /** Accept the email claim when the provider never says it is verified (Entra ID). */
   trust_email?: boolean
-  skip_mfa?: boolean
+  /** The provider does no MFA: ask for a Zanskar authenticator after it. */
+  zanskar_mfa?: boolean
+  /** Signing out of Zanskar leaves the provider's session alone. */
+  keep_provider_session?: boolean
 }
 interface LDAPConfig {
   url?: string
@@ -49,6 +53,31 @@ interface IdPConfig {
   default_roles?: Role[]
   group_mapping?: Record<string, string>
   auto_provision?: boolean
+  /** List the directory on a schedule: joiners get accounts, leavers are disabled (ADR 0035). */
+  sync_users?: boolean
+  sync_minutes?: number
+}
+/** One run of the directory user sync, as internal/idp.SyncStatus. */
+interface SyncRun {
+  at: string
+  ok: boolean
+  error?: string
+  listed: number
+  created: number
+  linked: number
+  updated: number
+  enabled: number
+  disabled: number
+  not_created: number
+  conflicts?: string[]
+  held: number
+  held_reason?: string
+}
+interface SyncState {
+  enabled: boolean
+  interval_minutes: number
+  running: boolean
+  last: SyncRun | null
 }
 interface Provider {
   id: string
@@ -59,6 +88,7 @@ interface Provider {
   updated_at: string
   config: IdPConfig
   has_secret: boolean
+  sync?: SyncState
 }
 
 const roleOptions: Role[] = ['user', 'auditor', 'admin']
@@ -74,6 +104,28 @@ export function IdentityProviders() {
   const { items, err, reload } = useList<Provider>('/identity-providers')
   const [editing, setEditing] = useState<Provider | 'new' | null>(null)
   const [deleting, setDeleting] = useState<Provider | null>(null)
+  const [syncing, setSyncing] = useState<string | null>(null)
+  const [notice, setNotice] = useState<{ tone: 'ok' | 'warn' | 'danger'; text: string } | null>(null)
+  // A run that held back removals offers to apply them, after a confirmation.
+  const [held, setHeld] = useState<{ provider: Provider; run: SyncRun } | null>(null)
+
+  const runSync = async (p: Provider, applyRemovals = false) => {
+    setSyncing(p.id)
+    setNotice(null)
+    try {
+      const st = await api.post<SyncState>(`/identity-providers/${p.id}/sync`, applyRemovals ? { apply_removals: true } : undefined)
+      const run = st.last
+      if (!run) return
+      if (!run.ok) setNotice({ tone: 'danger', text: `${p.name}: ${run.error ?? 'sync failed'}` })
+      else setNotice({ tone: run.held > 0 ? 'warn' : 'ok', text: `${p.name}: ${syncSummary(run)}` })
+      if (run.ok && run.held > 0 && !applyRemovals) setHeld({ provider: p, run })
+    } catch (e) {
+      setNotice({ tone: 'danger', text: `${p.name}: ${errorMessage(e)}` })
+    } finally {
+      setSyncing(null)
+      void reload()
+    }
+  }
 
   return (
     <>
@@ -81,6 +133,7 @@ export function IdentityProviders() {
         <button className="btn primary" onClick={() => setEditing('new')}>Add provider</button>
       </PageHead>
       {err && <Alert tone="danger">{err}</Alert>}
+      {notice && <Alert tone={notice.tone}>{notice.text}</Alert>}
       <div className="card table-wrap">
         {items === null ? (
           err ? null : <Empty>Loading…</Empty>
@@ -94,6 +147,7 @@ export function IdentityProviders() {
                 <th>Type</th>
                 <th>Status</th>
                 <th>Secret</th>
+                <th>User sync</th>
                 <th>Created</th>
                 <th><span className="sr-only">Actions</span></th>
               </tr>
@@ -105,8 +159,14 @@ export function IdentityProviders() {
                   <td><Badge tone="accent">{p.type.toUpperCase()}</Badge></td>
                   <td>{p.enabled ? <StateIcon state="ok" label="Enabled" /> : <StateIcon state="unknown" label="Disabled" />}</td>
                   <td>{p.has_secret ? <StateIcon state="ok" label="Secret stored" /> : <StateIcon state="warn" label="No secret stored" />}</td>
+                  <td><SyncCell sync={p.sync} /></td>
                   <td>{fmtTime(p.created_at)}</td>
                   <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
+                    {p.sync && p.enabled && (
+                      <>
+                        <button className="btn sm" disabled={syncing !== null || p.sync.running} onClick={() => void runSync(p)}>{syncing === p.id ? 'Syncing…' : 'Sync now'}</button>{' '}
+                      </>
+                    )}
                     <button className="btn sm" onClick={() => setEditing(p)}>Edit</button>{' '}
                     <button className="btn sm danger" onClick={() => setDeleting(p)}>Delete</button>
                   </td>
@@ -126,6 +186,16 @@ export function IdentityProviders() {
           }}
         />
       )}
+      {held && (
+        <Confirm
+          title="Apply held removals"
+          danger
+          confirmLabel={`Disable ${held.run.held}`}
+          body={<p>{held.run.held_reason}. Disable those {held.run.held} accounts of <strong>{held.provider.name}</strong> and end their sessions?</p>}
+          onConfirm={() => runSync(held.provider, true)}
+          onClose={() => setHeld(null)}
+        />
+      )}
       {deleting && (
         <Confirm
           title="Delete provider"
@@ -143,12 +213,57 @@ export function IdentityProviders() {
   )
 }
 
+/** What a sync run did, in a line: only the counts that are not zero. */
+function syncSummary(run: SyncRun): string {
+  const parts = [`${run.listed} listed`]
+  const add = (n: number, what: string) => {
+    if (n > 0) parts.push(`${n} ${what}`)
+  }
+  add(run.created, 'created')
+  add(run.linked, 'linked')
+  add(run.updated, 'updated')
+  add(run.enabled, 'enabled again')
+  add(run.disabled, 'disabled')
+  add(run.not_created, 'without an account')
+  add(run.conflicts?.length ?? 0, `in conflict (${(run.conflicts ?? []).join(', ')})`)
+  if (run.held > 0) parts.push(`${run.held} held: ${run.held_reason ?? ''}`)
+  return parts.join(' · ')
+}
+
+function SyncCell({ sync }: { sync?: SyncState }) {
+  if (!sync) return <span className="muted">Off</span>
+  if (sync.running) return <StateIcon state="unknown" label="Running" />
+  const run = sync.last
+  if (!run) return <StateIcon state="unknown" label={`Every ${sync.interval_minutes} min; not run yet`} />
+  if (!run.ok) return <StateIcon state="danger" label={`Failed ${fmtTime(run.at)}: ${run.error ?? ''}`} />
+  return <StateIcon state={run.held > 0 ? 'warn' : 'ok'} label={`${fmtTime(run.at)} · ${syncSummary(run)}`} />
+}
+
+/** The address an OIDC provider must have registered for this gateway. The
+ *  provider sends the browser back there after sign-in, and after sign-out
+ *  too (ADR 0035), so one registration covers both. */
+function RegisterURI({ id }: { id: string }) {
+  const value = `${window.location.origin}/api/v1/auth/oidc/${id}/callback`
+  return (
+    <div className="field">
+      <label htmlFor="oidc-uri-redirect">Redirect URI</label>
+      <div className="copy-row">
+        <input id="oidc-uri-redirect" aria-describedby="oidc-uri-hint" readOnly value={value} onFocus={(e) => e.target.select()} />
+        <CopyButton text={value} name="Redirect URI" />
+      </div>
+      <span className="hint" id="oidc-uri-hint">Register it at the provider; it is also the post-logout redirect URI.</span>
+    </div>
+  )
+}
+
 function ProviderModal({ existing, onClose, onSaved }: { existing: Provider | null; onClose: () => void; onSaved: () => void }) {
   const [loaded, setLoaded] = useState<Provider | null>(existing && !existing.config ? null : existing)
   const [type, setType] = useState<IdPType>(existing?.type ?? 'oidc')
   const [name, setName] = useState(existing?.name ?? '')
   const [enabled, setEnabled] = useState(existing?.enabled ?? true)
   const [autoProvision, setAutoProvision] = useState(existing?.config?.auto_provision ?? true)
+  const [syncUsers, setSyncUsers] = useState(existing?.config?.sync_users ?? false)
+  const [syncMinutes, setSyncMinutes] = useState(String(existing?.config?.sync_minutes || 15))
   const [roles, setRoles] = useState<Role[]>(existing?.config?.default_roles ?? ['user'])
   const [mapping, setMapping] = useState(mappingToText(existing?.config?.group_mapping))
   const [oidc, setOidc] = useState<OIDCConfig>(existing?.config?.oidc ?? {})
@@ -168,6 +283,8 @@ function ProviderModal({ existing, onClose, onSaved }: { existing: Provider | nu
         setName(p.name)
         setEnabled(p.enabled)
         setAutoProvision(p.config?.auto_provision ?? true)
+        setSyncUsers(p.config?.sync_users ?? false)
+        setSyncMinutes(String(p.config?.sync_minutes || 15))
         setRoles(p.config?.default_roles ?? ['user'])
         setMapping(mappingToText(p.config?.group_mapping))
         setOidc(p.config?.oidc ?? {})
@@ -186,6 +303,12 @@ function ProviderModal({ existing, onClose, onSaved }: { existing: Provider | nu
     const { mapping: gm, error } = textToMapping(mapping)
     if (error) return { error }
     const config: IdPConfig = { default_roles: roles, group_mapping: gm, auto_provision: autoProvision }
+    if (syncUsers) {
+      const minutes = Number(syncMinutes)
+      if (!Number.isInteger(minutes) || minutes < 5 || minutes > 1440) return { error: 'sync every 5 to 1440 minutes' }
+      config.sync_users = true
+      config.sync_minutes = minutes
+    }
     if (type === 'oidc') {
       config.oidc = { ...oidc, scopes: fromCsv(scopes), allowed_domains: fromCsv(domains) }
     } else {
@@ -251,11 +374,13 @@ function ProviderModal({ existing, onClose, onSaved }: { existing: Provider | nu
               </Field>
               <Field label="Scopes" hint="comma separated; default openid, profile, email"><input id="oidc-scopes" value={scopes} onChange={(e) => setScopes(e.target.value)} /></Field>
               <Field label="Username claim" hint="default preferred_username"><input id="oidc-uclaim" value={oidc.username_claim ?? ''} onChange={(e) => setOidc({ ...oidc, username_claim: e.target.value })} /></Field>
-              <Field label="Groups claim" hint="e.g. groups; empty disables group sync"><input id="oidc-gclaim" value={oidc.groups_claim ?? ''} onChange={(e) => setOidc({ ...oidc, groups_claim: e.target.value })} /></Field>
+              <Field label="Groups claim" hint="e.g. groups; empty turns group mapping off"><input id="oidc-gclaim" value={oidc.groups_claim ?? ''} onChange={(e) => setOidc({ ...oidc, groups_claim: e.target.value })} /></Field>
               <Field label="Allowed email domains" hint="comma separated; empty allows all; the provider must have verified the address"><input id="oidc-domains" value={domains} onChange={(e) => setDomains(e.target.value)} /></Field>
             </div>
             <div className="field inline"><input id="oidc-trustemail" type="checkbox" checked={!!oidc.trust_email} onChange={(e) => setOidc({ ...oidc, trust_email: e.target.checked })} /><label htmlFor="oidc-trustemail">Trust email addresses the provider does not mark as verified (for one that never says, such as Entra ID, when your directory assigns the addresses)</label></div>
-            <div className="field inline"><input id="oidc-skipmfa" type="checkbox" checked={!!oidc.skip_mfa} onChange={(e) => setOidc({ ...oidc, skip_mfa: e.target.checked })} /><label htmlFor="oidc-skipmfa">Trust the provider's MFA (do not require a Zanskar authenticator)</label></div>
+            <div className="field inline"><input id="oidc-zanskarmfa" type="checkbox" checked={!!oidc.zanskar_mfa} onChange={(e) => setOidc({ ...oidc, zanskar_mfa: e.target.checked })} /><label htmlFor="oidc-zanskarmfa">Also ask for a Zanskar authenticator (only for a provider with no MFA of its own)</label></div>
+            <div className="field inline"><input id="oidc-endsession" type="checkbox" checked={!oidc.keep_provider_session} onChange={(e) => setOidc({ ...oidc, keep_provider_session: !e.target.checked })} /><label htmlFor="oidc-endsession">Signing out ends the provider session too</label></div>
+            {existing && <RegisterURI id={existing.id} />}
           </>
         )}
 
@@ -284,7 +409,13 @@ function ProviderModal({ existing, onClose, onSaved }: { existing: Provider | nu
 
         <hr style={{ border: 0, borderTop: '1px solid var(--line)', margin: '16px 0' }} />
         <div className="field inline"><input id="idp-enabled" type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} /><label htmlFor="idp-enabled">Enabled</label></div>
-        <div className="field inline"><input id="idp-auto" type="checkbox" checked={autoProvision} onChange={(e) => setAutoProvision(e.target.checked)} /><label htmlFor="idp-auto">Create a Zanskar user on first sign-in</label></div>
+        <div className="field inline"><input id="idp-auto" type="checkbox" checked={autoProvision} onChange={(e) => setAutoProvision(e.target.checked)} /><label htmlFor="idp-auto">Create an account for each new person</label></div>
+        <div className="field inline"><input id="idp-sync" type="checkbox" checked={syncUsers} onChange={(e) => setSyncUsers(e.target.checked)} /><label htmlFor="idp-sync">Sync users from the directory</label></div>
+        {syncUsers && (
+          <Field label="Sync every (minutes)" hint={type === 'oidc' ? 'Keycloak realms. The client needs a service account with realm-management › view-users. People who leave are disabled.' : 'Everyone the user filter matches. People who leave are disabled.'}>
+            <input id="idp-sync-minutes" type="number" min={5} max={1440} step={1} value={syncMinutes} onChange={(e) => setSyncMinutes(e.target.value)} />
+          </Field>
+        )}
         <Field label="Default roles for provisioned users">
           <div className="actions">
             {roleOptions.map((r) => (

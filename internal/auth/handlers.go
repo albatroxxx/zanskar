@@ -45,6 +45,11 @@ type Handler struct {
 	LockFor     time.Duration
 	// MFAAttempts wrong codes end the pending session.
 	MFAAttempts int
+	// ProviderLogout, when set, names the page at a single sign-on provider
+	// that ends the provider's session for a session signing out (ADR
+	// 0035), or "" when there is none. It is read after the session is
+	// revoked.
+	ProviderLogout func(r *http.Request, sessionID string) string
 	// RequireMFA keeps a session partial until an authenticator is enrolled.
 	// It is read at every sign-in so the runtime setting applies live; nil
 	// means not required.
@@ -621,8 +626,19 @@ func (h *Handler) logout(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.Sessions.ClearCookie(w)
-	h.record(r, ActorFor(r).Event(audit.UserLogout, "user", p.User.ID, audit.Success, map[string]string{"session_id": p.Session.ID}))
-	httpx.WriteJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+	// A session from a single sign-on provider ends there too (ADR 0035):
+	// the answer names the provider's sign-out page for the browser to
+	// visit, which sends it back to the sign-in page.
+	out := map[string]string{"status": "ok"}
+	details := map[string]string{"session_id": p.Session.ID}
+	if h.ProviderLogout != nil {
+		if to := h.ProviderLogout(r, p.Session.ID); to != "" {
+			out["redirect"] = to
+			details["provider_sign_out"] = "true"
+		}
+	}
+	h.record(r, ActorFor(r).Event(audit.UserLogout, "user", p.User.ID, audit.Success, details))
+	httpx.WriteJSON(w, http.StatusOK, out)
 }
 
 func (h *Handler) me(w http.ResponseWriter, r *http.Request) {

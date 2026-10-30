@@ -43,6 +43,8 @@ type fakeDirectory struct {
 	conns   atomic.Int32
 	binds   atomic.Int32
 	closeFn func()
+	// listFails makes the listing search fail.
+	listFails atomic.Bool
 }
 
 func startFakeDirectory(t *testing.T) *fakeDirectory {
@@ -111,6 +113,15 @@ func (fd *fakeDirectory) serve(c net.Conn) {
 
 func (fd *fakeDirectory) search(c net.Conn, msgID int64, base, filter string) {
 	switch {
+	case strings.Contains(base, "ou=people") && strings.Contains(filter, "(uid=*)"):
+		if fd.listFails.Load() {
+			write(c, result(msgID, 5, goldap.LDAPResultUnwillingToPerform))
+			return
+		}
+		write(c, entry(msgID, aliceDN, map[string][]string{"uid": {"Alice"}, "displayName": {"Alice Example"}, "mail": {"Alice@Example.com"}, "entryUUID": {aliceUUID}}))
+		write(c, entry(msgID, "uid=bob,ou=people,dc=example,dc=com", map[string][]string{"uid": {"bob"}, "displayName": {"Bob"}, "userAccountControl": {"512"}}))
+		write(c, entry(msgID, "uid=gone,ou=people,dc=example,dc=com", map[string][]string{"uid": {"gone"}, "userAccountControl": {"514"}}))
+		write(c, entry(msgID, "cn=nameless,ou=people,dc=example,dc=com", map[string][]string{"cn": {"nameless"}}))
 	case strings.Contains(base, "ou=people") && strings.Contains(filter, "(uid=alice)"):
 		write(c, entry(msgID, aliceDN, map[string][]string{
 			"uid": {"alice"}, "displayName": {"Alice Example"}, "mail": {"Alice@Example.com"},
@@ -301,5 +312,39 @@ func TestDialIsBoundedByTheTimeout(t *testing.T) {
 	}
 	if !errors.Is(err, ErrDirectory) {
 		t.Fatalf("want ErrDirectory, got %v", err)
+	}
+}
+
+// TestUsersListsTheDirectory (ADR 0035): the listing searches the user
+// filter with a wildcard as the service account, leaves out an Active
+// Directory account disabled there and an entry with no username, and
+// asserts each person as their sign-in would. A refused search fails the
+// whole listing.
+func TestUsersListsTheDirectory(t *testing.T) {
+	fd := startFakeDirectory(t)
+	op := &idp.Opened{Provider: idp.Provider{ID: "p", Type: idp.TypeLDAP}, Config: idp.Config{LDAP: baseConfig(fd), SyncUsers: true}}
+	got, err := (&Authenticator{}).Users(context.Background(), op)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("listed %+v", got)
+	}
+	if got[0].Username != "alice" || got[0].ExternalID != "uuid:"+strings.ToLower(aliceUUID) || got[0].Email != "alice@example.com" || got[0].DisplayName != "Alice Example" {
+		t.Fatalf("alice: %+v", got[0])
+	}
+	if got[1].Username != "bob" || got[1].ExternalID != "dn:uid=bob,ou=people,dc=example,dc=com" {
+		t.Fatalf("bob: %+v", got[1])
+	}
+	fd.listFails.Store(true)
+	if got, err := (&Authenticator{}).Users(context.Background(), op); err == nil || got != nil {
+		t.Fatalf("a refused search must fail the listing: %v %v", got, err)
+	}
+	bad := *op
+	cfg := *op.Config.LDAP
+	cfg.BindPassword = "wrong"
+	bad.Config.LDAP = &cfg
+	if _, err := (&Authenticator{}).Users(context.Background(), &bad); !errors.Is(err, ErrDirectory) {
+		t.Fatalf("a failed service bind: %v", err)
 	}
 }

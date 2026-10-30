@@ -13,6 +13,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
 	"slices"
 	"sort"
 	"strings"
@@ -65,8 +66,17 @@ type OIDCConfig struct {
 	// its own directory assigns. An address the provider marks unverified is
 	// never used, whatever this says.
 	TrustEmail bool `json:"trust_email,omitempty"`
-	// SkipMFA trusts the provider's own MFA and does not require TOTP in Zanskar.
-	SkipMFA bool `json:"skip_mfa"`
+	// ZanskarMFA asks for a Zanskar authenticator after the provider's
+	// sign-in, for a provider that does no MFA of its own. Off, the default,
+	// the second factor is the provider's job and Zanskar asks for none
+	// (ADR 0035). It replaced skip_mfa, whose default was the opposite: a
+	// configuration sealed before reads as off.
+	ZanskarMFA bool `json:"zanskar_mfa,omitempty"`
+	// KeepProviderSession leaves the provider's session alone when someone
+	// signs out of Zanskar. Off, the default, signing out ends it too
+	// (RP-initiated logout, ADR 0035), so the next sign-in asks for the
+	// password again; set it for a realm other applications share.
+	KeepProviderSession bool `json:"keep_provider_session,omitempty"`
 }
 
 // LDAPConfig configures an LDAP or Active Directory bind-and-search provider.
@@ -108,6 +118,15 @@ type Config struct {
 	// (see Provisioner.Resolve). When false, only accounts already linked to
 	// the person and such pre-created accounts may sign in.
 	AutoProvision bool `json:"auto_provision"`
+	// SyncUsers lists everyone in the directory every SyncMinutes (ADR
+	// 0035). With AutoProvision a person who joins has an account before
+	// their first sign-in; one who leaves, or is disabled there, has the
+	// account disabled and every session ended. Group memberships are not
+	// synced; mapped groups still follow each sign-in. Only a Keycloak
+	// realm (OIDC) or an LDAP directory can be listed.
+	SyncUsers bool `json:"sync_users,omitempty"`
+	// SyncMinutes is the time between runs: default 15, from 5 to 1440.
+	SyncMinutes int `json:"sync_minutes,omitempty"`
 }
 
 // Provider is the public row; Config is only returned by Open.
@@ -126,12 +145,13 @@ type Provider struct {
 // granting admin or auditor is an audit event). It never holds a secret:
 // no client secret, bind password or CA bundle.
 func AccessSummary(c *Config) map[string]any {
-	d := map[string]any{"auto_provision": c.AutoProvision, "default_roles": c.DefaultRoles, "group_mapping": c.GroupMapping}
+	d := map[string]any{"auto_provision": c.AutoProvision, "default_roles": c.DefaultRoles, "group_mapping": c.GroupMapping,
+		"sync_users": c.SyncUsers, "sync_minutes": c.SyncMinutes}
 	if c.GroupMapping == nil {
 		d["group_mapping"] = GroupMapping{}
 	}
 	if o := c.OIDC; o != nil {
-		d["issuer"], d["client_id"], d["skip_mfa"] = o.Issuer, o.ClientID, o.SkipMFA
+		d["issuer"], d["client_id"], d["zanskar_mfa"] = o.Issuer, o.ClientID, o.ZanskarMFA
 		d["allowed_domains"], d["username_claim"], d["groups_claim"] = orEmpty(o.AllowedDomains), o.UsernameClaim, o.GroupsClaim
 		d["trust_email"] = o.TrustEmail
 	}
@@ -141,6 +161,41 @@ func AccessSummary(c *Config) map[string]any {
 		d["group_attr"], d["group_base_dn"], d["group_filter"] = l.GroupAttr, l.GroupBaseDN, l.GroupFilter
 	}
 	return d
+}
+
+// ProviderOwnsMFA reports whether the provider's own sign-in is the second
+// factor for the people it signs in (ADR 0035): an OIDC provider, unless it
+// is marked as doing no MFA of its own (zanskar_mfa). A directory reached
+// over LDAP checks only a password, so its people need a Zanskar
+// authenticator.
+func (c *Config) ProviderOwnsMFA() bool { return c.OIDC != nil && !c.OIDC.ZanskarMFA }
+
+// SecondFactor returns the check behind a policy's "require MFA": an
+// enrolled Zanskar authenticator (enrolled), or an account linked to a
+// provider whose sign-in is the second factor. Such an account has no
+// password, so the provider is the only way it signs in.
+func SecondFactor(users *user.Repo, providers *Repo, enrolled func(context.Context, string) (bool, error)) func(context.Context, string) (bool, error) {
+	return func(ctx context.Context, userID string) (bool, error) {
+		ok, err := enrolled(ctx, userID)
+		if err != nil || ok {
+			return ok, err
+		}
+		u, err := users.GetByID(ctx, userID)
+		if err != nil {
+			return false, err
+		}
+		if u.IdPID == "" || u.PasswordHash != "" {
+			return false, nil
+		}
+		op, err := providers.Open(ctx, u.IdPID)
+		if errors.Is(err, ErrNotFound) {
+			return false, nil
+		}
+		if err != nil {
+			return false, err
+		}
+		return op.Enabled && op.Config.ProviderOwnsMFA(), nil
+	}
 }
 
 // Opened is a provider with its decrypted configuration.
@@ -220,7 +275,51 @@ func Validate(p *Provider, c *Config) error {
 	default:
 		return fmt.Errorf("%w: unknown type %q", ErrInvalidInput, p.Type)
 	}
+	return validateSync(c)
+}
+
+// SyncUsernameClaims are the username claims the directory sync can give
+// the same value for as a sign-in: a Keycloak user's username and id. (An
+// email address is never a username: user.ValidUsername has no "@".)
+var SyncUsernameClaims = []string{"preferred_username", "sub"}
+
+func validateSync(c *Config) error {
+	if !c.SyncUsers {
+		c.SyncMinutes = 0
+		return nil
+	}
+	if c.SyncMinutes == 0 {
+		c.SyncMinutes = 15
+	}
+	if c.SyncMinutes < 5 || c.SyncMinutes > 1440 {
+		return fmt.Errorf("%w: sync_minutes must be 5 to 1440", ErrInvalidInput)
+	}
+	if o := c.OIDC; o != nil {
+		if _, _, err := KeycloakRealm(o.Issuer); err != nil {
+			return fmt.Errorf("%w: user sync lists a Keycloak realm; the issuer must be https://<host>/realms/<realm>", ErrInvalidInput)
+		}
+		if !slices.Contains(SyncUsernameClaims, o.UsernameClaim) {
+			return fmt.Errorf("%w: user sync needs the username claim to be preferred_username or sub", ErrInvalidInput)
+		}
+	}
 	return nil
+}
+
+// KeycloakRealm splits a Keycloak issuer, https://host[/prefix]/realms/name,
+// into the address of the realm's admin API (https://host[/prefix]/admin/realms/name)
+// and the realm's name.
+func KeycloakRealm(issuer string) (adminBase, realm string, err error) {
+	u, err := url.Parse(strings.TrimRight(issuer, "/"))
+	if err != nil || u.Scheme != "https" || u.Host == "" || u.RawQuery != "" || u.Fragment != "" {
+		return "", "", errors.New("not an https URL")
+	}
+	prefix, name, ok := strings.Cut(u.Path, "/realms/")
+	if !ok || name == "" || strings.Contains(name, "/") || strings.Contains(prefix, "/realms") {
+		return "", "", errors.New("not a Keycloak realm issuer")
+	}
+	u.Path = prefix + "/admin/realms/" + name
+	u.RawPath = ""
+	return u.String(), name, nil
 }
 
 // Repo persists providers.

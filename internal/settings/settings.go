@@ -168,7 +168,7 @@ var Definitions = []Definition{
 	{Key: KeyLoginBanner, Category: "Sign-in", Title: "Login banner", Type: TypeText,
 		Description: "System-use notification shown above the sign-in form before any credential is entered. Plain text, line breaks kept; empty hides it."},
 	{Key: KeyRequireMFA, Category: "Sign-in", Title: "Require an authenticator", Type: TypeBool, Default: "true", EnvVar: "ZANSKAR_REQUIRE_MFA",
-		Description: "Every password sign-in must enroll an authenticator before the session becomes usable. Turn off only for a throwaway installation."},
+		Description: "Every password sign-in, local or LDAP, must enroll an authenticator before the session becomes usable. Single sign-on providers enforce their own. Turn off only for a throwaway installation."},
 	{Key: KeyUpdateCheck, Category: "Updates", Title: "Check for new versions", Type: TypeBool, Default: "true",
 		Description: "Once a day, fetch the latest version number from the project site and light the bell when it is newer. Nothing about this gateway is sent."},
 	{Key: KeyGuacdAddr, Category: "Desktops", Title: "guacd address", Type: TypeHostPort, EnvVar: "ZANSKAR_GUACD_ADDR", StepUp: true,

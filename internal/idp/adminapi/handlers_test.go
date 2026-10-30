@@ -24,6 +24,8 @@ import (
 )
 
 type env struct {
+	h     *AdminHandler
+	users *user.Repo
 	srv   http.Handler
 	admin *http.Cookie
 	csrf  string
@@ -45,6 +47,7 @@ func newEnv(t *testing.T) *env {
 	sessions := auth.NewSessions(db, bytes.Repeat([]byte{2}, 32), false)
 	e := &env{repo: idp.NewRepo(db, ring), audit: audit.NewLog(db)}
 	h := &AdminHandler{Providers: e.repo, Audit: e.audit, Log: log}
+	e.h, e.users = h, users
 	mux := http.NewServeMux()
 	h.Register(mux)
 	mw := &auth.Middleware{Sessions: sessions, Users: users, Log: log}

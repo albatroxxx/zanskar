@@ -70,7 +70,7 @@ describe('Adding a provider', () => {
     await user.type(secret, 's3cr3t')
     await user.type(within(form).getByLabelText('Scopes'), 'openid, email ,groups')
     await user.type(within(form).getByLabelText('Allowed email domains'), 'example.com')
-    await user.click(within(form).getByLabelText(/Trust the provider's MFA/))
+    await user.click(within(form).getByLabelText(/Also ask for a Zanskar authenticator/))
     await user.click(within(form).getByLabelText('auditor'))
     await user.type(within(form).getByLabelText('Group mapping'), 'ops-team=g1\ncn=dba,ou=groups,dc=corp=g2')
     expect(within(form).getByText('ops=g1')).toBeDefined()
@@ -82,7 +82,7 @@ describe('Adding a provider', () => {
         default_roles: ['user', 'auditor'],
         group_mapping: { 'ops-team': 'g1', 'cn=dba,ou=groups,dc=corp': 'g2' },
         auto_provision: true,
-        oidc: { issuer: 'https://login.example.com', client_id: 'zanskar', client_secret: 's3cr3t', scopes: ['openid', 'email', 'groups'], allowed_domains: ['example.com'], skip_mfa: true },
+        oidc: { issuer: 'https://login.example.com', client_id: 'zanskar', client_secret: 's3cr3t', scopes: ['openid', 'email', 'groups'], allowed_domains: ['example.com'], zanskar_mfa: true },
       },
     }])
     expect(document.body.textContent).not.toContain('s3cr3t')
@@ -112,7 +112,7 @@ describe('Adding a provider', () => {
     await user.type(within(form).getByLabelText('Bind DN'), 'cn=svc,dc=corp,dc=example')
     await user.type(within(form).getByLabelText('Bind password'), 'bind pw')
     await user.type(within(form).getByLabelText('Base DN'), 'dc=corp,dc=example')
-    await user.click(within(form).getByLabelText('Create a Zanskar user on first sign-in'))
+    await user.click(within(form).getByLabelText('Create an account for each new person'))
     await user.click(within(form).getByRole('button', { name: 'Save' }))
     await waitFor(() => expect(post).toHaveBeenCalledTimes(1))
     expect(post.mock.calls[0][1]).toEqual({
@@ -152,6 +152,30 @@ describe('Editing, testing and deleting a provider', () => {
     await waitFor(() => expect(put).toHaveBeenCalledTimes(1))
     expect(put.mock.calls[0][0]).toBe('/identity-providers/i1')
     expect(put.mock.calls[0][1]).toMatchObject({ enabled: false, config: { oidc: { client_secret: '', issuer: 'https://login.example.com' } } })
+  })
+
+  // ADR 0035: an OIDC provider shows the address to register at the
+  // provider, which serves sign-in and sign-out alike, and signing out ends
+  // the provider's session unless the admin unticks it
+  // (keep_provider_session).
+  it('shows the address to register, and keeps the provider session only when asked', async () => {
+    serve()
+    const put = vi.spyOn(api, 'put').mockResolvedValue({} as never)
+    render(<IdentityProviders />)
+    const user = userEvent.setup()
+    await user.click((await screen.findAllByRole('button', { name: 'Edit' }))[0])
+    const form = screen.getByRole('dialog', { name: 'Edit Okta' })
+    await waitFor(() => expect((within(form).getByLabelText('Issuer URL') as HTMLInputElement).value).toBe('https://login.example.com'))
+    const origin = window.location.origin
+    expect((within(form).getByLabelText('Redirect URI') as HTMLInputElement).value).toBe(`${origin}/api/v1/auth/oidc/i1/callback`)
+    expect(within(form).getByText(/also the post-logout redirect URI/)).toBeDefined()
+    expect(within(form).getByRole('button', { name: 'Copy Redirect URI' })).toBeDefined()
+    const ends = within(form).getByLabelText('Signing out ends the provider session too') as HTMLInputElement
+    expect(ends.checked).toBe(true)
+    await user.click(ends)
+    await user.click(within(form).getByRole('button', { name: 'Save' }))
+    await waitFor(() => expect(put).toHaveBeenCalledTimes(1))
+    expect(put.mock.calls[0][1]).toMatchObject({ config: { oidc: { keep_provider_session: true } } })
   })
 
   it('reports a connection test as it went', async () => {

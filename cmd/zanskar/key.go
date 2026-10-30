@@ -80,6 +80,7 @@ var sealedTables = []struct{ label, table, version, has string }{
 	{"credentials (prepared CA keys)", "credentials", "pending_key_version", "pending_secret_enc IS NOT NULL"},
 	{"tls_certificates", "tls_certificates", "key_version", "key_enc IS NOT NULL"},
 	{"recording_storage", "recording_storage", "key_version", "secret_enc IS NOT NULL"},
+	{"auth_sessions (provider ID tokens)", "auth_sessions", "key_version", "id_token_enc IS NOT NULL"},
 }
 
 func runKeyStatus() error {

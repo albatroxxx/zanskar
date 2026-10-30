@@ -69,6 +69,9 @@ const (
 	IdPUpdate = "idp.update"
 	IdPDelete = "idp.delete"
 	IdPTest   = "idp.test"
+	// IdPSync is a run of the directory user sync (ADR 0035): who was
+	// created, linked, disabled or enabled again, or why it failed.
+	IdPSync = "idp.sync"
 
 	// The key ring and the master key.
 	KeyRotate       = "key.rotate"

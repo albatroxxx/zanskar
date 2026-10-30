@@ -56,6 +56,9 @@ type User struct {
 	// else (QA finding R25). Named without the word "password" so reads of
 	// the flag are not taken for secret data by CodeQL's heuristics.
 	MustResetOnLogin bool `json:"must_change_password"`
+	// DirectoryRemovedAt is when the directory sync disabled the account
+	// because the person left the directory (ADR 0035); nil otherwise.
+	DirectoryRemovedAt *time.Time `json:"directory_removed_at,omitempty"`
 
 	PasswordHash string `json:"-"`
 }

@@ -415,3 +415,26 @@ func testBackends(t *testing.T) []testBackend {
 	}
 	return backends
 }
+
+// TestEventWithNilDetailsIsRecorded: details given as a nil map or nil
+// pointer arrive typed, marshal to null, and Record refused them, so the
+// event was lost. The sign-in that enrolled an authenticator recorded its
+// user.mfa.confirm this way and lost it every time (found 2026-10-30).
+func TestEventWithNilDetailsIsRecorded(t *testing.T) {
+	ctx := context.Background()
+	log, _ := newTestLog(t)
+	var m map[string]any
+	var p *struct{ A int }
+	for i, details := range []any{m, p, nil} {
+		e := Actor{UserID: "u", IP: "10.0.0.1"}.Event(UserMFAConfirm, "user", "u", Success, details)
+		if len(e.Details) != 0 {
+			t.Fatalf("%d: details %s, want none", i, e.Details)
+		}
+		if _, err := log.Record(ctx, e); err != nil {
+			t.Fatalf("%d: %v", i, err)
+		}
+	}
+	if res, err := log.Verify(ctx, testKey); err != nil || res.Broken != nil || res.Checked != 3 {
+		t.Fatalf("verify: %+v %v", res, err)
+	}
+}
