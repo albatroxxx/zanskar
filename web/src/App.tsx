@@ -167,7 +167,6 @@ export default function App() {
                 { to: '/admin/users', label: 'Users & groups' },
                 { to: '/admin/identity-providers', label: 'Identity providers' },
                 { to: '/admin/sessions', label: 'Sessions' },
-                { to: '/admin/retention', label: 'Retention' },
                 { to: '/admin/settings', label: 'Settings' },
                 { to: '/admin/logs', label: 'Logs' },
                 { to: '/admin/events', label: 'Events' },

@@ -20,6 +20,7 @@ function signedIn(roles: string[] | null) {
     if (path.startsWith('/admin/system/status')) return { version: '1.5.0', started_at: 'x', uptime_seconds: 1, supervisor: 'systemd', live_sessions: 0, env_file: { state: 'unchanged', checked_at: 'x' }, restart_required: false, draining: false } as never
     // The dashboards' own data is not the point here; they show the failure and the portal still stands.
     if (path.startsWith('/admin/overview') || path.startsWith('/audit/overview')) throw new ApiError(503, { code: 'unavailable', message: 'not now', request_id: 'r' }, '503')
+    if (path === '/admin/settings') return { runtime: [], boot: [] } as never
     return { items: [] } as never
   })
 }
@@ -98,6 +99,17 @@ describe('Access portal nav', () => {
     expect(await screen.findByRole('link', { name: 'Access' })).toBeDefined()
     expect(screen.getByRole('link', { name: 'Sessions' }).getAttribute('href')).toBe('/sessions')
     expect(screen.queryByRole('link', { name: /^My / })).toBeNull()
+  })
+})
+
+// 2026-10-30 walkthrough: Retention is a section of Settings, not a page of
+// its own. The sidebar has no Retention, and an old link lands on Settings.
+describe('Retention lives in Settings', () => {
+  it('has no sidebar entry, and its old address opens Settings', async () => {
+    signedIn(['admin'])
+    open('/admin/retention')
+    expect(await screen.findByRole('heading', { name: 'Settings' })).toBeDefined()
+    expect(screen.queryByRole('link', { name: 'Retention' })).toBeNull()
   })
 })
 

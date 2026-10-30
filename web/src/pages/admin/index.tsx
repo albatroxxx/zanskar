@@ -1,5 +1,5 @@
-import { Route } from 'react-router-dom'
-import { Dashboard, Targets, Databases, Applications, Autoscaling, Credentials, Policies, Approvals, UsersGroups, IdentityProviders, Sessions, Retention, Settings, Logs } from './pages'
+import { Navigate, Route } from 'react-router-dom'
+import { Dashboard, Targets, Databases, Applications, Autoscaling, Credentials, Policies, Approvals, UsersGroups, IdentityProviders, Sessions, Settings, Logs } from './pages'
 
 // Admin pages, one per file. Paths match the sidebar in App.tsx. The console
 // lands on the dashboard (ADR 0029); hosts moved to /admin/hosts.
@@ -16,7 +16,8 @@ export const adminRoutes = (
     <Route path="users" element={<UsersGroups />} />
     <Route path="identity-providers" element={<IdentityProviders />} />
     <Route path="sessions" element={<Sessions />} />
-    <Route path="retention" element={<Retention />} />
+    {/* Retention is a section of Settings now (2026-10-30); old links land on it. */}
+    <Route path="retention" element={<Navigate to="/admin/settings#settings-recording-retention" replace />} />
     <Route path="settings" element={<Settings />} />
     <Route path="logs" element={<Logs />} />
   </>

@@ -15,6 +15,5 @@ export const Approvals = lazy(() => import('./Approvals').then((m) => ({ default
 export const UsersGroups = lazy(() => import('./UsersGroups').then((m) => ({ default: m.UsersGroups })))
 export const IdentityProviders = lazy(() => import('./IdentityProviders').then((m) => ({ default: m.IdentityProviders })))
 export const Sessions = lazy(() => import('./Sessions').then((m) => ({ default: m.Sessions })))
-export const Retention = lazy(() => import('./Retention').then((m) => ({ default: m.Retention })))
 export const Settings = lazy(() => import('./Settings').then((m) => ({ default: m.Settings })))
 export const Logs = lazy(() => import('./Logs').then((m) => ({ default: m.Logs })))
