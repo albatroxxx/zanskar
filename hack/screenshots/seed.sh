@@ -88,11 +88,15 @@ host "{\"name\":\"Wiki\",\"app_upstream\":\"https://wiki.internal.example:8443\"
 host "{\"name\":\"Grafana\",\"app_upstream\":\"https://grafana.internal.example\",\"tls_ca\":$CA_PEM,\"tags\":{\"env\":\"prod\",\"tier\":\"apps\"}}" >/dev/null
 
 # Policies: standing SSH to staging, approval-gated bastion and databases.
-pol() { api -X POST "$B/access-policies" -d "$1" >/dev/null; }
-pol "{\"name\":\"ops-internal-apps\",\"description\":\"Internal web applications for the platform team\",\"group_id\":\"$OPS\",\"target_selector\":{\"tags\":{\"tier\":\"apps\"}},\"protocols\":[\"http\"],\"idle_timeout_minutes\":30,\"max_session_minutes\":480,\"require_mfa\":false}"
-pol "{\"name\":\"ops-staging-ssh\",\"description\":\"Standing SSH to the staging web tier\",\"group_id\":\"$OPS\",\"target_selector\":{\"tags\":{\"env\":\"staging\"}},\"protocols\":[\"ssh\"],\"idle_timeout_minutes\":15,\"max_session_minutes\":240,\"require_mfa\":false}"
-pol "{\"name\":\"prod-bastion-jit\",\"description\":\"Approval-gated production bastion\",\"group_id\":\"$OPS\",\"target_selector\":{\"tags\":{\"role\":\"bastion\"}},\"protocols\":[\"ssh\"],\"idle_timeout_minutes\":15,\"max_session_minutes\":120,\"require_approval\":true,\"require_mfa\":false}"
-pol "{\"name\":\"prod-db-jit\",\"description\":\"Approval-gated production database access\",\"group_id\":\"$DBA\",\"target_selector\":{\"tags\":{\"role\":\"db\"}},\"protocols\":[\"database\"],\"idle_timeout_minutes\":10,\"max_session_minutes\":60,\"require_approval\":true,\"require_mfa\":false}"
+# Each grant matches its targets by tag (ADR 0036), as the policies did before.
+pol() { api -X POST "$B/access-policies" -d "$1" | jget 'd.get("id") or sys.exit("policy refused: %s" % d)' >/dev/null; }
+grant() { # kind tag-key tag-value protocol access idle max
+  echo "{\"kind\":\"$1\",\"tags\":{\"match\":{\"$2\":[\"$3\"]},\"protocols\":[\"$4\"]},\"access\":\"$5\",\"idle_timeout_minutes\":$6,\"max_session_minutes\":$7,\"require_mfa\":false}"
+}
+pol "{\"name\":\"ops-internal-apps\",\"description\":\"Internal web applications for the platform team\",\"subjects\":[{\"kind\":\"group\",\"id\":\"$OPS\"}],\"grants\":[$(grant application tier apps http standing 30 480)]}"
+pol "{\"name\":\"ops-staging-ssh\",\"description\":\"Standing SSH to the staging web tier\",\"subjects\":[{\"kind\":\"group\",\"id\":\"$OPS\"}],\"grants\":[$(grant host env staging ssh standing 15 240)]}"
+pol "{\"name\":\"prod-bastion-jit\",\"description\":\"Approval-gated production bastion\",\"subjects\":[{\"kind\":\"group\",\"id\":\"$OPS\"}],\"grants\":[$(grant host role bastion ssh approval 15 120)]}"
+pol "{\"name\":\"prod-db-jit\",\"description\":\"Approval-gated production database access\",\"subjects\":[{\"kind\":\"group\",\"id\":\"$DBA\"}],\"grants\":[$(grant database role db database approval 10 60)]}"
 
 # Users replace their first password, then ask for access.
 as_user() { # name first-pw new-pw -> sets USER_CSRF and cookie jar

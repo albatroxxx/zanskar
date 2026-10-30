@@ -47,7 +47,8 @@ TID=$(api -X POST "$B/targets" -d "{\"name\":\"fake-1\",\"address\":\"$LAN\",\"o
 api -X PUT "$B/targets/$TID/credentials/ssh" -d "{\"credential_id\":\"$CRED\"}" > /dev/null
 FP=$(api -X POST "$B/targets/$TID/probe" | jget 'd["host_key_fingerprint"]')
 api -X POST "$B/targets/$TID/host-key/trust" -d "{\"host_key_fingerprint\":\"$FP\"}" > /dev/null
-api -X POST "$B/access-policies" -d "{\"name\":\"ops-test-ssh\",\"group_id\":\"$GRP\",\"target_selector\":{\"tags\":{\"env\":\"test\"}},\"protocols\":[\"ssh\"],\"idle_timeout_minutes\":15,\"require_mfa\":false}" > /dev/null
+api -X POST "$B/access-policies" -d "{\"name\":\"ops-test-ssh\",\"subjects\":[{\"kind\":\"group\",\"id\":\"$GRP\"}],\"grants\":[{\"kind\":\"host\",\"tags\":{\"match\":{\"env\":[\"test\"]},\"protocols\":[\"ssh\"]},\"idle_timeout_minutes\":15,\"require_mfa\":false}]}" \
+  | jget 'd.get("id") or sys.exit("policy refused: %s" % d)' > /dev/null
 # The browser signs in on its own; the seeding sign-in is ended so it leaves no trace in what the tests see.
 api -X POST "$B/auth/logout" > /dev/null || true
 
