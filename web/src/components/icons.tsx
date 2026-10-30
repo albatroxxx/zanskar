@@ -92,9 +92,9 @@ export function DatabaseIcon({ label = 'Database' }: { label?: string }) {
 /** StateIcon marks a row that needs a decision or gives reassurance. Its
  *  words appear the moment the pointer is over it and pin open on click (no
  *  slow native tooltip); screen readers get them from the button's label. */
-export function StateIcon({ state, label }: { state: 'warn' | 'danger' | 'ok' | 'unknown'; label: string }) {
+export function StateIcon({ state, label }: { state: 'warn' | 'danger' | 'ok' | 'unknown' | 'info'; label: string }) {
   const [pinned, setPinned] = useState(false)
-  const tone = state === 'unknown' ? 'muted' : state
+  const tone = state === 'unknown' || state === 'info' ? 'muted' : state
   return (
     <span className="glyph-wrap">
       <button
@@ -115,6 +115,12 @@ export function StateIcon({ state, label }: { state: 'warn' | 'danger' | 'ok' | 
             <>
               <circle cx="12" cy="12" r="9" />
               <line x1="8.5" y1="12" x2="15.5" y2="12" />
+            </>
+          ) : state === 'info' ? (
+            <>
+              <circle cx="12" cy="12" r="9" />
+              <line x1="12" y1="11" x2="12" y2="16.5" />
+              <line x1="12" y1="7.6" x2="12" y2="7.7" />
             </>
           ) : (
             <>

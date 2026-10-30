@@ -362,8 +362,8 @@ function GrantCard({ index, draft: d, open, onToggleOpen, onChange, onRemove, on
             </div>
             <div className="form-grid">
               <Field label="Idle (minutes)"><input id={`${p}-idle`} inputMode="numeric" value={d.idle} onChange={(e) => up({ idle: e.target.value })} /></Field>
-              <Field label="Maximum (minutes)" hint="Blank = none"><input id={`${p}-max`} inputMode="numeric" value={d.max} onChange={(e) => up({ max: e.target.value })} /></Field>
-              <Field label="Keep recordings (days)" hint="Blank = the global policy"><input id={`${p}-retention`} inputMode="numeric" value={d.retention} onChange={(e) => up({ retention: e.target.value })} /></Field>
+              <Field label="Maximum (minutes)"><input id={`${p}-max`} inputMode="numeric" value={d.max} onChange={(e) => up({ max: e.target.value })} placeholder="No limit" /></Field>
+              <Field label="Recording retention (days)" info="A target's own value comes first; this grant's next; left empty, the global retention."><input id={`${p}-retention`} inputMode="numeric" value={d.retention} onChange={(e) => up({ retention: e.target.value })} placeholder="Global" /></Field>
             </div>
             <Field label="Time windows" hint="None = always">
               <div className="windows">

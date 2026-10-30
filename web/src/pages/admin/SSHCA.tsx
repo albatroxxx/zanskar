@@ -250,15 +250,15 @@ export function CASetup({ credential, onClose, onSaved }: { credential: Credenti
       <h3>Settings</h3>
       <form onSubmit={save}>
         <div className="form-grid">
-          <Field label="Login user" hint="Blank = each user's own username">
-            <input id="ca-username" value={username} onChange={(e) => setUsername(e.target.value)} placeholder="(each user as themselves)" />
+          <Field label="Login user">
+            <input id="ca-username" value={username} onChange={(e) => setUsername(e.target.value)} placeholder="Each user's own username" />
           </Field>
-          <Field label="Certificate lifetime (seconds)" hint={`Blank = ${DEFAULT_CERT_TTL}; 60–3600`}>
-            <input id="ca-ttl" inputMode="numeric" value={ttl} onChange={(e) => setTtl(e.target.value)} placeholder={String(DEFAULT_CERT_TTL)} />
+          <Field label="Certificate lifetime (seconds)" hint="60–3600">
+            <input id="ca-ttl" inputMode="numeric" value={ttl} onChange={(e) => setTtl(e.target.value)} placeholder={`Default: ${DEFAULT_CERT_TTL}`} />
           </Field>
         </div>
-        <Field label="Allowed login users" hint="One per line; blank = any">
-          <textarea id="ca-principals" value={principals} onChange={(e) => setPrincipals(e.target.value)} placeholder={'deploy\nops'} />
+        <Field label="Allowed login users" hint="One per line">
+          <textarea id="ca-principals" value={principals} onChange={(e) => setPrincipals(e.target.value)} placeholder="Any" />
         </Field>
         <div className="actions">
           <button type="button" className="btn" onClick={onClose}>Close</button>

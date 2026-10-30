@@ -90,9 +90,9 @@ export function StorageCard() {
       <div className="form-grid">
         <Field label="Bucket"><input id="st-bucket" value={f.bucket} onChange={set('bucket')} placeholder="my-recordings" /></Field>
         <Field label="Key prefix" hint="folder inside the bucket"><input id="st-prefix" value={f.prefix} onChange={set('prefix')} /></Field>
-        <Field label="Region" hint="blank: the SDK's default"><input id="st-region" value={f.region ?? ''} onChange={set('region')} placeholder="eu-west-1" /></Field>
+        <Field label="Region"><input id="st-region" value={f.region ?? ''} onChange={set('region')} placeholder="The SDK's default" /></Field>
         <Field label="Endpoint" hint="only for MinIO, Ceph and the like; path-style addressing is used"><input id="st-endpoint" value={f.endpoint ?? ''} onChange={set('endpoint')} placeholder="https://minio.internal:9000" /></Field>
-        <Field label="KMS key" hint="blank: AES-256 server-side encryption"><input id="st-kms" value={f.kms_key_id ?? ''} onChange={set('kms_key_id')} /></Field>
+        <Field label="KMS key"><input id="st-kms" value={f.kms_key_id ?? ''} onChange={set('kms_key_id')} placeholder="AES-256 server-side encryption" /></Field>
         <Field label="Credentials" hint={f.auth === 'role' ? 'the instance role, environment or shared config the gateway runs with' : 'a static access key; the secret is sealed by the master key and never shown again'}>
           <select id="st-auth" value={f.auth} onChange={set('auth')}>
             <option value="role">Instance role / SDK default</option>

@@ -199,6 +199,11 @@ td.actions > * + * { margin-left: 8px; }
 .filter-control { padding: 6px 10px; border: 1px solid var(--line-strong); border-radius: var(--radius); background: var(--bg-raised); }
 .field { display: flex; flex-direction: column; gap: 4px; margin-bottom: 12px; }
 .field label { font-size: 0.82rem; font-weight: 500; color: var(--fg-muted); }
+/* A label with an info glyph beside it, the glyph's words on hover or click. */
+.field-head { display: inline-flex; align-items: center; gap: 6px; }
+.field-head .glyph-btn svg { width: 14px; height: 14px; }
+.link-btn { align-self: flex-start; padding: 0; margin: -4px 0 12px; border: 0; background: none; color: var(--accent); font: inherit; font-size: 0.85rem; cursor: pointer; }
+.link-btn:hover { color: var(--accent-hover); }
 .field input, .field select, .field textarea { padding: 7px 10px; border: 1px solid var(--line-strong); border-radius: var(--radius); background: var(--bg-raised); width: 100%; }
 .field textarea { min-height: 80px; font-family: var(--mono); font-size: 0.82rem; }
 .field .hint { font-size: 0.78rem; color: var(--fg-faint); }

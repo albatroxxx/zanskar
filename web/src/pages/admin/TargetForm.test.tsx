@@ -109,3 +109,52 @@ describe('TargetForm tags', () => {
     expect(post).not.toHaveBeenCalled()
   })
 })
+
+// 2026-10-30, the walkthrough of Add host: "Address" said nothing of what
+// to type; every port showed whatever the operating system, under "blank =
+// default"; and "Keep recordings (days)" said "Blank = the policy's or
+// global".
+describe('TargetForm host fields', () => {
+  it('names the address, and shows the ports the operating system uses', async () => {
+    vi.spyOn(api, 'get').mockResolvedValue({ max_age_days: 90, max_total_bytes: 0 } as never)
+    render(<TargetForm kind="host" onClose={() => {}} onSaved={() => {}} />)
+    const user = userEvent.setup()
+    expect(screen.getByLabelText('Hostname or IP address')).toBeDefined()
+    const ports = () => ['SSH', 'RDP', 'VNC', 'WinRM'].filter((p) => screen.queryByLabelText(`${p} port`))
+    expect(ports()).toEqual(['SSH'])
+    expect((screen.getByLabelText('SSH port') as HTMLInputElement).value).toBe('22')
+    await user.click(screen.getByRole('button', { name: 'More ports (VNC)' }))
+    expect(ports()).toEqual(['SSH', 'VNC'])
+    await user.selectOptions(screen.getByLabelText('Operating system'), 'windows')
+    expect(ports()).toEqual(['SSH', 'RDP', 'WinRM']) // More was opened: Windows' SSH shows
+    await user.selectOptions(screen.getByLabelText('Operating system'), 'other')
+    expect(ports()).toEqual(['SSH', 'RDP', 'VNC', 'WinRM'])
+    expect(screen.queryByText(/blank = default/i)).toBeNull()
+  })
+
+  it('stores a port left at its default as unset, and keeps a changed one in sight', async () => {
+    vi.spyOn(api, 'get').mockResolvedValue({ max_age_days: 0, max_total_bytes: 0 } as never)
+    const post = vi.spyOn(api, 'post').mockResolvedValue(host as never)
+    render(<TargetForm kind="host" onClose={() => {}} onSaved={() => {}} />)
+    const user = userEvent.setup()
+    await user.type(screen.getByLabelText('Name'), 'web-9')
+    await user.type(screen.getByLabelText('Hostname or IP address'), '10.0.0.9')
+    await user.selectOptions(screen.getByLabelText('Operating system'), 'windows')
+    await user.clear(screen.getByLabelText('RDP port'))
+    await user.type(screen.getByLabelText('RDP port'), '3390')
+    await user.selectOptions(screen.getByLabelText('Operating system'), 'linux')
+    // RDP is not a Linux field, but a value of its own is never hidden.
+    expect((screen.getByLabelText('RDP port') as HTMLInputElement).value).toBe('3390')
+    await user.click(screen.getByRole('button', { name: 'Create' }))
+    const body = post.mock.calls[0][1] as { ports: Record<string, number> }
+    expect(body.ports).toEqual({ rdp: 3390 })
+  })
+
+  it('says what an empty retention falls back to, and in what order', async () => {
+    vi.spyOn(api, 'get').mockResolvedValue({ max_age_days: 90, max_total_bytes: 0 } as never)
+    render(<TargetForm kind="host" onClose={() => {}} onSaved={() => {}} />)
+    const field = screen.getByLabelText('Recording retention (days)') as HTMLInputElement
+    await vi.waitFor(() => expect(field.placeholder).toBe('Global: 90 days'))
+    expect(screen.getByRole('button', { name: /This target's value comes first; left empty, the policy grant's applies, then the global retention/ })).toBeDefined()
+  })
+})

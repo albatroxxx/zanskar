@@ -165,7 +165,7 @@ export function TLSCard() {
               body={
                 <div>
                   <p>Its fingerprint changes and browsers warn again.</p>
-                  <Field label="Names (host names and IPs, one per line)" hint="Blank = the names detected on start">
+                  <Field label="Names (host names and IPs, one per line)" info="Left empty, the names detected when the gateway started.">
                     <textarea id="tls-hosts" value={hosts} onChange={(e) => setHosts(e.target.value)} placeholder={(status.generated?.hosts ?? []).join('\n')} />
                   </Field>
                 </div>

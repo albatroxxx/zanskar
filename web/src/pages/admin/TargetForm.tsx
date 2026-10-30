@@ -1,10 +1,10 @@
 import { protocolName } from '../../api/format'
-import { useState, type FormEvent } from 'react'
+import { useEffect, useState, type FormEvent } from 'react'
 import { api } from '../../api/client'
-import type { OSFamily, Protocol, Target } from '../../api/types'
+import type { OSFamily, Protocol, RetentionPolicy, Target } from '../../api/types'
 import { useSubmit } from '../../components/submit'
 import { Alert, Field, Modal, Tabs } from '../../components/ui'
-import { protocols } from './lib'
+import { protocols, type PortProtocol } from './lib'
 import { TagEditor } from '../../components/TagEditor'
 import { rowsToTags, tagRows, type TagRow } from '../../components/tags'
 
@@ -39,6 +39,18 @@ export function targetBody(t: Target, patch: Partial<Target> = {}) {
 }
 
 const enginePorts: Record<string, string> = { postgres: '5432', mysql: '3306', mariadb: '3306' }
+/** The ports a host field starts with; a value left at its default is stored as unset. */
+const defaultPorts: Record<PortProtocol, string> = { ssh: '22', rdp: '3389', vnc: '5900', winrm: '5986' }
+/**
+ * hostPorts is which port fields an operating system shows (2026-10-30: a
+ * Linux host offered RDP, VNC and WinRM too): its usual protocols, and the
+ * rarer ones it can serve behind More ports. Other shows all four.
+ */
+const hostPorts: Record<OSFamily, { main: PortProtocol[]; more: PortProtocol[] }> = {
+  linux: { main: ['ssh'], more: ['vnc'] },
+  windows: { main: ['rdp', 'winrm'], more: ['ssh'] },
+  other: { main: ['ssh', 'rdp', 'vnc', 'winrm'], more: [] },
+}
 // Verified is the default (ADR 0025); the others are an explicit choice to
 // connect without checking who answers.
 const tlsModes = [
@@ -52,7 +64,7 @@ const emptyForm = {
   name: '', address: '', os_family: 'linux' as OSFamily,
   engine: 'postgres', engine_version: '', database_name: '', tls_mode: 'verify-full', tls_ca: '',
   app_upstream: '',
-  ssh: '', rdp: '', vnc: '', winrm: '', database: '', tags: [] as TagRow[], notes: '', retention: '',
+  ...defaultPorts, database: enginePorts.postgres, tags: [] as TagRow[], notes: '', retention: '',
 }
 
 /**
@@ -77,11 +89,11 @@ export function TargetForm({ initial, kind, onClose, onSaved }: { initial?: Targ
           tls_mode: initial.tls_mode || 'verify-full',
           tls_ca: initial.tls_ca ?? '',
           app_upstream: initial.app_upstream ?? '',
-          ssh: initial.ports.ssh ? String(initial.ports.ssh) : '',
-          rdp: initial.ports.rdp ? String(initial.ports.rdp) : '',
-          vnc: initial.ports.vnc ? String(initial.ports.vnc) : '',
-          winrm: initial.ports.winrm ? String(initial.ports.winrm) : '',
-          database: initial.ports.database ? String(initial.ports.database) : '',
+          ssh: initial.ports.ssh ? String(initial.ports.ssh) : defaultPorts.ssh,
+          rdp: initial.ports.rdp ? String(initial.ports.rdp) : defaultPorts.rdp,
+          vnc: initial.ports.vnc ? String(initial.ports.vnc) : defaultPorts.vnc,
+          winrm: initial.ports.winrm ? String(initial.ports.winrm) : defaultPorts.winrm,
+          database: initial.ports.database ? String(initial.ports.database) : (enginePorts[initial.engine || 'postgres'] ?? ''),
           tags: tagRows(initial.tags),
           notes: initial.notes,
           retention: initial.retention_days ? String(initial.retention_days) : '',
@@ -90,6 +102,20 @@ export function TargetForm({ initial, kind, onClose, onSaved }: { initial?: Targ
   )
   const { busy, err, setErr, submit } = useSubmit()
   const set = (key: keyof typeof emptyForm) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => setF({ ...f, [key]: e.target.value })
+  const [moreOpen, setMoreOpen] = useState(false)
+  // A port changed from its default always shows, whatever the operating
+  // system, so a value is never hidden and kept in silence.
+  const set_ = hostPorts[f.os_family] ?? hostPorts.other
+  const changed = protocols.filter((p) => f[p].trim() !== defaultPorts[p])
+  const shownPorts = protocols.filter((p) => set_.main.includes(p) || (moreOpen && set_.more.includes(p)) || changed.includes(p))
+  const hiddenMore = set_.more.filter((p) => !shownPorts.includes(p))
+  const [globalRetention, setGlobalRetention] = useState<string>('')
+  useEffect(() => {
+    api
+      .get<RetentionPolicy>('/admin/retention')
+      .then((r) => setGlobalRetention(r.max_age_days > 0 ? `${r.max_age_days} days` : 'no age limit'))
+      .catch(() => setGlobalRetention(''))
+  }, [])
 
   const port = (label: string, raw: string): number | null | undefined => {
     const v = raw.trim()
@@ -110,17 +136,19 @@ export function TargetForm({ initial, kind, onClose, onSaved }: { initial?: Targ
       setErr(error)
       return
     }
+    // A port at its default is stored unset, as it always was: the field
+    // shows the number instead of saying "blank = default".
     const ports: Partial<Record<Protocol, number>> = {}
     if (k === 'host') {
       for (const p of protocols) {
         const n = port(p, f[p])
         if (n === null) return
-        if (n !== undefined) ports[p] = n
+        if (n !== undefined && String(n) !== defaultPorts[p]) ports[p] = n
       }
     } else if (k === 'database') {
       const n = port('database', f.database)
       if (n === null) return
-      if (n !== undefined) ports.database = n
+      if (n !== undefined && String(n) !== enginePorts[f.engine]) ports.database = n
     }
     const retention = f.retention.trim() ? Number(f.retention) : null
     if (retention !== null && (!Number.isInteger(retention) || retention < 1 || retention > 3650)) {
@@ -179,7 +207,7 @@ export function TargetForm({ initial, kind, onClose, onSaved }: { initial?: Targ
               </>
             ) : k === 'host' ? (
               <>
-                <Field label="Address" hint={initial && f.address.trim() !== initial.address
+                <Field label="Hostname or IP address" hint={initial && f.address.trim() !== initial.address
                   ? 'New address: saving clears the trusted host key and pinned certificates.'
                   : undefined}>
                   <input id="t-address" value={f.address} onChange={set('address')} required />
@@ -195,7 +223,7 @@ export function TargetForm({ initial, kind, onClose, onSaved }: { initial?: Targ
             ) : (
               <>
                 <Field label="Engine">
-                  <select id="t-engine" value={f.engine} onChange={set('engine')}>
+                  <select id="t-engine" value={f.engine} onChange={(e) => setF({ ...f, engine: e.target.value, database: f.database === enginePorts[f.engine] ? (enginePorts[e.target.value] ?? '') : f.database })}>
                     <option value="postgres">PostgreSQL</option>
                     <option value="mysql">MySQL</option>
                     <option value="mariadb">MariaDB</option>
@@ -204,20 +232,27 @@ export function TargetForm({ initial, kind, onClose, onSaved }: { initial?: Targ
                 <Field label="Endpoint" hint="e.g. the RDS endpoint">
                   <input id="t-address" value={f.address} onChange={set('address')} required />
                 </Field>
-                <Field label="Port" hint="blank = engine default">
-                  <input id="t-port-database" inputMode="numeric" value={f.database} onChange={set('database')} placeholder={enginePorts[f.engine] ?? ''} />
+                <Field label="Port">
+                  <input id="t-port-database" inputMode="numeric" value={f.database} onChange={set('database')} />
                 </Field>
               </>
             )}
           </div>
           {k === 'host' && (
-            <div className="form-grid">
-              {protocols.map((p) => (
-                <Field key={p} label={`${protocolName(p)} port`} hint="blank = default">
-                  <input id={`t-port-${p}`} inputMode="numeric" value={f[p]} onChange={set(p)} placeholder={{ ssh: '22', rdp: '3389', vnc: '5900', winrm: '5986' }[p]} />
-                </Field>
-              ))}
-            </div>
+            <>
+              <div className="form-grid">
+                {shownPorts.map((p) => (
+                  <Field key={p} label={`${protocolName(p)} port`}>
+                    <input id={`t-port-${p}`} inputMode="numeric" value={f[p]} onChange={set(p)} />
+                  </Field>
+                ))}
+              </div>
+              {hiddenMore.length > 0 && (
+                <button type="button" className="link-btn" aria-expanded={moreOpen} onClick={() => setMoreOpen(true)}>
+                  More ports ({hiddenMore.map(protocolName).join(', ')})
+                </button>
+              )}
+            </>
           )}
           {k === 'database' && (
             <>
@@ -225,8 +260,8 @@ export function TargetForm({ initial, kind, onClose, onSaved }: { initial?: Targ
                 <Field label="Engine version" hint="e.g. 16 or 8.4">
                   <input id="t-engine-version" value={f.engine_version} onChange={set('engine_version')} placeholder={f.engine === 'postgres' ? '16' : '8'} />
                 </Field>
-                <Field label="Database" hint={f.engine === 'postgres' ? 'blank = the login role\'s name' : 'blank = none'}>
-                  <input id="t-database-name" value={f.database_name} onChange={set('database_name')} />
+                <Field label="Database">
+                  <input id="t-database-name" value={f.database_name} onChange={set('database_name')} placeholder={f.engine === 'postgres' ? 'The login role\'s name' : 'None'} />
                 </Field>
                 <Field label="TLS to the database" hint={tlsModes.find((m) => m.v === f.tls_mode)?.hint}>
                   <select id="t-tls-mode" value={f.tls_mode} onChange={set('tls_mode')}>
@@ -244,13 +279,13 @@ export function TargetForm({ initial, kind, onClose, onSaved }: { initial?: Targ
             </>
           )}
           {k === 'application' && secureUpstream && (
-            <Field label="CA bundle (PEM, optional)" hint="Blank = system roots">
-              <textarea id="t-tls-ca" value={f.tls_ca} onChange={set('tls_ca')} placeholder="-----BEGIN CERTIFICATE-----" />
+            <Field label="CA bundle (PEM, optional)">
+              <textarea id="t-tls-ca" value={f.tls_ca} onChange={set('tls_ca')} placeholder="System roots" />
             </Field>
           )}
           {k !== 'application' && (
-            <Field label="Keep recordings (days)" hint="Blank = the policy's or global">
-              <input id="t-retention" inputMode="numeric" value={f.retention} onChange={set('retention')} />
+            <Field label="Recording retention (days)" info="This target's value comes first; left empty, the policy grant's applies, then the global retention.">
+              <input id="t-retention" inputMode="numeric" value={f.retention} onChange={set('retention')} placeholder={globalRetention ? `Global: ${globalRetention}` : 'Global'} />
             </Field>
           )}
           <Field label="Tags">

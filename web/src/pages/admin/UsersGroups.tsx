@@ -251,7 +251,7 @@ function UserForm({ onClose, onSaved }: { onClose: () => void; onSaved: (oneTime
         <label htmlFor="nu-external">Signs in through an identity provider (no password)</label>
       </div>
       {!external && (
-        <Field label="Initial password" hint="Blank = generate a one-time password"><input id="nu-password" type="password" autoComplete="new-password" value={f.password} onChange={set('password')} minLength={12} /></Field>
+        <Field label="Initial password"><input id="nu-password" type="password" autoComplete="new-password" value={f.password} onChange={set('password')} minLength={12} placeholder="A one-time password is generated" /></Field>
       )}
       <RoleChecks value={r} onChange={setR} prefix="nu" />
     </FormModal>

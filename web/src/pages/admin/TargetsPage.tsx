@@ -97,7 +97,7 @@ export function TargetsPage({ kind, title, addLabel, empty, columns, cells }: {
         <div className="list-search">
           <input
             type="search"
-            placeholder={`Search ${noun} by name or address`}
+            placeholder={noun === 'hosts' ? 'Search hosts by name or IP' : `Search ${noun} by name or address`}
             aria-label={`Search ${noun}`}
             value={q}
             onChange={(e) => setQ(e.target.value)}
