@@ -112,7 +112,11 @@ a container runtime for it, as for databases; migration 0032 drops what the prox
 ([release notes](releases/v1.7.0.md)). 1.7.1 (28 October 2026) keeps the console's tunnel open
 while an application's containers start, pulls images before a session's set-up under a
 deadline of their own, and gives the dashboard's gateway card CPU use that refreshes
-([notes](releases/v1.7.1.md)).
+([notes](releases/v1.7.1.md)). 1.7.2 (30 October 2026) lets single sign-on work with any
+provider (SCIM 2.0, provider-owned MFA and sign-out, email usernames; ADR 0035) and carries
+the first fixes from a walkthrough of the live console: dashboard numbers open their filtered
+lists, tags are key and value boxes, the console says less ([notes](releases/v1.7.2.md)). The
+policy form's redesign is [ADR 0036](adr/0036-access-policy-grants.md), proposed for 1.8.
 
 ## v1.6 release — shipped (v1.6.0 tagged 2026-10-27)
 
