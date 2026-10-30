@@ -154,8 +154,11 @@ never writes the environment file.** A change is a request that a root helper ap
 - **The helper applies it and checks the outcome itself.** It runs `zanskar config check` on
   the new file, which loads it as `serve` would. It keeps the old file as
   `/etc/zanskar/env.previous`, renames the new one into place and restarts the gateway, then
-  waits up to a minute for `/readyz` where the new file says the gateway listens. If the gateway
-  does not answer, it puts the previous file back, restarts again, and reports `rolled_back`;
+  waits up to a minute for the service's own process (systemd's `MainPID`) to listen on the
+  port the new file names, read from `/proc`. It makes no request, so it trusts no certificate,
+  and a proxy still holding the port is another process. (A first version asked `/readyz` over
+  TLS without verifying the certificate; CodeQL and Sonar flagged it, 2026-10-31.) If the
+  gateway does not come up, it puts the previous file back, restarts again, and reports `rolled_back`;
   otherwise it reports `applied`. While the gateway drains, it watches the result, and a refused
   request ends the drain. The process that starts after the restart audits the outcome, once
   (`settings.boot_apply`).

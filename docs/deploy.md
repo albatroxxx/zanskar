@@ -855,7 +855,10 @@ environment file: it asks, and a helper running as root on the host decides and 
   the master key, variables it does not know) byte for byte, and runs the result through
   `config check` before it replaces anything. It keeps the old file as
   `/etc/zanskar/env.previous`, with the same owner and mode, restarts the service, and waits
-  up to 60 seconds for `/readyz` where the new file says the gateway listens.
+  up to 60 seconds for the service's own process (systemd's `MainPID`) to listen on the port
+  the new file names, which `serve` does only once its configuration, database and migrations
+  check out. It reads that from `/proc` and sends no request, so no certificate is taken on
+  trust, and a proxy still holding the port (Caddy, not yet stopped) does not count.
 - **Rollback.** If the gateway does not answer, the previous file goes back and the service
   restarts on it. The helper writes `/var/lib/zanskar/config-result`: `applied`, `refused` or
   `rolled_back`, with the names it changed and why, never a value. The console's progress

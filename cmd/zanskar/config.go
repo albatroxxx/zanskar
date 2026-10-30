@@ -4,18 +4,17 @@ package main
 
 import (
 	"context"
-	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
 	"maps"
 	"net"
-	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -92,10 +91,10 @@ func loadEnvFile(path string) (*config.Config, error) {
 // root, trusting nothing the gateway wrote.
 type configHelper struct {
 	Env, State string
-	// Run and Health stand in for systemctl and the gateway's /readyz in
+	// Run and Health stand in for systemctl and the listening check in
 	// tests; nil is the real thing.
 	Run    func(ctx context.Context, name string, args ...string) error
-	Health func(ctx context.Context, url string) error
+	Health func(ctx context.Context, port string) error
 	// Wait is how long the restarted gateway has to answer; zero is 60 s.
 	Wait time.Duration
 }
@@ -166,8 +165,8 @@ func (h *configHelper) apply(ctx context.Context, req bootedit.Request, perr err
 	return bootedit.Result{State: bootedit.Applied, Changed: names}
 }
 
-// restartAndWait restarts the service and waits for it to answer /readyz
-// where the new file says it listens.
+// restartAndWait restarts the service and waits for its new process to
+// listen where the new file says.
 func (h *configHelper) restartAndWait(ctx context.Context, cfg *config.Config) error {
 	if err := h.run(ctx, "systemctl", "restart", "zanskar"); err != nil {
 		return err
@@ -176,32 +175,19 @@ func (h *configHelper) restartAndWait(ctx context.Context, cfg *config.Config) e
 	if wait <= 0 {
 		wait = time.Minute
 	}
-	url := readyURL(cfg)
+	_, port, err := net.SplitHostPort(cfg.ListenAddr)
+	if err != nil {
+		return fmt.Errorf("the new listen address %q: %w", cfg.ListenAddr, err)
+	}
 	deadline := time.Now().Add(wait)
 	var last error
 	for time.Now().Before(deadline) {
-		if last = h.health(ctx, url); last == nil {
+		if last = h.health(ctx, port); last == nil {
 			return nil
 		}
 		time.Sleep(time.Second)
 	}
 	return last
-}
-
-// readyURL is the gateway's /readyz on this host, where cfg listens.
-func readyURL(cfg *config.Config) string {
-	host, port, err := net.SplitHostPort(cfg.ListenAddr)
-	if err != nil {
-		host, port = "127.0.0.1", "8443"
-	}
-	if host == "" || host == "0.0.0.0" || host == "::" {
-		host = "127.0.0.1"
-	}
-	scheme := "http"
-	if cfg.ServesTLS() {
-		scheme = "https"
-	}
-	return scheme + "://" + net.JoinHostPort(host, port) + "/readyz"
 }
 
 func (h *configHelper) run(ctx context.Context, name string, args ...string) error {
@@ -211,26 +197,67 @@ func (h *configHelper) run(ctx context.Context, name string, args ...string) err
 	return exec.CommandContext(ctx, name, args...).Run() // #nosec G204 -- systemctl with fixed arguments
 }
 
-func (h *configHelper) health(ctx context.Context, url string) error {
+// health reports whether the restarted gateway is up (2026-10-31): the
+// service's main process, as systemd knows it, holds a listening socket on
+// the new port. serve binds only after its configuration, database and
+// migrations check out, so a listener is a gateway that started. No request
+// is made, so no TLS is spoken and no certificate is taken on trust; and a
+// proxy still holding the port (Caddy, not yet stopped) is another process,
+// so it does not count.
+func (h *configHelper) health(ctx context.Context, port string) error {
 	if h.Health != nil {
-		return h.Health(ctx, url)
+		return h.Health(ctx, port)
 	}
-	// The gateway's own certificate may be self-signed; this asks the local
-	// process whether it is up, nothing more.
-	c := &http.Client{Timeout: 3 * time.Second, Transport: &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}} // #nosec G402 -- a liveness probe of the local gateway
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	out, err := exec.CommandContext(ctx, "systemctl", "show", "--property=MainPID", "--value", "zanskar").Output() // #nosec G204 -- systemctl with fixed arguments
 	if err != nil {
 		return err
 	}
-	resp, err := c.Do(req)
+	pid, err := strconv.Atoi(strings.TrimSpace(string(out)))
+	if err != nil || pid <= 0 {
+		return errors.New("the gateway service has no running process")
+	}
+	return listens("/proc", pid, port)
+}
+
+// listens reports whether process pid holds a TCP socket listening on port,
+// read from a proc filesystem at root: the inodes behind the process's
+// socket descriptors against the LISTEN rows of its own tcp and tcp6
+// tables (its network namespace's).
+func listens(root string, pid int, port string) error {
+	n, err := strconv.Atoi(port)
+	if err != nil || n <= 0 || n > 65535 {
+		return fmt.Errorf("port %q", port)
+	}
+	want := fmt.Sprintf("%04X", n)
+	dir := filepath.Join(root, strconv.Itoa(pid))
+	fds, err := os.ReadDir(filepath.Join(dir, "fd"))
 	if err != nil {
 		return err
 	}
-	_ = resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("readyz answered %d", resp.StatusCode)
+	sockets := map[string]bool{}
+	for _, fd := range fds {
+		link, err := os.Readlink(filepath.Join(dir, "fd", fd.Name()))
+		if inode, ok := strings.CutPrefix(link, "socket:["); err == nil && ok {
+			sockets[strings.TrimSuffix(inode, "]")] = true
+		}
 	}
-	return nil
+	for _, table := range []string{"tcp", "tcp6"} {
+		b, err := os.ReadFile(filepath.Join(dir, "net", table)) // #nosec G304 -- the process's own table under /proc
+		if err != nil {
+			continue
+		}
+		for _, row := range strings.Split(string(b), "\n")[1:] {
+			f := strings.Fields(row)
+			// local address, state, inode: "0100007F:20FB", "0A" (LISTEN), …
+			if len(f) < 10 || f[3] != "0A" || !sockets[f[9]] {
+				continue
+			}
+			if _, p, ok := strings.Cut(f[1], ":"); ok && p == want {
+				return nil
+			}
+		}
+	}
+	return fmt.Errorf("the gateway (process %d) is not listening on port %s", pid, port)
 }
 
 // writeResult writes the result for the gateway to read, owned like the

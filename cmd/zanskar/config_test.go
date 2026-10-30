@@ -7,9 +7,12 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"net"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -71,8 +74,8 @@ func (f *fakeHost) helper(env, state string) *configHelper {
 			f.runs = append(f.runs, append([]string{name}, args...))
 			return nil
 		},
-		Health: func(_ context.Context, url string) error {
-			f.asked = append(f.asked, url)
+		Health: func(_ context.Context, port string) error {
+			f.asked = append(f.asked, port)
 			if f.healthy {
 				return nil
 			}
@@ -114,8 +117,8 @@ func TestConfigApply(t *testing.T) {
 	if len(host.runs) != 1 || strings.Join(host.runs[0], " ") != "systemctl restart zanskar" {
 		t.Fatalf("runs: %v", host.runs)
 	}
-	if len(host.asked) == 0 || host.asked[0] != "https://127.0.0.1:443/readyz" {
-		t.Fatalf("health asked at %v", host.asked)
+	if len(host.asked) == 0 || host.asked[0] != "443" {
+		t.Fatalf("health asked about port %v, want the new file's 443", host.asked)
 	}
 	if _, err := os.Stat(filepath.Join(state, bootedit.RequestFile)); !errors.Is(err, os.ErrNotExist) {
 		t.Fatal("the request must be gone")
@@ -236,4 +239,91 @@ func mustRead(t *testing.T, path string) string {
 		t.Fatal(err)
 	}
 	return string(b)
+}
+
+// fakePID is the gateway's process in a fake /proc.
+const fakePID = 4242
+
+// fakeProc lays out what /proc shows for fakePID: its socket descriptors
+// (fd name -> inode) and its tcp6 table's rows.
+func fakeProc(t *testing.T, sockets map[string]string, rows ...string) string {
+	t.Helper()
+	root := t.TempDir()
+	dir := filepath.Join(root, strconv.Itoa(fakePID))
+	for _, sub := range []string{"fd", "net"} {
+		if err := os.MkdirAll(filepath.Join(dir, sub), 0o750); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for fd, inode := range sockets {
+		if err := os.Symlink("socket:["+inode+"]", filepath.Join(dir, "fd", fd)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Symlink("/dev/null", filepath.Join(dir, "fd", "0")); err != nil {
+		t.Fatal(err)
+	}
+	table := "  sl  local_address                         remote_address                        st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode\n" + strings.Join(rows, "\n") + "\n"
+	if err := os.WriteFile(filepath.Join(dir, "net", "tcp6"), []byte(table), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return root
+}
+
+// row is one tcp6 table row: local port (hex), state, inode.
+func row(port, state, inode string) string {
+	return "   0: 00000000000000000000000000000000:" + port + " 00000000000000000000000000000000:0000 " + state + " 00000000:00000000 00:00000000 00000000   997        0 " + inode + " 1 0000000000000000 100 0 0 10 0"
+}
+
+// TestListens (2026-10-31): the helper counts the gateway up when its own
+// process listens on the new port. The check it replaced asked /readyz over
+// TLS without verifying the certificate (CodeQL, Sonar); this one speaks no
+// TLS, and a proxy holding the port is another process, so it does not
+// count.
+func TestListens(t *testing.T) {
+	ours := fakeProc(t, map[string]string{"7": "991"}, row("01BB", "0A", "991"))
+	if err := listens(ours, fakePID, "443"); err != nil {
+		t.Fatalf("the gateway listening on 443: %v", err)
+	}
+	for name, root := range map[string]string{
+		// Caddy holds 443: a listener, but not one of this process's sockets.
+		"another process": fakeProc(t, map[string]string{"7": "991"}, row("01BB", "0A", "555")),
+		// The socket is the gateway's, but connected, not listening.
+		"not listening": fakeProc(t, map[string]string{"7": "991"}, row("01BB", "01", "991")),
+		// Listening, on the old port.
+		"another port": fakeProc(t, map[string]string{"7": "991"}, row("20FB", "0A", "991")),
+	} {
+		if err := listens(root, fakePID, "443"); err == nil {
+			t.Errorf("%s: counted as up", name)
+		}
+	}
+	if err := listens(ours, fakePID+1, "443"); err == nil {
+		t.Error("a process that does not exist counted as up")
+	}
+	if err := listens(ours, fakePID, "https"); err == nil {
+		t.Error("a port that is not a number was accepted")
+	}
+}
+
+// TestListensOnLinux reads the real /proc: this test process listening on
+// an IPv4 and a dual-stack port counts as up, and on a port it does not hold
+// does not.
+func TestListensOnLinux(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("reads /proc")
+	}
+	for _, addr := range []string{"127.0.0.1:0", ":0"} {
+		l, err := net.Listen("tcp", addr)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, port, _ := net.SplitHostPort(l.Addr().String())
+		if err := listens("/proc", os.Getpid(), port); err != nil {
+			t.Errorf("listening on %s: %v", l.Addr(), err)
+		}
+		_ = l.Close()
+		if err := listens("/proc", os.Getpid(), port); err == nil {
+			t.Errorf("%s still counted after it closed", l.Addr())
+		}
+	}
 }
