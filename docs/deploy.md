@@ -699,7 +699,8 @@ certificate, no DNS record, nothing installed on the client.
   needs. **Remove old images** (`updates.remove_old_images`, under *Updates* on the Settings
   page) turns it off, to keep an earlier version's images for a rollback on a host with no
   registry access; two gateways on one Docker host should turn it off too, or each removes the
-  other's images between sessions. A development build removes nothing. An upgrade also downloads less than the image's size: the
+  other's images between sessions, and so does a released binary started for a test on a
+  host whose images you want to keep. A development build removes nothing. An upgrade also downloads less than the image's size: the
   release builds the browser image's package layer only when Debian's packages changed since
   the last release, and takes it from that release's image otherwise, so between two releases
   with the same Chromium only the small layers after it are new.
