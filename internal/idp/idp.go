@@ -82,6 +82,12 @@ type OIDCConfig struct {
 	// (RP-initiated logout, ADR 0035), so the next sign-in asks for the
 	// password again; set it for a realm other applications share.
 	KeepProviderSession bool `json:"keep_provider_session,omitempty"`
+	// PromptLogin asks the provider to authenticate the person afresh at
+	// every sign-in (OpenID Connect prompt=login), whatever session it
+	// holds: for a provider whose sign-out does not end its own session
+	// (Authentik's default provider flow), or a shared workstation. Google
+	// does not take prompt=login.
+	PromptLogin bool `json:"prompt_login,omitempty"`
 }
 
 // LDAPConfig configures an LDAP or Active Directory bind-and-search provider.
@@ -166,7 +172,7 @@ func AccessSummary(c *Config) map[string]any {
 	if o := c.OIDC; o != nil {
 		d["issuer"], d["client_id"], d["zanskar_mfa"] = o.Issuer, o.ClientID, o.ZanskarMFA
 		d["allowed_domains"], d["username_claim"], d["groups_claim"] = orEmpty(o.AllowedDomains), o.UsernameClaim, o.GroupsClaim
-		d["trust_email"] = o.TrustEmail
+		d["trust_email"], d["prompt_login"] = o.TrustEmail, o.PromptLogin
 	}
 	if l := c.LDAP; l != nil {
 		d["url"], d["start_tls"], d["insecure_skip_verify"] = l.URL, l.StartTLS, l.InsecureSkipVerify

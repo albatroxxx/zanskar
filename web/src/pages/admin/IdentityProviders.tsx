@@ -28,6 +28,8 @@ interface OIDCConfig {
   zanskar_mfa?: boolean
   /** Signing out of Zanskar leaves the provider's session alone. */
   keep_provider_session?: boolean
+  /** Ask the provider to authenticate afresh at every sign-in (prompt=login). */
+  prompt_login?: boolean
 }
 interface LDAPConfig {
   url?: string
@@ -473,6 +475,7 @@ function ProviderModal({ existing, onClose, onSaved }: { existing: Provider | nu
             <div className="field inline"><input id="oidc-trustemail" type="checkbox" checked={!!oidc.trust_email} onChange={(e) => setOidc({ ...oidc, trust_email: e.target.checked })} /><label htmlFor="oidc-trustemail">Trust email addresses the provider does not mark as verified (for one that never says, such as Entra ID, when your directory assigns the addresses)</label></div>
             <div className="field inline"><input id="oidc-zanskarmfa" type="checkbox" checked={!!oidc.zanskar_mfa} onChange={(e) => setOidc({ ...oidc, zanskar_mfa: e.target.checked })} /><label htmlFor="oidc-zanskarmfa">Also ask for a Zanskar authenticator (only for a provider with no MFA of its own)</label></div>
             <div className="field inline"><input id="oidc-endsession" type="checkbox" checked={!oidc.keep_provider_session} onChange={(e) => setOidc({ ...oidc, keep_provider_session: !e.target.checked })} /><label htmlFor="oidc-endsession">Signing out ends the provider session too</label></div>
+            <div className="field inline"><input id="oidc-prompt" type="checkbox" checked={!!oidc.prompt_login} onChange={(e) => setOidc({ ...oidc, prompt_login: e.target.checked })} /><label htmlFor="oidc-prompt">Ask for the password at every sign-in (not Google)</label></div>
             {existing && <RegisterURI id={existing.id} />}
           </>
         )}

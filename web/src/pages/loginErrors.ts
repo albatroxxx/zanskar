@@ -20,6 +20,7 @@ const reasons: Record<string, string> = {
   not_provisioned: 'There is no account for you here yet. Ask an administrator to add you.',
   account_conflict: 'An account with your name already exists here and belongs to another sign-in method. Ask an administrator to link them.',
   provisioning_failed: `Your account could not be set up. ${tryAgain}`,
+  reauth_not_done: 'The identity provider signed you in on an earlier session instead of asking for your password again, so the sign-in was refused. Sign out of the identity provider, then sign in again.',
   internal: `Something went wrong on the gateway. ${tryAgain}`,
 }
 

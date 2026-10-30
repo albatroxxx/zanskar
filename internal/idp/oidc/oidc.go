@@ -133,7 +133,14 @@ func (h *Handler) start(w http.ResponseWriter, r *http.Request) {
 		Secure: h.Sessions.SecureCookie, SameSite: http.SameSiteLaxMode, MaxAge: int(stateTTL / time.Second),
 	})
 	oc := h.oauthConfig(r, prov, op, cfg)
-	authURL := oc.AuthCodeURL(st.State, oauth2.S256ChallengeOption(st.Verifier), gooidc.Nonce(st.Nonce))
+	opts := []oauth2.AuthCodeOption{oauth2.S256ChallengeOption(st.Verifier), gooidc.Nonce(st.Nonce)}
+	if cfg.PromptLogin {
+		// prompt=login is what providers document; max_age=0 is what OpenID
+		// Connect Core makes them honour ("MUST actively re-authenticate"),
+		// and the callback checks the auth_time it obliges them to send.
+		opts = append(opts, oauth2.SetAuthURLParam("prompt", "login"), oauth2.SetAuthURLParam("max_age", "0"))
+	}
+	authURL := oc.AuthCodeURL(st.State, opts...)
 	// authURL is built by the oauth2 library from the admin-configured issuer
 	// discovery document, not from request input.
 	http.Redirect(w, r, authURL, http.StatusFound) // #nosec G710
@@ -195,6 +202,17 @@ func (h *Handler) callback(w http.ResponseWriter, r *http.Request) {
 	if idt.Nonce != st.Nonce {
 		h.fail(w, r, "", id, "nonce_mismatch", errors.New("nonce mismatch"))
 		return
+	}
+	if cfg.PromptLogin {
+		// Asked to authenticate afresh, the provider must say when it did
+		// (auth_time, which max_age obliges it to send). A sign-in it made
+		// on an older session is refused, never taken silently: a provider
+		// that ignores the request would otherwise hand back the session the
+		// person just signed out of.
+		if at := authTime(idt); at.IsZero() || at.Before(time.Unix(st.Exp, 0).Add(-stateTTL-reauthSkew)) {
+			h.fail(w, r, "", id, "reauth_not_done", fmt.Errorf("the provider did not authenticate afresh (auth_time %v)", at))
+			return
+		}
 	}
 	ident, emailTrusted, err := identityFromToken(idt, cfg)
 	if err != nil {
@@ -344,6 +362,25 @@ func (h *Handler) LogoutURL(r *http.Request, sessionID string) string {
 	}
 	u.RawQuery = q.Encode()
 	return u.String()
+}
+
+// reauthSkew is how far the provider's clock may run behind ours when
+// auth_time is compared with the start of the sign-in.
+const reauthSkew = time.Minute
+
+// authTime reads the auth_time claim; zero when it is absent.
+func authTime(idt *gooidc.IDToken) time.Time {
+	var c struct {
+		AuthTime json.Number `json:"auth_time"`
+	}
+	if err := idt.Claims(&c); err != nil {
+		return time.Time{}
+	}
+	n, err := c.AuthTime.Int64()
+	if err != nil || n <= 0 {
+		return time.Time{}
+	}
+	return time.Unix(n, 0)
 }
 
 // ---- helpers
