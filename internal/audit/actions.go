@@ -114,6 +114,11 @@ const (
 	// Runtime settings.
 	SettingsUpdate = "settings.update"
 	SettingsReset  = "settings.reset"
+	// SettingsBootRequest and SettingsBootApply are a change to the
+	// environment file asked for in the console and its outcome from the
+	// root helper (ADR 0020, amended 2026-10-30).
+	SettingsBootRequest = "settings.boot_request"
+	SettingsBootApply   = "settings.boot_apply"
 
 	// The gateway process.
 	SystemRestart       = "system.restart"
@@ -121,6 +126,9 @@ const (
 	SystemReboot        = "system.reboot"
 	SystemPowerOff      = "system.poweroff"
 	SystemUpdate        = "system.update"
+	// SystemImagesRemove is the gateway removing earlier versions' images
+	// from its host (settings.KeyRemoveOldImages).
+	SystemImagesRemove = "system.images_remove"
 
 	// Targets, their host keys and their certificates.
 	TargetCreate           = "target.create"

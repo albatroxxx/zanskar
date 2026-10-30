@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { api, errorMessage, query } from '../../api/client'
 import type { HostKeyStatus, Page, Protocol } from '../../api/types'
 import { StateIcon } from '../../components/icons'
@@ -23,24 +23,55 @@ export function useDebounced<T>(value: T, delayMs = 200): T {
   return settled
 }
 
-/** useList fetches a paged collection and exposes reload. */
+/** listPages caps how many pages useList follows: 10,000 rows at 500 a page. */
+export const listPages = 20
+
+/**
+ * useList fetches a paged collection, every page of it, and exposes reload.
+ * It asked for one page of 500 and stopped (until 1.9.0), so past 500 hosts,
+ * users or groups the policy editor's lists silently missed some, and where
+ * an endpoint caps a page lower than that, sooner. It follows next_cursor up
+ * to listPages pages and says when it stopped short (truncated). An answer
+ * to a superseded request is dropped, so a quick change of params cannot be
+ * overwritten by the slower, older one.
+ */
 export function useList<T>(path: string, params: Record<string, string | number | boolean | undefined> = {}) {
   const [items, setItems] = useState<T[] | null>(null)
+  const [truncated, setTruncated] = useState(false)
   const [err, setErr] = useState('')
   const key = JSON.stringify(params)
+  const latest = useRef(0)
   const reload = useCallback(() => {
-    return api
-      .get<Page<T>>(path + query({ limit: 500, ...(JSON.parse(key) as Record<string, string>) }))
-      .then((p) => {
-        setItems(p.items ?? [])
+    const run = ++latest.current
+    return fetchAll<T>(path, JSON.parse(key) as Record<string, string>)
+      .then((r) => {
+        if (run !== latest.current) return
+        setItems(r.items)
+        setTruncated(r.truncated)
         setErr('')
       })
-      .catch((e) => setErr(errorMessage(e)))
+      .catch((e) => {
+        if (run === latest.current) setErr(errorMessage(e))
+      })
   }, [path, key])
   useEffect(() => {
     void reload()
   }, [reload])
-  return { items, err, setErr, reload }
+  return { items, truncated, err, setErr, reload }
+}
+
+/** fetchAll reads every page of path, up to listPages of them. */
+async function fetchAll<T>(path: string, params: Record<string, string>): Promise<{ items: T[]; truncated: boolean }> {
+  const items: T[] = []
+  let cursor: string | undefined
+  let pages = 0
+  do {
+    const p = await api.get<Page<T>>(path + query({ limit: 500, ...params, ...(cursor ? { cursor } : {}) }))
+    items.push(...(p.items ?? []))
+    cursor = p.next_cursor || undefined
+    pages++
+  } while (cursor && pages < listPages)
+  return { items, truncated: Boolean(cursor) }
 }
 
 export function hostKeyBadge(status: HostKeyStatus) {

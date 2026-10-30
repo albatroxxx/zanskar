@@ -220,6 +220,88 @@ func (r *Repo) Referencing(ctx context.Context, targetID, asgID string) ([]strin
 	}
 }
 
+// Removal is what deleting a target did, or would do, to one policy that
+// named it (ADR 0036, amended 2026-10-30).
+type Removal struct {
+	PolicyID string `json:"policy_id"`
+	Name     string `json:"name"`
+	// GrantsRemoved counts the grants left naming nothing and matching no
+	// tag, which go; NoGrantsLeft marks a policy left with none, which is
+	// kept and grants nobody.
+	GrantsRemoved int  `json:"grants_removed"`
+	NoGrantsLeft  bool `json:"no_grants_left"`
+}
+
+// TargetUsage previews RemoveTargetTx without writing: the policies that
+// name the target (or, for autoscaling grants, the group), in name order,
+// and what deleting it would do to each.
+func (r *Repo) TargetUsage(ctx context.Context, targetID, asgID string) ([]Removal, error) {
+	out := []Removal{}
+	after := ""
+	for {
+		batch, next, err := r.List(ctx, after, 500)
+		if err != nil {
+			return nil, err
+		}
+		for _, p := range batch {
+			if grants, n, changed := p.WithoutTarget(targetID, asgID); changed {
+				out = append(out, Removal{PolicyID: p.ID, Name: p.Name, GrantsRemoved: n, NoGrantsLeft: len(grants) == 0})
+			}
+		}
+		if next == "" {
+			return out, nil
+		}
+		after = next
+	}
+}
+
+// RemoveTargetTx takes the target, or the autoscaling group, out of every
+// grant that names it, inside the caller's transaction, so the target's own
+// deletion and this commit or fail together. A grant left naming nothing
+// and matching no tag goes; a policy left with no grant stays and grants
+// nobody, as one left with no one does. Deleting a target used to be
+// refused while any policy named it, so an administrator edited each one
+// first (2026-10-30).
+func (r *Repo) RemoveTargetTx(ctx context.Context, tx *sql.Tx, targetID, asgID string) ([]Removal, error) {
+	// Every policy read, and the cursor closed, before the first write:
+	// SQLite runs on one connection.
+	rows, err := tx.QueryContext(ctx, r.db.Rebind(`SELECT `+cols+` FROM access_policies ORDER BY name`))
+	if err != nil {
+		return nil, err
+	}
+	var all []*Policy
+	for rows.Next() {
+		p, err := scan(rows)
+		if err != nil {
+			_ = rows.Close() //nolint:sqlclosecheck // explicit close: SQLite single connection, writes follow
+			return nil, err
+		}
+		all = append(all, p)
+	}
+	_ = rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	out := []Removal{}
+	now := store.TimeArg(time.Now().UTC())
+	for _, p := range all {
+		grants, n, changed := p.WithoutTarget(targetID, asgID)
+		if !changed {
+			continue
+		}
+		p.Grants = grants
+		b, err := encodeGrants(p)
+		if err != nil {
+			return nil, err
+		}
+		if _, err := tx.ExecContext(ctx, r.db.Rebind(`UPDATE access_policies SET grants = ?, updated_at = ? WHERE id = ?`), b, now, p.ID); err != nil {
+			return nil, err
+		}
+		out = append(out, Removal{PolicyID: p.ID, Name: p.Name, GrantsRemoved: n, NoGrantsLeft: len(grants) == 0})
+	}
+	return out, nil
+}
+
 // Delete removes a policy and its subjects. Sessions and requests that
 // name it keep a NULL policy_id.
 func (r *Repo) Delete(ctx context.Context, id string) error {

@@ -12,7 +12,7 @@ export function Targets() {
       title="Hosts"
       addLabel="Add host"
       empty="No hosts yet."
-      columns={['Address', 'OS', 'Capabilities', 'Host key', 'Tags', 'Last probed']}
+      columns={['Hostname or IP', 'OS', 'Capabilities', 'Host key', 'Tags', 'Last probed']}
       cells={(t) => (
         <>
           <td className="mono">{t.address}</td>

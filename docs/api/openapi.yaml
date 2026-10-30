@@ -1359,6 +1359,12 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "409":
           $ref: "#/components/responses/Conflict"
+        "422":
+          description: "`invalid_group`: a group in `group_ids` does not exist or is synced from an identity provider; nothing was created."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
   /users/{id}:
     parameters:
       - $ref: "#/components/parameters/Id"
@@ -1582,6 +1588,12 @@ paths:
                 $ref: "#/components/schemas/Group"
         "409":
           $ref: "#/components/responses/Conflict"
+        "422":
+          description: "`invalid_user`: a user in `user_ids` does not exist; nothing was created."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
   /groups/{id}:
     parameters:
       - $ref: "#/components/parameters/Id"
@@ -2473,15 +2485,33 @@ paths:
       description: |
         Retires the target (ADR 0019): it leaves every listing and lookup and its credential
         bindings are dropped, but the row stays so past sessions, recordings and audit events
-        keep its name. Refused with `409 in_use` while a policy names the target by id or a
-        session is open on it; the message lists the policies and counts the sessions.
+        keep its name. In the same transaction (ADR 0036, amended 2026-10-30) it leaves every
+        grant that names it: a grant left naming nothing and matching no tag goes, and a
+        policy left with no grant stays and grants nobody. Its pending and approved access
+        requests are revoked, and its live sessions end (`target_deleted`). Until 1.9.0 this
+        was refused with `409 in_use` while a policy named the target. `GET …/usage` previews
+        it. `target.delete` names the policies changed; each gets a `policy.update`.
       responses:
         "204":
           description: Retired.
         "404":
           $ref: "#/components/responses/NotFound"
-        "409":
-          $ref: "#/components/responses/Conflict"
+  /targets/{id}/usage:
+    parameters:
+      - $ref: "#/components/parameters/Id"
+    get:
+      tags: [admin]
+      summary: Preview what deleting a target changes
+      description: The policies that name it and what deleting it does to each, its live sessions and its open access requests. Nothing is changed.
+      responses:
+        "200":
+          description: Usage.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AssetUsage"
+        "404":
+          $ref: "#/components/responses/NotFound"
   /targets/{id}/credentials/{protocol}:
     parameters:
       - $ref: "#/components/parameters/Id"
@@ -3140,15 +3170,31 @@ paths:
       description: |
         Retires the group (ADR 0019): it leaves every listing and the sync loop and its
         credential bindings are dropped, but the group and its instance rows stay so past
-        sessions keep their names. Refused with `409 in_use` while a policy names the group by
-        id or a session is open on one of its instances.
+        sessions keep their names. In the same transaction (ADR 0036, amended 2026-10-30) it
+        leaves every autoscaling grant that names it, as a deleted target does; its open access
+        requests are revoked and the sessions on its instances end (`target_deleted`). Until
+        1.9.0 this was refused with `409 in_use`. `GET …/usage` previews it.
       responses:
         "204":
           description: Retired.
         "404":
           $ref: "#/components/responses/NotFound"
-        "409":
-          $ref: "#/components/responses/Conflict"
+  /autoscaling-groups/{id}/usage:
+    parameters:
+      - $ref: "#/components/parameters/Id"
+    get:
+      tags: [admin]
+      summary: Preview what deleting an autoscaling group changes
+      description: The policies that name it and what deleting it does to each, the live sessions on its instances and its open access requests. Nothing is changed.
+      responses:
+        "200":
+          description: Usage.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AssetUsage"
+        "404":
+          $ref: "#/components/responses/NotFound"
   /autoscaling-groups/iam-preview:
     post:
       tags: [admin]
@@ -3740,8 +3786,8 @@ paths:
       description: >
         Runtime settings resolved with their precedence (built-in default, then the
         environment variable written at install, then the console value), and the boot
-        settings fixed at install, read-only with the variable to edit and secrets masked
-        (ADR 0020).
+        settings fixed at install, with the variable to edit and secrets masked (ADR 0020);
+        `editable` marks those the console may change through the root helper.
       responses:
         "200":
           description: Both sections.
@@ -3837,6 +3883,91 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
+  /admin/settings/boot:
+    post:
+      tags: [admin]
+      summary: Change install settings through the root helper
+      description: |
+        ADR 0020, amended 2026-10-30. New values for the allowlisted variables
+        (`ZANSKAR_APPS_MAX_SESSIONS`, `ZANSKAR_DATABASE_MAX_SESSIONS`, `ZANSKAR_PUBLIC_URL`,
+        `ZANSKAR_TLS_HOSTS`, `ZANSKAR_LOG_FORMAT`, `ZANSKAR_ISSUER`, `ZANSKAR_AWS_GATEWAY_PRINCIPAL`),
+        or a TLS preset (`managed` or `proxy`, which set the mode, the listen address, the redirect
+        and the proxy trust together). The gateway never writes the environment file: after the
+        drain it writes a request that `zanskar config apply`, run as root by a path unit, checks
+        again, writes beside the old file (kept as `env.previous`), and applies with a restart; if
+        the gateway does not come back on the new file, the previous one goes back. Needs a
+        systemd host and a recent authenticator code. Audited as `settings.boot_request`, and the
+        outcome as `settings.boot_apply`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                values:
+                  type: object
+                  additionalProperties: { type: string }
+                  description: Allowlisted variables and their new values; "" takes a line out.
+                tls_mode:
+                  type: string
+                  enum: [managed, proxy]
+                wait_minutes:
+                  type: integer
+                  minimum: 0
+                  maximum: 240
+      responses:
+        "202":
+          description: Draining; the request is written after the drain.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id: { type: string, description: The request; the result names it. }
+                  status: { $ref: "#/components/schemas/SystemStatus" }
+        "400":
+          description: >-
+            `invalid_change`: a variable outside the allowlist, a preset's variable given on its
+            own, or a value the helper would refuse. Nothing is drained.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: "`step_up_required`: prove an authenticator code first."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: "`unsupported_supervisor`: not a systemd host with a state directory."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /admin/settings/boot/result:
+    get:
+      tags: [admin]
+      summary: The root helper's last answer
+      responses:
+        "200":
+          description: Result.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [id, state, at]
+                properties:
+                  id: { type: string }
+                  state: { type: string, enum: [applied, refused, rolled_back] }
+                  message: { type: string }
+                  changed: { type: array, items: { type: string }, description: Variable names only. }
+                  at: { type: string, format: date-time }
+                  requested_by: { type: string, description: User id of the administrator who asked. }
+                  acknowledged: { type: boolean, description: The gateway has audited this outcome as `settings.boot_apply`. }
+        "404":
+          $ref: "#/components/responses/NotFound"
   /admin/settings/login-banner:
     get:
       tags: [admin]
@@ -4733,6 +4864,30 @@ components:
 
   schemas:
     # ---------------------------------------------------------------- common
+    AssetUsage:
+      type: object
+      description: What deleting a target or an autoscaling group changes (ADR 0036, amended 2026-10-30).
+      required: [policies, live_sessions, open_requests]
+      properties:
+        policies:
+          type: array
+          description: The policies that name it, in name order.
+          items:
+            type: object
+            required: [policy_id, name, grants_removed, no_grants_left]
+            properties:
+              policy_id: { type: string }
+              name: { type: string }
+              grants_removed:
+                type: integer
+                description: Grants left naming nothing and matching no tag, which go.
+              no_grants_left:
+                type: boolean
+                description: The policy is left with no grant; it stays and grants nobody.
+        live_sessions: { type: integer }
+        open_requests:
+          type: integer
+          description: Pending and approved access requests, which are revoked.
     Error:
       type: object
       required: [code, message, request_id]
@@ -4915,6 +5070,11 @@ components:
           type: string
         session_expires_at:
           $ref: "#/components/schemas/Timestamp"
+        time_zone:
+          type: string
+          description: >
+            The IANA zone every time in the console is shown in (runtime setting
+            `display.time_zone`; by default the gateway host's zone). 1.9.0.
 
     # ---------------------------------------------------------------- users and groups
     User:
@@ -5018,6 +5178,15 @@ components:
           type: boolean
           default: true
           description: The user must replace the password at their next sign-in, before the second factor (QA finding R25).
+        group_ids:
+          type: array
+          items:
+            type: string
+          description: >
+            Groups to put the user in, written in the same transaction as the account (1.9.0).
+            Repeats and blanks are dropped. A group that does not exist, or whose members come
+            from an identity provider, refuses the whole request with `422 invalid_group` naming
+            it, and no account is made.
     UserUpdate:
       type: object
       additionalProperties: false
@@ -5110,6 +5279,14 @@ components:
         description:
           type: string
           maxLength: 2000
+        user_ids:
+          type: array
+          items:
+            type: string
+          description: >
+            On create only: members added in the same transaction as the group (1.9.0). An
+            unknown user refuses the whole request with `422 invalid_user` naming it, and no
+            group is made. Ignored on update; members have their own routes.
 
     # ---------------------------------------------------------------- identity providers
     IdentityProvider:
@@ -6666,8 +6843,8 @@ components:
           type: string
         type:
           type: string
-          enum: [string, text, bool, enum, hostport]
-          description: How the value is edited and validated; `bool` values are the strings `true` and `false`.
+          enum: [string, text, bool, enum, hostport, timezone]
+          description: How the value is edited and validated; `bool` values are the strings `true` and `false`; `timezone` is an IANA zone name the gateway can load.
         default:
           type: string
           description: The built-in default.
@@ -6693,7 +6870,9 @@ components:
           description: User id of the administrator who set the console value; present only when `source` is `console`.
     BootSetting:
       type: object
-      description: A setting fixed at install from the environment; the console shows it read-only.
+      description: >-
+        A setting fixed at install from the environment. Most are read-only in the console;
+        those with `editable` can be changed through `POST /admin/settings/boot`.
       required: [key, title, env_var, value]
       properties:
         key:
@@ -6706,6 +6885,13 @@ components:
         value:
           type: string
           description: Masked where it is a secret.
+        editable:
+          type: string
+          enum: [value, preset]
+          description: How the console may change it through the root helper (ADR 0020, amended 2026-10-30); absent, install-only.
+        raw:
+          type: string
+          description: An editable variable's value as the file has it; allowlisted variables hold no secret.
         description:
           type: string
     EnvFileReport:
@@ -7031,7 +7217,8 @@ components:
             How busy the processors were over the last sampling window, as a
             share of all of them (0 to 100); the first request measures a
             short window of its own, later ones measure since the previous
-            request. Omitted off Linux.
+            request, and a previous reading older than 30 seconds starts a
+            fresh short window instead. Omitted off Linux.
           properties:
             percent:
               type: number
@@ -7075,6 +7262,13 @@ components:
                 type: integer
               free_bytes:
                 type: integer
+                description: Available to the service, as df's Avail.
+              used_bytes:
+                type: integer
+                description: >
+                  Blocks in use, as df's Used. The console's percentage is df's Use%,
+                  used / (used + free), rounded up, so the root-reserved blocks count as
+                  neither (1.9.0).
         database_sessions:
           type: integer
           description: Database client containers running now, one per live database session.
@@ -7112,6 +7306,9 @@ components:
           type: boolean
         draining:
           type: boolean
+        now:
+          $ref: "#/components/schemas/Timestamp"
+          description: The gateway's clock, for the dashboard's clock (1.9.0).
         drain:
           type: object
           description: The restart in progress, when there is one.

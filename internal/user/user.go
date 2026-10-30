@@ -91,6 +91,9 @@ var (
 	ErrInvalidInput  = errors.New("user: invalid input")
 	ErrInvalidRole   = errors.New("user: invalid role")
 	ErrUsernameShape = errors.New("user: username must be 2-64 characters of letters, digits, '.', '_' or '-', or an email address")
+	// ErrUnknownGroup refuses a group, given when a user is created, that
+	// does not exist or whose members come from an identity provider.
+	ErrUnknownGroup = errors.New("user: no such group, or its members come from an identity provider")
 )
 
 var (

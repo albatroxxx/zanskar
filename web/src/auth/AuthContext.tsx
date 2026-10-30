@@ -1,5 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { ApiError, api, setCsrf, signInEnded } from '../api/client'
+import { setDisplayZone } from '../api/format'
 import type { LoginResponse, Me, Role, User } from '../api/types'
 import { browser, providerSignOut } from './signOut'
 
@@ -52,6 +53,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         // rather than bouncing to a login the stale session would reject.
         setState({ status: 'partial', user: null, mfaEnrolled: me.mfa_enrolled, pending: me.pending })
       } else {
+        setDisplayZone(me.time_zone)
         setState({ status: 'full', user: me.user ?? null, mfaEnrolled: me.mfa_enrolled, pending: null })
       }
     } catch (e) {

@@ -19,6 +19,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/url"
 	"os"
 	"os/signal"
 	"strings"
@@ -87,6 +88,8 @@ func run(args []string) int {
 		err = runInit(args[1:])
 	case "backup":
 		err = runBackup(args[1:])
+	case "config":
+		err = runConfig(args[1:])
 	case "restore":
 		err = runRestore(args[1:])
 	case "keygen":
@@ -122,7 +125,7 @@ func run(args []string) int {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: zanskar <init|serve|migrate|backup|restore|keygen|key status|key rotate|key rotate-master|admin create|admin reset-mfa|audit verify|audit anchor|audit reseal|dbproxy|apprelay|healthcheck|version>")
+	fmt.Fprintln(os.Stderr, "usage: zanskar <init|serve|migrate|backup|restore|config check|config apply|keygen|key status|key rotate|key rotate-master|admin create|admin reset-mfa|audit verify|audit anchor|audit reseal|dbproxy|apprelay|healthcheck|version>")
 }
 
 func newLogger(cfg *config.Config) *slog.Logger {
@@ -244,6 +247,23 @@ func serve(ctx context.Context) error {
 			logLevel.Set(lvl)
 		}
 	}
+	if tlsMgr != nil {
+		// A certificate from Let's Encrypt, when the console turns it on
+		// (ADR 0021, amended 2026-10-30), for the public URL's name and the
+		// DNS names among the TLS hosts only.
+		publicHost := ""
+		if u, err := url.Parse(cfg.PublicURL); err == nil {
+			publicHost = u.Hostname()
+		}
+		tlsMgr.ACME = &tlscert.ACME{
+			Names: tlscert.NamesFor(publicHost, cfg.TLSHosts),
+			Settings: func() (bool, string, string) {
+				return runtime.Bool(settings.KeyACME), runtime.String(settings.KeyACMEEmail), runtime.String(settings.KeyACMEDirectory)
+			},
+			Cache: tlscert.DBCache{Repo: tlsMgr.Repo},
+			Log:   log,
+		}
+	}
 	applyLevel(runtime.String(settings.KeyLogLevel))
 	runtime.Subscribe(settings.KeyLogLevel, applyLevel)
 	requireMFA := func() bool { return runtime.Bool(settings.KeyRequireMFA) }
@@ -270,6 +290,9 @@ func serve(ctx context.Context) error {
 		log.Warn("session cookies are not marked Secure; fine on loopback, never in production")
 	}
 	auditLog := audit.NewLog(db)
+	// How the root helper's last change to the environment file ended: it
+	// restarted this service, so the process that asked never saw it.
+	lifecycle.AckConfigResult(ctx, cfg.StateDir, auditLog)
 	// Signs the audit anchors (ADR 0008), derived from the master key like
 	// the CSRF key; `zanskar key rotate-master` re-signs the stored anchors.
 	anchorKey, err := audit.AnchorKey(cfg.MasterKey)
@@ -279,6 +302,7 @@ func serve(ctx context.Context) error {
 	totp := auth.NewTOTP(db, ring, cfg.Issuer)
 	authHandler := auth.NewHandler(users, sessions, totp, auditLog, log)
 	authHandler.RequireMFA = requireMFA
+	authHandler.TimeZone = func() string { return runtime.String(settings.KeyTimeZone) }
 	if !requireMFA() {
 		log.Warn("authenticator not required: password-only logins are allowed (auth.require_mfa)")
 	}
@@ -375,10 +399,10 @@ func serve(ctx context.Context) error {
 			oidcHandler,
 			scimHandler,
 			&credential.AdminHandler{Vault: vault, Audit: auditLog, Log: log},
-			&target.AdminHandler{Repo: targets, Prober: prober, Policies: policies, Live: registry, Revoker: connectHandler, Vault: vault, Audit: auditLog, Log: log},
+			&target.AdminHandler{Repo: targets, Prober: prober, Policies: policies, Requests: accessReqs, Live: registry, Revoker: connectHandler, Vault: vault, Audit: auditLog, Log: log},
 			&policy.AdminHandler{Repo: policies, Users: users, Inventory: policyInventory{targets: targets, groups: asgRepo}, Revoker: connectHandler, Audit: auditLog, Log: log},
 			&access.Handler{Requests: accessReqs, Policies: policies, Targets: targets, ASGs: asgRepo, Revoker: connectHandler, Audit: auditLog, Log: log},
-			&asg.AdminHandler{Repo: asgRepo, Sync: syncer.SyncGroup, Identity: awsIdentity, Providers: asg.AWSFresh(), Policies: policies, Live: registry, Revoker: connectHandler, Vault: vault, Audit: auditLog, Log: log},
+			&asg.AdminHandler{Repo: asgRepo, Sync: syncer.SyncGroup, Identity: awsIdentity, Providers: asg.AWSFresh(), Policies: policies, Requests: accessReqs, Live: registry, Revoker: connectHandler, Vault: vault, Audit: auditLog, Log: log},
 			&session.Handler{Repo: sessionRepo, Audit: auditLog, AnchorKey: anchorKey, Registry: registry, Storage: storage, Log: log},
 			&browsergw.Readiness{Guacd: func() string { return runtime.String(settings.KeyGuacdAddr) }, BrowserImage: func() string { return runtime.String(settings.KeyBrowserImage) }, Docker: cfg.DockerPath},
 			&overview.Handler{Sessions: sessionRepo, Requests: accessReqs, Targets: targets, ASGs: asgRepo, Audit: auditLog, Log: log},
@@ -464,7 +488,19 @@ func serve(ctx context.Context) error {
 	// process or a failed teardown left behind are removed by label, now and
 	// every five minutes; a session this process still runs is never touched.
 	// How loudly a failing pass is reported is reapNotice's: once, not every
-	// pass, and never for a host with no container CLI.
+	// pass, and never for a host with no container CLI. The same pass then
+	// removes earlier versions' browser and relay images, first thing after
+	// an upgrade, before a session pulls the new ones into the room they took.
+	images := &oldImages{
+		Enabled: func() bool { return releasedBuild(version.Version) && runtime.Bool(settings.KeyRemoveOldImages) },
+		Configured: func() []string {
+			return []string{runtime.String(settings.KeyBrowserImage), runtime.String(settings.KeyDBProxyImage)}
+		},
+		Remove: func(ctx context.Context, configured []string) ([]string, error) {
+			return containers.RemoveOldImages(ctx, cfg.DockerPath, configured)
+		},
+		Audit: auditLog, Log: log,
+	}
 	go func() {
 		live := func(id string) bool { _, ok := registry.Get(id); return ok }
 		t := time.NewTicker(5 * time.Minute)
@@ -481,6 +517,7 @@ func serve(ctx context.Context) error {
 			if level, ok := notice.level(err); ok {
 				log.Log(ctx, level, "database session reaper cannot list containers; database sessions will not work until it can", "err", err)
 			}
+			images.pass(ctx)
 			select {
 			case <-ctx.Done():
 				return

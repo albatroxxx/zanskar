@@ -349,6 +349,28 @@ func TestReadinessProbesTheDaemonNotInfo(t *testing.T) {
 	}
 }
 
+// TestReadinessWithTheDefaultCLI (2026-10-30): with ZANSKAR_DOCKER_PATH
+// unset the probe ran exec("") and the live checklist said "docker
+// version: exec: no command", keeping Add application away on every
+// default install; sessions worked, as their callers defaulted the name
+// themselves. The empty path is "docker" on PATH, as everywhere else.
+func TestReadinessWithTheDefaultCLI(t *testing.T) {
+	dir := t.TempDir()
+	script := "#!/bin/sh\n[ \"$1\" = version ] && { echo 27.3.1; exit 0; }\n[ \"$1\" = image ] && exit 0\nexit 3\n"
+	if err := os.WriteFile(dir+"/docker", []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir)
+	r := &Readiness{Guacd: func() string { return "127.0.0.1:4822" }, BrowserImage: DefaultBrowserImageForTest, Docker: ""}
+	cs := r.Checks(context.Background())
+	if !cs[1].OK || cs[1].Detail != "docker answers" {
+		t.Fatalf("the runtime with no path set: %+v", cs[1])
+	}
+	if !strings.HasSuffix(cs[2].Detail, "(on this host)") {
+		t.Fatalf("the image check runs the same CLI: %+v", cs[2])
+	}
+}
+
 // TestRuntimeAdviceSaysWhy: a failed probe names its cause and the fix for
 // it, never the same sentence whatever went wrong.
 func TestRuntimeAdviceSaysWhy(t *testing.T) {

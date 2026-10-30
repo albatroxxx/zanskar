@@ -28,6 +28,15 @@ const userCols = `id, username, email, display_name, password_hash, status, idp_
 // Create inserts u with the given roles. u.ID, CreatedAt and UpdatedAt are set.
 // PasswordHash may be empty for externally authenticated users.
 func (r *Repo) Create(ctx context.Context, u *User) error {
+	return r.CreateInGroups(ctx, u, nil)
+}
+
+// CreateInGroups is Create that also makes the user a member of groupIDs, in
+// the same transaction (2026-10-30: adding a user and then their groups was
+// two pages): a group that does not exist, or whose members come from an
+// identity provider, refuses the whole request with ErrUnknownGroup, so no
+// half-made account is left behind.
+func (r *Repo) CreateInGroups(ctx context.Context, u *User, groupIDs []string) error {
 	if !ValidUsername(u.Username) {
 		return ErrUsernameShape
 	}
@@ -56,6 +65,20 @@ func (r *Repo) Create(ctx context.Context, u *User) error {
 	}
 	defer tx.Rollback() //nolint:errcheck // rollback after commit is a no-op
 
+	groups := distinct(groupIDs)
+	// One row at a time (QueryRow closes its cursor), before any write:
+	// SQLite runs on one connection.
+	for _, gid := range groups {
+		var idp sql.NullString
+		err := tx.QueryRowContext(ctx, r.db.Rebind(`SELECT idp_id FROM groups WHERE id = ?`), gid).Scan(&idp)
+		if errors.Is(err, sql.ErrNoRows) || err == nil && idp.Valid && idp.String != "" {
+			return fmt.Errorf("%w: %s", ErrUnknownGroup, gid)
+		}
+		if err != nil {
+			return err
+		}
+	}
+
 	_, err = tx.ExecContext(ctx, r.db.Rebind(`INSERT INTO users
 		(id, username, email, display_name, password_hash, status, idp_id, external_id, failed_logins, created_at, updated_at, must_change_password, scim_external_id)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?)`),
@@ -70,7 +93,25 @@ func (r *Repo) Create(ctx context.Context, u *User) error {
 	if err := setRolesTx(ctx, tx, r.db, u.ID, u.Roles); err != nil {
 		return err
 	}
+	for _, gid := range groups {
+		if _, err := tx.ExecContext(ctx, r.db.Rebind(`INSERT INTO group_members (group_id, user_id, added_at) VALUES (?, ?, ?)`), gid, u.ID, store.TimeArg(now)); err != nil {
+			return err
+		}
+	}
 	return tx.Commit()
+}
+
+// distinct drops empty and repeated ids, keeping the first order.
+func distinct(ids []string) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, id := range ids {
+		if id = strings.TrimSpace(id); id != "" && !seen[id] {
+			seen[id] = true
+			out = append(out, id)
+		}
+	}
+	return out
 }
 
 // GetByID returns the user or ErrNotFound.

@@ -4,8 +4,8 @@ package target
 
 import (
 	"context"
+	"database/sql"
 	"errors"
-	"fmt"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -29,9 +29,11 @@ const ProbeTimeout = 5 * time.Second
 type AdminHandler struct {
 	Repo   *Repo
 	Prober *Prober
-	// Policies and Live let delete refuse a target that a policy still names
-	// by id or that has sessions open (ADR 0019); nil skips that check.
+	// Policies, Requests and Live are what deleting a target reaches (ADR
+	// 0036, amended 2026-10-30): the grants that name it, its open access
+	// requests, its live sessions. Nil skips that part.
 	Policies *policy.Repo
+	Requests Requests
 	Live     *gateway.Registry
 	// Vault resolves the user_supplied sentinel when a slot is set to
 	// prompt; nil disables the sentinel.
@@ -51,6 +53,7 @@ func (h *AdminHandler) Register(mux *http.ServeMux) {
 	mux.Handle("GET /api/v1/targets/{id}", admin(http.HandlerFunc(h.get)))
 	mux.Handle("PUT /api/v1/targets/{id}", admin(http.HandlerFunc(h.update)))
 	mux.Handle("DELETE /api/v1/targets/{id}", admin(http.HandlerFunc(h.delete)))
+	mux.Handle("GET /api/v1/targets/{id}/usage", admin(http.HandlerFunc(h.usage)))
 	mux.Handle("POST /api/v1/targets/{id}/probe", admin(http.HandlerFunc(h.probe)))
 	mux.Handle("POST /api/v1/targets/{id}/probe-certificate", admin(http.HandlerFunc(h.probeCertificate)))
 	mux.Handle("POST /api/v1/targets/{id}/host-key/trust", admin(http.HandlerFunc(h.trustHostKey)))
@@ -192,67 +195,140 @@ func (h *AdminHandler) delete(w http.ResponseWriter, r *http.Request) {
 		h.fail(w, r, err)
 		return
 	}
-	blocked, err := h.deleteBlockedBy(r.Context(), t.ID)
+	var removals []policy.Removal
+	var closed int64
+	err = h.Repo.DeleteWith(r.Context(), t.ID, func(tx *sql.Tx) error {
+		var err error
+		if h.Policies != nil {
+			if removals, err = h.Policies.RemoveTargetTx(r.Context(), tx, t.ID, ""); err != nil {
+				return err
+			}
+		}
+		if h.Requests != nil {
+			if closed, err = h.Requests.CloseForTargetTx(r.Context(), tx, t.ID, "", "target deleted"); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		h.fail(w, r, err)
+		return
+	}
+	ended := EndSessions(h.Live, []string{t.ID})
+	h.record(r, audit.TargetDelete, t.ID, audit.Success, DeleteDetails(map[string]any{"name": t.Name, "address": t.Address}, removals, closed, ended))
+	RecordRemovals(r, h.Audit, removals, t.ID, t.Name)
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// usage answers GET /targets/{id}/usage: what deleting the target would
+// change, for the confirmation the console shows first.
+func (h *AdminHandler) usage(w http.ResponseWriter, r *http.Request) {
+	t, err := h.Repo.Get(r.Context(), r.PathValue("id"))
+	if err != nil {
+		h.fail(w, r, err)
+		return
+	}
+	u, err := Preview(r.Context(), h.Policies, h.Requests, h.Live, t.ID, "", []string{t.ID})
 	if err != nil {
 		httpx.Internal(w, r, h.Log, err)
 		return
 	}
-	if blocked != "" {
-		h.record(r, audit.TargetDelete, t.ID, audit.Failure, map[string]any{"name": t.Name, "reason": "in_use"})
-		httpx.WriteError(w, r, http.StatusConflict, "in_use", blocked)
-		return
-	}
-	if err := h.Repo.Delete(r.Context(), t.ID); err != nil {
-		h.fail(w, r, err)
-		return
-	}
-	h.record(r, audit.TargetDelete, t.ID, audit.Success, map[string]any{"name": t.Name, "address": t.Address})
-	w.WriteHeader(http.StatusNoContent)
+	httpx.WriteJSON(w, http.StatusOK, u)
 }
 
-// deleteBlockedBy explains why the target cannot be retired yet: policies that
-// name it by id and sessions still open on it. Empty means it may go.
-func (h *AdminHandler) deleteBlockedBy(ctx context.Context, id string) (string, error) {
-	var policies []string
-	if h.Policies != nil {
-		var err error
-		if policies, err = h.Policies.Referencing(ctx, id, ""); err != nil {
-			return "", err
+// Requests is what deleting a target needs of the access requests: their
+// count, and closing them inside the deletion's transaction.
+type Requests interface {
+	OpenForTarget(ctx context.Context, targetID, asgID string) (int, error)
+	CloseForTargetTx(ctx context.Context, tx *sql.Tx, targetID, asgID, note string) (int64, error)
+}
+
+// Usage is what deleting a target or an autoscaling group would change.
+type Usage struct {
+	Policies     []policy.Removal `json:"policies"`
+	LiveSessions int              `json:"live_sessions"`
+	OpenRequests int              `json:"open_requests"`
+}
+
+// Preview gathers a Usage; sessionIDs are the target ids the registry keys
+// the live sessions by (the target, or the group's instances).
+func Preview(ctx context.Context, pols *policy.Repo, reqs Requests, live *gateway.Registry, targetID, asgID string, liveIDs []string) (Usage, error) {
+	u := Usage{Policies: []policy.Removal{}}
+	var err error
+	if pols != nil {
+		if u.Policies, err = pols.TargetUsage(ctx, targetID, asgID); err != nil {
+			return u, err
 		}
 	}
-	open := 0
-	if h.Live != nil {
-		for _, l := range h.Live.List() {
-			if l.TargetID == id {
-				open++
+	if reqs != nil {
+		if u.OpenRequests, err = reqs.OpenForTarget(ctx, targetID, asgID); err != nil {
+			return u, err
+		}
+	}
+	if live != nil {
+		ids := make(map[string]bool, len(liveIDs))
+		for _, id := range liveIDs {
+			ids[id] = true
+		}
+		for _, l := range live.List() {
+			if ids[l.TargetID] {
+				u.LiveSessions++
 			}
 		}
 	}
-	return InUseMessage("target", policies, open), nil
+	return u, nil
 }
 
-// InUseMessage words the 409 an admin sees when a target or autoscaling
-// group cannot be deleted: which policies name it by id and how many sessions
-// are open on it. Empty when nothing stands in the way. Autoscaling groups
-// share it so both dialogs read the same.
-func InUseMessage(kind string, policies []string, openSessions int) string {
-	var parts []string
-	switch n := len(policies); {
-	case n == 1:
-		parts = append(parts, "policy "+policies[0]+" names it")
-	case n > 1:
-		parts = append(parts, "policies "+strings.Join(policies, ", ")+" name it")
+// EndSessions ends the live sessions on the deleted target ids, then once
+// more a moment later for a connection that was redeeming its ticket as the
+// deletion committed, and returns how many the first sweep ended.
+func EndSessions(live *gateway.Registry, ids []string) int {
+	if live == nil {
+		return 0
 	}
-	switch {
-	case openSessions == 1:
-		parts = append(parts, "1 session is open on it")
-	case openSessions > 1:
-		parts = append(parts, fmt.Sprintf("%d sessions are open on it", openSessions))
+	sweep := func() int {
+		n := 0
+		for _, id := range ids {
+			n += live.TerminateTarget(id, gateway.ErrTargetDeleted)
+		}
+		return n
 	}
-	if len(parts) == 0 {
-		return ""
+	ended := sweep()
+	time.AfterFunc(2*time.Second, func() { sweep() })
+	return ended
+}
+
+// DeleteDetails adds what a deletion reached to its audit details.
+func DeleteDetails(details map[string]any, removals []policy.Removal, closed int64, ended int) map[string]any {
+	if len(removals) > 0 {
+		names := make([]string, len(removals))
+		for i, rm := range removals {
+			names[i] = rm.Name
+		}
+		details["policies_updated"] = names
 	}
-	return fmt.Sprintf("the %s is still in use: %s. Remove it from those policies and end the sessions, then delete again.", kind, strings.Join(parts, "; "))
+	if closed > 0 {
+		details["requests_closed"] = closed
+	}
+	if ended > 0 {
+		details["sessions_ended"] = ended
+	}
+	return details
+}
+
+// RecordRemovals audits a policy.update for each policy a deletion changed,
+// so each policy's own history says why it changed.
+func RecordRemovals(r *http.Request, log *audit.Log, removals []policy.Removal, removedID, removedName string) {
+	if log == nil {
+		return
+	}
+	actor := auth.ActorFor(r)
+	for _, rm := range removals {
+		_, _ = log.Record(r.Context(), actor.Event(audit.PolicyUpdate, "policy", rm.PolicyID, audit.Success, map[string]any{
+			"name": rm.Name, "removed_target": removedID, "removed_target_name": removedName, "grants_removed": rm.GrantsRemoved, "no_grants_left": rm.NoGrantsLeft,
+		}))
+	}
 }
 
 // ProbeResponse pairs the refreshed target with what the probe saw.

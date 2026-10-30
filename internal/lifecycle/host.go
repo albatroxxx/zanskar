@@ -64,8 +64,12 @@ func (h *Handler) hostname() string {
 }
 
 func (h *Handler) hostAvailable() (bool, string) {
-	if s := h.supervisor(); s != "systemd" {
-		return false, "host actions need a systemd host; this gateway runs under " + s
+	switch s := h.supervisor(); s {
+	case "systemd":
+	case "kubernetes":
+		return false, "Needs a systemd host; on Kubernetes, roll the deployment."
+	default:
+		return false, "Needs a systemd host."
 	}
 	return true, ""
 }

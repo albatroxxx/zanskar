@@ -43,6 +43,9 @@ var (
 	ErrDuplicate    = errors.New("group: name already exists")
 	ErrInvalidInput = errors.New("group: invalid input")
 	ErrSynced       = errors.New("group: membership is managed by an identity provider")
+	// ErrUnknownUser refuses a member, given when a group is created, that
+	// does not exist.
+	ErrUnknownUser = errors.New("group: no such user")
 )
 
 // Repo reads and writes groups.
@@ -83,6 +86,63 @@ func (r *Repo) Create(ctx context.Context, g *Group) error {
 		return err
 	}
 	return nil
+}
+
+// CreateWithMembers is Create that also adds userIDs as members, in the
+// same transaction (2026-10-30: making a group and then filling it was two
+// steps): an unknown user refuses the whole request with ErrUnknownUser, so
+// no empty group is left behind.
+func (r *Repo) CreateWithMembers(ctx context.Context, g *Group, userIDs []string) error {
+	g.Name = strings.TrimSpace(g.Name)
+	if err := validName(g.Name); err != nil {
+		return err
+	}
+	now := time.Now().UTC()
+	g.ID = store.NewID()
+	g.CreatedAt, g.UpdatedAt = now, now
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback() //nolint:errcheck // rollback after commit is a no-op
+	members := distinctIDs(userIDs)
+	// One row at a time, before any write: SQLite runs on one connection.
+	for _, uid := range members {
+		var one int
+		if err := tx.QueryRowContext(ctx, r.db.Rebind(`SELECT 1 FROM users WHERE id = ?`), uid).Scan(&one); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return fmt.Errorf("%w: %s", ErrUnknownUser, uid)
+			}
+			return err
+		}
+	}
+	if _, err := tx.ExecContext(ctx, r.db.Rebind(`INSERT INTO groups (id, name, description, idp_id, external_id, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?)`),
+		g.ID, g.Name, g.Description, nullStr(g.IdPID), nullStr(g.ExternalID), store.TimeArg(now), store.TimeArg(now)); err != nil {
+		if store.IsUniqueViolation(err) {
+			return ErrDuplicate
+		}
+		return err
+	}
+	for _, uid := range members {
+		if _, err := tx.ExecContext(ctx, r.db.Rebind(`INSERT INTO group_members (group_id, user_id, added_at) VALUES (?, ?, ?)`), g.ID, uid, store.TimeArg(now)); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+// distinctIDs drops empty and repeated ids, keeping the first order.
+func distinctIDs(ids []string) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, id := range ids {
+		if id = strings.TrimSpace(id); id != "" && !seen[id] {
+			seen[id] = true
+			out = append(out, id)
+		}
+	}
+	return out
 }
 
 // Get returns a group or ErrNotFound.

@@ -155,6 +155,39 @@ func (r *Repo) Revoke(ctx context.Context, id, note string) (*Request, error) {
 	return r.Get(ctx, id)
 }
 
+// OpenForTarget counts the pending and approved requests for the target or
+// the autoscaling group: those its deletion would close.
+func (r *Repo) OpenForTarget(ctx context.Context, targetID, asgID string) (int, error) {
+	col, id := targetColumn(targetID, asgID)
+	var n int
+	err := r.db.QueryRowContext(ctx, r.db.Rebind(`SELECT COUNT(*) FROM access_requests WHERE status IN (?, ?) AND `+col+` = ?`), // #nosec G202 -- col is one of two fixed names
+		string(StatusPending), string(StatusApproved), id).Scan(&n)
+	return n, err
+}
+
+// targetColumn picks the column a target or group id is kept in.
+func targetColumn(targetID, asgID string) (col, id string) {
+	if targetID != "" {
+		return "target_id", targetID
+	}
+	return "asg_id", asgID
+}
+
+// CloseForTargetTx revokes, inside the caller's transaction, the pending
+// and approved requests for a target or autoscaling group being deleted
+// (ADR 0036, amended 2026-10-30), with note as the reason, and returns how
+// many.
+func (r *Repo) CloseForTargetTx(ctx context.Context, tx *sql.Tx, targetID, asgID, note string) (int64, error) {
+	col, id := targetColumn(targetID, asgID)
+	res, err := tx.ExecContext(ctx, r.db.Rebind(`UPDATE access_requests SET status = ?, decision_note = ?, updated_at = ?
+		WHERE status IN (?, ?) AND `+col+` = ?`), // #nosec G202 -- col is one of two fixed names
+		string(StatusRevoked), note, store.TimeArg(time.Now().UTC()), string(StatusPending), string(StatusApproved), id)
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
+}
+
 // DueForExpiry returns approved grants whose window has passed (as of now), so
 // the sweeper can audit each before flipping them with ExpireDue under the same
 // cutoff.

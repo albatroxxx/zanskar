@@ -4,6 +4,7 @@ package asg
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"log/slog"
 	"maps"
@@ -36,9 +37,11 @@ type AdminHandler struct {
 	// must not cache (AWSFresh): the test is whether the role can be assumed
 	// now. Nil disables the test endpoints.
 	Providers ProviderFactory
-	// Policies and Live let delete refuse a group that a policy still names
-	// by id or whose instances have sessions open (ADR 0019); nil skips it.
+	// Policies, Requests and Live are what deleting a group reaches (ADR
+	// 0036, amended 2026-10-30): the grants that name it, its open access
+	// requests, the live sessions on its instances. Nil skips that part.
 	Policies *policy.Repo
+	Requests target.Requests
 	Live     *gateway.Registry
 	// Revoker ends the live sessions on the group's instances when the
 	// group is disabled (ADR 0013); nil leaves them to their own limits.
@@ -58,6 +61,7 @@ func (h *AdminHandler) Register(mux *http.ServeMux) {
 	mux.Handle("GET /api/v1/autoscaling-groups/{id}", admin(http.HandlerFunc(h.get)))
 	mux.Handle("PUT /api/v1/autoscaling-groups/{id}", admin(http.HandlerFunc(h.update)))
 	mux.Handle("DELETE /api/v1/autoscaling-groups/{id}", admin(http.HandlerFunc(h.delete)))
+	mux.Handle("GET /api/v1/autoscaling-groups/{id}/usage", admin(http.HandlerFunc(h.usage)))
 	mux.Handle("GET /api/v1/autoscaling-groups/{id}/instances", admin(http.HandlerFunc(h.instances)))
 	mux.Handle("POST /api/v1/autoscaling-groups/{id}/sync", admin(http.HandlerFunc(h.sync)))
 	mux.Handle("GET /api/v1/autoscaling-groups/{id}/iam", admin(http.HandlerFunc(h.iam)))
@@ -237,52 +241,70 @@ func (h *AdminHandler) delete(w http.ResponseWriter, r *http.Request) {
 		h.fail(w, r, err)
 		return
 	}
-	blocked, err := h.deleteBlockedBy(r.Context(), g)
+	live, err := h.instanceIDs(r.Context(), g)
 	if err != nil {
 		httpx.Internal(w, r, h.Log, err)
 		return
 	}
-	if blocked != "" {
-		h.record(r, audit.ASGDelete, g, audit.Failure, map[string]any{"reason": "in_use"})
-		httpx.WriteError(w, r, http.StatusConflict, "in_use", blocked)
-		return
-	}
-	if err := h.Repo.Delete(r.Context(), g.ID); err != nil {
+	var removals []policy.Removal
+	var closed int64
+	err = h.Repo.DeleteWith(r.Context(), g.ID, func(tx *sql.Tx) error {
+		var err error
+		if h.Policies != nil {
+			if removals, err = h.Policies.RemoveTargetTx(r.Context(), tx, "", g.ID); err != nil {
+				return err
+			}
+		}
+		if h.Requests != nil {
+			if closed, err = h.Requests.CloseForTargetTx(r.Context(), tx, "", g.ID, "autoscaling group deleted"); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	if err != nil {
 		h.fail(w, r, err)
 		return
 	}
-	h.record(r, audit.ASGDelete, g, audit.Success, nil)
+	ended := target.EndSessions(h.Live, live)
+	h.record(r, audit.ASGDelete, g, audit.Success, target.DeleteDetails(map[string]any{}, removals, closed, ended))
+	target.RecordRemovals(r, h.Audit, removals, g.ID, g.Name)
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// deleteBlockedBy explains why the group cannot be retired yet: policies that
-// name it by id and sessions still open on its instances (the registry keys
-// those by instance row id). Empty means it may go.
-func (h *AdminHandler) deleteBlockedBy(ctx context.Context, g *Group) (string, error) {
-	var policies []string
-	if h.Policies != nil {
-		var err error
-		if policies, err = h.Policies.Referencing(ctx, "", g.ID); err != nil {
-			return "", err
-		}
+// usage answers GET /autoscaling-groups/{id}/usage: what deleting the group
+// would change, for the confirmation the console shows first.
+func (h *AdminHandler) usage(w http.ResponseWriter, r *http.Request) {
+	g, err := h.Repo.Get(r.Context(), r.PathValue("id"))
+	if err != nil {
+		h.fail(w, r, err)
+		return
 	}
-	open := 0
-	if h.Live != nil {
-		instances, err := h.Repo.Instances(ctx, g.ID, false)
-		if err != nil {
-			return "", err
-		}
-		ids := make(map[string]bool, len(instances))
-		for _, in := range instances {
-			ids[in.ID] = true
-		}
-		for _, l := range h.Live.List() {
-			if ids[l.TargetID] {
-				open++
-			}
-		}
+	live, err := h.instanceIDs(r.Context(), g)
+	if err != nil {
+		httpx.Internal(w, r, h.Log, err)
+		return
 	}
-	return target.InUseMessage("autoscaling group", policies, open), nil
+	u, err := target.Preview(r.Context(), h.Policies, h.Requests, h.Live, "", g.ID, live)
+	if err != nil {
+		httpx.Internal(w, r, h.Log, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, u)
+}
+
+// instanceIDs are the ids the registry keys the group's live sessions by:
+// its instances' rows.
+func (h *AdminHandler) instanceIDs(ctx context.Context, g *Group) ([]string, error) {
+	instances, err := h.Repo.Instances(ctx, g.ID, false)
+	if err != nil {
+		return nil, err
+	}
+	ids := make([]string, 0, len(instances))
+	for _, in := range instances {
+		ids = append(ids, in.ID)
+	}
+	return ids, nil
 }
 
 func (h *AdminHandler) instances(w http.ResponseWriter, r *http.Request) {

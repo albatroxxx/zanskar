@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react'
 import { ApiError, api, errorMessage } from '../../api/client'
-import { fmtTime } from '../../api/format'
-import type { BootSetting, RuntimeSetting, SettingsListing, SystemStatus } from '../../api/types'
-import { Alert, Badge, Empty, Field, PageHead } from '../../components/ui'
+import { fmtTime, setDisplayZone } from '../../api/format'
+import type { BootSetting, HostStatus, RuntimeSetting, SettingsListing, SystemMetrics, SystemStatus } from '../../api/types'
+import { HostActionDialog, type BootChange } from '../../components/HostActionDialog'
+import { Alert, Badge, Empty, Field, Modal, PageHead } from '../../components/ui'
 import { TLSCard } from './TLSCard'
 import { StorageCard } from './StorageCard'
 import { RetentionCard } from './RetentionCard'
@@ -89,8 +90,20 @@ function sourceBadge(s: RuntimeSetting) {
   }
 }
 
+/** defaultGuacd is where a package install runs guacd. */
+const defaultGuacd = '127.0.0.1:4822'
+
 function SettingRow({ setting, onChange }: { setting: RuntimeSetting; onChange: (v: RuntimeSetting) => void }) {
   const [value, setValue] = useState(setting.value)
+  // Whether guacd answers, for the Desktops row.
+  const [reach, setReach] = useState('')
+  useEffect(() => {
+    if (setting.key !== 'desktop.guacd_addr') return
+    api
+      .get<SystemMetrics>('/admin/system/metrics')
+      .then((m) => setReach(m.guacd ? (m.guacd.reachable ? 'guacd reachable' : `guacd unreachable at ${m.guacd.address}`) : ''))
+      .catch(() => setReach(''))
+  }, [setting.key, setting.value])
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState('')
   const [saved, setSaved] = useState(false)
@@ -111,6 +124,8 @@ function SettingRow({ setting, onChange }: { setting: RuntimeSetting; onChange: 
       const v = await fn()
       onChange(v)
       setValue(v.value)
+      // Every time on the page follows the zone from the next render on.
+      if (v.key === 'display.time_zone') setDisplayZone(v.value)
       setSaved(true)
       setNeedCode(false)
       setCode('')
@@ -150,12 +165,64 @@ function SettingRow({ setting, onChange }: { setting: RuntimeSetting; onChange: 
         </select>
       )
       break
+    case 'hostport':
+      if (setting.key === 'desktop.guacd_addr') {
+        // On or off is the choice an administrator makes; where guacd runs
+        // is an install detail, under Advanced (2026-10-30).
+        const on = value.trim() !== ''
+        input = (
+          <>
+            <span className="field inline" style={{ margin: 0 }}>
+              <input id={id} type="checkbox" checked={on} onChange={(e) => setValue(e.target.checked ? setting.value.trim() || defaultGuacd : '')} />
+              <label htmlFor={id}>{on ? 'On' : 'Off'}</label>
+              {on && reach && <span className="muted">· {reach}</span>}
+            </span>
+            <details className="advanced">
+              <summary>Advanced</summary>
+              <Field label="guacd address" hint="host:port">
+                <input id={id + '-addr'} value={value} onChange={(e) => setValue(e.target.value)} placeholder={defaultGuacd} />
+              </Field>
+            </details>
+          </>
+        )
+        break
+      }
+      input = <input id={id} value={value} onChange={(e) => setValue(e.target.value)} placeholder="host:port" />
+      break
+    case 'timezone':
+      // Typed, with every zone the browser knows offered as it is typed.
+      input = (
+        <>
+          <input id={id} value={value} onChange={(e) => setValue(e.target.value)} list={id + '-zones'} autoComplete="off" spellCheck={false} />
+          <datalist id={id + '-zones'}>
+            {timeZones().map((z) => (
+              <option key={z} value={z}>
+                {z}
+              </option>
+            ))}
+          </datalist>
+        </>
+      )
+      break
     case 'text':
       input = <textarea id={id} value={value} onChange={(e) => setValue(e.target.value)} rows={6} placeholder={setting.key === 'login_banner' ? 'This system is the property of Example Ltd. Access is restricted to authorised users.\nAll activity, including every session, is recorded and may be reviewed. By signing in you consent to this monitoring.' : undefined} />
       break
     default:
-      input = <input id={id} value={value} onChange={(e) => setValue(e.target.value)} placeholder={setting.type === 'hostport' ? 'host:port' : undefined} />
+      if (setting.key === 'database.proxy_image' || setting.key === 'apps.browser_image') {
+        // The default follows the gateway's version; a custom image is for a
+        // private mirror and is the one setting that would otherwise go
+        // stale across upgrades (2026-10-30).
+        input = (
+          <details className="advanced" open={setting.source !== 'default' || undefined}>
+            <summary>{setting.source === 'default' ? 'Default: follows the gateway version' : 'Custom image'}</summary>
+            <input id={id} value={value} onChange={(e) => setValue(e.target.value)} spellCheck={false} />
+          </details>
+        )
+        break
+      }
+      input = <input id={id} value={value} onChange={(e) => setValue(e.target.value)} />
   }
+  const customImage = (setting.key === 'database.proxy_image' || setting.key === 'apps.browser_image') && setting.source !== 'default'
 
   return (
     <div className="setting-row">
@@ -167,6 +234,7 @@ function SettingRow({ setting, onChange }: { setting: RuntimeSetting; onChange: 
       </div>
       <p className="muted">{setting.description}</p>
       {input}
+      {customImage && <Alert tone="warn">A custom image does not follow upgrades: change it with each release, or Reset to follow the gateway.</Alert>}
       {setting.key === 'login_banner' && value.trim() && (
         <Field label="Preview">
           <div className="login-banner" aria-hidden="true">{value.trim()}</div>
@@ -199,16 +267,31 @@ function changedIn(envVar: string, changed: string[]) {
 }
 
 function BootTable({ boot, changed }: { boot: BootSetting[]; changed: string[] }) {
+  const [editing, setEditing] = useState<BootSetting | null>(null)
+  const [change, setChange] = useState<BootChange | null>(null)
+  // The host check the gear uses: where no root helper can apply a change
+  // (Docker, Kubernetes, no systemd), Edit is greyed with the reason instead
+  // of answering 409 after the dialog.
+  const [host, setHost] = useState<HostStatus | null>(null)
+  useEffect(() => {
+    api.get<HostStatus>('/admin/system/host').then(setHost).catch(() => setHost(null))
+  }, [])
+  const hostOff = host !== null && !host.available
   return (
     <div className="card table-wrap" id="settings-set-at-install">
       <h2>Set at install</h2>
-      <p className="muted">From <code>/etc/zanskar/env</code>; edit and restart to change.</p>
+      <p className="muted">
+        From <code>/etc/zanskar/env</code>. {hostOff ? `Edit: ${host?.reason ?? 'Needs a systemd host.'}` : 'Some can be changed here; the gateway restarts to apply them.'}
+      </p>
       <table>
         <thead>
           <tr>
             <th>Setting</th>
             <th>Value</th>
             <th>Variable</th>
+            <th>
+              <span className="sr-only">Edit</span>
+            </th>
           </tr>
         </thead>
         <tbody>
@@ -228,10 +311,101 @@ function BootTable({ boot, changed }: { boot: BootSetting[]; changed: string[] }
                 )}
               </td>
               <td className="mono muted">{b.env_var}</td>
+              <td className="actions">
+                {b.editable ? (
+                  <button type="button" className="btn sm" onClick={() => setEditing(b)} disabled={hostOff} title={hostOff ? host?.reason : undefined}>
+                    Edit
+                  </button>
+                ) : (
+                  <span className="muted" title={installOnly[b.key] ?? 'Changed in the environment file only.'}>
+                    Install only
+                  </span>
+                )}
+              </td>
             </tr>
           ))}
         </tbody>
       </table>
+      {editing && (
+        <BootEdit
+          setting={editing}
+          onClose={() => setEditing(null)}
+          onNext={(c) => {
+            setEditing(null)
+            setChange(c)
+          }}
+        />
+      )}
+      {change && <HostActionDialog action="config" change={change} onClose={() => setChange(null)} />}
     </div>
   )
+}
+
+/** installOnly says why a boot setting is not offered for editing (ADR 0020, amended 2026-10-30). */
+const installOnly: Record<string, string> = {
+  db: 'Its credentials, and a different database is a different gateway.',
+  master_key: 'It seals every secret; zanskar key rotate-master changes it.',
+  docker_path: 'Any program path would run as the service user.',
+  listen_addr: 'The console could lock itself out; the TLS mode presets set it.',
+  recordings_s3: 'The Recording storage card above changes it, at once.',
+  allow_plain_http: 'Plain HTTP stays a decision made on the host.',
+  trusted_proxies: 'It decides which client addresses are believed.',
+  trust_proxy_tls: 'It decides which cookies are believed; the TLS mode presets set it.',
+  http_redirect: 'The TLS mode presets set it.',
+  recordings_dir: 'A path the service writes anywhere.',
+  siem: 'It would ship the audit stream elsewhere.',
+}
+
+/** BootEdit takes the new value of one editable boot setting, then hands on to the progress dialog. */
+function BootEdit({ setting, onClose, onNext }: { setting: BootSetting; onClose: () => void; onNext: (c: BootChange) => void }) {
+  const [value, setValue] = useState(setting.raw ?? '')
+  const preset = setting.editable === 'preset'
+  const [mode, setMode] = useState<'managed' | 'proxy'>(setting.raw === 'proxy' ? 'proxy' : 'managed')
+  return (
+    <Modal title={`Change ${setting.title}`} onClose={onClose} width={480}>
+      <form
+        onSubmit={(e) => {
+          e.preventDefault()
+          if (preset) onNext({ tls_mode: mode, summary: mode === 'managed' ? 'TLS mode: managed. The gateway serves HTTPS on 443 and redirects 80.' : 'TLS mode: proxy. The gateway listens on 127.0.0.1:8443 behind a TLS proxy.' })
+          else onNext({ values: { [setting.env_var]: value.trim() }, summary: `${setting.env_var} = ${value.trim() || '(unset)'}` })
+        }}
+      >
+        {preset ? (
+          <>
+            <Field label="TLS mode">
+              <select id="boot-tls-mode" value={mode} onChange={(e) => setMode(e.target.value as 'managed' | 'proxy')}>
+                <option value="managed">Managed: the gateway serves HTTPS itself</option>
+                <option value="proxy">Proxy: a TLS proxy in front</option>
+              </select>
+            </Field>
+            {mode === 'managed' && setting.raw !== 'managed' && (
+              <Alert tone="warn">Stop the proxy in front first: the gateway takes ports 443 and 80. If it cannot, the change is rolled back.</Alert>
+            )}
+          </>
+        ) : (
+          <Field label={setting.env_var}>
+            <input id="boot-value" value={value} onChange={(e) => setValue(e.target.value)} autoComplete="off" spellCheck={false} />
+          </Field>
+        )}
+        <div className="actions">
+          <button type="button" className="btn ghost" onClick={onClose}>
+            Cancel
+          </button>
+          <button type="submit" className="btn primary">
+            Continue
+          </button>
+        </div>
+      </form>
+    </Modal>
+  )
+}
+
+/** timeZones lists the zones this browser can show, for the time zone setting. */
+function timeZones(): string[] {
+  const intl = Intl as unknown as { supportedValuesOf?: (key: string) => string[] }
+  try {
+    return intl.supportedValuesOf?.('timeZone') ?? []
+  } catch {
+    return []
+  }
 }

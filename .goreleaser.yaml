@@ -109,6 +109,13 @@ nfpms:
         dst: /usr/libexec/zanskar/zanskar-update
         file_info:
           mode: 0755
+      # Install settings from the console (ADR 0020, amended 2026-10-30): a
+      # path unit watches the request file; `zanskar config apply` checks
+      # and applies it as root.
+      - src: deploy/packaging/zanskar-config.path
+        dst: /usr/lib/systemd/system/zanskar-config.path
+      - src: deploy/packaging/zanskar-config.service
+        dst: /usr/lib/systemd/system/zanskar-config.service
       - src: LICENSE
         dst: /usr/share/doc/zanskar/LICENSE
       - src: THIRD_PARTY_NOTICES.md

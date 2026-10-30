@@ -1,7 +1,7 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import { Link } from 'react-router-dom'
 import { api, errorMessage } from '../../api/client'
-import { engineName, fmtBytes, fmtTime } from '../../api/format'
+import { consoleZone, engineName, fmtBytes, fmtTime, zoneLabel } from '../../api/format'
 import type { AdminOverview, SystemMetrics, SystemStatus, TLSStatus } from '../../api/types'
 import { StateIcon, TileIcon } from '../../components/icons'
 import { drill } from '../../api/drilldown'
@@ -45,12 +45,23 @@ export function Dashboard() {
   const [status, setStatus] = useState<SystemStatus | null>(null)
   const [tls, setTls] = useState<TLSStatus | null>(null)
   const [metrics, setMetrics] = useState<SystemMetrics | null>(null)
+  const [skew, setSkew] = useState(0)
   // A failed read must not look like a quiet system (the Approvals rule).
   const [err, setErr] = useState('')
 
   useEffect(() => {
     api.get<AdminOverview>('/admin/overview').then(setOverview).catch((e) => setErr(errorMessage(e)))
-    api.get<SystemStatus>('/admin/system/status').then(setStatus).catch((e) => setErr(errorMessage(e)))
+    const asked = Date.now()
+    api
+      .get<SystemStatus>('/admin/system/status')
+      .then((st) => {
+        setStatus(st)
+        // The gateway's clock against the browser's, halfway through the
+        // round trip; the clock shows the gateway's time.
+        const at = st.now ? Date.parse(st.now) : Number.NaN
+        if (!Number.isNaN(at)) setSkew(at - (asked + Date.now()) / 2)
+      })
+      .catch((e) => setErr(errorMessage(e)))
     api.get<TLSStatus>('/admin/tls').then(setTls).catch((e) => setErr(errorMessage(e)))
     // The host's numbers are live: read again every ten seconds while the
     // page is open, so a gauge moves instead of standing where the page
@@ -73,6 +84,8 @@ export function Dashboard() {
       <PageHead title="Dashboard" />
       {err && <Alert tone="danger">The dashboard could not be fully loaded: {err}</Alert>}
 
+      <div className="dash-top">
+      <div className="dash-tiles">
       <h2 className="stat-section">Needs attention</h2>
       <div className="stat-grid">
         <StatTile value={o && o.pending_requests} label="Pending approvals" icon={<TileIcon kind="approvals" />} to="/admin/approvals" tone="warn" />
@@ -109,6 +122,9 @@ export function Dashboard() {
           }
           to="/admin/autoscaling"
         />
+      </div>
+      </div>
+      <Clock skewMs={skew} />
       </div>
 
       <h2 className="stat-section">Gateway</h2>
@@ -154,19 +170,34 @@ function diskTone(d: { total_bytes: number; free_bytes: number }): 'warn' | 'dan
   return undefined
 }
 
-/** Gauge is one ratio against its limit: a label, the reading in words, and
- *  a meter whose fill escalates with the tone. */
-function Gauge({ label, reading, fraction, tone }: { label: string; reading: ReactNode; fraction: number; tone?: 'warn' | 'danger' }) {
-  const pct = Math.round(Math.max(0, Math.min(1, fraction)) * 100)
+/** Gauge is one ratio against its limit: a label, the percentage first
+ *  (2026-10-30: only CPU had one; a percentage reads at a glance), the
+ *  figures behind it muted, and a meter whose fill escalates with the tone.
+ *  Every gauge, now and later, gets the percentage by being a Gauge. */
+function Gauge({ label, word, detail, fraction, tone, pct }: { label: string; word: string; detail?: ReactNode; fraction: number; tone?: 'warn' | 'danger'; pct?: number }) {
+  const shown = pct ?? Math.round(Math.max(0, fraction) * 100)
+  const fill = Math.round(Math.max(0, Math.min(1, fraction)) * 100)
   return (
     <div className="gauge">
       <div className="label">{label}</div>
-      <div className="reading">{reading}</div>
-      <div className={'meter' + (tone ? ' ' + tone : '')} role="meter" aria-label={label} aria-valuemin={0} aria-valuemax={100} aria-valuenow={pct}>
-        <i style={{ width: `${pct}%` }} />
+      <div className="reading">
+        <b className={'gauge-pct' + (tone ? ' ' + tone : '')}>{shown}%</b> {word}
+        {detail && <span className="muted"> · {detail}</span>}
+      </div>
+      <div className={'meter' + (tone ? ' ' + tone : '')} role="meter" aria-label={label} aria-valuemin={0} aria-valuemax={100} aria-valuenow={fill}>
+        <i style={{ width: `${fill}%` }} />
       </div>
     </div>
   )
+}
+
+/** diskUse is df's Use%: used over used plus available, rounded up, so the
+ *  blocks kept for root count as neither and the figure matches a terminal. */
+function diskUse(d: { total_bytes: number; free_bytes: number; used_bytes?: number }): { pct: number; fraction: number } {
+  const used = d.used_bytes ?? d.total_bytes - d.free_bytes
+  const base = used + d.free_bytes
+  if (base <= 0) return { pct: 0, fraction: 0 }
+  return { pct: Math.ceil((used / base) * 100), fraction: used / base }
 }
 
 /** HostFacts is the gateway host right now: a gauge per ratio, then a line
@@ -180,14 +211,16 @@ function HostFacts({ m }: { m: SystemMetrics }) {
         {m.cpu && m.cpus > 0 ? (
           <Gauge
             label={`CPU (${m.cpus} cores)`}
-            reading={<><b>{Math.round(m.cpu.percent)}%</b> busy{m.load && <> · load {m.load.fifteen.toFixed(2)} over 15 min</>}</>}
+            word="busy"
+            detail={m.load && <>load {m.load.fifteen.toFixed(2)} over 15 min</>}
             fraction={m.cpu.percent / 100}
             tone={m.cpu.percent >= 95 ? 'danger' : m.cpu.percent >= 85 ? 'warn' : undefined}
           />
         ) : m.load && m.cpus > 0 ? (
           <Gauge
             label={`Load (${m.cpus} cores)`}
-            reading={<><b>{m.load.one.toFixed(2)}</b> now · {m.load.fifteen.toFixed(2)} over 15 min</>}
+            word="load"
+            detail={<>{m.load.one.toFixed(2)} now · {m.load.fifteen.toFixed(2)} over 15 min</>}
             fraction={m.load.one / m.cpus}
             tone={m.load.one >= m.cpus ? 'danger' : m.load.one >= m.cpus * 0.85 ? 'warn' : undefined}
           />
@@ -195,7 +228,8 @@ function HostFacts({ m }: { m: SystemMetrics }) {
         {m.memory && (
           <Gauge
             label="Memory"
-            reading={<><b>{fmtBytes(used)}</b> used of {fmtBytes(m.memory.total_bytes)}</>}
+            word="used"
+            detail={<>{fmtBytes(used)} of {fmtBytes(m.memory.total_bytes)}</>}
             fraction={used / m.memory.total_bytes}
             tone={used >= m.memory.total_bytes * 0.95 ? 'danger' : used >= m.memory.total_bytes * 0.85 ? 'warn' : undefined}
           />
@@ -204,9 +238,10 @@ function HostFacts({ m }: { m: SystemMetrics }) {
           <Gauge
             key={d.path}
             label={d.system ? 'System disk' : d.what === 'recordings' ? 'Recordings' : `${d.what[0].toUpperCase() + d.what.slice(1)} disk`}
-            reading={
+            word="used"
+            detail={
               <>
-                <b>{fmtBytes(d.free_bytes)}</b> free of {fmtBytes(d.total_bytes)}
+                {fmtBytes(d.free_bytes)} free of {fmtBytes(d.total_bytes)}
                 {diskTone(d) && (
                   <>
                     {' '}
@@ -215,7 +250,8 @@ function HostFacts({ m }: { m: SystemMetrics }) {
                 )}
               </>
             }
-            fraction={1 - d.free_bytes / d.total_bytes}
+            pct={diskUse(d).pct}
+            fraction={diskUse(d).fraction}
             // The meter's tone follows its own geometry (how full); the badge
             // alone carries the absolute under-5-GB floor, so a tiny volume
             // never shows an alarmed near-empty bar.
@@ -232,5 +268,32 @@ function HostFacts({ m }: { m: SystemMetrics }) {
         )}
       </p>
     </>
+  )
+}
+
+/**
+ * Clock is the gateway's time in the console's zone (2026-10-30), ticking
+ * each second. It counts from the gateway's own clock (status.now), so a
+ * browser whose clock runs off still shows the gateway's time. Not a live
+ * region: it must not be read out every second.
+ */
+function Clock({ skewMs }: { skewMs: number }) {
+  const [now, setNow] = useState(() => Date.now())
+  useEffect(() => {
+    const t = setInterval(() => setNow(Date.now()), 1000)
+    return () => clearInterval(t)
+  }, [])
+  const zone = consoleZone()
+  const at = new Date(now + skewMs)
+  return (
+    <section className="card dash-clock" aria-label="Gateway time">
+      <time className="clock-time" dateTime={at.toISOString()}>
+        {at.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', second: '2-digit', timeZone: zone })}
+      </time>
+      <div className="clock-date">{at.toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric', timeZone: zone })}</div>
+      <div className="clock-zone muted">
+        {zone} · {zoneLabel(at.getTime(), zone)}
+      </div>
+    </section>
   )
 }

@@ -61,3 +61,43 @@ func TestRepoOnEachBackend(t *testing.T) {
 		}
 	})
 }
+
+// TestCreateWithMembersOnEachBackend (2026-10-30): a group can be made with
+// its members in one step; an unknown user refuses all of it, so no empty
+// group is left behind, and repeated or blank ids are taken once.
+func TestCreateWithMembersOnEachBackend(t *testing.T) {
+	storetest.ForEachBackend(t, func(t *testing.T, db *store.DB) {
+		ctx := context.Background()
+		users := user.NewRepo(db)
+		var ids []string
+		for _, n := range []string{"ann", "ben"} {
+			u := &user.User{Username: n, DisplayName: n, Roles: []user.Role{user.RoleUser}}
+			if err := users.Create(ctx, u); err != nil {
+				t.Fatal(err)
+			}
+			ids = append(ids, u.ID)
+		}
+		r := NewRepo(db)
+		g := &Group{Name: "ops"}
+		if err := r.CreateWithMembers(ctx, g, []string{ids[0], ids[1], ids[0], " "}); err != nil {
+			t.Fatal(err)
+		}
+		members, err := r.Members(ctx, g.ID)
+		if err != nil || len(members) != 2 {
+			t.Fatalf("members: %+v %v", members, err)
+		}
+		bad := &Group{Name: "sre"}
+		if err := r.CreateWithMembers(ctx, bad, []string{ids[0], "no-such-user"}); !errors.Is(err, ErrUnknownUser) {
+			t.Fatalf("unknown user: %v", err)
+		}
+		if _, _, err := r.List(ctx, "", 50); err != nil {
+			t.Fatal(err)
+		}
+		all, _, _ := r.List(ctx, "", 50)
+		for _, x := range all {
+			if x.Name == "sre" {
+				t.Fatal("a refused group was left behind")
+			}
+		}
+	})
+}

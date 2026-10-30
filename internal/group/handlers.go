@@ -40,6 +40,9 @@ func (h *AdminHandler) Register(mux *http.ServeMux) {
 type groupRequest struct {
 	Name        string `json:"name"`
 	Description string `json:"description"`
+	// UserIDs adds members as the group is created, in the same
+	// transaction; optional, and read on create only (2026-10-30).
+	UserIDs []string `json:"user_ids"`
 }
 
 type membersRequest struct {
@@ -68,11 +71,15 @@ func (h *AdminHandler) create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	g := &Group{Name: strings.TrimSpace(req.Name), Description: req.Description}
-	if err := h.Groups.Create(r.Context(), g); err != nil {
+	if err := h.Groups.CreateWithMembers(r.Context(), g, req.UserIDs); err != nil {
 		h.fail(w, r, err)
 		return
 	}
-	h.record(r, audit.GroupCreate, g.ID, map[string]any{"name": g.Name})
+	details := map[string]any{"name": g.Name}
+	if len(req.UserIDs) > 0 {
+		details["user_ids"] = req.UserIDs
+	}
+	h.record(r, audit.GroupCreate, g.ID, details)
 	httpx.WriteJSON(w, http.StatusCreated, g)
 }
 
@@ -204,6 +211,8 @@ func (h *AdminHandler) fail(w http.ResponseWriter, r *http.Request, err error) {
 		httpx.WriteError(w, r, http.StatusConflict, "conflict", "group name already exists")
 	case errors.Is(err, ErrSynced):
 		httpx.WriteError(w, r, http.StatusConflict, "synced", "membership is managed by an identity provider")
+	case errors.Is(err, ErrUnknownUser):
+		httpx.WriteError(w, r, http.StatusUnprocessableEntity, "invalid_user", err.Error())
 	case errors.Is(err, ErrInvalidInput):
 		httpx.BadRequest(w, r, err.Error())
 	default:

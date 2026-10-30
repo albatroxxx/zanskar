@@ -454,12 +454,25 @@ func (r *Repo) List(ctx context.Context, onlyActive bool) ([]*Group, error) {
 // dropped, and its name is free to enrol again. Whether anything still
 // depends on it is the handler's decision.
 func (r *Repo) Delete(ctx context.Context, id string) error {
+	return r.DeleteWith(ctx, id, nil)
+}
+
+// DeleteWith is Delete with first, when set, run inside the same
+// transaction: what else the deletion changes (its policies' grants, its
+// open access requests) commits with it or not at all (ADR 0036, amended
+// 2026-10-30).
+func (r *Repo) DeleteWith(ctx context.Context, id string, first func(*sql.Tx) error) error {
 	now := store.TimeArg(time.Now().UTC())
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback() //nolint:errcheck
+	if first != nil {
+		if err := first(tx); err != nil {
+			return err
+		}
+	}
 	res, err := tx.ExecContext(ctx, r.db.Rebind(`UPDATE autoscaling_groups SET deleted_at = ?, status = 'disabled', updated_at = ? WHERE id = ? AND deleted_at IS NULL`), now, now, id)
 	if err != nil {
 		return err

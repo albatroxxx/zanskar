@@ -38,6 +38,9 @@ type Handler struct {
 	// StateDir holds the update request the package's path unit watches
 	// (ADR 0032); empty disables installing from the console.
 	StateDir string
+	// installPoll and installLimit pace watchInstall; zero means 2 seconds
+	// and installWatchLimit. Tests shorten them.
+	installPoll, installLimit time.Duration
 }
 
 // Register mounts the routes; all admin-only.
@@ -51,6 +54,8 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.Handle("POST /api/v1/admin/system/update/install", admin(http.HandlerFunc(h.installUpdate)))
 	mux.Handle("POST /api/v1/admin/system/restart", admin(http.HandlerFunc(h.restart)))
 	mux.Handle("DELETE /api/v1/admin/system/restart", admin(http.HandlerFunc(h.cancel)))
+	mux.Handle("POST /api/v1/admin/settings/boot", admin(http.HandlerFunc(h.bootChange)))
+	mux.Handle("GET /api/v1/admin/settings/boot/result", admin(http.HandlerFunc(h.bootResult)))
 }
 
 // Status is what the console polls.
@@ -64,6 +69,9 @@ type Status struct {
 	RestartRequired bool      `json:"restart_required"`
 	Draining        bool      `json:"draining"`
 	Drain           *Drain    `json:"drain,omitempty"`
+	// Now is the gateway's clock, so the dashboard's clock shows the
+	// gateway's time even when the browser's runs off.
+	Now time.Time `json:"now"`
 }
 
 func (h *Handler) current() Status {
@@ -75,7 +83,7 @@ func (h *Handler) current() Status {
 	return Status{
 		Version: version.Version, StartedAt: h.StartedAt, UptimeSeconds: int64(time.Since(h.StartedAt).Seconds()),
 		Supervisor: Supervisor(), LiveSessions: h.Controller.Registry.Count(), EnvFile: rep,
-		RestartRequired: rep.RestartRequired(), Draining: d != nil, Drain: d,
+		RestartRequired: rep.RestartRequired(), Draining: d != nil, Drain: d, Now: time.Now().UTC(),
 	}
 }
 

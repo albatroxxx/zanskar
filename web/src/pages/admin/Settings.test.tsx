@@ -2,6 +2,7 @@ import { cleanup, render, screen, waitFor, within } from '@testing-library/react
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { ApiError, api } from '../../api/client'
+import { consoleZone, setDisplayZone } from '../../api/format'
 import type { RuntimeSetting, SettingsListing } from '../../api/types'
 import { Settings } from './Settings'
 
@@ -85,6 +86,96 @@ describe('Settings', () => {
     expect(await within(row).findByText('Applied.')).toBeDefined()
     expect(within(row).getByText('Set in console')).toBeDefined()
     expect(within(row).getByRole('button', { name: 'Reset' })).toBeDefined()
+  })
+
+  // 2026-10-30: a time zone for every time in the console, typed with the
+  // browser's zones offered, applied to the page the moment it is saved.
+  it('offers time zones and applies a saved one at once', async () => {
+    const tz = setting({ key: 'display.time_zone', category: 'Display', title: 'Time zone', type: 'timezone', default: 'UTC', value: 'UTC', source: 'default' })
+    serve({ ...listing, runtime: [...listing.runtime, tz] })
+    vi.spyOn(api, 'put').mockResolvedValue({ ...tz, value: 'Asia/Kolkata', source: 'console' } as never)
+    render(<Settings />)
+    const user = userEvent.setup()
+    const field = await screen.findByLabelText('Time zone')
+    const list = document.getElementById(field.getAttribute('list') ?? '')
+    expect(list?.tagName).toBe('DATALIST')
+    await user.clear(field)
+    await user.type(field, 'Asia/Kolkata')
+    await user.click(within(field.closest('.setting-row') as HTMLElement).getByRole('button', { name: 'Save' }))
+    await waitFor(() => expect(consoleZone()).toBe('Asia/Kolkata'))
+    setDisplayZone(undefined)
+  })
+
+  // 2026-10-30: an administrator turns desktops on or off; where guacd
+  // runs is under Advanced.
+  it('makes desktops a switch, with the address under Advanced', async () => {
+    const guacd = setting({ key: 'desktop.guacd_addr', category: 'Desktops', title: 'Desktops (RDP, VNC)', type: 'hostport', default: '', value: '', source: 'default' })
+    serve({ ...listing, runtime: [...listing.runtime.filter((x) => x.category !== 'Desktops'), guacd] })
+    const put = vi.spyOn(api, 'put').mockResolvedValue({ ...guacd, value: '127.0.0.1:4822', source: 'console' } as never)
+    render(<Settings />)
+    const user = userEvent.setup()
+    const toggle = (await screen.findByLabelText('Off')) as HTMLInputElement
+    expect(toggle.checked).toBe(false)
+    await user.click(toggle)
+    expect(screen.getByLabelText('guacd address', { selector: 'input' })).toBeDefined()
+    expect((screen.getByLabelText('guacd address', { selector: 'input' }) as HTMLInputElement).value).toBe('127.0.0.1:4822')
+    await user.click(within(toggle.closest('.setting-row') as HTMLElement).getByRole('button', { name: 'Save' }))
+    await waitFor(() => expect(put).toHaveBeenCalledWith('/admin/settings/desktop.guacd_addr', { value: '127.0.0.1:4822' }))
+  })
+
+  it('folds an image under Advanced and warns when a custom one will not follow upgrades', async () => {
+    const def = setting({ key: 'apps.browser_image', category: 'Applications', title: 'Browser image', type: 'string', default: 'ghcr.io/x/b:1.9.0', value: 'ghcr.io/x/b:1.9.0', source: 'default' })
+    const custom = setting({ key: 'database.proxy_image', category: 'Databases', title: 'Relay image', type: 'string', default: 'ghcr.io/x/z:1.9.0', value: 'mirror.corp/z@sha256:' + 'a'.repeat(64), source: 'console' })
+    serve({ ...listing, runtime: [...listing.runtime, def, custom] })
+    render(<Settings />)
+    expect(await screen.findByText('Default: follows the gateway version')).toBeDefined()
+    expect(screen.getByText('Custom image')).toBeDefined()
+    expect(screen.getAllByText(/does not follow upgrades/)).toHaveLength(1)
+  })
+
+  // ADR 0020, amended 2026-10-30: allowlisted install settings change
+  // through the root helper; the rest say why they cannot.
+  it('edits an allowlisted install setting through the helper, and says why others are install-only', async () => {
+    const boot = [
+      { key: 'public_url', title: 'Public URL', env_var: 'ZANSKAR_PUBLIC_URL', value: '(not set)', description: '', editable: 'value' as const, raw: '' },
+      { key: 'db', title: 'Database', env_var: 'ZANSKAR_DB_DRIVER, ZANSKAR_DB_DSN', value: 'sqlite', description: '' },
+    ]
+    serve({ ...listing, boot })
+    const get = api.get as unknown as ReturnType<typeof vi.fn>
+    const base = get.getMockImplementation() as (path: string) => Promise<unknown>
+    get.mockImplementation(async (path: string) => {
+      if (path === '/admin/system/host') return { hostname: 'gw', supervisor: 'systemd', available: true, mfa_fresh: true, step_up_minutes: 5 } as never
+      if (path === '/admin/system/status') return { started_at: 'A', draining: false, live_sessions: 0, env_file: { state: 'unchanged' } } as never
+      return base(path)
+    })
+    const post = vi.spyOn(api, 'post').mockResolvedValue({ id: 'req-1' } as never)
+    render(<Settings />)
+    const user = userEvent.setup()
+    const dbRow = (await screen.findByText('Database')).closest('tr') as HTMLElement
+    expect(within(dbRow).getByText('Install only').getAttribute('title')).toMatch(/different database is a different gateway/)
+    const urlRow = screen.getByText('Public URL').closest('tr') as HTMLElement
+    await user.click(within(urlRow).getByRole('button', { name: 'Edit' }))
+    await user.type(screen.getByLabelText('ZANSKAR_PUBLIC_URL'), 'https://gw.example.com')
+    await user.click(screen.getByRole('button', { name: 'Continue' }))
+    expect(await screen.findByText('ZANSKAR_PUBLIC_URL = https://gw.example.com')).toBeDefined()
+    await user.click(screen.getByRole('button', { name: 'Apply and restart' }))
+    await waitFor(() => expect(post).toHaveBeenCalledWith('/admin/settings/boot', { values: { ZANSKAR_PUBLIC_URL: 'https://gw.example.com' }, tls_mode: undefined, wait_minutes: 15 }))
+  })
+
+  it('greys Edit with the reason where the host cannot apply a change', async () => {
+    const boot = [{ key: 'public_url', title: 'Public URL', env_var: 'ZANSKAR_PUBLIC_URL', value: '(not set)', description: '', editable: 'value' as const, raw: '' }]
+    serve({ ...listing, boot })
+    const get = api.get as unknown as ReturnType<typeof vi.fn>
+    const base = get.getMockImplementation() as (path: string) => Promise<unknown>
+    get.mockImplementation(async (path: string) => {
+      if (path === '/admin/system/host') return { hostname: 'gw', supervisor: 'docker', available: false, reason: 'Needs a systemd host.', mfa_fresh: true, step_up_minutes: 5 } as never
+      return base(path)
+    })
+    render(<Settings />)
+    const urlRow = (await screen.findByText('Public URL')).closest('tr') as HTMLElement
+    await waitFor(() => expect((within(urlRow).getByRole('button', { name: 'Edit' }) as HTMLButtonElement).disabled).toBe(true))
+    expect(within(urlRow).getByRole('button', { name: 'Edit' }).getAttribute('title')).toBe('Needs a systemd host.')
+    expect(screen.getByText(/Edit: Needs a systemd host\./)).toBeDefined()
   })
 
   it('resets a console value with DELETE and shows a refused save in its own row', async () => {

@@ -30,6 +30,7 @@ var notRewritten = map[string]string{
 	"users.directory_removed_at":               "added by 0033, after the rewrite, so it has no older rows; written only through TimeArg (user.Repo.DisableRemoved)",
 	"users.scim_deleted_at":                    "added by 0034, after the rewrite; written only through TimeArg (user.Repo.SetSCIM)",
 	"identity_providers.scim_token_created_at": "added by 0034, after the rewrite; written only through TimeArg (idp.Repo.SetSCIMToken)",
+	"acme_cache.updated_at":                    "created by 0038, after the rewrite; written only through TimeArg (tlscert.DBCache.Put)",
 }
 
 // TestEveryTimestampColumnIsRewritten fails when the migrated SQLite schema

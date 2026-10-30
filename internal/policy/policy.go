@@ -373,6 +373,30 @@ func (p *Policy) References(targetID, asgID string) bool {
 	return false
 }
 
+// WithoutTarget returns p's grants with the target taken out, or for an
+// autoscaling grant the group: a grant left naming nothing and matching no
+// tag goes. It reports how many grants went, and whether anything changed.
+// Tag rules are untouched: they match what carries the tags.
+func (p *Policy) WithoutTarget(targetID, asgID string) (grants []Grant, removed int, changed bool) {
+	grants = make([]Grant, 0, len(p.Grants))
+	for _, g := range p.Grants {
+		want := targetID
+		if g.Kind == protocol.KindAutoscaling {
+			want = asgID
+		}
+		if want != "" && slices.ContainsFunc(g.Targets, func(t GrantTarget) bool { return t.ID == want }) {
+			changed = true
+			g.Targets = slices.DeleteFunc(slices.Clone(g.Targets), func(t GrantTarget) bool { return t.ID == want })
+			if len(g.Targets) == 0 && g.Tags == nil {
+				removed++
+				continue
+			}
+		}
+		grants = append(grants, g)
+	}
+	return grants, removed, changed
+}
+
 // HasSubject reports whether the policy names the subject.
 func (p *Policy) HasSubject(kind, id string) bool {
 	return slices.Contains(p.Subjects, Subject{Kind: kind, ID: id})

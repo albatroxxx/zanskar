@@ -85,9 +85,19 @@ func ChildEnv(extra []string) []string {
 	return append(env, extra...)
 }
 
+// DefaultCLI is the container CLI when ZANSKAR_DOCKER_PATH is unset: the
+// first "docker" on PATH.
+const DefaultCLI = "docker"
+
 // Command is every docker child the gateway starts: the CLI with args,
-// bound to ctx, in the environment ChildEnv builds.
+// bound to ctx, in the environment ChildEnv builds. An empty docker is
+// DefaultCLI here, once, so no caller can hand exec an empty name: the
+// applications checklist did, and reported "exec: no command" on every
+// install that left ZANSKAR_DOCKER_PATH unset (2026-10-30).
 func Command(ctx context.Context, docker string, extra []string, args ...string) *exec.Cmd {
+	if docker == "" {
+		docker = DefaultCLI
+	}
 	cmd := exec.CommandContext(ctx, docker, args...) // #nosec G204 G702 -- args built from fixed literals and validated fields (a stored, validated target), no shell
 	cmd.Env = ChildEnv(extra)
 	// When ctx ends the CLI is killed, but a grandchild it started (a

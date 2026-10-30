@@ -5,7 +5,9 @@ package target
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -38,6 +40,7 @@ type env struct {
 	csrf     string
 	user     *http.Cookie
 	revoker  *fakeRevoker
+	requests *fakeRequests
 }
 
 func newEnv(t *testing.T) *env {
@@ -67,11 +70,12 @@ func newEnvWith(t *testing.T, prober *Prober) *env {
 	t.Cleanup(ring.Close)
 	vault := credential.NewVault(db, ring)
 	revoker := &fakeRevoker{}
-	h := &AdminHandler{Repo: NewRepo(db), Prober: prober, Policies: policies, Live: live, Revoker: revoker, Vault: vault, Audit: auditLog, Log: log}
+	requests := &fakeRequests{}
+	h := &AdminHandler{Repo: NewRepo(db), Prober: prober, Policies: policies, Requests: requests, Live: live, Revoker: revoker, Vault: vault, Audit: auditLog, Log: log}
 	mux := http.NewServeMux()
 	h.Register(mux)
 	mw := &auth.Middleware{Sessions: sessions, Users: users, Log: log}
-	e := &env{srv: mw.Authenticate(mw.CSRF(mux)), db: db, audit: auditLog, policies: policies, live: live, vault: vault, revoker: revoker}
+	e := &env{srv: mw.Authenticate(mw.CSRF(mux)), db: db, audit: auditLog, policies: policies, live: live, vault: vault, revoker: revoker, requests: requests}
 
 	adminUser := &user.User{Username: "admin", DisplayName: "Admin", Roles: []user.Role{user.RoleAdmin}}
 	if err := users.Create(ctx, adminUser); err != nil {
@@ -225,49 +229,111 @@ func TestProbeForbiddenAddressIs422(t *testing.T) {
 	}
 }
 
-// TestDeleteRefusedWhileInUse covers the admin-facing half of ADR 0019: a
-// target that a policy names by id, or that has a session open, answers
-// delete with 409 in_use and a message naming the blockers; a tag selector
-// is not a reference; once nothing depends on it, delete retires it.
-func TestDeleteRefusedWhileInUse(t *testing.T) {
+// fakeRequests stands in for the access requests: open is what it counts,
+// fail makes closing them fail inside the deletion's transaction.
+type fakeRequests struct {
+	open   int
+	closed []string
+	fail   error
+}
+
+func (f *fakeRequests) OpenForTarget(_ context.Context, targetID, asgID string) (int, error) {
+	return f.open, nil
+}
+
+func (f *fakeRequests) CloseForTargetTx(_ context.Context, _ *sql.Tx, targetID, asgID, note string) (int64, error) {
+	if f.fail != nil {
+		return 0, f.fail
+	}
+	f.closed = append(f.closed, targetID+asgID+":"+note)
+	return int64(f.open), nil
+}
+
+// TestDeleteCascades (ADR 0036, amended 2026-10-30): deleting a target takes
+// it out of the grants that name it, removes a grant left naming nothing,
+// keeps a policy left with no grant, leaves tag rules alone, closes its open
+// requests and ends the sessions on it, after a preview that says all of
+// that. Until 1.9.0 it was refused with 409 in_use until every policy had
+// been edited by hand.
+func TestDeleteCascades(t *testing.T) {
 	e := newEnv(t)
 	ctx := context.Background()
-	code, out := e.do("POST", "/api/v1/targets", map[string]any{"name": "web-1", "address": "10.0.0.5", "os_family": "linux"}, e.admin)
-	if code != 201 {
-		t.Fatalf("create: %d %v", code, out)
-	}
-	id := out["id"].(string)
+	id := e.mkTarget(t, map[string]any{"name": "web-1", "address": "10.0.0.5", "os_family": "linux"})
+	other := e.mkTarget(t, map[string]any{"name": "web-2", "address": "10.0.0.6", "os_family": "linux"})
 	alice := &user.User{Username: "alice", DisplayName: "Alice", Roles: []user.Role{user.RoleUser}}
 	if err := user.NewRepo(e.db).Create(ctx, alice); err != nil {
 		t.Fatal(err)
 	}
-	pol := policytest.Policy("ops-ssh", []policy.Subject{policytest.User(alice.ID)}, policytest.Named(protocol.KindHost, []string{id}, "ssh"))
-	if err := e.policies.Create(ctx, pol); err != nil {
+	subjects := []policy.Subject{policytest.User(alice.ID)}
+	shared := policytest.Policy("shared", subjects, policytest.Named(protocol.KindHost, []string{id, other}, "ssh"))
+	only := policytest.Policy("only-web-1", subjects, policytest.Named(protocol.KindHost, []string{id}, "ssh"))
+	tagged := policytest.Policy("tagged", subjects, policytest.Tagged(protocol.KindHost, map[string]string{"env": "prod"}, "ssh"), policytest.Named(protocol.KindHost, []string{id}, "ssh"))
+	untouched := policytest.Policy("untouched", subjects, policytest.Named(protocol.KindHost, []string{other}, "ssh"))
+	for _, p := range []*policy.Policy{shared, only, tagged, untouched} {
+		if err := e.policies.Create(ctx, p); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// The stored time, not Create's: the database keeps less precision than
+	// a Linux clock, so the two never compare equal there.
+	stored, err := e.policies.Get(ctx, untouched.ID)
+	if err != nil {
 		t.Fatal(err)
 	}
+	e.requests.open = 2
+	onWeb1 := e.live.Add(ctx, gateway.Live{SessionID: "s1", UserID: alice.ID, TargetID: id, Protocol: "ssh"})
+	onWeb2 := e.live.Add(ctx, gateway.Live{SessionID: "s2", UserID: alice.ID, TargetID: other, Protocol: "ssh"})
 
-	code, out = e.do("DELETE", "/api/v1/targets/"+id, nil, e.admin)
-	if code != 409 || out["code"] != "in_use" || !strings.Contains(out["message"].(string), "policy ops-ssh names it") {
-		t.Fatalf("delete while a policy names it: %d %v", code, out)
+	code, out := e.do("GET", "/api/v1/targets/"+id+"/usage", nil, e.admin)
+	if code != 200 || out["live_sessions"] != float64(1) || out["open_requests"] != float64(2) {
+		t.Fatalf("usage: %d %v", code, out)
 	}
-
-	// A tag rule matches by tags, not by id, so it does not pin the target.
-	pol.Grants = []policy.Grant{policytest.Tagged(protocol.KindHost, map[string]string{"env": "prod"}, "ssh")}
-	if err := e.policies.Update(ctx, pol); err != nil {
-		t.Fatal(err)
+	pols := out["policies"].([]any)
+	if len(pols) != 3 {
+		t.Fatalf("usage names %d policies, want shared, only-web-1 and tagged: %v", len(pols), pols)
 	}
-	e.live.Add(ctx, gateway.Live{SessionID: "s1", UserID: alice.ID, TargetID: id, Protocol: "ssh"})
-	code, out = e.do("DELETE", "/api/v1/targets/"+id, nil, e.admin)
-	if code != 409 || !strings.Contains(out["message"].(string), "1 session is open on it") {
-		t.Fatalf("delete while a session is open: %d %v", code, out)
+	if p := pols[0].(map[string]any); p["name"] != "only-web-1" || p["grants_removed"] != float64(1) || p["no_grants_left"] != true {
+		t.Fatalf("only-web-1 preview: %v", p)
 	}
-	e.live.Remove("s1")
 
 	if code, out = e.do("DELETE", "/api/v1/targets/"+id, nil, e.admin); code != 204 {
-		t.Fatalf("delete once free: %d %v", code, out)
+		t.Fatalf("delete: %d %v", code, out)
 	}
 	if code, _ = e.do("GET", "/api/v1/targets/"+id, nil, e.admin); code != 404 {
-		t.Fatalf("retired target must be gone from the API: %d", code)
+		t.Fatalf("the target must be gone: %d", code)
+	}
+	got := func(p *policy.Policy) *policy.Policy {
+		x, err := e.policies.Get(ctx, p.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return x
+	}
+	if g := got(shared).Grants; len(g) != 1 || len(g[0].Targets) != 1 || g[0].Targets[0].ID != other {
+		t.Fatalf("shared keeps web-2 only: %+v", g)
+	}
+	if g := got(only).Grants; len(g) != 0 {
+		t.Fatalf("only-web-1 is kept with no grant: %+v", g)
+	}
+	if g := got(tagged).Grants; len(g) != 1 || g[0].Tags == nil {
+		t.Fatalf("tagged keeps its tag rule and loses the emptied grant: %+v", g)
+	}
+	if !got(untouched).UpdatedAt.Equal(stored.UpdatedAt) {
+		t.Fatal("a policy that never named the target was rewritten")
+	}
+	if len(e.requests.closed) != 1 || e.requests.closed[0] != id+":target deleted" {
+		t.Fatalf("requests: %v", e.requests.closed)
+	}
+	if !errors.Is(context.Cause(onWeb1), gateway.ErrTargetDeleted) || onWeb2.Err() != nil {
+		t.Fatalf("sessions after the delete: web-1 %v, web-2 %v", context.Cause(onWeb1), onWeb2.Err())
+	}
+	ev := auditActions(t, e, "target.delete")
+	if len(ev) != 1 || ev[0].Outcome != audit.Success || !strings.Contains(string(ev[0].Details), `"policies_updated":["only-web-1","shared","tagged"]`) ||
+		!strings.Contains(string(ev[0].Details), `"sessions_ended":1`) || !strings.Contains(string(ev[0].Details), `"requests_closed":2`) {
+		t.Fatalf("target.delete audit: %+v", ev)
+	}
+	if ups := auditActions(t, e, "policy.update"); len(ups) != 3 || !strings.Contains(string(ups[0].Details), `"removed_target":"`+id+`"`) {
+		t.Fatalf("policy.update audits: %+v", ups)
 	}
 }
 

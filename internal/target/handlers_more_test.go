@@ -15,6 +15,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/albatroxxx/zanskar/internal/audit"
 	"github.com/albatroxxx/zanskar/internal/credential"
@@ -136,88 +137,64 @@ func TestCreateUpdateErrors(t *testing.T) {
 	}
 }
 
-// TestDeleteMissingAndManyBlockers: deleting an unknown id is 404; a target
-// named by two policies with two open sessions names them all in the 409,
-// and the refusal is audited as a failure with reason in_use.
-func TestDeleteMissingAndManyBlockers(t *testing.T) {
+// TestDeleteMissing: deleting an unknown id is 404, and nothing is audited
+// as a deletion.
+func TestDeleteMissing(t *testing.T) {
 	e := newEnv(t)
-	ctx := context.Background()
 	if code, out := e.do("DELETE", "/api/v1/targets/no-such-id", nil, e.admin); code != 404 || out["code"] != "not_found" {
 		t.Fatalf("delete missing: %d %v", code, out)
 	}
-	id := e.mkTarget(t, map[string]any{"name": "db-host", "address": "10.0.0.6", "os_family": "linux"})
+	if code, _ := e.do("GET", "/api/v1/targets/no-such-id/usage", nil, e.admin); code != 404 {
+		t.Fatalf("usage of a missing target: %d", code)
+	}
+}
+
+// TestDeleteIsOneTransaction: when a part of the deletion fails (here,
+// closing its requests) nothing of it happens: the target stays, and the
+// grants already rewritten in the same transaction are rolled back with it.
+func TestDeleteIsOneTransaction(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	id := e.mkTarget(t, map[string]any{"name": "keep-me", "address": "10.0.0.7", "os_family": "linux"})
 	alice := &user.User{Username: "alice", DisplayName: "Alice", Roles: []user.Role{user.RoleUser}}
 	if err := user.NewRepo(e.db).Create(ctx, alice); err != nil {
 		t.Fatal(err)
 	}
-	for _, name := range []string{"ops-a", "ops-b"} {
-		pol := policytest.Policy(name, []policy.Subject{policytest.User(alice.ID)}, policytest.Named(protocol.KindHost, []string{id}, "ssh"))
-		if err := e.policies.Create(ctx, pol); err != nil {
-			t.Fatal(err)
-		}
-	}
-	e.live.Add(ctx, gateway.Live{SessionID: "s1", UserID: alice.ID, TargetID: id, Protocol: "ssh"})
-	e.live.Add(ctx, gateway.Live{SessionID: "s2", UserID: alice.ID, TargetID: id, Protocol: "ssh"})
-	e.live.Add(ctx, gateway.Live{SessionID: "s3", UserID: alice.ID, TargetID: "other", Protocol: "ssh"})
-
-	code, out := e.do("DELETE", "/api/v1/targets/"+id, nil, e.admin)
-	msg, _ := out["message"].(string)
-	if code != 409 || out["code"] != "in_use" || !strings.Contains(msg, "policies ") || !strings.Contains(msg, "ops-a") ||
-		!strings.Contains(msg, "ops-b") || !strings.Contains(msg, "2 sessions are open on it") {
-		t.Fatalf("delete with many blockers: %d %v", code, out)
-	}
-	ev := auditActions(t, e, "target.delete")
-	if len(ev) != 1 || ev[0].Outcome != audit.Failure || !strings.Contains(string(ev[0].Details), `"reason":"in_use"`) {
-		t.Fatalf("refused delete audit: %+v", ev)
-	}
-	if code, _ := e.do("GET", "/api/v1/targets/"+id, nil, e.admin); code != 200 {
-		t.Fatalf("refused delete must keep the target: %d", code)
-	}
-}
-
-func TestInUseMessage(t *testing.T) {
-	cases := []struct {
-		policies []string
-		open     int
-		want     string
-	}{
-		{nil, 0, ""},
-		{[]string{"a"}, 0, "the target is still in use: policy a names it. Remove it from those policies and end the sessions, then delete again."},
-		{[]string{"a", "b"}, 0, "the target is still in use: policies a, b name it. Remove it from those policies and end the sessions, then delete again."},
-		{nil, 1, "the target is still in use: 1 session is open on it. Remove it from those policies and end the sessions, then delete again."},
-		{[]string{"a"}, 3, "the target is still in use: policy a names it; 3 sessions are open on it. Remove it from those policies and end the sessions, then delete again."},
-	}
-	for _, c := range cases {
-		if got := InUseMessage("target", c.policies, c.open); got != c.want {
-			t.Errorf("InUseMessage(%v, %d) = %q, want %q", c.policies, c.open, got, c.want)
-		}
-	}
-	if got := InUseMessage("autoscaling group", nil, 2); !strings.HasPrefix(got, "the autoscaling group is still in use: 2 sessions") {
-		t.Errorf("kind must be named: %q", got)
-	}
-}
-
-// TestDeletePolicyLookupFailure: when the policy store cannot be read the
-// delete is refused with a 500 and the target stays enrolled; it is never
-// retired on the assumption that nothing references it.
-func TestDeletePolicyLookupFailure(t *testing.T) {
-	db := testDB(t)
-	var logs bytes.Buffer
-	repo := NewRepo(db)
-	tg := &Target{Name: "keep-me", Address: "10.0.0.7", OSFamily: Linux}
-	if err := repo.Create(context.Background(), tg); err != nil {
+	pol := policytest.Policy("ops", []policy.Subject{policytest.User(alice.ID)}, policytest.Named(protocol.KindHost, []string{id}, "ssh"))
+	if err := e.policies.Create(ctx, pol); err != nil {
 		t.Fatal(err)
 	}
-	h := &AdminHandler{Repo: repo, Policies: policy.NewRepo(closedDB(t)), Log: slog.New(slog.NewTextHandler(&logs, nil))}
-	code, out := direct(h.delete, "DELETE", "/api/v1/targets/"+tg.ID, map[string]string{"id": tg.ID})
-	if code != 500 || out["code"] != "internal" || out["message"] != "internal error" {
-		t.Fatalf("delete with broken policy store: %d %v", code, out)
+	e.requests.fail = errors.New("database is closed")
+	if code, out := e.do("DELETE", "/api/v1/targets/"+id, nil, e.admin); code != 500 || out["message"] != "internal error" {
+		t.Fatalf("delete with a failing part: %d %v", code, out)
 	}
-	if _, err := repo.Get(context.Background(), tg.ID); err != nil {
-		t.Fatalf("target must survive a failed delete: %v", err)
+	if code, _ := e.do("GET", "/api/v1/targets/"+id, nil, e.admin); code != 200 {
+		t.Fatalf("the target must survive a failed delete: %d", code)
 	}
-	if !strings.Contains(logs.String(), `msg="request failed"`) || !strings.Contains(logs.String(), "database is closed") {
-		t.Fatalf("server error must be logged: %s", logs.String())
+	got, err := e.policies.Get(ctx, pol.ID)
+	if err != nil || len(got.Grants) != 1 || len(got.Grants[0].Targets) != 1 {
+		t.Fatalf("the grants must be rolled back: %+v %v", got, err)
+	}
+}
+
+// TestEndSessionsSweepsTwice: a connection redeeming its ticket as the
+// deletion commits can register after the first sweep; the second, a moment
+// later, ends it too.
+func TestEndSessionsSweepsTwice(t *testing.T) {
+	live := gateway.NewRegistry()
+	ctx := context.Background()
+	live.Add(ctx, gateway.Live{SessionID: "s1", TargetID: "t1", Protocol: "ssh"})
+	if n := EndSessions(live, []string{"t1"}); n != 1 {
+		t.Fatalf("first sweep: %d", n)
+	}
+	late := live.Add(ctx, gateway.Live{SessionID: "late", TargetID: "t1", Protocol: "ssh"})
+	select {
+	case <-late.Done():
+		if !errors.Is(context.Cause(late), gateway.ErrTargetDeleted) {
+			t.Fatalf("ended for %v", context.Cause(late))
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("a session registered after the first sweep was left running")
 	}
 }
 

@@ -38,12 +38,32 @@ export function chipsFor(kind: TargetKind, t: Pick<Target, 'capabilities' | 'os_
   const served = kindProtocols[kind]
   const caps = (t.capabilities ?? []).filter((p) => served.includes(p))
   if (caps.length) return caps
-  if (kind === 'autoscaling') return served
+  return usualFor(kind, t)
+}
+
+/** usualFor is what a target of this kind and operating system usually serves, probed or not. */
+export function usualFor(kind: TargetKind, t: Pick<Target, 'os_family'> | Pick<AutoscalingGroup, 'os_family'>): Protocol[] {
+  const served = kindProtocols[kind]
+  if (kind !== 'host') return served
   switch (t.os_family) {
     case 'linux': return ['ssh', 'vnc']
     case 'windows': return ['rdp', 'winrm', 'ssh']
     default: return served
   }
+}
+
+/**
+ * unfound splits a host's chips by what its last probe said (2026-10-30):
+ * missing are the usual protocols the probe did not find, shown greyed so
+ * the admin knows why one is absent; stale are chosen protocols it did not
+ * find (a 1.7 policy converted with RDP on a Linux box), shown in warning so
+ * they can be unticked. A host never probed has neither.
+ */
+export function unfound(t: Pick<Target, 'capabilities' | 'os_family'>, chosen: Protocol[]): { missing: Protocol[]; stale: Protocol[] } {
+  const found = (t.capabilities ?? []).filter((p) => kindProtocols.host.includes(p))
+  if (found.length === 0) return { missing: [], stale: [] }
+  const stale = chosen.filter((p) => !found.includes(p))
+  return { missing: usualFor('host', t).filter((p) => !found.includes(p) && !stale.includes(p)), stale }
 }
 
 /** A new grant of kind, with the defaults the server would fill. */
@@ -181,9 +201,89 @@ export function fromDraft(d: GrantDraft, nameOf: (id: string) => string): { gran
 }
 
 /** whoSummary names a policy's audience: the groups, then how many users. */
-export function whoSummary(p: Policy, groupName: (id: string) => string, userName: (id: string) => string): string {
+export function whoSummary(p: Policy, groupName: (id: string) => string, userName: (id: string) => string): { text: string; cut: boolean } {
   const groups = p.subjects.filter((s) => s.kind === 'group').map((s) => groupName(s.id))
   const users = p.subjects.filter((s) => s.kind === 'user').map((s) => userName(s.id))
-  if (users.length <= 2) return [...groups, ...users].join(', ')
-  return [...groups, `${users.length} users`].join(', ')
+  const g = groups.length > 2 ? `${groups.slice(0, 2).join(', ')} +${groups.length - 2}` : groups.join(', ')
+  const u = users.length > 2 ? `${users.length} users` : users.join(', ')
+  return { text: [g, u].filter(Boolean).join(' · '), cut: groups.length > 2 || users.length > 2 }
+}
+
+/**
+ * Rollup is a policy's grants as the list summarises them (ADR 0036,
+ * amended 2026-10-30): what they reach, and their loosest terms. Each grant
+ * admits on its own, so one grant without MFA is enough to sign in without
+ * it; "MFA" is said only when every grant requires it.
+ */
+export interface Rollup {
+  count: number
+  kinds: { label: string; n: number }[]
+  targets: number
+  tagRules: string[]
+  standing: number
+  approval: number
+  mfaAll: boolean
+  standingNoMFA: number
+  approvalNoMFA: number
+  clipboard: number
+  files: number
+  ownLogin: number
+}
+
+export function policyRollup(p: Policy): Rollup {
+  const gs = p.grants
+  const named = new Set(gs.flatMap((g) => g.targets.map((t) => t.id)))
+  const tags = [...new Set(gs.filter((g) => g.tags).map((g) => matchPhrase(g.tags!.match)))]
+  return {
+    count: gs.length,
+    kinds: kinds.map((k) => ({ label: k.label, n: gs.filter((g) => g.kind === k.kind).length })).filter((k) => k.n > 0),
+    targets: named.size,
+    tagRules: tags,
+    standing: gs.filter((g) => g.access !== 'approval').length,
+    approval: gs.filter((g) => g.access === 'approval').length,
+    mfaAll: gs.length > 0 && gs.every((g) => g.require_mfa),
+    standingNoMFA: gs.filter((g) => g.access !== 'approval' && !g.require_mfa).length,
+    approvalNoMFA: gs.filter((g) => g.access === 'approval' && !g.require_mfa).length,
+    clipboard: gs.filter((g) => g.allow_clipboard).length,
+    files: gs.filter((g) => g.allow_file_transfer).length,
+    ownLogin: gs.filter((g) => g.sign_in === 'own').length,
+  }
+}
+
+/** grantsLine is the Grants cell's first line: "3 grants · Host 2 · Autoscaling 1". */
+export function grantsLine(r: Rollup): string {
+  return [`${r.count} ${r.count === 1 ? 'grant' : 'grants'}`, ...r.kinds.map((k) => `${k.label} ${k.n}`)].join(' · ')
+}
+
+/** reachLine is its second: "2 targets · tag env test", or "N tag rules". */
+export function reachLine(r: Rollup): string {
+  const parts: string[] = []
+  if (r.targets) parts.push(`${r.targets} ${r.targets === 1 ? 'target' : 'targets'}`)
+  if (r.tagRules.length === 1) parts.push(`tag ${r.tagRules[0]}`)
+  else if (r.tagRules.length > 1) parts.push(`${r.tagRules.length} tag rules`)
+  return parts.join(' · ')
+}
+
+/** accessLine is the Access column's first line: the access kinds and MFA when every grant asks it. */
+export function accessLine(r: Rollup): string {
+  const access = r.standing && r.approval ? `Standing ×${r.standing} · Approval ×${r.approval}` : r.approval ? 'Approval' : 'Standing'
+  return r.mfaAll ? `${access} · MFA` : access
+}
+
+/** extrasLine names what some grant turns on: "clipboard ×2 · files"; × only when not all do. */
+export function extrasLine(r: Rollup): string {
+  const n = (word: string, k: number) => (k === r.count ? word : `${word} ×${k}`)
+  return [r.clipboard && n('clipboard', r.clipboard), r.files && n('files', r.files), r.ownLogin && n('own login', r.ownLogin)].filter(Boolean).join(' · ')
+}
+
+/** targetsCell is one grant's reach for the expanded table: the first few targets, then +N. */
+export function targetsCell(g: PolicyGrant, nameOf: (id: string) => string, first = 3): string {
+  const implicit = g.kind === 'database' || g.kind === 'application'
+  const parts: string[] = []
+  if (g.targets.length) {
+    const shown = g.targets.slice(0, first).map((t) => (implicit ? nameOf(t.id) : `${nameOf(t.id)} (${protos(t.protocols)})`))
+    parts.push(shown.join(', ') + (g.targets.length > first ? ` +${g.targets.length - first}` : ''))
+  }
+  if (g.tags) parts.push(implicit ? `tag ${matchPhrase(g.tags.match)}` : `tag ${matchPhrase(g.tags.match)} (${protos(g.tags.protocols)})`)
+  return parts.join('; ')
 }

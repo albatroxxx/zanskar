@@ -185,3 +185,91 @@ func TestReferencingOnEachBackend(t *testing.T) {
 		}
 	})
 }
+
+// TestRemoveTargetOnEachBackend (ADR 0036, amended 2026-10-30): deleting a
+// target rewrites, inside the deletion's transaction, the grants that name
+// it on both engines' JSON columns: the target leaves a grant naming others;
+// a grant naming only it goes, unless a tag rule keeps it; a policy left
+// with no grant stays; a policy that never named it is not touched; an
+// autoscaling grant is matched by the group's id, never by a target's. The
+// preview says the same before anything is written.
+func TestRemoveTargetOnEachBackend(t *testing.T) {
+	storetest.ForEachBackend(t, func(t *testing.T, db *store.DB) {
+		ctx := context.Background()
+		seedPeople(t, db)
+		r := NewRepo(db)
+		subj := []Subject{{Kind: SubjectGroup, ID: "g1"}}
+		host := func(ids ...string) Grant {
+			g := Grant{Kind: protocol.KindHost}
+			for _, id := range ids {
+				g.Targets = append(g.Targets, GrantTarget{ID: id, Protocols: []string{"ssh"}})
+			}
+			return g
+		}
+		withTag := host("t1")
+		withTag.Tags = &TagMatch{Match: map[string][]string{"env": {"prod"}}, Protocols: []string{"ssh"}}
+		ps := []*Policy{
+			{Name: "a-shared", Enabled: true, Subjects: subj, Grants: []Grant{host("t1", "t2")}},
+			{Name: "b-only", Enabled: true, Subjects: subj, Grants: []Grant{host("t1")}},
+			{Name: "c-tagged", Enabled: true, Subjects: subj, Grants: []Grant{withTag, host("t1")}},
+			{Name: "d-other", Enabled: true, Subjects: subj, Grants: []Grant{host("t2")}},
+			{Name: "e-fleet", Enabled: true, Subjects: subj, Grants: []Grant{{Kind: protocol.KindAutoscaling, Targets: []GrantTarget{{ID: "t1", Protocols: []string{"ssh"}}}}}},
+		}
+		for _, p := range ps {
+			if err := r.Create(ctx, p); err != nil {
+				t.Fatal(err)
+			}
+		}
+		preview, err := r.TargetUsage(ctx, "t1", "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		// The stored time, not Create's: the database keeps less precision
+		// than a Linux clock, so the two never compare equal there.
+		stored, err := r.Get(ctx, ps[3].ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		tx, err := db.BeginTx(ctx, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		done, err := r.RemoveTargetTx(ctx, tx, "t1", "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := tx.Commit(); err != nil {
+			t.Fatal(err)
+		}
+		want := []Removal{
+			{PolicyID: ps[0].ID, Name: "a-shared"},
+			{PolicyID: ps[1].ID, Name: "b-only", GrantsRemoved: 1, NoGrantsLeft: true},
+			{PolicyID: ps[2].ID, Name: "c-tagged", GrantsRemoved: 1},
+		}
+		if !slices.Equal(done, want) || !slices.Equal(preview, want) {
+			t.Fatalf("removals:\n done    %+v\n preview %+v\n want    %+v", done, preview, want)
+		}
+		get := func(i int) *Policy {
+			p, err := r.Get(ctx, ps[i].ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			return p
+		}
+		if g := get(0).Grants; len(g) != 1 || len(g[0].Targets) != 1 || g[0].Targets[0].ID != "t2" {
+			t.Fatalf("a-shared: %+v", g)
+		}
+		if g := get(1).Grants; len(g) != 0 {
+			t.Fatalf("b-only: %+v", g)
+		}
+		if g := get(2).Grants; len(g) != 1 || g[0].Tags == nil || len(g[0].Targets) != 0 {
+			t.Fatalf("c-tagged: %+v", g)
+		}
+		if p := get(3); !p.UpdatedAt.Equal(stored.UpdatedAt) || len(p.Grants[0].Targets) != 1 {
+			t.Fatalf("d-other was rewritten: %+v", p)
+		}
+		if g := get(4).Grants; len(g) != 1 || g[0].Targets[0].ID != "t1" {
+			t.Fatalf("an autoscaling grant lost a group that shares the deleted target's id: %+v", g)
+		}
+	})
+}

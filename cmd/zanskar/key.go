@@ -81,6 +81,7 @@ var sealedTables = []struct{ label, table, version, has string }{
 	{"tls_certificates", "tls_certificates", "key_version", "key_enc IS NOT NULL"},
 	{"recording_storage", "recording_storage", "key_version", "secret_enc IS NOT NULL"},
 	{"auth_sessions (provider ID tokens)", "auth_sessions", "key_version", "id_token_enc IS NOT NULL"},
+	{"acme_cache (Let's Encrypt account and certificates)", "acme_cache", "key_version", "data_enc IS NOT NULL"},
 }
 
 func runKeyStatus() error {

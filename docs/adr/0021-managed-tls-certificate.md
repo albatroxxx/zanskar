@@ -73,3 +73,33 @@ allows for ambient capabilities. A refused bind on a port below 1024 names the d
 HSTS is sent whenever the gateway serves TLS. Browsers ignore it on a connection with
 certificate errors, so the self-signed default pins nothing; once a real certificate is
 uploaded, the two-year `max-age` applies from the first clean visit.
+
+## Amendment (2026-10-30): a certificate from an ACME CA (Let's Encrypt)
+
+Accepted by the product owner on 2026-10-30: the live gateway ran Caddy only to hold a Let's
+Encrypt certificate, and a certificate uploaded in the console could not replace it, because
+in `proxy` mode the gateway never sees TLS. In `managed` mode the certificate manager gains a
+source between the upload and the file.
+
+- **Resolution order:** an **uploaded** certificate, then an **ACME** certificate, then the
+  **file**, then **self-signed**. An upload still wins, so a certificate from another CA can be
+  used at any time and removed to fall back.
+- **What turns ACME on.** It is a runtime setting on the TLS card: on or off, an account
+  email, and the directory URL (Let's Encrypt production by default; staging or a private ACME
+  CA can be named).
+- **The names it requests.** The host of `ZANSKAR_PUBLIC_URL` plus the DNS names in
+  `ZANSKAR_TLS_HOSTS`, never an IP address. The manager's host policy refuses any other SNI,
+  so a stranger's handshake cannot make the gateway order certificates.
+- **Challenges.** TLS-ALPN-01 is answered on the TLS listener, so no extra port is needed;
+  HTTP-01 is answered on the redirect listener when it runs (`:80` in the managed preset).
+- **Storage.** The account key, certificates and keys are cached in the database, sealed with
+  `keyring.AAD("acme_cache", key)` like the uploaded certificate, so a second gateway on the
+  same database reuses them instead of ordering again.
+- **Renewal.** Renewal starts 30 days before expiry. The six-hourly expiry check (above) and
+  the card show the issuer, the expiry and the last error, and an order that keeps failing is
+  an audit event.
+- **Tests** run against Pebble, Let's Encrypt's test CA, in a container with validation
+  stubbed. They never touch the real directory.
+
+The live gateway can move off Caddy by switching to the `managed` preset (ADR 0020,
+2026-10-30) and turning ACME on. `proxy` mode stays supported.

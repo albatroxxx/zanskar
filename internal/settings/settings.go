@@ -16,6 +16,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"net/url"
 	"os"
 	"regexp"
 	"slices"
@@ -40,6 +41,7 @@ const (
 	TypeBool     Type = "bool"     // "true" | "false"
 	TypeEnum     Type = "enum"     // one of Definition.Enum
 	TypeHostPort Type = "hostport" // host:port, or empty
+	TypeTimeZone Type = "timezone" // an IANA zone name
 )
 
 // Sources of an effective value, from lowest to highest precedence.
@@ -64,6 +66,10 @@ const (
 	// the project site once a day and light the bell when it is newer
 	// (ADR 0032). Nothing about this gateway is sent.
 	KeyUpdateCheck = "updates.check"
+	// KeyRemoveOldImages has the gateway remove earlier versions' browser
+	// and relay images from its host (2026-10-30: each upgrade left the
+	// previous browser image behind until the disk filled).
+	KeyRemoveOldImages = "updates.remove_old_images"
 	// KeyLogLevel is the gateway's log level.
 	KeyLogLevel = "log.level"
 	// KeyDBProxyImage is the image run as the MySQL/MariaDB relay sidecar;
@@ -72,7 +78,19 @@ const (
 	// KeyBrowserImage is the image an application session's browser runs in
 	// (ADR 0034).
 	KeyBrowserImage = "apps.browser_image"
+	// KeyTimeZone is the zone every time in the console is shown in, and
+	// the dashboard's clock (2026-10-30); by default the gateway host's.
+	KeyTimeZone = "display.time_zone"
+	// KeyACME, KeyACMEEmail and KeyACMEDirectory get the gateway's
+	// certificate from an ACME CA when it serves TLS itself (ADR 0021,
+	// amended 2026-10-30).
+	KeyACME          = "tls.acme"
+	KeyACMEEmail     = "tls.acme_email"
+	KeyACMEDirectory = "tls.acme_directory"
 )
+
+// LetsEncryptDirectory is the ACME directory KeyACMEDirectory defaults to.
+const LetsEncryptDirectory = "https://acme-v02.api.letsencrypt.org/directory"
 
 // DefaultDBProxyImage is the gateway's own image at the running version. A
 // development build has no published tag, so it points at latest and the
@@ -142,6 +160,9 @@ func RequireDigest(v string) error {
 	return nil
 }
 
+// emailRe is an address the CA can write to: no spaces, one @, a dotted domain.
+var emailRe = regexp.MustCompile(`^[^@\s]{1,64}@[A-Za-z0-9.-]{1,253}\.[A-Za-z]{2,63}$`)
+
 // MaxLoginBanner bounds the banner: long enough for a legal notice, short
 // enough that the sign-in form stays on the page.
 const MaxLoginBanner = 4000
@@ -171,14 +192,24 @@ var Definitions = []Definition{
 		Description: "Password sign-ins, local or LDAP, must enrol an authenticator. Single sign-on providers enforce their own."},
 	{Key: KeyUpdateCheck, Category: "Updates", Title: "Check for new versions", Type: TypeBool, Default: "true",
 		Description: "Daily check of the project site for a newer version. Nothing is sent."},
-	{Key: KeyGuacdAddr, Category: "Desktops", Title: "guacd address", Type: TypeHostPort, EnvVar: "ZANSKAR_GUACD_ADDR", StepUp: true,
-		Description: "host:port of guacd for RDP and VNC; empty disables desktops. Loopback or private addresses only."},
+	{Key: KeyRemoveOldImages, Category: "Updates", Title: "Remove old images", Type: TypeBool, Default: "true",
+		Description: "Earlier versions' browser and relay images go from the host. Off keeps them, for a rollback without a registry."},
+	{Key: KeyGuacdAddr, Category: "Desktops", Title: "Desktops (RDP, VNC)", Type: TypeHostPort, EnvVar: "ZANSKAR_GUACD_ADDR", StepUp: true,
+		Description: "Relayed through guacd. The address is under Advanced: loopback or private host:port."},
 	{Key: KeyLogLevel, Category: "Logging", Title: "Log level", Type: TypeEnum, Default: "info", EnvVar: "ZANSKAR_LOG_LEVEL", Enum: []string{"debug", "info", "warn", "error"},
 		Description: "Applies at once."},
 	{Key: KeyDBProxyImage, Category: "Databases", Title: "Relay image", Type: TypeString, Default: DefaultDBProxyImage(), EnvVar: "ZANSKAR_DBPROXY_IMAGE", StepUp: true,
-		Description: "Relay for database and application sessions. Pinned by digest (repository@sha256:…)."},
+		Description: "Relay for database and application sessions. A custom image, for a private registry mirror, is pinned by digest."},
 	{Key: KeyBrowserImage, Category: "Applications", Title: "Browser image", Type: TypeString, Default: DefaultBrowserImage(), EnvVar: "ZANSKAR_BROWSER_IMAGE", StepUp: true,
-		Description: "Isolated browser for application sessions. Pinned by digest (repository@sha256:…)."},
+		Description: "Isolated browser for application sessions. A custom image, for a private registry mirror, is pinned by digest."},
+	{Key: KeyACME, Category: "Let's Encrypt", Title: "Certificate from Let's Encrypt", Type: TypeBool, Default: "false",
+		Description: "When the gateway serves TLS itself: a certificate for the public URL's name, renewed on its own. An uploaded one still wins."},
+	{Key: KeyACMEEmail, Category: "Let's Encrypt", Title: "Account email", Type: TypeString,
+		Description: "Where the CA writes about the certificate."},
+	{Key: KeyACMEDirectory, Category: "Let's Encrypt", Title: "ACME directory", Type: TypeString, Default: LetsEncryptDirectory,
+		Description: "Let's Encrypt by default; its staging, or a private ACME CA."},
+	{Key: KeyTimeZone, Category: "Display", Title: "Time zone", Type: TypeTimeZone, Default: HostZone(),
+		Description: "Every time in the console and the dashboard clock. The default is the gateway host's."},
 }
 
 // Lookup returns the definition for key.
@@ -208,6 +239,13 @@ type Boot struct {
 	EnvVar      string `json:"env_var"`
 	Value       string `json:"value"` // masked where it is a secret
 	Description string `json:"description"`
+	// Editable says how the console may change it through the root helper
+	// (ADR 0020, amended 2026-10-30): "value" for an allowlisted variable,
+	// "preset" for the TLS mode; empty, it is install-only.
+	Editable string `json:"editable,omitempty"`
+	// Raw is an editable variable's value as the file has it, for the edit
+	// field; allowlisted variables hold no secret.
+	Raw string `json:"raw,omitempty"`
 }
 
 // Setting is one stored console row.
@@ -251,6 +289,12 @@ func Validate(d Definition, value string) (string, error) {
 			return v, nil
 		}
 		return "", fmt.Errorf("%w: %s must be one of %s", ErrInvalid, d.Key, strings.Join(d.Enum, ", "))
+	case TypeTimeZone:
+		v := strings.TrimSpace(value)
+		if !validZone(v) {
+			return "", fmt.Errorf("%w: %s must be a time zone name such as Europe/London or Asia/Kolkata", ErrInvalid, d.Key)
+		}
+		return v, nil
 	case TypeHostPort:
 		v := strings.TrimSpace(value)
 		if v == "" {
@@ -268,6 +312,16 @@ func Validate(d Definition, value string) (string, error) {
 		v := strings.TrimSpace(value)
 		if !utf8.ValidString(v) || len(v) > 4096 {
 			return "", fmt.Errorf("%w: %s must be valid UTF-8 up to 4096 bytes", ErrInvalid, d.Key)
+		}
+		switch d.Key {
+		case KeyACMEEmail:
+			if v != "" && !emailRe.MatchString(v) {
+				return "", fmt.Errorf("%w: %s must be an email address", ErrInvalid, d.Key)
+			}
+		case KeyACMEDirectory:
+			if u, err := url.Parse(v); err != nil || u.Scheme != "https" || u.Host == "" {
+				return "", fmt.Errorf("%w: %s must be an https:// URL", ErrInvalid, d.Key)
+			}
 		}
 		// The relay image is an argument of `docker run`; free text there
 		// could be read as one of its flags (--privileged, a host mount).

@@ -6,10 +6,13 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/albatroxxx/zanskar/internal/audit"
@@ -305,5 +308,32 @@ func TestUpdateKeepsWhatItIsNotGiven(t *testing.T) {
 	}
 	if r := e.do("PUT", "/api/v1/users/"+u.ID, map[string]any{"email": "vera@new.example"}); r.code != 200 || r.body["email"] != "vera@new.example" {
 		t.Fatalf("a new email: %d %v", r.code, r.body)
+	}
+}
+
+// TestCreateUserIntoGroups (2026-10-30): an account can be made a member of
+// groups as it is created; a group that does not exist refuses the account
+// too, naming the group.
+func TestCreateUserIntoGroups(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	zero := store.TimeArg(store.NullTime{}.Time)
+	if _, err := e.db.ExecContext(ctx, e.db.Rebind(`INSERT INTO groups (id, name, description, created_at, updated_at) VALUES (?, ?, '', ?, ?)`), "g-ops", "ops", zero, zero); err != nil {
+		t.Fatal(err)
+	}
+	r := e.do("POST", "/api/v1/users", map[string]any{"username": "nia", "display_name": "Nia", "roles": []string{"user"}, "group_ids": []string{"g-ops", "g-gone"}})
+	if r.code != 422 || r.body["code"] != "invalid_group" || !strings.Contains(fmt.Sprint(r.body["message"]), "g-gone") {
+		t.Fatalf("unknown group: %d %v", r.code, r.body)
+	}
+	if _, err := e.users.GetByUsername(ctx, "nia"); !errors.Is(err, user.ErrNotFound) {
+		t.Fatalf("a refused account was left behind: %v", err)
+	}
+	r = e.do("POST", "/api/v1/users", map[string]any{"username": "nia", "display_name": "Nia", "roles": []string{"user"}, "group_ids": []string{"g-ops"}})
+	if r.code != 201 {
+		t.Fatalf("create into a group: %d %v", r.code, r.body)
+	}
+	var n int
+	if err := e.db.QueryRowContext(ctx, e.db.Rebind(`SELECT COUNT(*) FROM group_members WHERE group_id = ?`), "g-ops").Scan(&n); err != nil || n != 1 {
+		t.Fatalf("membership: %d %v", n, err)
 	}
 }

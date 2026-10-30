@@ -3,6 +3,7 @@ import { api, errorMessage } from '../../api/client'
 import { fmtTime } from '../../api/format'
 import type { Group, GroupMember, Role, User } from '../../api/types'
 import { useAuth } from '../../auth/AuthContext'
+import { PickList } from '../../components/PickList'
 import { useSubmit } from '../../components/submit'
 import { Alert, Badge, Confirm, Empty, Field, FormModal, Modal, PageHead, Tabs } from '../../components/ui'
 import { useList } from './lib'
@@ -231,11 +232,16 @@ function UserForm({ onClose, onSaved }: { onClose: () => void; onSaved: (oneTime
   const [f, setF] = useState({ username: '', display_name: '', email: '', password: '' })
   const [r, setR] = useState<Role[]>(['user'])
   const [external, setExternal] = useState(false)
+  // Groups can be picked as the user is made (2026-10-30, as AWS Identity
+  // Center does); the server adds them in the same transaction.
+  const groups = useList<Group>('/groups')
+  const [groupIDs, setGroupIDs] = useState<string[]>([])
   const { busy, err, submit } = useSubmit()
   const set = (k: keyof typeof f) => (e: React.ChangeEvent<HTMLInputElement>) => setF({ ...f, [k]: e.target.value })
   const save = () =>
     submit(async () => {
       const body: Record<string, unknown> = { username: f.username.trim(), display_name: f.display_name.trim(), email: f.email.trim(), roles: r }
+      if (groupIDs.length) body.group_ids = groupIDs
       if (external) body.password_less = true
       else if (f.password) body.password = f.password
       const created = await api.post<User & { initial_password?: string }>('/users', body)
@@ -251,9 +257,21 @@ function UserForm({ onClose, onSaved }: { onClose: () => void; onSaved: (oneTime
         <label htmlFor="nu-external">Signs in through an identity provider (no password)</label>
       </div>
       {!external && (
-        <Field label="Initial password" hint="Blank = generate a one-time password"><input id="nu-password" type="password" autoComplete="new-password" value={f.password} onChange={set('password')} minLength={12} /></Field>
+        <Field label="Initial password"><input id="nu-password" type="password" autoComplete="new-password" value={f.password} onChange={set('password')} minLength={12} placeholder="A one-time password is generated" /></Field>
       )}
       <RoleChecks value={r} onChange={setR} prefix="nu" />
+      {(groups.items?.length ?? 0) > 0 && (
+        <Field label="Groups (optional)">
+          <PickList
+            label="groups"
+            idPrefix="nu-g"
+            selected={groupIDs}
+            onToggle={(id) => setGroupIDs((g) => (g.includes(id) ? g.filter((x) => x !== id) : [...g, id]))}
+            onSelect={(ids, on) => setGroupIDs((g) => (on ? [...new Set([...g, ...ids])] : g.filter((x) => !ids.includes(x))))}
+            options={(groups.items ?? []).map((g) => ({ id: g.id, label: g.name, locked: g.idp_id ? 'Members come from the provider' : undefined }))}
+          />
+        </Field>
+      )}
     </FormModal>
   )
 }
@@ -382,16 +400,31 @@ function Groups() {
 
 function GroupForm({ onClose, onSaved }: { onClose: () => void; onSaved: () => void }) {
   const [f, setF] = useState({ name: '', description: '' })
+  // Members can be picked as the group is made (2026-10-30).
+  const users = useList<User>('/users')
+  const [userIDs, setUserIDs] = useState<string[]>([])
   const { busy, err, submit } = useSubmit()
   const save = () =>
     submit(async () => {
-      await api.post('/groups', { name: f.name.trim(), description: f.description })
+      await api.post('/groups', { name: f.name.trim(), description: f.description, ...(userIDs.length ? { user_ids: userIDs } : {}) })
       onSaved()
     })
   return (
     <FormModal title="Add group" err={err} busy={busy} submitLabel="Create" onSubmit={save} onClose={onClose}>
       <Field label="Name"><input id="g-name" value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} required autoFocus /></Field>
       <Field label="Description"><input id="g-desc" value={f.description} onChange={(e) => setF({ ...f, description: e.target.value })} /></Field>
+      {(users.items?.length ?? 0) > 0 && (
+        <Field label="Members (optional)">
+          <PickList
+            label="users"
+            idPrefix="g-u"
+            selected={userIDs}
+            onToggle={(id) => setUserIDs((u) => (u.includes(id) ? u.filter((x) => x !== id) : [...u, id]))}
+            onSelect={(ids, on) => setUserIDs((u) => (on ? [...new Set([...u, ...ids])] : u.filter((x) => !ids.includes(x))))}
+            options={(users.items ?? []).map((u) => ({ id: u.id, label: u.username, detail: u.display_name && u.display_name !== u.username ? u.display_name : undefined }))}
+          />
+        </Field>
+      )}
     </FormModal>
   )
 }

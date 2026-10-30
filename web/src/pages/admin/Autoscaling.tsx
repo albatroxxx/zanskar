@@ -3,6 +3,7 @@ import { api, errorMessage } from '../../api/client'
 import { fmtTime, protocolName } from '../../api/format'
 import type { AsgAccessTest, AsgIAMDocs, AsgInstance, AutoscalingGroup, AwsIdentity, Credential, OSFamily, Protocol } from '../../api/types'
 import { Alert, Badge, Confirm, Empty, Field, Modal, PageHead, Tags } from '../../components/ui'
+import { DeleteAsset } from './DeleteAsset'
 import { protocols, useList, type PortProtocol } from './lib'
 import { TagEditor } from '../../components/TagEditor'
 import { rowsToTags, tagRows, type TagRow } from '../../components/tags'
@@ -489,7 +490,7 @@ function healthBadge(v: string | undefined, good: string) {
   return <Badge tone={v === good ? 'ok' : v === 'unknown' ? undefined : 'warn'}>{v}</Badge>
 }
 
-function GroupDetail({ group, credentials, onClose, onChanged, onDeleted, onError }: { group: AutoscalingGroup; credentials: Credential[]; onClose: () => void; onChanged: (g: AutoscalingGroup) => void; onDeleted: () => void; onError: (m: string) => void }) {
+function GroupDetail({ group, credentials, onClose, onChanged, onDeleted }: { group: AutoscalingGroup; credentials: Credential[]; onClose: () => void; onChanged: (g: AutoscalingGroup) => void; onDeleted: () => void; onError: (m: string) => void }) {
   const [g, setG] = useState(group)
   const [instances, setInstances] = useState<AsgInstance[] | null>(null)
   const [showAll, setShowAll] = useState(false)
@@ -698,24 +699,7 @@ function GroupDetail({ group, credentials, onClose, onChanged, onDeleted, onErro
           }}
         />
       )}
-      {confirmDelete && (
-        <Confirm
-          title={`Delete ${g.name}?`}
-          body={<p>Refused while a policy names it or a session is open on it.</p>}
-          confirmLabel="Delete"
-          danger
-          onClose={() => setConfirmDelete(false)}
-          onConfirm={async () => {
-            try {
-              await api.del(`/autoscaling-groups/${g.id}`)
-              onDeleted()
-            } catch (e) {
-              onError(errorMessage(e))
-              throw e
-            }
-          }}
-        />
-      )}
+      {confirmDelete && <DeleteAsset name={g.name} path={`/autoscaling-groups/${g.id}`} onClose={() => setConfirmDelete(false)} onDeleted={onDeleted} />}
     </Modal>
   )
 }

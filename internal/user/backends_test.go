@@ -63,3 +63,44 @@ func TestRepoOnEachBackend(t *testing.T) {
 		}
 	})
 }
+
+// TestCreateInGroupsOnEachBackend (2026-10-30): a user can be made a member
+// of groups as the account is created, in one step; a group that does not
+// exist, or whose members come from an identity provider, refuses all of it.
+func TestCreateInGroupsOnEachBackend(t *testing.T) {
+	storetest.ForEachBackend(t, func(t *testing.T, db *store.DB) {
+		ctx := context.Background()
+		zero := store.TimeArg(store.NullTime{}.Time)
+		for _, q := range []struct {
+			sql  string
+			args []any
+		}{
+			{`INSERT INTO identity_providers (id, name, type, config_enc, enabled, created_at, updated_at) VALUES (?, ?, ?, ?, TRUE, ?, ?)`, []any{"idp1", "corp", "oidc", []byte{1}, zero, zero}},
+			{`INSERT INTO groups (id, name, description, created_at, updated_at) VALUES (?, ?, '', ?, ?)`, []any{"g-ops", "ops", zero, zero}},
+			{`INSERT INTO groups (id, name, description, created_at, updated_at) VALUES (?, ?, '', ?, ?)`, []any{"g-dba", "dba", zero, zero}},
+			{`INSERT INTO groups (id, name, description, idp_id, external_id, created_at, updated_at) VALUES (?, ?, '', ?, ?, ?, ?)`, []any{"g-synced", "synced", "idp1", "ext", zero, zero}},
+		} {
+			if _, err := db.ExecContext(ctx, db.Rebind(q.sql), q.args...); err != nil {
+				t.Fatal(err)
+			}
+		}
+		r := NewRepo(db)
+		ann := &User{Username: "ann", DisplayName: "Ann", Roles: []Role{RoleUser}}
+		if err := r.CreateInGroups(ctx, ann, []string{"g-ops", "g-dba", "g-ops", ""}); err != nil {
+			t.Fatal(err)
+		}
+		var n int
+		if err := db.QueryRowContext(ctx, db.Rebind(`SELECT COUNT(*) FROM group_members WHERE user_id = ?`), ann.ID).Scan(&n); err != nil || n != 2 {
+			t.Fatalf("memberships: %d %v", n, err)
+		}
+		for _, bad := range []string{"g-none", "g-synced"} {
+			u := &User{Username: "ben-" + bad, DisplayName: "Ben", Roles: []Role{RoleUser}}
+			if err := r.CreateInGroups(ctx, u, []string{"g-ops", bad}); !errors.Is(err, ErrUnknownGroup) {
+				t.Fatalf("%s: %v", bad, err)
+			}
+			if _, err := r.GetByUsername(ctx, u.Username); !errors.Is(err, ErrNotFound) {
+				t.Fatalf("%s: a refused account was left behind: %v", bad, err)
+			}
+		}
+	})
+}

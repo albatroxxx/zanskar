@@ -1,7 +1,8 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useSyncExternalStore } from 'react'
 import { api, errorMessage } from '../api/client'
 import { fmtTime } from '../api/format'
 import type { SystemStatus } from '../api/types'
+import { progressWatch } from './hostAction'
 import { Alert, Confirm } from './ui'
 
 const POLL_MS = 30_000
@@ -33,6 +34,7 @@ export function RestartNotice() {
   const [wait, setWait] = useState(true)
   const [minutes, setMinutes] = useState(15)
   const [err, setErr] = useState('')
+  const watched = useSyncExternalStore(progressWatch.subscribe, progressWatch.active)
 
   useEffect(() => {
     let cancelled = false
@@ -44,7 +46,9 @@ export function RestartNotice() {
           // A different start time is the fresh process: reload for its
           // bundle. Seen either after the server was away, or straight away
           // when the restart was quick enough to fall between two polls.
-          if ((gone && s.started_at !== gone) || (status?.draining && s.started_at !== status.started_at)) {
+          // Not while a progress view follows the restart: it shows the
+          // outcome and offers the reload itself.
+          if (!progressWatch.active() && ((gone && s.started_at !== gone) || (status?.draining && s.started_at !== status.started_at))) {
             window.location.reload()
             return
           }
@@ -62,6 +66,7 @@ export function RestartNotice() {
     }
   }, [gone, status?.draining, status?.started_at])
 
+  if (watched) return null
   if (gone) return <Alert tone="warn">Restarting the gateway… this page reloads when it is back.</Alert>
   if (!status) return null
   const env = status.env_file

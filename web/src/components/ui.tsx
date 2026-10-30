@@ -1,6 +1,7 @@
 import { Children, cloneElement, isValidElement, useEffect, useId, useRef, type KeyboardEvent as ReactKeyboardEvent, type ReactElement, type ReactNode } from 'react'
 import { Link } from 'react-router-dom'
 import { useSubmit } from './submit'
+import { StateIcon } from './icons'
 
 export function PageHead({ title, lead, children }: { title: string; lead?: string; children?: ReactNode }) {
   return (
@@ -245,7 +246,7 @@ function isControl(c: ReactNode): c is ReactElement<ControlProps> {
 // The label names its control, so a screen reader reads it and a click on it
 // focuses the box; the hint is read as the control's description. A field
 // holding a group (checkboxes, buttons) is a named group instead.
-export function Field({ label, hint, children }: { label: string; hint?: string; children: ReactNode }) {
+export function Field({ label, hint, info, children }: { label: string; hint?: string; info?: string; children: ReactNode }) {
   const auto = useId()
   const hintId = hint ? auto + '-hint' : undefined
   const parts = Children.toArray(children)
@@ -254,7 +255,14 @@ export function Field({ label, hint, children }: { label: string; hint?: string;
   if (!control) {
     return (
       <div className="field" role="group" aria-labelledby={auto + '-label'} aria-describedby={hintId}>
-        <label id={auto + '-label'}>{label}</label>
+        {info ? (
+          <span className="field-head">
+            <label id={auto + '-label'}>{label}</label>
+            <StateIcon state="info" label={info} />
+          </span>
+        ) : (
+          <label id={auto + '-label'}>{label}</label>
+        )}
         {children}
         {hint && <span className="hint" id={hintId}>{hint}</span>}
       </div>
@@ -264,7 +272,14 @@ export function Field({ label, hint, children }: { label: string; hint?: string;
   const describedBy = [control.props['aria-describedby'], hintId].filter(Boolean).join(' ') || undefined
   return (
     <div className="field">
-      <label htmlFor={id}>{label}</label>
+      {info ? (
+        <span className="field-head">
+          <label htmlFor={id}>{label}</label>
+          <StateIcon state="info" label={info} />
+        </span>
+      ) : (
+        <label htmlFor={id}>{label}</label>
+      )}
       {parts.map((c, i) => (i === at ? cloneElement(control, { id, 'aria-describedby': describedBy }) : c))}
       {hint && <span className="hint" id={hintId}>{hint}</span>}
     </div>

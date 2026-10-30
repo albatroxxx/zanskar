@@ -6,7 +6,7 @@ import { useAuth } from '../auth/AuthContext'
 import { canConnect } from '../auth/home'
 import { AccessNotices } from './AccessNotices'
 import { onBadgesChanged } from './badges'
-import { CornerBar } from './CornerBar'
+import { CornerBar, CornerThemeOnly } from './CornerBar'
 import { RestartNotice } from './RestartNotice'
 import { Badge, Modal } from './ui'
 
@@ -107,7 +107,7 @@ export function Shell({ portal, items }: { portal: 'user' | 'admin' | 'audit'; i
         </div>
       </aside>
       <main className="main">
-        {portal === 'admin' && <CornerBar />}
+        {portal === 'admin' ? <CornerBar /> : <CornerThemeOnly />}
         {portal === 'user' && <AccessNotices />}
         {portal === 'admin' && <RestartNotice />}
         {/* The admin and audit pages load on demand (ADR 0010), so the

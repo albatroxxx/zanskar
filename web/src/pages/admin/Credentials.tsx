@@ -289,15 +289,15 @@ function CredentialForm({ onClose, onSaved }: { onClose: () => void; onSaved: (c
       {isCA && (
         <>
           <div className="form-grid">
-            <Field label="Login user" hint="Blank = each user's own username">
-              <input id="c-username" value={f.username} onChange={set('username')} placeholder="(each user as themselves)" />
+            <Field label="Login user">
+              <input id="c-username" value={f.username} onChange={set('username')} placeholder="Each user's own username" />
             </Field>
-            <Field label="Certificate lifetime (seconds)" hint={`Blank = ${DEFAULT_CERT_TTL}; 60–3600`}>
-              <input id="c-ttl" inputMode="numeric" value={f.ttl} onChange={set('ttl')} placeholder={String(DEFAULT_CERT_TTL)} />
+            <Field label="Certificate lifetime (seconds)" hint="60–3600">
+              <input id="c-ttl" inputMode="numeric" value={f.ttl} onChange={set('ttl')} placeholder={`Default: ${DEFAULT_CERT_TTL}`} />
             </Field>
           </div>
-          <Field label="Allowed login users" hint="One per line; blank = any">
-            <textarea id="c-principals" value={f.principals} onChange={set('principals')} placeholder={'deploy\nops'} style={{ minHeight: 50 }} />
+          <Field label="Allowed login users" hint="One per line">
+            <textarea id="c-principals" value={f.principals} onChange={set('principals')} placeholder="Any" style={{ minHeight: 50 }} />
           </Field>
           <div className="field inline">
             <input id="c-generate-ca" type="checkbox" checked={generateCA} onChange={(e) => setGenerateCA(e.target.checked)} />

@@ -25,6 +25,8 @@ export interface Me {
   pending?: 'verify' | 'enroll' | 'password' | null
   user?: User
   session?: { id: string; created_at: string; expires_at: string }
+  /** The console's time zone (display.time_zone); absent on a partial session. */
+  time_zone?: string
 }
 
 export type LoginStatus = 'ok' | 'mfa_required' | 'mfa_enrollment_required' | 'password_change_required'
@@ -215,6 +217,8 @@ export interface Group {
   id: string
   name: string
   description: string
+  /** Set when an identity provider owns the group and its members (SCIM, ADR 0035). */
+  idp_id?: string
   member_count?: number
   created_at: string
   updated_at: string
@@ -494,7 +498,7 @@ export interface RuntimeSetting {
   category: string
   title: string
   description: string
-  type: 'string' | 'text' | 'bool' | 'enum' | 'hostport'
+  type: 'string' | 'text' | 'bool' | 'enum' | 'hostport' | 'timezone'
   default: string
   env_var?: string
   enum?: string[]
@@ -513,6 +517,19 @@ export interface BootSetting {
   env_var: string
   value: string
   description: string
+  /** How the console may change it through the root helper (ADR 0020, amended 2026-10-30). */
+  editable?: 'value' | 'preset'
+  /** An editable variable's value as the file has it. */
+  raw?: string
+}
+
+/** The root helper's answer to a change of the environment file. */
+export interface ConfigResult {
+  id: string
+  state: 'applied' | 'refused' | 'rolled_back'
+  message?: string
+  changed?: string[]
+  at: string
 }
 
 export interface SettingsListing {
@@ -566,6 +583,8 @@ export interface TLSStatus {
   uploaded?: TLSCertInfo
   generated?: TLSCertInfo
   file_hint?: string
+  /** Let's Encrypt, when the gateway serves TLS itself (ADR 0021, amended 2026-10-30). */
+  acme?: { on: boolean; names: string[] | null; not_after?: string; issuer?: string; last_error?: string }
 }
 
 /** Recording storage as the console edits it; the secret is write-only. Mirrors internal/recstorage.Config. */
@@ -621,7 +640,7 @@ export interface SystemMetrics {
   cpu?: { percent: number; window_seconds: number }
   load?: { one: number; five: number; fifteen: number }
   memory?: { total_bytes: number; available_bytes: number }
-  disks: { what: string; path: string; system: boolean; total_bytes: number; free_bytes: number }[]
+  disks: { what: string; path: string; system: boolean; total_bytes: number; free_bytes: number; used_bytes?: number }[]
   database_sessions: number
   guacd?: { address: string; reachable: boolean }
   cpus: number
@@ -638,6 +657,8 @@ export interface SystemStatus {
   restart_required: boolean
   draining: boolean
   drain?: { requested_at: string; requested_by: string; deadline: string; wait_minutes: number }
+  /** The gateway's clock when it answered. */
+  now?: string
 }
 
 /** Recording retention policy (admin-editable). Mirrors internal/session. */
@@ -646,4 +667,11 @@ export interface RetentionPolicy {
   max_total_bytes: number
   updated_at?: string
   updated_by?: string
+}
+
+/** What deleting a target or autoscaling group changes (GET …/usage; ADR 0036, amended 2026-10-30). */
+export interface AssetUsage {
+  policies: { policy_id: string; name: string; grants_removed: number; no_grants_left: boolean }[]
+  live_sessions: number
+  open_requests: number
 }

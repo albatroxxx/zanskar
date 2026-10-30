@@ -1,0 +1,13 @@
+[Unit]
+Description=Zanskar install-setting changes from the console
+Documentation=https://github.com/albatroxxx/zanskar
+
+# The gateway writes /var/lib/zanskar/config-request after draining its
+# sessions (ADR 0020, amended 2026-10-30); this unit starts the helper. The
+# gateway holds no systemd privilege and never writes the environment file.
+[Path]
+PathExists=/var/lib/zanskar/config-request
+Unit=zanskar-config.service
+
+[Install]
+WantedBy=multi-user.target

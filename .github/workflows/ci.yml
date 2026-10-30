@@ -51,8 +51,26 @@ jobs:
       - name: Build the browser image for the application session test
         # The image an application opens in (ADR 0034), built from
         # deploy/browser as the release builds it; the end-to-end test below
-        # starts it beside a real guacd and reads the pixels it draws.
-        run: docker build -t zanskar-browser:ci deploy/browser
+        # starts it beside a real guacd and reads the pixels it draws. Then,
+        # through a registry on the runner and with the build cache emptied,
+        # a rebuild from the pushed image must reuse every layer: the release
+        # relies on that so an upgrade with the same packages downloads only
+        # what changed (deploy/browser/build.sh).
+        run: |
+          set -euo pipefail
+          docker run -d --name registry -p 127.0.0.1:5000:5000 registry:3@sha256:d4032d4cc323c1731c707931ecada07a53076eac38e3b61ae57533f170f2c6c3
+          deploy/browser/build.sh amd64 localhost:5000/zanskar-browser:ci
+          docker push --quiet localhost:5000/zanskar-browser:ci
+          docker tag localhost:5000/zanskar-browser:ci zanskar-browser:ci
+          docker builder prune -af >/dev/null
+          deploy/browser/build.sh amd64 zanskar-browser:rebuilt localhost:5000/zanskar-browser:ci
+          first=$(docker inspect --format '{{json .RootFS.Layers}}' zanskar-browser:ci)
+          again=$(docker inspect --format '{{json .RootFS.Layers}}' zanskar-browser:rebuilt)
+          if [ "$first" != "$again" ]; then
+            echo "::error::the rebuild did not reuse the browser image's layers from its inline cache"
+            exit 1
+          fi
+          docker rm -f registry
       - name: Test (SQLite and PostgreSQL)
         env:
           ZANSKAR_TEST_POSTGRES_DSN: postgres://zanskar:zanskar@localhost:5432/zanskar_test?sslmode=disable

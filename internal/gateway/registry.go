@@ -62,6 +62,9 @@ var (
 	// certificate changed: the host may no longer be the one that was
 	// trusted, so nothing in flight is kept.
 	ErrTrustLost = errors.New("the target's host key or certificate changed")
+	// ErrTargetDeleted ends the sessions on a target or autoscaling group
+	// an administrator deleted (ADR 0036, amended 2026-10-30).
+	ErrTargetDeleted = errors.New("target deleted by an administrator")
 )
 
 // CancelReason maps a registry cancellation to an access_sessions end reason
@@ -78,6 +81,8 @@ func CancelReason(ctx context.Context) (reason, msg string) {
 		return "max_duration", "your approved access ran out"
 	case errors.Is(cause, ErrTargetDisabled):
 		return "admin_terminated", "an administrator disabled or changed the target"
+	case errors.Is(cause, ErrTargetDeleted):
+		return "target_deleted", "an administrator deleted the target"
 	case errors.Is(cause, ErrTrustLost):
 		return "trust_lost", "the target's host key or certificate changed; an administrator must trust it again"
 	case errors.Is(cause, ErrGatewayRestart):

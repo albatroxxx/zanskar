@@ -92,9 +92,9 @@ export function DatabaseIcon({ label = 'Database' }: { label?: string }) {
 /** StateIcon marks a row that needs a decision or gives reassurance. Its
  *  words appear the moment the pointer is over it and pin open on click (no
  *  slow native tooltip); screen readers get them from the button's label. */
-export function StateIcon({ state, label }: { state: 'warn' | 'danger' | 'ok' | 'unknown'; label: string }) {
+export function StateIcon({ state, label }: { state: 'warn' | 'danger' | 'ok' | 'unknown' | 'info'; label: string }) {
   const [pinned, setPinned] = useState(false)
-  const tone = state === 'unknown' ? 'muted' : state
+  const tone = state === 'unknown' || state === 'info' ? 'muted' : state
   return (
     <span className="glyph-wrap">
       <button
@@ -115,6 +115,12 @@ export function StateIcon({ state, label }: { state: 'warn' | 'danger' | 'ok' | 
             <>
               <circle cx="12" cy="12" r="9" />
               <line x1="8.5" y1="12" x2="15.5" y2="12" />
+            </>
+          ) : state === 'info' ? (
+            <>
+              <circle cx="12" cy="12" r="9" />
+              <line x1="12" y1="11" x2="12" y2="16.5" />
+              <line x1="12" y1="7.6" x2="12" y2="7.7" />
             </>
           ) : (
             <>
@@ -246,7 +252,7 @@ export function SignInIcon() {
 
 export function BellIcon() {
   return (
-    <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <svg width="23" height="23" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
       <path d="M6 9a6 6 0 0 1 12 0c0 6 2.5 8 2.5 8h-17S6 15 6 9" />
       <path d="M10 20.5a2 2 0 0 0 4 0" />
     </svg>
@@ -255,9 +261,101 @@ export function BellIcon() {
 
 export function GearIcon() {
   return (
-    <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round" aria-hidden="true">
+    <svg width="23" height="23" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round" aria-hidden="true">
       <polygon points="19.4,9.0 22.3,10.2 22.3,13.8 19.4,15.0 19.4,15.2 20.6,18.0 18.0,20.6 15.2,19.4 15.0,19.4 13.8,22.3 10.2,22.3 9.0,19.4 8.8,19.4 6.0,20.6 3.4,18.0 4.6,15.2 4.6,15.0 1.7,13.8 1.7,10.2 4.6,9.0 4.6,8.8 3.4,6.0 6.0,3.4 8.8,4.6 9.0,4.6 10.2,1.7 13.8,1.7 15.0,4.6 15.2,4.6 18.0,3.4 20.6,6.0 19.4,8.8" />
       <circle cx="12" cy="12" r="3.2" />
+    </svg>
+  )
+}
+
+/** DoneIcon is the large tick a finished host action shows beside its words. */
+export function DoneIcon() {
+  return (
+    <svg {...svgProps(28)}>
+      <circle cx="12" cy="12" r="9" />
+      <polyline points="8 12.5 11 15.5 16 9.5" />
+    </svg>
+  )
+}
+
+/** ThemeIcon is the corner's theme menu: a circle half light, half dark. */
+export function ThemeIcon() {
+  return (
+    <svg width="23" height="23" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden="true">
+      <circle cx="12" cy="12" r="8.5" />
+      <path d="M12 3.5a8.5 8.5 0 0 1 0 17z" fill="currentColor" stroke="none" />
+    </svg>
+  )
+}
+
+/** CommandsIcon is the command line's list of commands. */
+export function CommandsIcon() {
+  return (
+    <svg {...svgProps(16)}>
+      <line x1="9" y1="6" x2="20" y2="6" />
+      <line x1="9" y1="12" x2="20" y2="12" />
+      <line x1="9" y1="18" x2="20" y2="18" />
+      <circle cx="4.5" cy="6" r="1" />
+      <circle cx="4.5" cy="12" r="1" />
+      <circle cx="4.5" cy="18" r="1" />
+    </svg>
+  )
+}
+
+/** MinimiseIcon folds a panel away, keeping what it holds. */
+export function MinimiseIcon() {
+  return (
+    <svg {...svgProps(16)}>
+      <line x1="5" y1="18" x2="19" y2="18" />
+    </svg>
+  )
+}
+
+/** MaximiseIcon gives a panel the whole window. */
+export function MaximiseIcon() {
+  return (
+    <svg {...svgProps(16)}>
+      <rect x="5" y="5" width="14" height="14" rx="1.5" />
+    </svg>
+  )
+}
+
+/** RestoreIcon brings a maximised panel back to its own height. */
+export function RestoreIcon() {
+  return (
+    <svg {...svgProps(16)}>
+      <rect x="4" y="9" width="11" height="11" rx="1.5" />
+      <path d="M9 9V5.5A1.5 1.5 0 0 1 10.5 4h8A1.5 1.5 0 0 1 20 5.5v8a1.5 1.5 0 0 1-1.5 1.5H15" />
+    </svg>
+  )
+}
+
+/** CloseIcon shuts a panel. */
+export function CloseIcon() {
+  return (
+    <svg {...svgProps(16)}>
+      <line x1="6" y1="6" x2="18" y2="18" />
+      <line x1="18" y1="6" x2="6" y2="18" />
+    </svg>
+  )
+}
+
+/** AuditIcon marks something every use of which is recorded: a shield with a tick. */
+export function AuditIcon() {
+  return (
+    <svg {...svgProps(16)}>
+      <path d="M12 3l7 3v5c0 4.5-3 8-7 10-4-2-7-5.5-7-10V6z" />
+      <polyline points="9 12 11 14 15 10" />
+    </svg>
+  )
+}
+
+/** LockIcon is shut until a code is verified, then open. */
+export function LockIcon({ open }: { open: boolean }) {
+  return (
+    <svg {...svgProps(16)}>
+      <rect x="5" y="11" width="14" height="9" rx="2" />
+      <path d={open ? 'M8 11V8a4 4 0 0 1 7.5-2' : 'M8 11V8a4 4 0 0 1 8 0v3'} />
     </svg>
   )
 }
