@@ -11,6 +11,8 @@ import (
 	"time"
 
 	"github.com/albatroxxx/zanskar/internal/policy"
+	"github.com/albatroxxx/zanskar/internal/policy/policytest"
+	"github.com/albatroxxx/zanskar/internal/protocol"
 	"github.com/albatroxxx/zanskar/internal/store"
 	"github.com/albatroxxx/zanskar/internal/store/storetest"
 )
@@ -108,23 +110,50 @@ func TestRequestLifecycle(t *testing.T) {
 	}
 }
 
-func TestEligiblePolicy(t *testing.T) {
-	ref := policy.TargetRef{ID: "t1", Tags: map[string]string{"env": "prod"}}
-	approval := &policy.Policy{Enabled: true, RequireApproval: true, Selector: policy.Selector{Targets: []string{"t1"}}, Protocols: []string{"ssh"}}
-	standing := &policy.Policy{Enabled: true, Selector: policy.Selector{Targets: []string{"t1"}}, Protocols: []string{"ssh"}}
-	disabled := &policy.Policy{Enabled: false, RequireApproval: true, Selector: policy.Selector{Targets: []string{"t1"}}, Protocols: []string{"ssh"}}
+// TestEligible (ADR 0036): an approval grant covering the target, kind and
+// protocol makes a request eligible; standing access, a disabled policy, an
+// uncovered protocol and another kind do not. Of several approval grants,
+// the shortest maximum caps the request and names the grant recorded.
+func TestEligible(t *testing.T) {
+	ref := policy.TargetRef{Kind: protocol.KindHost, ID: "t1", Tags: map[string]string{"env": "prod"}}
+	host := func(max int) policy.Grant {
+		return policytest.Approval(policytest.Named(protocol.KindHost, []string{"t1"}, "ssh"), max)
+	}
+	pol := func(name string, grants ...policy.Grant) *policy.Policy {
+		p := policytest.Policy(name, nil, grants...)
+		for i := range p.Grants {
+			p.Grants[i].ID = name + "-" + string(rune('a'+i))
+		}
+		return p
+	}
+	standing := pol("standing", policytest.Named(protocol.KindHost, []string{"t1"}, "ssh"))
+	disabled := pol("disabled", host(0))
+	disabled.Enabled = false
+	approval := pol("approval", host(0))
+	fleet := pol("fleet", policytest.Approval(policytest.Named(protocol.KindAutoscaling, []string{"t1"}, "ssh"), 0))
 
-	if eligiblePolicy([]*policy.Policy{standing}, ref, "ssh") != nil {
-		t.Error("standing (non-approval) access is not requested through PIM")
+	for _, c := range []struct {
+		name  string
+		pols  []*policy.Policy
+		proto string
+	}{
+		{"standing access is not requested", []*policy.Policy{standing}, "ssh"},
+		{"a disabled policy", []*policy.Policy{disabled}, "ssh"},
+		{"a protocol not granted", []*policy.Policy{approval}, "rdp"},
+		{"a grant of another kind", []*policy.Policy{fleet}, "ssh"},
+	} {
+		if _, ok := eligible(c.pols, ref, c.proto); ok {
+			t.Errorf("%s made the request eligible", c.name)
+		}
 	}
-	if eligiblePolicy([]*policy.Policy{disabled}, ref, "ssh") != nil {
-		t.Error("a disabled policy must not confer eligibility")
+	e, ok := eligible([]*policy.Policy{standing, approval}, ref, "ssh")
+	if !ok || e.maxMinutes != DefaultMaxGrantMinutes || e.grant.ID != "approval-a" {
+		t.Fatalf("an approval grant: %+v %v", e, ok)
 	}
-	if eligiblePolicy([]*policy.Policy{approval}, ref, "rdp") != nil {
-		t.Error("a protocol the policy does not grant must not match")
-	}
-	if eligiblePolicy([]*policy.Policy{standing, approval}, ref, "ssh") == nil {
-		t.Error("an approval-gated policy should confer eligibility")
+	// Two approval grants, in two policies: the shorter maximum caps it.
+	long, short := pol("a-long", host(240)), pol("b-short", host(60))
+	if e, ok := eligible([]*policy.Policy{long, short}, ref, "ssh"); !ok || e.maxMinutes != 60 || e.policy.Name != "b-short" || e.grant.ID != "b-short-a" {
+		t.Fatalf("the shortest cap: %+v %v", e, ok)
 	}
 }
 

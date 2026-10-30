@@ -16,6 +16,7 @@ import (
 	"github.com/albatroxxx/zanskar/internal/gateway"
 	"github.com/albatroxxx/zanskar/internal/httpx"
 	"github.com/albatroxxx/zanskar/internal/policy"
+	"github.com/albatroxxx/zanskar/internal/protocol"
 	"github.com/albatroxxx/zanskar/internal/target"
 	"github.com/albatroxxx/zanskar/internal/user"
 )
@@ -91,16 +92,16 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 		h.fail(w, r, err)
 		return
 	}
-	// Eligibility: an enabled, approval-gated policy of the caller's must cover
-	// this target or group and protocol. Standing (non-approval) access is not
-	// requested here — a user who already has it connects directly.
-	elig := eligiblePolicy(pols, ref, in.Protocol)
-	if elig == nil {
+	// Eligibility: an approval grant of the caller's enabled policies must
+	// cover this target or group and protocol. Standing access is not
+	// requested here; a user who already has it connects directly.
+	elig, found := eligible(pols, ref, in.Protocol)
+	if !found {
 		httpx.WriteError(w, r, http.StatusForbidden, "not_eligible",
 			"no approval-gated policy makes you eligible for this target and protocol")
 		return
 	}
-	most := maxMinutes(elig)
+	most := elig.maxMinutes
 	if in.Minutes > most {
 		httpx.WriteError(w, r, http.StatusBadRequest, "duration_too_long",
 			fmt.Sprintf("requested duration exceeds the policy maximum of %d minutes", most))
@@ -130,7 +131,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	req := &Request{UserID: pr.User.ID, PolicyID: elig.ID, TargetID: ref.ID, ASGID: ref.ASGID,
+	req := &Request{UserID: pr.User.ID, PolicyID: elig.policy.ID, GrantID: elig.grant.ID, TargetID: ref.ID, ASGID: ref.ASGID,
 		Protocol: in.Protocol, Reason: in.Reason, RequestedMinutes: in.Minutes, ExtendsRequestID: in.ExtendsRequestID}
 	if err := h.Requests.Create(r.Context(), req); err != nil {
 		h.fail(w, r, err)
@@ -153,7 +154,7 @@ func (h *Handler) subject(w http.ResponseWriter, r *http.Request, in createInput
 			h.fail(w, r, err)
 			return ref, false
 		}
-		return policy.TargetRef{ID: tgt.ID, Tags: tgt.Tags}, true
+		return policy.TargetRef{Kind: tgt.Kind(), ID: tgt.ID, Tags: tgt.Tags}, true
 	}
 	if h.ASGs == nil {
 		httpx.WriteError(w, r, http.StatusNotFound, "not_found", "autoscaling group not found")
@@ -168,15 +169,42 @@ func (h *Handler) subject(w http.ResponseWriter, r *http.Request, in createInput
 		h.fail(w, r, err)
 		return ref, false
 	}
-	return policy.TargetRef{ASGID: g.ID, Tags: g.Tags}, true
+	return policy.TargetRef{Kind: protocol.KindAutoscaling, ASGID: g.ID, Tags: g.Tags}, true
 }
 
-// maxMinutes is the longest grant a policy allows.
-func maxMinutes(p *policy.Policy) int {
-	if p != nil && p.MaxSessionMinutes != nil && *p.MaxSessionMinutes > 0 {
-		return *p.MaxSessionMinutes
+// eligibility is what admits a request: an approval grant of the caller's
+// enabled policies covering the target or group and protocol. When several
+// do, the cap is the shortest of their maximums (a grant with none counts as
+// DefaultMaxGrantMinutes), and the grant that sets it is the one recorded;
+// ties go to the policy first by name, then the grant first in it.
+type eligibility struct {
+	policy     *policy.Policy
+	grant      *policy.Grant
+	maxMinutes int
+}
+
+func eligible(pols []*policy.Policy, ref policy.TargetRef, proto string) (eligibility, bool) {
+	var best eligibility
+	found := false
+	for _, p := range pols {
+		if !p.Enabled {
+			continue
+		}
+		for i := range p.Grants {
+			g := &p.Grants[i]
+			if g.Access != policy.AccessApproval || !g.Covers(ref, proto) {
+				continue
+			}
+			most := DefaultMaxGrantMinutes
+			if g.MaxSessionMinutes != nil && *g.MaxSessionMinutes > 0 {
+				most = *g.MaxSessionMinutes
+			}
+			if !found || most < best.maxMinutes {
+				best, found = eligibility{policy: p, grant: g, maxMinutes: most}, true
+			}
+		}
 	}
-	return DefaultMaxGrantMinutes
+	return best, found
 }
 
 func (h *Handler) myList(w http.ResponseWriter, r *http.Request) {
@@ -239,8 +267,8 @@ func (h *Handler) approve(w http.ResponseWriter, r *http.Request) {
 		h.fail(w, r, err)
 		return
 	}
-	elig := eligiblePolicy(pols, ref, cur.Protocol)
-	if elig == nil {
+	elig, found := eligible(pols, ref, cur.Protocol)
+	if !found {
 		httpx.WriteError(w, r, http.StatusConflict, "not_eligible",
 			"the requester is no longer eligible: no approval-gated policy of theirs covers this target and protocol")
 		return
@@ -255,7 +283,7 @@ func (h *Handler) approve(w http.ResponseWriter, r *http.Request) {
 		}
 		minutes = d.Minutes
 	}
-	if most := maxMinutes(elig); minutes > most {
+	if most := elig.maxMinutes; minutes > most {
 		httpx.WriteError(w, r, http.StatusBadRequest, "duration_too_long",
 			fmt.Sprintf("granted duration exceeds the policy maximum of %d minutes", most))
 		return
@@ -330,15 +358,6 @@ func (h *Handler) decision(r *http.Request) decisionInput {
 // note reads an optional {"note": "..."} body; absent body is fine.
 func (h *Handler) note(_ http.ResponseWriter, r *http.Request) string {
 	return h.decision(r).Note
-}
-
-func eligiblePolicy(pols []*policy.Policy, ref policy.TargetRef, protocol string) *policy.Policy {
-	for _, p := range pols {
-		if p.Enabled && p.RequireApproval && p.Covers(ref, protocol) {
-			return p
-		}
-	}
-	return nil
 }
 
 func (h *Handler) record(r *http.Request, action string, req *Request, extra map[string]any) {

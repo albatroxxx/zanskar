@@ -164,7 +164,7 @@ func (run *sessionRun) register(rec recorder, format, uri string) (*session.Reco
 // bridge returns.
 func (run *sessionRun) live() (ctx context.Context, done func()) {
 	ctx = run.h.Registry.Add(run.r.Context(), gateway.Live{SessionID: run.s.ID, UserID: run.g.UserID, TargetID: run.ep.LiveKey,
-		Protocol: run.g.Protocol, PolicyID: run.g.PolicyID})
+		Protocol: run.g.Protocol, PolicyID: run.g.PolicyID, AllowClipboard: run.g.AllowClipboard, AllowFileTransfer: run.g.AllowFileTransfer})
 	return ctx, func() { run.h.Registry.Remove(run.s.ID) }
 }
 

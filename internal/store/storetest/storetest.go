@@ -17,13 +17,18 @@ import (
 // end of the test. Foreign keys are on, as in production.
 func Open(tb testing.TB) *store.DB {
 	tb.Helper()
+	return openSQLite(tb, "")
+}
+
+func openSQLite(tb testing.TB, last string) *store.DB {
+	tb.Helper()
 	ctx := context.Background()
 	db, err := store.Open(ctx, config.DriverSQLite, "file::memory:?_pragma=foreign_keys(1)")
 	if err != nil {
 		tb.Fatal(err)
 	}
 	tb.Cleanup(func() { _ = db.Close() })
-	if _, err := store.Migrate(ctx, db); err != nil {
+	if _, err := store.MigrateTo(ctx, db, last); err != nil {
 		tb.Fatal(err)
 	}
 	return db

@@ -23,6 +23,8 @@ import (
 	"github.com/albatroxxx/zanskar/internal/gateway"
 	"github.com/albatroxxx/zanskar/internal/keyring"
 	"github.com/albatroxxx/zanskar/internal/policy"
+	"github.com/albatroxxx/zanskar/internal/policy/policytest"
+	"github.com/albatroxxx/zanskar/internal/protocol"
 	"github.com/albatroxxx/zanskar/internal/store"
 	"github.com/albatroxxx/zanskar/internal/target"
 	"github.com/albatroxxx/zanskar/internal/user"
@@ -281,7 +283,7 @@ func TestDeleteRefusedWhileInUse(t *testing.T) {
 	if err := user.NewRepo(e.db).Create(ctx, alice); err != nil {
 		t.Fatal(err)
 	}
-	pol := &policy.Policy{Name: "fleet-ssh", UserID: alice.ID, Enabled: true, Selector: policy.Selector{ASGs: []string{id}}, Protocols: []string{"ssh"}, IdleTimeoutMinutes: 15}
+	pol := policytest.Policy("fleet-ssh", []policy.Subject{policytest.User(alice.ID)}, policytest.Named(protocol.KindAutoscaling, []string{id}, "ssh"))
 	if err := e.policies.Create(ctx, pol); err != nil {
 		t.Fatal(err)
 	}

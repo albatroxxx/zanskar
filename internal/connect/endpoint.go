@@ -13,6 +13,8 @@ import (
 	"golang.org/x/crypto/ssh"
 
 	"github.com/albatroxxx/zanskar/internal/asg"
+	"github.com/albatroxxx/zanskar/internal/policy"
+	"github.com/albatroxxx/zanskar/internal/protocol"
 	"github.com/albatroxxx/zanskar/internal/target"
 	"github.com/albatroxxx/zanskar/internal/ticket"
 )
@@ -71,8 +73,19 @@ func (e *endpoint) port(p target.Protocol) int {
 	return target.DefaultPorts[p]
 }
 
-func (e *endpoint) policyRef() (id, asgID string, tags map[string]string) {
-	return e.TargetID, e.ASGID, e.Tags
+// policyRef is the endpoint in the policy engine's terms: its kind (ADR
+// 0036), its id or its autoscaling group's, and the tags policies match.
+func (e *endpoint) policyRef() policy.TargetRef {
+	kind := protocol.KindHost
+	switch {
+	case e.ASGID != "":
+		kind = protocol.KindAutoscaling
+	case e.Engine != "":
+		kind = protocol.KindDatabase
+	case e.AppUpstream != "":
+		kind = protocol.KindApplication
+	}
+	return policy.TargetRef{Kind: kind, ID: e.TargetID, ASGID: e.ASGID, Tags: e.Tags}
 }
 
 func fromTarget(t *target.Target) *endpoint {

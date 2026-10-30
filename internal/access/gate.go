@@ -35,19 +35,24 @@ const (
 // allowing decision, or the code and message of a refusal; err is an
 // infrastructure failure, not a refusal.
 func (g *Gate) Admit(ctx context.Context, userID string, ref policy.TargetRef, proto string, now time.Time) (policy.Decision, string, string, error) {
+	return g.admit(ctx, userID, ref, proto, now, policy.Evaluate)
+}
+
+// AdmitLive is Admit for a session already running, as revocation re-checks
+// it (ADR 0036): the same grant and authenticator checks a fresh connect
+// meets, but every time window counts as open, so a shut window does not
+// pull the session.
+func (g *Gate) AdmitLive(ctx context.Context, userID string, ref policy.TargetRef, proto string, now time.Time) (policy.Decision, string, string, error) {
+	return g.admit(ctx, userID, ref, proto, now, policy.EvaluateLive)
+}
+
+func (g *Gate) admit(ctx context.Context, userID string, ref policy.TargetRef, proto string, now time.Time,
+	evaluate func([]*policy.Policy, policy.TargetRef, string, time.Time) policy.Decision) (policy.Decision, string, string, error) {
 	pols, err := g.Policies.ForUser(ctx, userID)
 	if err != nil {
 		return policy.Decision{}, "", "", err
 	}
-	return g.AdmitPolicies(ctx, userID, pols, ref, proto, now)
-}
-
-// AdmitPolicies is Admit over a given set of policies instead of the user's
-// own: the revocation path judges a live session by the one policy that
-// admitted it (ADR 0013) and must apply the same grant and authenticator
-// checks a fresh connect would.
-func (g *Gate) AdmitPolicies(ctx context.Context, userID string, pols []*policy.Policy, ref policy.TargetRef, proto string, now time.Time) (policy.Decision, string, string, error) {
-	d := policy.Evaluate(pols, ref, proto, now)
+	d := evaluate(pols, ref, proto, now)
 	if !d.Allowed {
 		return d, CodePolicyDenied, d.Reason, nil
 	}

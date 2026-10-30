@@ -24,6 +24,8 @@ import (
 	"github.com/albatroxxx/zanskar/internal/group"
 	"github.com/albatroxxx/zanskar/internal/keyring"
 	"github.com/albatroxxx/zanskar/internal/policy"
+	"github.com/albatroxxx/zanskar/internal/policy/policytest"
+	"github.com/albatroxxx/zanskar/internal/protocol"
 	"github.com/albatroxxx/zanskar/internal/session"
 	"github.com/albatroxxx/zanskar/internal/store"
 	"github.com/albatroxxx/zanskar/internal/store/storetest"
@@ -147,17 +149,19 @@ func newConnectFixture(t *testing.T) *connectFixture {
 	add(&target.Target{Name: "jit-box", Address: "10.0.0.11", Tags: map[string]string{"tier": "jit"}, Credentials: sshCred}, sshProbe(), true)
 
 	policies := policy.NewRepo(db)
-	pol := func(p *policy.Policy) {
+	pol := func(name string, grants ...policy.Grant) {
 		t.Helper()
-		p.GroupID, p.Enabled, p.IdleTimeoutMinutes = g.ID, true, 15
+		p := policytest.Policy(name, []policy.Subject{policytest.Group(g.ID)}, grants...)
 		if err := policies.Create(ctx, p); err != nil {
 			t.Fatalf("policy %s: %v", p.Name, err)
 		}
 		f.policyIDs[p.Name] = p.ID
 	}
-	pol(&policy.Policy{Name: "test-all", Selector: policy.Selector{Tags: test}, Protocols: []string{"ssh", "rdp", "winrm", "database"}})
-	pol(&policy.Policy{Name: "mfa", Selector: policy.Selector{Tags: map[string]string{"tier": "mfa"}}, Protocols: []string{"ssh"}, RequireMFA: true})
-	pol(&policy.Policy{Name: "jit", Selector: policy.Selector{Tags: map[string]string{"tier": "jit"}}, Protocols: []string{"ssh"}, RequireApproval: true})
+	mfa := policytest.Tagged(protocol.KindHost, map[string]string{"tier": "mfa"}, "ssh")
+	mfa.RequireMFA = true
+	pol("test-all", policytest.Tagged(protocol.KindHost, test, "ssh", "rdp", "winrm"), policytest.Tagged(protocol.KindDatabase, test, "database"))
+	pol("mfa", mfa)
+	pol("jit", policytest.Approval(policytest.Tagged(protocol.KindHost, map[string]string{"tier": "jit"}, "ssh"), 0))
 
 	sessions := auth.NewSessions(db, bytes.Repeat([]byte{2}, 32), false)
 	tok, sess, err := sessions.Create(ctx, f.alice.ID, "203.0.113.5", "test", true)
@@ -255,7 +259,9 @@ func TestConnectRefusals(t *testing.T) {
 		{"RDP certificate not captured", "win-unpinned", "rdp", nil, http.StatusConflict, "certificate_unpinned"},
 		{"WinRM certificate not captured", "win-unpinned", "winrm", nil, http.StatusConflict, "certificate_unpinned"},
 		{"WinRM over plain HTTP", "win-http", "winrm", nil, http.StatusConflict, "tls_required"},
-		{"database protocol on a host", "plainhost", "database", nil, http.StatusConflict, "not_a_database"},
+		// A host grant cannot carry database (ADR 0036), so the policy
+		// refuses before the target's kind is looked at.
+		{"database protocol on a host", "plainhost", "database", nil, http.StatusForbidden, "policy_denied"},
 		{"policy requires an authenticator", "mfa-box", "ssh", nil, http.StatusForbidden, "mfa_required_by_policy"},
 		{"policy requires an approved request", "jit-box", "ssh", nil, http.StatusForbidden, "approval_required"},
 		{"unknown target", "", "ssh", map[string]any{"target_id": "no-such-target"}, http.StatusNotFound, "not_found"},

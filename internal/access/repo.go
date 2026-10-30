@@ -20,14 +20,14 @@ type Repo struct {
 func NewRepo(db *store.DB) *Repo { return &Repo{db: db} }
 
 const cols = `id, user_id, policy_id, target_id, asg_id, protocol, reason, requested_minutes,
-	status, approver_user_id, decision_note, decided_at, expires_at, created_at, updated_at, extends_request_id`
+	status, approver_user_id, decision_note, decided_at, expires_at, created_at, updated_at, extends_request_id, grant_id`
 
 // selectRequests reads a request with the names beside it. Every WHERE that
 // follows it must qualify columns with r., since the joined tables share
 // names such as status and created_at.
 const selectRequests = `SELECT r.id, r.user_id, r.policy_id, r.target_id, r.asg_id, r.protocol, r.reason, r.requested_minutes,
 	r.status, r.approver_user_id, r.decision_note, r.decided_at, r.expires_at, r.created_at, r.updated_at, r.extends_request_id,
-	r.approved_minutes, u.username, a.username, t.name, g.name
+	r.approved_minutes, r.grant_id, u.username, a.username, t.name, g.name
 	FROM access_requests r
 	LEFT JOIN users u ON u.id = r.user_id
 	LEFT JOIN users a ON a.id = r.approver_user_id
@@ -41,10 +41,10 @@ func (r *Repo) Create(ctx context.Context, req *Request) error {
 	req.Status = StatusPending
 	req.CreatedAt, req.UpdatedAt = now, now
 	_, err := r.db.ExecContext(ctx, r.db.Rebind(`INSERT INTO access_requests (`+cols+`)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`),
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`),
 		req.ID, req.UserID, nullStr(req.PolicyID), nullStr(req.TargetID), nullStr(req.ASGID), req.Protocol, req.Reason, req.RequestedMinutes,
 		string(req.Status), nullStr(req.ApproverUserID), req.DecisionNote, timeArg(req.DecidedAt), timeArg(req.ExpiresAt), store.TimeArg(now), store.TimeArg(now),
-		nullStr(req.ExtendsRequestID))
+		nullStr(req.ExtendsRequestID), nullStr(req.GrantID))
 	return err
 }
 
@@ -203,15 +203,15 @@ func (r *Repo) query(ctx context.Context, where string, args ...any) ([]*Request
 
 func scan(s store.Scanner) (*Request, error) {
 	var (
-		req                                 Request
-		status                              string
-		policyID, targetID, asgID, approver sql.NullString
-		extends, uname, aname, tname, gname sql.NullString
-		approved                            sql.NullInt64
-		decided, expires, created, updated  store.NullTime
+		req                                          Request
+		status                                       string
+		policyID, targetID, asgID, approver          sql.NullString
+		extends, grantID, uname, aname, tname, gname sql.NullString
+		approved                                     sql.NullInt64
+		decided, expires, created, updated           store.NullTime
 	)
 	err := s.Scan(&req.ID, &req.UserID, &policyID, &targetID, &asgID, &req.Protocol, &req.Reason, &req.RequestedMinutes,
-		&status, &approver, &req.DecisionNote, &decided, &expires, &created, &updated, &extends, &approved, &uname, &aname, &tname, &gname)
+		&status, &approver, &req.DecisionNote, &decided, &expires, &created, &updated, &extends, &approved, &grantID, &uname, &aname, &tname, &gname)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound
@@ -220,7 +220,7 @@ func scan(s store.Scanner) (*Request, error) {
 	}
 	req.PolicyID, req.TargetID, req.ASGID, req.ApproverUserID = policyID.String, targetID.String, asgID.String, approver.String
 	req.Username, req.ApproverUsername, req.TargetName, req.ASGName = uname.String, aname.String, tname.String, gname.String
-	req.ExtendsRequestID, req.ApprovedMinutes = extends.String, int(approved.Int64)
+	req.ExtendsRequestID, req.ApprovedMinutes, req.GrantID = extends.String, int(approved.Int64), grantID.String
 	req.Status = Status(status)
 	req.DecidedAt, req.ExpiresAt = decided.Ptr(), expires.Ptr()
 	req.CreatedAt, req.UpdatedAt = created.Time, updated.Time

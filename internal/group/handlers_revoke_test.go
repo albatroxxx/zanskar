@@ -21,31 +21,28 @@ import (
 	"github.com/albatroxxx/zanskar/internal/user"
 )
 
-// liveRevoker stands in for the gateway. It records what it was asked to end
-// and reports ended sessions for each call; for a deletion it also notes how
-// many policies were still bound to the group when it was asked, since they
-// go with the row.
+// liveRevoker stands in for the gateway. It records whom it was asked to
+// re-check and, at each call, how many policies still named the group, so a
+// test can tell a re-check made after the change from one made before it.
 type liveRevoker struct {
 	db         *store.DB
+	group      string
 	ended      int
-	removed    map[string][]string // group id -> user ids
-	deleted    []string
-	boundThen  []int // policies bound to the group at each GroupDeleted
+	rechecked  [][]string
+	namedThen  []int // policies naming the group at each Recheck
 	unexpected []string
+}
+
+func (f *liveRevoker) Recheck(ctx context.Context, userIDs []string) int {
+	n := -1
+	_ = f.db.QueryRowContext(ctx, f.db.Rebind(`SELECT COUNT(*) FROM access_policy_subjects WHERE group_id = ?`), f.group).Scan(&n)
+	f.rechecked = append(f.rechecked, slices.Clone(userIDs))
+	f.namedThen = append(f.namedThen, n)
+	return f.ended
 }
 
 func (f *liveRevoker) UserRevoked(string) int {
 	f.unexpected = append(f.unexpected, "UserRevoked")
-	return 0
-}
-
-func (f *liveRevoker) PolicyDeleted(string) int {
-	f.unexpected = append(f.unexpected, "PolicyDeleted")
-	return 0
-}
-
-func (f *liveRevoker) PolicyChanged(context.Context, string) int {
-	f.unexpected = append(f.unexpected, "PolicyChanged")
 	return 0
 }
 
@@ -69,24 +66,11 @@ func (f *liveRevoker) GrantExpired(context.Context, string, string, string, stri
 	return 0
 }
 
-func (f *liveRevoker) GroupMembersRemoved(_ context.Context, groupID string, userIDs []string) int {
-	f.removed[groupID] = append(f.removed[groupID], userIDs...)
-	return f.ended
-}
-
-func (f *liveRevoker) GroupDeleted(ctx context.Context, groupID string) int {
-	n := -1
-	_ = f.db.QueryRowContext(ctx, f.db.Rebind(`SELECT COUNT(*) FROM access_policies WHERE group_id = ?`), groupID).Scan(&n)
-	f.deleted = append(f.deleted, groupID)
-	f.boundThen = append(f.boundThen, n)
-	return f.ended
-}
-
-// TestGroupChangesEndLiveSessions: taking members out of a group ends their
-// live sessions under the group's policies, and deleting the group ends the
-// sessions of every policy bound to it, asked while those policies exist.
-// Each event says how many sessions ended; the deletion also names the
-// policies that went with the group, which leave no trace of their own.
+// TestGroupChangesEndLiveSessions (ADR 0036): taking members out of a group
+// re-checks their live sessions, and deleting the group re-checks its
+// members' once it is gone, so the check sees the access they hold without
+// it. The group leaves its policies; the policies stay. Each event says how
+// many sessions ended; the deletion names the policies the group left.
 func TestGroupChangesEndLiveSessions(t *testing.T) {
 	db := testDB(t)
 	ctx := context.Background()
@@ -95,7 +79,7 @@ func TestGroupChangesEndLiveSessions(t *testing.T) {
 	sessions := auth.NewSessions(db, bytes.Repeat([]byte{3}, 32), false)
 	auditLog := audit.NewLog(db)
 	groups := NewRepo(db)
-	rv := &liveRevoker{db: db, ended: 3, removed: map[string][]string{}}
+	rv := &liveRevoker{db: db, ended: 3}
 	h := &AdminHandler{Groups: groups, Revoker: rv, Audit: auditLog, Log: log}
 	mux := http.NewServeMux()
 	h.Register(mux)
@@ -141,11 +125,12 @@ func TestGroupChangesEndLiveSessions(t *testing.T) {
 		t.Fatalf("create: %d %v", code, out)
 	}
 	id := out["id"].(string)
+	rv.group = id
 	if code, out := do("PUT", "/api/v1/groups/"+id+"/members", map[string]any{"user_ids": []string{a.ID, b.ID}}); code != 200 {
 		t.Fatalf("add members: %d %v", code, out)
 	}
-	if len(rv.removed) != 0 {
-		t.Fatalf("adding members revoked %v", rv.removed)
+	if len(rv.rechecked) != 0 {
+		t.Fatalf("adding members re-checked %v", rv.rechecked)
 	}
 	if _, ok := details("group.members.update", id)["live_sessions_ended"]; ok {
 		t.Fatal("adding members claims live sessions ended")
@@ -154,63 +139,51 @@ func TestGroupChangesEndLiveSessions(t *testing.T) {
 	if code, out := do("PUT", "/api/v1/groups/"+id+"/members", map[string]any{"user_ids": []string{b.ID}}); code != 200 {
 		t.Fatalf("remove a member: %d %v", code, out)
 	}
-	if got := rv.removed[id]; !slices.Equal(got, []string{a.ID}) {
-		t.Fatalf("revoker told to end sessions of %v in %s, want [%s]", rv.removed, id, a.ID)
+	if len(rv.rechecked) != 1 || !slices.Equal(rv.rechecked[0], []string{a.ID}) {
+		t.Fatalf("revoker re-checked %v, want [[%s]]", rv.rechecked, a.ID)
 	}
 	if d := details("group.members.update", id); d["live_sessions_ended"] != float64(3) {
 		t.Fatalf("group.members.update details %v, want live_sessions_ended 3", d)
 	}
 
-	// Two policies bound to the group, one bound to a user: deleting the group
-	// takes the first two with it.
-	now := store.TimeArg(time.Now())
+	// Two policies name the group, one names a user: deleting the group
+	// takes it out of the first two, and all three stay.
 	policy := func(pid, name, groupID, userID string) {
 		t.Helper()
-		var g, u any
-		if groupID != "" {
-			g = groupID
-		}
-		if userID != "" {
-			u = userID
-		}
-		if _, err := db.ExecContext(ctx, db.Rebind(`INSERT INTO access_policies (id, name, description, enabled, group_id, user_id,
-			target_selector, protocols, time_windows, idle_timeout_minutes, allow_clipboard, allow_file_transfer, require_mfa, require_approval,
-			created_at, updated_at, rules) VALUES (?, ?, '', TRUE, ?, ?, '{"tags":{"env":"prod"}}', '["ssh"]', '[]', 15, FALSE, FALSE, TRUE, FALSE, ?, ?, '[]')`),
-			pid, name, g, u, now, now); err != nil {
-			t.Fatal(err)
-		}
+		insertPolicy(t, db, pid, name, groupID, userID)
 	}
 	policy("p-web", "web", id, "")
 	policy("p-db", "db", id, "")
 	policy("p-ben", "ben-only", "", b.ID)
 
-	if code, _ := do("DELETE", "/api/v1/groups/nope", nil); code != 404 || len(rv.deleted) != 0 {
-		t.Fatalf("deleting an unknown group: %d, revoker asked about %v", code, rv.deleted)
+	if code, _ := do("DELETE", "/api/v1/groups/nope", nil); code != 404 || len(rv.rechecked) != 1 {
+		t.Fatalf("deleting an unknown group: %d, revoker re-checked %v", code, rv.rechecked)
 	}
 	if code, out := do("DELETE", "/api/v1/groups/"+id, nil); code != 204 {
 		t.Fatalf("delete: %d %v", code, out)
 	}
-	if !slices.Equal(rv.deleted, []string{id}) || rv.boundThen[0] != 2 {
-		t.Fatalf("revoker asked about %v (policies bound then: %v), want %s while its 2 policies existed", rv.deleted, rv.boundThen, id)
+	if len(rv.rechecked) != 2 || !slices.Equal(rv.rechecked[1], []string{b.ID}) || rv.namedThen[1] != 0 {
+		t.Fatalf("revoker re-checked %v (policies naming the group then: %v), want [%s] once the group was gone", rv.rechecked, rv.namedThen, b.ID)
 	}
 	d := details("group.delete", id)
-	removed, _ := d["policies_removed"].([]any)
-	if d["live_sessions_ended"] != float64(3) || !slices.Equal(removed, []any{"p-db", "p-web"}) {
-		t.Fatalf("group.delete details %v, want live_sessions_ended 3 and policies_removed [p-db p-web]", d)
+	detached, _ := d["policies_detached"].([]any)
+	if d["live_sessions_ended"] != float64(3) || !slices.Equal(detached, []any{"db", "web"}) {
+		t.Fatalf("group.delete details %v, want live_sessions_ended 3 and policies_detached [db web]", d)
 	}
 	var left int
-	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM access_policies`).Scan(&left); err != nil || left != 1 {
-		t.Fatalf("policies left after the delete: %d %v, want only ben-only", left, err)
+	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM access_policies`).Scan(&left); err != nil || left != 3 {
+		t.Fatalf("policies left after the delete: %d %v, want all three", left, err)
 	}
 	if len(rv.unexpected) != 0 {
 		t.Fatalf("unexpected revoker calls: %v", rv.unexpected)
 	}
 }
 
-// TestDeleteReportsCascadedPolicies: deleting a group reports the policies
-// bound to it, in name order, because the schema deletes them with it; a
-// group with none reports an empty list, and an unknown group is not found.
-func TestDeleteReportsCascadedPolicies(t *testing.T) {
+// TestDeleteReportsDetachedPolicies (ADR 0036): deleting a group reports, in
+// name order, the policies that named it, which it leaves and which stay; a
+// group named by none reports an empty list, and an unknown group is not
+// found.
+func TestDeleteReportsDetachedPolicies(t *testing.T) {
 	db := testDB(t)
 	ctx := context.Background()
 	r := NewRepo(db)
@@ -220,18 +193,12 @@ func TestDeleteReportsCascadedPolicies(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	now := store.TimeArg(time.Now())
 	for _, p := range [][2]string{{"p2", "zeta"}, {"p1", "alpha"}} {
-		if _, err := db.ExecContext(ctx, db.Rebind(`INSERT INTO access_policies (id, name, description, enabled, group_id,
-			target_selector, protocols, time_windows, idle_timeout_minutes, allow_clipboard, allow_file_transfer, require_mfa, require_approval,
-			created_at, updated_at, rules) VALUES (?, ?, '', TRUE, ?, '{"tags":{"env":"prod"}}', '["ssh"]', '[]', 15, FALSE, FALSE, TRUE, FALSE, ?, ?, '[]')`),
-			p[0], p[1], g.ID, now, now); err != nil {
-			t.Fatal(err)
-		}
+		insertPolicy(t, db, p[0], p[1], g.ID, "")
 	}
 	removed, err := r.Delete(ctx, g.ID)
-	if err != nil || !slices.Equal(removed, []string{"p1", "p2"}) {
-		t.Fatalf("delete ops: %v %v, want [p1 p2]", removed, err)
+	if err != nil || !slices.Equal(removed, []string{"alpha", "zeta"}) {
+		t.Fatalf("delete ops: %v %v, want [alpha zeta]", removed, err)
 	}
 	removed, err = r.Delete(ctx, empty.ID)
 	if err != nil || removed == nil || len(removed) != 0 {
@@ -239,5 +206,27 @@ func TestDeleteReportsCascadedPolicies(t *testing.T) {
 	}
 	if _, err := r.Delete(ctx, "nope"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("delete unknown: %v, want not found", err)
+	}
+}
+
+// insertPolicy stores a policy row naming one group or user, as the policy
+// package would (ADR 0036): the row, and its subject.
+func insertPolicy(t *testing.T, db *store.DB, id, name, groupID, userID string) {
+	t.Helper()
+	ctx := context.Background()
+	now := store.TimeArg(time.Now())
+	if _, err := db.ExecContext(ctx, db.Rebind(`INSERT INTO access_policies (id, name, description, enabled, grants, created_at, updated_at)
+		VALUES (?, ?, '', TRUE, '[]', ?, ?)`), id, name, now, now); err != nil {
+		t.Fatal(err)
+	}
+	var g, u any
+	if groupID != "" {
+		g = groupID
+	}
+	if userID != "" {
+		u = userID
+	}
+	if _, err := db.ExecContext(ctx, db.Rebind(`INSERT INTO access_policy_subjects (policy_id, group_id, user_id) VALUES (?, ?, ?)`), id, g, u); err != nil {
+		t.Fatal(err)
 	}
 }

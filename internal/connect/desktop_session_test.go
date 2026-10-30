@@ -23,6 +23,8 @@ import (
 	"github.com/albatroxxx/zanskar/internal/gateway"
 	"github.com/albatroxxx/zanskar/internal/gateway/guac"
 	"github.com/albatroxxx/zanskar/internal/policy"
+	"github.com/albatroxxx/zanskar/internal/policy/policytest"
+	"github.com/albatroxxx/zanskar/internal/protocol"
 	"github.com/albatroxxx/zanskar/internal/recording"
 	"github.com/albatroxxx/zanskar/internal/target"
 )
@@ -123,8 +125,7 @@ func newDesktopRig(t *testing.T) *desktopRig {
 	f.h.Registry = gateway.NewRegistry()
 	f.h.Prober = &target.Prober{AllowLoopback: true}
 	f.h.DialTimeout = 3 * time.Second
-	desk := &policy.Policy{Name: "desk", UserID: f.alice.ID, Enabled: true, IdleTimeoutMinutes: 15,
-		Selector: policy.Selector{Tags: map[string]string{"desk": "yes"}}, Protocols: []string{"rdp", "vnc"}}
+	desk := policytest.Policy("desk", []policy.Subject{policytest.User(f.alice.ID)}, policytest.Tagged(protocol.KindHost, map[string]string{"desk": "yes"}, "rdp", "vnc"))
 	if err := f.h.Policies.Create(f.ctx, desk); err != nil {
 		t.Fatal(err)
 	}

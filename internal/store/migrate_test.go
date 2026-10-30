@@ -147,7 +147,9 @@ func TestSQLiteRebuildKeepsSessionPolicyLinks(t *testing.T) {
 		}
 	}
 
-	ran, err := Migrate(ctx, db)
+	// Up to the last migration of the legacy policy shape: ADR 0036 rewrites
+	// the table afterwards, and its own test covers that.
+	ran, err := MigrateTo(ctx, db, legacyPolicyShapeLast)
 	if err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
@@ -268,5 +270,43 @@ func TestSQLiteRebuildKeepsTargetHistory(t *testing.T) {
 	}
 	if _, err := db.ExecContext(ctx, db.Rebind(`INSERT INTO autoscaling_groups (id, name, provider, region, external_name, role_arn, external_id, os_family, created_at, updated_at) VALUES ('a2', 'fleet', 'aws', 'ap-south-1', 'fleet-asg', 'arn:aws:iam::1:role/r', 'ext', 'linux', ?, ?)`), now, now); err != nil {
 		t.Fatalf("re-enrolling a retired group name: %v", err)
+	}
+}
+
+// legacyPolicyShapeLast is the last migration before ADR 0036 rewrites the
+// access_policies table into subjects and grants.
+const legacyPolicyShapeLast = "0034_scim"
+
+// TestPolicyDropRefusesUnconvertedRows (ADR 0036): 0037 drops the legacy
+// policy columns only once every row has grants. Without the data step that
+// writes them (the policy package registers it; this package has none), a
+// stored policy stops the run instead of being dropped unconverted; with no
+// policies, there is nothing to convert and the run completes.
+func TestPolicyDropRefusesUnconvertedRows(t *testing.T) {
+	ctx := context.Background()
+	withSteps(t)
+	empty := memDB(t)
+	if _, err := Migrate(ctx, empty); err != nil {
+		t.Fatalf("a database with no policies: %v", err)
+	}
+	db := memDB(t)
+	if _, err := MigrateTo(ctx, db, legacyPolicyShapeLast); err != nil {
+		t.Fatal(err)
+	}
+	now := TimeArg(time.Now())
+	for _, q := range []string{
+		`INSERT INTO groups (id, name, created_at, updated_at) VALUES ('g1', 'ops', ?, ?)`,
+		`INSERT INTO access_policies (id, name, group_id, target_selector, protocols, created_at, updated_at) VALUES ('p1', 'ops-ssh', 'g1', '{"tags":{"env":"prod"}}', '["ssh"]', ?, ?)`,
+	} {
+		if _, err := db.ExecContext(ctx, db.Rebind(q), now, now); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := Migrate(ctx, db); err == nil || !strings.Contains(err.Error(), "0037") {
+		t.Fatalf("an unconverted policy went through 0037: %v", err)
+	}
+	var n int
+	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM access_policies WHERE group_id = 'g1'`).Scan(&n); err != nil || n != 1 {
+		t.Fatalf("the legacy row is not intact after the refusal: %d %v", n, err)
 	}
 }

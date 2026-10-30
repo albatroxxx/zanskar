@@ -67,7 +67,6 @@ func all(driver string) ([]migration, error) {
 	}
 	stepsMu.Lock()
 	for _, s := range steps {
-		s := s
 		out = append(out, migration{version: s.Version, step: &s})
 	}
 	stepsMu.Unlock()
@@ -80,6 +79,13 @@ func all(driver string) ([]migration, error) {
 // transaction, in lexical order of version. It returns the versions applied
 // in this run.
 func Migrate(ctx context.Context, db *DB) ([]string, error) {
+	return MigrateTo(ctx, db, "")
+}
+
+// MigrateTo is Migrate stopping after version last, for tests that put rows
+// in an older schema and then watch the rest of the migrations convert
+// them. An empty last applies everything.
+func MigrateTo(ctx context.Context, db *DB, last string) ([]string, error) {
 	if _, err := db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS schema_migrations (
 		version    TEXT PRIMARY KEY,
 		applied_at TEXT NOT NULL
@@ -98,6 +104,9 @@ func Migrate(ctx context.Context, db *DB) ([]string, error) {
 	}
 	var ran []string
 	for _, m := range list {
+		if last != "" && m.version > last {
+			break
+		}
 		if applied[m.version] {
 			continue
 		}

@@ -125,20 +125,28 @@ func (h *AdminHandler) del(w http.ResponseWriter, r *http.Request) {
 		h.fail(w, r, err)
 		return
 	}
-	// The group's policies are deleted with it, so the live sessions they
-	// admitted are ended first, while those policies can still be found.
-	ended := 0
+	// The group leaves its policies (ADR 0036); its members are read now
+	// and their sessions re-checked once the group is gone, so the check
+	// sees the access they hold without it.
+	var members []string
 	if h.Revoker != nil {
-		ended = h.Revoker.GroupDeleted(r.Context(), id)
+		list, err := h.Groups.Members(r.Context(), id)
+		if err != nil {
+			h.fail(w, r, err)
+			return
+		}
+		for _, m := range list {
+			members = append(members, m.UserID)
+		}
 	}
 	policies, err := h.Groups.Delete(r.Context(), id)
 	if err != nil {
 		h.fail(w, r, err)
 		return
 	}
-	details := map[string]any{"name": g.Name, "member_count": g.MemberCount, "policies_removed": policies}
+	details := map[string]any{"name": g.Name, "member_count": g.MemberCount, "policies_detached": policies}
 	if h.Revoker != nil {
-		details["live_sessions_ended"] = ended
+		details["live_sessions_ended"] = h.Revoker.Recheck(r.Context(), members)
 	}
 	h.record(r, audit.GroupDelete, id, details)
 	w.WriteHeader(http.StatusNoContent)
@@ -173,7 +181,7 @@ func (h *AdminHandler) setMembers(w http.ResponseWriter, r *http.Request) {
 	// A member taken out loses what the group's policies granted, live
 	// sessions included.
 	if h.Revoker != nil && len(removed) > 0 {
-		details["live_sessions_ended"] = h.Revoker.GroupMembersRemoved(r.Context(), id, removed)
+		details["live_sessions_ended"] = h.Revoker.Recheck(r.Context(), removed)
 	}
 	h.record(r, audit.GroupMembersUpdate, id, details)
 	members, err := h.Groups.Members(r.Context(), id)

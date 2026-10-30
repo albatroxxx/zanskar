@@ -5,7 +5,7 @@ package gateway
 import "context"
 
 // Revoker ends the live sessions that a change to who may connect has
-// withdrawn (ADR 0013). The admin handlers call it as they make such a
+// withdrawn (ADR 0013, 0036). The admin handlers call it as they make such a
 // change, so an open bridge does not outlive the access that admitted it.
 // Each method returns how many sessions it ended.
 //
@@ -16,18 +16,13 @@ type Revoker interface {
 	// disabled, locked or deleted, their roles changed, or an admin signed
 	// them out everywhere.
 	UserRevoked(userID string) int
-	// PolicyDeleted ends every live session the policy admitted.
-	PolicyDeleted(policyID string) int
-	// PolicyChanged ends the live sessions the policy admitted that its
-	// stored version no longer grants on its own.
-	PolicyChanged(ctx context.Context, policyID string) int
-	// GroupMembersRemoved ends the live sessions of those users that a
-	// policy bound to the group admitted.
-	GroupMembersRemoved(ctx context.Context, groupID string, userIDs []string) int
-	// GroupDeleted ends the live sessions admitted by every policy bound to
-	// the group. Deleting the group deletes those policies, so it must be
-	// called while the group still exists.
-	GroupDeleted(ctx context.Context, groupID string) int
+	// Recheck re-checks every live session of the users against the access
+	// they hold now (ADR 0036): a session ends when a fresh connect would be
+	// refused, or when its clipboard or file transfer would now be off. A
+	// shorter idle timeout, maximum or window does not end it. Policy
+	// changes, group membership and group deletion call it with the users
+	// they touch, after the change is stored.
+	Recheck(ctx context.Context, userIDs []string) int
 	// TargetDisabled ends every live session on the target or autoscaling
 	// instance: an administrator disabled it or moved its address.
 	TargetDisabled(targetID string) int

@@ -18,6 +18,8 @@ import (
 	"github.com/albatroxxx/zanskar/internal/audit"
 	"github.com/albatroxxx/zanskar/internal/auth"
 	"github.com/albatroxxx/zanskar/internal/policy"
+	"github.com/albatroxxx/zanskar/internal/policy/policytest"
+	"github.com/albatroxxx/zanskar/internal/protocol"
 	"github.com/albatroxxx/zanskar/internal/store/storetest"
 	"github.com/albatroxxx/zanskar/internal/target"
 	"github.com/albatroxxx/zanskar/internal/user"
@@ -72,10 +74,13 @@ func newEnv(t *testing.T) *env {
 		}
 		if name == "alice" {
 			most := 120
-			// Eligibility comes through a rule, not the base, so the request
-			// path is proven to use Policy.Covers like the connect gate.
-			pol := &policy.Policy{Name: "prod-ssh-jit", UserID: u.ID, Enabled: true, RequireApproval: true, MaxSessionMinutes: &most,
-				Rules: []policy.Rule{{Selector: policy.Selector{Tags: map[string]string{"env": "prod"}}, Protocols: []string{"ssh"}}}, IdleTimeoutMinutes: 15}
+			// Eligibility comes through tag rules, one per kind (ADR 0036),
+			// so the request path is proven to use Grant.Covers like the
+			// connect gate.
+			prod := map[string]string{"env": "prod"}
+			pol := policytest.Policy("prod-ssh-jit", []policy.Subject{policytest.User(u.ID)},
+				policytest.Approval(policytest.Tagged(protocol.KindHost, prod, "ssh"), most),
+				policytest.Approval(policytest.Tagged(protocol.KindAutoscaling, prod, "ssh"), most))
 			if err := policies.Create(ctx, pol); err != nil {
 				t.Fatal(err)
 			}

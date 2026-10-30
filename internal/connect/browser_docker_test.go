@@ -25,6 +25,8 @@ import (
 	"github.com/albatroxxx/zanskar/internal/gateway/dbgw/dbtest"
 	"github.com/albatroxxx/zanskar/internal/gateway/guac"
 	"github.com/albatroxxx/zanskar/internal/policy"
+	"github.com/albatroxxx/zanskar/internal/policy/policytest"
+	"github.com/albatroxxx/zanskar/internal/protocol"
 	"github.com/albatroxxx/zanskar/internal/recording"
 	"github.com/albatroxxx/zanskar/internal/target"
 )
@@ -130,8 +132,9 @@ func openRealApp(t *testing.T, ctx context.Context, prepare func(nginxName strin
 	f.h.StateDir = t.TempDir()
 	f.h.BrowserImage = func() string { return browserImage }
 	f.h.DBProxyImage = func() string { return relayImage }
-	apps := &policy.Policy{Name: "apps", UserID: f.alice.ID, Enabled: true, IdleTimeoutMinutes: 15, AllowClipboard: true,
-		Selector: policy.Selector{Tags: map[string]string{"app": "yes"}}, Protocols: []string{"http"}}
+	appGrant := policytest.Tagged(protocol.KindApplication, map[string]string{"app": "yes"}, "http")
+	appGrant.AllowClipboard = true
+	apps := policytest.Policy("apps", []policy.Subject{policytest.User(f.alice.ID)}, appGrant)
 	if err := f.h.Policies.Create(f.ctx, apps); err != nil {
 		t.Fatal(err)
 	}

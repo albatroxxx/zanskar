@@ -21,6 +21,8 @@ import (
 	"github.com/albatroxxx/zanskar/internal/gateway"
 	"github.com/albatroxxx/zanskar/internal/keyring"
 	"github.com/albatroxxx/zanskar/internal/policy"
+	"github.com/albatroxxx/zanskar/internal/policy/policytest"
+	"github.com/albatroxxx/zanskar/internal/protocol"
 	"github.com/albatroxxx/zanskar/internal/store"
 	"github.com/albatroxxx/zanskar/internal/user"
 )
@@ -239,7 +241,7 @@ func TestDeleteRefusedWhileInUse(t *testing.T) {
 	if err := user.NewRepo(e.db).Create(ctx, alice); err != nil {
 		t.Fatal(err)
 	}
-	pol := &policy.Policy{Name: "ops-ssh", UserID: alice.ID, Enabled: true, Selector: policy.Selector{Targets: []string{id}}, Protocols: []string{"ssh"}, IdleTimeoutMinutes: 15}
+	pol := policytest.Policy("ops-ssh", []policy.Subject{policytest.User(alice.ID)}, policytest.Named(protocol.KindHost, []string{id}, "ssh"))
 	if err := e.policies.Create(ctx, pol); err != nil {
 		t.Fatal(err)
 	}
@@ -249,8 +251,8 @@ func TestDeleteRefusedWhileInUse(t *testing.T) {
 		t.Fatalf("delete while a policy names it: %d %v", code, out)
 	}
 
-	// A tag selector matches by tags, not by id, so it does not pin the target.
-	pol.Selector = policy.Selector{Tags: map[string]string{"env": "prod"}}
+	// A tag rule matches by tags, not by id, so it does not pin the target.
+	pol.Grants = []policy.Grant{policytest.Tagged(protocol.KindHost, map[string]string{"env": "prod"}, "ssh")}
 	if err := e.policies.Update(ctx, pol); err != nil {
 		t.Fatal(err)
 	}
