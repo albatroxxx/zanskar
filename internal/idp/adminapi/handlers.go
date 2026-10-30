@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"maps"
 	"net/http"
+	"strings"
 	"time"
 
 	gooidc "github.com/coreos/go-oidc/v3/oidc"
@@ -317,6 +318,14 @@ func (h *AdminHandler) test(w http.ResponseWriter, r *http.Request) {
 			result["issuer"] = op.Config.OIDC.Issuer
 			result["authorization_endpoint"] = ep.AuthURL
 			result["token_endpoint"] = ep.TokenURL
+			// Whether signing out can end the provider's session too (ADR
+			// 0035): only with an https end_session_endpoint. Google, for
+			// one, publishes none.
+			var meta struct {
+				EndSession string `json:"end_session_endpoint"`
+			}
+			_ = prov.Claims(&meta)
+			result["provider_sign_out"] = strings.HasPrefix(meta.EndSession, "https://")
 		}
 	case idp.TypeLDAP:
 		if h.LDAPTester == nil {

@@ -37,7 +37,7 @@ describe('Directory user sync in the list', () => {
     const row = (await screen.findByText('Keycloak')).closest('tr')!
     expect(within(row).getByRole('button', { name: /5 listed · 2 created · 1 disabled/ })).toBeDefined()
     const other = screen.getByText('Okta').closest('tr')!
-    expect(within(other).getByText('Off')).toBeDefined()
+    expect(within(other).getByText('At sign-in')).toBeDefined()
     expect(within(other).queryByRole('button', { name: 'Sync now' })).toBeNull()
 
     const user = userEvent.setup()
@@ -85,7 +85,7 @@ describe('Directory user sync in the form', () => {
     const form = screen.getByRole('dialog', { name: 'Edit Okta' })
     await waitFor(() => expect((within(form).getByLabelText('Issuer URL') as HTMLInputElement).value).toBe('https://kc.example/realms/zanskar'))
     expect(within(form).queryByLabelText('Sync every (minutes)')).toBeNull()
-    await user.click(within(form).getByLabelText('Sync users from the directory'))
+    await user.selectOptions(within(form).getByLabelText('People arrive'), 'list')
     const minutes = within(form).getByLabelText('Sync every (minutes)') as HTMLInputElement
     expect(minutes.value).toBe('15')
     expect(within(form).getByText(/realm-management › view-users/)).toBeDefined()
@@ -100,5 +100,86 @@ describe('Directory user sync in the form', () => {
     await user.click(within(form).getByRole('button', { name: 'Save' }))
     await waitFor(() => expect(put).toHaveBeenCalledTimes(1))
     expect(put.mock.calls[0][1]).toMatchObject({ config: { sync_users: true, sync_minutes: 30 } })
+  })
+})
+
+// ADR 0035: any standard provider can push its people over SCIM. The form
+// gives the base URL to copy and makes a token, shown once; replacing one
+// asks first, since the old one stops working.
+describe('SCIM in the form', () => {
+  const okta = { ...kc, id: 's1', name: 'Okta', config: { ...kc.config, issuer: 'https://corp.okta.com', sync_users: false, scim: true }, sync: undefined }
+
+  it('shows the base URL and makes a token once', async () => {
+    serve([okta])
+    const post = vi.spyOn(api, 'post').mockResolvedValue({ token: 'zscim_abc', created_at: '2026-10-30T10:00:00Z', base_path: '/api/v1/scim/s1' } as never)
+    render(<IdentityProviders />)
+    const user = userEvent.setup()
+    const row = (await screen.findByText('Okta')).closest('tr')!
+    expect(within(row).getByRole('button', { name: 'Pushed over SCIM · no token yet' })).toBeDefined()
+    await user.click(within(row).getByRole('button', { name: 'Edit' }))
+    const form = screen.getByRole('dialog', { name: 'Edit Okta' })
+    await waitFor(() => expect((within(form).getByLabelText('People arrive') as HTMLSelectElement).value).toBe('scim'))
+    expect((within(form).getByLabelText('SCIM base URL') as HTMLInputElement).value).toBe(`${window.location.origin}/api/v1/scim/s1`)
+    expect(within(form).getByText('No token yet')).toBeDefined()
+    await user.click(within(form).getByRole('button', { name: 'Make token' }))
+    expect(post).toHaveBeenCalledWith('/identity-providers/s1/scim-token')
+    expect(((await within(form).findByLabelText('SCIM token')) as HTMLInputElement).value).toBe('zscim_abc')
+    expect(within(form).getByText(/Shown once/)).toBeDefined()
+  })
+
+  it('asks before replacing a token, and revokes one', async () => {
+    serve([{ ...okta, scim_token_created_at: '2026-10-29T10:00:00Z' }])
+    const post = vi.spyOn(api, 'post').mockResolvedValue({ token: 'zscim_new', created_at: '2026-10-30T10:00:00Z' } as never)
+    const del = vi.spyOn(api, 'del').mockResolvedValue({} as never)
+    render(<IdentityProviders />)
+    const user = userEvent.setup()
+    await user.click(await screen.findByRole('button', { name: 'Edit' }))
+    const form = screen.getByRole('dialog', { name: 'Edit Okta' })
+    await user.click(await within(form).findByRole('button', { name: 'Replace token' }))
+    expect(post).not.toHaveBeenCalled()
+    const ask = screen.getByRole('dialog', { name: 'Replace the SCIM token' })
+    await user.click(within(ask).getByRole('button', { name: 'Replace' }))
+    expect(((await within(form).findByLabelText('SCIM token')) as HTMLInputElement).value).toBe('zscim_new')
+    cleanup()
+    serve([{ ...okta, scim_token_created_at: '2026-10-29T10:00:00Z' }])
+    render(<IdentityProviders />)
+    await user.click(await screen.findByRole('button', { name: 'Edit' }))
+    const form2 = screen.getByRole('dialog', { name: 'Edit Okta' })
+    await user.click(await within(form2).findByRole('button', { name: 'Revoke' }))
+    await user.click(within(screen.getByRole('dialog', { name: 'Revoke the SCIM token' })).getByRole('button', { name: 'Revoke' }))
+    await waitFor(() => expect(del).toHaveBeenCalledWith('/identity-providers/s1/scim-token'))
+    expect(await within(form2).findByText('No token yet')).toBeDefined()
+  })
+
+  it('saves the choice as scim, and never with the listing', async () => {
+    serve([plain])
+    const put = vi.spyOn(api, 'put').mockResolvedValue({} as never)
+    render(<IdentityProviders />)
+    const user = userEvent.setup()
+    await user.click(await screen.findByRole('button', { name: 'Edit' }))
+    const form = screen.getByRole('dialog', { name: 'Edit Okta' })
+    await waitFor(() => expect((within(form).getByLabelText('Issuer URL') as HTMLInputElement).value).toBe('https://kc.example/realms/zanskar'))
+    await user.selectOptions(within(form).getByLabelText('People arrive'), 'scim')
+    await user.click(within(form).getByRole('button', { name: 'Save' }))
+    await waitFor(() => expect(put).toHaveBeenCalledTimes(1))
+    const config = (put.mock.calls[0][1] as { config: Record<string, unknown> }).config
+    expect(config.scim).toBe(true)
+    expect(config.sync_users).toBeUndefined()
+  })
+})
+
+
+// A provider that publishes no sign-out (Google) passes the test with a
+// warning: signing out will end the Zanskar session only.
+describe('Connection test and sign-out', () => {
+  it('warns when the provider offers no sign-out', async () => {
+    serve([plain])
+    vi.spyOn(api, 'post').mockResolvedValue({ status: 'ok', provider_sign_out: false } as never)
+    render(<IdentityProviders />)
+    const user = userEvent.setup()
+    await user.click(await screen.findByRole('button', { name: 'Edit' }))
+    const form = screen.getByRole('dialog', { name: 'Edit Okta' })
+    await user.click(within(form).getByRole('button', { name: 'Test connection' }))
+    expect(await within(form).findByText(/offers no sign-out, so signing out ends the Zanskar session only/)).toBeDefined()
   })
 })
