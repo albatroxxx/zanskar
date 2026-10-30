@@ -173,9 +173,12 @@ describe('Editing, testing and deleting a provider', () => {
     const ends = within(form).getByLabelText('Signing out ends the provider session too') as HTMLInputElement
     expect(ends.checked).toBe(true)
     await user.click(ends)
+    const prompt = within(form).getByLabelText(/Ask for the password at every sign-in/) as HTMLInputElement
+    expect(prompt.checked).toBe(false)
+    await user.click(prompt)
     await user.click(within(form).getByRole('button', { name: 'Save' }))
     await waitFor(() => expect(put).toHaveBeenCalledTimes(1))
-    expect(put.mock.calls[0][1]).toMatchObject({ config: { oidc: { keep_provider_session: true } } })
+    expect(put.mock.calls[0][1]).toMatchObject({ config: { oidc: { keep_provider_session: true, prompt_login: true } } })
   })
 
   it('reports a connection test as it went', async () => {

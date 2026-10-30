@@ -8,6 +8,8 @@ describe('signInError', () => {
   it('says what a known reason means', () => {
     expect(signInError('not_provisioned')).toBe('There is no account for you here yet. Ask an administrator to add you.')
     expect(signInError('domain_not_allowed')).toMatch(/email domain/)
+    expect(signInError('reauth_not_done')).toMatch(/instead of asking for your password again/)
+    expect(signInError('auth_time_missing')).toMatch(/auth_time claim/)
   })
 
   it('never repeats text it was handed', () => {

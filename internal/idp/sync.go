@@ -101,6 +101,10 @@ type Syncer struct {
 	running map[string]bool
 }
 
+func (s *Syncer) lifecycle() *Lifecycle {
+	return &Lifecycle{Users: s.Provisioner.Users, Sessions: s.Sessions, Revoker: s.Provisioner.Revoker, Audit: s.Audit, Log: s.Log}
+}
+
 func (s *Syncer) clock() time.Time {
 	if s.now != nil {
 		return s.now()
@@ -268,41 +272,41 @@ func (s *Syncer) sync(ctx context.Context, p *Opened, opts SyncOptions) (*SyncSt
 		byExternal[u.ExternalID] = u
 	}
 	sort.Slice(people, func(i, j int) bool { return people[i].Username < people[j].Username })
-	seen := make(map[string]bool, len(people))
+	seen := make(map[string]bool, len(people)) // by external id: each person once
+	kept := make(map[string]bool, len(people)) // by account id: the accounts the listing accounts for
 	for _, id := range people {
 		if id.ExternalID == "" || seen[id.ExternalID] {
 			continue
 		}
 		seen[id.ExternalID] = true
 		if u := byExternal[id.ExternalID]; u != nil {
+			kept[u.ID] = true
 			if err := s.keep(ctx, p, u, id, opts.Actor, st); err != nil {
 				return st, err
 			}
 			continue
 		}
-		if err := s.join(ctx, p, id, opts.Actor, st); err != nil {
+		adopted, err := s.join(ctx, p, id, opts.Actor, st)
+		if err != nil {
 			return st, err
 		}
+		if adopted != "" {
+			kept[adopted] = true
+		}
 	}
-	return st, s.leave(ctx, p, linked, seen, len(people), opts, st)
+	return st, s.leave(ctx, p, linked, kept, len(people), opts, st)
 }
 
 // keep brings a linked account in line with the directory: enabled again if
 // the sync had disabled it, and the name and address the directory has.
 func (s *Syncer) keep(ctx context.Context, p *Opened, u *user.User, id Identity, actor audit.Actor, st *SyncStatus) error {
 	users := s.Provisioner.Users
-	if u.Status == user.StatusDisabled && u.DirectoryRemovedAt != nil {
-		ok, err := users.EnableReturned(ctx, u.ID)
-		if err != nil {
-			return err
-		}
-		if ok {
-			st.Enabled++
-			u.Status = user.StatusActive
-			s.record(ctx, actor.Event(audit.UserUpdate, "user", u.ID, audit.Success, map[string]any{
-				"username": u.Username, "status": user.StatusActive, "previous_status": user.StatusDisabled,
-				"via": "directory_sync", "idp": p.ID, "idp_name": p.Name, "reason": "back in the directory"}))
-		}
+	back, err := s.lifecycle().Return(ctx, p, u, actor, "directory_sync", "back in the directory")
+	if err != nil {
+		return err
+	}
+	if back {
+		st.Enabled++
 	}
 	name := id.DisplayName
 	if name == "" {
@@ -325,10 +329,12 @@ func (s *Syncer) keep(ctx context.Context, p *Opened, u *user.User, id Identity,
 // join gives a person with no linked account one, as their first sign-in
 // would: a pre-created account adopted, else one created when the provider
 // creates accounts.
-func (s *Syncer) join(ctx context.Context, p *Opened, id Identity, actor audit.Actor, st *SyncStatus) error {
+// It returns the id of an account it adopted, which the listing therefore
+// accounts for.
+func (s *Syncer) join(ctx context.Context, p *Opened, id Identity, actor audit.Actor, st *SyncStatus) (adopted string, err error) {
 	if !user.ValidUsername(id.Username) {
 		st.addConflict(id.Username)
-		return nil
+		return "", nil
 	}
 	u, err := s.Provisioner.adopt(ctx, p, id)
 	switch {
@@ -336,27 +342,27 @@ func (s *Syncer) join(ctx context.Context, p *Opened, id Identity, actor audit.A
 		st.Linked++
 		s.record(ctx, actor.Event(audit.UserLink, "user", u.ID, audit.Success,
 			map[string]string{"idp": p.ID, "idp_name": p.Name, "external_id": id.ExternalID, "via": "directory_sync"}))
-		return nil
+		return u.ID, nil
 	case errors.Is(err, user.ErrNotFound):
 	case errors.Is(err, ErrAccountConflict):
 		st.addConflict(id.Username)
-		return nil
+		return "", nil
 	case errors.Is(err, errLocked):
-		return nil
+		return "", nil
 	default:
-		return err
+		return "", err
 	}
 	if !p.Config.AutoProvision {
 		st.NotCreated++
-		return nil
+		return "", nil
 	}
 	u, err = s.Provisioner.create(ctx, p, id)
 	if err != nil {
 		if errors.Is(err, ErrAccountConflict) {
 			st.addConflict(id.Username)
-			return nil
+			return "", nil
 		}
-		return err
+		return "", err
 	}
 	st.Created++
 	d := map[string]any{"username": u.Username, "roles": u.Roles, "has_password": false, "via": "directory_sync",
@@ -365,12 +371,12 @@ func (s *Syncer) join(ctx context.Context, p *Opened, id Identity, actor audit.A
 		d["roles_granted"] = granted
 	}
 	s.record(ctx, actor.Event(audit.UserCreate, "user", u.ID, audit.Success, d))
-	return nil
+	return "", nil
 }
 
 // leave disables the active accounts whose people the directory no longer
 // lists, unless a guard holds the removals back.
-func (s *Syncer) leave(ctx context.Context, p *Opened, linked []*user.User, seen map[string]bool, listed int, opts SyncOptions, st *SyncStatus) error {
+func (s *Syncer) leave(ctx context.Context, p *Opened, linked []*user.User, kept map[string]bool, listed int, opts SyncOptions, st *SyncStatus) error {
 	var gone []*user.User
 	active := 0
 	for _, u := range linked {
@@ -378,7 +384,7 @@ func (s *Syncer) leave(ctx context.Context, p *Opened, linked []*user.User, seen
 			continue
 		}
 		active++
-		if !seen[u.ExternalID] {
+		if !kept[u.ID] {
 			gone = append(gone, u)
 		}
 	}
@@ -393,42 +399,21 @@ func (s *Syncer) leave(ctx context.Context, p *Opened, linked []*user.User, seen
 		st.Held, st.HeldReason = len(gone), fmt.Sprintf("would disable %d of %d accounts at once; run the sync from the console to apply", len(gone), active)
 		return nil
 	}
-	users := s.Provisioner.Users
+	life := s.lifecycle()
 	for _, u := range gone {
-		if u.HasRole(user.RoleAdmin) {
-			n, err := users.CountAdmins(ctx)
-			if err != nil {
-				return err
-			}
-			if n <= 1 {
-				st.Held++
-				st.HeldReason = "the last active administrator is never disabled"
-				continue
-			}
-		}
-		ok, err := users.DisableRemoved(ctx, u.ID, s.clock().UTC())
-		if err != nil {
+		disabled, live, err := life.Leave(ctx, p, u, opts.Actor, "directory_sync", "left the directory", s.clock())
+		switch {
+		case errors.Is(err, ErrLastAdmin):
+			st.Held++
+			st.HeldReason = ErrLastAdmin.Error()[len("idp: "):]
+			continue
+		case err != nil:
 			return err
 		}
-		if !ok {
-			continue
+		if disabled {
+			st.Disabled++
+			st.LiveSessionsEnded += live
 		}
-		st.Disabled++
-		d := map[string]any{"username": u.Username, "status": user.StatusDisabled, "previous_status": user.StatusActive,
-			"via": "directory_sync", "idp": p.ID, "idp_name": p.Name, "reason": "left the directory"}
-		if s.Sessions != nil {
-			if n, err := s.Sessions.RevokeAllForUser(ctx, u.ID); err != nil {
-				s.Log.Error("user sync: end sessions", "user_id", u.ID, "err", err)
-			} else {
-				d["sessions_revoked"] = n
-			}
-		}
-		if s.Provisioner.Revoker != nil {
-			n := s.Provisioner.Revoker.UserRevoked(u.ID)
-			st.LiveSessionsEnded += n
-			d["live_sessions_ended"] = n
-		}
-		s.record(ctx, opts.Actor.Event(audit.UserUpdate, "user", u.ID, audit.Success, d))
 	}
 	return nil
 }

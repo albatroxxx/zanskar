@@ -243,7 +243,7 @@ function UserForm({ onClose, onSaved }: { onClose: () => void; onSaved: (oneTime
     })
   return (
     <FormModal title="Add user" err={err} busy={busy} submitLabel="Create" onSubmit={save} onClose={onClose}>
-      <Field label="Username" hint="2-64 characters: letters, digits, . _ -"><input id="nu-username" value={f.username} onChange={set('username')} required autoFocus /></Field>
+      <Field label="Username" hint="letters, digits, . _ - (2-64), or an email address"><input id="nu-username" value={f.username} onChange={set('username')} required autoFocus /></Field>
       <Field label="Display name"><input id="nu-name" value={f.display_name} onChange={set('display_name')} required /></Field>
       <Field label="Email (optional)"><input id="nu-email" type="email" value={f.email} onChange={set('email')} /></Field>
       <div className="field inline">

@@ -9,7 +9,12 @@ package idp
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/sha256"
+	"crypto/subtle"
 	"database/sql"
+	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -77,6 +82,12 @@ type OIDCConfig struct {
 	// (RP-initiated logout, ADR 0035), so the next sign-in asks for the
 	// password again; set it for a realm other applications share.
 	KeepProviderSession bool `json:"keep_provider_session,omitempty"`
+	// PromptLogin asks the provider to authenticate the person afresh at
+	// every sign-in (OpenID Connect prompt=login), whatever session it
+	// holds: for a provider whose sign-out does not end its own session
+	// (Authentik's default provider flow), or a shared workstation. Google
+	// does not take prompt=login.
+	PromptLogin bool `json:"prompt_login,omitempty"`
 }
 
 // LDAPConfig configures an LDAP or Active Directory bind-and-search provider.
@@ -127,6 +138,11 @@ type Config struct {
 	SyncUsers bool `json:"sync_users,omitempty"`
 	// SyncMinutes is the time between runs: default 15, from 5 to 1440.
 	SyncMinutes int `json:"sync_minutes,omitempty"`
+	// SCIM lets the provider push its people to /api/v1/scim/<id> (SCIM
+	// 2.0, the standard Okta, Entra ID, OneLogin, JumpCloud, PingOne and
+	// Authentik speak), with a bearer token generated for it (ADR 0035).
+	// A provider has its people pushed or listed (SyncUsers), not both.
+	SCIM bool `json:"scim,omitempty"`
 }
 
 // Provider is the public row; Config is only returned by Open.
@@ -137,6 +153,9 @@ type Provider struct {
 	Enabled   bool      `json:"enabled"`
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
+	// SCIMTokenAt is when the provider's SCIM token was made; nil when it
+	// has none. The token itself is shown once and kept only as a hash.
+	SCIMTokenAt *time.Time `json:"scim_token_created_at,omitempty"`
 }
 
 // AccessSummary is the part of a provider's configuration that decides who
@@ -146,14 +165,14 @@ type Provider struct {
 // no client secret, bind password or CA bundle.
 func AccessSummary(c *Config) map[string]any {
 	d := map[string]any{"auto_provision": c.AutoProvision, "default_roles": c.DefaultRoles, "group_mapping": c.GroupMapping,
-		"sync_users": c.SyncUsers, "sync_minutes": c.SyncMinutes}
+		"sync_users": c.SyncUsers, "sync_minutes": c.SyncMinutes, "scim": c.SCIM}
 	if c.GroupMapping == nil {
 		d["group_mapping"] = GroupMapping{}
 	}
 	if o := c.OIDC; o != nil {
 		d["issuer"], d["client_id"], d["zanskar_mfa"] = o.Issuer, o.ClientID, o.ZanskarMFA
 		d["allowed_domains"], d["username_claim"], d["groups_claim"] = orEmpty(o.AllowedDomains), o.UsernameClaim, o.GroupsClaim
-		d["trust_email"] = o.TrustEmail
+		d["trust_email"], d["prompt_login"] = o.TrustEmail, o.PromptLogin
 	}
 	if l := c.LDAP; l != nil {
 		d["url"], d["start_tls"], d["insecure_skip_verify"] = l.URL, l.StartTLS, l.InsecureSkipVerify
@@ -278,12 +297,14 @@ func Validate(p *Provider, c *Config) error {
 	return validateSync(c)
 }
 
-// SyncUsernameClaims are the username claims the directory sync can give
-// the same value for as a sign-in: a Keycloak user's username and id. (An
-// email address is never a username: user.ValidUsername has no "@".)
-var SyncUsernameClaims = []string{"preferred_username", "sub"}
+// SyncUsernameClaims are the username claims a Keycloak listing can give
+// the same value for as a sign-in: the user's username, address and id.
+var SyncUsernameClaims = []string{"preferred_username", "email", "sub"}
 
 func validateSync(c *Config) error {
+	if c.SCIM && c.SyncUsers {
+		return fmt.Errorf("%w: a provider's people are either pushed to Zanskar (SCIM) or listed by it (user sync), not both", ErrInvalidInput)
+	}
 	if !c.SyncUsers {
 		c.SyncMinutes = 0
 		return nil
@@ -299,7 +320,7 @@ func validateSync(c *Config) error {
 			return fmt.Errorf("%w: user sync lists a Keycloak realm; the issuer must be https://<host>/realms/<realm>", ErrInvalidInput)
 		}
 		if !slices.Contains(SyncUsernameClaims, o.UsernameClaim) {
-			return fmt.Errorf("%w: user sync needs the username claim to be preferred_username or sub", ErrInvalidInput)
+			return fmt.Errorf("%w: user sync needs the username claim to be preferred_username, email or sub", ErrInvalidInput)
 		}
 	}
 	return nil
@@ -388,7 +409,7 @@ func (r *Repo) Update(ctx context.Context, p *Provider, c *Config) error {
 
 // Get returns the public row.
 func (r *Repo) Get(ctx context.Context, id string) (*Provider, error) {
-	row := r.db.QueryRowContext(ctx, r.db.Rebind(`SELECT id, name, type, enabled, created_at, updated_at FROM identity_providers WHERE id = ?`), id)
+	row := r.db.QueryRowContext(ctx, r.db.Rebind(`SELECT `+providerCols+` FROM identity_providers WHERE id = ?`), id)
 	return scan(row)
 }
 
@@ -401,8 +422,10 @@ func (r *Repo) Open(ctx context.Context, id string) (*Opened, error) {
 		ver              sql.NullInt64
 		created, updated store.NullTime
 	)
-	err := r.db.QueryRowContext(ctx, r.db.Rebind(`SELECT id, name, type, config_enc, key_version, enabled, created_at, updated_at FROM identity_providers WHERE id = ?`), id).
-		Scan(&p.ID, &p.Name, &typ, &sealed, &ver, &p.Enabled, &created, &updated)
+	var scimAt store.NullTime
+	err := r.db.QueryRowContext(ctx, r.db.Rebind(`SELECT id, name, type, config_enc, key_version, enabled, created_at, updated_at, scim_token_created_at FROM identity_providers WHERE id = ?`), id).
+		Scan(&p.ID, &p.Name, &typ, &sealed, &ver, &p.Enabled, &created, &updated, &scimAt)
+	p.SCIMTokenAt = scimAt.Ptr()
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound
@@ -423,7 +446,7 @@ func (r *Repo) Open(ctx context.Context, id string) (*Opened, error) {
 
 // List returns providers ordered by name. Enabled-only when onlyEnabled.
 func (r *Repo) List(ctx context.Context, onlyEnabled bool) ([]*Provider, error) {
-	q := `SELECT id, name, type, enabled, created_at, updated_at FROM identity_providers`
+	q := `SELECT ` + providerCols + ` FROM identity_providers`
 	if onlyEnabled {
 		q += ` WHERE enabled = TRUE`
 	}
@@ -453,6 +476,58 @@ func (r *Repo) Delete(ctx context.Context, id string) error {
 		return err
 	}
 	return store.Affected(res, ErrNotFound)
+}
+
+// NewSCIMToken makes a bearer token for a provider's SCIM client and the
+// hash Zanskar keeps of it: 32 random bytes, so the hash needs no salt and
+// a database read cannot be turned back into the token.
+func NewSCIMToken() (token, hash string, err error) {
+	b := make([]byte, 32)
+	if _, err := rand.Read(b); err != nil {
+		return "", "", err
+	}
+	token = "zscim_" + base64.RawURLEncoding.EncodeToString(b)
+	return token, SCIMTokenHash(token), nil
+}
+
+// SCIMTokenHash is the stored form of a SCIM token.
+func SCIMTokenHash(token string) string {
+	sum := sha256.Sum256([]byte(token))
+	return hex.EncodeToString(sum[:])
+}
+
+// SetSCIMToken stores a new token hash for the provider, replacing any
+// earlier one, which stops working at once.
+func (r *Repo) SetSCIMToken(ctx context.Context, id, hash string, at time.Time) error {
+	res, err := r.db.ExecContext(ctx, r.db.Rebind(`UPDATE identity_providers SET scim_token_hash = ?, scim_token_created_at = ? WHERE id = ?`), hash, store.TimeArg(at), id)
+	if err != nil {
+		return err
+	}
+	return store.Affected(res, ErrNotFound)
+}
+
+// ClearSCIMToken revokes the provider's SCIM token.
+func (r *Repo) ClearSCIMToken(ctx context.Context, id string) error {
+	res, err := r.db.ExecContext(ctx, r.db.Rebind(`UPDATE identity_providers SET scim_token_hash = NULL, scim_token_created_at = NULL WHERE id = ?`), id)
+	if err != nil {
+		return err
+	}
+	return store.Affected(res, ErrNotFound)
+}
+
+// CheckSCIMToken reports whether token is the provider's current SCIM
+// token, comparing hashes in constant time. A provider with none, or none
+// by that id, matches nothing.
+func (r *Repo) CheckSCIMToken(ctx context.Context, id, token string) (bool, error) {
+	var stored sql.NullString
+	err := r.db.QueryRowContext(ctx, r.db.Rebind(`SELECT scim_token_hash FROM identity_providers WHERE id = ?`), id).Scan(&stored)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil || !stored.Valid || stored.String == "" || token == "" {
+		return false, err
+	}
+	return subtle.ConstantTimeCompare([]byte(SCIMTokenHash(token)), []byte(stored.String)) == 1, nil
 }
 
 // Identity is what a provider asserts after a successful authentication.
@@ -640,6 +715,14 @@ func (pv *Provisioner) adopt(ctx context.Context, p *Opened, id Identity) (*user
 	switch {
 	case u.PasswordHash != "":
 		return nil, fmt.Errorf("%w: a local account named %q has a password; remove it or rename one of them", ErrAccountConflict, u.Username)
+	case u.IdPID == p.ID && u.ExternalID == "":
+		// Provisioned for this provider (pushed over SCIM) and never signed
+		// in to: the provider vouches for the username both times, and now
+		// says who holds it. Entra ID's subject is made per application, so
+		// the username, not an id, is what the push and the sign-in share.
+		if u.IsLocked(time.Now()) {
+			return nil, errLocked
+		}
 	case u.IdPID == p.ID:
 		return nil, fmt.Errorf("%w: the local account %q is linked to a different identity at this provider", ErrAccountConflict, u.Username)
 	case u.IdPID != "":
@@ -740,19 +823,21 @@ func (r *Repo) seal(id string, c *Config) ([]byte, int, error) {
 	return r.ring.Encrypt(keyring.AAD("identity_providers", id), plain)
 }
 
+const providerCols = `id, name, type, enabled, created_at, updated_at, scim_token_created_at`
+
 func scan(s store.Scanner) (*Provider, error) {
 	var (
-		p                Provider
-		typ              string
-		created, updated store.NullTime
+		p                        Provider
+		typ                      string
+		created, updated, scimAt store.NullTime
 	)
-	if err := s.Scan(&p.ID, &p.Name, &typ, &p.Enabled, &created, &updated); err != nil {
+	if err := s.Scan(&p.ID, &p.Name, &typ, &p.Enabled, &created, &updated, &scimAt); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound
 		}
 		return nil, err
 	}
-	p.Type, p.CreatedAt, p.UpdatedAt = Type(typ), created.Time, updated.Time
+	p.Type, p.CreatedAt, p.UpdatedAt, p.SCIMTokenAt = Type(typ), created.Time, updated.Time, scimAt.Ptr()
 	return &p, nil
 }
 

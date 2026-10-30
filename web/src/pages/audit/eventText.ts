@@ -50,6 +50,8 @@ const actionLabels: Record<string, string> = {
   'idp.delete': 'Identity provider deleted',
   'idp.test': 'Identity provider tested',
   'idp.sync': 'Directory users synced',
+  'idp.scim': 'SCIM request refused',
+  'idp.scim_token': 'SCIM token changed',
   'key.rotate': 'Encryption key rotated',
   'key.rotate_master': 'Master key rotated',
   'logs.download': 'Logs downloaded',

@@ -28,6 +28,8 @@ interface OIDCConfig {
   zanskar_mfa?: boolean
   /** Signing out of Zanskar leaves the provider's session alone. */
   keep_provider_session?: boolean
+  /** Ask the provider to authenticate afresh at every sign-in (prompt=login). */
+  prompt_login?: boolean
 }
 interface LDAPConfig {
   url?: string
@@ -56,6 +58,8 @@ interface IdPConfig {
   /** List the directory on a schedule: joiners get accounts, leavers are disabled (ADR 0035). */
   sync_users?: boolean
   sync_minutes?: number
+  /** The provider pushes its people over SCIM 2.0 instead (ADR 0035). */
+  scim?: boolean
 }
 /** One run of the directory user sync, as internal/idp.SyncStatus. */
 interface SyncRun {
@@ -89,6 +93,15 @@ interface Provider {
   config: IdPConfig
   has_secret: boolean
   sync?: SyncState
+  /** When the SCIM token was made; absent when there is none. */
+  scim_token_created_at?: string
+}
+
+/** How a provider's people get accounts in Zanskar. */
+type Arrival = 'signin' | 'scim' | 'list'
+
+function arrivalOf(c?: IdPConfig): Arrival {
+  return c?.scim ? 'scim' : c?.sync_users ? 'list' : 'signin'
 }
 
 const roleOptions: Role[] = ['user', 'auditor', 'admin']
@@ -147,7 +160,7 @@ export function IdentityProviders() {
                 <th>Type</th>
                 <th>Status</th>
                 <th>Secret</th>
-                <th>User sync</th>
+                <th>People</th>
                 <th>Created</th>
                 <th><span className="sr-only">Actions</span></th>
               </tr>
@@ -159,7 +172,7 @@ export function IdentityProviders() {
                   <td><Badge tone="accent">{p.type.toUpperCase()}</Badge></td>
                   <td>{p.enabled ? <StateIcon state="ok" label="Enabled" /> : <StateIcon state="unknown" label="Disabled" />}</td>
                   <td>{p.has_secret ? <StateIcon state="ok" label="Secret stored" /> : <StateIcon state="warn" label="No secret stored" />}</td>
-                  <td><SyncCell sync={p.sync} /></td>
+                  <td><ArrivalCell provider={p} /></td>
                   <td>{fmtTime(p.created_at)}</td>
                   <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
                     {p.sync && p.enabled && (
@@ -230,13 +243,93 @@ function syncSummary(run: SyncRun): string {
   return parts.join(' · ')
 }
 
+/** How the provider's people arrive, and how the last of it went. */
+function ArrivalCell({ provider: p }: { provider: Provider }) {
+  if (p.config?.scim) {
+    return p.scim_token_created_at
+      ? <StateIcon state="ok" label={`Pushed over SCIM · token made ${fmtTime(p.scim_token_created_at)}`} />
+      : <StateIcon state="warn" label="Pushed over SCIM · no token yet" />
+  }
+  return <SyncCell sync={p.sync} />
+}
+
 function SyncCell({ sync }: { sync?: SyncState }) {
-  if (!sync) return <span className="muted">Off</span>
+  if (!sync) return <span className="muted">At sign-in</span>
   if (sync.running) return <StateIcon state="unknown" label="Running" />
   const run = sync.last
   if (!run) return <StateIcon state="unknown" label={`Every ${sync.interval_minutes} min; not run yet`} />
   if (!run.ok) return <StateIcon state="danger" label={`Failed ${fmtTime(run.at)}: ${run.error ?? ''}`} />
   return <StateIcon state={run.held > 0 ? 'warn' : 'ok'} label={`${fmtTime(run.at)} · ${syncSummary(run)}`} />
+}
+
+function arrivalHint(a: Arrival, type: IdPType): string {
+  switch (a) {
+    case 'scim':
+      return 'Okta, Entra ID, OneLogin, JumpCloud, PingOne, Authentik… People deactivated or removed there are disabled here.'
+    case 'list':
+      return type === 'oidc'
+        ? 'Keycloak realms: the client needs a service account with realm-management › view-users. People who leave are disabled.'
+        : 'Everyone the user filter matches. People who leave are disabled.'
+  }
+  return ''
+}
+
+/** The SCIM base URL and token to give the provider. The token is shown
+ *  once, when it is made; making another stops the first. */
+function SCIMSetup({ provider }: { provider: Provider }) {
+  const [madeAt, setMadeAt] = useState(provider.scim_token_created_at)
+  const [token, setToken] = useState('')
+  const [confirm, setConfirm] = useState<'replace' | 'revoke' | null>(null)
+  const { busy, err, submit } = useSubmit()
+  const baseURL = `${window.location.origin}/api/v1/scim/${provider.id}`
+  const make = () =>
+    submit(async () => {
+      const r = await api.post<{ token: string; created_at: string }>(`/identity-providers/${provider.id}/scim-token`)
+      setToken(r.token)
+      setMadeAt(r.created_at)
+    })
+  return (
+    <div className="register-uris">
+      {err && <Alert tone="danger">{err}</Alert>}
+      <div className="field">
+        <label htmlFor="scim-base">SCIM base URL</label>
+        <div className="copy-row">
+          <input id="scim-base" readOnly value={baseURL} onFocus={(e) => e.target.select()} />
+          <CopyButton text={baseURL} name="SCIM base URL" />
+        </div>
+      </div>
+      {token ? (
+        <div className="field">
+          <label htmlFor="scim-token">SCIM token</label>
+          <div className="copy-row">
+            <input id="scim-token" readOnly value={token} onFocus={(e) => e.target.select()} />
+            <CopyButton text={token} name="SCIM token" />
+          </div>
+          <span className="hint">Shown once. Paste it at the provider as the bearer token.</span>
+        </div>
+      ) : (
+        <div className="actions" style={{ alignItems: 'center' }}>
+          <span className="muted">{madeAt ? `Token made ${fmtTime(madeAt)}` : 'No token yet'}</span>
+          <button type="button" className="btn sm" disabled={busy} onClick={() => (madeAt ? setConfirm('replace') : void make())}>
+            {madeAt ? 'Replace token' : 'Make token'}
+          </button>
+          {madeAt && <button type="button" className="btn sm danger" disabled={busy} onClick={() => setConfirm('revoke')}>Revoke</button>}
+        </div>
+      )}
+      {confirm === 'replace' && (
+        <Confirm title="Replace the SCIM token" confirmLabel="Replace" body={<p>The current token stops working at once. Give the provider the new one.</p>}
+          onConfirm={make} onClose={() => setConfirm(null)} />
+      )}
+      {confirm === 'revoke' && (
+        <Confirm title="Revoke the SCIM token" danger confirmLabel="Revoke" body={<p>The provider can no longer push changes until you make a new token.</p>}
+          onConfirm={async () => {
+            await api.del(`/identity-providers/${provider.id}/scim-token`)
+            setMadeAt(undefined)
+          }}
+          onClose={() => setConfirm(null)} />
+      )}
+    </div>
+  )
 }
 
 /** The address an OIDC provider must have registered for this gateway. The
@@ -262,7 +355,7 @@ function ProviderModal({ existing, onClose, onSaved }: { existing: Provider | nu
   const [name, setName] = useState(existing?.name ?? '')
   const [enabled, setEnabled] = useState(existing?.enabled ?? true)
   const [autoProvision, setAutoProvision] = useState(existing?.config?.auto_provision ?? true)
-  const [syncUsers, setSyncUsers] = useState(existing?.config?.sync_users ?? false)
+  const [arrival, setArrival] = useState<Arrival>(arrivalOf(existing?.config))
   const [syncMinutes, setSyncMinutes] = useState(String(existing?.config?.sync_minutes || 15))
   const [roles, setRoles] = useState<Role[]>(existing?.config?.default_roles ?? ['user'])
   const [mapping, setMapping] = useState(mappingToText(existing?.config?.group_mapping))
@@ -283,7 +376,7 @@ function ProviderModal({ existing, onClose, onSaved }: { existing: Provider | nu
         setName(p.name)
         setEnabled(p.enabled)
         setAutoProvision(p.config?.auto_provision ?? true)
-        setSyncUsers(p.config?.sync_users ?? false)
+        setArrival(arrivalOf(p.config))
         setSyncMinutes(String(p.config?.sync_minutes || 15))
         setRoles(p.config?.default_roles ?? ['user'])
         setMapping(mappingToText(p.config?.group_mapping))
@@ -303,7 +396,8 @@ function ProviderModal({ existing, onClose, onSaved }: { existing: Provider | nu
     const { mapping: gm, error } = textToMapping(mapping)
     if (error) return { error }
     const config: IdPConfig = { default_roles: roles, group_mapping: gm, auto_provision: autoProvision }
-    if (syncUsers) {
+    if (arrival === 'scim') config.scim = true
+    if (arrival === 'list') {
       const minutes = Number(syncMinutes)
       if (!Number.isInteger(minutes) || minutes < 5 || minutes > 1440) return { error: 'sync every 5 to 1440 minutes' }
       config.sync_users = true
@@ -335,8 +429,9 @@ function ProviderModal({ existing, onClose, onSaved }: { existing: Provider | nu
     if (!existing) return
     setTest(null)
     try {
-      const r = await api.post<{ status: string; message?: string }>(`/identity-providers/${existing.id}/test`)
-      if (r.status === 'ok') setTest({ tone: 'ok', msg: 'Connection succeeded.' })
+      const r = await api.post<{ status: string; message?: string; provider_sign_out?: boolean }>(`/identity-providers/${existing.id}/test`)
+      if (r.status === 'ok' && r.provider_sign_out === false) setTest({ tone: 'warn', msg: 'Connection succeeded. The provider offers no sign-out, so signing out ends the Zanskar session only.' })
+      else if (r.status === 'ok') setTest({ tone: 'ok', msg: 'Connection succeeded.' })
       else if (r.status === 'skipped') setTest({ tone: 'warn', msg: r.message ?? 'Test not available.' })
       else setTest({ tone: 'danger', msg: r.message ?? 'Connection failed.' })
     } catch (err) {
@@ -380,6 +475,7 @@ function ProviderModal({ existing, onClose, onSaved }: { existing: Provider | nu
             <div className="field inline"><input id="oidc-trustemail" type="checkbox" checked={!!oidc.trust_email} onChange={(e) => setOidc({ ...oidc, trust_email: e.target.checked })} /><label htmlFor="oidc-trustemail">Trust email addresses the provider does not mark as verified (for one that never says, such as Entra ID, when your directory assigns the addresses)</label></div>
             <div className="field inline"><input id="oidc-zanskarmfa" type="checkbox" checked={!!oidc.zanskar_mfa} onChange={(e) => setOidc({ ...oidc, zanskar_mfa: e.target.checked })} /><label htmlFor="oidc-zanskarmfa">Also ask for a Zanskar authenticator (only for a provider with no MFA of its own)</label></div>
             <div className="field inline"><input id="oidc-endsession" type="checkbox" checked={!oidc.keep_provider_session} onChange={(e) => setOidc({ ...oidc, keep_provider_session: !e.target.checked })} /><label htmlFor="oidc-endsession">Signing out ends the provider session too</label></div>
+            <div className="field inline"><input id="oidc-prompt" type="checkbox" checked={!!oidc.prompt_login} onChange={(e) => setOidc({ ...oidc, prompt_login: e.target.checked })} /><label htmlFor="oidc-prompt">Ask for the password at every sign-in (not Google)</label></div>
             {existing && <RegisterURI id={existing.id} />}
           </>
         )}
@@ -410,12 +506,19 @@ function ProviderModal({ existing, onClose, onSaved }: { existing: Provider | nu
         <hr style={{ border: 0, borderTop: '1px solid var(--line)', margin: '16px 0' }} />
         <div className="field inline"><input id="idp-enabled" type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} /><label htmlFor="idp-enabled">Enabled</label></div>
         <div className="field inline"><input id="idp-auto" type="checkbox" checked={autoProvision} onChange={(e) => setAutoProvision(e.target.checked)} /><label htmlFor="idp-auto">Create an account for each new person</label></div>
-        <div className="field inline"><input id="idp-sync" type="checkbox" checked={syncUsers} onChange={(e) => setSyncUsers(e.target.checked)} /><label htmlFor="idp-sync">Sync users from the directory</label></div>
-        {syncUsers && (
-          <Field label="Sync every (minutes)" hint={type === 'oidc' ? 'Keycloak realms. The client needs a service account with realm-management › view-users. People who leave are disabled.' : 'Everyone the user filter matches. People who leave are disabled.'}>
+        <Field label="People arrive" hint={arrivalHint(arrival, type)}>
+          <select id="idp-arrival" value={arrival} onChange={(e) => setArrival(e.target.value as Arrival)}>
+            <option value="signin">At their first sign-in</option>
+            <option value="scim">Pushed by the provider (SCIM)</option>
+            <option value="list">Listed by Zanskar on a schedule</option>
+          </select>
+        </Field>
+        {arrival === 'list' && (
+          <Field label="Sync every (minutes)">
             <input id="idp-sync-minutes" type="number" min={5} max={1440} step={1} value={syncMinutes} onChange={(e) => setSyncMinutes(e.target.value)} />
           </Field>
         )}
+        {arrival === 'scim' && (existing ? <SCIMSetup provider={loaded ?? existing} /> : <p className="hint">Save the provider, then make its SCIM token here.</p>)}
         <Field label="Default roles for provisioned users">
           <div className="actions">
             {roleOptions.map((r) => (

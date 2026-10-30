@@ -252,3 +252,28 @@ func TestCanConnect(t *testing.T) {
 		}
 	}
 }
+
+// TestValidUsernameTakesAddresses (ADR 0035): a provider such as Okta or
+// Entra ID asserts an email address or UPN as the username, so the address
+// form is a username too. Neither form takes a space, quote, slash, control
+// character or a second "@", and an address is bounded as SMTP bounds one.
+func TestValidUsernameTakesAddresses(t *testing.T) {
+	for _, ok := range []string{
+		"alice", "a.b-c_d", "alice@corp.example", "alice.smith+ops@corp.example", "a@b.co", "first.last@sub.corp-x.example",
+		"x" + strings.Repeat("y", 63) + "@corp.example",
+	} {
+		if !ValidUsername(ok) {
+			t.Errorf("%q refused", ok)
+		}
+	}
+	long := strings.Repeat("a", 60) + "@" + strings.Repeat("b", 60) + "." + strings.Repeat("c", 60) + "." + strings.Repeat("d", 60) + "." + strings.Repeat("e", 60) + ".example" // 312 characters
+	for _, bad := range []string{
+		"", "a", "-alice", ".alice@corp.example", "alice@", "@corp.example", "alice@corp", "alice@@corp.example", "alice@corp.example.",
+		"alice@-corp.example", "alice@corp-.example", "al ice@corp.example", "alice@corp example", "a/b@corp.example", `a"b@corp.example`,
+		"alice@corp.example\n", "alice\x00@corp.example", "alice@corp_x.example", "a+b", "x" + strings.Repeat("y", 64) + "@corp.example", long,
+	} {
+		if ValidUsername(bad) {
+			t.Errorf("%q accepted", bad)
+		}
+	}
+}

@@ -4,6 +4,7 @@ package adminapi
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -71,6 +72,57 @@ func TestSyncRoutes(t *testing.T) {
 		t.Fatalf("bad body: %d", code)
 	}
 	if code, _, _ := e.do(t, "GET", "/api/v1/identity-providers/nope/sync", nil); code != http.StatusNotFound {
+		t.Fatalf("unknown provider: %d", code)
+	}
+}
+
+// TestSCIMTokenRoutes: a token is shown once, with the base path to give
+// the provider; only its hash is kept, so a second request makes a new one
+// and the first stops working; revoking leaves none. Nothing secret is
+// recorded.
+func TestSCIMTokenRoutes(t *testing.T) {
+	e := newEnv(t)
+	code, out, raw := e.do(t, "POST", "/api/v1/identity-providers", map[string]any{"name": "okta", "type": "oidc", "config": map[string]any{
+		"oidc": map[string]any{"issuer": "https://okta.example", "client_id": "cid", "client_secret": "s"}, "scim": true}})
+	if code != http.StatusCreated {
+		t.Fatalf("create: %d %s", code, raw)
+	}
+	id := out["id"].(string)
+	code, first, _ := e.do(t, "POST", "/api/v1/identity-providers/"+id+"/scim-token", nil)
+	tok, _ := first["token"].(string)
+	if code != http.StatusOK || !strings.HasPrefix(tok, "zscim_") || first["base_path"] != "/api/v1/scim/"+id {
+		t.Fatalf("token: %d %v", code, first)
+	}
+	ctx := context.Background()
+	if ok, err := e.repo.CheckSCIMToken(ctx, id, tok); !ok || err != nil {
+		t.Fatalf("the token must work: %v %v", ok, err)
+	}
+	_, second, _ := e.do(t, "POST", "/api/v1/identity-providers/"+id+"/scim-token", nil)
+	if ok, _ := e.repo.CheckSCIMToken(ctx, id, tok); ok {
+		t.Fatal("a replaced token must stop working")
+	}
+	if ok, _ := e.repo.CheckSCIMToken(ctx, id, second["token"].(string)); !ok {
+		t.Fatal("the new token must work")
+	}
+	if _, view, _ := e.do(t, "GET", "/api/v1/identity-providers/"+id, nil); view["scim_token_created_at"] == nil || strings.Contains(fmt.Sprint(view), "zscim_") {
+		t.Fatalf("the provider shows when, never what: %v", view)
+	}
+	if code, _, _ := e.do(t, "DELETE", "/api/v1/identity-providers/"+id+"/scim-token", nil); code != http.StatusNoContent {
+		t.Fatalf("revoke: %d", code)
+	}
+	if ok, _ := e.repo.CheckSCIMToken(ctx, id, second["token"].(string)); ok {
+		t.Fatal("a revoked token must stop working")
+	}
+	evs, _, _ := e.audit.List(ctx, audit.Filter{Action: audit.IdPSCIMToken, Limit: 10})
+	if len(evs) != 3 {
+		t.Fatalf("token events: %d", len(evs))
+	}
+	for _, ev := range evs {
+		if strings.Contains(string(ev.Details), "zscim_") {
+			t.Fatal("a token reached the audit log")
+		}
+	}
+	if code, _, _ := e.do(t, "POST", "/api/v1/identity-providers/nope/scim-token", nil); code != http.StatusNotFound {
 		t.Fatalf("unknown provider: %d", code)
 	}
 }

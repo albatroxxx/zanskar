@@ -103,3 +103,42 @@ provider's directory.**
   the standard asks.
 - A sync on several gateway instances at once is harmless but not coordinated: the second
   creation of an account is a conflict for that run, and the next run finds it linked.
+
+## Amendment (2026-10-30, the same day): standards first, any provider
+
+The operator had used Keycloak only because it is open source and at hand: "Our solution must not
+stick only to Keycloak fixes, it should be generic." Checked against what the common providers
+document, and against Authentik as a second vendor (`hack/authentik/run.sh`), three things were
+Keycloak-shaped:
+
+- **Usernames.** Okta asserts the login, and Entra ID the UPN, as `preferred_username`: an email
+  address. A username could not hold `@`, so those sign-ins were refused outright. A username is now
+  a plain name or an email address (bounded at 254, no space, quote, slash or control character).
+  The `email` claim names an account only when the provider vouches for the address; with no
+  username claim at all (Google) the verified address is the username whole, not its local part.
+- **Joining and leaving.** OIDC lists no one, so the Keycloak admin-API listing could not be the
+  answer. **SCIM 2.0** (RFC 7643, 7644) is how Okta, Entra ID, OneLogin, JumpCloud, PingOne and
+  Authentik provision applications: each provider can push to `/api/v1/scim/<provider id>` with a
+  bearer token the console makes and shows once (only its SHA-256 is kept). Users only; Groups
+  answer 501. A provider's people arrive at first sign-in, pushed over SCIM, or listed by Zanskar
+  (Keycloak, LDAP), one of the three. Deactivation and deletion go through the same lifecycle as a
+  listed departure; deletion keeps the account and its history and hides it from SCIM, and a later
+  create of the same person brings it back.
+  - **The key is the username, scoped to the provider.** Entra ID's ID-token subject is made per
+    application and never equals anything its SCIM client sends, so an account the provider pushes
+    is linked to it with no subject, and the first sign-in through that provider with the same
+    username binds the subject (the adopt rule, with the race guard repeated in the UPDATE). It is
+    the same trust as adopting an account an administrator pre-created: the provider vouches for
+    the name both times.
+- **Signing out.** RP-initiated logout is the standard and stays the mechanism, but whether the
+  provider's own session ends is the provider's policy: Authentik's default provider flow ends the
+  application's session and keeps its own (its full logout flow ends both), and Google publishes no
+  end-session endpoint. The connection test now says whether a provider offers sign-out.
+  `prompt_login` asks for a fresh sign-in every time with `prompt=login` and `max_age=0`; because
+  Authentik 2026.8 honours neither, the callback holds the provider to it, refusing a sign-in whose
+  `auth_time` is older than the request (`reauth_not_done`) rather than taking the old session.
+  A token with no `auth_time` is refused too (`auth_time_missing`): Entra ID sends it only as an
+  optional claim an administrator adds. Google takes no `prompt=login`.
+
+What stays vendor-specific is an addition beside the standard path, not instead of it: the Keycloak
+listing, for a realm that cannot push.

@@ -103,13 +103,15 @@ func TestValidateSync(t *testing.T) {
 	}{
 		{"keycloak, defaults", TypeOIDC, kc(realm, "", 0), true, 15},
 		{"keycloak behind /auth", TypeOIDC, kc("https://sso.example/auth/realms/corp/", "", 60), true, 60},
-		{"email as the username", TypeOIDC, kc(realm, "email", 0), false, 0},
+		{"email as the username", TypeOIDC, kc(realm, "email", 0), true, 15},
 		{"keycloak by sub", TypeOIDC, kc(realm, "sub", 5), true, 5},
 		{"not keycloak", TypeOIDC, kc("https://login.example.com", "", 0), false, 0},
 		{"custom username claim", TypeOIDC, kc(realm, "upn", 0), false, 0},
 		{"too often", TypeOIDC, kc(realm, "", 4), false, 0},
 		{"too rarely", TypeOIDC, kc(realm, "", 1441), false, 0},
 		{"ldap", TypeLDAP, func() *Config { c := okLDAP(); c.SyncUsers = true; return c }(), true, 15},
+		{"pushed and listed at once", TypeOIDC, func() *Config { c := kc(realm, "", 0); c.SCIM = true; return c }(), false, 0},
+		{"pushed, any provider", TypeOIDC, func() *Config { c := okOIDC(); c.SCIM = true; return c }(), true, 0},
 		{"off keeps no interval", TypeOIDC, func() *Config { c := kc(realm, "", 30); c.SyncUsers = false; return c }(), true, 0},
 	}
 	for _, tc := range cases {

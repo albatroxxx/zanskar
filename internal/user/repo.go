@@ -22,7 +22,8 @@ type Repo struct {
 func NewRepo(db *store.DB) *Repo { return &Repo{db: db} }
 
 const userCols = `id, username, email, display_name, password_hash, status, idp_id, external_id,
-	failed_logins, locked_until, created_at, updated_at, last_login_at, must_change_password, directory_removed_at`
+	failed_logins, locked_until, created_at, updated_at, last_login_at, must_change_password, directory_removed_at,
+	scim_external_id, scim_deleted_at`
 
 // Create inserts u with the given roles. u.ID, CreatedAt and UpdatedAt are set.
 // PasswordHash may be empty for externally authenticated users.
@@ -56,10 +57,10 @@ func (r *Repo) Create(ctx context.Context, u *User) error {
 	defer tx.Rollback() //nolint:errcheck // rollback after commit is a no-op
 
 	_, err = tx.ExecContext(ctx, r.db.Rebind(`INSERT INTO users
-		(id, username, email, display_name, password_hash, status, idp_id, external_id, failed_logins, created_at, updated_at, must_change_password)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?)`),
+		(id, username, email, display_name, password_hash, status, idp_id, external_id, failed_logins, created_at, updated_at, must_change_password, scim_external_id)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?)`),
 		u.ID, u.Username, nullStr(u.Email), u.DisplayName, nullStr(u.PasswordHash), string(u.Status),
-		nullStr(u.IdPID), nullStr(u.ExternalID), store.TimeArg(now), store.TimeArg(now), u.MustResetOnLogin)
+		nullStr(u.IdPID), nullStr(u.ExternalID), store.TimeArg(now), store.TimeArg(now), u.MustResetOnLogin, nullStr(u.SCIMExternalID))
 	if err != nil {
 		if store.IsUniqueViolation(err) {
 			return ErrDuplicate
@@ -354,10 +355,11 @@ func scanUser(s store.Scanner) (*User, error) {
 		email, hash, idp, ext               sql.NullString
 		status                              string
 		lockedUntil, created, updated, last store.NullTime
-		removed                             store.NullTime
+		removed, scimDeleted                store.NullTime
+		scimExt                             sql.NullString
 	)
 	err := s.Scan(&u.ID, &u.Username, &email, &u.DisplayName, &hash, &status, &idp, &ext,
-		&u.FailedLogins, &lockedUntil, &created, &updated, &last, &u.MustResetOnLogin, &removed)
+		&u.FailedLogins, &lockedUntil, &created, &updated, &last, &u.MustResetOnLogin, &removed, &scimExt, &scimDeleted)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound
@@ -367,7 +369,7 @@ func scanUser(s store.Scanner) (*User, error) {
 	u.Email, u.PasswordHash, u.IdPID, u.ExternalID = email.String, hash.String, idp.String, ext.String
 	u.Status = Status(status)
 	u.LockedUntil, u.CreatedAt, u.UpdatedAt, u.LastLoginAt = lockedUntil.Ptr(), created.Time, updated.Time, last.Ptr()
-	u.DirectoryRemovedAt = removed.Ptr()
+	u.DirectoryRemovedAt, u.SCIMExternalID, u.SCIMDeletedAt = removed.Ptr(), scimExt.String, scimDeleted.Ptr()
 	return &u, nil
 }
 
@@ -389,9 +391,13 @@ func (r *Repo) LinkExternal(ctx context.Context, id, idpID, externalID string) e
 	// The conditions the caller checked are repeated in the UPDATE, so two
 	// first sign-ins asserting the same username at the same moment cannot
 	// both link it: the second finds the row taken (S1 L4).
+	// An account the same provider provisioned (SCIM, or a listing) and
+	// nobody has signed in to yet is linked here too: its subject is not
+	// known until that first sign-in.
 	res, err := r.db.ExecContext(ctx, r.db.Rebind(`UPDATE users SET idp_id = ?, external_id = ?, updated_at = ?
-		WHERE id = ? AND (idp_id IS NULL OR idp_id = '') AND (password_hash IS NULL OR password_hash = '')`),
-		idpID, externalID, store.TimeArg(time.Now()), id)
+		WHERE id = ? AND (password_hash IS NULL OR password_hash = '')
+		AND (idp_id IS NULL OR idp_id = '' OR (idp_id = ? AND (external_id IS NULL OR external_id = '')))`),
+		idpID, externalID, store.TimeArg(time.Now()), id, idpID)
 	if err != nil {
 		if store.IsUniqueViolation(err) {
 			return ErrDuplicate
@@ -466,6 +472,96 @@ func (r *Repo) EnableReturned(ctx context.Context, id string) (bool, error) {
 	}
 	n, err := res.RowsAffected()
 	return n == 1, err
+}
+
+// Provision links an account an administrator created with no password to
+// an identity provider that pushes its people (SCIM), before anyone has
+// signed in: the provider, and its own id for the person, but no subject
+// yet (LinkExternal binds it at the first sign-in). The conditions are
+// repeated in the UPDATE, as LinkExternal does. ErrDuplicate when the
+// account has a password or a provider by now.
+func (r *Repo) Provision(ctx context.Context, id, idpID, scimExternalID string) error {
+	res, err := r.db.ExecContext(ctx, r.db.Rebind(`UPDATE users SET idp_id = ?, scim_external_id = ?, updated_at = ?
+		WHERE id = ? AND (idp_id IS NULL OR idp_id = '') AND (password_hash IS NULL OR password_hash = '')`),
+		idpID, nullStr(scimExternalID), store.TimeArg(time.Now()), id)
+	if err != nil {
+		return err
+	}
+	if err := store.Affected(res, ErrNotFound); err != nil {
+		if _, gerr := r.GetByID(ctx, id); gerr == nil {
+			return ErrDuplicate
+		}
+		return err
+	}
+	return nil
+}
+
+// SetSCIM records the provider's own id for the person and whether its
+// SCIM client has deleted the account (deleted nil clears it).
+func (r *Repo) SetSCIM(ctx context.Context, id, scimExternalID string, deleted *time.Time) error {
+	var at any
+	if deleted != nil {
+		at = store.TimeArg(*deleted)
+	}
+	res, err := r.db.ExecContext(ctx, r.db.Rebind(`UPDATE users SET scim_external_id = ?, scim_deleted_at = ?, updated_at = ? WHERE id = ?`),
+		nullStr(scimExternalID), at, store.TimeArg(time.Now()), id)
+	if err != nil {
+		return err
+	}
+	return store.Affected(res, ErrNotFound)
+}
+
+// Rename changes an account's username, as a provider renames a person
+// (an Entra ID UPN change). ErrDuplicate when another account holds it.
+func (r *Repo) Rename(ctx context.Context, id, username string) error {
+	username = strings.ToLower(strings.TrimSpace(username))
+	if !ValidUsername(username) {
+		return ErrUsernameShape
+	}
+	res, err := r.db.ExecContext(ctx, r.db.Rebind(`UPDATE users SET username = ?, updated_at = ? WHERE id = ?`), username, store.TimeArg(time.Now()), id)
+	if err != nil {
+		if store.IsUniqueViolation(err) {
+			return ErrDuplicate
+		}
+		return err
+	}
+	return store.Affected(res, ErrNotFound)
+}
+
+// SCIMFilter narrows ListProvisioned to one attribute's value: "userName"
+// (any case), "externalId" or "id"; empty Attr lists everyone.
+type SCIMFilter struct{ Attr, Value string }
+
+// ListProvisioned returns a page of the accounts linked to an identity
+// provider that its SCIM client has not deleted, ordered by username, and
+// how many there are in all. offset counts from 0.
+func (r *Repo) ListProvisioned(ctx context.Context, idpID string, f SCIMFilter, offset, limit int) ([]*User, int, error) {
+	where, args := `idp_id = ? AND scim_deleted_at IS NULL`, []any{idpID}
+	switch f.Attr {
+	case "":
+	case "userName":
+		where, args = where+` AND LOWER(username) = LOWER(?)`, append(args, f.Value)
+	case "externalId":
+		where, args = where+` AND scim_external_id = ?`, append(args, f.Value)
+	case "id":
+		where, args = where+` AND id = ?`, append(args, f.Value)
+	default:
+		return nil, 0, fmt.Errorf("%w: cannot filter on %q", ErrInvalidInput, f.Attr)
+	}
+	var total int
+	if err := r.db.QueryRowContext(ctx, r.db.Rebind(`SELECT COUNT(*) FROM users WHERE `+where), args...).Scan(&total); err != nil { // #nosec G202 -- where is built from constants; values are bound
+		return nil, 0, err
+	}
+	out, err := r.scanAll(ctx, `SELECT `+userCols+` FROM users WHERE `+where+` ORDER BY LOWER(username) LIMIT ? OFFSET ?`, append(args, limit, offset)...) // #nosec G202 -- as above
+	if err != nil {
+		return nil, 0, err
+	}
+	for _, u := range out {
+		if u.Roles, err = r.roles(ctx, u.ID); err != nil {
+			return nil, 0, err
+		}
+	}
+	return out, total, nil
 }
 
 // GetByExternalID finds a user provisioned from an identity provider.
