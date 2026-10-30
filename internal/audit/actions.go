@@ -72,6 +72,11 @@ const (
 	// IdPSync is a run of the directory user sync (ADR 0035): who was
 	// created, linked, disabled or enabled again, or why it failed.
 	IdPSync = "idp.sync"
+	// IdPSCIM is a refused SCIM request (a wrong token); the accounts a
+	// provider's SCIM client changes are recorded as user events.
+	IdPSCIM = "idp.scim"
+	// IdPSCIMToken is a SCIM token made or revoked for a provider.
+	IdPSCIMToken = "idp.scim_token"
 
 	// The key ring and the master key.
 	KeyRotate       = "key.rotate"

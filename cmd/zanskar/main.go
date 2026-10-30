@@ -42,6 +42,7 @@ import (
 	idpadmin "github.com/albatroxxx/zanskar/internal/idp/adminapi"
 	"github.com/albatroxxx/zanskar/internal/idp/ldap"
 	"github.com/albatroxxx/zanskar/internal/idp/oidc"
+	"github.com/albatroxxx/zanskar/internal/idp/scim"
 	"github.com/albatroxxx/zanskar/internal/keyring"
 	"github.com/albatroxxx/zanskar/internal/lifecycle"
 	"github.com/albatroxxx/zanskar/internal/logring"
@@ -355,6 +356,10 @@ func serve(ctx context.Context) error {
 	// those who leave are disabled with their sessions ended.
 	userSync := &idp.Syncer{Providers: idpRepo, Provisioner: provisioner, Sessions: sessions, Audit: auditLog, Log: log,
 		Directories: map[idp.Type]idp.Directory{idp.TypeOIDC: &oidc.KeycloakDirectory{}, idp.TypeLDAP: &ldap.Authenticator{}}}
+	// Providers that push their people over SCIM 2.0 (Okta, Entra ID,
+	// OneLogin, JumpCloud, PingOne, Authentik) reach the same lifecycle.
+	scimHandler := &scim.Handler{Providers: idpRepo, Provisioner: provisioner, Audit: auditLog, Log: log, BaseURL: cfg.PublicURL,
+		Lifecycle: &idp.Lifecycle{Users: users, Sessions: sessions, Revoker: connectHandler, Audit: auditLog, Log: log}}
 	// The bell (ADR 0032): once a day, is there a newer release? The
 	// runtime setting is read before each check so a switch-off applies live.
 	versionCheck := &update.Checker{URL: cfg.UpdateManifestURL, Current: version.Version, Enabled: func() bool { return runtime.Bool(settings.KeyUpdateCheck) }, Log: log}
@@ -368,6 +373,7 @@ func serve(ctx context.Context) error {
 			&group.AdminHandler{Groups: groups, Revoker: connectHandler, Audit: auditLog, Log: log},
 			&idpadmin.AdminHandler{Providers: idpRepo, Audit: auditLog, Log: log, LDAPTester: &ldap.Authenticator{}, Sync: userSync},
 			oidcHandler,
+			scimHandler,
 			&credential.AdminHandler{Vault: vault, Audit: auditLog, Log: log},
 			&target.AdminHandler{Repo: targets, Prober: prober, Policies: policies, Live: registry, Revoker: connectHandler, Vault: vault, Audit: auditLog, Log: log},
 			&policy.AdminHandler{Repo: policies, Users: users, Revoker: connectHandler, Audit: auditLog, Log: log},

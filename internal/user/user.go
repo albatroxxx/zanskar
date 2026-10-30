@@ -59,6 +59,11 @@ type User struct {
 	// DirectoryRemovedAt is when the directory sync disabled the account
 	// because the person left the directory (ADR 0035); nil otherwise.
 	DirectoryRemovedAt *time.Time `json:"directory_removed_at,omitempty"`
+	// SCIMExternalID is the provider's own id for the person, as its SCIM
+	// client sent it (externalId); SCIMDeletedAt is when that client
+	// deleted the account. Both empty for an account SCIM never touched.
+	SCIMExternalID string     `json:"scim_external_id,omitempty"`
+	SCIMDeletedAt  *time.Time `json:"scim_deleted_at,omitempty"`
 
 	PasswordHash string `json:"-"`
 }

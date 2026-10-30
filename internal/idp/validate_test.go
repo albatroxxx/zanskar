@@ -110,6 +110,8 @@ func TestValidateSync(t *testing.T) {
 		{"too often", TypeOIDC, kc(realm, "", 4), false, 0},
 		{"too rarely", TypeOIDC, kc(realm, "", 1441), false, 0},
 		{"ldap", TypeLDAP, func() *Config { c := okLDAP(); c.SyncUsers = true; return c }(), true, 15},
+		{"pushed and listed at once", TypeOIDC, func() *Config { c := kc(realm, "", 0); c.SCIM = true; return c }(), false, 0},
+		{"pushed, any provider", TypeOIDC, func() *Config { c := okOIDC(); c.SCIM = true; return c }(), true, 0},
 		{"off keeps no interval", TypeOIDC, func() *Config { c := kc(realm, "", 30); c.SyncUsers = false; return c }(), true, 0},
 	}
 	for _, tc := range cases {

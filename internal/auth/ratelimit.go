@@ -173,3 +173,14 @@ func (g *hashGate) enter(ctx context.Context) (leave func(), ok bool) {
 }
 
 func (g *hashGate) leave() { <-g.slots }
+
+// IPLimiter is the per-address token bucket the sign-in routes use, for
+// other machine-facing routes that take a secret (the SCIM endpoint).
+type IPLimiter = ipLimiter
+
+// NewIPLimiter allows perMinute requests per address after a burst.
+func NewIPLimiter(perMinute, burst int) *IPLimiter { return newIPLimiter(perMinute, burst) }
+
+// LimiterKey is the bucket an address counts against: an IPv4 address as
+// it is, an IPv6 address by its /64.
+func LimiterKey(ip string) string { return limiterKey(ip) }

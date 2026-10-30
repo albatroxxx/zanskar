@@ -49,6 +49,46 @@ func (h *AdminHandler) Register(mux *http.ServeMux) {
 	mux.Handle("POST /api/v1/identity-providers/{id}/test", admin(http.HandlerFunc(h.test)))
 	mux.Handle("GET /api/v1/identity-providers/{id}/sync", admin(http.HandlerFunc(h.syncStatus)))
 	mux.Handle("POST /api/v1/identity-providers/{id}/sync", admin(http.HandlerFunc(h.syncNow)))
+	mux.Handle("POST /api/v1/identity-providers/{id}/scim-token", admin(http.HandlerFunc(h.newSCIMToken)))
+	mux.Handle("DELETE /api/v1/identity-providers/{id}/scim-token", admin(http.HandlerFunc(h.revokeSCIMToken)))
+}
+
+// newSCIMToken makes the provider a SCIM bearer token, replacing any earlier
+// one, and answers with it and the base URL to give the provider. The token
+// is shown this once: only its hash is kept.
+func (h *AdminHandler) newSCIMToken(w http.ResponseWriter, r *http.Request) {
+	p, err := h.Providers.Get(r.Context(), r.PathValue("id"))
+	if err != nil {
+		h.fail(w, r, err)
+		return
+	}
+	token, hash, err := idp.NewSCIMToken()
+	if err != nil {
+		httpx.Internal(w, r, h.Log, err)
+		return
+	}
+	replaced := p.SCIMTokenAt != nil
+	now := time.Now().UTC()
+	if err := h.Providers.SetSCIMToken(r.Context(), p.ID, hash, now); err != nil {
+		h.fail(w, r, err)
+		return
+	}
+	h.record(r, audit.IdPSCIMToken, p, map[string]any{"change": "created", "replaced": replaced})
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"token": token, "created_at": now, "base_path": "/api/v1/scim/" + p.ID})
+}
+
+func (h *AdminHandler) revokeSCIMToken(w http.ResponseWriter, r *http.Request) {
+	p, err := h.Providers.Get(r.Context(), r.PathValue("id"))
+	if err != nil {
+		h.fail(w, r, err)
+		return
+	}
+	if err := h.Providers.ClearSCIMToken(r.Context(), p.ID); err != nil {
+		h.fail(w, r, err)
+		return
+	}
+	h.record(r, audit.IdPSCIMToken, p, map[string]any{"change": "revoked"})
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // syncView is the state of a provider's user sync.
