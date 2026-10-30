@@ -407,7 +407,7 @@ td.actions > * + * { margin-left: 8px; }
    right, above the page head, so a page's own buttons keep the right edge and
    are never read as one group with it. The main column makes headroom. */
 .main:has(> .corner) { padding-top: 46px; }
-.corner { position: absolute; top: 12px; right: 32px; z-index: 30; display: flex; align-items: center; gap: 16px; }
+.corner { position: absolute; top: 12px; right: 32px; z-index: 30; display: flex; align-items: center; gap: 14px; }
 .corner-btn { position: relative; display: inline-flex; padding: 0; border: 0; background: none; color: var(--accent); cursor: pointer; }
 .corner-btn:hover { color: var(--accent-hover); }
 .corner-dot { position: absolute; top: -1px; right: -1px; width: 9px; height: 9px; border-radius: 50%; background: var(--danger); border: 2px solid var(--bg); }

@@ -246,7 +246,7 @@ export function SignInIcon() {
 
 export function BellIcon() {
   return (
-    <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <svg width="23" height="23" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
       <path d="M6 9a6 6 0 0 1 12 0c0 6 2.5 8 2.5 8h-17S6 15 6 9" />
       <path d="M10 20.5a2 2 0 0 0 4 0" />
     </svg>
@@ -255,7 +255,7 @@ export function BellIcon() {
 
 export function GearIcon() {
   return (
-    <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round" aria-hidden="true">
+    <svg width="23" height="23" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round" aria-hidden="true">
       <polygon points="19.4,9.0 22.3,10.2 22.3,13.8 19.4,15.0 19.4,15.2 20.6,18.0 18.0,20.6 15.2,19.4 15.0,19.4 13.8,22.3 10.2,22.3 9.0,19.4 8.8,19.4 6.0,20.6 3.4,18.0 4.6,15.2 4.6,15.0 1.7,13.8 1.7,10.2 4.6,9.0 4.6,8.8 3.4,6.0 6.0,3.4 8.8,4.6 9.0,4.6 10.2,1.7 13.8,1.7 15.0,4.6 15.2,4.6 18.0,3.4 20.6,6.0 19.4,8.8" />
       <circle cx="12" cy="12" r="3.2" />
     </svg>
@@ -268,6 +268,16 @@ export function DoneIcon() {
     <svg {...svgProps(28)}>
       <circle cx="12" cy="12" r="9" />
       <polyline points="8 12.5 11 15.5 16 9.5" />
+    </svg>
+  )
+}
+
+/** ThemeIcon is the corner's theme menu: a circle half light, half dark. */
+export function ThemeIcon() {
+  return (
+    <svg width="23" height="23" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden="true">
+      <circle cx="12" cy="12" r="8.5" />
+      <path d="M12 3.5a8.5 8.5 0 0 1 0 17z" fill="currentColor" stroke="none" />
     </svg>
   )
 }

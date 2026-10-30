@@ -274,7 +274,7 @@ export function ConsoleCLI() {
         title="Command line (Ctrl `)"
         onClick={toggle}
       >
-        <TerminalIcon size={28} />
+        <TerminalIcon size={25} />
       </button>
       {open && (
         <section id="console-cli" className="cli-panel" style={{ height }} aria-label="Command line">

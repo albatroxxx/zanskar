@@ -88,8 +88,11 @@
   --sidebar-w: 224px;
 }
 
+/* The dark tokens apply when the operating system is dark and no light
+   theme was chosen in the corner menu, or when dark was chosen (2026-10-30).
+   The two blocks must stay identical; tokens.test.ts checks it. */
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme="light"]) {
     --bg: #15161a;
     --bg-raised: #1d1f24;
     --bg-sunken: #0f1013;
@@ -119,3 +122,36 @@
     --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 8px 24px rgba(0, 0, 0, 0.35);
   }
 }
+
+:root[data-theme="dark"] {
+  --bg: #15161a;
+  --bg-raised: #1d1f24;
+  --bg-sunken: #0f1013;
+  --fg: #ece8df;
+  --fg-muted: #a7a297;
+  --fg-faint: #7b766b;
+  --line: #2a2d34;
+  --line-strong: #3c404a;
+  --accent: #8e9dff;
+  --accent-hover: #a3afff;
+  --accent-fg: #0f1013;
+  --accent-soft: #252a48;
+  --focus: #8e9dff;
+  --danger: #f4776d;
+  --danger-soft: #3a1613;
+  --warn: #e5b04a;
+  --warn-soft: #34260a;
+  --ok: #5fcf85;
+  --ok-soft: #10301f;
+  --proto-desk: #b3a7f2;
+  --proto-desk-soft: #24213f;
+  --proto-db: #6fc79b;
+  --proto-db-soft: #132a20;
+  --proto-app: #e5a876;
+  --proto-app-soft: #33241a;
+  --backdrop: rgba(0, 0, 0, 0.62);
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 8px 24px rgba(0, 0, 0, 0.35);
+}
+
+:root[data-theme="light"] { color-scheme: light; }
+:root[data-theme="dark"] { color-scheme: dark; }

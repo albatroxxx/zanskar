@@ -168,6 +168,27 @@ describe('the corner strip', () => {
     expect(await screen.findByText(/the release signature did not verify/)).toBeDefined()
   })
 
+  // 2026-10-30: the theme followed the operating system only.
+  it('switches the theme from its own menu and keeps the choice', async () => {
+    serve(newer, host)
+    strip()
+    const user = userEvent.setup()
+    await user.click(await screen.findByRole('button', { name: 'Theme' }))
+    const choices = within(await screen.findByRole('menu', { name: 'Theme' })).getAllByRole('menuitemradio')
+    expect(choices.map((c) => [c.textContent?.replace('✓', ''), c.getAttribute('aria-checked')])).toEqual([
+      ['System', 'true'],
+      ['Light', 'false'],
+      ['Dark', 'false'],
+    ])
+    await user.click(choices[2])
+    expect(document.documentElement.getAttribute('data-theme')).toBe('dark')
+    expect(screen.queryByRole('menu')).toBeNull()
+    await user.click(screen.getByRole('button', { name: 'Theme' }))
+    expect(screen.getByRole('menuitemradio', { name: /Dark/ }).getAttribute('aria-checked')).toBe('true')
+    await user.click(screen.getByRole('menuitemradio', { name: /System/ }))
+    expect(document.documentElement.hasAttribute('data-theme')).toBe(false)
+  })
+
   it('offers no host actions off systemd, and says why', async () => {
     serve(newer, { ...host, supervisor: 'kubernetes', available: false, reason: 'Needs a systemd host; on Kubernetes, roll the deployment.' })
     strip()

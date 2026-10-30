@@ -6,20 +6,57 @@ import type { HostStatus, SystemStatus, UpdateStatus } from '../api/types'
 import { ConsoleCLI } from './ConsoleCLI'
 import { HostActionDialog } from './HostActionDialog'
 import type { HostAction } from './hostAction'
-import { BellIcon, GearIcon } from './icons'
+import { readTheme, setTheme, type ThemeChoice } from '../styles/theme'
+import { BellIcon, GearIcon, ThemeIcon } from './icons'
 import { CornerPopover, MenuItem, MenuSeparator } from './Popover'
 import { Alert, Badge } from './ui'
 
-/** CornerBar is the admin console's top-right strip: the bell (is there a
- *  newer release), the gear (restart, reboot, stop — ADR 0032) and the
- *  command line (ADR 0027), one row of bare glyphs. */
+/** CornerBar is the admin console's top-right strip: the theme, the bell
+ *  (is there a newer release), the gear (restart, reboot, stop — ADR 0032)
+ *  and the command line (ADR 0027), one row of bare glyphs. */
 export function CornerBar() {
   return (
     <div className="corner">
+      <ThemeMenu />
       <UpdateBell />
       <GearMenu />
       <ConsoleCLI />
     </div>
+  )
+}
+
+/** CornerThemeOnly is the access and audit portals' corner: the theme menu alone. */
+export function CornerThemeOnly() {
+  return (
+    <div className="corner">
+      <ThemeMenu />
+    </div>
+  )
+}
+
+const themeNames: Record<ThemeChoice, string> = { system: 'System', light: 'Light', dark: 'Dark' }
+
+/** ThemeMenu picks the console's theme for this browser (2026-10-30). */
+function ThemeMenu() {
+  const [theme, setChoice] = useState<ThemeChoice>(readTheme)
+  return (
+    <CornerPopover label="Theme" icon={<ThemeIcon />} kind="menu">
+      {(close) =>
+        (['system', 'light', 'dark'] as const).map((t) => (
+          <MenuItem
+            key={t}
+            checked={theme === t}
+            onSelect={() => {
+              setTheme(t)
+              setChoice(t)
+              close()
+            }}
+          >
+            {themeNames[t]}
+          </MenuItem>
+        ))
+      }
+    </CornerPopover>
   )
 }
 
