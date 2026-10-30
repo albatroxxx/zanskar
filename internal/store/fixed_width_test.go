@@ -27,6 +27,7 @@ var rewriteStatement = regexp.MustCompile(`(?m)^UPDATE (\w+) SET (\w+) =`)
 // saying so, provided every value it holds is written through TimeArg.
 var notRewritten = map[string]string{
 	"schema_migrations.applied_at": "the migrator's own bookkeeping, TEXT on both engines, written as RFC 3339 whole seconds (one width already) and never read or compared",
+	"users.directory_removed_at":   "added by 0033, after the rewrite, so it has no older rows; written only through TimeArg (user.Repo.DisableRemoved)",
 }
 
 // TestEveryTimestampColumnIsRewritten fails when the migrated SQLite schema
