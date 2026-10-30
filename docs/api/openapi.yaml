@@ -5140,8 +5140,9 @@ components:
               type: boolean
               description: |
                 Ask the provider for a fresh sign-in every time (`prompt=login` and `max_age=0`), and
-                refuse one whose `auth_time` is older than the sign-in (`reauth_not_done`). For a
-                provider whose sign-out keeps its own session. Google takes no `prompt=login`.
+                refuse one whose `auth_time` is older than the sign-in (`reauth_not_done`) or absent
+                (`auth_time_missing`; Entra ID sends it only as an optional claim). For a provider
+                whose sign-out keeps its own session. Google takes no `prompt=login`.
         ldap:
           type: object
           properties:

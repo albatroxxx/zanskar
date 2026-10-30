@@ -287,8 +287,9 @@ func TestEntraIDLifecycle(t *testing.T) {
 	if st, _ := e.call(t, "DELETE", "/Users/"+id, nil); st != 404 {
 		t.Fatalf("delete twice: %d", st)
 	}
-	// Created again: the same account comes back, enabled.
-	st, out = e.call(t, "POST", "/Users", map[string]any{"schemas": []string{schemaUser}, "userName": "grace.hopper@corp.example", "externalId": "0a21f0f2-new", "active": true})
+	// Created again, saying nothing of active: the same account comes
+	// back, enabled.
+	st, out = e.call(t, "POST", "/Users", map[string]any{"schemas": []string{schemaUser}, "userName": "grace.hopper@corp.example", "externalId": "0a21f0f2-new"})
 	if st != 201 || out["id"] != id || out["active"] != true || out["externalId"] != "0a21f0f2-new" {
 		t.Fatalf("rehire: %d %v", st, out)
 	}

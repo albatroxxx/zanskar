@@ -98,21 +98,22 @@ func TestPromptLogin(t *testing.T) {
 
 // TestPromptLoginNeedsFreshAuthTime: with prompt_login a sign-in counts only
 // if the provider says it authenticated the person after the sign-in began
-// (auth_time). One made on an older session, or with no auth_time, is
-// refused as reauth_not_done: Authentik 2026.8 ignores prompt=login and
+// (auth_time). One made on an older session is refused as reauth_not_done,
+// one with no auth_time as auth_time_missing: Authentik 2026.8 ignores prompt=login and
 // max_age=0 alike and hands back its session, which would otherwise be
 // the session the person just signed out of.
 func TestPromptLoginNeedsFreshAuthTime(t *testing.T) {
 	cases := []struct {
 		name     string
 		authTime any
-		ok       bool
+		want     string // the refusal, "" for a sign-in that completes
 	}{
-		{"fresh", time.Now().Unix(), true},
-		{"a little behind our clock", time.Now().Add(-30 * time.Second).Unix(), true},
-		{"an hour old", time.Now().Add(-time.Hour).Unix(), false},
-		{"absent", nil, false},
-		{"not a number", "yesterday", false},
+		{"fresh", time.Now().Unix(), ""},
+		{"a little behind our clock", time.Now().Add(-30 * time.Second).Unix(), ""},
+		{"an hour old", time.Now().Add(-time.Hour).Unix(), "reauth_not_done"},
+		// Entra ID sends auth_time only once an administrator adds it.
+		{"absent", nil, "auth_time_missing"},
+		{"not a number", "yesterday", "auth_time_missing"},
 	}
 	for _, tc := range cases {
 		f := newFakeIdP(t)
@@ -122,11 +123,11 @@ func TestPromptLoginNeedsFreshAuthTime(t *testing.T) {
 		}
 		e, id := newEnv(t, f, idp.Config{OIDC: &idp.OIDCConfig{ClientID: "cid", ClientSecret: "s", PromptLogin: true}, AutoProvision: true})
 		_, location, cookies := drive(t, e, f, id)
-		if tc.ok != (location == "/admin" && hasSession(cookies)) {
+		if (tc.want == "") != (location == "/admin" && hasSession(cookies)) {
 			t.Errorf("%s: %s", tc.name, location)
 		}
-		if !tc.ok && !strings.Contains(location, "error=reauth_not_done") {
-			t.Errorf("%s: want reauth_not_done, got %s", tc.name, location)
+		if tc.want != "" && !strings.Contains(location, "error="+tc.want) {
+			t.Errorf("%s: want %s, got %s", tc.name, tc.want, location)
 		}
 	}
 	// Without prompt_login an old session is the provider's business.

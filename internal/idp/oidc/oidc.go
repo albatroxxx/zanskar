@@ -209,7 +209,14 @@ func (h *Handler) callback(w http.ResponseWriter, r *http.Request) {
 		// on an older session is refused, never taken silently: a provider
 		// that ignores the request would otherwise hand back the session the
 		// person just signed out of.
-		if at := authTime(idt); at.IsZero() || at.Before(time.Unix(st.Exp, 0).Add(-stateTTL-reauthSkew)) {
+		at := authTime(idt)
+		if at.IsZero() {
+			// Entra ID sends auth_time only as an optional claim an
+			// administrator adds; without it nothing shows a fresh sign-in.
+			h.fail(w, r, "", id, "auth_time_missing", errors.New("the provider sent no auth_time, so a fresh sign-in cannot be told from an old one"))
+			return
+		}
+		if at.Before(time.Unix(st.Exp, 0).Add(-stateTTL - reauthSkew)) {
 			h.fail(w, r, "", id, "reauth_not_done", fmt.Errorf("the provider did not authenticate afresh (auth_time %v)", at))
 			return
 		}

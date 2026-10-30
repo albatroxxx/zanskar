@@ -11,7 +11,7 @@ import base64, hashlib, hmac, http.cookiejar, json, os, re, secrets, ssl, struct
 
 AK = "https://ak"
 AK_API = AK + "/api/v3"
-ZK = "http://zk:18443"
+ZK = os.environ["ZK_URL"]  # inside.sh: plain HTTP on the private test network
 CTX = ssl.create_default_context(cafile="/w/ak.pem")
 AK_TOKEN = os.environ["AK_TOKEN"]
 ROOT_PW = os.environ["ZANSKAR_E2E_ROOT_PW"]

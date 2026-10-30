@@ -12,7 +12,9 @@ ZANSKAR_ADMIN_PASSWORD=$ZANSKAR_E2E_ROOT_PW /tmp/zanskar admin create --username
 ZANSKAR_MASTER_KEY=$(/tmp/zanskar keygen); export ZANSKAR_MASTER_KEY
 /tmp/zanskar serve > /tmp/z.log 2>&1 &
 for _ in $(seq 1 50); do wget -q -O /dev/null http://127.0.0.1:18443/readyz 2>/dev/null && break; sleep 0.2; done
-python3 /w/e2e.py || { echo "--- gateway log"; grep -v "path=/readyz" /tmp/z.log | tail -40; exit 1; }
+# Authentik's SCIM client and the browser reach the gateway by this name
+# on the run's private Docker network, without TLS: nothing leaves it.
+ZK_URL=http://zk:18443 python3 /w/e2e.py || { echo "--- gateway log"; grep -v "path=/readyz" /tmp/z.log | tail -40; exit 1; }
 errors=$(grep -c "level=ERROR" /tmp/z.log || true)
 echo "gateway errors: $errors"
 [ "$errors" = 0 ] || { grep "level=ERROR" /tmp/z.log; exit 1; }

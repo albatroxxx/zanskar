@@ -325,6 +325,11 @@ func (h *Handler) createUser(w http.ResponseWriter, r *http.Request, p *idp.Open
 			return
 		}
 		existing.SCIMDeletedAt, existing.SCIMExternalID = nil, want.externalID
+		if want.active == nil {
+			// A create means active unless it says otherwise.
+			active := true
+			want.active = &active
+		}
 		if !h.apply(w, r, p, existing, want, actor) {
 			return
 		}

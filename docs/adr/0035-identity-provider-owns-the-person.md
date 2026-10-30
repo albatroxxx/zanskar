@@ -137,7 +137,8 @@ Keycloak-shaped:
   `prompt_login` asks for a fresh sign-in every time with `prompt=login` and `max_age=0`; because
   Authentik 2026.8 honours neither, the callback holds the provider to it, refusing a sign-in whose
   `auth_time` is older than the request (`reauth_not_done`) rather than taking the old session.
-  Google takes no `prompt=login`.
+  A token with no `auth_time` is refused too (`auth_time_missing`): Entra ID sends it only as an
+  optional claim an administrator adds. Google takes no `prompt=login`.
 
 What stays vendor-specific is an addition beside the standard path, not instead of it: the Keycloak
 listing, for a realm that cannot push.
