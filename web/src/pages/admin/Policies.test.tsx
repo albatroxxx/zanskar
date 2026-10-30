@@ -1,256 +1,203 @@
 import { cleanup, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { ApiError, api } from '../../api/client'
-import type { Policy } from '../../api/types'
+import type { Policy, PolicyGrant } from '../../api/types'
 import { Policies } from './Policies'
+import { PolicyEditor } from './PolicyEditor'
+import { newGrant } from './policyModel'
 
 afterEach(() => {
   cleanup()
   vi.restoreAllMocks()
 })
 
-const groups = [{ id: 'g1', name: 'ops' }, { id: 'g2', name: 'dba' }]
+// ADR 0036: a policy names many groups and users and holds grants, each
+// picking a kind, then targets with a protocol each or tags, then its own
+// conditions. The list shows one line per grant; the editor is a page.
+
+const groups = [{ id: 'g1', name: 'ops', member_count: 2 }, { id: 'g2', name: 'dba', member_count: 1 }]
 const users = [
   { id: 'u1', username: 'alice', display_name: 'Alice', roles: ['user'], status: 'active' },
   { id: 'u2', username: 'ava', display_name: 'Ava the auditor', roles: ['auditor'], status: 'active' },
 ]
-const targets = [{ id: 't1', name: 'web-1', tags: {} }, { id: 't2', name: 'db-1', tags: {} }]
-const asgs = [{ id: 'a1', name: 'fleet' }]
+const targets = [
+  { id: 't1', name: 'web-1', os_family: 'linux', capabilities: ['ssh'], status: 'active', tags: { env: 'prod' } },
+  { id: 't2', name: 'dc-1', os_family: 'windows', capabilities: [], status: 'active', tags: { env: 'prod' } },
+  { id: 't3', name: 'build', os_family: 'linux', capabilities: [], status: 'active', tags: { env: 'staging' } },
+  { id: 'd1', name: 'orders', os_family: 'other', engine: 'postgres', capabilities: [], status: 'active', tags: {} },
+  { id: 'w1', name: 'wiki', os_family: 'other', app_upstream: 'http://10.0.0.8', capabilities: [], status: 'active', tags: {} },
+]
+const asgs = [{ id: 'a1', name: 'fleet', os_family: 'linux', capabilities: ['ssh'], tags: {} }]
+
+function grant(over: Partial<PolicyGrant>): PolicyGrant {
+  return { ...newGrant('host'), id: 'gr1', ...over }
+}
 
 function policy(over: Partial<Policy> = {}): Policy {
   return {
-    id: 'p1', name: 'ops-ssh', description: 'Shell on the fleet', enabled: true, group_id: 'g1',
-    target_selector: { tags: { env: 'prod' } }, protocols: ['ssh'], time_windows: [],
-    idle_timeout_minutes: 15, max_session_minutes: null, allow_clipboard: false, allow_file_transfer: false,
-    require_mfa: true, created_at: '2026-10-01T00:00:00Z', updated_at: '2026-10-01T00:00:00Z', ...over,
+    id: 'p1', name: 'ops-web', description: 'Shell on the fleet', enabled: true,
+    subjects: [{ kind: 'group', id: 'g1' }],
+    grants: [grant({ targets: [{ id: 't1', protocols: ['ssh'] }] })],
+    created_at: '2026-10-01T00:00:00Z', updated_at: '2026-10-01T00:00:00Z', ...over,
   }
 }
 
-/** lists serves every collection the page reads, with the policies given. */
-function lists(policies: Policy[]) {
+/** serve answers every collection the pages read, and the one policy by id. */
+function serve(policies: Policy[]) {
   return vi.spyOn(api, 'get').mockImplementation(async (path: string) => {
-    const items = path.startsWith('/access-policies') ? policies : path.startsWith('/groups') ? groups : path.startsWith('/users') ? users : path.startsWith('/targets') ? targets : path.startsWith('/autoscaling-groups') ? asgs : []
+    const one = policies.find((p) => path === `/access-policies/${p.id}`)
+    if (one) return one as never
+    const items = path.startsWith('/access-policies') ? policies : path.startsWith('/groups') ? groups : path.startsWith('/users') ? users
+      : path.startsWith('/targets') ? targets : path.startsWith('/autoscaling-groups') ? asgs : []
     return { items } as never
   })
 }
 
-const refused = (status: number, message: string) => new ApiError(status, { code: 'invalid', message, request_id: 'req-1' }, String(status))
+function Where() {
+  return <p data-testid="where">{useLocation().pathname}</p>
+}
 
-describe('Policies list', () => {
-  it('shows each policy: who, which protocols, which targets, windows, limits and state', async () => {
-    lists([
-      policy(),
-      policy({ id: 'p2', name: 'alice-rdp', description: '', group_id: undefined, user_id: 'u1', target_selector: { targets: ['t1', 't2'], asgs: ['a1'] }, protocols: ['rdp', 'winrm'], enabled: false, max_session_minutes: 120, time_windows: [{ days: ['mon'], from: '09:00', to: '17:00', tz: 'UTC' }], rules: [{ target_selector: { tags: { role: 'jump' } }, protocols: ['ssh'] }] }),
+function at(path: string) {
+  render(
+    <MemoryRouter initialEntries={[path]}>
+      <Routes>
+        <Route path="/admin/policies" element={<><Policies /><Where /></>} />
+        <Route path="/admin/policies/new" element={<><PolicyEditor /><Where /></>} />
+        <Route path="/admin/policies/:id" element={<><PolicyEditor /><Where /></>} />
+      </Routes>
+    </MemoryRouter>,
+  )
+}
+
+describe('the policy list', () => {
+  it('shows who each policy is for and one line per grant, and marks a policy left with no one', async () => {
+    serve([
+      policy({ grants: [grant({ targets: [{ id: 't1', protocols: ['ssh'] }, { id: 't2', protocols: ['rdp', 'winrm'] }] }),
+        grant({ id: 'gr2', kind: 'database', targets: [{ id: 'd1', protocols: ['database'] }], access: 'approval', require_mfa: false })] }),
+      policy({ id: 'p2', name: 'orphan', description: '', subjects: [], enabled: false }),
     ])
-    render(<Policies />)
-
-    const first = (await screen.findByText('ops-ssh')).closest('tr')!
+    at('/admin/policies')
+    const first = (await screen.findByText('ops-web')).closest('tr')!
     expect(within(first).getByText('ops')).toBeDefined()
-    expect(within(first).getByText('group')).toBeDefined()
-    expect(within(first).getByText('ssh')).toBeDefined()
-    expect(within(first).getByText('env: prod')).toBeDefined()
-    expect(within(first).getByText('always')).toBeDefined()
-    expect(within(first).getByText('15 m / ∞')).toBeDefined()
-    expect(within(first).getByRole('button', { name: 'Enabled' })).toBeDefined()
-
-    const second = screen.getByText('alice-rdp').closest('tr')!
-    expect(within(second).getByText('alice')).toBeDefined()
-    expect(within(second).getByText('user')).toBeDefined()
-    expect(within(second).getByText('web-1, db-1 · ASG fleet')).toBeDefined()
-    expect(within(second).getByText('+ 1 rule')).toBeDefined()
-    expect(within(second).getByText('ssh → role: jump')).toBeDefined()
-    expect(within(second).getByText('15 m / 120 m')).toBeDefined()
-    expect(within(second).getByRole('button', { name: 'Disabled' })).toBeDefined()
-    // One time window is counted, not spelled out, in the list.
-    expect(within(second).getAllByRole('cell')[4].textContent).toBe('1')
+    expect(within(first).getByText('Host · web-1 (SSH), dc-1 (RDP, WinRM) · Standing · MFA · 15m')).toBeDefined()
+    expect(within(first).getByText('Database · orders · Approval · 15m')).toBeDefined()
+    const orphan = screen.getByText('orphan').closest('tr')!
+    expect(within(orphan).getByText('no one')).toBeDefined()
+    expect(within(orphan).getByRole('button', { name: 'Disabled' })).toBeDefined()
+    expect(within(first).getByRole('link', { name: 'Edit' }).getAttribute('href')).toBe('/admin/policies/p1')
   })
 
-  it('says nobody can connect while there is no policy, and names a failed read', async () => {
-    lists([])
-    const { unmount } = render(<Policies />)
-    expect(await screen.findByText('No policies yet. Nobody can connect until a policy grants access.')).toBeDefined()
-    unmount()
-
-    vi.spyOn(api, 'get').mockImplementation(async (path: string) => {
-      if (path.startsWith('/access-policies')) throw new ApiError(500, { code: 'internal', message: 'database is locked', request_id: 'req-9' }, '500')
-      return { items: [] } as never
-    })
-    render(<Policies />)
-    expect(await screen.findByText('database is locked (reference req-9)')).toBeDefined()
-    expect(screen.queryByText(/No policies yet/)).toBeNull()
-  })
-})
-
-describe('Policy form', () => {
-  async function openNew() {
-    lists([])
-    render(<Policies />)
-    await screen.findByText(/No policies yet/)
-    const user = userEvent.setup()
-    await user.click(screen.getByRole('button', { name: 'Add policy' }))
-    const form = screen.getByRole('dialog', { name: 'Add policy' })
-    return { user, form }
-  }
-
-  it('refuses what the server would refuse, before sending anything', async () => {
-    const post = vi.spyOn(api, 'post').mockResolvedValue({} as never)
-    const { user, form } = await openNew()
-    const create = within(form).getByRole('button', { name: 'Create' })
-    await user.type(within(form).getByLabelText('Name'), 'empty')
-
-    // The default form grants ssh on nothing.
-    await user.click(create)
-    expect(await within(form).findByText('the main rule has protocols but no targets: pick targets, or clear its protocols and use rules only')).toBeDefined()
-
-    // Tags are a Key and a Value box (2026-10-30); a policy matches on the
-    // value, so a key alone is refused.
-    await user.click(within(form).getAllByRole('button', { name: 'Add tag' })[0])
-    await user.type(within(form).getByLabelText('Tag 1 key'), 'env')
-    await user.click(create)
-    expect(await within(form).findByText('tag env: value is empty')).toBeDefined()
-    await user.type(within(form).getByLabelText('Tag 1 value'), 'prod')
-
-    // Targets with no protocol.
-    await user.click(within(form).getByLabelText('SSH'))
-    await user.click(create)
-    expect(await within(form).findByText('the main rule has targets but no protocol')).toBeDefined()
-    await user.click(within(form).getByLabelText('SSH'))
-
-    // Limits that are not whole minutes or days.
-    const idle = within(form).getByLabelText('Idle timeout (minutes)')
-    await user.clear(idle)
-    await user.type(idle, '2.5')
-    await user.click(create)
-    expect(await within(form).findByText('idle timeout must be a whole number of minutes')).toBeDefined()
-    await user.clear(idle)
-    await user.type(idle, '30')
-    await user.type(within(form).getByLabelText(/Keep recordings/), '4000')
-    await user.click(create)
-    expect(await within(form).findByText('retention must be 1-3650 days')).toBeDefined()
-    await user.clear(within(form).getByLabelText(/Keep recordings/))
-    await user.type(within(form).getByLabelText(/Max session/), '0')
-    await user.click(create)
-    expect(await within(form).findByText('max session must be a whole number of minutes')).toBeDefined()
-    await user.clear(within(form).getByLabelText(/Max session/))
-
-    // An extra rule with nothing selected, then one with no protocol.
-    await user.click(within(form).getByRole('button', { name: 'Add rule' }))
-    await user.click(create)
-    expect(await within(form).findByText('rule 1: select targets by tag, by name, or an autoscaling group')).toBeDefined()
-    // The rule's pickers repeat the base ones; the second 'fleet' is the rule's.
-    await user.click(within(form).getAllByLabelText('fleet')[1])
-    await user.click(create)
-    expect(await within(form).findByText('rule 1: choose at least one protocol')).toBeDefined()
-
-    expect(post).not.toHaveBeenCalled()
-  })
-
-  it('sends what was entered, as the API wants it', async () => {
-    const post = vi.spyOn(api, 'post').mockResolvedValue({} as never)
-    const { user, form } = await openNew()
-    await user.type(within(form).getByLabelText('Name'), '  dba-prod ')
-    await user.type(within(form).getByLabelText('Description'), 'Databases, office hours')
-    await user.selectOptions(within(form).getByLabelText('Group'), 'g2')
-    await user.click(within(form).getByRole('button', { name: 'Add tag' }))
-    await user.type(within(form).getByLabelText('Tag 1 key'), 'env')
-    await user.type(within(form).getByLabelText('Tag 1 value'), 'prod')
-    await user.click(within(form).getByRole('button', { name: 'Add tag' }))
-    await user.type(within(form).getByLabelText('Tag 2 key'), ' tier ')
-    await user.type(within(form).getByLabelText('Tag 2 value'), ' db ')
-    await user.click(within(form).getByRole('button', { name: 'Add tag' }))
-    await user.click(within(form).getByLabelText('db-1'))
-    await user.click(within(form).getByLabelText('SSH'))
-    await user.click(within(form).getByLabelText('database'))
-    await user.click(within(form).getByRole('button', { name: 'Add window' }))
-    await user.click(within(form).getByLabelText('sat'))
-    await user.clear(within(form).getByLabelText('Time zone'))
-    const idle = within(form).getByLabelText('Idle timeout (minutes)')
-    await user.clear(idle)
-    await user.type(idle, '10')
-    await user.type(within(form).getByLabelText(/Max session/), '240')
-    await user.type(within(form).getByLabelText(/Keep recordings/), '30')
-    await user.click(within(form).getByLabelText('Allow file transfer'))
-    await user.click(within(form).getByLabelText('Require approval (just-in-time access)'))
-    await user.click(within(form).getByRole('button', { name: 'Create' }))
-
-    await waitFor(() => expect(post).toHaveBeenCalledTimes(1))
-    expect(post.mock.calls[0][0]).toBe('/access-policies')
-    expect(post.mock.calls[0][1]).toEqual({
-      name: 'dba-prod',
-      description: 'Databases, office hours',
-      enabled: true,
-      group_id: 'g2',
-      target_selector: { tags: { env: 'prod', tier: 'db' }, targets: ['t2'] },
-      protocols: ['database'],
-      rules: [],
-      time_windows: [{ days: ['mon', 'tue', 'wed', 'thu', 'fri', 'sat'], from: '09:00', to: '18:00', tz: 'UTC' }],
-      idle_timeout_minutes: 10,
-      max_session_minutes: 240,
-      retention_days: 30,
-      allow_clipboard: false,
-      allow_file_transfer: true,
-      require_mfa: true,
-      require_approval: true,
-    })
-    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
-  })
-
-  it('offers only accounts that can connect as a user policy\'s subject', async () => {
-    const { user, form } = await openNew()
-    await user.click(within(form).getByLabelText('One user'))
-    const picker = within(form).getByLabelText('User') as HTMLSelectElement
-    expect(Array.from(picker.options).map((o) => o.textContent)).toEqual(['alice (Alice)'])
-    expect(within(form).getByText(/Review-only accounts are not listed/)).toBeDefined()
-  })
-
-  it('shows the server\'s refusal in the form and keeps it open', async () => {
-    vi.spyOn(api, 'post').mockRejectedValue(refused(422, 'a policy named dba-prod already exists'))
-    const { user, form } = await openNew()
-    await user.type(within(form).getByLabelText('Name'), 'dba-prod')
-    await user.click(within(form).getByLabelText('web-1'))
-    await user.click(within(form).getByRole('button', { name: 'Create' }))
-    expect(await within(form).findByText('a policy named dba-prod already exists')).toBeDefined()
-    expect(screen.getByRole('dialog', { name: 'Add policy' })).toBeDefined()
-  })
-
-  it('edits in place and saves with PUT to the policy\'s own address', async () => {
-    lists([policy({ rules: [{ target_selector: { targets: ['t1'] }, protocols: ['rdp'] }] })])
-    const put = vi.spyOn(api, 'put').mockResolvedValue({} as never)
-    render(<Policies />)
-    const user = userEvent.setup()
-    await user.click(await screen.findByRole('button', { name: 'Edit' }))
-    const form = screen.getByRole('dialog', { name: 'Edit ops-ssh' })
-    expect((within(form).getByLabelText('Name') as HTMLInputElement).value).toBe('ops-ssh')
-    expect((within(form).getAllByLabelText('Tag 1 key')[0] as HTMLInputElement).value).toBe('env')
-    expect((within(form).getAllByLabelText('Tag 1 value')[0] as HTMLInputElement).value).toBe('prod')
-    expect((within(form).getAllByLabelText('SSH')[0] as HTMLInputElement).checked).toBe(true)
-    // The existing rule is shown with its own pickers, after the base ones.
-    expect((within(form).getAllByLabelText('RDP')[0] as HTMLInputElement).checked).toBe(false)
-    expect((within(form).getAllByLabelText('RDP')[1] as HTMLInputElement).checked).toBe(true)
-    expect((within(form).getAllByLabelText('web-1')[1] as HTMLInputElement).checked).toBe(true)
-    await user.click(within(form).getByLabelText('Enabled'))
-    await user.click(within(form).getByRole('button', { name: 'Save' }))
-    await waitFor(() => expect(put).toHaveBeenCalledTimes(1))
-    expect(put.mock.calls[0][0]).toBe('/access-policies/p1')
-    expect(put.mock.calls[0][1]).toMatchObject({ enabled: false, protocols: ['ssh'], rules: [{ target_selector: { targets: ['t1'] }, protocols: ['rdp'] }] })
-  })
-})
-
-describe('Deleting a policy', () => {
-  it('says who loses access, deletes on confirm, and shows a refusal', async () => {
-    lists([policy({ group_id: undefined, user_id: 'u1' })])
-    const del = vi.spyOn(api, 'del').mockRejectedValueOnce(refused(409, 'the policy is in use by an approved request')).mockResolvedValue({} as never)
-    render(<Policies />)
+  it('deletes after a confirmation that says what happens to live sessions', async () => {
+    serve([policy()])
+    const del = vi.spyOn(api, 'del').mockResolvedValue(undefined as never)
+    at('/admin/policies')
     const user = userEvent.setup()
     await user.click(await screen.findByRole('button', { name: 'Delete' }))
-    const dialog = screen.getByRole('dialog', { name: 'Delete policy ops-ssh?' })
-    expect(within(dialog).getByText('alice loses the access it granted, and any live session it allowed ends now.')).toBeDefined()
+    const dialog = screen.getByRole('dialog', { name: 'Delete policy ops-web?' })
+    expect(within(dialog).getByText(/re-checked/)).toBeDefined()
     await user.click(within(dialog).getByRole('button', { name: 'Delete' }))
-    expect(await within(dialog).findByText('the policy is in use by an approved request')).toBeDefined()
-    await user.click(within(dialog).getByRole('button', { name: 'Delete' }))
-    await waitFor(() => expect(del).toHaveBeenCalledTimes(2))
-    expect(del).toHaveBeenLastCalledWith('/access-policies/p1')
-    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    await waitFor(() => expect(del).toHaveBeenCalledWith('/access-policies/p1'))
+  })
+})
+
+describe('the policy editor', () => {
+  it('builds a policy for groups and users, with a protocol per target, tags, and conditions per grant', async () => {
+    serve([])
+    const post = vi.spyOn(api, 'post').mockResolvedValue({} as never)
+    at('/admin/policies/new')
+    const user = userEvent.setup()
+    await user.type(await screen.findByLabelText('Name'), 'platform')
+    // Many groups and users; a review-only account is not offered.
+    await user.click(await screen.findByLabelText('ops'))
+    await user.click(screen.getByLabelText('dba'))
+    expect(screen.queryByLabelText('ava')).toBeNull()
+    await user.click(screen.getByLabelText('alice'))
+
+    // Host is the first kind: only hosts are listed, each with the
+    // protocols it serves; a host with one is ticked for the admin.
+    const card = screen.getByRole('region', { name: 'Grant 1' })
+    expect(within(card).queryByLabelText('orders')).toBeNull()
+    await user.click(within(card).getByLabelText('web-1'))
+    expect((within(card).getByLabelText('SSH on web-1') as HTMLInputElement).checked).toBe(true)
+    await user.click(within(card).getByLabelText('dc-1'))
+    expect(within(card).getByLabelText('RDP on dc-1')).toBeDefined()
+    expect(within(card).queryByLabelText('VNC on dc-1')).toBeNull() // a Windows host before a probe: rdp, winrm, ssh
+    await user.click(within(card).getByLabelText('RDP on dc-1'))
+    await user.click(within(card).getByLabelText('WinRM on dc-1'))
+    // Tags: every key, any of a repeated key's values.
+    await user.click(within(card).getByRole('button', { name: 'Add tag' }))
+    await user.type(within(card).getByLabelText('Tag 1 key'), 'env')
+    await user.type(within(card).getByLabelText('Tag 1 value'), 'staging')
+    await user.click(within(card).getByRole('radio', { name: 'Approval (just-in-time)' }))
+    await user.click(within(card).getByLabelText('Clipboard'))
+
+    // A second grant with the same conditions, for the database.
+    await user.click(screen.getByRole('button', { name: 'Add grant, same conditions' }))
+    const second = screen.getByRole('region', { name: 'Grant 2' })
+    await user.click(within(second).getByRole('radio', { name: 'Database' }))
+    await user.click(within(second).getByLabelText('orders'))
+    expect(within(second).queryByLabelText(/on orders/)).toBeNull() // a database has one protocol, not chips
+    await user.click(screen.getByRole('button', { name: 'Create' }))
+
+    await waitFor(() => expect(post).toHaveBeenCalledTimes(1))
+    const [path, body] = post.mock.calls[0] as [string, Record<string, unknown>]
+    expect(path).toBe('/access-policies')
+    expect(body).toEqual({
+      name: 'platform', description: '', enabled: true,
+      subjects: [{ kind: 'group', id: 'g1' }, { kind: 'group', id: 'g2' }, { kind: 'user', id: 'u1' }],
+      grants: [
+        { kind: 'host', targets: [{ id: 't1', protocols: ['ssh'] }, { id: 't2', protocols: ['rdp', 'winrm'] }],
+          tags: { match: { env: ['staging'] }, protocols: ['ssh'] }, access: 'approval', sign_in: 'target', require_mfa: true,
+          allow_clipboard: true, allow_file_transfer: false, idle_timeout_minutes: 15, max_session_minutes: null, time_windows: [], retention_days: null },
+        { kind: 'database', targets: [{ id: 'd1', protocols: ['database'] }], access: 'approval', sign_in: 'target', require_mfa: true,
+          allow_clipboard: true, allow_file_transfer: false, idle_timeout_minutes: 15, max_session_minutes: null, time_windows: [], retention_days: null },
+      ],
+    })
+    expect(screen.getByTestId('where').textContent).toBe('/admin/policies')
+    // Nothing of the old shape goes out.
+    for (const old of ['group_id', 'user_id', 'target_selector', 'protocols', 'rules', 'require_approval']) expect(body).not.toHaveProperty(old)
+  })
+
+  it('names what is missing before sending, and the server\'s refusal after', async () => {
+    serve([])
+    const post = vi.spyOn(api, 'post').mockRejectedValue(new ApiError(422, { code: 'kind_mismatch', message: 'grant 1: t1 is a database, not a host', request_id: 'r' }, '422'))
+    at('/admin/policies/new')
+    const user = userEvent.setup()
+    await user.type(await screen.findByLabelText('Name'), 'p')
+    await user.click(screen.getByRole('button', { name: 'Create' }))
+    expect(await screen.findByText('Choose at least one group or user')).toBeDefined()
+    await user.click(await screen.findByLabelText('ops'))
+    await user.click(screen.getByRole('button', { name: 'Create' }))
+    expect(await screen.findByText('Grant 1: choose targets, or match tags')).toBeDefined()
+    const card = screen.getByRole('region', { name: 'Grant 1' })
+    await user.click(within(card).getByLabelText('build')) // two protocols possible: none ticked
+    await user.click(screen.getByRole('button', { name: 'Create' }))
+    expect(await screen.findByText('Grant 1: build has no protocol')).toBeDefined()
+    expect(post).not.toHaveBeenCalled()
+    await user.click(within(card).getByLabelText('SSH on build'))
+    await user.click(screen.getByRole('button', { name: 'Create' }))
+    expect(await screen.findByText('grant 1: t1 is a database, not a host')).toBeDefined()
+  })
+
+  it('edits in place: loads the grants, keeps their ids, and saves with PUT', async () => {
+    serve([policy({ grants: [grant({ targets: [{ id: 't1', protocols: ['ssh'] }] })] })])
+    const put = vi.spyOn(api, 'put').mockResolvedValue({} as never)
+    at('/admin/policies/p1')
+    const user = userEvent.setup()
+    expect(((await screen.findByLabelText('Name')) as HTMLInputElement).value).toBe('ops-web')
+    expect((screen.getByLabelText('ops') as HTMLInputElement).checked).toBe(true)
+    const card = screen.getByRole('region', { name: 'Grant 1' })
+    expect((within(card).getByLabelText('SSH on web-1') as HTMLInputElement).checked).toBe(true)
+    // Changing the kind resets what the grant covered.
+    await user.click(within(card).getByRole('radio', { name: 'Autoscaling' }))
+    await user.click(within(card).getByLabelText('fleet'))
+    await user.click(screen.getByRole('button', { name: 'Save' }))
+    await waitFor(() => expect(put).toHaveBeenCalledTimes(1))
+    const [path, body] = put.mock.calls[0] as [string, { grants: PolicyGrant[] }]
+    expect(path).toBe('/access-policies/p1')
+    expect(body.grants).toHaveLength(1)
+    expect(body.grants[0]).toMatchObject({ id: 'gr1', kind: 'autoscaling', targets: [{ id: 'a1', protocols: ['ssh'] }] })
   })
 })

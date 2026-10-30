@@ -121,6 +121,8 @@ export interface ReachableTarget {
   allowed_protocols: Protocol[]
   /** Allowed protocols that are approval-gated (ADR 0018): request access, don't connect directly. */
   requires_approval?: Protocol[]
+  /** Allowed protocols on which the user may sign in with their own login (ADR 0036). */
+  own_login?: Protocol[]
   host_key_ready: boolean
   /** Private (RFC1918/ULA) IP when the target has one; withheld for public addresses/hostnames. */
   private_ip?: string
@@ -141,6 +143,8 @@ export interface AccessRequest {
   id: string
   user_id: string
   policy_id?: string
+  /** The approval grant whose maximum capped the request (ADR 0036). */
+  grant_id?: string
   target_id?: string
   asg_id?: string
   protocol: Protocol
@@ -219,33 +223,45 @@ export interface Group {
 export interface GroupMember { user_id: string; username: string; display_name: string; added_at: string }
 
 export interface TimeWindow { days: string[]; from: string; to: string; tz: string }
-export interface Selector { targets?: string[]; asgs?: string[]; tags?: Record<string, string> }
+/** What a policy grant covers (ADR 0036); each kind serves its own protocols. */
+export type TargetKind = 'host' | 'database' | 'application' | 'autoscaling'
 
-/** One extra selector/protocol pair a policy grants beyond its base; it shares the policy's windows, limits and flags. */
-export interface PolicyRule { target_selector: Selector; protocols: Protocol[] }
+/** One group or user a policy applies to. */
+export interface PolicySubject { kind: 'group' | 'user'; id: string }
 
+/** A named target (or autoscaling group) with the protocols granted on it. */
+export interface GrantTarget { id: string; protocols: Protocol[] }
+
+/** Every target of the grant's kind carrying every key with one of its values. */
+export interface TagMatch { match: Record<string, string[]>; protocols: Protocol[] }
+
+/** One grant of a policy: what, and the conditions it opens and runs under. */
+export interface PolicyGrant {
+  /** Given by the server; sent back on edit so requests keep pointing at it. */
+  id?: string
+  kind: TargetKind
+  targets: GrantTarget[]
+  tags?: TagMatch
+  access: 'standing' | 'approval'
+  /** target: the target's own credential setting decides; own: the person's own login. */
+  sign_in: 'target' | 'own'
+  require_mfa: boolean
+  allow_clipboard: boolean
+  allow_file_transfer: boolean
+  idle_timeout_minutes: number
+  max_session_minutes: number | null
+  time_windows: TimeWindow[]
+  retention_days: number | null
+}
+
+/** An access policy: an audience and the grants it holds (ADR 0036). */
 export interface Policy {
   id: string
   name: string
   description: string
   enabled: boolean
-  /** Exactly one of group_id and user_id is set: the policy applies to a whole group or to one user. */
-  group_id?: string
-  user_id?: string
-  target_selector: Selector
-  protocols: Protocol[]
-  /** Further selector/protocol pairs; the base may be empty when these carry everything. */
-  rules?: PolicyRule[]
-  time_windows: TimeWindow[]
-  max_session_minutes?: number | null
-  idle_timeout_minutes: number
-  /** Recording retention for this policy's sessions, in days; null defers to the global policy. */
-  retention_days?: number | null
-  allow_clipboard: boolean
-  allow_file_transfer: boolean
-  require_mfa: boolean
-  /** When true the policy grants eligibility only; access needs an approved request (ADR 0018). */
-  require_approval?: boolean
+  subjects: PolicySubject[]
+  grants: PolicyGrant[]
   created_at: string
   updated_at: string
 }

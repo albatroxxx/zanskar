@@ -325,3 +325,36 @@ describe('Targets, the user\'s own login', () => {
     expect((screen.getByLabelText('Password') as HTMLInputElement).value).toBe('')
   })
 })
+
+// ADR 0036: where a grant lets the user sign in with their own login instead
+// of the target's, the portal offers "as me" beside the protocol; it asks for
+// the login at once, and the connect carries it.
+describe('Targets, signing in as me', () => {
+  it('offers "as me" where a grant allows it, and sends the login', async () => {
+    const box: ReachableTarget = {
+      kind: 'target', id: 't1', name: 'box', os_family: 'linux', tags: {}, capabilities: ['ssh'],
+      allowed_protocols: ['ssh'], own_login: ['ssh'], requires_approval: [], host_key_ready: true,
+    }
+    const other: ReachableTarget = { ...box, id: 't2', name: 'other', own_login: [] }
+    vi.spyOn(api, 'get').mockImplementation(async (p: string) => ({ items: p === '/me/targets' ? [box, other] : [] }) as never)
+    const post = vi.spyOn(api, 'post').mockResolvedValue({ ticket: 'tk', expires_at: 'x', ws_path: '/ws/terminal' } as never)
+    render(
+      <MemoryRouter>
+        <Routes>
+          <Route path="/" element={<Targets />} />
+          <Route path="/terminal" element={<p>terminal page</p>} />
+        </Routes>
+      </MemoryRouter>,
+    )
+    const user = userEvent.setup()
+    expect(await screen.findAllByRole('button', { name: 'SSH with my own login' })).toHaveLength(1)
+    await user.click(screen.getByRole('button', { name: 'SSH with my own login' }))
+    await screen.findByRole('dialog', { name: 'Credentials for box' })
+    expect(post).not.toHaveBeenCalled()
+    await user.type(screen.getByLabelText('Username'), 'me')
+    await user.type(screen.getByLabelText('Password', { selector: 'input[type=password]' }), 'mine')
+    await user.click(screen.getByRole('button', { name: 'Connect' }))
+    expect(await screen.findByText('terminal page')).toBeDefined()
+    expect(post).toHaveBeenCalledWith('/connect', { target_id: 't1', protocol: 'ssh', credential: { username: 'me', password: 'mine' } })
+  })
+})

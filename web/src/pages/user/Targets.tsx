@@ -208,8 +208,10 @@ export function Targets() {
   const emptyFor = (noun: string, assigned: string) => (term ? `No ${noun} match ‘${search.trim()}’.` : assigned)
 
   // protoButtons renders one cell per protocol family. onRequest, when given,
-  // turns a gated protocol into a Request button.
-  const protoButtons = (t: ReachableTarget, onPick: (p: Protocol) => void, onRequest?: (p: Protocol) => void) => {
+  // turns a gated protocol into a Request button; onOwn, when given, adds
+  // "as me" where a grant lets the user sign in with their own login
+  // instead of the target's (ADR 0036).
+  const protoButtons = (t: ReachableTarget, onPick: (p: Protocol) => void, onRequest?: (p: Protocol) => void, onOwn?: (p: Protocol) => void) => {
     const term = pick(t, terminalProtocols)
     const desk = pick(t, desktopProtocols)
     const notReady = !t.host_key_ready && term === 'ssh'
@@ -221,10 +223,17 @@ export function Targets() {
           </button>
         )
       }
-      return (
+      const main = (
         <button className={'btn sm' + (p ? colorClass : '')} disabled={!p || blocked || busy === t.id + p} onClick={() => p && onPick(p)} title={p ? label : 'not allowed'}>
           {p ? label : '—'}
         </button>
+      )
+      if (!p || !onOwn || !(t.own_login ?? []).includes(p)) return main
+      return (
+        <span className="actions">
+          {main}
+          <button className="btn sm ghost" disabled={blocked} onClick={() => onOwn(p)} aria-label={`${label} with my own login`} title="with my own login">as me</button>
+        </span>
       )
     }
     return (
@@ -385,7 +394,8 @@ export function Targets() {
                       <td><OSIcon os={t.os_family} /></td>
                       <td className="mono">{t.private_ip ?? '—'}</td>
                       <td><Tags tags={t.tags} /></td>
-                      {protoButtons(t, (p) => void connect(t, { target_id: t.id, protocol: p }), (p) => setReqModal({ target: t, protocol: p }))}
+                      {protoButtons(t, (p) => void connect(t, { target_id: t.id, protocol: p }), (p) => setReqModal({ target: t, protocol: p }),
+                        (p) => { setPromptErr(''); setPrompt({ target: t, protocol: p, body: { target_id: t.id, protocol: p } }) })}
                     </tr>
                   )
                 })}
