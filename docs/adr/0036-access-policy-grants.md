@@ -94,6 +94,21 @@ costs one click and nothing in the model.
 | `max_session_minutes` | null or 1-10080 |
 | `time_windows` | as today; empty means always |
 | `retention_days` | null or 1-3650; a target's own value still wins (ADR 0015 amendment) |
+| `sign_in` | `target` (default): the credential bound to the target's slot (vaulted, or the SSH authority); `own`: the person's own login, typed at connect time (a password, or over SSH their own key) and never stored. See *Signing in* below |
+
+**Signing in** (added 2026-10-30, from the walkthrough). How a person signs in to the target is
+said by the grant, not only by the target: an administrator's vaulted credential is for
+privileged, often just-in-time access, while the same people may reach other machines as
+themselves. Today *User supplied* is a choice on the target's credential slot, so one target
+signs in one way for everyone. With `sign_in` on the grant, the platform team's approval grant
+can use the vaulted `root` credential on the database hosts while a contractors' grant on the
+same hosts asks for their own login. The slot keeps the vaulted credential or authority a
+`target` grant uses; an `own` grant needs nothing bound. `sign_in` is not a limit, so the
+strictest-of-each rule does not apply to it: when the grants that admit a session disagree,
+both ways are allowed, the console asks the person which to use, and the session's audit
+event records the choice. Migration: a slot bound to *User supplied* becomes `sign_in: own` on every grant
+that covers that target and protocol, and the slot is left empty, so effective access is
+unchanged.
 
 Protocols per kind are fixed by the server and the only ones the console offers:
 
@@ -595,7 +610,7 @@ unprobed chips, tag matching), plus the approval line on first selection.
 
 ## Open questions for the product owner
 
-Five choices this design makes on the owner's behalf; each changes what is built. The
+Six choices this design makes on the owner's behalf; each changes what is built. The
 recommendation is what the sections above assume.
 
 | # | Question | Recommended | Other option |
@@ -605,6 +620,7 @@ recommendation is what the sections above assume.
 | 3 | An edit that only tightens a number (idle, maximum, window) | Live sessions keep their terms; clipboard or file transfer turned off ends them | End every affected session |
 | 4 | A tag wildcard (`env` = any value) | Left out until tag values reserve `*` | Add it now |
 | 5 | The API break | Same path, old shape refused with `400 legacy_policy_shape` | A new `/api/v2/access-policies` beside the old |
+| 6 | How a person signs in, per grant (`sign_in`: the target's credential or their own login) | Per grant, as above, with *User supplied* on a slot migrated into the grants | Keep it on the target's slot only |
 
 Not a choice but a release question: the API break and the data migration make this a minor
 release (1.8.0), not a patch.
