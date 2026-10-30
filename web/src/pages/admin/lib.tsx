@@ -43,25 +43,6 @@ export function useList<T>(path: string, params: Record<string, string | number 
   return { items, err, setErr, reload }
 }
 
-/** parseTags reads "key=value" lines into a map; returns an error string on a bad line. */
-export function parseTags(text: string): { tags: Record<string, string>; error?: string } {
-  const tags: Record<string, string> = {}
-  for (const raw of text.split('\n')) {
-    const line = raw.trim()
-    if (!line) continue
-    const i = line.indexOf('=')
-    if (i <= 0) return { tags, error: `tag line "${line}" must be key=value` }
-    tags[line.slice(0, i).trim()] = line.slice(i + 1).trim()
-  }
-  return { tags }
-}
-
-export function formatTags(tags?: Record<string, string>): string {
-  return Object.entries(tags ?? {})
-    .map(([k, v]) => `${k}=${v}`)
-    .join('\n')
-}
-
 export function hostKeyBadge(status: HostKeyStatus) {
   const tone = status === 'trusted' ? 'ok' : status === 'pending' ? 'warn' : status === 'changed' ? 'danger' : undefined
   return <Badge tone={tone}>{status}</Badge>
