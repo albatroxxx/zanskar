@@ -45,19 +45,21 @@ func (f *connectFixture) wsOptions(subprotocols ...string) *websocket.DialOption
 }
 
 type connectFixture struct {
-	ctx      context.Context
-	srv      http.Handler
-	cookie   *http.Cookie
-	csrf     string
-	alice    *user.User
-	auditLog *audit.Log
-	access   *access.Repo
-	ids      map[string]string // target name -> id
-	vaulted  string            // id of the vaulted credential, svc / pw-123456
-	mfa      bool              // what MFAEnrolled reports for alice
-	h        *Handler
-	users    *user.Repo
-	sessions *auth.Sessions
+	ctx    context.Context
+	srv    http.Handler
+	cookie *http.Cookie
+	csrf   string
+	// sessionID is alice's sign-in, which a test redeeming a ticket presents.
+	sessionID string
+	alice     *user.User
+	auditLog  *audit.Log
+	access    *access.Repo
+	ids       map[string]string // target name -> id
+	vaulted   string            // id of the vaulted credential, svc / pw-123456
+	mfa       bool              // what MFAEnrolled reports for alice
+	h         *Handler
+	users     *user.Repo
+	sessions  *auth.Sessions
 	// groups holds ops, the group alice is in (opsID). policyIDs maps a
 	// policy's name to its id; test-all, mfa and jit are bound to ops.
 	groups    *group.Repo
@@ -168,7 +170,7 @@ func newConnectFixture(t *testing.T) *connectFixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	f.cookie, f.csrf = &http.Cookie{Name: auth.CookieName, Value: tok}, sessions.CSRFToken(sess.ID)
+	f.cookie, f.csrf, f.sessionID = &http.Cookie{Name: auth.CookieName, Value: tok}, sessions.CSRFToken(sess.ID), sess.ID
 
 	// The rigs built on this fixture run their stand-in targets on loopback,
 	// which production refuses; address_test.go runs without the allowance.
