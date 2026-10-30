@@ -474,8 +474,13 @@ func TestDiscoveryAndRefusals(t *testing.T) {
 	req, _ := http.NewRequest("POST", e.srv.URL+"/api/v1/scim/"+e.p.ID+"/Users", strings.NewReader(`{"userName":"x1"}`))
 	req.Header.Set("Authorization", "Bearer "+e.token)
 	req.Header.Set("Content-Type", "text/plain")
-	if res, err := http.DefaultClient.Do(req); err != nil || res.StatusCode != 415 {
-		t.Fatalf("content type: %v %v", res, err)
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res.Body.Close()
+	if res.StatusCode != 415 {
+		t.Fatalf("content type: %d", res.StatusCode)
 	}
 	if st, _ := e.call(t, "PATCH", "/Users/nope", map[string]any{"Operations": []any{}}); st != 404 {
 		t.Fatalf("unknown id: %d", st)

@@ -4,6 +4,7 @@ package user
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -127,10 +128,10 @@ func TestProvisionedOnEachBackend(t *testing.T) {
 		if err := r.Provision(ctx, pre.ID, "p1", "ext-pre"); err != nil {
 			t.Fatal(err)
 		}
-		if err := r.Provision(ctx, pw.ID, "p1", ""); err != ErrDuplicate {
+		if err := r.Provision(ctx, pw.ID, "p1", ""); !errors.Is(err, ErrDuplicate) {
 			t.Fatalf("a password account must not be provisioned: %v", err)
 		}
-		if err := r.Provision(ctx, other.ID, "p1", ""); err != ErrDuplicate {
+		if err := r.Provision(ctx, other.ID, "p1", ""); !errors.Is(err, ErrDuplicate) {
 			t.Fatalf("another provider's account must not be provisioned: %v", err)
 		}
 		all, total, err := r.ListProvisioned(ctx, "p1", SCIMFilter{}, 0, 10)
@@ -152,7 +153,7 @@ func TestProvisionedOnEachBackend(t *testing.T) {
 		if err := r.Rename(ctx, pushed.ID, "renamed@corp.example"); err != nil {
 			t.Fatal(err)
 		}
-		if err := r.Rename(ctx, pushed.ID, "PRE@corp.example"); err != ErrDuplicate {
+		if err := r.Rename(ctx, pushed.ID, "PRE@corp.example"); !errors.Is(err, ErrDuplicate) {
 			t.Fatalf("rename onto another account: %v", err)
 		}
 		at := now.Add(time.Minute)
@@ -169,10 +170,10 @@ func TestProvisionedOnEachBackend(t *testing.T) {
 		if err := r.LinkExternal(ctx, pushed.ID, "p1", "sub-1"); err != nil {
 			t.Fatal(err)
 		}
-		if err := r.LinkExternal(ctx, pushed.ID, "p1", "sub-2"); err != ErrDuplicate {
+		if err := r.LinkExternal(ctx, pushed.ID, "p1", "sub-2"); !errors.Is(err, ErrDuplicate) {
 			t.Fatalf("rebinding: %v", err)
 		}
-		if err := r.LinkExternal(ctx, other.ID, "p1", "sub-3"); err != ErrDuplicate {
+		if err := r.LinkExternal(ctx, other.ID, "p1", "sub-3"); !errors.Is(err, ErrDuplicate) {
 			t.Fatalf("binding another provider's account: %v", err)
 		}
 	})

@@ -172,36 +172,37 @@ func (h *Handler) resourceType(w http.ResponseWriter, r *http.Request, _ *idp.Op
 	writeJSON(w, http.StatusOK, h.userResourceType(r))
 }
 
-func userSchema(r *http.Request, base string) map[string]any {
-	attr := func(name, typ string, required bool, mutability, uniqueness string, sub ...map[string]any) map[string]any {
+func userSchema(base string) map[string]any {
+	// Every attribute is read-write: the provider owns the person.
+	attr := func(name, typ string, required bool, uniqueness string, sub ...map[string]any) map[string]any {
 		a := map[string]any{"name": name, "type": typ, "multiValued": false, "required": required, "caseExact": false,
-			"mutability": mutability, "returned": "default", "uniqueness": uniqueness}
+			"mutability": "readWrite", "returned": "default", "uniqueness": uniqueness}
 		if len(sub) > 0 {
 			a["subAttributes"] = sub
 		}
 		return a
 	}
-	emails := attr("emails", "complex", false, "readWrite", "none",
-		attr("value", "string", false, "readWrite", "none"), attr("type", "string", false, "readWrite", "none"), attr("primary", "boolean", false, "readWrite", "none"))
+	emails := attr("emails", "complex", false, "none",
+		attr("value", "string", false, "none"), attr("type", "string", false, "none"), attr("primary", "boolean", false, "none"))
 	emails["multiValued"] = true
 	return map[string]any{
 		"schemas": []string{"urn:ietf:params:scim:schemas:core:2.0:Schema"},
 		"id":      schemaUser, "name": "User", "description": "A person who signs in to Zanskar",
 		"attributes": []map[string]any{
-			attr("userName", "string", true, "readWrite", "server"),
-			attr("name", "complex", false, "readWrite", "none",
-				attr("formatted", "string", false, "readWrite", "none"), attr("givenName", "string", false, "readWrite", "none"), attr("familyName", "string", false, "readWrite", "none")),
-			attr("displayName", "string", false, "readWrite", "none"),
+			attr("userName", "string", true, "server"),
+			attr("name", "complex", false, "none",
+				attr("formatted", "string", false, "none"), attr("givenName", "string", false, "none"), attr("familyName", "string", false, "none")),
+			attr("displayName", "string", false, "none"),
 			emails,
-			attr("active", "boolean", false, "readWrite", "none"),
-			attr("externalId", "string", false, "readWrite", "none"),
+			attr("active", "boolean", false, "none"),
+			attr("externalId", "string", false, "none"),
 		},
 		"meta": map[string]string{"resourceType": "Schema", "location": base + "/Schemas/" + schemaUser},
 	}
 }
 
 func (h *Handler) schemas(w http.ResponseWriter, r *http.Request, _ *idp.Opened) {
-	writeJSON(w, http.StatusOK, listResponse([]any{userSchema(r, h.base(r))}, 1, 1))
+	writeJSON(w, http.StatusOK, listResponse([]any{userSchema(h.base(r))}, 1, 1))
 }
 
 func (h *Handler) schema(w http.ResponseWriter, r *http.Request, _ *idp.Opened) {
@@ -209,7 +210,7 @@ func (h *Handler) schema(w http.ResponseWriter, r *http.Request, _ *idp.Opened) 
 		writeError(w, http.StatusNotFound, "", "only the core User schema is provisioned")
 		return
 	}
-	writeJSON(w, http.StatusOK, userSchema(r, h.base(r)))
+	writeJSON(w, http.StatusOK, userSchema(h.base(r)))
 }
 
 func (h *Handler) noGroups(w http.ResponseWriter, _ *http.Request, _ *idp.Opened) {
