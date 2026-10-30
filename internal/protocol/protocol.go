@@ -6,7 +6,10 @@
 // rather than repeating them as bare strings, where a typo compiles.
 package protocol
 
-import "strings"
+import (
+	"slices"
+	"strings"
+)
 
 // Protocols, as policies, grants and sessions store them. target.Protocol
 // gives them a type for a target's own fields.
@@ -46,3 +49,38 @@ const (
 	MySQL    = "mysql"
 	MariaDB  = "mariadb"
 )
+
+// Kinds of thing an access policy grants (ADR 0036). A target's kind is
+// derived, never stored: an engine makes it a database, an upstream an
+// application, anything else a host. Autoscaling groups are a kind of their
+// own.
+const (
+	KindHost        = "host"
+	KindDatabase    = "database"
+	KindApplication = "application"
+	KindAutoscaling = "autoscaling"
+)
+
+// Kinds lists every kind, in the order the console offers them.
+var Kinds = []string{KindHost, KindDatabase, KindApplication, KindAutoscaling}
+
+// kindProtocols is what each kind can serve. A grant offers only these, so a
+// policy can no longer say ssh to a database.
+var kindProtocols = map[string][]string{
+	KindHost:        {SSH, RDP, VNC, WinRM},
+	KindAutoscaling: {SSH, RDP, VNC, WinRM},
+	KindDatabase:    {Database},
+	KindApplication: {HTTP},
+}
+
+// ValidKind reports whether k is a kind.
+func ValidKind(k string) bool {
+	_, ok := kindProtocols[k]
+	return ok
+}
+
+// KindProtocols returns the protocols a thing of kind k can serve.
+func KindProtocols(k string) []string { return slices.Clone(kindProtocols[k]) }
+
+// KindServes reports whether a thing of kind k can serve protocol p.
+func KindServes(k, p string) bool { return slices.Contains(kindProtocols[k], p) }
