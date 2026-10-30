@@ -221,6 +221,9 @@ func TestPolicyAPIRefusals(t *testing.T) {
 		{"a user that does not exist", func(b map[string]any) {
 			b["subjects"] = []map[string]string{{"kind": "user", "id": "nobody"}}
 		}, 422, "invalid_subject", "not found"},
+		{"a group that does not exist", func(b map[string]any) {
+			b["subjects"] = []map[string]string{{"kind": "group", "id": "no-group"}}
+		}, 422, "invalid_subject", "group no-group not found"},
 		{"a target that does not exist", func(b map[string]any) {
 			b["grants"].([]map[string]any)[0]["targets"] = []map[string]any{{"id": "gone", "protocols": []string{"ssh"}}}
 		}, 422, "unknown_target", "gone is not a live host"},
@@ -229,7 +232,7 @@ func TestPolicyAPIRefusals(t *testing.T) {
 		}, 422, "kind_mismatch", "orders is a database, not a host"},
 		{"ssh on a database", func(b map[string]any) {
 			b["grants"] = []map[string]any{{"kind": "database", "targets": []map[string]any{{"id": "orders", "protocols": []string{"ssh"}}}}}
-		}, 400, "bad_request", `a database does not serve "ssh"`},
+		}, 400, "protocol_not_for_kind", `a database does not serve "ssh"`},
 		{"a group that does not exist", func(b map[string]any) {
 			b["grants"] = []map[string]any{{"kind": "autoscaling", "targets": []map[string]any{{"id": "no-fleet", "protocols": []string{"ssh"}}}}}
 		}, 422, "unknown_target", "no-fleet is not a live autoscaling"},
@@ -262,3 +265,29 @@ func TestPolicyAPIRefusals(t *testing.T) {
 }
 
 func nowUTC() time.Time { return time.Now().UTC() }
+
+// TestPolicyWithNoOneLeft (ADR 0036): a policy whose last group was deleted
+// reads back with no subjects and may be saved as it is, switched off or
+// not; a new policy still needs someone.
+func TestPolicyWithNoOneLeft(t *testing.T) {
+	e := newHandlerEnv(t)
+	code, out := e.do("POST", "/api/v1/access-policies", e.body())
+	if code != http.StatusCreated {
+		t.Fatalf("create: %d %v", code, out)
+	}
+	id := out["id"].(string)
+	if _, err := e.db.ExecContext(context.Background(), e.db.Rebind(`DELETE FROM groups WHERE id = ?`), e.group); err != nil {
+		t.Fatal(err)
+	}
+	code, got := e.do("GET", "/api/v1/access-policies/"+id, nil)
+	if code != 200 || len(got["subjects"].([]any)) != 0 {
+		t.Fatalf("read back: %d %v", code, got)
+	}
+	got["enabled"] = false
+	for _, k := range []string{"id", "created_at", "updated_at", "created_by"} {
+		delete(got, k)
+	}
+	if code, out := e.do("PUT", "/api/v1/access-policies/"+id, got); code != 200 || out["enabled"] != false {
+		t.Fatalf("saving it as read, switched off: %d %v", code, out)
+	}
+}

@@ -61,7 +61,9 @@ export function PolicyEditor() {
   const save = async () => {
     setErr('')
     if (!name.trim()) return fail('Name the policy')
-    if (groupIDs.length + userIDs.length === 0) return fail('Choose at least one group or user')
+    // A policy left with no one (its last group deleted) may be saved as it is;
+    // a new one needs someone.
+    if (!id && groupIDs.length + userIDs.length === 0) return fail('Choose at least one group or user')
     if (grants.length === 0) return fail('Add a grant')
     const out: PolicyGrant[] = []
     for (const [i, d] of grants.entries()) {

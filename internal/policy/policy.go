@@ -116,6 +116,10 @@ var (
 	ErrNotFound     = errors.New("policy: not found")
 	ErrDuplicate    = errors.New("policy: name already exists")
 	ErrInvalidInput = errors.New("policy: invalid input")
+	// ErrProtocolNotForKind and ErrUnknownSubject are invalid input of a kind
+	// the API names with codes of their own.
+	ErrProtocolNotForKind = errors.New("protocol not served by the kind")
+	ErrUnknownSubject     = errors.New("subject not found")
 )
 
 var dayIndex = map[string]time.Weekday{"sun": time.Sunday, "mon": time.Monday, "tue": time.Tuesday, "wed": time.Wednesday, "thu": time.Thursday, "fri": time.Friday, "sat": time.Saturday}
@@ -127,9 +131,9 @@ func (p *Policy) Validate() error {
 	if p.Name == "" || len(p.Name) > 64 {
 		return fmt.Errorf("%w: name must be 1-64 characters", ErrInvalidInput)
 	}
-	if len(p.Subjects) == 0 {
-		return fmt.Errorf("%w: a policy needs at least one group or user", ErrInvalidInput)
-	}
+	// No subject is allowed: a policy whose last group or user was deleted
+	// grants nobody and may still be edited or switched off. A new policy
+	// needs someone (the handler asks).
 	if len(p.Subjects) > MaxSubjects {
 		return fmt.Errorf("%w: at most %d groups and users", ErrInvalidInput, MaxSubjects)
 	}
@@ -247,7 +251,7 @@ func (g *Grant) validProtocols(protos []string) error {
 	seen := map[string]bool{}
 	for _, p := range protos {
 		if !protocol.KindServes(g.Kind, p) {
-			return fmt.Errorf("%w: a %s does not serve %q (it serves %s)", ErrInvalidInput, g.Kind, p, strings.Join(protocol.KindProtocols(g.Kind), ", "))
+			return fmt.Errorf("%w: %w: a %s does not serve %q (it serves %s)", ErrInvalidInput, ErrProtocolNotForKind, g.Kind, p, strings.Join(protocol.KindProtocols(g.Kind), ", "))
 		}
 		if seen[p] {
 			return fmt.Errorf("%w: %s is given twice", ErrInvalidInput, p)

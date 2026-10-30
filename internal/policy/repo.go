@@ -83,7 +83,7 @@ func (r *Repo) writeSubjects(ctx context.Context, tx *sql.Tx, p *Policy) error {
 		}
 		if _, err := tx.ExecContext(ctx, r.db.Rebind(`INSERT INTO access_policy_subjects (policy_id, group_id, user_id) VALUES (?, ?, ?)`), p.ID, group, usr); err != nil {
 			if store.IsForeignKeyViolation(err) {
-				return fmt.Errorf("%w: %s %s does not exist", ErrInvalidInput, s.Kind, s.ID)
+				return fmt.Errorf("%w: %w: %s %s not found", ErrInvalidInput, ErrUnknownSubject, s.Kind, s.ID)
 			}
 			return err
 		}

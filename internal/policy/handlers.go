@@ -160,6 +160,10 @@ func (h *AdminHandler) create(w http.ResponseWriter, r *http.Request) {
 	pr, _ := auth.FromContext(r.Context())
 	p := &Policy{CreatedBy: pr.User.ID}
 	in.apply(p)
+	if len(p.Subjects) == 0 {
+		httpx.BadRequest(w, r, "a policy needs at least one group or user")
+		return
+	}
 	for i, g := range p.Grants {
 		if g.ID != "" {
 			httpx.WriteError(w, r, http.StatusUnprocessableEntity, "unknown_grant", "grant "+itoa(i+1)+": a new policy's grants carry no id")
@@ -372,6 +376,10 @@ func (h *AdminHandler) fail(w http.ResponseWriter, r *http.Request, err error) {
 		httpx.WriteError(w, r, http.StatusNotFound, "not_found", "policy not found")
 	case errors.Is(err, ErrDuplicate):
 		httpx.WriteError(w, r, http.StatusConflict, "conflict", "a policy with that name exists")
+	case errors.Is(err, ErrProtocolNotForKind):
+		httpx.WriteError(w, r, http.StatusBadRequest, "protocol_not_for_kind", err.Error())
+	case errors.Is(err, ErrUnknownSubject):
+		httpx.WriteError(w, r, http.StatusUnprocessableEntity, "invalid_subject", err.Error())
 	case errors.Is(err, ErrInvalidInput):
 		httpx.BadRequest(w, r, err.Error())
 	default:

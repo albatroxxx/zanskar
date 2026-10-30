@@ -4639,18 +4639,19 @@ components:
     PolicyBadRequest:
       description: >-
         `bad_request`: the body is malformed, carries an unknown field, or fails a rule of
-        `AccessPolicyWrite` or `PolicyGrant`; the message names the grant and the field, for
-        example a protocol the grant's kind does not serve, or a group subject that does not
-        exist. `legacy_policy_shape`: the body carries a field of the policy shape before 1.8
-        (ADR 0036), named in the message; nothing is read from it.
+        `AccessPolicyWrite` or `PolicyGrant`, the grant and the field named in the message; a
+        new policy names no group or user. `protocol_not_for_kind`: a grant offers a protocol
+        its kind does not serve (ssh on a database). `legacy_policy_shape`: the body carries a
+        field of the policy shape before 1.8 (ADR 0036), named in the message; nothing is read
+        from it.
       content:
         application/json:
           schema:
             $ref: "#/components/schemas/Error"
     PolicyUnprocessable:
       description: >-
-        The policy is well formed but names something it cannot. `invalid_subject`: a user
-        subject does not exist. `review_only_subject`: a user subject holds only the auditor
+        The policy is well formed but names something it cannot. `invalid_subject`: a group or
+        user subject does not exist. `review_only_subject`: a user subject holds only the auditor
         role, which cannot connect. `unknown_target`: a named target or autoscaling group does
         not exist or is retired. `kind_mismatch`: a named target is of another kind than its
         grant. `unknown_grant`: on create a grant carries an `id`, or on update an `id` is not a

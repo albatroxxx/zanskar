@@ -45,7 +45,6 @@ func TestValidate(t *testing.T) {
 		want string
 	}{
 		{"no name", func(p *Policy) { p.Name = " " }, "name must be"},
-		{"no subject", func(p *Policy) { p.Subjects = nil }, "at least one group or user"},
 		{"a subject twice", func(p *Policy) { p.Subjects = append(p.Subjects, p.Subjects[0]) }, "named twice"},
 		{"a subject of no kind", func(p *Policy) { p.Subjects = []Subject{{Kind: "team", ID: "x"}} }, "a group or a user"},
 		{"no grant", func(p *Policy) { p.Grants = nil }, "at least one grant"},
