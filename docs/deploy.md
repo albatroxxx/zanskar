@@ -637,16 +637,32 @@ certificate, no DNS record, nothing installed on the client.
   `session.start` and `session.end`, as for a desktop. An application holds no credential:
   the application's own sign-in, if it has one, is the user's.
 - **The first session pulls the images.** A host that has never run an application pulls
-  the relay (the gateway's own image) and the browser image (about 320 MB) before the first
-  session starts, under a deadline of its own, and the console shows *Connecting* until the
-  first frame; on a slow link that first session takes minutes. The Applications checklist
-  says when the browser image is not on the host yet. To spare the first user, pull ahead on
-  the gateway host:
+  the relay (the gateway's own image, about 45 MB) and the browser image (about a 270 MB
+  download, 660 MB on disk) before the first session starts, under a deadline of its own, and the
+  console shows *Connecting* until the first frame; on a slow link that first session takes
+  minutes. The Applications checklist says when the browser image is not on the host yet. To
+  spare the first user, pull ahead on the gateway host:
 
   ```
   docker pull ghcr.io/albatroxxx/zanskar-browser:<version>
   docker pull ghcr.io/albatroxxx/zanskar:<version>
   ```
+- **Upgrades and disk.** Both images follow the gateway's version, so every upgrade pulls
+  new ones. From 1.9.0 the gateway removes the earlier versions' images itself: on start and
+  every five minutes after, it removes from the browser and relay images' repositories every
+  image that carries Zanskar's source label (`org.opencontainers.image.source`) and is not
+  the configured one, records `system.images_remove` with the references it removed, and
+  logs them. It never forces a removal, so an image a container still uses (a Compose
+  gateway's own, a running session's relay) stays, and an image without the label, such as
+  a custom build pushed to the same repository, is never a candidate. It removes the old
+  images before the first session pulls the new ones, which is the order a nearly full disk
+  needs. **Remove old images** (`updates.remove_old_images`, under *Updates* on the Settings
+  page) turns it off, to keep an earlier version's images for a rollback on a host with no
+  registry access; two gateways on one Docker host should turn it off too, or each removes the
+  other's images between sessions. A development build removes nothing. An upgrade also downloads less than the image's size: the
+  release builds the browser image's package layer only when Debian's packages changed since
+  the last release, and takes it from that release's image otherwise, so between two releases
+  with the same Chromium only the small layers after it are new.
 - **Settings.** `apps.browser_image` (`ZANSKAR_BROWSER_IMAGE` in the environment file)
   names the browser image; the default is the published image at the gateway's version.
   From the console it takes a digest-pinned reference only, behind a fresh authenticator

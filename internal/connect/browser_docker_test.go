@@ -376,6 +376,39 @@ func TestApplicationBrowserControls(t *testing.T) {
 	waitFor("Forward", "/two.html", 3)
 	keys(f5)
 	waitFor("Reload", "/two.html", 4)
+	// Home is also the proof that the entrypoint's managed policy is in
+	// force: without HomepageLocation, Alt+Home opens the new tab page and
+	// nginx sees nothing.
 	keys(alt, home)
 	waitFor("Home", "/", 3)
+}
+
+// TestBrowserImageEnforcesManagedPolicy (2026-10-30, when the image moved to
+// a trimmed Debian 13): the image's Chromium reads policy from
+// /etc/chromium/policies/managed, where the entrypoint writes it, and blocks
+// what URLBlocklist names. A data: page renders without a policy and is
+// blank with one that blocks everything. The session's own policy cannot be
+// probed this way: it turns developer tools off, and --dump-dom needs them.
+// Needs ZANSKAR_TEST_DOCKER=1 and ZANSKAR_TEST_BROWSER_IMAGE.
+func TestBrowserImageEnforcesManagedPolicy(t *testing.T) {
+	dbtest.RequireDocker(t)
+	image := os.Getenv("ZANSKAR_TEST_BROWSER_IMAGE")
+	if image == "" {
+		t.Skip("set ZANSKAR_TEST_BROWSER_IMAGE to a built deploy/browser image")
+	}
+	render := func(policy string) string {
+		t.Helper()
+		script := `mkdir -p /tmp/home && export HOME=/tmp/home
+[ -z "$1" ] || printf '%s' "$1" > /etc/chromium/policies/managed/zanskar.json
+exec timeout 60 chromium --headless --disable-gpu --no-sandbox --user-data-dir=/tmp/profile --dump-dom 'data:text/html,<p>rendered</p>' 2>/dev/null`
+		return dbtest.Docker(t, "run", "--rm", "--network", "none", "--tmpfs", "/tmp",
+			"--tmpfs", "/etc/chromium/policies/managed:uid=10001,gid=10001,mode=700",
+			"--entrypoint", "sh", image, "-c", script, "probe", policy)
+	}
+	if got := render(""); !strings.Contains(got, "rendered") {
+		t.Fatalf("Chromium did not render a page with no policy: %q", got)
+	}
+	if got := render(`{"URLBlocklist":["*"]}`); strings.Contains(got, "rendered") {
+		t.Fatal("a policy in /etc/chromium/policies/managed did not block the page: the entrypoint's policy would not be in force")
+	}
 }

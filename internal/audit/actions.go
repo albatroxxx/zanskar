@@ -126,6 +126,9 @@ const (
 	SystemReboot        = "system.reboot"
 	SystemPowerOff      = "system.poweroff"
 	SystemUpdate        = "system.update"
+	// SystemImagesRemove is the gateway removing earlier versions' images
+	// from its host (settings.KeyRemoveOldImages).
+	SystemImagesRemove = "system.images_remove"
 
 	// Targets, their host keys and their certificates.
 	TargetCreate           = "target.create"

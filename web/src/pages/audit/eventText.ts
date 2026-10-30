@@ -82,6 +82,7 @@ const actionLabels: Record<string, string> = {
   'system.reboot': 'Host reboot requested',
   'system.poweroff': 'Host power-off requested',
   'system.update': 'Gateway update requested',
+  'system.images_remove': 'Old images removed',
   'target.create': 'Target created',
   'target.update': 'Target updated',
   'target.delete': 'Target deleted',

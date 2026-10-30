@@ -488,7 +488,19 @@ func serve(ctx context.Context) error {
 	// process or a failed teardown left behind are removed by label, now and
 	// every five minutes; a session this process still runs is never touched.
 	// How loudly a failing pass is reported is reapNotice's: once, not every
-	// pass, and never for a host with no container CLI.
+	// pass, and never for a host with no container CLI. The same pass then
+	// removes earlier versions' browser and relay images, first thing after
+	// an upgrade, before a session pulls the new ones into the room they took.
+	images := &oldImages{
+		Enabled: func() bool { return releasedBuild(version.Version) && runtime.Bool(settings.KeyRemoveOldImages) },
+		Configured: func() []string {
+			return []string{runtime.String(settings.KeyBrowserImage), runtime.String(settings.KeyDBProxyImage)}
+		},
+		Remove: func(ctx context.Context, configured []string) ([]string, error) {
+			return containers.RemoveOldImages(ctx, cfg.DockerPath, configured)
+		},
+		Audit: auditLog, Log: log,
+	}
 	go func() {
 		live := func(id string) bool { _, ok := registry.Get(id); return ok }
 		t := time.NewTicker(5 * time.Minute)
@@ -505,6 +517,7 @@ func serve(ctx context.Context) error {
 			if level, ok := notice.level(err); ok {
 				log.Log(ctx, level, "database session reaper cannot list containers; database sessions will not work until it can", "err", err)
 			}
+			images.pass(ctx)
 			select {
 			case <-ctx.Done():
 				return

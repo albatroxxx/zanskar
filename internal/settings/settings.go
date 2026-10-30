@@ -66,6 +66,10 @@ const (
 	// the project site once a day and light the bell when it is newer
 	// (ADR 0032). Nothing about this gateway is sent.
 	KeyUpdateCheck = "updates.check"
+	// KeyRemoveOldImages has the gateway remove earlier versions' browser
+	// and relay images from its host (2026-10-30: each upgrade left the
+	// previous browser image behind until the disk filled).
+	KeyRemoveOldImages = "updates.remove_old_images"
 	// KeyLogLevel is the gateway's log level.
 	KeyLogLevel = "log.level"
 	// KeyDBProxyImage is the image run as the MySQL/MariaDB relay sidecar;
@@ -188,6 +192,8 @@ var Definitions = []Definition{
 		Description: "Password sign-ins, local or LDAP, must enrol an authenticator. Single sign-on providers enforce their own."},
 	{Key: KeyUpdateCheck, Category: "Updates", Title: "Check for new versions", Type: TypeBool, Default: "true",
 		Description: "Daily check of the project site for a newer version. Nothing is sent."},
+	{Key: KeyRemoveOldImages, Category: "Updates", Title: "Remove old images", Type: TypeBool, Default: "true",
+		Description: "Earlier versions' browser and relay images go from the host. Off keeps them, for a rollback without a registry."},
 	{Key: KeyGuacdAddr, Category: "Desktops", Title: "Desktops (RDP, VNC)", Type: TypeHostPort, EnvVar: "ZANSKAR_GUACD_ADDR", StepUp: true,
 		Description: "Relayed through guacd. The address is under Advanced: loopback or private host:port."},
 	{Key: KeyLogLevel, Category: "Logging", Title: "Log level", Type: TypeEnum, Default: "info", EnvVar: "ZANSKAR_LOG_LEVEL", Enum: []string{"debug", "info", "warn", "error"},

@@ -203,17 +203,21 @@ jobs:
         env:
           ARCH: ${{ matrix.arch }}
           TAG: ${{ github.ref_name }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           image=ghcr.io/albatroxxx/zanskar-browser
           version=${TAG#v}
-          docker build --platform "linux/$ARCH" \
+          # The package layer comes from the last release's image when apt
+          # would install the same versions (deploy/browser/build.sh), so
+          # an upgrade downloads only what changed.
+          prev=$(gh release view --repo "$GITHUB_REPOSITORY" --json tagName -q .tagName 2>/dev/null || true)
+          deploy/browser/build.sh "$ARCH" "$image:$version-$ARCH" "${prev:+$image:${prev#v}-$ARCH}" \
             --label org.opencontainers.image.source=https://github.com/albatroxxx/zanskar \
             --label org.opencontainers.image.version="$version" \
             --label org.opencontainers.image.revision="$GITHUB_SHA" \
             --label org.opencontainers.image.licenses=Apache-2.0 \
-            --label org.opencontainers.image.description="The isolated browser a Zanskar application session runs in" \
-            -t "$image:$version-$ARCH" deploy/browser
+            --label org.opencontainers.image.description="The isolated browser a Zanskar application session runs in"
           docker push "$image:$version-$ARCH"
           digest=$(docker inspect --format '{{index .RepoDigests 0}}' "$image:$version-$ARCH" | cut -d@ -f2)
           echo "digest-$ARCH=$digest" >> "$GITHUB_OUTPUT"
