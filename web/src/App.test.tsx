@@ -34,6 +34,13 @@ function open(path: string) {
   )
 }
 
+/** The access portal's own nav links (its Access and Sessions pages, at
+ *  /access and /sessions), which another portal must not show. The admin
+ *  console has a Sessions page of its own, at /admin/sessions. */
+function accessPortalLinks() {
+  return screen.queryAllByRole('link').map((a) => a.getAttribute('href')).filter((h) => h === '/access' || h === '/sessions')
+}
+
 describe('App routes', () => {
   it('sends an anonymous visitor to sign in, remembering where they were going', async () => {
     signedIn(null)
@@ -52,7 +59,7 @@ describe('App routes', () => {
     signedIn(['auditor'])
     open('/')
     expect(await screen.findByRole('link', { name: 'Events' })).toBeDefined()
-    expect(screen.queryByRole('link', { name: 'My sessions' })).toBeNull()
+    expect(accessPortalLinks()).toEqual([])
     expect(screen.queryByRole('link', { name: 'Policies' })).toBeNull()
   })
 
@@ -61,7 +68,7 @@ describe('App routes', () => {
     open('/audit/events?action=user.login')
     expect(await screen.findByRole('heading', { name: 'Audit events' })).toBeDefined()
     expect(screen.getByRole('link', { name: 'Policies' })).toBeDefined()
-    expect(screen.queryByRole('link', { name: 'My sessions' })).toBeNull()
+    expect(accessPortalLinks()).toEqual([])
   })
 
   it('resolves the home and unknown paths to the account\'s own portal', async () => {
@@ -81,3 +88,16 @@ describe('App routes', () => {
     expect(screen.getByRole('button', { name: 'Sign out' })).toBeDefined()
   })
 })
+
+// 2026-10-30 walkthrough: the access portal's nav says Access and Sessions,
+// not "My access" and "My sessions".
+describe('Access portal nav', () => {
+  it('names its pages plainly', async () => {
+    signedIn(['user'])
+    open('/')
+    expect(await screen.findByRole('link', { name: 'Access' })).toBeDefined()
+    expect(screen.getByRole('link', { name: 'Sessions' }).getAttribute('href')).toBe('/sessions')
+    expect(screen.queryByRole('link', { name: /^My / })).toBeNull()
+  })
+})
+

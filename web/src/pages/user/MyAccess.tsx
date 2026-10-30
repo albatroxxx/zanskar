@@ -80,7 +80,7 @@ export function MyAccess() {
 
   return (
     <>
-      <PageHead title="My access" lead="Your requests, and the grants currently active." />
+      <PageHead title="Access" lead="Your requests, and the grants currently active." />
       {err && <Alert tone="danger">{err}</Alert>}
       {notice && <Alert tone="ok">{notice}</Alert>}
       <div className="card table-wrap">

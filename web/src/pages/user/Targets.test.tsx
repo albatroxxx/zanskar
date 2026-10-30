@@ -235,3 +235,28 @@ describe('Targets search', () => {
     expect(screen.queryByText('web01')).toBeNull()
   })
 })
+
+// 2026-10-30 walkthrough: only Applications (and Databases) said how many
+// they held. Every tab counts its own, the same way, once it has any, and a
+// search narrows the counts with the lists.
+describe('Target tabs count what they hold', () => {
+  const host = (id: string, name: string): ReachableTarget => ({ ...fleet, kind: 'target', id, name, private_ip: '10.0.0.' + id.slice(1) })
+  const items: ReachableTarget[] = [
+    host('h1', 'linux-host'), host('h2', 'windows-host'),
+    { ...host('d1', 'orders-db'), engine: 'postgres' },
+    { ...fleet, id: 'g1', name: 'web-fleet' },
+  ]
+
+  it('counts every kind, and the search narrows the counts', async () => {
+    vi.spyOn(api, 'get').mockImplementation(async (p: string) => ({ items: p === '/me/targets' ? items : [] }) as never)
+    render(
+      <MemoryRouter>
+        <Targets />
+      </MemoryRouter>,
+    )
+    expect(await screen.findByRole('tab', { name: 'Hosts (2)' })).toBeDefined()
+    expect(screen.getAllByRole('tab').map((t) => t.textContent)).toEqual(['Hosts (2)', 'Databases (1)', 'Applications', 'Autoscaling (1)'])
+    await userEvent.setup().type(screen.getByRole('searchbox', { name: 'Search targets by name or IP' }), 'linux')
+    expect(screen.getAllByRole('tab').map((t) => t.textContent)).toEqual(['Hosts (1)', 'Databases', 'Applications', 'Autoscaling'])
+  })
+})

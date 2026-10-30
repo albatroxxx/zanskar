@@ -141,7 +141,7 @@ export function Targets() {
         reason: reqForm.reason,
         minutes: Number(reqForm.minutes),
       })
-      setNotice(`Requested ${protocolName(reqModal.protocol)} access to ${reqModal.target.name}. An administrator must approve it — track it under My access.`)
+      setNotice(`Requested ${protocolName(reqModal.protocol)} access to ${reqModal.target.name}. An administrator must approve it — track it under Access.`)
       setReqModal(null)
       setReqForm({ reason: '', minutes: 60 })
       void loadGrants()
@@ -171,6 +171,9 @@ export function Targets() {
   const databases = shown?.filter((t) => kindOf(t) === 'database') ?? null
   const applications = shown?.filter((t) => kindOf(t) === 'application') ?? null
   const groups = shown?.filter((t) => kindOf(t) === 'asg') ?? null
+  // Every tab says how many it holds, the same way, once there are any; a
+  // search narrows the counts with the lists.
+  const counted = (label: string, list: ReachableTarget[] | null) => (list && list.length > 0 ? `${label} (${list.length})` : label)
   // Empty-state text for a tab: the search message while filtering, else the tab's own "nothing assigned" line.
   const emptyFor = (noun: string, assigned: string) => (term ? `No ${noun} match ‘${search.trim()}’.` : assigned)
 
@@ -230,10 +233,10 @@ export function Targets() {
         value={tab}
         onChange={setTab}
         tabs={[
-          { key: 'static', label: 'Hosts' },
-          { key: 'database', label: `Databases${databases && databases.length > 0 ? ` (${databases.length})` : ''}` },
-          { key: 'application', label: `Applications${applications && applications.length > 0 ? ` (${applications.length})` : ''}` },
-          { key: 'asg', label: 'Autoscaling' },
+          { key: 'static', label: counted('Hosts', statics) },
+          { key: 'database', label: counted('Databases', databases) },
+          { key: 'application', label: counted('Applications', applications) },
+          { key: 'asg', label: counted('Autoscaling', groups) },
         ]}
       />
 

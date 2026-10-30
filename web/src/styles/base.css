@@ -54,6 +54,11 @@ button, input, select, textarea { font: inherit; color: inherit; }
 /* The username is the account's door: a quiet link-weight button. */
 .me-user { background: none; border: 0; padding: 0; color: var(--fg); cursor: pointer; text-align: left; font-size: 0.86rem; align-self: flex-start; }
 .me-user:hover { color: var(--accent); }
+/* Sign out sits on the same left edge as the username and the portal
+   links above it: no button padding, a muted line that firms on hover. */
+.me-signout { display: inline-flex; align-items: center; gap: 6px; align-self: flex-start; margin-top: 2px; padding: 0; border: 0; background: none; color: var(--fg-muted); font-size: 0.82rem; cursor: pointer; transition: color 0.12s ease; }
+.me-signout:hover { color: var(--fg); }
+.me-signout svg { flex: none; }
 .sidebar .switch { font-size: 0.8rem; }
 .main { padding: 28px 32px 48px; min-width: 0; }
 /* A page's actions sit level with its title block, never up against the
