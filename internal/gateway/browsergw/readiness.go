@@ -27,7 +27,9 @@ type Check struct {
 
 // Readiness answers what application sessions still need: a guacd
 // address, a container runtime the service can reach, and a browser image.
-// The Applications page shows the list until every check passes.
+// The Applications page offers to add an application only once every check
+// passes, and shows the list with Check again until then (2026-10-30). An
+// image the host has not pulled yet passes: the first session pulls it.
 type Readiness struct {
 	Guacd        func() string
 	BrowserImage func() string
@@ -136,11 +138,10 @@ func (h *Readiness) Checks(ctx context.Context) []Check {
 	case runtimeErr != nil:
 		// Whether the host has it cannot be known until the runtime answers.
 	case h.present(ctx, image) != nil:
-		// The first session pulls it, with its own deadline; the checklist
-		// says so, because that first session is slow and an operator may
-		// rather pull ahead.
-		img.OK = false
-		img.Detail = image + " is not on this host yet. Run `" + docker + " pull " + image + "` on the gateway host, or the first session pulls it (a few hundred megabytes)."
+		// Not a prerequisite: the first session pulls it, under a deadline
+		// of its own (1.7.1). The detail names the pull for an operator who
+		// would rather spare that first user the wait.
+		img.Detail = image + ", not pulled yet: the first session pulls it, or run `" + docker + " pull " + image + "` ahead."
 	default:
 		img.Detail = image + " (on this host)"
 	}
@@ -179,6 +180,13 @@ func firstLine(s string) string {
 }
 
 func (h *Readiness) serve(w http.ResponseWriter, r *http.Request) {
+	// Check again asks afresh: an operator who has just fixed the runtime
+	// should not read the answer from before the fix.
+	if r.URL.Query().Get("fresh") == "1" {
+		h.mu.Lock()
+		h.probed, h.inspected = time.Time{}, time.Time{}
+		h.mu.Unlock()
+	}
 	checks := h.Checks(r.Context())
 	ready := true
 	for _, c := range checks {

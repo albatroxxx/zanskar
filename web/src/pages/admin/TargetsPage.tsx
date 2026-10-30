@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useState, type ReactNode } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { api } from '../../api/client'
 import type { AppsReadiness, Credential, Target } from '../../api/types'
@@ -51,24 +51,31 @@ export function TargetsPage({ kind, title, addLabel, empty, columns, cells }: {
   const [adding, setAdding] = useState(false)
   const [open, setOpen] = useState<Target | null>(null)
   // Applications open only once the gateway can run the browser beside it
-  // (ADR 0034); the page shows the three prerequisites with their state, so
-  // an operator sees what is left instead of one refusal at a time.
-  const [readiness, setReadiness] = useState<AppsReadiness | null>(null)
-  useEffect(() => {
-    if (kind !== 'application') return
+  // (ADR 0034). Until the prerequisites pass, the page is the checklist and
+  // Check again; Add application appears once they do (2026-10-30). A
+  // check that cannot be read does not hold the page back.
+  const [readiness, setReadiness] = useState<AppsReadiness | 'unknown' | null>(kind === 'application' ? null : 'unknown')
+  const [checking, setChecking] = useState(false)
+  const check = useCallback((fresh: boolean) => {
+    setChecking(true)
     api
-      .get<AppsReadiness>('/admin/applications/readiness')
-      .then((r) => setReadiness(r && Array.isArray(r.checks) ? r : null))
-      .catch(() => setReadiness(null))
-  }, [kind, adding])
+      .get<AppsReadiness>('/admin/applications/readiness' + (fresh ? '?fresh=1' : ''))
+      .then((r) => setReadiness(r && Array.isArray(r.checks) ? r : 'unknown'))
+      .catch(() => setReadiness('unknown'))
+      .finally(() => setChecking(false))
+  }, [])
+  useEffect(() => {
+    if (kind === 'application') check(false)
+  }, [kind, check])
+  const blocked = readiness !== 'unknown' && !readiness?.ready
 
   return (
     <>
       <PageHead title={title}>
-        <button className="btn primary" onClick={() => setAdding(true)}>{addLabel}</button>
+        {!blocked && <button className="btn primary" onClick={() => setAdding(true)}>{addLabel}</button>}
       </PageHead>
       {err && <Alert tone="danger">{err}</Alert>}
-      {readiness && !readiness.ready && (
+      {readiness && readiness !== 'unknown' && !readiness.ready && (
         <div className="card" aria-labelledby="apps-readiness">
           <h2 id="apps-readiness">Before the first application</h2>
           <ul className="checks">
@@ -81,6 +88,9 @@ export function TargetsPage({ kind, title, addLabel, empty, columns, cells }: {
               </li>
             ))}
           </ul>
+          <div className="actions">
+            <button className="btn" disabled={checking} onClick={() => check(true)}>{checking ? 'Checking…' : 'Check again'}</button>
+          </div>
         </div>
       )}
       <div className="card table-wrap">
