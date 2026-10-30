@@ -29,6 +29,7 @@ import (
 	"net"
 	"os"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"sync/atomic"
@@ -324,7 +325,11 @@ type Manager struct {
 	// File is the certificate from the environment, when there is one.
 	File *tls.Certificate
 	// Hosts are the names a generated certificate carries.
-	Hosts  []string
+	Hosts []string
+	// ACME, when set, serves its certificate for the names it covers while
+	// the console has it on: after an upload, before the file and the
+	// self-signed one (ADR 0021, amended 2026-10-30).
+	ACME   *ACME
 	active atomic.Pointer[entry]
 	now    func() time.Time // nil means time.Now; tests move it
 }
@@ -442,14 +447,37 @@ func (m *Manager) set(source string, cert tls.Certificate, leaf *x509.Certificat
 	m.active.Store(&entry{cert: cert, info: describe(source, leaf, certPEM)})
 }
 
-// GetCertificate is what the listener's tls.Config calls per handshake: the
-// active certificate, whatever name the handshake asks for.
-func (m *Manager) GetCertificate(_ *tls.ClientHelloInfo) (*tls.Certificate, error) {
+// GetCertificate is what the listener's tls.Config calls per handshake: an
+// ACME challenge goes to ACME; an uploaded certificate serves every name;
+// ACME serves the names it covers while it is on; otherwise the active
+// certificate (the file or the self-signed one) serves. An ACME failure
+// falls back rather than failing the handshake.
+func (m *Manager) GetCertificate(hello *tls.ClientHelloInfo) (*tls.Certificate, error) {
 	e := m.active.Load()
+	if m.ACME.On() && hello != nil {
+		if challenge(hello) {
+			return m.ACME.GetCertificate(hello)
+		}
+		if (e == nil || e.info.Source != SourceUploaded) && m.ACME.Covers(hello.ServerName) {
+			if c, err := m.ACME.GetCertificate(hello); err == nil {
+				return c, nil
+			}
+		}
+	}
 	if e == nil {
 		return nil, errors.New("tlscert: no certificate loaded")
 	}
 	return &e.cert, nil
+}
+
+// Covered is every name a certificate the gateway serves carries: the
+// active certificate's, and ACME's names while it is on.
+func (m *Manager) Covered() []string {
+	hosts := m.Active().Hosts
+	if m.ACME.On() {
+		hosts = append(slices.Clone(hosts), m.ACME.Names...)
+	}
+	return hosts
 }
 
 // Active describes the certificate being served.

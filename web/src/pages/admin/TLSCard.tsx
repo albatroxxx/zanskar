@@ -122,11 +122,24 @@ export function TLSCard() {
     <div className="card" id="settings-tls-certificate">
       <h2>TLS certificate</h2>
       {status.mode === 'proxy' ? (
-        <p className="muted">Terminated by the proxy in front of the gateway (<code>ZANSKAR_TLS_MODE=proxy</code>).</p>
+        <p className="muted">
+          The proxy in front of the gateway holds the certificate (<code>ZANSKAR_TLS_MODE=proxy</code>). To upload one here, or have the gateway get one from Let's Encrypt, switch the TLS mode to managed under Set at install.
+        </p>
       ) : (
         <>
           {err && <Alert tone="danger">{err}</Alert>}
           {ok && <Alert tone="ok">{ok}</Alert>}
+          {status.acme?.on && (
+            <p className="acme-line">
+              <strong>Let's Encrypt</strong>{' '}
+              {!status.acme.names?.length
+                ? 'is on, but there is no name to order: set the public URL.'
+                : status.acme.not_after
+                  ? `serves ${status.acme.names.join(', ')} until ${fmtTime(status.acme.not_after)}${status.acme.issuer ? ` (${status.acme.issuer})` : ''}.`
+                  : `will order ${status.acme.names.join(', ')} at the first visit by that name.`}
+              {status.acme.last_error && <span className="muted"> Last attempt: {status.acme.last_error}</span>}
+            </p>
+          )}
           {status.uploaded?.problem && (
             <Alert tone="warn">
               The uploaded certificate ({status.uploaded.subject}) is not in use: {status.uploaded.problem}. Upload a replacement below, or remove it.

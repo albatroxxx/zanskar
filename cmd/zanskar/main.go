@@ -19,6 +19,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/url"
 	"os"
 	"os/signal"
 	"strings"
@@ -242,6 +243,23 @@ func serve(ctx context.Context) error {
 		var lvl slog.Level
 		if err := lvl.UnmarshalText([]byte(v)); err == nil {
 			logLevel.Set(lvl)
+		}
+	}
+	if tlsMgr != nil {
+		// A certificate from Let's Encrypt, when the console turns it on
+		// (ADR 0021, amended 2026-10-30), for the public URL's name and the
+		// DNS names among the TLS hosts only.
+		publicHost := ""
+		if u, err := url.Parse(cfg.PublicURL); err == nil {
+			publicHost = u.Hostname()
+		}
+		tlsMgr.ACME = &tlscert.ACME{
+			Names: tlscert.NamesFor(publicHost, cfg.TLSHosts),
+			Settings: func() (bool, string, string) {
+				return runtime.Bool(settings.KeyACME), runtime.String(settings.KeyACMEEmail), runtime.String(settings.KeyACMEDirectory)
+			},
+			Cache: tlscert.DBCache{Repo: tlsMgr.Repo},
+			Log:   log,
 		}
 	}
 	applyLevel(runtime.String(settings.KeyLogLevel))

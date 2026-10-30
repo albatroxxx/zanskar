@@ -41,6 +41,9 @@ type Status struct {
 	Generated *Info  `json:"generated,omitempty"`
 	// FileHint names the variables for the file certificate, when one is in use.
 	FileHint string `json:"file_hint,omitempty"`
+	// ACME is the Let's Encrypt state, when the gateway serves TLS itself
+	// (ADR 0021, amended 2026-10-30).
+	ACME *ACMEStatus `json:"acme,omitempty"`
 }
 
 func (h *Handler) status(r *http.Request) Status {
@@ -58,6 +61,10 @@ func (h *Handler) status(r *http.Request) Status {
 	}
 	if h.Manager.File != nil {
 		s.FileHint = "ZANSKAR_TLS_CERT, ZANSKAR_TLS_KEY"
+	}
+	if h.Manager.ACME != nil {
+		st := h.Manager.ACME.Status()
+		s.ACME = &st
 	}
 	return s
 }

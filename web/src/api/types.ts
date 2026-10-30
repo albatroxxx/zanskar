@@ -570,6 +570,8 @@ export interface TLSStatus {
   uploaded?: TLSCertInfo
   generated?: TLSCertInfo
   file_hint?: string
+  /** Let's Encrypt, when the gateway serves TLS itself (ADR 0021, amended 2026-10-30). */
+  acme?: { on: boolean; names: string[] | null; not_after?: string; issuer?: string; last_error?: string }
 }
 
 /** Recording storage as the console edits it; the secret is write-only. Mirrors internal/recstorage.Config. */

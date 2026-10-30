@@ -10,7 +10,7 @@ afterEach(() => {
   vi.restoreAllMocks()
 })
 
-const guacd: RuntimeSetting = { key: 'desktop.guacd_addr', category: 'Desktops', title: 'guacd address', description: 'host:port of guacd.', type: 'hostport', default: '', value: '127.0.0.1:4822', source: 'environment', env_var: 'ZANSKAR_GUACD_ADDR', step_up: true }
+const guacd: RuntimeSetting = { key: 'desktop.guacd_addr', category: 'Desktops', title: 'Desktops (RDP, VNC)', description: 'host:port of guacd.', type: 'hostport', default: '', value: '127.0.0.1:4822', source: 'environment', env_var: 'ZANSKAR_GUACD_ADDR', step_up: true }
 const listing: SettingsListing = { runtime: [guacd], boot: [] }
 const stepUp = () => new ApiError(403, { code: 'step_up_required', message: 'prove your authenticator first' }, '403')
 

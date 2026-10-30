@@ -59,3 +59,28 @@ func TestTimeZoneSetting(t *testing.T) {
 		}
 	}
 }
+
+// TestACMESettings (ADR 0021, amended 2026-10-30): the account email is an
+// address or nothing, and the directory an https URL.
+func TestACMESettings(t *testing.T) {
+	email, _ := Lookup(KeyACMEEmail)
+	dir, _ := Lookup(KeyACMEDirectory)
+	for _, ok := range []string{"", "ops@example.com"} {
+		if _, err := Validate(email, ok); err != nil {
+			t.Errorf("email %q: %v", ok, err)
+		}
+	}
+	for _, bad := range []string{"ops", "ops@", "a b@example.com", "ops@example"} {
+		if _, err := Validate(email, bad); !errors.Is(err, ErrInvalid) {
+			t.Errorf("email %q accepted", bad)
+		}
+	}
+	if _, err := Validate(dir, LetsEncryptDirectory); err != nil || dir.Default != LetsEncryptDirectory {
+		t.Fatalf("directory default: %v", err)
+	}
+	for _, bad := range []string{"http://acme.example/dir", "acme.example/dir", "https://"} {
+		if _, err := Validate(dir, bad); !errors.Is(err, ErrInvalid) {
+			t.Errorf("directory %q accepted", bad)
+		}
+	}
+}

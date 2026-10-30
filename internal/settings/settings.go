@@ -16,6 +16,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"net/url"
 	"os"
 	"regexp"
 	"slices"
@@ -76,7 +77,16 @@ const (
 	// KeyTimeZone is the zone every time in the console is shown in, and
 	// the dashboard's clock (2026-10-30); by default the gateway host's.
 	KeyTimeZone = "display.time_zone"
+	// KeyACME, KeyACMEEmail and KeyACMEDirectory get the gateway's
+	// certificate from an ACME CA when it serves TLS itself (ADR 0021,
+	// amended 2026-10-30).
+	KeyACME          = "tls.acme"
+	KeyACMEEmail     = "tls.acme_email"
+	KeyACMEDirectory = "tls.acme_directory"
 )
+
+// LetsEncryptDirectory is the ACME directory KeyACMEDirectory defaults to.
+const LetsEncryptDirectory = "https://acme-v02.api.letsencrypt.org/directory"
 
 // DefaultDBProxyImage is the gateway's own image at the running version. A
 // development build has no published tag, so it points at latest and the
@@ -146,6 +156,9 @@ func RequireDigest(v string) error {
 	return nil
 }
 
+// emailRe is an address the CA can write to: no spaces, one @, a dotted domain.
+var emailRe = regexp.MustCompile(`^[^@\s]{1,64}@[A-Za-z0-9.-]{1,253}\.[A-Za-z]{2,63}$`)
+
 // MaxLoginBanner bounds the banner: long enough for a legal notice, short
 // enough that the sign-in form stays on the page.
 const MaxLoginBanner = 4000
@@ -183,6 +196,12 @@ var Definitions = []Definition{
 		Description: "Relay for database and application sessions. A custom image, for a private registry mirror, is pinned by digest."},
 	{Key: KeyBrowserImage, Category: "Applications", Title: "Browser image", Type: TypeString, Default: DefaultBrowserImage(), EnvVar: "ZANSKAR_BROWSER_IMAGE", StepUp: true,
 		Description: "Isolated browser for application sessions. A custom image, for a private registry mirror, is pinned by digest."},
+	{Key: KeyACME, Category: "Let's Encrypt", Title: "Certificate from Let's Encrypt", Type: TypeBool, Default: "false",
+		Description: "When the gateway serves TLS itself: a certificate for the public URL's name, renewed on its own. An uploaded one still wins."},
+	{Key: KeyACMEEmail, Category: "Let's Encrypt", Title: "Account email", Type: TypeString,
+		Description: "Where the CA writes about the certificate."},
+	{Key: KeyACMEDirectory, Category: "Let's Encrypt", Title: "ACME directory", Type: TypeString, Default: LetsEncryptDirectory,
+		Description: "Let's Encrypt by default; its staging, or a private ACME CA."},
 	{Key: KeyTimeZone, Category: "Display", Title: "Time zone", Type: TypeTimeZone, Default: HostZone(),
 		Description: "Every time in the console and the dashboard clock. The default is the gateway host's."},
 }
@@ -280,6 +299,16 @@ func Validate(d Definition, value string) (string, error) {
 		v := strings.TrimSpace(value)
 		if !utf8.ValidString(v) || len(v) > 4096 {
 			return "", fmt.Errorf("%w: %s must be valid UTF-8 up to 4096 bytes", ErrInvalid, d.Key)
+		}
+		switch d.Key {
+		case KeyACMEEmail:
+			if v != "" && !emailRe.MatchString(v) {
+				return "", fmt.Errorf("%w: %s must be an email address", ErrInvalid, d.Key)
+			}
+		case KeyACMEDirectory:
+			if u, err := url.Parse(v); err != nil || u.Scheme != "https" || u.Host == "" {
+				return "", fmt.Errorf("%w: %s must be an https:// URL", ErrInvalid, d.Key)
+			}
 		}
 		// The relay image is an argument of `docker run`; free text there
 		// could be read as one of its flags (--privileged, a host mount).
