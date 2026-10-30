@@ -60,7 +60,7 @@ export function TagEditor({ rows, onChange, idPrefix, suggest, valuePlaceholder 
       })}
       {suggest && (
         <datalist id={keysId}>
-          {Object.keys(suggest).sort().map((k) => <option key={k} value={k}>{k}</option>)}
+          {Object.keys(suggest).sort((a, b) => a.localeCompare(b)).map((k) => <option key={k} value={k}>{k}</option>)}
         </datalist>
       )}
       <div>

@@ -42,5 +42,5 @@ export function tagSuggestions(tagged: { tags?: Record<string, string> }[]): Rec
       if (v) out.get(k)!.add(v)
     }
   }
-  return Object.fromEntries([...out].map(([k, vs]) => [k, [...vs].sort()]))
+  return Object.fromEntries([...out].map(([k, vs]) => [k, [...vs].sort((a, b) => a.localeCompare(b))]))
 }

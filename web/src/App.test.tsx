@@ -21,6 +21,11 @@ function signedIn(roles: string[] | null) {
     // The dashboards' own data is not the point here; they show the failure and the portal still stands.
     if (path.startsWith('/admin/overview') || path.startsWith('/audit/overview')) throw new ApiError(503, { code: 'unavailable', message: 'not now', request_id: 'r' }, '503')
     if (path === '/admin/settings') return { runtime: [], boot: [] } as never
+    // Settings' own cards read these; answered in their real shape, so a
+    // card that loads after the test's last look cannot crash on a stand-in.
+    if (path === '/admin/tls') return { mode: 'proxy' } as never
+    if (path === '/admin/storage') return { source: 'local', counts: {}, move: { running: false, moved: 0, failed: 0, total: 0 } } as never
+    if (path === '/admin/retention') return { max_age_days: 30, max_total_bytes: 0 } as never
     return { items: [] } as never
   })
 }
@@ -110,6 +115,9 @@ describe('Retention lives in Settings', () => {
     open('/admin/retention')
     expect(await screen.findByRole('heading', { name: 'Settings' })).toBeDefined()
     expect(screen.queryByRole('link', { name: 'Retention' })).toBeNull()
+    // The section it moved into loads there.
+    expect(await screen.findByRole('heading', { name: 'Recording retention' })).toBeDefined()
+    expect(await screen.findByRole('heading', { name: 'Recording storage' })).toBeDefined()
   })
 })
 
