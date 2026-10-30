@@ -37,6 +37,9 @@ import (
 const (
 	stateCookieName = "zanskar_oidc"
 	stateTTL        = 10 * time.Minute
+	// signedOutState is the state a provider echoes when it sends the
+	// browser back to the callback after signing it out (LogoutURL).
+	signedOutState = "signed-out"
 )
 
 // Handler serves the public provider list and the OIDC start/callback pair.
@@ -138,6 +141,13 @@ func (h *Handler) start(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) callback(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
+	// Back from the provider's sign-out (LogoutURL): no code, no error, the
+	// sign-out state. On to the sign-in page; nothing was attempted, so
+	// nothing is recorded, and no session changes.
+	if q := r.URL.Query(); q.Get("state") == signedOutState && q.Get("code") == "" && q.Get("error") == "" {
+		http.Redirect(w, r, "/login", http.StatusFound)
+		return
+	}
 	ip := auth.ClientIP(r)
 	name, path := h.stateCookie()
 	c, err := r.Cookie(name)
@@ -286,12 +296,16 @@ func (h *Handler) rememberProvider(ctx context.Context, sessionID, idpID, rawIDT
 // LogoutURL is where the browser goes once a session has signed out, when
 // it signed in through a provider (ADR 0035): the provider's
 // end_session_endpoint (OpenID Connect RP-Initiated Logout) with the
-// session's ID token as id_token_hint, the client id, and the sign-in page
-// as post_logout_redirect_uri, which the provider must have registered. It
-// is empty when the session signed in some other way, the provider keeps
-// its session (keep_provider_session), or it publishes no https
-// end_session_endpoint. It never stands in the way of signing out: a
-// problem is logged and the answer is empty.
+// session's ID token as id_token_hint and the client id. The way back,
+// post_logout_redirect_uri, is the provider's own callback with the
+// sign-out state, which the callback sends on to the sign-in page: a
+// provider accepts only an address it has registered, and refuses the
+// whole sign-out otherwise (Keycloak answers "Invalid redirect uri" and
+// keeps its session), while the callback is registered already, or no
+// sign-in would work. It is empty when the session signed in some other
+// way, the provider keeps its session (keep_provider_session), or it
+// publishes no https end_session_endpoint. It never stands in the way of
+// signing out: a problem is logged and the answer is empty.
 func (h *Handler) LogoutURL(r *http.Request, sessionID string) string {
 	ctx := r.Context()
 	idpID, enc, ver, err := h.Sessions.Provider(ctx, sessionID)
@@ -319,7 +333,8 @@ func (h *Handler) LogoutURL(r *http.Request, sessionID string) string {
 	}
 	q := u.Query()
 	q.Set("client_id", cfg.ClientID)
-	q.Set("post_logout_redirect_uri", h.baseURL(r)+"/login")
+	q.Set("post_logout_redirect_uri", h.baseURL(r)+"/api/v1/auth/oidc/"+op.ID+"/callback")
+	q.Set("state", signedOutState)
 	if enc != nil && h.Ring != nil {
 		if raw, err := h.Ring.Decrypt(keyring.AAD("auth_sessions", sessionID), enc, ver); err == nil {
 			q.Set("id_token_hint", string(raw))

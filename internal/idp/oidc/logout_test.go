@@ -90,8 +90,21 @@ func TestSignOutEndsTheProviderSession(t *testing.T) {
 	if !strings.HasPrefix(to, f.srv.URL+"/logout?") || q.Get("kc") != "1" {
 		t.Fatalf("redirect %s: want the provider's end_session_endpoint with its own query", to)
 	}
-	if q.Get("id_token_hint") != issued || q.Get("client_id") != "cid" || q.Get("post_logout_redirect_uri") != e.app.URL+"/login" {
+	callback := e.app.URL + "/api/v1/auth/oidc/" + id + "/callback"
+	if q.Get("id_token_hint") != issued || q.Get("client_id") != "cid" || q.Get("post_logout_redirect_uri") != callback || q.Get("state") != signedOutState {
 		t.Fatalf("redirect query: %v", q)
+	}
+
+	// The provider sends the browser back to the callback with the state:
+	// on to the sign-in page, with no failed sign-in recorded and no
+	// session made.
+	back, err := http.DefaultClient.Do(mustReq(t, callback+"?state="+signedOutState))
+	if err != nil {
+		t.Fatal(err)
+	}
+	back.Body.Close()
+	if back.Request.URL.Path != "/login" || back.Request.URL.RawQuery != "" {
+		t.Fatalf("back from the provider: %s", back.Request.URL)
 	}
 	if signedIn(t, e, cookies) {
 		t.Fatal("the session must be revoked")
@@ -99,6 +112,23 @@ func TestSignOutEndsTheProviderSession(t *testing.T) {
 	events, _, err := e.h.Audit.List(context.Background(), audit.Filter{Action: audit.UserLogout, Limit: 5})
 	if err != nil || len(events) != 1 || !strings.Contains(string(events[0].Details), `"provider_sign_out":"true"`) {
 		t.Fatalf("logout event: %v %v", events, err)
+	}
+	logins, _, err := e.h.Audit.List(context.Background(), audit.Filter{Action: audit.UserLogin, Limit: 5})
+	if err != nil || len(logins) != 1 || logins[0].Outcome != audit.Success {
+		t.Fatalf("the way back must record no failed sign-in: %+v %v", logins, err)
+	}
+
+	// A state of anything else, or the sign-out state with a code, is still
+	// a sign-in, and fails as one without its cookie.
+	for _, q := range []string{"?state=forged", "?state=" + signedOutState + "&code=x"} {
+		res, err := http.DefaultClient.Do(mustReq(t, callback+q))
+		if err != nil {
+			t.Fatal(err)
+		}
+		res.Body.Close()
+		if !strings.Contains(res.Request.URL.RawQuery, "error=state_missing") {
+			t.Fatalf("%s: %s", q, res.Request.URL)
+		}
 	}
 }
 

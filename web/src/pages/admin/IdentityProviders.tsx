@@ -239,25 +239,19 @@ function SyncCell({ sync }: { sync?: SyncState }) {
   return <StateIcon state={run.held > 0 ? 'warn' : 'ok'} label={`${fmtTime(run.at)} · ${syncSummary(run)}`} />
 }
 
-/** The two addresses an OIDC provider must have registered for this
- *  gateway: where it sends the browser after sign-in, and after sign-out. */
-function RegisterURIs({ id }: { id: string }) {
-  const origin = window.location.origin
-  const uris = [
-    { key: 'redirect', label: 'Redirect URI', value: `${origin}/api/v1/auth/oidc/${id}/callback` },
-    { key: 'logout', label: 'Post-logout redirect URI', value: `${origin}/login` },
-  ]
+/** The address an OIDC provider must have registered for this gateway. The
+ *  provider sends the browser back there after sign-in, and after sign-out
+ *  too (ADR 0035), so one registration covers both. */
+function RegisterURI({ id }: { id: string }) {
+  const value = `${window.location.origin}/api/v1/auth/oidc/${id}/callback`
   return (
-    <div className="register-uris">
-      {uris.map((u) => (
-        <div key={u.key} className="field">
-          <label htmlFor={`oidc-uri-${u.key}`}>{u.label}</label>
-          <div className="copy-row">
-            <input id={`oidc-uri-${u.key}`} readOnly value={u.value} onFocus={(e) => e.target.select()} />
-            <CopyButton text={u.value} name={u.label} />
-          </div>
-        </div>
-      ))}
+    <div className="field">
+      <label htmlFor="oidc-uri-redirect">Redirect URI</label>
+      <div className="copy-row">
+        <input id="oidc-uri-redirect" aria-describedby="oidc-uri-hint" readOnly value={value} onFocus={(e) => e.target.select()} />
+        <CopyButton text={value} name="Redirect URI" />
+      </div>
+      <span className="hint" id="oidc-uri-hint">Register it at the provider; it is also the post-logout redirect URI.</span>
     </div>
   )
 }
@@ -386,7 +380,7 @@ function ProviderModal({ existing, onClose, onSaved }: { existing: Provider | nu
             <div className="field inline"><input id="oidc-trustemail" type="checkbox" checked={!!oidc.trust_email} onChange={(e) => setOidc({ ...oidc, trust_email: e.target.checked })} /><label htmlFor="oidc-trustemail">Trust email addresses the provider does not mark as verified (for one that never says, such as Entra ID, when your directory assigns the addresses)</label></div>
             <div className="field inline"><input id="oidc-zanskarmfa" type="checkbox" checked={!!oidc.zanskar_mfa} onChange={(e) => setOidc({ ...oidc, zanskar_mfa: e.target.checked })} /><label htmlFor="oidc-zanskarmfa">Also ask for a Zanskar authenticator (only for a provider with no MFA of its own)</label></div>
             <div className="field inline"><input id="oidc-endsession" type="checkbox" checked={!oidc.keep_provider_session} onChange={(e) => setOidc({ ...oidc, keep_provider_session: !e.target.checked })} /><label htmlFor="oidc-endsession">Signing out ends the provider session too</label></div>
-            {existing && <RegisterURIs id={existing.id} />}
+            {existing && <RegisterURI id={existing.id} />}
           </>
         )}
 

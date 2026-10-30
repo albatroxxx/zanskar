@@ -154,10 +154,11 @@ describe('Editing, testing and deleting a provider', () => {
     expect(put.mock.calls[0][1]).toMatchObject({ enabled: false, config: { oidc: { client_secret: '', issuer: 'https://login.example.com' } } })
   })
 
-  // ADR 0035: an OIDC provider shows the two addresses to register at the
-  // provider, and signing out ends the provider's session unless the admin
-  // unticks it (keep_provider_session).
-  it('shows the addresses to register, and keeps the provider session only when asked', async () => {
+  // ADR 0035: an OIDC provider shows the address to register at the
+  // provider, which serves sign-in and sign-out alike, and signing out ends
+  // the provider's session unless the admin unticks it
+  // (keep_provider_session).
+  it('shows the address to register, and keeps the provider session only when asked', async () => {
     serve()
     const put = vi.spyOn(api, 'put').mockResolvedValue({} as never)
     render(<IdentityProviders />)
@@ -167,7 +168,7 @@ describe('Editing, testing and deleting a provider', () => {
     await waitFor(() => expect((within(form).getByLabelText('Issuer URL') as HTMLInputElement).value).toBe('https://login.example.com'))
     const origin = window.location.origin
     expect((within(form).getByLabelText('Redirect URI') as HTMLInputElement).value).toBe(`${origin}/api/v1/auth/oidc/i1/callback`)
-    expect((within(form).getByLabelText('Post-logout redirect URI') as HTMLInputElement).value).toBe(`${origin}/login`)
+    expect(within(form).getByText(/also the post-logout redirect URI/)).toBeDefined()
     expect(within(form).getByRole('button', { name: 'Copy Redirect URI' })).toBeDefined()
     const ends = within(form).getByLabelText('Signing out ends the provider session too') as HTMLInputElement
     expect(ends.checked).toBe(true)
