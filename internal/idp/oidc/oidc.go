@@ -191,18 +191,9 @@ func (h *Handler) callback(w http.ResponseWriter, r *http.Request) {
 		h.fail(w, r, "", id, "claims_invalid", err)
 		return
 	}
-	if len(cfg.AllowedDomains) > 0 {
-		// The gate means something only for an address the provider vouches
-		// for: on one where people edit their own, anyone could type in an
-		// allowed domain.
-		if !emailTrusted {
-			h.fail(w, r, "", id, "email_unverified", errors.New("the provider has not verified the email address"))
-			return
-		}
-		if !domainAllowed(ident.Email, cfg.AllowedDomains) {
-			h.fail(w, r, "", id, "domain_not_allowed", fmt.Errorf("email domain not allowed for %q", ident.Email))
-			return
-		}
+	if code, err := admit(ident, emailTrusted, cfg); err != nil {
+		h.fail(w, r, "", id, code, err)
+		return
 	}
 	res, err := h.Provisioner.Resolve(r.Context(), op, ident)
 	if err != nil {
@@ -420,8 +411,20 @@ func identityFromToken(idt *gooidc.IDToken, cfg *idp.OIDCConfig) (ident idp.Iden
 	if err := idt.Claims(&all); err != nil {
 		return idp.Identity{}, false, err
 	}
+	if idt.Subject == "" {
+		return idp.Identity{}, false, errors.New("no subject")
+	}
+	return identityFromClaims(idt.Subject, all, cfg)
+}
+
+// identityFromClaims is identityFromToken over claims already read: the
+// directory sync (KeycloakDirectory) builds them from the admin API, so that
+// a person listed there is asserted exactly as their sign-in would be.
+func identityFromClaims(subject string, all map[string]any, cfg *idp.OIDCConfig) (ident idp.Identity, emailTrusted bool, err error) {
 	var c claims
-	_ = idt.Claims(&c)
+	if raw, err := json.Marshal(all); err == nil {
+		_ = json.Unmarshal(raw, &c)
+	}
 	email := strings.ToLower(strings.TrimSpace(c.Email))
 	verified, said := emailVerified(c.EmailVerified)
 	if said && !verified {
@@ -439,7 +442,7 @@ func identityFromToken(idt *gooidc.IDToken, cfg *idp.OIDCConfig) (ident idp.Iden
 	if username == "" {
 		return idp.Identity{}, false, errors.New("no usable username claim")
 	}
-	ident = idp.Identity{ExternalID: idt.Subject, Username: username, DisplayName: c.Name, Email: email}
+	ident = idp.Identity{ExternalID: subject, Username: username, DisplayName: c.Name, Email: email}
 	if cfg.GroupsClaim != "" {
 		if raw, ok := all[cfg.GroupsClaim].([]any); ok {
 			for _, g := range raw {
@@ -450,6 +453,25 @@ func identityFromToken(idt *gooidc.IDToken, cfg *idp.OIDCConfig) (ident idp.Iden
 		}
 	}
 	return ident, emailTrusted, nil
+}
+
+// admit applies the provider's own gate on who may sign in: with allowed
+// email domains, an address the provider vouches for (emailTrusted) in one
+// of them. It answers the failure code a sign-in reports.
+func admit(ident idp.Identity, emailTrusted bool, cfg *idp.OIDCConfig) (string, error) {
+	if len(cfg.AllowedDomains) == 0 {
+		return "", nil
+	}
+	// The gate means something only for an address the provider vouches
+	// for: on one where people edit their own, anyone could type in an
+	// allowed domain.
+	if !emailTrusted {
+		return "email_unverified", errors.New("the provider has not verified the email address")
+	}
+	if !domainAllowed(ident.Email, cfg.AllowedDomains) {
+		return "domain_not_allowed", fmt.Errorf("email domain not allowed for %q", ident.Email)
+	}
+	return "", nil
 }
 
 // emailVerified reads the email_verified claim, a boolean or the string some

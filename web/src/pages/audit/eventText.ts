@@ -49,6 +49,7 @@ const actionLabels: Record<string, string> = {
   'idp.update': 'Identity provider updated',
   'idp.delete': 'Identity provider deleted',
   'idp.test': 'Identity provider tested',
+  'idp.sync': 'Directory users synced',
   'key.rotate': 'Encryption key rotated',
   'key.rotate_master': 'Master key rotated',
   'logs.download': 'Logs downloaded',

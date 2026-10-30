@@ -33,6 +33,9 @@ type AdminHandler struct {
 	LDAPTester LDAPTester
 	// HTTPClient for OIDC discovery in tests; defaults to a 10 s client.
 	HTTPClient *http.Client
+	// Sync runs the directory user sync (ADR 0035); nil leaves its routes
+	// answering that there is none.
+	Sync *idp.Syncer
 }
 
 // Register mounts the routes.
@@ -44,6 +47,77 @@ func (h *AdminHandler) Register(mux *http.ServeMux) {
 	mux.Handle("PUT /api/v1/identity-providers/{id}", admin(http.HandlerFunc(h.update)))
 	mux.Handle("DELETE /api/v1/identity-providers/{id}", admin(http.HandlerFunc(h.del)))
 	mux.Handle("POST /api/v1/identity-providers/{id}/test", admin(http.HandlerFunc(h.test)))
+	mux.Handle("GET /api/v1/identity-providers/{id}/sync", admin(http.HandlerFunc(h.syncStatus)))
+	mux.Handle("POST /api/v1/identity-providers/{id}/sync", admin(http.HandlerFunc(h.syncNow)))
+}
+
+// syncView is the state of a provider's user sync.
+type syncView struct {
+	Enabled bool            `json:"enabled"`
+	Minutes int             `json:"interval_minutes"`
+	Running bool            `json:"running"`
+	Last    *idp.SyncStatus `json:"last"`
+}
+
+func (h *AdminHandler) syncView(op *idp.Opened) syncView {
+	v := syncView{Enabled: op.Config.SyncUsers, Minutes: op.Config.SyncMinutes}
+	if h.Sync != nil {
+		v.Running, v.Last = h.Sync.Running(op.ID), h.Sync.Status(op.ID)
+	}
+	return v
+}
+
+func (h *AdminHandler) syncStatus(w http.ResponseWriter, r *http.Request) {
+	op, err := h.Providers.Open(r.Context(), r.PathValue("id"))
+	if err != nil {
+		h.fail(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, h.syncView(op))
+}
+
+type syncRequest struct {
+	// ApplyRemovals disables the accounts a run held back because there
+	// were too many at once.
+	ApplyRemovals bool `json:"apply_removals"`
+}
+
+// syncNow runs the sync for one provider while the administrator waits,
+// and answers with what it did. The run is audited under the administrator
+// even when it changes nothing.
+func (h *AdminHandler) syncNow(w http.ResponseWriter, r *http.Request) {
+	var req syncRequest
+	if r.ContentLength != 0 {
+		if err := httpx.DecodeJSON(r, &req); err != nil {
+			httpx.BadRequest(w, r, err.Error())
+			return
+		}
+	}
+	op, err := h.Providers.Open(r.Context(), r.PathValue("id"))
+	if err != nil {
+		h.fail(w, r, err)
+		return
+	}
+	switch {
+	case h.Sync == nil:
+		httpx.WriteError(w, r, http.StatusConflict, "sync_unavailable", "this gateway does not run the user sync")
+		return
+	case !op.Enabled || !op.Config.SyncUsers:
+		httpx.WriteError(w, r, http.StatusConflict, "sync_off", "turn on user sync for this provider, and enable it, first")
+		return
+	}
+	_, err = h.Sync.Sync(r.Context(), op, idp.SyncOptions{Force: req.ApplyRemovals, Actor: auth.ActorFor(r), Manual: true})
+	switch {
+	case errors.Is(err, idp.ErrSyncRunning):
+		httpx.WriteError(w, r, http.StatusConflict, "sync_running", "a sync of this provider is running; try again when it ends")
+		return
+	case errors.Is(err, idp.ErrNoDirectory):
+		httpx.WriteError(w, r, http.StatusConflict, "sync_unavailable", "this provider cannot be listed")
+		return
+	}
+	// A run that failed still answers 200: the run happened, and its status
+	// says what went wrong.
+	httpx.WriteJSON(w, http.StatusOK, h.syncView(op))
 }
 
 type input struct {
@@ -53,11 +127,13 @@ type input struct {
 	Config  idp.Config `json:"config"`
 }
 
-// view is the response shape: the row plus its config with secrets blanked.
+// view is the response shape: the row plus its config with secrets blanked,
+// and the state of its user sync when it has one turned on.
 type view struct {
 	idp.Provider
 	Config    idp.Config `json:"config"`
 	HasSecret bool       `json:"has_secret"`
+	Sync      *syncView  `json:"sync,omitempty"`
 }
 
 func redact(op *idp.Opened) view {
@@ -90,7 +166,12 @@ func (h *AdminHandler) list(w http.ResponseWriter, r *http.Request) {
 			h.fail(w, r, err)
 			return
 		}
-		out = append(out, redact(op))
+		v := redact(op)
+		if op.Config.SyncUsers {
+			sv := h.syncView(op)
+			v.Sync = &sv
+		}
+		out = append(out, v)
 	}
 	httpx.WriteJSON(w, http.StatusOK, httpx.Page[view]{Items: out})
 }

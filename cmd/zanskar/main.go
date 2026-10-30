@@ -350,6 +350,11 @@ func serve(ctx context.Context) error {
 	// A sign-in through an identity provider that removes the user from a
 	// mapped group ends what that group granted, as an admin's removal does.
 	provisioner.Revoker = connectHandler
+	// The directory user sync (ADR 0035): people who join a Keycloak realm
+	// or an LDAP directory get an account before their first sign-in, and
+	// those who leave are disabled with their sessions ended.
+	userSync := &idp.Syncer{Providers: idpRepo, Provisioner: provisioner, Sessions: sessions, Audit: auditLog, Log: log,
+		Directories: map[idp.Type]idp.Directory{idp.TypeOIDC: &oidc.KeycloakDirectory{}, idp.TypeLDAP: &ldap.Authenticator{}}}
 	// The bell (ADR 0032): once a day, is there a newer release? The
 	// runtime setting is read before each check so a switch-off applies live.
 	versionCheck := &update.Checker{URL: cfg.UpdateManifestURL, Current: version.Version, Enabled: func() bool { return runtime.Bool(settings.KeyUpdateCheck) }, Log: log}
@@ -361,7 +366,7 @@ func serve(ctx context.Context) error {
 		Handlers: []server.Registrar{
 			&adminapi.AdminHandler{Users: users, Sessions: sessions, TOTP: totp, Revoker: connectHandler, Audit: auditLog, Log: log},
 			&group.AdminHandler{Groups: groups, Revoker: connectHandler, Audit: auditLog, Log: log},
-			&idpadmin.AdminHandler{Providers: idpRepo, Audit: auditLog, Log: log, LDAPTester: &ldap.Authenticator{}},
+			&idpadmin.AdminHandler{Providers: idpRepo, Audit: auditLog, Log: log, LDAPTester: &ldap.Authenticator{}, Sync: userSync},
 			oidcHandler,
 			&credential.AdminHandler{Vault: vault, Audit: auditLog, Log: log},
 			&target.AdminHandler{Repo: targets, Prober: prober, Policies: policies, Live: registry, Revoker: connectHandler, Vault: vault, Audit: auditLog, Log: log},
@@ -389,6 +394,9 @@ func serve(ctx context.Context) error {
 
 	// Autoscaling: keep instance membership and health current (ADR 0011).
 	go syncer.Run(ctx)
+
+	// Directory users: joiners and leavers, per provider (ADR 0035).
+	go userSync.Run(ctx)
 
 	// Recording retention: delete recordings past the admin-configured policy
 	// (ADR 0015). Off until an admin sets a policy in the console.

@@ -13,6 +13,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
 	"slices"
 	"sort"
 	"strings"
@@ -117,6 +118,15 @@ type Config struct {
 	// (see Provisioner.Resolve). When false, only accounts already linked to
 	// the person and such pre-created accounts may sign in.
 	AutoProvision bool `json:"auto_provision"`
+	// SyncUsers lists everyone in the directory every SyncMinutes (ADR
+	// 0035). With AutoProvision a person who joins has an account before
+	// their first sign-in; one who leaves, or is disabled there, has the
+	// account disabled and every session ended. Group memberships are not
+	// synced; mapped groups still follow each sign-in. Only a Keycloak
+	// realm (OIDC) or an LDAP directory can be listed.
+	SyncUsers bool `json:"sync_users,omitempty"`
+	// SyncMinutes is the time between runs: default 15, from 5 to 1440.
+	SyncMinutes int `json:"sync_minutes,omitempty"`
 }
 
 // Provider is the public row; Config is only returned by Open.
@@ -135,7 +145,8 @@ type Provider struct {
 // granting admin or auditor is an audit event). It never holds a secret:
 // no client secret, bind password or CA bundle.
 func AccessSummary(c *Config) map[string]any {
-	d := map[string]any{"auto_provision": c.AutoProvision, "default_roles": c.DefaultRoles, "group_mapping": c.GroupMapping}
+	d := map[string]any{"auto_provision": c.AutoProvision, "default_roles": c.DefaultRoles, "group_mapping": c.GroupMapping,
+		"sync_users": c.SyncUsers, "sync_minutes": c.SyncMinutes}
 	if c.GroupMapping == nil {
 		d["group_mapping"] = GroupMapping{}
 	}
@@ -264,7 +275,50 @@ func Validate(p *Provider, c *Config) error {
 	default:
 		return fmt.Errorf("%w: unknown type %q", ErrInvalidInput, p.Type)
 	}
+	return validateSync(c)
+}
+
+// SyncUsernameClaims are the username claims the directory sync can give
+// the same value for as a sign-in: a Keycloak user's username, email and id.
+var SyncUsernameClaims = []string{"preferred_username", "email", "sub"}
+
+func validateSync(c *Config) error {
+	if !c.SyncUsers {
+		c.SyncMinutes = 0
+		return nil
+	}
+	if c.SyncMinutes == 0 {
+		c.SyncMinutes = 15
+	}
+	if c.SyncMinutes < 5 || c.SyncMinutes > 1440 {
+		return fmt.Errorf("%w: sync_minutes must be 5 to 1440", ErrInvalidInput)
+	}
+	if o := c.OIDC; o != nil {
+		if _, _, err := KeycloakRealm(o.Issuer); err != nil {
+			return fmt.Errorf("%w: user sync lists a Keycloak realm; the issuer must be https://<host>/realms/<realm>", ErrInvalidInput)
+		}
+		if !slices.Contains(SyncUsernameClaims, o.UsernameClaim) {
+			return fmt.Errorf("%w: user sync needs the username claim to be preferred_username, email or sub", ErrInvalidInput)
+		}
+	}
 	return nil
+}
+
+// KeycloakRealm splits a Keycloak issuer, https://host[/prefix]/realms/name,
+// into the address of the realm's admin API (https://host[/prefix]/admin/realms/name)
+// and the realm's name.
+func KeycloakRealm(issuer string) (adminBase, realm string, err error) {
+	u, err := url.Parse(strings.TrimRight(issuer, "/"))
+	if err != nil || u.Scheme != "https" || u.Host == "" || u.RawQuery != "" || u.Fragment != "" {
+		return "", "", errors.New("not an https URL")
+	}
+	prefix, name, ok := strings.Cut(u.Path, "/realms/")
+	if !ok || name == "" || strings.Contains(name, "/") || strings.Contains(prefix, "/realms") {
+		return "", "", errors.New("not a Keycloak realm issuer")
+	}
+	u.Path = prefix + "/admin/realms/" + name
+	u.RawPath = ""
+	return u.String(), name, nil
 }
 
 // Repo persists providers.

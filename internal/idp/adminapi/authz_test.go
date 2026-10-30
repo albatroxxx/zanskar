@@ -69,6 +69,7 @@ func TestRoutesRequireAdmin(t *testing.T) {
 	routes := []struct{ method, path string }{
 		{"GET", "/api/v1/identity-providers"}, {"POST", "/api/v1/identity-providers"}, {"GET", "/api/v1/identity-providers/x"},
 		{"PUT", "/api/v1/identity-providers/x"}, {"DELETE", "/api/v1/identity-providers/x"}, {"POST", "/api/v1/identity-providers/x/test"},
+		{"GET", "/api/v1/identity-providers/x/sync"}, {"POST", "/api/v1/identity-providers/x/sync"},
 	}
 	for _, rt := range routes {
 		if code := do(rt.method, rt.path, nil, ""); code != 401 {

@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"net"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -112,6 +113,57 @@ func (a *Authenticator) Test(ctx context.Context, cfg *idp.LDAPConfig) error {
 		return fmt.Errorf("%w: user search: %v", ErrConfig, redact(err))
 	}
 	return nil
+}
+
+// pageSize is how many entries one page of a directory listing asks for;
+// Active Directory's own limit is 1000.
+const pageSize = 500
+
+// uacAccountDisable is the ACCOUNTDISABLE bit of Active Directory's
+// userAccountControl.
+const uacAccountDisable = 0x2
+
+// Users lists everyone the user filter admits, for the user sync (ADR
+// 0035): the filter with its %s as a wildcard, searched in pages as the
+// service account. An Active Directory account disabled there is left out,
+// as are entries with no username attribute. Each person is the Identity
+// their sign-in would assert, without groups, which the sync does not
+// touch. Any error, including a page the directory refuses, fails the
+// whole listing.
+func (a *Authenticator) Users(ctx context.Context, p *idp.Opened) ([]idp.Identity, error) {
+	cfg := p.Config.LDAP
+	if cfg == nil {
+		return nil, fmt.Errorf("%w: not an LDAP provider", ErrConfig)
+	}
+	conn, err := a.connect(ctx, cfg)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = conn.Close() }()
+	if err := conn.Bind(cfg.BindDN, cfg.BindPassword); err != nil {
+		return nil, fmt.Errorf("%w: service bind: %v", ErrDirectory, redact(err))
+	}
+	conn.SetTimeout(2 * time.Minute)
+	attrs := []string{cfg.UsernameAttr, cfg.DisplayNameAttr, cfg.EmailAttr, "objectGUID", "entryUUID", "userAccountControl"}
+	req := goldap.NewSearchRequest(cfg.BaseDN, goldap.ScopeWholeSubtree, goldap.NeverDerefAliases, 0, 0, false,
+		strings.ReplaceAll(cfg.UserFilter, "%s", "*"), attrs, nil)
+	res, err := conn.SearchWithPaging(req, pageSize)
+	if err != nil {
+		return nil, fmt.Errorf("%w: user listing: %v", ErrDirectory, redact(err))
+	}
+	out := make([]idp.Identity, 0, len(res.Entries))
+	for _, e := range res.Entries {
+		if uac, err := strconv.ParseInt(e.GetAttributeValue("userAccountControl"), 10, 64); err == nil && uac&uacAccountDisable != 0 {
+			continue
+		}
+		username := strings.ToLower(e.GetAttributeValue(cfg.UsernameAttr))
+		if username == "" {
+			continue
+		}
+		out = append(out, idp.Identity{ExternalID: externalID(e), Username: username,
+			DisplayName: e.GetAttributeValue(cfg.DisplayNameAttr), Email: strings.ToLower(e.GetAttributeValue(cfg.EmailAttr))})
+	}
+	return out, nil
 }
 
 func (a *Authenticator) connect(ctx context.Context, cfg *idp.LDAPConfig) (*goldap.Conn, error) {

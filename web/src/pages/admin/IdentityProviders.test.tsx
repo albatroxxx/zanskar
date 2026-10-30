@@ -112,7 +112,7 @@ describe('Adding a provider', () => {
     await user.type(within(form).getByLabelText('Bind DN'), 'cn=svc,dc=corp,dc=example')
     await user.type(within(form).getByLabelText('Bind password'), 'bind pw')
     await user.type(within(form).getByLabelText('Base DN'), 'dc=corp,dc=example')
-    await user.click(within(form).getByLabelText('Create a Zanskar user on first sign-in'))
+    await user.click(within(form).getByLabelText('Create an account for each new person'))
     await user.click(within(form).getByRole('button', { name: 'Save' }))
     await waitFor(() => expect(post).toHaveBeenCalledTimes(1))
     expect(post.mock.calls[0][1]).toEqual({

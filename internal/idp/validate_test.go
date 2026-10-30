@@ -82,3 +82,65 @@ func TestValidateAcceptsAndFillsDefaults(t *testing.T) {
 		t.Fatalf("explicit insecure mode: %v", err)
 	}
 }
+
+// TestValidateSync (ADR 0035): the user sync lists a Keycloak realm or an
+// LDAP directory, gives each person the username a sign-in would, and runs
+// every 5 minutes to once a day, 15 by default. Off, the interval is not
+// kept.
+func TestValidateSync(t *testing.T) {
+	kc := func(issuer, claim string, minutes int) *Config {
+		c := okOIDC()
+		c.OIDC.Issuer, c.OIDC.UsernameClaim, c.SyncUsers, c.SyncMinutes = issuer, claim, true, minutes
+		return c
+	}
+	realm := "https://kc.example/realms/zanskar"
+	cases := []struct {
+		name string
+		typ  Type
+		c    *Config
+		ok   bool
+		mins int
+	}{
+		{"keycloak, defaults", TypeOIDC, kc(realm, "", 0), true, 15},
+		{"keycloak behind /auth", TypeOIDC, kc("https://sso.example/auth/realms/corp/", "email", 60), true, 60},
+		{"keycloak by sub", TypeOIDC, kc(realm, "sub", 5), true, 5},
+		{"not keycloak", TypeOIDC, kc("https://login.example.com", "", 0), false, 0},
+		{"custom username claim", TypeOIDC, kc(realm, "upn", 0), false, 0},
+		{"too often", TypeOIDC, kc(realm, "", 4), false, 0},
+		{"too rarely", TypeOIDC, kc(realm, "", 1441), false, 0},
+		{"ldap", TypeLDAP, func() *Config { c := okLDAP(); c.SyncUsers = true; return c }(), true, 15},
+		{"off keeps no interval", TypeOIDC, func() *Config { c := kc(realm, "", 30); c.SyncUsers = false; return c }(), true, 0},
+	}
+	for _, tc := range cases {
+		err := Validate(&Provider{Name: "p", Type: tc.typ}, tc.c)
+		if (err == nil) != tc.ok {
+			t.Errorf("%s: %v", tc.name, err)
+			continue
+		}
+		if tc.ok && tc.c.SyncMinutes != tc.mins {
+			t.Errorf("%s: interval %d, want %d", tc.name, tc.c.SyncMinutes, tc.mins)
+		}
+	}
+}
+
+// TestKeycloakRealm: the admin API sits beside the realm, under any path
+// prefix the server has; anything that is not an https realm issuer is
+// refused.
+func TestKeycloakRealm(t *testing.T) {
+	for issuer, want := range map[string]string{
+		"https://kc.example/realms/zanskar":         "https://kc.example/admin/realms/zanskar",
+		"https://kc.example/realms/zanskar/":        "https://kc.example/admin/realms/zanskar",
+		"https://sso.example:8443/auth/realms/corp": "https://sso.example:8443/auth/admin/realms/corp",
+	} {
+		got, realm, err := KeycloakRealm(issuer)
+		if err != nil || got != want || realm == "" {
+			t.Errorf("%s: %s %s %v", issuer, got, realm, err)
+		}
+	}
+	for _, bad := range []string{"http://kc.example/realms/zanskar", "https://kc.example/", "https://kc.example/realms/", "https://kc.example/realms/a/b",
+		"https://kc.example/realms/x/realms/y", "https://kc.example/realms/z?x=1", "realms/z", ""} {
+		if _, _, err := KeycloakRealm(bad); err == nil {
+			t.Errorf("%q accepted", bad)
+		}
+	}
+}
