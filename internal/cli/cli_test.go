@@ -398,6 +398,8 @@ func TestTokenize(t *testing.T) {
 		{"  request approve  9c1d   'ok for now' ", []string{"request", "approve", "9c1d", "ok for now"}, ""},
 		{`setting set login_banner "Use is monitored; $5 fine"`, []string{"setting", "set", "login_banner", "Use is monitored; $5 fine"}, ""},
 		{"a\tb", []string{"a", "b"}, ""},
+		// An address is a username (ADR 0035); "@" is an ordinary character.
+		{"user disable alice.smith+ops@corp.example", []string{"user", "disable", "alice.smith+ops@corp.example"}, ""},
 		{"", nil, "empty"},
 		{"users; reboot", nil, "not a shell"},
 		{"echo $HOME", nil, "not a shell"},

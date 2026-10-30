@@ -103,7 +103,7 @@ func TestValidateSync(t *testing.T) {
 	}{
 		{"keycloak, defaults", TypeOIDC, kc(realm, "", 0), true, 15},
 		{"keycloak behind /auth", TypeOIDC, kc("https://sso.example/auth/realms/corp/", "", 60), true, 60},
-		{"email as the username", TypeOIDC, kc(realm, "email", 0), false, 0},
+		{"email as the username", TypeOIDC, kc(realm, "email", 0), true, 15},
 		{"keycloak by sub", TypeOIDC, kc(realm, "sub", 5), true, 5},
 		{"not keycloak", TypeOIDC, kc("https://login.example.com", "", 0), false, 0},
 		{"custom username claim", TypeOIDC, kc(realm, "upn", 0), false, 0},

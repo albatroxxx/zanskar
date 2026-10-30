@@ -278,10 +278,9 @@ func Validate(p *Provider, c *Config) error {
 	return validateSync(c)
 }
 
-// SyncUsernameClaims are the username claims the directory sync can give
-// the same value for as a sign-in: a Keycloak user's username and id. (An
-// email address is never a username: user.ValidUsername has no "@".)
-var SyncUsernameClaims = []string{"preferred_username", "sub"}
+// SyncUsernameClaims are the username claims a Keycloak listing can give
+// the same value for as a sign-in: the user's username, address and id.
+var SyncUsernameClaims = []string{"preferred_username", "email", "sub"}
 
 func validateSync(c *Config) error {
 	if !c.SyncUsers {
@@ -299,7 +298,7 @@ func validateSync(c *Config) error {
 			return fmt.Errorf("%w: user sync lists a Keycloak realm; the issuer must be https://<host>/realms/<realm>", ErrInvalidInput)
 		}
 		if !slices.Contains(SyncUsernameClaims, o.UsernameClaim) {
-			return fmt.Errorf("%w: user sync needs the username claim to be preferred_username or sub", ErrInvalidInput)
+			return fmt.Errorf("%w: user sync needs the username claim to be preferred_username, email or sub", ErrInvalidInput)
 		}
 	}
 	return nil

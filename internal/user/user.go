@@ -85,10 +85,28 @@ var (
 	ErrHasHistory    = errors.New("user: has session history")
 	ErrInvalidInput  = errors.New("user: invalid input")
 	ErrInvalidRole   = errors.New("user: invalid role")
-	ErrUsernameShape = errors.New("user: username must be 2-64 characters of letters, digits, '.', '_' or '-'")
+	ErrUsernameShape = errors.New("user: username must be 2-64 characters of letters, digits, '.', '_' or '-', or an email address")
 )
 
-var usernameRe = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._-]{1,63}$`)
+var (
+	usernameRe = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._-]{1,63}$`)
+	// emailUsernameRe is the address form most single sign-on providers
+	// give as the username (Okta's login, Entra ID's UPN): a local part of
+	// the plain characters plus "+", and a host name of DNS labels.
+	emailUsernameRe = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._+-]{0,63}@[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)+$`)
+)
 
-// ValidUsername reports whether s is an acceptable username.
-func ValidUsername(s string) bool { return usernameRe.MatchString(s) }
+// maxEmailUsername bounds an address-form username (RFC 5321's path limit).
+const maxEmailUsername = 254
+
+// ValidUsername reports whether s is an acceptable username: a name of
+// letters, digits, ".", "_" and "-", or an email address, the form
+// providers such as Okta and Entra ID assert (ADR 0035). Neither form has a
+// space, quote, slash or control character, so a username is safe in a
+// log line, an argument list or an SSH certificate's key id.
+func ValidUsername(s string) bool {
+	if usernameRe.MatchString(s) {
+		return true
+	}
+	return len(s) <= maxEmailUsername && emailUsernameRe.MatchString(s)
+}

@@ -446,12 +446,26 @@ func identityFromClaims(subject string, all map[string]any, cfg *idp.OIDCConfig)
 		email = ""
 	}
 	emailTrusted = email != "" && (verified || (!said && cfg.TrustEmail))
-	username, _ := all[cfg.UsernameClaim].(string)
+	var username string
+	if cfg.UsernameClaim == "email" {
+		// An address names an account only when the provider vouches for
+		// it: one a person can type in for themselves could name someone
+		// else's (an account is adopted by its username, Resolve).
+		if !emailTrusted {
+			return idp.Identity{}, false, errors.New("the username claim is the email address, and the provider has not verified it")
+		}
+		username = email
+	} else {
+		username, _ = all[cfg.UsernameClaim].(string)
+	}
 	if username == "" {
 		username = c.PreferredUsername
 	}
+	// With no username claim (Google sends none), a verified address is
+	// the username, whole: its local part alone would be the same for
+	// alice@one.example and alice@two.example.
 	if username == "" && emailTrusted {
-		username = email[:strings.IndexByte(email+"@", '@')]
+		username = email
 	}
 	username = strings.ToLower(strings.TrimSpace(username))
 	if username == "" {
