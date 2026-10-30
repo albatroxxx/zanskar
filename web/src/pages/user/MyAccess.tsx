@@ -1,9 +1,12 @@
 import { useEffect, useState, type FormEvent } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { api, errorMessage } from '../../api/client'
+import { expiresSoon } from '../../api/drilldown'
 import { fmtTime, protocolName } from '../../api/format'
 import type { AccessRequest, AccessStatus, Page } from '../../api/types'
+import { FilterChips } from '../../components/FilterChips'
 import { Alert, Badge, Empty, Field, Modal, PageHead } from '../../components/ui'
+import { badgesChanged } from '../../components/badges'
 
 const tone: Record<AccessStatus, 'ok' | 'warn' | 'danger' | undefined> = {
   approved: 'ok',
@@ -37,6 +40,10 @@ export function MyAccess() {
 
   const now = Date.now()
   const active = (r: AccessRequest) => r.status === 'approved' && !!r.expires_at && new Date(r.expires_at).getTime() > now
+  // show=pending or show=expiring, from the Targets page's strip
+  // (2026-10-30), narrows to the requests it counted.
+  const show = params.get('show') === 'pending' || params.get('show') === 'expiring' ? params.get('show') : null
+  const shown = reqs?.filter((r) => (show === 'pending' ? r.status === 'pending' : show === 'expiring' ? active(r) && expiresSoon(r.expires_at, now) : true)) ?? null
   const openExtend = (r: AccessRequest) => {
     setExt({ minutes: r.approved_minutes || r.requested_minutes, reason: `Extension: ${r.reason}` })
     setExtending(r)
@@ -65,6 +72,7 @@ export function MyAccess() {
         minutes: Number(ext.minutes),
         extends_request_id: extending.id,
       })
+      badgesChanged()
       setNotice(`Asked to extend ${protocolName(extending.protocol)} access to ${extending.target_name || extending.asg_name || 'the target'} by ${ext.minutes} minutes. An administrator must approve it; the current grant continues until it expires.`)
       setExtending(null)
       void load()
@@ -80,14 +88,15 @@ export function MyAccess() {
 
   return (
     <>
-      <PageHead title="My access" lead="Your requests, and the grants currently active." />
+      <PageHead title="Access" />
       {err && <Alert tone="danger">{err}</Alert>}
       {notice && <Alert tone="ok">{notice}</Alert>}
+      <FilterChips chips={show ? [{ label: show === 'pending' ? 'Pending' : 'Expiring within the hour', onClear: () => setParams({}, { replace: true }) }] : []} />
       <div className="card table-wrap">
-        {reqs === null ? (
+        {shown === null ? (
           <Empty>Loading…</Empty>
-        ) : reqs.length === 0 ? (
-          <Empty>You haven't requested access to any approval-gated machines.</Empty>
+        ) : shown.length === 0 ? (
+          <Empty>{show ? 'None right now.' : "You haven't requested access to any approval-gated machines."}</Empty>
         ) : (
           <table>
             <thead>
@@ -103,7 +112,7 @@ export function MyAccess() {
               </tr>
             </thead>
             <tbody>
-              {reqs.map((r) => (
+              {shown.map((r) => (
                 <tr key={r.id}>
                   <td className="muted">{fmtTime(r.created_at)}</td>
                   <td><strong>{name(r)}</strong></td>

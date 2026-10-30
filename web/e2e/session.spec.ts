@@ -36,7 +36,7 @@ test.describe('An SSH session from the browser', () => {
     const mine = page.getByRole('row').filter({ hasText: 'fake-1' }).first()
     await expect(mine).toBeVisible()
     await expect(mine).toContainText(/ssh/i)
-    await expect(page.getByText(/not shown here/)).toBeVisible()
+    await expect(page.getByText('Sessions are recorded.')).toBeVisible()
 
     // The administrator sees it with its recording, and the recording plays.
     await page.goto('/admin/sessions')
@@ -48,7 +48,7 @@ test.describe('An SSH session from the browser', () => {
     await expect(page.getByRole('link', { name: 'Download recording' })).toBeVisible()
     // Playing is a deliberate act: the page says a view is audited, then
     // loads the player on Play, and the audit log holds the view.
-    await expect(page.getByText(/Pressing Play records a view/)).toBeVisible()
+    await expect(page.getByText('Playing is logged with your name.')).toBeVisible()
     await page.getByRole('button', { name: 'Play' }).click()
     await expect(page.locator('.player-host .ap-wrapper, .player-host .ap-player').first()).toBeVisible({ timeout: 15_000 })
     const views = await page.evaluate(() => fetch('/api/v1/audit/events?action=recording.view').then((r) => r.json()))

@@ -1,20 +1,25 @@
-// Group mapping as the identity-provider form edits it: one line per mapping,
-// "externalGroup=zanskarGroupId". An LDAP group is best written as its full DN
-// (cn=ops,ou=groups,dc=corp,dc=example), which holds "=" itself, so each line
-// splits at its last "=": a Zanskar group id never contains one.
+// Group mapping as the identity-provider form edits it: rows of a provider
+// group (an OIDC groups-claim value, or an LDAP group, best written as its
+// full DN) and the Zanskar group it lands in, chosen by name, never typed as
+// an id.
 
-export function mappingToText(m?: Record<string, string>): string {
-  return Object.entries(m ?? {}).map(([k, v]) => `${k}=${v}`).join('\n')
+export interface MappingRow { external: string; group: string }
+
+export function mappingRows(m?: Record<string, string>): MappingRow[] {
+  return Object.entries(m ?? {}).map(([external, group]) => ({ external, group }))
 }
 
-export function textToMapping(text: string): { mapping: Record<string, string>; error?: string } {
-  const mapping: Record<string, string> = {}
-  for (const raw of text.split('\n')) {
-    const line = raw.trim()
-    if (!line) continue
-    const i = line.lastIndexOf('=')
-    if (i <= 0 || i === line.length - 1) return { mapping, error: `line "${line}" must be externalGroup=groupId` }
-    mapping[line.slice(0, i).trim()] = line.slice(i + 1).trim()
+/** rowsToMapping reads the rows back into the map the API takes; blank rows are dropped. */
+export function rowsToMapping(rows: MappingRow[]): { mapping: Record<string, string>; error?: string } {
+  // A Map, then fromEntries, so a provider group named "__proto__" stays a key.
+  const seen = new Map<string, string>()
+  for (const [i, r] of rows.entries()) {
+    const external = r.external.trim()
+    if (!external && !r.group) continue
+    if (!external) return { mapping: {}, error: `mapping ${i + 1}: provider group is empty` }
+    if (!r.group) return { mapping: {}, error: `mapping ${external}: choose a Zanskar group` }
+    if (seen.has(external)) return { mapping: {}, error: `mapping ${external} is given twice` }
+    seen.set(external, r.group)
   }
-  return { mapping }
+  return { mapping: Object.fromEntries(seen) }
 }

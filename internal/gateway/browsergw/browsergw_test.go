@@ -4,11 +4,16 @@ package browsergw
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"net"
+	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -305,9 +310,10 @@ func TestReadinessChecks(t *testing.T) {
 	if cs = r.Checks(context.Background()); !cs[1].OK || probes != 2 {
 		t.Fatalf("after the cache: %+v probes=%d", cs, probes)
 	}
-	// With the runtime answering, an image the host lacks is reported with
-	// the pull to run; the answer is kept like the probe's.
-	if cs[2].OK || !strings.Contains(cs[2].Detail, "podman pull "+DefaultBrowserImageForTest()) || inspects != 1 {
+	// With the runtime answering, an image the host lacks is named with the
+	// pull to run, and passes: the first session pulls it, so it does not
+	// hold back adding an application. The answer is kept like the probe's.
+	if !cs[2].OK || !strings.Contains(cs[2].Detail, "not pulled yet") || !strings.Contains(cs[2].Detail, "podman pull "+DefaultBrowserImageForTest()) || inspects != 1 {
 		t.Fatalf("absent image: %+v inspects=%d", cs[2], inspects)
 	}
 	if _ = r.Checks(context.Background()); inspects != 1 {
@@ -322,3 +328,82 @@ func TestReadinessChecks(t *testing.T) {
 
 // DefaultBrowserImageForTest stands in for the settings default.
 func DefaultBrowserImageForTest() string { return "ghcr.io/albatroxxx/zanskar-browser:test" }
+
+// TestReadinessProbesTheDaemonNotInfo (2026-10-30): on a host where
+// sessions ran fine the checklist said the runtime was unreachable, because
+// it asked `docker info`, which fails on things a session never touches (a
+// broken CLI plugin, a slow registry lookup). The probe asks the daemon its
+// version, the one round trip a session needs, through the real command.
+// The stand-in fails `version` given a format, as a local Podman does for a
+// template naming .Server (it has no server part): the probe must not ask.
+func TestReadinessProbesTheDaemonNotInfo(t *testing.T) {
+	dir := t.TempDir()
+	fake := dir + "/docker"
+	script := "#!/bin/sh\ncase \"$1\" in\n  version) [ $# -eq 1 ] || { echo 'template: version:1:9: executing at <.Server.Version>: nil pointer' >&2; exit 125; }; echo 27.3.1 ;;\n  info) echo 'errors pretty printing info' >&2; exit 1 ;;\n  *) exit 3 ;;\nesac\n"
+	if err := os.WriteFile(fake, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	r := &Readiness{Guacd: func() string { return "127.0.0.1:4822" }, BrowserImage: func() string { return "" }, Docker: fake}
+	if cs := r.Checks(context.Background()); !cs[1].OK {
+		t.Fatalf("a daemon that answers its version is reachable: %+v", cs[1])
+	}
+}
+
+// TestRuntimeAdviceSaysWhy: a failed probe names its cause and the fix for
+// it, never the same sentence whatever went wrong.
+func TestRuntimeAdviceSaysWhy(t *testing.T) {
+	for _, tc := range []struct {
+		err  error
+		want string
+	}{
+		{exec.ErrNotFound, "not installed"},
+		{errors.New(`docker version: exit status 1: permission denied while trying to connect to the Docker daemon socket at unix:///var/run/docker.sock`), "restart the service so the group applies"},
+		{errors.New(`docker version: exit status 1: Cannot connect to the Docker daemon at unix:///var/run/docker.sock. Is the docker daemon running?`), "daemon is not running"},
+		{context.DeadlineExceeded, "within 10 seconds"},
+		{errors.New("docker version: exit status 125: something new\nand more"), "cannot use docker: docker version: exit status 125: something new"},
+	} {
+		got := runtimeAdvice("docker", tc.err)
+		if !strings.Contains(got, tc.want) || strings.Contains(got, "and more") {
+			t.Errorf("%v: %q, want it to say %q", tc.err, got, tc.want)
+		}
+	}
+}
+
+// TestReadinessServeFresh (2026-10-30): the Applications page offers Add only
+// when ready is true, and its Check again asks with fresh=1, which must not
+// read the runtime's answer from before an operator's fix.
+func TestReadinessServeFresh(t *testing.T) {
+	probes, broken := 0, true
+	r := &Readiness{Guacd: func() string { return "127.0.0.1:4822" }, BrowserImage: DefaultBrowserImageForTest, Docker: "docker",
+		Probe: func(context.Context) error {
+			probes++
+			if broken {
+				return errors.New("docker version: exit status 1: Cannot connect to the Docker daemon")
+			}
+			return nil
+		},
+		Inspect: func(context.Context, string) error { return os.ErrNotExist }}
+	ask := func(query string) (ready bool) {
+		t.Helper()
+		rec := httptest.NewRecorder()
+		r.serve(rec, httptest.NewRequest(http.MethodGet, "/api/v1/admin/applications/readiness"+query, nil))
+		var out struct {
+			Ready bool `json:"ready"`
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+			t.Fatal(err)
+		}
+		return out.Ready
+	}
+	if ask("") {
+		t.Fatal("ready with the runtime down")
+	}
+	broken = false
+	if ask("") || probes != 1 {
+		t.Fatalf("a plain read within the cache keeps the old answer: probes=%d", probes)
+	}
+	// Fixed, and asked afresh: ready, although the image is not pulled yet.
+	if !ask("?fresh=1") || probes != 2 {
+		t.Fatalf("fresh=1 must probe again and pass: probes=%d", probes)
+	}
+}

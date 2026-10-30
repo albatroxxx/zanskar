@@ -348,6 +348,8 @@ export interface AdminOverview {
     host_key_pending: number
     host_key_changed: number
     certificate_pending: number
+    /** Hosts waiting on any of the above, each once: the dashboard's number. */
+    needing_attention: number
   }
   inventory: {
     hosts: number

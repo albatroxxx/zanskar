@@ -4,7 +4,9 @@ package browsergw
 
 import (
 	"context"
+	"errors"
 	"net/http"
+	"os/exec"
 	"strings"
 	"sync"
 	"time"
@@ -25,13 +27,15 @@ type Check struct {
 
 // Readiness answers what application sessions still need: a guacd
 // address, a container runtime the service can reach, and a browser image.
-// The Applications page shows the list until every check passes.
+// The Applications page offers to add an application only once every check
+// passes, and shows the list with Check again until then (2026-10-30). An
+// image the host has not pulled yet passes: the first session pulls it.
 type Readiness struct {
 	Guacd        func() string
 	BrowserImage func() string
 	Docker       string
-	// Probe answers whether the container runtime is reachable; nil runs
-	// `docker info`. Its answer is kept for a short while.
+	// Probe answers whether the container runtime is reachable; nil asks the
+	// daemon its version. Its answer is kept for a short while.
 	Probe func(ctx context.Context) error
 	// Inspect answers whether an image is present on the host; nil runs
 	// `docker image inspect`. Its answer is kept like the probe's.
@@ -61,10 +65,18 @@ func (h *Readiness) runtime(ctx context.Context) error {
 	}
 	probe := h.Probe
 	if probe == nil {
+		// One round trip to the daemon, which is all a session needs of it.
+		// `docker info` it was, until a host where sessions ran fine showed
+		// the runtime as unreachable (2026-10-30): info also loads every CLI
+		// plugin, asks after registries and swarm, can take seconds, and
+		// fails on a warning a session never meets. Plain `version`, judged
+		// by its exit status: Docker's exits non-zero when it cannot reach
+		// the daemon, and a template naming .Server would fail on a local
+		// Podman, whose version has no server part.
 		probe = func(ctx context.Context) error {
-			ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+			ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 			defer cancel()
-			return containers.Run(ctx, h.Docker, nil, "info")
+			return containers.Run(ctx, h.Docker, nil, "version")
 		}
 	}
 	h.probeOK, h.probed = probe(ctx), time.Now()
@@ -114,7 +126,7 @@ func (h *Readiness) Checks(ctx context.Context) []Check {
 	rt := Check{Key: "runtime", Title: "Container runtime"}
 	runtimeErr := h.runtime(ctx)
 	if runtimeErr != nil {
-		rt.Detail = "The service cannot reach " + docker + ": add the service user to the docker group (systemctl edit zanskar, SupplementaryGroups=docker) or set ZANSKAR_DOCKER_PATH, then restart."
+		rt.Detail = runtimeAdvice(docker, runtimeErr)
 	} else {
 		rt.OK, rt.Detail = true, docker+" answers"
 	}
@@ -126,18 +138,55 @@ func (h *Readiness) Checks(ctx context.Context) []Check {
 	case runtimeErr != nil:
 		// Whether the host has it cannot be known until the runtime answers.
 	case h.present(ctx, image) != nil:
-		// The first session pulls it, with its own deadline; the checklist
-		// says so, because that first session is slow and an operator may
-		// rather pull ahead.
-		img.OK = false
-		img.Detail = image + " is not on this host yet. Run `" + docker + " pull " + image + "` on the gateway host, or the first session pulls it (a few hundred megabytes)."
+		// Not a prerequisite: the first session pulls it, under a deadline
+		// of its own (1.7.1). The detail names the pull for an operator who
+		// would rather spare that first user the wait.
+		img.Detail = image + ", not pulled yet: the first session pulls it, or run `" + docker + " pull " + image + "` ahead."
 	default:
 		img.Detail = image + " (on this host)"
 	}
 	return append(out, img)
 }
 
+// runtimeAdvice says why the runtime did not answer, from its own words,
+// and what to do about it: a check that only says "cannot reach" sends an
+// operator who has done the obvious thing round in a circle.
+func runtimeAdvice(docker string, err error) string {
+	msg := err.Error()
+	lower := strings.ToLower(msg)
+	switch {
+	case errors.Is(err, exec.ErrNotFound) || strings.Contains(lower, "executable file not found") || strings.Contains(lower, "no such file or directory") && !strings.Contains(lower, ".sock"):
+		return docker + " is not installed for the service, or not on its PATH: install it, or set ZANSKAR_DOCKER_PATH to the program, then restart."
+	case strings.Contains(lower, "permission denied"):
+		return "The service may not use " + docker + "'s socket: add the service user to the docker group (systemctl edit zanskar, SupplementaryGroups=docker), then restart the service so the group applies."
+	case errors.Is(err, context.DeadlineExceeded) || strings.Contains(lower, "signal: killed"):
+		return docker + " did not answer within 10 seconds; is the daemon running and healthy?"
+	case strings.Contains(lower, "cannot connect") || strings.Contains(lower, "is the docker daemon running"):
+		return docker + "'s daemon is not running, or not where the service looks for it (DOCKER_HOST): start it, then try again."
+	}
+	return "The service cannot use " + docker + ": " + firstLine(msg)
+}
+
+// firstLine is the first line of s, at most 200 bytes, for a detail line.
+func firstLine(s string) string {
+	s = strings.TrimSpace(s)
+	if i := strings.IndexByte(s, '\n'); i >= 0 {
+		s = s[:i]
+	}
+	if len(s) > 200 {
+		s = s[:200] + "…"
+	}
+	return s
+}
+
 func (h *Readiness) serve(w http.ResponseWriter, r *http.Request) {
+	// Check again asks afresh: an operator who has just fixed the runtime
+	// should not read the answer from before the fix.
+	if r.URL.Query().Get("fresh") == "1" {
+		h.mu.Lock()
+		h.probed, h.inspected = time.Time{}, time.Time{}
+		h.mu.Unlock()
+	}
 	checks := h.Checks(r.Context())
 	ready := true
 	for _, c := range checks {

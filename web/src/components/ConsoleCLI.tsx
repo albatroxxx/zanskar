@@ -336,8 +336,7 @@ export function ConsoleCLI() {
                 <div className="cli-card">
                   <h3>An authenticator is needed</h3>
                   <p>
-                    The command line opens only with a code from an authenticator app, and this account has none. Enrol one at your next sign-in, or ask another administrator to require
-                    one for you.
+                    This account has no authenticator. Enrol one at your next sign-in.
                   </p>
                 </div>
               )}

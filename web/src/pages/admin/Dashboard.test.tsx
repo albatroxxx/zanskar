@@ -13,7 +13,7 @@ afterEach(() => {
 const overview: AdminOverview = {
   sessions: { open: 2, started_24h: 7 },
   pending_requests: 3,
-  targets: { active: 5, host_key_pending: 1, host_key_changed: 1, certificate_pending: 0 },
+  targets: { active: 5, host_key_pending: 1, host_key_changed: 1, certificate_pending: 1, needing_attention: 2 },
   inventory: { hosts: 3, hosts_by_os: { linux: 2, windows: 1 }, databases: 2, databases_by_engine: { postgres: 1, mysql: 1 }, applications: 4 },
   autoscaling: { groups: 1, instances: 4, healthy_instances: 3 },
   audit_24h: { events: 41, failures: 4, failed_logins: 2, refused_connects: 1 },
@@ -87,20 +87,28 @@ describe('the admin dashboard', () => {
     expect(approvals?.getAttribute('href')).toBe('/admin/approvals')
     expect(approvals?.textContent).toContain('3')
 
-    // The two host-key states and the pending certificate fold into one tile.
+    // Each host once, however many decisions it waits on (three reasons, two
+    // hosts), opening the hosts that wait.
     const hosts = screen.getByText('Hosts needing attention').closest('a')
-    expect(hosts?.getAttribute('href')).toBe('/admin/hosts')
+    expect(hosts?.getAttribute('href')).toBe('/admin/hosts?attention=1')
     expect(hosts?.textContent).toContain('2')
 
-    expect(screen.getByText('Open sessions').closest('a')?.getAttribute('href')).toBe('/admin/sessions')
+    // 2026-10-30: every number opens the list it counted, not the whole page.
+    const href = (label: string) => screen.getByText(label).closest('a')?.getAttribute('href')
+    expect(href('Failed sign-ins (24h)')).toBe('/admin/events?action=user.login&outcome=failure&range=24h&routine=1')
+    expect(href('Refused connections (24h)')).toBe('/admin/events?action=session.connect&outcome=failure&range=24h&routine=1')
+    expect(href('Failures (24h)')).toBe('/admin/events?outcome=failure&range=24h&routine=1')
+    expect(href('Audit events (24h)')).toBe('/admin/events?range=24h&routine=1')
+    expect(href('Open sessions')).toBe('/admin/sessions?open=1')
+    expect(href('Sessions (24h)')).toBe('/admin/sessions?range=24h')
 
     // The inventory row: totals with their mix, each linking to its page.
     const hostsTile = screen.getByText('2 Linux · 1 Windows').closest('a')
-    expect(hostsTile?.getAttribute('href')).toBe('/admin/hosts')
+    expect(hostsTile?.getAttribute('href')).toBe('/admin/hosts?status=active')
     expect(hostsTile?.textContent).toContain('3')
-    expect(screen.getByText('1 PostgreSQL · 1 MySQL').closest('a')?.getAttribute('href')).toBe('/admin/databases')
+    expect(screen.getByText('1 PostgreSQL · 1 MySQL').closest('a')?.getAttribute('href')).toBe('/admin/databases?status=active')
     const apps = screen.getByText('Applications').closest('a')
-    expect(apps?.getAttribute('href')).toBe('/admin/applications')
+    expect(apps?.getAttribute('href')).toBe('/admin/applications?status=active')
     expect(apps?.textContent).toContain('4')
     expect(screen.getByText('3 of 4 instances healthy').closest('a')?.getAttribute('href')).toBe('/admin/autoscaling')
     expect(screen.getByText(/Zanskar 1\.4\.0, up 2 hours under systemd/)).toBeDefined()
@@ -138,7 +146,7 @@ describe('the admin dashboard', () => {
     })
     at('/')
 
-    expect(await screen.findByText(/a restart applies it/)).toBeDefined()
+    expect(await screen.findByText(/The environment file changed/)).toBeDefined()
     expect(screen.getByText(/days left/)).toBeDefined()
   })
 

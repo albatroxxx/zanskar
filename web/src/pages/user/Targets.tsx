@@ -1,9 +1,11 @@
 import { useEffect, useState, type FormEvent } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { api, ApiError, errorMessage } from '../../api/client'
+import { accessDrill, expiresSoon } from '../../api/drilldown'
 import type { AccessRequest, ConnectResponse, Page, Protocol, ReachableInstance, ReachableTarget, Session } from '../../api/types'
 import { DatabaseIcon, OSIcon, StateIcon } from '../../components/icons'
 import { Alert, Badge, Empty, Field, Modal, PageHead, StatTile, Tabs, Tags } from '../../components/ui'
+import { badgesChanged } from '../../components/badges'
 import { engineName, protocolName } from '../../api/format'
 import { fmtAgo } from './Failover'
 
@@ -23,8 +25,15 @@ interface ConnectBody {
   asg_id?: string
   asg_instance_id?: string
   protocol: Protocol
-  credential?: { username: string; password: string }
+  /** The user's own login, for a slot that asks for it: a password, or over
+   *  SSH their own private key with its passphrase when it has one. */
+  credential?: { username: string; password?: string; private_key?: string; private_key_passphrase?: string }
 }
+
+/** The largest key file the prompt reads; the gateway refuses more. */
+const maxKeyBytes = 16 << 10
+
+const noCred = { username: '', password: '', method: 'password' as 'password' | 'key', key: '', passphrase: '' }
 
 export function Targets() {
   const nav = useNavigate()
@@ -34,7 +43,24 @@ export function Targets() {
   const [tab, setTab] = useState<'static' | 'database' | 'application' | 'asg'>('static')
   const [prompt, setPrompt] = useState<{ target: ReachableTarget; protocol: Protocol; body: ConnectBody } | null>(null)
   const [chooser, setChooser] = useState<{ group: ReachableTarget; protocol: Protocol; instances: ReachableInstance[] | null } | null>(null)
-  const [cred, setCred] = useState({ username: '', password: '' })
+  const [cred, setCred] = useState(noCred)
+  const [promptErr, setPromptErr] = useState('')
+  // Closing the prompt forgets what was typed in it, the username excepted.
+  const closePrompt = () => {
+    setPrompt(null)
+    setPromptErr('')
+    setCred((c) => ({ ...noCred, username: c.username, method: c.method }))
+  }
+  const readKeyFile = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    e.target.value = ''
+    if (!file) return
+    if (file.size > maxKeyBytes) {
+      setPromptErr('that file is too large to be a private key')
+      return
+    }
+    void file.text().then((key) => setCred((c) => ({ ...c, key })))
+  }
   // Active grants, as a set of "targetId:protocol", so a gated protocol the user
   // already holds a grant for shows Connect rather than Request.
   const [grants, setGrants] = useState<Set<string>>(new Set())
@@ -58,8 +84,7 @@ export function Targets() {
       .get<Page<AccessRequest>>('/me/access')
       .then((p) => {
         setGrants(new Set(p.items.map((g) => `${g.target_id ?? g.asg_id}:${g.protocol}`)))
-        const soon = Date.now() + 60 * 60000
-        setStrip((s) => ({ ...s, expiring: p.items.filter((g) => g.expires_at && new Date(g.expires_at).getTime() < soon).length }))
+        setStrip((s) => ({ ...s, expiring: p.items.filter((g) => expiresSoon(g.expires_at)).length }))
       })
       .catch(() => {})
 
@@ -98,7 +123,7 @@ export function Targets() {
     setErr('')
     try {
       const res = await api.post<ConnectResponse>('/connect', body)
-      setPrompt(null)
+      closePrompt()
       setChooser(null)
       nav(res.ws_path === '/ws/desktop' ? '/desktop' : '/terminal', {
         state: {
@@ -112,7 +137,11 @@ export function Targets() {
         },
       })
     } catch (e) {
-      if (e instanceof ApiError && e.code === 'credential_required') {
+      if (prompt && e instanceof ApiError && (e.code === 'credential_required' || e.code === 'credential_invalid')) {
+        // Said inside the open prompt, where the user is looking.
+        setPromptErr(e.message)
+      } else if (e instanceof ApiError && e.code === 'credential_required') {
+        setPromptErr('')
         setPrompt({ target, protocol: body.protocol, body })
       } else if (e instanceof ApiError && e.code === 'approval_required') {
         // The grant lapsed between listing and connecting; fall back to a request.
@@ -141,7 +170,8 @@ export function Targets() {
         reason: reqForm.reason,
         minutes: Number(reqForm.minutes),
       })
-      setNotice(`Requested ${protocolName(reqModal.protocol)} access to ${reqModal.target.name}. An administrator must approve it — track it under My access.`)
+      badgesChanged()
+      setNotice(`Requested ${protocolName(reqModal.protocol)} access to ${reqModal.target.name}. An administrator must approve it — track it under Access.`)
       setReqModal(null)
       setReqForm({ reason: '', minutes: 60 })
       void loadGrants()
@@ -171,6 +201,9 @@ export function Targets() {
   const databases = shown?.filter((t) => kindOf(t) === 'database') ?? null
   const applications = shown?.filter((t) => kindOf(t) === 'application') ?? null
   const groups = shown?.filter((t) => kindOf(t) === 'asg') ?? null
+  // Every tab says how many it holds, the same way, once there are any; a
+  // search narrows the counts with the lists.
+  const counted = (label: string, list: ReachableTarget[] | null) => (list && list.length > 0 ? `${label} (${list.length})` : label)
   // Empty-state text for a tab: the search message while filtering, else the tab's own "nothing assigned" line.
   const emptyFor = (noun: string, assigned: string) => (term ? `No ${noun} match ‘${search.trim()}’.` : assigned)
 
@@ -220,9 +253,9 @@ export function Targets() {
       {notice && <Alert tone="ok">{notice}</Alert>}
       {(strip.open > 0 || strip.pending > 0 || strip.expiring > 0) && (
         <div className="stat-grid" style={{ marginBottom: 16 }}>
-          {strip.open > 0 && <StatTile value={strip.open} label="Open sessions" to="/sessions" />}
-          {strip.pending > 0 && <StatTile value={strip.pending} label="Pending requests" to="/access" />}
-          {strip.expiring > 0 && <StatTile value={strip.expiring} label="Grants expiring soon" to="/access" tone="warn" />}
+          {strip.open > 0 && <StatTile value={strip.open} label="Open sessions" to={accessDrill.openSessions} />}
+          {strip.pending > 0 && <StatTile value={strip.pending} label="Pending requests" to={accessDrill.pendingRequests} />}
+          {strip.expiring > 0 && <StatTile value={strip.expiring} label="Grants expiring soon" to={accessDrill.expiringGrants} tone="warn" />}
         </div>
       )}
       <Tabs
@@ -230,10 +263,10 @@ export function Targets() {
         value={tab}
         onChange={setTab}
         tabs={[
-          { key: 'static', label: 'Hosts' },
-          { key: 'database', label: `Databases${databases && databases.length > 0 ? ` (${databases.length})` : ''}` },
-          { key: 'application', label: `Applications${applications && applications.length > 0 ? ` (${applications.length})` : ''}` },
-          { key: 'asg', label: 'Autoscaling' },
+          { key: 'static', label: counted('Hosts', statics) },
+          { key: 'database', label: counted('Databases', databases) },
+          { key: 'application', label: counted('Applications', applications) },
+          { key: 'asg', label: counted('Autoscaling', groups) },
         ]}
       />
 
@@ -404,7 +437,7 @@ export function Targets() {
 
       {chooser && (
         <Modal title={`Connect to ${chooser.group.name}`} onClose={() => setChooser(null)} width={560}>
-          <p className="muted">Instances come and go with scaling. Connect to the newest healthy one, or pick a specific instance.</p>
+          <p className="muted">Newest healthy instance, or pick one.</p>
           {chooser.instances === null && <p className="muted">Loading healthy instances…</p>}
           {chooser.instances !== null && chooser.instances.length === 0 && (
             <Alert tone="warn">This group has no healthy instance right now.</Alert>
@@ -461,22 +494,59 @@ export function Targets() {
       )}
 
       {prompt && (
-        <Modal title={`Credentials for ${prompt.target.name}`} onClose={() => setPrompt(null)}>
-          <p className="muted">This target uses your own account. Zanskar forwards these to the machine and does not store them.</p>
+        <Modal title={`Credentials for ${prompt.target.name}`} onClose={closePrompt}>
+          <p className="muted">Sent to the machine; not stored.</p>
+          {promptErr && <Alert tone="danger">{promptErr}</Alert>}
           <form
             onSubmit={(e) => {
               e.preventDefault()
-              void connect(prompt.target, { ...prompt.body, credential: cred })
+              const withKey = prompt.protocol === 'ssh' && cred.method === 'key'
+              void connect(prompt.target, {
+                ...prompt.body,
+                credential: withKey
+                  ? { username: cred.username, private_key: cred.key, ...(cred.passphrase ? { private_key_passphrase: cred.passphrase } : {}) }
+                  : { username: cred.username, password: cred.password },
+              })
             }}
           >
             <Field label="Username">
               <input id="cred-user" autoFocus value={cred.username} onChange={(e) => setCred({ ...cred, username: e.target.value })} required />
             </Field>
-            <Field label="Password">
-              <input id="cred-pass" type="password" value={cred.password} onChange={(e) => setCred({ ...cred, password: e.target.value })} required />
-            </Field>
+            {prompt.protocol === 'ssh' && (
+              <div className="actions" role="radiogroup" aria-label="Sign in with" style={{ marginBottom: 8 }}>
+                {(
+                  [
+                    ['password', 'Password'],
+                    ['key', 'Private key'],
+                  ] as const
+                ).map(([m, label]) => (
+                  <span key={m} className="field inline" style={{ margin: 0 }}>
+                    <input id={`cred-method-${m}`} type="radio" name="cred-method" checked={cred.method === m} onChange={() => setCred({ ...cred, method: m })} />
+                    <label htmlFor={`cred-method-${m}`}>{label}</label>
+                  </span>
+                ))}
+              </div>
+            )}
+            {prompt.protocol === 'ssh' && cred.method === 'key' ? (
+              <>
+                <Field label="Private key" hint="OpenSSH, PKCS#8 or PKCS#1">
+                  <textarea id="cred-key" className="mono" value={cred.key} onChange={(e) => setCred({ ...cred, key: e.target.value })} required spellCheck={false} autoComplete="off" placeholder="-----BEGIN OPENSSH PRIVATE KEY-----" />
+                </Field>
+                <div className="actions" style={{ marginTop: -6, marginBottom: 10 }}>
+                  <input id="cred-key-file" type="file" hidden onChange={readKeyFile} />
+                  <button type="button" className="btn sm" onClick={() => document.getElementById('cred-key-file')?.click()}>Choose key file…</button>
+                </div>
+                <Field label="Passphrase" hint="If the key has one">
+                  <input id="cred-passphrase" type="password" autoComplete="off" value={cred.passphrase} onChange={(e) => setCred({ ...cred, passphrase: e.target.value })} />
+                </Field>
+              </>
+            ) : (
+              <Field label="Password">
+                <input id="cred-pass" type="password" value={cred.password} onChange={(e) => setCred({ ...cred, password: e.target.value })} required />
+              </Field>
+            )}
             <div className="actions">
-              <button type="button" className="btn" onClick={() => setPrompt(null)}>Cancel</button>
+              <button type="button" className="btn" onClick={closePrompt}>Cancel</button>
               <button type="submit" className="btn primary" disabled={busy !== ''}>Connect</button>
             </div>
           </form>

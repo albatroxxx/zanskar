@@ -114,10 +114,10 @@ export function RestartNotice() {
   return (
     <>
       <Alert tone={masterKey ? 'danger' : 'warn'}>
-        <strong>Restart required.</strong> {env.changed?.join(', ')} changed in {env.path} after the gateway started ({fmtTime(status.started_at)}). Boot settings apply only to a fresh process.
+        <strong>Restart required.</strong> {env.changed?.join(', ')} changed in {env.path} after the gateway started ({fmtTime(status.started_at)}).
         {masterKey && (
           <div style={{ marginTop: 6 }}>
-            <strong>ZANSKAR_MASTER_KEY differs.</strong> A restart will fail to open every stored secret unless the change came from <code>zanskar key rotate-master</code>. Check before restarting.
+            <strong>ZANSKAR_MASTER_KEY differs.</strong> Unless it came from <code>zanskar key rotate-master</code>, a restart cannot open stored secrets.
           </div>
         )}
         <div className="actions" style={{ marginTop: 8 }}>
@@ -147,7 +147,7 @@ export function RestartNotice() {
                 <input id="rs-now" type="radio" name="rs" checked={!wait} onChange={() => setWait(false)} />
                 <label htmlFor="rs-now">End live sessions and restart now</label>
               </p>
-              <p className="muted">Users in an ended session see that the gateway is restarting; the session is recorded as ended by a gateway restart. The request is written to the audit log.</p>
+              <p className="muted">Ended sessions are recorded as ended by a restart.</p>
             </div>
           }
         />

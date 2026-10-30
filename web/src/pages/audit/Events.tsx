@@ -1,6 +1,7 @@
-import { useEffect, useState, type FormEvent } from 'react'
-import { Link } from 'react-router-dom'
+import { useEffect, useMemo, useState, type FormEvent } from 'react'
+import { Link, useSearchParams } from 'react-router-dom'
 import { api, errorMessage, query } from '../../api/client'
+import { ranges, sinceFor } from '../../api/ranges'
 import { fmtPreciseTime, shortId } from '../../api/format'
 import type { AuditEvent, AuditFacets, AuditVerify, Page } from '../../api/types'
 import { usePaged } from '../../components/paged'
@@ -9,26 +10,37 @@ import { capitalize, describe, detailText, humanAction, typeLabel, who, words } 
 import { useRecordingsPath } from './paths'
 import { StateIcon } from '../../components/icons'
 
-interface Filters { actor: string; action: string; object_type: string; range: string; from: string; to: string }
-const emptyFilters: Filters = { actor: '', action: '', object_type: '', range: '', from: '', to: '' }
+interface Filters { actor: string; action: string; outcome: string; object_type: string; range: string; from: string; to: string }
+const emptyFilters: Filters = { actor: '', action: '', outcome: '', object_type: '', range: '', from: '', to: '' }
+const filterKeys = Object.keys(emptyFilters) as (keyof Filters)[]
 
-/** Time ranges offered instead of making a reviewer hand-type two timestamps.
- *  "Any time" is the default; the two pickers appear only for a custom range. */
-const ranges: { key: string; label: string; hours?: number }[] = [
-  { key: '', label: 'Any time' },
-  { key: '1h', label: 'Last hour', hours: 1 },
-  { key: '24h', label: 'Last 24 hours', hours: 24 },
-  { key: '7d', label: 'Last 7 days', hours: 24 * 7 },
-  { key: '30d', label: 'Last 30 days', hours: 24 * 30 },
-  { key: 'custom', label: 'Custom range…' },
-]
+/** The page's filters live in its address (2026-10-30), so a dashboard
+ *  number opens exactly the events it counted, and Back, Forward and a shared
+ *  link all show the same list. routine=1 shows the routine events too. */
+function filtersFrom(sp: URLSearchParams): Filters {
+  const f = { ...emptyFilters }
+  for (const k of filterKeys) f[k] = sp.get(k) ?? ''
+  if (f.outcome !== 'success' && f.outcome !== 'failure') f.outcome = ''
+  return f
+}
+
+function paramsFrom(f: Filters, routine: boolean): URLSearchParams {
+  const sp = new URLSearchParams()
+  for (const k of filterKeys) {
+    const v = f[k].trim()
+    if (v && (f.range === 'custom' || (k !== 'from' && k !== 'to'))) sp.set(k, v)
+  }
+  if (routine) sp.set('routine', '1')
+  return sp
+}
+
+/** The shared ranges, and a custom one with two pickers for the audit log. */
+const eventRanges = [...ranges, { key: 'custom', label: 'Custom range…' }]
 
 /** rangeBounds turns the chosen range into the from/to the API expects. */
 function rangeBounds(f: Filters): { from: string; to: string } {
   if (f.range === 'custom') return { from: toRFC3339(f.from), to: toRFC3339(f.to) }
-  const hours = ranges.find((r) => r.key === f.range)?.hours
-  if (!hours) return { from: '', to: '' }
-  return { from: new Date(Date.now() - hours * 3600_000).toISOString(), to: '' }
+  return { from: sinceFor(f.range), to: '' }
 }
 
 /** Routine events are hidden by default: the log's own reads, and the
@@ -109,15 +121,20 @@ export function Events() {
   const [verify, setVerify] = useState<AuditVerify | null>(null)
   const [verifyErr, setVerifyErr] = useState('')
   const [facets, setFacets] = useState<AuditFacets>({ actions: [], object_types: [] })
-  const [draft, setDraft] = useState<Filters>(emptyFilters)
-  const [filters, setFilters] = useState<Filters>(emptyFilters)
-  const [showRoutine, setShowRoutine] = useState(false)
+  const [sp, setSp] = useSearchParams()
+  const spKey = sp.toString()
+  const filters = useMemo(() => filtersFrom(new URLSearchParams(spKey)), [spKey])
+  const showRoutine = new URLSearchParams(spKey).get('routine') === '1'
+  const [draft, setDraft] = useState<Filters>(filters)
+  // The form follows the address when it changes underneath it (a link, Back).
+  useEffect(() => setDraft(filters), [filters])
   const { items, next, err, setErr, busy, load, more, restart } = usePaged((cursor) =>
     api.get<Page<AuditEvent>>(
       '/audit/events' +
         query({
           actor: filters.actor.trim(),
           action: filters.action.trim(),
+          outcome: filters.outcome,
           object_type: filters.object_type.trim(),
           from: rangeBounds(filters).from,
           to: rangeBounds(filters).to,
@@ -157,18 +174,21 @@ export function Events() {
   const apply = (e: FormEvent) => {
     e.preventDefault()
     restart()
-    setFilters({ ...draft })
+    const next = paramsFrom(draft, showRoutine)
+    setSp(next, { replace: true })
+    // Applying the filters already in place reads the list again.
+    if (next.toString() === spKey) void load()
   }
   const reset = () => {
     restart()
     setDraft(emptyFilters)
-    // A new object, so the list is read again even when the filters were
-    // empty already: restart has emptied it either way.
-    setFilters({ ...emptyFilters })
+    setSp(new URLSearchParams(), { replace: true })
+    // The same address again reads nothing anew: read the list here.
+    if (spKey === '') void load()
   }
   const toggleRoutine = (on: boolean) => {
     restart()
-    setShowRoutine(on)
+    setSp(paramsFrom(filters, on), { replace: true })
   }
 
   // The password stage of a two-step sign-in is one line of a story whose
@@ -177,7 +197,7 @@ export function Events() {
 
   return (
     <>
-      <PageHead title="Audit events" lead="Every event is hash-chained, and reading this page is itself recorded.">
+      <PageHead title="Audit events" lead="Viewing is logged.">
         <ChainStatus verify={verify} err={verifyErr} />
       </PageHead>
       {err && <Alert tone="danger">{err}</Alert>}
@@ -192,9 +212,17 @@ export function Events() {
             <label htmlFor="f-action">Action</label>
             <select id="f-action" value={draft.action} onChange={(e) => setDraft({ ...draft, action: e.target.value })}>
               <option value="">Any action</option>
-              {facets.actions.map((a) => (
+              {(facets.actions.includes(draft.action) || !draft.action ? facets.actions : [draft.action, ...facets.actions]).map((a) => (
                 <option key={a} value={a}>{humanAction(a)}</option>
               ))}
+            </select>
+          </div>
+          <div className="field">
+            <label htmlFor="f-outcome">Outcome</label>
+            <select id="f-outcome" value={draft.outcome} onChange={(e) => setDraft({ ...draft, outcome: e.target.value })}>
+              <option value="">Any outcome</option>
+              <option value="success">Succeeded</option>
+              <option value="failure">Failed</option>
             </select>
           </div>
           <div className="field">
@@ -209,7 +237,7 @@ export function Events() {
           <div className="field">
             <label htmlFor="f-range">Time</label>
             <select id="f-range" value={draft.range} onChange={(e) => setDraft({ ...draft, range: e.target.value })}>
-              {ranges.map((r) => (
+              {eventRanges.map((r) => (
                 <option key={r.key} value={r.key}>{r.label}</option>
               ))}
             </select>

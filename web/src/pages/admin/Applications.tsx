@@ -14,9 +14,8 @@ export function Applications() {
     <TargetsPage
       kind="application"
       title="Applications"
-      lead="Web applications opened in an isolated browser beside the gateway; policies grant them under HTTP."
       addLabel="Add application"
-      empty="No applications yet. Add one with its upstream address."
+      empty="No applications yet."
       columns={['Upstream', 'TLS', 'Tags']}
       cells={(t) => (
         <>

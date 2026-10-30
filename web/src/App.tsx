@@ -138,8 +138,8 @@ export default function App() {
               portal="user"
               items={[
                 { to: '/', label: 'Targets', end: true },
-                { to: '/access', label: 'My access' },
-                { to: '/sessions', label: 'My sessions' },
+                { to: '/access', label: 'Access' },
+                { to: '/sessions', label: 'Sessions' },
               ]}
             />
           </Guard>
@@ -167,7 +167,6 @@ export default function App() {
                 { to: '/admin/users', label: 'Users & groups' },
                 { to: '/admin/identity-providers', label: 'Identity providers' },
                 { to: '/admin/sessions', label: 'Sessions' },
-                { to: '/admin/retention', label: 'Retention' },
                 { to: '/admin/settings', label: 'Settings' },
                 { to: '/admin/logs', label: 'Logs' },
                 { to: '/admin/events', label: 'Events' },

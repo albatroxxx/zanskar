@@ -5,6 +5,7 @@ import type { BootSetting, RuntimeSetting, SettingsListing, SystemStatus } from 
 import { Alert, Badge, Empty, Field, PageHead } from '../../components/ui'
 import { TLSCard } from './TLSCard'
 import { StorageCard } from './StorageCard'
+import { RetentionCard } from './RetentionCard'
 
 /**
  * Settings holds the two kinds of configuration (ADR 0020): runtime settings
@@ -24,6 +25,12 @@ export function Settings() {
       .get<SettingsListing>('/admin/settings')
       .then(setListing)
       .catch((e) => setErr(errorMessage(e)))
+  // A link to one section (the old Retention page sends its visitors to
+  // #settings-recording-retention) lands on it once the page has drawn.
+  useEffect(() => {
+    const id = window.location.hash.slice(1)
+    if (listing && id) document.getElementById(id)?.scrollIntoView()
+  }, [listing])
   useEffect(() => {
     void load()
     api
@@ -39,10 +46,10 @@ export function Settings() {
 
   return (
     <>
-      <PageHead title="Settings" lead="Saved values apply at once and override the environment file; Reset returns to it." />
+      <PageHead title="Settings" />
       {err && <Alert tone="danger">{err}</Alert>}
       <nav className="jump" aria-label="Sections">
-        {[...categories, 'TLS certificate', 'Recording storage', 'Set at install'].map((c) => (
+        {[...categories, 'TLS certificate', 'Recording storage', 'Recording retention', 'Set at install'].map((c) => (
           <a key={c} href={'#' + sectionId(c)}>{c}</a>
         ))}
       </nav>
@@ -56,6 +63,7 @@ export function Settings() {
       ))}
       <TLSCard />
       <StorageCard />
+      <RetentionCard />
       {listing && <BootTable boot={listing.boot} changed={changed} />}
     </>
   )
@@ -165,7 +173,7 @@ function SettingRow({ setting, onChange }: { setting: RuntimeSetting; onChange: 
         </Field>
       )}
       {needCode && (
-        <Field label="Authenticator code" hint="This setting decides where a stored credential is sent; enter a fresh code, then Save or Reset.">
+        <Field label="Authenticator code" hint="Required for this setting">
           <input id={id + '-code'} inputMode="numeric" autoComplete="one-time-code" value={code} onChange={(e) => setCode(e.target.value)} autoFocus />
         </Field>
       )}
@@ -194,7 +202,7 @@ function BootTable({ boot, changed }: { boot: BootSetting[]; changed: string[] }
   return (
     <div className="card table-wrap" id="settings-set-at-install">
       <h2>Set at install</h2>
-      <p className="muted">Read once when the gateway starts, from the environment file (usually <code>/etc/zanskar/env</code>). To change one, edit the variable and restart the service; the banner above offers the restart once the file differs. Secrets are not shown.</p>
+      <p className="muted">From <code>/etc/zanskar/env</code>; edit and restart to change.</p>
       <table>
         <thead>
           <tr>

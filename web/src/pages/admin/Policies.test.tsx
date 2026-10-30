@@ -49,7 +49,7 @@ describe('Policies list', () => {
     expect(within(first).getByText('ops')).toBeDefined()
     expect(within(first).getByText('group')).toBeDefined()
     expect(within(first).getByText('ssh')).toBeDefined()
-    expect(within(first).getByText('env=prod')).toBeDefined()
+    expect(within(first).getByText('env: prod')).toBeDefined()
     expect(within(first).getByText('always')).toBeDefined()
     expect(within(first).getByText('15 m / ∞')).toBeDefined()
     expect(within(first).getByRole('button', { name: 'Enabled' })).toBeDefined()
@@ -59,7 +59,7 @@ describe('Policies list', () => {
     expect(within(second).getByText('user')).toBeDefined()
     expect(within(second).getByText('web-1, db-1 · ASG fleet')).toBeDefined()
     expect(within(second).getByText('+ 1 rule')).toBeDefined()
-    expect(within(second).getByText('ssh → role=jump')).toBeDefined()
+    expect(within(second).getByText('ssh → role: jump')).toBeDefined()
     expect(within(second).getByText('15 m / 120 m')).toBeDefined()
     expect(within(second).getByRole('button', { name: 'Disabled' })).toBeDefined()
     // One time window is counted, not spelled out, in the list.
@@ -103,12 +103,13 @@ describe('Policy form', () => {
     await user.click(create)
     expect(await within(form).findByText('the main rule has protocols but no targets: pick targets, or clear its protocols and use rules only')).toBeDefined()
 
-    // A tag line that is not key=value.
-    await user.type(within(form).getByLabelText('By tag'), 'prod')
+    // Tags are a Key and a Value box (2026-10-30); a policy matches on the
+    // value, so a key alone is refused.
+    await user.click(within(form).getAllByRole('button', { name: 'Add tag' })[0])
+    await user.type(within(form).getByLabelText('Tag 1 key'), 'env')
     await user.click(create)
-    expect(await within(form).findByText('tag line "prod" must be key=value')).toBeDefined()
-    await user.clear(within(form).getByLabelText('By tag'))
-    await user.type(within(form).getByLabelText('By tag'), 'env=prod')
+    expect(await within(form).findByText('tag env: value is empty')).toBeDefined()
+    await user.type(within(form).getByLabelText('Tag 1 value'), 'prod')
 
     // Targets with no protocol.
     await user.click(within(form).getByLabelText('SSH'))
@@ -151,7 +152,13 @@ describe('Policy form', () => {
     await user.type(within(form).getByLabelText('Name'), '  dba-prod ')
     await user.type(within(form).getByLabelText('Description'), 'Databases, office hours')
     await user.selectOptions(within(form).getByLabelText('Group'), 'g2')
-    await user.type(within(form).getByLabelText('By tag'), 'env=prod\n tier = db \n')
+    await user.click(within(form).getByRole('button', { name: 'Add tag' }))
+    await user.type(within(form).getByLabelText('Tag 1 key'), 'env')
+    await user.type(within(form).getByLabelText('Tag 1 value'), 'prod')
+    await user.click(within(form).getByRole('button', { name: 'Add tag' }))
+    await user.type(within(form).getByLabelText('Tag 2 key'), ' tier ')
+    await user.type(within(form).getByLabelText('Tag 2 value'), ' db ')
+    await user.click(within(form).getByRole('button', { name: 'Add tag' }))
     await user.click(within(form).getByLabelText('db-1'))
     await user.click(within(form).getByLabelText('SSH'))
     await user.click(within(form).getByLabelText('database'))
@@ -194,7 +201,7 @@ describe('Policy form', () => {
     await user.click(within(form).getByLabelText('One user'))
     const picker = within(form).getByLabelText('User') as HTMLSelectElement
     expect(Array.from(picker.options).map((o) => o.textContent)).toEqual(['alice (Alice)'])
-    expect(within(form).getByText(/review-only and are not listed/)).toBeDefined()
+    expect(within(form).getByText(/Review-only accounts are not listed/)).toBeDefined()
   })
 
   it('shows the server\'s refusal in the form and keeps it open', async () => {
@@ -215,7 +222,8 @@ describe('Policy form', () => {
     await user.click(await screen.findByRole('button', { name: 'Edit' }))
     const form = screen.getByRole('dialog', { name: 'Edit ops-ssh' })
     expect((within(form).getByLabelText('Name') as HTMLInputElement).value).toBe('ops-ssh')
-    expect((within(form).getAllByLabelText('By tag')[0] as HTMLTextAreaElement).value).toBe('env=prod')
+    expect((within(form).getAllByLabelText('Tag 1 key')[0] as HTMLInputElement).value).toBe('env')
+    expect((within(form).getAllByLabelText('Tag 1 value')[0] as HTMLInputElement).value).toBe('prod')
     expect((within(form).getAllByLabelText('SSH')[0] as HTMLInputElement).checked).toBe(true)
     // The existing rule is shown with its own pickers, after the base ones.
     expect((within(form).getAllByLabelText('RDP')[0] as HTMLInputElement).checked).toBe(false)

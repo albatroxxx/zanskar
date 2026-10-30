@@ -3,6 +3,7 @@
 package auth
 
 import (
+	"bytes"
 	"context"
 	"io"
 	"log/slog"
@@ -180,5 +181,25 @@ func TestSessionCheckOutageKeepsTheCookie(t *testing.T) {
 		if me := e.do("GET", "/api/v1/auth/me", nil, r.cookie, nil); me.code != 200 {
 			t.Fatalf("after the outage of %s the session carries on: %d %v", table, me.code, me.body)
 		}
+	}
+}
+
+// TestSessionCheckAbandonedIsNotAnError: a request the browser abandons
+// (navigating away mid-request) cancels the session lookup. That is not an
+// outage, and the gateway's log says so at Info, not Error: the browser
+// end-to-end run fails on any logged error and caught this one (2026-10-30).
+func TestSessionCheckAbandonedIsNotAnError(t *testing.T) {
+	e := newEnv(t)
+	r := e.sessionFor(t, e.bareUser(t, "ann", user.RoleUser), true)
+	var logged bytes.Buffer
+	mw := &Middleware{Sessions: e.sessions, Users: e.users, Log: slog.New(slog.NewTextHandler(&logged, nil))}
+	h := mw.Authenticate(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) }))
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	req := httptest.NewRequest("GET", "/api/v1/auth/me", nil).WithContext(ctx)
+	req.AddCookie(r.cookie)
+	h.ServeHTTP(httptest.NewRecorder(), req)
+	if strings.Contains(logged.String(), "level=ERROR") || !strings.Contains(logged.String(), "request abandoned by the client") {
+		t.Fatalf("an abandoned request logged: %s", logged.String())
 	}
 }

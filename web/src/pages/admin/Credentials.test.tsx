@@ -46,7 +46,6 @@ describe('Credentials list', () => {
 
     const deploy = (await screen.findByText('deploy', { selector: 'strong' })).closest('tr')!
     expect(within(deploy).getByText('password')).toBeDefined()
-    expect(within(deploy).getByText('vaulted')).toBeDefined()
     expect(within(deploy).getByRole('button', { name: 'Secret stored' })).toBeDefined()
     expect(within(deploy).getByText('never')).toBeDefined()
     expect(within(deploy).getByRole('button', { name: 'Rotate' })).toBeDefined()
@@ -71,9 +70,10 @@ describe('Credentials list', () => {
     expect(within(eic).getByRole('button', { name: 'No secret stored' })).toBeDefined()
     expect(within(eic).queryByRole('button', { name: 'Rotate' })).toBeNull()
 
-    const own = screen.getByText('own').closest('tr')!
-    expect(within(own).getByText('user supplied')).toBeDefined()
-    expect(within(own).queryByRole('button', { name: 'Rotate' })).toBeNull()
+    // The shared user-supplied row is a choice on a target's slot, not a
+    // credential: not listed (2026-10-30).
+    expect(screen.queryByText('own')).toBeNull()
+    expect(screen.queryByRole('columnheader', { name: 'Mode' })).toBeNull()
   })
 
   it('names a failed read', async () => {

@@ -166,19 +166,19 @@ type Definition struct {
 // Definitions lists every runtime setting, in the order the panel shows them.
 var Definitions = []Definition{
 	{Key: KeyLoginBanner, Category: "Sign-in", Title: "Login banner", Type: TypeText,
-		Description: "System-use notification shown above the sign-in form before any credential is entered. Plain text, line breaks kept; empty hides it."},
+		Description: "Shown above the sign-in form. Plain text; empty hides it."},
 	{Key: KeyRequireMFA, Category: "Sign-in", Title: "Require an authenticator", Type: TypeBool, Default: "true", EnvVar: "ZANSKAR_REQUIRE_MFA",
-		Description: "Every password sign-in, local or LDAP, must enroll an authenticator before the session becomes usable. Single sign-on providers enforce their own. Turn off only for a throwaway installation."},
+		Description: "Password sign-ins, local or LDAP, must enrol an authenticator. Single sign-on providers enforce their own."},
 	{Key: KeyUpdateCheck, Category: "Updates", Title: "Check for new versions", Type: TypeBool, Default: "true",
-		Description: "Once a day, fetch the latest version number from the project site and light the bell when it is newer. Nothing about this gateway is sent."},
+		Description: "Daily check of the project site for a newer version. Nothing is sent."},
 	{Key: KeyGuacdAddr, Category: "Desktops", Title: "guacd address", Type: TypeHostPort, EnvVar: "ZANSKAR_GUACD_ADDR", StepUp: true,
-		Description: "host:port of the guacd relay for RDP and VNC. Empty disables desktop sessions. Applies to the next session opened. guacd receives the desktop credential, so the console accepts a loopback or private address only, and a change asks for a fresh authenticator code."},
+		Description: "host:port of guacd for RDP and VNC; empty disables desktops. Loopback or private addresses only."},
 	{Key: KeyLogLevel, Category: "Logging", Title: "Log level", Type: TypeEnum, Default: "info", EnvVar: "ZANSKAR_LOG_LEVEL", Enum: []string{"debug", "info", "warn", "error"},
-		Description: "Verbosity of the gateway's log. Applies at once; go back to info afterwards."},
+		Description: "Applies at once."},
 	{Key: KeyDBProxyImage, Category: "Databases", Title: "Relay image", Type: TypeString, Default: DefaultDBProxyImage(), EnvVar: "ZANSKAR_DBPROXY_IMAGE", StepUp: true,
-		Description: "The gateway's own image, started beside each MySQL or MariaDB session as the credential-holding relay (zanskar dbproxy) and beside each application session as the forwarder (zanskar apprelay). Change it only to pin a mirror or test a local build. The relay receives the database credential, so the console accepts only an image pinned by digest (registry/repository@sha256:<64 hex digits>, a :tag before it is fine) and a change asks for a fresh authenticator code; the environment file may name a tag. Applies to the next session."},
+		Description: "Relay for database and application sessions. Pinned by digest (repository@sha256:…)."},
 	{Key: KeyBrowserImage, Category: "Applications", Title: "Browser image", Type: TypeString, Default: DefaultBrowserImage(), EnvVar: "ZANSKAR_BROWSER_IMAGE", StepUp: true,
-		Description: "Container image an application opens in: Chromium behind a VNC server, started beside each application session and destroyed with it. The browser sees the application's pages, so the console accepts only an image pinned by digest and a change asks for a fresh authenticator code; the environment file may name a tag. Applies to the next session."},
+		Description: "Isolated browser for application sessions. Pinned by digest (repository@sha256:…)."},
 }
 
 // Lookup returns the definition for key.

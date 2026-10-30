@@ -54,6 +54,11 @@ button, input, select, textarea { font: inherit; color: inherit; }
 /* The username is the account's door: a quiet link-weight button. */
 .me-user { background: none; border: 0; padding: 0; color: var(--fg); cursor: pointer; text-align: left; font-size: 0.86rem; align-self: flex-start; }
 .me-user:hover { color: var(--accent); }
+/* Sign out sits on the same left edge as the username and the portal
+   links above it: no button padding, a muted line that firms on hover. */
+.me-signout { display: inline-flex; align-items: center; gap: 6px; align-self: flex-start; margin-top: 2px; padding: 0; border: 0; background: none; color: var(--fg-muted); font-size: 0.82rem; cursor: pointer; transition: color 0.12s ease; }
+.me-signout:hover { color: var(--fg); }
+.me-signout svg { flex: none; }
 .sidebar .switch { font-size: 0.8rem; }
 .main { padding: 28px 32px 48px; min-width: 0; }
 /* A page's actions sit level with its title block, never up against the
@@ -203,6 +208,15 @@ td.actions > * + * { margin-left: 8px; }
 .kv dt { color: var(--fg-muted); }
 .kv dd { margin: 0; word-break: break-all; }
 .tag { display: inline-block; font-family: var(--mono); font-size: 0.74rem; background: var(--bg-sunken); border-radius: 4px; padding: 1px 6px; margin-right: 4px; }
+/* A tag reads as key, then value, split by a hairline: no "=" to parse. */
+.tag .tag-k { color: var(--fg-muted); }
+.tag .tag-k + .tag-v { border-left: 1px solid var(--line); margin-left: 5px; padding-left: 5px; }
+/* The tag editor: rows of Key and Value boxes with a remove button, as
+   cloud consoles lay them out. */
+.tag-editor { display: grid; gap: 6px; }
+.tag-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 2rem; gap: 8px; align-items: center; }
+.tag-row input, .tag-row select { width: 100%; min-width: 0; }
+.tag-head { font-size: 0.78rem; color: var(--fg-muted); }
 
 /* modal
    The dialog never exceeds the viewport: the title stays put, the body scrolls,
@@ -269,6 +283,11 @@ td.actions > * + * { margin-left: 8px; }
 .sso-btn svg { color: var(--accent); flex: none; }
 .sso-btn:hover { background: var(--bg-sunken); border-color: var(--fg-faint); }
 .sso-btn:active { transform: translateY(1px); }
+/* Filters a list was opened with, each removable (FilterChips). */
+.filter-chips { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 12px; }
+.chip { display: inline-flex; align-items: center; gap: 8px; padding: 3px 10px; border-radius: 999px; border: 1px solid transparent; background: var(--accent-soft); color: var(--accent); font: inherit; font-size: 0.8rem; font-weight: 500; cursor: pointer; transition: border-color 0.12s ease; }
+.chip:hover { border-color: var(--accent); }
+.chip span { font-size: 0.72rem; opacity: 0.8; }
 /* Addresses to copy into another system: the value and its Copy button. */
 .copy-row { display: flex; gap: 8px; align-items: center; }
 .copy-row input { flex: 1; min-width: 0; font-family: var(--mono); font-size: 0.8rem; background: var(--bg-sunken); }
@@ -298,6 +317,8 @@ td.actions > * + * { margin-left: 8px; }
 .term-bar .btn:hover { background: var(--term-btn-hover); border-color: var(--term-fg-muted); }
 .term-bar .btn.danger { color: var(--term-danger); border-color: var(--term-danger-line); }
 .term-bar .btn.icon { padding: 4px 7px; }
+.term-bar .browser-nav { display: inline-flex; gap: 2px; }
+.term-bar .browser-nav .btn { min-width: 30px; }
 .term-bar .btn.icon svg { display: block; }
 /* guacamole-common-js gives the desktop's default layer `z-index: -1`. Without a
    stacking context here that canvas paints in the root stacking context, behind

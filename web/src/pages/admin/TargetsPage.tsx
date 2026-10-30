@@ -1,7 +1,8 @@
-import { useEffect, useState, type ReactNode } from 'react'
-import { Link } from 'react-router-dom'
+import { useCallback, useEffect, useState, type ReactNode } from 'react'
+import { Link, useSearchParams } from 'react-router-dom'
 import { api } from '../../api/client'
 import type { AppsReadiness, Credential, Target } from '../../api/types'
+import { FilterChips } from '../../components/FilterChips'
 import { StateIcon } from '../../components/icons'
 import { Alert, Badge, Empty, PageHead } from '../../components/ui'
 import { useDebounced, useList } from './lib'
@@ -12,16 +13,15 @@ import { TargetForm, type TargetKind } from './TargetForm'
  * TargetsPage is the page for one kind of target: the list with an Add
  * button, the form that adds one of that kind, and the drawer that opens
  * one. Hosts and databases differ only in their words and in the columns
- * between a target's name and its Open button.
+ * between a target's name and its Manage button.
  */
-export function TargetsPage({ kind, title, lead, addLabel, empty, columns, cells }: {
+export function TargetsPage({ kind, title, addLabel, empty, columns, cells }: {
   kind: TargetKind
   title: string
-  lead: string
   addLabel: string
   /** What the list says while it has no target of this kind. */
   empty: string
-  /** Headers of the columns between Name and the Open button. */
+  /** Headers of the columns between Name and the Manage button. */
   columns: string[]
   /** One target's cells for those columns. The credentials are there to name what it is bound to. */
   cells: (t: Target, credentials: Credential[]) => ReactNode
@@ -32,30 +32,50 @@ export function TargetsPage({ kind, title, lead, addLabel, empty, columns, cells
   // typing pauses rather than on every keystroke.
   const [q, setQ] = useState('')
   const dq = useDebounced(q.trim())
-  const { items, err, setErr, reload } = useList<Target>('/targets', { kind, q: dq })
+  // A dashboard number opens this list narrowed to what it counted
+  // (2026-10-30): attention=1 the hosts waiting on a decision, status=active
+  // the active ones the inventory counts. Each shows as a chip that drops it.
+  const [sp, setSp] = useSearchParams()
+  const attention = kind === 'host' && sp.get('attention') === '1'
+  const activeOnly = sp.get('status') === 'active'
+  const drop = (key: string) => {
+    const next = new URLSearchParams(sp)
+    next.delete(key)
+    setSp(next, { replace: true })
+  }
+  const { items, err, setErr, reload } = useList<Target>('/targets', {
+    kind, q: dq, attention: attention ? 'true' : undefined, status: activeOnly ? 'active' : undefined,
+  })
   const noun = title.toLowerCase()
   const creds = useList<Credential>('/credentials')
   const [adding, setAdding] = useState(false)
   const [open, setOpen] = useState<Target | null>(null)
   // Applications open only once the gateway can run the browser beside it
-  // (ADR 0034); the page shows the three prerequisites with their state, so
-  // an operator sees what is left instead of one refusal at a time.
-  const [readiness, setReadiness] = useState<AppsReadiness | null>(null)
-  useEffect(() => {
-    if (kind !== 'application') return
+  // (ADR 0034). Until the prerequisites pass, the page is the checklist and
+  // Check again; Add application appears once they do (2026-10-30). A
+  // check that cannot be read does not hold the page back.
+  const [readiness, setReadiness] = useState<AppsReadiness | 'unknown' | null>(kind === 'application' ? null : 'unknown')
+  const [checking, setChecking] = useState(false)
+  const check = useCallback((fresh: boolean) => {
+    setChecking(true)
     api
-      .get<AppsReadiness>('/admin/applications/readiness')
-      .then((r) => setReadiness(r && Array.isArray(r.checks) ? r : null))
-      .catch(() => setReadiness(null))
-  }, [kind, adding])
+      .get<AppsReadiness>('/admin/applications/readiness' + (fresh ? '?fresh=1' : ''))
+      .then((r) => setReadiness(r && Array.isArray(r.checks) ? r : 'unknown'))
+      .catch(() => setReadiness('unknown'))
+      .finally(() => setChecking(false))
+  }, [])
+  useEffect(() => {
+    if (kind === 'application') check(false)
+  }, [kind, check])
+  const blocked = readiness !== 'unknown' && !readiness?.ready
 
   return (
     <>
-      <PageHead title={title} lead={lead}>
-        <button className="btn primary" onClick={() => setAdding(true)}>{addLabel}</button>
+      <PageHead title={title}>
+        {!blocked && <button className="btn primary" onClick={() => setAdding(true)}>{addLabel}</button>}
       </PageHead>
       {err && <Alert tone="danger">{err}</Alert>}
-      {readiness && !readiness.ready && (
+      {readiness && readiness !== 'unknown' && !readiness.ready && (
         <div className="card" aria-labelledby="apps-readiness">
           <h2 id="apps-readiness">Before the first application</h2>
           <ul className="checks">
@@ -68,6 +88,9 @@ export function TargetsPage({ kind, title, lead, addLabel, empty, columns, cells
               </li>
             ))}
           </ul>
+          <div className="actions">
+            <button className="btn" disabled={checking} onClick={() => check(true)}>{checking ? 'Checking…' : 'Check again'}</button>
+          </div>
         </div>
       )}
       <div className="card table-wrap">
@@ -80,10 +103,14 @@ export function TargetsPage({ kind, title, lead, addLabel, empty, columns, cells
             onChange={(e) => setQ(e.target.value)}
           />
         </div>
+        <FilterChips chips={[
+          ...(attention ? [{ label: 'Needing attention', onClear: () => drop('attention') }] : []),
+          ...(activeOnly ? [{ label: 'Active only', onClear: () => drop('status') }] : []),
+        ]} />
         {items === null ? (
           err ? null : <Empty>Loading…</Empty>
         ) : items.length === 0 ? (
-          <Empty>{dq ? `No ${noun} match ‘${dq}’.` : empty}</Empty>
+          <Empty>{dq || attention || activeOnly ? `No ${noun} match.` : empty}</Empty>
         ) : (
           <table>
             <thead>
@@ -103,7 +130,10 @@ export function TargetsPage({ kind, title, lead, addLabel, empty, columns, cells
                   </td>
                   {cells(t, creds.items ?? [])}
                   <td>
-                    <button className="btn sm" onClick={() => setOpen(t)}>Open</button>
+                    {/* Manage, not Open: in the console it opens the record (details,
+                        edit, disable, delete), never a session to the target, which is what
+                        Open means in the access portal (2026-10-30). */}
+                    <button className="btn sm" onClick={() => setOpen(t)}>Manage</button>
                   </td>
                 </tr>
               ))}

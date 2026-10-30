@@ -3,6 +3,7 @@ import { api, errorMessage } from '../../api/client'
 import { fmtTime, protocolName } from '../../api/format'
 import type { AccessRequest, Page } from '../../api/types'
 import { Alert, Badge, Empty, Field, Modal, PageHead } from '../../components/ui'
+import { badgesChanged } from '../../components/badges'
 
 /** Approvals is the admin queue for just-in-time access requests (ADR 0018):
  *  approve or deny what's pending, and revoke grants that are still active. */
@@ -47,6 +48,9 @@ export function Approvals() {
       return false
     } finally {
       setBusy('')
+      // A refusal (decided elsewhere meanwhile) changes the count as surely
+      // as a decision does.
+      badgesChanged()
     }
   }
   const openApprove = (r: AccessRequest) => {
@@ -60,7 +64,7 @@ export function Approvals() {
 
   return (
     <>
-      <PageHead title="Approvals" lead="Requests awaiting a decision, and the grants currently active." />
+      <PageHead title="Approvals" />
       {err && <Alert tone="danger">{err}</Alert>}
 
       <div className="card table-wrap">
@@ -149,7 +153,7 @@ export function Approvals() {
               void act(approving.id, 'approve', { minutes: grant.minutes, note: grant.note }).then((ok) => ok && setApproving(null))
             }}
           >
-            <Field label="Grant (minutes)" hint="Any duration up to the policy maximum; the request keeps what was asked on record.">
+            <Field label="Grant (minutes)" hint="Up to the policy maximum">
               <input id="ap-minutes" type="number" min={1} value={grant.minutes} autoFocus onChange={(e) => setGrant({ ...grant, minutes: Number(e.target.value) })} required />
             </Field>
             <Field label="Note (optional, shown to the requester and recorded)">

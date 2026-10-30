@@ -20,6 +20,12 @@ function signedIn(roles: string[] | null) {
     if (path.startsWith('/admin/system/status')) return { version: '1.5.0', started_at: 'x', uptime_seconds: 1, supervisor: 'systemd', live_sessions: 0, env_file: { state: 'unchanged', checked_at: 'x' }, restart_required: false, draining: false } as never
     // The dashboards' own data is not the point here; they show the failure and the portal still stands.
     if (path.startsWith('/admin/overview') || path.startsWith('/audit/overview')) throw new ApiError(503, { code: 'unavailable', message: 'not now', request_id: 'r' }, '503')
+    if (path === '/admin/settings') return { runtime: [], boot: [] } as never
+    // Settings' own cards read these; answered in their real shape, so a
+    // card that loads after the test's last look cannot crash on a stand-in.
+    if (path === '/admin/tls') return { mode: 'proxy' } as never
+    if (path === '/admin/storage') return { source: 'local', counts: {}, move: { running: false, moved: 0, failed: 0, total: 0 } } as never
+    if (path === '/admin/retention') return { max_age_days: 30, max_total_bytes: 0 } as never
     return { items: [] } as never
   })
 }
@@ -32,6 +38,13 @@ function open(path: string) {
       </AuthProvider>
     </MemoryRouter>,
   )
+}
+
+/** The access portal's own nav links (its Access and Sessions pages, at
+ *  /access and /sessions), which another portal must not show. The admin
+ *  console has a Sessions page of its own, at /admin/sessions. */
+function accessPortalLinks() {
+  return screen.queryAllByRole('link').map((a) => a.getAttribute('href')).filter((h) => h === '/access' || h === '/sessions')
 }
 
 describe('App routes', () => {
@@ -52,7 +65,7 @@ describe('App routes', () => {
     signedIn(['auditor'])
     open('/')
     expect(await screen.findByRole('link', { name: 'Events' })).toBeDefined()
-    expect(screen.queryByRole('link', { name: 'My sessions' })).toBeNull()
+    expect(accessPortalLinks()).toEqual([])
     expect(screen.queryByRole('link', { name: 'Policies' })).toBeNull()
   })
 
@@ -61,7 +74,7 @@ describe('App routes', () => {
     open('/audit/events?action=user.login')
     expect(await screen.findByRole('heading', { name: 'Audit events' })).toBeDefined()
     expect(screen.getByRole('link', { name: 'Policies' })).toBeDefined()
-    expect(screen.queryByRole('link', { name: 'My sessions' })).toBeNull()
+    expect(accessPortalLinks()).toEqual([])
   })
 
   it('resolves the home and unknown paths to the account\'s own portal', async () => {
@@ -81,3 +94,30 @@ describe('App routes', () => {
     expect(screen.getByRole('button', { name: 'Sign out' })).toBeDefined()
   })
 })
+
+// 2026-10-30 walkthrough: the access portal's nav says Access and Sessions,
+// not "My access" and "My sessions".
+describe('Access portal nav', () => {
+  it('names its pages plainly', async () => {
+    signedIn(['user'])
+    open('/')
+    expect(await screen.findByRole('link', { name: 'Access' })).toBeDefined()
+    expect(screen.getByRole('link', { name: 'Sessions' }).getAttribute('href')).toBe('/sessions')
+    expect(screen.queryByRole('link', { name: /^My / })).toBeNull()
+  })
+})
+
+// 2026-10-30 walkthrough: Retention is a section of Settings, not a page of
+// its own. The sidebar has no Retention, and an old link lands on Settings.
+describe('Retention lives in Settings', () => {
+  it('has no sidebar entry, and its old address opens Settings', async () => {
+    signedIn(['admin'])
+    open('/admin/retention')
+    expect(await screen.findByRole('heading', { name: 'Settings' })).toBeDefined()
+    expect(screen.queryByRole('link', { name: 'Retention' })).toBeNull()
+    // The section it moved into loads there.
+    expect(await screen.findByRole('heading', { name: 'Recording retention' })).toBeDefined()
+    expect(await screen.findByRole('heading', { name: 'Recording storage' })).toBeDefined()
+  })
+})
+

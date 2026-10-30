@@ -1,10 +1,11 @@
 import { Fragment, Suspense, useEffect, useState } from 'react'
-import { Link, NavLink, Outlet, useNavigate } from 'react-router-dom'
+import { Link, NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import type { User } from '../api/types'
 import { fmtTime } from '../api/format'
 import { useAuth } from '../auth/AuthContext'
 import { canConnect } from '../auth/home'
 import { AccessNotices } from './AccessNotices'
+import { onBadgesChanged } from './badges'
 import { CornerBar } from './CornerBar'
 import { RestartNotice } from './RestartNotice'
 import { Badge, Modal } from './ui'
@@ -13,19 +14,25 @@ export interface NavItem {
   to: string
   label: string
   end?: boolean
-  /** badge, when set, is polled once a minute; a positive count shows beside the label. */
+  /** badge, when set, is read once a minute, on every page change and on
+   *  badgesChanged; a positive count shows beside the label. */
   badge?: () => Promise<number>
 }
 
 /** NavBadge shows a count next to a nav label: 1 to 99, then "99+", nothing at zero. */
 function NavBadge({ load }: { load: () => Promise<number> }) {
   const [n, setN] = useState(0)
+  const { pathname } = useLocation()
   useEffect(() => {
     const tick = () => load().then(setN).catch(() => {})
     void tick()
     const t = setInterval(tick, 60_000)
-    return () => clearInterval(t)
-  }, [load])
+    const off = onBadgesChanged(() => void tick())
+    return () => {
+      clearInterval(t)
+      off()
+    }
+  }, [load, pathname])
   if (n <= 0) return null
   return <span className="nav-badge" aria-label={`${n} pending`}>{n > 99 ? '99+' : n}</span>
 }
@@ -87,7 +94,7 @@ export function Shell({ portal, items }: { portal: 'user' | 'admin' | 'audit'; i
               </Fragment>
             ))}
           </div>
-          <button className="btn sm ghost" onClick={() => void logout()} style={{ alignSelf: 'flex-start' }}>
+          <button className="me-signout" onClick={() => void logout()}>
             {/* The door-and-arrow sign-out glyph; the text stays, so the icon
                 is decoration and hidden from screen readers. */}
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">

@@ -784,7 +784,9 @@ paths:
         "422":
           description: >-
             `credential_required`: the target uses the caller's own account for this protocol, so
-            the request must carry `credential`.
+            the request must carry `credential` (a private key is for `ssh` only).
+            `credential_invalid`: the private key cannot be read, is too large, or is encrypted and
+            its passphrase is missing or wrong.
           content:
             application/json:
               schema:
@@ -2355,6 +2357,11 @@ paths:
           in: query
           schema:
             $ref: "#/components/schemas/ActiveStatus"
+        - name: attention
+          in: query
+          description: When `true`, only active targets waiting on an administrator's decision (a host key pending or changed, or a certificate pin pending), as the dashboard's "Hosts needing attention" counts them.
+          schema:
+            type: boolean
         - name: tag
           in: query
           description: "`key=value`, repeatable."
@@ -3398,6 +3405,12 @@ paths:
           description: When `true`, only sessions with no `ended_at`.
           schema:
             type: boolean
+        - name: from
+          in: query
+          description: Only sessions started at or after this time, as the dashboards' "Sessions (24h)" counts them. A value that is not RFC 3339 is 400.
+          schema:
+            type: string
+            format: date-time
       responses:
         "200":
           description: Sessions.
@@ -6282,7 +6295,12 @@ components:
           description: Total instances in the group. Present only for autoscaling-group rows (`kind` is `asg`).
     UserSuppliedCredential:
       type: object
-      description: Sent only when the target's credential for that protocol has `mode=user_supplied`. Never stored.
+      description: >-
+        Sent only when the target's credential for that protocol has `mode=user_supplied`. Never
+        stored. A username with a `password`, or, for `ssh` only, with the person's own
+        `private_key` (OpenSSH, PKCS#8 or PKCS#1, at most 16 KiB) and its
+        `private_key_passphrase` when it is encrypted; the key is unlocked when the ticket is
+        issued and used for that session alone.
       properties:
         username:
           type: string
@@ -6736,11 +6754,11 @@ components:
               description: Of those, how many are healthy, counted as the Autoscaling page counts them.
         targets:
           type: object
-          required: [active, host_key_pending, host_key_changed, certificate_pending]
+          required: [active, host_key_pending, host_key_changed, certificate_pending, needing_attention]
           properties:
             active:
               type: integer
-              description: Active targets.
+              description: Active hosts.
             host_key_pending:
               type: integer
               description: Targets whose host key was seen but not yet trusted.
@@ -6750,6 +6768,9 @@ components:
             certificate_pending:
               type: integer
               description: Targets with an RDP or WinRM certificate pin awaiting confirmation.
+            needing_attention:
+              type: integer
+              description: Hosts waiting on any of the three, each counted once; `GET /targets?kind=host&attention=true` lists them.
         audit_24h:
           $ref: "#/components/schemas/AuditTallies"
     AuditOverview:

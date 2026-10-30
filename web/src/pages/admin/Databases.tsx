@@ -16,9 +16,8 @@ export function Databases() {
     <TargetsPage
       kind="database"
       title="Databases"
-      lead="PostgreSQL, MySQL and MariaDB, including RDS. The user never sees the password."
       addLabel="Add database"
-      empty="No databases yet. Add one with its engine, endpoint and a password credential."
+      empty="No databases yet."
       columns={['Engine', 'Endpoint', 'Database', 'TLS', 'Credential', 'Tags']}
       cells={(t, credentials) => (
         <>

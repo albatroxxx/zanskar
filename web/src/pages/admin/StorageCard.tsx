@@ -64,7 +64,6 @@ export function StorageCard() {
   return (
     <div className="card" id="settings-recording-storage">
       <h2>Recording storage</h2>
-      <p className="muted">Where session recordings are written. New recordings go to the active store; every recording is read from wherever it was written.</p>
       {err && <Alert tone="danger">{err}</Alert>}
       {ok && <Alert tone="ok">{ok}</Alert>}
       <dl className="kv">
@@ -131,7 +130,7 @@ export function StorageCard() {
       {confirm === 'move' && (
         <Confirm
           title={`Move ${local} local recording${local === 1 ? '' : 's'}?`}
-          body="Each finished recording is copied to the bucket, its digest checked, its record repointed and the local file removed. Recordings of sessions still running are left for a later move. This runs in the background and is written to the audit log when it finishes."
+          body="Finished recordings are copied, verified and removed locally, in the background."
           confirmLabel="Move"
           onClose={() => setConfirm(null)}
           onConfirm={() => run(() => api.post('/admin/storage/move'), 'Move started.')}

@@ -75,14 +75,24 @@ func container(t *testing.T, name string, args ...string) (containerName, ip str
 	return name, dbtest.Docker(t, "inspect", "-f", "{{.NetworkSettings.Networks.bridge.IPAddress}}", name)
 }
 
-// TestApplicationSessionThroughRealBrowser: with a real guacd, the browser
-// image and an nginx as the application, an http ticket ends in pixels:
-// guacd draws the browser's screen into the session's socket, the
-// containers sit on the networks the design says (the browser on the
-// internal network alone, the relay on it and the bridge), and the end of
-// the session removes all three. Needs ZANSKAR_TEST_DOCKER=1 and
+// realApp is an application session opened against real containers: guacd,
+// the browser image, the relay and an nginx upstream, with the browser's
+// first frame drawn.
+type realApp struct {
+	f         *connectFixture
+	ws        *websocket.Conn
+	nginx     string
+	sessionID string
+	targetID  string
+	// hangUp stops the client's keepalive.
+	hangUp context.CancelFunc
+}
+
+// openRealApp opens one. prepare, when set, runs on the nginx container
+// before the browser fetches anything from it. Needs ZANSKAR_TEST_DOCKER=1 and
 // ZANSKAR_TEST_BROWSER_IMAGE naming a built browser image.
-func TestApplicationSessionThroughRealBrowser(t *testing.T) {
+func openRealApp(t *testing.T, ctx context.Context, prepare func(nginxName string)) *realApp {
+	t.Helper()
 	dbtest.RequireDocker(t)
 	browserImage := os.Getenv("ZANSKAR_TEST_BROWSER_IMAGE")
 	if browserImage == "" {
@@ -90,6 +100,9 @@ func TestApplicationSessionThroughRealBrowser(t *testing.T) {
 	}
 	relayImage := buildGatewayImage(t)
 	nginxName, upstreamIP := container(t, "zanskar-test-nginx", "nginx:alpine")
+	if prepare != nil {
+		prepare(nginxName)
+	}
 	// guacd on the default bridge, as the install guide starts it, published
 	// on a loopback port the gateway (this process) dials. A developer whose
 	// daemon runs in a VM that does not forward published ports (Colima)
@@ -133,19 +146,17 @@ func TestApplicationSessionThroughRealBrowser(t *testing.T) {
 	if code != http.StatusOK || tok == "" || out["ws_path"] != "/ws/desktop" {
 		t.Fatalf("connect: %d %v", code, out)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
-	defer cancel()
 	ws, _, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(srv.URL, "http")+"/ws/desktop?width=1024&height=768&ticket="+tok, f.wsOptions("guacamole")) //nolint:bodyclose // the library closes the handshake body
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer ws.CloseNow()
+	t.Cleanup(func() { _ = ws.CloseNow() })
 	// A stock client answers guacd's sync and sends nop keepalives, and guacd
 	// drops a user that says nothing for fifteen seconds. The first frame can
 	// take longer than that on a loaded runner, so this client keeps talking
 	// until it hangs up.
 	keepalive, hangUp := context.WithCancel(ctx)
-	defer hangUp()
+	t.Cleanup(hangUp)
 	go func() {
 		beat := time.NewTicker(3 * time.Second)
 		defer beat.Stop()
@@ -190,6 +201,22 @@ func TestApplicationSessionThroughRealBrowser(t *testing.T) {
 	if sessionID == "" {
 		t.Fatalf("no session id before the flags: %.300s", seen.String())
 	}
+	return &realApp{f: f, ws: ws, nginx: nginxName, sessionID: sessionID, targetID: tg.ID, hangUp: hangUp}
+}
+
+// TestApplicationSessionThroughRealBrowser: with a real guacd, the browser
+// image and an nginx as the application, an http ticket ends in pixels:
+// guacd draws the browser's screen into the session's socket, the
+// containers sit on the networks the design says (the browser on the
+// internal network alone, the relay on it and the bridge), and the end of
+// the session removes all three. Needs ZANSKAR_TEST_DOCKER=1 and
+// ZANSKAR_TEST_BROWSER_IMAGE naming a built browser image.
+func TestApplicationSessionThroughRealBrowser(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+	app := openRealApp(t, ctx, nil)
+	f, ws, nginxName, sessionID, hangUp := app.f, app.ws, app.nginx, app.sessionID, app.hangUp
+	tg := &target.Target{ID: app.targetID}
 	netName, relayName, browserName := "zanskar-net-"+sessionID, "zanskar-apprelay-"+sessionID, "zanskar-browser-"+sessionID
 	if internal := dbtest.Docker(t, "network", "inspect", "-f", "{{.Internal}}", netName); internal != "true" {
 		t.Fatalf("the session network is not internal: %s", internal)
@@ -254,4 +281,98 @@ func TestApplicationSessionThroughRealBrowser(t *testing.T) {
 	if d["protocol"] != "http" || d["target_id"] != tg.ID {
 		t.Fatalf("session.start %v", d)
 	}
+}
+
+// TestApplicationBrowserControls (2026-10-30): the isolated browser runs
+// Chromium in kiosk mode, with no address bar and no buttons, so a link to a
+// site the policy blocks was a dead end. The console's bar sends Chromium's
+// own shortcuts; this proves Chromium in the shipped image obeys them over
+// guacd: Back off a blocked page, Back and Forward between pages, Reload, and
+// Home to the application's start page. Every page is served no-store, so
+// each navigation is a request in nginx's log.
+func TestApplicationBrowserControls(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Minute)
+	defer cancel()
+	app := openRealApp(t, ctx, func(nginx string) {
+		page := func(name, body string) string {
+			return "printf '%s' '<!doctype html><title>" + name + "</title><body>" + body + "</body>' > /usr/share/nginx/html/" + name
+		}
+		dbtest.Docker(t, "exec", nginx, "sh", "-c", strings.Join([]string{
+			// Each page focuses its one link, so Enter follows it.
+			page("index.html", `<a href="/two.html">two</a><script>document.querySelector("a").focus()</script>`),
+			page("two.html", `<a href="https://example.com/">elsewhere</a><script>document.querySelector("a").focus()</script>`),
+			`sed -i 's|location / {|location / { add_header Cache-Control no-store;|' /etc/nginx/conf.d/default.conf`,
+			"nginx -s reload",
+		}, " && "))
+	})
+	defer func() {
+		app.hangUp()
+		_ = app.ws.Write(ctx, websocket.MessageText, []byte(guac.Encode("disconnect")))
+		time.Sleep(2 * time.Second)
+	}()
+	count := func(path string) int {
+		return strings.Count(dbtest.Docker(t, "logs", app.nginx), `"GET `+path+` HTTP/1.1"`)
+	}
+	seen := func(path string, n int, within time.Duration) bool {
+		for end := time.Now().Add(within); time.Now().Before(end); time.Sleep(250 * time.Millisecond) {
+			if count(path) >= n {
+				return true
+			}
+		}
+		return false
+	}
+	waitFor := func(what, path string, n int) {
+		t.Helper()
+		if !seen(path, n, 30*time.Second) {
+			t.Fatalf("%s: nginx saw GET %s %d times, want %d:\n%s", what, path, count(path), n, dbtest.Docker(t, "logs", app.nginx))
+		}
+	}
+	keys := func(keysyms ...int) {
+		t.Helper()
+		for _, k := range keysyms {
+			if err := app.ws.Write(ctx, websocket.MessageText, []byte(guac.Encode("key", strconv.Itoa(k), "1"))); err != nil {
+				t.Fatal(err)
+			}
+		}
+		for i := len(keysyms) - 1; i >= 0; i-- {
+			if err := app.ws.Write(ctx, websocket.MessageText, []byte(guac.Encode("key", strconv.Itoa(keysyms[i]), "0"))); err != nil {
+				t.Fatal(err)
+			}
+		}
+		time.Sleep(300 * time.Millisecond)
+	}
+	// Drain what guacd draws, so its socket never backs up while keys go in.
+	go func() {
+		for {
+			if _, _, err := app.ws.Read(ctx); err != nil {
+				return
+			}
+		}
+	}()
+	const (
+		alt, enter, left, right, home, f5 = 0xffe9, 0xff0d, 0xff51, 0xff53, 0xff50, 0xffc2
+	)
+
+	waitFor("the start page", "/", 1)
+	// A page is fetched before its script has focused the link; Enter is
+	// pressed again until the link has been followed.
+	for i := 0; i < 10 && !seen("/two.html", 1, 3*time.Second); i++ {
+		keys(enter)
+	}
+	waitFor("following the link", "/two.html", 1)
+	// The link off the application: blocked by policy, nothing reaches nginx.
+	time.Sleep(2 * time.Second)
+	keys(enter)
+	time.Sleep(2 * time.Second)
+
+	keys(alt, left) // the blocked page back to page two
+	waitFor("Back off the blocked page", "/two.html", 2)
+	keys(alt, left)
+	waitFor("Back", "/", 2)
+	keys(alt, right)
+	waitFor("Forward", "/two.html", 3)
+	keys(f5)
+	waitFor("Reload", "/two.html", 4)
+	keys(alt, home)
+	waitFor("Home", "/", 3)
 }

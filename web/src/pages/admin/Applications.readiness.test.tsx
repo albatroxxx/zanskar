@@ -1,4 +1,5 @@
-import { cleanup, render, screen } from '@testing-library/react'
+import { cleanup, render, screen, waitFor } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router-dom'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { api } from '../../api/client'
@@ -66,15 +67,43 @@ describe('Applications, before the first one', () => {
     expect(screen.queryByText(/domain|certificate/i)).toBeNull()
   })
 
-  it('shows nothing of it once the gateway is ready', async () => {
+  it('shows nothing of it once the gateway is ready, and offers Add', async () => {
     mount({ ready: true, checks: notReady.checks.map((c) => ({ ...c, ok: true })) })
     expect(await screen.findByText(/No applications yet/)).toBeDefined()
     expect(screen.queryByRole('heading', { name: 'Before the first application' })).toBeNull()
+    expect(await screen.findByRole('button', { name: 'Add application' })).toBeDefined()
   })
 
   it('leaves the page usable when the readiness read fails', async () => {
     mount(null)
     expect(await screen.findByText(/No applications yet/)).toBeDefined()
     expect(screen.queryByRole('heading', { name: 'Before the first application' })).toBeNull()
+    expect(await screen.findByRole('button', { name: 'Add application' })).toBeDefined()
+  })
+
+  // 2026-10-30 walkthrough: the prerequisites come first. Adding an
+  // application is not offered while one is left, or before the answer is
+  // in; Check again asks afresh, and once everything passes the checklist
+  // goes and Add application appears.
+  it('offers Add only once the prerequisites pass, checked again on request', async () => {
+    let ready = false
+    const get = vi.spyOn(api, 'get').mockImplementation(async (path: string) => {
+      if (path.startsWith('/admin/applications/readiness')) return (ready ? { ready: true, checks: notReady.checks.map((c) => ({ ...c, ok: true })) } : notReady) as never
+      return { items: [] } as never
+    })
+    render(
+      <MemoryRouter>
+        <Applications />
+      </MemoryRouter>,
+    )
+    expect(screen.queryByRole('button', { name: 'Add application' })).toBeNull()
+    await screen.findByRole('heading', { name: 'Before the first application' })
+    expect(screen.queryByRole('button', { name: 'Add application' })).toBeNull()
+
+    ready = true
+    await userEvent.setup().click(screen.getByRole('button', { name: 'Check again' }))
+    expect(await screen.findByRole('button', { name: 'Add application' })).toBeDefined()
+    expect(screen.queryByRole('heading', { name: 'Before the first application' })).toBeNull()
+    await waitFor(() => expect(get).toHaveBeenCalledWith('/admin/applications/readiness?fresh=1'))
   })
 })

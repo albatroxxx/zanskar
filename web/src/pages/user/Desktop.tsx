@@ -7,7 +7,7 @@ import { SessionEndedDialog } from './SessionEnded'
 import { desktopEnd, saveBlob, SESSION_ID, useSwitched, type SessionEnd, type SessionState } from './session'
 import { useFullscreen } from './fullscreen'
 import { FullscreenButton } from './FullscreenButton'
-import { isPasteKey, keyQueue } from './keys'
+import { browserKeys, isPasteKey, keyQueue, pressCombo } from './keys'
 
 type GuacModule = typeof import('guacamole-common-js')['default']
 
@@ -73,6 +73,13 @@ function DesktopSession({ state }: { state: SessionState }) {
   const [clipText, setClipText] = useState('')
   const [clipNote, setClipNote] = useState<string | null>(null)
   const disconnectRef = useRef<() => void>(() => {})
+  // The session's key queue, for the browser controls an application has
+  // above its pane: their keystrokes wait their turn behind the user's.
+  const sendKeyRef = useRef<((pressed: 0 | 1, keysym: number) => Promise<void>) | null>(null)
+  const browse = (keys: readonly number[]) => {
+    const send = sendKeyRef.current
+    if (send) pressCombo(send, keys)
+  }
   const guacRef = useRef<GuacModule | null>(null)
   const clientRef = useRef<Client | null>(null)
   const fsRef = useRef<GuacObject | null>(null)
@@ -203,6 +210,7 @@ function DesktopSession({ state }: { state: SessionState }) {
       // remote application pastes what the user meant to paste; the keys
       // after it wait their turn rather than overtaking it.
       const sendKey = keyQueue((pressed, k) => client.sendKeyEvent(pressed, k))
+      sendKeyRef.current = sendKey
       // Keys typed into the clipboard panel (or any other field on this page)
       // belong to that field, not to the desktop: returning true tells the
       // library to leave the browser's default alone instead of preventing it.
@@ -401,6 +409,16 @@ function DesktopSession({ state }: { state: SessionState }) {
         ) : (
           <span className="stat rec" title="This session is being recorded"><i className="rec-dot" aria-hidden="true" />Recording</span>
         )}
+        {state.protocol === 'http' && !ended && (
+          // An application's browser has no controls of its own (kiosk mode,
+          // ADR 0034); without these a page the policy blocked was a dead end.
+          <span className="browser-nav" role="group" aria-label="Browser">
+            <button className="btn sm" disabled={!connected} onClick={() => browse(browserKeys.back)} aria-label="Back" title="Back">←</button>
+            <button className="btn sm" disabled={!connected} onClick={() => browse(browserKeys.forward)} aria-label="Forward" title="Forward">→</button>
+            <button className="btn sm" disabled={!connected} onClick={() => browse(browserKeys.reload)} aria-label="Reload" title="Reload">↻</button>
+            <button className="btn sm" disabled={!connected} onClick={() => browse(browserKeys.home)} aria-label="Home" title="The application's start page">⌂</button>
+          </span>
+        )}
         <FullscreenButton isFull={isFull} onClick={toggleFull} />
         {flags.clipboard && (
           <button className="btn sm" onClick={() => setClipOpen((o) => !o)} aria-pressed={clipOpen}>
@@ -423,7 +441,7 @@ function DesktopSession({ state }: { state: SessionState }) {
               <span className="grow" />
               <button className="btn sm" onClick={() => setClipOpen(false)}>Close</button>
             </header>
-            <div className="hint">Text copied inside the session shows up here. Paste text below and send it to make it available inside the session; it syncs on its own when the browser allows.</div>
+            <div className="hint">Copied in the session shows here; send text below into it.</div>
             <textarea value={clipText} onChange={(e) => setClipText(e.target.value)} spellCheck={false} aria-label="Clipboard text" />
             <div className="row">
               <button className="btn sm primary" disabled={!clipText} onClick={() => pushClipboard(clipText)}>Send to session</button>
@@ -441,7 +459,7 @@ function DesktopSession({ state }: { state: SessionState }) {
               <button className="btn sm" disabled={!fsReady} onClick={() => fileInput.current?.click()}>Upload</button>
             </header>
             {!fsReady ? (
-              <div className="hint">The drive appears once the desktop session has started. Inside the session it is the "Zanskar" drive; files placed there show up here.</div>
+              <div className="hint">Available once the session starts, as the "Zanskar" drive.</div>
             ) : (
               <div className="list">
                 <div className="entry dir">{cwd}</div>
@@ -449,7 +467,7 @@ function DesktopSession({ state }: { state: SessionState }) {
                   <button type="button" className="entry dir" title="parent folder" onClick={() => list(parent)}>..</button>
                 )}
                 {entries === null && <div className="hint">Loading…</div>}
-                {entries?.length === 0 && <div className="hint">Empty. Upload a file, or save one to the Zanskar drive in the session.</div>}
+                {entries?.length === 0 && <div className="hint">Empty.</div>}
                 {entries?.map((e) => (
                   <button type="button" key={e.path} className={'entry' + (e.dir ? ' dir' : '')} onClick={() => (e.dir ? list(e.path) : download(e))} title={e.dir ? 'open folder' : 'download'}>
                     <span aria-hidden="true">{e.dir ? '📁' : '📄'}</span>

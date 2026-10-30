@@ -35,6 +35,7 @@ function serve(l: SettingsListing = listing, changed: string[] = []) {
     if (path === '/admin/system/status') return { env_file: { state: changed.length ? 'changed' : 'unchanged', changed } } as never
     if (path === '/admin/tls') return { mode: 'managed', active: { source: 'generated', hosts: ['gw'], subject: 'gw', issuer: 'gw', not_before: '2026-01-01T00:00:00Z', not_after: '2027-01-01T00:00:00Z', fingerprint: 'ab' } } as never
     if (path === '/admin/storage') return { source: 'local', counts: {}, move: { running: false, moved: 0, failed: 0, total: 0 } } as never
+    if (path === '/admin/retention') return { max_age_days: 30, max_total_bytes: 0 } as never
     return {} as never
   })
 }
@@ -133,7 +134,9 @@ describe('Settings', () => {
     vi.spyOn(api, 'get').mockRejectedValue(new ApiError(500, { code: 'internal', message: 'database is locked', request_id: 'req-5' }, '500'))
     render(<Settings />)
     expect(await screen.findByText('database is locked (reference req-5)')).toBeDefined()
-    expect(screen.queryByText('Loading…')).toBeNull()
+    // The recording retention card reads on its own and settles a moment
+    // later; nothing on the page is left loading.
+    await waitFor(() => expect(screen.queryByText('Loading…')).toBeNull())
   })
 })
 
@@ -148,9 +151,11 @@ describe('Settings, the section list', () => {
     // The TLS and storage cards render their heading once their own read lands.
     await screen.findByRole('heading', { name: 'TLS certificate' })
     await screen.findByRole('heading', { name: 'Recording storage' })
+    // Recording retention moved here from a page of its own (2026-10-30).
+    await screen.findByLabelText('Keep recordings for (days)')
     const nav = screen.getByRole('navigation', { name: 'Sections' })
     const links = within(nav).getAllByRole('link')
-    expect(links.map((a) => a.textContent)).toEqual(['Updates', 'Sign-in', 'Logging', 'Desktops', 'TLS certificate', 'Recording storage', 'Set at install'])
+    expect(links.map((a) => a.textContent)).toEqual(['Updates', 'Sign-in', 'Logging', 'Desktops', 'TLS certificate', 'Recording storage', 'Recording retention', 'Set at install'])
     for (const a of links) {
       const id = a.getAttribute('href')!.slice(1)
       expect(document.getElementById(id), `${a.textContent} has a section`).not.toBeNull()

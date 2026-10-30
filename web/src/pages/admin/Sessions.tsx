@@ -1,7 +1,8 @@
-import { useState } from 'react'
-import { Link, useLocation } from 'react-router-dom'
+import { useEffect, useState } from 'react'
+import { Link, useLocation, useSearchParams } from 'react-router-dom'
 import { api, errorMessage } from '../../api/client'
 import { fmtDuration, fmtTime } from '../../api/format'
+import { ranges, sinceFor } from '../../api/ranges'
 import { sessionTarget, sessionUser } from '../../api/labels'
 import type { Session } from '../../api/types'
 import { Alert, Confirm, Empty, Field, PageHead, reasonBadge } from '../../components/ui'
@@ -13,10 +14,26 @@ import { useList } from './lib'
 export function Sessions() {
   const admin = useLocation().pathname.startsWith('/admin')
   const recordings = useRecordingsPath()
-  const [openOnly, setOpenOnly] = useState(false)
-  const [username, setUsername] = useState('')
-  const [applied, setApplied] = useState('')
-  const { items, err, setErr, reload } = useList<Session>('/sessions', { open: openOnly ? 'true' : undefined, username: applied || undefined })
+  // The filters live in the address (2026-10-30): a dashboard's "Open
+  // sessions" and "Sessions (24h)" open this list narrowed to what they
+  // counted, and Back and a shared link keep it so.
+  const [sp, setSp] = useSearchParams()
+  const openOnly = sp.get('open') === '1'
+  const range = ranges.some((r) => r.key === sp.get('range')) ? (sp.get('range') ?? '') : ''
+  const applied = sp.get('user') ?? ''
+  const [username, setUsername] = useState(applied)
+  useEffect(() => setUsername(applied), [applied])
+  const set = (key: string, value: string) => {
+    const next = new URLSearchParams(sp)
+    if (value) next.set(key, value)
+    else next.delete(key)
+    setSp(next, { replace: true })
+  }
+  // The start of the range is fixed when the range is chosen, not at every
+  // render, so the list is not read again each time the page draws.
+  const [from, setFrom] = useState(() => sinceFor(range))
+  useEffect(() => setFrom(sinceFor(range)), [range])
+  const { items, err, setErr, reload } = useList<Session>('/sessions', { open: openOnly ? 'true' : undefined, username: applied || undefined, from: from || undefined })
   const [terminating, setTerminating] = useState<Session | null>(null)
   const [reason, setReason] = useState('')
 
@@ -24,26 +41,27 @@ export function Sessions() {
     <>
       <PageHead
         title="Sessions"
-        lead={
-          admin
-            ? "Every connection through the gateway. Terminating a live session closes the user's terminal immediately."
-            : 'Every connection through the gateway. Watch a live session read-only; each view is audited.'
-        }
+        lead={admin ? undefined : 'Watching is logged.'}
       >
         <span className="field inline" style={{ margin: 0 }}>
-          <input id="s-open" type="checkbox" checked={openOnly} onChange={(e) => setOpenOnly(e.target.checked)} />
+          <input id="s-open" type="checkbox" checked={openOnly} onChange={(e) => set('open', e.target.checked ? '1' : '')} />
           <label htmlFor="s-open">Live only</label>
         </span>
-        <input id="s-user" className="filter-control" placeholder="filter by username" aria-label="Filter by username" value={username} onChange={(e) => setUsername(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && setApplied(username.trim())} />
-        <button className="btn sm" onClick={() => setApplied(username.trim())}>Filter</button>
-        <button className="btn sm" onClick={() => void reload()}>Refresh</button>
+        <select id="s-range" className="filter-control" aria-label="Started" value={range} onChange={(e) => set('range', e.target.value)}>
+          {ranges.map((r) => (
+            <option key={r.key} value={r.key}>{r.key ? `Started: ${r.label.toLowerCase()}` : 'Started: any time'}</option>
+          ))}
+        </select>
+        <input id="s-user" className="filter-control" placeholder="filter by username" aria-label="Filter by username" value={username} onChange={(e) => setUsername(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && set('user', username.trim())} />
+        <button className="btn sm" onClick={() => set('user', username.trim())}>Filter</button>
+        <button className="btn sm" onClick={() => (range ? setFrom(sinceFor(range)) : void reload())}>Refresh</button>
       </PageHead>
       {err && <Alert tone="danger">{err}</Alert>}
       <div className="card table-wrap">
         {items === null ? (
           err ? null : <Empty>Loading…</Empty>
         ) : items.length === 0 ? (
-          <Empty>{applied || openOnly ? 'No sessions match.' : 'No sessions yet.'}</Empty>
+          <Empty>{applied || openOnly || range ? 'No sessions match.' : 'No sessions yet.'}</Empty>
         ) : (
           <table>
             <thead>

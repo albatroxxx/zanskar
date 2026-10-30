@@ -198,7 +198,14 @@ func (m *Middleware) Authenticate(next http.Handler) http.Handler {
 // anything else, such as the console's own files, is served without a
 // principal.
 func (m *Middleware) unchecked(w http.ResponseWriter, r *http.Request, next http.Handler, what string, err error) {
-	m.Log.Error(what, "err", err)
+	// A client that left mid-request (a page navigated away) cancels the
+	// lookup; nothing is wrong with the database, so it is not an error in
+	// the log, as httpx.Internal treats the same case.
+	if r.Context().Err() != nil && errors.Is(err, context.Canceled) {
+		m.Log.Info("request abandoned by the client", "step", what, "route", httpx.Route(r))
+	} else {
+		m.Log.Error(what, "err", err)
+	}
 	if p := r.URL.Path; strings.HasPrefix(p, "/api/") || strings.HasPrefix(p, "/ws/") {
 		httpx.WriteError(w, r, http.StatusServiceUnavailable, "unavailable", "the gateway cannot check your sign-in right now; try again in a moment")
 		return

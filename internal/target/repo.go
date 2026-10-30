@@ -90,7 +90,17 @@ type ListFilter struct {
 	Status   string // "active" | "disabled"
 	OSFamily string
 	Query    string // case-insensitive substring of name or address
+	// Attention narrows to the targets that wait on an administrator's
+	// decision, as CountAttention counts them.
+	Attention bool
 }
+
+// attentionPredicate is what makes a target wait on an administrator: an SSH
+// host key seen and not yet trusted, or changed after it was; or a
+// certificate a probe saw after one was pinned (ADR 0012). CountAttention
+// and List share it, so the dashboard's number and the list it opens count
+// the same rows.
+const attentionPredicate = `(host_key_status IN ('pending', 'changed') OR tls_fingerprint_pending IS NOT NULL OR winrm_tls_fingerprint_pending IS NOT NULL)`
 
 // Kinds of target, as ListFilter.Kind and the admin API's kind= name them.
 const (
@@ -117,19 +127,24 @@ type AttentionCounts struct {
 	HostKeyPending     int `json:"host_key_pending"`
 	HostKeyChanged     int `json:"host_key_changed"`
 	CertificatePending int `json:"certificate_pending"`
+	// NeedingAttention counts each host once, however many of the above it
+	// waits on: the number the dashboard shows and the Hosts page lists.
+	NeedingAttention int `json:"needing_attention"`
 }
 
-// CountAttention returns AttentionCounts over active, undeleted targets in
-// one query.
+// CountAttention returns AttentionCounts over active, undeleted hosts in one
+// query: only a host's probe sees host keys and certificates, and the
+// dashboard's tile opens the Hosts page.
 func (r *Repo) CountAttention(ctx context.Context) (AttentionCounts, error) {
 	var c AttentionCounts
 	err := r.db.QueryRowContext(ctx, r.db.Rebind(`SELECT COUNT(*),
 		COALESCE(SUM(CASE WHEN host_key_status = ? THEN 1 ELSE 0 END), 0),
 		COALESCE(SUM(CASE WHEN host_key_status = ? THEN 1 ELSE 0 END), 0),
-		COALESCE(SUM(CASE WHEN tls_fingerprint_pending IS NOT NULL OR winrm_tls_fingerprint_pending IS NOT NULL THEN 1 ELSE 0 END), 0)
-		FROM targets WHERE deleted_at IS NULL AND status = ?`),
+		COALESCE(SUM(CASE WHEN tls_fingerprint_pending IS NOT NULL OR winrm_tls_fingerprint_pending IS NOT NULL THEN 1 ELSE 0 END), 0),
+		COALESCE(SUM(CASE WHEN `+attentionPredicate+` THEN 1 ELSE 0 END), 0)
+		FROM targets WHERE deleted_at IS NULL AND status = ?`+kindClauses[KindHost]),
 		string(HostKeyPending), string(HostKeyChanged), StatusActive).
-		Scan(&c.Active, &c.HostKeyPending, &c.HostKeyChanged, &c.CertificatePending)
+		Scan(&c.Active, &c.HostKeyPending, &c.HostKeyChanged, &c.CertificatePending, &c.NeedingAttention)
 	return c, err
 }
 
@@ -195,6 +210,9 @@ func (r *Repo) List(ctx context.Context, afterName string, limit int, f ListFilt
 	if f.OSFamily != "" {
 		q += ` AND os_family = ?`
 		args = append(args, f.OSFamily)
+	}
+	if f.Attention {
+		q += ` AND ` + attentionPredicate + ` AND status = '` + StatusActive + `'`
 	}
 	if s := strings.ToLower(strings.TrimSpace(f.Query)); s != "" {
 		like := "%" + strings.NewReplacer(`\`, `\\`, "%", `\%`, "_", `\_`).Replace(s) + "%"

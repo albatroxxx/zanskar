@@ -20,7 +20,14 @@ function inUse(c: Credential) {
 }
 
 export function Credentials() {
-  const { items, err, setErr, reload } = useList<Credential>('/credentials')
+  const list = useList<Credential>('/credentials')
+  const { err, setErr, reload } = list
+  // The secrets an administrator vaults, nothing else. "User supplied" is
+  // stored as one shared row that a target's slot points at (the user types
+  // their own login at connect time); it is not a credential, so it is not
+  // listed, and with it gone every row is vaulted and needs no Mode column
+  // (2026-10-30). Target slots still offer it.
+  const items = list.items?.filter((c) => c.mode !== 'user_supplied') ?? null
   const [adding, setAdding] = useState(false)
   const [rotating, setRotating] = useState<Credential | null>(null)
   const [deleting, setDeleting] = useState<Credential | null>(null)
@@ -29,13 +36,13 @@ export function Credentials() {
 
   return (
     <>
-      <PageHead title="Credentials" lead="Secrets are sealed on save and never shown again.">
+      <PageHead title="Credentials">
         <button className="btn primary" onClick={() => setAdding(true)}>Add credential</button>
       </PageHead>
       {err && <Alert tone="danger">{err}</Alert>}
       {generated && generated.type === 'ssh_ca' && (
         <Alert tone="ok">
-          Certificate authority <strong>{generated.name}</strong> created; the private key is sealed and never shown. Targets trust it with:
+          Certificate authority <strong>{generated.name}</strong> created.
           <div style={{ marginTop: 8 }}><CAInstall credential={generated} /></div>
         </Alert>
       )}
@@ -56,7 +63,6 @@ export function Credentials() {
               <tr>
                 <th>Name</th>
                 <th>Type</th>
-                <th>Mode</th>
                 <th>Username</th>
                 <th>Public key</th>
                 <th>Secret</th>
@@ -70,7 +76,6 @@ export function Credentials() {
                 <tr key={c.id}>
                   <td><strong>{c.name}</strong></td>
                   <td>{c.type === 'ssh_ca' ? 'ssh certificate authority' : c.type}</td>
-                  <td>{c.mode.replace(/_/g, ' ')}</td>
                   <td className="mono">{c.domain ? `${c.domain}\\` : ''}{c.username ?? <span className="muted">—</span>}</td>
                   <td className="mono muted" title={c.public_key}>{c.public_key ? c.public_key.slice(0, 28) + '…' : '—'}</td>
                   <td>{c.has_secret ? <StateIcon state="ok" label="Secret stored" /> : <StateIcon state="warn" label="No secret stored" />}</td>
@@ -183,7 +188,7 @@ function SecretFields({ type, f, set, put }: { type: CredentialType; f: Record<s
   if (type === 'ssh_key' || type === 'ssh_ca') {
     return (
       <>
-        <Field label={type === 'ssh_ca' ? 'CA private key (PEM)' : 'Private key (PEM)'} hint="OpenSSH, PKCS#8 or PKCS#1; encrypted keys need the passphrase below. Paste it, or choose the file.">
+        <Field label={type === 'ssh_ca' ? 'CA private key (PEM)' : 'Private key (PEM)'} hint="OpenSSH, PKCS#8 or PKCS#1">
           <textarea id="c-private-key" value={f.private_key} onChange={set('private_key')} required placeholder="-----BEGIN OPENSSH PRIVATE KEY-----" />
           <div className="actions" style={{ marginTop: 6 }}>
             <input id="c-private-key-file" type="file" accept=".pem,.key,.pub,.txt,application/x-pem-file,text/plain" hidden onChange={readKeyFile} />
@@ -255,7 +260,7 @@ function CredentialForm({ onClose, onSaved }: { onClose: () => void; onSaved: (c
         <input id="c-name" value={f.name} onChange={set('name')} required autoFocus />
       </Field>
       <div className="form-grid">
-        <Field label="Type" hint="Zanskar stores the secret; users never see it. To let users type their own login instead, choose “User supplied” on the target's credential slot.">
+        <Field label="Type">
           <select id="c-type" value={f.type} onChange={set('type')}>
             {types.map((t) => (
               <option key={t.v} value={t.v}>{t.label}</option>
@@ -283,23 +288,20 @@ function CredentialForm({ onClose, onSaved }: { onClose: () => void; onSaved: (c
       )}
       {isCA && (
         <>
-          <p className="muted" style={{ marginTop: 0 }}>
-            Keyless SSH: each session gets a certificate signed by this authority, valid for minutes, and targets trust one public key instead of holding a key per gateway. The recommended way to reach Linux targets.
-          </p>
           <div className="form-grid">
-            <Field label="Login user" hint="Blank: each person logs in as their own Zanskar username. Set it to make everyone use one account, e.g. deploy.">
+            <Field label="Login user" hint="Blank = each user's own username">
               <input id="c-username" value={f.username} onChange={set('username')} placeholder="(each user as themselves)" />
             </Field>
-            <Field label="Certificate lifetime (seconds)" hint={`Blank = ${DEFAULT_CERT_TTL}; 60-3600.`}>
+            <Field label="Certificate lifetime (seconds)" hint={`Blank = ${DEFAULT_CERT_TTL}; 60–3600`}>
               <input id="c-ttl" inputMode="numeric" value={f.ttl} onChange={set('ttl')} placeholder={String(DEFAULT_CERT_TTL)} />
             </Field>
           </div>
-          <Field label="Allowed login users" hint="One per line. Blank = any login user.">
+          <Field label="Allowed login users" hint="One per line; blank = any">
             <textarea id="c-principals" value={f.principals} onChange={set('principals')} placeholder={'deploy\nops'} style={{ minHeight: 50 }} />
           </Field>
           <div className="field inline">
             <input id="c-generate-ca" type="checkbox" checked={generateCA} onChange={(e) => setGenerateCA(e.target.checked)} />
-            <label htmlFor="c-generate-ca">Generate an ed25519 authority key for me (the private key is sealed and never shown)</label>
+            <label htmlFor="c-generate-ca">Generate an ed25519 key</label>
           </div>
         </>
       )}
@@ -326,7 +328,7 @@ function RotateForm({ credential, onClose, onSaved }: { credential: Credential; 
     })
   return (
     <FormModal title={`Rotate ${credential.name}`} width={560} err={err} busy={busy} submitLabel="Rotate" onSubmit={save} onClose={onClose}>
-      <p className="muted" style={{ marginTop: 0 }}>The new secret replaces the old one immediately for every target using this credential.</p>
+      <p className="muted" style={{ marginTop: 0 }}>Takes effect at once on every target using it.</p>
       <SecretFields type={credential.type} f={f} set={set} put={put} />
     </FormModal>
   )

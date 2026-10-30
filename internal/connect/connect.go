@@ -14,7 +14,6 @@ import (
 	"log/slog"
 	"net/http"
 	"net/netip"
-	"slices"
 	"time"
 
 	"github.com/coder/websocket"
@@ -183,11 +182,16 @@ func (h *Handler) myTargets(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 			protos := target.Protocols
-			// database is not in target.Protocols (it is not probed); offer it
-			// for database targets the policy permits (ADR 0017), and only
-			// when the gateway can actually broker that engine.
-			if t.IsDatabase() && target.ServableEngine(t.Engine) {
-				protos = append(slices.Clip(protos), target.Database)
+			// A database is reached over database alone (ADR 0017), and only
+			// when the gateway can broker its engine. A tag policy that grants
+			// ssh to every target tagged env=prod covers the prod database
+			// too; offering ssh on it listed a button connect then refused
+			// (2026-10-30, ADR 0036).
+			if t.IsDatabase() {
+				if !target.ServableEngine(t.Engine) {
+					continue
+				}
+				protos = []target.Protocol{target.Database}
 			}
 			allowed, needApproval := reach(pols, policy.TargetRef{ID: t.ID, Tags: t.Tags}, protos, now)
 			if len(allowed) == 0 {
@@ -275,11 +279,21 @@ type connectResponse struct {
 	InstanceLabel string    `json:"instance_label,omitempty"`
 }
 
-// userCredential is what a user_supplied credential mode asks for.
+// userCredential is what a user_supplied credential mode asks for: a
+// username with a password, or, over SSH, with the user's own private key
+// and its passphrase when it has one.
 type userCredential struct {
-	Username string `json:"username"`
-	Password string `json:"password"`
+	Username   string `json:"username"`
+	Password   string `json:"password"`
+	PrivateKey string `json:"private_key,omitempty"`
+	Passphrase string `json:"private_key_passphrase,omitempty"`
 }
+
+// Bounds on a key a user brings: an RSA 16384-bit key in PEM is under 13 KiB.
+const (
+	maxUserKey        = 16 << 10
+	maxUserPassphrase = 1 << 10
+)
 
 func (h *Handler) connect(w http.ResponseWriter, r *http.Request) {
 	p, _ := auth.FromContext(r.Context())
@@ -451,11 +465,32 @@ func (h *Handler) issueTicket(ctx context.Context, p *auth.Principal, ip string,
 			}
 		}
 	case credential.ModeUserSupplied:
-		if uc == nil || uc.Username == "" || uc.Password == "" {
+		if uc == nil || uc.Username == "" || (uc.Password == "" && uc.PrivateKey == "") {
 			return nil, "credential_required", "this target needs your username and password", nil
 		}
 		grant.Username = uc.Username
-		grant.UserSecret = []byte(uc.Password)
+		if uc.PrivateKey == "" {
+			grant.UserSecret = []byte(uc.Password)
+			break
+		}
+		// The user's own key (2026-10-30). It signs in over SSH alone; RDP,
+		// VNC, WinRM and databases take a password. It is unlocked here, so
+		// a wrong passphrase is a plain answer rather than a broken socket,
+		// and the ticket carries it for its thirty seconds, never stored.
+		if proto != target.SSH {
+			return nil, "credential_required", "a private key signs in over SSH only; give your password", nil
+		}
+		if len(uc.PrivateKey) > maxUserKey || len(uc.Passphrase) > maxUserPassphrase {
+			return nil, "credential_invalid", "the private key is too large", nil
+		}
+		key, err := credential.UnlockPrivateKey(uc.PrivateKey, uc.Passphrase)
+		switch {
+		case errors.Is(err, credential.ErrPassphrase):
+			return nil, "credential_invalid", "the key is encrypted, and its passphrase is missing or wrong", nil
+		case err != nil:
+			return nil, "credential_invalid", "that is not a private key this gateway can read (OpenSSH, PKCS#8 or PKCS#1)", nil
+		}
+		grant.UserKey = key
 	default:
 		return nil, "credential_mode_unavailable", "credential mode not supported yet", nil
 	}
@@ -490,7 +525,7 @@ func codeStatus(code string) int {
 	switch code {
 	case "policy_denied", "mfa_required_by_policy", "approval_required", "login_user_not_permitted":
 		return http.StatusForbidden
-	case "credential_required":
+	case "credential_required", "credential_invalid":
 		return http.StatusUnprocessableEntity
 	case "protocol_unavailable", "credential_mode_unavailable", "engine_unavailable":
 		return http.StatusNotImplemented
@@ -508,7 +543,7 @@ func (h *Handler) terminal(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	defer zero(g.UserSecret)
+	defer g.Wipe()
 	// The policy allowed the ticket's protocol, not this one: a ticket for
 	// RDP must not open an SSH shell with the RDP credential.
 	if target.Protocol(g.Protocol) != target.SSH {
@@ -527,6 +562,8 @@ func (h *Handler) terminal(w http.ResponseWriter, r *http.Request) {
 	// plain HTTP error rather than a broken socket.
 	a := sshgw.Auth{Username: g.Username}
 	switch {
+	case len(g.UserKey) > 0:
+		a.PrivateKey = g.UserKey
 	case len(g.UserSecret) > 0:
 		a.Password = string(g.UserSecret)
 	default:
@@ -705,7 +742,7 @@ func (h *Handler) redeem(w http.ResponseWriter, r *http.Request) (*ticket.Grant,
 	// change inside the ticket's thirty seconds ends nothing (there is no
 	// session yet) and must not let a review-only account start one.
 	if !signedIn || !p.User.CanConnect() {
-		zero(g.UserSecret)
+		g.Wipe()
 		httpx.WriteError(w, r, http.StatusForbidden, "review_only", "this account is review-only; the user role is required to reach targets")
 		return nil, false
 	}
@@ -714,12 +751,12 @@ func (h *Handler) redeem(w http.ResponseWriter, r *http.Request) (*ticket.Grant,
 	if ep, err := h.resolveGrant(r.Context(), g); err == nil {
 		_, code, msg, err := h.admits(r.Context(), g.UserID, ep, target.Protocol(g.Protocol))
 		if err != nil {
-			zero(g.UserSecret)
+			g.Wipe()
 			httpx.Internal(w, r, h.Log, err)
 			return nil, false
 		}
 		if code != "" {
-			zero(g.UserSecret)
+			g.Wipe()
 			httpx.WriteError(w, r, codeStatus(code), code, msg)
 			return nil, false
 		}
@@ -756,12 +793,6 @@ func (h *Handler) guacd() string {
 
 func (h *Handler) record(r *http.Request, e audit.Event) {
 	auth.Recorder{Audit: h.Audit, Log: h.Log}.Record(r, e)
-}
-
-func zero(b []byte) {
-	for i := range b {
-		b[i] = 0
-	}
 }
 
 // caLoginUser is the login user a certificate authority signs for: the

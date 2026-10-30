@@ -185,7 +185,7 @@ export function Login() {
 
           {effectiveStep === 'change' && (
             <form onSubmit={submitChange}>
-              <p className="muted" style={{ marginTop: 0 }}>The password you signed in with was set by an administrator. Choose your own before continuing; it is never shown to anyone else.</p>
+              <p className="muted" style={{ marginTop: 0 }}>Choose your own password to continue.</p>
               {!password && (
                 <Field label="Current password">
                   <input id="current-password" type="password" autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} required />
@@ -219,7 +219,7 @@ export function Login() {
 
           {effectiveStep === 'enroll' && (
             <form onSubmit={submitConfirm}>
-              <p className="muted" style={{ marginTop: 0 }}>This deployment requires a second factor. Scan the code with your authenticator app, then enter the six-digit code it shows.</p>
+              <p className="muted" style={{ marginTop: 0 }}>Scan with your authenticator app, then enter its code.</p>
               {enroll ? (
                 <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12 }}>
                   <img className="qr" src={enroll.qr} alt="TOTP enrollment QR code" width={192} height={192} />
@@ -244,7 +244,7 @@ export function Login() {
           {effectiveStep === 'recovery' && (
             <div>
               <h2>Save your recovery codes</h2>
-              <p className="muted">Each code works once if you lose your authenticator. They will not be shown again.</p>
+              <p className="muted">Each works once. Shown only now.</p>
               <div className="recovery-codes">
                 {recovery.map((c) => (
                   <span key={c}>{c}</span>

@@ -139,7 +139,10 @@ type Filter struct {
 	Username string
 	TargetID string
 	OpenOnly bool
-	Limit    int
+	// From narrows to sessions started at or after it, as Count's
+	// StartedSince counts them; zero means any time.
+	From  time.Time
+	Limit int
 	// Cursor is the started_at of the last row seen, as List returns it. Any
 	// RFC 3339 form is read as a time and compared in the stored form, so a
 	// cursor from before migration 0030 pages the same way.
@@ -170,6 +173,10 @@ func (r *Repo) List(ctx context.Context, f Filter) ([]*Session, string, error) {
 	}
 	if f.OpenOnly {
 		q += ` AND s.ended_at IS NULL`
+	}
+	if !f.From.IsZero() {
+		q += ` AND s.started_at >= ?`
+		args = append(args, store.TimeArg(f.From))
 	}
 	if f.Cursor != "" {
 		at, err := time.Parse(time.RFC3339Nano, f.Cursor)

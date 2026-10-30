@@ -94,7 +94,9 @@ func seed(t *testing.T, e *env) {
 		}
 	}
 	now := store.TimeArg(time.Now())
-	if _, err := e.db.ExecContext(ctx, e.db.Rebind(`UPDATE targets SET host_key_status = 'pending', updated_at = ? WHERE name = 'web 2'`), now); err != nil {
+	// web 2 waits on two decisions, a host key and a certificate: one host
+	// needing attention, whatever the per-reason counts add up to.
+	if _, err := e.db.ExecContext(ctx, e.db.Rebind(`UPDATE targets SET host_key_status = 'pending', tls_fingerprint_pending = 'ab', updated_at = ? WHERE name = 'web 2'`), now); err != nil {
 		t.Fatal(err)
 	}
 	var t1 string
@@ -190,8 +192,15 @@ func TestAdminOverview(t *testing.T) {
 	if got := num(t, out, "pending_requests"); got != 1 {
 		t.Errorf("pending_requests = %v, want 1", got)
 	}
-	if got := num(t, out, "targets", "active"); got != 4 {
-		t.Errorf("targets.active = %v, want 4", got)
+	// Hosts only: the tile opens the Hosts page (2026-10-30).
+	if got := num(t, out, "targets", "active"); got != 3 {
+		t.Errorf("targets.active = %v, want 3", got)
+	}
+	if got := num(t, out, "targets", "needing_attention"); got != 1 {
+		t.Errorf("targets.needing_attention = %v, want 1 (one host, two reasons)", got)
+	}
+	if got := num(t, out, "targets", "certificate_pending"); got != 1 {
+		t.Errorf("targets.certificate_pending = %v, want 1", got)
 	}
 	if got := num(t, out, "targets", "host_key_pending"); got != 1 {
 		t.Errorf("targets.host_key_pending = %v, want 1", got)

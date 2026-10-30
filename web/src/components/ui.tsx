@@ -292,7 +292,8 @@ export function Tags({ tags }: { tags?: Record<string, string> }) {
     <>
       {entries.map(([k, v]) => (
         <span className="tag" key={k}>
-          {k}={v}
+          <span className="tag-k">{k}</span>
+          {v && <><span className="sr-only">: </span><span className="tag-v">{v}</span></>}
         </span>
       ))}
     </>

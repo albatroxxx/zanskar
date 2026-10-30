@@ -65,7 +65,7 @@ describe('TLSCard', () => {
   it('says the proxy holds the certificate in proxy mode', async () => {
     vi.spyOn(api, 'get').mockResolvedValue({ mode: 'proxy' } as never)
     render(<TLSCard />)
-    expect(await screen.findByText(/terminated by the proxy in front of the gateway/)).toBeDefined()
+    expect(await screen.findByText(/Terminated by the proxy in front of the gateway/)).toBeDefined()
     expect(screen.queryByRole('button', { name: 'Upload and serve' })).toBeNull()
   })
 })

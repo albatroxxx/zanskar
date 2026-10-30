@@ -41,8 +41,11 @@ type Grant struct {
 	ClientIP          string
 	FailoverFrom      string
 	// UserSecret carries a user-supplied password for the target, if the
-	// credential mode requires one. Zeroed on redeem.
+	// credential mode requires one; UserKey a user-supplied SSH private key,
+	// already unlocked (OpenSSH PEM, unencrypted). Neither is stored; both
+	// are wiped on every path that ends the grant (Wipe).
 	UserSecret []byte
+	UserKey    []byte
 	IssuedAt   time.Time
 	ExpiresAt  time.Time
 }
@@ -51,6 +54,13 @@ type Grant struct {
 var (
 	ErrInvalid = errors.New("ticket: invalid or expired")
 )
+
+// Wipe zeroes the user-supplied secrets the grant carries. Every path that
+// ends a grant calls it, so a secret added later is wiped wherever these are.
+func (g *Grant) Wipe() {
+	zero(g.UserSecret)
+	zero(g.UserKey)
+}
 
 // Store keeps live tickets.
 type Store struct {
@@ -96,7 +106,7 @@ func (s *Store) Redeem(tok, clientIP, sessionID string) (*Grant, error) {
 	// and a sign-out ends it. A ticket presented any other way is spent,
 	// since it has been seen where it should not be.
 	if s.now().After(g.ExpiresAt) || g.ClientIP != clientIP || g.SessionID != sessionID {
-		zero(g.UserSecret)
+		g.Wipe()
 		return nil, ErrInvalid
 	}
 	return g, nil
@@ -112,7 +122,7 @@ func (s *Store) Len() int {
 func (s *Store) gc(now time.Time) {
 	for k, g := range s.tickets {
 		if now.After(g.ExpiresAt) {
-			zero(g.UserSecret)
+			g.Wipe()
 			delete(s.tickets, k)
 		}
 	}
