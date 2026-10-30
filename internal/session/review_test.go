@@ -13,6 +13,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/albatroxxx/zanskar/internal/audit"
 	"github.com/albatroxxx/zanskar/internal/store"
@@ -90,6 +91,17 @@ func TestSessionLists(t *testing.T) {
 	}
 	if rr, out := e.get("/api/v1/sessions?open=true", "reviewer"); len(out["items"].([]any)) != 1 || rr.Code != http.StatusOK {
 		t.Errorf("open sessions only: %v", out)
+	}
+	// Started since (2026-10-30): the dashboard's "Sessions (24h)".
+	since := time.Now().Add(-24 * time.Hour).UTC().Format(time.RFC3339)
+	if rr, out := e.get("/api/v1/sessions?from="+since, "reviewer"); rr.Code != http.StatusOK || len(out["items"].([]any)) != 2 {
+		t.Errorf("started in the last day: %d %v", rr.Code, out)
+	}
+	if _, out := e.get("/api/v1/sessions?from="+time.Now().Add(time.Hour).UTC().Format(time.RFC3339), "reviewer"); len(out["items"].([]any)) != 0 {
+		t.Errorf("started after now: %v", out)
+	}
+	if rr, _ := e.get("/api/v1/sessions?from=yesterday", "reviewer"); rr.Code != http.StatusBadRequest {
+		t.Errorf("from=yesterday: %d, want 400", rr.Code)
 	}
 	if rr, _ := e.get("/api/v1/sessions", "alice"); rr.Code != http.StatusForbidden {
 		t.Errorf("alice listing everyone's sessions: %d, want 403", rr.Code)

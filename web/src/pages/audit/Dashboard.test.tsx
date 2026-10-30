@@ -32,10 +32,18 @@ describe('the auditor dashboard', () => {
     )
 
     const failures = (await screen.findByText('Failures (24h)')).closest('a')
-    expect(failures?.getAttribute('href')).toBe('/audit/events')
+    expect(failures?.getAttribute('href')).toBe('/audit/events?outcome=failure&range=24h&routine=1')
     expect(failures?.textContent).toContain('5')
-    expect(screen.getByText('Open sessions').closest('a')?.getAttribute('href')).toBe('/audit/sessions')
-    expect(screen.getByText('Recordings played (24h)').closest('a')?.getAttribute('href')).toBe('/audit/recordings')
+    // 2026-10-30: every number opens the list it counted. Recordings played
+    // and downloaded are counts of audit events, so they open those events.
+    const href = (label: string) => screen.getByText(label).closest('a')?.getAttribute('href')
+    expect(href('Open sessions')).toBe('/audit/sessions?open=1')
+    expect(href('Sessions (24h)')).toBe('/audit/sessions?range=24h')
+    expect(href('Failed sign-ins (24h)')).toBe('/audit/events?action=user.login&outcome=failure&range=24h&routine=1')
+    expect(href('Refused connections (24h)')).toBe('/audit/events?action=session.connect&outcome=failure&range=24h&routine=1')
+    expect(href('Audit events (24h)')).toBe('/audit/events?range=24h&routine=1')
+    expect(href('Recordings played (24h)')).toBe('/audit/events?action=recording.view&outcome=success&range=24h&routine=1')
+    expect(href('Recordings downloaded (24h)')).toBe('/audit/events?action=recording.download&outcome=success&range=24h&routine=1')
   })
 
   it('checks the chain only when asked, then shows the verdict', async () => {

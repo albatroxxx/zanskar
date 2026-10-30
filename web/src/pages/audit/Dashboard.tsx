@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { api, errorMessage } from '../../api/client'
 import type { AuditOverview, AuditVerify } from '../../api/types'
 import { TileIcon } from '../../components/icons'
+import { drill } from '../../api/drilldown'
 import { Alert, PageHead, StatTile } from '../../components/ui'
 import { ChainStatus } from './Events'
 
@@ -39,18 +40,18 @@ export function Dashboard() {
 
       <h2 className="stat-section">Worth a look</h2>
       <div className="stat-grid">
-        <StatTile value={o && o.events_24h.failures} label="Failures (24h)" icon={<TileIcon kind="attention" />} to="/audit/events" tone="warn" />
-        <StatTile value={o && o.events_24h.failed_logins} label="Failed sign-ins (24h)" icon={<TileIcon kind="key" />} to="/audit/events" tone="warn" />
-        <StatTile value={o && o.events_24h.refused_connects} label="Refused connections (24h)" icon={<TileIcon kind="ban" />} to="/audit/events" tone="warn" />
-        <StatTile value={o && o.sessions.open} label="Open sessions" icon={<TileIcon kind="session" />} to="/audit/sessions" />
+        <StatTile value={o && o.events_24h.failures} label="Failures (24h)" icon={<TileIcon kind="attention" />} to={drill.failures('/audit')} tone="warn" />
+        <StatTile value={o && o.events_24h.failed_logins} label="Failed sign-ins (24h)" icon={<TileIcon kind="key" />} to={drill.failedSignIns('/audit')} tone="warn" />
+        <StatTile value={o && o.events_24h.refused_connects} label="Refused connections (24h)" icon={<TileIcon kind="ban" />} to={drill.refusedConnections('/audit')} tone="warn" />
+        <StatTile value={o && o.sessions.open} label="Open sessions" icon={<TileIcon kind="session" />} to={drill.openSessions('/audit')} />
       </div>
 
       <h2 className="stat-section">Activity</h2>
       <div className="stat-grid">
-        <StatTile value={o && o.sessions.started_24h} label="Sessions (24h)" icon={<TileIcon kind="clock" />} to="/audit/sessions" />
-        <StatTile value={o && o.events_24h.events} label="Audit events (24h)" icon={<TileIcon kind="list" />} to="/audit/events" />
-        <StatTile value={o && o.reviews_24h.recording_views} label="Recordings played (24h)" icon={<TileIcon kind="session" />} to="/audit/recordings" />
-        <StatTile value={o && o.reviews_24h.recording_downloads} label="Recordings downloaded (24h)" icon={<TileIcon kind="list" />} to="/audit/recordings" />
+        <StatTile value={o && o.sessions.started_24h} label="Sessions (24h)" icon={<TileIcon kind="clock" />} to={drill.sessions24h('/audit')} />
+        <StatTile value={o && o.events_24h.events} label="Audit events (24h)" icon={<TileIcon kind="list" />} to={drill.auditEvents('/audit')} />
+        <StatTile value={o && o.reviews_24h.recording_views} label="Recordings played (24h)" icon={<TileIcon kind="session" />} to={drill.recordingsPlayed('/audit')} />
+        <StatTile value={o && o.reviews_24h.recording_downloads} label="Recordings downloaded (24h)" icon={<TileIcon kind="list" />} to={drill.recordingsDownloaded('/audit')} />
       </div>
 
       <h2 className="stat-section">Log integrity</h2>

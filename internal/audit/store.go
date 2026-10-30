@@ -155,9 +155,12 @@ func (l *Log) Record(ctx context.Context, e Event) (Event, error) {
 type Filter struct {
 	ActorUserID string
 	Action      string
-	ObjectType  string
-	ObjectID    string
-	From, To    time.Time
+	// Outcome narrows to successes or failures; empty means both. The
+	// dashboards' failure counts open the list with it.
+	Outcome    Outcome
+	ObjectType string
+	ObjectID   string
+	From, To   time.Time
 	// Exclude drops routine events from a listing without touching the log.
 	// Each entry is an action ("audit.read") or action:outcome
 	// ("session.connect:success"), so a reader can hide the successful
@@ -189,6 +192,9 @@ func (l *Log) List(ctx context.Context, f Filter) ([]Event, string, error) {
 	}
 	if f.Action != "" {
 		add("action = ?", f.Action)
+	}
+	if f.Outcome != "" {
+		add("outcome = ?", string(f.Outcome))
 	}
 	if f.ObjectType != "" {
 		add("object_type = ?", f.ObjectType)

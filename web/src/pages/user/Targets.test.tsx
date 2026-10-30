@@ -154,10 +154,10 @@ describe('Targets overview strip', () => {
     )
 
     const open = (await screen.findByText('Open sessions')).closest('a')
-    expect(open?.getAttribute('href')).toBe('/sessions')
+    expect(open?.getAttribute('href')).toBe('/sessions?open=1')
     expect(open?.textContent).toContain('1')
-    expect(screen.getByText('Pending requests').closest('a')?.getAttribute('href')).toBe('/access')
-    expect(screen.getByText('Grants expiring soon').closest('a')?.getAttribute('href')).toBe('/access')
+    expect(screen.getByText('Pending requests').closest('a')?.getAttribute('href')).toBe('/access?show=pending')
+    expect(screen.getByText('Grants expiring soon').closest('a')?.getAttribute('href')).toBe('/access?show=expiring')
   })
 
   it('is absent when nothing waits', async () => {

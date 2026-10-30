@@ -1,5 +1,6 @@
 import { cleanup, render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { MemoryRouter } from 'react-router-dom'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { api } from '../../api/client'
 import type { Credential, Target } from '../../api/types'
@@ -30,7 +31,7 @@ function serve(targets: Target[]) {
 describe('TargetsPage', () => {
   it('lists its own kind in its own columns, and adds one of that kind', async () => {
     const get = serve([db])
-    render(<Databases />)
+    render(<MemoryRouter><Databases /></MemoryRouter>)
 
     const row = (await screen.findByText('orders-admin')).closest('tr')!
     expect(get).toHaveBeenCalledWith('/targets?limit=500&kind=database')
@@ -48,7 +49,7 @@ describe('TargetsPage', () => {
 
   it('says how to start when there is none of its kind', async () => {
     const get = serve([])
-    render(<Targets />)
+    render(<MemoryRouter><Targets /></MemoryRouter>)
 
     expect(await screen.findByText('No hosts yet. Add one to get started; databases are added under Databases.')).toBeDefined()
     expect(get).toHaveBeenCalledWith('/targets?limit=500&kind=host')
@@ -63,7 +64,7 @@ describe('TargetsPage', () => {
       app_upstream: 'https://wiki.internal:8443', tls_ca: '', ports: {}, capabilities: [], credentials: {},
     }
     const get = serve([wiki])
-    render(<Applications />)
+    render(<MemoryRouter><Applications /></MemoryRouter>)
 
     const row = (await screen.findByText('https://wiki.internal:8443')).closest('tr')!
     expect(get).toHaveBeenCalledWith('/targets?limit=500&kind=application')
@@ -81,7 +82,7 @@ describe('TargetsPage', () => {
 
   it('searches the whole fleet server-side as the user types (debounced)', async () => {
     const get = serve([db])
-    render(<Databases />)
+    render(<MemoryRouter><Databases /></MemoryRouter>)
     await screen.findByText('orders-admin')
 
     await userEvent.setup().type(screen.getByRole('searchbox', { name: 'Search databases' }), 'orders')
@@ -93,7 +94,7 @@ describe('TargetsPage', () => {
     vi.spyOn(api, 'get').mockImplementation(async (path: string) =>
       ({ items: path.startsWith('/credentials') ? [cred] : path.includes('q=') ? [] : [db] }) as never,
     )
-    render(<Databases />)
+    render(<MemoryRouter><Databases /></MemoryRouter>)
     await screen.findByText('orders-admin')
 
     await userEvent.setup().type(screen.getByRole('searchbox', { name: 'Search databases' }), 'zzz')

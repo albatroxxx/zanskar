@@ -1,7 +1,8 @@
 import { useEffect, useState, type ReactNode } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useSearchParams } from 'react-router-dom'
 import { api } from '../../api/client'
 import type { AppsReadiness, Credential, Target } from '../../api/types'
+import { FilterChips } from '../../components/FilterChips'
 import { StateIcon } from '../../components/icons'
 import { Alert, Badge, Empty, PageHead } from '../../components/ui'
 import { useDebounced, useList } from './lib'
@@ -32,7 +33,20 @@ export function TargetsPage({ kind, title, lead, addLabel, empty, columns, cells
   // typing pauses rather than on every keystroke.
   const [q, setQ] = useState('')
   const dq = useDebounced(q.trim())
-  const { items, err, setErr, reload } = useList<Target>('/targets', { kind, q: dq })
+  // A dashboard number opens this list narrowed to what it counted
+  // (2026-10-30): attention=1 the hosts waiting on a decision, status=active
+  // the active ones the inventory counts. Each shows as a chip that drops it.
+  const [sp, setSp] = useSearchParams()
+  const attention = kind === 'host' && sp.get('attention') === '1'
+  const activeOnly = sp.get('status') === 'active'
+  const drop = (key: string) => {
+    const next = new URLSearchParams(sp)
+    next.delete(key)
+    setSp(next, { replace: true })
+  }
+  const { items, err, setErr, reload } = useList<Target>('/targets', {
+    kind, q: dq, attention: attention ? 'true' : undefined, status: activeOnly ? 'active' : undefined,
+  })
   const noun = title.toLowerCase()
   const creds = useList<Credential>('/credentials')
   const [adding, setAdding] = useState(false)
@@ -80,10 +94,14 @@ export function TargetsPage({ kind, title, lead, addLabel, empty, columns, cells
             onChange={(e) => setQ(e.target.value)}
           />
         </div>
+        <FilterChips chips={[
+          ...(attention ? [{ label: 'Needing attention', onClear: () => drop('attention') }] : []),
+          ...(activeOnly ? [{ label: 'Active only', onClear: () => drop('status') }] : []),
+        ]} />
         {items === null ? (
           err ? null : <Empty>Loading…</Empty>
         ) : items.length === 0 ? (
-          <Empty>{dq ? `No ${noun} match ‘${dq}’.` : empty}</Empty>
+          <Empty>{dq || attention || activeOnly ? `No ${noun} match.` : empty}</Empty>
         ) : (
           <table>
             <thead>

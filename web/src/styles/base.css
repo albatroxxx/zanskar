@@ -274,6 +274,11 @@ td.actions > * + * { margin-left: 8px; }
 .sso-btn svg { color: var(--accent); flex: none; }
 .sso-btn:hover { background: var(--bg-sunken); border-color: var(--fg-faint); }
 .sso-btn:active { transform: translateY(1px); }
+/* Filters a list was opened with, each removable (FilterChips). */
+.filter-chips { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 12px; }
+.chip { display: inline-flex; align-items: center; gap: 8px; padding: 3px 10px; border-radius: 999px; border: 1px solid transparent; background: var(--accent-soft); color: var(--accent); font: inherit; font-size: 0.8rem; font-weight: 500; cursor: pointer; transition: border-color 0.12s ease; }
+.chip:hover { border-color: var(--accent); }
+.chip span { font-size: 0.72rem; opacity: 0.8; }
 /* Addresses to copy into another system: the value and its Copy button. */
 .copy-row { display: flex; gap: 8px; align-items: center; }
 .copy-row input { flex: 1; min-width: 0; font-family: var(--mono); font-size: 0.8rem; background: var(--bg-sunken); }

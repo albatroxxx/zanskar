@@ -393,6 +393,18 @@ func TestAuditEventsFiltersAndDecoration(t *testing.T) {
 		t.Errorf("malformed bounds are ignored: %v", out["items"])
 	}
 
+	// Outcome (2026-10-30): the dashboards' failure tiles open the list with
+	// it, so it must hold exactly the failures.
+	if _, out := e.get("/api/v1/audit/events?action=connect.start&outcome=failure", "reviewer"); len(out["items"].([]any)) != 1 || out["items"].([]any)[0].(map[string]any)["outcome"] != "failure" {
+		t.Errorf("outcome=failure: %v", out["items"])
+	}
+	if _, out := e.get("/api/v1/audit/events?actor=alice&outcome=success", "reviewer"); len(out["items"].([]any)) != 3 {
+		t.Errorf("outcome=success: %v", out["items"])
+	}
+	if rr, out := e.get("/api/v1/audit/events?outcome=maybe", "reviewer"); rr.Code != http.StatusBadRequest || out["code"] != "bad_request" {
+		t.Errorf("outcome=maybe: %d %v, want 400", rr.Code, out)
+	}
+
 	toks := make([]string, 17)
 	for i := range toks {
 		toks[i] = fmt.Sprintf("a%d", i)

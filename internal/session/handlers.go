@@ -85,6 +85,14 @@ func (h *Handler) listSessions(w http.ResponseWriter, r *http.Request) {
 	limit, cursor := httpx.Paging(r, 50, 500)
 	q := r.URL.Query()
 	f := Filter{UserID: q.Get("user_id"), Username: q.Get("username"), TargetID: q.Get("target_id"), OpenOnly: q.Get("open") == "true", Limit: limit, Cursor: cursor}
+	if s := q.Get("from"); s != "" {
+		t, err := time.Parse(time.RFC3339, s)
+		if err != nil {
+			httpx.BadRequest(w, r, "from: expected an RFC 3339 time")
+			return
+		}
+		f.From = t
+	}
 	items, next, err := h.Repo.List(r.Context(), f)
 	if err != nil {
 		h.fail(w, r, err)
@@ -405,6 +413,13 @@ func (h *Handler) auditEvents(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		f.Exclude = append(f.Exclude, ex)
+	}
+	switch o := audit.Outcome(q.Get("outcome")); o {
+	case "", audit.Success, audit.Failure:
+		f.Outcome = o
+	default:
+		httpx.BadRequest(w, r, "outcome: expected success or failure")
+		return
 	}
 	if s := q.Get("from"); s != "" {
 		if t, err := time.Parse(time.RFC3339, s); err == nil {

@@ -101,7 +101,7 @@ func (h *AdminHandler) list(w http.ResponseWriter, r *http.Request) {
 		tags[k] = v
 	}
 	f := ListFilter{Tags: tags, Kind: r.URL.Query().Get("kind"), Status: r.URL.Query().Get("status"),
-		OSFamily: r.URL.Query().Get("os_family"), Query: r.URL.Query().Get("q")}
+		OSFamily: r.URL.Query().Get("os_family"), Query: r.URL.Query().Get("q"), Attention: r.URL.Query().Get("attention") == "true"}
 	switch f.Kind {
 	case "", KindHost, KindDatabase, KindApplication:
 	default:

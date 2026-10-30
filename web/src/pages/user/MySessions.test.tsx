@@ -1,5 +1,6 @@
 import { cleanup, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { MemoryRouter } from 'react-router-dom'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { api } from '../../api/client'
 import type { Session } from '../../api/types'
@@ -25,7 +26,7 @@ describe('My sessions, Load more', () => {
       })
       return { items: [session('b')] } as never
     })
-    render(<MySessions />)
+    render(<MemoryRouter><MySessions /></MemoryRouter>)
     const user = userEvent.setup()
 
     await user.dblClick(await screen.findByRole('button', { name: 'Load more' }))

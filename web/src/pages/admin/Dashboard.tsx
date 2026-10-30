@@ -4,6 +4,7 @@ import { api, errorMessage } from '../../api/client'
 import { engineName, fmtBytes, fmtTime } from '../../api/format'
 import type { AdminOverview, SystemMetrics, SystemStatus, TLSStatus } from '../../api/types'
 import { StateIcon, TileIcon } from '../../components/icons'
+import { drill } from '../../api/drilldown'
 import { Alert, Badge, PageHead, StatTile } from '../../components/ui'
 
 /** mix says what a count is made of — "2 Linux · 1 Windows" — in a tile's
@@ -61,7 +62,9 @@ export function Dashboard() {
   }, [])
 
   const o = overview
-  const attention = o ? o.targets.host_key_pending + o.targets.host_key_changed + o.targets.certificate_pending : null
+  // Each host once, however many decisions it waits on: what the list it
+  // opens holds.
+  const attention = o ? o.targets.needing_attention : null
   const cert = tls?.active
   const certDays = cert ? Math.floor((new Date(cert.not_after).getTime() - now) / 86400000) : null
 
@@ -73,24 +76,24 @@ export function Dashboard() {
       <h2 className="stat-section">Needs attention</h2>
       <div className="stat-grid">
         <StatTile value={o && o.pending_requests} label="Pending approvals" icon={<TileIcon kind="approvals" />} to="/admin/approvals" tone="warn" />
-        <StatTile value={attention} label="Hosts needing attention" icon={<TileIcon kind="attention" />} to="/admin/hosts" tone="warn" />
-        <StatTile value={o && o.audit_24h.failed_logins} label="Failed sign-ins (24h)" icon={<TileIcon kind="key" />} to="/admin/events" tone="warn" />
-        <StatTile value={o && o.audit_24h.refused_connects} label="Refused connections (24h)" icon={<TileIcon kind="ban" />} to="/admin/events" tone="warn" />
+        <StatTile value={attention} label="Hosts needing attention" icon={<TileIcon kind="attention" />} to={drill.hostsNeedingAttention} tone="warn" />
+        <StatTile value={o && o.audit_24h.failed_logins} label="Failed sign-ins (24h)" icon={<TileIcon kind="key" />} to={drill.failedSignIns('/admin')} tone="warn" />
+        <StatTile value={o && o.audit_24h.refused_connects} label="Refused connections (24h)" icon={<TileIcon kind="ban" />} to={drill.refusedConnections('/admin')} tone="warn" />
       </div>
 
       <h2 className="stat-section">Activity</h2>
       <div className="stat-grid">
-        <StatTile value={o && o.sessions.open} label="Open sessions" icon={<TileIcon kind="session" />} to="/admin/sessions" />
-        <StatTile value={o && o.sessions.started_24h} label="Sessions (24h)" icon={<TileIcon kind="clock" />} to="/admin/sessions" />
-        <StatTile value={o && o.audit_24h.failures} label="Failures (24h)" icon={<TileIcon kind="attention" />} to="/admin/events" />
-        <StatTile value={o && o.audit_24h.events} label="Audit events (24h)" icon={<TileIcon kind="list" />} to="/admin/events" />
+        <StatTile value={o && o.sessions.open} label="Open sessions" icon={<TileIcon kind="session" />} to={drill.openSessions('/admin')} />
+        <StatTile value={o && o.sessions.started_24h} label="Sessions (24h)" icon={<TileIcon kind="clock" />} to={drill.sessions24h('/admin')} />
+        <StatTile value={o && o.audit_24h.failures} label="Failures (24h)" icon={<TileIcon kind="attention" />} to={drill.failures('/admin')} />
+        <StatTile value={o && o.audit_24h.events} label="Audit events (24h)" icon={<TileIcon kind="list" />} to={drill.auditEvents('/admin')} />
       </div>
 
       <h2 className="stat-section">Inventory</h2>
       <div className="stat-grid">
-        <StatTile value={o && o.inventory.hosts} label="Hosts" icon={<TileIcon kind="server" />} detail={o ? mix(o.inventory.hosts_by_os, osLabel) : undefined} to="/admin/hosts" />
-        <StatTile value={o && o.inventory.databases} label="Databases" icon={<TileIcon kind="db" />} detail={o ? mix(o.inventory.databases_by_engine, (e) => engineName(e)) : undefined} to="/admin/databases" />
-        <StatTile value={o && o.inventory.applications} label="Applications" icon={<TileIcon kind="app" />} to="/admin/applications" />
+        <StatTile value={o && o.inventory.hosts} label="Hosts" icon={<TileIcon kind="server" />} detail={o ? mix(o.inventory.hosts_by_os, osLabel) : undefined} to={drill.activeHosts} />
+        <StatTile value={o && o.inventory.databases} label="Databases" icon={<TileIcon kind="db" />} detail={o ? mix(o.inventory.databases_by_engine, (e) => engineName(e)) : undefined} to={drill.activeDatabases} />
+        <StatTile value={o && o.inventory.applications} label="Applications" icon={<TileIcon kind="app" />} to={drill.activeApplications} />
         <StatTile
           value={o && o.autoscaling.groups}
           label="Autoscaling groups"

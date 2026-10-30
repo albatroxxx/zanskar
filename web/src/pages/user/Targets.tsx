@@ -1,6 +1,7 @@
 import { useEffect, useState, type FormEvent } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { api, ApiError, errorMessage } from '../../api/client'
+import { accessDrill, expiresSoon } from '../../api/drilldown'
 import type { AccessRequest, ConnectResponse, Page, Protocol, ReachableInstance, ReachableTarget, Session } from '../../api/types'
 import { DatabaseIcon, OSIcon, StateIcon } from '../../components/icons'
 import { Alert, Badge, Empty, Field, Modal, PageHead, StatTile, Tabs, Tags } from '../../components/ui'
@@ -58,8 +59,7 @@ export function Targets() {
       .get<Page<AccessRequest>>('/me/access')
       .then((p) => {
         setGrants(new Set(p.items.map((g) => `${g.target_id ?? g.asg_id}:${g.protocol}`)))
-        const soon = Date.now() + 60 * 60000
-        setStrip((s) => ({ ...s, expiring: p.items.filter((g) => g.expires_at && new Date(g.expires_at).getTime() < soon).length }))
+        setStrip((s) => ({ ...s, expiring: p.items.filter((g) => expiresSoon(g.expires_at)).length }))
       })
       .catch(() => {})
 
@@ -223,9 +223,9 @@ export function Targets() {
       {notice && <Alert tone="ok">{notice}</Alert>}
       {(strip.open > 0 || strip.pending > 0 || strip.expiring > 0) && (
         <div className="stat-grid" style={{ marginBottom: 16 }}>
-          {strip.open > 0 && <StatTile value={strip.open} label="Open sessions" to="/sessions" />}
-          {strip.pending > 0 && <StatTile value={strip.pending} label="Pending requests" to="/access" />}
-          {strip.expiring > 0 && <StatTile value={strip.expiring} label="Grants expiring soon" to="/access" tone="warn" />}
+          {strip.open > 0 && <StatTile value={strip.open} label="Open sessions" to={accessDrill.openSessions} />}
+          {strip.pending > 0 && <StatTile value={strip.pending} label="Pending requests" to={accessDrill.pendingRequests} />}
+          {strip.expiring > 0 && <StatTile value={strip.expiring} label="Grants expiring soon" to={accessDrill.expiringGrants} tone="warn" />}
         </div>
       )}
       <Tabs
