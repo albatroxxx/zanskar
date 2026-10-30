@@ -5,12 +5,18 @@ gateway listens on 127.0.0.1:18443 in this same container (inside.sh). It
 plays a browser with urllib and a cookie jar, following each redirect by
 hand, and stops at the first check that fails.
 """
-import base64, hashlib, hmac, html, http.cookiejar, json, re, ssl, struct, sys, time, urllib.error, urllib.parse, urllib.request
+import base64, hmac, html, http.cookiejar, json, os, re, secrets, ssl, struct, sys, time, urllib.error, urllib.parse, urllib.request
 
 KC = "https://kc:8443"
 ZK = "http://127.0.0.1:18443"
 CTX = ssl.create_default_context(cafile="/work/kc.pem")
 STEP = 0
+# Every secret is made for this run (run.sh and inside.sh pass theirs in):
+# nothing here is a credential anyone could reuse.
+KC_ADMIN_PW = os.environ["KC_ADMIN_PW"]
+ROOT_PW = os.environ["ZANSKAR_E2E_ROOT_PW"]
+PW = {u: secrets.token_urlsafe(18) for u in ("alice", "bob", "carol")}
+CLIENT_SECRET = secrets.token_urlsafe(24)
 
 
 def say(msg):
@@ -97,7 +103,9 @@ def kc_post(b, action, form):
 
 def totp(key, at=None):
     counter = int((at or time.time()) // 30)
-    digest = hmac.new(key, struct.pack(">Q", counter), hashlib.sha1).digest()
+    # RFC 6238 TOTP is HMAC-SHA-1, which is what Keycloak's authenticator
+    # codes are; HMAC does not rest on SHA-1's collision resistance.
+    digest = hmac.digest(key, struct.pack(">Q", counter), "sha1")  # NOSONAR: the TOTP algorithm, not a choice
     o = digest[-1] & 0x0F
     return f"{(struct.unpack('>I', digest[o:o + 4])[0] & 0x7FFFFFFF) % 1000000:06d}"
 
@@ -134,7 +142,7 @@ kc = Browser()
 
 
 def kc_admin_token():
-    st, _, body = kc.req("POST", KC + "/realms/master/protocol/openid-connect/token", form={"client_id": "admin-cli", "username": "admin", "password": "admin", "grant_type": "password"})
+    st, _, body = kc.req("POST", KC + "/realms/master/protocol/openid-connect/token", form={"client_id": "admin-cli", "username": "admin", "password": KC_ADMIN_PW, "grant_type": "password"})
     return json.loads(body)["access_token"]
 
 
@@ -153,7 +161,7 @@ for _ in range(60):
     time.sleep(2)
 kc_api("DELETE", "/zanskar")  # start from nothing on every run
 kc_api("POST", "", {"realm": "zanskar", "enabled": True})
-kc_api("POST", "/zanskar/clients", {"clientId": "zanskar", "enabled": True, "publicClient": False, "secret": "zsecret", "serviceAccountsEnabled": True,
+kc_api("POST", "/zanskar/clients", {"clientId": "zanskar", "enabled": True, "publicClient": False, "secret": CLIENT_SECRET, "serviceAccountsEnabled": True,
                                     "standardFlowEnabled": True, "redirectUris": [ZK + "/api/v1/auth/oidc/*"]})  # no post-logout URI registered: the callback serves
 cid = kc_api("GET", "/zanskar/clients?clientId=zanskar")[1][0]["id"]
 sa = kc_api("GET", f"/zanskar/clients/{cid}/service-account-user")[1]["id"]
@@ -163,7 +171,7 @@ check(kc_api("POST", f"/zanskar/users/{sa}/role-mappings/clients/{rm}", [role])[
 people = {}
 for u in ("alice", "bob", "carol"):
     rep = {"username": u, "enabled": True, "email": f"{u}@corp.example", "emailVerified": True, "firstName": u.title(), "lastName": "Test",
-           "credentials": [{"type": "password", "value": f"pw-{u}", "temporary": False}]}
+           "credentials": [{"type": "password", "value": PW[u], "temporary": False}]}
     if u == "alice":
         rep["requiredActions"] = ["CONFIGURE_TOTP"]
     st, _, hd = kc_api("POST", "/zanskar/users", rep)
@@ -173,7 +181,7 @@ check(len(people) == 3, "alice (must set up Keycloak OTP), bob, carol created in
 # ---------------------------------------------------------------- Zanskar admin
 z = Browser()
 say("Zanskar: the local admin signs in (MFA required for local accounts)")
-st, out = z.api("POST", "/api/v1/auth/login", {"username": "root", "password": "bootstrap passphrase 2026"})
+st, out = z.api("POST", "/api/v1/auth/login", {"username": "root", "password": ROOT_PW})
 check(st == 200 and out["status"] == "mfa_enrollment_required", f"root owes an authenticator: {out}")
 z.csrf = out["csrf_token"]
 st, enr = z.api("POST", "/api/v1/auth/mfa/totp/enroll", {})
@@ -185,7 +193,7 @@ z.csrf = z.api("GET", "/api/v1/auth/me")[1]["csrf_token"]
 
 say("Zanskar: add Keycloak as a provider with user sync on")
 st, prov = z.api("POST", "/api/v1/identity-providers", {"name": "Keycloak", "type": "oidc", "enabled": True, "config": {
-    "oidc": {"issuer": KC + "/realms/zanskar", "client_id": "zanskar", "client_secret": "zsecret"},
+    "oidc": {"issuer": KC + "/realms/zanskar", "client_id": "zanskar", "client_secret": CLIENT_SECRET},
     "auto_provision": True, "default_roles": ["user"], "sync_users": True, "sync_minutes": 5}})
 check(st == 201, f"provider created: {st} {prov}")
 pid = prov["id"]
@@ -210,7 +218,7 @@ def sign_in(expect_credentials=True, first=False):
         return st, url, hops, body
     action, fields = form_of(body, "kc-form-login")
     check(action is not None and "username" in fields, f"Keycloak asks for the username and password (landed on {url.split('?')[0]})")
-    body, back = kc_post(alice, action, {"username": "alice", "password": "pw-alice", "credentialId": ""})
+    body, back = kc_post(alice, action, {"username": "alice", "password": PW["alice"], "credentialId": ""})
     if first:
         forms = re.findall(r'<form[^>]*id="([^"]+)"', body or "")
         action, fields = form_of(body or "", forms[0] if forms else None)
@@ -253,7 +261,7 @@ say("Leavers: bob is disabled in Keycloak and carol deleted; the sync disables b
 bob = Browser()
 st, hd, body, url, _ = bob.follow(ZK + f"/api/v1/auth/oidc/{pid}/start")
 action, fields = form_of(body, "kc-form-login")
-_, back = kc_post(bob, action, {"username": "bob", "password": "pw-bob", "credentialId": ""})
+_, back = kc_post(bob, action, {"username": "bob", "password": PW["bob"], "credentialId": ""})
 bob.follow(back)
 check(bob.api("GET", "/api/v1/auth/me")[0] == 200, "bob is signed in to Zanskar")
 rep = kc_api("GET", f"/zanskar/users/{people['bob']}")[1]

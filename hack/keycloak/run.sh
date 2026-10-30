@@ -25,8 +25,9 @@ CGO_ENABLED=0 GOOS=linux GOARCH=$arch go build -o "$W/zanskar" ./cmd/zanskar
 openssl req -x509 -newkey rsa:2048 -nodes -subj /CN=kc -addext subjectAltName=DNS:kc -keyout "$W/kc.key" -out "$W/kc.pem" -days 1 2>/dev/null
 chmod 644 "$W/kc.key" # Keycloak runs as its own user; the key is thrown away with $W
 cp hack/keycloak/e2e.py hack/keycloak/inside.sh "$W/"
+KC_ADMIN_PW=$(openssl rand -base64 18) # Keycloak's bootstrap admin, for this run only
 docker network create "$NET" >/dev/null
 docker run -d --name "$KC" --network "$NET" --network-alias kc -v "$W:/work:ro" \
-	-e KC_BOOTSTRAP_ADMIN_USERNAME=admin -e KC_BOOTSTRAP_ADMIN_PASSWORD=admin "$IMAGE" \
+	-e KC_BOOTSTRAP_ADMIN_USERNAME=admin -e KC_BOOTSTRAP_ADMIN_PASSWORD="$KC_ADMIN_PW" "$IMAGE" \
 	start-dev --https-port=8443 --https-certificate-file=/work/kc.pem --https-certificate-key-file=/work/kc.key --hostname=https://kc:8443 >/dev/null
-docker run --rm --network "$NET" -v "$W:/work:ro" python:3.12-alpine sh /work/inside.sh
+docker run --rm --network "$NET" -v "$W:/work:ro" -e KC_ADMIN_PW="$KC_ADMIN_PW" python:3.12-alpine sh /work/inside.sh
