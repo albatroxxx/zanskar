@@ -106,6 +106,33 @@ describe('Settings', () => {
     setDisplayZone(undefined)
   })
 
+  // 2026-10-30: an administrator turns desktops on or off; where guacd
+  // runs is under Advanced.
+  it('makes desktops a switch, with the address under Advanced', async () => {
+    const guacd = setting({ key: 'desktop.guacd_addr', category: 'Desktops', title: 'Desktops (RDP, VNC)', type: 'hostport', default: '', value: '', source: 'default' })
+    serve({ ...listing, runtime: [...listing.runtime.filter((x) => x.category !== 'Desktops'), guacd] })
+    const put = vi.spyOn(api, 'put').mockResolvedValue({ ...guacd, value: '127.0.0.1:4822', source: 'console' } as never)
+    render(<Settings />)
+    const user = userEvent.setup()
+    const toggle = (await screen.findByLabelText('Off')) as HTMLInputElement
+    expect(toggle.checked).toBe(false)
+    await user.click(toggle)
+    expect(screen.getByLabelText('guacd address', { selector: 'input' })).toBeDefined()
+    expect((screen.getByLabelText('guacd address', { selector: 'input' }) as HTMLInputElement).value).toBe('127.0.0.1:4822')
+    await user.click(within(toggle.closest('.setting-row') as HTMLElement).getByRole('button', { name: 'Save' }))
+    await waitFor(() => expect(put).toHaveBeenCalledWith('/admin/settings/desktop.guacd_addr', { value: '127.0.0.1:4822' }))
+  })
+
+  it('folds an image under Advanced and warns when a custom one will not follow upgrades', async () => {
+    const def = setting({ key: 'apps.browser_image', category: 'Applications', title: 'Browser image', type: 'string', default: 'ghcr.io/x/b:1.9.0', value: 'ghcr.io/x/b:1.9.0', source: 'default' })
+    const custom = setting({ key: 'database.proxy_image', category: 'Databases', title: 'Relay image', type: 'string', default: 'ghcr.io/x/z:1.9.0', value: 'mirror.corp/z@sha256:' + 'a'.repeat(64), source: 'console' })
+    serve({ ...listing, runtime: [...listing.runtime, def, custom] })
+    render(<Settings />)
+    expect(await screen.findByText('Default: follows the gateway version')).toBeDefined()
+    expect(screen.getByText('Custom image')).toBeDefined()
+    expect(screen.getAllByText(/does not follow upgrades/)).toHaveLength(1)
+  })
+
   it('resets a console value with DELETE and shows a refused save in its own row', async () => {
     serve()
     const del = vi.spyOn(api, 'del').mockResolvedValue(setting({ key: 'log.level', category: 'Logging', title: 'Log level', type: 'enum', enum: ['debug', 'info', 'warn', 'error'], default: 'info', value: 'info', source: 'default' }) as never)

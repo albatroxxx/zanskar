@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { ApiError, api, errorMessage } from '../../api/client'
 import { fmtTime, setDisplayZone } from '../../api/format'
-import type { BootSetting, RuntimeSetting, SettingsListing, SystemStatus } from '../../api/types'
+import type { BootSetting, RuntimeSetting, SettingsListing, SystemMetrics, SystemStatus } from '../../api/types'
 import { Alert, Badge, Empty, Field, PageHead } from '../../components/ui'
 import { TLSCard } from './TLSCard'
 import { StorageCard } from './StorageCard'
@@ -89,8 +89,20 @@ function sourceBadge(s: RuntimeSetting) {
   }
 }
 
+/** defaultGuacd is where a package install runs guacd. */
+const defaultGuacd = '127.0.0.1:4822'
+
 function SettingRow({ setting, onChange }: { setting: RuntimeSetting; onChange: (v: RuntimeSetting) => void }) {
   const [value, setValue] = useState(setting.value)
+  // Whether guacd answers, for the Desktops row.
+  const [reach, setReach] = useState('')
+  useEffect(() => {
+    if (setting.key !== 'desktop.guacd_addr') return
+    api
+      .get<SystemMetrics>('/admin/system/metrics')
+      .then((m) => setReach(m.guacd ? (m.guacd.reachable ? 'guacd reachable' : `guacd unreachable at ${m.guacd.address}`) : ''))
+      .catch(() => setReach(''))
+  }, [setting.key, setting.value])
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState('')
   const [saved, setSaved] = useState(false)
@@ -152,6 +164,30 @@ function SettingRow({ setting, onChange }: { setting: RuntimeSetting; onChange: 
         </select>
       )
       break
+    case 'hostport':
+      if (setting.key === 'desktop.guacd_addr') {
+        // On or off is the choice an administrator makes; where guacd runs
+        // is an install detail, under Advanced (2026-10-30).
+        const on = value.trim() !== ''
+        input = (
+          <>
+            <span className="field inline" style={{ margin: 0 }}>
+              <input id={id} type="checkbox" checked={on} onChange={(e) => setValue(e.target.checked ? setting.value.trim() || defaultGuacd : '')} />
+              <label htmlFor={id}>{on ? 'On' : 'Off'}</label>
+              {on && reach && <span className="muted">· {reach}</span>}
+            </span>
+            <details className="advanced">
+              <summary>Advanced</summary>
+              <Field label="guacd address" hint="host:port">
+                <input id={id + '-addr'} value={value} onChange={(e) => setValue(e.target.value)} placeholder={defaultGuacd} />
+              </Field>
+            </details>
+          </>
+        )
+        break
+      }
+      input = <input id={id} value={value} onChange={(e) => setValue(e.target.value)} placeholder="host:port" />
+      break
     case 'timezone':
       // Typed, with every zone the browser knows offered as it is typed.
       input = (
@@ -171,8 +207,21 @@ function SettingRow({ setting, onChange }: { setting: RuntimeSetting; onChange: 
       input = <textarea id={id} value={value} onChange={(e) => setValue(e.target.value)} rows={6} placeholder={setting.key === 'login_banner' ? 'This system is the property of Example Ltd. Access is restricted to authorised users.\nAll activity, including every session, is recorded and may be reviewed. By signing in you consent to this monitoring.' : undefined} />
       break
     default:
-      input = <input id={id} value={value} onChange={(e) => setValue(e.target.value)} placeholder={setting.type === 'hostport' ? 'host:port' : undefined} />
+      if (setting.key === 'database.proxy_image' || setting.key === 'apps.browser_image') {
+        // The default follows the gateway's version; a custom image is for a
+        // private mirror and is the one setting that would otherwise go
+        // stale across upgrades (2026-10-30).
+        input = (
+          <details className="advanced" open={setting.source !== 'default' || undefined}>
+            <summary>{setting.source === 'default' ? 'Default: follows the gateway version' : 'Custom image'}</summary>
+            <input id={id} value={value} onChange={(e) => setValue(e.target.value)} spellCheck={false} />
+          </details>
+        )
+        break
+      }
+      input = <input id={id} value={value} onChange={(e) => setValue(e.target.value)} />
   }
+  const customImage = (setting.key === 'database.proxy_image' || setting.key === 'apps.browser_image') && setting.source !== 'default'
 
   return (
     <div className="setting-row">
@@ -184,6 +233,7 @@ function SettingRow({ setting, onChange }: { setting: RuntimeSetting; onChange: 
       </div>
       <p className="muted">{setting.description}</p>
       {input}
+      {customImage && <Alert tone="warn">A custom image does not follow upgrades: change it with each release, or Reset to follow the gateway.</Alert>}
       {setting.key === 'login_banner' && value.trim() && (
         <Field label="Preview">
           <div className="login-banner" aria-hidden="true">{value.trim()}</div>
