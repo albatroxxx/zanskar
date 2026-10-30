@@ -14,7 +14,6 @@ import (
 	"log/slog"
 	"net/http"
 	"net/netip"
-	"slices"
 	"time"
 
 	"github.com/coder/websocket"
@@ -183,11 +182,16 @@ func (h *Handler) myTargets(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 			protos := target.Protocols
-			// database is not in target.Protocols (it is not probed); offer it
-			// for database targets the policy permits (ADR 0017), and only
-			// when the gateway can actually broker that engine.
-			if t.IsDatabase() && target.ServableEngine(t.Engine) {
-				protos = append(slices.Clip(protos), target.Database)
+			// A database is reached over database alone (ADR 0017), and only
+			// when the gateway can broker its engine. A tag policy that grants
+			// ssh to every target tagged env=prod covers the prod database
+			// too; offering ssh on it listed a button connect then refused
+			// (2026-10-30, ADR 0036).
+			if t.IsDatabase() {
+				if !target.ServableEngine(t.Engine) {
+					continue
+				}
+				protos = []target.Protocol{target.Database}
 			}
 			allowed, needApproval := reach(pols, policy.TargetRef{ID: t.ID, Tags: t.Tags}, protos, now)
 			if len(allowed) == 0 {

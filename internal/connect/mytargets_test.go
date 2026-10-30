@@ -68,7 +68,9 @@ func TestMyTargets(t *testing.T) {
 	if got := byName["named"]; got.ID != named || got.PrivateIP != "" || got.HostKeyReady {
 		t.Errorf("a hostname must be withheld and an unknown key is not ready: %+v", got)
 	}
-	if got := byName["orders"]; got.ID != pg || got.Engine != "postgres" || !contains(got.Allowed, "database") {
+	// The policy that grants database here grants ssh on the same tag too; a
+	// database offers database alone, never a protocol connect would refuse.
+	if got := byName["orders"]; got.ID != pg || got.Engine != "postgres" || !slices.Equal(got.Allowed, []string{"database"}) {
 		t.Errorf("database target: %+v", got)
 	}
 	if got := byName["jit-box"]; !contains(got.Allowed, "ssh") || !contains(got.RequiresApproval, "ssh") {
