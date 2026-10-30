@@ -867,7 +867,8 @@ func writeError(w http.ResponseWriter, status int, scimType, detail string) {
 }
 
 func (h *Handler) internal(w http.ResponseWriter, r *http.Request, err error) {
-	h.Log.Error("scim", "route", r.Method+" "+r.URL.Path, "err", err)
+	// The route as registered, not the path the client sent.
+	h.Log.Error("scim", "route", r.Pattern, "err", err)
 	writeError(w, http.StatusInternalServerError, "", "internal error")
 }
 
