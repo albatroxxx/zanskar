@@ -72,21 +72,47 @@ function at(path: string) {
 }
 
 describe('the policy list', () => {
-  it('shows who each policy is for and one line per grant, and marks a policy left with no one', async () => {
+  // ADR 0036, amended 2026-10-30: a rollup and the loosest terms in the
+  // row; the grants side by side when it opens.
+  it('sums each policy up, flags standing access without MFA, and opens to its grants', async () => {
     serve([
       policy({ grants: [grant({ targets: [{ id: 't1', protocols: ['ssh'] }, { id: 't2', protocols: ['rdp', 'winrm'] }] }),
         grant({ id: 'gr2', kind: 'database', targets: [{ id: 'd1', protocols: ['database'] }], access: 'approval', require_mfa: false })] }),
-      policy({ id: 'p2', name: 'orphan', description: '', subjects: [], enabled: false }),
+      policy({ id: 'p2', name: 'orphan', description: '', subjects: [], enabled: false, grants: [grant({ targets: [{ id: 't3', protocols: ['ssh'] }], require_mfa: false })] }),
     ])
     at('/admin/policies')
+    const user = userEvent.setup()
     const first = (await screen.findByText('ops-web')).closest('tr')!
     expect(within(first).getByText('ops')).toBeDefined()
-    expect(within(first).getByText('Host · web-1 (SSH), dc-1 (RDP, WinRM) · Standing · MFA · 15m')).toBeDefined()
-    expect(within(first).getByText('Database · orders · Approval · 15m')).toBeDefined()
+    const toggle = within(first).getByRole('button', { name: /2 grants · Host 1 · Database 1/ })
+    expect(toggle.textContent).toContain('3 targets')
+    expect(within(first).getByText('Standing ×1 · Approval ×1')).toBeDefined()
+    expect(within(first).getByText('no MFA ×1')).toBeDefined()
+    expect(within(first).queryByText(/standing, no MFA/)).toBeNull()
+    expect(toggle.getAttribute('aria-expanded')).toBe('false')
+    await user.click(toggle)
+    expect(toggle.getAttribute('aria-expanded')).toBe('true')
+    const grants = screen.getByRole('table', { name: 'Grants of ops-web' })
+    expect(within(grants).getByText('web-1 (SSH), dc-1 (RDP, WinRM)')).toBeDefined()
+    expect(within(grants).getAllByRole('row')).toHaveLength(3)
+    await user.click(toggle)
+    expect(screen.queryByRole('table', { name: 'Grants of ops-web' })).toBeNull()
+
     const orphan = screen.getByText('orphan').closest('tr')!
     expect(within(orphan).getByText('no one')).toBeDefined()
+    expect(within(orphan).getByText('standing, no MFA')).toBeDefined()
     expect(within(orphan).getByRole('button', { name: 'Disabled' })).toBeDefined()
     expect(within(first).getByRole('link', { name: 'Edit' }).getAttribute('href')).toBe('/admin/policies/p1')
+  })
+
+  it('counts a target no list holds as not found, never as an id', async () => {
+    serve([policy({ grants: [grant({ targets: [{ id: 't1', protocols: ['ssh'] }, { id: 'gone-1234567', protocols: ['ssh'] }] })] })])
+    at('/admin/policies')
+    const row = (await screen.findByText('ops-web')).closest('tr')!
+    expect(await within(row).findByText('1 not found')).toBeDefined()
+    await userEvent.setup().click(within(row).getByRole('button', { name: /1 grant/ }))
+    expect(screen.getByText('web-1 (SSH), not found (SSH)')).toBeDefined()
+    expect(screen.queryByText(/gone-123/)).toBeNull()
   })
 
   it('deletes after a confirmation that says what happens to live sessions', async () => {

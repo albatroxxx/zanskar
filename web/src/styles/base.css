@@ -146,7 +146,7 @@ a.stat-tile:hover { border-color: var(--fg-faint); }
 table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
 th, td { text-align: left; padding: 9px 10px; border-bottom: 1px solid var(--line); vertical-align: middle; }
 th { font-size: 0.74rem; letter-spacing: 0.06em; text-transform: uppercase; color: var(--fg-muted); font-weight: 600; }
-tr:last-child td { border-bottom: 0; }
+tr:last-child td, tbody tr:last-child th { border-bottom: 0; }
 td .muted, .muted { color: var(--fg-muted); }
 /* position: relative makes this the containing block of the positioned
    descendants in the cells (the sr-only labels, the glyph tips), so their
@@ -562,3 +562,19 @@ td.actions > * + * { margin-left: 8px; }
 .window-row .tz { width: 10em; }
 .editor-footer { position: sticky; bottom: 0; display: flex; justify-content: flex-end; gap: 8px; padding: 10px 0; margin-top: 16px; background: var(--bg); border-top: 1px solid var(--line); }
 
+/* The policy list (ADR 0036, amended 2026-10-30): a rollup that opens to a
+   table of the policy's grants, and an Access column that keeps the loosest
+   terms in sight. */
+.policy-table tbody th[scope="row"] { font-size: inherit; letter-spacing: normal; text-transform: none; color: var(--fg); font-weight: normal; }
+.policy-row.off th, .policy-row.off .who, .policy-row.off .expander, .policy-row.off .access > div:first-child { color: var(--fg-muted); }
+.expander { display: flex; align-items: flex-start; gap: 8px; padding: 0; border: 0; background: none; color: var(--fg); font: inherit; text-align: left; cursor: pointer; }
+.expander:focus-visible { outline: 2px solid var(--focus); outline-offset: 3px; border-radius: 3px; }
+.expander .chev { flex: none; width: 7px; height: 7px; margin-top: 6px; border-right: 2px solid var(--fg-muted); border-bottom: 2px solid var(--fg-muted); transform: rotate(-45deg); transition: transform 0.12s; }
+.expander[aria-expanded="true"] .chev { transform: rotate(45deg); }
+@media (prefers-reduced-motion: reduce) { .expander .chev { transition: none; } }
+.rollup-reach { display: block; font-size: 0.84rem; }
+.access-flags { display: flex; flex-wrap: wrap; gap: 4px; margin: 4px 0 2px; }
+.policy-detail > td { background: var(--bg-sunken); padding: 10px 14px 14px; }
+.policy-who-full { margin: 0 0 8px; font-size: 0.88rem; }
+.grants-table { width: 100%; font-size: 0.86rem; }
+.grants-table th { font-size: 0.72rem; }

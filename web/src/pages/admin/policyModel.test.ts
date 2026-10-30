@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import type { Policy, PolicyGrant } from '../../api/types'
-import { chipsFor, fromDraft, grantSummary, matchToRows, newGrant, rowsToMatch, toDraft, whoSummary } from './policyModel'
+import type { Policy, PolicyGrant, Protocol } from '../../api/types'
+import { accessLine, chipsFor, extrasLine, fromDraft, grantSummary, grantsLine, matchToRows, newGrant, policyRollup, reachLine, rowsToMatch, targetsCell, toDraft, whoSummary } from './policyModel'
 
 const name = (id: string) => ({ t1: 'web-1', t2: 'dc-1', d1: 'orders' } as Record<string, string>)[id] ?? id
 
@@ -86,9 +86,39 @@ describe('summaries', () => {
       .toBe('Database · orders · Standing · own login · 15m')
   })
 
-  it('name the audience', () => {
+  it('name the audience, and say when they cut it short', () => {
     const p = { subjects: [{ kind: 'group', id: 'g1' }, { kind: 'user', id: 'u1' }, { kind: 'user', id: 'u2' }, { kind: 'user', id: 'u3' }] } as Policy
-    expect(whoSummary(p, () => 'ops', (id) => id)).toBe('ops, 3 users')
-    expect(whoSummary({ subjects: p.subjects.slice(0, 2) } as Policy, () => 'ops', () => 'ann')).toBe('ops, ann')
+    expect(whoSummary(p, () => 'ops', (id) => id)).toEqual({ text: 'ops · 3 users', cut: true })
+    expect(whoSummary({ subjects: p.subjects.slice(0, 2) } as Policy, () => 'ops', () => 'ann')).toEqual({ text: 'ops · ann', cut: false })
+    const many = { subjects: ['a', 'b', 'c', 'd'].map((id) => ({ kind: 'group', id })) } as Policy
+    expect(whoSummary(many, (id) => id, () => '')).toEqual({ text: 'a, b +2', cut: true })
+  })
+
+  // ADR 0036, amended 2026-10-30: twelve grants made twelve lines. The list
+  // sums them up and shows the loosest terms, because each grant admits on
+  // its own: eleven grants with MFA and one without is MFA-less access.
+  it('sum a policy up by its loosest terms', () => {
+    const p = {
+      grants: [
+        { ...newGrant('host'), targets: [{ id: 't1', protocols: ['ssh'] }, { id: 't2', protocols: ['rdp'] }] },
+        { ...newGrant('host'), targets: [{ id: 't1', protocols: ['vnc'] }], access: 'approval', require_mfa: false, allow_clipboard: true },
+        { ...newGrant('autoscaling'), tags: { match: { env: ['test'] }, protocols: ['ssh'] }, require_mfa: false },
+      ],
+    } as unknown as Policy
+    const r = policyRollup(p)
+    expect(grantsLine(r)).toBe('3 grants · Host 2 · Autoscaling 1')
+    expect(reachLine(r)).toBe('2 targets · tag env test')
+    expect(accessLine(r)).toBe('Standing ×2 · Approval ×1')
+    expect([r.standingNoMFA, r.approvalNoMFA]).toEqual([1, 1])
+    expect(extrasLine(r)).toBe('clipboard ×1')
+    const strict = policyRollup({ grants: [p.grants[0]] } as Policy)
+    expect(accessLine(strict)).toBe('Standing · MFA')
+    expect([strict.standingNoMFA, strict.approvalNoMFA]).toEqual([0, 0])
+    expect(policyRollup({ grants: [] } as unknown as Policy).mfaAll).toBe(false)
+  })
+
+  it('cut a long target list to the first few', () => {
+    const g = { ...newGrant('host'), targets: ['t1', 't2', 't3', 't4', 't5'].map((id) => ({ id, protocols: ['ssh'] as Protocol[] })) }
+    expect(targetsCell(g, (id) => id)).toBe('t1 (SSH), t2 (SSH), t3 (SSH) +2')
   })
 })
