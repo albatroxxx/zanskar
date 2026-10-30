@@ -4,7 +4,8 @@ Date: 2026-10-30
 
 ## Status
 
-Proposed. Amends [ADR 0013](0013-policy-subject-group-or-user.md) (one subject per policy,
+Accepted 2026-10-30, with the owner's answers to the questions at the end (all as
+recommended); ships in 1.8.0. Amends [ADR 0013](0013-policy-subject-group-or-user.md) (one subject per policy,
 rules, revocation by the admitting policy) and the eligibility rule of
 [ADR 0018](0018-just-in-time-access-approvals.md). Leaves ADR 0015 (retention), 0017
 (databases), 0024 (autoscaling sessions) and 0034 (applications) as they are.
@@ -94,7 +95,7 @@ costs one click and nothing in the model.
 | `max_session_minutes` | null or 1-10080 |
 | `time_windows` | as today; empty means always |
 | `retention_days` | null or 1-3650; a target's own value still wins (ADR 0015 amendment) |
-| `sign_in` | `target` (default): the credential bound to the target's slot (vaulted, or the SSH authority); `own`: the person's own login, typed at connect time (a password, or over SSH their own key) and never stored. See *Signing in* below |
+| `sign_in` | `target` (default): the target's slot decides, exactly as before this ADR (its vaulted credential, its SSH authority, or *User supplied*); `own`: the person's own login whatever the slot holds, typed at connect time (a password, or over SSH their own key) and never stored. See *Signing in* below |
 
 **Signing in** (added 2026-10-30, from the walkthrough). How a person signs in to the target is
 said by the grant, not only by the target: an administrator's vaulted credential is for
@@ -102,13 +103,20 @@ privileged, often just-in-time access, while the same people may reach other mac
 themselves. Today *User supplied* is a choice on the target's credential slot, so one target
 signs in one way for everyone. With `sign_in` on the grant, the platform team's approval grant
 can use the vaulted `root` credential on the database hosts while a contractors' grant on the
-same hosts asks for their own login. The slot keeps the vaulted credential or authority a
-`target` grant uses; an `own` grant needs nothing bound. `sign_in` is not a limit, so the
-strictest-of-each rule does not apply to it: when the grants that admit a session disagree,
-both ways are allowed, the console asks the person which to use, and the session's audit
-event records the choice. Migration: a slot bound to *User supplied* becomes `sign_in: own` on every grant
-that covers that target and protocol, and the slot is left empty, so effective access is
-unchanged.
+same hosts asks for their own login.
+
+`target` means the slot decides, as it does today, *User supplied* included; `own` means the
+person's own login whatever the slot holds, so an `own` grant needs nothing bound. `sign_in` is
+not a limit, so the strictest-of-each rule does not apply to it. The connect rule, in one
+sentence: **if a deciding grant says `target`, the slot decides; if they all say `own`, the
+person's own login is asked for.** Where both are allowed, the access portal offers *Use my own
+login* beside the protocol, and the session's audit event records which was used.
+
+Migration: every grant gets `target` and no slot is touched, so who signs in how is exactly as
+before. (A first draft moved *User supplied* slots into `own` grants and emptied the slots;
+one tag grant can cover a host whose slot is *User supplied* and one whose slot is vaulted, so
+that could not be expressed, and an emptied slot would have broken the `target` grants still
+covering it.)
 
 Protocols per kind are fixed by the server and the only ones the console offers:
 
@@ -367,13 +375,14 @@ like a file; `Pending` lists them too). Nothing in the application reads the leg
 the last step, and `zanskar migrate` leaves the database in the new shape in one run, so there is
 no release in which two shapes coexist.
 
-1. `0036_policy_grants.sql` (both engines, same name, portable): create `access_policy_subjects`;
+1. `0035_policy_grants.sql` (both engines, same name, portable): create `access_policy_subjects`;
    `ALTER TABLE access_policies ADD COLUMN grants` (nullable, no default; `NULL` means "not yet
    converted"); `ALTER TABLE access_requests ADD COLUMN grant_id TEXT`; copy subjects with
    plain SQL:
    `INSERT INTO access_policy_subjects (policy_id, group_id, user_id) SELECT id, group_id, user_id FROM access_policies`.
-2. `0037_policy_grants_data`, a Go step (`policy.MigrationStep()`, passed to the migrator from
-   `cmd/zanskar/main.go` and from the test helpers): for every row with `grants IS NULL`, decode
+2. `0036_policy_grants_data`, a Go step the policy package registers with the migrator when it
+   is loaded (`store.RegisterStep`, as `database/sql` drivers register), so no caller of
+   `store.Migrate` can run the files without it: for every row with `grants IS NULL`, decode
    the legacy columns into a frozen copy of today's types (`internal/policy/legacy.go`, kept for
    the oracle test and this step only), build the grants, write them. The transform needs the
    inventory, because a legacy selector names ids without kinds: it reads `targets`
@@ -397,10 +406,10 @@ no release in which two shapes coexist.
    - A policy that ends with no grant (every id gone) keeps the policy row with `grants = '[]'`
      and is logged; it granted nothing before. The list marks it `⚠ no grants` beside the
      `⚠ no subjects` mark; it can be deleted as it is, and its next edit must give it a grant.
-3. `0038_policy_grants_drop_legacy.sql`: PostgreSQL drops the columns and the subject CHECK and
+3. `0037_policy_grants_drop_legacy.sql`: PostgreSQL drops the columns and the subject CHECK and
    sets `grants NOT NULL DEFAULT '[]'`; SQLite rebuilds `access_policies` under
    `-- migrate: foreign_keys=off` as 0006 and 0031 did, so the `policy_id` of past sessions and
-   requests survives, and the framework's dangling-reference check runs after. 0038 is also the
+   requests survives, and the framework's dangling-reference check runs after. 0037 is also the
    guard against a binary that runs the files without the step: `SET NOT NULL` on PostgreSQL
    and the rebuild into a `NOT NULL` column on SQLite both fail on any row the step has not
    converted, so legacy policies can never be dropped unconverted by mistake.
@@ -608,10 +617,10 @@ unprobed chips, tag matching), plus the approval line on first selection.
   migration steps, but it leaves a release in which two shapes coexist and a window in which an
   older binary writes the old one. Three ordered versions in one run is simpler to reason about.
 
-## Open questions for the product owner
+## Decisions of the product owner
 
-Six choices this design makes on the owner's behalf; each changes what is built. The
-recommendation is what the sections above assume.
+Six choices this design made on the owner's behalf; on 2026-10-30 the owner took the
+recommendation on each, and the release as 1.8.0.
 
 | # | Question | Recommended | Other option |
 |---|---|---|---|
@@ -622,8 +631,7 @@ recommendation is what the sections above assume.
 | 5 | The API break | Same path, old shape refused with `400 legacy_policy_shape` | A new `/api/v2/access-policies` beside the old |
 | 6 | How a person signs in, per grant (`sign_in`: the target's credential or their own login) | Per grant, as above, with *User supplied* on a slot migrated into the grants | Keep it on the target's slot only |
 
-Not a choice but a release question: the API break and the data migration make this a minor
-release (1.8.0), not a patch.
+The API break and the data migration make this a minor release: 1.8.0.
 
 ## Defects of the current model found while writing this
 
@@ -661,18 +669,18 @@ the same branch.
    null maximum versus a limit, MFA OR, clipboard AND, retention max; windows as a filter;
    standing over approval; `Decision.Policy` tie-break) and `policy_fuzz_test.go`.
 3. `internal/policy/legacy.go`: frozen legacy types and `legacyEvaluate`; `Transform(legacy,
-   inventory) []Grant`; `MigrationStep() store.Step`. `internal/store/migrate.go`: `Step`
-   (`Version string`, `Run func(ctx, *DB, *sql.Tx) error`); `Migrate(ctx, db, steps ...Step)`
-   (variadic, so every existing call keeps compiling and `cmd/zanskar/main.go` passes
-   `policy.MigrationStep()` explicitly; `store` cannot import `policy`); steps sort with the
-   files by version and are recorded in `schema_migrations`; `Pending` lists them;
+   inventory) []Grant`; an `init` that registers the step. `internal/store/migrate.go`: `Step`
+   (`Version string`, `Run func(ctx, *sql.Tx, driver string) error`) and `RegisterStep`
+   (`store` cannot import `policy`; a fresh database has no policy rows, so a test binary
+   without the policy package migrates as well); steps sort with the files by version and are
+   recorded in `schema_migrations`; `Pending` lists them;
    `MigrateUpTo(ctx, db, version, steps...)` for tests that must seed rows at an older schema,
-   and `storetest.ForEachBackendUpTo`. Migrations `0036_policy_grants.sql`,
-   `0038_policy_grants_drop_legacy.sql` in both `migrations/sqlite/` and `migrations/postgres/`
-   (same names; the SQLite 0038 under `-- migrate: foreign_keys=off`). Tests:
+   and `storetest.ForEachBackendUpTo`. Migrations `0035_policy_grants.sql`,
+   `0037_policy_grants_drop_legacy.sql` in both `migrations/sqlite/` and `migrations/postgres/`
+   (same names; the SQLite 0037 under `-- migrate: foreign_keys=off`). Tests:
    `store/migrate_test.go` (a step runs once, in order between its neighbours, is recorded,
    fails the run when it fails, and a fresh database migrates without it); `policy/migrate_test.go`
-   on each backend: migrate up to 0035, seed the legacy shapes, migrate the rest with the step,
+   on each backend: migrate up to 0034, seed the legacy shapes, migrate the rest with the step,
    then the oracle assertions of Migration above, idempotency and the dropped-id cases.
 4. `internal/policy/repo.go`: `cols` without legacy columns; `Create`/`Update` write subjects
    in the policy's transaction (delete and re-insert on update); `Get`/`List` load subjects
