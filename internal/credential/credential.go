@@ -310,6 +310,16 @@ func normalisePrivateKey(pemText, passphrase string) ([]byte, string, error) {
 	return pem.EncodeToMemory(block), pub, nil
 }
 
+// UnlockPrivateKey reads a private key a user brings at connect time for a
+// user_supplied slot (ADR 0005), decrypting it with passphrase when it is
+// encrypted, and returns it unencrypted in OpenSSH PEM for the one session
+// it is for. Nothing is stored. ErrPassphrase when the key is encrypted and
+// the passphrase is missing or wrong; ErrBadKey when it is not a key.
+func UnlockPrivateKey(pemText, passphrase string) ([]byte, error) {
+	pemBytes, _, err := normalisePrivateKey(pemText, passphrase)
+	return pemBytes, err
+}
+
 // GenerateSSHKey returns a fresh ed25519 private key in OpenSSH PEM format.
 // The caller stores it through the vault and shows only the public half.
 func GenerateSSHKey() (string, error) {

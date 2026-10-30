@@ -25,8 +25,15 @@ interface ConnectBody {
   asg_id?: string
   asg_instance_id?: string
   protocol: Protocol
-  credential?: { username: string; password: string }
+  /** The user's own login, for a slot that asks for it: a password, or over
+   *  SSH their own private key with its passphrase when it has one. */
+  credential?: { username: string; password?: string; private_key?: string; private_key_passphrase?: string }
 }
+
+/** The largest key file the prompt reads; the gateway refuses more. */
+const maxKeyBytes = 16 << 10
+
+const noCred = { username: '', password: '', method: 'password' as 'password' | 'key', key: '', passphrase: '' }
 
 export function Targets() {
   const nav = useNavigate()
@@ -36,7 +43,24 @@ export function Targets() {
   const [tab, setTab] = useState<'static' | 'database' | 'application' | 'asg'>('static')
   const [prompt, setPrompt] = useState<{ target: ReachableTarget; protocol: Protocol; body: ConnectBody } | null>(null)
   const [chooser, setChooser] = useState<{ group: ReachableTarget; protocol: Protocol; instances: ReachableInstance[] | null } | null>(null)
-  const [cred, setCred] = useState({ username: '', password: '' })
+  const [cred, setCred] = useState(noCred)
+  const [promptErr, setPromptErr] = useState('')
+  // Closing the prompt forgets what was typed in it, the username excepted.
+  const closePrompt = () => {
+    setPrompt(null)
+    setPromptErr('')
+    setCred((c) => ({ ...noCred, username: c.username, method: c.method }))
+  }
+  const readKeyFile = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    e.target.value = ''
+    if (!file) return
+    if (file.size > maxKeyBytes) {
+      setPromptErr('that file is too large to be a private key')
+      return
+    }
+    void file.text().then((key) => setCred((c) => ({ ...c, key })))
+  }
   // Active grants, as a set of "targetId:protocol", so a gated protocol the user
   // already holds a grant for shows Connect rather than Request.
   const [grants, setGrants] = useState<Set<string>>(new Set())
@@ -99,7 +123,7 @@ export function Targets() {
     setErr('')
     try {
       const res = await api.post<ConnectResponse>('/connect', body)
-      setPrompt(null)
+      closePrompt()
       setChooser(null)
       nav(res.ws_path === '/ws/desktop' ? '/desktop' : '/terminal', {
         state: {
@@ -113,7 +137,11 @@ export function Targets() {
         },
       })
     } catch (e) {
-      if (e instanceof ApiError && e.code === 'credential_required') {
+      if (prompt && e instanceof ApiError && (e.code === 'credential_required' || e.code === 'credential_invalid')) {
+        // Said inside the open prompt, where the user is looking.
+        setPromptErr(e.message)
+      } else if (e instanceof ApiError && e.code === 'credential_required') {
+        setPromptErr('')
         setPrompt({ target, protocol: body.protocol, body })
       } else if (e instanceof ApiError && e.code === 'approval_required') {
         // The grant lapsed between listing and connecting; fall back to a request.
@@ -466,22 +494,59 @@ export function Targets() {
       )}
 
       {prompt && (
-        <Modal title={`Credentials for ${prompt.target.name}`} onClose={() => setPrompt(null)}>
+        <Modal title={`Credentials for ${prompt.target.name}`} onClose={closePrompt}>
           <p className="muted">Sent to the machine; not stored.</p>
+          {promptErr && <Alert tone="danger">{promptErr}</Alert>}
           <form
             onSubmit={(e) => {
               e.preventDefault()
-              void connect(prompt.target, { ...prompt.body, credential: cred })
+              const withKey = prompt.protocol === 'ssh' && cred.method === 'key'
+              void connect(prompt.target, {
+                ...prompt.body,
+                credential: withKey
+                  ? { username: cred.username, private_key: cred.key, ...(cred.passphrase ? { private_key_passphrase: cred.passphrase } : {}) }
+                  : { username: cred.username, password: cred.password },
+              })
             }}
           >
             <Field label="Username">
               <input id="cred-user" autoFocus value={cred.username} onChange={(e) => setCred({ ...cred, username: e.target.value })} required />
             </Field>
-            <Field label="Password">
-              <input id="cred-pass" type="password" value={cred.password} onChange={(e) => setCred({ ...cred, password: e.target.value })} required />
-            </Field>
+            {prompt.protocol === 'ssh' && (
+              <div className="actions" role="radiogroup" aria-label="Sign in with" style={{ marginBottom: 8 }}>
+                {(
+                  [
+                    ['password', 'Password'],
+                    ['key', 'Private key'],
+                  ] as const
+                ).map(([m, label]) => (
+                  <span key={m} className="field inline" style={{ margin: 0 }}>
+                    <input id={`cred-method-${m}`} type="radio" name="cred-method" checked={cred.method === m} onChange={() => setCred({ ...cred, method: m })} />
+                    <label htmlFor={`cred-method-${m}`}>{label}</label>
+                  </span>
+                ))}
+              </div>
+            )}
+            {prompt.protocol === 'ssh' && cred.method === 'key' ? (
+              <>
+                <Field label="Private key" hint="OpenSSH, PKCS#8 or PKCS#1">
+                  <textarea id="cred-key" className="mono" value={cred.key} onChange={(e) => setCred({ ...cred, key: e.target.value })} required spellCheck={false} autoComplete="off" placeholder="-----BEGIN OPENSSH PRIVATE KEY-----" />
+                </Field>
+                <div className="actions" style={{ marginTop: -6, marginBottom: 10 }}>
+                  <input id="cred-key-file" type="file" hidden onChange={readKeyFile} />
+                  <button type="button" className="btn sm" onClick={() => document.getElementById('cred-key-file')?.click()}>Choose key file…</button>
+                </div>
+                <Field label="Passphrase" hint="If the key has one">
+                  <input id="cred-passphrase" type="password" autoComplete="off" value={cred.passphrase} onChange={(e) => setCred({ ...cred, passphrase: e.target.value })} />
+                </Field>
+              </>
+            ) : (
+              <Field label="Password">
+                <input id="cred-pass" type="password" value={cred.password} onChange={(e) => setCred({ ...cred, password: e.target.value })} required />
+              </Field>
+            )}
             <div className="actions">
-              <button type="button" className="btn" onClick={() => setPrompt(null)}>Cancel</button>
+              <button type="button" className="btn" onClick={closePrompt}>Cancel</button>
               <button type="submit" className="btn primary" disabled={busy !== ''}>Connect</button>
             </div>
           </form>

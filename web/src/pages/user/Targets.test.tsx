@@ -260,3 +260,68 @@ describe('Target tabs count what they hold', () => {
     expect(screen.getAllByRole('tab').map((t) => t.textContent)).toEqual(['Hosts (1)', 'Databases', 'Applications', 'Autoscaling'])
   })
 })
+
+// 2026-10-30: a slot that asks for the user's own login takes a password, or
+// over SSH the user's own private key with its passphrase. What the gateway
+// says about it shows in the prompt, and what was typed is forgotten when
+// the prompt closes.
+describe('Targets, the user\'s own login', () => {
+  const box: ReachableTarget = {
+    kind: 'target', id: 't1', name: 'box-own', os_family: 'linux', tags: {},
+    capabilities: ['ssh', 'vnc'], allowed_protocols: ['ssh', 'vnc'], requires_approval: [], host_key_ready: true,
+  }
+  const asked = new ApiError(422, { code: 'credential_required', message: 'this target needs your username and password', request_id: 'r' }, '422')
+
+  function mount() {
+    vi.spyOn(api, 'get').mockImplementation(async (p: string) => ({ items: p === '/me/targets' ? [box] : [] }) as never)
+    render(
+      <MemoryRouter>
+        <Routes>
+          <Route path="/" element={<Targets />} />
+          <Route path="/terminal" element={<p>terminal page</p>} />
+          <Route path="/desktop" element={<p>desktop page</p>} />
+        </Routes>
+      </MemoryRouter>,
+    )
+  }
+
+  it('signs in over SSH with a key and its passphrase, the gateway\'s refusal shown in the prompt', async () => {
+    const post = vi.spyOn(api, 'post')
+      .mockRejectedValueOnce(asked)
+      .mockRejectedValueOnce(new ApiError(422, { code: 'credential_invalid', message: 'the key is encrypted, and its passphrase is missing or wrong', request_id: 'r' }, '422'))
+      .mockResolvedValueOnce({ ticket: 'tk', expires_at: 'x', ws_path: '/ws/terminal' } as never)
+    mount()
+    const user = userEvent.setup()
+    await user.click(await screen.findByRole('button', { name: 'SSH' }))
+    const dialog = await screen.findByRole('dialog', { name: 'Credentials for box-own' })
+    await user.type(screen.getByLabelText('Username'), 'alice')
+    await user.click(screen.getByRole('radio', { name: 'Private key' }))
+    expect(screen.queryByLabelText('Password', { selector: 'input[type=password]' })).toBeNull()
+    await user.type(screen.getByLabelText('Private key', { selector: 'textarea' }), 'KEY')
+    await user.click(screen.getByRole('button', { name: 'Connect' }))
+    expect(await screen.findByText('the key is encrypted, and its passphrase is missing or wrong')).toBeDefined()
+    expect(dialog.isConnected).toBe(true)
+    expect(post.mock.calls[1][1]).toEqual({ target_id: 't1', protocol: 'ssh', credential: { username: 'alice', private_key: 'KEY' } })
+
+    await user.type(screen.getByLabelText('Passphrase'), 'pp')
+    await user.click(screen.getByRole('button', { name: 'Connect' }))
+    expect(await screen.findByText('terminal page')).toBeDefined()
+    expect(post.mock.calls[2][1]).toEqual({ target_id: 't1', protocol: 'ssh', credential: { username: 'alice', private_key: 'KEY', private_key_passphrase: 'pp' } })
+  })
+
+  it('asks a desktop for a password only, and forgets it when the prompt closes', async () => {
+    vi.spyOn(api, 'post').mockRejectedValue(asked)
+    mount()
+    const user = userEvent.setup()
+    await user.click(await screen.findByRole('button', { name: 'VNC' }))
+    await screen.findByRole('dialog', { name: 'Credentials for box-own' })
+    expect(screen.queryByLabelText('Private key')).toBeNull()
+    await user.type(screen.getByLabelText('Username'), 'alice')
+    await user.type(screen.getByLabelText('Password'), 'hunter2')
+    await user.click(screen.getByRole('button', { name: 'Cancel' }))
+    await user.click(screen.getByRole('button', { name: 'VNC' }))
+    await screen.findByRole('dialog', { name: 'Credentials for box-own' })
+    expect((screen.getByLabelText('Username') as HTMLInputElement).value).toBe('alice')
+    expect((screen.getByLabelText('Password') as HTMLInputElement).value).toBe('')
+  })
+})

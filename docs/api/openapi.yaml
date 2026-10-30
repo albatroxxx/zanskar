@@ -784,7 +784,9 @@ paths:
         "422":
           description: >-
             `credential_required`: the target uses the caller's own account for this protocol, so
-            the request must carry `credential`.
+            the request must carry `credential` (a private key is for `ssh` only).
+            `credential_invalid`: the private key cannot be read, is too large, or is encrypted and
+            its passphrase is missing or wrong.
           content:
             application/json:
               schema:
@@ -6293,7 +6295,12 @@ components:
           description: Total instances in the group. Present only for autoscaling-group rows (`kind` is `asg`).
     UserSuppliedCredential:
       type: object
-      description: Sent only when the target's credential for that protocol has `mode=user_supplied`. Never stored.
+      description: >-
+        Sent only when the target's credential for that protocol has `mode=user_supplied`. Never
+        stored. A username with a `password`, or, for `ssh` only, with the person's own
+        `private_key` (OpenSSH, PKCS#8 or PKCS#1, at most 16 KiB) and its
+        `private_key_passphrase` when it is encrypted; the key is unlocked when the ticket is
+        issued and used for that session alone.
       properties:
         username:
           type: string

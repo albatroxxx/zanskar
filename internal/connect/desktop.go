@@ -142,7 +142,7 @@ func (h *Handler) desktop(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	defer zero(g.UserSecret)
+	defer g.Wipe()
 	proto := target.Protocol(g.Protocol)
 	if proto != target.RDP && proto != target.VNC && proto != target.HTTP {
 		httpx.WriteError(w, r, http.StatusBadRequest, "bad_request", "ticket is not for a desktop protocol")

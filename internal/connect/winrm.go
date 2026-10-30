@@ -36,7 +36,7 @@ func (h *Handler) winrm(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	defer zero(g.UserSecret)
+	defer g.Wipe()
 	if target.Protocol(g.Protocol) != target.WinRM {
 		httpx.WriteError(w, r, http.StatusBadRequest, "bad_request", "ticket is not for winrm")
 		return

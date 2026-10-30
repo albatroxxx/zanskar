@@ -25,7 +25,7 @@ func (h *Handler) database(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	defer zero(g.UserSecret)
+	defer g.Wipe()
 	if target.Protocol(g.Protocol) != target.Database {
 		httpx.WriteError(w, r, http.StatusBadRequest, "bad_request", "ticket is not for database")
 		return
