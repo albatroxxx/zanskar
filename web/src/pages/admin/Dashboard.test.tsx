@@ -1,4 +1,4 @@
-import { act, cleanup, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, render, screen, waitFor, within } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import { setDisplayZone } from '../../api/format'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -154,10 +154,14 @@ describe('the admin dashboard', () => {
     const admins = await tile('Administrators')
     expect(admins.textContent).toContain('2')
     expect(admins.className).not.toContain('warn')
-    // The section sits between what needs a decision and what is happening.
-    const sections = [...document.querySelectorAll('h2.stat-section')].map((h) => h.textContent)
-    expect(sections.indexOf('Security posture')).toBe(sections.indexOf('Needs attention') + 1)
-    expect(sections.indexOf('Activity')).toBe(sections.indexOf('Security posture') + 1)
+    // 2026-10-31: inventory first, then what needs a decision, what is
+    // happening and the posture; the gateway, its clock and the log's
+    // integrity in a column beside them, not below.
+    const main = [...document.querySelectorAll('.dash-main h2.stat-section')].map((h) => h.textContent)
+    expect(main).toEqual(['Inventory', 'Needs attention', 'Activity', 'Security posture'])
+    const side = screen.getByRole('complementary', { name: 'The gateway' })
+    expect([...side.querySelectorAll('h2.stat-section')].map((h) => h.textContent)).toEqual(['Gateway', 'Integrity'])
+    expect(within(side).getByRole('region', { name: 'Gateway time' })).toBeDefined()
   })
 
   // 2026-10-31: access in flight, on the tiles it belongs with.

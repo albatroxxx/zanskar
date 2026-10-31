@@ -134,14 +134,17 @@ a.stat-tile:hover { border-color: var(--fg-faint); }
 .gw-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 14px 24px; margin-top: 14px; }
 .gauge-pct.warn { color: var(--warn); }
 .gauge-pct.danger { color: var(--danger); }
-/* The dashboard's tiles on the left, the gateway's clock in the space on
-   their right (2026-10-30); the clock drops below them on a narrow page. */
-.dash-top { display: flex; gap: 24px; align-items: flex-start; flex-wrap: wrap; }
-/* Four tiles across (4 x 172 px and three gaps), shrinking to fewer on a
-   narrow page; a width of its own, since auto-fill in a box as wide as its
-   content makes one column. */
-.dash-tiles { flex: 0 1 724px; min-width: 0; }
-.dash-clock { flex: 0 0 240px; margin-top: 42px; padding: 18px 20px; text-align: center; }
+/* The dashboard (2026-10-31): the tiles on the left, inventory first; the
+   gateway's clock, health and log integrity in a column on their right, its
+   gauges and checks one under another. The column drops below the tiles on
+   a page too narrow for both. */
+.dash { display: grid; grid-template-columns: minmax(0, 1fr); gap: 0 28px; align-items: start; }
+.dash-clock { margin-top: 42px; padding: 18px 20px; text-align: center; max-width: 300px; }
+@media (min-width: 1181px) {
+  .dash { grid-template-columns: minmax(0, 1fr) minmax(300px, 360px); }
+  .dash-clock { max-width: none; }
+  .dash-side .gw-grid, .dash-side .checks { grid-template-columns: minmax(0, 1fr); }
+}
 .clock-time { display: block; font-size: 2.2rem; font-weight: 600; letter-spacing: 0.02em; font-variant-numeric: tabular-nums; color: var(--fg); }
 .clock-date { margin-top: 4px; font-size: 0.95rem; color: var(--fg); }
 .clock-zone { margin-top: 6px; font-size: 0.8rem; }
