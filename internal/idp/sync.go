@@ -189,6 +189,31 @@ func (s *Syncer) Run(ctx context.Context) {
 	}
 }
 
+// due is when the schedule wants p listed again: its interval after the
+// last run in this process, zero (at once) before the first.
+func (s *Syncer) due(p *Opened) time.Time {
+	last := s.Status(p.ID)
+	if last == nil {
+		return time.Time{}
+	}
+	return last.At.Add(time.Duration(p.Config.SyncMinutes) * time.Minute)
+}
+
+// NextRun is when the schedule lists p next, for the console: the run
+// starts at Run's first tick from then on, so up to a minute later, and a
+// time already past means at the next tick. Nil when the schedule will not
+// list p (sync off, the provider disabled) or a run is going now.
+func (s *Syncer) NextRun(p *Opened) *time.Time {
+	if !p.Enabled || !p.Config.SyncUsers || s.Running(p.ID) {
+		return nil
+	}
+	next := s.due(p)
+	if next.IsZero() {
+		next = s.clock().UTC()
+	}
+	return &next
+}
+
 // Tick runs the providers that are due.
 func (s *Syncer) Tick(ctx context.Context) {
 	ps, err := s.Providers.List(ctx, true)
@@ -202,10 +227,7 @@ func (s *Syncer) Tick(ctx context.Context) {
 			s.Log.Error("user sync: open provider", "idp", p.ID, "err", err)
 			continue
 		}
-		if !op.Config.SyncUsers {
-			continue
-		}
-		if last := s.Status(p.ID); last != nil && s.clock().Sub(last.At) < time.Duration(op.Config.SyncMinutes)*time.Minute {
+		if !op.Config.SyncUsers || s.clock().Before(s.due(op)) {
 			continue
 		}
 		if _, err := s.Sync(ctx, op, SyncOptions{}); err != nil && !errors.Is(err, ErrSyncRunning) {

@@ -455,6 +455,53 @@ func TestSyncTick(t *testing.T) {
 	}
 }
 
+// TestSyncNextRun: the console's "next" is the schedule's own: now before
+// the first run, then the interval after the last one, unmoved by ticks
+// that find it not yet due; none while the provider is disabled, has sync
+// off, or is being listed.
+func TestSyncNextRun(t *testing.T) {
+	e := newSyncEnv(t, func(c *Config) { c.SyncMinutes = 30 })
+	e.dir.set("alice")
+	ctx := context.Background()
+	at := func(want time.Time) {
+		t.Helper()
+		if got := e.s.NextRun(e.op); got == nil || !got.Equal(want) {
+			t.Fatalf("next run %v, want %v", got, want)
+		}
+	}
+	start := e.now
+	at(start)
+	e.s.Tick(ctx)
+	at(start.Add(30 * time.Minute))
+	e.now = start.Add(29 * time.Minute)
+	e.s.Tick(ctx)
+	at(start.Add(30 * time.Minute))
+	e.now = start.Add(31 * time.Minute)
+	e.s.Tick(ctx)
+	if e.dir.calls != 2 {
+		t.Fatalf("listings: %d", e.dir.calls)
+	}
+	at(start.Add(61 * time.Minute))
+	// A run from the console starts the interval again.
+	e.now = start.Add(40 * time.Minute)
+	e.run(t, SyncOptions{Manual: true})
+	at(start.Add(70 * time.Minute))
+
+	disabled := *e.op
+	disabled.Enabled = false
+	off := *e.op
+	off.Config.SyncUsers = false
+	if e.s.NextRun(&disabled) != nil || e.s.NextRun(&off) != nil {
+		t.Fatal("a provider the schedule skips has no next run")
+	}
+	e.s.mu.Lock()
+	e.s.running[e.op.ID] = true
+	e.s.mu.Unlock()
+	if e.s.NextRun(e.op) != nil {
+		t.Fatal("a provider being listed has no next run")
+	}
+}
+
 // TestSyncSurvivesABadDirectory (break-it, 2026-10-30): a listing with a
 // username no account can have, a person with no id, and one listed twice
 // creates what it can, names the conflict, and never counts anyone twice.
