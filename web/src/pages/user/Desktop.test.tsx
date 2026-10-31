@@ -20,7 +20,10 @@ interface FakeClient {
 /** The part of the library's own keyboard the tests look at. */
 interface RealKeyboard { onkeydown: unknown; onkeyup: unknown }
 
-const g = vi.hoisted(() => ({ clients: [] as FakeClient[], keyboards: [] as RealKeyboard[] }))
+/** The mouse on the desktop's display, as the page wires it. */
+interface FakeMouse { onmousedown: ((m: unknown) => void) | null }
+
+const g = vi.hoisted(() => ({ clients: [] as FakeClient[], keyboards: [] as RealKeyboard[], mice: [] as FakeMouse[] }))
 
 // The client and tunnel stand in for guacd; everything else is the library,
 // the keyboard included, so its hold on the document's keys is the real one.
@@ -66,6 +69,7 @@ vi.mock('guacamole-common-js', async (importOriginal) => {
     onmousedown = null
     onmouseup = null
     onmousemove = null
+    constructor() { g.mice.push(this) }
   }
   return { default: { ...real, WebSocketTunnel, Client, Mouse, Keyboard } }
 })
@@ -96,6 +100,7 @@ async function connected(nth = 1): Promise<FakeClient> {
 beforeEach(() => {
   g.clients.length = 0
   g.keyboards.length = 0
+  g.mice.length = 0
   vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} })
 })
 afterEach(() => {
@@ -132,7 +137,10 @@ describe('Desktop, when the session ends', () => {
 
     expect(screen.getByText(/^(elapsed|ran for) /).textContent).toBe('ran for 00:03')
     expect(screen.getByText('Ended · recording saved')).toBeDefined()
-    expect(within(screen.getByRole('dialog')).getByText(/win-01 · RDP · ran for 00:03\./)).toBeDefined()
+    expect(within(screen.getByRole('dialog')).getByText('win-01 · RDP · ran for 00:03.')).toBeDefined()
+    // How long recordings are kept is the administrator's business, not news
+    // for the person whose session just ended.
+    expect(screen.getByRole('dialog').textContent).not.toContain('retention')
   })
 
   it.each([
@@ -229,22 +237,103 @@ describe('Desktop, the session id from the gateway', () => {
 
 
 // Review U2: the Guacamole keyboard holds the whole document, so a
-// keyboard-only person could not reach Disconnect. F6 moves focus to the
-// bar and is not sent to the remote machine; the browser keeps the key.
+// keyboard-only person could not reach Disconnect. Ctrl+Shift+F6 moves focus
+// to the bar, and from there Tab, Enter and Space work the controls (1.6 to
+// 1.10 moved focus but sent those keys to the remote machine, so no control
+// could be used). Bare F6 (1.6 to 1.10) is the remote side's: Chromium and
+// Windows use it.
 describe('Desktop, leaving by keyboard', () => {
-  it('moves focus to the controls on F6', async () => {
+  type Kb = { onkeydown: (k: number) => boolean; modifiers: { ctrl: boolean; shift: boolean; alt: boolean; meta: boolean } }
+  const F6 = 0xffc3
+  const ENTER = 0xff0d
+  const TAB = 0xff09
+  const A = 0x61
+  const hold = (kb: Kb, m: Partial<Kb['modifiers']>) => Object.assign(kb.modifiers, { ctrl: false, shift: false, alt: false, meta: false }, m)
+  const press = (kb: Kb, k: number, m: Partial<Kb['modifiers']> = {}) => {
+    hold(kb, m)
+    let kept = false
+    act(() => { kept = kb.onkeydown(k) })
+    return kept
+  }
+  // The keys go out through the page's queue, a promise chain.
+  const flush = () => act(() => new Promise((r) => setTimeout(r, 0)))
+  const onBar = () => document.activeElement?.closest('.term-bar') ?? null
+
+  it('moves focus to the controls on Ctrl+Shift+F6, and the remote machine sees the whole keystroke', async () => {
     start()
     const client = await connected()
-    const kb = g.keyboards[0] as unknown as { onkeydown: (k: number) => boolean }
+    const kb = g.keyboards[0] as unknown as Kb
     const sentBefore = client.keys.length
-    let kept = false
-    act(() => { kept = kb.onkeydown(0xffc3) })
-    expect(kept).toBe(true)
-    expect(client.keys.length).toBe(sentBefore)
-    const active = document.activeElement
-    expect(active?.tagName).toBe('BUTTON')
-    expect(active?.closest('.term-bar')).not.toBeNull()
-    expect(screen.getByText('F6: controls')).toBeDefined()
+    expect(press(kb, F6, { ctrl: true, shift: true })).toBe(true)
+    expect(document.activeElement?.tagName).toBe('BUTTON')
+    expect(onBar()).not.toBeNull()
+    // F6 follows the Ctrl and Shift already sent: a bare Ctrl+Shift is
+    // Windows' keyboard-layout switch.
+    await flush()
+    expect(client.keys.slice(sentBefore)).toEqual([F6])
+    expect(screen.getByText('Ctrl+Shift+F6: controls')).toBeDefined()
+  })
+
+  it('works the controls from the keyboard until Ctrl+Shift+F6 again', async () => {
+    start()
+    const client = await connected()
+    const kb = g.keyboards[0] as unknown as Kb
+    const sentBefore = client.keys.length
+    press(kb, F6, { ctrl: true, shift: true })
+    // The page keeps Enter and Tab, so the browser presses and moves.
+    expect(press(kb, ENTER)).toBe(true)
+    expect(press(kb, TAB)).toBe(true)
+    expect(press(kb, A)).toBe(true)
+    // The keystroke again hands the keyboard back to the desktop.
+    expect(press(kb, F6, { ctrl: true, shift: true })).toBe(true)
+    expect(onBar()).toBeNull()
+    expect(press(kb, A)).toBe(false)
+    await flush()
+    expect(client.keys.slice(sentBefore)).toEqual([F6, A])
+  })
+
+  it('hands the keys back on a click on the desktop or when focus leaves the page', async () => {
+    start()
+    const client = await connected()
+    const kb = g.keyboards[0] as unknown as Kb
+    press(kb, F6, { ctrl: true, shift: true })
+    act(() => g.mice[0].onmousedown?.({}))
+    expect(onBar()).toBeNull()
+    expect(press(kb, A)).toBe(false)
+
+    press(kb, F6, { ctrl: true, shift: true })
+    act(() => (document.activeElement as HTMLElement).blur())
+    expect(press(kb, A)).toBe(false)
+    await flush()
+    expect(client.keys.filter((k) => k === A)).toHaveLength(2)
+  })
+
+  it('still sends typing to the desktop after a control is clicked with the mouse', async () => {
+    start()
+    const client = await connected()
+    const kb = g.keyboards[0] as unknown as Kb
+    const sentBefore = client.keys.length
+    act(() => screen.getByRole('button', { name: 'Disconnect' }).focus())
+    expect(press(kb, A)).toBe(false)
+    await flush()
+    expect(client.keys.slice(sentBefore)).toEqual([A])
+  })
+
+  it('sends F6 alone, and with Ctrl+Alt+Shift, to the remote machine', async () => {
+    start()
+    const client = await connected()
+    const kb = g.keyboards[0] as unknown as Kb
+    const sentBefore = client.keys.length
+    for (const m of [{}, { ctrl: true, alt: true, shift: true }]) {
+      hold(kb, m)
+      let kept = true
+      act(() => { kept = kb.onkeydown(F6) })
+      expect(kept).toBe(false)
+      expect(document.activeElement?.closest('.term-bar')).toBeNull()
+    }
+    // The keys go out through the page's queue, a promise chain.
+    await act(() => new Promise((r) => setTimeout(r, 0)))
+    expect(client.keys.slice(sentBefore)).toEqual([F6, F6])
   })
 })
 

@@ -2,6 +2,7 @@ import { cleanup, render, screen, waitFor, within } from '@testing-library/react
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { api } from '../../api/client'
+import { fmtTime } from '../../api/format'
 import { IdentityProviders } from './IdentityProviders'
 
 afterEach(() => {
@@ -15,7 +16,7 @@ const run = (over: Record<string, unknown> = {}) => ({
 const kc = {
   id: 'k1', name: 'Keycloak', type: 'oidc', enabled: true, has_secret: true, created_at: '2026-10-01T00:00:00Z', updated_at: '2026-10-01T00:00:00Z',
   config: { oidc: { issuer: 'https://kc.example/realms/zanskar', client_id: 'zanskar' }, default_roles: ['user'], auto_provision: true, sync_users: true, sync_minutes: 15 },
-  sync: { enabled: true, interval_minutes: 15, running: false, last: run() },
+  sync: { enabled: true, interval_minutes: 15, running: false, last: run(), next_at: '2030-10-30T09:15:00Z' },
 }
 const plain = { ...kc, id: 'o1', name: 'Okta', config: { ...kc.config, sync_users: false }, sync: undefined }
 
@@ -78,6 +79,37 @@ describe('Directory user sync in the list', () => {
 // The live 1.9.0 report (2026-10-31): the realm's only person deleted.
 // The dialog speaks of one account, and leaves out the hint to come to the
 // console, since it is the console's way to apply.
+// The list says when each provider last synced and when it syncs next, in
+// words, not only behind the icon (2026-10-31).
+describe('Last and next sync in the list', () => {
+  const rowOf = async (name: string) => (await screen.findByText(name)).closest('tr')!.textContent ?? ''
+
+  it('shows when it last synced and when it syncs next', async () => {
+    serve([kc])
+    render(<IdentityProviders />)
+    const text = await rowOf('Keycloak')
+    expect(text).toContain(`Last synced ${fmtTime('2026-10-30T09:00:00Z')}`)
+    expect(text).toContain(`Next sync ${fmtTime('2030-10-30T09:15:00Z')} · every 15 min`)
+  })
+
+  it('says never, and within a minute when the next run is already due', async () => {
+    serve([{ ...kc, sync: { ...kc.sync, last: null, next_at: '2026-10-30T09:00:00Z' } }])
+    render(<IdentityProviders />)
+    const text = await rowOf('Keycloak')
+    expect(text).toContain('Last synced never')
+    expect(text).toContain('Next sync within a minute · every 15 min')
+  })
+
+  it('pauses with the provider, and has no next run while one is going', async () => {
+    serve([{ ...kc, enabled: false, sync: { ...kc.sync, next_at: null } }, { ...kc, id: 'k2', name: 'Busy', sync: { ...kc.sync, running: true, next_at: null } }])
+    render(<IdentityProviders />)
+    expect(await rowOf('Keycloak')).toContain('Next sync paused while disabled')
+    const busy = await rowOf('Busy')
+    expect(busy).toContain('Syncing now')
+    expect(busy).not.toContain('Next sync')
+  })
+})
+
 describe('Applying a held removal of one account', () => {
   it('asks in the singular and forces the run', async () => {
     serve()

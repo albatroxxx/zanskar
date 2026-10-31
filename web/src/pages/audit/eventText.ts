@@ -188,7 +188,11 @@ export function describe(ev: AuditEvent): string {
       return reason === 'code_reused' ? 'failed the second factor (a code already used)' : 'failed the second factor'
     case 'session.connect': return fail ? `was refused ${proto} access to ${name}${reason ? ` (${words(reason)})` : ''}` : `requested ${proto} access to ${name}`
     case 'session.start': return s ? `opened a ${s.proto} session on ${s.target}` : `opened a session ${name}`
-    case 'session.end': return s ? `ended the ${s.proto} session on ${s.target}${reason ? ` (${words(reason)})` : ''}` : `ended session ${name}`
+    case 'session.end': {
+      // A desktop that guacd ended carries guacd's words: "target lost: Upstream error."
+      const why = [reason && words(reason), str(d.detail)].filter(Boolean).join(': ')
+      return s ? `ended the ${s.proto} session on ${s.target}${why ? ` (${why})` : ''}` : `ended session ${name}`
+    }
     case 'session.terminate': return s ? `terminated ${s.user}'s ${s.proto} session on ${s.target}` : `terminated session ${name}`
     case 'session.shadow.start': return s ? `started watching ${s.user}'s ${s.proto} session on ${s.target}` : `started watching session ${name}`
     case 'session.shadow.end': return s ? `stopped watching ${s.user}'s session on ${s.target}` : `stopped watching session ${name}`

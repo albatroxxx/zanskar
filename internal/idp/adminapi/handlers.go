@@ -92,18 +92,20 @@ func (h *AdminHandler) revokeSCIMToken(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// syncView is the state of a provider's user sync.
+// syncView is the state of a provider's user sync: the last run and when
+// the schedule runs the next one (nil when it will not, or one is going).
 type syncView struct {
 	Enabled bool            `json:"enabled"`
 	Minutes int             `json:"interval_minutes"`
 	Running bool            `json:"running"`
 	Last    *idp.SyncStatus `json:"last"`
+	NextAt  *time.Time      `json:"next_at"`
 }
 
 func (h *AdminHandler) syncView(op *idp.Opened) syncView {
 	v := syncView{Enabled: op.Config.SyncUsers, Minutes: op.Config.SyncMinutes}
 	if h.Sync != nil {
-		v.Running, v.Last = h.Sync.Running(op.ID), h.Sync.Status(op.ID)
+		v.Running, v.Last, v.NextAt = h.Sync.Running(op.ID), h.Sync.Status(op.ID), h.Sync.NextRun(op)
 	}
 	return v
 }

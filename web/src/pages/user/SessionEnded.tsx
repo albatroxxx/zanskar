@@ -11,7 +11,7 @@ export function SessionEndedDialog({ ended, target, protocol, elapsed, onClose }
       <p>{lead}</p>
       {detail && <p className="muted">{detail}</p>}
       <p className="muted">
-        {target} · {protocolName(protocol)} · ran for {fmtSeconds(elapsed)}. The recording is kept for as long as the retention policy says.
+        {target} · {protocolName(protocol)} · ran for {fmtSeconds(elapsed)}.
       </p>
       <div className="actions">
         <button className="btn primary" onClick={onClose}>Back to targets</button>

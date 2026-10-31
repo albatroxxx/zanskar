@@ -82,6 +82,8 @@ interface SyncState {
   interval_minutes: number
   running: boolean
   last: SyncRun | null
+  /** When the schedule lists the provider next; null while it is disabled or a run is going. */
+  next_at: string | null
 }
 interface Provider {
   id: string
@@ -263,16 +265,33 @@ function ArrivalCell({ provider: p }: { provider: Provider }) {
       ? <StateIcon state="ok" label={`Pushed over SCIM · token made ${fmtTime(p.scim_token_created_at)}`} />
       : <StateIcon state="warn" label="Pushed over SCIM · no token yet" />
   }
-  return <SyncCell sync={p.sync} />
+  return <SyncCell sync={p.sync} enabled={p.enabled} />
 }
 
-function SyncCell({ sync }: { sync?: SyncState }) {
+/** The last run, with what it did behind the icon, and the next one. */
+function SyncCell({ sync, enabled }: { sync?: SyncState; enabled: boolean }) {
   if (!sync) return <span className="muted">At sign-in</span>
-  if (sync.running) return <StateIcon state="unknown" label="Running" />
+  if (sync.running) return <><StateIcon state="unknown" label="Running" /> Syncing now</>
   const run = sync.last
-  if (!run) return <StateIcon state="unknown" label={`Every ${sync.interval_minutes} min; not run yet`} />
-  if (!run.ok) return <StateIcon state="danger" label={`Failed ${fmtTime(run.at)}: ${run.error ?? ''}`} />
-  return <StateIcon state={run.held > 0 ? 'warn' : 'ok'} label={`${fmtTime(run.at)} · ${syncSummary(run)}`} />
+  const icon = !run
+    ? <StateIcon state="unknown" label="Not run yet" />
+    : !run.ok
+      ? <StateIcon state="danger" label={`Failed ${fmtTime(run.at)}: ${run.error ?? ''}`} />
+      : <StateIcon state={run.held > 0 ? 'warn' : 'ok'} label={`${fmtTime(run.at)} · ${syncSummary(run)}`} />
+  return (
+    <>
+      <div>{icon} Last synced {run ? fmtTime(run.at) : 'never'}</div>
+      <div className="muted">{nextSync(sync, enabled)}</div>
+    </>
+  )
+}
+
+/** nextSync says when the schedule lists the provider again. A time already
+ *  past is the scheduler's next minute tick. */
+function nextSync(sync: SyncState, enabled: boolean): string {
+  if (!sync.next_at) return enabled ? 'Next sync not scheduled' : 'Next sync paused while disabled'
+  const when = Date.parse(sync.next_at) <= Date.now() ? 'within a minute' : fmtTime(sync.next_at)
+  return `Next sync ${when} · every ${sync.interval_minutes} min`
 }
 
 function arrivalHint(a: Arrival, type: IdPType): string {

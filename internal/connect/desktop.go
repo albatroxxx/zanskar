@@ -255,7 +255,7 @@ func (h *Handler) serveGuac(r *http.Request, ws *websocket.Conn, run *sessionRun
 	gc, err := guac.Dial(r.Context(), guacdAddr, params, timeout)
 	if err != nil {
 		h.Log.Warn("guacd dial failed", "target", ep.LiveKey, "guacd", guacdAddr, "err", err)
-		run.end(session.EndError, desktopDialMessage(err))
+		run.end(session.EndError, desktopDialMessage(err), nil)
 		return
 	}
 	defer func() { _ = gc.Close() }()
@@ -274,7 +274,7 @@ func (h *Handler) serveGuac(r *http.Request, ws *websocket.Conn, run *sessionRun
 		// The recording is closed the way every other end closes it, so a
 		// close that fails is audited as recording.lost here too (B14).
 		run.finishRecording(rec, recRow)
-		run.end(session.EndError, "")
+		run.end(session.EndError, "", nil)
 		return
 	}
 

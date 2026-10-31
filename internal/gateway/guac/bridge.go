@@ -5,11 +5,14 @@ package guac
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/coder/websocket"
 
@@ -136,11 +139,50 @@ func (f *streamFilter) check(raw, op string, lim Limits) (pass bool, refused int
 	return false, idx
 }
 
+// UpstreamError is the "error" instruction guacd ended a session with: its
+// words and its Guacamole status. "Upstream error." with 0x0203, for one, is
+// an RDP server that disconnected with a reason code guacd has no words for;
+// a dropped connection is "Connection closed." with 0x0208.
+type UpstreamError struct {
+	Message string
+	Status  int
+}
+
+func (e *UpstreamError) Error() string {
+	return fmt.Sprintf("guacd: %s (status 0x%04X)", e.Message, e.Status)
+}
+
+// maxUpstreamMessage bounds the words kept from guacd's "error" instruction:
+// they go into the log and the audit trail, and guacd's own are a line long.
+const maxUpstreamMessage = 200
+
+// upstreamError reads guacd's "error" instruction: the message, then the
+// status as a decimal number.
+func upstreamError(raw string) *UpstreamError {
+	in, err := Parse(raw)
+	if err != nil || len(in.Args) == 0 {
+		return &UpstreamError{Message: "unreadable error instruction"}
+	}
+	msg := strings.ToValidUTF8(in.Args[0], "")
+	if len(msg) > maxUpstreamMessage {
+		msg = msg[:maxUpstreamMessage]
+		for !utf8.ValidString(msg) {
+			msg = msg[:len(msg)-1]
+		}
+	}
+	e := &UpstreamError{Message: msg}
+	if len(in.Args) > 1 {
+		e.Status, _ = strconv.Atoi(in.Args[1])
+	}
+	return e
+}
+
 // Bridge relays instructions between guacd and the browser until either side
-// ends. It returns the end reason for the access_sessions row. Once the
-// browser has been told why the session ended, Bridge closes ws normally
-// (gateway.CloseAfterEnd).
-func Bridge(ctx context.Context, log *slog.Logger, c *Conn, ws *websocket.Conn, rec Recorder, lim Limits) (string, error) {
+// ends. It returns the end reason for the access_sessions row and, when guacd
+// ended the session with an "error" instruction, an *UpstreamError carrying
+// what guacd said. Once the browser has been told why the session ended,
+// Bridge closes ws normally (gateway.CloseAfterEnd).
+func Bridge(ctx context.Context, log *slog.Logger, c *Conn, ws *websocket.Conn, rec Recorder, lim Limits) (_ string, err error) {
 	if log == nil {
 		log = slog.Default()
 	}
@@ -155,13 +197,14 @@ func Bridge(ctx context.Context, log *slog.Logger, c *Conn, ws *websocket.Conn, 
 	// browser has been told, or at once when the browser has gone.
 	wsCtx, wsCancel := context.WithCancel(context.WithoutCancel(ctx))
 	var (
-		mu     sync.Mutex
-		reason = "user_exit"
-		lastIn = time.Now()
-		start  = time.Now()
-		gdDone = make(chan struct{})
-		wsDone = make(chan struct{})
-		setEnd = func(r string) {
+		mu       sync.Mutex
+		reason   = "user_exit"
+		upstream *UpstreamError // guacd's "error" instruction, when it sent one
+		lastIn   = time.Now()
+		start    = time.Now()
+		gdDone   = make(chan struct{})
+		wsDone   = make(chan struct{})
+		setEnd   = func(r string) {
 			mu.Lock()
 			if reason == "user_exit" {
 				reason = r
@@ -180,6 +223,14 @@ func Bridge(ctx context.Context, log *slog.Logger, c *Conn, ws *websocket.Conn, 
 			return ws.Write(wctx, websocket.MessageText, []byte(raw))
 		}
 	)
+	// Whichever way the session then ends, what guacd said goes back with it.
+	defer func() {
+		mu.Lock()
+		defer mu.Unlock()
+		if err == nil && upstream != nil {
+			err = upstream
+		}
+	}()
 
 	// guacd -> browser
 	go func() {
@@ -223,6 +274,10 @@ func Bridge(ctx context.Context, log *slog.Logger, c *Conn, ws *websocket.Conn, 
 			}
 			if op == "error" {
 				setEnd("target_lost")
+				e := upstreamError(raw)
+				mu.Lock()
+				upstream = e
+				mu.Unlock()
 			}
 			if rec != nil {
 				if err := rec.Write(raw); err != nil {

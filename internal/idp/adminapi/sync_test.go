@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/albatroxxx/zanskar/internal/audit"
 	"github.com/albatroxxx/zanskar/internal/idp"
@@ -43,8 +44,11 @@ func TestSyncRoutes(t *testing.T) {
 		Log: slog.New(slog.NewTextHandler(io.Discard, nil)), Directories: map[idp.Type]idp.Directory{idp.TypeOIDC: listed{{ExternalID: "k1", Username: "kim", DisplayName: "Kim"}}}}
 
 	code, out, _ := e.do(t, "GET", "/api/v1/identity-providers/"+on+"/sync", nil)
-	if code != http.StatusOK || out["enabled"] != true || out["interval_minutes"] != float64(15) || out["last"] != nil || out["running"] != false {
+	if code != http.StatusOK || out["enabled"] != true || out["interval_minutes"] != float64(15) || out["last"] != nil || out["running"] != false || out["next_at"] == nil {
 		t.Fatalf("status before a run: %d %v", code, out)
+	}
+	if _, out, _ := e.do(t, "GET", "/api/v1/identity-providers/"+off+"/sync", nil); out["next_at"] != nil {
+		t.Fatalf("a provider without sync has no next run: %v", out)
 	}
 	if code, out, _ := e.do(t, "POST", "/api/v1/identity-providers/"+off+"/sync", nil); code != http.StatusConflict || out["code"] != "sync_off" {
 		t.Fatalf("sync off: %d %v", code, out)
@@ -53,6 +57,11 @@ func TestSyncRoutes(t *testing.T) {
 	last, _ := out["last"].(map[string]any)
 	if code != http.StatusOK || last == nil || last["created"] != float64(1) || last["ok"] != true {
 		t.Fatalf("run: %d %s", code, raw)
+	}
+	ranAt, _ := time.Parse(time.RFC3339Nano, last["at"].(string))
+	nextAt, _ := time.Parse(time.RFC3339Nano, fmt.Sprint(out["next_at"]))
+	if !nextAt.Equal(ranAt.Add(15 * time.Minute)) {
+		t.Fatalf("next run %v, want 15 minutes after %v", out["next_at"], last["at"])
 	}
 	if _, err := e.users.GetByUsername(context.Background(), "kim"); err != nil {
 		t.Fatalf("kim: %v", err)

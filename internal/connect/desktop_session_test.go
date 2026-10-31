@@ -26,11 +26,13 @@ import (
 	"github.com/albatroxxx/zanskar/internal/policy/policytest"
 	"github.com/albatroxxx/zanskar/internal/protocol"
 	"github.com/albatroxxx/zanskar/internal/recording"
+	"github.com/albatroxxx/zanskar/internal/session"
 	"github.com/albatroxxx/zanskar/internal/target"
 )
 
 // stubGuacd answers the guacd handshake, reports "ready", and then reads
-// until the client disconnects. It counts the connections it accepted.
+// until the client disconnects, playing the instructions an "emit" carries
+// as its own output. It counts the connections it accepted.
 func stubGuacd(t *testing.T) (string, *atomic.Int32) {
 	t.Helper()
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
@@ -64,8 +66,14 @@ func stubGuacd(t *testing.T) (string, *atomic.Int32) {
 				}
 				_, _ = c.Write([]byte(guac.Encode("ready", "$conn-1")))
 				for {
-					if in, err := rd.Read(); err != nil || in.Opcode == "disconnect" {
+					in, err := rd.Read()
+					if err != nil || in.Opcode == "disconnect" {
 						return
+					}
+					if in.Opcode == "emit" {
+						for _, raw := range in.Args {
+							_, _ = c.Write([]byte(raw))
+						}
 					}
 				}
 			}()
@@ -218,6 +226,43 @@ func TestDesktopSessionEndToEnd(t *testing.T) {
 	rec, err := r.h.Sessions.GetRecording(r.ctx, d["recording_id"].(string))
 	if err != nil || rec.FinishedAt == nil || rec.Format != "guac" {
 		t.Fatalf("recording %+v %v", rec, err)
+	}
+}
+
+// TestDesktopEndedByGuacdKeepsItsWords: a desktop that guacd ends with an
+// "error" instruction (the RDP server disconnecting with a reason guacd has
+// no words for) still ends target_lost, which failover depends on, and its
+// session.end event carries guacd's words and status, so an administrator
+// reading Events sees more than "target lost".
+func TestDesktopEndedByGuacdKeepsItsWords(t *testing.T) {
+	r := newDesktopRig(t)
+	id := r.addTarget(t, "win-box", map[target.Protocol]int{target.VNC: 5900}, "")
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	ws, _, err := r.dial(ctx, r.ticket(t, id, "vnc")) //nolint:bodyclose // the library closes the handshake body
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ws.CloseNow()
+	if _, _, err := ws.Read(ctx); err != nil {
+		t.Fatal(err)
+	}
+	sessionID := lastEvent(t, r.connectFixture, "session.start").ObjectID
+	if err := ws.Write(ctx, websocket.MessageText, []byte(guac.Encode("emit", guac.Encode("error", "Upstream error.", "515")))); err != nil {
+		t.Fatal(err)
+	}
+	if row, audited := r.endedWith(t, sessionID); row != session.EndTargetLost || audited != session.EndTargetLost {
+		t.Fatalf("ended %q (session.end says %q), want target_lost", row, audited)
+	}
+	evs, _, err := r.auditLog.List(r.ctx, audit.Filter{Action: "session.end", ObjectID: sessionID})
+	if err != nil || len(evs) != 1 {
+		t.Fatalf("session.end: %v %v", evs, err)
+	}
+	var d map[string]string
+	_ = json.Unmarshal(evs[0].Details, &d)
+	if d["detail"] != "Upstream error." || d["status"] != "0x0203" || d["target_id"] != id {
+		t.Fatalf("session.end details %v", d)
 	}
 }
 
