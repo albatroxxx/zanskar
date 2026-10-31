@@ -272,7 +272,7 @@ func TestSyncGuards(t *testing.T) {
 	e.run(t, SyncOptions{})
 
 	e.dir.set()
-	if st := e.run(t, SyncOptions{}); st.Held != 6 || st.Disabled != 0 || st.HeldReason != "the directory listed no one" {
+	if st := e.run(t, SyncOptions{}); st.Held != 6 || st.Disabled != 0 || st.HeldReason != "the directory listed no one; run the sync from the console to apply" {
 		t.Fatalf("empty listing: %+v", st)
 	}
 	e.dir.set("a1", "a2")
@@ -287,6 +287,28 @@ func TestSyncGuards(t *testing.T) {
 	syncs := e.events(t, audit.IdPSync)
 	if syncs[0]["forced"] != true {
 		t.Fatalf("the forced run must say so: %v", syncs[0])
+	}
+
+	// The live 1.9.0 report (2026-10-31): a realm's only person deleted, so
+	// the listing is empty. The scheduled run holds the removal back; the
+	// console's "Disable 1" forces it, and the account is disabled, marked
+	// and signed out instead of being held back again.
+	e3 := newSyncEnv(t, nil)
+	e3.dir.set("solo")
+	e3.run(t, SyncOptions{})
+	e3.dir.set()
+	if st := e3.run(t, SyncOptions{}); st.Held != 1 || st.Disabled != 0 {
+		t.Fatalf("scheduled run, empty listing: %+v", st)
+	}
+	if st := e3.run(t, SyncOptions{Force: true, Manual: true}); st.Held != 0 || st.Disabled != 1 || st.HeldReason != "" {
+		t.Fatalf("forced run, empty listing: %+v", st)
+	}
+	solo := e3.byName(t, "solo")
+	if solo.Status != user.StatusDisabled || solo.DirectoryRemovedAt == nil {
+		t.Fatalf("solo after the forced run: %s %v", solo.Status, solo.DirectoryRemovedAt)
+	}
+	if len(e3.rev.browser) != 1 || e3.rev.browser[0] != solo.ID || len(e3.rev.live) != 1 {
+		t.Fatalf("solo's sessions: browser %v live %v", e3.rev.browser, e3.rev.live)
 	}
 
 	// The last administrator: boss is the only admin left once x1 is made

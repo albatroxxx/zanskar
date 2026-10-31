@@ -204,7 +204,12 @@ export function IdentityProviders() {
           title="Apply held removals"
           danger
           confirmLabel={`Disable ${held.run.held}`}
-          body={<p>{held.run.held_reason}. Disable those {held.run.held} accounts of <strong>{held.provider.name}</strong> and end their sessions?</p>}
+          body={
+            <p>
+              {heldWhy(held.run.held_reason)}. Disable {held.run.held === 1 ? 'that account' : `those ${held.run.held} accounts`} of <strong>{held.provider.name}</strong> and end{' '}
+              {held.run.held === 1 ? 'its' : 'their'} sessions?
+            </p>
+          }
           onConfirm={() => runSync(held.provider, true)}
           onClose={() => setHeld(null)}
         />
@@ -224,6 +229,14 @@ export function IdentityProviders() {
       )}
     </>
   )
+}
+
+/** heldWhy is why a run held removals back, as the dialog that applies
+ *  them says it: the reason up to its hint to run the sync from the
+ *  console (the dialog is that), starting with a capital. */
+function heldWhy(reason?: string): string {
+  const why = (reason ?? '').split(';')[0].trim()
+  return why ? why[0].toUpperCase() + why.slice(1) : 'Removals were held back'
 }
 
 /** What a sync run did, in a line: only the counts that are not zero. */

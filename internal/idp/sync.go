@@ -80,8 +80,8 @@ var ErrNoDirectory = errors.New("idp: this provider cannot be listed")
 // accounts, as a first sign-in would. An active account whose person the
 // list no longer has is disabled, and its sessions, browser and live, end.
 //
-// Disabling holds back, and says so, when the directory listed no one or
-// (unless forced) when it would disable more than half of the provider's
+// Disabling holds back, and says so, unless forced, when the directory
+// listed no one or when it would disable more than half of the provider's
 // active accounts at once: a directory answering short must not lock
 // everyone out. It never disables the last active administrator. Only a
 // list that came back whole is acted on. Group memberships are not synced.
@@ -435,9 +435,13 @@ func (s *Syncer) leave(ctx context.Context, p *Opened, linked []*user.User, kept
 	if len(gone) == 0 {
 		return nil
 	}
+	// Both guards hold back a scheduled run; a forced one, asked for from
+	// the console after reading the reason, applies the removals (ADR 0035).
+	// The empty listing ignored the force until 2026-10-31, so "Disable 1"
+	// on a realm whose only person was deleted held it back again.
 	switch {
-	case listed == 0:
-		st.Held, st.HeldReason = len(gone), "the directory listed no one"
+	case listed == 0 && !opts.Force:
+		st.Held, st.HeldReason = len(gone), "the directory listed no one; run the sync from the console to apply"
 		return nil
 	case !opts.Force && len(gone) > 3 && 2*len(gone) > active:
 		st.Held, st.HeldReason = len(gone), fmt.Sprintf("would disable %d of %d accounts at once; run the sync from the console to apply", len(gone), active)
