@@ -50,15 +50,22 @@ async function as(cookie) {
 }
 // Every shot is taken in both schemes: the guide shows the dark set
 // (`name-version.jpg`), the front page the light one (`name-light-version.jpg`).
+// height 'page' takes the whole page: the window grows to the page's own
+// height before the capture, so nothing below the fold is cut.
 async function shot(name, url, after, height = 720) {
   for (const value of ['dark', 'light']) {
     await scheme(value)
-    await send('Emulation.setDeviceMetricsOverride', { width: 1568, height, deviceScaleFactor: 1, mobile: false })
+    await send('Emulation.setDeviceMetricsOverride', { width: 1568, height: height === 'page' ? 720 : height, deviceScaleFactor: 1, mobile: false })
     await send('Page.navigate', { url: base + url })
     await sleep(2000)
     if (after) {
       await send('Runtime.evaluate', { expression: after, awaitPromise: true })
       await sleep(800)
+    }
+    if (height === 'page') {
+      const { result: h } = await send('Runtime.evaluate', { expression: 'document.documentElement.scrollHeight', returnByValue: true })
+      await send('Emulation.setDeviceMetricsOverride', { width: 1568, height: h.result.value, deviceScaleFactor: 1, mobile: false })
+      await sleep(500)
     }
     const { result } = await send('Page.captureScreenshot', { format: 'jpeg', quality: 85 })
     await save(value === 'dark' ? name : `${name}-light`, result.data)
@@ -76,8 +83,9 @@ async function save(name, data) {
 }
 
 await as(adminCookie)
-// The dashboard is taken taller, so the gateway card is whole.
-await shot('dashboard', '/admin', undefined, 824)
+// The dashboard is taken whole, down to the gateway card (2026-10-31: five
+// rows of tiles no longer fit 824 pixels).
+await shot('dashboard', '/admin', undefined, 'page')
 await shot('hosts', '/admin/hosts')
 await shot('databases', '/admin/databases')
 await shot('applications', '/admin/applications')

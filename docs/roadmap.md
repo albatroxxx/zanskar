@@ -102,6 +102,16 @@ Deferred by decision: a multi-pane workspace (browser tabs suffice), rotation of
 keys and of Windows or database passwords (the certificate authority and the owning systems
 do that). Still Phase 4: HA, SAML/SCIM, WebAuthn.
 
+## v1.10 release — shipped (v1.10.0 tagged 2026-10-31)
+
+Applications open in a full browser, with developer tools by grant
+([ADR 0037](adr/0037-application-modes-proxied-and-isolated.md), phase 1; phases 2 to 4, proxied
+applications by name and on a port, are next). The dashboard adds security posture, integrity,
+access in flight and capacity with a week of trends; Users and groups say where each account
+comes from; an account its identity provider took away is not enabled by hand
+([ADR 0035](adr/0035-identity-provider-owns-the-person.md), amended); and four fixes from the
+live 1.9.0 console ([release notes](releases/v1.10.0.md)).
+
 ## v1.9 release — shipped (v1.9.0 tagged 2026-10-31)
 
 Fifteen findings from walking the live 1.8.0 console. Host actions and updates show progress
