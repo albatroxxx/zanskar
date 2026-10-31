@@ -229,22 +229,45 @@ describe('Desktop, the session id from the gateway', () => {
 
 
 // Review U2: the Guacamole keyboard holds the whole document, so a
-// keyboard-only person could not reach Disconnect. F6 moves focus to the
-// bar and is not sent to the remote machine; the browser keeps the key.
+// keyboard-only person could not reach Disconnect. Ctrl+Shift+F6 moves focus
+// to the bar and is not sent to the remote machine; the browser keeps it.
+// Bare F6 (1.6 to 1.10) is the remote side's: Chromium and Windows use it.
 describe('Desktop, leaving by keyboard', () => {
-  it('moves focus to the controls on F6', async () => {
+  type Kb = { onkeydown: (k: number) => boolean; modifiers: { ctrl: boolean; shift: boolean; alt: boolean; meta: boolean } }
+  const F6 = 0xffc3
+  const hold = (kb: Kb, m: Partial<Kb['modifiers']>) => Object.assign(kb.modifiers, { ctrl: false, shift: false, alt: false, meta: false }, m)
+
+  it('moves focus to the controls on Ctrl+Shift+F6', async () => {
     start()
     const client = await connected()
-    const kb = g.keyboards[0] as unknown as { onkeydown: (k: number) => boolean }
+    const kb = g.keyboards[0] as unknown as Kb
     const sentBefore = client.keys.length
+    hold(kb, { ctrl: true, shift: true })
     let kept = false
-    act(() => { kept = kb.onkeydown(0xffc3) })
+    act(() => { kept = kb.onkeydown(F6) })
     expect(kept).toBe(true)
     expect(client.keys.length).toBe(sentBefore)
     const active = document.activeElement
     expect(active?.tagName).toBe('BUTTON')
     expect(active?.closest('.term-bar')).not.toBeNull()
-    expect(screen.getByText('F6: controls')).toBeDefined()
+    expect(screen.getByText('Ctrl+Shift+F6: controls')).toBeDefined()
+  })
+
+  it('sends F6 alone, and with Ctrl+Alt+Shift, to the remote machine', async () => {
+    start()
+    const client = await connected()
+    const kb = g.keyboards[0] as unknown as Kb
+    const sentBefore = client.keys.length
+    for (const m of [{}, { ctrl: true, alt: true, shift: true }]) {
+      hold(kb, m)
+      let kept = true
+      act(() => { kept = kb.onkeydown(F6) })
+      expect(kept).toBe(false)
+      expect(document.activeElement?.closest('.term-bar')).toBeNull()
+    }
+    // The keys go out through the page's queue, a promise chain.
+    await act(() => new Promise((r) => setTimeout(r, 0)))
+    expect(client.keys.slice(sentBefore)).toEqual([F6, F6])
   })
 })
 

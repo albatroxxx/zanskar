@@ -7,7 +7,7 @@ import { SessionEndedDialog } from './SessionEnded'
 import { desktopEnd, saveBlob, SESSION_ID, useSwitched, type SessionEnd, type SessionState } from './session'
 import { useFullscreen } from './fullscreen'
 import { FullscreenButton } from './FullscreenButton'
-import { isPasteKey, keyQueue } from './keys'
+import { CONTROLS_KEY, isControlsKey, isPasteKey, keyQueue } from './keys'
 
 type GuacModule = typeof import('guacamole-common-js')['default']
 
@@ -208,9 +208,10 @@ function DesktopSession({ state }: { state: SessionState }) {
       // library to leave the browser's default alone instead of preventing it.
       kb.onkeydown = (k: number) => {
         if (typingInField()) return true
-        // F6 (keysym 0xffc3) leaves the desktop for its controls instead of
-        // going to the remote machine (review U2); the browser keeps the key.
-        if (k === 0xffc3) {
+        // CONTROLS_KEY leaves the desktop for its controls instead of going to
+        // the remote machine; the browser keeps it. Ctrl and Shift have already
+        // gone out, and their releases follow, since a button is not a field.
+        if (isControlsKey(k, kb.modifiers)) {
           pageRef.current?.querySelector<HTMLElement>('.term-bar button')?.focus()
           return true
         }
@@ -395,7 +396,7 @@ function DesktopSession({ state }: { state: SessionState }) {
         <span className="stat">{(ended ? 'ran for ' : 'elapsed ') + fmtSeconds(elapsed)}</span>
         <span className="grow" />
         {!ended && !connected && <span className="stat hint" role="status">Connecting…</span>}
-        {!ended && <span className="stat hint" title="Press F6 to move from the desktop to these controls">F6: controls</span>}
+        {!ended && <span className="stat hint" title={`Press ${CONTROLS_KEY} to move from the desktop to these controls`}>{CONTROLS_KEY}: controls</span>}
         {ended ? (
           <span className="stat">Ended · recording saved</span>
         ) : (

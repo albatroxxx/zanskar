@@ -162,24 +162,37 @@ describe('Terminal', () => {
 
 
 // Review U2 (WCAG 2.1.2): Tab is a shell key, so xterm keeps it, and nothing
-// let a keyboard-only person leave the terminal for Disconnect or Files. F6
-// moves focus to the bar's controls; every other key still goes to the shell.
+// let a keyboard-only person leave the terminal for Disconnect or Files.
+// Ctrl+Shift+F6 moves focus to the bar's controls; every other key, bare F6
+// (mc, htop) included, still goes to the shell.
 describe('Terminal, leaving by keyboard', () => {
-  it('moves focus to the controls on F6 and keeps the key from the shell', () => {
+  it('moves focus to the controls on Ctrl+Shift+F6 and keeps the key from the shell', () => {
     open()
     message(new TextEncoder().encode('$ ').buffer)
     const handler = g.terms[0].keyHandler
     expect(handler).not.toBeNull()
-    const f6 = new KeyboardEvent('keydown', { key: 'F6', cancelable: true })
-    expect(handler!(f6)).toBe(false)
-    expect(f6.defaultPrevented).toBe(true)
+    const chord = new KeyboardEvent('keydown', { key: 'F6', ctrlKey: true, shiftKey: true, cancelable: true })
+    expect(handler!(chord)).toBe(false)
+    expect(chord.defaultPrevented).toBe(true)
     const active = document.activeElement
     expect(active?.tagName).toBe('BUTTON')
     expect(active?.closest('.term-bar')).not.toBeNull()
     // Tab and letters stay with the terminal.
     expect(handler!(new KeyboardEvent('keydown', { key: 'Tab' }))).toBe(true)
     expect(handler!(new KeyboardEvent('keydown', { key: 'a' }))).toBe(true)
-    expect(handler!(new KeyboardEvent('keyup', { key: 'F6' }))).toBe(true)
-    expect(screen.getByText('F6: controls')).toBeDefined()
+    expect(handler!(new KeyboardEvent('keyup', { key: 'F6', ctrlKey: true, shiftKey: true }))).toBe(true)
+    expect(screen.getByText('Ctrl+Shift+F6: controls')).toBeDefined()
+  })
+
+  it('leaves F6 alone, and with Ctrl+Alt+Shift, to the shell', () => {
+    open()
+    message(new TextEncoder().encode('$ ').buffer)
+    const handler = g.terms[0].keyHandler!
+    for (const init of [{}, { ctrlKey: true, altKey: true, shiftKey: true }]) {
+      const e = new KeyboardEvent('keydown', { key: 'F6', cancelable: true, ...init })
+      expect(handler(e)).toBe(true)
+      expect(e.defaultPrevented).toBe(false)
+      expect(document.activeElement?.closest('.term-bar')).toBeNull()
+    }
   })
 })

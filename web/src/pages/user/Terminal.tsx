@@ -12,6 +12,7 @@ import { TerminalFiles } from './TerminalFiles'
 import { useFullscreen } from './fullscreen'
 import { FullscreenButton } from './FullscreenButton'
 import { terminalTheme } from '../../styles/theme'
+import { CONTROLS_KEY, isControlsEvent } from './keys'
 
 export function Terminal() {
   const loc = useLocation()
@@ -37,7 +38,7 @@ function TerminalSession({ state }: { state: SessionState }) {
   const [panelOpen, setPanelOpen] = useState(false)
   const wsRef = useRef<WebSocket | null>(null)
 
-  // Where F6 lands: the first control in the bar.
+  // Where CONTROLS_KEY lands: the first control in the bar.
   const leaveTerminal = () => pageRef.current?.querySelector<HTMLElement>('.term-bar button')?.focus()
 
   useEffect(() => {
@@ -48,10 +49,10 @@ function TerminalSession({ state }: { state: SessionState }) {
     term.loadAddon(new WebLinksAddon())
     term.open(host.current)
     fit.fit()
-    // Tab is a shell key, so xterm keeps it; F6, which no shell needs, moves
-    // focus from the terminal to its controls (review U2, WCAG 2.1.2).
+    // Tab is a shell key, so xterm keeps it, and so is bare F6 (mc, htop);
+    // CONTROLS_KEY moves focus from the terminal to its controls.
     term.attachCustomKeyEventHandler((e) => {
-      if (e.type === 'keydown' && e.key === 'F6') {
+      if (isControlsEvent(e)) {
         e.preventDefault()
         leaveTerminal()
         return false
@@ -145,8 +146,8 @@ function TerminalSession({ state }: { state: SessionState }) {
         <span className="stat">{status === 'connecting' ? 'connecting…' : (ended ? 'ran for ' : 'elapsed ') + fmtSeconds(elapsed)}</span>
         {!ended && <span className={'stat' + (idle > 600 ? ' warn' : '')}>idle {fmtSeconds(idle)}</span>}
         <span className="grow" />
-        {!ended && <span className="stat hint" title="Press F6 to move from the terminal to these controls">F6: controls</span>}
-        <span className="sr-only" role="status">{status === 'live' && !ended ? 'Connected. Press F6 to move from the terminal to the controls.' : ''}</span>
+        {!ended && <span className="stat hint" title={`Press ${CONTROLS_KEY} to move from the terminal to these controls`}>{CONTROLS_KEY}: controls</span>}
+        <span className="sr-only" role="status">{status === 'live' && !ended ? `Connected. Press ${CONTROLS_KEY} to move from the terminal to the controls.` : ''}</span>
         {ended ? (
           <span className="stat">Ended · recording saved</span>
         ) : (
