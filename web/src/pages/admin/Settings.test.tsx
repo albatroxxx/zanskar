@@ -88,20 +88,22 @@ describe('Settings', () => {
     expect(within(row).getByRole('button', { name: 'Reset' })).toBeDefined()
   })
 
-  // 2026-10-30: a time zone for every time in the console, typed with the
-  // browser's zones offered, applied to the page the moment it is saved.
+  // 2026-10-30: a time zone for every time in the console, applied to the
+  // page the moment it is saved. 2026-10-31: picked from every zone the
+  // browser knows, searched, not typed against a <datalist>.
   it('offers time zones and applies a saved one at once', async () => {
     const tz = setting({ key: 'display.time_zone', category: 'Display', title: 'Time zone', type: 'timezone', default: 'UTC', value: 'UTC', source: 'default' })
     serve({ ...listing, runtime: [...listing.runtime, tz] })
-    vi.spyOn(api, 'put').mockResolvedValue({ ...tz, value: 'Asia/Kolkata', source: 'console' } as never)
+    const put = vi.spyOn(api, 'put').mockResolvedValue({ ...tz, value: 'Asia/Kolkata', source: 'console' } as never)
     render(<Settings />)
     const user = userEvent.setup()
-    const field = await screen.findByLabelText('Time zone')
-    const list = document.getElementById(field.getAttribute('list') ?? '')
-    expect(list?.tagName).toBe('DATALIST')
-    await user.clear(field)
-    await user.type(field, 'Asia/Kolkata')
+    const field = await screen.findByRole('combobox', { name: 'Time zone' })
+    await user.click(field)
+    expect(screen.getAllByRole('option').length).toBeGreaterThan(300)
+    await user.type(field, 'Kolkata')
+    await user.keyboard('{Enter}')
     await user.click(within(field.closest('.setting-row') as HTMLElement).getByRole('button', { name: 'Save' }))
+    expect(put).toHaveBeenCalledWith('/admin/settings/display.time_zone', { value: 'Asia/Kolkata' })
     await waitFor(() => expect(consoleZone()).toBe('Asia/Kolkata'))
     setDisplayZone(undefined)
   })
