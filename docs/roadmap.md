@@ -102,7 +102,7 @@ Deferred by decision: a multi-pane workspace (browser tabs suffice), rotation of
 keys and of Windows or database passwords (the certificate authority and the owning systems
 do that). Still Phase 4: HA, SAML/SCIM, WebAuthn.
 
-## v1.11 release — shipped (v1.11.0 tagged 2026-10-31)
+## v1.11 release — shipped (v1.11.0 tagged 2026-10-31, v1.11.1 2026-11-01)
 
 The dashboard on one screen, inventory first, the gateway, its clock and the storage the audit
 log and recordings take in a column beside the tiles (the Integrity row is gone from it);
@@ -110,6 +110,8 @@ Ctrl+Shift+F6 instead of F6 for a session's controls, which on a desktop now wor
 keyboard; the time zone picked from a searchable list; identity providers that say when they
 last synced and sync next; and a desktop the remote machine ended keeps guacd's words on its
 `session.end` ([release notes](releases/v1.11.0.md)).
+1.11.1: one cursor in desktop and application sessions, a desktop that fills its pane at any pixel ratio, and
+notices that can be dismissed ([release notes](releases/v1.11.1.md)).
 
 ## v1.10 release — shipped (v1.10.0 tagged 2026-10-31)
 
