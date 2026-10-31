@@ -686,7 +686,7 @@ func (h *Handler) terminal(w http.ResponseWriter, r *http.Request) {
 		if errors.Is(err, target.ErrAddressForbidden) {
 			msg = addressRefusedMsg
 		}
-		run.end(session.EndError, msg)
+		run.end(session.EndError, msg, nil)
 		return
 	}
 	client, err := sshgw.Dial(r.Context(), sshgw.Endpoint{Address: dialIP.String(), Port: ep.port(target.SSH), HostKeyFingerprint: fp, HostKeyTrusted: true}, a, timeout)
@@ -700,7 +700,7 @@ func (h *Handler) terminal(w http.ResponseWriter, r *http.Request) {
 			msg = "authentication to the target failed"
 		}
 		h.Log.Warn("ssh dial failed", "target", ep.LiveKey, "err", err)
-		run.end(reason, msg)
+		run.end(reason, msg, nil)
 		return
 	}
 	defer func() { _ = client.Close() }()

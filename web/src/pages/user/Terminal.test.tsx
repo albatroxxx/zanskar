@@ -1,11 +1,11 @@
-import { act, cleanup, render, screen } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { Terminal } from './Terminal'
 
 /** The parts of xterm the page drives, recorded so the tests can read them back. */
-interface FakeTerm { cols: number; rows: number; written: Uint8Array[]; data: ((d: string) => void) | null; resize: ((s: { cols: number; rows: number }) => void) | null; disposed: boolean; keyHandler: ((e: KeyboardEvent) => boolean) | null }
+interface FakeTerm { cols: number; rows: number; written: Uint8Array[]; data: ((d: string) => void) | null; resize: ((s: { cols: number; rows: number }) => void) | null; disposed: boolean; keyHandler: ((e: KeyboardEvent) => boolean) | null; focused: number }
 const g = vi.hoisted(() => ({ terms: [] as FakeTerm[], sockets: [] as FakeSocket[] }))
 
 interface FakeSocket {
@@ -29,7 +29,8 @@ vi.mock('@xterm/xterm', () => ({
     constructor() { g.terms.push(this as unknown as FakeTerm) }
     loadAddon() {}
     open() {}
-    focus() {}
+    focused = 0
+    focus() { this.focused++ }
     write(b: Uint8Array) { this.written.push(b) }
     onData(fn: (d: string) => void) { this.data = fn; return { dispose: () => { this.data = null } } }
     onResize(fn: (s: { cols: number; rows: number }) => void) { this.resize = fn; return { dispose: () => { this.resize = null } } }
@@ -162,24 +163,55 @@ describe('Terminal', () => {
 
 
 // Review U2 (WCAG 2.1.2): Tab is a shell key, so xterm keeps it, and nothing
-// let a keyboard-only person leave the terminal for Disconnect or Files. F6
-// moves focus to the bar's controls; every other key still goes to the shell.
+// let a keyboard-only person leave the terminal for Disconnect or Files.
+// Ctrl+Shift+F6 moves focus to the bar's controls; every other key, bare F6
+// (mc, htop) included, still goes to the shell.
 describe('Terminal, leaving by keyboard', () => {
-  it('moves focus to the controls on F6 and keeps the key from the shell', () => {
+  it('moves focus to the controls on Ctrl+Shift+F6 and keeps the key from the shell', () => {
     open()
     message(new TextEncoder().encode('$ ').buffer)
     const handler = g.terms[0].keyHandler
     expect(handler).not.toBeNull()
-    const f6 = new KeyboardEvent('keydown', { key: 'F6', cancelable: true })
-    expect(handler!(f6)).toBe(false)
-    expect(f6.defaultPrevented).toBe(true)
+    const chord = new KeyboardEvent('keydown', { key: 'F6', ctrlKey: true, shiftKey: true, cancelable: true })
+    expect(handler!(chord)).toBe(false)
+    expect(chord.defaultPrevented).toBe(true)
     const active = document.activeElement
     expect(active?.tagName).toBe('BUTTON')
     expect(active?.closest('.term-bar')).not.toBeNull()
     // Tab and letters stay with the terminal.
     expect(handler!(new KeyboardEvent('keydown', { key: 'Tab' }))).toBe(true)
     expect(handler!(new KeyboardEvent('keydown', { key: 'a' }))).toBe(true)
-    expect(handler!(new KeyboardEvent('keyup', { key: 'F6' }))).toBe(true)
-    expect(screen.getByText('F6: controls')).toBeDefined()
+    expect(handler!(new KeyboardEvent('keyup', { key: 'F6', ctrlKey: true, shiftKey: true }))).toBe(true)
+    expect(screen.getByText('Ctrl+Shift+F6: controls')).toBeDefined()
+  })
+
+  it('leaves F6 alone, and with Ctrl+Alt+Shift, to the shell', () => {
+    open()
+    message(new TextEncoder().encode('$ ').buffer)
+    const handler = g.terms[0].keyHandler!
+    for (const init of [{}, { ctrlKey: true, altKey: true, shiftKey: true }]) {
+      const e = new KeyboardEvent('keydown', { key: 'F6', cancelable: true, ...init })
+      expect(handler(e)).toBe(true)
+      expect(e.defaultPrevented).toBe(false)
+      expect(document.activeElement?.closest('.term-bar')).toBeNull()
+    }
+  })
+
+  it('goes back to the terminal on Ctrl+Shift+F6 from the bar, once', () => {
+    open()
+    message(new TextEncoder().encode('$ ').buffer)
+    const term = g.terms[0]
+    term.keyHandler!(new KeyboardEvent('keydown', { key: 'F6', ctrlKey: true, shiftKey: true, cancelable: true }))
+    const button = document.activeElement as HTMLElement
+    expect(button.closest('.term-bar')).not.toBeNull()
+    const before = term.focused
+    fireEvent.keyDown(button, { key: 'F6' })
+    fireEvent.keyDown(button, { key: 'F6', ctrlKey: true, shiftKey: true, altKey: true })
+    expect(term.focused).toBe(before)
+    fireEvent.keyDown(button, { key: 'F6', ctrlKey: true, shiftKey: true })
+    expect(term.focused).toBe(before + 1)
+    // Inside the terminal the keystroke is xterm's handler's, not this one.
+    fireEvent.keyDown(document.querySelector('.term-host')!, { key: 'F6', ctrlKey: true, shiftKey: true })
+    expect(term.focused).toBe(before + 1)
   })
 })

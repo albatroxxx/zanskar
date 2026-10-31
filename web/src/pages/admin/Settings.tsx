@@ -3,6 +3,7 @@ import { ApiError, api, errorMessage } from '../../api/client'
 import { fmtTime, setDisplayZone } from '../../api/format'
 import type { BootSetting, HostStatus, RuntimeSetting, SettingsListing, SystemMetrics, SystemStatus } from '../../api/types'
 import { HostActionDialog, type BootChange } from '../../components/HostActionDialog'
+import { TimeZonePicker } from '../../components/TimeZonePicker'
 import { Alert, Badge, Empty, Field, Modal, PageHead } from '../../components/ui'
 import { TLSCard } from './TLSCard'
 import { StorageCard } from './StorageCard'
@@ -190,19 +191,8 @@ function SettingRow({ setting, onChange }: { setting: RuntimeSetting; onChange: 
       input = <input id={id} value={value} onChange={(e) => setValue(e.target.value)} placeholder="host:port" />
       break
     case 'timezone':
-      // Typed, with every zone the browser knows offered as it is typed.
-      input = (
-        <>
-          <input id={id} value={value} onChange={(e) => setValue(e.target.value)} list={id + '-zones'} autoComplete="off" spellCheck={false} />
-          <datalist id={id + '-zones'}>
-            {timeZones().map((z) => (
-              <option key={z} value={z}>
-                {z}
-              </option>
-            ))}
-          </datalist>
-        </>
-      )
+      // Every zone the browser knows, searchable (2026-10-31).
+      input = <TimeZonePicker id={id} value={value} onChange={setValue} />
       break
     case 'text':
       input = <textarea id={id} value={value} onChange={(e) => setValue(e.target.value)} rows={6} placeholder={setting.key === 'login_banner' ? 'This system is the property of Example Ltd. Access is restricted to authorised users.\nAll activity, including every session, is recorded and may be reviewed. By signing in you consent to this monitoring.' : undefined} />
@@ -400,12 +390,3 @@ function BootEdit({ setting, onClose, onNext }: { setting: BootSetting; onClose:
   )
 }
 
-/** timeZones lists the zones this browser can show, for the time zone setting. */
-function timeZones(): string[] {
-  const intl = Intl as unknown as { supportedValuesOf?: (key: string) => string[] }
-  try {
-    return intl.supportedValuesOf?.('timeZone') ?? []
-  } catch {
-    return []
-  }
-}

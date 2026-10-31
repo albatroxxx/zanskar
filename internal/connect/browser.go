@@ -115,7 +115,7 @@ func (h *Handler) browser(w http.ResponseWriter, r *http.Request, g *ticket.Gran
 	<-kaDone
 	if err != nil {
 		h.Log.Warn("application browser failed to start", "target", ep.LiveKey, "err", err)
-		run.end(session.EndError, "the application's browser could not be started on the gateway")
+		run.end(session.EndError, "the application's browser could not be started on the gateway", nil)
 		return
 	}
 	defer bs.Close()

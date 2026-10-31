@@ -5455,7 +5455,7 @@ components:
           description: The provider pushes its people over SCIM 2.0 (`/scim/{idp}`). Not with `sync_users`.
     IdentityProviderSync:
       type: object
-      required: [enabled, interval_minutes, running, last]
+      required: [enabled, interval_minutes, running, last, next_at]
       properties:
         enabled:
           type: boolean
@@ -5463,6 +5463,15 @@ components:
           type: integer
         running:
           type: boolean
+        next_at:
+          description: >-
+            When the schedule lists the provider next: `interval_minutes` after the last run, or now
+            before the first. The run starts at the scheduler's next minute tick from then on, so a
+            time already past means within a minute. Null while the provider is disabled or a run is
+            going.
+          oneOf:
+            - type: "null"
+            - $ref: "#/components/schemas/Timestamp"
         last:
           description: The last run since the gateway started; null before the first.
           oneOf:
@@ -7079,8 +7088,30 @@ components:
           description: Refused connections (`session.connect` failures).
     AdminOverview:
       type: object
-      required: [sessions, pending_requests, targets, inventory, autoscaling, audit_24h, posture, integrity, in_flight, trends]
+      required: [sessions, pending_requests, targets, inventory, autoscaling, audit_24h, posture, integrity, in_flight, trends, storage]
       properties:
+        storage:
+          type: object
+          description: What the evidence takes (2026-10-31), for the dashboard's storage tiles.
+          required: [audit_log, recordings]
+          properties:
+            audit_log:
+              type: object
+              required: [events, approx_bytes]
+              properties:
+                events: {type: integer, format: int64, description: Events in the audit log; none is ever deleted.}
+                approx_bytes:
+                  type: integer
+                  format: int64
+                  description: >-
+                    About how much room the events take: the newest thousand rows' average length
+                    times `events`. Characters rather than bytes, indexes left out; an estimate.
+            recordings:
+              type: object
+              required: [count, bytes]
+              properties:
+                count: {type: integer, format: int64, description: Finished recordings that retention has not purged, wherever they are stored.}
+                bytes: {type: integer, format: int64, description: Their total size, exact.}
         trends:
           type: object
           description: >

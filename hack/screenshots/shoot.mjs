@@ -92,11 +92,14 @@ await shot('applications', '/admin/applications')
 await shot('policies', '/admin/policies')
 await shot('approvals', '/admin/approvals')
 // The certificate authority's Setup panel, opened from its row.
+// The row's first button is the Secret column's state glyph since those
+// became buttons, so Setup is found by its words.
 await shot('ssh-ca', '/admin/credentials',
-  `[...document.querySelectorAll('tr')].find((r) => r.textContent.includes('linux-fleet-ca'))?.querySelector('button')?.click()`)
-// The audit log, with the first access decision's details open.
+  `[...[...document.querySelectorAll('tr')].find((r) => r.textContent.includes('linux-fleet-ca'))?.querySelectorAll('button') ?? []].find((b) => b.textContent.trim() === 'Setup')?.click()`)
+// The audit log, with the newest session's end open (the shoot opens one SSH
+// session, whose events come first), else the first access decision's.
 await shot('audit-events', '/admin/events',
-  `[...document.querySelectorAll('tr')].find((r) => r.textContent.includes('request for'))?.querySelector('details')?.setAttribute('open', '')`, 800)
+  `(([...document.querySelectorAll('tr')].find((r) => r.textContent.includes('ended the SSH session')) ?? [...document.querySelectorAll('tr')].find((r) => r.textContent.includes('request for')))?.querySelector('details'))?.setAttribute('open', '')`, 800)
 // The command line, last: its commands are audit events of their own.
 await shot('console-cli', '/admin/policies', `(async () => {
   const wait = (ms) => new Promise((r) => setTimeout(r, ms))

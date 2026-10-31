@@ -114,6 +114,30 @@ type integrity struct {
 	} `json:"export"`
 }
 
+// storage is how much the evidence takes (2026-10-31): the audit log's
+// events and their estimated size (audit.Log.Size), and the recordings kept
+// with their exact size.
+type storage struct {
+	Audit struct {
+		Events int64 `json:"events"`
+		Bytes  int64 `json:"approx_bytes"`
+	} `json:"audit_log"`
+	Recordings struct {
+		Count int64 `json:"count"`
+		Bytes int64 `json:"bytes"`
+	} `json:"recordings"`
+}
+
+func (h *Handler) countStorage(ctx context.Context) (storage, error) {
+	var st storage
+	var err error
+	if st.Audit.Events, st.Audit.Bytes, err = h.Audit.Size(ctx); err != nil {
+		return st, err
+	}
+	st.Recordings.Count, st.Recordings.Bytes, err = h.Sessions.RecordingTotals(ctx)
+	return st, err
+}
+
 func (h *Handler) countIntegrity(ctx context.Context, now time.Time) (integrity, error) {
 	var in integrity
 	if h.Chain != nil {
@@ -310,6 +334,11 @@ func (h *Handler) adminOverview(w http.ResponseWriter, r *http.Request) {
 		httpx.Internal(w, r, h.Log, err)
 		return
 	}
+	stored, err := h.countStorage(ctx)
+	if err != nil {
+		httpx.Internal(w, r, h.Log, err)
+		return
+	}
 	w.Header().Set("Cache-Control", "no-store")
 	httpx.WriteJSON(w, http.StatusOK, struct {
 		Sessions        session.Counts         `json:"sessions"`
@@ -322,7 +351,8 @@ func (h *Handler) adminOverview(w http.ResponseWriter, r *http.Request) {
 		Integrity       integrity              `json:"integrity"`
 		InFlight        access.InFlight        `json:"in_flight"`
 		Trends          trends                 `json:"trends"`
-	}{sessions, pending, targets, inventory, asgs, foldTallies(tallies), post, integ, flight, trend})
+		Storage         storage                `json:"storage"`
+	}{sessions, pending, targets, inventory, asgs, foldTallies(tallies), post, integ, flight, trend, stored})
 }
 
 // auditOverview answers GET /api/v1/audit/overview for admins and auditors.
