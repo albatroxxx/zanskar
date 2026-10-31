@@ -47,6 +47,22 @@ describe('Directory user sync in the list', () => {
     expect(await screen.findByText('Keycloak: 5 listed · 1 created · 1 in conflict (bob)')).toBeDefined()
   })
 
+  // 2026-11-01: the run's notice stayed until the page was left. Its x
+  // dismisses it, and the same result from the next run shows again.
+  it('dismisses the run\'s notice, and shows the next one', async () => {
+    serve()
+    vi.spyOn(api, 'post').mockResolvedValue({ enabled: true, interval_minutes: 15, running: false, last: run({ created: 0, disabled: 0 }), next_at: null } as never)
+    render(<IdentityProviders />)
+    const user = userEvent.setup()
+    const row = (await screen.findByText('Keycloak')).closest('tr')!
+    await user.click(within(row).getByRole('button', { name: 'Sync now' }))
+    const notice = await screen.findByText('Keycloak: 5 listed')
+    await user.click(within(notice.closest('.alert') as HTMLElement).getByRole('button', { name: 'Dismiss' }))
+    expect(screen.queryByText('Keycloak: 5 listed')).toBeNull()
+    await user.click(within(row).getByRole('button', { name: 'Sync now' }))
+    expect(await screen.findByText('Keycloak: 5 listed')).toBeDefined()
+  })
+
   it('names a failed run', async () => {
     serve([{ ...kc, sync: { ...kc.sync, last: run({ ok: false, error: 'keycloak admin API refused the client (HTTP 403)' }) } }])
     vi.spyOn(api, 'post').mockResolvedValue({ enabled: true, interval_minutes: 15, running: false, last: run({ ok: false, error: 'list the directory: HTTP 403' }) } as never)

@@ -46,7 +46,6 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .sidebar nav a .nav-badge { margin-left: auto; min-width: 20px; padding: 1px 6px; border-radius: 999px; background: var(--accent); color: var(--accent-fg); font-size: 0.72rem; font-weight: 600; text-align: center; line-height: 1.5; }
 .access-notices { display: flex; flex-direction: column; gap: 8px; margin-bottom: 12px; }
 .access-notices .alert { display: flex; align-items: center; gap: 12px; margin-bottom: 0; }
-.access-notices .grow { flex: 1; }
 .sidebar nav a.active { background: var(--accent-soft); color: var(--accent); font-weight: 600; box-shadow: inset 3px 0 0 var(--accent); }
 .sidebar .spacer { flex: 1; }
 .sidebar .me { border-top: 1px solid var(--line); padding-top: 12px; font-size: 0.86rem; color: var(--fg-muted); display: flex; flex-direction: column; gap: 6px; }
@@ -274,7 +273,14 @@ td.actions > * + * { margin-left: 8px; }
 .badge.warn { background: var(--warn-soft); color: var(--warn); }
 .badge.danger { background: var(--danger-soft); color: var(--danger); }
 .badge.accent { background: var(--accent-soft); color: var(--accent); }
-.alert { padding: 10px 12px; border-radius: var(--radius); border: 1px solid var(--line); background: var(--bg-sunken); margin-bottom: 12px; }
+.alert { display: flex; align-items: flex-start; gap: 10px; padding: 10px 12px; border-radius: var(--radius); border: 1px solid var(--line); background: var(--bg-sunken); margin-bottom: 12px; }
+.alert-body { flex: 1; min-width: 0; }
+/* Every notice can be dismissed (2026-11-01): an x in its own colour, at the
+   top right, a square to hit. */
+.alert-close { flex: none; display: inline-flex; margin: -3px -5px -3px 0; padding: 3px; border: 0; border-radius: var(--radius); background: none; color: inherit; opacity: 0.7; cursor: pointer; }
+.alert-close:hover, .alert-close:focus-visible { opacity: 1; background: color-mix(in srgb, currentColor 12%, transparent); }
+.alert-close svg, .remove-btn svg { display: block; }
+.remove-btn { padding: 5px; }
 .alert.danger { background: var(--danger-soft); border-color: var(--danger); color: var(--danger); }
 .alert.ok { background: var(--ok-soft); border-color: var(--ok); color: var(--ok); }
 .alert.warn { background: var(--warn-soft); border-color: var(--warn); color: var(--warn); }

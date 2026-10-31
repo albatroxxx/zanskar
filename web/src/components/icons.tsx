@@ -360,10 +360,10 @@ export function RestoreIcon() {
   )
 }
 
-/** CloseIcon shuts a panel. */
-export function CloseIcon() {
+/** CloseIcon shuts a panel, dismisses a notice, or takes a row out of a list. */
+export function CloseIcon({ size = 16 }: { size?: number }) {
   return (
-    <svg {...svgProps(16)}>
+    <svg {...svgProps(size)}>
       <line x1="6" y1="6" x2="18" y2="18" />
       <line x1="18" y1="6" x2="6" y2="18" />
     </svg>

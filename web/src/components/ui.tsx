@@ -1,7 +1,7 @@
-import { Children, cloneElement, isValidElement, useEffect, useId, useRef, type KeyboardEvent as ReactKeyboardEvent, type ReactElement, type ReactNode } from 'react'
+import { Children, cloneElement, isValidElement, useEffect, useId, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactElement, type ReactNode } from 'react'
 import { Link } from 'react-router-dom'
 import { useSubmit } from './submit'
-import { StateIcon } from './icons'
+import { CloseIcon, StateIcon } from './icons'
 
 export function PageHead({ title, lead, children }: { title: string; lead?: string; children?: ReactNode }) {
   return (
@@ -138,8 +138,36 @@ function Sparkline({ days, values, noun }: Trend) {
   )
 }
 
-export function Alert({ tone, children }: { tone?: 'ok' | 'warn' | 'danger'; children: ReactNode }) {
-  return <div className={'alert' + (tone ? ' ' + tone : '')} role={tone === 'danger' ? 'alert' : 'status'}>{children}</div>
+/**
+ * Alert is a notice: what an action did, or what needs attention. Every one
+ * has an x that dismisses it (2026-11-01: "Keycloak: 1 listed" stayed until
+ * the page was left). With onDismiss the caller clears the notice it holds,
+ * so the next one shows; without, the alert hides itself, and a different
+ * message (a string) shows again.
+ */
+export function Alert({ tone, children, onDismiss }: { tone?: 'ok' | 'warn' | 'danger'; children: ReactNode; onDismiss?: () => void }) {
+  const text = typeof children === 'string' ? children : null
+  const [dismissed, setDismissed] = useState<{ text: string | null } | null>(null)
+  if (dismissed && (dismissed.text === null || dismissed.text === text)) return null
+  return (
+    <div className={'alert' + (tone ? ' ' + tone : '')} role={tone === 'danger' ? 'alert' : 'status'}>
+      <div className="alert-body">{children}</div>
+      <button type="button" className="alert-close" aria-label="Dismiss" title="Dismiss" onClick={() => (onDismiss ? onDismiss() : setDismissed({ text }))}>
+        <CloseIcon size={18} />
+      </button>
+    </div>
+  )
+}
+
+/** RemoveButton takes a row out of a list being edited (a tag, a group
+ *  mapping, a time window): an x large enough to see and hit (2026-11-01;
+ *  the "×" glyph was a few pixels wide). */
+export function RemoveButton({ label, onClick }: { label: string; onClick: () => void }) {
+  return (
+    <button type="button" className="btn sm ghost remove-btn" aria-label={label} title={label} onClick={onClick}>
+      <CloseIcon size={18} />
+    </button>
+  )
 }
 
 // Dialogs nest: a detail dialog opens edit, IAM and confirm dialogs on top of

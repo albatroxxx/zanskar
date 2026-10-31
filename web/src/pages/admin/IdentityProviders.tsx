@@ -3,7 +3,7 @@ import { api, errorMessage } from '../../api/client'
 import { fmtTime } from '../../api/format'
 import type { Group, Page, Role } from '../../api/types'
 import { useSubmit } from '../../components/submit'
-import { Alert, Badge, Confirm, Empty, Field, Modal, PageHead } from '../../components/ui'
+import { Alert, Badge, Confirm, Empty, Field, Modal, PageHead, RemoveButton } from '../../components/ui'
 import { useList } from './lib'
 import { mappingRows, rowsToMapping, type MappingRow } from './groupMapping'
 import { StateIcon } from '../../components/icons'
@@ -148,7 +148,7 @@ export function IdentityProviders() {
         <button className="btn primary" onClick={() => setEditing('new')}>Add provider</button>
       </PageHead>
       {err && <Alert tone="danger">{err}</Alert>}
-      {notice && <Alert tone={notice.tone}>{notice.text}</Alert>}
+      {notice && <Alert tone={notice.tone} onDismiss={() => setNotice(null)}>{notice.text}</Alert>}
       <div className="card table-wrap">
         {items === null ? (
           err ? null : <Empty>Loading…</Empty>
@@ -601,7 +601,7 @@ function GroupMappingEditor({ rows, groups, onChange, placeholder }: { rows: Map
             {r.group && groups.length === 0 && <option value={r.group}>{r.group}</option>}
             {groups.map((g) => <option key={g.id} value={g.id}>{g.name}</option>)}
           </select>
-          <button type="button" className="btn sm ghost" aria-label={`Remove mapping ${r.external.trim() || i + 1}`} onClick={() => onChange(rows.filter((_, j) => j !== i))}>×</button>
+          <RemoveButton label={`Remove mapping ${r.external.trim() || i + 1}`} onClick={() => onChange(rows.filter((_, j) => j !== i))} />
         </div>
       ))}
       <div>
