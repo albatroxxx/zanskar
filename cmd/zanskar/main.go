@@ -315,7 +315,7 @@ func serve(ctx context.Context) error {
 	}
 	authHandler.ExternalLogin = ldapExternalAuth{ldap.NewLogin(idpRepo, provisioner, auditLog, log)}
 	oidcHandler := &oidc.Handler{Providers: idpRepo, Provisioner: provisioner, Sessions: sessions, Audit: auditLog, Log: log, StateKey: stateKey, MFAEnrolled: totp.Enrolled, RequireMFA: requireMFA,
-		BaseURL: cfg.PublicURL, Ring: ring}
+		BaseURL: cfg.PublicURL, ProxyTLS: cfg.TrustProxyTLS, Ring: ring}
 	authHandler.ProviderLogout = oidcHandler.LogoutURL
 	vault := credential.NewVault(db, ring)
 	targets := target.NewRepo(db)
@@ -382,7 +382,7 @@ func serve(ctx context.Context) error {
 		Directories: map[idp.Type]idp.Directory{idp.TypeOIDC: &oidc.KeycloakDirectory{}, idp.TypeLDAP: &ldap.Authenticator{}}}
 	// Providers that push their people over SCIM 2.0 (Okta, Entra ID,
 	// OneLogin, JumpCloud, PingOne, Authentik) reach the same lifecycle.
-	scimHandler := &scim.Handler{Providers: idpRepo, Provisioner: provisioner, Audit: auditLog, Log: log, BaseURL: cfg.PublicURL,
+	scimHandler := &scim.Handler{Providers: idpRepo, Provisioner: provisioner, Audit: auditLog, Log: log, BaseURL: cfg.PublicURL, ProxyTLS: cfg.TrustProxyTLS,
 		Lifecycle: &idp.Lifecycle{Users: users, Sessions: sessions, Revoker: connectHandler, Audit: auditLog, Log: log}}
 	// The bell (ADR 0032): once a day, is there a newer release? The
 	// runtime setting is read before each check so a switch-off applies live.

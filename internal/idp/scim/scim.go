@@ -55,6 +55,8 @@ type Handler struct {
 	// BaseURL is the public origin, as for OIDC; empty derives it from the
 	// request.
 	BaseURL string
+	// ProxyTLS: TLS ends at a proxy in front, so a derived origin is https.
+	ProxyTLS bool
 	// Limiter slows an address that presents wrong tokens; nil makes one.
 	Limiter *auth.IPLimiter
 	now     func() time.Time
@@ -876,7 +878,7 @@ func (h *Handler) base(r *http.Request) string {
 	origin := strings.TrimRight(h.BaseURL, "/")
 	if origin == "" {
 		scheme := "http"
-		if r.TLS != nil {
+		if r.TLS != nil || h.ProxyTLS {
 			scheme = "https"
 		}
 		origin = scheme + "://" + r.Host

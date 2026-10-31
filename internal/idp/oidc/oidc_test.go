@@ -580,6 +580,38 @@ func TestStartUsesThePublicURL(t *testing.T) {
 	}
 }
 
+// TestStartBehindATLSProxyWithoutPublicURL (2026-10-31, the live gateway
+// behind Caddy with no public URL): the request reaches the gateway in
+// plain HTTP, but the browser was on HTTPS, so the redirect URI is https on
+// the request's host, the one the console shows to register. Without
+// ProxyTLS a plain request still derives http, as before.
+func TestStartBehindATLSProxyWithoutPublicURL(t *testing.T) {
+	f := newFakeIdP(t)
+	e, id := newEnv(t, f, idp.Config{OIDC: &idp.OIDCConfig{ClientID: "cid", ClientSecret: "s"}, AutoProvision: true, DefaultRoles: []user.Role{user.RoleUser}})
+	client := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	redirect := func() string {
+		t.Helper()
+		res, err := client.Get(e.app.URL + "/api/v1/auth/oidc/" + id + "/start")
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = res.Body.Close()
+		loc, err := url.Parse(res.Header.Get("Location"))
+		if err != nil || res.StatusCode != http.StatusFound {
+			t.Fatalf("start: %d %v", res.StatusCode, err)
+		}
+		return loc.Query().Get("redirect_uri")
+	}
+	host := strings.TrimPrefix(e.app.URL, "http://")
+	if got, want := redirect(), "http://"+host+"/api/v1/auth/oidc/"+id+"/callback"; got != want {
+		t.Fatalf("plain, no proxy: redirect_uri %q, want %q", got, want)
+	}
+	e.h.ProxyTLS = true
+	if got, want := redirect(), "https://"+host+"/api/v1/auth/oidc/"+id+"/callback"; got != want {
+		t.Fatalf("behind a TLS proxy: redirect_uri %q, want %q", got, want)
+	}
+}
+
 // TestDomainGateNeedsAVerifiedEmail: allowed_domains was checked against the
 // email claim whatever the provider said about it (L12), so on a provider
 // where people edit their own address anyone could pass the gate. The email
