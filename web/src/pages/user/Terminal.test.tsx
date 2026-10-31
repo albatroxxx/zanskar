@@ -1,11 +1,11 @@
-import { act, cleanup, render, screen } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { Terminal } from './Terminal'
 
 /** The parts of xterm the page drives, recorded so the tests can read them back. */
-interface FakeTerm { cols: number; rows: number; written: Uint8Array[]; data: ((d: string) => void) | null; resize: ((s: { cols: number; rows: number }) => void) | null; disposed: boolean; keyHandler: ((e: KeyboardEvent) => boolean) | null }
+interface FakeTerm { cols: number; rows: number; written: Uint8Array[]; data: ((d: string) => void) | null; resize: ((s: { cols: number; rows: number }) => void) | null; disposed: boolean; keyHandler: ((e: KeyboardEvent) => boolean) | null; focused: number }
 const g = vi.hoisted(() => ({ terms: [] as FakeTerm[], sockets: [] as FakeSocket[] }))
 
 interface FakeSocket {
@@ -29,7 +29,8 @@ vi.mock('@xterm/xterm', () => ({
     constructor() { g.terms.push(this as unknown as FakeTerm) }
     loadAddon() {}
     open() {}
-    focus() {}
+    focused = 0
+    focus() { this.focused++ }
     write(b: Uint8Array) { this.written.push(b) }
     onData(fn: (d: string) => void) { this.data = fn; return { dispose: () => { this.data = null } } }
     onResize(fn: (s: { cols: number; rows: number }) => void) { this.resize = fn; return { dispose: () => { this.resize = null } } }
@@ -194,5 +195,23 @@ describe('Terminal, leaving by keyboard', () => {
       expect(e.defaultPrevented).toBe(false)
       expect(document.activeElement?.closest('.term-bar')).toBeNull()
     }
+  })
+
+  it('goes back to the terminal on Ctrl+Shift+F6 from the bar, once', () => {
+    open()
+    message(new TextEncoder().encode('$ ').buffer)
+    const term = g.terms[0]
+    term.keyHandler!(new KeyboardEvent('keydown', { key: 'F6', ctrlKey: true, shiftKey: true, cancelable: true }))
+    const button = document.activeElement as HTMLElement
+    expect(button.closest('.term-bar')).not.toBeNull()
+    const before = term.focused
+    fireEvent.keyDown(button, { key: 'F6' })
+    fireEvent.keyDown(button, { key: 'F6', ctrlKey: true, shiftKey: true, altKey: true })
+    expect(term.focused).toBe(before)
+    fireEvent.keyDown(button, { key: 'F6', ctrlKey: true, shiftKey: true })
+    expect(term.focused).toBe(before + 1)
+    // Inside the terminal the keystroke is xterm's handler's, not this one.
+    fireEvent.keyDown(document.querySelector('.term-host')!, { key: 'F6', ctrlKey: true, shiftKey: true })
+    expect(term.focused).toBe(before + 1)
   })
 })

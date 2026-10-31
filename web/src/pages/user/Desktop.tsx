@@ -192,9 +192,28 @@ function DesktopSession({ state }: { state: SessionState }) {
           })
         }
       }
+      // After CONTROLS_KEY the keyboard works the page's controls: Tab, Enter
+      // and Space reach the bar and its panels (review U2) until focus leaves
+      // the page, CONTROLS_KEY is pressed again or the desktop is clicked. A
+      // control clicked with the mouse does not count; typing then still goes
+      // to the desktop, as before.
+      let onControls = false
+      const keyboardOnControls = () => {
+        const el = document.activeElement
+        onControls = onControls && el !== null && el !== document.body && !!pageRef.current?.contains(el)
+        return onControls
+      }
+      const backToDesktop = () => {
+        if (!onControls) return
+        onControls = false
+        ;(document.activeElement as HTMLElement | null)?.blur()
+      }
       const mouse = new Guacamole.Mouse(client.getDisplay().getElement())
       const send = (m: unknown) => client.sendMouseState(m as never)
-      mouse.onmousedown = mouse.onmouseup = mouse.onmousemove = send
+      // The library cancels a press on the desktop, so focus would stay on the
+      // control the keyboard was on; the click itself hands the keys back.
+      mouse.onmousedown = (m: unknown) => { backToDesktop(); send(m) }
+      mouse.onmouseup = mouse.onmousemove = send
       const kb = new Guacamole.Keyboard(document)
       keyboardRef.current = kb
       // Key events go out in order through one queue. A paste keystroke
@@ -207,11 +226,19 @@ function DesktopSession({ state }: { state: SessionState }) {
       // belong to that field, not to the desktop: returning true tells the
       // library to leave the browser's default alone instead of preventing it.
       kb.onkeydown = (k: number) => {
+        const controlsKey = isControlsKey(k, kb.modifiers)
+        if (keyboardOnControls()) {
+          if (controlsKey) backToDesktop()
+          return true
+        }
         if (typingInField()) return true
-        // CONTROLS_KEY leaves the desktop for its controls instead of going to
-        // the remote machine; the browser keeps it. Ctrl and Shift have already
-        // gone out, and their releases follow, since a button is not a field.
-        if (isControlsKey(k, kb.modifiers)) {
+        // CONTROLS_KEY moves the keyboard to the bar. F6 still goes out after
+        // the Ctrl and Shift already sent, so the remote machine sees a whole
+        // Ctrl+Shift+F6, not a bare Ctrl+Shift, which Windows can take as its
+        // keyboard-layout switch.
+        if (controlsKey) {
+          void sendKey(1, k)
+          onControls = true
           pageRef.current?.querySelector<HTMLElement>('.term-bar button')?.focus()
           return true
         }
@@ -219,6 +246,8 @@ function DesktopSession({ state }: { state: SessionState }) {
         void sendKey(1, k, paste ? pullBrowserClipboard : undefined)
         return false
       }
+      // Releases always go out, Ctrl's and Shift's after CONTROLS_KEY among
+      // them; releasing a key the desktop never saw pressed does nothing.
       kb.onkeyup = (k: number) => {
         if (typingInField()) return
         void sendKey(0, k)
@@ -396,7 +425,7 @@ function DesktopSession({ state }: { state: SessionState }) {
         <span className="stat">{(ended ? 'ran for ' : 'elapsed ') + fmtSeconds(elapsed)}</span>
         <span className="grow" />
         {!ended && !connected && <span className="stat hint" role="status">Connecting…</span>}
-        {!ended && <span className="stat hint" title={`Press ${CONTROLS_KEY} to move from the desktop to these controls`}>{CONTROLS_KEY}: controls</span>}
+        {!ended && <span className="stat hint" title={`Press ${CONTROLS_KEY} to move between the desktop and these controls`}>{CONTROLS_KEY}: controls</span>}
         {ended ? (
           <span className="stat">Ended · recording saved</span>
         ) : (

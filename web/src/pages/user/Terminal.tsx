@@ -59,6 +59,15 @@ function TerminalSession({ state }: { state: SessionState }) {
       }
       return true
     })
+    // Pressed again on the bar or in the files panel, it goes back to the
+    // terminal; inside the terminal the handler above has it.
+    const page = pageRef.current
+    const backToTerminal = (e: KeyboardEvent) => {
+      if (!isControlsEvent(e) || host.current?.contains(e.target as Node)) return
+      e.preventDefault()
+      term.focus()
+    }
+    page?.addEventListener('keydown', backToTerminal)
 
     const scheme = location.protocol === 'https:' ? 'wss' : 'ws'
     const url = `${scheme}://${location.host}${state.ws_path}?ticket=${encodeURIComponent(state.ticket)}&cols=${term.cols}&rows=${term.rows}`
@@ -124,6 +133,7 @@ function TerminalSession({ state }: { state: SessionState }) {
       sub.dispose()
       resize.dispose()
       ws.close()
+      page?.removeEventListener('keydown', backToTerminal)
       term.dispose()
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -146,7 +156,7 @@ function TerminalSession({ state }: { state: SessionState }) {
         <span className="stat">{status === 'connecting' ? 'connecting…' : (ended ? 'ran for ' : 'elapsed ') + fmtSeconds(elapsed)}</span>
         {!ended && <span className={'stat' + (idle > 600 ? ' warn' : '')}>idle {fmtSeconds(idle)}</span>}
         <span className="grow" />
-        {!ended && <span className="stat hint" title={`Press ${CONTROLS_KEY} to move from the terminal to these controls`}>{CONTROLS_KEY}: controls</span>}
+        {!ended && <span className="stat hint" title={`Press ${CONTROLS_KEY} to move between the terminal and these controls`}>{CONTROLS_KEY}: controls</span>}
         <span className="sr-only" role="status">{status === 'live' && !ended ? `Connected. Press ${CONTROLS_KEY} to move from the terminal to the controls.` : ''}</span>
         {ended ? (
           <span className="stat">Ended · recording saved</span>
