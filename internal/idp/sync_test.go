@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"strings"
@@ -325,6 +326,43 @@ func TestSyncGuards(t *testing.T) {
 	}
 	if e2.byName(t, "boss").Status != user.StatusActive {
 		t.Fatal("the last admin was disabled")
+	}
+}
+
+// TestHolds (2026-10-31): a provider decides who its people are while it
+// exists, is enabled, and lists them or has them pushed; then an account it
+// took away is not an administrator's to enable.
+func TestHolds(t *testing.T) {
+	ctx := context.Background()
+	e := newProvisionEnv(t)
+	n := 0
+	create := func(name string, enabled bool, set func(*Config)) string {
+		t.Helper()
+		c := okOIDC()
+		n++
+		c.OIDC.Issuer = fmt.Sprintf("https://kc.example/realms/r%d", n)
+		set(c)
+		p := &Provider{Name: name, Type: TypeOIDC, Enabled: enabled}
+		if err := e.repo.Create(ctx, p, c); err != nil {
+			t.Fatal(err)
+		}
+		return p.ID
+	}
+	for _, tc := range []struct {
+		id        string
+		name      string
+		wantHolds bool
+	}{
+		{create("listed", true, func(c *Config) { c.SyncUsers = true }), "listed", true},
+		{create("pushed", true, func(c *Config) { c.SCIM = true }), "pushed", true},
+		{create("sign-in only", true, func(*Config) {}), "sign-in only", false},
+		{create("off", false, func(c *Config) { c.SyncUsers = true }), "off", false},
+		{"no-such-provider", "", false},
+	} {
+		name, holds, err := e.repo.Holds(ctx, tc.id)
+		if err != nil || name != tc.name || holds != tc.wantHolds {
+			t.Errorf("%s: (%q, %v, %v), want (%q, %v)", tc.id, name, holds, err, tc.name, tc.wantHolds)
+		}
 	}
 }
 

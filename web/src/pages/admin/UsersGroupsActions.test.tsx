@@ -65,6 +65,35 @@ describe('Users', () => {
     expect(screen.getByRole('columnheader', { name: 'Source' })).toBeDefined()
   })
 
+  // 2026-10-31, the live 1.9.0 report: a person deleted from Keycloak, the
+  // sync disabled their account, and the console let it be enabled again.
+  it('keeps Enable away from an account its provider took away, while the provider decides', async () => {
+    const gone = { ...carol, idp_id: 'p1', directory_removed_at: '2026-10-31T09:00:00Z' } as User
+    const byHand = { ...bob, status: 'disabled', idp_id: 'p1' } as User
+    const pushedOff = { ...carol, id: 'u4', username: 'dora', idp_id: 'p2', directory_removed_at: '2026-10-31T09:00:00Z' } as User
+    const get = serve([alice, gone, byHand, pushedOff])
+    const base = get.getMockImplementation() as (path: string) => Promise<unknown>
+    get.mockImplementation(async (path: string) => {
+      if (path.startsWith('/identity-providers'))
+        return {
+          items: [
+            { id: 'p1', name: 'Keycloak', type: 'oidc', enabled: true, config: { sync_users: true } },
+            { id: 'p2', name: 'Old IdP', type: 'oidc', enabled: false, config: { scim: true } },
+          ],
+        } as never
+      return base(path)
+    })
+    await show()
+    const enable = (username: string) => within(screen.getByLabelText(`actions for ${username}`)).getByRole('option', { name: 'Enable' }) as HTMLOptionElement
+    await waitFor(() => expect(enable('carol').disabled).toBe(true))
+    expect(enable('carol').title).toBe('Keycloak no longer has this person; the account is enabled again when it does')
+    expect(within(screen.getByText('carol').closest('tr') as HTMLElement).getByRole('button', { name: 'Disabled: Keycloak no longer has this person' })).toBeDefined()
+    // Disabled by an administrator: theirs to enable.
+    expect(enable('bob').disabled).toBe(false)
+    // A provider that no longer decides (here disabled) lets go of its people.
+    expect(enable('dora').disabled).toBe(false)
+  })
+
   it('shows each account, marks the signed-in one, and keeps disable and delete away from it', async () => {
     serve()
     await show()

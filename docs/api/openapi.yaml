@@ -1390,6 +1390,12 @@ paths:
 
         Setting `status` to `active` clears `failed_logins` and `locked_until`. Disabling or
         locking a user signs them out everywhere. You cannot disable or lock your own account.
+
+        An account its identity provider took away (`directory_removed_at` set: the user sync
+        or SCIM disabled it because the person left) keeps its status while that provider
+        exists, is enabled, and lists or pushes its people: a change of status answers 409
+        `left_provider`, and the account is enabled again when the provider has the person
+        again (ADR 0035, amended 2026-10-31). A name or email edit still applies.
       requestBody:
         required: true
         content:
@@ -5120,7 +5126,10 @@ components:
             - $ref: "#/components/schemas/Timestamp"
             - type: "null"
         directory_removed_at:
-          description: When the directory user sync disabled the account because the person left the directory (ADR 0035).
+          description: >
+            When the directory user sync or SCIM disabled the account because the person left
+            the provider (ADR 0035). While the provider still decides, the status cannot be
+            changed by hand; the mark goes when the person is back.
           oneOf:
             - $ref: "#/components/schemas/Timestamp"
             - type: "null"

@@ -488,6 +488,22 @@ func (r *Repo) MFAOwners(ctx context.Context) ([]string, error) {
 	return out, nil
 }
 
+// Holds reports whether a provider still decides who its people are
+// (2026-10-31): it exists, is enabled, and lists them (SyncUsers) or has
+// them pushed (SCIM), so an account it took away comes back only when it
+// has the person again. name is the provider's, for saying so; a provider
+// that no longer exists holds nothing.
+func (r *Repo) Holds(ctx context.Context, id string) (name string, holds bool, err error) {
+	op, err := r.Open(ctx, id)
+	if errors.Is(err, ErrNotFound) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, err
+	}
+	return op.Name, op.Enabled && (op.Config.SyncUsers || op.Config.SCIM), nil
+}
+
 // Delete removes a provider. Users and groups linked to it keep their rows
 // with idp_id set to NULL (schema ON DELETE SET NULL) and can no longer sign
 // in through it. Such a user with no password counts as unlinked, so the next

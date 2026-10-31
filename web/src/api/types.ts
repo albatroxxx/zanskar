@@ -19,6 +19,8 @@ export interface User {
   idp_id?: string
   /** No password of its own: it signs in through an identity provider, linked or waiting for its first sign-in. */
   provider_sign_in?: boolean
+  /** When the provider's sync or SCIM disabled the account because the person left it; cleared when they come back. */
+  directory_removed_at?: string
 }
 
 export interface Me {

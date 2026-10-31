@@ -24,12 +24,23 @@ export function UsersGroups() {
 
 type UserAction = 'roles' | 'password' | 'sessions' | 'mfa' | 'status' | 'delete'
 
-type Providers = Map<string, { name: string; type: string }>
+type Providers = Map<string, { name: string; type: string; holds: boolean }>
 
-/** useProviders names the identity providers by id, for the Source column. */
+/** useProviders names the identity providers by id, for the Source column,
+ *  and says which still decide who their people are: enabled, and listing
+ *  them or having them pushed (idp.Repo.Holds on the server). */
 function useProviders(): Providers {
-  const { items } = useList<{ id: string; name: string; type: string }>('/identity-providers')
-  return new Map((items ?? []).map((p) => [p.id, { name: p.name, type: p.type }]))
+  const { items } = useList<{ id: string; name: string; type: string; enabled?: boolean; config?: { sync_users?: boolean; scim?: boolean } }>('/identity-providers')
+  return new Map((items ?? []).map((p) => [p.id, { name: p.name, type: p.type, holds: !!p.enabled && !!(p.config?.sync_users || p.config?.scim) }]))
+}
+
+/** tookAway names the provider that disabled an account because its person
+ *  left, while that provider still decides (2026-10-31): the account comes
+ *  back when the person does, and is not an administrator's to enable. */
+function tookAway(u: User, providers: Providers): string | undefined {
+  if (!u.directory_removed_at || !u.idp_id) return undefined
+  const p = providers.get(u.idp_id)
+  return p?.holds ? p.name : undefined
 }
 
 /**
@@ -101,6 +112,7 @@ function Users() {
             <tbody>
               {items.map((u) => {
                 const self = u.id === me?.id
+                const leftFor = tookAway(u, providers)
                 return (
                   <tr key={u.id}>
                     <td className="mono">{u.username}{self && <span className="muted"> (you)</span>}</td>
@@ -113,7 +125,10 @@ function Users() {
                     </td>
                     <td>{u.roles.map((r) => <Badge key={r} tone={r === 'admin' ? 'accent' : undefined}>{r}</Badge>)}</td>
                     <td>
-                      <StateIcon state={u.status === 'active' ? 'ok' : 'warn'} label={u.status === 'active' ? 'Active' : u.status === 'locked' ? 'Locked' : 'Disabled'} />
+                      <StateIcon
+                        state={u.status === 'active' ? 'ok' : 'warn'}
+                        label={u.status === 'active' ? 'Active' : u.status === 'locked' ? 'Locked' : leftFor ? `Disabled: ${leftFor} no longer has this person` : 'Disabled'}
+                      />
                       {u.must_change_password && (
                         <>
                           {' '}
@@ -131,7 +146,11 @@ function Users() {
                         <option value="password">Reset password</option>
                         <option value="sessions">Revoke sessions</option>
                         <option value="mfa">Reset authenticator</option>
-                        {!self && <option value="status">{u.status === 'active' ? 'Disable' : 'Enable'}</option>}
+                        {!self && (
+                          <option value="status" disabled={!!leftFor} title={leftFor ? `${leftFor} no longer has this person; the account is enabled again when it does` : undefined}>
+                            {u.status === 'active' ? 'Disable' : 'Enable'}
+                          </option>
+                        )}
                         {!self && <option value="delete">Delete</option>}
                       </select>
                     </td>
