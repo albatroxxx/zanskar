@@ -98,6 +98,13 @@ export function Alert({ tone, children }: { tone?: 'ok' | 'warn' | 'danger'; chi
 // itself. Only the topmost one may answer Escape, so each registers on a shared
 // stack; the stack also decides when the page behind can scroll again.
 const openModals: symbol[] = []
+// The page's own overflow, saved when the first dialog opens and put back
+// when the last one closes. Each dialog used to save what it found, so one
+// opened over another saved the first one's `hidden`; when it was the last
+// to close (a delete closing the delete dialog and the detail dialog under
+// it in one render) it put `hidden` back and the page never scrolled again
+// (the live 1.9.0 console, 2026-10-31).
+let pageOverflow = ''
 
 // focusable lists what Tab can reach inside el, in order.
 function focusable(el: HTMLElement): HTMLElement[] {
@@ -116,15 +123,15 @@ export function Modal({ title, onClose, children, width }: { title: string; onCl
   // On unmount, return focus to whatever opened the dialog.
   useEffect(() => {
     const id = me.current
+    if (openModals.length === 0) pageOverflow = document.body.style.overflow
     openModals.push(id)
     const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null
-    const prevOverflow = document.body.style.overflow
     document.body.style.overflow = 'hidden'
     if (box.current && !box.current.contains(document.activeElement)) box.current.focus()
     return () => {
       const i = openModals.lastIndexOf(id)
       if (i >= 0) openModals.splice(i, 1)
-      if (openModals.length === 0) document.body.style.overflow = prevOverflow
+      if (openModals.length === 0) document.body.style.overflow = pageOverflow
       opener?.focus()
     }
   }, [])
