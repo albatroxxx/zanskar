@@ -24,21 +24,3 @@ export function keyQueue(send: (pressed: 0 | 1, keysym: number) => void) {
     return chain
   }
 }
-
-// The isolated browser (ADR 0034) runs Chromium in kiosk mode: no address
-// bar, no buttons. Its own shortcuts move it, sent as keystrokes like any
-// other: Alt+Left back, Alt+Right forward, F5 reload, Alt+Home to the home
-// page, which the image's policy sets to the application's start page.
-const ALT = 0xffe9
-export const browserKeys = {
-  back: [ALT, 0xff51],
-  forward: [ALT, 0xff53],
-  reload: [0xffc2],
-  home: [ALT, 0xff50],
-} as const
-
-/** pressCombo presses keys in order and releases them in reverse, through send. */
-export function pressCombo(send: (pressed: 0 | 1, keysym: number) => unknown, keys: readonly number[]) {
-  for (const k of keys) send(1, k)
-  for (const k of [...keys].reverse()) send(0, k)
-}

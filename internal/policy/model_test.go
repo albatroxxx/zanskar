@@ -56,6 +56,7 @@ func TestValidate(t *testing.T) {
 			p.Grants[0] = Grant{Kind: protocol.KindDatabase, Targets: []GrantTarget{{ID: "d1", Protocols: []string{"ssh"}}}}
 		}, `a database does not serve "ssh"`},
 		{"database on a host", func(p *Policy) { p.Grants[0].Targets[0].Protocols = []string{"database"} }, `a host does not serve "database"`},
+		{"developer tools on a host", func(p *Policy) { p.Grants[0].AllowDevTools = true }, "developer tools are for application grants only"},
 		{"a protocol twice", func(p *Policy) { p.Grants[0].Targets[0].Protocols = []string{"ssh", "ssh"} }, "given twice"},
 		{"tags with no key", func(p *Policy) { p.Grants[0].Tags = tags(map[string][]string{}, "ssh") }, "at least one key"},
 		{"a tag with no value", func(p *Policy) { p.Grants[0].Tags = tags(map[string][]string{"env": {}}, "ssh") }, "needs 1-16 values"},
@@ -245,5 +246,32 @@ func TestReferences(t *testing.T) {
 	}
 	if p.References("t2", "") || p.References("", "t1") || p.References("g1", "") {
 		t.Fatal("a reference across kinds, or by tag")
+	}
+}
+
+// TestEvaluateDevTools (ADR 0037): developer tools open only when every
+// grant that admits the person allows them, as the clipboard does; an
+// application grant may allow them, and validation keeps them there.
+func TestEvaluateDevTools(t *testing.T) {
+	ref := TargetRef{Kind: protocol.KindApplication, ID: "a1"}
+	app := func(name string, devtools bool) *Policy {
+		g := Grant{Kind: protocol.KindApplication, Targets: []GrantTarget{{ID: "a1", Protocols: []string{"http"}}}, Access: AccessStanding, SignIn: SignInTarget, AllowDevTools: devtools}
+		p := valid(g)
+		p.Name, p.ID = name, "id-"+name
+		p.Grants[0].ID = name + "-g"
+		if err := p.Validate(); err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		return p
+	}
+	now := time.Now()
+	if d := Evaluate([]*Policy{app("engineers", true)}, ref, "http", now); !d.Allowed || !d.AllowDevTools {
+		t.Fatalf("one grant allowing developer tools: %+v", d)
+	}
+	if d := Evaluate([]*Policy{app("engineers", true), app("everyone", false)}, ref, "http", now); !d.Allowed || d.AllowDevTools {
+		t.Fatalf("a second admitting grant without them must keep them closed: %+v", d)
+	}
+	if d := Evaluate([]*Policy{app("everyone", false)}, ref, "http", now); d.AllowDevTools {
+		t.Fatalf("off by default: %+v", d)
 	}
 }

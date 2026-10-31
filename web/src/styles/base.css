@@ -338,8 +338,6 @@ td.actions > * + * { margin-left: 8px; }
 .term-bar .btn:hover { background: var(--term-btn-hover); border-color: var(--term-fg-muted); }
 .term-bar .btn.danger { color: var(--term-danger); border-color: var(--term-danger-line); }
 .term-bar .btn.icon { padding: 4px 7px; }
-.term-bar .browser-nav { display: inline-flex; gap: 2px; }
-.term-bar .browser-nav .btn { min-width: 30px; }
 .term-bar .btn.icon svg { display: block; }
 /* guacamole-common-js gives the desktop's default layer `z-index: -1`. Without a
    stacking context here that canvas paints in the root stacking context, behind

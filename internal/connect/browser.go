@@ -108,7 +108,7 @@ func (h *Handler) browser(w http.ResponseWriter, r *http.Request, g *ticket.Gran
 	}()
 	bs, err := browsergw.Start(r.Context(), h.Log, h.DockerPath, browsergw.Spec{
 		SessionID: run.s.ID, Upstream: upstream, UpstreamIP: upstreamIP, TLSCA: ep.TLSCA,
-		Width: width, Height: height, BrowserImage: browserImage, RelayImage: relayImage, StateDir: h.StateDir,
+		Width: width, Height: height, DevTools: run.g.AllowDevTools, BrowserImage: browserImage, RelayImage: relayImage, StateDir: h.StateDir,
 	})
 	// Nothing else writes to the socket until the keepalive has stopped.
 	stopKeepalive()

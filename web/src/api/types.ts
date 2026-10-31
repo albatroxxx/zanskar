@@ -256,6 +256,8 @@ export interface PolicyGrant {
   require_mfa: boolean
   allow_clipboard: boolean
   allow_file_transfer: boolean
+  /** Chromium's developer tools in an application's isolated browser (ADR 0037); applications only. */
+  allow_devtools?: boolean
   idle_timeout_minutes: number
   max_session_minutes: number | null
   time_windows: TimeWindow[]

@@ -73,7 +73,7 @@ func (h *Handler) Recheck(ctx context.Context, userIDs []string) int {
 			h.Log.Warn("access changed; live session kept, it could not be checked", "session", l.SessionID, "err", err)
 			continue
 		}
-		if code != "" || (l.AllowClipboard && !d.AllowClipboard) || (l.AllowFileTransfer && !d.AllowFileTransfer) {
+		if code != "" || (l.AllowClipboard && !d.AllowClipboard) || (l.AllowFileTransfer && !d.AllowFileTransfer) || (l.AllowDevTools && !d.AllowDevTools) {
 			withdrawn = append(withdrawn, l)
 		}
 	}

@@ -659,7 +659,9 @@ certificate, no DNS record, nothing installed on the client.
   cloud metadata service or the gateway's own listener.
 - **What a session starts.** An internal network with no route out. A browser container,
   `ghcr.io/albatroxxx/zanskar-browser` (Debian's Chromium and TigerVNC), on that network
-  alone: kiosk mode, an unprivileged user, Chromium's own sandbox on, a read-only filesystem,
+  alone: a full browser window with Chromium's own address bar, tabs, Back, Forward, Reload
+  and Home (ADR 0037; kiosk mode until 1.9), an unprivileged user, Chromium's own sandbox on,
+  `--enable-low-end-device-mode`, a read-only filesystem,
   no capabilities, `no-new-privileges`, pid and memory limits, and a seccomp profile that is
   Docker's default plus the namespace and chroot calls the sandbox needs. A relay container,
   the gateway's own image running `zanskar apprelay`, on that network and on the default
@@ -667,10 +669,15 @@ certificate, no DNS record, nothing installed on the client.
   address, and exposes the browser's VNC port on the bridge side, where guacd connects to it
   with a password made for the session; it accepts exactly one VNC connection. The browser's
   resolver maps the upstream's host name to the relay and everything else to nothing.
-  Chromium policy allows the upstream's origin only and blocks downloads, printing,
-  developer tools, extensions, sign-in, sync, password saving, autofill, safe browsing and
-  metrics. Everything is destroyed when the session ends; a reaper removes what a crash
-  leaves behind.
+  Chromium policy allows the upstream's origin only, opens it in every new tab and on Home,
+  and blocks every other URL (with `chrome://`, `file://`, `javascript:` and `view-source:`
+  named), downloads, printing, extensions, sign-in, sync, password saving, autofill, safe
+  browsing, metrics and the command-line warning bar. Developer tools are off unless the
+  grant that admits the person allows them (**Developer tools**, an application grant's
+  condition, off by default; where several grants admit, every one must allow them, and
+  withdrawing them ends a running session at the next re-check). Closing the last window
+  opens the start page again; the session ends from the console. Everything is destroyed
+  when the session ends; a reaper removes what a crash leaves behind.
 - **Sessions** are desktop sessions with protocol `http`: on the Sessions pages, terminable
   there, shadowable, recorded as a pixel stream and replayable, with the policy's idle and
   maximum limits and its clipboard rule. The audit chain records `session.connect`,

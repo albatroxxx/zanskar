@@ -169,7 +169,7 @@ function GrantsTable({ policy, nameOf }: { policy: Policy; nameOf: (id: string) 
             <td>{targetsCell(g, nameOf)}</td>
             <td>{g.access === 'approval' ? 'Approval' : 'Standing'}</td>
             <td>{g.require_mfa ? 'MFA' : <Badge tone={g.access === 'approval' ? 'warn' : 'danger'}>no MFA</Badge>}</td>
-            <td>{[g.allow_clipboard && 'clipboard', g.allow_file_transfer && 'files'].filter(Boolean).join(', ') || <span className="muted">—</span>}</td>
+            <td>{[g.allow_clipboard && 'clipboard', g.allow_file_transfer && 'files', g.allow_devtools && 'dev tools'].filter(Boolean).join(', ') || <span className="muted">—</span>}</td>
             <td>{g.sign_in === 'own' ? 'Own login' : 'Target'}</td>
             <td>
               {g.idle_timeout_minutes}m / {g.max_session_minutes ? `${g.max_session_minutes}m` : '—'}

@@ -6047,6 +6047,13 @@ components:
         allow_file_transfer:
           type: boolean
           default: false
+        allow_devtools:
+          type: boolean
+          default: false
+          description: >
+            Chromium's developer tools in the application's isolated browser (ADR 0037).
+            Allowed only on an `application` grant; where several grants admit a person, every
+            one must allow them.
         idle_timeout_minutes:
           type: integer
           minimum: 1

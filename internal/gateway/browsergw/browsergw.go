@@ -57,6 +57,9 @@ type Spec struct {
 	TLSCA string
 	// Width and Height are the screen, the size the user's window had.
 	Width, Height int
+	// DevTools opens Chromium's developer tools to this session (ADR 0037):
+	// a grant allows it, and the browser is this session's alone.
+	DevTools bool
 	// BrowserImage and RelayImage are the two images; the relay's is the
 	// gateway's own.
 	BrowserImage, RelayImage string
@@ -157,6 +160,7 @@ func browserArgs(spec Spec, network, browserName, relayInternalIP, password, sec
 		"--security-opt", "no-new-privileges", "--security-opt", "seccomp="+seccompPath, "--cap-drop", "ALL",
 		"--pids-limit", "512", "--memory", "1536m", "--cpus", "2",
 		"-e", "APP_URL", "-e", "APP_ORIGIN", "-e", "RESOLVER_RULES", "-e", "VNC_PASSWORD", "-e", "SCREEN_W", "-e", "SCREEN_H", "-e", "CA_PEM",
+		"-e", "DEVTOOLS",
 		spec.BrowserImage,
 	)
 	origin := spec.Upstream.Scheme + "://" + spec.Upstream.Host
@@ -168,6 +172,7 @@ func browserArgs(spec Spec, network, browserName, relayInternalIP, password, sec
 		"SCREEN_W=" + strconv.Itoa(spec.Width),
 		"SCREEN_H=" + strconv.Itoa(spec.Height),
 		"CA_PEM=" + spec.TLSCA,
+		"DEVTOOLS=" + strconv.FormatBool(spec.DevTools),
 	}
 	return args, env
 }

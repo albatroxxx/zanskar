@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -286,13 +287,12 @@ func TestApplicationSessionThroughRealBrowser(t *testing.T) {
 	}
 }
 
-// TestApplicationBrowserControls (2026-10-30): the isolated browser runs
-// Chromium in kiosk mode, with no address bar and no buttons, so a link to a
-// site the policy blocks was a dead end. The console's bar sends Chromium's
-// own shortcuts; this proves Chromium in the shipped image obeys them over
-// guacd: Back off a blocked page, Back and Forward between pages, Reload, and
-// Home to the application's start page. Every page is served no-store, so
-// each navigation is a request in nginx's log.
+// TestApplicationBrowserControls (2026-10-30, a full browser since
+// 2026-10-31, ADR 0037): Chromium's own shortcuts work over guacd in the
+// shipped image: Back off a blocked page, Back and Forward between pages,
+// Reload, and Home to the application's start page (the Home button's
+// policy). Each page reports every time it is shown, so a page restored from
+// the back/forward cache counts as well as one fetched again.
 func TestApplicationBrowserControls(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Minute)
 	defer cancel()
@@ -301,9 +301,12 @@ func TestApplicationBrowserControls(t *testing.T) {
 			return "printf '%s' '<!doctype html><title>" + name + "</title><body>" + body + "</body>' > /usr/share/nginx/html/" + name
 		}
 		dbtest.Docker(t, "exec", nginx, "sh", "-c", strings.Join([]string{
-			// Each page focuses its one link, so Enter follows it.
-			page("index.html", `<a href="/two.html">two</a><script>document.querySelector("a").focus()</script>`),
-			page("two.html", `<a href="https://example.com/">elsewhere</a><script>document.querySelector("a").focus()</script>`),
+			// Each page focuses its one link, so Enter follows it, and asks
+			// for /shown<its path> whenever it is shown: a full browser
+			// restores Back and Forward from its back/forward cache without
+			// fetching the page (2026-10-31; kiosk mode fetched it again).
+			page("index.html", `<a href="/two.html">two</a><script>document.querySelector("a").focus();addEventListener("pageshow",()=>fetch("/shown"+location.pathname+"?"+Date.now()))</script>`),
+			page("two.html", `<a href="https://example.com/">elsewhere</a><script>document.querySelector("a").focus();addEventListener("pageshow",()=>fetch("/shown"+location.pathname+"?"+Date.now()))</script>`),
 			`sed -i 's|location / {|location / { add_header Cache-Control no-store;|' /etc/nginx/conf.d/default.conf`,
 			"nginx -s reload",
 		}, " && "))
@@ -313,8 +316,9 @@ func TestApplicationBrowserControls(t *testing.T) {
 		_ = app.ws.Write(ctx, websocket.MessageText, []byte(guac.Encode("disconnect")))
 		time.Sleep(2 * time.Second)
 	}()
+	// count is how many times the page at path has been shown.
 	count := func(path string) int {
-		return strings.Count(dbtest.Docker(t, "logs", app.nginx), `"GET `+path+` HTTP/1.1"`)
+		return strings.Count(dbtest.Docker(t, "logs", app.nginx), `"GET /shown`+path+`?`)
 	}
 	seen := func(path string, n int, within time.Duration) bool {
 		for end := time.Now().Add(within); time.Now().Before(end); time.Sleep(250 * time.Millisecond) {
@@ -410,5 +414,62 @@ exec timeout 60 chromium --headless --disable-gpu --no-sandbox --user-data-dir=/
 	}
 	if got := render(`{"URLBlocklist":["*"]}`); strings.Contains(got, "rendered") {
 		t.Fatal("a policy in /etc/chromium/policies/managed did not block the page: the entrypoint's policy would not be in force")
+	}
+}
+
+// TestBrowserEntrypointPolicy (ADR 0037): the entrypoint writes a policy
+// Chromium can read (valid JSON, assembled by the shell) that keeps the
+// browser on the application's origin with its internal pages, files,
+// javascript: and view-source: blocked by name, gives every new tab and
+// Home the application, and opens developer tools only when the session's
+// grant does. Needs ZANSKAR_TEST_DOCKER=1 and ZANSKAR_TEST_BROWSER_IMAGE.
+func TestBrowserEntrypointPolicy(t *testing.T) {
+	dbtest.RequireDocker(t)
+	image := os.Getenv("ZANSKAR_TEST_BROWSER_IMAGE")
+	if image == "" {
+		t.Skip("set ZANSKAR_TEST_BROWSER_IMAGE to a built deploy/browser image")
+	}
+	written := func(devtools string) map[string]any {
+		t.Helper()
+		out := dbtest.Docker(t, "run", "--rm", "--network", "none", "--read-only", "--tmpfs", "/tmp",
+			"--tmpfs", "/etc/chromium/policies/managed:uid=10001,gid=10001,mode=700",
+			"-e", "APP_URL=http://wiki.internal:8080/", "-e", "APP_ORIGIN=http://wiki.internal:8080",
+			"-e", "RESOLVER_RULES=MAP * ~NOTFOUND", "-e", "VNC_PASSWORD=probe123", "-e", "DEVTOOLS="+devtools,
+			"--entrypoint", "sh", image, "-c",
+			"/entrypoint.sh >/dev/null 2>&1 & for i in $(seq 50); do [ -s /etc/chromium/policies/managed/zanskar.json ] && break; sleep 0.1; done; cat /etc/chromium/policies/managed/zanskar.json")
+		var p map[string]any
+		if err := json.Unmarshal([]byte(out), &p); err != nil {
+			t.Fatalf("DEVTOOLS=%s: the policy is not JSON (%v):\n%s", devtools, err, out)
+		}
+		return p
+	}
+	list := func(p map[string]any, key string) []string {
+		var out []string
+		for _, v := range p[key].([]any) {
+			out = append(out, v.(string))
+		}
+		return out
+	}
+	off := written("false")
+	if off["DeveloperToolsAvailability"] != float64(2) || !slices.Contains(list(off, "URLBlocklist"), "devtools://*") || slices.Contains(list(off, "URLAllowlist"), "devtools://*") {
+		t.Fatalf("developer tools must be off and devtools:// blocked: %v", off)
+	}
+	for _, blocked := range []string{"*", "chrome://*", "file://*", "javascript:*", "view-source:*"} {
+		if !slices.Contains(list(off, "URLBlocklist"), blocked) {
+			t.Errorf("%s is not blocked: %v", blocked, off["URLBlocklist"])
+		}
+	}
+	if !slices.Equal(list(off, "URLAllowlist"), []string{"http://wiki.internal:8080"}) {
+		t.Errorf("allowlist: %v", off["URLAllowlist"])
+	}
+	if off["NewTabPageLocation"] != "http://wiki.internal:8080/" || off["HomepageLocation"] != "http://wiki.internal:8080/" || off["ShowHomeButton"] != true || off["DownloadRestrictions"] != float64(3) {
+		t.Errorf("start pages, Home or downloads: %v", off)
+	}
+	on := written("true")
+	if on["DeveloperToolsAvailability"] != float64(1) || !slices.Contains(list(on, "URLAllowlist"), "devtools://*") || slices.Contains(list(on, "URLBlocklist"), "devtools://*") {
+		t.Fatalf("developer tools must be on when granted: %v", on)
+	}
+	if !slices.Contains(list(on, "URLBlocklist"), "chrome://*") {
+		t.Errorf("granting developer tools must not open chrome:// pages: %v", on["URLBlocklist"])
 	}
 }

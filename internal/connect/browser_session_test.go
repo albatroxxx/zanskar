@@ -36,7 +36,7 @@ func stubBrowserDocker(t *testing.T) (docker, calls string) {
 	script := "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '" + calls + "'\n" +
 		"if [ \"$1\" = inspect ]; then for a in \"$@\"; do n=$a; done; n=${n#zanskar-apprelay-}; printf 'bridge=127.0.0.1\\nzanskar-net-%s=172.30.0.2\\n' \"$n\"; fi\n" +
 		"if [ \"$1\" = network ] && [ \"$2\" = inspect ]; then printf '172.30.0.0/16\\n'; fi\n" +
-		"if [ \"$1\" = run ]; then echo \"ENV APP_URL=$APP_URL RESOLVER_RULES=$RESOLVER_RULES ZANSKAR_APPRELAY=$ZANSKAR_APPRELAY\" >> '" + calls + "'; fi\nexit 0\n"
+		"if [ \"$1\" = run ]; then echo \"ENV APP_URL=$APP_URL RESOLVER_RULES=$RESOLVER_RULES ZANSKAR_APPRELAY=$ZANSKAR_APPRELAY DEVTOOLS=$DEVTOOLS\" >> '" + calls + "'; fi\nexit 0\n"
 	docker = filepath.Join(dir, "docker")
 	if err := os.WriteFile(docker, []byte(script), 0o700); err != nil { // #nosec G306 -- an executable test stub
 		t.Fatal(err)
@@ -256,5 +256,56 @@ func TestApplicationSessionRefusesForbiddenUpstream(t *testing.T) {
 	_ = resp.Body.Close()
 	if _, err := os.Stat(calls); err == nil {
 		t.Fatal("a container was started for a forbidden upstream")
+	}
+}
+
+// TestApplicationDevToolsByGrant (ADR 0037): a grant that allows developer
+// tools starts the session's browser with them (DEVTOOLS=true in its
+// environment, recorded in the live registry); withdrawing them ends the
+// running session at the re-check, as withdrawing the clipboard does,
+// since the switch is fixed when the browser starts.
+func TestApplicationDevToolsByGrant(t *testing.T) {
+	r, id, calls := appRig(t)
+	ps, _, err := r.h.Policies.List(r.ctx, "", 50)
+	if err != nil || len(ps) == 0 {
+		t.Fatalf("policies: %v %v", ps, err)
+	}
+	var apps *policy.Policy
+	for _, p := range ps {
+		if p.Name == "apps" {
+			apps = p
+		}
+	}
+	apps.Grants[0].AllowDevTools = true
+	if err := r.h.Policies.Update(r.ctx, apps); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	ws, _, err := r.dial(ctx, r.ticket(t, id, "http")) //nolint:bodyclose // the library closes the handshake body
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ws.CloseNow()
+	var live []gateway.Live
+	for i := 0; i < 500; i++ {
+		if live = r.h.Registry.List(); len(live) == 1 && live[0].GuacID != "" {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if len(live) != 1 || !live[0].AllowDevTools {
+		t.Fatalf("registry: %+v", live)
+	}
+	log, _ := os.ReadFile(calls) // #nosec G304 -- test temp dir
+	if !strings.Contains(string(log), "DEVTOOLS=true") {
+		t.Fatalf("the browser was not started with developer tools:\n%s", log)
+	}
+	apps.Grants[0].AllowDevTools = false
+	if err := r.h.Policies.Update(r.ctx, apps); err != nil {
+		t.Fatal(err)
+	}
+	if n := r.h.Recheck(r.ctx, []string{r.alice.ID}); n != 1 {
+		t.Fatalf("Recheck ended %d session(s) after developer tools were withdrawn, want 1", n)
 	}
 }

@@ -77,6 +77,28 @@ describe('a grant draft', () => {
   })
 })
 
+// ADR 0037: developer tools are an application grant's condition only.
+describe('developer tools', () => {
+  it('are sent for an application grant only, and copied only to another', () => {
+    const app = toDraft({ ...newGrant('application'), allow_devtools: true })
+    app.targets = { a1: [] }
+    expect(fromDraft(app, name).grant).toMatchObject({ allow_devtools: true })
+    const host = toDraft({ ...newGrant('host'), allow_devtools: true })
+    host.targets = { t1: ['ssh'] }
+    expect(fromDraft(host, name).grant).not.toHaveProperty('allow_devtools')
+    const appGrant = { ...newGrant('application'), allow_devtools: true }
+    expect(newGrant('application', appGrant).allow_devtools).toBe(true)
+    expect(newGrant('host', appGrant)).not.toHaveProperty('allow_devtools')
+  })
+
+  it('are named in the summaries when on', () => {
+    const g: PolicyGrant = { ...newGrant('application'), targets: [{ id: 'a1', protocols: ['http'] }], allow_devtools: true }
+    expect(grantSummary(g, name)).toContain('dev tools')
+    const p = { id: 'p', name: 'apps', enabled: true, subjects: [], grants: [g, { ...g, allow_devtools: false }] } as unknown as Policy
+    expect(extrasLine(policyRollup(p))).toBe('dev tools ×1')
+  })
+})
+
 describe('summaries', () => {
   it('say a grant on one line', () => {
     const g: PolicyGrant = { ...newGrant('host'), targets: [{ id: 't1', protocols: ['ssh'] }, { id: 't2', protocols: ['rdp', 'winrm'] }],
