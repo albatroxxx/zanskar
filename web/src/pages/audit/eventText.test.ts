@@ -110,6 +110,7 @@ group('sign-in, session and recording events read as what happened', () => {
     [{ action: 'session.connect', outcome: 'failure' as const, object_name: 'web-1', details: { protocol: 'ssh', reason: 'not_allowed' } }, 'was refused SSH access to web-1 (not allowed)'],
     [{ action: 'session.start', object_name: 'bob → web-1 (SSH)' }, 'opened a SSH session on web-1'],
     [{ action: 'session.end', object_name: 'bob → web-1 (SSH)', details: { reason: 'idle_timeout' } }, 'ended the SSH session on web-1 (idle timeout)'],
+    [{ action: 'session.end', object_name: 'bob → win-1 (RDP)', details: { reason: 'target_lost', detail: 'Upstream error.', status: '0x0203' } }, 'ended the RDP session on win-1 (target lost: Upstream error.)'],
     [{ action: 'session.terminate', object_name: 'bob → web-1 (SSH)' }, "terminated bob's SSH session on web-1"],
     [{ action: 'session.shadow.start', object_name: 'bob → web-1 (SSH)' }, "started watching bob's SSH session on web-1"],
     [{ action: 'session.shadow.end', object_name: 'bob → web-1 (SSH)' }, "stopped watching bob's session on web-1"],

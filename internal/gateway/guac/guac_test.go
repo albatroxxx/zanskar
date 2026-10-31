@@ -729,3 +729,104 @@ func TestBridgeDropsCompoundMessages(t *testing.T) {
 		t.Fatalf("the compound messages must not reach guacd; first echo %q", got)
 	}
 }
+
+// TestBridgeKeepsUpstreamError: a session guacd ends with an "error"
+// instruction (an RDP server disconnecting with a reason guacd has no words
+// for, say) reaches the browser as before, and Bridge hands back guacd's
+// words and status, so the audit trail says more than "target lost". A
+// session the browser ends hands back no error.
+func TestBridgeKeepsUpstreamError(t *testing.T) {
+	addr := fakeGuacd(t, nil)
+	type end struct {
+		reason string
+		err    error
+	}
+	ends := make(chan end, 1)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ws, err := websocket.Accept(w, r, &websocket.AcceptOptions{InsecureSkipVerify: true})
+		if err != nil {
+			return
+		}
+		c, err := Dial(r.Context(), addr, Params{Protocol: "rdp", Args: map[string]string{}}, 2*time.Second)
+		if err != nil {
+			t.Errorf("dial: %v", err)
+			return
+		}
+		defer c.Close()
+		reason, err := Bridge(r.Context(), nil, c, ws, nil, Limits{Idle: time.Minute, tick: 20 * time.Millisecond})
+		ends <- end{reason, err}
+		_ = ws.Close(websocket.StatusNormalClosure, "")
+	}))
+	defer srv.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	open := func() *websocket.Conn {
+		ws, _, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(srv.URL, "http"), nil) //nolint:bodyclose
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = ws.CloseNow() })
+		return ws
+	}
+	wait := func() end {
+		select {
+		case e := <-ends:
+			return e
+		case <-time.After(5 * time.Second):
+			t.Fatal("bridge did not end")
+			return end{}
+		}
+	}
+
+	guacdErr := Encode("error", "Upstream error.", "515")
+	ws := open()
+	if err := ws.Write(ctx, websocket.MessageText, []byte(Encode("emit", guacdErr))); err != nil {
+		t.Fatal(err)
+	}
+	if _, got, err := ws.Read(ctx); err != nil || string(got) != guacdErr {
+		t.Fatalf("the browser must hear guacd's error as guacd sent it: %q %v", got, err)
+	}
+	e := wait()
+	up, ok := errors.AsType[*UpstreamError](e.err)
+	if e.reason != "target_lost" || !ok || *up != (UpstreamError{Message: "Upstream error.", Status: 0x0203}) {
+		t.Fatalf("got %q %v, want target_lost with guacd's words and status", e.reason, e.err)
+	}
+	if got := up.Error(); got != "guacd: Upstream error. (status 0x0203)" {
+		t.Fatalf("Error() = %q", got)
+	}
+
+	ws = open()
+	if err := ws.Write(ctx, websocket.MessageText, []byte(Encode("disconnect"))); err != nil {
+		t.Fatal(err)
+	}
+	if e := wait(); e.reason != "user_exit" || e.err != nil {
+		t.Fatalf("a browser disconnect: got %q %v", e.reason, e.err)
+	}
+}
+
+// TestUpstreamErrorReading: guacd's words are kept whole when short, cut on
+// a character boundary when long, and a status that is missing or not a
+// number reads as 0.
+func TestUpstreamErrorReading(t *testing.T) {
+	for _, c := range []struct {
+		raw  string
+		want UpstreamError
+	}{
+		{Encode("error", "Disconnected by other connection.", "521"), UpstreamError{"Disconnected by other connection.", 0x0209}},
+		{Encode("error", "Connection closed."), UpstreamError{"Connection closed.", 0}},
+		{Encode("error", "odd", "not-a-number"), UpstreamError{"odd", 0}},
+		{Encode("error"), UpstreamError{"unreadable error instruction", 0}},
+		{"not an instruction", UpstreamError{"unreadable error instruction", 0}},
+	} {
+		if got := upstreamError(c.raw); *got != c.want {
+			t.Errorf("%q: got %+v, want %+v", c.raw, *got, c.want)
+		}
+	}
+	// One byte, then two-byte characters: the cut at 200 bytes falls inside
+	// one and steps back to 199.
+	long := "a" + strings.Repeat("é", 150)
+	got := upstreamError(Encode("error", long, "515")).Message
+	if len(got) != maxUpstreamMessage-1 || !strings.HasPrefix(long, got) {
+		t.Fatalf("long message kept as %d bytes: %q", len(got), got)
+	}
+}

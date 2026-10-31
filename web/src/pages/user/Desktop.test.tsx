@@ -137,7 +137,10 @@ describe('Desktop, when the session ends', () => {
 
     expect(screen.getByText(/^(elapsed|ran for) /).textContent).toBe('ran for 00:03')
     expect(screen.getByText('Ended · recording saved')).toBeDefined()
-    expect(within(screen.getByRole('dialog')).getByText(/win-01 · RDP · ran for 00:03\./)).toBeDefined()
+    expect(within(screen.getByRole('dialog')).getByText('win-01 · RDP · ran for 00:03.')).toBeDefined()
+    // How long recordings are kept is the administrator's business, not news
+    // for the person whose session just ended.
+    expect(screen.getByRole('dialog').textContent).not.toContain('retention')
   })
 
   it.each([

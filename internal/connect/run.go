@@ -4,6 +4,8 @@ package connect
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"maps"
 	"net/http"
 	"time"
@@ -12,6 +14,7 @@ import (
 
 	"github.com/albatroxxx/zanskar/internal/audit"
 	"github.com/albatroxxx/zanskar/internal/gateway"
+	"github.com/albatroxxx/zanskar/internal/gateway/guac"
 	"github.com/albatroxxx/zanskar/internal/recording"
 	"github.com/albatroxxx/zanskar/internal/session"
 	"github.com/albatroxxx/zanskar/internal/ticket"
@@ -94,12 +97,15 @@ func (run *sessionRun) endRow(id, reason string) {
 	}
 }
 
-// end closes the session's row and audits its end. With a message, the client
-// is told why and the socket closes as a policy violation, the close the
-// console shows a reason for.
-func (run *sessionRun) end(reason, msg string) {
+// end closes the session's row and audits its end, with more for the
+// session.end event: what the target's side said when it was the one that
+// ended the session. With a message, the client is told why and the socket
+// closes as a policy violation, the close the console shows a reason for.
+func (run *sessionRun) end(reason, msg string, more map[string]string) {
 	run.endRow(run.s.ID, reason)
-	run.h.record(run.r, run.actor.Event(audit.SessionEnd, "access_session", run.s.ID, audit.Success, map[string]string{"reason": reason, "target_id": run.ep.LiveKey}))
+	details := map[string]string{"reason": reason, "target_id": run.ep.LiveKey}
+	maps.Copy(details, more)
+	run.h.record(run.r, run.actor.Event(audit.SessionEnd, "access_session", run.s.ID, audit.Success, details))
 	if msg != "" {
 		if run.tell != nil {
 			run.tell(msg)
@@ -140,7 +146,7 @@ func (run *sessionRun) guacStream() (*recording.GuacStream, *session.Recording, 
 // session runs unrecorded.
 func (run *sessionRun) recordingFailed(err error) {
 	run.h.Log.Error("start recording", "session", run.s.ID, "err", err)
-	run.end(session.EndError, "recording could not be started; session refused")
+	run.end(session.EndError, "recording could not be started; session refused", nil)
 }
 
 // register writes the recording's row and audits the session's start. When
@@ -150,7 +156,7 @@ func (run *sessionRun) register(rec recorder, format, uri string) (*session.Reco
 	if err := run.h.Sessions.CreateRecording(run.r.Context(), row); err != nil {
 		run.h.Log.Error("register recording", "session", run.s.ID, "err", err)
 		_, _, _ = rec.Close()
-		run.end(session.EndError, "recording could not be registered; session refused")
+		run.end(session.EndError, "recording could not be registered; session refused", nil)
 		return nil, false
 	}
 	details := map[string]any{"target_id": run.ep.LiveKey, "protocol": run.g.Protocol, "policy_id": run.g.PolicyID, "recording_id": row.ID}
@@ -179,7 +185,14 @@ func (run *sessionRun) finish(rec recorder, row *session.Recording, reason strin
 	if reason == "" {
 		reason = session.EndError
 	}
-	run.end(reason, "")
+	// A desktop that guacd ended (the RDP server disconnecting, say) keeps
+	// guacd's words and status; the reason alone reads "target lost" for a
+	// dropped network and a Windows logoff alike.
+	var more map[string]string
+	if up, ok := errors.AsType[*guac.UpstreamError](err); ok {
+		more = map[string]string{"detail": up.Message, "status": fmt.Sprintf("0x%04X", up.Status)}
+	}
+	run.end(reason, "", more)
 	_ = run.ws.Close(websocket.StatusNormalClosure, reason)
 }
 
