@@ -11,6 +11,9 @@ type Handler<T extends unknown[]> = ((...args: T) => void) | null
 /** What the tests drive in place of a guacd connection. */
 interface FakeClient {
   keys: number[]
+  /** Mouse states sent to the remote machine. */
+  moves: number
+  display: FakeDisplay
   onerror: Handler<[Status]>
   onstatechange: Handler<[number]>
   tunnel: { oninstruction: Handler<[string, string[]]> }
@@ -21,9 +24,25 @@ interface FakeClient {
 interface RealKeyboard { onkeydown: unknown; onkeyup: unknown }
 
 /** The mouse on the desktop's display, as the page wires it. */
-interface FakeMouse { onmousedown: ((m: unknown) => void) | null }
+interface FakeMouse {
+  onmousedown: ((m: unknown) => void) | null
+  onmousemove: ((m: unknown) => void) | null
+  onmouseout: ((m: unknown) => void) | null
+  /** Each setCursor call: the canvas and its hotspot. */
+  cursors: [HTMLCanvasElement, number, number][]
+}
 
-const g = vi.hoisted(() => ({ clients: [] as FakeClient[], keyboards: [] as RealKeyboard[], mice: [] as FakeMouse[] }))
+/** The remote display: its element, the cursor callback the page sets, and
+ *  each showCursor call (true shows the software cursor). */
+interface FakeDisplay {
+  el: HTMLElement
+  oncursor: ((canvas: HTMLCanvasElement, x: number, y: number) => void) | null
+  shown: boolean[]
+}
+
+// cursorOK is what the fake Mouse.setCursor answers: whether the browser takes
+// an image cursor.
+const g = vi.hoisted(() => ({ clients: [] as FakeClient[], keyboards: [] as RealKeyboard[], mice: [] as FakeMouse[], cursorOK: true, tunnels: [] as string[] }))
 
 // The client and tunnel stand in for guacd; everything else is the library,
 // the keyboard included, so its hold on the document's keys is the real one.
@@ -39,20 +58,27 @@ vi.mock('guacamole-common-js', async (importOriginal) => {
   class WebSocketTunnel {
     oninstruction: Handler<[string, string[]]> = null
     onerror: Handler<[Status]> = null
+    constructor(url: string) { g.tunnels.push(url) }
   }
   class Client {
     onerror: Handler<[Status]> = null
     onstatechange: Handler<[number]> = null
     onfilesystem = null
     onclipboard = null
-    private display = document.createElement('div')
+    display = {
+      el: document.createElement('div'),
+      oncursor: null as FakeDisplay['oncursor'],
+      shown: [] as boolean[],
+      getElement() { return this.el },
+      showCursor(shown = true) { this.shown.push(shown) },
+    }
     tunnel: WebSocketTunnel
     constructor(tunnel: WebSocketTunnel) {
       this.tunnel = tunnel
       g.clients.push(this)
     }
     getDisplay() {
-      return { getElement: () => this.display }
+      return this.display
     }
     connect() {
       this.tunnel.oninstruction = () => {}
@@ -62,14 +88,26 @@ vi.mock('guacamole-common-js', async (importOriginal) => {
     }
     keys: number[] = []
     sendKeyEvent(_pressed: number, k: number) { this.keys.push(k) }
-    sendMouseState() {}
+    moves = 0
+    sendMouseState() { this.moves++ }
     sendSize() {}
   }
   class Mouse {
     onmousedown = null
     onmouseup = null
     onmousemove = null
-    constructor() { g.mice.push(this) }
+    onmouseout = null
+    cursors: [HTMLCanvasElement, number, number][] = []
+    private el: HTMLElement
+    constructor(el: HTMLElement) {
+      this.el = el
+      g.mice.push(this)
+    }
+    setCursor(canvas: HTMLCanvasElement, x: number, y: number) {
+      this.cursors.push([canvas, x, y])
+      if (g.cursorOK) this.el.style.cursor = `url(data:image/png;base64,AA) ${x} ${y}, auto`
+      return g.cursorOK
+    }
   }
   return { default: { ...real, WebSocketTunnel, Client, Mouse, Keyboard } }
 })
@@ -101,6 +139,8 @@ beforeEach(() => {
   g.clients.length = 0
   g.keyboards.length = 0
   g.mice.length = 0
+  g.cursorOK = true
+  g.tunnels.length = 0
   vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} })
 })
 afterEach(() => {
@@ -346,5 +386,85 @@ describe('Desktop, an application', () => {
     await connected()
     expect(screen.queryByRole('group', { name: 'Browser' })).toBeNull()
     expect(screen.queryByRole('button', { name: 'Back' })).toBeNull()
+  })
+})
+
+// 2026-11-01: two cursors over a desktop that did not line up. The remote
+// pointer is now the browser's own cursor over the desktop, as Guacamole's
+// own client does it, and the library's software cursor is never shown
+// beside it: only in its place, for a pointer image the browser will not take.
+describe('Desktop, the pointer', () => {
+  const canvas = (w: number, h: number) => Object.assign(document.createElement('canvas'), { width: w, height: h })
+  const last = (shown: boolean[]) => shown[shown.length - 1]
+
+  it('shows the remote pointer as the browser cursor and no second one', async () => {
+    start()
+    const client = await connected()
+    const d = client.display
+    const mouse = g.mice[0]
+    const arrow = canvas(32, 32)
+    act(() => d.oncursor?.(arrow, 4, 7))
+    expect(mouse.cursors).toEqual([[arrow, 4, 7]])
+    expect(d.el.style.cursor).toContain('url(')
+    expect(last(d.shown)).toBe(false)
+    act(() => mouse.onmousemove?.({}))
+    expect(client.moves).toBe(1)
+    expect(last(d.shown)).toBe(false)
+  })
+
+  it.each([
+    ['too big for a browser cursor', 200, 200, true, 0],
+    ['empty, the remote hiding its pointer', 0, 0, true, 0],
+    ['refused by a browser without image cursors', 32, 32, false, 1],
+  ])('falls back to the software cursor, the browser\'s hidden, for an image %s', async (_, w, h, ok, tried) => {
+    g.cursorOK = ok
+    start()
+    const client = await connected()
+    const d = client.display
+    act(() => d.oncursor?.(canvas(w, h), 0, 0))
+    expect(g.mice[0].cursors).toHaveLength(tried)
+    expect(d.el.style.cursor).toBe('none')
+    expect(last(d.shown)).toBe(true)
+    act(() => g.mice[0].onmousemove?.({}))
+    expect(last(d.shown)).toBe(true)
+  })
+
+  it('hides the software cursor while the pointer is outside the desktop', async () => {
+    start()
+    const client = await connected()
+    const d = client.display
+    act(() => d.oncursor?.(canvas(200, 200), 0, 0))
+    act(() => g.mice[0].onmouseout?.({}))
+    expect(last(d.shown)).toBe(false)
+    act(() => g.mice[0].onmousemove?.({}))
+    expect(last(d.shown)).toBe(true)
+  })
+
+  it('hands the pointer back when the session ends, and sends no more', async () => {
+    start()
+    const client = await connected()
+    const d = client.display
+    act(() => d.oncursor?.(canvas(32, 32), 0, 0))
+    act(() => client.onerror?.({ code: 0x020b, message: 'session ended by an administrator' }))
+    expect(d.el.style.cursor).toBe('')
+    expect(last(d.shown)).toBe(false)
+    act(() => g.mice[0].onmousemove?.({}))
+    expect(client.moves).toBe(0)
+  })
+})
+
+// 2026-11-01: on a screen or zoom with a pixel ratio of 1.5 (Brave on the
+// admin's Mac) a Windows desktop filled two thirds of its pane. guacd sizes
+// an RDP session at width x 96 / the DPI it is told, and the page drew it one
+// remote pixel per CSS pixel; it now says 96 DPI whatever the screen.
+describe('Desktop, the size it asks for', () => {
+  it('asks for the pane in CSS pixels at 96 DPI on a high-density screen', async () => {
+    vi.stubGlobal('devicePixelRatio', 1.5)
+    start()
+    await connected()
+    const url = new URL(g.tunnels[0])
+    expect(url.searchParams.get('dpi')).toBe('96')
+    expect(url.searchParams.get('width')).toBe('1024')
+    expect(url.searchParams.get('height')).toBe('768')
   })
 })

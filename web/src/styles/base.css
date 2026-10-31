@@ -416,6 +416,10 @@ td.actions > * + * { margin-left: 8px; }
    background, keeping the cursor-above-desktop order intact. */
 .term-host { flex: 1; min-height: 0; padding: 6px; position: relative; z-index: 0; }
 .term-host .xterm { height: 100%; }
+/* A desktop fills its pane edge to edge: the remote is asked for the pane's
+   size (clientWidth), which counts padding, so a padded pane cut the remote's
+   right and bottom 6 px off, where a window's close button and scrollbars sit. */
+.term-host.desk-host { padding: 0; overflow: hidden; }
 
 /* desktop file transfer panel */
 .desk-body { flex: 1; min-height: 0; display: flex; }
