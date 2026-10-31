@@ -7070,8 +7070,45 @@ components:
           description: Refused connections (`session.connect` failures).
     AdminOverview:
       type: object
-      required: [sessions, pending_requests, targets, inventory, autoscaling, audit_24h, posture]
+      required: [sessions, pending_requests, targets, inventory, autoscaling, audit_24h, posture, integrity]
       properties:
+        integrity:
+          type: object
+          description: Whether the evidence is whole (2026-10-31), counts only.
+          required: [audit_chain, recordings_lost_7d, directories, export]
+          properties:
+            audit_chain:
+              description: >
+                The background check of the whole chain, run a minute after start and every six
+                hours; null before the first check, which the console shows as not checked yet.
+              oneOf:
+                - type: "null"
+                - type: object
+                  required: [at, intact, checked, problems]
+                  properties:
+                    at: {$ref: "#/components/schemas/Timestamp"}
+                    intact: {type: boolean}
+                    checked: {type: integer, description: Events walked.}
+                    problems: {type: integer}
+                    error: {type: string, description: A check that could not run; says nothing about the chain.}
+            recordings_lost_7d:
+              type: integer
+              description: recording.lost failures in the last seven days.
+            directories:
+              type: object
+              description: Identity providers listed on a schedule; the Identity providers page has each one's status.
+              required: [listed, failing, not_run, held_back]
+              properties:
+                listed: {type: integer}
+                failing: {type: integer}
+                not_run: {type: integer}
+                held_back: {type: integer, description: Accounts the last runs did not disable.}
+            export:
+              type: object
+              required: [sinks, behind]
+              properties:
+                sinks: {type: integer, description: SIEM sinks configured.}
+                behind: {type: integer, description: Events the furthest-behind sink has not shipped.}
         posture:
           type: object
           description: What weakens access (2026-10-31), counts only.

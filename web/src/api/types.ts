@@ -397,6 +397,13 @@ export interface AdminOverview {
     dormant: number
     not_enrolled: number
   }
+  /** Whether the evidence is whole (2026-10-31). audit_chain is null before the gateway's first check. */
+  integrity?: {
+    audit_chain: { at: string; intact: boolean; checked: number; problems: number; error?: string } | null
+    recordings_lost_7d: number
+    directories: { listed: number; failing: number; not_run: number; held_back: number }
+    export: { sinks: number; behind: number }
+  }
 }
 
 /** GET /audit/overview (ADR 0029). Counts only, never row data. */

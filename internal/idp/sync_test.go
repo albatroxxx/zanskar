@@ -458,3 +458,31 @@ func TestSyncAdoptsPushedAccounts(t *testing.T) {
 		}
 	}
 }
+
+// TestSyncHealth (2026-10-31, the dashboard's integrity row): the listings
+// counted, one that has not run yet, one whose last run failed, and the
+// accounts held back; a provider that is not listed is not counted.
+func TestSyncHealth(t *testing.T) {
+	e := newSyncEnv(t, nil)
+	ctx := context.Background()
+	if err := e.repo.Create(ctx, &Provider{Name: "pushed", Type: TypeOIDC, Enabled: true}, okOIDC()); err != nil {
+		t.Fatal(err)
+	}
+	h, err := e.s.Health(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if h != (SyncHealth{Listed: 1, NotRun: 1}) {
+		t.Fatalf("before a run: %+v", h)
+	}
+	e.dir.set("alice")
+	e.run(t, SyncOptions{})
+	if h, _ = e.s.Health(ctx); h != (SyncHealth{Listed: 1}) {
+		t.Fatalf("after a good run: %+v", h)
+	}
+	e.dir.err = errors.New("keycloak admin API refused the client (HTTP 403)")
+	_, _ = e.s.Sync(ctx, e.op, SyncOptions{})
+	if h, _ = e.s.Health(ctx); h != (SyncHealth{Listed: 1, Failing: 1}) {
+		t.Fatalf("after a failed run: %+v", h)
+	}
+}

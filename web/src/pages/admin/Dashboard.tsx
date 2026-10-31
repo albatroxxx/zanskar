@@ -5,6 +5,7 @@ import { consoleZone, engineName, fmtBytes, fmtTime, zoneLabel } from '../../api
 import type { AdminOverview, SystemMetrics, SystemStatus, TLSStatus } from '../../api/types'
 import { StateIcon, TileIcon } from '../../components/icons'
 import { drill } from '../../api/drilldown'
+import { integrityChecks } from './dashboardChecks'
 import { Alert, Badge, PageHead, StatTile } from '../../components/ui'
 
 /** mix says what a count is made of — "2 Linux · 1 Windows" — in a tile's
@@ -116,6 +117,21 @@ export function Dashboard() {
         <StatTile value={o && o.audit_24h.failures} label="Failures (24h)" icon={<TileIcon kind="attention" />} to={drill.failures('/admin')} />
         <StatTile value={o && o.audit_24h.events} label="Audit events (24h)" icon={<TileIcon kind="list" />} to={drill.auditEvents('/admin')} />
       </div>
+
+      {o?.integrity && (
+        <>
+          <h2 className="stat-section">Integrity</h2>
+          <div className="checks">
+            {integrityChecks(o.integrity).map((c) => (
+              <Link key={c.label} className={'check ' + c.state} to={c.to}>
+                <StateIcon state={c.state} label={c.label + ': ' + c.text} />
+                <span className="check-label">{c.label}</span>
+                <span className="check-text">{c.text}</span>
+              </Link>
+            ))}
+          </div>
+        </>
+      )}
 
       <h2 className="stat-section">Inventory</h2>
       <div className="stat-grid">

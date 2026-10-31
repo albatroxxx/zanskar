@@ -16,6 +16,7 @@ import (
 	"github.com/albatroxxx/zanskar/internal/asg"
 	"github.com/albatroxxx/zanskar/internal/audit"
 	"github.com/albatroxxx/zanskar/internal/auth"
+	"github.com/albatroxxx/zanskar/internal/idp"
 	"github.com/albatroxxx/zanskar/internal/policy"
 	"github.com/albatroxxx/zanskar/internal/protocol"
 	"github.com/albatroxxx/zanskar/internal/session"
@@ -345,5 +346,49 @@ func TestAdminOverviewPosture(t *testing.T) {
 	}
 	if exp := p["standing_no_mfa"].(map[string]any); exp["grants"] != float64(1) || exp["policies"] != float64(1) {
 		t.Fatalf("standing without MFA: %v", exp)
+	}
+}
+
+// TestAdminOverviewIntegrity (2026-10-31): before the first chain check the
+// overview says nothing about the chain (null), never "intact"; after one it
+// carries the result; lost recordings in the week, the listings' health and
+// how far behind the SIEM sinks are come as counts.
+func TestAdminOverviewIntegrity(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	var chain *audit.CheckResult
+	h := &Handler{Sessions: e.sessions, Requests: e.requests, Targets: e.targets, ASGs: e.asgs, Audit: e.audit, Log: slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Users: e.users, Policies: e.policies,
+		Chain: func() *audit.CheckResult { return chain },
+		Directories: func(context.Context) (idp.SyncHealth, error) {
+			return idp.SyncHealth{Listed: 2, Failing: 1, HeldBack: 3}, nil
+		},
+		ExportSinks: []string{"syslog"}}
+	mux := http.NewServeMux()
+	h.Register(mux)
+	sessions := auth.NewSessions(e.db, []byte("0123456789abcdef0123456789abcdef"), false)
+	mw := &auth.Middleware{Sessions: sessions, Users: e.users, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	e.srv = mw.Authenticate(mw.CSRF(mux))
+	if _, err := e.audit.Record(ctx, audit.Actor{IP: "system"}.Event(audit.RecordingLost, "recording", "r1", audit.Failure, nil)); err != nil {
+		t.Fatal(err)
+	}
+	_, out := e.get(t, "/api/v1/admin/overview", "root")
+	in := out["integrity"].(map[string]any)
+	if in["audit_chain"] != nil {
+		t.Fatalf("a chain never checked must not be reported: %v", in["audit_chain"])
+	}
+	if in["recordings_lost_7d"] != float64(1) {
+		t.Fatalf("recordings lost: %v", in)
+	}
+	if d := in["directories"].(map[string]any); d["listed"] != float64(2) || d["failing"] != float64(1) || d["held_back"] != float64(3) {
+		t.Fatalf("directories: %v", d)
+	}
+	if x := in["export"].(map[string]any); x["sinks"] != float64(1) || x["behind"].(float64) < 1 {
+		t.Fatalf("export: %v", x)
+	}
+	chain = &audit.CheckResult{At: time.Now(), Intact: true, Checked: 9}
+	_, out = e.get(t, "/api/v1/admin/overview", "root")
+	if c := out["integrity"].(map[string]any)["audit_chain"].(map[string]any); c["intact"] != true || c["checked"] != float64(9) {
+		t.Fatalf("chain: %v", c)
 	}
 }

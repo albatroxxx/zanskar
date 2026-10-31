@@ -19,6 +19,7 @@ const overview: AdminOverview = {
   autoscaling: { groups: 1, instances: 4, healthy_instances: 3 },
   audit_24h: { events: 41, failures: 4, failed_logins: 2, refused_connects: 1 },
   posture: { standing_no_mfa: { grants: 3, policies: 2 }, admins: 2, dormant: 4, not_enrolled: 1 },
+  integrity: { audit_chain: null, recordings_lost_7d: 1, directories: { listed: 1, failing: 0, not_run: 0, held_back: 0 }, export: { sinks: 0, behind: 0 } },
 }
 
 const status: SystemStatus = {
@@ -155,6 +156,18 @@ describe('the admin dashboard', () => {
     const sections = [...document.querySelectorAll('h2.stat-section')].map((h) => h.textContent)
     expect(sections.indexOf('Security posture')).toBe(sections.indexOf('Needs attention') + 1)
     expect(sections.indexOf('Activity')).toBe(sections.indexOf('Security posture') + 1)
+  })
+
+  it('shows the integrity row as status lines that open their pages', async () => {
+    serve()
+    at('/')
+    const line = async (label: string) => (await screen.findByText(label)).closest('a') as HTMLAnchorElement
+    expect((await line('Audit chain')).textContent).toContain('Not checked yet')
+    const rec = await line('Recordings')
+    expect(rec.className).toContain('danger')
+    expect(rec.getAttribute('href')).toBe('/admin/events?action=recording.lost&outcome=failure&range=7d')
+    expect((await line('Identity providers')).textContent).toContain('In sync')
+    expect((await line('SIEM export')).textContent).toContain('Not configured')
   })
 
   it('says the overview failed rather than showing a quiet system', async () => {

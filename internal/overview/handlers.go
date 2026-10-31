@@ -18,6 +18,7 @@ import (
 	"github.com/albatroxxx/zanskar/internal/audit"
 	"github.com/albatroxxx/zanskar/internal/auth"
 	"github.com/albatroxxx/zanskar/internal/httpx"
+	"github.com/albatroxxx/zanskar/internal/idp"
 	"github.com/albatroxxx/zanskar/internal/policy"
 	"github.com/albatroxxx/zanskar/internal/session"
 	"github.com/albatroxxx/zanskar/internal/target"
@@ -40,6 +41,53 @@ type Handler struct {
 	Users     *user.Repo
 	Policies  *policy.Repo
 	MFAOwners func(ctx context.Context) ([]string, error)
+	// Chain, Directories and ExportSinks give the integrity row: the
+	// background chain check's last result, the identity providers'
+	// listings, and the SIEM sinks configured.
+	Chain       func() *audit.CheckResult
+	Directories func(ctx context.Context) (idp.SyncHealth, error)
+	ExportSinks []string
+}
+
+// lostWindow is how far back the dashboard counts lost recordings: rarer
+// than a refused connection, and worse.
+const lostWindow = 7 * 24 * time.Hour
+
+// integrity says whether the evidence is whole: the audit chain at its last
+// check (null before the first, never shown as intact), recordings lost in
+// the last week, the identity providers' listings, the SIEM export.
+type integrity struct {
+	AuditChain     *audit.CheckResult `json:"audit_chain"`
+	RecordingsLost int64              `json:"recordings_lost_7d"`
+	Directories    idp.SyncHealth     `json:"directories"`
+	Export         struct {
+		Sinks  int   `json:"sinks"`
+		Behind int64 `json:"behind"`
+	} `json:"export"`
+}
+
+func (h *Handler) countIntegrity(ctx context.Context, now time.Time) (integrity, error) {
+	var in integrity
+	if h.Chain != nil {
+		in.AuditChain = h.Chain()
+	}
+	week, err := h.Audit.TallySince(ctx, now.Add(-lostWindow))
+	if err != nil {
+		return in, err
+	}
+	for _, t := range week {
+		if t.Action == audit.RecordingLost && t.Outcome == audit.Failure {
+			in.RecordingsLost += t.Count
+		}
+	}
+	if h.Directories != nil {
+		if in.Directories, err = h.Directories(ctx); err != nil {
+			return in, err
+		}
+	}
+	in.Export.Sinks = len(h.ExportSinks)
+	in.Export.Behind, err = h.Audit.ExportBehind(ctx, h.ExportSinks)
+	return in, err
 }
 
 // posture is the dashboard's security posture: counts of what weakens
@@ -199,6 +247,11 @@ func (h *Handler) adminOverview(w http.ResponseWriter, r *http.Request) {
 		httpx.Internal(w, r, h.Log, err)
 		return
 	}
+	integ, err := h.countIntegrity(ctx, time.Now())
+	if err != nil {
+		httpx.Internal(w, r, h.Log, err)
+		return
+	}
 	w.Header().Set("Cache-Control", "no-store")
 	httpx.WriteJSON(w, http.StatusOK, struct {
 		Sessions        session.Counts         `json:"sessions"`
@@ -208,7 +261,8 @@ func (h *Handler) adminOverview(w http.ResponseWriter, r *http.Request) {
 		Autoscaling     asgInventory           `json:"autoscaling"`
 		Audit           auditTallies           `json:"audit_24h"`
 		Posture         posture                `json:"posture"`
-	}{sessions, pending, targets, inventory, asgs, foldTallies(tallies), post})
+		Integrity       integrity              `json:"integrity"`
+	}{sessions, pending, targets, inventory, asgs, foldTallies(tallies), post, integ})
 }
 
 // auditOverview answers GET /api/v1/audit/overview for admins and auditors.

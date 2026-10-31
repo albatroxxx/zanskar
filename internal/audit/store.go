@@ -848,6 +848,30 @@ func (l *Log) ExportCheckpoint(ctx context.Context, sink string) (int64, error) 
 	return id, err
 }
 
+// ExportBehind is how many events the given sinks have not shipped yet,
+// at most: the newest event's id less the furthest-behind checkpoint
+// (2026-10-31, the dashboard's integrity row). Zero with no sink.
+func (l *Log) ExportBehind(ctx context.Context, sinks []string) (int64, error) {
+	if len(sinks) == 0 {
+		return 0, nil
+	}
+	var newest sql.NullInt64
+	if err := l.db.QueryRowContext(ctx, `SELECT MAX(id) FROM audit_events`).Scan(&newest); err != nil {
+		return 0, err
+	}
+	var behind int64
+	for _, s := range sinks {
+		at, err := l.ExportCheckpoint(ctx, s)
+		if err != nil {
+			return 0, err
+		}
+		if n := newest.Int64 - at; n > behind {
+			behind = n
+		}
+	}
+	return behind, nil
+}
+
 // SaveExportCheckpoint records the last exported id for a sink.
 func (l *Log) SaveExportCheckpoint(ctx context.Context, sink string, lastID int64) error {
 	now := store.TimeArg(time.Now())

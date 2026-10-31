@@ -388,6 +388,17 @@ func serve(ctx context.Context) error {
 	// runtime setting is read before each check so a switch-off applies live.
 	versionCheck := &update.Checker{URL: cfg.UpdateManifestURL, Current: version.Version, Enabled: func() bool { return runtime.Bool(settings.KeyUpdateCheck) }, Log: log}
 	go versionCheck.Run(ctx)
+	// The SIEM sinks, started further down, and the background check of the
+	// audit chain whose last result the dashboard shows (2026-10-31).
+	var sinks []audit.Sink
+	if cfg.SIEMSyslogAddr != "" {
+		sinks = append(sinks, &audit.SyslogSink{Addr: cfg.SIEMSyslogAddr, Format: cfg.SIEMSyslogFormat, CAFile: cfg.SIEMSyslogCAFile})
+	}
+	if cfg.SIEMWebhookURL != "" {
+		sinks = append(sinks, &audit.WebhookSink{URL: cfg.SIEMWebhookURL, Secret: cfg.SIEMWebhookSecret})
+	}
+	chainChecker := &audit.Checker{Log: auditLog, Key: anchorKey, Logger: log}
+
 	deps := server.Deps{
 		TLS:            tlsMgr,
 		AuthMiddleware: &auth.Middleware{Sessions: sessions, Users: users, Log: log},
@@ -406,7 +417,8 @@ func serve(ctx context.Context) error {
 			&session.Handler{Repo: sessionRepo, Audit: auditLog, AnchorKey: anchorKey, Registry: registry, Storage: storage, Log: log},
 			&browsergw.Readiness{Guacd: func() string { return runtime.String(settings.KeyGuacdAddr) }, BrowserImage: func() string { return runtime.String(settings.KeyBrowserImage) }, Docker: cfg.DockerPath},
 			&overview.Handler{Sessions: sessionRepo, Requests: accessReqs, Targets: targets, ASGs: asgRepo, Audit: auditLog, Log: log,
-				Users: users, Policies: policies, MFAOwners: idpRepo.MFAOwners},
+				Users: users, Policies: policies, MFAOwners: idpRepo.MFAOwners,
+				Chain: chainChecker.Last, Directories: userSync.Health, ExportSinks: sinkNames(sinks)},
 			&update.Handler{Checker: versionCheck, Log: log, StateDir: cfg.StateDir, Supervisor: lifecycle.Supervisor},
 			&settings.Handler{Service: runtime, Audit: auditLog, Log: log},
 			&recstorage.Handler{Manager: storageMgr, Audit: auditLog, Log: log},
@@ -444,14 +456,8 @@ func serve(ctx context.Context) error {
 		go tlsMgr.Run(ctx, 6*time.Hour)
 	}
 
-	// SIEM export: ship the audit chain to the configured sinks.
-	var sinks []audit.Sink
-	if cfg.SIEMSyslogAddr != "" {
-		sinks = append(sinks, &audit.SyslogSink{Addr: cfg.SIEMSyslogAddr, Format: cfg.SIEMSyslogFormat, CAFile: cfg.SIEMSyslogCAFile})
-	}
-	if cfg.SIEMWebhookURL != "" {
-		sinks = append(sinks, &audit.WebhookSink{URL: cfg.SIEMWebhookURL, Secret: cfg.SIEMWebhookSecret})
-	}
+	// SIEM export: ship the audit chain to the configured sinks (built
+	// above, where the dashboard's integrity row names them).
 	if len(sinks) > 0 {
 		exporter := &audit.Exporter{Log: auditLog, Sinks: sinks, Logger: log}
 		go exporter.Run(ctx)
@@ -463,6 +469,7 @@ func serve(ctx context.Context) error {
 	// kept outside the database, for `zanskar audit verify --anchor`.
 	anchorer := &audit.Anchorer{Log: auditLog, Key: anchorKey, Logger: log, Interval: time.Hour}
 	go anchorer.Run(ctx)
+	go chainChecker.Run(ctx)
 	if cfg.AllowPlainHTTP && !cfg.ServesTLS() {
 		log.Warn("ZANSKAR_ALLOW_PLAIN_HTTP=true: serving without TLS on a non-loopback address; development only")
 	}
@@ -588,4 +595,13 @@ func dbFileForMetrics(dsn string) string {
 		return ""
 	}
 	return path
+}
+
+// sinkNames names the configured SIEM sinks, as their export checkpoints do.
+func sinkNames(sinks []audit.Sink) []string {
+	names := make([]string, 0, len(sinks))
+	for _, s := range sinks {
+		names = append(names, s.Name())
+	}
+	return names
 }
