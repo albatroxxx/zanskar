@@ -16,6 +16,8 @@ import (
 	"github.com/albatroxxx/zanskar/internal/asg"
 	"github.com/albatroxxx/zanskar/internal/audit"
 	"github.com/albatroxxx/zanskar/internal/auth"
+	"github.com/albatroxxx/zanskar/internal/policy"
+	"github.com/albatroxxx/zanskar/internal/protocol"
 	"github.com/albatroxxx/zanskar/internal/session"
 	"github.com/albatroxxx/zanskar/internal/store"
 	"github.com/albatroxxx/zanskar/internal/store/storetest"
@@ -31,6 +33,8 @@ type env struct {
 	targets  *target.Repo
 	asgs     *asg.Repo
 	audit    *audit.Log
+	users    *user.Repo
+	policies *policy.Repo
 	cookies  map[string]*http.Cookie
 	ids      map[string]string
 }
@@ -44,8 +48,9 @@ func newEnv(t *testing.T) *env {
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	users := user.NewRepo(db)
 	sessions := auth.NewSessions(db, []byte("0123456789abcdef0123456789abcdef"), false)
-	e := &env{db: db, sessions: session.NewRepo(db), requests: access.NewRepo(db), targets: target.NewRepo(db), asgs: asg.NewRepo(db), audit: audit.NewLog(db), cookies: map[string]*http.Cookie{}, ids: map[string]string{}}
-	h := &Handler{Sessions: e.sessions, Requests: e.requests, Targets: e.targets, ASGs: e.asgs, Audit: e.audit, Log: log}
+	e := &env{db: db, sessions: session.NewRepo(db), requests: access.NewRepo(db), targets: target.NewRepo(db), asgs: asg.NewRepo(db), audit: audit.NewLog(db),
+		users: users, policies: policy.NewRepo(db), cookies: map[string]*http.Cookie{}, ids: map[string]string{}}
+	h := &Handler{Sessions: e.sessions, Requests: e.requests, Targets: e.targets, ASGs: e.asgs, Audit: e.audit, Log: log, Users: e.users, Policies: e.policies}
 	mux := http.NewServeMux()
 	h.Register(mux)
 	mw := &auth.Middleware{Sessions: sessions, Users: users, Log: log}
@@ -307,5 +312,38 @@ func TestOverviewRecordsNoAuditEvent(t *testing.T) {
 	}
 	if after := count(); after != before {
 		t.Errorf("audit log grew from %d to %d on overview reads", before, after)
+	}
+}
+
+// TestAdminOverviewPosture (2026-10-31): the overview carries the security
+// posture: standing grants without MFA and the policies holding them, the
+// active administrators, accounts not yet enrolled in an authenticator, and
+// dormant ones. Counts only, as every overview number is.
+func TestAdminOverviewPosture(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	hash, err := user.HashPassword("a password of its own")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := e.users.Create(ctx, &user.User{Username: "bob", DisplayName: "Bob", PasswordHash: hash, Roles: []user.Role{user.RoleUser}}); err != nil {
+		t.Fatal(err)
+	}
+	open := policy.Grant{Kind: protocol.KindHost, Targets: []policy.GrantTarget{{ID: "t1", Protocols: []string{"ssh"}}}, Access: policy.AccessStanding}
+	asked := open
+	asked.RequireMFA = true
+	if err := e.policies.Create(ctx, &policy.Policy{Name: "open", Enabled: true, Subjects: []policy.Subject{{Kind: policy.SubjectUser, ID: e.ids["alice"]}}, Grants: []policy.Grant{open, asked}}); err != nil {
+		t.Fatal(err)
+	}
+	rr, out := e.get(t, "/api/v1/admin/overview", "root")
+	if rr.Code != http.StatusOK {
+		t.Fatalf("overview: %d %s", rr.Code, rr.Body)
+	}
+	p := out["posture"].(map[string]any)
+	if p["admins"] != float64(1) || p["not_enrolled"] != float64(1) || p["dormant"] != float64(0) {
+		t.Fatalf("posture: %v", p)
+	}
+	if exp := p["standing_no_mfa"].(map[string]any); exp["grants"] != float64(1) || exp["policies"] != float64(1) {
+		t.Fatalf("standing without MFA: %v", exp)
 	}
 }

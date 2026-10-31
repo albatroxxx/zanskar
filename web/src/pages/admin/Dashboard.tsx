@@ -94,6 +94,21 @@ export function Dashboard() {
         <StatTile value={o && o.audit_24h.refused_connects} label="Refused connections (24h)" icon={<TileIcon kind="ban" />} to={drill.refusedConnections('/admin')} tone="warn" />
       </div>
 
+      <h2 className="stat-section">Security posture</h2>
+      <div className="stat-grid">
+        <StatTile
+          value={o?.posture ? o.posture.standing_no_mfa.grants : null}
+          label="Standing access without MFA"
+          icon={<TileIcon kind="shield" />}
+          detail={o?.posture && o.posture.standing_no_mfa.grants > 0 ? `in ${o.posture.standing_no_mfa.policies} ${o.posture.standing_no_mfa.policies === 1 ? 'policy' : 'policies'}` : undefined}
+          to="/admin/policies"
+          tone="danger"
+        />
+        <StatTile value={o?.posture ? o.posture.not_enrolled : null} label="No authenticator yet" icon={<TileIcon kind="phone" />} to="/admin/users" tone="warn" />
+        <StatTile value={o?.posture ? o.posture.dormant : null} label="Dormant (90 days)" icon={<TileIcon kind="moon" />} to="/admin/users" tone="warn" />
+        <StatTile value={o?.posture ? o.posture.admins : null} label="Administrators" icon={<TileIcon kind="admin" />} to="/admin/users" />
+      </div>
+
       <h2 className="stat-section">Activity</h2>
       <div className="stat-grid">
         <StatTile value={o && o.sessions.open} label="Open sessions" icon={<TileIcon kind="session" />} to={drill.openSessions('/admin')} />

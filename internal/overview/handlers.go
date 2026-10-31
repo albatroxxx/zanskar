@@ -18,6 +18,7 @@ import (
 	"github.com/albatroxxx/zanskar/internal/audit"
 	"github.com/albatroxxx/zanskar/internal/auth"
 	"github.com/albatroxxx/zanskar/internal/httpx"
+	"github.com/albatroxxx/zanskar/internal/policy"
 	"github.com/albatroxxx/zanskar/internal/session"
 	"github.com/albatroxxx/zanskar/internal/target"
 	"github.com/albatroxxx/zanskar/internal/user"
@@ -34,6 +35,34 @@ type Handler struct {
 	ASGs     *asg.Repo
 	Audit    *audit.Log
 	Log      *slog.Logger
+	// Users and Policies give the security posture (2026-10-31); MFAOwners
+	// lists the identity providers that are their accounts' second factor.
+	Users     *user.Repo
+	Policies  *policy.Repo
+	MFAOwners func(ctx context.Context) ([]string, error)
+}
+
+// posture is the dashboard's security posture: counts of what weakens
+// access, each a link to the list it counted.
+type posture struct {
+	StandingNoMFA policy.Exposure `json:"standing_no_mfa"`
+	user.Posture
+}
+
+func (h *Handler) countPosture(ctx context.Context, now time.Time) (posture, error) {
+	var p posture
+	var err error
+	if p.StandingNoMFA, err = h.Policies.CountStandingNoMFA(ctx); err != nil {
+		return p, err
+	}
+	var owners []string
+	if h.MFAOwners != nil {
+		if owners, err = h.MFAOwners(ctx); err != nil {
+			return p, err
+		}
+	}
+	p.Posture, err = h.Users.CountPosture(ctx, now, owners)
+	return p, err
 }
 
 // asgInventory is the autoscaling slice of the admin inventory: enrolled
@@ -165,6 +194,11 @@ func (h *Handler) adminOverview(w http.ResponseWriter, r *http.Request) {
 		httpx.Internal(w, r, h.Log, err)
 		return
 	}
+	post, err := h.countPosture(ctx, time.Now())
+	if err != nil {
+		httpx.Internal(w, r, h.Log, err)
+		return
+	}
 	w.Header().Set("Cache-Control", "no-store")
 	httpx.WriteJSON(w, http.StatusOK, struct {
 		Sessions        session.Counts         `json:"sessions"`
@@ -173,7 +207,8 @@ func (h *Handler) adminOverview(w http.ResponseWriter, r *http.Request) {
 		Inventory       target.Inventory       `json:"inventory"`
 		Autoscaling     asgInventory           `json:"autoscaling"`
 		Audit           auditTallies           `json:"audit_24h"`
-	}{sessions, pending, targets, inventory, asgs, foldTallies(tallies)})
+		Posture         posture                `json:"posture"`
+	}{sessions, pending, targets, inventory, asgs, foldTallies(tallies), post})
 }
 
 // auditOverview answers GET /api/v1/audit/overview for admins and auditors.

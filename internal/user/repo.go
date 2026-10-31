@@ -357,6 +357,57 @@ func (r *Repo) CountAdmins(ctx context.Context) (int, error) {
 	return n, err
 }
 
+// DormantAfter is how long an active account may go without signing in
+// before the dashboard counts it as dormant.
+const DormantAfter = 90 * 24 * time.Hour
+
+// Posture is the dashboard's count of accounts worth a look (2026-10-31).
+type Posture struct {
+	// Admins: active accounts holding admin.
+	Admins int `json:"admins"`
+	// Dormant: active accounts whose last sign-in, or creation when they
+	// never signed in, is older than DormantAfter.
+	Dormant int `json:"dormant"`
+	// NotEnrolled: active accounts whose second factor is Zanskar's
+	// authenticator and that have not confirmed one. With the MFA
+	// requirement on, each is asked to enrol at its next sign-in.
+	NotEnrolled int `json:"not_enrolled"`
+}
+
+// CountPosture counts Posture at now. providerMFA lists the identity
+// providers whose own sign-in is the second factor (idp.Config's
+// ProviderOwnsMFA, enabled): an account linked to one, with no password of
+// its own, needs no Zanskar authenticator. So does an account with neither
+// a password nor a provider yet, which cannot sign in until single sign-on
+// links it. Every other active account (a password, an LDAP link, a
+// provider that leaves the second factor to Zanskar) needs one.
+func (r *Repo) CountPosture(ctx context.Context, now time.Time, providerMFA []string) (Posture, error) {
+	var p Posture
+	var err error
+	if p.Admins, err = r.CountAdmins(ctx); err != nil {
+		return p, err
+	}
+	err = r.db.QueryRowContext(ctx, r.db.Rebind(`SELECT COUNT(*) FROM users
+		WHERE status = 'active' AND COALESCE(last_login_at, created_at) < ?`), store.TimeArg(now.Add(-DormantAfter))).Scan(&p.Dormant)
+	if err != nil {
+		return p, err
+	}
+	linked := `u.idp_id IS NOT NULL`
+	args := []any{}
+	if len(providerMFA) > 0 {
+		marks := strings.TrimSuffix(strings.Repeat("?, ", len(providerMFA)), ", ")
+		linked = `u.idp_id IS NOT NULL AND (u.password_hash IS NOT NULL OR u.idp_id NOT IN (` + marks + `))`
+		for _, id := range providerMFA {
+			args = append(args, id)
+		}
+	}
+	err = r.db.QueryRowContext(ctx, r.db.Rebind(`SELECT COUNT(*) FROM users u
+		WHERE u.status = 'active'
+		AND NOT EXISTS (SELECT 1 FROM mfa_totp m WHERE m.user_id = u.id AND m.confirmed_at IS NOT NULL)
+		AND ((u.idp_id IS NULL AND u.password_hash IS NOT NULL) OR (`+linked+`))`), args...).Scan(&p.NotEnrolled)
+	return p, err
+}
+
 func (r *Repo) roles(ctx context.Context, id string) ([]Role, error) {
 	rows, err := r.db.QueryContext(ctx, r.db.Rebind(`SELECT role FROM user_roles WHERE user_id = ? ORDER BY role`), id)
 	if err != nil {

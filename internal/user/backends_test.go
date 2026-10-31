@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/albatroxxx/zanskar/internal/store"
 	"github.com/albatroxxx/zanskar/internal/store/storetest"
@@ -101,6 +102,82 @@ func TestCreateInGroupsOnEachBackend(t *testing.T) {
 			if _, err := r.GetByUsername(ctx, u.Username); !errors.Is(err, ErrNotFound) {
 				t.Fatalf("%s: a refused account was left behind: %v", bad, err)
 			}
+		}
+	})
+}
+
+// TestCountPostureOnEachBackend (2026-10-31, the dashboard's security
+// posture): who counts as not yet enrolled for each shape of account, who is
+// dormant at 90 days, and how many administrators there are, on SQLite and
+// PostgreSQL (timestamp comparison, an IN list built per call).
+func TestCountPostureOnEachBackend(t *testing.T) {
+	storetest.ForEachBackend(t, func(t *testing.T, db *store.DB) {
+		ctx := context.Background()
+		r := NewRepo(db)
+		now := time.Now().UTC()
+		exec := func(q string, args ...any) {
+			t.Helper()
+			if _, err := db.ExecContext(ctx, db.Rebind(q), args...); err != nil {
+				t.Fatalf("%s: %v", q, err)
+			}
+		}
+		for _, p := range [][2]string{{"p-owns", "oidc"}, {"p-ldap", "ldap"}, {"p-zmfa", "oidc"}} {
+			exec(`INSERT INTO identity_providers (id, name, type, config_enc, enabled, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+				p[0], p[0], p[1], []byte("sealed"), true, store.TimeArg(now), store.TimeArg(now))
+		}
+		add := func(name, hash, idp string, roles []Role, status Status) string {
+			t.Helper()
+			u := &User{Username: name, DisplayName: name, PasswordHash: hash, IdPID: idp, Roles: roles, Status: status}
+			if idp != "" {
+				u.ExternalID = "sub-" + name
+			}
+			if err := r.Create(ctx, u); err != nil {
+				t.Fatal(err)
+			}
+			return u.ID
+		}
+		totp := func(id string, confirmed bool) {
+			var at any
+			if confirmed {
+				at = store.TimeArg(now)
+			}
+			exec(`INSERT INTO mfa_totp (user_id, secret_enc, confirmed_at, created_at) VALUES (?, ?, ?, ?)`, id, []byte("s"), at, store.TimeArg(now))
+		}
+		users := []Role{RoleUser}
+		local := add("local", "hash", "", users, StatusActive)                    // counts
+		enrolled := add("enrolled", "hash", "", users, StatusActive)              // has one
+		half := add("half", "hash", "", users, StatusActive)                      // started, not confirmed: counts
+		add("waiting", "", "", users, StatusActive)                               // no password, no link yet
+		add("sso", "", "p-owns", users, StatusActive)                             // provider owns MFA
+		add("ldap", "", "p-ldap", users, StatusActive)                            // counts
+		add("zmfa", "", "p-zmfa", users, StatusActive)                            // provider leaves it to Zanskar: counts
+		add("gone", "hash", "", users, StatusDisabled)                            // disabled: never counted
+		admin1 := add("admin1", "hash", "", []Role{RoleAdmin}, StatusActive)      // counts as admin, enrolled below
+		add("admin-off", "hash", "", []Role{RoleAdmin, RoleUser}, StatusDisabled) // disabled admin: not counted
+		totp(enrolled, true)
+		totp(half, false)
+		totp(admin1, true)
+
+		p, err := r.CountPosture(ctx, now, []string{"p-owns"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if p.NotEnrolled != 4 || p.Admins != 1 || p.Dormant != 0 {
+			t.Fatalf("posture %+v, want not enrolled 4 (local, half, ldap, zmfa), admins 1, dormant 0", p)
+		}
+		// With no provider owning MFA, the linked SSO account needs one too.
+		if p, err = r.CountPosture(ctx, now, nil); err != nil || p.NotEnrolled != 5 {
+			t.Fatalf("no provider owns MFA: %+v %v", p, err)
+		}
+
+		// Dormant: last sign-in, else creation, older than 90 days.
+		old := store.TimeArg(now.Add(-DormantAfter - time.Hour))
+		exec(`UPDATE users SET last_login_at = ? WHERE id = ?`, old, local)
+		exec(`UPDATE users SET created_at = ? WHERE username = ?`, old, "waiting")
+		exec(`UPDATE users SET created_at = ?, last_login_at = ? WHERE id = ?`, old, store.TimeArg(now), enrolled)
+		exec(`UPDATE users SET last_login_at = ? WHERE username = ?`, old, "gone")
+		if p, err = r.CountPosture(ctx, now, []string{"p-owns"}); err != nil || p.Dormant != 2 {
+			t.Fatalf("dormant: %+v %v, want local and waiting", p, err)
 		}
 	})
 }

@@ -139,6 +139,36 @@ func (r *Repo) List(ctx context.Context, afterName string, limit int) ([]*Policy
 	return out, next, nil
 }
 
+// Exposure is the dashboard's count of standing access with no
+// authenticator asked for (2026-10-31): grants that admit without approval
+// and without MFA, in enabled policies, and the policies that hold them.
+type Exposure struct {
+	Grants   int `json:"grants"`
+	Policies int `json:"policies"`
+}
+
+// CountStandingNoMFA counts Exposure over every enabled policy.
+func (r *Repo) CountStandingNoMFA(ctx context.Context) (Exposure, error) {
+	var e Exposure
+	ps, err := r.query(ctx, `SELECT `+cols+` FROM access_policies WHERE enabled = ?`, true)
+	if err != nil {
+		return e, err
+	}
+	for _, p := range ps {
+		n := 0
+		for _, g := range p.Grants {
+			if g.Access != AccessApproval && !g.RequireMFA {
+				n++
+			}
+		}
+		if n > 0 {
+			e.Grants += n
+			e.Policies++
+		}
+	}
+	return e, nil
+}
+
 // query reads policies and drains the cursor before returning, so the
 // caller may query again at once (SQLite runs on one connection).
 func (r *Repo) query(ctx context.Context, q string, args ...any) ([]*Policy, error) {

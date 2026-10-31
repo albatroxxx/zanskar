@@ -390,6 +390,13 @@ export interface AdminOverview {
     healthy_instances: number
   }
   audit_24h: AuditTallies
+  /** What weakens access (2026-10-31): standing grants without MFA, accounts not yet enrolled, dormant ones, administrators. */
+  posture?: {
+    standing_no_mfa: { grants: number; policies: number }
+    admins: number
+    dormant: number
+    not_enrolled: number
+  }
 }
 
 /** GET /audit/overview (ADR 0029). Counts only, never row data. */

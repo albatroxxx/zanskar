@@ -7070,8 +7070,31 @@ components:
           description: Refused connections (`session.connect` failures).
     AdminOverview:
       type: object
-      required: [sessions, pending_requests, targets, inventory, autoscaling, audit_24h]
+      required: [sessions, pending_requests, targets, inventory, autoscaling, audit_24h, posture]
       properties:
+        posture:
+          type: object
+          description: What weakens access (2026-10-31), counts only.
+          required: [standing_no_mfa, admins, dormant, not_enrolled]
+          properties:
+            standing_no_mfa:
+              type: object
+              required: [grants, policies]
+              description: Standing grants that ask for no authenticator, in enabled policies, and the policies holding them.
+              properties:
+                grants: {type: integer}
+                policies: {type: integer}
+            admins:
+              type: integer
+              description: Active accounts holding admin.
+            dormant:
+              type: integer
+              description: Active accounts whose last sign-in, or creation when they never signed in, is more than 90 days old.
+            not_enrolled:
+              type: integer
+              description: >
+                Active accounts whose second factor is Zanskar's authenticator (a password, an LDAP
+                link, or a provider that leaves it to Zanskar) and that have not confirmed one.
         sessions:
           $ref: "#/components/schemas/SessionCounts"
         pending_requests:

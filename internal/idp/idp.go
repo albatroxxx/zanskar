@@ -466,6 +466,28 @@ func (r *Repo) List(ctx context.Context, onlyEnabled bool) ([]*Provider, error) 
 	return out, rows.Err()
 }
 
+// MFAOwners lists the enabled providers whose own sign-in is an account's
+// second factor (Config.ProviderOwnsMFA), for counting who still needs a
+// Zanskar authenticator (2026-10-31). The listing is drained before any
+// provider is opened (SQLite runs on one connection).
+func (r *Repo) MFAOwners(ctx context.Context) ([]string, error) {
+	ps, err := r.List(ctx, true)
+	if err != nil {
+		return nil, err
+	}
+	var out []string
+	for _, p := range ps {
+		op, err := r.Open(ctx, p.ID)
+		if err != nil {
+			return nil, err
+		}
+		if op.Config.ProviderOwnsMFA() {
+			out = append(out, p.ID)
+		}
+	}
+	return out, nil
+}
+
 // Delete removes a provider. Users and groups linked to it keep their rows
 // with idp_id set to NULL (schema ON DELETE SET NULL) and can no longer sign
 // in through it. Such a user with no password counts as unlinked, so the next

@@ -18,6 +18,7 @@ const overview: AdminOverview = {
   inventory: { hosts: 3, hosts_by_os: { linux: 2, windows: 1 }, databases: 2, databases_by_engine: { postgres: 1, mysql: 1 }, applications: 4 },
   autoscaling: { groups: 1, instances: 4, healthy_instances: 3 },
   audit_24h: { events: 41, failures: 4, failed_logins: 2, refused_connects: 1 },
+  posture: { standing_no_mfa: { grants: 3, policies: 2 }, admins: 2, dormant: 4, not_enrolled: 1 },
 }
 
 const status: SystemStatus = {
@@ -133,6 +134,27 @@ describe('the admin dashboard', () => {
     expect(screen.getByRole('button', { name: /Low space: 4\.0 GB free/ })).toBeDefined()
     expect(screen.getByText(/1 database session container/)).toBeDefined()
     expect(screen.getByText(/unreachable at 127\.0\.0\.1:4822/)).toBeDefined()
+  })
+
+  // 2026-10-31: the dashboard says what weakens access, each number a link.
+  it('shows the security posture, each tile opening its page', async () => {
+    serve()
+    at('/')
+    const tile = async (label: string) => (await screen.findByText(label)).closest('a') as HTMLAnchorElement
+    const standing = await tile('Standing access without MFA')
+    expect(standing.getAttribute('href')).toBe('/admin/policies')
+    expect(standing.textContent).toContain('3')
+    expect(standing.textContent).toContain('in 2 policies')
+    expect(standing.className).toContain('danger')
+    expect((await tile('No authenticator yet')).textContent).toContain('1')
+    expect((await tile('Dormant (90 days)')).textContent).toContain('4')
+    const admins = await tile('Administrators')
+    expect(admins.textContent).toContain('2')
+    expect(admins.className).not.toContain('warn')
+    // The section sits between what needs a decision and what is happening.
+    const sections = [...document.querySelectorAll('h2.stat-section')].map((h) => h.textContent)
+    expect(sections.indexOf('Security posture')).toBe(sections.indexOf('Needs attention') + 1)
+    expect(sections.indexOf('Activity')).toBe(sections.indexOf('Security posture') + 1)
   })
 
   it('says the overview failed rather than showing a quiet system', async () => {
