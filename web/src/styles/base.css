@@ -111,6 +111,21 @@ a.stat-tile:hover { border-color: var(--fg-faint); }
 .stat-tile.danger .value { color: var(--danger); }
 .stat-tile .label { margin-top: 2px; font-size: 0.82rem; color: var(--fg-muted); }
 .stat-tile .detail { margin-top: 4px; font-size: 0.78rem; color: var(--fg-faint); }
+/* A tile's last days (2026-10-31): columns with a 2px surface gap, rounded
+   at the data end only; each column's hit area is its whole slot. */
+.spark { display: flex; align-items: stretch; height: 24px; max-width: 126px; margin-top: 10px; }
+.spark-col { position: relative; flex: 1; display: flex; align-items: flex-end; padding: 0 1px; }
+.spark-col > i { display: block; width: 100%; border-radius: 2px 2px 0 0; background: var(--fg-faint); }
+.spark-col.now > i { background: var(--accent); }
+.spark-col.none > i { height: 2px; border-radius: 0; background: var(--line-strong); }
+.spark-col:hover > i { background: var(--fg-muted); }
+.spark-col.now:hover > i { background: var(--accent-hover); }
+.spark-col:hover::after {
+  content: attr(data-tip); position: absolute; bottom: calc(100% + 6px); left: 50%; transform: translateX(-50%); z-index: 2;
+  padding: 3px 7px; border-radius: 4px; background: var(--fg); color: var(--bg); font-size: 0.74rem; white-space: nowrap; pointer-events: none;
+}
+.spark-col:first-child:hover::after { left: 0; transform: none; }
+.spark-col:last-child:hover::after { left: auto; right: 0; transform: none; }
 
 /* Gauges (the gateway card): a ratio against its limit. The fill carries
    severity — accent at rest, warn and danger as thresholds pass — on a

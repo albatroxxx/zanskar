@@ -47,6 +47,54 @@ type Handler struct {
 	Chain       func() *audit.CheckResult
 	Directories func(ctx context.Context) (idp.SyncHealth, error)
 	ExportSinks []string
+	// Zone is the console's time zone (display.time_zone), whose calendar
+	// days the trends count; nil is UTC.
+	Zone func() *time.Location
+}
+
+// trendDays is how many calendar days the trends cover, today included.
+const trendDays = 7
+
+// trends are the last seven calendar days in the console's zone, today
+// last and so far: sessions started and connections refused, each day a
+// count (2026-10-31). Calendar days, not 24-hour windows from now, so a day
+// here is the day the Events page's filter shows.
+type trends struct {
+	Days     []string `json:"days"`
+	Sessions []int    `json:"sessions"`
+	Refused  []int    `json:"refused"`
+}
+
+// dayBounds are the starts of the last trendDays days in loc, then now:
+// trendDays+1 bounds. Each start is built from the date, so a day with a
+// daylight-saving change has its true length.
+func dayBounds(now time.Time, loc *time.Location) ([]time.Time, []string) {
+	local := now.In(loc)
+	bounds := make([]time.Time, 0, trendDays+1)
+	days := make([]string, 0, trendDays)
+	for i := trendDays - 1; i >= 0; i-- {
+		d := time.Date(local.Year(), local.Month(), local.Day()-i, 0, 0, 0, 0, loc)
+		bounds = append(bounds, d)
+		days = append(days, d.Format(time.DateOnly))
+	}
+	return append(bounds, now), days
+}
+
+func (h *Handler) countTrends(ctx context.Context, now time.Time) (trends, error) {
+	loc := time.UTC
+	if h.Zone != nil {
+		if z := h.Zone(); z != nil {
+			loc = z
+		}
+	}
+	bounds, days := dayBounds(now, loc)
+	t := trends{Days: days}
+	var err error
+	if t.Sessions, err = h.Sessions.StartedPer(ctx, bounds); err != nil {
+		return t, err
+	}
+	t.Refused, err = h.Audit.CountPer(ctx, audit.SessionConnect, audit.Failure, bounds)
+	return t, err
 }
 
 // lostWindow is how far back the dashboard counts lost recordings: rarer
@@ -257,6 +305,11 @@ func (h *Handler) adminOverview(w http.ResponseWriter, r *http.Request) {
 		httpx.Internal(w, r, h.Log, err)
 		return
 	}
+	trend, err := h.countTrends(ctx, time.Now())
+	if err != nil {
+		httpx.Internal(w, r, h.Log, err)
+		return
+	}
 	w.Header().Set("Cache-Control", "no-store")
 	httpx.WriteJSON(w, http.StatusOK, struct {
 		Sessions        session.Counts         `json:"sessions"`
@@ -268,7 +321,8 @@ func (h *Handler) adminOverview(w http.ResponseWriter, r *http.Request) {
 		Posture         posture                `json:"posture"`
 		Integrity       integrity              `json:"integrity"`
 		InFlight        access.InFlight        `json:"in_flight"`
-	}{sessions, pending, targets, inventory, asgs, foldTallies(tallies), post, integ, flight})
+		Trends          trends                 `json:"trends"`
+	}{sessions, pending, targets, inventory, asgs, foldTallies(tallies), post, integ, flight, trend})
 }
 
 // auditOverview answers GET /api/v1/audit/overview for admins and auditors.

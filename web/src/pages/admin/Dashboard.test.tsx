@@ -135,7 +135,7 @@ describe('the admin dashboard', () => {
     expect(disk.parentElement?.textContent).toContain('96% used · 4.0 GB free of 100.0 GB')
     expect(disk.parentElement?.querySelector('.gauge-pct')?.className).toContain('danger')
     expect(screen.getByRole('button', { name: /Low space: 4\.0 GB free/ })).toBeDefined()
-    expect(screen.getByText(/1 database session container/)).toBeDefined()
+    expect(screen.getByText(/1 database session/)).toBeDefined()
     expect(screen.getByText(/unreachable at 127\.0\.0\.1:4822/)).toBeDefined()
   })
 
@@ -183,6 +183,77 @@ describe('the admin dashboard', () => {
     expect(rec.getAttribute('href')).toBe('/admin/events?action=recording.lost&outcome=failure&range=7d')
     expect((await line('Identity providers')).textContent).toContain('In sync')
     expect((await line('SIEM export')).textContent).toContain('Not configured')
+  })
+
+  // 2026-10-31: the last seven calendar days under the two counts that have
+  // a shape over a week, today last and in the accent.
+  it('draws the last seven days under sessions and refused connections', async () => {
+    const days = ['2026-10-25', '2026-10-26', '2026-10-27', '2026-10-28', '2026-10-29', '2026-10-30', '2026-10-31']
+    serve({ '/admin/overview': { ...overview, trends: { days, sessions: [0, 3, 1, 0, 12, 5, 2], refused: [0, 0, 0, 0, 0, 0, 1] } } })
+    at('/')
+    const tile = (await screen.findByText('Sessions (24h)')).closest('a') as HTMLAnchorElement
+    const cols = Array.from(tile.querySelectorAll<HTMLElement>('.spark-col'))
+    expect(cols).toHaveLength(7)
+    expect(tile.querySelector('.spark')?.getAttribute('aria-hidden')).toBe('true')
+    // Today is the last column and the only one in the accent.
+    expect(cols.map((c) => c.classList.contains('now'))).toEqual([false, false, false, false, false, false, true])
+    // A day with none is a stub on the baseline; heights scale to the week's
+    // most, and one session still stands an eighth high next to twelve.
+    expect(cols.map((c) => c.classList.contains('none'))).toEqual([true, false, false, true, false, false, false])
+    const height = (i: number) => (cols[i].querySelector('i') as HTMLElement).style.height
+    expect(height(4)).toBe('100%')
+    expect(height(1)).toBe('25%')
+    expect(height(2)).toBe('12.5%')
+    expect(height(0)).toBe('')
+    // Hovering names the day and the count; a screen reader hears the same
+    // with what is counted.
+    expect(cols[6].dataset.tip).toBe('Today so far: 2')
+    expect(cols[2].dataset.tip).toMatch(/(Oct 27|27 Oct).*: 1$/)
+    expect(tile.textContent).toMatch(/(Oct 27|27 Oct).*: 1 session;/)
+    expect(tile.textContent).toContain('Last 7 days:')
+    expect(tile.textContent).toContain('Today so far: 2 sessions')
+
+    const refused = screen.getByText('Refused connections (24h)').closest('a') as HTMLAnchorElement
+    expect(refused.querySelectorAll('.spark-col')).toHaveLength(7)
+    expect(refused.querySelector<HTMLElement>('.spark-col.now')?.dataset.tip).toBe('Today so far: 1')
+    expect(refused.textContent).toContain('Today so far: 1 refused connection')
+  })
+
+  it('draws no trend when the gateway sends none', async () => {
+    serve()
+    at('/')
+    await screen.findByText('Sessions (24h)')
+    expect(document.querySelector('.spark')).toBeNull()
+  })
+
+  // 2026-10-31: a kind of session with a cap is a gauge against it, and the
+  // images Zanskar keeps on the host are a figure in the facts line.
+  it('shows sessions against their caps and the images on disk', async () => {
+    serve({
+      '/admin/system/metrics': { ...metrics, database_sessions: 20, application_sessions: 8, session_caps: { applications: 10, databases: 20 }, images_bytes: 2.5 * 1024 ** 3 },
+    })
+    at('/')
+    const apps = await screen.findByRole('meter', { name: 'Application sessions' })
+    expect(apps.getAttribute('aria-valuenow')).toBe('80')
+    expect(apps.className).toContain('warn')
+    expect(apps.parentElement?.textContent).toContain('80% of the cap · 8 of 10 open')
+    // At the cap the gateway refuses the next one: danger.
+    const dbs = screen.getByRole('meter', { name: 'Database sessions' })
+    expect(dbs.className).toContain('danger')
+    expect(dbs.parentElement?.textContent).toContain('20 of 20 open')
+    // A capped kind is not counted again in the line.
+    // The line opens with a capital whichever fact comes first.
+    const line = screen.getByText(/^Container images 2\.5 GB/)
+    expect(line.textContent).not.toContain('session')
+  })
+
+  it('counts a kind of session without a cap in the facts line', async () => {
+    serve({ '/admin/system/metrics': { ...metrics, application_sessions: 3, session_caps: { applications: 0, databases: 0 } } })
+    at('/')
+    const line = await screen.findByText(/3 application sessions/)
+    expect(line.textContent).toContain('1 database session · 3 application sessions · guacd')
+    expect(screen.queryByRole('meter', { name: 'Application sessions' })).toBeNull()
+    expect(line.textContent).not.toContain('container images')
   })
 
   it('says the overview failed rather than showing a quiet system', async () => {

@@ -595,6 +595,22 @@ func (l *Log) TallySince(ctx context.Context, since time.Time) ([]Tally, error) 
 	return out, nil
 }
 
+// CountPer counts the events of one action and outcome in each range
+// between consecutive bounds, [bounds[i], bounds[i+1]) (2026-10-31, the
+// dashboard's trends).
+func (l *Log) CountPer(ctx context.Context, action string, outcome Outcome, bounds []time.Time) ([]int, error) {
+	out := make([]int, 0, max(len(bounds)-1, 0))
+	for i := 0; i+1 < len(bounds); i++ {
+		var n int
+		if err := l.db.QueryRowContext(ctx, l.db.Rebind(`SELECT COUNT(*) FROM audit_events WHERE action = ? AND outcome = ? AND ts >= ? AND ts < ?`),
+			action, string(outcome), l.tsArg(bounds[i]), l.tsArg(bounds[i+1])).Scan(&n); err != nil {
+			return nil, fmt.Errorf("audit: count: %w", err)
+		}
+		out = append(out, n)
+	}
+	return out, nil
+}
+
 // distinct lists the values held in one column. The column is named by a
 // caller-supplied literal and never by request input, so interpolating it into
 // the statement cannot be turned into an injection. Each result set is drained

@@ -418,12 +418,22 @@ func serve(ctx context.Context) error {
 			&browsergw.Readiness{Guacd: func() string { return runtime.String(settings.KeyGuacdAddr) }, BrowserImage: func() string { return runtime.String(settings.KeyBrowserImage) }, Docker: cfg.DockerPath},
 			&overview.Handler{Sessions: sessionRepo, Requests: accessReqs, Targets: targets, ASGs: asgRepo, Audit: auditLog, Log: log,
 				Users: users, Policies: policies, MFAOwners: idpRepo.MFAOwners,
-				Chain: chainChecker.Last, Directories: userSync.Health, ExportSinks: sinkNames(sinks)},
+				Chain: chainChecker.Last, Directories: userSync.Health, ExportSinks: sinkNames(sinks),
+				Zone: func() *time.Location {
+					// The setting only takes loadable names; anything else is UTC.
+					loc, err := time.LoadLocation(runtime.String(settings.KeyTimeZone))
+					if err != nil {
+						return time.UTC
+					}
+					return loc
+				}},
 			&update.Handler{Checker: versionCheck, Log: log, StateDir: cfg.StateDir, Supervisor: lifecycle.Supervisor},
 			&settings.Handler{Service: runtime, Audit: auditLog, Log: log},
 			&recstorage.Handler{Manager: storageMgr, Audit: auditLog, Log: log},
 			&lifecycle.Handler{Drift: drift, Controller: restarter, Audit: auditLog, Log: log, StartedAt: startedAt,
-				DatabasePath: dbFileForMetrics(cfg.DBDSN), RecordingsPath: cfg.RecordingsDir, GuacdAddr: guacdAddr, StateDir: cfg.StateDir},
+				DatabasePath: dbFileForMetrics(cfg.DBDSN), RecordingsPath: cfg.RecordingsDir, GuacdAddr: guacdAddr, StateDir: cfg.StateDir,
+				AppsMaxSessions: cfg.AppsMaxSessions, DatabaseMaxSessions: cfg.DatabaseMaxSessions,
+				ImagesSize: func(ctx context.Context) (int64, error) { return containers.ImagesSize(ctx, cfg.DockerPath) }},
 			&logring.API{Ring: logs, Audit: auditLog, Log: log},
 			&tlscert.Handler{Manager: tlsMgr, Mode: cfg.TLSMode, Audit: auditLog, Log: log},
 			connectHandler,

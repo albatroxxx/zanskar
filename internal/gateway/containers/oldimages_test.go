@@ -197,3 +197,33 @@ func TestRemoveOldImagesWithDocker(t *testing.T) {
 		}
 	}
 }
+
+// TestImagesSize (2026-10-31): Zanskar's labelled images, each once, by the
+// bytes the runtime reports; a listing with none is zero, not an error.
+func TestImagesSize(t *testing.T) {
+	var asked [][]string
+	run := func(_ context.Context, args ...string) (string, error) {
+		asked = append(asked, args)
+		switch args[1] {
+		case "ls":
+			return "sha256:aa\nsha256:bb\nsha256:aa\nWARNING: noise\n", nil
+		case "inspect":
+			return "1000\n2500\n", nil
+		}
+		return "", fmt.Errorf("unexpected %v", args)
+	}
+	n, err := ImagesSizeWith(context.Background(), run)
+	if err != nil || n != 3500 {
+		t.Fatalf("size %d %v, want 3500", n, err)
+	}
+	if !slices.Contains(asked[0], "label="+SourceLabel+"="+Source) {
+		t.Fatalf("listing without the source label: %v", asked[0])
+	}
+	if got := asked[1][len(asked[1])-2:]; !reflect.DeepEqual(got, []string{"sha256:aa", "sha256:bb"}) {
+		t.Fatalf("inspected %v, each image once", got)
+	}
+	none := func(_ context.Context, args ...string) (string, error) { return "", nil }
+	if n, err := ImagesSizeWith(context.Background(), none); err != nil || n != 0 {
+		t.Fatalf("no images: %d %v", n, err)
+	}
+}

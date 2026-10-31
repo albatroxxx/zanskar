@@ -125,6 +125,22 @@ func (r *Repo) Count(ctx context.Context, since time.Time) (Counts, error) {
 	return c, err
 }
 
+// StartedPer counts the sessions started in each range between consecutive
+// bounds, [bounds[i], bounds[i+1]), one query after another (2026-10-31,
+// the dashboard's trends).
+func (r *Repo) StartedPer(ctx context.Context, bounds []time.Time) ([]int, error) {
+	out := make([]int, 0, max(len(bounds)-1, 0))
+	for i := 0; i+1 < len(bounds); i++ {
+		var n int
+		if err := r.db.QueryRowContext(ctx, r.db.Rebind(`SELECT COUNT(*) FROM access_sessions WHERE started_at >= ? AND started_at < ?`),
+			store.TimeArg(bounds[i]), store.TimeArg(bounds[i+1])).Scan(&n); err != nil {
+			return nil, err
+		}
+		out = append(out, n)
+	}
+	return out, nil
+}
+
 // Get returns a session.
 func (r *Repo) Get(ctx context.Context, id string) (*Session, error) {
 	row := r.db.QueryRowContext(ctx, r.db.Rebind(selectSessions+` WHERE s.id = ?`), id)

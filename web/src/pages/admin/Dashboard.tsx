@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from 'react'
+import { Fragment, useEffect, useState, type ReactNode } from 'react'
 import { Link } from 'react-router-dom'
 import { api, errorMessage } from '../../api/client'
 import { consoleZone, engineName, fmtBytes, fmtTime, zoneLabel } from '../../api/format'
@@ -99,7 +99,14 @@ export function Dashboard() {
         />
         <StatTile value={attention} label="Hosts needing attention" icon={<TileIcon kind="attention" />} to={drill.hostsNeedingAttention} tone="warn" />
         <StatTile value={o && o.audit_24h.failed_logins} label="Failed sign-ins (24h)" icon={<TileIcon kind="key" />} to={drill.failedSignIns('/admin')} tone="warn" />
-        <StatTile value={o && o.audit_24h.refused_connects} label="Refused connections (24h)" icon={<TileIcon kind="ban" />} to={drill.refusedConnections('/admin')} tone="warn" />
+        <StatTile
+          value={o && o.audit_24h.refused_connects}
+          label="Refused connections (24h)"
+          icon={<TileIcon kind="ban" />}
+          trend={o?.trends && { days: o.trends.days, values: o.trends.refused, noun: 'refused connection' }}
+          to={drill.refusedConnections('/admin')}
+          tone="warn"
+        />
       </div>
 
       <h2 className="stat-section">Security posture</h2>
@@ -127,7 +134,13 @@ export function Dashboard() {
           detail={o?.in_flight && o.in_flight.ending_soon > 0 ? `${o.in_flight.ending_soon} end within the hour` : undefined}
           to="/admin/approvals"
         />
-        <StatTile value={o && o.sessions.started_24h} label="Sessions (24h)" icon={<TileIcon kind="clock" />} to={drill.sessions24h('/admin')} />
+        <StatTile
+          value={o && o.sessions.started_24h}
+          label="Sessions (24h)"
+          icon={<TileIcon kind="clock" />}
+          trend={o?.trends && { days: o.trends.days, values: o.trends.sessions, noun: 'session' }}
+          to={drill.sessions24h('/admin')}
+        />
         <StatTile value={o && o.audit_24h.failures} label="Failures (24h)" icon={<TileIcon kind="attention" />} to={drill.failures('/admin')} />
       </div>
 
@@ -244,11 +257,31 @@ function diskUse(d: { total_bytes: number; free_bytes: number; used_bytes?: numb
   return { pct: Math.ceil((used / base) * 100), fraction: used / base }
 }
 
+/** capTone escalates a count against its cap: at the cap the gateway
+ *  refuses the next session, so that is danger; four fifths is the warning. */
+function capTone(n: number, cap: number): 'warn' | 'danger' | undefined {
+  if (n >= cap) return 'danger'
+  if (n >= cap * 0.8) return 'warn'
+  return undefined
+}
+
+function plural(n: number, noun: string): string {
+  return `${n} ${noun}${n === 1 ? '' : 's'}`
+}
+
 /** HostFacts is the gateway host right now: a gauge per ratio, then a line
  *  for the facts that are not ratios. Words carry every state the colour
- *  does. */
+ *  does. A kind of session with a cap is a gauge against it (2026-10-31);
+ *  without one its count joins the line. */
 function HostFacts({ m }: { m: SystemMetrics }) {
   const used = m.memory ? m.memory.total_bytes - m.memory.available_bytes : 0
+  const apps = m.application_sessions ?? 0
+  const caps = m.session_caps ?? { applications: 0, databases: 0 }
+  const line: ReactNode[] = []
+  if (caps.databases === 0) line.push(plural(m.database_sessions, 'database session'))
+  if (caps.applications === 0 && m.application_sessions !== undefined) line.push(plural(apps, 'application session'))
+  if (m.images_bytes !== undefined) line.push(`container images ${fmtBytes(m.images_bytes)}`)
+  if (m.guacd) line.push(<>guacd {m.guacd.reachable ? 'reachable' : <Badge tone="danger">unreachable at {m.guacd.address}</Badge>}</>)
   return (
     <>
       <div className="gw-grid">
@@ -302,15 +335,36 @@ function HostFacts({ m }: { m: SystemMetrics }) {
             tone={d.free_bytes < d.total_bytes / 20 ? 'danger' : d.free_bytes < d.total_bytes / 10 ? 'warn' : undefined}
           />
         ))}
-      </div>
-      <p className="muted" style={{ margin: '12px 0 0' }}>
-        {m.database_sessions} database session container{m.database_sessions === 1 ? '' : 's'}
-        {m.guacd && (
-          <>
-            {' · '}guacd {m.guacd.reachable ? 'reachable' : <Badge tone="danger">unreachable at {m.guacd.address}</Badge>}
-          </>
+        {caps.applications > 0 && (
+          <Gauge
+            label="Application sessions"
+            word="of the cap"
+            detail={<>{apps} of {caps.applications} open</>}
+            fraction={apps / caps.applications}
+            tone={capTone(apps, caps.applications)}
+          />
         )}
-      </p>
+        {caps.databases > 0 && (
+          <Gauge
+            label="Database sessions"
+            word="of the cap"
+            detail={<>{m.database_sessions} of {caps.databases} open</>}
+            fraction={m.database_sessions / caps.databases}
+            tone={capTone(m.database_sessions, caps.databases)}
+          />
+        )}
+      </div>
+      {line.length > 0 && (
+        <p className="muted" style={{ margin: '12px 0 0' }}>
+          {line.map((part, i) => (
+            <Fragment key={i}>
+              {i > 0 && ' · '}
+              {/* The line opens with a capital, whichever fact comes first. */}
+              {i === 0 && typeof part === 'string' ? part[0].toUpperCase() + part.slice(1) : part}
+            </Fragment>
+          ))}
+        </p>
+      )}
     </>
   )
 }

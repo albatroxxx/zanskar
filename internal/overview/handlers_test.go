@@ -392,3 +392,24 @@ func TestAdminOverviewIntegrity(t *testing.T) {
 		t.Fatalf("chain: %v", c)
 	}
 }
+
+// TestDayBounds (2026-10-31): the trends' days are calendar days in the
+// console's zone, today last and so far; the day the clocks go back is 25
+// hours long, not 24.
+func TestDayBounds(t *testing.T) {
+	berlin, err := time.LoadLocation("Europe/Berlin")
+	if err != nil {
+		t.Skip(err)
+	}
+	now := time.Date(2026, 10, 31, 10, 0, 0, 0, berlin)
+	bounds, days := dayBounds(now, berlin)
+	if len(bounds) != 8 || len(days) != 7 || days[0] != "2026-10-25" || days[6] != "2026-10-31" {
+		t.Fatalf("days %v (%d bounds)", days, len(bounds))
+	}
+	if got := bounds[1].Sub(bounds[0]); got != 25*time.Hour {
+		t.Fatalf("25 October in Berlin lasted %s, want 25h", got)
+	}
+	if !bounds[7].Equal(now) || !bounds[6].Equal(time.Date(2026, 10, 31, 0, 0, 0, 0, berlin)) {
+		t.Fatalf("today runs from midnight to now: %v .. %v", bounds[6], bounds[7])
+	}
+}

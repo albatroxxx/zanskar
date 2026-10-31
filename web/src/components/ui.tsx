@@ -63,7 +63,7 @@ export function Badge({ tone, children }: { tone?: 'ok' | 'warn' | 'danger' | 'a
  *  naming what it counts, and the page that manages it. The caption is a
  *  label, not a sentence; a tone only underlines what it already says, so it
  *  shows only on a non-zero count. "—" while the value is still loading. */
-export function StatTile({ value, label, detail, icon, meter, to, tone }: {
+export function StatTile({ value, label, detail, icon, meter, trend, to, tone }: {
   value: number | null
   label: string
   detail?: ReactNode
@@ -71,6 +71,8 @@ export function StatTile({ value, label, detail, icon, meter, to, tone }: {
   icon?: ReactNode
   /** A ratio against a limit, drawn under the caption. */
   meter?: { fraction: number; tone?: 'warn' | 'danger' }
+  /** Counts per calendar day, oldest first and today last, drawn under the caption. */
+  trend?: Trend
   to: string
   tone?: 'warn' | 'danger'
 }) {
@@ -86,7 +88,52 @@ export function StatTile({ value, label, detail, icon, meter, to, tone }: {
           <i style={{ width: `${pct}%` }} />
         </div>
       )}
+      {trend && trend.values.length > 0 && <Sparkline {...trend} />}
     </Link>
+  )
+}
+
+export interface Trend {
+  /** Days as YYYY-MM-DD, already in the console's zone; values matched by index. */
+  days: string[]
+  values: number[]
+  /** What is counted, singular: "session" reads "3 sessions". */
+  noun: string
+}
+
+// trendDay names a calendar day the server already cut in the console's
+// zone; read at noon UTC and shown in UTC, it is that day wherever the
+// browser is.
+function trendDay(day: string): string {
+  return new Date(day + 'T12:00:00Z').toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short', timeZone: 'UTC' })
+}
+
+/**
+ * Sparkline is a stat tile's last days as columns (2026-10-31): past days
+ * in the faint ink, today in the accent, a day with none a stub on the
+ * baseline. Hovering a column shows its day and count; the same, with what
+ * is counted, is in the link's text for a screen reader, and the tile opens
+ * the list behind every count.
+ */
+function Sparkline({ days, values, noun }: Trend) {
+  const max = Math.max(1, ...values)
+  const last = values.length - 1
+  const day = (i: number) => (i === last ? 'Today so far' : trendDay(days[i]))
+  const says = (i: number) => `${day(i)}: ${values[i]} ${values[i] === 1 ? noun : noun + 's'}`
+  return (
+    <>
+      <span className="spark" aria-hidden="true">
+        {values.map((v, i) => (
+          // The hover says the day and the count alone: the caption already
+          // names what is counted, and a short tip stays within the tile.
+          <span key={days[i] ?? i} className={'spark-col' + (i === last ? ' now' : '') + (v === 0 ? ' none' : '')} data-tip={`${day(i)}: ${v}`}>
+            {/* A day with any counts stands at least an eighth high, so one is not mistaken for none. */}
+            <i style={v > 0 ? { height: `${Math.max(12.5, (v / max) * 100)}%` } : undefined} />
+          </span>
+        ))}
+      </span>
+      <span className="sr-only">Last {values.length} days: {values.map((_, i) => says(i)).join('; ')}</span>
+    </>
   )
 }
 

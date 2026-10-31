@@ -406,6 +406,8 @@ export interface AdminOverview {
   }
   /** Access in flight (2026-10-31): just-in-time grants active now, those ending within the hour, the oldest pending request's wait. */
   in_flight?: { active: number; ending_soon: number; oldest_pending_seconds: number }
+  /** The last seven calendar days in the console's time zone, today last and so far (2026-10-31): days as YYYY-MM-DD, sessions started and connections refused per day. */
+  trends?: { days: string[]; sessions: number[]; refused: number[] }
 }
 
 /** GET /audit/overview (ADR 0029). Counts only, never row data. */
@@ -665,6 +667,11 @@ export interface SystemMetrics {
   disks: { what: string; path: string; system: boolean; total_bytes: number; free_bytes: number; used_bytes?: number }[]
   database_sessions: number
   guacd?: { address: string; reachable: boolean }
+  /** Application browsers running now (ADR 0034), and the caps on both kinds, 0 for none (2026-10-31). */
+  application_sessions?: number
+  session_caps?: { applications: number; databases: number }
+  /** Disk Zanskar's container images take; absent without a container runtime. */
+  images_bytes?: number
   cpus: number
 }
 
