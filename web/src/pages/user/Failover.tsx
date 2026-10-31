@@ -78,7 +78,7 @@ export function FailoverDialog({ sessionId, asgId, protocol, lostLabel, onExit, 
         {lostLabel ? `${lostLabel} left the healthy pool. ` : 'The instance you were on left the healthy pool. '}
         {empty ? 'The group has no healthy instance to switch to right now.' : `Switch to another instance in this group over ${protocol.toUpperCase()}, or exit.`}
       </p>
-      {err && <Alert tone="danger">{err}</Alert>}
+      {err && <Alert tone="danger" onDismiss={() => setErr('')}>{err}</Alert>}
       {instances === null && <p className="muted">Loading healthy instances…</p>}
       {instances && instances.length > 0 && (
         <div className="failover-list">

@@ -24,6 +24,10 @@ declare module 'guacamole-common-js' {
     getScale(): number
     scale(scale: number): void
     onresize: ((width: number, height: number) => void) | null
+    /** Fired when the remote pointer image changes: the image and its hotspot. */
+    oncursor: ((canvas: HTMLCanvasElement, x: number, y: number) => void) | null
+    /** Shows or hides the software cursor, the layer the library moves with the mouse. */
+    showCursor(shown?: boolean): void
   }
   /** Replays a stored guacd instruction stream through a Display. */
   export class SessionRecording {
@@ -116,6 +120,9 @@ declare module 'guacamole-common-js' {
     onmousedown: ((state: unknown) => void) | null
     onmouseup: ((state: unknown) => void) | null
     onmousemove: ((state: unknown) => void) | null
+    onmouseout: ((state: unknown) => void) | null
+    /** Sets the element's CSS cursor to the canvas; false when the browser has no image cursors. */
+    setCursor(canvas: HTMLCanvasElement, x: number, y: number): boolean
   }
   export class Keyboard {
     constructor(element: Document | HTMLElement)

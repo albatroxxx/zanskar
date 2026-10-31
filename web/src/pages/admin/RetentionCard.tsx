@@ -62,8 +62,8 @@ export function RetentionCard() {
   return (
     <form className="card" id="settings-recording-retention" onSubmit={save}>
       <h2>Recording retention</h2>
-      {err && <Alert tone="danger">{err}</Alert>}
-      {saved && <Alert tone="ok">Retention policy saved.</Alert>}
+      {err && <Alert tone="danger" onDismiss={() => setErr('')}>{err}</Alert>}
+      {saved && <Alert tone="ok" onDismiss={() => setSaved(false)}>Retention policy saved.</Alert>}
       {!loaded && !err ? (
         <p className="muted">Loading…</p>
       ) : (

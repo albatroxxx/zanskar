@@ -229,6 +229,30 @@ describe('Users', () => {
     expect(await within(dialog).findByText('bob has opened sessions; disable the account instead')).toBeDefined()
     expect(screen.getByRole('dialog', { name: 'Delete bob?' })).toBeDefined()
   })
+
+  // 2026-11-01, every notice can be dismissed: a refusal dismissed on the
+  // page and then met again is the same message, which does not render, so
+  // an alert that only hid itself stayed hidden and the retry said nothing.
+  it('names the same refusal again after the first was dismissed', async () => {
+    serve()
+    const refusal = 'bob has opened sessions; disable the account instead'
+    vi.spyOn(api, 'del').mockRejectedValue(new ApiError(409, { code: 'has_history', message: refusal, request_id: 'r' }, '409'))
+    const user = await show()
+    const onPage = () => screen.queryAllByText(refusal).filter((el) => !el.closest('[role="dialog"]'))
+    const tryDelete = async () => {
+      await act(user, 'bob', 'delete')
+      const dialog = screen.getByRole('dialog', { name: 'Delete bob?' })
+      await user.click(within(dialog).getByRole('button', { name: 'Delete' }))
+      await within(dialog).findByText(refusal)
+      await user.click(within(dialog).getByRole('button', { name: 'Cancel' }))
+    }
+    await tryDelete()
+    expect(onPage()).toHaveLength(1)
+    await user.click(within(onPage()[0].closest('[role="alert"]') as HTMLElement).getByRole('button', { name: 'Dismiss' }))
+    expect(onPage()).toHaveLength(0)
+    await tryDelete()
+    expect(onPage()).toHaveLength(1)
+  })
 })
 
 describe('Groups', () => {

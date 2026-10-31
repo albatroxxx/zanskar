@@ -64,8 +64,8 @@ export function StorageCard() {
   return (
     <div className="card" id="settings-recording-storage">
       <h2>Recording storage</h2>
-      {err && <Alert tone="danger">{err}</Alert>}
-      {ok && <Alert tone="ok">{ok}</Alert>}
+      {err && <Alert tone="danger" onDismiss={() => setErr('')}>{err}</Alert>}
+      {ok && <Alert tone="ok" onDismiss={() => setOk('')}>{ok}</Alert>}
       <dl className="kv">
         <dt>Active</dt>
         <dd>

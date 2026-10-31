@@ -235,7 +235,7 @@ function SettingRow({ setting, onChange }: { setting: RuntimeSetting; onChange: 
           <input id={id + '-code'} inputMode="numeric" autoComplete="one-time-code" value={code} onChange={(e) => setCode(e.target.value)} autoFocus />
         </Field>
       )}
-      {err && <Alert tone="danger">{err}</Alert>}
+      {err && <Alert tone="danger" onDismiss={() => setErr('')}>{err}</Alert>}
       <div className="actions">
         <button type="button" className="btn primary sm" disabled={!dirty || busy || (needCode && !code.trim())} onClick={() => void save()}>{busy ? 'Saving…' : 'Save'}</button>
         <button type="button" className="btn sm" disabled={!dirty || busy} onClick={() => setValue(setting.value)}>Discard</button>

@@ -247,7 +247,7 @@ export function Targets() {
   return (
     <>
       <PageHead title="Targets" />
-      {err && <Alert tone="danger">{err}</Alert>}
+      {err && <Alert tone="danger" onDismiss={() => setErr('')}>{err}</Alert>}
       {items && items.length > 0 && (
         <div className="list-search">
           <input
@@ -259,7 +259,7 @@ export function Targets() {
           />
         </div>
       )}
-      {notice && <Alert tone="ok">{notice}</Alert>}
+      {notice && <Alert tone="ok" onDismiss={() => setNotice('')}>{notice}</Alert>}
       {(strip.open > 0 || strip.pending > 0 || strip.expiring > 0) && (
         <div className="stat-grid" style={{ marginBottom: 16 }}>
           {strip.open > 0 && <StatTile value={strip.open} label="Open sessions" to={accessDrill.openSessions} />}
@@ -506,7 +506,7 @@ export function Targets() {
       {prompt && (
         <Modal title={`Credentials for ${prompt.target.name}`} onClose={closePrompt}>
           <p className="muted">Sent to the machine; not stored.</p>
-          {promptErr && <Alert tone="danger">{promptErr}</Alert>}
+          {promptErr && <Alert tone="danger" onDismiss={() => setPromptErr('')}>{promptErr}</Alert>}
           <form
             onSubmit={(e) => {
               e.preventDefault()

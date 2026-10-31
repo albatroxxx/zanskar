@@ -7,7 +7,7 @@ import { canConnect } from '../../auth/home'
 import { PickList } from '../../components/PickList'
 import { TagEditor } from '../../components/TagEditor'
 import { tagSuggestions } from '../../components/tags'
-import { Alert, Empty, Field, PageHead } from '../../components/ui'
+import { Alert, Empty, Field, PageHead, RemoveButton } from '../../components/ui'
 import { useList } from './lib'
 import { chipsFor, fromDraft, grantSummary, kindOf, kinds, newGrant, toDraft, unfound, type GrantDraft } from './policyModel'
 
@@ -104,7 +104,7 @@ export function PolicyEditor() {
       <PageHead title={id ? `Edit ${loaded?.name ?? 'policy'}` : 'New policy'}>
         <Link className="btn" to="/admin/policies">Back to policies</Link>
       </PageHead>
-      {err && <Alert tone="danger">{err}</Alert>}
+      {err && <Alert tone="danger" onDismiss={() => setErr('')}>{err}</Alert>}
       <div className="card">
         <h2>Policy</h2>
         <div className="form-grid">
@@ -382,7 +382,7 @@ function GrantCard({ index, draft: d, open, onToggleOpen, onChange, onRemove, on
                     <input aria-label={`Window ${i + 1} from`} className="time" value={w.from} onChange={(e) => setWindow(i, { from: e.target.value })} placeholder="09:00" />
                     <input aria-label={`Window ${i + 1} to`} className="time" value={w.to} onChange={(e) => setWindow(i, { to: e.target.value })} placeholder="18:00" />
                     <input aria-label={`Window ${i + 1} time zone`} className="tz" value={w.tz} onChange={(e) => setWindow(i, { tz: e.target.value })} placeholder="UTC" />
-                    <button type="button" className="btn sm ghost" aria-label={`Remove window ${i + 1}`} onClick={() => up({ windows: d.windows.filter((_, j) => j !== i) })}>×</button>
+                    <RemoveButton label={`Remove window ${i + 1}`} onClick={() => up({ windows: d.windows.filter((_, j) => j !== i) })} />
                   </div>
                 ))}
                 <div>

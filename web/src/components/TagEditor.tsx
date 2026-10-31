@@ -1,4 +1,5 @@
 import { maxTagLen, maxTags, type TagRow } from './tags'
+import { RemoveButton } from './ui'
 
 /**
  * TagEditor edits tags as rows of two boxes, Key and Value, the way cloud
@@ -47,9 +48,7 @@ export function TagEditor({ rows, onChange, idPrefix, suggest, valuePlaceholder 
               list={values.length ? valuesId : undefined}
               onChange={(e) => set(i, { value: e.target.value })}
             />
-            <button type="button" className="btn sm ghost" aria-label={`Remove tag ${r.key.trim() || i + 1}`} onClick={() => onChange(rows.filter((_, j) => j !== i))}>
-              ×
-            </button>
+            <RemoveButton label={`Remove tag ${r.key.trim() || i + 1}`} onClick={() => onChange(rows.filter((_, j) => j !== i))} />
             {values.length > 0 && (
               <datalist id={valuesId}>
                 {values.map((v) => <option key={v} value={v}>{v}</option>)}

@@ -187,7 +187,7 @@ export function TargetForm({ initial, kind, onClose, onSaved }: { initial?: Targ
   const secureUpstream = f.app_upstream.trim().toLowerCase().startsWith('https://')
   return (
     <Modal title={title} onClose={onClose} width={620}>
-      {err && <Alert tone="danger">{err}</Alert>}
+      {err && <Alert tone="danger" onDismiss={() => setErr('')}>{err}</Alert>}
       {!initial && !kind && (
         <>
           <Tabs label="Kind of target" value={k ?? ''} onChange={setK} tabs={[{ key: 'host', label: 'Host' }, { key: 'database', label: 'Database' }, { key: 'application', label: 'Application' }]} />

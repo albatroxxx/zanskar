@@ -33,7 +33,7 @@ export function Policies() {
       <PageHead title="Access policies" lead="Standing access wins over approval; where grants overlap, each limit is the strictest.">
         <Link className="btn primary" to="/admin/policies/new">Add policy</Link>
       </PageHead>
-      {err && <Alert tone="danger">{err}</Alert>}
+      {err && <Alert tone="danger" onDismiss={() => setErr('')}>{err}</Alert>}
       <div className="card table-wrap">
         {items === null ? (
           err ? null : <Empty>Loading…</Empty>

@@ -335,7 +335,7 @@ export function Player() {
         )}
         <Link className="btn" to={recordingsPath}>Back to recordings</Link>
       </PageHead>
-      {err && <Alert tone="danger">{err}</Alert>}
+      {err && <Alert tone="danger" onDismiss={() => setErr('')}>{err}</Alert>}
       {!rec && !err && <Empty>Loading…</Empty>}
       {rec && (
         <>

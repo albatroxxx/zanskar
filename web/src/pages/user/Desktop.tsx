@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Navigate, useLocation, useNavigate } from 'react-router-dom'
-import type { Client, GuacObject, InputStream, Keyboard } from 'guacamole-common-js'
+import type { Client, Display, GuacObject, InputStream, Keyboard } from 'guacamole-common-js'
 import { fmtBytes, fmtSeconds, protocolName } from '../../api/format'
 import { FailoverDialog } from './Failover'
 import { SessionEndedDialog } from './SessionEnded'
@@ -8,6 +8,7 @@ import { desktopEnd, saveBlob, SESSION_ID, useSwitched, type SessionEnd, type Se
 import { useFullscreen } from './fullscreen'
 import { FullscreenButton } from './FullscreenButton'
 import { CONTROLS_KEY, isControlsKey, isPasteKey, keyQueue } from './keys'
+import { pointerAsCursor } from './cursor'
 
 type GuacModule = typeof import('guacamole-common-js')['default']
 
@@ -90,6 +91,10 @@ function DesktopSession({ state }: { state: SessionState }) {
   // the one offering another instance. The library has no detach call:
   // nulling the handlers is how it is told to stop intercepting.
   const keyboardRef = useRef<Keyboard | null>(null)
+  // The remote display, so an ended session can hand the pointer back: the
+  // remote image off the browser's cursor and the software cursor hidden,
+  // or the dialog saying the session ended keeps one or the other.
+  const displayRef = useRef<Display | null>(null)
   const releaseKeyboard = useCallback(() => {
     const kb = keyboardRef.current
     if (!kb) return
@@ -149,12 +154,19 @@ function DesktopSession({ state }: { state: SessionState }) {
       const scheme = location.protocol === 'https:' ? 'wss' : 'ws'
       const width = el.clientWidth || 1024
       const height = el.clientHeight || 768
-      const dpi = Math.round(96 * (window.devicePixelRatio || 1))
+      // 96 DPI, whatever the screen: the remote is asked for the pane's size
+      // in CSS pixels and drawn one remote pixel to one CSS pixel. guacd runs
+      // RDP at 96 DPI and sizes the remote at width x 96 / the DPI it is told,
+      // so 96 x devicePixelRatio (2026-11-01: Brave at 1.5x) made a Windows
+      // desktop two thirds of its pane, on connecting and on every resize.
+      const dpi = 96
       const tz = Intl.DateTimeFormat().resolvedOptions().timeZone
       const url = `${scheme}://${location.host}${state.ws_path}?ticket=${encodeURIComponent(state.ticket)}&width=${width}&height=${height}&dpi=${dpi}&tz=${encodeURIComponent(tz)}`
       const tunnel = new Guacamole.WebSocketTunnel(url)
       const client = new Guacamole.Client(tunnel)
-      el.appendChild(client.getDisplay().getElement())
+      const display = client.getDisplay()
+      displayRef.current = display
+      el.appendChild(display.getElement())
       client.onerror = (st) => setEnded((cur) => cur ?? desktopEnd(st.code, st.message))
       tunnel.onerror = () => setEnded((cur) => cur ?? { reason: 'target_lost' })
       client.onstatechange = (s: number) => {
@@ -208,12 +220,27 @@ function DesktopSession({ state }: { state: SessionState }) {
         onControls = false
         ;(document.activeElement as HTMLElement | null)?.blur()
       }
-      const mouse = new Guacamole.Mouse(client.getDisplay().getElement())
-      const send = (m: unknown) => client.sendMouseState(m as never)
+      const mouse = new Guacamole.Mouse(display.getElement())
+      // One cursor (2026-11-01): the remote pointer is the browser's own
+      // cursor over the desktop (cursor.ts), so the software cursor the
+      // library draws beside it is hidden on every move and when the pointer
+      // leaves; it shows only for a pointer image the browser will not take,
+      // with the browser's cursor hidden then instead.
+      let browserCursor = false
+      display.oncursor = (canvas, x, y) => {
+        browserCursor = pointerAsCursor(mouse, display.getElement(), canvas, x, y)
+        display.showCursor(!browserCursor)
+      }
+      const send = (m: unknown) => {
+        if (endedRef.current) return
+        display.showCursor(!browserCursor)
+        client.sendMouseState(m as never)
+      }
       // The library cancels a press on the desktop, so focus would stay on the
       // control the keyboard was on; the click itself hands the keys back.
       mouse.onmousedown = (m: unknown) => { backToDesktop(); send(m) }
       mouse.onmouseup = mouse.onmousemove = send
+      mouse.onmouseout = () => display.showCursor(false)
       const kb = new Guacamole.Keyboard(document)
       keyboardRef.current = kb
       // Key events go out in order through one queue. A paste keystroke
@@ -412,6 +439,13 @@ function DesktopSession({ state }: { state: SessionState }) {
   useEffect(() => { endedRef.current = !!ended }, [ended])
   // An ended session takes no more keys; the dialogs that follow need them.
   useEffect(() => { if (ended) releaseKeyboard() }, [ended, releaseKeyboard])
+  // Nor the pointer: the browser's own arrow again, no software cursor left.
+  useEffect(() => {
+    const display = displayRef.current
+    if (!ended || !display) return
+    display.showCursor(false)
+    display.getElement().style.cursor = ''
+  }, [ended])
   const failover = ended?.reason === 'target_lost' && !!state.asg_id && !!sessionId
   // Drop out of full screen when the session ends so the dialog shows normally.
   useEffect(() => { if (ended) exitFull() }, [ended, exitFull])
@@ -445,7 +479,7 @@ function DesktopSession({ state }: { state: SessionState }) {
         {!ended && <button className="btn sm" onClick={() => disconnectRef.current()}>Disconnect</button>}
       </div>
       <div className="desk-body">
-        <div className="term-host" ref={host} style={{ overflow: 'hidden' }} />
+        <div className="term-host desk-host" ref={host} />
         {flags.clipboard && clipOpen && (
           <aside className="files-panel clip-panel" aria-label="Session clipboard">
             <header>

@@ -147,7 +147,7 @@ function UpdateBell() {
               </Alert>
             )}
             {newer && !st?.installable && <p>{upgradeHint(sys?.supervisor)}</p>}
-            {err && <Alert tone="danger">{err}</Alert>}
+            {err && <Alert tone="danger" onDismiss={() => setErr('')}>{err}</Alert>}
             <div className="actions">
               <button type="button" className="btn sm" onClick={() => void check()} disabled={busy}>
                 {busy ? 'Checking…' : 'Check now'}

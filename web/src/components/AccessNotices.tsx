@@ -65,9 +65,8 @@ export function AccessNotices() {
   return (
     <div className="access-notices">
       {notices.map((n) => (
-        <Alert key={n.key} tone={n.tone}>
-          <span className="grow">{n.body}</span>
-          <button className="btn sm ghost" onClick={() => dismiss(n.key)} aria-label="Dismiss">Dismiss</button>
+        <Alert key={n.key} tone={n.tone} onDismiss={() => dismiss(n.key)}>
+          {n.body}
         </Alert>
       ))}
     </div>

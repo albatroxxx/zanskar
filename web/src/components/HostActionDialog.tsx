@@ -150,7 +150,7 @@ export function HostActionDialog({ action, version, change, onClose }: { action:
         )}
         {progress.state === 'failed' && <Alert tone="danger">{progress.message}</Alert>}
         {progress.state === 'cancelled' && <Alert tone="ok">Cancelled; the gateway carries on.</Alert>}
-        {err && <Alert tone="danger">{err}</Alert>}
+        {err && <Alert tone="danger" onDismiss={() => setErr('')}>{err}</Alert>}
         <div className="actions">
           {progress.state === 'running' && progress.step === 'drain' && (
             <button type="button" className="btn ghost" onClick={() => void cancel()}>
@@ -174,7 +174,7 @@ export function HostActionDialog({ action, version, change, onClose }: { action:
     <Modal title={title} onClose={onClose} width={440}>
       {action === 'poweroff' && <Alert tone="warn">Starting it again needs the host or the cloud console.</Alert>}
       {change && <p className="config-change">{change.summary}</p>}
-      {err && <Alert tone="danger">{err}</Alert>}
+      {err && <Alert tone="danger" onDismiss={() => setErr('')}>{err}</Alert>}
       <form onSubmit={(e) => void submit(e)}>
         <Field label="Let live sessions finish for" hint="Minutes; 0 ends them now.">
           <input id="action-wait" type="number" min={0} max={240} value={wait} onChange={(e) => setWait(Number(e.target.value))} />

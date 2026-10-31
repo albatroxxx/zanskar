@@ -74,7 +74,7 @@ export function TargetsPage({ kind, title, addLabel, empty, columns, cells }: {
       <PageHead title={title}>
         {!blocked && <button className="btn primary" onClick={() => setAdding(true)}>{addLabel}</button>}
       </PageHead>
-      {err && <Alert tone="danger">{err}</Alert>}
+      {err && <Alert tone="danger" onDismiss={() => setErr('')}>{err}</Alert>}
       {readiness && readiness !== 'unknown' && !readiness.ready && (
         <div className="card" aria-labelledby="apps-readiness">
           <h2 id="apps-readiness">Before the first application</h2>

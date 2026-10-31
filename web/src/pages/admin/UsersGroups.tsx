@@ -86,8 +86,8 @@ function Users() {
 
   return (
     <>
-      {err && <Alert tone="danger">{err}</Alert>}
-      {notice && <Alert tone="ok">{notice}</Alert>}
+      {err && <Alert tone="danger" onDismiss={() => setErr('')}>{err}</Alert>}
+      {notice && <Alert tone="ok" onDismiss={() => setNotice('')}>{notice}</Alert>}
       <div className="actions" style={{ marginBottom: 12 }}>
         <button className="btn primary" onClick={() => setAdding(true)}>Add user</button>
       </div>
@@ -387,7 +387,7 @@ function Groups() {
   const [deleting, setDeleting] = useState<Group | null>(null)
   return (
     <>
-      {err && <Alert tone="danger">{err}</Alert>}
+      {err && <Alert tone="danger" onDismiss={() => setErr('')}>{err}</Alert>}
       <div className="actions" style={{ marginBottom: 12 }}>
         <button className="btn primary" onClick={() => setAdding(true)}>Add group</button>
       </div>
