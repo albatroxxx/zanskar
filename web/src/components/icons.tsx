@@ -138,7 +138,7 @@ export function StateIcon({ state, label }: { state: 'warn' | 'danger' | 'ok' | 
 
 /** TileIcon is a tile's identity mark: decorative (the caption carries the
  *  meaning), muted, one simple shape per kind. */
-export function TileIcon({ kind }: { kind: 'approvals' | 'attention' | 'key' | 'ban' | 'session' | 'clock' | 'list' | 'server' | 'db' | 'stack' | 'app' }) {
+export function TileIcon({ kind }: { kind: 'approvals' | 'attention' | 'key' | 'ban' | 'session' | 'clock' | 'list' | 'server' | 'db' | 'stack' | 'app' | 'shield' | 'phone' | 'moon' | 'admin' }) {
   const shape = (() => {
     switch (kind) {
       case 'app':
@@ -156,6 +156,36 @@ export function TileIcon({ kind }: { kind: 'approvals' | 'attention' | 'key' | '
           <>
             <rect x="5" y="3" width="14" height="18" rx="2" />
             <polyline points="9 12.5 11.5 15 15.5 9.5" />
+          </>
+        )
+      case 'shield':
+        // A shield with a gap in it: access without a second factor.
+        return (
+          <>
+            <path d="M12 3l7 3v5c0 4.5-3 8-7 10-4-2-7-5.5-7-10V6z" />
+            <line x1="12" y1="8" x2="12" y2="12.5" />
+            <line x1="12" y1="15.5" x2="12" y2="15.6" />
+          </>
+        )
+      case 'phone':
+        // An authenticator: a phone with a code on it.
+        return (
+          <>
+            <rect x="6.5" y="2.5" width="11" height="19" rx="2" />
+            <line x1="9.5" y1="11" x2="14.5" y2="11" />
+            <line x1="11" y1="18" x2="13" y2="18" />
+          </>
+        )
+      case 'moon':
+        // Dormant: a crescent.
+        return <path d="M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5z" />
+      case 'admin':
+        // A person with a badge at the shoulder.
+        return (
+          <>
+            <circle cx="10" cy="8" r="3.5" />
+            <path d="M3.5 20c.8-3.6 3.4-5.5 6.5-5.5 1.3 0 2.5.3 3.5 1" />
+            <path d="M18 13.5l1.2 2.4 2.6.4-1.9 1.8.5 2.6-2.4-1.3-2.4 1.3.5-2.6-1.9-1.8 2.6-.4z" />
           </>
         )
       case 'attention':

@@ -67,11 +67,33 @@ describe('Directory user sync in the list', () => {
     const row = (await screen.findByText('Keycloak')).closest('tr')!
     await user.click(within(row).getByRole('button', { name: 'Sync now' }))
     const dialog = await screen.findByRole('dialog', { name: 'Apply held removals' })
-    expect(within(dialog).getByText(/would disable 4 of 6 accounts at once/)).toBeDefined()
+    expect(dialog.textContent).toContain('Would disable 4 of 6 accounts at once. Disable those 4 accounts of Keycloak and end their sessions?')
     await user.click(within(dialog).getByRole('button', { name: 'Disable 4' }))
     await waitFor(() => expect(post).toHaveBeenCalledTimes(2))
     expect(post).toHaveBeenLastCalledWith('/identity-providers/k1/sync', { apply_removals: true })
     expect(await screen.findByText('Keycloak: 5 listed · 2 created · 4 disabled')).toBeDefined()
+  })
+})
+
+// The live 1.9.0 report (2026-10-31): the realm's only person deleted.
+// The dialog speaks of one account, and leaves out the hint to come to the
+// console, since it is the console's way to apply.
+describe('Applying a held removal of one account', () => {
+  it('asks in the singular and forces the run', async () => {
+    serve()
+    const held = run({ listed: 0, created: 0, disabled: 0, held: 1, held_reason: 'the directory listed no one; run the sync from the console to apply' })
+    const post = vi.spyOn(api, 'post')
+      .mockResolvedValueOnce({ enabled: true, interval_minutes: 15, running: false, last: held } as never)
+      .mockResolvedValueOnce({ enabled: true, interval_minutes: 15, running: false, last: run({ listed: 0, created: 0, disabled: 1 }) } as never)
+    render(<IdentityProviders />)
+    const user = userEvent.setup()
+    await user.click(within((await screen.findByText('Keycloak')).closest('tr')!).getByRole('button', { name: 'Sync now' }))
+    const dialog = await screen.findByRole('dialog', { name: 'Apply held removals' })
+    expect(dialog.textContent).toContain('The directory listed no one. Disable that account of Keycloak and end its sessions?')
+    expect(dialog.textContent).not.toContain('run the sync from the console')
+    await user.click(within(dialog).getByRole('button', { name: 'Disable 1' }))
+    await waitFor(() => expect(post).toHaveBeenLastCalledWith('/identity-providers/k1/sync', { apply_removals: true }))
+    expect(await screen.findByText('Keycloak: 0 listed · 1 disabled')).toBeDefined()
   })
 })
 

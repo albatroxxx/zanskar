@@ -54,6 +54,12 @@ type Handler struct {
 	// BaseURL is the public origin (https://zanskar.example). Empty means
 	// derive from the request: TLS state for the scheme, Host for the host.
 	BaseURL string
+	// ProxyTLS says TLS ends at a proxy in front (ZANSKAR_TRUST_PROXY_TLS):
+	// a request that reached the gateway in plain HTTP was HTTPS at the
+	// browser, so a derived origin is https (2026-10-31: behind Caddy with
+	// no public URL, the redirect URI went out as http:// and Keycloak
+	// refused it against the https:// one the console shows).
+	ProxyTLS bool
 	// MFAEnrolled reports whether the user has a confirmed authenticator.
 	MFAEnrolled func(ctx context.Context, userID string) (bool, error)
 	// RequireMFA mirrors the runtime setting, read at every sign-in; nil
@@ -448,7 +454,7 @@ func (h *Handler) baseURL(r *http.Request) string {
 		return strings.TrimRight(h.BaseURL, "/")
 	}
 	scheme := "http"
-	if r.TLS != nil {
+	if r.TLS != nil || h.ProxyTLS {
 		scheme = "https"
 	}
 	return scheme + "://" + r.Host

@@ -30,6 +30,13 @@ type Handler struct {
 	RecordingsPath string
 	GuacdAddr      func() string
 	cpu            cpuSampler
+	// The capacity line (2026-10-31): the caps on application and database
+	// sessions (0 for none), and the disk Zanskar's images take, read at
+	// most every imagesEvery; nil leaves it out.
+	AppsMaxSessions     int
+	DatabaseMaxSessions int
+	ImagesSize          func(ctx context.Context) (int64, error)
+	images              imagesCache
 	// For the host actions (ADR 0032); nil means the real host: systemd
 	// detection, os.Hostname, and systemctl.
 	Supervisor func() string

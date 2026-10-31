@@ -27,7 +27,11 @@ type Live struct {
 	// (ADR 0036): they are exfiltration controls, not limits that can wait.
 	AllowClipboard    bool
 	AllowFileTransfer bool
-	StartedAt         time.Time
+	// AllowDevTools is fixed when an application's browser starts; a
+	// re-check ends the session when it would now be off, as for the
+	// clipboard (ADR 0037).
+	AllowDevTools bool
+	StartedAt     time.Time
 	// Tap carries the output stream for shadowing. Terminal protocols get
 	// one automatically in Add; desktop sessions are shadowed through guacd
 	// instead (see GuacID).

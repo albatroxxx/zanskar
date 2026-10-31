@@ -7,7 +7,7 @@ import { SessionEndedDialog } from './SessionEnded'
 import { desktopEnd, saveBlob, SESSION_ID, useSwitched, type SessionEnd, type SessionState } from './session'
 import { useFullscreen } from './fullscreen'
 import { FullscreenButton } from './FullscreenButton'
-import { browserKeys, isPasteKey, keyQueue, pressCombo } from './keys'
+import { isPasteKey, keyQueue } from './keys'
 
 type GuacModule = typeof import('guacamole-common-js')['default']
 
@@ -73,13 +73,6 @@ function DesktopSession({ state }: { state: SessionState }) {
   const [clipText, setClipText] = useState('')
   const [clipNote, setClipNote] = useState<string | null>(null)
   const disconnectRef = useRef<() => void>(() => {})
-  // The session's key queue, for the browser controls an application has
-  // above its pane: their keystrokes wait their turn behind the user's.
-  const sendKeyRef = useRef<((pressed: 0 | 1, keysym: number) => Promise<void>) | null>(null)
-  const browse = (keys: readonly number[]) => {
-    const send = sendKeyRef.current
-    if (send) pressCombo(send, keys)
-  }
   const guacRef = useRef<GuacModule | null>(null)
   const clientRef = useRef<Client | null>(null)
   const fsRef = useRef<GuacObject | null>(null)
@@ -210,7 +203,6 @@ function DesktopSession({ state }: { state: SessionState }) {
       // remote application pastes what the user meant to paste; the keys
       // after it wait their turn rather than overtaking it.
       const sendKey = keyQueue((pressed, k) => client.sendKeyEvent(pressed, k))
-      sendKeyRef.current = sendKey
       // Keys typed into the clipboard panel (or any other field on this page)
       // belong to that field, not to the desktop: returning true tells the
       // library to leave the browser's default alone instead of preventing it.
@@ -408,16 +400,6 @@ function DesktopSession({ state }: { state: SessionState }) {
           <span className="stat">Ended · recording saved</span>
         ) : (
           <span className="stat rec" title="This session is being recorded"><i className="rec-dot" aria-hidden="true" />Recording</span>
-        )}
-        {state.protocol === 'http' && !ended && (
-          // An application's browser has no controls of its own (kiosk mode,
-          // ADR 0034); without these a page the policy blocked was a dead end.
-          <span className="browser-nav" role="group" aria-label="Browser">
-            <button className="btn sm" disabled={!connected} onClick={() => browse(browserKeys.back)} aria-label="Back" title="Back">←</button>
-            <button className="btn sm" disabled={!connected} onClick={() => browse(browserKeys.forward)} aria-label="Forward" title="Forward">→</button>
-            <button className="btn sm" disabled={!connected} onClick={() => browse(browserKeys.reload)} aria-label="Reload" title="Reload">↻</button>
-            <button className="btn sm" disabled={!connected} onClick={() => browse(browserKeys.home)} aria-label="Home" title="The application's start page">⌂</button>
-          </span>
         )}
         <FullscreenButton isFull={isFull} onClick={toggleFull} />
         {flags.clipboard && (

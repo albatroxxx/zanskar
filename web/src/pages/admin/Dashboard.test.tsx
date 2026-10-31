@@ -18,6 +18,9 @@ const overview: AdminOverview = {
   inventory: { hosts: 3, hosts_by_os: { linux: 2, windows: 1 }, databases: 2, databases_by_engine: { postgres: 1, mysql: 1 }, applications: 4 },
   autoscaling: { groups: 1, instances: 4, healthy_instances: 3 },
   audit_24h: { events: 41, failures: 4, failed_logins: 2, refused_connects: 1 },
+  posture: { standing_no_mfa: { grants: 3, policies: 2 }, admins: 2, dormant: 4, not_enrolled: 1 },
+  integrity: { audit_chain: null, recordings_lost_7d: 1, directories: { listed: 1, failing: 0, not_run: 0, held_back: 0 }, export: { sinks: 0, behind: 0 } },
+  in_flight: { active: 3, ending_soon: 1, oldest_pending_seconds: 7500 },
 }
 
 const status: SystemStatus = {
@@ -99,7 +102,8 @@ describe('the admin dashboard', () => {
     expect(href('Failed sign-ins (24h)')).toBe('/admin/events?action=user.login&outcome=failure&range=24h&routine=1')
     expect(href('Refused connections (24h)')).toBe('/admin/events?action=session.connect&outcome=failure&range=24h&routine=1')
     expect(href('Failures (24h)')).toBe('/admin/events?outcome=failure&range=24h&routine=1')
-    expect(href('Audit events (24h)')).toBe('/admin/events?range=24h&routine=1')
+    // The day's events are a line in the integrity row since 2026-10-31.
+    expect(href('Audit log')).toBe('/admin/events?range=24h&routine=1')
     expect(href('Open sessions')).toBe('/admin/sessions?open=1')
     expect(href('Sessions (24h)')).toBe('/admin/sessions?range=24h')
 
@@ -131,8 +135,125 @@ describe('the admin dashboard', () => {
     expect(disk.parentElement?.textContent).toContain('96% used · 4.0 GB free of 100.0 GB')
     expect(disk.parentElement?.querySelector('.gauge-pct')?.className).toContain('danger')
     expect(screen.getByRole('button', { name: /Low space: 4\.0 GB free/ })).toBeDefined()
-    expect(screen.getByText(/1 database session container/)).toBeDefined()
+    expect(screen.getByText(/1 database session/)).toBeDefined()
     expect(screen.getByText(/unreachable at 127\.0\.0\.1:4822/)).toBeDefined()
+  })
+
+  // 2026-10-31: the dashboard says what weakens access, each number a link.
+  it('shows the security posture, each tile opening its page', async () => {
+    serve()
+    at('/')
+    const tile = async (label: string) => (await screen.findByText(label)).closest('a') as HTMLAnchorElement
+    const standing = await tile('Standing access without MFA')
+    expect(standing.getAttribute('href')).toBe('/admin/policies')
+    expect(standing.textContent).toContain('3')
+    expect(standing.textContent).toContain('in 2 policies')
+    expect(standing.className).toContain('danger')
+    expect((await tile('No authenticator yet')).textContent).toContain('1')
+    expect((await tile('Dormant (90 days)')).textContent).toContain('4')
+    const admins = await tile('Administrators')
+    expect(admins.textContent).toContain('2')
+    expect(admins.className).not.toContain('warn')
+    // The section sits between what needs a decision and what is happening.
+    const sections = [...document.querySelectorAll('h2.stat-section')].map((h) => h.textContent)
+    expect(sections.indexOf('Security posture')).toBe(sections.indexOf('Needs attention') + 1)
+    expect(sections.indexOf('Activity')).toBe(sections.indexOf('Security posture') + 1)
+  })
+
+  // 2026-10-31: access in flight, on the tiles it belongs with.
+  it('says how long the oldest request has waited and which grants end soon', async () => {
+    serve()
+    at('/')
+    const approvals = (await screen.findByText('Pending approvals')).closest('a') as HTMLAnchorElement
+    expect(approvals.textContent).toContain('oldest waiting 2 hours')
+    const grants = (await screen.findByText('Grants active')).closest('a') as HTMLAnchorElement
+    expect(grants.getAttribute('href')).toBe('/admin/approvals')
+    expect(grants.textContent).toContain('3')
+    expect(grants.textContent).toContain('1 end within the hour')
+    expect(screen.queryByText('Audit events (24h)')).toBeNull()
+  })
+
+  it('shows the integrity row as status lines that open their pages', async () => {
+    serve()
+    at('/')
+    const line = async (label: string) => (await screen.findByText(label)).closest('a') as HTMLAnchorElement
+    expect((await line('Audit chain')).textContent).toContain('Not checked yet')
+    const rec = await line('Recordings')
+    expect(rec.className).toContain('danger')
+    expect(rec.getAttribute('href')).toBe('/admin/events?action=recording.lost&outcome=failure&range=7d')
+    expect((await line('Identity providers')).textContent).toContain('In sync')
+    expect((await line('SIEM export')).textContent).toContain('Not configured')
+  })
+
+  // 2026-10-31: the last seven calendar days under the two counts that have
+  // a shape over a week, today last and in the accent.
+  it('draws the last seven days under sessions and refused connections', async () => {
+    const days = ['2026-10-25', '2026-10-26', '2026-10-27', '2026-10-28', '2026-10-29', '2026-10-30', '2026-10-31']
+    serve({ '/admin/overview': { ...overview, trends: { days, sessions: [0, 3, 1, 0, 12, 5, 2], refused: [0, 0, 0, 0, 0, 0, 1] } } })
+    at('/')
+    const tile = (await screen.findByText('Sessions (24h)')).closest('a') as HTMLAnchorElement
+    const cols = Array.from(tile.querySelectorAll<HTMLElement>('.spark-col'))
+    expect(cols).toHaveLength(7)
+    expect(tile.querySelector('.spark')?.getAttribute('aria-hidden')).toBe('true')
+    // Today is the last column and the only one in the accent.
+    expect(cols.map((c) => c.classList.contains('now'))).toEqual([false, false, false, false, false, false, true])
+    // A day with none is a stub on the baseline; heights scale to the week's
+    // most, and one session still stands an eighth high next to twelve.
+    expect(cols.map((c) => c.classList.contains('none'))).toEqual([true, false, false, true, false, false, false])
+    const height = (i: number) => (cols[i].querySelector('i') as HTMLElement).style.height
+    expect(height(4)).toBe('100%')
+    expect(height(1)).toBe('25%')
+    expect(height(2)).toBe('12.5%')
+    expect(height(0)).toBe('')
+    // Hovering names the day and the count; a screen reader hears the same
+    // with what is counted.
+    expect(cols[6].dataset.tip).toBe('Today so far: 2')
+    expect(cols[2].dataset.tip).toMatch(/(Oct 27|27 Oct).*: 1$/)
+    expect(tile.textContent).toMatch(/(Oct 27|27 Oct).*: 1 session;/)
+    expect(tile.textContent).toContain('Last 7 days:')
+    expect(tile.textContent).toContain('Today so far: 2 sessions')
+
+    const refused = screen.getByText('Refused connections (24h)').closest('a') as HTMLAnchorElement
+    expect(refused.querySelectorAll('.spark-col')).toHaveLength(7)
+    expect(refused.querySelector<HTMLElement>('.spark-col.now')?.dataset.tip).toBe('Today so far: 1')
+    expect(refused.textContent).toContain('Today so far: 1 refused connection')
+  })
+
+  it('draws no trend when the gateway sends none', async () => {
+    serve()
+    at('/')
+    await screen.findByText('Sessions (24h)')
+    expect(document.querySelector('.spark')).toBeNull()
+  })
+
+  // 2026-10-31: a kind of session with a cap is a gauge against it, and the
+  // images Zanskar keeps on the host are a figure in the facts line.
+  it('shows sessions against their caps and the images on disk', async () => {
+    serve({
+      '/admin/system/metrics': { ...metrics, database_sessions: 20, application_sessions: 8, session_caps: { applications: 10, databases: 20 }, images_bytes: 2.5 * 1024 ** 3 },
+    })
+    at('/')
+    const apps = await screen.findByRole('meter', { name: 'Application sessions' })
+    expect(apps.getAttribute('aria-valuenow')).toBe('80')
+    expect(apps.className).toContain('warn')
+    expect(apps.parentElement?.textContent).toContain('80% of the cap · 8 of 10 open')
+    // At the cap the gateway refuses the next one: danger.
+    const dbs = screen.getByRole('meter', { name: 'Database sessions' })
+    expect(dbs.className).toContain('danger')
+    expect(dbs.parentElement?.textContent).toContain('20 of 20 open')
+    // A capped kind is not counted again in the line.
+    // The line opens with a capital whichever fact comes first.
+    const line = screen.getByText(/^Container images 2\.5 GB/)
+    expect(line.textContent).not.toContain('session')
+  })
+
+  it('counts a kind of session without a cap in the facts line', async () => {
+    serve({ '/admin/system/metrics': { ...metrics, application_sessions: 3, session_caps: { applications: 0, databases: 0 } } })
+    at('/')
+    const line = await screen.findByText(/3 application sessions/)
+    expect(line.textContent).toContain('1 database session · 3 application sessions · guacd')
+    expect(screen.queryByRole('meter', { name: 'Application sessions' })).toBeNull()
+    expect(line.textContent).not.toContain('container images')
   })
 
   it('says the overview failed rather than showing a quiet system', async () => {

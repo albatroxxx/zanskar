@@ -463,7 +463,7 @@ func (h *Handler) issueTicket(ctx context.Context, p *auth.Principal, ip string,
 		TargetID: ep.TargetID, ASGID: ep.ASGID, ASGInstanceID: ep.ASGInstanceID,
 		Protocol: string(proto), CredentialID: credID, PolicyID: d.Policy.ID,
 		IdleTimeout: d.IdleTimeout, MaxSession: d.MaxSession, RetentionDays: retentionDays(ep, d),
-		AllowClipboard: d.AllowClipboard, AllowFileTransfer: d.AllowFileTransfer,
+		AllowClipboard: d.AllowClipboard, AllowFileTransfer: d.AllowFileTransfer, AllowDevTools: d.AllowDevTools,
 		ClientIP: ip, FailoverFrom: failoverFrom,
 	}
 	switch cred.Mode {
@@ -529,7 +529,7 @@ func (h *Handler) issueCredentialless(p *auth.Principal, ep *endpoint, proto tar
 		TargetID: ep.TargetID, ASGID: ep.ASGID, ASGInstanceID: ep.ASGInstanceID,
 		Protocol: string(proto), PolicyID: d.Policy.ID,
 		IdleTimeout: d.IdleTimeout, MaxSession: d.MaxSession, RetentionDays: retentionDays(ep, d),
-		AllowClipboard: d.AllowClipboard, AllowFileTransfer: d.AllowFileTransfer,
+		AllowClipboard: d.AllowClipboard, AllowFileTransfer: d.AllowFileTransfer, AllowDevTools: d.AllowDevTools,
 		ClientIP: ip, FailoverFrom: failoverFrom,
 	}
 	tok, err := h.Tickets.Issue(grant)

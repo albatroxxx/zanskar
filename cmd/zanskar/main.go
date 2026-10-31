@@ -315,7 +315,7 @@ func serve(ctx context.Context) error {
 	}
 	authHandler.ExternalLogin = ldapExternalAuth{ldap.NewLogin(idpRepo, provisioner, auditLog, log)}
 	oidcHandler := &oidc.Handler{Providers: idpRepo, Provisioner: provisioner, Sessions: sessions, Audit: auditLog, Log: log, StateKey: stateKey, MFAEnrolled: totp.Enrolled, RequireMFA: requireMFA,
-		BaseURL: cfg.PublicURL, Ring: ring}
+		BaseURL: cfg.PublicURL, ProxyTLS: cfg.TrustProxyTLS, Ring: ring}
 	authHandler.ProviderLogout = oidcHandler.LogoutURL
 	vault := credential.NewVault(db, ring)
 	targets := target.NewRepo(db)
@@ -382,18 +382,29 @@ func serve(ctx context.Context) error {
 		Directories: map[idp.Type]idp.Directory{idp.TypeOIDC: &oidc.KeycloakDirectory{}, idp.TypeLDAP: &ldap.Authenticator{}}}
 	// Providers that push their people over SCIM 2.0 (Okta, Entra ID,
 	// OneLogin, JumpCloud, PingOne, Authentik) reach the same lifecycle.
-	scimHandler := &scim.Handler{Providers: idpRepo, Provisioner: provisioner, Audit: auditLog, Log: log, BaseURL: cfg.PublicURL,
+	scimHandler := &scim.Handler{Providers: idpRepo, Provisioner: provisioner, Audit: auditLog, Log: log, BaseURL: cfg.PublicURL, ProxyTLS: cfg.TrustProxyTLS,
 		Lifecycle: &idp.Lifecycle{Users: users, Sessions: sessions, Revoker: connectHandler, Audit: auditLog, Log: log}}
 	// The bell (ADR 0032): once a day, is there a newer release? The
 	// runtime setting is read before each check so a switch-off applies live.
 	versionCheck := &update.Checker{URL: cfg.UpdateManifestURL, Current: version.Version, Enabled: func() bool { return runtime.Bool(settings.KeyUpdateCheck) }, Log: log}
 	go versionCheck.Run(ctx)
+	// The SIEM sinks, started further down, and the background check of the
+	// audit chain whose last result the dashboard shows (2026-10-31).
+	var sinks []audit.Sink
+	if cfg.SIEMSyslogAddr != "" {
+		sinks = append(sinks, &audit.SyslogSink{Addr: cfg.SIEMSyslogAddr, Format: cfg.SIEMSyslogFormat, CAFile: cfg.SIEMSyslogCAFile})
+	}
+	if cfg.SIEMWebhookURL != "" {
+		sinks = append(sinks, &audit.WebhookSink{URL: cfg.SIEMWebhookURL, Secret: cfg.SIEMWebhookSecret})
+	}
+	chainChecker := &audit.Checker{Log: auditLog, Key: anchorKey, Logger: log}
+
 	deps := server.Deps{
 		TLS:            tlsMgr,
 		AuthMiddleware: &auth.Middleware{Sessions: sessions, Users: users, Log: log},
 		Auth:           authHandler,
 		Handlers: []server.Registrar{
-			&adminapi.AdminHandler{Users: users, Sessions: sessions, TOTP: totp, Revoker: connectHandler, Audit: auditLog, Log: log},
+			&adminapi.AdminHandler{Users: users, Sessions: sessions, TOTP: totp, Revoker: connectHandler, Audit: auditLog, Log: log, ProviderHolds: idpRepo.Holds},
 			&group.AdminHandler{Groups: groups, Revoker: connectHandler, Audit: auditLog, Log: log},
 			&idpadmin.AdminHandler{Providers: idpRepo, Audit: auditLog, Log: log, LDAPTester: &ldap.Authenticator{}, Sync: userSync},
 			oidcHandler,
@@ -405,12 +416,24 @@ func serve(ctx context.Context) error {
 			&asg.AdminHandler{Repo: asgRepo, Sync: syncer.SyncGroup, Identity: awsIdentity, Providers: asg.AWSFresh(), Policies: policies, Requests: accessReqs, Live: registry, Revoker: connectHandler, Vault: vault, Audit: auditLog, Log: log},
 			&session.Handler{Repo: sessionRepo, Audit: auditLog, AnchorKey: anchorKey, Registry: registry, Storage: storage, Log: log},
 			&browsergw.Readiness{Guacd: func() string { return runtime.String(settings.KeyGuacdAddr) }, BrowserImage: func() string { return runtime.String(settings.KeyBrowserImage) }, Docker: cfg.DockerPath},
-			&overview.Handler{Sessions: sessionRepo, Requests: accessReqs, Targets: targets, ASGs: asgRepo, Audit: auditLog, Log: log},
+			&overview.Handler{Sessions: sessionRepo, Requests: accessReqs, Targets: targets, ASGs: asgRepo, Audit: auditLog, Log: log,
+				Users: users, Policies: policies, MFAOwners: idpRepo.MFAOwners,
+				Chain: chainChecker.Last, Directories: userSync.Health, ExportSinks: sinkNames(sinks),
+				Zone: func() *time.Location {
+					// The setting only takes loadable names; anything else is UTC.
+					loc, err := time.LoadLocation(runtime.String(settings.KeyTimeZone))
+					if err != nil {
+						return time.UTC
+					}
+					return loc
+				}},
 			&update.Handler{Checker: versionCheck, Log: log, StateDir: cfg.StateDir, Supervisor: lifecycle.Supervisor},
 			&settings.Handler{Service: runtime, Audit: auditLog, Log: log},
 			&recstorage.Handler{Manager: storageMgr, Audit: auditLog, Log: log},
 			&lifecycle.Handler{Drift: drift, Controller: restarter, Audit: auditLog, Log: log, StartedAt: startedAt,
-				DatabasePath: dbFileForMetrics(cfg.DBDSN), RecordingsPath: cfg.RecordingsDir, GuacdAddr: guacdAddr, StateDir: cfg.StateDir},
+				DatabasePath: dbFileForMetrics(cfg.DBDSN), RecordingsPath: cfg.RecordingsDir, GuacdAddr: guacdAddr, StateDir: cfg.StateDir,
+				AppsMaxSessions: cfg.AppsMaxSessions, DatabaseMaxSessions: cfg.DatabaseMaxSessions,
+				ImagesSize: func(ctx context.Context) (int64, error) { return containers.ImagesSize(ctx, cfg.DockerPath) }},
 			&logring.API{Ring: logs, Audit: auditLog, Log: log},
 			&tlscert.Handler{Manager: tlsMgr, Mode: cfg.TLSMode, Audit: auditLog, Log: log},
 			connectHandler,
@@ -443,14 +466,8 @@ func serve(ctx context.Context) error {
 		go tlsMgr.Run(ctx, 6*time.Hour)
 	}
 
-	// SIEM export: ship the audit chain to the configured sinks.
-	var sinks []audit.Sink
-	if cfg.SIEMSyslogAddr != "" {
-		sinks = append(sinks, &audit.SyslogSink{Addr: cfg.SIEMSyslogAddr, Format: cfg.SIEMSyslogFormat, CAFile: cfg.SIEMSyslogCAFile})
-	}
-	if cfg.SIEMWebhookURL != "" {
-		sinks = append(sinks, &audit.WebhookSink{URL: cfg.SIEMWebhookURL, Secret: cfg.SIEMWebhookSecret})
-	}
+	// SIEM export: ship the audit chain to the configured sinks (built
+	// above, where the dashboard's integrity row names them).
 	if len(sinks) > 0 {
 		exporter := &audit.Exporter{Log: auditLog, Sinks: sinks, Logger: log}
 		go exporter.Run(ctx)
@@ -462,6 +479,7 @@ func serve(ctx context.Context) error {
 	// kept outside the database, for `zanskar audit verify --anchor`.
 	anchorer := &audit.Anchorer{Log: auditLog, Key: anchorKey, Logger: log, Interval: time.Hour}
 	go anchorer.Run(ctx)
+	go chainChecker.Run(ctx)
 	if cfg.AllowPlainHTTP && !cfg.ServesTLS() {
 		log.Warn("ZANSKAR_ALLOW_PLAIN_HTTP=true: serving without TLS on a non-loopback address; development only")
 	}
@@ -587,4 +605,13 @@ func dbFileForMetrics(dsn string) string {
 		return ""
 	}
 	return path
+}
+
+// sinkNames names the configured SIEM sinks, as their export checkpoints do.
+func sinkNames(sinks []audit.Sink) []string {
+	names := make([]string, 0, len(sinks))
+	for _, s := range sinks {
+		names = append(names, s.Name())
+	}
+	return names
 }

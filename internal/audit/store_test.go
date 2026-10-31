@@ -438,3 +438,32 @@ func TestEventWithNilDetailsIsRecorded(t *testing.T) {
 		t.Fatalf("verify: %+v %v", res, err)
 	}
 }
+
+// TestCountPerOnEachBackend (2026-10-31, the dashboard's trends): one
+// action and outcome counted per range, the lower bound included and the
+// upper not, on both engines.
+func TestCountPerOnEachBackend(t *testing.T) {
+	for _, b := range testBackends(t) {
+		t.Run(b.name, func(t *testing.T) {
+			db := b.open(t)
+			l := NewLog(db)
+			ctx := context.Background()
+			for _, e := range []struct {
+				action  string
+				outcome Outcome
+			}{{SessionConnect, Failure}, {SessionConnect, Failure}, {SessionConnect, Success}, {UserLogin, Failure}} {
+				if _, err := l.Record(ctx, Actor{IP: "system"}.Event(e.action, "target", "t1", e.outcome, nil)); err != nil {
+					t.Fatal(err)
+				}
+			}
+			now := time.Now()
+			got, err := l.CountPer(ctx, SessionConnect, Failure, []time.Time{now.Add(-48 * time.Hour), now.Add(-24 * time.Hour), now.Add(time.Minute)})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(got) != 2 || got[0] != 0 || got[1] != 2 {
+				t.Fatalf("per range %v, want [0 2]", got)
+			}
+		})
+	}
+}

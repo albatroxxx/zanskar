@@ -59,6 +59,21 @@ describe('PickList', () => {
     expect((screen.getByLabelText('web-2') as HTMLInputElement).checked).toBe(false)
   })
 
+  // 2026-10-31: "ashish.gupta Ashish Gupta" read as one name; the detail
+  // sits in a box of its own, named on hover, outside the checkbox's label.
+  it('puts the detail in a box of its own, named on hover', () => {
+    render(
+      <PickList label="users" idPrefix="u" selected={[]} onToggle={() => {}}
+        options={[{ id: 'u1', label: 'ashish.gupta', detail: 'Ashish Gupta', detailTitle: 'Display name' }, { id: 'u2', label: 'svc-backup' }]} />,
+    )
+    const box = screen.getByText('Ashish Gupta')
+    expect(box.className).toBe('pick-detail')
+    expect(box.getAttribute('title')).toBe('Display name')
+    expect(screen.getByLabelText('ashish.gupta')).toBeDefined()
+    expect(screen.getByText('ashish.gupta').tagName).toBe('LABEL')
+    expect(document.querySelectorAll('.pick-detail')).toHaveLength(1)
+  })
+
   it('offers no Select all without a way to pick many', () => {
     render(<Harness />)
     expect(screen.queryByLabelText(/Select all/)).toBeNull()

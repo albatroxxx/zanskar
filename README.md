@@ -41,7 +41,7 @@ it is taken away.
   <a href="https://albatroxxx.github.io/zanskar/">
     <picture>
       <source media="(prefers-color-scheme: dark)" srcset="docs/assets/screenshots/dashboard.jpg">
-      <img alt="The Zanskar admin dashboard: what needs attention, activity, the inventory of hosts, databases and applications, and the gateway host's CPU, memory and disk" src="docs/assets/screenshots/dashboard-light.jpg" width="100%">
+      <img alt="The Zanskar admin dashboard: what needs attention, security posture, activity with a week of sessions, the integrity of the audit chain and recordings, the inventory of hosts, databases and applications, and the gateway host's CPU, memory, disk and session caps" src="docs/assets/screenshots/dashboard-light.jpg" width="100%">
     </picture>
   </a>
 </p>

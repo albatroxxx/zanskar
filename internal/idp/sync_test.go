@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"strings"
@@ -272,7 +273,7 @@ func TestSyncGuards(t *testing.T) {
 	e.run(t, SyncOptions{})
 
 	e.dir.set()
-	if st := e.run(t, SyncOptions{}); st.Held != 6 || st.Disabled != 0 || st.HeldReason != "the directory listed no one" {
+	if st := e.run(t, SyncOptions{}); st.Held != 6 || st.Disabled != 0 || st.HeldReason != "the directory listed no one; run the sync from the console to apply" {
 		t.Fatalf("empty listing: %+v", st)
 	}
 	e.dir.set("a1", "a2")
@@ -289,6 +290,28 @@ func TestSyncGuards(t *testing.T) {
 		t.Fatalf("the forced run must say so: %v", syncs[0])
 	}
 
+	// The live 1.9.0 report (2026-10-31): a realm's only person deleted, so
+	// the listing is empty. The scheduled run holds the removal back; the
+	// console's "Disable 1" forces it, and the account is disabled, marked
+	// and signed out instead of being held back again.
+	e3 := newSyncEnv(t, nil)
+	e3.dir.set("solo")
+	e3.run(t, SyncOptions{})
+	e3.dir.set()
+	if st := e3.run(t, SyncOptions{}); st.Held != 1 || st.Disabled != 0 {
+		t.Fatalf("scheduled run, empty listing: %+v", st)
+	}
+	if st := e3.run(t, SyncOptions{Force: true, Manual: true}); st.Held != 0 || st.Disabled != 1 || st.HeldReason != "" {
+		t.Fatalf("forced run, empty listing: %+v", st)
+	}
+	solo := e3.byName(t, "solo")
+	if solo.Status != user.StatusDisabled || solo.DirectoryRemovedAt == nil {
+		t.Fatalf("solo after the forced run: %s %v", solo.Status, solo.DirectoryRemovedAt)
+	}
+	if len(e3.rev.browser) != 1 || e3.rev.browser[0] != solo.ID || len(e3.rev.live) != 1 {
+		t.Fatalf("solo's sessions: browser %v live %v", e3.rev.browser, e3.rev.live)
+	}
+
 	// The last administrator: boss is the only admin left once x1 is made
 	// a plain user, and stays active when boss leaves the directory.
 	e2 := newSyncEnv(t, func(c *Config) { c.DefaultRoles = []user.Role{user.RoleAdmin} })
@@ -303,6 +326,43 @@ func TestSyncGuards(t *testing.T) {
 	}
 	if e2.byName(t, "boss").Status != user.StatusActive {
 		t.Fatal("the last admin was disabled")
+	}
+}
+
+// TestHolds (2026-10-31): a provider decides who its people are while it
+// exists, is enabled, and lists them or has them pushed; then an account it
+// took away is not an administrator's to enable.
+func TestHolds(t *testing.T) {
+	ctx := context.Background()
+	e := newProvisionEnv(t)
+	n := 0
+	create := func(name string, enabled bool, set func(*Config)) string {
+		t.Helper()
+		c := okOIDC()
+		n++
+		c.OIDC.Issuer = fmt.Sprintf("https://kc.example/realms/r%d", n)
+		set(c)
+		p := &Provider{Name: name, Type: TypeOIDC, Enabled: enabled}
+		if err := e.repo.Create(ctx, p, c); err != nil {
+			t.Fatal(err)
+		}
+		return p.ID
+	}
+	for _, tc := range []struct {
+		id        string
+		name      string
+		wantHolds bool
+	}{
+		{create("listed", true, func(c *Config) { c.SyncUsers = true }), "listed", true},
+		{create("pushed", true, func(c *Config) { c.SCIM = true }), "pushed", true},
+		{create("sign-in only", true, func(*Config) {}), "sign-in only", false},
+		{create("off", false, func(c *Config) { c.SyncUsers = true }), "off", false},
+		{"no-such-provider", "", false},
+	} {
+		name, holds, err := e.repo.Holds(ctx, tc.id)
+		if err != nil || name != tc.name || holds != tc.wantHolds {
+			t.Errorf("%s: (%q, %v, %v), want (%q, %v)", tc.id, name, holds, err, tc.name, tc.wantHolds)
+		}
 	}
 }
 
@@ -456,5 +516,33 @@ func TestSyncAdoptsPushedAccounts(t *testing.T) {
 		if u.ID != pushed[i] || u.ExternalID != "ext-"+n || u.Status != user.StatusActive {
 			t.Fatalf("%s: %+v", n, u)
 		}
+	}
+}
+
+// TestSyncHealth (2026-10-31, the dashboard's integrity row): the listings
+// counted, one that has not run yet, one whose last run failed, and the
+// accounts held back; a provider that is not listed is not counted.
+func TestSyncHealth(t *testing.T) {
+	e := newSyncEnv(t, nil)
+	ctx := context.Background()
+	if err := e.repo.Create(ctx, &Provider{Name: "pushed", Type: TypeOIDC, Enabled: true}, okOIDC()); err != nil {
+		t.Fatal(err)
+	}
+	h, err := e.s.Health(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if h != (SyncHealth{Listed: 1, NotRun: 1}) {
+		t.Fatalf("before a run: %+v", h)
+	}
+	e.dir.set("alice")
+	e.run(t, SyncOptions{})
+	if h, _ = e.s.Health(ctx); h != (SyncHealth{Listed: 1}) {
+		t.Fatalf("after a good run: %+v", h)
+	}
+	e.dir.err = errors.New("keycloak admin API refused the client (HTTP 403)")
+	_, _ = e.s.Sync(ctx, e.op, SyncOptions{})
+	if h, _ = e.s.Health(ctx); h != (SyncHealth{Listed: 1, Failing: 1}) {
+		t.Fatalf("after a failed run: %+v", h)
 	}
 }

@@ -14,6 +14,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/albatroxxx/zanskar/internal/audit"
 	"github.com/albatroxxx/zanskar/internal/auth"
@@ -335,5 +336,75 @@ func TestCreateUserIntoGroups(t *testing.T) {
 	var n int
 	if err := e.db.QueryRowContext(ctx, e.db.Rebind(`SELECT COUNT(*) FROM group_members WHERE group_id = ?`), "g-ops").Scan(&n); err != nil || n != 1 {
 		t.Fatalf("membership: %d %v", n, err)
+	}
+}
+
+// TestStatusOfAnAccountItsProviderTookAway (2026-10-31, the live 1.9.0
+// report): a person deleted from Keycloak, their account disabled and marked
+// by the sync, could be enabled again from the console, an active account
+// for someone the directory no longer has. While the provider still lists
+// or pushes its people the status is refused, a name or email edit stands,
+// and an account disabled by hand stays the administrator's to toggle.
+func TestStatusOfAnAccountItsProviderTookAway(t *testing.T) {
+	ctx := context.Background()
+	e := newEnv(t)
+	idpID, now := store.NewID(), store.TimeArg(time.Now())
+	if _, err := e.db.ExecContext(ctx, e.db.Rebind(`INSERT INTO identity_providers (id, name, type, config_enc, enabled, created_at, updated_at)
+		VALUES (?, 'Keycloak', 'oidc', ?, TRUE, ?, ?)`), idpID, []byte{0}, now, now); err != nil {
+		t.Fatal(err)
+	}
+	holds := true
+	e.h.ProviderHolds = func(_ context.Context, id string) (string, bool, error) {
+		if id != idpID {
+			t.Errorf("asked about provider %q", id)
+		}
+		return "Keycloak", holds, nil
+	}
+	account := func(name string) *user.User {
+		t.Helper()
+		u := &user.User{Username: name, DisplayName: name, Roles: []user.Role{user.RoleUser}}
+		if err := e.users.Create(ctx, u); err != nil {
+			t.Fatal(err)
+		}
+		if err := e.users.LinkExternal(ctx, u.ID, idpID, "ext-"+name); err != nil {
+			t.Fatal(err)
+		}
+		return u
+	}
+
+	gone := account("gone")
+	if ok, err := e.users.DisableRemoved(ctx, gone.ID, time.Now()); err != nil || !ok {
+		t.Fatalf("disable as the sync does: %v %v", ok, err)
+	}
+	for _, status := range []string{"active", "locked"} {
+		r := e.do("PUT", "/api/v1/users/"+gone.ID, map[string]any{"status": status})
+		if r.code != http.StatusConflict || r.body["code"] != "left_provider" || r.body["message"] != "Keycloak no longer has this person; the account is enabled again when it does" {
+			t.Fatalf("%s: %d %v", status, r.code, r.body)
+		}
+	}
+	if r := e.do("PUT", "/api/v1/users/"+gone.ID, map[string]any{"display_name": "Gone Person"}); r.code != 200 || r.body["display_name"] != "Gone Person" || r.body["status"] != "disabled" {
+		t.Fatalf("a name edit: %d %v", r.code, r.body)
+	}
+	if u, _ := e.users.GetByID(ctx, gone.ID); u.Status != user.StatusDisabled || u.DirectoryRemovedAt == nil {
+		t.Fatalf("after the refusals: %s %v, want disabled and still marked", u.Status, u.DirectoryRemovedAt)
+	}
+
+	// Disabled and enabled by hand, as the report did before the sync could
+	// apply the removal: the administrator's decision either way.
+	byHand := account("byhand")
+	for _, status := range []string{"disabled", "active"} {
+		if r := e.do("PUT", "/api/v1/users/"+byHand.ID, map[string]any{"status": status}); r.code != 200 || r.body["status"] != status {
+			t.Fatalf("by hand, %s: %d %v", status, r.code, r.body)
+		}
+	}
+
+	// The provider no longer holds its people (sync and SCIM off, disabled,
+	// or deleted): the account is the administrator's again.
+	holds = false
+	if r := e.do("PUT", "/api/v1/users/"+gone.ID, map[string]any{"status": "active"}); r.code != 200 || r.body["status"] != "active" {
+		t.Fatalf("enable once the provider lets go: %d %v", r.code, r.body)
+	}
+	if u, _ := e.users.GetByID(ctx, gone.ID); u.DirectoryRemovedAt != nil {
+		t.Fatal("the mark must go with an administrator's change of status")
 	}
 }

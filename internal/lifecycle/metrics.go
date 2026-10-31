@@ -3,6 +3,7 @@
 package lifecycle
 
 import (
+	"context"
 	"net/http"
 	"os"
 	"runtime"
@@ -13,6 +14,7 @@ import (
 	"time"
 
 	"github.com/albatroxxx/zanskar/internal/httpx"
+	"github.com/albatroxxx/zanskar/internal/protocol"
 	"github.com/albatroxxx/zanskar/internal/target"
 )
 
@@ -33,6 +35,17 @@ type Metrics struct {
 	// Counted from the session registry, so no Docker socket is needed.
 	DatabaseSessions int         `json:"database_sessions"`
 	Guacd            *GuacdCheck `json:"guacd,omitempty"`
+	// ApplicationSessions is how many application browsers this process
+	// runs, each a container (ADR 0034); SessionCaps the caps on both, 0 for
+	// none (2026-10-31).
+	ApplicationSessions int `json:"application_sessions"`
+	SessionCaps         struct {
+		Applications int `json:"applications"`
+		Databases    int `json:"databases"`
+	} `json:"session_caps"`
+	// ImagesBytes is the disk Zanskar's container images take on the host;
+	// absent with no container runtime or when it could not be read.
+	ImagesBytes *int64 `json:"images_bytes,omitempty"`
 	// CPUs scales the load average into a meter: a load of 4 is calm on 16
 	// cores and saturation on 4.
 	CPUs int `json:"cpus"`
@@ -207,11 +220,18 @@ func (h *Handler) metrics(w http.ResponseWriter, r *http.Request) {
 	}
 	if h.Controller != nil && h.Controller.Registry != nil {
 		for _, l := range h.Controller.Registry.List() {
-			if l.Protocol == "database" {
+			// The names the caps count by in connect, so a gauge at its
+			// limit is the gateway refusing the next one.
+			switch l.Protocol {
+			case protocol.Database:
 				m.DatabaseSessions++
+			case protocol.HTTP:
+				m.ApplicationSessions++
 			}
 		}
 	}
+	m.SessionCaps.Applications, m.SessionCaps.Databases = h.AppsMaxSessions, h.DatabaseMaxSessions
+	m.ImagesBytes = h.images.read(h.ImagesSize)
 	if h.GuacdAddr != nil {
 		if addr := strings.TrimSpace(h.GuacdAddr()); addr != "" {
 			check := &GuacdCheck{Address: addr}
@@ -342,4 +362,45 @@ func deviceID(info os.FileInfo) uint64 {
 		return statDev(st)
 	}
 	return 0
+}
+
+// imagesEvery is how often the metrics read the images' size from the
+// container runtime: the dashboard polls every ten seconds, and a small
+// host should not fork docker that often.
+const imagesEvery = 5 * time.Minute
+
+// imagesCache keeps the last images size, when a read last started, and
+// whether one is running.
+type imagesCache struct {
+	mu      sync.Mutex
+	at      time.Time
+	bytes   *int64
+	reading bool
+}
+
+// read returns the last size read and, when that is older than imagesEvery,
+// starts the next read in the background: the metrics never wait on the
+// container runtime, which can hang for the whole of its timeout. nil with
+// no reader, before the first read ends, or when the last read failed.
+func (c *imagesCache) read(size func(context.Context) (int64, error)) *int64 {
+	if size == nil {
+		return nil
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if !c.reading && (c.at.IsZero() || time.Since(c.at) >= imagesEvery) {
+		c.reading, c.at = true, time.Now()
+		go func() {
+			// Not the request's context: the read outlives the response.
+			// The reader bounds itself (containers.ImagesSize, 10 s).
+			n, err := size(context.Background())
+			c.mu.Lock()
+			defer c.mu.Unlock()
+			c.reading, c.bytes = false, nil
+			if err == nil {
+				c.bytes = &n
+			}
+		}()
+	}
+	return c.bytes
 }

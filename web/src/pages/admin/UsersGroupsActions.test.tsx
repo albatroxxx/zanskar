@@ -42,6 +42,58 @@ async function act(user: ReturnType<typeof userEvent.setup>, username: string, a
 }
 
 describe('Users', () => {
+  // 2026-10-31: the list did not say which people come from an identity
+  // provider and which were made in Zanskar.
+  it('says where each account comes from', async () => {
+    const fromKeycloak = { ...bob, idp_id: 'p1', provider_sign_in: true } as User
+    const waiting = { ...carol, provider_sign_in: true } as User
+    const get = serve([alice, fromKeycloak, waiting])
+    const base = get.getMockImplementation() as (path: string) => Promise<unknown>
+    get.mockImplementation(async (path: string) => {
+      if (path.startsWith('/identity-providers')) return { items: [{ id: 'p1', name: 'Keycloak', type: 'oidc' }] } as never
+      return base(path)
+    })
+    await show()
+    const source = (username: string) => {
+      const cell = within(screen.getByText(username).closest('tr') as HTMLElement).getAllByRole('cell')[2]
+      return { text: cell.textContent, title: cell.querySelector('.badge')?.getAttribute('title'), idp: !!cell.querySelector('.source-idp') }
+    }
+    await waitFor(() => expect(source('bob').text).toBe('Keycloak'))
+    expect(source('bob')).toEqual({ text: 'Keycloak', title: 'Signs in through Keycloak (OIDC)', idp: true })
+    expect(source('carol')).toMatchObject({ text: 'Single sign-on', idp: true })
+    expect(source('alice')).toMatchObject({ text: 'Zanskar', idp: false })
+    expect(screen.getByRole('columnheader', { name: 'Source' })).toBeDefined()
+  })
+
+  // 2026-10-31, the live 1.9.0 report: a person deleted from Keycloak, the
+  // sync disabled their account, and the console let it be enabled again.
+  it('keeps Enable away from an account its provider took away, while the provider decides', async () => {
+    const gone = { ...carol, idp_id: 'p1', directory_removed_at: '2026-10-31T09:00:00Z' } as User
+    const byHand = { ...bob, status: 'disabled', idp_id: 'p1' } as User
+    const pushedOff = { ...carol, id: 'u4', username: 'dora', idp_id: 'p2', directory_removed_at: '2026-10-31T09:00:00Z' } as User
+    const get = serve([alice, gone, byHand, pushedOff])
+    const base = get.getMockImplementation() as (path: string) => Promise<unknown>
+    get.mockImplementation(async (path: string) => {
+      if (path.startsWith('/identity-providers'))
+        return {
+          items: [
+            { id: 'p1', name: 'Keycloak', type: 'oidc', enabled: true, config: { sync_users: true } },
+            { id: 'p2', name: 'Old IdP', type: 'oidc', enabled: false, config: { scim: true } },
+          ],
+        } as never
+      return base(path)
+    })
+    await show()
+    const enable = (username: string) => within(screen.getByLabelText(`actions for ${username}`)).getByRole('option', { name: 'Enable' }) as HTMLOptionElement
+    await waitFor(() => expect(enable('carol').disabled).toBe(true))
+    expect(enable('carol').title).toBe('Keycloak no longer has this person; the account is enabled again when it does')
+    expect(within(screen.getByText('carol').closest('tr') as HTMLElement).getByRole('button', { name: 'Disabled: Keycloak no longer has this person' })).toBeDefined()
+    // Disabled by an administrator: theirs to enable.
+    expect(enable('bob').disabled).toBe(false)
+    // A provider that no longer decides (here disabled) lets go of its people.
+    expect(enable('dora').disabled).toBe(false)
+  })
+
   it('shows each account, marks the signed-in one, and keeps disable and delete away from it', async () => {
     serve()
     await show()
@@ -180,6 +232,20 @@ describe('Users', () => {
 })
 
 describe('Groups', () => {
+  it('says which groups an identity provider fills', async () => {
+    const get = serve([alice], [{ id: 'g1', name: 'ops', description: '', member_count: 2 }, { id: 'g2', name: 'kc-admins', description: '', member_count: 3, idp_id: 'p1' }])
+    const base = get.getMockImplementation() as (path: string) => Promise<unknown>
+    get.mockImplementation(async (path: string) => {
+      if (path.startsWith('/identity-providers')) return { items: [{ id: 'p1', name: 'Keycloak', type: 'oidc' }] } as never
+      return base(path)
+    })
+    const user = await show()
+    await user.click(screen.getByRole('tab', { name: 'Groups' }))
+    const synced = (await screen.findByText('kc-admins')).closest('tr') as HTMLElement
+    await waitFor(() => expect(within(synced).getByText('Keycloak').getAttribute('title')).toBe('Members come from Keycloak (OIDC)'))
+    expect(within(screen.getByText('ops').closest('tr') as HTMLElement).getByText('Zanskar')).toBeDefined()
+  })
+
   it('lists groups with member counts, adds one, edits members, and deletes with the warning about policies', async () => {
     serve([alice, bob, carol], [{ id: 'g1', name: 'ops', description: 'Operators', member_count: 2 }], [{ user_id: 'u1' }, { user_id: 'u2' }])
     const post = vi.spyOn(api, 'post').mockResolvedValue({} as never)

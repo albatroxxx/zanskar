@@ -277,3 +277,36 @@ func TestValidUsernameTakesAddresses(t *testing.T) {
 		}
 	}
 }
+
+// TestProviderSignIn (2026-10-31): the console tells an account that signs
+// in through an identity provider from one made with a password. The flag is
+// derived on create and on every read, and is never a stored secret.
+func TestProviderSignIn(t *testing.T) {
+	r := testRepo(t)
+	ctx := context.Background()
+	hash, err := HashPassword("a password of its own")
+	if err != nil {
+		t.Fatal(err)
+	}
+	local := &User{Username: "local-one", DisplayName: "Local One", PasswordHash: hash, Status: StatusActive, Roles: []Role{RoleUser}}
+	waiting := &User{Username: "waits-for-sso", DisplayName: "Waits", Status: StatusActive, Roles: []Role{RoleUser}}
+	for _, u := range []*User{local, waiting} {
+		if err := r.Create(ctx, u); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if local.ProviderSignIn || !waiting.ProviderSignIn {
+		t.Fatalf("on create: local %v, waiting %v", local.ProviderSignIn, waiting.ProviderSignIn)
+	}
+	all, _, err := r.List(ctx, "", 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]bool{}
+	for _, u := range all {
+		got[u.Username] = u.ProviderSignIn
+	}
+	if got["local-one"] || !got["waits-for-sso"] {
+		t.Fatalf("on read: %v", got)
+	}
+}

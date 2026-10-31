@@ -125,7 +125,7 @@ export function PolicyEditor() {
           </Field>
           <Field label="Users" hint="Review-only accounts are not offered">
             <PickList label="users" idPrefix="pe-user" selected={userIDs} onToggle={(uid) => setUserIDs(toggle(userIDs, uid))} onSelect={(ids, on) => setUserIDs(pickMany(userIDs, ids, on))}
-              options={people.map((u) => ({ id: u.id, label: u.username, detail: u.display_name && u.display_name !== u.username ? u.display_name : undefined }))} />
+              options={people.map((u) => ({ id: u.id, label: u.username, detail: u.display_name && u.display_name !== u.username ? u.display_name : undefined, detailTitle: 'Display name' }))} />
           </Field>
         </div>
       </div>
@@ -353,6 +353,8 @@ function GrantCard({ index, draft: d, open, onToggleOpen, onChange, onRemove, on
                 ['require_mfa', 'Authenticator'],
                 ['allow_clipboard', 'Clipboard'],
                 ['allow_file_transfer', 'File transfer'],
+                // Developer tools exist only in an application's browser (ADR 0037).
+                ...(d.kind === 'application' ? ([['allow_devtools', 'Developer tools']] as const) : []),
               ] as const).map(([k, label]) => (
                 <span key={k} className="field inline">
                   <input id={`${p}-${k}`} type="checkbox" checked={d[k]} onChange={(e) => up({ [k]: e.target.checked } as Partial<GrantDraft>)} />

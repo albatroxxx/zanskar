@@ -75,19 +75,22 @@ type TagMatch struct {
 
 // Grant is one complete grant: what, and under which conditions.
 type Grant struct {
-	ID                 string        `json:"id"`
-	Kind               string        `json:"kind"`
-	Targets            []GrantTarget `json:"targets"`
-	Tags               *TagMatch     `json:"tags,omitempty"`
-	Access             string        `json:"access"`
-	SignIn             string        `json:"sign_in"`
-	RequireMFA         bool          `json:"require_mfa"`
-	AllowClipboard     bool          `json:"allow_clipboard"`
-	AllowFileTransfer  bool          `json:"allow_file_transfer"`
-	IdleTimeoutMinutes int           `json:"idle_timeout_minutes"`
-	MaxSessionMinutes  *int          `json:"max_session_minutes"`
-	TimeWindows        []TimeWindow  `json:"time_windows"`
-	RetentionDays      *int          `json:"retention_days"`
+	ID                string        `json:"id"`
+	Kind              string        `json:"kind"`
+	Targets           []GrantTarget `json:"targets"`
+	Tags              *TagMatch     `json:"tags,omitempty"`
+	Access            string        `json:"access"`
+	SignIn            string        `json:"sign_in"`
+	RequireMFA        bool          `json:"require_mfa"`
+	AllowClipboard    bool          `json:"allow_clipboard"`
+	AllowFileTransfer bool          `json:"allow_file_transfer"`
+	// AllowDevTools lets an application grant open Chromium's developer
+	// tools in its isolated browser (ADR 0037); applications only.
+	AllowDevTools      bool         `json:"allow_devtools"`
+	IdleTimeoutMinutes int          `json:"idle_timeout_minutes"`
+	MaxSessionMinutes  *int         `json:"max_session_minutes"`
+	TimeWindows        []TimeWindow `json:"time_windows"`
+	RetentionDays      *int         `json:"retention_days"`
 }
 
 // TimeWindow is a recurring weekly window in a named zone.
@@ -175,6 +178,9 @@ func (g *Grant) validate() error {
 	}
 	if len(g.Targets) == 0 && g.Tags == nil {
 		return fmt.Errorf("%w: name targets or match tags", ErrInvalidInput)
+	}
+	if g.AllowDevTools && g.Kind != protocol.KindApplication {
+		return fmt.Errorf("%w: developer tools are for application grants only", ErrInvalidInput)
 	}
 	if len(g.Targets) > MaxGrantTargets {
 		return fmt.Errorf("%w: at most %d targets", ErrInvalidInput, MaxGrantTargets)
@@ -428,6 +434,7 @@ type Decision struct {
 	RetentionDays     int  `json:"-"`
 	AllowClipboard    bool `json:"allow_clipboard"`
 	AllowFileTransfer bool `json:"allow_file_transfer"`
+	AllowDevTools     bool `json:"allow_devtools"`
 	RequireMFA        bool `json:"require_mfa"`
 	// RequireApproval is true when only approval grants admit, so the
 	// person needs an active grant to connect (ADR 0018).
@@ -492,7 +499,7 @@ func evaluate(policies []*Policy, t TargetRef, proto string, now time.Time, wind
 	if len(set) == 0 {
 		return Decision{Reason: reason}
 	}
-	d := Decision{Allowed: true, RequireApproval: requireApproval, AllowClipboard: true, AllowFileTransfer: true}
+	d := Decision{Allowed: true, RequireApproval: requireApproval, AllowClipboard: true, AllowFileTransfer: true, AllowDevTools: true}
 	var best *decider
 	maxSet := false
 	for i := range set {
@@ -504,6 +511,7 @@ func evaluate(policies []*Policy, t TargetRef, proto string, now time.Time, wind
 		}
 		d.AllowClipboard = d.AllowClipboard && g.AllowClipboard
 		d.AllowFileTransfer = d.AllowFileTransfer && g.AllowFileTransfer
+		d.AllowDevTools = d.AllowDevTools && g.AllowDevTools
 		d.RequireMFA = d.RequireMFA || g.RequireMFA
 		if g.MaxSessionMinutes != nil {
 			m := time.Duration(*g.MaxSessionMinutes) * time.Minute

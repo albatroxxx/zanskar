@@ -1390,6 +1390,12 @@ paths:
 
         Setting `status` to `active` clears `failed_logins` and `locked_until`. Disabling or
         locking a user signs them out everywhere. You cannot disable or lock your own account.
+
+        An account its identity provider took away (`directory_removed_at` set: the user sync
+        or SCIM disabled it because the person left) keeps its status while that provider
+        exists, is enabled, and lists or pushes its people: a change of status answers 409
+        `left_provider`, and the account is enabled again when the provider has the person
+        again (ADR 0035, amended 2026-10-31). A name or email edit still applies.
       requestBody:
         required: true
         content:
@@ -5105,8 +5111,12 @@ components:
             $ref: "#/components/schemas/Role"
         idp_id:
           type: [string, "null"]
+          description: The identity provider the account belongs to, when one does; the console names it in the Source column.
         external_id:
           type: [string, "null"]
+        provider_sign_in:
+          type: boolean
+          description: The account has no password of its own and signs in through an identity provider, linked (idp_id) or waiting for its first sign-in. Derived when read; absent when false.
         scim_external_id:
           type: string
           description: The provider's own id for the person, as its SCIM client sent it.
@@ -5116,7 +5126,10 @@ components:
             - $ref: "#/components/schemas/Timestamp"
             - type: "null"
         directory_removed_at:
-          description: When the directory user sync disabled the account because the person left the directory (ADR 0035).
+          description: >
+            When the directory user sync or SCIM disabled the account because the person left
+            the provider (ADR 0035). While the provider still decides, the status cannot be
+            changed by hand; the mark goes when the person is back.
           oneOf:
             - $ref: "#/components/schemas/Timestamp"
             - type: "null"
@@ -6043,6 +6056,13 @@ components:
         allow_file_transfer:
           type: boolean
           default: false
+        allow_devtools:
+          type: boolean
+          default: false
+          description: >
+            Chromium's developer tools in the application's isolated browser (ADR 0037).
+            Allowed only on an `application` grant; where several grants admit a person, every
+            one must allow them.
         idle_timeout_minutes:
           type: integer
           minimum: 1
@@ -7059,8 +7079,98 @@ components:
           description: Refused connections (`session.connect` failures).
     AdminOverview:
       type: object
-      required: [sessions, pending_requests, targets, inventory, autoscaling, audit_24h]
+      required: [sessions, pending_requests, targets, inventory, autoscaling, audit_24h, posture, integrity, in_flight, trends]
       properties:
+        trends:
+          type: object
+          description: >
+            The last seven calendar days in the console's time zone (`display.time_zone`,
+            UTC when unset), oldest first and today last, today counted so far
+            (2026-10-31). Calendar days, not 24-hour windows from now, so a day here is the
+            day the Events page's filter shows; a day with a daylight-saving change has its
+            true length.
+          required: [days, sessions, refused]
+          properties:
+            days:
+              type: array
+              items: {type: string, format: date}
+              description: Each day as YYYY-MM-DD; seven entries.
+            sessions:
+              type: array
+              items: {type: integer}
+              description: Sessions started on each day, matched to `days` by index.
+            refused:
+              type: array
+              items: {type: integer}
+              description: Refused connections (`session.connect` failures) on each day.
+        in_flight:
+          type: object
+          description: Access in flight (2026-10-31).
+          required: [active, ending_soon, oldest_pending_seconds]
+          properties:
+            active: {type: integer, description: Just-in-time grants approved and not yet ended.}
+            ending_soon: {type: integer, description: Of those, how many end within the hour.}
+            oldest_pending_seconds: {type: integer, description: How long the oldest pending request has waited; 0 when none waits.}
+        integrity:
+          type: object
+          description: Whether the evidence is whole (2026-10-31), counts only.
+          required: [audit_chain, recordings_lost_7d, directories, export]
+          properties:
+            audit_chain:
+              description: >
+                The background check of the whole chain, run a minute after start and every six
+                hours; null before the first check, which the console shows as not checked yet.
+              oneOf:
+                - type: "null"
+                - type: object
+                  required: [at, intact, checked, problems]
+                  properties:
+                    at: {$ref: "#/components/schemas/Timestamp"}
+                    intact: {type: boolean}
+                    checked: {type: integer, description: Events walked.}
+                    problems: {type: integer}
+                    error: {type: string, description: A check that could not run; says nothing about the chain.}
+            recordings_lost_7d:
+              type: integer
+              description: recording.lost failures in the last seven days.
+            directories:
+              type: object
+              description: Identity providers listed on a schedule; the Identity providers page has each one's status.
+              required: [listed, failing, not_run, held_back]
+              properties:
+                listed: {type: integer}
+                failing: {type: integer}
+                not_run: {type: integer}
+                held_back: {type: integer, description: Accounts the last runs did not disable.}
+            export:
+              type: object
+              required: [sinks, behind]
+              properties:
+                sinks: {type: integer, description: SIEM sinks configured.}
+                behind: {type: integer, description: Events the furthest-behind sink has not shipped.}
+        posture:
+          type: object
+          description: What weakens access (2026-10-31), counts only.
+          required: [standing_no_mfa, admins, dormant, not_enrolled]
+          properties:
+            standing_no_mfa:
+              type: object
+              required: [grants, policies]
+              description: Standing grants that ask for no authenticator, in enabled policies, and the policies holding them.
+              properties:
+                grants: {type: integer}
+                policies: {type: integer}
+            admins:
+              type: integer
+              description: Active accounts holding admin.
+            dormant:
+              type: integer
+              description: Active accounts whose last sign-in, or creation when they never signed in, is more than 90 days old.
+            not_enrolled:
+              type: integer
+              description: >
+                Active accounts whose second factor is Zanskar's authenticator (a password, an LDAP
+                link, or a provider that leaves it to Zanskar) and that have not confirmed one.
         sessions:
           $ref: "#/components/schemas/SessionCounts"
         pending_requests:
@@ -7208,7 +7318,7 @@ components:
               type: string
     SystemMetrics:
       type: object
-      required: [disks, database_sessions]
+      required: [disks, database_sessions, application_sessions, session_caps]
       properties:
         cpu:
           type: object
@@ -7272,6 +7382,29 @@ components:
         database_sessions:
           type: integer
           description: Database client containers running now, one per live database session.
+        application_sessions:
+          type: integer
+          description: Application browsers running now, one per live application session (ADR 0034).
+        session_caps:
+          type: object
+          required: [applications, databases]
+          description: >
+            The caps on concurrent sessions of each kind (`ZANSKAR_APPS_MAX_SESSIONS`,
+            `ZANSKAR_DATABASE_MAX_SESSIONS`); 0 for none. A count at its cap means the next
+            connection of that kind is refused with 503 (2026-10-31).
+          properties:
+            applications:
+              type: integer
+            databases:
+              type: integer
+        images_bytes:
+          type: integer
+          description: >
+            Disk the container images Zanskar pulled take on the host, each image's size
+            summed (layers two images share count twice, as `docker image ls` shows). Read
+            in the background at most every five minutes, so the answer never waits on the
+            container runtime; omitted until the first read ends, without a container
+            runtime, or when the last read failed (2026-10-31).
         cpus:
           type: integer
           description: Logical CPUs, to scale the load average.

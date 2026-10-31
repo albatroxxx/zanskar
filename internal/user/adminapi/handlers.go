@@ -39,6 +39,9 @@ type AdminHandler struct {
 	Revoker gateway.Revoker
 	Audit   *audit.Log
 	Log     *slog.Logger
+	// ProviderHolds says whether an identity provider still decides who
+	// its people are, and its name (idp.Repo.Holds); nil holds nothing.
+	ProviderHolds func(ctx context.Context, idpID string) (name string, holds bool, err error)
 }
 
 // Register mounts the routes behind the admin role.
@@ -218,6 +221,22 @@ func (h *AdminHandler) update(w http.ResponseWriter, r *http.Request) {
 	if req.Status != user.StatusActive && h.isSelf(r, id) {
 		httpx.WriteError(w, r, http.StatusConflict, "self", "you cannot disable or lock your own account")
 		return
+	}
+	// An account its provider took away (the sync or SCIM disabled and
+	// marked it) stays the provider's while the provider still lists or
+	// pushes its people: it is enabled again when they are back (ADR 0035,
+	// amended 2026-10-31). Enabling it by hand made an active account of a
+	// person the directory no longer has. A name or email edit stands.
+	if req.Status != existing.Status && existing.DirectoryRemovedAt != nil && existing.IdPID != "" && h.ProviderHolds != nil {
+		name, holds, err := h.ProviderHolds(r.Context(), existing.IdPID)
+		if err != nil {
+			httpx.Internal(w, r, h.Log, err)
+			return
+		}
+		if holds {
+			httpx.WriteError(w, r, http.StatusConflict, "left_provider", name+" no longer has this person; the account is enabled again when it does")
+			return
+		}
 	}
 	if err := h.Users.Update(r.Context(), id, req.DisplayName, email, req.Status); err != nil {
 		h.fail(w, r, err)

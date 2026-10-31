@@ -145,6 +145,7 @@ describe('the policy editor', () => {
     // protocols it serves; a host with one is ticked for the admin.
     const card = screen.getByRole('region', { name: 'Grant 1' })
     expect(within(card).queryByLabelText('orders')).toBeNull()
+    expect(within(card).queryByLabelText('Developer tools')).toBeNull() // applications only (ADR 0037)
     await user.click(within(card).getByLabelText('web-1'))
     expect((within(card).getByLabelText('SSH on web-1') as HTMLInputElement).checked).toBe(true)
     await user.click(within(card).getByLabelText('dc-1'))
@@ -184,6 +185,19 @@ describe('the policy editor', () => {
     expect(screen.getByTestId('where').textContent).toBe('/admin/policies')
     // Nothing of the old shape goes out.
     for (const old of ['group_id', 'user_id', 'target_selector', 'protocols', 'rules', 'require_approval']) expect(body).not.toHaveProperty(old)
+  })
+
+  it('offers developer tools on an application grant only', async () => {
+    serve([])
+    at('/admin/policies/new')
+    const user = userEvent.setup()
+    const card = await screen.findByRole('region', { name: 'Grant 1' })
+    expect(within(card).queryByLabelText('Developer tools')).toBeNull()
+    await user.click(within(card).getByRole('radio', { name: 'Application' }))
+    const box = within(card).getByLabelText('Developer tools') as HTMLInputElement
+    expect(box.checked).toBe(false)
+    await user.click(box)
+    expect(box.checked).toBe(true)
   })
 
   it('names what is missing before sending, and the server\'s refusal after', async () => {

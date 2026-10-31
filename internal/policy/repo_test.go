@@ -273,3 +273,37 @@ func TestRemoveTargetOnEachBackend(t *testing.T) {
 		}
 	})
 }
+
+// TestCountStandingNoMFAOnEachBackend (2026-10-31, the dashboard's security
+// posture): standing grants without an authenticator, counted in enabled
+// policies only; approval grants and grants that ask for MFA are not.
+func TestCountStandingNoMFAOnEachBackend(t *testing.T) {
+	storetest.ForEachBackend(t, func(t *testing.T, db *store.DB) {
+		ctx := context.Background()
+		seedPeople(t, db)
+		r := NewRepo(db)
+		subj := []Subject{{Kind: SubjectGroup, ID: "g1"}}
+		grant := func(access string, mfa bool) Grant {
+			return Grant{Kind: protocol.KindHost, Targets: []GrantTarget{{ID: "t1", Protocols: []string{"ssh"}}}, Access: access, RequireMFA: mfa}
+		}
+		ps := []*Policy{
+			{Name: "a-open", Enabled: true, Subjects: subj, Grants: []Grant{grant(AccessStanding, false), grant(AccessStanding, false), grant(AccessStanding, true)}},
+			{Name: "b-approval", Enabled: true, Subjects: subj, Grants: []Grant{grant(AccessApproval, false)}},
+			{Name: "c-mfa", Enabled: true, Subjects: subj, Grants: []Grant{grant(AccessStanding, true)}},
+			{Name: "d-off", Enabled: false, Subjects: subj, Grants: []Grant{grant(AccessStanding, false)}},
+			{Name: "e-one", Enabled: true, Subjects: subj, Grants: []Grant{grant(AccessStanding, false)}},
+		}
+		for _, p := range ps {
+			if err := r.Create(ctx, p); err != nil {
+				t.Fatal(err)
+			}
+		}
+		e, err := r.CountStandingNoMFA(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if e != (Exposure{Grants: 3, Policies: 2}) {
+			t.Fatalf("exposure %+v, want 3 grants in 2 policies", e)
+		}
+	})
+}

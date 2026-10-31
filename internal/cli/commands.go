@@ -851,12 +851,17 @@ func grantPairs(g policy.Grant, targets, asgs map[string]string) [][2]string {
 	if g.RetentionDays != nil {
 		keep = fmt.Sprintf("%d days", *g.RetentionDays)
 	}
-	return [][2]string{
+	rows := [][2]string{
 		{"targets", strings.Join(named, ", ")}, {"tags", tags}, {"access", g.Access}, {"sign-in", signIn},
 		{"needs MFA", yesNo(g.RequireMFA)}, {"clipboard", yesNo(g.AllowClipboard)}, {"file transfer", yesNo(g.AllowFileTransfer)},
+	}
+	if g.Kind == protocol.KindApplication {
+		rows = append(rows, [2]string{"dev tools", yesNo(g.AllowDevTools)})
+	}
+	return append(rows, [][2]string{
 		{"idle timeout", fmt.Sprintf("%d min", g.IdleTimeoutMinutes)}, {"max session", most},
 		{"windows", windowsText(g.TimeWindows)}, {"retention", keep}, {"id", g.ID},
-	}
+	}...)
 }
 
 // grantProtocols lists, by name and in the kind's own order, the protocols

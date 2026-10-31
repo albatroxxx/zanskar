@@ -24,9 +24,61 @@ export function UsersGroups() {
 
 type UserAction = 'roles' | 'password' | 'sessions' | 'mfa' | 'status' | 'delete'
 
+type Providers = Map<string, { name: string; type: string; holds: boolean }>
+
+/** useProviders names the identity providers by id, for the Source column,
+ *  and says which still decide who their people are: enabled, and listing
+ *  them or having them pushed (idp.Repo.Holds on the server). */
+function useProviders(): Providers {
+  const { items } = useList<{ id: string; name: string; type: string; enabled?: boolean; config?: { sync_users?: boolean; scim?: boolean } }>('/identity-providers')
+  return new Map((items ?? []).map((p) => [p.id, { name: p.name, type: p.type, holds: !!p.enabled && !!(p.config?.sync_users || p.config?.scim) }]))
+}
+
+/** tookAway names the provider that disabled an account because its person
+ *  left, while that provider still decides (2026-10-31): the account comes
+ *  back when the person does, and is not an administrator's to enable. */
+function tookAway(u: User, providers: Providers): string | undefined {
+  if (!u.directory_removed_at || !u.idp_id) return undefined
+  const p = providers.get(u.idp_id)
+  return p?.holds ? p.name : undefined
+}
+
+/**
+ * Source says where an account or a group comes from (2026-10-31: the list
+ * did not tell an identity provider's people from Zanskar's own): the
+ * provider by name, outlined so it never reads as a role; "Single sign-on"
+ * for an account made here to sign in through a provider and not yet
+ * linked; "Zanskar" for one with its own password, or a group made here.
+ */
+function Source({ idp, providerSignIn, providers, group }: { idp?: string; providerSignIn?: boolean; providers: Providers; group?: boolean }) {
+  if (idp) {
+    const p = providers.get(idp)
+    const name = p?.name ?? 'Identity provider'
+    const how = p ? ` (${p.type.toUpperCase()})` : ''
+    return (
+      <span className="badge source-idp" title={group ? `Members come from ${name}${how}` : `Signs in through ${name}${how}`}>
+        {name}
+      </span>
+    )
+  }
+  if (providerSignIn) {
+    return (
+      <span className="badge source-idp" title="Signs in through an identity provider; linked at the first sign-in">
+        Single sign-on
+      </span>
+    )
+  }
+  return (
+    <span className="badge" title={group ? 'Made in Zanskar' : 'Made in Zanskar, with its own password'}>
+      Zanskar
+    </span>
+  )
+}
+
 function Users() {
   const me = useAuth().user
   const { items, err, setErr, reload } = useList<User>('/users')
+  const providers = useProviders()
   const [adding, setAdding] = useState(false)
   const [showOnce, setShowOnce] = useState<{ username: string; password: string } | null>(null)
   const [action, setAction] = useState<{ u: User; a: UserAction } | null>(null)
@@ -50,6 +102,7 @@ function Users() {
               <tr>
                 <th>Username</th>
                 <th>Name</th>
+                <th>Source</th>
                 <th>Roles</th>
                 <th>Status</th>
                 <th>Last login</th>
@@ -59,6 +112,7 @@ function Users() {
             <tbody>
               {items.map((u) => {
                 const self = u.id === me?.id
+                const leftFor = tookAway(u, providers)
                 return (
                   <tr key={u.id}>
                     <td className="mono">{u.username}{self && <span className="muted"> (you)</span>}</td>
@@ -66,9 +120,15 @@ function Users() {
                       {u.display_name}
                       {u.email && <div className="muted">{u.email}</div>}
                     </td>
+                    <td>
+                      <Source idp={u.idp_id} providerSignIn={u.provider_sign_in} providers={providers} />
+                    </td>
                     <td>{u.roles.map((r) => <Badge key={r} tone={r === 'admin' ? 'accent' : undefined}>{r}</Badge>)}</td>
                     <td>
-                      <StateIcon state={u.status === 'active' ? 'ok' : 'warn'} label={u.status === 'active' ? 'Active' : u.status === 'locked' ? 'Locked' : 'Disabled'} />
+                      <StateIcon
+                        state={u.status === 'active' ? 'ok' : 'warn'}
+                        label={u.status === 'active' ? 'Active' : u.status === 'locked' ? 'Locked' : leftFor ? `Disabled: ${leftFor} no longer has this person` : 'Disabled'}
+                      />
                       {u.must_change_password && (
                         <>
                           {' '}
@@ -86,7 +146,11 @@ function Users() {
                         <option value="password">Reset password</option>
                         <option value="sessions">Revoke sessions</option>
                         <option value="mfa">Reset authenticator</option>
-                        {!self && <option value="status">{u.status === 'active' ? 'Disable' : 'Enable'}</option>}
+                        {!self && (
+                          <option value="status" disabled={!!leftFor} title={leftFor ? `${leftFor} no longer has this person; the account is enabled again when it does` : undefined}>
+                            {u.status === 'active' ? 'Disable' : 'Enable'}
+                          </option>
+                        )}
                         {!self && <option value="delete">Delete</option>}
                       </select>
                     </td>
@@ -317,6 +381,7 @@ function PasswordForm({ user, onClose, onSaved }: { user: User; onClose: () => v
 
 function Groups() {
   const { items, err, setErr, reload } = useList<Group>('/groups')
+  const providers = useProviders()
   const [adding, setAdding] = useState(false)
   const [members, setMembers] = useState<Group | null>(null)
   const [deleting, setDeleting] = useState<Group | null>(null)
@@ -337,6 +402,7 @@ function Groups() {
               <tr>
                 <th>Name</th>
                 <th>Description</th>
+                <th>Source</th>
                 <th>Members</th>
                 <th><span className="sr-only">Actions</span></th>
               </tr>
@@ -346,6 +412,9 @@ function Groups() {
                 <tr key={g.id}>
                   <td><strong>{g.name}</strong></td>
                   <td className="muted">{g.description}</td>
+                  <td>
+                    <Source idp={g.idp_id} providers={providers} group />
+                  </td>
                   <td>{g.member_count ?? 0}</td>
                   <td className="actions">
                     <button className="btn sm" onClick={() => setMembers(g)}>Members</button>
@@ -421,7 +490,7 @@ function GroupForm({ onClose, onSaved }: { onClose: () => void; onSaved: () => v
             selected={userIDs}
             onToggle={(id) => setUserIDs((u) => (u.includes(id) ? u.filter((x) => x !== id) : [...u, id]))}
             onSelect={(ids, on) => setUserIDs((u) => (on ? [...new Set([...u, ...ids])] : u.filter((x) => !ids.includes(x))))}
-            options={(users.items ?? []).map((u) => ({ id: u.id, label: u.username, detail: u.display_name && u.display_name !== u.username ? u.display_name : undefined }))}
+            options={(users.items ?? []).map((u) => ({ id: u.id, label: u.username, detail: u.display_name && u.display_name !== u.username ? u.display_name : undefined, detailTitle: 'Display name' }))}
           />
         </Field>
       )}
@@ -450,7 +519,15 @@ function MembersForm({ group, onClose, onSaved }: { group: Group; onClose: () =>
             <div key={u.id} className="field inline" style={{ margin: '4px 0' }}>
               <input id={`m-${group.id}-${u.id}`} type="checkbox" checked={selected.includes(u.id)} onChange={(e) => setSelected(e.target.checked ? [...selected, u.id] : selected.filter((x) => x !== u.id))} />
               <label htmlFor={`m-${group.id}-${u.id}`}>
-                {u.display_name} <span className="mono muted">{u.username}</span>
+                {u.username}
+                {u.display_name && u.display_name !== u.username && (
+                  <>
+                    {' '}
+                    <span className="pick-detail" title="Display name">
+                      {u.display_name}
+                    </span>
+                  </>
+                )}
               </label>
             </div>
           ))}

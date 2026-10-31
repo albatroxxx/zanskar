@@ -81,3 +81,39 @@ func TestRepoOnEachBackend(t *testing.T) {
 		_ = counts
 	})
 }
+
+// TestStartedPerOnEachBackend (2026-10-31, the dashboard's trends): each
+// session falls in the range its start is in, the lower bound included and
+// the upper not, on both engines.
+func TestStartedPerOnEachBackend(t *testing.T) {
+	storetest.ForEachBackend(t, func(t *testing.T, db *store.DB) {
+		ctx := context.Background()
+		stamp := store.TimeArg(time.Now())
+		for _, q := range []string{
+			`INSERT INTO users (id, username, display_name, created_at, updated_at) VALUES ('u1', 'alice', 'Alice', ?, ?)`,
+			`INSERT INTO targets (id, name, address, os_family, created_at, updated_at) VALUES ('t1', 'box', '10.0.0.5', 'linux', ?, ?)`,
+		} {
+			if _, err := db.ExecContext(ctx, db.Rebind(q), stamp, stamp); err != nil {
+				t.Fatal(err)
+			}
+		}
+		r := NewRepo(db)
+		day := time.Date(2026, 10, 29, 0, 0, 0, 0, time.UTC)
+		for _, at := range []time.Time{day.Add(-time.Second), day, day.Add(23 * time.Hour), day.Add(24 * time.Hour)} {
+			s := &Session{UserID: "u1", TargetID: "t1", Protocol: "ssh", ClientIP: "10.0.0.1", UserAgent: "test"}
+			if err := r.Start(ctx, s); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := db.ExecContext(ctx, db.Rebind(`UPDATE access_sessions SET started_at = ? WHERE id = ?`), store.TimeArg(at), s.ID); err != nil {
+				t.Fatal(err)
+			}
+		}
+		got, err := r.StartedPer(ctx, []time.Time{day.Add(-24 * time.Hour), day, day.Add(24 * time.Hour), day.Add(48 * time.Hour)})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(got) != 3 || got[0] != 1 || got[1] != 2 || got[2] != 1 {
+			t.Fatalf("per day %v, want [1 2 1]", got)
+		}
+	})
+}

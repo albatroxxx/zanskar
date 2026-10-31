@@ -77,6 +77,14 @@ provider's directory.**
     (`users.directory_removed_at`), and their browser and live sessions end. One who comes back
     is enabled again. An account an administrator disabled or locked is never touched, and an
     administrator's change of status clears the mark.
+    *Amended 2026-10-31:* while the account's provider still decides (it exists, is enabled,
+    and lists or pushes its people), an administrator cannot change the status of an account
+    it marked: enabling it made an active account of a person the directory no longer has
+    (the live 1.9.0 console, after a Keycloak user was deleted). The account comes back when
+    the provider has the person again; once the provider is disabled, deleted, or stops
+    listing and pushing, the account is the administrator's again. An account disabled by
+    hand is unchanged: the administrator's to enable, and the next sync disables it again if
+    the directory does not list the person.
   - Only a complete listing is acted on. The Keycloak count is read before and after the pages,
     and a realm that changed in between fails the run. A listing of no one, or one that would
     disable more than half the provider's active accounts at once (and more than three), holds

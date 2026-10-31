@@ -15,6 +15,12 @@ export interface User {
   created_at: string
   updated_at: string
   last_login_at?: string
+  /** The identity provider the account belongs to, when one does. */
+  idp_id?: string
+  /** No password of its own: it signs in through an identity provider, linked or waiting for its first sign-in. */
+  provider_sign_in?: boolean
+  /** When the provider's sync or SCIM disabled the account because the person left it; cleared when they come back. */
+  directory_removed_at?: string
 }
 
 export interface Me {
@@ -252,6 +258,8 @@ export interface PolicyGrant {
   require_mfa: boolean
   allow_clipboard: boolean
   allow_file_transfer: boolean
+  /** Chromium's developer tools in an application's isolated browser (ADR 0037); applications only. */
+  allow_devtools?: boolean
   idle_timeout_minutes: number
   max_session_minutes: number | null
   time_windows: TimeWindow[]
@@ -384,6 +392,24 @@ export interface AdminOverview {
     healthy_instances: number
   }
   audit_24h: AuditTallies
+  /** What weakens access (2026-10-31): standing grants without MFA, accounts not yet enrolled, dormant ones, administrators. */
+  posture?: {
+    standing_no_mfa: { grants: number; policies: number }
+    admins: number
+    dormant: number
+    not_enrolled: number
+  }
+  /** Whether the evidence is whole (2026-10-31). audit_chain is null before the gateway's first check. */
+  integrity?: {
+    audit_chain: { at: string; intact: boolean; checked: number; problems: number; error?: string } | null
+    recordings_lost_7d: number
+    directories: { listed: number; failing: number; not_run: number; held_back: number }
+    export: { sinks: number; behind: number }
+  }
+  /** Access in flight (2026-10-31): just-in-time grants active now, those ending within the hour, the oldest pending request's wait. */
+  in_flight?: { active: number; ending_soon: number; oldest_pending_seconds: number }
+  /** The last seven calendar days in the console's time zone, today last and so far (2026-10-31): days as YYYY-MM-DD, sessions started and connections refused per day. */
+  trends?: { days: string[]; sessions: number[]; refused: number[] }
 }
 
 /** GET /audit/overview (ADR 0029). Counts only, never row data. */
@@ -643,6 +669,11 @@ export interface SystemMetrics {
   disks: { what: string; path: string; system: boolean; total_bytes: number; free_bytes: number; used_bytes?: number }[]
   database_sessions: number
   guacd?: { address: string; reachable: boolean }
+  /** Application browsers running now (ADR 0034), and the caps on both kinds, 0 for none (2026-10-31). */
+  application_sessions?: number
+  session_caps?: { applications: number; databases: number }
+  /** Disk Zanskar's container images take; absent without a container runtime. */
+  images_bytes?: number
   cpus: number
 }
 

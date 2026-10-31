@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -78,6 +79,50 @@ func RemoveOldImagesWith(ctx context.Context, run runFunc, configured []string) 
 		}
 	}
 	return removed, errors.Join(errs...)
+}
+
+// ImagesSize is the disk Zanskar's own images take on the host, by the
+// source label (2026-10-31, the dashboard's capacity): each image once,
+// however many tags it has. docker is the path to the docker CLI, empty for
+// "docker" on PATH.
+func ImagesSize(ctx context.Context, docker string) (int64, error) {
+	if docker == "" {
+		docker = "docker"
+	}
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	run := func(ctx context.Context, args ...string) (string, error) {
+		return Output(ctx, docker, nil, args...)
+	}
+	return ImagesSizeWith(ctx, run)
+}
+
+// ImagesSizeWith is ImagesSize over an injectable runner.
+func ImagesSizeWith(ctx context.Context, run runFunc) (int64, error) {
+	out, err := run(ctx, "image", "ls", "--no-trunc", "--filter", "label="+SourceLabel+"="+Source, "--format", "{{.ID}}")
+	if err != nil {
+		return 0, err
+	}
+	var ids []string
+	for line := range strings.SplitSeq(out, "\n") {
+		if id := strings.TrimSpace(line); strings.HasPrefix(id, "sha256:") && !slices.Contains(ids, id) {
+			ids = append(ids, id)
+		}
+	}
+	if len(ids) == 0 {
+		return 0, nil
+	}
+	sizes, err := run(ctx, append([]string{"image", "inspect", "--format", "{{.Size}}"}, ids...)...)
+	if err != nil {
+		return 0, err
+	}
+	var total int64
+	for line := range strings.SplitSeq(sizes, "\n") {
+		if n, err := strconv.ParseInt(strings.TrimSpace(line), 10, 64); err == nil && n > 0 {
+			total += n
+		}
+	}
+	return total, nil
 }
 
 // oldRefs picks from a listing (one image per line: id, repository, tag,

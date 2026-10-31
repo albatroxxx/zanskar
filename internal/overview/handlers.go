@@ -18,6 +18,8 @@ import (
 	"github.com/albatroxxx/zanskar/internal/audit"
 	"github.com/albatroxxx/zanskar/internal/auth"
 	"github.com/albatroxxx/zanskar/internal/httpx"
+	"github.com/albatroxxx/zanskar/internal/idp"
+	"github.com/albatroxxx/zanskar/internal/policy"
 	"github.com/albatroxxx/zanskar/internal/session"
 	"github.com/albatroxxx/zanskar/internal/target"
 	"github.com/albatroxxx/zanskar/internal/user"
@@ -34,6 +36,129 @@ type Handler struct {
 	ASGs     *asg.Repo
 	Audit    *audit.Log
 	Log      *slog.Logger
+	// Users and Policies give the security posture (2026-10-31); MFAOwners
+	// lists the identity providers that are their accounts' second factor.
+	Users     *user.Repo
+	Policies  *policy.Repo
+	MFAOwners func(ctx context.Context) ([]string, error)
+	// Chain, Directories and ExportSinks give the integrity row: the
+	// background chain check's last result, the identity providers'
+	// listings, and the SIEM sinks configured.
+	Chain       func() *audit.CheckResult
+	Directories func(ctx context.Context) (idp.SyncHealth, error)
+	ExportSinks []string
+	// Zone is the console's time zone (display.time_zone), whose calendar
+	// days the trends count; nil is UTC.
+	Zone func() *time.Location
+}
+
+// trendDays is how many calendar days the trends cover, today included.
+const trendDays = 7
+
+// trends are the last seven calendar days in the console's zone, today
+// last and so far: sessions started and connections refused, each day a
+// count (2026-10-31). Calendar days, not 24-hour windows from now, so a day
+// here is the day the Events page's filter shows.
+type trends struct {
+	Days     []string `json:"days"`
+	Sessions []int    `json:"sessions"`
+	Refused  []int    `json:"refused"`
+}
+
+// dayBounds are the starts of the last trendDays days in loc, then now:
+// trendDays+1 bounds. Each start is built from the date, so a day with a
+// daylight-saving change has its true length.
+func dayBounds(now time.Time, loc *time.Location) ([]time.Time, []string) {
+	local := now.In(loc)
+	bounds := make([]time.Time, 0, trendDays+1)
+	days := make([]string, 0, trendDays)
+	for i := trendDays - 1; i >= 0; i-- {
+		d := time.Date(local.Year(), local.Month(), local.Day()-i, 0, 0, 0, 0, loc)
+		bounds = append(bounds, d)
+		days = append(days, d.Format(time.DateOnly))
+	}
+	return append(bounds, now), days
+}
+
+func (h *Handler) countTrends(ctx context.Context, now time.Time) (trends, error) {
+	loc := time.UTC
+	if h.Zone != nil {
+		if z := h.Zone(); z != nil {
+			loc = z
+		}
+	}
+	bounds, days := dayBounds(now, loc)
+	t := trends{Days: days}
+	var err error
+	if t.Sessions, err = h.Sessions.StartedPer(ctx, bounds); err != nil {
+		return t, err
+	}
+	t.Refused, err = h.Audit.CountPer(ctx, audit.SessionConnect, audit.Failure, bounds)
+	return t, err
+}
+
+// lostWindow is how far back the dashboard counts lost recordings: rarer
+// than a refused connection, and worse.
+const lostWindow = 7 * 24 * time.Hour
+
+// integrity says whether the evidence is whole: the audit chain at its last
+// check (null before the first, never shown as intact), recordings lost in
+// the last week, the identity providers' listings, the SIEM export.
+type integrity struct {
+	AuditChain     *audit.CheckResult `json:"audit_chain"`
+	RecordingsLost int64              `json:"recordings_lost_7d"`
+	Directories    idp.SyncHealth     `json:"directories"`
+	Export         struct {
+		Sinks  int   `json:"sinks"`
+		Behind int64 `json:"behind"`
+	} `json:"export"`
+}
+
+func (h *Handler) countIntegrity(ctx context.Context, now time.Time) (integrity, error) {
+	var in integrity
+	if h.Chain != nil {
+		in.AuditChain = h.Chain()
+	}
+	week, err := h.Audit.TallySince(ctx, now.Add(-lostWindow))
+	if err != nil {
+		return in, err
+	}
+	for _, t := range week {
+		if t.Action == audit.RecordingLost && t.Outcome == audit.Failure {
+			in.RecordingsLost += t.Count
+		}
+	}
+	if h.Directories != nil {
+		if in.Directories, err = h.Directories(ctx); err != nil {
+			return in, err
+		}
+	}
+	in.Export.Sinks = len(h.ExportSinks)
+	in.Export.Behind, err = h.Audit.ExportBehind(ctx, h.ExportSinks)
+	return in, err
+}
+
+// posture is the dashboard's security posture: counts of what weakens
+// access, each a link to the list it counted.
+type posture struct {
+	StandingNoMFA policy.Exposure `json:"standing_no_mfa"`
+	user.Posture
+}
+
+func (h *Handler) countPosture(ctx context.Context, now time.Time) (posture, error) {
+	var p posture
+	var err error
+	if p.StandingNoMFA, err = h.Policies.CountStandingNoMFA(ctx); err != nil {
+		return p, err
+	}
+	var owners []string
+	if h.MFAOwners != nil {
+		if owners, err = h.MFAOwners(ctx); err != nil {
+			return p, err
+		}
+	}
+	p.Posture, err = h.Users.CountPosture(ctx, now, owners)
+	return p, err
 }
 
 // asgInventory is the autoscaling slice of the admin inventory: enrolled
@@ -165,6 +290,26 @@ func (h *Handler) adminOverview(w http.ResponseWriter, r *http.Request) {
 		httpx.Internal(w, r, h.Log, err)
 		return
 	}
+	post, err := h.countPosture(ctx, time.Now())
+	if err != nil {
+		httpx.Internal(w, r, h.Log, err)
+		return
+	}
+	integ, err := h.countIntegrity(ctx, time.Now())
+	if err != nil {
+		httpx.Internal(w, r, h.Log, err)
+		return
+	}
+	flight, err := h.Requests.CountInFlight(ctx, time.Now())
+	if err != nil {
+		httpx.Internal(w, r, h.Log, err)
+		return
+	}
+	trend, err := h.countTrends(ctx, time.Now())
+	if err != nil {
+		httpx.Internal(w, r, h.Log, err)
+		return
+	}
 	w.Header().Set("Cache-Control", "no-store")
 	httpx.WriteJSON(w, http.StatusOK, struct {
 		Sessions        session.Counts         `json:"sessions"`
@@ -173,7 +318,11 @@ func (h *Handler) adminOverview(w http.ResponseWriter, r *http.Request) {
 		Inventory       target.Inventory       `json:"inventory"`
 		Autoscaling     asgInventory           `json:"autoscaling"`
 		Audit           auditTallies           `json:"audit_24h"`
-	}{sessions, pending, targets, inventory, asgs, foldTallies(tallies)})
+		Posture         posture                `json:"posture"`
+		Integrity       integrity              `json:"integrity"`
+		InFlight        access.InFlight        `json:"in_flight"`
+		Trends          trends                 `json:"trends"`
+	}{sessions, pending, targets, inventory, asgs, foldTallies(tallies), post, integ, flight, trend})
 }
 
 // auditOverview answers GET /api/v1/audit/overview for admins and auditors.

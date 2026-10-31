@@ -76,6 +76,7 @@ export function newGrant(kind: TargetKind = 'host', conditionsFrom?: PolicyGrant
   const { access, sign_in, require_mfa, allow_clipboard, allow_file_transfer, idle_timeout_minutes, max_session_minutes, time_windows, retention_days } = conditionsFrom
   return {
     ...base, access, sign_in: kind === 'application' ? 'target' : sign_in, require_mfa, allow_clipboard, allow_file_transfer,
+    ...(kind === 'application' && conditionsFrom.allow_devtools ? { allow_devtools: true } : {}),
     idle_timeout_minutes, max_session_minutes, time_windows: time_windows.map((w) => ({ ...w, days: [...w.days] })), retention_days,
   }
 }
@@ -130,6 +131,7 @@ export function grantSummary(g: PolicyGrant, nameOf: (id: string) => string): st
   if (g.sign_in === 'own') parts.push('own login')
   if (g.allow_clipboard) parts.push('clipboard')
   if (g.allow_file_transfer) parts.push('files')
+  if (g.allow_devtools) parts.push('dev tools')
   parts.push(`${g.idle_timeout_minutes}m`)
   if (g.time_windows.length) parts.push(g.time_windows.length === 1 ? '1 window' : `${g.time_windows.length} windows`)
   return parts.join(' · ')
@@ -147,6 +149,7 @@ export interface GrantDraft {
   require_mfa: boolean
   allow_clipboard: boolean
   allow_file_transfer: boolean
+  allow_devtools: boolean
   idle: string
   max: string
   retention: string
@@ -160,7 +163,7 @@ export function toDraft(g: PolicyGrant): GrantDraft {
     tagRows: matchToRows(g.tags?.match),
     tagProtocols: g.tags ? [...g.tags.protocols] : g.kind === 'database' || g.kind === 'application' ? kindProtocols[g.kind] : ['ssh'],
     access: g.access, sign_in: g.sign_in, require_mfa: g.require_mfa, allow_clipboard: g.allow_clipboard,
-    allow_file_transfer: g.allow_file_transfer, idle: String(g.idle_timeout_minutes),
+    allow_file_transfer: g.allow_file_transfer, allow_devtools: !!g.allow_devtools, idle: String(g.idle_timeout_minutes),
     max: g.max_session_minutes ? String(g.max_session_minutes) : '', retention: g.retention_days ? String(g.retention_days) : '',
     windows: g.time_windows.map((w) => ({ ...w, days: [...w.days] })),
   }
@@ -195,6 +198,7 @@ export function fromDraft(d: GrantDraft, nameOf: (id: string) => string): { gran
       kind: d.kind, targets, ...(hasTags ? { tags: { match, protocols: tagProtocols } } : {}),
       access: d.access, sign_in: d.kind === 'application' ? 'target' : d.sign_in, require_mfa: d.require_mfa,
       allow_clipboard: d.allow_clipboard, allow_file_transfer: d.allow_file_transfer, idle_timeout_minutes: idle,
+      ...(d.kind === 'application' && d.allow_devtools ? { allow_devtools: true } : {}),
       max_session_minutes: max, time_windows: d.windows.map((w) => ({ ...w, tz: w.tz || 'UTC' })), retention_days: retention,
     },
   }
@@ -226,6 +230,7 @@ export interface Rollup {
   standingNoMFA: number
   approvalNoMFA: number
   clipboard: number
+  devtools: number
   files: number
   ownLogin: number
 }
@@ -246,6 +251,7 @@ export function policyRollup(p: Policy): Rollup {
     approvalNoMFA: gs.filter((g) => g.access === 'approval' && !g.require_mfa).length,
     clipboard: gs.filter((g) => g.allow_clipboard).length,
     files: gs.filter((g) => g.allow_file_transfer).length,
+    devtools: gs.filter((g) => g.allow_devtools).length,
     ownLogin: gs.filter((g) => g.sign_in === 'own').length,
   }
 }
@@ -273,7 +279,7 @@ export function accessLine(r: Rollup): string {
 /** extrasLine names what some grant turns on: "clipboard ×2 · files"; × only when not all do. */
 export function extrasLine(r: Rollup): string {
   const n = (word: string, k: number) => (k === r.count ? word : `${word} ×${k}`)
-  return [r.clipboard && n('clipboard', r.clipboard), r.files && n('files', r.files), r.ownLogin && n('own login', r.ownLogin)].filter(Boolean).join(' · ')
+  return [r.clipboard && n('clipboard', r.clipboard), r.files && n('files', r.files), r.devtools && n('dev tools', r.devtools), r.ownLogin && n('own login', r.ownLogin)].filter(Boolean).join(' · ')
 }
 
 /** targetsCell is one grant's reach for the expanded table: the first few targets, then +N. */

@@ -16,6 +16,9 @@ import (
 	"github.com/albatroxxx/zanskar/internal/asg"
 	"github.com/albatroxxx/zanskar/internal/audit"
 	"github.com/albatroxxx/zanskar/internal/auth"
+	"github.com/albatroxxx/zanskar/internal/idp"
+	"github.com/albatroxxx/zanskar/internal/policy"
+	"github.com/albatroxxx/zanskar/internal/protocol"
 	"github.com/albatroxxx/zanskar/internal/session"
 	"github.com/albatroxxx/zanskar/internal/store"
 	"github.com/albatroxxx/zanskar/internal/store/storetest"
@@ -31,6 +34,8 @@ type env struct {
 	targets  *target.Repo
 	asgs     *asg.Repo
 	audit    *audit.Log
+	users    *user.Repo
+	policies *policy.Repo
 	cookies  map[string]*http.Cookie
 	ids      map[string]string
 }
@@ -44,8 +49,9 @@ func newEnv(t *testing.T) *env {
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	users := user.NewRepo(db)
 	sessions := auth.NewSessions(db, []byte("0123456789abcdef0123456789abcdef"), false)
-	e := &env{db: db, sessions: session.NewRepo(db), requests: access.NewRepo(db), targets: target.NewRepo(db), asgs: asg.NewRepo(db), audit: audit.NewLog(db), cookies: map[string]*http.Cookie{}, ids: map[string]string{}}
-	h := &Handler{Sessions: e.sessions, Requests: e.requests, Targets: e.targets, ASGs: e.asgs, Audit: e.audit, Log: log}
+	e := &env{db: db, sessions: session.NewRepo(db), requests: access.NewRepo(db), targets: target.NewRepo(db), asgs: asg.NewRepo(db), audit: audit.NewLog(db),
+		users: users, policies: policy.NewRepo(db), cookies: map[string]*http.Cookie{}, ids: map[string]string{}}
+	h := &Handler{Sessions: e.sessions, Requests: e.requests, Targets: e.targets, ASGs: e.asgs, Audit: e.audit, Log: log, Users: e.users, Policies: e.policies}
 	mux := http.NewServeMux()
 	h.Register(mux)
 	mw := &auth.Middleware{Sessions: sessions, Users: users, Log: log}
@@ -307,5 +313,103 @@ func TestOverviewRecordsNoAuditEvent(t *testing.T) {
 	}
 	if after := count(); after != before {
 		t.Errorf("audit log grew from %d to %d on overview reads", before, after)
+	}
+}
+
+// TestAdminOverviewPosture (2026-10-31): the overview carries the security
+// posture: standing grants without MFA and the policies holding them, the
+// active administrators, accounts not yet enrolled in an authenticator, and
+// dormant ones. Counts only, as every overview number is.
+func TestAdminOverviewPosture(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	hash, err := user.HashPassword("a password of its own")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := e.users.Create(ctx, &user.User{Username: "bob", DisplayName: "Bob", PasswordHash: hash, Roles: []user.Role{user.RoleUser}}); err != nil {
+		t.Fatal(err)
+	}
+	open := policy.Grant{Kind: protocol.KindHost, Targets: []policy.GrantTarget{{ID: "t1", Protocols: []string{"ssh"}}}, Access: policy.AccessStanding}
+	asked := open
+	asked.RequireMFA = true
+	if err := e.policies.Create(ctx, &policy.Policy{Name: "open", Enabled: true, Subjects: []policy.Subject{{Kind: policy.SubjectUser, ID: e.ids["alice"]}}, Grants: []policy.Grant{open, asked}}); err != nil {
+		t.Fatal(err)
+	}
+	rr, out := e.get(t, "/api/v1/admin/overview", "root")
+	if rr.Code != http.StatusOK {
+		t.Fatalf("overview: %d %s", rr.Code, rr.Body)
+	}
+	p := out["posture"].(map[string]any)
+	if p["admins"] != float64(1) || p["not_enrolled"] != float64(1) || p["dormant"] != float64(0) {
+		t.Fatalf("posture: %v", p)
+	}
+	if exp := p["standing_no_mfa"].(map[string]any); exp["grants"] != float64(1) || exp["policies"] != float64(1) {
+		t.Fatalf("standing without MFA: %v", exp)
+	}
+}
+
+// TestAdminOverviewIntegrity (2026-10-31): before the first chain check the
+// overview says nothing about the chain (null), never "intact"; after one it
+// carries the result; lost recordings in the week, the listings' health and
+// how far behind the SIEM sinks are come as counts.
+func TestAdminOverviewIntegrity(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	var chain *audit.CheckResult
+	h := &Handler{Sessions: e.sessions, Requests: e.requests, Targets: e.targets, ASGs: e.asgs, Audit: e.audit, Log: slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Users: e.users, Policies: e.policies,
+		Chain: func() *audit.CheckResult { return chain },
+		Directories: func(context.Context) (idp.SyncHealth, error) {
+			return idp.SyncHealth{Listed: 2, Failing: 1, HeldBack: 3}, nil
+		},
+		ExportSinks: []string{"syslog"}}
+	mux := http.NewServeMux()
+	h.Register(mux)
+	sessions := auth.NewSessions(e.db, []byte("0123456789abcdef0123456789abcdef"), false)
+	mw := &auth.Middleware{Sessions: sessions, Users: e.users, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	e.srv = mw.Authenticate(mw.CSRF(mux))
+	if _, err := e.audit.Record(ctx, audit.Actor{IP: "system"}.Event(audit.RecordingLost, "recording", "r1", audit.Failure, nil)); err != nil {
+		t.Fatal(err)
+	}
+	_, out := e.get(t, "/api/v1/admin/overview", "root")
+	in := out["integrity"].(map[string]any)
+	if in["audit_chain"] != nil {
+		t.Fatalf("a chain never checked must not be reported: %v", in["audit_chain"])
+	}
+	if in["recordings_lost_7d"] != float64(1) {
+		t.Fatalf("recordings lost: %v", in)
+	}
+	if d := in["directories"].(map[string]any); d["listed"] != float64(2) || d["failing"] != float64(1) || d["held_back"] != float64(3) {
+		t.Fatalf("directories: %v", d)
+	}
+	if x := in["export"].(map[string]any); x["sinks"] != float64(1) || x["behind"].(float64) < 1 {
+		t.Fatalf("export: %v", x)
+	}
+	chain = &audit.CheckResult{At: time.Now(), Intact: true, Checked: 9}
+	_, out = e.get(t, "/api/v1/admin/overview", "root")
+	if c := out["integrity"].(map[string]any)["audit_chain"].(map[string]any); c["intact"] != true || c["checked"] != float64(9) {
+		t.Fatalf("chain: %v", c)
+	}
+}
+
+// TestDayBounds (2026-10-31): the trends' days are calendar days in the
+// console's zone, today last and so far; the day the clocks go back is 25
+// hours long, not 24.
+func TestDayBounds(t *testing.T) {
+	berlin, err := time.LoadLocation("Europe/Berlin")
+	if err != nil {
+		t.Skip(err)
+	}
+	now := time.Date(2026, 10, 31, 10, 0, 0, 0, berlin)
+	bounds, days := dayBounds(now, berlin)
+	if len(bounds) != 8 || len(days) != 7 || days[0] != "2026-10-25" || days[6] != "2026-10-31" {
+		t.Fatalf("days %v (%d bounds)", days, len(bounds))
+	}
+	if got := bounds[1].Sub(bounds[0]); got != 25*time.Hour {
+		t.Fatalf("25 October in Berlin lasted %s, want 25h", got)
+	}
+	if !bounds[7].Equal(now) || !bounds[6].Equal(time.Date(2026, 10, 31, 0, 0, 0, 0, berlin)) {
+		t.Fatalf("today runs from midnight to now: %v .. %v", bounds[6], bounds[7])
 	}
 }

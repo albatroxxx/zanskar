@@ -399,3 +399,37 @@ func actions(evs []audit.Event) []string {
 	}
 	return out
 }
+
+// TestMFAOwners (2026-10-31): the providers whose sign-in is the second
+// factor are the enabled OIDC ones that leave nothing to Zanskar's
+// authenticator; one that asks for it too, a disabled one and LDAP are not.
+func TestMFAOwners(t *testing.T) {
+	e := newProvisionEnv(t)
+	ctx := context.Background()
+	owns := okOIDC()
+	asks := okOIDC()
+	asks.OIDC.Issuer, asks.OIDC.ZanskarMFA = "https://kc.example/realms/asks", true
+	off := okOIDC()
+	off.OIDC.Issuer = "https://kc.example/realms/off"
+	want := ""
+	for _, p := range []struct {
+		name    string
+		c       *Config
+		enabled bool
+	}{{"owns", owns, true}, {"asks", asks, true}, {"off", off, false}} {
+		pr := &Provider{Name: p.name, Type: TypeOIDC, Enabled: p.enabled}
+		if err := e.repo.Create(ctx, pr, p.c); err != nil {
+			t.Fatal(err)
+		}
+		if p.name == "owns" {
+			want = pr.ID
+		}
+	}
+	got, err := e.repo.MFAOwners(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0] != want {
+		t.Fatalf("owners %v, want only %s", got, want)
+	}
+}

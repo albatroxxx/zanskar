@@ -78,7 +78,7 @@ func TestBrowserArgs(t *testing.T) {
 	joined := strings.Join(args, " ")
 	for _, want := range []string{"--network zanskar-net-s1", "--read-only", "--tmpfs /tmp:rw,size=512m", "--tmpfs /etc/chromium/policies/managed:rw,size=1m,uid=10001,gid=10001,mode=700",
 		"--security-opt no-new-privileges", "--security-opt seccomp=/var/lib/zanskar/browser-seccomp.json", "--cap-drop ALL",
-		"--pids-limit 512", "--memory 1536m", "--cpus 2", "-e APP_URL -e APP_ORIGIN -e RESOLVER_RULES -e VNC_PASSWORD -e SCREEN_W -e SCREEN_H -e CA_PEM",
+		"--pids-limit 512", "--memory 1536m", "--cpus 2", "-e APP_URL -e APP_ORIGIN -e RESOLVER_RULES -e VNC_PASSWORD -e SCREEN_W -e SCREEN_H -e CA_PEM -e DEVTOOLS",
 		"--label zanskar.session=s1", s.BrowserImage} {
 		if !strings.Contains(joined, want) {
 			t.Errorf("browser args miss %q: %s", want, joined)
@@ -91,7 +91,7 @@ func TestBrowserArgs(t *testing.T) {
 	}
 	got := strings.Join(env, "\n")
 	for _, want := range []string{"APP_URL=http://wiki.internal:8080/", "APP_ORIGIN=http://wiki.internal:8080",
-		"RESOLVER_RULES=MAP wiki.internal 172.30.0.2, MAP * ~NOTFOUND", "VNC_PASSWORD=p4ssw0rd", "SCREEN_W=1440", "SCREEN_H=900", "CA_PEM=-----BEGIN CERTIFICATE-----"} {
+		"RESOLVER_RULES=MAP wiki.internal 172.30.0.2, MAP * ~NOTFOUND", "VNC_PASSWORD=p4ssw0rd", "SCREEN_W=1440", "SCREEN_H=900", "CA_PEM=-----BEGIN CERTIFICATE-----", "DEVTOOLS=false"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("env misses %q: %s", want, got)
 		}

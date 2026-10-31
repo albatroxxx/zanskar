@@ -54,6 +54,7 @@ type env struct {
 	p     *idp.Opened
 	token string
 	pv    *idp.Provisioner
+	h     *Handler
 }
 
 func newEnv(t *testing.T, mutate func(*idp.Config)) *env {
@@ -90,6 +91,7 @@ func newEnv(t *testing.T, mutate func(*idp.Config)) *env {
 	e.pv = &idp.Provisioner{Users: e.users, Revoker: e.rev}
 	h := &Handler{Providers: e.repo, Provisioner: e.pv, Audit: e.audit, Log: log,
 		Lifecycle: &idp.Lifecycle{Users: e.users, Sessions: e.rev, Revoker: e.rev, Audit: e.audit, Log: log}}
+	e.h = h
 	mux := http.NewServeMux()
 	h.Register(mux)
 	// The console's own chain, as the server mounts it: a server-to-server
@@ -508,5 +510,27 @@ func TestDiscoveryAndRefusals(t *testing.T) {
 	}
 	if st, _ := e.call(t, "GET", "/Users/"+local.ID, nil); st != 404 {
 		t.Fatalf("a local account: %d", st)
+	}
+}
+
+// TestLocationsBehindATLSProxy (2026-10-31): with no public URL, the SCIM
+// resource locations are derived from the request; behind a TLS proxy the
+// request is plain HTTP, but the provider called https, so they are https.
+func TestLocationsBehindATLSProxy(t *testing.T) {
+	e := newEnv(t, nil)
+	location := func() string {
+		t.Helper()
+		st, out := e.call(t, "GET", "/ServiceProviderConfig", nil)
+		if st != 200 {
+			t.Fatalf("discovery: %d %v", st, out)
+		}
+		return out["meta"].(map[string]any)["location"].(string)
+	}
+	if got := location(); !strings.HasPrefix(got, "http://") {
+		t.Fatalf("plain, no proxy: %s", got)
+	}
+	e.h.ProxyTLS = true
+	if got := location(); !strings.HasPrefix(got, "https://") {
+		t.Fatalf("behind a TLS proxy: %s", got)
 	}
 }

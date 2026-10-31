@@ -80,8 +80,8 @@ var ErrNoDirectory = errors.New("idp: this provider cannot be listed")
 // accounts, as a first sign-in would. An active account whose person the
 // list no longer has is disabled, and its sessions, browser and live, end.
 //
-// Disabling holds back, and says so, when the directory listed no one or
-// (unless forced) when it would disable more than half of the provider's
+// Disabling holds back, and says so, unless forced, when the directory
+// listed no one or when it would disable more than half of the provider's
 // active accounts at once: a directory answering short must not lock
 // everyone out. It never disables the last active administrator. Only a
 // list that came back whole is acted on. Group memberships are not synced.
@@ -121,6 +121,50 @@ func (s *Syncer) Status(id string) *SyncStatus {
 		return &cp
 	}
 	return nil
+}
+
+// SyncHealth is the dashboard's view of every listing (2026-10-31): counts
+// only; the Identity providers page has each provider's status.
+type SyncHealth struct {
+	// Listed: enabled providers Zanskar lists on a schedule.
+	Listed int `json:"listed"`
+	// Failing: of those, how many failed their last run.
+	Failing int `json:"failing"`
+	// NotRun: how many have not run since the gateway started.
+	NotRun int `json:"not_run"`
+	// HeldBack: accounts the last runs did not disable, waiting on Sync now.
+	HeldBack int `json:"held_back"`
+}
+
+// Health counts SyncHealth over the enabled providers. The listing is
+// drained before any provider is opened (SQLite runs on one connection).
+func (s *Syncer) Health(ctx context.Context) (SyncHealth, error) {
+	var h SyncHealth
+	ps, err := s.Providers.List(ctx, true)
+	if err != nil {
+		return h, err
+	}
+	for _, p := range ps {
+		op, err := s.Providers.Open(ctx, p.ID)
+		if err != nil {
+			return h, err
+		}
+		if !op.Config.SyncUsers {
+			continue
+		}
+		h.Listed++
+		st := s.Status(p.ID)
+		switch {
+		case st == nil:
+			h.NotRun++
+		case !st.OK:
+			h.Failing++
+		}
+		if st != nil {
+			h.HeldBack += st.Held
+		}
+	}
+	return h, nil
 }
 
 // Running reports whether a run for the provider is going now.
@@ -391,9 +435,13 @@ func (s *Syncer) leave(ctx context.Context, p *Opened, linked []*user.User, kept
 	if len(gone) == 0 {
 		return nil
 	}
+	// Both guards hold back a scheduled run; a forced one, asked for from
+	// the console after reading the reason, applies the removals (ADR 0035).
+	// The empty listing ignored the force until 2026-10-31, so "Disable 1"
+	// on a realm whose only person was deleted held it back again.
 	switch {
-	case listed == 0:
-		st.Held, st.HeldReason = len(gone), "the directory listed no one"
+	case listed == 0 && !opts.Force:
+		st.Held, st.HeldReason = len(gone), "the directory listed no one; run the sync from the console to apply"
 		return nil
 	case !opts.Force && len(gone) > 3 && 2*len(gone) > active:
 		st.Held, st.HeldReason = len(gone), fmt.Sprintf("would disable %d of %d accounts at once; run the sync from the console to apply", len(gone), active)
