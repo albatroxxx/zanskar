@@ -7088,8 +7088,30 @@ components:
           description: Refused connections (`session.connect` failures).
     AdminOverview:
       type: object
-      required: [sessions, pending_requests, targets, inventory, autoscaling, audit_24h, posture, integrity, in_flight, trends]
+      required: [sessions, pending_requests, targets, inventory, autoscaling, audit_24h, posture, integrity, in_flight, trends, storage]
       properties:
+        storage:
+          type: object
+          description: What the evidence takes (2026-10-31), for the dashboard's storage tiles.
+          required: [audit_log, recordings]
+          properties:
+            audit_log:
+              type: object
+              required: [events, approx_bytes]
+              properties:
+                events: {type: integer, format: int64, description: Events in the audit log; none is ever deleted.}
+                approx_bytes:
+                  type: integer
+                  format: int64
+                  description: >-
+                    About how much room the events take: the newest thousand rows' average length
+                    times `events`. Characters rather than bytes, indexes left out; an estimate.
+            recordings:
+              type: object
+              required: [count, bytes]
+              properties:
+                count: {type: integer, format: int64, description: Finished recordings that retention has not purged, wherever they are stored.}
+                bytes: {type: integer, format: int64, description: Their total size, exact.}
         trends:
           type: object
           description: >

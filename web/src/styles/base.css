@@ -93,15 +93,8 @@ button, input, select, textarea { font: inherit; color: inherit; }
    value only when the label already says what needs attention, never alone. */
 .stat-section { margin: 20px 0 10px; color: var(--fg-muted); font-size: 0.82rem; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; }
 .stat-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(172px, 1fr)); gap: 12px; }
-/* The integrity row: a status line each, not a big number (2026-10-31). */
+/* A list of checks, a status line each (the applications' prerequisites). */
 .checks { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 12px; }
-.check { display: grid; grid-template-columns: auto 1fr; grid-template-rows: auto auto; column-gap: 10px; align-items: center; background: var(--bg-raised); border: 1px solid var(--line); border-radius: var(--radius-lg); padding: 10px 14px; color: inherit; text-decoration: none; }
-.check:hover { border-color: var(--fg-faint); }
-.check .glyph-wrap { grid-row: 1 / 3; }
-.check-label { font-weight: 600; font-size: 0.9rem; }
-.check-text { color: var(--fg-muted); font-size: 0.84rem; }
-.check.danger .check-text { color: var(--danger); }
-.check.warn .check-text { color: var(--warn); }
 .stat-tile { display: block; position: relative; background: var(--bg-raised); border: 1px solid var(--line); border-radius: var(--radius-lg); padding: 14px 16px; color: inherit; text-decoration: none; }
 .stat-tile .ticon { position: absolute; top: 12px; right: 14px; color: var(--fg-faint); }
 .stat-tile .meter { margin-top: 8px; }
@@ -135,15 +128,18 @@ a.stat-tile:hover { border-color: var(--fg-faint); }
 .gauge-pct.warn { color: var(--warn); }
 .gauge-pct.danger { color: var(--danger); }
 /* The dashboard (2026-10-31): the tiles on the left, inventory first; the
-   gateway's clock, health and log integrity in a column on their right, its
-   gauges and checks one under another. The column drops below the tiles on
-   a page too narrow for both. */
+   gateway's clock, health and storage in a column on their right, its
+   gauges one under another. The column drops below the tiles on a page too
+   narrow for both. */
 .dash { display: grid; grid-template-columns: minmax(0, 1fr); gap: 0 28px; align-items: start; }
 .dash-clock { margin-top: 42px; padding: 18px 20px; text-align: center; max-width: 300px; }
 @media (min-width: 1181px) {
   .dash { grid-template-columns: minmax(0, 1fr) minmax(300px, 360px); }
   .dash-clock { max-width: none; }
-  .dash-side .gw-grid, .dash-side .checks { grid-template-columns: minmax(0, 1fr); }
+  .dash-side .gw-grid { grid-template-columns: minmax(0, 1fr); }
+  /* The storage tiles: two squares side by side under the gateway. */
+  .dash-side .stat-grid { grid-template-columns: 1fr 1fr; }
+  .dash-side .stat-tile { aspect-ratio: 1; }
 }
 .clock-time { display: block; font-size: 2.2rem; font-weight: 600; letter-spacing: 0.02em; font-variant-numeric: tabular-nums; color: var(--fg); }
 .clock-date { margin-top: 4px; font-size: 0.95rem; color: var(--fg); }

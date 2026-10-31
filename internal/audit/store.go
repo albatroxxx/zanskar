@@ -595,6 +595,38 @@ func (l *Log) TallySince(ctx context.Context, since time.Time) ([]Tally, error) 
 	return out, nil
 }
 
+// sizeSample is how many of the newest events Size averages.
+const sizeSample = 1000
+
+// Size is how many events the log holds and about how much room they take,
+// for the dashboard (2026-10-31). Events are never deleted, so the highest
+// id is the count. The room is the newest sizeSample rows' average length
+// times that count: LENGTH counts characters, not bytes, and the indexes are
+// left out, so it is an estimate; reading every row to be exact would hold
+// SQLite's one connection for seconds on a long log. Like TallySince it
+// reads no event content out.
+func (l *Log) Size(ctx context.Context) (events, bytes int64, err error) {
+	if err := l.db.QueryRowContext(ctx, `SELECT COALESCE(MAX(id), 0) FROM audit_events`).Scan(&events); err != nil {
+		return 0, 0, fmt.Errorf("audit: size: %w", err)
+	}
+	if events == 0 {
+		return 0, 0, nil
+	}
+	// Every column as text (ts is a timestamp and details JSONB on
+	// Postgres), and 8 for the id.
+	var sum, n int64
+	if err := l.db.QueryRowContext(ctx, l.db.Rebind(`SELECT CAST(COALESCE(SUM(
+		LENGTH(CAST(ts AS TEXT)) + LENGTH(COALESCE(actor_user_id, '')) + LENGTH(actor_ip) + LENGTH(action) + LENGTH(object_type) +
+		LENGTH(object_id) + LENGTH(outcome) + LENGTH(CAST(details AS TEXT)) + LENGTH(prev_hash) + LENGTH(hash) + 8), 0) AS BIGINT), COUNT(*)
+		FROM (SELECT * FROM audit_events ORDER BY id DESC LIMIT ?) newest`), sizeSample).Scan(&sum, &n); err != nil {
+		return 0, 0, fmt.Errorf("audit: size: %w", err)
+	}
+	if n > 0 {
+		bytes = sum * events / n
+	}
+	return events, bytes, nil
+}
+
 // CountPer counts the events of one action and outcome in each range
 // between consecutive bounds, [bounds[i], bounds[i+1]) (2026-10-31, the
 // dashboard's trends).

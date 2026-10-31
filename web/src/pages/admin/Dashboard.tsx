@@ -5,7 +5,6 @@ import { consoleZone, engineName, fmtBytes, fmtTime, zoneLabel } from '../../api
 import type { AdminOverview, SystemMetrics, SystemStatus, TLSStatus } from '../../api/types'
 import { StateIcon, TileIcon } from '../../components/icons'
 import { drill } from '../../api/drilldown'
-import { integrityChecks } from './dashboardChecks'
 import { Alert, Badge, PageHead, StatTile } from '../../components/ui'
 
 /** mix says what a count is made of — "2 Linux · 1 Windows" — in a tile's
@@ -202,20 +201,23 @@ export function Dashboard() {
             )}
           </div>
 
-          {o?.integrity && (
-            <>
-              <h2 className="stat-section">Integrity</h2>
-              <div className="checks">
-                {integrityChecks(o.integrity, o.audit_24h.events, drill.auditEvents('/admin')).map((c) => (
-                  <Link key={c.label} className={'check ' + c.state} to={c.to}>
-                    <StateIcon state={c.state} label={c.label + ': ' + c.text} />
-                    <span className="check-label">{c.label}</span>
-                    <span className="check-text">{c.text}</span>
-                  </Link>
-                ))}
-              </div>
-            </>
-          )}
+          <h2 className="stat-section">Storage</h2>
+          <div className="stat-grid">
+            <StatTile
+              value={o?.storage ? fmtBytes(o.storage.audit_log.approx_bytes) : null}
+              label="Audit log"
+              icon={<TileIcon kind="list" />}
+              detail={o?.storage ? `${plural(o.storage.audit_log.events, 'event')}, size estimated` : undefined}
+              to="/admin/events"
+            />
+            <StatTile
+              value={o?.storage ? fmtBytes(o.storage.recordings.bytes) : null}
+              label="Recordings"
+              icon={<TileIcon kind="session" />}
+              detail={o?.storage ? `${plural(o.storage.recordings.count, 'recording')} kept` : undefined}
+              to="/admin/recordings"
+            />
+          </div>
         </aside>
       </div>
     </>

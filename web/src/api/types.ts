@@ -410,6 +410,8 @@ export interface AdminOverview {
   in_flight?: { active: number; ending_soon: number; oldest_pending_seconds: number }
   /** The last seven calendar days in the console's time zone, today last and so far (2026-10-31): days as YYYY-MM-DD, sessions started and connections refused per day. */
   trends?: { days: string[]; sessions: number[]; refused: number[] }
+  /** What the evidence takes (2026-10-31): the audit log's events and their estimated size, the recordings kept and their exact size. */
+  storage?: { audit_log: { events: number; approx_bytes: number }; recordings: { count: number; bytes: number } }
 }
 
 /** GET /audit/overview (ADR 0029). Counts only, never row data. */

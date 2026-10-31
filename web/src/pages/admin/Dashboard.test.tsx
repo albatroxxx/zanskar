@@ -1,6 +1,6 @@
 import { act, cleanup, render, screen, waitFor, within } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
-import { setDisplayZone } from '../../api/format'
+import { fmtBytes, setDisplayZone } from '../../api/format'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { ApiError, api } from '../../api/client'
 import type { AdminOverview, SystemMetrics, SystemStatus, TLSStatus } from '../../api/types'
@@ -21,6 +21,7 @@ const overview: AdminOverview = {
   posture: { standing_no_mfa: { grants: 3, policies: 2 }, admins: 2, dormant: 4, not_enrolled: 1 },
   integrity: { audit_chain: null, recordings_lost_7d: 1, directories: { listed: 1, failing: 0, not_run: 0, held_back: 0 }, export: { sinks: 0, behind: 0 } },
   in_flight: { active: 3, ending_soon: 1, oldest_pending_seconds: 7500 },
+  storage: { audit_log: { events: 48210, approx_bytes: 31457280 }, recordings: { count: 12, bytes: 2147483648 } },
 }
 
 const status: SystemStatus = {
@@ -102,8 +103,9 @@ describe('the admin dashboard', () => {
     expect(href('Failed sign-ins (24h)')).toBe('/admin/events?action=user.login&outcome=failure&range=24h&routine=1')
     expect(href('Refused connections (24h)')).toBe('/admin/events?action=session.connect&outcome=failure&range=24h&routine=1')
     expect(href('Failures (24h)')).toBe('/admin/events?outcome=failure&range=24h&routine=1')
-    // The day's events are a line in the integrity row since 2026-10-31.
-    expect(href('Audit log')).toBe('/admin/events?range=24h&routine=1')
+    // The storage tiles open the whole log and the recordings (2026-10-31).
+    expect(href('Audit log')).toBe('/admin/events')
+    expect(href('Recordings')).toBe('/admin/recordings')
     expect(href('Open sessions')).toBe('/admin/sessions?open=1')
     expect(href('Sessions (24h)')).toBe('/admin/sessions?range=24h')
 
@@ -160,7 +162,7 @@ describe('the admin dashboard', () => {
     const main = [...document.querySelectorAll('.dash-main h2.stat-section')].map((h) => h.textContent)
     expect(main).toEqual(['Inventory', 'Needs attention', 'Activity', 'Security posture'])
     const side = screen.getByRole('complementary', { name: 'The gateway' })
-    expect([...side.querySelectorAll('h2.stat-section')].map((h) => h.textContent)).toEqual(['Gateway', 'Integrity'])
+    expect([...side.querySelectorAll('h2.stat-section')].map((h) => h.textContent)).toEqual(['Gateway', 'Storage'])
     expect(within(side).getByRole('region', { name: 'Gateway time' })).toBeDefined()
   })
 
@@ -177,16 +179,20 @@ describe('the admin dashboard', () => {
     expect(screen.queryByText('Audit events (24h)')).toBeNull()
   })
 
-  it('shows the integrity row as status lines that open their pages', async () => {
+  // 2026-10-31: the integrity row is gone; in its place, what the audit log
+  // and the recordings take, side by side.
+  it('shows the audit log and the recordings by size, and no integrity row', async () => {
     serve()
     at('/')
-    const line = async (label: string) => (await screen.findByText(label)).closest('a') as HTMLAnchorElement
-    expect((await line('Audit chain')).textContent).toContain('Not checked yet')
-    const rec = await line('Recordings')
-    expect(rec.className).toContain('danger')
-    expect(rec.getAttribute('href')).toBe('/admin/events?action=recording.lost&outcome=failure&range=7d')
-    expect((await line('Identity providers')).textContent).toContain('In sync')
-    expect((await line('SIEM export')).textContent).toContain('Not configured')
+    const tile = async (label: string) => (await screen.findByText(label, { selector: '.label' })).closest('a') as HTMLAnchorElement
+    const log = await tile('Audit log')
+    expect(log.querySelector('.value')?.textContent).toBe(fmtBytes(31457280))
+    expect(log.textContent).toContain('48210 events, size estimated')
+    const rec = await tile('Recordings')
+    expect(rec.querySelector('.value')?.textContent).toBe(fmtBytes(2147483648))
+    expect(rec.textContent).toContain('12 recordings kept')
+    expect(screen.queryByRole('heading', { name: 'Integrity' })).toBeNull()
+    expect(screen.queryByText('Audit chain')).toBeNull()
   })
 
   // 2026-10-31: the last seven calendar days under the two counts that have

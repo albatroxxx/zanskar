@@ -62,9 +62,10 @@ export function Badge({ tone, children }: { tone?: 'ok' | 'warn' | 'danger' | 'a
 /** StatTile is one dashboard number (ADR 0029): a value, a short caption
  *  naming what it counts, and the page that manages it. The caption is a
  *  label, not a sentence; a tone only underlines what it already says, so it
- *  shows only on a non-zero count. "—" while the value is still loading. */
+ *  shows only on a non-zero count. "—" while the value is still loading. A
+ *  value already written out (a size: "31.2 MB") is shown as it is. */
 export function StatTile({ value, label, detail, icon, meter, trend, to, tone }: {
-  value: number | null
+  value: number | string | null
   label: string
   detail?: ReactNode
   /** A decorative identity mark in the corner; the caption carries the meaning. */

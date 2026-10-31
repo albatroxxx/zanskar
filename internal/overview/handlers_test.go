@@ -120,6 +120,14 @@ func seed(t *testing.T, e *env) {
 	if err := e.sessions.End(ctx, ended.ID, session.EndUserExit); err != nil {
 		t.Fatal(err)
 	}
+	// The ended session's recording, kept: the storage tiles count it.
+	rec := &session.Recording{SessionID: ended.ID, Format: "asciicast", StorageURI: "file:///tmp/" + ended.ID + ".cast"}
+	if err := e.sessions.CreateRecording(ctx, rec); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.sessions.FinishRecording(ctx, rec.ID, 2048, "abc"); err != nil {
+		t.Fatal(err)
+	}
 	req := &access.Request{UserID: e.ids["alice"], TargetID: t1, Protocol: "ssh", Reason: "deploy", RequestedMinutes: 30}
 	if err := e.requests.Create(ctx, req); err != nil {
 		t.Fatal(err)
@@ -197,6 +205,16 @@ func TestAdminOverview(t *testing.T) {
 	}
 	if got := num(t, out, "pending_requests"); got != 1 {
 		t.Errorf("pending_requests = %v, want 1", got)
+	}
+	// 2026-10-31: what the evidence takes, for the dashboard's storage tiles.
+	if got := num(t, out, "storage", "recordings", "count"); got != 1 {
+		t.Errorf("storage.recordings.count = %v, want 1", got)
+	}
+	if got := num(t, out, "storage", "recordings", "bytes"); got != 2048 {
+		t.Errorf("storage.recordings.bytes = %v, want 2048", got)
+	}
+	if events, size := num(t, out, "storage", "audit_log", "events"), num(t, out, "storage", "audit_log", "approx_bytes"); events < 1 || size < events*128 {
+		t.Errorf("storage.audit_log = %v events, about %v bytes", events, size)
 	}
 	// Hosts only: the tile opens the Hosts page (2026-10-30).
 	if got := num(t, out, "targets", "active"); got != 3 {

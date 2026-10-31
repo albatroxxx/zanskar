@@ -249,6 +249,16 @@ func (r *Repo) FinishRecording(ctx context.Context, id string, size int64, sha25
 	return err
 }
 
+// RecordingTotals counts the recordings kept and the bytes they take, for
+// the dashboard (2026-10-31): finished ones that retention has not purged,
+// wherever they are stored. A recording still being written counts once it
+// ends.
+func (r *Repo) RecordingTotals(ctx context.Context) (count, bytes int64, err error) {
+	err = r.db.QueryRowContext(ctx, `SELECT COUNT(*), CAST(COALESCE(SUM(size_bytes), 0) AS BIGINT) FROM recordings
+		WHERE finished_at IS NOT NULL AND purged_at IS NULL`).Scan(&count, &bytes)
+	return count, bytes, err
+}
+
 // GetRecording returns one recording.
 func (r *Repo) GetRecording(ctx context.Context, id string) (*Recording, error) {
 	var (

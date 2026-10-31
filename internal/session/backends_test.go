@@ -82,6 +82,55 @@ func TestRepoOnEachBackend(t *testing.T) {
 	})
 }
 
+// TestRecordingTotalsOnEachBackend (2026-10-31, the dashboard's storage
+// tiles): only finished recordings retention has not purged count, with
+// their sizes summed, on both engines; none is zero, not null.
+func TestRecordingTotalsOnEachBackend(t *testing.T) {
+	storetest.ForEachBackend(t, func(t *testing.T, db *store.DB) {
+		ctx := context.Background()
+		stamp := store.TimeArg(time.Now())
+		for _, q := range []string{
+			`INSERT INTO users (id, username, display_name, created_at, updated_at) VALUES ('u1', 'alice', 'Alice', ?, ?)`,
+			`INSERT INTO targets (id, name, address, os_family, created_at, updated_at) VALUES ('t1', 'box', '10.0.0.5', 'linux', ?, ?)`,
+		} {
+			if _, err := db.ExecContext(ctx, db.Rebind(q), stamp, stamp); err != nil {
+				t.Fatal(err)
+			}
+		}
+		r := NewRepo(db)
+		if n, b, err := r.RecordingTotals(ctx); err != nil || n != 0 || b != 0 {
+			t.Fatalf("no recordings: %d, %d bytes, %v", n, b, err)
+		}
+		recording := func(size int64, finish bool) *Recording {
+			t.Helper()
+			s := &Session{UserID: "u1", TargetID: "t1", Protocol: "ssh", ClientIP: "10.0.0.1"}
+			if err := r.Start(ctx, s); err != nil {
+				t.Fatal(err)
+			}
+			rec := &Recording{SessionID: s.ID, Format: "asciicast", StorageURI: "file:///tmp/" + s.ID + ".cast"}
+			if err := r.CreateRecording(ctx, rec); err != nil {
+				t.Fatal(err)
+			}
+			if finish {
+				if err := r.FinishRecording(ctx, rec.ID, size, "abc"); err != nil {
+					t.Fatal(err)
+				}
+			}
+			return rec
+		}
+		recording(3_000_000_000, true) // over 2^31: the sum is a BIGINT
+		recording(1000, true)
+		purged := recording(500, true)
+		if ok, err := r.markRecordingPurged(ctx, purged.ID, purged.StorageURI, time.Now()); err != nil || !ok {
+			t.Fatalf("purge: %v %v", ok, err)
+		}
+		recording(0, false) // still being written
+		if n, b, err := r.RecordingTotals(ctx); err != nil || n != 2 || b != 3_000_001_000 {
+			t.Fatalf("kept recordings: %d, %d bytes, %v", n, b, err)
+		}
+	})
+}
+
 // TestStartedPerOnEachBackend (2026-10-31, the dashboard's trends): each
 // session falls in the range its start is in, the lower bound included and
 // the upper not, on both engines.
