@@ -24,9 +24,50 @@ export function UsersGroups() {
 
 type UserAction = 'roles' | 'password' | 'sessions' | 'mfa' | 'status' | 'delete'
 
+type Providers = Map<string, { name: string; type: string }>
+
+/** useProviders names the identity providers by id, for the Source column. */
+function useProviders(): Providers {
+  const { items } = useList<{ id: string; name: string; type: string }>('/identity-providers')
+  return new Map((items ?? []).map((p) => [p.id, { name: p.name, type: p.type }]))
+}
+
+/**
+ * Source says where an account or a group comes from (2026-10-31: the list
+ * did not tell an identity provider's people from Zanskar's own): the
+ * provider by name, outlined so it never reads as a role; "Single sign-on"
+ * for an account made here to sign in through a provider and not yet
+ * linked; "Zanskar" for one with its own password, or a group made here.
+ */
+function Source({ idp, providerSignIn, providers, group }: { idp?: string; providerSignIn?: boolean; providers: Providers; group?: boolean }) {
+  if (idp) {
+    const p = providers.get(idp)
+    const name = p?.name ?? 'Identity provider'
+    const how = p ? ` (${p.type.toUpperCase()})` : ''
+    return (
+      <span className="badge source-idp" title={group ? `Members come from ${name}${how}` : `Signs in through ${name}${how}`}>
+        {name}
+      </span>
+    )
+  }
+  if (providerSignIn) {
+    return (
+      <span className="badge source-idp" title="Signs in through an identity provider; linked at the first sign-in">
+        Single sign-on
+      </span>
+    )
+  }
+  return (
+    <span className="badge" title={group ? 'Made in Zanskar' : 'Made in Zanskar, with its own password'}>
+      Zanskar
+    </span>
+  )
+}
+
 function Users() {
   const me = useAuth().user
   const { items, err, setErr, reload } = useList<User>('/users')
+  const providers = useProviders()
   const [adding, setAdding] = useState(false)
   const [showOnce, setShowOnce] = useState<{ username: string; password: string } | null>(null)
   const [action, setAction] = useState<{ u: User; a: UserAction } | null>(null)
@@ -50,6 +91,7 @@ function Users() {
               <tr>
                 <th>Username</th>
                 <th>Name</th>
+                <th>Source</th>
                 <th>Roles</th>
                 <th>Status</th>
                 <th>Last login</th>
@@ -65,6 +107,9 @@ function Users() {
                     <td>
                       {u.display_name}
                       {u.email && <div className="muted">{u.email}</div>}
+                    </td>
+                    <td>
+                      <Source idp={u.idp_id} providerSignIn={u.provider_sign_in} providers={providers} />
                     </td>
                     <td>{u.roles.map((r) => <Badge key={r} tone={r === 'admin' ? 'accent' : undefined}>{r}</Badge>)}</td>
                     <td>
@@ -317,6 +362,7 @@ function PasswordForm({ user, onClose, onSaved }: { user: User; onClose: () => v
 
 function Groups() {
   const { items, err, setErr, reload } = useList<Group>('/groups')
+  const providers = useProviders()
   const [adding, setAdding] = useState(false)
   const [members, setMembers] = useState<Group | null>(null)
   const [deleting, setDeleting] = useState<Group | null>(null)
@@ -337,6 +383,7 @@ function Groups() {
               <tr>
                 <th>Name</th>
                 <th>Description</th>
+                <th>Source</th>
                 <th>Members</th>
                 <th><span className="sr-only">Actions</span></th>
               </tr>
@@ -346,6 +393,9 @@ function Groups() {
                 <tr key={g.id}>
                   <td><strong>{g.name}</strong></td>
                   <td className="muted">{g.description}</td>
+                  <td>
+                    <Source idp={g.idp_id} providers={providers} group />
+                  </td>
                   <td>{g.member_count ?? 0}</td>
                   <td className="actions">
                     <button className="btn sm" onClick={() => setMembers(g)}>Members</button>

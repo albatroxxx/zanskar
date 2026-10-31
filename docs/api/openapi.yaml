@@ -5105,8 +5105,12 @@ components:
             $ref: "#/components/schemas/Role"
         idp_id:
           type: [string, "null"]
+          description: The identity provider the account belongs to, when one does; the console names it in the Source column.
         external_id:
           type: [string, "null"]
+        provider_sign_in:
+          type: boolean
+          description: The account has no password of its own and signs in through an identity provider, linked (idp_id) or waiting for its first sign-in. Derived when read; absent when false.
         scim_external_id:
           type: string
           description: The provider's own id for the person, as its SCIM client sent it.

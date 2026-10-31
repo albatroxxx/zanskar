@@ -15,6 +15,10 @@ export interface User {
   created_at: string
   updated_at: string
   last_login_at?: string
+  /** The identity provider the account belongs to, when one does. */
+  idp_id?: string
+  /** No password of its own: it signs in through an identity provider, linked or waiting for its first sign-in. */
+  provider_sign_in?: boolean
 }
 
 export interface Me {

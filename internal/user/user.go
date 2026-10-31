@@ -64,6 +64,11 @@ type User struct {
 	// deleted the account. Both empty for an account SCIM never touched.
 	SCIMExternalID string     `json:"scim_external_id,omitempty"`
 	SCIMDeletedAt  *time.Time `json:"scim_deleted_at,omitempty"`
+	// ProviderSignIn is an account with no secret of its own: it signs in
+	// through an identity provider, linked (IdPID) or waiting for its first
+	// sign-in to be linked (2026-10-31: the console could not tell such an
+	// account from one made with a password). Derived when read, not stored.
+	ProviderSignIn bool `json:"provider_sign_in,omitempty"`
 
 	PasswordHash string `json:"-"`
 }

@@ -58,6 +58,7 @@ func (r *Repo) CreateInGroups(ctx context.Context, u *User, groupIDs []string) e
 	now := time.Now().UTC()
 	u.ID = store.NewID()
 	u.CreatedAt, u.UpdatedAt = now, now
+	u.ProviderSignIn = u.PasswordHash == ""
 
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -408,6 +409,7 @@ func scanUser(s store.Scanner) (*User, error) {
 		return nil, err
 	}
 	u.Email, u.PasswordHash, u.IdPID, u.ExternalID = email.String, hash.String, idp.String, ext.String
+	u.ProviderSignIn = u.PasswordHash == ""
 	u.Status = Status(status)
 	u.LockedUntil, u.CreatedAt, u.UpdatedAt, u.LastLoginAt = lockedUntil.Ptr(), created.Time, updated.Time, last.Ptr()
 	u.DirectoryRemovedAt, u.SCIMExternalID, u.SCIMDeletedAt = removed.Ptr(), scimExt.String, scimDeleted.Ptr()
