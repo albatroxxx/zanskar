@@ -136,17 +136,20 @@ a.stat-tile:hover { border-color: var(--fg-faint); }
 @media (min-width: 1181px) {
   /* Side by side, the columns line up top and bottom: each opens with a
      heading, so the clock starts where the tiles do, and both are as tall as
-     the taller, so Storage ends where Security posture does. The gateway card
-     takes any height the right has spare; on the left the sections spread. */
+     the taller, so Storage ends where Security posture does. The gaps between
+     rows never change; the shorter column's tiles take the difference: the
+     two storage tiles (near square on a dashboard like the demo's), or, when
+     the gateway card runs long (a Linux host's CPU and memory gauges), each
+     row of tiles on the left alike. */
   .dash { grid-template-columns: minmax(0, 1fr) minmax(300px, 360px); align-items: stretch; }
-  .dash-main, .dash-side { display: flex; flex-direction: column; }
-  .dash-main { justify-content: space-between; }
-  .dash-gw { flex: 1; }
+  .dash-main { display: flex; flex-direction: column; }
+  .dash-main .dash-sec { flex: 1 1 auto; display: flex; flex-direction: column; }
+  .dash-main .stat-grid { flex: 1; }
+  .dash-side { display: flex; flex-direction: column; }
+  .dash-side .dash-sec { flex: 1; display: flex; flex-direction: column; }
+  .dash-side .stat-grid { flex: 1; grid-template-columns: 1fr 1fr; }
   .dash-clock { max-width: none; }
   .dash-side .gw-grid { grid-template-columns: minmax(0, 1fr); }
-  /* The storage tiles: two squares side by side under the gateway. */
-  .dash-side .stat-grid { grid-template-columns: 1fr 1fr; }
-  .dash-side .stat-tile { aspect-ratio: 1; }
 }
 .clock-time { display: block; font-size: 2.2rem; font-weight: 600; letter-spacing: 0.02em; font-variant-numeric: tabular-nums; color: var(--fg); }
 .clock-date { margin-top: 4px; font-size: 0.95rem; color: var(--fg); }

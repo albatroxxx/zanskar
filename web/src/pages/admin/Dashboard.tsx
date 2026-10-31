@@ -177,10 +177,10 @@ export function Dashboard() {
         </div>
         <aside className="dash-side" aria-label="The gateway">
           {/* The heading first, as on the left, so the clock starts where the
-              tiles do; the card stretches so Storage ends where they end. */}
+              tiles do; the storage tiles stretch so they end where those end. */}
           <h2 className="stat-section">Gateway</h2>
           <Clock skewMs={skew} />
-          <div className="card dash-gw">
+          <div className="card">
             {status === null ? (
               <p className="muted" style={{ margin: 0 }}>Loading…</p>
             ) : (
