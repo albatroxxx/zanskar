@@ -85,93 +85,102 @@ export function Dashboard() {
       {err && <Alert tone="danger">The dashboard could not be fully loaded: {err}</Alert>}
 
       {/* The tiles, inventory first, on the left; the gateway itself (its
-          clock, health and log integrity) in a column on their right. */}
+          clock, health and storage) in a column on their right. */}
       <div className="dash">
         <div className="dash-main">
-          <h2 className="stat-section">Inventory</h2>
-          <div className="stat-grid">
-            <StatTile value={o && o.inventory.hosts} label="Hosts" icon={<TileIcon kind="server" />} detail={o ? mix(o.inventory.hosts_by_os, osLabel) : undefined} to={drill.activeHosts} />
-            <StatTile value={o && o.inventory.databases} label="Databases" icon={<TileIcon kind="db" />} detail={o ? mix(o.inventory.databases_by_engine, (e) => engineName(e)) : undefined} to={drill.activeDatabases} />
-            <StatTile value={o && o.inventory.applications} label="Applications" icon={<TileIcon kind="app" />} to={drill.activeApplications} />
-            <StatTile
-              value={o && o.autoscaling.groups}
-              label="Autoscaling groups"
-              icon={<TileIcon kind="stack" />}
-              detail={o && o.autoscaling.instances > 0 ? `${o.autoscaling.healthy_instances} of ${o.autoscaling.instances} instances healthy` : undefined}
-              meter={
-                o && o.autoscaling.instances > 0
-                  ? {
-                      fraction: o.autoscaling.healthy_instances / o.autoscaling.instances,
-                      tone: o.autoscaling.healthy_instances === 0 ? 'danger' : o.autoscaling.healthy_instances < o.autoscaling.instances ? 'warn' : undefined,
-                    }
-                  : undefined
-              }
-              to="/admin/autoscaling"
-            />
-          </div>
+          <section className="dash-sec">
+            <h2 className="stat-section">Inventory</h2>
+            <div className="stat-grid">
+              <StatTile value={o && o.inventory.hosts} label="Hosts" icon={<TileIcon kind="server" />} detail={o ? mix(o.inventory.hosts_by_os, osLabel) : undefined} to={drill.activeHosts} />
+              <StatTile value={o && o.inventory.databases} label="Databases" icon={<TileIcon kind="db" />} detail={o ? mix(o.inventory.databases_by_engine, (e) => engineName(e)) : undefined} to={drill.activeDatabases} />
+              <StatTile value={o && o.inventory.applications} label="Applications" icon={<TileIcon kind="app" />} to={drill.activeApplications} />
+              <StatTile
+                value={o && o.autoscaling.groups}
+                label="Autoscaling groups"
+                icon={<TileIcon kind="stack" />}
+                detail={o && o.autoscaling.instances > 0 ? `${o.autoscaling.healthy_instances} of ${o.autoscaling.instances} instances healthy` : undefined}
+                meter={
+                  o && o.autoscaling.instances > 0
+                    ? {
+                        fraction: o.autoscaling.healthy_instances / o.autoscaling.instances,
+                        tone: o.autoscaling.healthy_instances === 0 ? 'danger' : o.autoscaling.healthy_instances < o.autoscaling.instances ? 'warn' : undefined,
+                      }
+                    : undefined
+                }
+                to="/admin/autoscaling"
+              />
+            </div>
+          </section>
 
-          <h2 className="stat-section">Needs attention</h2>
-          <div className="stat-grid">
-            <StatTile
-              value={o && o.pending_requests}
-              label="Pending approvals"
-              icon={<TileIcon kind="approvals" />}
-              detail={o?.in_flight && o.pending_requests > 0 && o.in_flight.oldest_pending_seconds > 0 ? `oldest waiting ${uptime(o.in_flight.oldest_pending_seconds)}` : undefined}
-              to="/admin/approvals"
-              tone="warn"
-            />
-            <StatTile value={attention} label="Hosts needing attention" icon={<TileIcon kind="attention" />} to={drill.hostsNeedingAttention} tone="warn" />
-            <StatTile value={o && o.audit_24h.failed_logins} label="Failed sign-ins (24h)" icon={<TileIcon kind="key" />} to={drill.failedSignIns('/admin')} tone="warn" />
-            <StatTile
-              value={o && o.audit_24h.refused_connects}
-              label="Refused connections (24h)"
-              icon={<TileIcon kind="ban" />}
-              trend={o?.trends && { days: o.trends.days, values: o.trends.refused, noun: 'refused connection' }}
-              to={drill.refusedConnections('/admin')}
-              tone="warn"
-            />
-          </div>
+          <section className="dash-sec">
+            <h2 className="stat-section">Needs attention</h2>
+            <div className="stat-grid">
+              <StatTile
+                value={o && o.pending_requests}
+                label="Pending approvals"
+                icon={<TileIcon kind="approvals" />}
+                detail={o?.in_flight && o.pending_requests > 0 && o.in_flight.oldest_pending_seconds > 0 ? `oldest waiting ${uptime(o.in_flight.oldest_pending_seconds)}` : undefined}
+                to="/admin/approvals"
+                tone="warn"
+              />
+              <StatTile value={attention} label="Hosts needing attention" icon={<TileIcon kind="attention" />} to={drill.hostsNeedingAttention} tone="warn" />
+              <StatTile value={o && o.audit_24h.failed_logins} label="Failed sign-ins (24h)" icon={<TileIcon kind="key" />} to={drill.failedSignIns('/admin')} tone="warn" />
+              <StatTile
+                value={o && o.audit_24h.refused_connects}
+                label="Refused connections (24h)"
+                icon={<TileIcon kind="ban" />}
+                trend={o?.trends && { days: o.trends.days, values: o.trends.refused, noun: 'refused connection' }}
+                to={drill.refusedConnections('/admin')}
+                tone="warn"
+              />
+            </div>
+          </section>
 
-          <h2 className="stat-section">Activity</h2>
-          <div className="stat-grid">
-            <StatTile value={o && o.sessions.open} label="Open sessions" icon={<TileIcon kind="session" />} to={drill.openSessions('/admin')} />
-            <StatTile
-              value={o?.in_flight ? o.in_flight.active : null}
-              label="Grants active"
-              icon={<TileIcon kind="key" />}
-              detail={o?.in_flight && o.in_flight.ending_soon > 0 ? `${o.in_flight.ending_soon} end within the hour` : undefined}
-              to="/admin/approvals"
-            />
-            <StatTile
-              value={o && o.sessions.started_24h}
-              label="Sessions (24h)"
-              icon={<TileIcon kind="clock" />}
-              trend={o?.trends && { days: o.trends.days, values: o.trends.sessions, noun: 'session' }}
-              to={drill.sessions24h('/admin')}
-            />
-            <StatTile value={o && o.audit_24h.failures} label="Failures (24h)" icon={<TileIcon kind="attention" />} to={drill.failures('/admin')} />
-          </div>
+          <section className="dash-sec">
+            <h2 className="stat-section">Activity</h2>
+            <div className="stat-grid">
+              <StatTile value={o && o.sessions.open} label="Open sessions" icon={<TileIcon kind="session" />} to={drill.openSessions('/admin')} />
+              <StatTile
+                value={o?.in_flight ? o.in_flight.active : null}
+                label="Grants active"
+                icon={<TileIcon kind="key" />}
+                detail={o?.in_flight && o.in_flight.ending_soon > 0 ? `${o.in_flight.ending_soon} end within the hour` : undefined}
+                to="/admin/approvals"
+              />
+              <StatTile
+                value={o && o.sessions.started_24h}
+                label="Sessions (24h)"
+                icon={<TileIcon kind="clock" />}
+                trend={o?.trends && { days: o.trends.days, values: o.trends.sessions, noun: 'session' }}
+                to={drill.sessions24h('/admin')}
+              />
+              <StatTile value={o && o.audit_24h.failures} label="Failures (24h)" icon={<TileIcon kind="attention" />} to={drill.failures('/admin')} />
+            </div>
+          </section>
 
-          <h2 className="stat-section">Security posture</h2>
-          <div className="stat-grid">
-            <StatTile
-              value={o?.posture ? o.posture.standing_no_mfa.grants : null}
-              label="Standing access without MFA"
-              icon={<TileIcon kind="shield" />}
-              detail={o?.posture && o.posture.standing_no_mfa.grants > 0 ? `in ${o.posture.standing_no_mfa.policies} ${o.posture.standing_no_mfa.policies === 1 ? 'policy' : 'policies'}` : undefined}
-              to="/admin/policies"
-              tone="danger"
-            />
-            <StatTile value={o?.posture ? o.posture.not_enrolled : null} label="No authenticator yet" icon={<TileIcon kind="phone" />} to="/admin/users" tone="warn" />
-            <StatTile value={o?.posture ? o.posture.dormant : null} label="Dormant (90 days)" icon={<TileIcon kind="moon" />} to="/admin/users" tone="warn" />
-            <StatTile value={o?.posture ? o.posture.admins : null} label="Administrators" icon={<TileIcon kind="admin" />} to="/admin/users" />
-          </div>
+          <section className="dash-sec">
+            <h2 className="stat-section">Security posture</h2>
+            <div className="stat-grid">
+              <StatTile
+                value={o?.posture ? o.posture.standing_no_mfa.grants : null}
+                label="Standing access without MFA"
+                icon={<TileIcon kind="shield" />}
+                detail={o?.posture && o.posture.standing_no_mfa.grants > 0 ? `in ${o.posture.standing_no_mfa.policies} ${o.posture.standing_no_mfa.policies === 1 ? 'policy' : 'policies'}` : undefined}
+                to="/admin/policies"
+                tone="danger"
+              />
+              <StatTile value={o?.posture ? o.posture.not_enrolled : null} label="No authenticator yet" icon={<TileIcon kind="phone" />} to="/admin/users" tone="warn" />
+              <StatTile value={o?.posture ? o.posture.dormant : null} label="Dormant (90 days)" icon={<TileIcon kind="moon" />} to="/admin/users" tone="warn" />
+              <StatTile value={o?.posture ? o.posture.admins : null} label="Administrators" icon={<TileIcon kind="admin" />} to="/admin/users" />
+            </div>
+          </section>
         </div>
         <aside className="dash-side" aria-label="The gateway">
-          <Clock skewMs={skew} />
-
+          {/* The heading first, as on the left, so the clock starts where the
+              tiles do; the card stretches so Storage ends where they end. */}
           <h2 className="stat-section">Gateway</h2>
-          <div className="card">
+          <Clock skewMs={skew} />
+          <div className="card dash-gw">
             {status === null ? (
               <p className="muted" style={{ margin: 0 }}>Loading…</p>
             ) : (
@@ -201,23 +210,25 @@ export function Dashboard() {
             )}
           </div>
 
-          <h2 className="stat-section">Storage</h2>
-          <div className="stat-grid">
-            <StatTile
-              value={o?.storage ? fmtBytes(o.storage.audit_log.approx_bytes) : null}
-              label="Audit log"
-              icon={<TileIcon kind="list" />}
-              detail={o?.storage ? `${plural(o.storage.audit_log.events, 'event')}, size estimated` : undefined}
-              to="/admin/events"
-            />
-            <StatTile
-              value={o?.storage ? fmtBytes(o.storage.recordings.bytes) : null}
-              label="Recordings"
-              icon={<TileIcon kind="session" />}
-              detail={o?.storage ? `${plural(o.storage.recordings.count, 'recording')} kept` : undefined}
-              to="/admin/recordings"
-            />
-          </div>
+          <section className="dash-sec">
+            <h2 className="stat-section">Storage</h2>
+            <div className="stat-grid">
+              <StatTile
+                value={o?.storage ? fmtBytes(o.storage.audit_log.approx_bytes) : null}
+                label="Audit log"
+                icon={<TileIcon kind="list" />}
+                detail={o?.storage ? `${plural(o.storage.audit_log.events, 'event')}, size estimated` : undefined}
+                to="/admin/events"
+              />
+              <StatTile
+                value={o?.storage ? fmtBytes(o.storage.recordings.bytes) : null}
+                label="Recordings"
+                icon={<TileIcon kind="session" />}
+                detail={o?.storage ? `${plural(o.storage.recordings.count, 'recording')} kept` : undefined}
+                to="/admin/recordings"
+              />
+            </div>
+          </section>
         </aside>
       </div>
     </>

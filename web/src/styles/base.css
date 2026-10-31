@@ -132,9 +132,16 @@ a.stat-tile:hover { border-color: var(--fg-faint); }
    gauges one under another. The column drops below the tiles on a page too
    narrow for both. */
 .dash { display: grid; grid-template-columns: minmax(0, 1fr); gap: 0 28px; align-items: start; }
-.dash-clock { margin-top: 42px; padding: 18px 20px; text-align: center; max-width: 300px; }
+.dash-clock { padding: 18px 20px; text-align: center; max-width: 300px; }
 @media (min-width: 1181px) {
-  .dash { grid-template-columns: minmax(0, 1fr) minmax(300px, 360px); }
+  /* Side by side, the columns line up top and bottom: each opens with a
+     heading, so the clock starts where the tiles do, and both are as tall as
+     the taller, so Storage ends where Security posture does. The gateway card
+     takes any height the right has spare; on the left the sections spread. */
+  .dash { grid-template-columns: minmax(0, 1fr) minmax(300px, 360px); align-items: stretch; }
+  .dash-main, .dash-side { display: flex; flex-direction: column; }
+  .dash-main { justify-content: space-between; }
+  .dash-gw { flex: 1; }
   .dash-clock { max-width: none; }
   .dash-side .gw-grid { grid-template-columns: minmax(0, 1fr); }
   /* The storage tiles: two squares side by side under the gateway. */
