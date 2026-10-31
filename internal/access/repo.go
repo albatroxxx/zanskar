@@ -93,6 +93,40 @@ func (r *Repo) CountPending(ctx context.Context) (int, error) {
 	return n, err
 }
 
+// SoonWindow is how close to its end a grant counts as ending soon on the
+// dashboard.
+const SoonWindow = time.Hour
+
+// InFlight is the dashboard's access in flight (2026-10-31): grants active
+// now and those ending within SoonWindow, and how long the oldest pending
+// request has waited (0 when none waits).
+type InFlight struct {
+	Active        int   `json:"active"`
+	EndingSoon    int   `json:"ending_soon"`
+	OldestPending int64 `json:"oldest_pending_seconds"`
+}
+
+// CountInFlight counts InFlight at now.
+func (r *Repo) CountInFlight(ctx context.Context, now time.Time) (InFlight, error) {
+	var f InFlight
+	err := r.db.QueryRowContext(ctx, r.db.Rebind(`SELECT
+		COUNT(*),
+		COALESCE(SUM(CASE WHEN expires_at <= ? THEN 1 ELSE 0 END), 0)
+		FROM access_requests WHERE status = ? AND expires_at > ?`),
+		store.TimeArg(now.Add(SoonWindow)), string(StatusApproved), store.TimeArg(now)).Scan(&f.Active, &f.EndingSoon)
+	if err != nil {
+		return f, err
+	}
+	var oldest store.NullTime
+	if err := r.db.QueryRowContext(ctx, r.db.Rebind(`SELECT MIN(created_at) FROM access_requests WHERE status = ?`), string(StatusPending)).Scan(&oldest); err != nil {
+		return f, err
+	}
+	if oldest.Valid {
+		f.OldestPending = int64(now.Sub(oldest.Time) / time.Second)
+	}
+	return f, nil
+}
+
 // ActiveForUser returns a user's approved, unexpired grants.
 func (r *Repo) ActiveForUser(ctx context.Context, userID string, now time.Time) ([]*Request, error) {
 	return r.query(ctx, `WHERE r.user_id = ? AND r.status = ? AND r.expires_at > ? ORDER BY r.expires_at`,

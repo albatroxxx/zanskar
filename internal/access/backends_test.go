@@ -137,3 +137,55 @@ func TestCloseForTargetOnEachBackend(t *testing.T) {
 		}
 	})
 }
+
+// TestCountInFlightOnEachBackend (2026-10-31, the dashboard's access in
+// flight): grants active now, those ending within the hour, and how long the
+// oldest pending request has waited, with the time comparisons on both
+// engines.
+func TestCountInFlightOnEachBackend(t *testing.T) {
+	storetest.ForEachBackend(t, func(t *testing.T, db *store.DB) {
+		ctx := context.Background()
+		stamp := store.TimeArg(time.Now())
+		for _, q := range []string{
+			`INSERT INTO users (id, username, display_name, created_at, updated_at) VALUES ('u1', 'alice', 'Alice', ?, ?)`,
+			`INSERT INTO users (id, username, display_name, created_at, updated_at) VALUES ('u2', 'bob', 'Bob', ?, ?)`,
+			`INSERT INTO targets (id, name, address, os_family, created_at, updated_at) VALUES ('t1', 'web1', '10.0.0.1', 'linux', ?, ?)`,
+		} {
+			if _, err := db.ExecContext(ctx, db.Rebind(q), stamp, stamp); err != nil {
+				t.Fatal(err)
+			}
+		}
+		r := NewRepo(db)
+		now := time.Now().UTC()
+		if f, err := r.CountInFlight(ctx, now); err != nil || f != (InFlight{}) {
+			t.Fatalf("nothing in flight: %+v %v", f, err)
+		}
+		grant := func(until time.Time) {
+			t.Helper()
+			req := &Request{UserID: "u1", TargetID: "t1", Protocol: "ssh", Reason: "work", RequestedMinutes: 60}
+			if err := r.Create(ctx, req); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := r.Decide(ctx, req.ID, "u2", StatusApproved, "ok", &until, 60); err != nil {
+				t.Fatal(err)
+			}
+		}
+		grant(now.Add(20 * time.Minute)) // ending soon
+		grant(now.Add(3 * time.Hour))    // active
+		grant(now.Add(-time.Minute))     // already over: not counted
+		waiting := &Request{UserID: "u1", TargetID: "t1", Protocol: "rdp", Reason: "later", RequestedMinutes: 30}
+		if err := r.Create(ctx, waiting); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := db.ExecContext(ctx, db.Rebind(`UPDATE access_requests SET created_at = ? WHERE id = ?`), store.TimeArg(now.Add(-2*time.Hour)), waiting.ID); err != nil {
+			t.Fatal(err)
+		}
+		f, err := r.CountInFlight(ctx, now)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if f.Active != 2 || f.EndingSoon != 1 || f.OldestPending < 7190 || f.OldestPending > 7210 {
+			t.Fatalf("in flight %+v, want 2 active, 1 ending soon, oldest waiting about 7200 s", f)
+		}
+	})
+}

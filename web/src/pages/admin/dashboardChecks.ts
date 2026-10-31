@@ -13,7 +13,7 @@ const exportSlack = 200
  * lost this week, the identity providers' listings, the SIEM export. Each
  * line opens the page that explains it.
  */
-export function integrityChecks(i: Integrity): { label: string; text: string; state: 'ok' | 'warn' | 'danger' | 'unknown'; to: string }[] {
+export function integrityChecks(i: Integrity, events24h = 0, eventsTo = '/admin/events'): { label: string; text: string; state: 'ok' | 'warn' | 'danger' | 'unknown'; to: string }[] {
   const chain = i.audit_chain
   const c = !chain
     ? { text: 'Not checked yet', state: 'unknown' as const }
@@ -43,6 +43,9 @@ export function integrityChecks(i: Integrity): { label: string; text: string; st
         : { text: 'Up to date', state: 'ok' as const }
   return [
     { label: 'Audit chain', ...c, to: '/admin/events' },
+    // The day's events, a line here since 2026-10-31 (it was an Activity
+    // tile): the audit log is evidence first.
+    { label: 'Audit log', text: `${events24h} ${events24h === 1 ? 'event' : 'events'} in 24 hours`, state: 'ok', to: eventsTo },
     {
       label: 'Recordings',
       text: lost === 0 ? 'None lost in 7 days' : `${lost} lost in 7 days`,

@@ -404,6 +404,8 @@ export interface AdminOverview {
     directories: { listed: number; failing: number; not_run: number; held_back: number }
     export: { sinks: number; behind: number }
   }
+  /** Access in flight (2026-10-31): just-in-time grants active now, those ending within the hour, the oldest pending request's wait. */
+  in_flight?: { active: number; ending_soon: number; oldest_pending_seconds: number }
 }
 
 /** GET /audit/overview (ADR 0029). Counts only, never row data. */

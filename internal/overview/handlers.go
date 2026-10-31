@@ -252,6 +252,11 @@ func (h *Handler) adminOverview(w http.ResponseWriter, r *http.Request) {
 		httpx.Internal(w, r, h.Log, err)
 		return
 	}
+	flight, err := h.Requests.CountInFlight(ctx, time.Now())
+	if err != nil {
+		httpx.Internal(w, r, h.Log, err)
+		return
+	}
 	w.Header().Set("Cache-Control", "no-store")
 	httpx.WriteJSON(w, http.StatusOK, struct {
 		Sessions        session.Counts         `json:"sessions"`
@@ -262,7 +267,8 @@ func (h *Handler) adminOverview(w http.ResponseWriter, r *http.Request) {
 		Audit           auditTallies           `json:"audit_24h"`
 		Posture         posture                `json:"posture"`
 		Integrity       integrity              `json:"integrity"`
-	}{sessions, pending, targets, inventory, asgs, foldTallies(tallies), post, integ})
+		InFlight        access.InFlight        `json:"in_flight"`
+	}{sessions, pending, targets, inventory, asgs, foldTallies(tallies), post, integ, flight})
 }
 
 // auditOverview answers GET /api/v1/audit/overview for admins and auditors.

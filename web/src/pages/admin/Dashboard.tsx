@@ -89,7 +89,14 @@ export function Dashboard() {
       <div className="dash-tiles">
       <h2 className="stat-section">Needs attention</h2>
       <div className="stat-grid">
-        <StatTile value={o && o.pending_requests} label="Pending approvals" icon={<TileIcon kind="approvals" />} to="/admin/approvals" tone="warn" />
+        <StatTile
+          value={o && o.pending_requests}
+          label="Pending approvals"
+          icon={<TileIcon kind="approvals" />}
+          detail={o?.in_flight && o.pending_requests > 0 && o.in_flight.oldest_pending_seconds > 0 ? `oldest waiting ${uptime(o.in_flight.oldest_pending_seconds)}` : undefined}
+          to="/admin/approvals"
+          tone="warn"
+        />
         <StatTile value={attention} label="Hosts needing attention" icon={<TileIcon kind="attention" />} to={drill.hostsNeedingAttention} tone="warn" />
         <StatTile value={o && o.audit_24h.failed_logins} label="Failed sign-ins (24h)" icon={<TileIcon kind="key" />} to={drill.failedSignIns('/admin')} tone="warn" />
         <StatTile value={o && o.audit_24h.refused_connects} label="Refused connections (24h)" icon={<TileIcon kind="ban" />} to={drill.refusedConnections('/admin')} tone="warn" />
@@ -113,16 +120,22 @@ export function Dashboard() {
       <h2 className="stat-section">Activity</h2>
       <div className="stat-grid">
         <StatTile value={o && o.sessions.open} label="Open sessions" icon={<TileIcon kind="session" />} to={drill.openSessions('/admin')} />
+        <StatTile
+          value={o?.in_flight ? o.in_flight.active : null}
+          label="Grants active"
+          icon={<TileIcon kind="key" />}
+          detail={o?.in_flight && o.in_flight.ending_soon > 0 ? `${o.in_flight.ending_soon} end within the hour` : undefined}
+          to="/admin/approvals"
+        />
         <StatTile value={o && o.sessions.started_24h} label="Sessions (24h)" icon={<TileIcon kind="clock" />} to={drill.sessions24h('/admin')} />
         <StatTile value={o && o.audit_24h.failures} label="Failures (24h)" icon={<TileIcon kind="attention" />} to={drill.failures('/admin')} />
-        <StatTile value={o && o.audit_24h.events} label="Audit events (24h)" icon={<TileIcon kind="list" />} to={drill.auditEvents('/admin')} />
       </div>
 
       {o?.integrity && (
         <>
           <h2 className="stat-section">Integrity</h2>
           <div className="checks">
-            {integrityChecks(o.integrity).map((c) => (
+            {integrityChecks(o.integrity, o.audit_24h.events, drill.auditEvents('/admin')).map((c) => (
               <Link key={c.label} className={'check ' + c.state} to={c.to}>
                 <StateIcon state={c.state} label={c.label + ': ' + c.text} />
                 <span className="check-label">{c.label}</span>

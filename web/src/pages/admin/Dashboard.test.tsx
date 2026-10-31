@@ -20,6 +20,7 @@ const overview: AdminOverview = {
   audit_24h: { events: 41, failures: 4, failed_logins: 2, refused_connects: 1 },
   posture: { standing_no_mfa: { grants: 3, policies: 2 }, admins: 2, dormant: 4, not_enrolled: 1 },
   integrity: { audit_chain: null, recordings_lost_7d: 1, directories: { listed: 1, failing: 0, not_run: 0, held_back: 0 }, export: { sinks: 0, behind: 0 } },
+  in_flight: { active: 3, ending_soon: 1, oldest_pending_seconds: 7500 },
 }
 
 const status: SystemStatus = {
@@ -101,7 +102,8 @@ describe('the admin dashboard', () => {
     expect(href('Failed sign-ins (24h)')).toBe('/admin/events?action=user.login&outcome=failure&range=24h&routine=1')
     expect(href('Refused connections (24h)')).toBe('/admin/events?action=session.connect&outcome=failure&range=24h&routine=1')
     expect(href('Failures (24h)')).toBe('/admin/events?outcome=failure&range=24h&routine=1')
-    expect(href('Audit events (24h)')).toBe('/admin/events?range=24h&routine=1')
+    // The day's events are a line in the integrity row since 2026-10-31.
+    expect(href('Audit log')).toBe('/admin/events?range=24h&routine=1')
     expect(href('Open sessions')).toBe('/admin/sessions?open=1')
     expect(href('Sessions (24h)')).toBe('/admin/sessions?range=24h')
 
@@ -156,6 +158,19 @@ describe('the admin dashboard', () => {
     const sections = [...document.querySelectorAll('h2.stat-section')].map((h) => h.textContent)
     expect(sections.indexOf('Security posture')).toBe(sections.indexOf('Needs attention') + 1)
     expect(sections.indexOf('Activity')).toBe(sections.indexOf('Security posture') + 1)
+  })
+
+  // 2026-10-31: access in flight, on the tiles it belongs with.
+  it('says how long the oldest request has waited and which grants end soon', async () => {
+    serve()
+    at('/')
+    const approvals = (await screen.findByText('Pending approvals')).closest('a') as HTMLAnchorElement
+    expect(approvals.textContent).toContain('oldest waiting 2 hours')
+    const grants = (await screen.findByText('Grants active')).closest('a') as HTMLAnchorElement
+    expect(grants.getAttribute('href')).toBe('/admin/approvals')
+    expect(grants.textContent).toContain('3')
+    expect(grants.textContent).toContain('1 end within the hour')
+    expect(screen.queryByText('Audit events (24h)')).toBeNull()
   })
 
   it('shows the integrity row as status lines that open their pages', async () => {

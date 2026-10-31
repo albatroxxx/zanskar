@@ -7070,8 +7070,16 @@ components:
           description: Refused connections (`session.connect` failures).
     AdminOverview:
       type: object
-      required: [sessions, pending_requests, targets, inventory, autoscaling, audit_24h, posture, integrity]
+      required: [sessions, pending_requests, targets, inventory, autoscaling, audit_24h, posture, integrity, in_flight]
       properties:
+        in_flight:
+          type: object
+          description: Access in flight (2026-10-31).
+          required: [active, ending_soon, oldest_pending_seconds]
+          properties:
+            active: {type: integer, description: Just-in-time grants approved and not yet ended.}
+            ending_soon: {type: integer, description: Of those, how many end within the hour.}
+            oldest_pending_seconds: {type: integer, description: How long the oldest pending request has waited; 0 when none waits.}
         integrity:
           type: object
           description: Whether the evidence is whole (2026-10-31), counts only.

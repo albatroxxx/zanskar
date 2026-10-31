@@ -13,7 +13,8 @@ const by = (i: Parameters<typeof integrityChecks>[0]) => Object.fromEntries(inte
 describe('integrityChecks', () => {
   it('reads all well as ok, each line opening its page', () => {
     const c = by(base)
-    expect(Object.values(c).map((x) => x.state)).toEqual(['ok', 'ok', 'ok', 'ok'])
+    expect(Object.values(c).map((x) => x.state)).toEqual(['ok', 'ok', 'ok', 'ok', 'ok'])
+    expect(integrityChecks(base, 41, '/admin/events?range=24h').find((x) => x.label === 'Audit log')).toMatchObject({ text: '41 events in 24 hours', to: '/admin/events?range=24h' })
     expect(c['Audit chain'].text).toMatch(/^Intact · checked /)
     expect(c['Recordings']).toMatchObject({ text: 'None lost in 7 days', to: '/admin/recordings' })
     expect(c['Identity providers']).toMatchObject({ text: 'In sync', to: '/admin/identity-providers' })
