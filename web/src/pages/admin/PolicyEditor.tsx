@@ -125,7 +125,7 @@ export function PolicyEditor() {
           </Field>
           <Field label="Users" hint="Review-only accounts are not offered">
             <PickList label="users" idPrefix="pe-user" selected={userIDs} onToggle={(uid) => setUserIDs(toggle(userIDs, uid))} onSelect={(ids, on) => setUserIDs(pickMany(userIDs, ids, on))}
-              options={people.map((u) => ({ id: u.id, label: u.username, detail: u.display_name && u.display_name !== u.username ? u.display_name : undefined }))} />
+              options={people.map((u) => ({ id: u.id, label: u.username, detail: u.display_name && u.display_name !== u.username ? u.display_name : undefined, detailTitle: 'Display name' }))} />
           </Field>
         </div>
       </div>

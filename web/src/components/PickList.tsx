@@ -3,8 +3,11 @@ import { useState, type ReactNode } from 'react'
 export interface PickOption {
   id: string
   label: string
-  /** A muted word beside the label: an OS, an engine, a member count. */
+  /** Beside the label, in a box of its own so it does not read as part of
+   * the name: a display name, an OS, an engine, a member count. */
   detail?: string
+  /** What the detail is, on hover: "Display name". */
+  detailTitle?: string
   /** Disabled, or no longer found: shown, and removable, but never picked by Select all. */
   inactive?: boolean
   /** Why this row cannot be picked at all; it shows greyed with the reason. */
@@ -72,7 +75,11 @@ export function PickList({ label, options, selected, onToggle, onSelect, extra, 
             <div key={o.id} className={'pick-row' + (on ? ' on' : '') + (o.locked ? ' locked' : '')} title={o.locked}>
               <input id={id} type="checkbox" checked={on} disabled={!!o.locked && !on} onChange={() => onToggle(o.id)} />
               <label htmlFor={id}>{o.label}</label>
-              {o.detail && <span className="muted">{o.detail}</span>}
+              {o.detail && (
+                <span className="pick-detail" title={o.detailTitle}>
+                  {o.detail}
+                </span>
+              )}
               {o.locked && <span className="muted">{o.locked}</span>}
               {on && extra && <span className="pick-extra">{extra(o.id)}</span>}
             </div>

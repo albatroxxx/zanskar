@@ -549,6 +549,12 @@ td.actions > * + * { margin-left: 8px; }
 .pick-row.on { background: var(--bg-sunken); }
 .pick-row input[type=checkbox], .seg input[type=radio], .conditions .field.inline input { width: auto; padding: 0; flex: none; }
 .pick-row label { margin: 0; }
+/* The second thing a row names (a display name beside a username, an OS
+   beside a host) sits in a filled box of its own, so it never reads as part
+   of the name (2026-10-31). A shade darker on a chosen row, whose own
+   background is the box's colour. */
+.pick-detail { display: inline-block; padding: 1px 7px; border-radius: 4px; background: var(--bg-sunken); color: var(--fg-muted); font-size: 0.8rem; line-height: 1.45; white-space: nowrap; }
+.pick-row.on .pick-detail { background: var(--line); }
 .pick-extra { margin-left: auto; }
 .picklist-empty, .picklist-count { padding: 6px 10px; font-size: 0.84rem; }
 .picklist-count { border-top: 1px solid var(--line); }

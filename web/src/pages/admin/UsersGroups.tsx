@@ -421,7 +421,7 @@ function GroupForm({ onClose, onSaved }: { onClose: () => void; onSaved: () => v
             selected={userIDs}
             onToggle={(id) => setUserIDs((u) => (u.includes(id) ? u.filter((x) => x !== id) : [...u, id]))}
             onSelect={(ids, on) => setUserIDs((u) => (on ? [...new Set([...u, ...ids])] : u.filter((x) => !ids.includes(x))))}
-            options={(users.items ?? []).map((u) => ({ id: u.id, label: u.username, detail: u.display_name && u.display_name !== u.username ? u.display_name : undefined }))}
+            options={(users.items ?? []).map((u) => ({ id: u.id, label: u.username, detail: u.display_name && u.display_name !== u.username ? u.display_name : undefined, detailTitle: 'Display name' }))}
           />
         </Field>
       )}
@@ -450,7 +450,15 @@ function MembersForm({ group, onClose, onSaved }: { group: Group; onClose: () =>
             <div key={u.id} className="field inline" style={{ margin: '4px 0' }}>
               <input id={`m-${group.id}-${u.id}`} type="checkbox" checked={selected.includes(u.id)} onChange={(e) => setSelected(e.target.checked ? [...selected, u.id] : selected.filter((x) => x !== u.id))} />
               <label htmlFor={`m-${group.id}-${u.id}`}>
-                {u.display_name} <span className="mono muted">{u.username}</span>
+                {u.username}
+                {u.display_name && u.display_name !== u.username && (
+                  <>
+                    {' '}
+                    <span className="pick-detail" title="Display name">
+                      {u.display_name}
+                    </span>
+                  </>
+                )}
               </label>
             </div>
           ))}
