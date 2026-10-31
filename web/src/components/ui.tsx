@@ -144,6 +144,11 @@ function Sparkline({ days, values, noun }: Trend) {
  * the page was left). With onDismiss the caller clears the notice it holds,
  * so the next one shows; without, the alert hides itself, and a different
  * message (a string) shows again.
+ *
+ * An alert showing state that an action sets (an error, a "saved", a test's
+ * result) passes onDismiss: the same message set again does not render, so a
+ * self-hidden alert would stay hidden when a retry fails the same way. Only
+ * a fixed warning, or a load error, hides itself.
  */
 export function Alert({ tone, children, onDismiss }: { tone?: 'ok' | 'warn' | 'danger'; children: ReactNode; onDismiss?: () => void }) {
   const text = typeof children === 'string' ? children : null

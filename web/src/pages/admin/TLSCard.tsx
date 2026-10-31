@@ -127,8 +127,8 @@ export function TLSCard() {
         </p>
       ) : (
         <>
-          {err && <Alert tone="danger">{err}</Alert>}
-          {ok && <Alert tone="ok">{ok}</Alert>}
+          {err && <Alert tone="danger" onDismiss={() => setErr('')}>{err}</Alert>}
+          {ok && <Alert tone="ok" onDismiss={() => setOk('')}>{ok}</Alert>}
           {status.acme?.on && (
             <p className="acme-line">
               <strong>Let's Encrypt</strong>{' '}

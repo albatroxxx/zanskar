@@ -39,15 +39,15 @@ export function Credentials() {
       <PageHead title="Credentials">
         <button className="btn primary" onClick={() => setAdding(true)}>Add credential</button>
       </PageHead>
-      {err && <Alert tone="danger">{err}</Alert>}
+      {err && <Alert tone="danger" onDismiss={() => setErr('')}>{err}</Alert>}
       {generated && generated.type === 'ssh_ca' && (
-        <Alert tone="ok">
+        <Alert tone="ok" onDismiss={() => setGenerated(null)}>
           Certificate authority <strong>{generated.name}</strong> created.
           <div style={{ marginTop: 8 }}><CAInstall credential={generated} /></div>
         </Alert>
       )}
       {generated && generated.type !== 'ssh_ca' && (
-        <Alert tone="ok">
+        <Alert tone="ok" onDismiss={() => setGenerated(null)}>
           Key pair created for <strong>{generated.name}</strong>. Add this public key to the target's <code>authorized_keys</code>:
           <pre className="mono" style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-all', margin: '8px 0 0' }}>{generated.public_key}</pre>
         </Alert>

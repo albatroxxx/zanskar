@@ -104,7 +104,7 @@ export function PolicyEditor() {
       <PageHead title={id ? `Edit ${loaded?.name ?? 'policy'}` : 'New policy'}>
         <Link className="btn" to="/admin/policies">Back to policies</Link>
       </PageHead>
-      {err && <Alert tone="danger">{err}</Alert>}
+      {err && <Alert tone="danger" onDismiss={() => setErr('')}>{err}</Alert>}
       <div className="card">
         <h2>Policy</h2>
         <div className="form-grid">

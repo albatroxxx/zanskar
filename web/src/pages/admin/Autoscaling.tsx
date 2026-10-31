@@ -27,7 +27,7 @@ export function Autoscaling() {
       <PageHead title="Autoscaling groups">
         <button className="btn primary" onClick={() => setAdding(true)}>Enroll group</button>
       </PageHead>
-      {err && <Alert tone="danger">{err}</Alert>}
+      {err && <Alert tone="danger" onDismiss={() => setErr('')}>{err}</Alert>}
       <IdentityCard />
       <div className="card table-wrap">
         {items === null ? (
@@ -229,7 +229,7 @@ function GroupForm({ initial, credentials, onClose, onSaved }: { initial?: Autos
 
   return (
     <Modal title={initial ? `Edit ${initial.name}` : 'Enroll autoscaling group'} onClose={onClose} width={680}>
-      {err && <Alert tone="danger">{err}</Alert>}
+      {err && <Alert tone="danger" onDismiss={() => setErr('')}>{err}</Alert>}
       <form onSubmit={submit}>
         <div className="form-grid">
           <Field label="Name">
@@ -584,7 +584,7 @@ function GroupDetail({ group, credentials, onClose, onChanged, onDeleted }: { gr
 
   return (
     <Modal title={g.name} onClose={onClose} width={900}>
-      {err && <Alert tone="danger">{err}</Alert>}
+      {err && <Alert tone="danger" onDismiss={() => setErr('')}>{err}</Alert>}
       <div className="actions" style={{ marginBottom: 12 }}>
         <button className="btn primary" disabled={syncing} onClick={() => void sync()}>{syncing ? 'Syncing…' : 'Sync now'}</button>
         <button className="btn" disabled={testing} onClick={() => void testAccess()}>{testing ? 'Testing…' : 'Test access'}</button>
@@ -596,12 +596,12 @@ function GroupDetail({ group, credentials, onClose, onChanged, onDeleted }: { gr
         <button className="btn danger" onClick={() => setConfirmDelete(true)}>Delete</button>
       </div>
       {accessTest && (
-        <Alert tone={accessTest.ok ? 'ok' : 'danger'}>
+        <Alert tone={accessTest.ok ? 'ok' : 'danger'} onDismiss={() => setAccessTest(null)}>
           <AccessTestResult result={accessTest} />
         </Alert>
       )}
       {summary && (
-        <Alert tone={summary.error ? 'danger' : 'ok'}>
+        <Alert tone={summary.error ? 'danger' : 'ok'} onDismiss={() => setSummary(null)}>
           {summary.error
             ? `Sync failed: ${summary.error}`
             : `Sync complete: ${summary.summary.Seen} seen, ${summary.summary.Healthy} healthy, ${summary.summary.Joined} joined, ${summary.summary.Left} left, ${summary.summary.Retired} retired${summary.summary.HostKeyMismatches ? `, ${summary.summary.HostKeyMismatches} host key mismatch` : ''}`}

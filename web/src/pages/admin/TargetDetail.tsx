@@ -102,7 +102,7 @@ export function TargetDetail({ target, credentials, onClose, onChanged, onDelete
 
   return (
     <Modal title={t.name} onClose={onClose} width={720}>
-      {err && <Alert tone="danger">{err}</Alert>}
+      {err && <Alert tone="danger" onDismiss={() => setErr('')}>{err}</Alert>}
       {t.host_key_status === 'changed' && (
         <Alert tone="danger">
           The SSH host key changed after it was trusted. Connections are refused until an administrator confirms the new key. Verify it out of band before trusting it.
@@ -198,7 +198,7 @@ export function TargetDetail({ target, credentials, onClose, onChanged, onDelete
       )}
 
       {certProbe && (
-        <Alert tone={certProbe.accepted ? 'ok' : 'danger'}>
+        <Alert tone={certProbe.accepted ? 'ok' : 'danger'} onDismiss={() => setCertProbe(null)}>
           {certProbe.accepted ? `The target accepted a certificate from ${sshCA?.name ?? 'the authority'} for login user ${certProbe.login_user}.` : `${certProbe.error ?? 'certificate login failed'} (login user ${certProbe.login_user}).`}
         </Alert>
       )}

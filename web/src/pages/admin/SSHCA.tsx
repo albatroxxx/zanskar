@@ -238,8 +238,8 @@ export function CASetup({ credential, onClose, onSaved }: { credential: Credenti
 
   return (
     <Modal title={`${credential.name}: certificate authority`} onClose={onClose} width={680}>
-      {err && <Alert tone="danger">{err}</Alert>}
-      {ok && <Alert tone="ok">{ok}</Alert>}
+      {err && <Alert tone="danger" onDismiss={() => setErr('')}>{err}</Alert>}
+      {ok && <Alert tone="ok" onDismiss={() => setOk('')}>{ok}</Alert>}
       <h3 style={{ marginTop: 0 }}>Install on targets</h3>
       <CAInstall credential={credential} />
       <p className="muted">

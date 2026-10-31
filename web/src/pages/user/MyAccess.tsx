@@ -89,8 +89,8 @@ export function MyAccess() {
   return (
     <>
       <PageHead title="Access" />
-      {err && <Alert tone="danger">{err}</Alert>}
-      {notice && <Alert tone="ok">{notice}</Alert>}
+      {err && <Alert tone="danger" onDismiss={() => setErr('')}>{err}</Alert>}
+      {notice && <Alert tone="ok" onDismiss={() => setNotice('')}>{notice}</Alert>}
       <FilterChips chips={show ? [{ label: show === 'pending' ? 'Pending' : 'Expiring within the hour', onClear: () => setParams({}, { replace: true }) }] : []} />
       <div className="card table-wrap">
         {shown === null ? (

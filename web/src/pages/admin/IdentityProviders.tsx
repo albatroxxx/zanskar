@@ -476,8 +476,8 @@ function ProviderModal({ existing, onClose, onSaved }: { existing: Provider | nu
 
   return (
     <Modal title={existing ? `Edit ${existing.name}` : 'Add identity provider'} onClose={onClose} width={620}>
-      {localErr && <Alert tone="danger">{localErr}</Alert>}
-      {test && <Alert tone={test.tone}>{test.msg}</Alert>}
+      {localErr && <Alert tone="danger" onDismiss={() => setLocalErr('')}>{localErr}</Alert>}
+      {test && <Alert tone={test.tone} onDismiss={() => setTest(null)}>{test.msg}</Alert>}
       <form onSubmit={save}>
         <div className="form-grid">
           <Field label="Name"><input id="idp-name" value={name} onChange={(e) => setName(e.target.value)} required /></Field>

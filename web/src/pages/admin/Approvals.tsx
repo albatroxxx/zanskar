@@ -65,7 +65,7 @@ export function Approvals() {
   return (
     <>
       <PageHead title="Approvals" />
-      {err && <Alert tone="danger">{err}</Alert>}
+      {err && <Alert tone="danger" onDismiss={() => setErr('')}>{err}</Alert>}
 
       <div className="card table-wrap">
         <h2>Pending</h2>

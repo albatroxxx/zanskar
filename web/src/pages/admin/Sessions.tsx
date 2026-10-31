@@ -56,7 +56,7 @@ export function Sessions() {
         <button className="btn sm" onClick={() => set('user', username.trim())}>Filter</button>
         <button className="btn sm" onClick={() => (range ? setFrom(sinceFor(range)) : void reload())}>Refresh</button>
       </PageHead>
-      {err && <Alert tone="danger">{err}</Alert>}
+      {err && <Alert tone="danger" onDismiss={() => setErr('')}>{err}</Alert>}
       <div className="card table-wrap">
         {items === null ? (
           err ? null : <Empty>Loading…</Empty>

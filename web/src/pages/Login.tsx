@@ -156,7 +156,7 @@ export function Login() {
           <div className="login-banner" role="note" aria-label="System use notification">{banner}</div>
         )}
         <div className="card">
-          {err && <Alert tone="danger">{err}</Alert>}
+          {err && <Alert tone="danger" onDismiss={() => setErr('')}>{err}</Alert>}
 
           {effectiveStep === 'password' && (
             <form onSubmit={submitPassword}>
