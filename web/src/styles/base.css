@@ -533,6 +533,12 @@ td.actions > * + * { margin-left: 8px; }
 .corner-btn:hover { color: var(--accent-hover); }
 .corner-dot { position: absolute; top: -1px; right: -1px; width: 9px; height: 9px; border-radius: 50%; background: var(--danger); border: 2px solid var(--bg); }
 .corner-btn.on { color: var(--accent-hover); }
+/* The theme switch: the circle's dark half swings over on every change of
+   theme, and the circle gives a little under the press. */
+.theme-toggle svg { transition: transform 0.15s ease; }
+.theme-toggle:active svg { transform: scale(0.86); }
+.theme-half { transform-box: view-box; transform-origin: 50% 50%; transition: transform 0.5s cubic-bezier(0.65, 0, 0.35, 1); }
+@media (prefers-reduced-motion: reduce) { .theme-toggle svg, .theme-half { transition: none; } }
 /* A corner button's menu or panel drops from it and stays attached, right
    edges aligned, as the cloud consoles' Actions menus do (2026-10-30). */
 .corner-pop { position: relative; display: inline-flex; }

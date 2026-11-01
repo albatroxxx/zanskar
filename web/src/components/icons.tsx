@@ -308,12 +308,14 @@ export function DoneIcon() {
   )
 }
 
-/** ThemeIcon is the corner's theme menu: a circle half light, half dark. */
-export function ThemeIcon() {
+/** ThemeIcon is the corner's theme switch: a circle half light, half dark.
+ *  The dark half sits right in the light theme and left in the dark one;
+ *  turns is how many half turns it has made, so it always turns one way. */
+export function ThemeIcon({ turns = 0 }: { turns?: number }) {
   return (
     <svg width="23" height="23" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden="true">
       <circle cx="12" cy="12" r="8.5" />
-      <path d="M12 3.5a8.5 8.5 0 0 1 0 17z" fill="currentColor" stroke="none" />
+      <path className="theme-half" d="M12 3.5a8.5 8.5 0 0 1 0 17z" fill="currentColor" stroke="none" style={{ transform: `rotate(${turns * 180}deg)` }} />
     </svg>
   )
 }

@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { ApiError, api } from '../../api/client'
 import { consoleZone, setDisplayZone } from '../../api/format'
 import type { RuntimeSetting, SettingsListing } from '../../api/types'
+import { consoleTheme, setConsoleTheme, themeKey } from '../../styles/theme'
 import { Settings } from './Settings'
 
 afterEach(() => {
@@ -106,6 +107,24 @@ describe('Settings', () => {
     expect(put).toHaveBeenCalledWith('/admin/settings/display.time_zone', { value: 'Asia/Kolkata' })
     await waitFor(() => expect(consoleZone()).toBe('Asia/Kolkata'))
     setDisplayZone(undefined)
+  })
+
+  // 2026-11-01: a theme for everyone. The administrator who saves it sees
+  // it at once, even if this browser had its own pick from the corner.
+  it('applies a saved theme for everyone here at once, over this browser’s own pick', async () => {
+    const theme = setting({ key: 'display.theme', category: 'Display', title: 'Theme', type: 'enum', enum: ['system', 'light', 'dark'], default: 'system', value: 'system', source: 'default' })
+    serve({ ...listing, runtime: [...listing.runtime, theme] })
+    const put = vi.spyOn(api, 'put').mockResolvedValue({ ...theme, value: 'dark', source: 'console' } as never)
+    localStorage.setItem(themeKey, 'light')
+    render(<Settings />)
+    const user = userEvent.setup()
+    await user.selectOptions(await screen.findByRole('combobox', { name: 'Theme' }), 'dark')
+    await user.click(within(screen.getByRole('combobox', { name: 'Theme' }).closest('.setting-row') as HTMLElement).getByRole('button', { name: 'Save' }))
+    expect(put).toHaveBeenCalledWith('/admin/settings/display.theme', { value: 'dark' })
+    await waitFor(() => expect(document.documentElement.getAttribute('data-theme')).toBe('dark'))
+    expect(consoleTheme()).toBe('dark')
+    expect(localStorage.getItem(themeKey)).toBeNull()
+    setConsoleTheme('system')
   })
 
   // 2026-10-30: an administrator turns desktops on or off; where guacd

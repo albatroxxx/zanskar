@@ -401,6 +401,7 @@ func serve(ctx context.Context) error {
 
 	deps := server.Deps{
 		TLS:            tlsMgr,
+		Theme:          func() string { return runtime.String(settings.KeyTheme) },
 		AuthMiddleware: &auth.Middleware{Sessions: sessions, Users: users, Log: log},
 		Auth:           authHandler,
 		Handlers: []server.Registrar{

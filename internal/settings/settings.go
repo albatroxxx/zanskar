@@ -81,6 +81,10 @@ const (
 	// KeyTimeZone is the zone every time in the console is shown in, and
 	// the dashboard's clock (2026-10-30); by default the gateway host's.
 	KeyTimeZone = "display.time_zone"
+	// KeyTheme is the console's theme for everyone, from the sign-in page on
+	// (2026-11-01): system follows each device's light or dark setting. A
+	// person's corner switch still picks their own browser's theme.
+	KeyTheme = "display.theme"
 	// KeyACME, KeyACMEEmail and KeyACMEDirectory get the gateway's
 	// certificate from an ACME CA when it serves TLS itself (ADR 0021,
 	// amended 2026-10-30).
@@ -210,7 +214,16 @@ var Definitions = []Definition{
 		Description: "Let's Encrypt by default; its staging, or a private ACME CA."},
 	{Key: KeyTimeZone, Category: "Display", Title: "Time zone", Type: TypeTimeZone, Default: HostZone(),
 		Description: "Every time in the console and the dashboard clock. The default is the gateway host's."},
+	{Key: KeyTheme, Category: "Display", Title: "Theme", Type: TypeEnum, Default: ThemeSystem, Enum: []string{ThemeSystem, ThemeLight, ThemeDark},
+		Description: "Everyone's, from the sign-in page on; system follows each device. The corner switch picks a browser's own."},
 }
+
+// Themes KeyTheme takes.
+const (
+	ThemeSystem = "system"
+	ThemeLight  = "light"
+	ThemeDark   = "dark"
+)
 
 // Lookup returns the definition for key.
 func Lookup(key string) (Definition, bool) {
