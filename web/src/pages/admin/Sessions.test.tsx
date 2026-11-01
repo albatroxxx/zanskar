@@ -51,5 +51,7 @@ describe('Sessions', () => {
     at('/admin/sessions', [{ ...live, id: 's2', target_name: 'wiki', protocol: 'http' }])
     const watch = await screen.findByRole('link', { name: 'Watch, opens in a new tab' })
     expect(watch.getAttribute('href')).toBe('/audit/shadow/s2?protocol=http&target=wiki')
+    // the protocol reads as it does on Recordings (the live console, 2026-11-01)
+    expect(screen.getByRole('cell', { name: 'HTTP' })).toBeDefined()
   })
 })

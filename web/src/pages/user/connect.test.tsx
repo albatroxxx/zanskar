@@ -1,12 +1,14 @@
-import { StrictMode } from 'react'
-import { cleanup, render, screen, within } from '@testing-library/react'
+import { lazy, StrictMode, Suspense } from 'react'
+import { act, cleanup, render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { MemoryRouter, Route, Routes } from 'react-router-dom'
+import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { ApiError, api } from '../../api/client'
 import type { ReachableTarget } from '../../api/types'
+import { SessionLoading } from '../../components/SessionSplash'
 import { ConnectPage } from './connect'
-import { connectHref, intentTTL, parseIntent, recordIntent, takeIntent } from './intent'
+import { connectHref, intentTTL, parseIntent, recordedIntents, recordIntent, takeIntent } from './intent'
+import * as sessionPages from './sessionPages'
 
 afterEach(() => {
   cleanup()
@@ -30,6 +32,11 @@ const wiki: ReachableTarget = {
 const granted = { ticket: 'tk', expires_at: 'x', ws_path: '/ws/terminal' }
 const asked = new ApiError(422, { code: 'credential_required', message: 'this target needs your username and password', request_id: 'r' }, '422')
 
+/** Again shows the address the session page was given for Connect again. */
+function Again() {
+  return <output data-testid="again">{(useLocation().state as { again?: string } | null)?.again}</output>
+}
+
 let page = 0
 /** open mounts /connect as a new tab does, clicked (a record left for it) or
  *  not. Each mount is its own history entry, like its own page load. */
@@ -41,7 +48,7 @@ function open(href: string, { clicked = true, items = [box, fleet, wiki], strict
     <MemoryRouter initialEntries={[{ pathname: url.pathname, search: url.search, key: `page-${++page}` }]}>
       <Routes>
         <Route path="/connect" element={<ConnectPage />} />
-        <Route path="/terminal" element={<p>terminal page</p>} />
+        <Route path="/terminal" element={<><p>terminal page</p><Again /></>} />
         <Route path="/desktop" element={<p>desktop page</p>} />
         <Route path="/" element={<p>targets</p>} />
       </Routes>
@@ -56,11 +63,35 @@ function open(href: string, { clicked = true, items = [box, fleet, wiki], strict
 describe('the record of a session link just clicked', () => {
   const href = connectHref({ target: 't1', protocol: 'ssh' })
 
+  /** stored is everything the records left in storage. */
+  const stored = () => Object.keys(localStorage).map((k) => `${k}=${localStorage.getItem(k)}`).join('\n')
+
   it('is used up once, by one tab', () => {
     recordIntent(href)
     expect(takeIntent(href)).toBe(true)
     expect(takeIntent(href)).toBe(false)
-    expect(localStorage.getItem('zanskar.connect')).toBeNull()
+    expect(stored()).toBe('')
+  })
+
+  // One list, read, edited and written back by each tab, lost a click that
+  // landed while the first tab took its record: that tab asked "Connect?"
+  // (the end-to-end suite under load, 2026-11-01). Each click has a key.
+  it('keeps a click that lands while a tab takes its record', () => {
+    recordIntent(href)
+    const read = Storage.prototype.getItem
+    let clicked = false
+    vi.spyOn(Storage.prototype, 'getItem').mockImplementation(function (this: Storage, key: string) {
+      const value = read.call(this, key)
+      if (!clicked && key.startsWith('zanskar.connect')) {
+        clicked = true
+        recordIntent(href) // the second click, between the take's read and its write
+      }
+      return value
+    })
+    expect(takeIntent(href)).toBe(true)
+    vi.restoreAllMocks()
+    expect(recordedIntents()).toEqual([href])
+    expect(takeIntent(href)).toBe(true)
   })
 
   it('serves two tabs when the link was clicked twice, and only for its own address', () => {
@@ -74,15 +105,17 @@ describe('the record of a session link just clicked', () => {
   it('lapses after a minute, and goes from storage on the next write', () => {
     recordIntent(href, 1_000)
     recordIntent('/connect?target=t2&protocol=ssh', 1_000 + intentTTL)
-    expect(localStorage.getItem('zanskar.connect')).not.toContain('t1')
+    expect(stored()).not.toContain('t1')
     expect(takeIntent(href, 1_000 + intentTTL)).toBe(false)
   })
 
-  it('reads storage it does not understand as no record', () => {
-    localStorage.setItem('zanskar.connect', '{"not":"a list"')
+  it('reads storage it does not understand as no record, and clears it', () => {
+    localStorage.setItem('zanskar.connect:1:a', '{"not":"a record"')
+    localStorage.setItem('zanskar.connect:1:b', JSON.stringify({ href, at: 'soon' }))
+    // the one list 1.12.0 kept, a fresh record in it
+    localStorage.setItem('zanskar.connect', JSON.stringify([{ href, at: Date.now() }]))
     expect(takeIntent(href)).toBe(false)
-    localStorage.setItem('zanskar.connect', JSON.stringify([{ href, at: 'soon' }, 7]))
-    expect(takeIntent(href)).toBe(false)
+    expect(stored()).toBe('')
   })
 })
 
@@ -99,12 +132,86 @@ describe('a session link', () => {
   })
 })
 
+// The live console (2026-11-01): between the click and the application, the
+// tab flashed a portal page with a Connect button, then the same card asking
+// "Connect to … ?" again, then a light "Loading desktop".
+describe('the tab while it connects', () => {
+  it('shows only the connecting screen, and asks for the session page\'s code meanwhile', async () => {
+    vi.spyOn(api, 'post').mockReturnValue(new Promise(() => {}))
+    const preload = vi.spyOn(sessionPages, 'preloadSessionPage')
+    open('/connect?target=t1&protocol=ssh')
+    expect((await screen.findByRole('status')).textContent).toBe('Connecting to box…')
+    expect(screen.queryByRole('button', { name: 'Connect' })).toBeNull()
+    expect(screen.queryByRole('link', { name: 'Back to targets' })).toBeNull()
+    expect(screen.queryByRole('heading')).toBeNull()
+    expect(preload).toHaveBeenCalledWith('ssh')
+  })
+
+  it('never asks again once connected, while the session page is still loading', async () => {
+    let answer: (v: unknown) => void = () => {}
+    vi.spyOn(api, 'post').mockReturnValue(new Promise((ok) => (answer = ok)))
+    vi.spyOn(api, 'get').mockImplementation(async () => ({ items: [box] }) as never)
+    const href = '/connect?target=t1&protocol=ssh'
+    recordIntent(href)
+    // a session page whose code never arrives
+    const Never = lazy(() => new Promise<{ default: () => null }>(() => {}))
+    // The boundary is around the routes, already showing this page, so the
+    // router's transition keeps this page on screen while the next one
+    // loads, as the browser did for about 60 ms.
+    render(
+      <MemoryRouter initialEntries={[{ pathname: '/connect', search: '?target=t1&protocol=ssh', key: `page-${++page}` }]}>
+        <Suspense fallback={<p>fallback</p>}>
+          <Routes>
+            <Route path="/connect" element={<ConnectPage />} />
+            <Route path="/terminal" element={<Never />} />
+          </Routes>
+        </Suspense>
+      </MemoryRouter>,
+    )
+    await screen.findByText('Connecting to box…')
+    await act(async () => answer(granted))
+    await act(() => new Promise((r) => setTimeout(r, 50)))
+    expect(screen.queryByText('fallback')).toBeNull()
+    expect(screen.queryByText(/over SSH\?/)).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Connect' })).toBeNull()
+    expect(screen.getByRole('status').textContent).toBe('Connecting to box…')
+  })
+
+  it('loads a session page behind the same screen, naming the target', () => {
+    render(
+      <MemoryRouter initialEntries={[{ pathname: '/desktop', state: { target: 'nginx-internal' } }]}>
+        <SessionLoading />
+      </MemoryRouter>,
+    )
+    expect(screen.getByRole('status').textContent).toBe('Connecting to nginx-internal…')
+  })
+
+  it('titles the tab as the session will be titled, so it does not blink on the way', () => {
+    render(
+      <MemoryRouter initialEntries={[{ pathname: '/desktop', state: { target: 'nginx-internal', protocol: 'http' } }]}>
+        <SessionLoading />
+      </MemoryRouter>,
+    )
+    expect(document.title).toBe('nginx-internal · HTTP · Zanskar')
+  })
+
+  it('brings the page back with the reason when the connect is refused', async () => {
+    vi.spyOn(api, 'post').mockRejectedValue(new ApiError(502, { code: 'upstream', message: 'the machine did not answer', request_id: 'r' }, '502'))
+    open('/connect?target=t1&protocol=ssh')
+    expect(await screen.findByText(/the machine did not answer/)).toBeDefined()
+    expect(screen.getByRole('button', { name: 'Connect' })).toBeDefined()
+    expect(screen.queryByText('Connecting to box…')).toBeNull()
+  })
+})
+
 describe('the tab a session link opened', () => {
   it('connects at once when our own link was just clicked, and opens the terminal in this tab', async () => {
     const post = vi.spyOn(api, 'post').mockResolvedValue(granted as never)
     open('/connect?target=t1&protocol=ssh')
     expect(await screen.findByText('terminal page')).toBeDefined()
     expect(post.mock.calls).toEqual([['/connect', { target_id: 't1', protocol: 'ssh' }]])
+    // the session page can come back here to connect again
+    expect(screen.getByTestId('again').textContent).toBe('/connect?target=t1&protocol=ssh')
   })
 
   it('asks first when it was opened any other way, and connects on Connect', async () => {

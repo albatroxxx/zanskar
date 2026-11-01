@@ -20,6 +20,9 @@ export interface SessionState {
   asg_instance_id?: string
   instance_label?: string
   switched_from?: string
+  /** The address of the page that connected (connectHref), for Connect
+   *  again when the session ends. */
+  again?: string
 }
 
 /** switchedState is the state for the session a failover moved to: the new
@@ -35,6 +38,7 @@ export function switchedState(from: SessionState, res: ConnectResponse): Session
     asg_instance_id: res.asg_instance_id,
     instance_label: res.instance_label,
     switched_from: from.instance_label,
+    again: from.again,
   }
 }
 

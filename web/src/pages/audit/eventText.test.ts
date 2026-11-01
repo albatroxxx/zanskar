@@ -107,6 +107,7 @@ group('sign-in, session and recording events read as what happened', () => {
     [{ action: 'user.mfa.confirm', outcome: 'failure' as const }, 'failed to confirm an authenticator'],
     [{ action: 'user.mfa.verify' }, 'passed the second factor'],
     [{ action: 'session.connect', object_name: 'web-1', details: { protocol: 'ssh' } }, 'requested SSH access to web-1'],
+    [{ action: 'session.connect', object_name: 'win-1', details: { protocol: 'winrm' } }, 'requested WinRM access to win-1'],
     [{ action: 'session.connect', outcome: 'failure' as const, object_name: 'web-1', details: { protocol: 'ssh', reason: 'not_allowed' } }, 'was refused SSH access to web-1 (not allowed)'],
     [{ action: 'session.start', object_name: 'bob → web-1 (SSH)' }, 'opened a SSH session on web-1'],
     [{ action: 'session.end', object_name: 'bob → web-1 (SSH)', details: { reason: 'idle_timeout' } }, 'ended the SSH session on web-1 (idle timeout)'],

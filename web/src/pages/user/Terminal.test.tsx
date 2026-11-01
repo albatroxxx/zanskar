@@ -1,4 +1,4 @@
-import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -149,6 +149,14 @@ describe('Terminal', () => {
     act(() => g.sockets[0].onclose?.({ code: 1008, reason: 'policy_revoked: access to web-1 was withdrawn' }))
     const dialog = await screen.findByRole('dialog')
     expect(dialog.textContent).toContain('access to web-1 was withdrawn')
+  })
+
+  it('offers to connect again when the session ended, given the page that connected it', async () => {
+    open({ ...session, again: '/connect?target=t1&protocol=ssh' })
+    await screen.findByText('web-1')
+    act(() => g.sockets[0].onclose?.({ code: 1000, reason: 'user_exit' }))
+    const dialog = await screen.findByRole('dialog')
+    expect(within(dialog).getByRole('button', { name: 'Connect again' }).className).toBe('btn primary')
   })
 
   it('rebuilds the terminal and socket when the session ticket changes, and tears both down on leave', async () => {

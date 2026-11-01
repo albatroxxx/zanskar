@@ -1,12 +1,26 @@
 import { renderHook, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { api } from '../../api/client'
-import { listPages, useList } from './lib'
+import type { HostKeyStatus, Protocol } from '../../api/types'
+import { listPages, useList, usesHostKey } from './lib'
 
 afterEach(() => vi.restoreAllMocks())
 
 // Until 1.9.0 useList asked for one page of 500 and ignored next_cursor:
 // past 500 targets the policy editor's lists silently lost some.
+describe('usesHostKey', () => {
+  const t = { capabilities: [] as Protocol[], host_key_fingerprint: null as string | null, host_key_status: 'unknown' as HostKeyStatus, last_probed_at: '2026-11-01T10:00:00Z' as string | null }
+  it('says no for a probed host without SSH and without a key', () => {
+    expect(usesHostKey({ ...t, capabilities: ['rdp'] })).toBe(false)
+  })
+  it('says yes for SSH, a key on record, a key in any state, or a host never probed', () => {
+    expect(usesHostKey({ ...t, capabilities: ['ssh'] })).toBe(true)
+    expect(usesHostKey({ ...t, host_key_fingerprint: 'SHA256:x' })).toBe(true)
+    expect(usesHostKey({ ...t, host_key_status: 'changed' })).toBe(true)
+    expect(usesHostKey({ ...t, last_probed_at: null })).toBe(true)
+  })
+})
+
 describe('useList', () => {
   it('follows next_cursor to the last page', async () => {
     const get = vi.spyOn(api, 'get').mockImplementation(async (path: string) => {

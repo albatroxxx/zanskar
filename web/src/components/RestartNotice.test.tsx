@@ -79,6 +79,31 @@ describe('RestartNotice', () => {
     expect(await screen.findByText('Restart required.')).toBeDefined()
   })
 
+  // The first answer brings the start time; with it among the effect's
+  // dependencies the notice read the status again straight away, on every
+  // admin page (the live console, 2026-11-01).
+  it('reads the status once as a page opens', async () => {
+    const get = vi.spyOn(api, 'get').mockResolvedValue(status() as never)
+    render(<RestartNotice />)
+    await waitFor(() => expect(get).toHaveBeenCalledTimes(1))
+    await new Promise((r) => setTimeout(r, 50))
+    expect(get).toHaveBeenCalledTimes(1)
+  })
+
+  it('takes its own restart as the latest answer: the gateway gone next is a restart under way', async () => {
+    const pending = status({ restart_required: true, env_file: { state: 'changed', path: '/etc/zanskar/env', changed: ['ZANSKAR_TLS_HOSTS'], checked_at: 'x' } })
+    // the page's first read, then the gateway is away
+    vi.spyOn(api, 'get').mockResolvedValueOnce(pending as never).mockRejectedValue(new Error('Failed to fetch'))
+    vi.spyOn(api, 'post').mockResolvedValue(status({ draining: true, live_sessions: 0, drain: { requested_at: 'x', requested_by: 'u1', deadline: 'x', wait_minutes: 0 } }) as never)
+    render(<RestartNotice />)
+    const user = userEvent.setup()
+    await user.click(await screen.findByRole('button', { name: 'Restart the gateway…' }))
+    const dialog = screen.getByRole('dialog', { name: 'Restart the gateway?' })
+    await user.click(within(dialog).getByLabelText('End live sessions and restart now'))
+    await user.click(within(dialog).getByRole('button', { name: 'Restart' }))
+    expect(await screen.findByText(/Restarting the gateway… this page reloads when it is back/)).toBeDefined()
+  })
+
   it('warns in red when the master key changed, and says when the file cannot be checked', async () => {
     vi.spyOn(api, 'get').mockResolvedValue(status({ restart_required: true, env_file: { state: 'changed', path: '/etc/zanskar/env', changed: ['ZANSKAR_MASTER_KEY'], checked_at: 'x' } }) as never)
     const { unmount } = render(<RestartNotice />)

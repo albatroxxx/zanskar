@@ -310,6 +310,7 @@ describe('Groups', () => {
     serve([alice], [])
     const user = await show()
     await user.click(screen.getByRole('tab', { name: 'Groups' }))
-    expect(await screen.findByText('No groups. Policies attach to groups, so create one first.')).toBeDefined()
+    // A policy names users or groups (ADR 0036); a group is not needed first.
+    expect(await screen.findByText('No groups. A policy can name users without one.')).toBeDefined()
   })
 })

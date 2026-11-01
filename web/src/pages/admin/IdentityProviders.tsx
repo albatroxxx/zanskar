@@ -118,7 +118,6 @@ function fromCsv(s: string): string[] {
 export function IdentityProviders() {
   const { items, err, reload } = useList<Provider>('/identity-providers')
   const [editing, setEditing] = useState<Provider | 'new' | null>(null)
-  const [deleting, setDeleting] = useState<Provider | null>(null)
   const [syncing, setSyncing] = useState<string | null>(null)
   const [notice, setNotice] = useState<{ tone: 'ok' | 'warn' | 'danger'; text: string } | null>(null)
   // A run that held back removals offers to apply them, after a confirmation.
@@ -182,8 +181,7 @@ export function IdentityProviders() {
                         <button className="btn sm" disabled={syncing !== null || p.sync.running} onClick={() => void runSync(p)}>{syncing === p.id ? 'Syncing…' : 'Sync now'}</button>{' '}
                       </>
                     )}
-                    <button className="btn sm" onClick={() => setEditing(p)}>Edit</button>{' '}
-                    <button className="btn sm danger" onClick={() => setDeleting(p)}>Delete</button>
+                    <button className="btn sm" onClick={() => setEditing(p)}>Edit</button>
                   </td>
                 </tr>
               ))}
@@ -196,6 +194,10 @@ export function IdentityProviders() {
           existing={editing === 'new' ? null : editing}
           onClose={() => setEditing(null)}
           onSaved={() => {
+            setEditing(null)
+            void reload()
+          }}
+          onDeleted={() => {
             setEditing(null)
             void reload()
           }}
@@ -214,19 +216,6 @@ export function IdentityProviders() {
           }
           onConfirm={() => runSync(held.provider, true)}
           onClose={() => setHeld(null)}
-        />
-      )}
-      {deleting && (
-        <Confirm
-          title="Delete provider"
-          danger
-          confirmLabel="Delete"
-          body={<p>Delete <strong>{deleting.name}</strong>? Its users keep their accounts but cannot sign in through it.</p>}
-          onConfirm={async () => {
-            await api.del(`/identity-providers/${deleting.id}`)
-            void reload()
-          }}
-          onClose={() => setDeleting(null)}
         />
       )}
     </>
@@ -381,7 +370,8 @@ function RegisterURI({ id }: { id: string }) {
   )
 }
 
-function ProviderModal({ existing, onClose, onSaved }: { existing: Provider | null; onClose: () => void; onSaved: () => void }) {
+function ProviderModal({ existing, onClose, onSaved, onDeleted }: { existing: Provider | null; onClose: () => void; onSaved: () => void; onDeleted: () => void }) {
+  const [deleting, setDeleting] = useState(false)
   const [loaded, setLoaded] = useState<Provider | null>(existing && !existing.config ? null : existing)
   const [type, setType] = useState<IdPType>(existing?.type ?? 'oidc')
   const [name, setName] = useState(existing?.name ?? '')
@@ -565,13 +555,36 @@ function ProviderModal({ existing, onClose, onSaved }: { existing: Provider | nu
         </Field>
 
         <div className="actions" style={{ justifyContent: 'space-between' }}>
-          <span>{existing && <button type="button" className="btn" onClick={runTest}>Test connection</button>}</span>
+          {/* Delete lives where a provider is opened, as a host's does in its
+              drawer, not as a red button on every row of the list (the live
+              console, 2026-11-01). */}
+          <span>
+            {existing && (
+              <>
+                <button type="button" className="btn danger" onClick={() => setDeleting(true)} disabled={busy}>Delete</button>{' '}
+                <button type="button" className="btn" onClick={runTest}>Test connection</button>
+              </>
+            )}
+          </span>
           <span>
             <button type="button" className="btn" onClick={onClose} disabled={busy}>Cancel</button>{' '}
             <button type="submit" className="btn primary" disabled={busy}>{busy ? 'Saving…' : 'Save'}</button>
           </span>
         </div>
       </form>
+      {deleting && existing && (
+        <Confirm
+          title="Delete provider"
+          danger
+          confirmLabel="Delete"
+          body={<p>Delete <strong>{existing.name}</strong>? Its users keep their accounts but cannot sign in through it.</p>}
+          onConfirm={async () => {
+            await api.del(`/identity-providers/${existing.id}`)
+            onDeleted()
+          }}
+          onClose={() => setDeleting(false)}
+        />
+      )}
     </Modal>
   )
 }

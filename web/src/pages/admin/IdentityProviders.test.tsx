@@ -213,12 +213,17 @@ describe('Editing, testing and deleting a provider', () => {
     expect(post).toHaveBeenCalledWith('/identity-providers/i2/test')
   })
 
-  it('deletes after confirmation, and shows a refusal in the dialog', async () => {
+  // Delete lives where a provider is opened, as a host's does in its
+  // drawer; a red Delete on every row was the live console's finding
+  // (2026-11-01).
+  it('deletes from the edit dialog after confirmation, and shows a refusal in the dialog', async () => {
     serve()
     const del = vi.spyOn(api, 'del').mockRejectedValueOnce(new ApiError(409, { code: 'conflict', message: 'sessions still open through it', request_id: 'r' }, '409')).mockResolvedValue({} as never)
     render(<IdentityProviders />)
     const user = userEvent.setup()
-    await user.click((await screen.findAllByRole('button', { name: 'Delete' }))[0])
+    await user.click((await screen.findAllByRole('button', { name: 'Edit' }))[0])
+    expect(screen.getAllByRole('row').every((r) => within(r).queryByRole('button', { name: 'Delete' }) === null)).toBe(true)
+    await user.click(await within(screen.getByRole('dialog')).findByRole('button', { name: 'Delete' }))
     const dialog = screen.getByRole('dialog', { name: 'Delete provider' })
     expect(within(dialog).getByText(/keep their accounts but cannot sign in through it/)).toBeDefined()
     await user.click(within(dialog).getByRole('button', { name: 'Delete' }))

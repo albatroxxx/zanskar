@@ -7,7 +7,7 @@ import { canConnect } from '../../auth/home'
 import { PickList } from '../../components/PickList'
 import { TagEditor } from '../../components/TagEditor'
 import { tagSuggestions } from '../../components/tags'
-import { Alert, Empty, Field, PageHead, RemoveButton } from '../../components/ui'
+import { Alert, Confirm, Empty, Field, PageHead, RemoveButton } from '../../components/ui'
 import { useList } from './lib'
 import { chipsFor, fromDraft, grantSummary, kindOf, kinds, newGrant, toDraft, unfound, type GrantDraft } from './policyModel'
 
@@ -18,6 +18,17 @@ function toggle<T>(list: T[], v: T): T[] {
 }
 
 /** pickMany adds ids to list, or takes them out. */
+/** personOption is a user as the audience picker lists them: the display
+ *  name beside the username, and a disabled account (one its identity
+ *  provider removed, say) marked and left out of Select all, the way a
+ *  disabled target is. Unmarked, it read as someone the policy would reach
+ *  (the live console, 2026-11-01). */
+function personOption(u: User) {
+  const named = u.display_name && u.display_name !== u.username ? u.display_name : undefined
+  const off = u.status === 'disabled'
+  return { id: u.id, label: u.username, detail: off ? [named, 'disabled'].filter(Boolean).join(' · ') : named, detailTitle: off ? undefined : 'Display name', inactive: off }
+}
+
 function pickMany(list: string[], ids: string[], on: boolean): string[] {
   return on ? [...new Set([...list, ...ids])] : list.filter((x) => !ids.includes(x))
 }
@@ -31,6 +42,7 @@ function pickMany(list: string[], ids: string[], on: boolean): string[] {
 export function PolicyEditor() {
   const { id } = useParams()
   const nav = useNavigate()
+  const [deleting, setDeleting] = useState(false)
   const groups = useList<Group>('/groups')
   const users = useList<User>('/users')
   const targets = useList<Target>('/targets', { limit: 500 })
@@ -125,7 +137,7 @@ export function PolicyEditor() {
           </Field>
           <Field label="Users" hint="Review-only accounts are not offered">
             <PickList label="users" idPrefix="pe-user" selected={userIDs} onToggle={(uid) => setUserIDs(toggle(userIDs, uid))} onSelect={(ids, on) => setUserIDs(pickMany(userIDs, ids, on))}
-              options={people.map((u) => ({ id: u.id, label: u.username, detail: u.display_name && u.display_name !== u.username ? u.display_name : undefined, detailTitle: 'Display name' }))} />
+              options={people.map(personOption)} />
           </Field>
         </div>
       </div>
@@ -162,9 +174,26 @@ export function PolicyEditor() {
         )}
       </div>
       <div className="editor-footer">
+        {/* Delete lives where a policy is opened, as a host's does in its
+            drawer, not as a red button on every row of the list (the live
+            console, 2026-11-01). */}
+        {id && loaded && <button type="button" className="btn danger" style={{ marginRight: 'auto' }} disabled={busy} onClick={() => setDeleting(true)}>Delete</button>}
         <Link className="btn" to="/admin/policies">Cancel</Link>
         <button type="button" className="btn primary" disabled={busy} onClick={() => void save()}>{busy ? 'Saving…' : id ? 'Save' : 'Create'}</button>
       </div>
+      {deleting && loaded && (
+        <Confirm
+          title={`Delete policy ${loaded.name}?`}
+          body="Its people lose this access; their live sessions are re-checked and end if nothing else admits them."
+          confirmLabel="Delete"
+          danger
+          onClose={() => setDeleting(false)}
+          onConfirm={async () => {
+            await api.del(`/access-policies/${loaded.id}`)
+            nav('/admin/policies')
+          }}
+        />
+      )}
     </div>
   )
 }

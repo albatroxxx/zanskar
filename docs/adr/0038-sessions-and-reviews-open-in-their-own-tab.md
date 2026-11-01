@@ -52,7 +52,10 @@ address, the browser's "open in new tab" menu, which sends no event) it shows th
 a **Connect** button. The record is no secret: it proves only that a page of this origin made
 the link moments ago, which another origin cannot write. Two clicks leave two records, for
 two tabs. The page reads its record once per page load even when React runs its first steps
-twice. The console's `frame-ancestors 'none'` keeps the Connect button from being clicked
+twice. Amended 2026-11-01: each record is a key of its own (`zanskar.connect:<time>:<nonce>`)
+rather than an entry in one list. A tab that read the list, took its entry and wrote the list
+back could write away a second click that landed meanwhile, and that tab asked first; a tab
+now removes only its own key. The console's `frame-ancestors 'none'` keeps the Connect button from being clicked
 through a frame.
 
 **Watches and recordings.** Watch and Review (and the recording links in Sessions and
@@ -77,6 +80,10 @@ session's tab), Terminate, the admin's edit dialogs and pages, Settings, signing
   not the list. A lapsed grant says so there and points back to Targets for the request.
 - "Back to targets" at the end of a session stays: a tab cannot count on closing itself in
   every browser. A reload of a session tab behaves as it did before this change.
+  Amended 2026-11-01: the end dialog also offers "Connect again", first. It goes back to the
+  `/connect` address that opened the session, in the same tab, with the record a session link
+  leaves; that page asks for a credential again where one is needed. A tab of its own ending
+  on a second targets list was the live console's finding.
 - The end-to-end suite now drives a session in a tab of its own, two at once, and the
   `/connect` page opened without a click; the old guarantee holds (a fresh `/terminal` goes
   back to the targets).

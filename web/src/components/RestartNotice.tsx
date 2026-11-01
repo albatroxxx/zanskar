@@ -1,4 +1,4 @@
-import { useEffect, useState, useSyncExternalStore } from 'react'
+import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import { api, errorMessage } from '../api/client'
 import { fmtTime } from '../api/format'
 import type { SystemStatus } from '../api/types'
@@ -35,6 +35,18 @@ export function RestartNotice() {
   const [minutes, setMinutes] = useState(15)
   const [err, setErr] = useState('')
   const watched = useSyncExternalStore(progressWatch.subscribe, progressWatch.active)
+  // The latest answer, for comparing the next one with. Held apart from the
+  // effect's dependencies: with the start time among them, the first answer
+  // (which brings it) ran the effect again and read the status a second time
+  // straight away, on every admin page (the live console, 2026-11-01).
+  const last = useRef<SystemStatus | null>(null)
+  const draining = !!status?.draining
+  // Every answer goes through here, a restart's and a cancel's too, so the
+  // next poll compares with the latest.
+  const keep = (s: SystemStatus) => {
+    last.current = s
+    setStatus(s)
+  }
 
   useEffect(() => {
     let cancelled = false
@@ -43,28 +55,30 @@ export function RestartNotice() {
         .get<SystemStatus>('/admin/system/status')
         .then((s) => {
           if (cancelled) return
+          const was = last.current
           // A different start time is the fresh process: reload for its
           // bundle. Seen either after the server was away, or straight away
           // when the restart was quick enough to fall between two polls.
           // Not while a progress view follows the restart: it shows the
           // outcome and offers the reload itself.
-          if (!progressWatch.active() && ((gone && s.started_at !== gone) || (status?.draining && s.started_at !== status.started_at))) {
+          if (!progressWatch.active() && ((gone && s.started_at !== gone) || (was?.draining && s.started_at !== was.started_at))) {
             window.location.reload()
             return
           }
-          setStatus(s)
+          keep(s)
         })
         .catch(() => {
           // The server is away: after a restart request that is expected.
-          if (!cancelled && status?.draining) setGone(status.started_at)
+          const was = last.current
+          if (!cancelled && was?.draining) setGone(was.started_at)
         })
     void tick()
-    const t = setInterval(tick, gone || status?.draining ? RECONNECT_MS : POLL_MS)
+    const t = setInterval(tick, gone || draining ? RECONNECT_MS : POLL_MS)
     return () => {
       cancelled = true
       clearInterval(t)
     }
-  }, [gone, status?.draining, status?.started_at])
+  }, [gone, draining])
 
   if (watched) return null
   if (gone) return <Alert tone="warn">Restarting the gateway… this page reloads when it is back.</Alert>
@@ -74,7 +88,7 @@ export function RestartNotice() {
   const restart = async (waitMinutes: number) => {
     setErr('')
     try {
-      setStatus(await api.post<SystemStatus>('/admin/system/restart', { wait_minutes: waitMinutes }))
+      keep(await api.post<SystemStatus>('/admin/system/restart', { wait_minutes: waitMinutes }))
     } catch (e) {
       setErr(errorMessage(e))
       throw e
@@ -83,7 +97,7 @@ export function RestartNotice() {
   const cancel = async () => {
     setErr('')
     try {
-      setStatus(await api.del<SystemStatus>('/admin/system/restart'))
+      keep(await api.del<SystemStatus>('/admin/system/restart'))
     } catch (e) {
       setErr(errorMessage(e))
     }

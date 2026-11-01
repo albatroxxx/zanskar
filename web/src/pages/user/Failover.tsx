@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { api, ApiError, errorMessage } from '../../api/client'
+import { protocolName } from '../../api/format'
 import type { ConnectResponse, Page, ReachableInstance } from '../../api/types'
 import { Alert, Modal } from '../../components/ui'
 
@@ -76,7 +77,7 @@ export function FailoverDialog({ sessionId, asgId, protocol, lostLabel, onExit, 
     <Modal title={empty ? 'No healthy instances' : 'Instance lost'} onClose={onExit} width={560}>
       <p>
         {lostLabel ? `${lostLabel} left the healthy pool. ` : 'The instance you were on left the healthy pool. '}
-        {empty ? 'The group has no healthy instance to switch to right now.' : `Switch to another instance in this group over ${protocol.toUpperCase()}, or exit.`}
+        {empty ? 'The group has no healthy instance to switch to right now.' : `Switch to another instance in this group over ${protocolName(protocol)}, or exit.`}
       </p>
       {err && <Alert tone="danger" onDismiss={() => setErr('')}>{err}</Alert>}
       {instances === null && <p className="muted">Loading healthy instances…</p>}

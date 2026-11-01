@@ -51,50 +51,76 @@ export function parseIntent(q: URLSearchParams): ConnectIntent | null {
 // address) shows a Connect button instead, so nobody's session is started
 // for them by a page they happened to open. The record is no secret; it
 // proves only that this origin made the link, which another site cannot.
-const intentKey = 'zanskar.connect'
+// One key per click (zanskar.connect:<time>:<nonce>), not one list: a tab
+// taking its record removes its own key and writes nothing else. With one
+// list, read, edited and written back, a second click landing while the
+// first tab took its record could be written away, and that tab asked
+// "Connect?" (the end-to-end suite under load, 2026-11-01). Tabs see each
+// other's storage late, so two may take one record; both were clicked for,
+// and the spare one lapses.
+const intentPrefix = 'zanskar.connect:'
+/** The one list 1.12.0 kept; removed on sight. */
+const legacyKey = 'zanskar.connect'
 /** How long a click's record waits for its tab. */
 export const intentTTL = 60_000
 
 interface Click {
+  key: string
   href: string
   at: number
 }
 
+/** readRecords is the fresh records, oldest first. Expired ones, and any
+ *  this code cannot read, go from storage as they are met. */
 function readRecords(now: number): Click[] {
+  const out: Click[] = []
   try {
-    const all = JSON.parse(localStorage.getItem(intentKey) ?? '[]') as unknown
-    if (!Array.isArray(all)) return []
-    return all.filter((r): r is Click => typeof r?.href === 'string' && typeof r?.at === 'number' && now - r.at < intentTTL && r.at <= now)
+    localStorage.removeItem(legacyKey)
+    const keys = Array.from({ length: localStorage.length }, (_, i) => localStorage.key(i)).filter((k): k is string => !!k?.startsWith(intentPrefix))
+    for (const key of keys) {
+      let r: Partial<Click> | null = null
+      try {
+        r = JSON.parse(localStorage.getItem(key) ?? 'null') as Partial<Click> | null
+      } catch {
+        r = null
+      }
+      if (typeof r?.href === 'string' && typeof r.at === 'number' && now - r.at < intentTTL && r.at <= now) out.push({ key, href: r.href, at: r.at })
+      else localStorage.removeItem(key)
+    }
   } catch {
+    // Storage blocked: the new tab shows its Connect button.
     return []
   }
+  return out.sort((a, b) => a.at - b.at)
 }
 
-function writeRecords(records: Click[]) {
+/** recordedIntents is the addresses with a fresh record, oldest first. */
+export function recordedIntents(now = Date.now()): string[] {
+  return readRecords(now).map((r) => r.href)
+}
+
+/** recordIntent notes that a session link to href was just clicked; expired
+ *  records go on every read, so storage stays short. */
+export function recordIntent(href: string, now = Date.now()) {
+  readRecords(now)
+  const nonce = Array.from(crypto.getRandomValues(new Uint32Array(2)), (n) => n.toString(36)).join('')
   try {
-    if (records.length === 0) localStorage.removeItem(intentKey)
-    else localStorage.setItem(intentKey, JSON.stringify(records))
+    localStorage.setItem(`${intentPrefix}${now}:${nonce}`, JSON.stringify({ href, at: now }))
   } catch {
     // Storage blocked: the new tab shows its Connect button.
   }
 }
 
-/** recordIntent notes that a session link to href was just clicked; expired
- *  records go on every write, so the list stays short. */
-export function recordIntent(href: string, now = Date.now()) {
-  writeRecords([...readRecords(now), { href, at: now }])
-}
-
-/** takeIntent uses up one fresh record for href and says whether there was
- *  one. Two clicks on one link leave two records, for two tabs. */
+/** takeIntent uses up one fresh record for href, the oldest, and says
+ *  whether there was one. Two clicks on one link leave two records, for two
+ *  tabs. */
 export function takeIntent(href: string, now = Date.now()): boolean {
-  const records = readRecords(now)
-  const at = records.findIndex((r) => r.href === href)
-  if (at < 0) {
-    writeRecords(records)
-    return false
+  const mine = readRecords(now).find((r) => r.href === href)
+  if (!mine) return false
+  try {
+    localStorage.removeItem(mine.key)
+  } catch {
+    // Storage blocked: nothing to use up.
   }
-  records.splice(at, 1)
-  writeRecords(records)
   return true
 }

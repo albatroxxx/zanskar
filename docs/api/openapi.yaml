@@ -6480,6 +6480,10 @@ components:
           $ref: "#/components/schemas/Timestamp"
         error:
           type: string
+          description: >
+            Why there is no identity, in a sentence ("This machine has no IAM role.
+            Attach an instance profile to it."). The AWS SDK's own error goes to the
+            gateway's log, not here.
     AsgIAMDocs:
       type: object
       required: [external_id, principal_source, role_name, permissions_policy]

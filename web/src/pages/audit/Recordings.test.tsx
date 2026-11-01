@@ -35,6 +35,12 @@ describe('Recordings, a row', () => {
     }
     expect(document.querySelector('a[href$="/download"], a[href$="/transcript"]')).toBeNull()
   })
+
+  it('writes the protocol the way every other page does', async () => {
+    page([session(1, { recording_id: 'r1', protocol: 'winrm' }), session(2, { recording_id: 'r2', protocol: 'ssh' })])
+    expect(await screen.findByRole('cell', { name: 'WinRM' })).toBeDefined()
+    expect(screen.getByRole('cell', { name: 'SSH' })).toBeDefined()
+  })
 })
 
 // B24: the page reads the newest sessions a page at a time and filters them

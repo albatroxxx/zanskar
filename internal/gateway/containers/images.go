@@ -28,7 +28,7 @@ func EnsureImage(ctx context.Context, log *slog.Logger, docker, image string) er
 	if err := Run(ctx, docker, nil, "image", "inspect", "--format", "{{.Id}}", image); err == nil {
 		return nil
 	}
-	log.Info("image not present on this host; pulling it before the session starts", "image", image)
+	log.Info("image not present on this host; pulling it", "image", image)
 	pctx, cancel := context.WithTimeout(ctx, PullTimeout)
 	defer cancel()
 	start := time.Now()

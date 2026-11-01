@@ -4,7 +4,7 @@ import { appTLS, dbTLS, engineName, fmtTime, protocolName } from '../../api/form
 import type { CertificateProbe, Credential, ProbeResponse, Protocol, Target } from '../../api/types'
 import { Alert, Badge, Confirm, Modal, Tags } from '../../components/ui'
 import { DeleteAsset } from './DeleteAsset'
-import { hostKeyBadge, protocols } from './lib'
+import { hostKeyBadge, protocols, usesHostKey } from './lib'
 import { CredentialBindings, type BindingChange } from './Bindings'
 import { kindOf, TargetForm, targetBody } from './TargetForm'
 
@@ -150,7 +150,11 @@ export function TargetDetail({ target, credentials, onClose, onChanged, onDelete
         <dt>Status</dt><dd>{t.status}</dd>
         {host && (
           <>
-            <dt>Capabilities</dt><dd>{t.capabilities.length ? t.capabilities.join(', ') : <span className="muted">unprobed</span>}</dd>
+            <dt>Capabilities</dt><dd>{t.capabilities.length ? t.capabilities.map(protocolName).join(', ') : <span className="muted">unprobed</span>}</dd>
+          </>
+        )}
+        {host && usesHostKey(t) && (
+          <>
             <dt>Host key</dt>
             <dd>
               {hostKeyBadge(t.host_key_status)} {fp && <span className="mono"> {fp}</span>}

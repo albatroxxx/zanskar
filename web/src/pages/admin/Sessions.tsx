@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useLocation, useSearchParams } from 'react-router-dom'
 import { api, errorMessage } from '../../api/client'
-import { fmtDuration, fmtTime } from '../../api/format'
+import { fmtDuration, fmtTime, protocolName } from '../../api/format'
 import { ranges, sinceFor } from '../../api/ranges'
 import { sessionTarget, sessionUser } from '../../api/labels'
 import type { Session } from '../../api/types'
@@ -83,7 +83,7 @@ export function Sessions() {
                   <td>{fmtTime(s.started_at)}</td>
                   <td title={s.user_id}><strong>{sessionUser(s)}</strong></td>
                   <td title={s.target_id ?? s.asg_instance_id}>{sessionTarget(s)}</td>
-                  <td>{s.protocol}</td>
+                  <td>{protocolName(s.protocol)}</td>
                   <td className="mono muted">{s.client_ip}</td>
                   <td>{fmtDuration(s.started_at, s.ended_at)}</td>
                   <td>{reasonBadge(s.end_reason)}</td>

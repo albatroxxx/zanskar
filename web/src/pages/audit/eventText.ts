@@ -1,7 +1,7 @@
 // The words the Events page uses for audit events: action names, object
 // types and the one-line sentence per event. Kept apart from the page so the
 // wording can be tested, since a reader sees words and never ids.
-import { fmtPreciseTime, shortId } from '../../api/format'
+import { fmtPreciseTime, protocolName, shortId } from '../../api/format'
 import type { AuditEvent } from '../../api/types'
 
 /** Readable names for the action codes the gateway records. The code stays
@@ -173,7 +173,7 @@ export function describe(ev: AuditEvent): string {
   const fail = ev.outcome === 'failure'
   const name = ev.object_name || (ev.object_id ? shortId(ev.object_id) : '')
   const s = session(ev.object_name)
-  const proto = s?.proto ?? str(d.protocol).toUpperCase()
+  const proto = s?.proto ?? protocolName(str(d.protocol))
   const reason = str(d.reason)
   switch (ev.action) {
     case 'user.login':

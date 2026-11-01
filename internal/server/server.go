@@ -261,13 +261,29 @@ var quietPaths = map[string]bool{
 	"/api/v1/admin/logs": true, "/api/v1/admin/system/status": true,
 }
 
+// staticKey carries the mark a request for one of the console's own files
+// gets (markStatic), read by the access log.
+type staticKey struct{}
+
+// markStatic marks r as a request for a file of the console's bundle: a
+// script, a style sheet, a font, an icon. A page load fetches about ten, and
+// at info each was a line of its own (the live console, 2026-11-01), so a
+// served one is logged at debug. The page itself, and anything that fails,
+// stays at info.
+func markStatic(r *http.Request) {
+	if f, ok := r.Context().Value(staticKey{}).(*bool); ok {
+		*f = true
+	}
+}
+
 func (s *Server) accessLog(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
 		rec := httpx.NewStatusRecorder(w)
-		next.ServeHTTP(rec, r)
+		static := new(bool)
+		next.ServeHTTP(rec, r.WithContext(context.WithValue(r.Context(), staticKey{}, static)))
 		level := slog.LevelInfo
-		if quietPaths[r.URL.Path] && rec.Status < 400 {
+		if (quietPaths[r.URL.Path] || *static) && rec.Status < 400 {
 			level = slog.LevelDebug
 		}
 		// Query strings are intentionally not logged: connect tickets travel there.

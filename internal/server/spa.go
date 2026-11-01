@@ -24,6 +24,7 @@ func spaHandler(bundle fs.FS) http.Handler {
 		// A directory is not a page: it gets the app like any unknown path,
 		// never a listing of the bundle (L8).
 		if p != "/" && isFile(bundle, strings.TrimPrefix(p, "/")) {
+			markStatic(r)
 			if strings.HasPrefix(p, "/assets/") {
 				w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
 			}

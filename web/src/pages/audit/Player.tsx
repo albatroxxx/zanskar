@@ -3,20 +3,17 @@ import { Link, useParams } from 'react-router-dom'
 import * as AsciinemaPlayer from 'asciinema-player'
 import 'asciinema-player/dist/bundle/asciinema-player.css'
 import { api, errorMessage } from '../../api/client'
-import { fmtBytes, fmtDuration, fmtSeconds, fmtTime } from '../../api/format'
+import { fmtBytes, fmtDuration, fmtSeconds, fmtTime, protocolName } from '../../api/format'
 import { sessionTarget, sessionUser } from '../../api/labels'
 import type { Recording } from '../../api/types'
 import { TransportIcon } from '../../components/icons'
-import { Alert, Badge, Empty, PageHead, reasonBadge } from '../../components/ui'
+import { Alert, Empty, PageHead, reasonBadge } from '../../components/ui'
 import { useTitle } from '../../components/title'
 import { useFullscreen } from '../user/fullscreen'
 import { FullscreenButton } from '../user/FullscreenButton'
 import { useRecordingsPath } from './paths'
 
 type PlayerHandle = ReturnType<typeof AsciinemaPlayer.create>
-/** How the terminal player sizes itself: to the card's width on the page,
- *  to the whole screen (width and height) in full screen. */
-type TermFit = 'width' | 'both'
 type GuacModule = typeof import('guacamole-common-js').default
 type SessionRecording = InstanceType<GuacModule['SessionRecording']>
 
@@ -28,9 +25,20 @@ interface Command { t: number; text: string }
 const IDLE_LIMIT = 2
 const SKIP_SECONDS = 10
 const SPEEDS = [0.5, 1, 1.5, 2, 4]
-/** Room kept under the replayed desktop in full screen for the transport and
- *  the stage's padding. */
-const FULL_RESERVE = 72
+/** Room kept under the picture for the transport, on the page and in full
+ *  screen. */
+const RESERVE = 72
+/** The least a picture is given on the page, however short the window. */
+const MIN_ROOM = 240
+
+/** pageRoom is the height a picture may take on the page: the window's,
+ *  less the transport. Play scrolls the player to the top of the window, so
+ *  where it stands before that does not count. Sizing it to the room below
+ *  its place on the page left a short window with a small picture and a page
+ *  too short to scroll it any higher (the live console, 2026-11-01). */
+function pageRoom(): number {
+  return Math.max(MIN_ROOM, window.innerHeight - RESERVE)
+}
 
 /** parseCast reads an asciicast v2 file once: the marker events ([time, "m",
  *  label]) the gateway writes per submitted command line ("(hidden input)"
@@ -88,6 +96,13 @@ function typingInField(): boolean {
   return el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement || el instanceof HTMLSelectElement
 }
 
+/** onPressable says focus is on something Space presses: a button or a
+ *  link keeps that key, so a keyboard user can still use them. */
+function onPressable(): boolean {
+  const el = document.activeElement
+  return el instanceof HTMLButtonElement || el instanceof HTMLAnchorElement
+}
+
 /** IconButton is one transport control: a glyph on the button, its words in
  *  the accessible name and the tooltip. */
 function IconButton({ label, onClick, primary, children }: { label: string; onClick: () => void; primary?: boolean; children: ReactNode }) {
@@ -111,8 +126,9 @@ export function Player() {
   const stage = useRef<HTMLDivElement>(null)
   const { isFull, toggle: toggleFull } = useFullscreen(stage)
   const full = useRef(false)
-  const termFit = useRef<TermFit>('width')
   const term = useRef<PlayerHandle | null>(null)
+  // Watches the terminal's picture, to trim the room around it.
+  const termSize = useRef<ResizeObserver | null>(null)
   const cast = useRef<{ text: string; times: number[] } | null>(null)
   const desk = useRef<SessionRecording | null>(null)
   // transport state shared by both players
@@ -135,6 +151,7 @@ export function Player() {
 
   useEffect(() => {
     return () => {
+      termSize.current?.disconnect()
       term.current?.dispose()
       term.current = null
       desk.current?.disconnect()
@@ -144,23 +161,45 @@ export function Player() {
 
   // ---- terminal (asciinema)
 
+  /** roomTerminal gives the terminal player its height. The player fits
+   *  both ways inside it, so the whole picture is in view: fitted to the
+   *  width alone, a wide window's terminal ran below the window's bottom
+   *  with its controls (the live console, 2026-11-01). On the page that is
+   *  the window's height, and in full screen what the stage leaves. */
+  const roomTerminal = useCallback(() => {
+    const el = host.current
+    if (el) el.style.height = full.current ? '' : `${pageRoom()}px`
+  }, [])
+
+  /** trimTerminal takes the room in to the picture. When the width is what
+   *  limits the picture, the player leaves the rest of its height empty,
+   *  which would stand as a gap above the controls. The picture keeps its
+   *  size, so the player does not fit again. */
+  const trimTerminal = useCallback(() => {
+    const el = host.current
+    const picture = el?.querySelector<HTMLElement>('.ap-player')
+    if (!el || !picture || full.current) return
+    const h = Math.ceil(picture.getBoundingClientRect().height)
+    if (h > 0 && h < pageRoom()) el.style.height = `${h}px`
+  }, [])
+
   /** mountTerminal creates the asciinema player at a point on its own clock,
-   *  with a speed and fit. It is the only way to change speed or fit: the
-   *  player has no setter for either. */
-  const mountTerminal = useCallback((at: number, rate: number, autoPlay: boolean, fit: TermFit = termFit.current) => {
+   *  with a speed. It is the only way to change speed: the player has no
+   *  setter for it. */
+  const mountTerminal = useCallback((at: number, rate: number, autoPlay: boolean, focus = false) => {
     const c = cast.current
     const el = host.current
     if (!c || !el) return
-    // Focus inside the old player (its own keys, F) moves to the new one;
-    // it would otherwise fall to the page and the next F would do nothing.
-    const focused = el.contains(document.activeElement)
+    // Focus inside the old player (its own keys) moves to the new one.
+    const focused = focus || el.contains(document.activeElement)
+    termSize.current?.disconnect()
     term.current?.dispose()
     el.innerHTML = ''
-    termFit.current = fit
+    roomTerminal()
     // Markers in the file appear on the player's timeline; the list below
     // seeks to them. The theme is neutral so it matches the console pages.
     // startAt is recording time.
-    const p = AsciinemaPlayer.create({ data: c.text }, el, { fit, theme: 'asciinema', idleTimeLimit: IDLE_LIMIT, autoPlay, speed: rate, startAt: rawTime(c.times, at) })
+    const p = AsciinemaPlayer.create({ data: c.text }, el, { fit: 'both', theme: 'asciinema', idleTimeLimit: IDLE_LIMIT, autoPlay, speed: rate, startAt: rawTime(c.times, at) })
     // A player made paused is moved to where the old one stopped (on its own
     // clock), so it shows that frame instead of a blank screen, and Play goes
     // on from there with the screen as it was. Its poster option shows the
@@ -172,8 +211,14 @@ export function Player() {
     p.addEventListener('ended', () => setRunning(false))
     term.current = p
     setDuration(0)
-    if (focused) el.querySelector<HTMLElement>('.ap-wrapper')?.focus()
-  }, [])
+    const picture = el.querySelector('.ap-player')
+    if (picture && typeof ResizeObserver !== 'undefined') {
+      termSize.current = new ResizeObserver(() => trimTerminal())
+      termSize.current.observe(picture)
+    }
+    // preventScroll: Play scrolls the player into view itself, smoothly.
+    if (focused) el.querySelector<HTMLElement>('.ap-wrapper')?.focus({ preventScroll: true })
+  }, [roomTerminal, trimTerminal])
 
   const playTerminal = async (r: Recording) => {
     // Streaming the recording is the audited "view". It goes through the api
@@ -183,7 +228,9 @@ export function Player() {
     const parsed = parseCast(text)
     cast.current = { text, times: parsed.times }
     setCommands(parsed.commands)
-    mountTerminal(0, speed, true)
+    // Play takes its own button away; focus goes to the player rather than
+    // falling to the page, so the player's own keys answer straight away.
+    mountTerminal(0, speed, true, true)
   }
 
   const changeSpeed = (rate: number) => {
@@ -195,12 +242,13 @@ export function Player() {
   // ---- desktop (guacd stream)
 
   /** fitDesktop scales the replayed desktop to what the reviewer can see:
-   *  never wider than the card, never taller than the viewport below the
-   *  player's top edge, letterboxed inside the dark container. The previous
-   *  version scaled by width only, so a tall recording ran off the bottom of
-   *  the page and only half of it was visible without scrolling. In full
-   *  screen the reviewer asked for the whole screen, so a recording smaller
-   *  than it is drawn larger; on the page it is never drawn above its size. */
+   *  never wider than the card, never taller than the window less the
+   *  transport (pageRoom), letterboxed inside the dark container. The
+   *  previous version scaled by width only, so a tall recording ran off the
+   *  bottom of the page and only half of it was visible without scrolling.
+   *  In full screen the reviewer asked for the whole screen, so a recording
+   *  smaller than it is drawn larger; on the page it is never drawn above
+   *  its size. */
   const fitDesktop = useCallback(() => {
     const playback = desk.current
     const el = host.current
@@ -210,11 +258,7 @@ export function Player() {
     const h = display.getHeight()
     if (w <= 0 || h <= 0) return
     const availW = el.clientWidth
-    // The stage centres the picture in full screen, so the host's own top
-    // moves with its height; measure the stage instead.
-    const availH = full.current && stage.current
-      ? stage.current.clientHeight - FULL_RESERVE
-      : Math.max(240, window.innerHeight - el.getBoundingClientRect().top - 72)
+    const availH = full.current && stage.current ? stage.current.clientHeight - RESERVE : pageRoom()
     const scale = Math.min(full.current ? Infinity : 1, availW / w, availH / h)
     display.scale(scale)
     el.style.height = `${Math.round(h * scale)}px`
@@ -225,6 +269,9 @@ export function Player() {
     desk.current?.disconnect()
     if (!host.current) return
     host.current.innerHTML = ''
+    // The room the picture will have, before it has a size of its own, so
+    // the page is long enough for Play to scroll the player to the top.
+    host.current.style.height = `${pageRoom()}px`
     // guacamole-common-js's Blob source is broken upstream: it hands parseBlob an
     // uninitialised blob, so playback dies with "undefined is not an object
     // (evaluating 't.size')", and seeking reads that same unset blob. The tunnel
@@ -263,37 +310,50 @@ export function Player() {
     playback.connect()
   }
 
-  // Refit the desktop when the window changes, and follow the position while
-  // it plays (onseek fires only for seeks, not for ordinary progress).
+  // Refit the picture when the window changes. The terminal player fits
+  // itself to the room it is given; the room is the page's to set.
+  useEffect(() => {
+    if (phase !== 'playing') return
+    const onResize = () => (rec?.format === 'guac' ? fitDesktop() : roomTerminal())
+    window.addEventListener('resize', onResize)
+    return () => window.removeEventListener('resize', onResize)
+  }, [phase, rec?.format, fitDesktop, roomTerminal])
+
+  // Follow the desktop's position while it plays (onseek fires only for
+  // seeks, not for ordinary progress).
   useEffect(() => {
     if (phase !== 'playing' || rec?.format !== 'guac') return
-    const onResize = () => fitDesktop()
-    window.addEventListener('resize', onResize)
     const tick = setInterval(() => {
       const p = desk.current
       if (p && p.isPlaying()) setPosition(p.getPosition())
     }, 250)
-    return () => {
-      window.removeEventListener('resize', onResize)
-      clearInterval(tick)
-    }
-  }, [phase, rec?.format, fitDesktop])
+    return () => clearInterval(tick)
+  }, [phase, rec?.format])
 
   // Full screen in and out: the desktop refits once the stage has its new
-  // box (the window's resize event comes before that), and the terminal
-  // player is made again at the same point with the fit for the space.
+  // box (the window's resize event comes before that). The terminal player
+  // is given the stage's room or the page's, and fits itself to it where it
+  // stands, playing or paused. Leaving full screen, the browser puts the
+  // page back at its top, which leaves a picture sized for the window with
+  // its controls below the fold; the player goes back to where Play put it.
   useEffect(() => {
+    const left = full.current && !isFull
     full.current = isFull
     if (phase !== 'playing') return
-    if (rec?.format === 'guac') {
-      const frame = requestAnimationFrame(() => fitDesktop())
-      return () => cancelAnimationFrame(frame)
+    const back = () => {
+      if (left) host.current?.scrollIntoView({ block: 'start' })
     }
-    const fit: TermFit = isFull ? 'both' : 'width'
-    const p = term.current
-    if (!p || termFit.current === fit) return
-    mountTerminal(p.getCurrentTime(), speed, running, fit)
-  }, [isFull, phase, rec?.format, speed, running, fitDesktop, mountTerminal])
+    if (rec?.format !== 'guac') {
+      roomTerminal()
+      back()
+      return
+    }
+    const frame = requestAnimationFrame(() => {
+      fitDesktop()
+      back()
+    })
+    return () => cancelAnimationFrame(frame)
+  }, [isFull, phase, rec?.format, fitDesktop, roomTerminal])
 
   // F toggles full screen for both players. On the stage it is caught on the
   // way down, before the terminal player sees it: that player's own F would
@@ -330,6 +390,14 @@ export function Player() {
     setPosition(ms)
     desk.current?.seek(ms)
   }
+  const seekToStart = () => {
+    if (rec?.format === 'guac') seekTo(0)
+    else void term.current?.seek(0)
+  }
+  const seekToEnd = () => {
+    if (rec?.format === 'guac') seekTo(desk.current?.getDuration() ?? 0)
+    else void term.current?.seek('100%')
+  }
   const toggle = () => {
     if (rec?.format === 'guac') {
       const p = desk.current
@@ -353,18 +421,27 @@ export function Player() {
     if (p) void p.seek(0).then(() => p.play())
   }
 
-  // Keyboard shortcuts for the desktop player. The terminal player ships its
-  // own (space, arrows, [ ] for markers, 0-9), so these stay out of its way.
+  // Keyboard shortcuts for both players, from anywhere on the page. Play
+  // takes its own button away, so focus falls to the page: listened for only
+  // inside the terminal player, Space scrolled the page and F did nothing
+  // (the live console, 2026-11-01). Inside the terminal player its own keys
+  // answer (Space, the arrows, [ ] for markers, 0-9), so these leave them be.
+  // Space stays with a focused button or link, which it presses.
   useEffect(() => {
-    if (phase !== 'playing' || rec?.format !== 'guac') return
+    if (phase !== 'playing') return
+    const desktop = rec?.format === 'guac'
     const onKey = (e: KeyboardEvent) => {
       if (typingInField() || e.metaKey || e.ctrlKey || e.altKey) return
+      if (!desktop && host.current?.contains(document.activeElement)) return
       switch (e.key) {
-        case ' ': toggle(); break
+        case ' ':
+          if (onPressable()) return
+          toggle()
+          break
         case 'ArrowLeft': seekBy(-SKIP_SECONDS); break
         case 'ArrowRight': seekBy(SKIP_SECONDS); break
-        case 'Home': seekTo(0); break
-        case 'End': seekTo(desk.current?.getDuration() ?? 0); break
+        case 'Home': seekToStart(); break
+        case 'End': seekToEnd(); break
         case 'f': toggleFull(); break
         default: return
       }
@@ -395,7 +472,7 @@ export function Player() {
   const s = rec?.session
   const who = s ? sessionUser(s) : ''
   const where = s ? sessionTarget(s) : ''
-  const proto = s?.protocol.toUpperCase() ?? rec?.format
+  const proto = s ? protocolName(s.protocol) : rec?.format
   const title = s ? `${who} on ${where}` : 'Recording'
   const isDesktop = rec?.format === 'guac'
   useTitle(rec ? (s ? `Recording · ${title}` : 'Recording') : undefined)
@@ -523,7 +600,6 @@ export function Player() {
               )}
             </div>
           )}
-          {isDesktop && <Badge>desktop</Badge>}
         </>
       )}
     </>
