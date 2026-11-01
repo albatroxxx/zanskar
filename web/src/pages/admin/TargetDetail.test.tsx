@@ -28,6 +28,28 @@ function Drawer() {
   )
 }
 
+// The live console (2026-11-01): an RDP-only Windows host said "Host key:
+// unknown", as if something were wrong with a key it never had.
+describe('TargetDetail, the host key', () => {
+  const probed = '2026-11-01T10:00:00Z'
+  const show = (t: Target) => render(<TargetDetail target={t} credentials={[]} onClose={() => {}} onChanged={() => {}} onDeleted={() => {}} onError={() => {}} />)
+
+  it('is not shown for a probed host without SSH', () => {
+    show({ ...web, os_family: 'windows', ports: {}, capabilities: ['rdp', 'winrm'], host_key_status: 'unknown', last_probed_at: probed })
+    expect(screen.queryByText('Host key')).toBeNull()
+    expect(screen.getByText('RDP, WinRM')).toBeDefined()
+  })
+
+  it('is shown for a host with SSH, and for one never probed', () => {
+    show({ ...web, last_probed_at: probed })
+    expect(screen.getByText('Host key')).toBeDefined()
+    expect(screen.getByText('SSH', { selector: 'dd' })).toBeDefined()
+    cleanup()
+    show({ ...web, capabilities: [], host_key_status: 'unknown' })
+    expect(screen.getByText('Host key')).toBeDefined()
+  })
+})
+
 // B25: Disable had no busy state, so a double-click sent two PUTs, and once
 // the first had answered the second turned the target back on.
 describe('TargetDetail, Disable', () => {

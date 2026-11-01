@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { api, errorMessage, query } from '../../api/client'
-import type { HostKeyStatus, Page, Protocol } from '../../api/types'
+import type { HostKeyStatus, Page, Protocol, Target } from '../../api/types'
 import { StateIcon } from '../../components/icons'
 import { Badge } from '../../components/ui'
 
@@ -72,6 +72,14 @@ async function fetchAll<T>(path: string, params: Record<string, string>): Promis
     pages++
   } while (cursor && pages < listPages)
   return { items, truncated: Boolean(cursor) }
+}
+
+/** usesHostKey says whether an SSH host key means anything for a host: SSH
+ *  was found on it, a key is on record, or it was never probed, so nobody
+ *  knows yet. A probed host without SSH (a Windows host over RDP) has none,
+ *  and "unknown" there read as a fault (the live console, 2026-11-01). */
+export function usesHostKey(t: Pick<Target, 'capabilities' | 'host_key_fingerprint' | 'host_key_status' | 'last_probed_at'>): boolean {
+  return !t.last_probed_at || t.capabilities.includes('ssh') || !!t.host_key_fingerprint || t.host_key_status !== 'unknown'
 }
 
 export function hostKeyBadge(status: HostKeyStatus) {
