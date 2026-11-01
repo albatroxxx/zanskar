@@ -520,6 +520,23 @@ func serve(ctx context.Context) error {
 		},
 		Audit: auditLog, Log: log,
 	}
+	// Then it pulls the new ones the enrolled targets' sessions will need,
+	// in the background, so the first session after an upgrade does not wait
+	// on the pull. A development build pulls nothing, as it removes nothing.
+	warm := &warmImages{
+		Enabled: func() bool { return releasedBuild(version.Version) },
+		Needed: func(ctx context.Context) ([]string, error) {
+			inv, err := targets.CountInventory(ctx)
+			if err != nil {
+				return nil, err
+			}
+			return neededImages(inv, runtime.String(settings.KeyBrowserImage), runtime.String(settings.KeyDBProxyImage)), nil
+		},
+		Ensure: func(ctx context.Context, image string) error {
+			return containers.EnsureImage(ctx, log, cfg.DockerPath, image)
+		},
+		Log: log,
+	}
 	go func() {
 		live := func(id string) bool { _, ok := registry.Get(id); return ok }
 		t := time.NewTicker(5 * time.Minute)
@@ -537,6 +554,7 @@ func serve(ctx context.Context) error {
 				log.Log(ctx, level, "database session reaper cannot list containers; database sessions will not work until it can", "err", err)
 			}
 			images.pass(ctx)
+			go warm.pass(ctx)
 			select {
 			case <-ctx.Done():
 				return

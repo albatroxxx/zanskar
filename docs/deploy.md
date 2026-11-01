@@ -683,12 +683,17 @@ certificate, no DNS record, nothing installed on the client.
   maximum limits and its clipboard rule. The audit chain records `session.connect`,
   `session.start` and `session.end`, as for a desktop. An application holds no credential:
   the application's own sign-in, if it has one, is the user's.
-- **The first session pulls the images.** A host that has never run an application pulls
-  the relay (the gateway's own image, about 45 MB) and the browser image (about a 270 MB
-  download, 660 MB on disk) before the first session starts, under a deadline of its own, and the
-  console shows *Connecting* until the first frame; on a slow link that first session takes
-  minutes. The Applications checklist says when the browser image is not on the host yet. To
-  spare the first user, pull ahead on the gateway host:
+- **The gateway pulls the images ahead.** An application session needs the relay (the
+  gateway's own image, about 45 MB) and the browser image (about a 270 MB download, 660 MB on
+  disk). Once an application is enrolled, a released gateway pulls both in the background: on
+  start and every five minutes after, right after it removes earlier versions' images (below),
+  so after an upgrade the new images arrive before the first user asks for them. A MySQL or
+  MariaDB database gets its relay the same way. A pull that fails is logged once, as a warning,
+  until a pass works again; a development build pulls nothing. A session that starts before the
+  pull is done pulls the image itself, under a deadline of its own, and the console shows
+  *Connecting* until the first frame; on a slow link that takes minutes. The Applications
+  checklist says when the browser image is not on the host yet. To pull by hand on the gateway
+  host:
 
   ```
   docker pull ghcr.io/albatroxxx/zanskar-browser:<version>
