@@ -274,6 +274,8 @@ describe('Player, the transport', () => {
     await user.click(screen.getByRole('button', { name: 'Forward 10 seconds' }))
     await user.click(screen.getByRole('button', { name: 'Back 10 seconds' }))
     expect(h.seeks).toEqual([13, 0])
+    // no line of keyboard instructions under the controls (2026-11-01)
+    expect(screen.queryByText(/play\/pause|full screen\./i)).toBeNull()
   })
 
   it('takes a paused terminal player and its controls full screen and back, on the same frame', async () => {

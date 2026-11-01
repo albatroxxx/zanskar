@@ -487,11 +487,6 @@ export function Player() {
                     )}
                     <FullscreenButton isFull={isFull} onClick={toggleFull} size={18} />
                   </div>
-                  <p className="muted player-hint">
-                    {isDesktop
-                      ? 'Space play/pause · ← → back/forward 10 s · Home/End · F full screen. Desktop recordings play at real time; guacd streams carry no speed control.'
-                      : 'On the player: Space play/pause · ← → 5 s · [ ] previous/next command · 0–9 jump to a tenth · F full screen. Speed applies from the current point.'}
-                  </p>
                 </>
               )}
             </div>
