@@ -395,7 +395,7 @@ function Groups() {
         {items === null ? (
           err ? null : <Empty>Loading…</Empty>
         ) : items.length === 0 ? (
-          <Empty>No groups. Policies attach to groups, so create one first.</Empty>
+          <Empty>No groups. A policy can name users without one.</Empty>
         ) : (
           <table>
             <thead>
