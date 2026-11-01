@@ -22,7 +22,8 @@ func themeScript(bundle fs.FS, theme func() string) http.Handler {
 	if err != nil {
 		return nil
 	}
-	return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		markStatic(r)
 		lit := `'system'`
 		switch theme() {
 		case "light":
