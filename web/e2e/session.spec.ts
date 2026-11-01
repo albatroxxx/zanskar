@@ -98,4 +98,26 @@ test.describe('An SSH session from the browser', () => {
     await expect(page.getByRole('button', { name: 'Connect' })).toBeEnabled()
     await expect(page).toHaveURL(/\/connect\?/)
   })
+
+  // 2026-11-01: a session's own tab ended on a second targets list. It
+  // offers to connect again, in the same tab, without asking first.
+  test('connects again from the end of a session, in the same tab', async ({ page, context }) => {
+    test.slow()
+    await page.goto('/')
+    const ssh = page.getByRole('row').filter({ hasText: 'fake-1' }).getByRole('link', { name: 'SSH, opens in a new tab' })
+    const [tab] = await Promise.all([context.waitForEvent('page'), ssh.click()])
+    await expect(tab.locator('.xterm')).toContainText('welcome to fakessh', { timeout: 15_000 })
+    await tab.getByRole('button', { name: 'Disconnect' }).click()
+    const ended = tab.getByRole('dialog', { name: 'Session ended' })
+    await ended.getByRole('button', { name: 'Connect again' }).click()
+    await expect(ended).toBeHidden()
+    await expect(tab).toHaveURL(/\/terminal$/)
+    // a live shell, not the one that ended: it echoes what is typed
+    await expect(tab.locator('.xterm')).toContainText('welcome to fakessh', { timeout: 15_000 })
+    await tab.locator('.xterm').click()
+    await tab.keyboard.type('again\n')
+    await expect(tab.locator('.xterm')).toContainText('AGAIN')
+    await tab.getByRole('button', { name: 'Disconnect' }).click()
+    await tab.close()
+  })
 })
