@@ -102,6 +102,13 @@ Deferred by decision: a multi-pane workspace (browser tabs suffice), rotation of
 keys and of Windows or database passwords (the certificate authority and the owning systems
 do that). Still Phase 4: HA, SAML/SCIM, WebAuthn.
 
+## v1.13 release — shipped (v1.13.0 tagged 2026-11-01)
+
+What a walk through the live console found, fixed: a session's tab offers to connect again, the
+gateway pulls the images sessions need ahead of the first one, the recording player answers its
+keys and fits the window, and the console reads and behaves the same on every page
+([release notes](releases/v1.13.0.md)).
+
 ## v1.12 release — shipped (v1.12.0 tagged 2026-11-01)
 
 Sessions, watches and recordings open in a tab of their own, so a person runs several sessions at
