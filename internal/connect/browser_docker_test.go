@@ -387,6 +387,64 @@ func TestApplicationBrowserControls(t *testing.T) {
 	waitFor("Home", "/", 3)
 }
 
+// TestApplicationBrowserFollowsTheScreen (2026-11-01, the live console in
+// full screen: black below the page): when the session's pane changes size,
+// guacd resizes the X screen, and the browser window is made that size too,
+// larger and smaller again. There is no window manager in the image; the
+// entrypoint does it with xdotool, which this test reads the sizes with.
+func TestApplicationBrowserFollowsTheScreen(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+	app := openRealApp(t, ctx, nil)
+	defer func() {
+		app.hangUp()
+		_ = app.ws.Write(ctx, websocket.MessageText, []byte(guac.Encode("disconnect")))
+		time.Sleep(2 * time.Second)
+	}()
+	// Drain what guacd draws, so its socket never backs up.
+	go func() {
+		for {
+			if _, _, err := app.ws.Read(ctx); err != nil {
+				return
+			}
+		}
+	}()
+	browser := "zanskar-browser-" + app.sessionID
+	// sizes is the X screen's size on the first line, then each visible
+	// browser window's, as "width height".
+	sizes := func() []string {
+		out := dbtest.Docker(t, "exec", "-e", "DISPLAY=:1", browser, "sh", "-c",
+			`xdotool getdisplaygeometry 2>&1; for id in $(xdotool search --onlyvisible --class chromium 2>/dev/null); do xdotool getwindowgeometry --shell "$id" | sed -n 's/^WIDTH=//p; s/^HEIGHT=//p' | tr '\n' ' '; echo; done`)
+		lines := strings.Split(out, "\n")
+		for i := range lines {
+			lines[i] = strings.TrimSpace(lines[i])
+		}
+		return lines
+	}
+	fills := func(what string, w, h int) {
+		t.Helper()
+		want := strconv.Itoa(w) + " " + strconv.Itoa(h)
+		var got []string
+		for end := time.Now().Add(30 * time.Second); time.Now().Before(end); time.Sleep(500 * time.Millisecond) {
+			if got = sizes(); got[0] == want && slices.Contains(got[1:], want) {
+				return
+			}
+		}
+		t.Fatalf("%s: want the screen and a browser window at %s; screen, then windows: %q", what, want, got)
+	}
+	resize := func(w, h int) {
+		t.Helper()
+		if err := app.ws.Write(ctx, websocket.MessageText, []byte(guac.Encode("size", strconv.Itoa(w), strconv.Itoa(h)))); err != nil {
+			t.Fatal(err)
+		}
+	}
+	fills("the session's first size", 1024, 768)
+	resize(1280, 960)
+	fills("a larger pane, as full screen", 1280, 960)
+	resize(900, 600)
+	fills("a smaller pane", 900, 600)
+}
+
 // TestBrowserImageEnforcesManagedPolicy (2026-10-30, when the image moved to
 // a trimmed Debian 13): the image's Chromium reads policy from
 // /etc/chromium/policies/managed, where the entrypoint writes it, and blocks

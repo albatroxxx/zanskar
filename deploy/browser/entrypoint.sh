@@ -75,15 +75,48 @@ export DISPLAY=:1
 vncconfig -nowin >/dev/null 2>&1 &
 touch /tmp/ready
 
+# The browser window follows the screen. There is no window manager, so a
+# window keeps the size it opened at; when the session's pane changes (full
+# screen, a resized window) guacd resizes the X screen to match, and the
+# page stopped short of the bottom, black below it (2026-11-01), or ran past
+# it. Twice a second, a Chromium window at the top left about the size of
+# the screen, now or before its last change (the browser window; not a menu,
+# a bubble or a separate developer tools window), is made exactly the
+# screen's size: Chromium also opens a window asked for at 1280x800 at
+# 1279x799, a line of black at the right and the bottom.
+near() {
+  d=$(($1 - $2))
+  [ "${d#-}" -le 8 ]
+}
+follow_screen() {
+  last="$W $H"
+  while sleep 0.5; do
+    now=$(xdotool getdisplaygeometry 2>/dev/null) || continue
+    for id in $(xdotool search --onlyvisible --class chromium 2>/dev/null); do
+      # X, Y, WIDTH and HEIGHT, in that order.
+      set -- $(xdotool getwindowgeometry --shell "$id" 2>/dev/null | sed -nE 's/^(X|Y|WIDTH|HEIGHT)=//p')
+      [ $# -eq 4 ] && [ "$1" -eq 0 ] && [ "$2" -eq 0 ] || continue
+      [ "$3 $4" = "$now" ] && continue
+      if { near "$3" "${now% *}" && near "$4" "${now#* }"; } || { near "$3" "${last% *}" && near "$4" "${last#* }"; }; then
+        xdotool windowsize "$id" ${now% *} ${now#* } windowmove "$id" 0 0 2>/dev/null || true
+      fi
+    done
+    last=$now
+  done
+}
+follow_screen &
+
 # A full browser window filling the screen, Chromium's own toolbar and tabs
 # shown (ADR 0037; it was kiosk mode until 1.9). Closing the last window
 # opens the start page again rather than ending the session: the session
-# ends from the console. Confinement is the policy above either way.
-# --enable-low-end-device-mode trims about a tenth of the memory (measured
-# 2026-10-31).
+# ends from the console, and the new window takes the screen's size now,
+# not the one the session started with. Confinement is the policy above
+# either way. --enable-low-end-device-mode trims about a tenth of the memory
+# (measured 2026-10-31).
 while :; do
+  screen=$(xdotool getdisplaygeometry 2>/dev/null) || screen="$W $H"
   chromium "$APP_URL" --no-first-run --no-default-browser-check \
-    --window-position=0,0 --window-size="${W},${H}" --start-maximized --user-data-dir="$HOME/profile" \
+    --window-position=0,0 --window-size="${screen% *},${screen#* }" --start-maximized --user-data-dir="$HOME/profile" \
     --host-resolver-rules="$RESOLVER_RULES" --password-store=basic \
     --disable-dev-shm-usage --disable-gpu --disable-background-networking \
     --disable-component-update --disable-sync --no-pings --disable-breakpad \
