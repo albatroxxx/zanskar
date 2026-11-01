@@ -34,14 +34,17 @@ export function HostActionDialog({ action, version, change, onClose }: { action:
   const [wait, setWait] = useState(15)
   const [confirm, setConfirm] = useState('')
   const [code, setCode] = useState('')
-  const [busy, setBusy] = useState(false)
+  // The minutes of the request in flight, null when none is.
+  const [busy, setBusy] = useState<number | null>(null)
   const [err, setErr] = useState('')
   const [start, setStart] = useState<Start | null>(null)
   const [progress, setProgress] = useState<Progress>(initialProgress)
+  const [live, setLive] = useState<number | null>(null)
   const words = titles[action]
 
   useEffect(() => {
     api.get<HostStatus>('/admin/system/host').then(setHost).catch(() => setHost(null))
+    api.get<SystemStatus>('/admin/system/status').then((s) => setLive(s.live_sessions)).catch(() => setLive(null))
   }, [])
 
   // While the view follows an action, the restart banner leaves the page alone.
@@ -81,27 +84,32 @@ export function HostActionDialog({ action, version, change, onClose }: { action:
 
   const needsCode = action !== 'restart' && host !== null && !host.mfa_fresh
   const typed = action !== 'restart' && action !== 'config'
-  const submit = async (e: FormEvent) => {
-    e.preventDefault()
-    setBusy(true)
+  const ready = busy === null && !(typed && !confirm.trim()) && !(needsCode && !code.trim())
+  /** run asks for the action, letting live sessions finish for minutes (0 ends them now). */
+  const run = async (minutes: number) => {
+    setBusy(minutes)
     setErr('')
     try {
       const before = await api.get<SystemStatus>('/admin/system/status')
       const installBefore = action === 'update' ? (await api.get<UpdateStatus>('/admin/system/update').catch(() => null))?.install?.at : undefined
       if (needsCode) await api.post('/auth/mfa/step-up', { code: code.trim() })
-      const body = typed ? { wait_minutes: wait, confirm: confirm.trim() } : { wait_minutes: wait }
+      const body = typed ? { wait_minutes: minutes, confirm: confirm.trim() } : { wait_minutes: minutes }
       let target = version
       if (action === 'update') await api.post('/admin/system/update/install', { version, ...body })
-      else if (action === 'config') target = (await api.post<{ id: string }>('/admin/settings/boot', { values: change?.values, tls_mode: change?.tls_mode, wait_minutes: wait })).id
+      else if (action === 'config') target = (await api.post<{ id: string }>('/admin/settings/boot', { values: change?.values, tls_mode: change?.tls_mode, wait_minutes: minutes })).id
       else await api.post(`/admin/system/${action}`, body)
       const now = Date.now()
       setProgress(initialProgress)
-      setStart({ action, target, startedAt: before.started_at, installBefore, at: now, deadline: deadlineFor(action, wait, now) })
+      setStart({ action, target, startedAt: before.started_at, installBefore, at: now, deadline: deadlineFor(action, minutes, now) })
     } catch (e2) {
       setErr(errorMessage(e2))
     } finally {
-      setBusy(false)
+      setBusy(null)
     }
+  }
+  const submit = (e: FormEvent) => {
+    e.preventDefault()
+    void run(wait)
   }
   const cancel = async () => {
     try {
@@ -117,7 +125,7 @@ export function HostActionDialog({ action, version, change, onClose }: { action:
     const steps = stepsFor[action]
     const at = steps.indexOf(progress.step)
     return (
-      <Modal title={title} onClose={onClose} width={440}>
+      <Modal title={title} onClose={onClose} width={480}>
         {progress.state === 'done' ? (
           <div className="action-done" role="status">
             <DoneIcon />
@@ -171,12 +179,12 @@ export function HostActionDialog({ action, version, change, onClose }: { action:
     )
   }
   return (
-    <Modal title={title} onClose={onClose} width={440}>
+    <Modal title={title} onClose={onClose} width={480}>
       {action === 'poweroff' && <Alert tone="warn">Starting it again needs the host or the cloud console.</Alert>}
       {change && <p className="config-change">{change.summary}</p>}
       {err && <Alert tone="danger" onDismiss={() => setErr('')}>{err}</Alert>}
-      <form onSubmit={(e) => void submit(e)}>
-        <Field label="Let live sessions finish for" hint="Minutes; 0 ends them now.">
+      <form onSubmit={submit}>
+        <Field label="Let live sessions finish for" hint={`Minutes; 0 ends them now.${live === null ? '' : live === 0 ? ' None live.' : ` ${live} live.`}`}>
           <input id="action-wait" type="number" min={0} max={240} value={wait} onChange={(e) => setWait(Number(e.target.value))} />
         </Field>
         {typed && host && (
@@ -189,12 +197,20 @@ export function HostActionDialog({ action, version, change, onClose }: { action:
             <input id="action-code" value={code} onChange={(e) => setCode(e.target.value)} inputMode="numeric" autoComplete="one-time-code" />
           </Field>
         )}
+        {/* "<verb> now" skips the wait without typing 0 (2026-11-01); it
+            asks for the same hostname and code. With the wait already 0, the
+            main button says it. */}
         <div className="actions">
-          <button type="button" className="btn ghost" onClick={onClose} disabled={busy}>
+          <button type="button" className="btn ghost" onClick={onClose} disabled={busy !== null}>
             Cancel
           </button>
-          <button type="submit" className={'btn ' + (words.danger ? 'danger' : 'primary')} disabled={busy || (typed && !confirm.trim()) || (needsCode && !code.trim())}>
-            {busy ? 'Working…' : words.verb}
+          {wait > 0 && (
+            <button type="button" className="btn" onClick={() => void run(0)} disabled={!ready}>
+              {busy === 0 ? 'Working…' : `${words.verb} now`}
+            </button>
+          )}
+          <button type="submit" className={'btn ' + (words.danger ? 'danger' : 'primary')} disabled={!ready}>
+            {busy !== null && busy === wait ? 'Working…' : wait > 0 ? words.verb : `${words.verb} now`}
           </button>
         </div>
       </form>

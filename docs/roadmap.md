@@ -39,7 +39,7 @@ What the project does **not** intend to do in that time:
 - Install anything on targets. Zanskar stays agentless (ADR 0009); AWS SSM is out of scope.
 - Rotate static SSH keys, or Windows and database passwords. The SSH certificate authority removes
   the first; the systems that own those accounts do the second better.
-- A multi-pane workspace inside the console; browser tabs already do this.
+- A multi-pane workspace inside the console; browser tabs already do this (sessions, watches and recordings each open in a tab of their own, [ADR 0038](adr/0038-sessions-and-reviews-open-in-their-own-tab.md)).
 - Give any shell on the gateway host through the console.
 
 ## v1.0 release — shipped (v1.0.0 tagged 2026-09-25)
@@ -101,6 +101,14 @@ audits every command; it ships with a reference of every command. An ADR comes f
 Deferred by decision: a multi-pane workspace (browser tabs suffice), rotation of static SSH
 keys and of Windows or database passwords (the certificate authority and the owning systems
 do that). Still Phase 4: HA, SAML/SCIM, WebAuthn.
+
+## v1.12 release — shipped (v1.12.0 tagged 2026-11-01)
+
+Sessions, watches and recordings open in a tab of their own, so a person runs several sessions at
+once and an auditor inspects several side by side; a session link opened from anywhere else asks
+before it connects ([ADR 0038](adr/0038-sessions-and-reviews-open-in-their-own-tab.md)). Host
+actions can be done now without typing 0, a recordings row offers Review alone, and the player
+loses its line of keyboard instructions ([release notes](releases/v1.12.0.md)).
 
 ## v1.11 release — shipped (v1.11.0 tagged 2026-10-31, v1.11.1 and v1.11.2 2026-11-01)
 

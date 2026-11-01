@@ -494,7 +494,6 @@ td.actions > * + * { margin-left: 8px; }
 .transport .t { font-variant-numeric: tabular-nums; font-size: 0.86rem; color: var(--fg-muted); white-space: nowrap; }
 .transport .grow { flex: 1; }
 .transport .speed { padding: 4px 8px; border: 1px solid var(--line-strong); border-radius: var(--radius); background: var(--bg-raised); font-size: 0.86rem; }
-.player-hint { margin: 8px 0 0; font-size: 0.78rem; }
 /* Transport controls are glyphs; each button is a 32 px target. */
 .transport .btn.icon { padding: 6px 10px; }
 .transport .btn.icon svg { display: block; }
@@ -514,7 +513,6 @@ td.actions > * + * { margin-left: 8px; }
 .player-stage.is-full .player-host { margin-top: 0; }
 .player-stage.is-full .player-host:not(.desk-player) { flex: 1; min-height: 0; }
 .player-stage.is-full .ap-wrapper { align-items: center; }
-.player-stage.is-full .player-hint { display: none; }
 .player-stage.is-full .transport .t { color: var(--term-fg-muted); }
 .player-stage.is-full .btn:not(.primary), .player-stage.is-full .speed { background: var(--term-btn-bg); color: var(--term-fg); border-color: var(--term-btn-line); }
 .player-stage.is-full .btn:not(.primary):hover { background: var(--term-btn-hover); border-color: var(--term-fg-muted); }

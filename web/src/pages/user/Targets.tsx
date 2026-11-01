@@ -1,13 +1,13 @@
 import { useEffect, useState, type FormEvent } from 'react'
-import { useNavigate } from 'react-router-dom'
-import { api, ApiError, errorMessage } from '../../api/client'
+import { api, errorMessage } from '../../api/client'
 import { accessDrill, expiresSoon } from '../../api/drilldown'
-import type { AccessRequest, ConnectResponse, Page, Protocol, ReachableInstance, ReachableTarget, Session } from '../../api/types'
+import type { AccessRequest, Page, Protocol, ReachableInstance, ReachableTarget, Session } from '../../api/types'
 import { DatabaseIcon, OSIcon, StateIcon } from '../../components/icons'
 import { Alert, Badge, Empty, Field, Modal, PageHead, StatTile, Tabs, Tags } from '../../components/ui'
 import { badgesChanged } from '../../components/badges'
 import { engineName, protocolName } from '../../api/format'
 import { fmtAgo } from './Failover'
+import { SessionLink } from './connect'
 
 const terminalProtocols: Protocol[] = ['ssh', 'winrm']
 const desktopProtocols: Protocol[] = ['rdp', 'vnc']
@@ -19,48 +19,12 @@ function pick(t: ReachableTarget, family: Protocol[]): Protocol | null {
   return null
 }
 
-/** Body of POST /connect: exactly one of target_id, asg_id, asg_instance_id. */
-interface ConnectBody {
-  target_id?: string
-  asg_id?: string
-  asg_instance_id?: string
-  protocol: Protocol
-  /** The user's own login, for a slot that asks for it: a password, or over
-   *  SSH their own private key with its passphrase when it has one. */
-  credential?: { username: string; password?: string; private_key?: string; private_key_passphrase?: string }
-}
-
-/** The largest key file the prompt reads; the gateway refuses more. */
-const maxKeyBytes = 16 << 10
-
-const noCred = { username: '', password: '', method: 'password' as 'password' | 'key', key: '', passphrase: '' }
-
 export function Targets() {
-  const nav = useNavigate()
   const [items, setItems] = useState<ReachableTarget[] | null>(null)
   const [err, setErr] = useState('')
   const [notice, setNotice] = useState('')
   const [tab, setTab] = useState<'static' | 'database' | 'application' | 'asg'>('static')
-  const [prompt, setPrompt] = useState<{ target: ReachableTarget; protocol: Protocol; body: ConnectBody } | null>(null)
   const [chooser, setChooser] = useState<{ group: ReachableTarget; protocol: Protocol; instances: ReachableInstance[] | null } | null>(null)
-  const [cred, setCred] = useState(noCred)
-  const [promptErr, setPromptErr] = useState('')
-  // Closing the prompt forgets what was typed in it, the username excepted.
-  const closePrompt = () => {
-    setPrompt(null)
-    setPromptErr('')
-    setCred((c) => ({ ...noCred, username: c.username, method: c.method }))
-  }
-  const readKeyFile = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0]
-    e.target.value = ''
-    if (!file) return
-    if (file.size > maxKeyBytes) {
-      setPromptErr('that file is too large to be a private key')
-      return
-    }
-    void file.text().then((key) => setCred((c) => ({ ...c, key })))
-  }
   // Active grants, as a set of "targetId:protocol", so a gated protocol the user
   // already holds a grant for shows Connect rather than Request.
   const [grants, setGrants] = useState<Set<string>>(new Set())
@@ -88,6 +52,22 @@ export function Targets() {
       })
       .catch(() => {})
 
+  const countOpen = () =>
+    api
+      .get<Page<Session>>('/me/sessions?open=true&limit=50')
+      .then((p) => setStrip((s) => ({ ...s, open: p.items.length })))
+      .catch(() => {})
+
+  // A session started from here runs in a tab of its own (ADR 0038), so the
+  // open-sessions count is read again whenever this tab is looked at.
+  useEffect(() => {
+    const look = () => {
+      if (document.visibilityState === 'visible') void countOpen()
+    }
+    document.addEventListener('visibilitychange', look)
+    return () => document.removeEventListener('visibilitychange', look)
+  }, [])
+
   useEffect(() => {
     api
       .get<Page<ReachableTarget>>('/me/targets')
@@ -104,10 +84,7 @@ export function Targets() {
       })
       .catch((e) => setErr(errorMessage(e)))
     void loadGrants()
-    api
-      .get<Page<Session>>('/me/sessions?open=true&limit=50')
-      .then((p) => setStrip((s) => ({ ...s, open: p.items.length })))
-      .catch(() => {})
+    void countOpen()
     api
       .get<Page<AccessRequest>>('/me/access-requests')
       .then((p) => setStrip((s) => ({ ...s, pending: p.items.filter((r) => r.status === 'pending').length })))
@@ -117,46 +94,6 @@ export function Targets() {
   // A protocol is gated when the policy requires approval and the user holds no
   // active grant for it yet.
   const gated = (t: ReachableTarget, p: Protocol) => (t.requires_approval ?? []).includes(p) && !grants.has(`${t.id}:${p}`)
-
-  const connect = async (target: ReachableTarget, body: ConnectBody) => {
-    setBusy(target.id + body.protocol)
-    setErr('')
-    try {
-      const res = await api.post<ConnectResponse>('/connect', body)
-      closePrompt()
-      setChooser(null)
-      nav(res.ws_path === '/ws/desktop' ? '/desktop' : '/terminal', {
-        state: {
-          ticket: res.ticket,
-          ws_path: res.ws_path,
-          target: target.name,
-          protocol: body.protocol,
-          asg_id: res.asg_id,
-          asg_instance_id: res.asg_instance_id,
-          instance_label: res.instance_label,
-        },
-      })
-    } catch (e) {
-      if (prompt && e instanceof ApiError && (e.code === 'credential_required' || e.code === 'credential_invalid')) {
-        // Said inside the open prompt, where the user is looking.
-        setPromptErr(e.message)
-      } else if (e instanceof ApiError && e.code === 'credential_required') {
-        setPromptErr('')
-        setPrompt({ target, protocol: body.protocol, body })
-      } else if (e instanceof ApiError && e.code === 'approval_required') {
-        // The grant lapsed between listing and connecting; fall back to a request.
-        void loadGrants()
-        setReqModal({ target, protocol: body.protocol })
-      } else if (e instanceof ApiError && (e.code === 'no_healthy_instances' || e.code === 'instance_unhealthy')) {
-        setErr(e.message)
-        if (chooser) void loadInstances(chooser.group, chooser.protocol)
-      } else {
-        setErr(errorMessage(e))
-      }
-    } finally {
-      setBusy('')
-    }
-  }
 
   const submitRequest = async (e: FormEvent) => {
     e.preventDefault()
@@ -207,11 +144,13 @@ export function Targets() {
   // Empty-state text for a tab: the search message while filtering, else the tab's own "nothing assigned" line.
   const emptyFor = (noun: string, assigned: string) => (term ? `No ${noun} match ‘${search.trim()}’.` : assigned)
 
-  // protoButtons renders one cell per protocol family. onRequest, when given,
-  // turns a gated protocol into a Request button; onOwn, when given, adds
-  // "as me" where a grant lets the user sign in with their own login
+  // protoButtons renders one cell per protocol family. A machine's protocol is
+  // a link that opens the session in a tab of its own (ADR 0038); an
+  // autoscaling group's opens the instance chooser here (onPick). onRequest,
+  // when given, turns a gated protocol into a Request button; own, when set,
+  // adds "as me" where a grant lets the user sign in with their own login
   // instead of the target's (ADR 0036).
-  const protoButtons = (t: ReachableTarget, onPick: (p: Protocol) => void, onRequest?: (p: Protocol) => void, onOwn?: (p: Protocol) => void) => {
+  const protoButtons = (t: ReachableTarget, open: { link: true } | { onPick: (p: Protocol) => void }, onRequest?: (p: Protocol) => void, own?: boolean) => {
     const term = pick(t, terminalProtocols)
     const desk = pick(t, desktopProtocols)
     const notReady = !t.host_key_ready && term === 'ssh'
@@ -223,16 +162,27 @@ export function Targets() {
           </button>
         )
       }
-      const main = (
-        <button className={'btn sm' + (p ? colorClass : '')} disabled={!p || blocked || busy === t.id + p} onClick={() => p && onPick(p)} title={p ? label : 'not allowed'}>
-          {p ? label : '—'}
-        </button>
-      )
-      if (!p || !onOwn || !(t.own_login ?? []).includes(p)) return main
+      const main =
+        p && !blocked && 'link' in open ? (
+          <SessionLink intent={{ target: t.id, protocol: p }} className={'btn sm' + colorClass} label={label} title={label}>
+            {label}
+          </SessionLink>
+        ) : (
+          <button className={'btn sm' + (p ? colorClass : '')} disabled={!p || blocked} onClick={() => p && 'onPick' in open && open.onPick(p)} title={p ? label : 'not allowed'}>
+            {p ? label : '—'}
+          </button>
+        )
+      if (!p || !own || !(t.own_login ?? []).includes(p)) return main
       return (
         <span className="actions">
           {main}
-          <button className="btn sm ghost" disabled={blocked} onClick={() => onOwn(p)} aria-label={`${label} with my own login`} title="with my own login">as me</button>
+          {blocked ? (
+            <button className="btn sm ghost" disabled aria-label={`${label} with my own login`} title="with my own login">as me</button>
+          ) : (
+            <SessionLink intent={{ target: t.id, protocol: p, own: true }} className="btn sm ghost" label={`${label} with my own login`} title="with my own login">
+              as me
+            </SessionLink>
+          )}
         </span>
       )
     }
@@ -304,9 +254,9 @@ export function Targets() {
                         <button className="btn sm" onClick={() => setReqModal({ target: t, protocol: 'http' })} title="request access to this application">Request</button>
                       ) : (
                         // The application opens in an isolated browser beside
-                        // the gateway, streamed like a desktop (ADR 0034): the
-                        // ticket comes from /connect and the page is Desktop.
-                        <button className="btn sm proto-app" disabled={busy === t.id + 'http'} onClick={() => void connect(t, { target_id: t.id, protocol: 'http' })} title="open in an isolated browser">Open</button>
+                        // the gateway, streamed like a desktop (ADR 0034), in a
+                        // tab of its own (ADR 0038).
+                        <SessionLink intent={{ target: t.id, protocol: 'http' }} className="btn sm proto-app" label={`Open ${t.name}`} title="open in an isolated browser">Open</SessionLink>
                       )}
                     </td>
                   </tr>
@@ -345,9 +295,11 @@ export function Targets() {
                         {p && gated(t, p) ? (
                           <button className="btn sm" onClick={() => setReqModal({ target: t, protocol: p })} title="request database access">Request</button>
                         ) : (
-                          <button className={'btn sm' + (p ? ' proto-database' : '')} disabled={!p || busy === t.id + p} onClick={() => p && void connect(t, { target_id: t.id, protocol: p })} title={p ? 'open the SQL client' : 'not allowed'}>
-                            {p ? 'SQL client' : '—'}
-                          </button>
+                          p ? (
+                            <SessionLink intent={{ target: t.id, protocol: p }} className="btn sm proto-database" label="SQL client" title="open the SQL client">SQL client</SessionLink>
+                          ) : (
+                            <button className="btn sm" disabled title="not allowed">—</button>
+                          )
                         )}
                       </td>
                     </tr>
@@ -394,8 +346,7 @@ export function Targets() {
                       <td><OSIcon os={t.os_family} /></td>
                       <td className="mono">{t.private_ip ?? '—'}</td>
                       <td><Tags tags={t.tags} /></td>
-                      {protoButtons(t, (p) => void connect(t, { target_id: t.id, protocol: p }), (p) => setReqModal({ target: t, protocol: p }),
-                        (p) => { setPromptErr(''); setPrompt({ target: t, protocol: p, body: { target_id: t.id, protocol: p } }) })}
+                      {protoButtons(t, { link: true }, (p) => setReqModal({ target: t, protocol: p }), true)}
                     </tr>
                   )
                 })}
@@ -435,7 +386,7 @@ export function Targets() {
                       <td>
                         <Badge tone={healthy === 0 ? 'danger' : 'ok'}>{healthy} / {total}</Badge>
                       </td>
-                      {protoButtons(g, (p) => void loadInstances(g, p), (p) => setReqModal({ target: g, protocol: p }))}
+                      {protoButtons(g, { onPick: (p) => void loadInstances(g, p) }, (p) => setReqModal({ target: g, protocol: p }))}
                     </tr>
                   )
                 })}
@@ -460,9 +411,9 @@ export function Targets() {
                     <span className="mono">{i.instance_id}</span>
                     <span className="muted"> · {i.availability_zone} · launched {fmtAgo(i.launched_at)}</span>
                   </div>
-                  <button id={`pick-${i.id}`} className="btn sm" disabled={busy !== ''} onClick={() => void connect(chooser.group, { asg_instance_id: i.id, protocol: chooser.protocol })}>
+                  <SessionLink intent={{ asg: chooser.group.id, instance: i.id, protocol: chooser.protocol }} className="btn sm" label={`Connect to ${i.instance_id}`}>
                     Connect
-                  </button>
+                  </SessionLink>
                 </div>
               ))}
             </div>
@@ -471,15 +422,13 @@ export function Targets() {
             <a href="#refresh" className="muted" onClick={(e) => { e.preventDefault(); void loadInstances(chooser.group, chooser.protocol) }}>Refresh</a>
             <span>
               <button className="btn" onClick={() => setChooser(null)}>Cancel</button>
-              <button
-                id="connect-newest"
-                className="btn primary"
-                style={{ marginLeft: 8 }}
-                disabled={busy !== '' || !chooser.instances || chooser.instances.length === 0}
-                onClick={() => void connect(chooser.group, { asg_id: chooser.group.id, protocol: chooser.protocol })}
-              >
-                Connect to newest healthy
-              </button>
+              {chooser.instances && chooser.instances.length > 0 ? (
+                <SessionLink intent={{ asg: chooser.group.id, protocol: chooser.protocol }} className="btn primary connect-newest" style={{ marginLeft: 8 }} label="Connect to newest healthy">
+                  Connect to newest healthy
+                </SessionLink>
+              ) : (
+                <button className="btn primary connect-newest" style={{ marginLeft: 8 }} disabled>Connect to newest healthy</button>
+              )}
             </span>
           </div>
         </Modal>
@@ -503,65 +452,6 @@ export function Targets() {
         </Modal>
       )}
 
-      {prompt && (
-        <Modal title={`Credentials for ${prompt.target.name}`} onClose={closePrompt}>
-          <p className="muted">Sent to the machine; not stored.</p>
-          {promptErr && <Alert tone="danger" onDismiss={() => setPromptErr('')}>{promptErr}</Alert>}
-          <form
-            onSubmit={(e) => {
-              e.preventDefault()
-              const withKey = prompt.protocol === 'ssh' && cred.method === 'key'
-              void connect(prompt.target, {
-                ...prompt.body,
-                credential: withKey
-                  ? { username: cred.username, private_key: cred.key, ...(cred.passphrase ? { private_key_passphrase: cred.passphrase } : {}) }
-                  : { username: cred.username, password: cred.password },
-              })
-            }}
-          >
-            <Field label="Username">
-              <input id="cred-user" autoFocus value={cred.username} onChange={(e) => setCred({ ...cred, username: e.target.value })} required />
-            </Field>
-            {prompt.protocol === 'ssh' && (
-              <div className="actions" role="radiogroup" aria-label="Sign in with" style={{ marginBottom: 8 }}>
-                {(
-                  [
-                    ['password', 'Password'],
-                    ['key', 'Private key'],
-                  ] as const
-                ).map(([m, label]) => (
-                  <span key={m} className="field inline" style={{ margin: 0 }}>
-                    <input id={`cred-method-${m}`} type="radio" name="cred-method" checked={cred.method === m} onChange={() => setCred({ ...cred, method: m })} />
-                    <label htmlFor={`cred-method-${m}`}>{label}</label>
-                  </span>
-                ))}
-              </div>
-            )}
-            {prompt.protocol === 'ssh' && cred.method === 'key' ? (
-              <>
-                <Field label="Private key" hint="OpenSSH, PKCS#8 or PKCS#1">
-                  <textarea id="cred-key" className="mono" value={cred.key} onChange={(e) => setCred({ ...cred, key: e.target.value })} required spellCheck={false} autoComplete="off" placeholder="-----BEGIN OPENSSH PRIVATE KEY-----" />
-                </Field>
-                <div className="actions" style={{ marginTop: -6, marginBottom: 10 }}>
-                  <input id="cred-key-file" type="file" hidden onChange={readKeyFile} />
-                  <button type="button" className="btn sm" onClick={() => document.getElementById('cred-key-file')?.click()}>Choose key file…</button>
-                </div>
-                <Field label="Passphrase" hint="If the key has one">
-                  <input id="cred-passphrase" type="password" autoComplete="off" value={cred.passphrase} onChange={(e) => setCred({ ...cred, passphrase: e.target.value })} />
-                </Field>
-              </>
-            ) : (
-              <Field label="Password">
-                <input id="cred-pass" type="password" value={cred.password} onChange={(e) => setCred({ ...cred, password: e.target.value })} required />
-              </Field>
-            )}
-            <div className="actions">
-              <button type="button" className="btn" onClick={closePrompt}>Cancel</button>
-              <button type="submit" className="btn primary" disabled={busy !== ''}>Connect</button>
-            </div>
-          </form>
-        </Modal>
-      )}
     </>
   )
 }

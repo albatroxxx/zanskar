@@ -164,6 +164,17 @@ export function Alert({ tone, children, onDismiss }: { tone?: 'ok' | 'warn' | 'd
   )
 }
 
+/** TabLink opens a page in a tab of its own (ADR 0038): a recording or a
+ *  live session, so that several can be open at once and the list stays
+ *  where it was. Its visible text stays terse; the name says where it goes. */
+export function TabLink({ to, label, className, title, children }: { to: string; label: string; className?: string; title?: string; children?: ReactNode }) {
+  return (
+    <Link to={to} target="_blank" rel="noopener noreferrer" className={className} title={title} aria-label={`${label}, opens in a new tab`}>
+      {children ?? label}
+    </Link>
+  )
+}
+
 /** RemoveButton takes a row out of a list being edited (a tag, a group
  *  mapping, a time window): an x large enough to see and hit (2026-11-01;
  *  the "×" glyph was a few pixels wide). */

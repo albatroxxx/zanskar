@@ -1,11 +1,11 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react'
-import { Link, useSearchParams } from 'react-router-dom'
+import { useSearchParams } from 'react-router-dom'
 import { api, errorMessage, query } from '../../api/client'
 import { ranges, sinceFor } from '../../api/ranges'
 import { consoleZone, fmtPreciseTime, shortId, zonedInputToISO } from '../../api/format'
 import type { AuditEvent, AuditFacets, AuditVerify, Page } from '../../api/types'
 import { usePaged } from '../../components/paged'
-import { Alert, Badge, Empty, LoadMore, PageHead } from '../../components/ui'
+import { Alert, Badge, Empty, LoadMore, PageHead, TabLink } from '../../components/ui'
 import { capitalize, describe, detailText, humanAction, typeLabel, who, words } from './eventText'
 import { useRecordingsPath } from './paths'
 import { StateIcon } from '../../components/icons'
@@ -62,7 +62,7 @@ function DetailRow({ k, v, name }: { k: string; v: unknown; name?: string }) {
   const id = typeof v === 'string' ? v : ''
   let body: React.ReactNode
   if (k === 'recording_id' && id) {
-    body = <Link to={`${recordingsPath}/${id}`} title={id}>{name ?? 'play'}</Link>
+    body = <TabLink to={`${recordingsPath}/${id}`} title={id} label={name ?? 'play'} />
   } else if (name) {
     body = <strong title={id}>{name}</strong>
   } else if (v === null || v === undefined || v === '') {

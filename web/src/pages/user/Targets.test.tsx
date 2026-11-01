@@ -1,15 +1,32 @@
 import { cleanup, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { MemoryRouter, Route, Routes } from 'react-router-dom'
+import { MemoryRouter } from 'react-router-dom'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { ApiError, api } from '../../api/client'
+import { api } from '../../api/client'
 import type { ReachableTarget } from '../../api/types'
 import { Targets } from './Targets'
 
 afterEach(() => {
   cleanup()
   vi.restoreAllMocks()
+  localStorage.clear()
+  document.removeEventListener('click', stay)
 })
+
+/** stay keeps a clicked link from navigating, which jsdom cannot do; the
+ *  link's own click handler still runs. */
+function stay(e: Event) {
+  e.preventDefault()
+}
+
+/** sessionLink checks a link opens a session in a tab of its own (ADR 0038). */
+function sessionLink(name: string, href: string) {
+  const a = screen.getByRole('link', { name: `${name}, opens in a new tab` })
+  expect([a.getAttribute('href'), a.getAttribute('target'), a.getAttribute('rel')]).toEqual([href, '_blank', 'noopener noreferrer'])
+  return a
+}
+
+const records = () => (JSON.parse(localStorage.getItem('zanskar.connect') ?? '[]') as { href: string }[]).map((r) => r.href)
 
 const fleet: ReachableTarget = {
   kind: 'asg',
@@ -56,41 +73,26 @@ describe('Targets, applications', () => {
     capabilities: [], allowed_protocols: ['http'], requires_approval: [], host_key_ready: true,
   }
 
-  it('lists the application under its own tab and opens it through /connect as a desktop', async () => {
+  // 2026-11-01: Open connected in this tab; it opens a tab of its own now,
+  // which connects (connect.test.tsx).
+  it('lists the application under its own tab and opens it in a tab of its own', async () => {
     vi.spyOn(api, 'get').mockImplementation(async (p: string) => ({ items: p === '/me/targets' ? [wiki] : [] }) as never)
-    const post = vi.spyOn(api, 'post').mockResolvedValue({ ticket: 'tk1', expires_at: '2026-10-27T10:01:00Z', ws_path: '/ws/desktop' } as never)
-    render(
-      <MemoryRouter>
-        <Routes>
-          <Route path="/" element={<Targets />} />
-          <Route path="/desktop" element={<p>desktop page</p>} />
-          <Route path="/terminal" element={<p>terminal page</p>} />
-        </Routes>
-      </MemoryRouter>,
-    )
-    // With no hosts, the first tab that has something in it is chosen.
-    expect(await screen.findByRole('tab', { name: 'Applications (1)', selected: true })).toBeDefined()
-    expect(screen.queryByRole('link', { name: 'Open' })).toBeNull()
-    // No address column: where the browser goes is the gateway's business.
-    expect(screen.getAllByRole('columnheader').map((th) => th.textContent)).toEqual(['Name', 'Tags', 'Open'])
-
-    await userEvent.setup().click(screen.getByRole('button', { name: 'Open' }))
-
-    expect(post).toHaveBeenCalledWith('/connect', { target_id: 'a1', protocol: 'http' })
-    expect(await screen.findByText('desktop page')).toBeDefined()
-  })
-
-  it('shows the refusal when the gateway cannot run the browser', async () => {
-    vi.spyOn(api, 'get').mockImplementation(async (p: string) => ({ items: p === '/me/targets' ? [wiki] : [] }) as never)
-    vi.spyOn(api, 'post').mockRejectedValue(new ApiError(501, { code: 'protocol_unavailable', message: 'applications need guacd and a container runtime', request_id: 'r1' }, '501'))
+    const post = vi.spyOn(api, 'post')
+    document.addEventListener('click', stay)
     render(
       <MemoryRouter>
         <Targets />
       </MemoryRouter>,
     )
-    await userEvent.setup().click(await screen.findByRole('button', { name: 'Open' }))
-    expect(await screen.findByText(/applications need guacd and a container runtime/)).toBeDefined()
-    expect(screen.getByRole('button', { name: 'Open' }).hasAttribute('disabled')).toBe(false)
+    // With no hosts, the first tab that has something in it is chosen.
+    expect(await screen.findByRole('tab', { name: 'Applications (1)', selected: true })).toBeDefined()
+    // No address column: where the browser goes is the gateway's business.
+    expect(screen.getAllByRole('columnheader').map((th) => th.textContent)).toEqual(['Name', 'Tags', 'Open'])
+
+    await userEvent.setup().click(sessionLink('Open Wiki', '/connect?target=a1&protocol=http'))
+
+    expect(records()).toEqual(['/connect?target=a1&protocol=http'])
+    expect(post).not.toHaveBeenCalled()
   })
 
   it('offers Request when the policy requires approval', async () => {
@@ -107,7 +109,7 @@ describe('Targets, applications', () => {
     await user.type(screen.getByLabelText('Reason'), 'edit the runbook')
     await user.click(screen.getByRole('button', { name: 'Request access' }))
     expect(post).toHaveBeenCalledWith('/me/access-requests', { target_id: 'a1', protocol: 'http', reason: 'edit the runbook', minutes: 60 })
-    expect(screen.queryByRole('button', { name: 'Open' })).toBeNull()
+    expect(screen.queryByRole('link', { name: /^Open/ })).toBeNull()
   })
 })
 
@@ -265,96 +267,81 @@ describe('Target tabs count what they hold', () => {
 // over SSH the user's own private key with its passphrase. What the gateway
 // says about it shows in the prompt, and what was typed is forgotten when
 // the prompt closes.
-describe('Targets, the user\'s own login', () => {
+// ADR 0038: each protocol opens its session in a tab of its own, so a user
+// can run several; the click leaves the record the new tab connects on, a
+// middle click too. A protocol that cannot connect stays a disabled button.
+describe('Targets, sessions in tabs of their own', () => {
   const box: ReachableTarget = {
-    kind: 'target', id: 't1', name: 'box-own', os_family: 'linux', tags: {},
+    kind: 'target', id: 't1', name: 'box', os_family: 'linux', tags: {},
     capabilities: ['ssh', 'vnc'], allowed_protocols: ['ssh', 'vnc'], requires_approval: [], host_key_ready: true,
   }
-  const asked = new ApiError(422, { code: 'credential_required', message: 'this target needs your username and password', request_id: 'r' }, '422')
 
-  function mount() {
-    vi.spyOn(api, 'get').mockImplementation(async (p: string) => ({ items: p === '/me/targets' ? [box] : [] }) as never)
+  function mount(items: ReachableTarget[]) {
+    vi.spyOn(api, 'get').mockImplementation(async (p: string) => {
+      if (p === '/me/autoscaling-groups/g1/instances') return { items: [{ id: 'i9', instance_id: 'i-0abc', availability_zone: 'eu-1a', launched_at: '2026-11-01T08:00:00Z' }] } as never
+      return { items: p === '/me/targets' ? items : [] } as never
+    })
+    document.addEventListener('click', stay)
     render(
       <MemoryRouter>
-        <Routes>
-          <Route path="/" element={<Targets />} />
-          <Route path="/terminal" element={<p>terminal page</p>} />
-          <Route path="/desktop" element={<p>desktop page</p>} />
-        </Routes>
+        <Targets />
       </MemoryRouter>,
     )
   }
 
-  it('signs in over SSH with a key and its passphrase, the gateway\'s refusal shown in the prompt', async () => {
+  it('links each protocol to a tab of its own, and a click or a middle click leaves the record', async () => {
     const post = vi.spyOn(api, 'post')
-      .mockRejectedValueOnce(asked)
-      .mockRejectedValueOnce(new ApiError(422, { code: 'credential_invalid', message: 'the key is encrypted, and its passphrase is missing or wrong', request_id: 'r' }, '422'))
-      .mockResolvedValueOnce({ ticket: 'tk', expires_at: 'x', ws_path: '/ws/terminal' } as never)
-    mount()
-    const user = userEvent.setup()
-    await user.click(await screen.findByRole('button', { name: 'SSH' }))
-    const dialog = await screen.findByRole('dialog', { name: 'Credentials for box-own' })
-    await user.type(screen.getByLabelText('Username'), 'alice')
-    await user.click(screen.getByRole('radio', { name: 'Private key' }))
-    expect(screen.queryByLabelText('Password', { selector: 'input[type=password]' })).toBeNull()
-    await user.type(screen.getByLabelText('Private key', { selector: 'textarea' }), 'KEY')
-    await user.click(screen.getByRole('button', { name: 'Connect' }))
-    expect(await screen.findByText('the key is encrypted, and its passphrase is missing or wrong')).toBeDefined()
-    expect(dialog.isConnected).toBe(true)
-    expect(post.mock.calls[1][1]).toEqual({ target_id: 't1', protocol: 'ssh', credential: { username: 'alice', private_key: 'KEY' } })
-
-    await user.type(screen.getByLabelText('Passphrase'), 'pp')
-    await user.click(screen.getByRole('button', { name: 'Connect' }))
-    expect(await screen.findByText('terminal page')).toBeDefined()
-    expect(post.mock.calls[2][1]).toEqual({ target_id: 't1', protocol: 'ssh', credential: { username: 'alice', private_key: 'KEY', private_key_passphrase: 'pp' } })
-  })
-
-  it('asks a desktop for a password only, and forgets it when the prompt closes', async () => {
-    vi.spyOn(api, 'post').mockRejectedValue(asked)
-    mount()
-    const user = userEvent.setup()
-    await user.click(await screen.findByRole('button', { name: 'VNC' }))
-    await screen.findByRole('dialog', { name: 'Credentials for box-own' })
-    expect(screen.queryByLabelText('Private key')).toBeNull()
-    await user.type(screen.getByLabelText('Username'), 'alice')
-    await user.type(screen.getByLabelText('Password'), 'hunter2')
-    await user.click(screen.getByRole('button', { name: 'Cancel' }))
-    await user.click(screen.getByRole('button', { name: 'VNC' }))
-    await screen.findByRole('dialog', { name: 'Credentials for box-own' })
-    expect((screen.getByLabelText('Username') as HTMLInputElement).value).toBe('alice')
-    expect((screen.getByLabelText('Password') as HTMLInputElement).value).toBe('')
-  })
-})
-
-// ADR 0036: where a grant lets the user sign in with their own login instead
-// of the target's, the portal offers "as me" beside the protocol; it asks for
-// the login at once, and the connect carries it.
-describe('Targets, signing in as me', () => {
-  it('offers "as me" where a grant allows it, and sends the login', async () => {
-    const box: ReachableTarget = {
-      kind: 'target', id: 't1', name: 'box', os_family: 'linux', tags: {}, capabilities: ['ssh'],
-      allowed_protocols: ['ssh'], own_login: ['ssh'], requires_approval: [], host_key_ready: true,
-    }
-    const other: ReachableTarget = { ...box, id: 't2', name: 'other', own_login: [] }
-    vi.spyOn(api, 'get').mockImplementation(async (p: string) => ({ items: p === '/me/targets' ? [box, other] : [] }) as never)
-    const post = vi.spyOn(api, 'post').mockResolvedValue({ ticket: 'tk', expires_at: 'x', ws_path: '/ws/terminal' } as never)
-    render(
-      <MemoryRouter>
-        <Routes>
-          <Route path="/" element={<Targets />} />
-          <Route path="/terminal" element={<p>terminal page</p>} />
-        </Routes>
-      </MemoryRouter>,
-    )
-    const user = userEvent.setup()
-    expect(await screen.findAllByRole('button', { name: 'SSH with my own login' })).toHaveLength(1)
-    await user.click(screen.getByRole('button', { name: 'SSH with my own login' }))
-    await screen.findByRole('dialog', { name: 'Credentials for box' })
+    mount([box])
+    await screen.findByText('box')
+    const ssh = sessionLink('SSH', '/connect?target=t1&protocol=ssh')
+    sessionLink('VNC', '/connect?target=t1&protocol=vnc')
+    await userEvent.setup().click(ssh)
+    ssh.dispatchEvent(new MouseEvent('auxclick', { bubbles: true, button: 1 }))
+    ssh.dispatchEvent(new MouseEvent('auxclick', { bubbles: true, button: 2 }))
+    expect(records()).toEqual(['/connect?target=t1&protocol=ssh', '/connect?target=t1&protocol=ssh'])
     expect(post).not.toHaveBeenCalled()
-    await user.type(screen.getByLabelText('Username'), 'me')
-    await user.type(screen.getByLabelText('Password', { selector: 'input[type=password]' }), 'mine')
-    await user.click(screen.getByRole('button', { name: 'Connect' }))
-    expect(await screen.findByText('terminal page')).toBeDefined()
-    expect(post).toHaveBeenCalledWith('/connect', { target_id: 't1', protocol: 'ssh', credential: { username: 'me', password: 'mine' } })
+  })
+
+  it('counts open sessions again when its tab is looked at, a session having started in another', async () => {
+    mount([box])
+    await screen.findByText('box')
+    const reads = () => vi.mocked(api.get).mock.calls.filter((c) => c[0] === '/me/sessions?open=true&limit=50').length
+    expect(reads()).toBe(1)
+    Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => 'hidden' })
+    document.dispatchEvent(new Event('visibilitychange'))
+    expect(reads()).toBe(1)
+    Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => 'visible' })
+    document.dispatchEvent(new Event('visibilitychange'))
+    expect(reads()).toBe(2)
+    delete (document as unknown as Record<string, unknown>).visibilityState
+  })
+
+  it('keeps a host whose key is not trusted yet a disabled button, not a link', async () => {
+    mount([{ ...box, host_key_ready: false }])
+    await screen.findByText('box')
+    expect(screen.queryByRole('link', { name: /^SSH/ })).toBeNull()
+    expect((screen.getByRole('button', { name: 'SSH' }) as HTMLButtonElement).disabled).toBe(true)
+  })
+
+  it('offers "as me" where a grant allows it, a link whose tab asks for the login', async () => {
+    mount([{ ...box, own_login: ['ssh'] }, { ...box, id: 't2', name: 'other', own_login: [] }])
+    await screen.findByText('other')
+    expect(screen.getAllByRole('link', { name: /with my own login/ })).toHaveLength(1)
+    sessionLink('SSH with my own login', '/connect?target=t1&protocol=ssh&own=1')
+  })
+
+  it('opens the instance chooser here, and each instance, or the newest, in a tab of its own', async () => {
+    const fleet: ReachableTarget = { ...box, kind: 'asg', id: 'g1', name: 'web-fleet', healthy_count: 1, instance_count: 1 }
+    mount([fleet])
+    const user = userEvent.setup()
+    await user.click(await screen.findByRole('tab', { name: /Autoscaling/ }))
+    await user.click(screen.getByRole('button', { name: 'SSH' }))
+    await screen.findByRole('dialog', { name: 'Connect to web-fleet' })
+    await screen.findByText('i-0abc')
+    await user.click(sessionLink('Connect to i-0abc', '/connect?asg=g1&instance=i9&protocol=ssh'))
+    sessionLink('Connect to newest healthy', '/connect?asg=g1&protocol=ssh')
+    // The chooser stays, so another instance can be opened from it.
+    expect(screen.getByRole('dialog', { name: 'Connect to web-fleet' })).toBeDefined()
+    expect(records()).toEqual(['/connect?asg=g1&instance=i9&protocol=ssh'])
   })
 })

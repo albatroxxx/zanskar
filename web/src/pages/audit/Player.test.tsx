@@ -211,6 +211,18 @@ describe('Player', () => {
   })
 })
 
+// The recordings list sends a reviewer here for the downloads (2026-11-01).
+// A desktop recording, an application's included (ADR 0034), is a pixel
+// stream with no command lines: the file, and no transcript.
+describe('Player, the downloads', () => {
+  it('offers the file and no transcript for a desktop recording', async () => {
+    gateway({ [`/api/v1/recordings/${RID}`]: [() => json(200, recording({ format: 'guac' }))] })
+    open(`/audit/recordings/${RID}`)
+    expect((await screen.findByRole('link', { name: 'Download recording' })).getAttribute('href')).toBe(`/api/v1/recordings/${RID}/download`)
+    expect(screen.queryByRole('link', { name: 'Download transcript' })).toBeNull()
+  })
+})
+
 // B28: the command list was clickable <li>s, so a keyboard user could not
 // jump the playback to a command. Each command is a button now.
 describe('Player, the command list', () => {
@@ -262,6 +274,8 @@ describe('Player, the transport', () => {
     await user.click(screen.getByRole('button', { name: 'Forward 10 seconds' }))
     await user.click(screen.getByRole('button', { name: 'Back 10 seconds' }))
     expect(h.seeks).toEqual([13, 0])
+    // no line of keyboard instructions under the controls (2026-11-01)
+    expect(screen.queryByText(/play\/pause|full screen\./i)).toBeNull()
   })
 
   it('takes a paused terminal player and its controls full screen and back, on the same frame', async () => {

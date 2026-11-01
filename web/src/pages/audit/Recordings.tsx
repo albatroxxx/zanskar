@@ -1,11 +1,10 @@
 import { useEffect, useState } from 'react'
-import { Link } from 'react-router-dom'
 import { api, query } from '../../api/client'
 import { fmtDuration, fmtTime } from '../../api/format'
 import { sessionTarget, sessionUser } from '../../api/labels'
 import type { Page, Session } from '../../api/types'
 import { usePaged } from '../../components/paged'
-import { Alert, Empty, LoadMore, PageHead, reasonBadge } from '../../components/ui'
+import { Alert, Empty, LoadMore, PageHead, reasonBadge, TabLink } from '../../components/ui'
 import { useRecordingsPath } from './paths'
 
 export function Recordings() {
@@ -81,13 +80,9 @@ export function Recordings() {
                   <td>{fmtDuration(s.started_at, s.ended_at)}</td>
                   <td>{reasonBadge(s.end_reason)}</td>
                   <td>
-                    <Link className="btn sm" to={`${recordingsPath}/${encodeURIComponent(s.recording_id!)}`}>Review</Link>{' '}
-                    {/* Downloads are recorded views and audit events, like playback. */}
-                    <a className="btn sm ghost" href={`/api/v1/recordings/${encodeURIComponent(s.recording_id!)}/download`} download title="Download the recording file (audited)">Download</a>
-                    {/* A desktop recording, an application's included (ADR 0034), is a pixel stream: it has no command lines. */}
-                    {s.protocol !== 'rdp' && s.protocol !== 'vnc' && s.protocol !== 'http' && (
-                      <>{' '}<a className="btn sm ghost" href={`/api/v1/recordings/${encodeURIComponent(s.recording_id!)}/transcript`} download title="Download the command lines as text (audited)">Transcript</a></>
-                    )}
+                    {/* Review only (2026-11-01): the recording's page has its
+                        downloads, the file and, for a terminal, the transcript. */}
+                    <TabLink className="btn sm" to={`${recordingsPath}/${encodeURIComponent(s.recording_id!)}`} label="Review" />
                   </td>
                 </tr>
               ))}

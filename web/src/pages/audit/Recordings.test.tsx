@@ -24,17 +24,16 @@ function page(items: Session[], next = '') {
   )
 }
 
-// A desktop recording is a pixel stream with no command lines, an
-// application's (ADR 0034) included: Review and Download, no Transcript.
-describe('Recordings of desktops', () => {
-  it('offers no transcript for an application session', async () => {
+// 2026-11-01: each row had Review, Download and Transcript; the recording's
+// page, which Review opens, has the downloads, so a row has Review alone.
+describe('Recordings, a row', () => {
+  it('offers Review alone, the downloads being on the recording’s page', async () => {
     page([session(1, { recording_id: 'r1', protocol: 'http', target_name: 'wiki' }), session(2, { recording_id: 'r2', protocol: 'ssh' })])
-    await screen.findAllByRole('link', { name: 'Review' })
-    const rows = screen.getAllByRole('row').slice(1)
-    expect(rows[0].textContent).toContain('HTTP')
-    expect(rows[0].querySelector('a[href$="/transcript"]')).toBeNull()
-    expect(rows[0].querySelector('a[href$="/download"]')).not.toBeNull()
-    expect(rows[1].querySelector('a[href$="/transcript"]')).not.toBeNull()
+    await screen.findAllByRole('link', { name: 'Review, opens in a new tab' })
+    for (const row of screen.getAllByRole('row').slice(1)) {
+      expect(Array.from(row.querySelectorAll('a, button')).map((a) => a.textContent)).toEqual(['Review'])
+    }
+    expect(document.querySelector('a[href$="/download"], a[href$="/transcript"]')).toBeNull()
   })
 })
 
@@ -52,7 +51,7 @@ describe('Recordings', () => {
 
   it('says the filter searched only the sessions loaded so far', async () => {
     page([session(1, { recording_id: 'r1' }), session(2), session(3, { recording_id: 'r3' })], 'c1')
-    await screen.findAllByRole('link', { name: 'Review' })
+    await screen.findAllByRole('link', { name: 'Review, opens in a new tab' })
 
     await userEvent.setup().type(screen.getByLabelText('Filter recordings'), 'bob')
     expect(screen.queryByText('No recordings match.')).toBeNull()

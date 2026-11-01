@@ -55,3 +55,4 @@ and update the status of the old one.
 | [0035](0035-identity-provider-owns-the-person.md) | A single sign-on provider owns the person: second factor, session, joining and leaving | Accepted |
 | [0036](0036-access-policy-grants.md) | An access policy is an audience and a list of grants, each with its own conditions | Accepted |
 | [0037](0037-application-modes-proxied-and-isolated.md) | An application opens proxied in the user's own browser, or isolated in a full browser beside the gateway | Accepted |
+| [0038](0038-sessions-and-reviews-open-in-their-own-tab.md) | Sessions, watches and recordings open in a tab of their own | Accepted |

@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { Shadow } from './Shadow'
 
 interface FakeTerm { options: Record<string, unknown>; written: Uint8Array[]; disposed: boolean }
-const g = vi.hoisted(() => ({ terms: [] as FakeTerm[], sockets: [] as FakeSocket[], tunnels: [] as string[], clients: [] as FakeClient[] }))
+const g = vi.hoisted(() => ({ terms: [] as FakeTerm[], sockets: [] as FakeSocket[], tunnels: [] as string[], clients: [] as FakeClient[], role: 'admin' }))
 interface FakeClient { connected: boolean; disconnected: boolean; onstatechange: ((s: number) => void) | null }
 interface FakeSocket { url: string; closed: { code?: number; reason?: string } | null; onmessage: ((ev: { data: unknown }) => void) | null; onclose: (() => void) | null; onerror: (() => void) | null }
 
@@ -42,6 +42,8 @@ vi.mock('guacamole-common-js', () => {
   return { default: { WebSocketTunnel, Client } }
 })
 vi.mock('@xterm/xterm/css/xterm.css', () => ({}))
+// The watcher's portal decides where leaving goes; g.role is who watches.
+vi.mock('../../auth/AuthContext', () => ({ useAuth: () => ({ hasRole: (...roles: string[]) => roles.includes(g.role) }) }))
 
 class WS implements FakeSocket {
   url: string
@@ -59,6 +61,7 @@ beforeEach(() => {
   g.sockets.length = 0
   g.tunnels.length = 0
   g.clients.length = 0
+  g.role = 'admin'
   vi.stubGlobal('WebSocket', WS)
 })
 afterEach(() => {
@@ -67,12 +70,15 @@ afterEach(() => {
   vi.restoreAllMocks()
 })
 
+/** open mounts the watch as a tab of its own does (ADR 0038): with no page
+ *  before it to go back to. */
 function open(path: string) {
   return render(
-    <MemoryRouter initialEntries={['/admin/sessions', path]}>
+    <MemoryRouter initialEntries={[path]}>
       <Routes>
         <Route path="/audit/shadow/:id" element={<Shadow />} />
-        <Route path="/admin/sessions" element={<p>sessions list</p>} />
+        <Route path="/admin/sessions" element={<p>admin sessions list</p>} />
+        <Route path="/audit/sessions" element={<p>audit sessions list</p>} />
       </Routes>
     </MemoryRouter>,
   )
@@ -82,6 +88,7 @@ describe('Shadow', () => {
   it('opens a read-only terminal on the session\'s tap, says when it is live, and shows the output', async () => {
     open('/audit/shadow/s1?protocol=ssh&target=web-1')
     expect(await screen.findByText('Watching web-1')).toBeDefined()
+    expect(document.title).toBe('Watching web-1 · Zanskar')
     expect(screen.getByText('SSH · read-only')).toBeDefined()
     expect(screen.getByText('this view is audited')).toBeDefined()
     expect(g.sockets[0].url).toBe('ws://localhost:3000/ws/shadow/s1')
@@ -105,13 +112,24 @@ describe('Shadow', () => {
     expect((await screen.findByRole('dialog', { name: 'Session ended' })).textContent).toContain('The connection to the gateway was lost.')
   })
 
-  it('leaves as a watcher, closing its own socket and going back where it came from', async () => {
+  // 2026-11-01: a watch opens in a tab of its own, where going back went
+  // nowhere; leaving goes to the sessions list of the watcher's portal.
+  it('leaves as a watcher, closing its own socket, for the sessions list of its portal', async () => {
     open('/audit/shadow/s1?protocol=ssh&target=web-1')
     await screen.findByText('Watching web-1')
     await userEvent.setup().click(screen.getByRole('button', { name: 'Stop watching' }))
     expect(g.sockets[0].closed).toEqual({ code: 1000, reason: 'watcher_left' })
-    expect(await screen.findByText('sessions list')).toBeDefined()
+    expect(await screen.findByText('admin sessions list')).toBeDefined()
     expect(g.terms[0].disposed).toBe(true)
+  })
+
+  it("goes back to an auditor's sessions list once the session has ended", async () => {
+    g.role = 'auditor'
+    open('/audit/shadow/s1?protocol=ssh&target=web-1')
+    await screen.findByText('Watching web-1')
+    act(() => g.sockets[0].onmessage?.({ data: JSON.stringify({ t: 'end', reason: 'session_ended' }) }))
+    await userEvent.setup().click(await screen.findByRole('button', { name: 'Back to sessions' }))
+    expect(await screen.findByText('audit sessions list')).toBeDefined()
   })
 
   // An application session (ADR 0034) is a browser streamed through guacd:
@@ -129,6 +147,6 @@ describe('Shadow', () => {
     expect(screen.getByText(/watching /)).toBeDefined()
     await userEvent.setup().click(screen.getByRole('button', { name: 'Stop watching' }))
     expect(g.clients[0].disconnected).toBe(true)
-    expect(await screen.findByText('sessions list')).toBeDefined()
+    expect(await screen.findByText('admin sessions list')).toBeDefined()
   })
 })

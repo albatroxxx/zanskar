@@ -12,6 +12,7 @@ import { TerminalFiles } from './TerminalFiles'
 import { useFullscreen } from './fullscreen'
 import { FullscreenButton } from './FullscreenButton'
 import { terminalTheme } from '../../styles/theme'
+import { useTitle } from '../../components/title'
 import { CONTROLS_KEY, isControlsEvent } from './keys'
 
 export function Terminal() {
@@ -25,6 +26,7 @@ export function Terminal() {
 
 function TerminalSession({ state }: { state: SessionState }) {
   const nav = useNavigate()
+  useTitle(`${state.target} · ${protocolName(state.protocol)}`)
   const host = useRef<HTMLDivElement>(null)
   const pageRef = useRef<HTMLDivElement>(null)
   const { isFull, toggle: toggleFull, exit: exitFull } = useFullscreen(pageRef)
