@@ -7,7 +7,7 @@ import { canConnect } from '../../auth/home'
 import { PickList } from '../../components/PickList'
 import { TagEditor } from '../../components/TagEditor'
 import { tagSuggestions } from '../../components/tags'
-import { Alert, Empty, Field, PageHead, RemoveButton } from '../../components/ui'
+import { Alert, Confirm, Empty, Field, PageHead, RemoveButton } from '../../components/ui'
 import { useList } from './lib'
 import { chipsFor, fromDraft, grantSummary, kindOf, kinds, newGrant, toDraft, unfound, type GrantDraft } from './policyModel'
 
@@ -42,6 +42,7 @@ function pickMany(list: string[], ids: string[], on: boolean): string[] {
 export function PolicyEditor() {
   const { id } = useParams()
   const nav = useNavigate()
+  const [deleting, setDeleting] = useState(false)
   const groups = useList<Group>('/groups')
   const users = useList<User>('/users')
   const targets = useList<Target>('/targets', { limit: 500 })
@@ -173,9 +174,26 @@ export function PolicyEditor() {
         )}
       </div>
       <div className="editor-footer">
+        {/* Delete lives where a policy is opened, as a host's does in its
+            drawer, not as a red button on every row of the list (the live
+            console, 2026-11-01). */}
+        {id && loaded && <button type="button" className="btn danger" style={{ marginRight: 'auto' }} disabled={busy} onClick={() => setDeleting(true)}>Delete</button>}
         <Link className="btn" to="/admin/policies">Cancel</Link>
         <button type="button" className="btn primary" disabled={busy} onClick={() => void save()}>{busy ? 'Saving…' : id ? 'Save' : 'Create'}</button>
       </div>
+      {deleting && loaded && (
+        <Confirm
+          title={`Delete policy ${loaded.name}?`}
+          body="Its people lose this access; their live sessions are re-checked and end if nothing else admits them."
+          confirmLabel="Delete"
+          danger
+          onClose={() => setDeleting(false)}
+          onConfirm={async () => {
+            await api.del(`/access-policies/${loaded.id}`)
+            nav('/admin/policies')
+          }}
+        />
+      )}
     </div>
   )
 }

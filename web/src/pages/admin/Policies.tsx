@@ -1,9 +1,8 @@
 import { Fragment, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { api, errorMessage } from '../../api/client'
 import type { AutoscalingGroup, Group, Policy, Target, User } from '../../api/types'
 import { StateIcon } from '../../components/icons'
-import { Alert, Badge, Confirm, Empty, PageHead } from '../../components/ui'
+import { Alert, Badge, Empty, PageHead } from '../../components/ui'
 import { useList } from './lib'
 import { accessLine, extrasLine, grantsLine, kinds, policyRollup, reachLine, targetsCell, whoSummary } from './policyModel'
 
@@ -14,12 +13,11 @@ import { accessLine, extrasLine, grantsLine, kinds, policyRollup, reachLine, tar
  * stands out. A row opens to a table of its grants; editing has a page.
  */
 export function Policies() {
-  const { items, err, setErr, reload } = useList<Policy>('/access-policies')
+  const { items, err, setErr } = useList<Policy>('/access-policies')
   const groups = useList<Group>('/groups')
   const users = useList<User>('/users')
   const targets = useList<Target>('/targets')
   const asgs = useList<AutoscalingGroup>('/autoscaling-groups')
-  const [deleting, setDeleting] = useState<Policy | null>(null)
   const [open, setOpen] = useState<string[]>([])
   // Until every list has loaded a name cannot be called missing.
   const loaded = !!targets.items && !!asgs.items && !targets.truncated && !asgs.truncated
@@ -100,7 +98,6 @@ export function Policies() {
                       <td>{p.enabled ? <StateIcon state="ok" label="Enabled" /> : <StateIcon state="unknown" label="Disabled" />}</td>
                       <td className="actions">
                         <Link className="btn sm" to={`/admin/policies/${p.id}`}>Edit</Link>
-                        <button className="btn sm danger" onClick={() => setDeleting(p)}>Delete</button>
                       </td>
                     </tr>
                     {isOpen && r.count > 0 && (
@@ -123,24 +120,6 @@ export function Policies() {
           </table>
         )}
       </div>
-      {deleting && (
-        <Confirm
-          title={`Delete policy ${deleting.name}?`}
-          body="Its people lose this access; their live sessions are re-checked and end if nothing else admits them."
-          confirmLabel="Delete"
-          danger
-          onClose={() => setDeleting(null)}
-          onConfirm={async () => {
-            try {
-              await api.del(`/access-policies/${deleting.id}`)
-              void reload()
-            } catch (e) {
-              setErr(errorMessage(e))
-              throw e
-            }
-          }}
-        />
-      )}
     </>
   )
 }

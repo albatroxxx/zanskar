@@ -115,16 +115,33 @@ describe('the policy list', () => {
     expect(screen.queryByText(/gone-123/)).toBeNull()
   })
 
-  it('deletes after a confirmation that says what happens to live sessions', async () => {
+  // Delete lives where a policy is opened, as a host's does in its drawer;
+  // a red Delete on every row was the live console's finding (2026-11-01).
+  it('has no Delete on a row', async () => {
+    serve([policy()])
+    at('/admin/policies')
+    expect(await screen.findByRole('link', { name: 'Edit' })).toBeDefined()
+    expect(screen.queryByRole('button', { name: 'Delete' })).toBeNull()
+  })
+
+  it('deletes from the editor after a confirmation that says what happens to live sessions, then goes back to the list', async () => {
     serve([policy()])
     const del = vi.spyOn(api, 'del').mockResolvedValue(undefined as never)
-    at('/admin/policies')
+    at('/admin/policies/p1')
     const user = userEvent.setup()
     await user.click(await screen.findByRole('button', { name: 'Delete' }))
     const dialog = screen.getByRole('dialog', { name: 'Delete policy ops-web?' })
     expect(within(dialog).getByText(/re-checked/)).toBeDefined()
     await user.click(within(dialog).getByRole('button', { name: 'Delete' }))
     await waitFor(() => expect(del).toHaveBeenCalledWith('/access-policies/p1'))
+    await waitFor(() => expect(screen.getByTestId('where').textContent).toBe('/admin/policies'))
+  })
+
+  it('offers no Delete on a policy not made yet', async () => {
+    serve([])
+    at('/admin/policies/new')
+    expect(await screen.findByRole('button', { name: 'Create' })).toBeDefined()
+    expect(screen.queryByRole('button', { name: 'Delete' })).toBeNull()
   })
 })
 
