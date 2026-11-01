@@ -18,6 +18,17 @@ function toggle<T>(list: T[], v: T): T[] {
 }
 
 /** pickMany adds ids to list, or takes them out. */
+/** personOption is a user as the audience picker lists them: the display
+ *  name beside the username, and a disabled account (one its identity
+ *  provider removed, say) marked and left out of Select all, the way a
+ *  disabled target is. Unmarked, it read as someone the policy would reach
+ *  (the live console, 2026-11-01). */
+function personOption(u: User) {
+  const named = u.display_name && u.display_name !== u.username ? u.display_name : undefined
+  const off = u.status === 'disabled'
+  return { id: u.id, label: u.username, detail: off ? [named, 'disabled'].filter(Boolean).join(' · ') : named, detailTitle: off ? undefined : 'Display name', inactive: off }
+}
+
 function pickMany(list: string[], ids: string[], on: boolean): string[] {
   return on ? [...new Set([...list, ...ids])] : list.filter((x) => !ids.includes(x))
 }
@@ -125,7 +136,7 @@ export function PolicyEditor() {
           </Field>
           <Field label="Users" hint="Review-only accounts are not offered">
             <PickList label="users" idPrefix="pe-user" selected={userIDs} onToggle={(uid) => setUserIDs(toggle(userIDs, uid))} onSelect={(ids, on) => setUserIDs(pickMany(userIDs, ids, on))}
-              options={people.map((u) => ({ id: u.id, label: u.username, detail: u.display_name && u.display_name !== u.username ? u.display_name : undefined, detailTitle: 'Display name' }))} />
+              options={people.map(personOption)} />
           </Field>
         </div>
       </div>

@@ -289,6 +289,22 @@ describe('the policy editor', () => {
     ])
   })
 
+  // The live console (2026-11-01) offered an account its identity provider
+  // had removed, disabled, with nothing to say so.
+  it('marks a disabled user and leaves it out of Select all', async () => {
+    const get = serve([])
+    const base = get.getMockImplementation()!
+    const more = [...users, { id: 'u3', username: 'zanskar-keycloak', display_name: 'Keycloak sync', roles: ['user'], status: 'disabled' }, { id: 'u4', username: 'carol', roles: ['user'], status: 'active' }]
+    get.mockImplementation(async (path: string) => (path.startsWith('/users') ? ({ items: more } as never) : base(path)))
+    at('/admin/policies/new')
+    const user = userEvent.setup()
+    await user.click(await screen.findByLabelText('Select all users'))
+    expect(screen.getByText('Keycloak sync · disabled')).toBeDefined()
+    expect((screen.getByLabelText('zanskar-keycloak') as HTMLInputElement).checked).toBe(false)
+    expect((screen.getByLabelText('carol') as HTMLInputElement).checked).toBe(true)
+    expect((screen.getByLabelText('alice') as HTMLInputElement).checked).toBe(true)
+  })
+
   it('shows a target the grant names that no list holds, so it can be removed', async () => {
     serve([policy({ grants: [grant({ targets: [{ id: 't1', protocols: ['ssh'] }, { id: 'gone-1', protocols: ['ssh'] }] })] })])
     const put = vi.spyOn(api, 'put').mockResolvedValue({} as never)
