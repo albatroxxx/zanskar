@@ -104,18 +104,24 @@ describe('the corner strip', () => {
   // ADR 0032: a reboot asks for the hostname and, when the session's proof
   // is stale, an authenticator code, and proves the code before acting.
   // Then the dialog follows it to the end (2026-10-30).
-  it('reboots with the typed hostname, then follows it until the host is back', async () => {
-    serve(newer, host, [up(), up({ draining: true, live_sessions: 1 }), new TypeError('Failed to fetch'), up({ started_at: 'B' })])
+  // 2026-11-01: "Reboot now" skips the wait without typing 0, behind the
+  // same hostname and code.
+  it('reboots now with the typed hostname, then follows it until the host is back', async () => {
+    // the bell's read, the dialog's (how many are live), the one before acting
+    serve(newer, host, [up(), up({ live_sessions: 2 }), up({ draining: true, live_sessions: 1 }), new TypeError('Failed to fetch'), up({ started_at: 'B' })])
     const post = vi.spyOn(api, 'post').mockResolvedValue({} as never)
     strip()
     const user = userEvent.setup()
     await user.click(await screen.findByRole('button', { name: 'Gateway actions' }))
     await user.click(await screen.findByRole('menuitem', { name: 'Reboot host' }))
-    await user.clear(screen.getByLabelText(/Let live sessions finish for/))
-    await user.type(screen.getByLabelText(/Let live sessions finish for/), '0')
+    expect(await screen.findByText(/Minutes; 0 ends them now\. 2 live\./)).toBeDefined()
+    const now = screen.getByRole('button', { name: 'Reboot now' })
+    expect((now as HTMLButtonElement).disabled).toBe(true)
     await user.type(await screen.findByLabelText(/Type the hostname to confirm/), 'gw-test')
+    expect((now as HTMLButtonElement).disabled).toBe(true)
     await user.type(screen.getByLabelText('Authenticator code'), '123456')
-    await user.click(screen.getByRole('button', { name: 'Reboot' }))
+    expect(screen.getByLabelText<HTMLInputElement>(/Let live sessions finish for/).value).toBe('15')
+    await user.click(now)
 
     expect(await screen.findByText('Host rebooted')).toBeDefined()
     expect(screen.getByRole('button', { name: 'Close' })).toBeDefined()
@@ -123,9 +129,30 @@ describe('the corner strip', () => {
     expect(post.mock.calls[1]).toEqual(['/admin/system/reboot', { wait_minutes: 0, confirm: 'gw-test' }])
   })
 
+  it('offers one button that says now once the wait is 0, and restarts at once', async () => {
+    serve(newer, host, [up(), up({ live_sessions: 0 }), up(), new TypeError('Failed to fetch'), up({ started_at: 'B' })])
+    const post = vi.spyOn(api, 'post').mockResolvedValue({} as never)
+    strip()
+    const user = userEvent.setup()
+    await user.click(await screen.findByRole('button', { name: 'Gateway actions' }))
+    await user.click(await screen.findByRole('menuitem', { name: 'Restart gateway' }))
+    expect(await screen.findByText(/None live\./)).toBeDefined()
+    const dialog = screen.getByRole('dialog', { name: 'Restart gateway' })
+    const buttons = () => within(dialog).getAllByRole('button').map((b) => b.textContent)
+    expect(buttons()).toEqual(expect.arrayContaining(['Restart now', 'Restart']))
+    await user.clear(screen.getByLabelText(/Let live sessions finish for/))
+    await user.type(screen.getByLabelText(/Let live sessions finish for/), '0')
+    expect(buttons().filter((t) => t?.startsWith('Restart'))).toEqual(['Restart now'])
+    await user.click(within(dialog).getByRole('button', { name: 'Restart now' }))
+
+    expect(await screen.findByText('Gateway restarted')).toBeDefined()
+    expect(post.mock.calls).toEqual([['/admin/system/restart', { wait_minutes: 0 }]])
+  })
+
   it('installs a newer release and says when it is back on it', async () => {
     let calls = 0
     serve(() => ({ ...newer, installable: true, ...(calls++ > 2 ? { install: { state: 'running', version: '1.5.0', message: 'downloading', at: 'now' } } : {}) }), host, [
+      up(),
       up(),
       up({ draining: true }),
       new TypeError('Failed to fetch'),
