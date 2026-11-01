@@ -19,6 +19,10 @@ const h = vi.hoisted(() => ({
   // whether the desktop recording plays or the gateway refuses its stream
   deskPlays: false,
   scales: [] as number[],
+  // what the terminal player was asked to do by the page's own keys
+  pauses: 0,
+  // the height of the terminal player's picture, as laid out
+  pictureHeight: 0,
 }))
 
 vi.mock('asciinema-player', () => ({
@@ -28,6 +32,10 @@ vi.mock('asciinema-player', () => ({
     const wrapper = document.createElement('div')
     wrapper.className = 'ap-wrapper'
     wrapper.tabIndex = -1
+    const picture = document.createElement('div')
+    picture.className = 'ap-player'
+    picture.getBoundingClientRect = () => ({ height: h.pictureHeight }) as DOMRect
+    wrapper.appendChild(picture)
     el.appendChild(wrapper)
     return {
       addEventListener(event: string, fn: () => void) {
@@ -38,7 +46,9 @@ vi.mock('asciinema-player', () => ({
         h.seeks.push(to)
       },
       play: async () => {},
-      pause: async () => {},
+      pause: async () => {
+        h.pauses++
+      },
       getCurrentTime: () => h.now,
     }
   },
@@ -123,6 +133,8 @@ beforeEach(() => {
   h.listeners = {}
   h.deskPlays = false
   h.scales.length = 0
+  h.pauses = 0
+  h.pictureHeight = 0
   // jsdom lays nothing out, so it has no scrolling to do.
   Element.prototype.scrollIntoView = () => {}
   ended = vi.fn<() => void>()
@@ -278,37 +290,99 @@ describe('Player, the transport', () => {
     expect(screen.queryByText(/play\/pause|full screen\./i)).toBeNull()
   })
 
-  it('takes a paused terminal player and its controls full screen and back, on the same frame', async () => {
+  // The terminal player fitted the card's width only, so in a wide, short
+  // window its controls were below the window's bottom (the live console,
+  // 2026-11-01, 1707x692). It fits both ways now, in the room the page
+  // gives it, and is never made again for full screen: it fits the stage.
+  it('gives the terminal player the window less the controls on the page, and the stage in full screen', async () => {
     const asked = fullscreen()
     const user = await playTerminal()
-    expect(h.creates.map((o) => o.fit)).toEqual(['width'])
+    const room = `${window.innerHeight - 72}px`
+    const host = document.querySelector<HTMLElement>('.player-host')!
+    expect(h.creates.map((o) => o.fit)).toEqual(['both'])
+    expect(host.style.height).toBe(room)
 
-    // 5 s on the player's clock is 9 s into the recording: the 6 s gap
-    // before the last event was squeezed to 2.
+    act(() => h.listeners.playing())
     h.now = 5
     await user.click(screen.getByRole('button', { name: 'Full screen' }))
     expect(asked).toHaveLength(1)
     expect(asked[0].contains(screen.getByRole('combobox', { name: 'Playback speed' }))).toBe(true)
-    expect(h.creates.map((o) => o.fit)).toEqual(['width', 'both'])
-    expect(h.creates[1]).toMatchObject({ startAt: 9, autoPlay: false })
-    // paused, the new player is moved to the frame the old one showed
-    expect(h.seeks).toEqual([5])
+    // the stage's flex height, not the page's
+    expect(host.style.height).toBe('')
 
+    // the browser leaves full screen with the page at its top; the player
+    // goes back to the top of the window, where Play put it
+    const scrolled = vi.fn()
+    Element.prototype.scrollIntoView = scrolled
     await user.click(screen.getByRole('button', { name: 'Exit full screen' }))
-    expect(h.creates.map((o) => o.fit)).toEqual(['width', 'both', 'width'])
-    expect(h.seeks).toEqual([5, 5])
-  })
-
-  it('keeps a playing terminal player playing in full screen, without a seek', async () => {
-    fullscreen()
-    const user = await playTerminal()
-    act(() => h.listeners.playing())
-    await user.click(screen.getByRole('button', { name: 'Full screen' }))
-    expect(h.creates[1]).toMatchObject({ fit: 'both', autoPlay: true })
+    expect(host.style.height).toBe(room)
+    expect(scrolled).toHaveBeenCalledWith({ block: 'start' })
+    expect(scrolled.mock.contexts[0]).toBe(host)
+    // one player throughout, never moved
+    expect(h.creates).toHaveLength(1)
     expect(h.seeks).toEqual([])
   })
 
-  it('answers F in the terminal player, and again in the player made for full screen', async () => {
+  it('takes the room in to the picture when the width is what limits it', async () => {
+    let seen: ResizeObserverCallback = () => {}
+    vi.stubGlobal('ResizeObserver', class {
+      constructor(cb: ResizeObserverCallback) {
+        seen = cb
+      }
+      observe() {}
+      disconnect() {}
+    })
+    await playTerminal()
+    const host = document.querySelector<HTMLElement>('.player-host')!
+    h.pictureHeight = 400.2
+    act(() => seen([], {} as ResizeObserver))
+    expect(host.style.height).toBe('401px')
+    // a picture as tall as the room leaves it be
+    host.style.height = `${window.innerHeight - 72}px`
+    h.pictureHeight = window.innerHeight
+    act(() => seen([], {} as ResizeObserver))
+    expect(host.style.height).toBe(`${window.innerHeight - 72}px`)
+  })
+
+  // A click on Play takes its own button away, so focus fell to the page,
+  // where the terminal player heard no key: Space scrolled the page and F
+  // did nothing (the live console, 2026-11-01).
+  it('hands focus to the terminal player on Play', async () => {
+    await playTerminal()
+    expect(document.activeElement?.className).toBe('ap-wrapper')
+  })
+
+  it('answers the keys from anywhere on the page for a terminal recording', async () => {
+    fullscreen()
+    const user = await playTerminal()
+    act(() => h.listeners.playing())
+    ;(document.activeElement as HTMLElement).blur()
+    h.now = 3
+    await user.keyboard(' ')
+    expect(h.pauses).toBe(1)
+    await user.keyboard('{ArrowRight}{ArrowLeft}{Home}{End}')
+    expect(h.seeks).toEqual([13, 0, 0, '100%'])
+    await user.keyboard('f')
+    expect(screen.getByRole('button', { name: 'Exit full screen' })).toBeDefined()
+  })
+
+  it('leaves Space to a focused button, and every key to the terminal player inside it', async () => {
+    const user = await playTerminal()
+    act(() => h.listeners.playing())
+    h.now = 30
+    screen.getByRole('button', { name: 'Back 10 seconds' }).focus()
+    await user.keyboard(' ')
+    // the button was pressed; the page did not pause as well
+    expect(h.seeks).toEqual([20])
+    expect(h.pauses).toBe(0)
+
+    document.querySelector<HTMLElement>('.ap-wrapper')!.focus()
+    await user.keyboard(' {ArrowRight}')
+    expect(h.pauses).toBe(0)
+    expect(h.seeks).toEqual([20])
+  })
+
+  it('answers F in the terminal player, and again in full screen', async () => {
     fullscreen()
     const user = await playTerminal()
     // The terminal player's own F would take only the picture full screen,
@@ -320,15 +394,13 @@ describe('Player, the transport', () => {
     await user.keyboard('f')
     expect(screen.getByRole('button', { name: 'Exit full screen' })).toBeDefined()
 
-    // Focus went to the new player, so a second F works without a click.
-    const second = document.activeElement as HTMLElement
-    expect(second).not.toBe(first)
-    expect(second.className).toBe('ap-wrapper')
+    // the same player, still focused, so a second F works without a click
+    expect(document.activeElement).toBe(first)
     await user.keyboard('f')
     document.removeEventListener('keydown', reached)
     expect(reached).not.toHaveBeenCalled()
     expect(screen.getByRole('button', { name: 'Full screen' })).toBeDefined()
-    expect(h.creates.map((o) => o.fit)).toEqual(['width', 'both', 'width'])
+    expect(h.creates).toHaveLength(1)
   })
 
   it('draws a desktop recording as large as the screen in full screen, never above its size on the page', async () => {
@@ -356,5 +428,26 @@ describe('Player, the transport', () => {
     await user.keyboard('f')
     await waitFor(() => expect(h.scales.at(-1)).toBe(1))
     expect(screen.getByRole('button', { name: 'Full screen' })).toBeDefined()
+    // no stray "desktop" badge under the playback card (2026-11-01)
+    expect(screen.queryByText('desktop')).toBeNull()
+  })
+
+  // In a short window the desktop was sized to the room below where the
+  // player stood (320 px down), so it came out small, and the small picture
+  // kept the page too short to scroll it any higher (the live console,
+  // 2026-11-01). It is sized to the window less the controls: Play scrolls
+  // it to the top.
+  it('sizes a desktop recording for the window, not for where the player stands before Play scrolls it', async () => {
+    h.deskPlays = true
+    vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(2000)
+    vi.spyOn(window, 'innerHeight', 'get').mockReturnValue(500)
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({ top: 320, height: 0 } as DOMRect)
+    gateway({ [`/api/v1/recordings/${RID}`]: [() => json(200, recording({ format: 'guac' }))] })
+    open(`/audit/recordings/${RID}`)
+    await userEvent.setup().click(await screen.findByRole('button', { name: 'Play' }))
+    await screen.findByRole('button', { name: 'Pause' })
+    // 500 high, 72 kept for the controls: 428 for a 600-high desktop
+    expect(h.scales.at(-1)).toBeCloseTo(428 / 600)
+    expect(document.querySelector<HTMLElement>('.player-host')!.style.height).toBe('428px')
   })
 })

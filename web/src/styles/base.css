@@ -516,9 +516,10 @@ td.actions > * + * { margin-left: 8px; }
 .player-stage.is-full .transport .t { color: var(--term-fg-muted); }
 .player-stage.is-full .btn:not(.primary), .player-stage.is-full .speed { background: var(--term-btn-bg); color: var(--term-fg); border-color: var(--term-btn-line); }
 .player-stage.is-full .btn:not(.primary):hover { background: var(--term-btn-hover); border-color: var(--term-fg-muted); }
-/* The replayed desktop is scaled to fit; the container hugs the scaled
-   height so the transport sits right under the picture. */
-.desk-player { scroll-margin-top: 12px; }
+/* Both pictures are scaled to fit; the container hugs the scaled height so
+   the transport sits right under the picture, and Play scrolls it to just
+   below the window's top. */
+.player-host { scroll-margin-top: 12px; }
 
 /* console command line (ADR 0027) */
 .main { position: relative; }
