@@ -3,6 +3,7 @@ import { Navigate, Route, Routes, useLocation } from 'react-router-dom'
 import { useAuth } from './auth/AuthContext'
 import { SessionExpired } from './auth/SessionExpired'
 import { Empty } from './components/ui'
+import { SessionLoading } from './components/SessionSplash'
 import { Shell } from './components/Shell'
 import type { Role } from './api/types'
 import { homeFor } from './auth/home'
@@ -11,12 +12,13 @@ import type { AccessRequest, Page } from './api/types'
 import { Login } from './pages/Login'
 import { Targets } from './pages/user/Targets'
 import { ConnectPage } from './pages/user/connect'
+import { loadDesktop, loadTerminal } from './pages/user/sessionPages'
 import { MySessions } from './pages/user/MySessions'
 import { MyAccess } from './pages/user/MyAccess'
 
 // The terminal pulls in xterm; load it only when a session opens.
-const Terminal = lazy(() => import('./pages/user/Terminal').then((m) => ({ default: m.Terminal })))
-const Desktop = lazy(() => import('./pages/user/Desktop').then((m) => ({ default: m.Desktop })))
+const Terminal = lazy(loadTerminal)
+const Desktop = lazy(loadDesktop)
 const Shadow = lazy(() => import('./pages/audit/Shadow').then((m) => ({ default: m.Shadow })))
 import { adminRoutes } from './pages/admin'
 import { adminAuditRoutes, auditRoutes } from './pages/audit'
@@ -105,7 +107,7 @@ export default function App() {
         path="/terminal"
         element={
           <Guard roles={connectRoles}>
-            <Suspense fallback={<Empty>Loading terminal</Empty>}>
+            <Suspense fallback={<SessionLoading />}>
               <Terminal />
             </Suspense>
           </Guard>
@@ -115,7 +117,7 @@ export default function App() {
         path="/desktop"
         element={
           <Guard roles={connectRoles}>
-            <Suspense fallback={<Empty>Loading desktop</Empty>}>
+            <Suspense fallback={<SessionLoading />}>
               <Desktop />
             </Suspense>
           </Guard>

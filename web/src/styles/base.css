@@ -393,6 +393,9 @@ td.actions > * + * { margin-left: 8px; }
 
 /* terminal */
 .term-page { display: flex; flex-direction: column; height: 100vh; background: var(--terminal-bg); color: var(--term-fg); }
+/* A session's tab while it connects and its page loads (SessionSplash): the
+   session page's ground over the whole window, the portal's sidebar too. */
+.session-splash { position: fixed; inset: 0; z-index: 45; display: grid; place-items: center; background: var(--terminal-bg); color: var(--term-fg-muted); font-size: 0.95rem; }
 /* When the session is fullscreened the bar stays and the host fills the rest;
    the ResizeObserver on the host re-fits the terminal / resizes the desktop. */
 .term-page:fullscreen { width: 100vw; height: 100vh; }

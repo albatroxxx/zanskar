@@ -7,9 +7,11 @@ import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { api, ApiError, errorMessage } from '../../api/client'
 import { protocolName } from '../../api/format'
 import type { ConnectResponse, Page, Protocol, ReachableTarget } from '../../api/types'
+import { SessionSplash } from '../../components/SessionSplash'
 import { useTitle } from '../../components/title'
 import { Alert, Empty, Field, Modal, PageHead } from '../../components/ui'
 import { connectHref, parseIntent, recordIntent, takeIntent, type ConnectIntent } from './intent'
+import { preloadSessionPage } from './sessionPages'
 
 /** Body of POST /connect: exactly one of target_id, asg_id, asg_instance_id. */
 export interface ConnectBody {
@@ -102,15 +104,23 @@ export function ConnectPage() {
   const [cred, setCred] = useState(noCred)
   const started = useRef(false)
   const protocol = intent ? protocolName(intent.protocol) : ''
-  useTitle(target ? `${target.name} · ${protocol}` : 'Connect')
+  useTitle(target ? `${target.name} · ${protocol}` : auto ? 'Connecting' : 'Connect')
 
   const connect = async (t: ReachableTarget, body: ConnectBody, inPrompt: boolean) => {
     if (!intent) return
     setBusy(true)
     setErr('')
     setNeedsApproval(false)
+    // The session page's code comes while the gateway sets the session up.
+    preloadSessionPage(intent.protocol)
+    // Once the session page is asked for, this page stays as it is: the
+    // router keeps it on screen while that page loads, and turning busy off
+    // showed "Connect to … ?" and a live Connect button for a moment
+    // (2026-11-01).
+    let left = false
     try {
       const res = await api.post<ConnectResponse>('/connect', body)
+      left = true
       nav(res.ws_path === '/ws/desktop' ? '/desktop' : '/terminal', {
         replace: true,
         state: {
@@ -138,7 +148,7 @@ export function ConnectPage() {
         setErr(errorMessage(e))
       }
     } finally {
-      setBusy(false)
+      if (!left) setBusy(false)
     }
   }
 
@@ -196,6 +206,13 @@ export function ConnectPage() {
     )
   }
   const what = intent.instance ? `an instance of ${target?.name ?? 'the group'}` : target?.name ?? ''
+  // Connecting, by itself or after Connect: the tab looks like the session
+  // it is about to be, not a portal page with buttons (the live console,
+  // 2026-11-01). Anything that needs the person (a refusal, an approval to
+  // ask for, the credential prompt) brings the page back.
+  if (!err && !needsApproval && !prompt && target !== null && (busy || (auto && target === undefined))) {
+    return <SessionSplash text={target ? `Connecting to ${what}…` : 'Connecting…'} />
+  }
   return (
     <>
       <PageHead title={target ? target.name : 'Connect'} lead={target ? `${protocol}${intent.own ? ', with your own login' : ''}` : undefined} />

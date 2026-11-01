@@ -1,12 +1,14 @@
-import { StrictMode } from 'react'
-import { cleanup, render, screen, within } from '@testing-library/react'
+import { lazy, StrictMode, Suspense } from 'react'
+import { act, cleanup, render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { ApiError, api } from '../../api/client'
 import type { ReachableTarget } from '../../api/types'
+import { SessionLoading } from '../../components/SessionSplash'
 import { ConnectPage } from './connect'
 import { connectHref, intentTTL, parseIntent, recordedIntents, recordIntent, takeIntent } from './intent'
+import * as sessionPages from './sessionPages'
 
 afterEach(() => {
   cleanup()
@@ -127,6 +129,78 @@ describe('a session link', () => {
     for (const bad of ['target=t1&protocol=telnet', 'protocol=ssh', 'target=t1&asg=g1&protocol=ssh', 'instance=i9&protocol=ssh', 'target=../x&protocol=ssh', 'target=t1']) {
       expect(parseIntent(new URLSearchParams(bad))).toBeNull()
     }
+  })
+})
+
+// The live console (2026-11-01): between the click and the application, the
+// tab flashed a portal page with a Connect button, then the same card asking
+// "Connect to … ?" again, then a light "Loading desktop".
+describe('the tab while it connects', () => {
+  it('shows only the connecting screen, and asks for the session page\'s code meanwhile', async () => {
+    vi.spyOn(api, 'post').mockReturnValue(new Promise(() => {}))
+    const preload = vi.spyOn(sessionPages, 'preloadSessionPage')
+    open('/connect?target=t1&protocol=ssh')
+    expect((await screen.findByRole('status')).textContent).toBe('Connecting to box…')
+    expect(screen.queryByRole('button', { name: 'Connect' })).toBeNull()
+    expect(screen.queryByRole('link', { name: 'Back to targets' })).toBeNull()
+    expect(screen.queryByRole('heading')).toBeNull()
+    expect(preload).toHaveBeenCalledWith('ssh')
+  })
+
+  it('never asks again once connected, while the session page is still loading', async () => {
+    let answer: (v: unknown) => void = () => {}
+    vi.spyOn(api, 'post').mockReturnValue(new Promise((ok) => (answer = ok)))
+    vi.spyOn(api, 'get').mockImplementation(async () => ({ items: [box] }) as never)
+    const href = '/connect?target=t1&protocol=ssh'
+    recordIntent(href)
+    // a session page whose code never arrives
+    const Never = lazy(() => new Promise<{ default: () => null }>(() => {}))
+    // The boundary is around the routes, already showing this page, so the
+    // router's transition keeps this page on screen while the next one
+    // loads, as the browser did for about 60 ms.
+    render(
+      <MemoryRouter initialEntries={[{ pathname: '/connect', search: '?target=t1&protocol=ssh', key: `page-${++page}` }]}>
+        <Suspense fallback={<p>fallback</p>}>
+          <Routes>
+            <Route path="/connect" element={<ConnectPage />} />
+            <Route path="/terminal" element={<Never />} />
+          </Routes>
+        </Suspense>
+      </MemoryRouter>,
+    )
+    await screen.findByText('Connecting to box…')
+    await act(async () => answer(granted))
+    await act(() => new Promise((r) => setTimeout(r, 50)))
+    expect(screen.queryByText('fallback')).toBeNull()
+    expect(screen.queryByText(/over SSH\?/)).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Connect' })).toBeNull()
+    expect(screen.getByRole('status').textContent).toBe('Connecting to box…')
+  })
+
+  it('loads a session page behind the same screen, naming the target', () => {
+    render(
+      <MemoryRouter initialEntries={[{ pathname: '/desktop', state: { target: 'nginx-internal' } }]}>
+        <SessionLoading />
+      </MemoryRouter>,
+    )
+    expect(screen.getByRole('status').textContent).toBe('Connecting to nginx-internal…')
+  })
+
+  it('titles the tab as the session will be titled, so it does not blink on the way', () => {
+    render(
+      <MemoryRouter initialEntries={[{ pathname: '/desktop', state: { target: 'nginx-internal', protocol: 'http' } }]}>
+        <SessionLoading />
+      </MemoryRouter>,
+    )
+    expect(document.title).toBe('nginx-internal · HTTP · Zanskar')
+  })
+
+  it('brings the page back with the reason when the connect is refused', async () => {
+    vi.spyOn(api, 'post').mockRejectedValue(new ApiError(502, { code: 'upstream', message: 'the machine did not answer', request_id: 'r' }, '502'))
+    open('/connect?target=t1&protocol=ssh')
+    expect(await screen.findByText(/the machine did not answer/)).toBeDefined()
+    expect(screen.getByRole('button', { name: 'Connect' })).toBeDefined()
+    expect(screen.queryByText('Connecting to box…')).toBeNull()
   })
 })
 
