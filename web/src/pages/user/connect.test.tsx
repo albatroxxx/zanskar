@@ -1,7 +1,7 @@
 import { StrictMode } from 'react'
 import { cleanup, render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { MemoryRouter, Route, Routes } from 'react-router-dom'
+import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { ApiError, api } from '../../api/client'
 import type { ReachableTarget } from '../../api/types'
@@ -30,6 +30,11 @@ const wiki: ReachableTarget = {
 const granted = { ticket: 'tk', expires_at: 'x', ws_path: '/ws/terminal' }
 const asked = new ApiError(422, { code: 'credential_required', message: 'this target needs your username and password', request_id: 'r' }, '422')
 
+/** Again shows the address the session page was given for Connect again. */
+function Again() {
+  return <output data-testid="again">{(useLocation().state as { again?: string } | null)?.again}</output>
+}
+
 let page = 0
 /** open mounts /connect as a new tab does, clicked (a record left for it) or
  *  not. Each mount is its own history entry, like its own page load. */
@@ -41,7 +46,7 @@ function open(href: string, { clicked = true, items = [box, fleet, wiki], strict
     <MemoryRouter initialEntries={[{ pathname: url.pathname, search: url.search, key: `page-${++page}` }]}>
       <Routes>
         <Route path="/connect" element={<ConnectPage />} />
-        <Route path="/terminal" element={<p>terminal page</p>} />
+        <Route path="/terminal" element={<><p>terminal page</p><Again /></>} />
         <Route path="/desktop" element={<p>desktop page</p>} />
         <Route path="/" element={<p>targets</p>} />
       </Routes>
@@ -105,6 +110,8 @@ describe('the tab a session link opened', () => {
     open('/connect?target=t1&protocol=ssh')
     expect(await screen.findByText('terminal page')).toBeDefined()
     expect(post.mock.calls).toEqual([['/connect', { target_id: 't1', protocol: 'ssh' }]])
+    // the session page can come back here to connect again
+    expect(screen.getByTestId('again').textContent).toBe('/connect?target=t1&protocol=ssh')
   })
 
   it('asks first when it was opened any other way, and connects on Connect', async () => {

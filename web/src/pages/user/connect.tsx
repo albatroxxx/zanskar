@@ -121,6 +121,7 @@ export function ConnectPage() {
           asg_id: res.asg_id,
           asg_instance_id: res.asg_instance_id,
           instance_label: res.instance_label,
+          again: href,
         },
       })
     } catch (e) {

@@ -1,10 +1,11 @@
 import { act, cleanup, render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { MemoryRouter, Route, Routes } from 'react-router-dom'
+import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Status } from 'guacamole-common-js'
 import { api } from '../../api/client'
 import { Desktop } from './Desktop'
+import { takeIntent } from './intent'
 
 type Handler<T extends unknown[]> = ((...args: T) => void) | null
 
@@ -120,9 +121,15 @@ function start(state: object = desk) {
       <Routes>
         <Route path="/desktop" element={<Desktop />} />
         <Route path="/" element={<p>Targets page</p>} />
+        <Route path="/connect" element={<ConnectStandIn />} />
       </Routes>
     </MemoryRouter>,
   )
+}
+
+function ConnectStandIn() {
+  const loc = useLocation()
+  return <p>Connect page {loc.pathname + loc.search}</p>
 }
 
 /** connected waits for the page to load the library and open its nth client. */
@@ -225,6 +232,32 @@ describe('Desktop, the keyboard', () => {
     await press('Back to targets')
 
     expect(screen.getByText('Targets page')).toBeDefined()
+  })
+
+  // A session runs in a tab of its own (ADR 0038); ended, the tab offered
+  // only a second targets list (the live console, 2026-11-01).
+  it('connects again from the end dialog, through the connect page, in this tab', async () => {
+    const again = '/connect?target=t1&protocol=rdp'
+    start({ ...desk, again })
+    const client = await connected()
+    act(() => client.disconnect())
+    await press('Connect again')
+    expect(screen.getByText(`Connect page ${again}`)).toBeDefined()
+    // the record a session link leaves, so the connect page connects at once
+    expect(takeIntent(again)).toBe(true)
+  })
+
+  it('offers no Connect again without a connect page to go back to, or with one of another shape', async () => {
+    for (const again of [undefined, '/admin/users', 'https://elsewhere.example/connect?target=t1&protocol=rdp', '/connect?target=..%2Fx&protocol=rdp', '/connect?target=t1&protocol=telnet']) {
+      start({ ...desk, again })
+      const client = await connected()
+      act(() => client.disconnect())
+      const dialog = within(screen.getByRole('dialog', { name: 'Session ended' }))
+      expect(dialog.queryByRole('button', { name: 'Connect again' })).toBeNull()
+      expect(dialog.getByRole('button', { name: 'Back to targets' }).className).toBe('btn primary')
+      cleanup()
+      g.clients.length = 0
+    }
   })
 
   it('reaches the failover dialog when the instance is lost', async () => {

@@ -32,12 +32,13 @@ describe('desktopEnd', () => {
 // D14: the terminal and desktop pages each built the state for the instance
 // a failover moved to. They share switchedState through useSwitched now.
 describe('switchedState', () => {
-  const lost = { ticket: 'tk1', ws_path: '/ws/terminal', target: 'web', protocol: 'ssh', asg_id: 'g1', asg_instance_id: 'i1', instance_label: 'i-0abc', switched_from: 'i-0old' }
+  const lost = { ticket: 'tk1', ws_path: '/ws/terminal', target: 'web', protocol: 'ssh', asg_id: 'g1', asg_instance_id: 'i1', instance_label: 'i-0abc', switched_from: 'i-0old', again: '/connect?asg=g1&protocol=ssh' }
 
   it('opens the new instance under the same target, naming the instance it left', () => {
     const res = { ticket: 'tk2', expires_at: '2026-10-06T10:01:00Z', ws_path: '/ws/terminal', asg_id: 'g1', asg_instance_id: 'i2', instance_label: 'i-0def' }
     expect(switchedState(lost, res)).toEqual({
       ticket: 'tk2', ws_path: '/ws/terminal', target: 'web', protocol: 'ssh', asg_id: 'g1', asg_instance_id: 'i2', instance_label: 'i-0def', switched_from: 'i-0abc',
+      again: '/connect?asg=g1&protocol=ssh',
     })
   })
 
