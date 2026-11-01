@@ -69,6 +69,16 @@ describe('api.get, the same read at once', () => {
     expect(g.seen).toEqual(['GET /api/v1/users', 'POST /api/v1/users', 'GET /api/v1/users', 'POST /api/v1/sessions/s1/files', 'GET /api/v1/users'])
   })
 
+  it('never shares a read that started while a change was on its way with one asked for after it', async () => {
+    const g = gateway()
+    const change = api.post('/users', { username: 'x' })
+    void api.get('/users') // a poll landing while the change is in flight
+    g.answer({ id: 'u1' }) // the change is answered; the poll is not yet
+    await change
+    void api.get('/users') // the caller's reload after the change
+    expect(g.seen).toEqual(['POST /api/v1/users', 'GET /api/v1/users', 'GET /api/v1/users'])
+  })
+
   it('asks again once the first reply is in, or when the first has hung a second', async () => {
     const g = gateway()
     const first = api.get('/auth/me')

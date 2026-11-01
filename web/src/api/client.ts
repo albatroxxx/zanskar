@@ -88,9 +88,21 @@ function read(path: string): Promise<Reply> {
   return mine.reply
 }
 
+/** change sends a change, forgetting the reads in flight before it and again
+ *  once it is answered: a read that started while the change was on its way
+ *  may hold an answer from before it, and the caller's next read must not
+ *  join that one. */
+async function change(method: Method, path: string, body?: unknown): Promise<Reply> {
+  forgetReads()
+  try {
+    return await send(method, path, body)
+  } finally {
+    forgetReads()
+  }
+}
+
 async function request<T>(method: Method, path: string, body?: unknown): Promise<T> {
-  if (method !== 'GET') forgetReads()
-  const res = method === 'GET' ? await read(path) : await send(method, path, body)
+  const res = method === 'GET' ? await read(path) : await change(method, path, body)
   if (res.status === 204) return undefined as T
   // Parsed per caller: no caller sees another's changes to the result.
   const parsed = parseBody(res.text)
@@ -137,8 +149,16 @@ async function upload<T>(path: string, body: BodyInit, contentType = 'applicatio
   forgetReads()
   const headers: Record<string, string> = { Accept: 'application/json', 'Content-Type': contentType }
   if (csrfToken) headers['X-CSRF-Token'] = csrfToken
-  const res = await fetch('/api/v1' + path, { method: 'POST', headers, credentials: 'same-origin', body })
-  const parsed = parseBody(await res.text())
+  let text: string
+  let res: Response
+  try {
+    res = await fetch('/api/v1' + path, { method: 'POST', headers, credentials: 'same-origin', body })
+    text = await res.text()
+  } finally {
+    // as for any change: a read that started meanwhile is not joined
+    forgetReads()
+  }
+  const parsed = parseBody(text)
   if (!res.ok) raise(res, parsed, path)
   return parsed as T
 }
