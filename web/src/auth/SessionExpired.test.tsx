@@ -130,7 +130,9 @@ describe('SessionExpired', () => {
     await screen.findByRole('dialog', { name: 'Session expired' })
     await userEvent.setup().click(screen.getByRole('button', { name: 'Go to sign in' }))
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
-    expect(screen.getByText('the page')).toBeDefined()
+    // The login page sends the person back once the session check answers;
+    // until then it shows itself (a slower CI runner caught it there).
+    expect(await screen.findByText('the page')).toBeDefined()
     await expect(api.get('/users')).rejects.toMatchObject({ status: 401 })
     await screen.findByRole('dialog', { name: 'Session expired' })
     expect((screen.getByRole('button', { name: 'Go to sign in' }) as HTMLButtonElement).disabled).toBe(false)
