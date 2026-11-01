@@ -104,7 +104,8 @@ describe('the corner strip', () => {
   // ADR 0032: a reboot asks for the hostname and, when the session's proof
   // is stale, an authenticator code, and proves the code before acting.
   // Then the dialog follows it to the end (2026-10-30).
-  // 2026-11-01: "Reboot now" skips the wait without typing 0, behind the
+  // 2026-11-01: "now" is a box under the wait, which it sets to 0 (a
+  // separate "Reboot now" button did not say what it was for), behind the
   // same hostname and code.
   it('reboots now with the typed hostname, then follows it until the host is back', async () => {
     // the bell's read, the dialog's (how many are live), the one before acting
@@ -114,13 +115,21 @@ describe('the corner strip', () => {
     const user = userEvent.setup()
     await user.click(await screen.findByRole('button', { name: 'Gateway actions' }))
     await user.click(await screen.findByRole('menuitem', { name: 'Reboot host' }))
-    expect(await screen.findByText(/Minutes; 0 ends them now\. 2 live\./)).toBeDefined()
-    const now = screen.getByRole('button', { name: 'Reboot now' })
+    expect(await screen.findByText(/^Minutes\. 2 live\.$/)).toBeDefined()
+    const dialog = screen.getByRole('dialog', { name: 'Reboot host' })
+    const minutes = screen.getByLabelText<HTMLInputElement>(/Let live sessions finish for/)
+    const box = screen.getByLabelText<HTMLInputElement>('End live sessions and reboot now')
+    expect(minutes.value).toBe('15')
+    expect(box.checked).toBe(false)
+    expect(within(dialog).queryByRole('button', { name: 'Reboot now' })).toBeNull()
+
+    await user.click(box)
+    expect(minutes.value).toBe('0')
+    const now = within(dialog).getByRole('button', { name: 'Reboot now' })
     expect((now as HTMLButtonElement).disabled).toBe(true)
     await user.type(await screen.findByLabelText(/Type the hostname to confirm/), 'gw-test')
     expect((now as HTMLButtonElement).disabled).toBe(true)
     await user.type(screen.getByLabelText('Authenticator code'), '123456')
-    expect(screen.getByLabelText<HTMLInputElement>(/Let live sessions finish for/).value).toBe('15')
     await user.click(now)
 
     expect(await screen.findByText('Host rebooted')).toBeDefined()
@@ -129,7 +138,7 @@ describe('the corner strip', () => {
     expect(post.mock.calls[1]).toEqual(['/admin/system/reboot', { wait_minutes: 0, confirm: 'gw-test' }])
   })
 
-  it('offers one button that says now once the wait is 0, and restarts at once', async () => {
+  it('keeps the box and the wait in step, with one button that says now at 0, and restarts at once', async () => {
     serve(newer, host, [up(), up({ live_sessions: 0 }), up(), new TypeError('Failed to fetch'), up({ started_at: 'B' })])
     const post = vi.spyOn(api, 'post').mockResolvedValue({} as never)
     strip()
@@ -138,11 +147,24 @@ describe('the corner strip', () => {
     await user.click(await screen.findByRole('menuitem', { name: 'Restart gateway' }))
     expect(await screen.findByText(/None live\./)).toBeDefined()
     const dialog = screen.getByRole('dialog', { name: 'Restart gateway' })
-    const buttons = () => within(dialog).getAllByRole('button').map((b) => b.textContent)
-    expect(buttons()).toEqual(expect.arrayContaining(['Restart now', 'Restart']))
-    await user.clear(screen.getByLabelText(/Let live sessions finish for/))
-    await user.type(screen.getByLabelText(/Let live sessions finish for/), '0')
-    expect(buttons().filter((t) => t?.startsWith('Restart'))).toEqual(['Restart now'])
+    const restarts = () => within(dialog).getAllByRole('button').map((b) => b.textContent).filter((t) => t?.startsWith('Restart'))
+    const minutes = screen.getByLabelText<HTMLInputElement>(/Let live sessions finish for/)
+    const box = screen.getByLabelText<HTMLInputElement>('End live sessions and restart now')
+    expect(restarts()).toEqual(['Restart'])
+
+    // a wait typed, then now ticked and unticked: the typed wait comes back
+    await user.clear(minutes)
+    await user.type(minutes, '20')
+    expect(box.checked).toBe(false)
+    await user.click(box)
+    expect([minutes.value, box.checked, restarts()]).toEqual(['0', true, ['Restart now']])
+    await user.click(box)
+    expect([minutes.value, box.checked, restarts()]).toEqual(['20', false, ['Restart']])
+
+    // a 0 typed in the field ticks the box
+    await user.clear(minutes)
+    await user.type(minutes, '0')
+    expect([box.checked, restarts()]).toEqual([true, ['Restart now']])
     await user.click(within(dialog).getByRole('button', { name: 'Restart now' }))
 
     expect(await screen.findByText('Gateway restarted')).toBeDefined()

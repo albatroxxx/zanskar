@@ -6,13 +6,19 @@ import { DoneIcon } from './icons'
 import { deadlineFor, doneTitle, initialProgress, observe, pacing, progressWatch, stepLabel, stepsFor, type HostAction, type Observation, type Progress, type Start } from './hostAction'
 import { Alert, Field, Modal } from './ui'
 
-const titles: Record<HostAction, { title: string; verb: string; danger?: boolean }> = {
-  update: { title: 'Update', verb: 'Install' },
-  restart: { title: 'Restart gateway', verb: 'Restart' },
-  reboot: { title: 'Reboot host', verb: 'Reboot' },
-  poweroff: { title: 'Stop host', verb: 'Stop', danger: true },
-  config: { title: 'Change install settings', verb: 'Apply and restart' },
+/** Each action's title, its button's verb, and the verb in "End live
+ *  sessions and <now> now". */
+const titles: Record<HostAction, { title: string; verb: string; now: string; danger?: boolean }> = {
+  update: { title: 'Update', verb: 'Install', now: 'install' },
+  restart: { title: 'Restart gateway', verb: 'Restart', now: 'restart' },
+  reboot: { title: 'Reboot host', verb: 'Reboot', now: 'reboot' },
+  poweroff: { title: 'Stop host', verb: 'Stop', now: 'stop', danger: true },
+  config: { title: 'Change install settings', verb: 'Apply and restart', now: 'apply' },
 }
+
+/** The wait a dialog opens with, and comes back to when "now" is unticked
+ *  before any other was typed. */
+const DEFAULT_WAIT = 15
 
 /** BootChange is a change to the environment file the root helper applies (ADR 0020, amended 2026-10-30). */
 export interface BootChange {
@@ -31,7 +37,9 @@ export interface BootChange {
  */
 export function HostActionDialog({ action, version, change, onClose }: { action: HostAction; version?: string; change?: BootChange; onClose: () => void }) {
   const [host, setHost] = useState<HostStatus | null>(null)
-  const [wait, setWait] = useState(15)
+  const [wait, setWait] = useState(DEFAULT_WAIT)
+  // The wait typed before "now" was ticked, given back when it is unticked.
+  const kept = useRef(DEFAULT_WAIT)
   const [confirm, setConfirm] = useState('')
   const [code, setCode] = useState('')
   // The minutes of the request in flight, null when none is.
@@ -184,9 +192,27 @@ export function HostActionDialog({ action, version, change, onClose }: { action:
       {change && <p className="config-change">{change.summary}</p>}
       {err && <Alert tone="danger" onDismiss={() => setErr('')}>{err}</Alert>}
       <form onSubmit={submit}>
-        <Field label="Let live sessions finish for" hint={`Minutes; 0 ends them now.${live === null ? '' : live === 0 ? ' None live.' : ` ${live} live.`}`}>
+        <Field label="Let live sessions finish for" hint={`Minutes.${live === null ? '' : live === 0 ? ' None live.' : ` ${live} live.`}`}>
           <input id="action-wait" type="number" min={0} max={240} value={wait} onChange={(e) => setWait(Number(e.target.value))} />
         </Field>
+        {/* "Now" is a box beside the wait it replaces (the user, 2026-11-01:
+            a separate "Reboot now" button did not say what it was for).
+            Ticked, the wait reads 0; unticked, it is what it was. It follows
+            the field too: a 0 typed there ticks it. */}
+        <div className="field inline">
+          <input
+            id="action-now"
+            type="checkbox"
+            checked={wait === 0}
+            onChange={(e) => {
+              if (e.target.checked) {
+                kept.current = wait
+                setWait(0)
+              } else setWait(kept.current > 0 ? kept.current : DEFAULT_WAIT)
+            }}
+          />
+          <label htmlFor="action-now">End live sessions and {words.now} now</label>
+        </div>
         {typed && host && (
           <Field label={`Type the hostname to confirm: ${host.hostname}`}>
             <input id="action-confirm" value={confirm} onChange={(e) => setConfirm(e.target.value)} autoComplete="off" />
@@ -197,20 +223,12 @@ export function HostActionDialog({ action, version, change, onClose }: { action:
             <input id="action-code" value={code} onChange={(e) => setCode(e.target.value)} inputMode="numeric" autoComplete="one-time-code" />
           </Field>
         )}
-        {/* "<verb> now" skips the wait without typing 0 (2026-11-01); it
-            asks for the same hostname and code. With the wait already 0, the
-            main button says it. */}
         <div className="actions">
           <button type="button" className="btn ghost" onClick={onClose} disabled={busy !== null}>
             Cancel
           </button>
-          {wait > 0 && (
-            <button type="button" className="btn" onClick={() => void run(0)} disabled={!ready}>
-              {busy === 0 ? 'Working…' : `${words.verb} now`}
-            </button>
-          )}
           <button type="submit" className={'btn ' + (words.danger ? 'danger' : 'primary')} disabled={!ready}>
-            {busy !== null && busy === wait ? 'Working…' : wait > 0 ? words.verb : `${words.verb} now`}
+            {busy !== null ? 'Working…' : wait > 0 ? words.verb : `${words.verb} now`}
           </button>
         </div>
       </form>
