@@ -360,6 +360,42 @@ export function RestoreIcon() {
   )
 }
 
+/** TransportIcon draws a recording player's controls: play again from the
+ *  start (an arrow turning back), back and forward a few seconds (rewind and
+ *  fast-forward), play and pause. The button around it carries the words. */
+export function TransportIcon({ kind, size = 18 }: { kind: 'replay' | 'back' | 'forward' | 'play' | 'pause'; size?: number }) {
+  const solid = { fill: 'currentColor' }
+  return (
+    <svg {...svgProps(size)}>
+      {kind === 'replay' && (
+        <>
+          <path d="M3.5 12a8.5 8.5 0 1 0 2.5-6" />
+          <polyline points="3.5 3.5 3.5 8 8 8" />
+        </>
+      )}
+      {kind === 'back' && (
+        <>
+          <polygon points="11 18 3.5 12 11 6" {...solid} />
+          <polygon points="20 18 12.5 12 20 6" {...solid} />
+        </>
+      )}
+      {kind === 'forward' && (
+        <>
+          <polygon points="4 18 11.5 12 4 6" {...solid} />
+          <polygon points="13 18 20.5 12 13 6" {...solid} />
+        </>
+      )}
+      {kind === 'play' && <polygon points="7.5 5 19 12 7.5 19" {...solid} />}
+      {kind === 'pause' && (
+        <>
+          <rect x="6.5" y="5" width="3.5" height="14" rx="1" {...solid} />
+          <rect x="14" y="5" width="3.5" height="14" rx="1" {...solid} />
+        </>
+      )}
+    </svg>
+  )
+}
+
 /** CloseIcon shuts a panel, dismisses a notice, or takes a row out of a list. */
 export function CloseIcon({ size = 16 }: { size?: number }) {
   return (

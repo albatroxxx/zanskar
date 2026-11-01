@@ -495,6 +495,29 @@ td.actions > * + * { margin-left: 8px; }
 .transport .grow { flex: 1; }
 .transport .speed { padding: 4px 8px; border: 1px solid var(--line-strong); border-radius: var(--radius); background: var(--bg-raised); font-size: 0.86rem; }
 .player-hint { margin: 8px 0 0; font-size: 0.78rem; }
+/* Transport controls are glyphs; each button is a 32 px target. */
+.transport .btn.icon { padding: 6px 10px; }
+.transport .btn.icon svg { display: block; }
+/* One full screen for both players: the stage (picture and transport) goes
+   full screen, so the terminal player's own button, which takes only the
+   picture, is not shown. A class from the hook rather than :fullscreen, so one
+   rule set also serves Safari's prefixed API. The stage is dark like a
+   session's full screen, and its controls take the session bar's colours.
+   The player's stylesheet loads after this one, so the hiding rule outranks
+   its own selectors for the button. */
+.player-host div.ap-control-bar button.ap-fullscreen-button { display: none; }
+/* A terminal player made again while paused (a new speed, full screen) shows
+   the frame it stopped on; the transport's Play resumes it, so the player's
+   own start button (its logo) is not laid over that frame. */
+.player-host div.ap-overlay-start { display: none; }
+.player-stage.is-full { display: flex; flex-direction: column; justify-content: center; padding: 12px 16px; background: var(--terminal-bg); }
+.player-stage.is-full .player-host { margin-top: 0; }
+.player-stage.is-full .player-host:not(.desk-player) { flex: 1; min-height: 0; }
+.player-stage.is-full .ap-wrapper { align-items: center; }
+.player-stage.is-full .player-hint { display: none; }
+.player-stage.is-full .transport .t { color: var(--term-fg-muted); }
+.player-stage.is-full .btn:not(.primary), .player-stage.is-full .speed { background: var(--term-btn-bg); color: var(--term-fg); border-color: var(--term-btn-line); }
+.player-stage.is-full .btn:not(.primary):hover { background: var(--term-btn-hover); border-color: var(--term-fg-muted); }
 /* The replayed desktop is scaled to fit; the container hugs the scaled
    height so the transport sits right under the picture. */
 .desk-player { scroll-margin-top: 12px; }
