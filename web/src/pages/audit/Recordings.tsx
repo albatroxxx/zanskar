@@ -1,11 +1,10 @@
 import { useEffect, useState } from 'react'
-import { Link } from 'react-router-dom'
 import { api, query } from '../../api/client'
 import { fmtDuration, fmtTime } from '../../api/format'
 import { sessionTarget, sessionUser } from '../../api/labels'
 import type { Page, Session } from '../../api/types'
 import { usePaged } from '../../components/paged'
-import { Alert, Empty, LoadMore, PageHead, reasonBadge } from '../../components/ui'
+import { Alert, Empty, LoadMore, PageHead, reasonBadge, TabLink } from '../../components/ui'
 import { useRecordingsPath } from './paths'
 
 export function Recordings() {
@@ -83,7 +82,7 @@ export function Recordings() {
                   <td>
                     {/* Review only (2026-11-01): the recording's page has its
                         downloads, the file and, for a terminal, the transcript. */}
-                    <Link className="btn sm" to={`${recordingsPath}/${encodeURIComponent(s.recording_id!)}`}>Review</Link>
+                    <TabLink className="btn sm" to={`${recordingsPath}/${encodeURIComponent(s.recording_id!)}`} label="Review" />
                   </td>
                 </tr>
               ))}

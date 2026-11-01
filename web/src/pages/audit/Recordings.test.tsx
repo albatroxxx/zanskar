@@ -29,7 +29,7 @@ function page(items: Session[], next = '') {
 describe('Recordings, a row', () => {
   it('offers Review alone, the downloads being on the recording’s page', async () => {
     page([session(1, { recording_id: 'r1', protocol: 'http', target_name: 'wiki' }), session(2, { recording_id: 'r2', protocol: 'ssh' })])
-    await screen.findAllByRole('link', { name: 'Review' })
+    await screen.findAllByRole('link', { name: 'Review, opens in a new tab' })
     for (const row of screen.getAllByRole('row').slice(1)) {
       expect(Array.from(row.querySelectorAll('a, button')).map((a) => a.textContent)).toEqual(['Review'])
     }
@@ -51,7 +51,7 @@ describe('Recordings', () => {
 
   it('says the filter searched only the sessions loaded so far', async () => {
     page([session(1, { recording_id: 'r1' }), session(2), session(3, { recording_id: 'r3' })], 'c1')
-    await screen.findAllByRole('link', { name: 'Review' })
+    await screen.findAllByRole('link', { name: 'Review, opens in a new tab' })
 
     await userEvent.setup().type(screen.getByLabelText('Filter recordings'), 'bob')
     expect(screen.queryByText('No recordings match.')).toBeNull()

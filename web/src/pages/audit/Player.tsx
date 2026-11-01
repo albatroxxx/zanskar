@@ -8,6 +8,7 @@ import { sessionTarget, sessionUser } from '../../api/labels'
 import type { Recording } from '../../api/types'
 import { TransportIcon } from '../../components/icons'
 import { Alert, Badge, Empty, PageHead, reasonBadge } from '../../components/ui'
+import { useTitle } from '../../components/title'
 import { useFullscreen } from '../user/fullscreen'
 import { FullscreenButton } from '../user/FullscreenButton'
 import { useRecordingsPath } from './paths'
@@ -397,6 +398,7 @@ export function Player() {
   const proto = s?.protocol.toUpperCase() ?? rec?.format
   const title = s ? `${who} on ${where}` : 'Recording'
   const isDesktop = rec?.format === 'guac'
+  useTitle(rec ? (s ? `Recording · ${title}` : 'Recording') : undefined)
 
   return (
     <>

@@ -1,11 +1,11 @@
 import { useEffect, useState } from 'react'
-import { Link, useLocation, useSearchParams } from 'react-router-dom'
+import { useLocation, useSearchParams } from 'react-router-dom'
 import { api, errorMessage } from '../../api/client'
 import { fmtDuration, fmtTime } from '../../api/format'
 import { ranges, sinceFor } from '../../api/ranges'
 import { sessionTarget, sessionUser } from '../../api/labels'
 import type { Session } from '../../api/types'
-import { Alert, Confirm, Empty, Field, PageHead, reasonBadge } from '../../components/ui'
+import { Alert, Confirm, Empty, Field, PageHead, reasonBadge, TabLink } from '../../components/ui'
 import { useRecordingsPath } from '../audit/paths'
 import { useList } from './lib'
 
@@ -87,13 +87,11 @@ export function Sessions() {
                   <td className="mono muted">{s.client_ip}</td>
                   <td>{fmtDuration(s.started_at, s.ended_at)}</td>
                   <td>{reasonBadge(s.end_reason)}</td>
-                  <td>{s.recording_id ? <Link to={`${recordings}/${s.recording_id}`}>play</Link> : <span className="muted">—</span>}</td>
+                  <td>{s.recording_id ? <TabLink to={`${recordings}/${s.recording_id}`} label="play" /> : <span className="muted">—</span>}</td>
                   <td>
                     {!s.ended_at && (
                       <span className="actions">
-                        <Link className="btn sm" to={`/audit/shadow/${s.id}?protocol=${s.protocol}&target=${encodeURIComponent(sessionTarget(s))}`} title="Watch live, read-only; the view is audited">
-                          Watch
-                        </Link>
+                        <TabLink className="btn sm" to={`/audit/shadow/${s.id}?protocol=${s.protocol}&target=${encodeURIComponent(sessionTarget(s))}`} label="Watch" title="Watch live, read-only; the view is audited" />
                         {admin && (
                           <button className="btn sm danger" onClick={() => setTerminating(s)}>
                             Terminate

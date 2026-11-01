@@ -5,6 +5,8 @@ import { FitAddon } from '@xterm/addon-fit'
 import '@xterm/xterm/css/xterm.css'
 import { fmtSeconds } from '../../api/format'
 import { Modal } from '../../components/ui'
+import { useTitle } from '../../components/title'
+import { useAuth } from '../../auth/AuthContext'
 import { terminalTheme } from '../../styles/theme'
 
 /**
@@ -19,6 +21,11 @@ export function Shadow() {
   const nav = useNavigate()
   const protocol = q.get('protocol') ?? 'ssh'
   const target = q.get('target') ?? id ?? ''
+  useTitle(`Watching ${target}`)
+  // The watch opens in a tab of its own (ADR 0038), where there is no page
+  // to go back to: leaving goes to the sessions list of the watcher's portal.
+  const auth = useAuth()
+  const leave = () => nav(auth.hasRole('admin') ? '/admin/sessions' : '/audit/sessions')
   // An application session (ADR 0034) is a browser streamed through guacd:
   // a desktop to the watcher, like RDP and VNC.
   const isDesktop = protocol === 'rdp' || protocol === 'vnc' || protocol === 'http'
@@ -108,14 +115,14 @@ export function Shadow() {
         <span className="stat">{status === 'connecting' ? 'connecting…' : 'watching ' + fmtSeconds(elapsed)}</span>
         <span className="grow" />
         <span className="stat">this view is audited</span>
-        <button className="btn sm" onClick={() => { closeRef.current(); nav(-1) }}>Stop watching</button>
+        <button className="btn sm" onClick={() => { closeRef.current(); leave() }}>Stop watching</button>
       </div>
       <div className="term-host" ref={host} style={isDesktop ? { overflow: 'hidden' } : undefined} />
       {ended && (
-        <Modal title="Session ended" onClose={() => nav(-1)}>
+        <Modal title="Session ended" onClose={leave}>
           <p>{ended === 'session_ended' ? 'The session you were watching has ended.' : 'The connection to the gateway was lost.'}</p>
           <div className="actions">
-            <button className="btn primary" onClick={() => nav(-1)}>Back</button>
+            <button className="btn primary" onClick={leave}>Back to sessions</button>
           </div>
         </Modal>
       )}

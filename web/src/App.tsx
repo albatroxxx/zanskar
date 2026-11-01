@@ -10,6 +10,7 @@ import { api } from './api/client'
 import type { AccessRequest, Page } from './api/types'
 import { Login } from './pages/Login'
 import { Targets } from './pages/user/Targets'
+import { ConnectPage } from './pages/user/connect'
 import { MySessions } from './pages/user/MySessions'
 import { MyAccess } from './pages/user/MyAccess'
 
@@ -146,6 +147,8 @@ export default function App() {
         }
       >
         <Route index element={<Targets />} />
+        {/* A session link's own tab: connects, then opens the terminal or desktop (ADR 0038). */}
+        <Route path="connect" element={<ConnectPage />} />
         <Route path="access" element={<MyAccess />} />
         <Route path="sessions" element={<MySessions />} />
       </Route>

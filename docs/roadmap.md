@@ -39,7 +39,7 @@ What the project does **not** intend to do in that time:
 - Install anything on targets. Zanskar stays agentless (ADR 0009); AWS SSM is out of scope.
 - Rotate static SSH keys, or Windows and database passwords. The SSH certificate authority removes
   the first; the systems that own those accounts do the second better.
-- A multi-pane workspace inside the console; browser tabs already do this.
+- A multi-pane workspace inside the console; browser tabs already do this (sessions, watches and recordings each open in a tab of their own, [ADR 0038](adr/0038-sessions-and-reviews-open-in-their-own-tab.md)).
 - Give any shell on the gateway host through the console.
 
 ## v1.0 release — shipped (v1.0.0 tagged 2026-09-25)

@@ -9,6 +9,7 @@ import { useFullscreen } from './fullscreen'
 import { FullscreenButton } from './FullscreenButton'
 import { CONTROLS_KEY, isControlsKey, isPasteKey, keyQueue } from './keys'
 import { pointerAsCursor } from './cursor'
+import { useTitle } from '../../components/title'
 
 type GuacModule = typeof import('guacamole-common-js')['default']
 
@@ -54,6 +55,7 @@ export function Desktop() {
 
 function DesktopSession({ state }: { state: SessionState }) {
   const nav = useNavigate()
+  useTitle(`${state.target} · ${protocolName(state.protocol)}`)
   const host = useRef<HTMLDivElement>(null)
   const pageRef = useRef<HTMLDivElement>(null)
   const { isFull, toggle: toggleFull, exit: exitFull } = useFullscreen(pageRef)
