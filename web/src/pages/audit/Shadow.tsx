@@ -3,7 +3,7 @@ import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { Terminal as XTerm } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import '@xterm/xterm/css/xterm.css'
-import { fmtSeconds } from '../../api/format'
+import { fmtSeconds, protocolName } from '../../api/format'
 import { Modal } from '../../components/ui'
 import { useTitle } from '../../components/title'
 import { useAuth } from '../../auth/AuthContext'
@@ -111,7 +111,7 @@ export function Shadow() {
     <div className="term-page">
       <div className="term-bar">
         <span className="name">Watching {target}</span>
-        <span className="stat">{protocol.toUpperCase()} · read-only</span>
+        <span className="stat">{protocolName(protocol)} · read-only</span>
         <span className="stat">{status === 'connecting' ? 'connecting…' : 'watching ' + fmtSeconds(elapsed)}</span>
         <span className="grow" />
         <span className="stat">this view is audited</span>

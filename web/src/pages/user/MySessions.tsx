@@ -1,7 +1,7 @@
 import { useEffect } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { api, query } from '../../api/client'
-import { fmtDuration, fmtTime } from '../../api/format'
+import { fmtDuration, fmtTime, protocolName } from '../../api/format'
 import { sessionTarget } from '../../api/labels'
 import type { Page, Session } from '../../api/types'
 import { FilterChips } from '../../components/FilterChips'
@@ -47,7 +47,7 @@ export function MySessions() {
                 <tr key={s.id}>
                   <td>{fmtTime(s.started_at)}</td>
                   <td title={s.target_id ?? s.asg_instance_id}>{sessionTarget(s)}</td>
-                  <td>{s.protocol}</td>
+                  <td>{protocolName(s.protocol)}</td>
                   <td>{fmtDuration(s.started_at, s.ended_at)}</td>
                   <td>{reasonBadge(s.end_reason)}</td>
                 </tr>

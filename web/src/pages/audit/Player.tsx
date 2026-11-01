@@ -3,7 +3,7 @@ import { Link, useParams } from 'react-router-dom'
 import * as AsciinemaPlayer from 'asciinema-player'
 import 'asciinema-player/dist/bundle/asciinema-player.css'
 import { api, errorMessage } from '../../api/client'
-import { fmtBytes, fmtDuration, fmtSeconds, fmtTime } from '../../api/format'
+import { fmtBytes, fmtDuration, fmtSeconds, fmtTime, protocolName } from '../../api/format'
 import { sessionTarget, sessionUser } from '../../api/labels'
 import type { Recording } from '../../api/types'
 import { TransportIcon } from '../../components/icons'
@@ -472,7 +472,7 @@ export function Player() {
   const s = rec?.session
   const who = s ? sessionUser(s) : ''
   const where = s ? sessionTarget(s) : ''
-  const proto = s?.protocol.toUpperCase() ?? rec?.format
+  const proto = s ? protocolName(s.protocol) : rec?.format
   const title = s ? `${who} on ${where}` : 'Recording'
   const isDesktop = rec?.format === 'guac'
   useTitle(rec ? (s ? `Recording · ${title}` : 'Recording') : undefined)
