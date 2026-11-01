@@ -6,3 +6,4 @@ fonts-dejavu-core
 fonts-liberation
 fonts-noto-core
 ca-certificates
+xdotool

@@ -32,6 +32,7 @@ interface AuthContextValue extends AuthState {
   confirmTotp: (code: string) => Promise<string[]>
   logout: () => Promise<void>
   refresh: () => Promise<void>
+  forget: () => void
   hasRole: (...roles: Role[]) => boolean
 }
 
@@ -156,11 +157,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (to) browser.assign(to)
   }, [])
 
+  // forget drops the session here without asking the gateway, for when it
+  // has already refused a call as signed out and does not answer the check
+  // (the session dialog). A late answer still sets what the gateway says.
+  const forget = useCallback(() => {
+    clearTimeout(retry.current)
+    setCsrf('')
+    setState({ status: 'anonymous', user: null, mfaEnrolled: false, pending: null })
+  }, [])
+
   const hasRole = useCallback((...roles: Role[]) => !!state.user && roles.some((r) => state.user!.roles.includes(r)), [state.user])
 
   const value = useMemo<AuthContextValue>(
-    () => ({ ...state, login, changePassword, verifyTotp, enrollTotp, confirmTotp, logout, refresh, hasRole }),
-    [state, login, changePassword, verifyTotp, enrollTotp, confirmTotp, logout, refresh, hasRole],
+    () => ({ ...state, login, changePassword, verifyTotp, enrollTotp, confirmTotp, logout, refresh, forget, hasRole }),
+    [state, login, changePassword, verifyTotp, enrollTotp, confirmTotp, logout, refresh, forget, hasRole],
   )
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>
 }

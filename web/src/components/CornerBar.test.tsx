@@ -1,4 +1,4 @@
-import { cleanup, render, screen, waitFor, within } from '@testing-library/react'
+import { act, cleanup, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -6,6 +6,7 @@ import { ApiError, api } from '../api/client'
 import type { HostStatus, SystemStatus, UpdateStatus } from '../api/types'
 import { CornerBar } from './CornerBar'
 import { pacing } from './hostAction'
+import { setConsoleTheme, themeKey } from '../styles/theme'
 
 afterEach(() => {
   cleanup()
@@ -168,25 +169,42 @@ describe('the corner strip', () => {
     expect(await screen.findByText(/the release signature did not verify/)).toBeDefined()
   })
 
-  // 2026-10-30: the theme followed the operating system only.
-  it('switches the theme from its own menu and keeps the choice', async () => {
+  // 2026-11-01: the theme menu (System, Light, Dark) became a switch, one
+  // click to the other theme and one back, its circle turning each time.
+  it('switches the theme with one click each way, and the circle turns', async () => {
     serve(newer, host)
     strip()
     const user = userEvent.setup()
-    await user.click(await screen.findByRole('button', { name: 'Theme' }))
-    const choices = within(await screen.findByRole('menu', { name: 'Theme' })).getAllByRole('menuitemradio')
-    expect(choices.map((c) => [c.textContent?.replace('✓', ''), c.getAttribute('aria-checked')])).toEqual([
-      ['System', 'true'],
-      ['Light', 'false'],
-      ['Dark', 'false'],
-    ])
-    await user.click(choices[2])
-    expect(document.documentElement.getAttribute('data-theme')).toBe('dark')
+    const half = () => document.querySelector<SVGPathElement>('.theme-toggle .theme-half')!.style.transform
+    // jsdom's device is light and everyone is on system
+    const toDark = await screen.findByRole('button', { name: 'Switch to the dark theme' })
+    expect(toDark.getAttribute('aria-haspopup')).toBeNull()
+    expect(half()).toBe('rotate(0deg)')
+
+    await user.click(toDark)
     expect(screen.queryByRole('menu')).toBeNull()
-    await user.click(screen.getByRole('button', { name: 'Theme' }))
-    expect(screen.getByRole('menuitemradio', { name: /Dark/ }).getAttribute('aria-checked')).toBe('true')
-    await user.click(screen.getByRole('menuitemradio', { name: /System/ }))
+    expect(document.documentElement.getAttribute('data-theme')).toBe('dark')
+    expect(localStorage.getItem(themeKey)).toBe('dark')
+    expect(half()).toBe('rotate(180deg)')
+
+    await user.click(screen.getByRole('button', { name: 'Switch to the light theme' }))
     expect(document.documentElement.hasAttribute('data-theme')).toBe(false)
+    expect(localStorage.getItem(themeKey)).toBeNull()
+    // one way round, never back the way it came
+    expect(half()).toBe('rotate(360deg)')
+  })
+
+  it('turns the circle when the theme changes elsewhere, and only then', async () => {
+    serve(newer, host)
+    strip()
+    const half = () => document.querySelector<SVGPathElement>('.theme-toggle .theme-half')!.style.transform
+    await screen.findByRole('button', { name: 'Switch to the dark theme' })
+    act(() => setConsoleTheme('dark'))
+    expect(screen.getByRole('button', { name: 'Switch to the light theme' })).toBeDefined()
+    expect(half()).toBe('rotate(180deg)')
+    act(() => setConsoleTheme('dark'))
+    expect(half()).toBe('rotate(180deg)')
+    act(() => setConsoleTheme('system'))
   })
 
   it('offers no host actions off systemd, and says why', async () => {

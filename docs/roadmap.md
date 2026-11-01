@@ -102,7 +102,7 @@ Deferred by decision: a multi-pane workspace (browser tabs suffice), rotation of
 keys and of Windows or database passwords (the certificate authority and the owning systems
 do that). Still Phase 4: HA, SAML/SCIM, WebAuthn.
 
-## v1.11 release — shipped (v1.11.0 tagged 2026-10-31, v1.11.1 2026-11-01)
+## v1.11 release — shipped (v1.11.0 tagged 2026-10-31, v1.11.1 and v1.11.2 2026-11-01)
 
 The dashboard on one screen, inventory first, the gateway, its clock and the storage the audit
 log and recordings take in a column beside the tiles (the Integrity row is gone from it);
@@ -112,6 +112,9 @@ last synced and sync next; and a desktop the remote machine ended keeps guacd's 
 `session.end` ([release notes](releases/v1.11.0.md)).
 1.11.1: one cursor in desktop and application sessions, a desktop that fills its pane at any pixel ratio, and
 notices that can be dismissed ([release notes](releases/v1.11.1.md)).
+1.11.2: a theme for everyone in Settings and a light/dark switch in the corner, a recording player with
+icon controls and a full screen, an application that fills a full screen, and a session dialog that
+reaches sign-in after the computer slept ([release notes](releases/v1.11.2.md)).
 
 ## v1.10 release — shipped (v1.10.0 tagged 2026-10-31)
 

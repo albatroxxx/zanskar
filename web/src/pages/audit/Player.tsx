@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import * as AsciinemaPlayer from 'asciinema-player'
 import 'asciinema-player/dist/bundle/asciinema-player.css'
@@ -6,10 +6,16 @@ import { api, errorMessage } from '../../api/client'
 import { fmtBytes, fmtDuration, fmtSeconds, fmtTime } from '../../api/format'
 import { sessionTarget, sessionUser } from '../../api/labels'
 import type { Recording } from '../../api/types'
+import { TransportIcon } from '../../components/icons'
 import { Alert, Badge, Empty, PageHead, reasonBadge } from '../../components/ui'
+import { useFullscreen } from '../user/fullscreen'
+import { FullscreenButton } from '../user/FullscreenButton'
 import { useRecordingsPath } from './paths'
 
 type PlayerHandle = ReturnType<typeof AsciinemaPlayer.create>
+/** How the terminal player sizes itself: to the card's width on the page,
+ *  to the whole screen (width and height) in full screen. */
+type TermFit = 'width' | 'both'
 type GuacModule = typeof import('guacamole-common-js').default
 type SessionRecording = InstanceType<GuacModule['SessionRecording']>
 
@@ -21,6 +27,9 @@ interface Command { t: number; text: string }
 const IDLE_LIMIT = 2
 const SKIP_SECONDS = 10
 const SPEEDS = [0.5, 1, 1.5, 2, 4]
+/** Room kept under the replayed desktop in full screen for the transport and
+ *  the stage's padding. */
+const FULL_RESERVE = 72
 
 /** parseCast reads an asciicast v2 file once: the marker events ([time, "m",
  *  label]) the gateway writes per submitted command line ("(hidden input)"
@@ -78,6 +87,16 @@ function typingInField(): boolean {
   return el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement || el instanceof HTMLSelectElement
 }
 
+/** IconButton is one transport control: a glyph on the button, its words in
+ *  the accessible name and the tooltip. */
+function IconButton({ label, onClick, primary, children }: { label: string; onClick: () => void; primary?: boolean; children: ReactNode }) {
+  return (
+    <button type="button" className={'btn sm icon' + (primary ? ' primary' : '')} onClick={onClick} aria-label={label} title={label}>
+      {children}
+    </button>
+  )
+}
+
 export function Player() {
   const recordingsPath = useRecordingsPath()
   const { id = '' } = useParams()
@@ -86,6 +105,12 @@ export function Player() {
   const [phase, setPhase] = useState<'idle' | 'loading' | 'playing'>('idle')
   const [commands, setCommands] = useState<Command[]>([])
   const host = useRef<HTMLDivElement>(null)
+  // The stage is what goes full screen: the picture and the transport under
+  // it, the way a session's whole page does, so the controls stay in reach.
+  const stage = useRef<HTMLDivElement>(null)
+  const { isFull, toggle: toggleFull } = useFullscreen(stage)
+  const full = useRef(false)
+  const termFit = useRef<TermFit>('width')
   const term = useRef<PlayerHandle | null>(null)
   const cast = useRef<{ text: string; times: number[] } | null>(null)
   const desk = useRef<SessionRecording | null>(null)
@@ -118,22 +143,35 @@ export function Player() {
 
   // ---- terminal (asciinema)
 
-  /** mountTerminal creates the asciinema player at a recording time and
-   *  speed. It is the only way to change speed: the player has no setter. */
-  const mountTerminal = useCallback((startAtRaw: number, rate: number, autoPlay: boolean) => {
+  /** mountTerminal creates the asciinema player at a point on its own clock,
+   *  with a speed and fit. It is the only way to change speed or fit: the
+   *  player has no setter for either. */
+  const mountTerminal = useCallback((at: number, rate: number, autoPlay: boolean, fit: TermFit = termFit.current) => {
     const c = cast.current
-    if (!c || !host.current) return
+    const el = host.current
+    if (!c || !el) return
+    // Focus inside the old player (its own keys, F) moves to the new one;
+    // it would otherwise fall to the page and the next F would do nothing.
+    const focused = el.contains(document.activeElement)
     term.current?.dispose()
-    host.current.innerHTML = ''
+    el.innerHTML = ''
+    termFit.current = fit
     // Markers in the file appear on the player's timeline; the list below
     // seeks to them. The theme is neutral so it matches the console pages.
-    const p = AsciinemaPlayer.create({ data: c.text }, host.current, { fit: 'width', theme: 'asciinema', idleTimeLimit: IDLE_LIMIT, autoPlay, speed: rate, startAt: startAtRaw })
+    // startAt is recording time.
+    const p = AsciinemaPlayer.create({ data: c.text }, el, { fit, theme: 'asciinema', idleTimeLimit: IDLE_LIMIT, autoPlay, speed: rate, startAt: rawTime(c.times, at) })
+    // A player made paused is moved to where the old one stopped (on its own
+    // clock), so it shows that frame instead of a blank screen, and Play goes
+    // on from there with the screen as it was. Its poster option shows the
+    // frame too, but Play then clears the screen before going on.
+    if (!autoPlay) void p.seek(at)
     p.addEventListener('play', () => setRunning(true))
     p.addEventListener('playing', () => setRunning(true))
     p.addEventListener('pause', () => setRunning(false))
     p.addEventListener('ended', () => setRunning(false))
     term.current = p
     setDuration(0)
+    if (focused) el.querySelector<HTMLElement>('.ap-wrapper')?.focus()
   }, [])
 
   const playTerminal = async (r: Recording) => {
@@ -150,9 +188,7 @@ export function Player() {
   const changeSpeed = (rate: number) => {
     setSpeed(rate)
     const p = term.current
-    if (!p || !cast.current) return
-    const at = rawTime(cast.current.times, p.getCurrentTime())
-    mountTerminal(at, rate, running)
+    if (p) mountTerminal(p.getCurrentTime(), rate, running)
   }
 
   // ---- desktop (guacd stream)
@@ -161,7 +197,9 @@ export function Player() {
    *  never wider than the card, never taller than the viewport below the
    *  player's top edge, letterboxed inside the dark container. The previous
    *  version scaled by width only, so a tall recording ran off the bottom of
-   *  the page and only half of it was visible without scrolling. */
+   *  the page and only half of it was visible without scrolling. In full
+   *  screen the reviewer asked for the whole screen, so a recording smaller
+   *  than it is drawn larger; on the page it is never drawn above its size. */
   const fitDesktop = useCallback(() => {
     const playback = desk.current
     const el = host.current
@@ -171,8 +209,12 @@ export function Player() {
     const h = display.getHeight()
     if (w <= 0 || h <= 0) return
     const availW = el.clientWidth
-    const availH = Math.max(240, window.innerHeight - el.getBoundingClientRect().top - 72)
-    const scale = Math.min(1, availW / w, availH / h)
+    // The stage centres the picture in full screen, so the host's own top
+    // moves with its height; measure the stage instead.
+    const availH = full.current && stage.current
+      ? stage.current.clientHeight - FULL_RESERVE
+      : Math.max(240, window.innerHeight - el.getBoundingClientRect().top - 72)
+    const scale = Math.min(full.current ? Infinity : 1, availW / w, availH / h)
     display.scale(scale)
     el.style.height = `${Math.round(h * scale)}px`
   }, [])
@@ -236,6 +278,38 @@ export function Player() {
     }
   }, [phase, rec?.format, fitDesktop])
 
+  // Full screen in and out: the desktop refits once the stage has its new
+  // box (the window's resize event comes before that), and the terminal
+  // player is made again at the same point with the fit for the space.
+  useEffect(() => {
+    full.current = isFull
+    if (phase !== 'playing') return
+    if (rec?.format === 'guac') {
+      const frame = requestAnimationFrame(() => fitDesktop())
+      return () => cancelAnimationFrame(frame)
+    }
+    const fit: TermFit = isFull ? 'both' : 'width'
+    const p = term.current
+    if (!p || termFit.current === fit) return
+    mountTerminal(p.getCurrentTime(), speed, running, fit)
+  }, [isFull, phase, rec?.format, speed, running, fitDesktop, mountTerminal])
+
+  // F toggles full screen for both players. On the stage it is caught on the
+  // way down, before the terminal player sees it: that player's own F would
+  // make only its picture full screen, without the controls below it.
+  useEffect(() => {
+    const el = stage.current
+    if (phase !== 'playing' || !el) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'f' || typingInField() || e.metaKey || e.ctrlKey || e.altKey) return
+      e.stopPropagation()
+      e.preventDefault()
+      toggleFull()
+    }
+    el.addEventListener('keydown', onKey, true)
+    return () => el.removeEventListener('keydown', onKey, true)
+  }, [phase, toggleFull])
+
   // ---- transport, both players
 
   const seekBy = (deltaSeconds: number) => {
@@ -290,6 +364,7 @@ export function Player() {
         case 'ArrowRight': seekBy(SKIP_SECONDS); break
         case 'Home': seekTo(0); break
         case 'End': seekTo(desk.current?.getDuration() ?? 0); break
+        case 'f': toggleFull(); break
         default: return
       }
       e.preventDefault()
@@ -378,46 +453,49 @@ export function Player() {
               </>
             )}
             {phase === 'loading' && <Empty>Loading recording…</Empty>}
-            <div ref={host} className={'player-host' + (isDesktop && phase !== 'idle' ? ' desk-player' : '')} />
-            {phase === 'playing' && (
-              <>
-                <div className="transport">
-                  <button className="btn sm" onClick={replay} title="Play again from the start">Replay</button>
-                  <button className="btn sm" onClick={() => seekBy(-SKIP_SECONDS)} title={`Back ${SKIP_SECONDS} seconds`}>−{SKIP_SECONDS}s</button>
-                  <button className="btn sm primary" onClick={toggle} style={{ minWidth: 72 }}>{running ? 'Pause' : 'Play'}</button>
-                  <button className="btn sm" onClick={() => seekBy(SKIP_SECONDS)} title={`Forward ${SKIP_SECONDS} seconds`}>+{SKIP_SECONDS}s</button>
-                  {isDesktop ? (
-                    <>
-                      <input
-                        type="range"
-                        min={0}
-                        max={Math.max(duration, 1)}
-                        value={Math.min(position, duration)}
-                        onChange={(e) => seekTo(Number(e.target.value))}
-                        aria-label="Playback position"
-                      />
-                      <span className="t">{fmtSeconds(Math.floor(position / 1000))} / {fmtSeconds(Math.floor(duration / 1000))}</span>
-                    </>
-                  ) : (
-                    <>
-                      <span className="grow" />
-                      <label className="t" htmlFor="speed">Speed</label>
-                      <select id="speed" className="speed" value={speed} onChange={(e) => changeSpeed(Number(e.target.value))} aria-label="Playback speed">
-                        {SPEEDS.map((r) => (
-                          <option key={r} value={r}>{r}×</option>
-                        ))}
-                      </select>
-                    </>
-                  )}
-                </div>
-                <p className="muted player-hint">
-                  {isDesktop
-                    ? 'Space play/pause · ← → back/forward 10 s · Home/End. Desktop recordings play at real time; guacd streams carry no speed control.'
-                    : 'On the player: Space play/pause · ← → 5 s · [ ] previous/next command · 0–9 jump to a tenth. Speed applies from the current point.'}
-                </p>
-                {isDesktop && loaded && duration === 0 && <p className="muted" style={{ marginTop: 10 }}>No screen frames recorded.</p>}
-              </>
-            )}
+            <div ref={stage} className={'player-stage' + (isFull ? ' is-full' : '')}>
+              <div ref={host} className={'player-host' + (isDesktop && phase !== 'idle' ? ' desk-player' : '')} />
+              {phase === 'playing' && (
+                <>
+                  <div className="transport">
+                    <IconButton label="Play again from the start" onClick={replay}><TransportIcon kind="replay" /></IconButton>
+                    <IconButton label={`Back ${SKIP_SECONDS} seconds`} onClick={() => seekBy(-SKIP_SECONDS)}><TransportIcon kind="back" /></IconButton>
+                    <IconButton label={running ? 'Pause' : 'Play'} onClick={toggle} primary><TransportIcon kind={running ? 'pause' : 'play'} /></IconButton>
+                    <IconButton label={`Forward ${SKIP_SECONDS} seconds`} onClick={() => seekBy(SKIP_SECONDS)}><TransportIcon kind="forward" /></IconButton>
+                    {isDesktop ? (
+                      <>
+                        <input
+                          type="range"
+                          min={0}
+                          max={Math.max(duration, 1)}
+                          value={Math.min(position, duration)}
+                          onChange={(e) => seekTo(Number(e.target.value))}
+                          aria-label="Playback position"
+                        />
+                        <span className="t">{fmtSeconds(Math.floor(position / 1000))} / {fmtSeconds(Math.floor(duration / 1000))}</span>
+                      </>
+                    ) : (
+                      <>
+                        <span className="grow" />
+                        <label className="t" htmlFor="speed">Speed</label>
+                        <select id="speed" className="speed" value={speed} onChange={(e) => changeSpeed(Number(e.target.value))} aria-label="Playback speed">
+                          {SPEEDS.map((r) => (
+                            <option key={r} value={r}>{r}×</option>
+                          ))}
+                        </select>
+                      </>
+                    )}
+                    <FullscreenButton isFull={isFull} onClick={toggleFull} size={18} />
+                  </div>
+                  <p className="muted player-hint">
+                    {isDesktop
+                      ? 'Space play/pause · ← → back/forward 10 s · Home/End · F full screen. Desktop recordings play at real time; guacd streams carry no speed control.'
+                      : 'On the player: Space play/pause · ← → 5 s · [ ] previous/next command · 0–9 jump to a tenth · F full screen. Speed applies from the current point.'}
+                  </p>
+                </>
+              )}
+            </div>
+            {phase === 'playing' && isDesktop && loaded && duration === 0 && <p className="muted" style={{ marginTop: 10 }}>No screen frames recorded.</p>}
           </div>
 
           {!isDesktop && phase === 'playing' && (

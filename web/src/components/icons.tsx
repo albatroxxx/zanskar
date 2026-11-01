@@ -308,12 +308,14 @@ export function DoneIcon() {
   )
 }
 
-/** ThemeIcon is the corner's theme menu: a circle half light, half dark. */
-export function ThemeIcon() {
+/** ThemeIcon is the corner's theme switch: a circle half light, half dark.
+ *  The dark half sits right in the light theme and left in the dark one;
+ *  turns is how many half turns it has made, so it always turns one way. */
+export function ThemeIcon({ turns = 0 }: { turns?: number }) {
   return (
     <svg width="23" height="23" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden="true">
       <circle cx="12" cy="12" r="8.5" />
-      <path d="M12 3.5a8.5 8.5 0 0 1 0 17z" fill="currentColor" stroke="none" />
+      <path className="theme-half" d="M12 3.5a8.5 8.5 0 0 1 0 17z" fill="currentColor" stroke="none" style={{ transform: `rotate(${turns * 180}deg)` }} />
     </svg>
   )
 }
@@ -356,6 +358,42 @@ export function RestoreIcon() {
     <svg {...svgProps(16)}>
       <rect x="4" y="9" width="11" height="11" rx="1.5" />
       <path d="M9 9V5.5A1.5 1.5 0 0 1 10.5 4h8A1.5 1.5 0 0 1 20 5.5v8a1.5 1.5 0 0 1-1.5 1.5H15" />
+    </svg>
+  )
+}
+
+/** TransportIcon draws a recording player's controls: play again from the
+ *  start (an arrow turning back), back and forward a few seconds (rewind and
+ *  fast-forward), play and pause. The button around it carries the words. */
+export function TransportIcon({ kind, size = 18 }: { kind: 'replay' | 'back' | 'forward' | 'play' | 'pause'; size?: number }) {
+  const solid = { fill: 'currentColor' }
+  return (
+    <svg {...svgProps(size)}>
+      {kind === 'replay' && (
+        <>
+          <path d="M3.5 12a8.5 8.5 0 1 0 2.5-6" />
+          <polyline points="3.5 3.5 3.5 8 8 8" />
+        </>
+      )}
+      {kind === 'back' && (
+        <>
+          <polygon points="11 18 3.5 12 11 6" {...solid} />
+          <polygon points="20 18 12.5 12 20 6" {...solid} />
+        </>
+      )}
+      {kind === 'forward' && (
+        <>
+          <polygon points="4 18 11.5 12 4 6" {...solid} />
+          <polygon points="13 18 20.5 12 13 6" {...solid} />
+        </>
+      )}
+      {kind === 'play' && <polygon points="7.5 5 19 12 7.5 19" {...solid} />}
+      {kind === 'pause' && (
+        <>
+          <rect x="6.5" y="5" width="3.5" height="14" rx="1" {...solid} />
+          <rect x="14" y="5" width="3.5" height="14" rx="1" {...solid} />
+        </>
+      )}
     </svg>
   )
 }

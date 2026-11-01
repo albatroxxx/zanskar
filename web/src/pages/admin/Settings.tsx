@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { ApiError, api, errorMessage } from '../../api/client'
 import { fmtTime, setDisplayZone } from '../../api/format'
+import { setConsoleTheme } from '../../styles/theme'
 import type { BootSetting, HostStatus, RuntimeSetting, SettingsListing, SystemMetrics, SystemStatus } from '../../api/types'
 import { HostActionDialog, type BootChange } from '../../components/HostActionDialog'
 import { TimeZonePicker } from '../../components/TimeZonePicker'
@@ -127,6 +128,8 @@ function SettingRow({ setting, onChange }: { setting: RuntimeSetting; onChange: 
       setValue(v.value)
       // Every time on the page follows the zone from the next render on.
       if (v.key === 'display.time_zone') setDisplayZone(v.value)
+      // This browser follows a new theme for everyone at once.
+      if (v.key === 'display.theme') setConsoleTheme(v.value)
       setSaved(true)
       setNeedCode(false)
       setCode('')

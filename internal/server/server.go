@@ -52,6 +52,9 @@ type Deps struct {
 	// upload in the console, the ZANSKAR_TLS_CERT files, or the self-signed
 	// one, so an upload applies without a restart. Nil in proxy mode.
 	TLS *tlscert.Manager
+	// Theme is the console's theme for everyone (display.theme), written
+	// into the pre-paint theme script; nil serves the bundle's file as is.
+	Theme func() string
 }
 
 // New builds a Server with the system routes and the given handlers registered.
@@ -66,6 +69,11 @@ func New(cfg *config.Config, db *store.DB, log *slog.Logger, deps Deps) *Server 
 	mux.HandleFunc("/api/", s.handleNotFound)
 	mux.HandleFunc("/ws/", s.handleNotFound)
 	mux.Handle("/", spaHandler(web.FS()))
+	if deps.Theme != nil {
+		if h := themeScript(web.FS(), deps.Theme); h != nil {
+			mux.Handle("GET /theme.js", h)
+		}
+	}
 	if deps.Auth != nil {
 		deps.Auth.Register(mux)
 	}

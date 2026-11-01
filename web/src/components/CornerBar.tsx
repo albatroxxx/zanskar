@@ -6,7 +6,7 @@ import type { HostStatus, SystemStatus, UpdateStatus } from '../api/types'
 import { ConsoleCLI } from './ConsoleCLI'
 import { HostActionDialog } from './HostActionDialog'
 import type { HostAction } from './hostAction'
-import { readTheme, setTheme, type ThemeChoice } from '../styles/theme'
+import { shownTheme, themeEvent, toggleTheme } from '../styles/theme'
 import { BellIcon, GearIcon, ThemeIcon } from './icons'
 import { CornerPopover, MenuItem, MenuSeparator } from './Popover'
 import { Alert, Badge } from './ui'
@@ -17,7 +17,7 @@ import { Alert, Badge } from './ui'
 export function CornerBar() {
   return (
     <div className="corner">
-      <ThemeMenu />
+      <ThemeToggle />
       <UpdateBell />
       <GearMenu />
       <ConsoleCLI />
@@ -25,38 +25,44 @@ export function CornerBar() {
   )
 }
 
-/** CornerThemeOnly is the access and audit portals' corner: the theme menu alone. */
+/** CornerThemeOnly is the access and audit portals' corner: the theme switch alone. */
 export function CornerThemeOnly() {
   return (
     <div className="corner">
-      <ThemeMenu />
+      <ThemeToggle />
     </div>
   )
 }
 
-const themeNames: Record<ThemeChoice, string> = { system: 'System', light: 'Light', dark: 'Dark' }
-
-/** ThemeMenu picks the console's theme for this browser (2026-10-30). */
-function ThemeMenu() {
-  const [theme, setChoice] = useState<ThemeChoice>(readTheme)
+/** ThemeToggle switches this browser between the light and the dark theme,
+ *  one click each way (2026-11-01; it was a menu of System, Light and Dark;
+ *  the theme for everyone is in Settings). The circle's dark half turns half
+ *  a turn whenever the theme drawn changes, whatever changed it (this switch,
+ *  Settings, the device), always the same way round. */
+function ThemeToggle() {
+  const [view, setView] = useState(() => {
+    const shown = shownTheme()
+    return { shown, turns: shown === 'dark' ? 1 : 0 }
+  })
+  useEffect(() => {
+    const follow = () =>
+      setView((v) => {
+        const shown = shownTheme()
+        return shown === v.shown ? v : { shown, turns: v.turns + 1 }
+      })
+    window.addEventListener(themeEvent, follow)
+    const device = window.matchMedia?.('(prefers-color-scheme: dark)')
+    device?.addEventListener('change', follow)
+    return () => {
+      window.removeEventListener(themeEvent, follow)
+      device?.removeEventListener('change', follow)
+    }
+  }, [])
+  const label = view.shown === 'dark' ? 'Switch to the light theme' : 'Switch to the dark theme'
   return (
-    <CornerPopover label="Theme" icon={<ThemeIcon />} kind="menu">
-      {(close) =>
-        (['system', 'light', 'dark'] as const).map((t) => (
-          <MenuItem
-            key={t}
-            checked={theme === t}
-            onSelect={() => {
-              setTheme(t)
-              setChoice(t)
-              close()
-            }}
-          >
-            {themeNames[t]}
-          </MenuItem>
-        ))
-      }
-    </CornerPopover>
+    <button type="button" className="corner-btn theme-toggle" aria-label={label} title={label} onClick={() => toggleTheme()}>
+      <ThemeIcon turns={view.turns} />
+    </button>
   )
 }
 
