@@ -4,6 +4,7 @@ import { MemoryRouter } from 'react-router-dom'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { api } from '../../api/client'
 import type { ReachableTarget } from '../../api/types'
+import { recordedIntents } from './intent'
 import { Targets } from './Targets'
 
 afterEach(() => {
@@ -26,7 +27,7 @@ function sessionLink(name: string, href: string) {
   return a
 }
 
-const records = () => (JSON.parse(localStorage.getItem('zanskar.connect') ?? '[]') as { href: string }[]).map((r) => r.href)
+const records = () => recordedIntents()
 
 const fleet: ReachableTarget = {
   kind: 'asg',

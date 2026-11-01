@@ -52,7 +52,10 @@ address, the browser's "open in new tab" menu, which sends no event) it shows th
 a **Connect** button. The record is no secret: it proves only that a page of this origin made
 the link moments ago, which another origin cannot write. Two clicks leave two records, for
 two tabs. The page reads its record once per page load even when React runs its first steps
-twice. The console's `frame-ancestors 'none'` keeps the Connect button from being clicked
+twice. Amended 2026-11-01: each record is a key of its own (`zanskar.connect:<time>:<nonce>`)
+rather than an entry in one list. A tab that read the list, took its entry and wrote the list
+back could write away a second click that landed meanwhile, and that tab asked first; a tab
+now removes only its own key. The console's `frame-ancestors 'none'` keeps the Connect button from being clicked
 through a frame.
 
 **Watches and recordings.** Watch and Review (and the recording links in Sessions and

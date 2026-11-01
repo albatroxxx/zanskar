@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { ApiError, api } from '../../api/client'
 import type { ReachableTarget } from '../../api/types'
 import { ConnectPage } from './connect'
-import { connectHref, intentTTL, parseIntent, recordIntent, takeIntent } from './intent'
+import { connectHref, intentTTL, parseIntent, recordedIntents, recordIntent, takeIntent } from './intent'
 
 afterEach(() => {
   cleanup()
@@ -61,11 +61,35 @@ function open(href: string, { clicked = true, items = [box, fleet, wiki], strict
 describe('the record of a session link just clicked', () => {
   const href = connectHref({ target: 't1', protocol: 'ssh' })
 
+  /** stored is everything the records left in storage. */
+  const stored = () => Object.keys(localStorage).map((k) => `${k}=${localStorage.getItem(k)}`).join('\n')
+
   it('is used up once, by one tab', () => {
     recordIntent(href)
     expect(takeIntent(href)).toBe(true)
     expect(takeIntent(href)).toBe(false)
-    expect(localStorage.getItem('zanskar.connect')).toBeNull()
+    expect(stored()).toBe('')
+  })
+
+  // One list, read, edited and written back by each tab, lost a click that
+  // landed while the first tab took its record: that tab asked "Connect?"
+  // (the end-to-end suite under load, 2026-11-01). Each click has a key.
+  it('keeps a click that lands while a tab takes its record', () => {
+    recordIntent(href)
+    const read = Storage.prototype.getItem
+    let clicked = false
+    vi.spyOn(Storage.prototype, 'getItem').mockImplementation(function (this: Storage, key: string) {
+      const value = read.call(this, key)
+      if (!clicked && key.startsWith('zanskar.connect')) {
+        clicked = true
+        recordIntent(href) // the second click, between the take's read and its write
+      }
+      return value
+    })
+    expect(takeIntent(href)).toBe(true)
+    vi.restoreAllMocks()
+    expect(recordedIntents()).toEqual([href])
+    expect(takeIntent(href)).toBe(true)
   })
 
   it('serves two tabs when the link was clicked twice, and only for its own address', () => {
@@ -79,15 +103,17 @@ describe('the record of a session link just clicked', () => {
   it('lapses after a minute, and goes from storage on the next write', () => {
     recordIntent(href, 1_000)
     recordIntent('/connect?target=t2&protocol=ssh', 1_000 + intentTTL)
-    expect(localStorage.getItem('zanskar.connect')).not.toContain('t1')
+    expect(stored()).not.toContain('t1')
     expect(takeIntent(href, 1_000 + intentTTL)).toBe(false)
   })
 
-  it('reads storage it does not understand as no record', () => {
-    localStorage.setItem('zanskar.connect', '{"not":"a list"')
+  it('reads storage it does not understand as no record, and clears it', () => {
+    localStorage.setItem('zanskar.connect:1:a', '{"not":"a record"')
+    localStorage.setItem('zanskar.connect:1:b', JSON.stringify({ href, at: 'soon' }))
+    // the one list 1.12.0 kept, a fresh record in it
+    localStorage.setItem('zanskar.connect', JSON.stringify([{ href, at: Date.now() }]))
     expect(takeIntent(href)).toBe(false)
-    localStorage.setItem('zanskar.connect', JSON.stringify([{ href, at: 'soon' }, 7]))
-    expect(takeIntent(href)).toBe(false)
+    expect(stored()).toBe('')
   })
 })
 
