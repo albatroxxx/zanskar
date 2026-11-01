@@ -23,6 +23,7 @@ export default defineConfig({
     environment: 'jsdom',
     include: ['src/**/*.test.{ts,tsx}'],
     restoreMocks: true,
+    setupFiles: ['src/test/setup.ts'],
     // Stylesheets stay empty in tests, except one imported as text (?raw),
     // which the colour test reads as written.
     css: { include: [/\.css\?raw$/] },
@@ -35,7 +36,7 @@ export default defineConfig({
     coverage: {
       provider: 'istanbul',
       include: ['src/**/*.{ts,tsx}'],
-      exclude: ['src/**/*.test.{ts,tsx}', 'src/**/*.d.ts', 'src/main.tsx'],
+      exclude: ['src/**/*.test.{ts,tsx}', 'src/**/*.d.ts', 'src/main.tsx', 'src/test/**'],
       reporter: ['text-summary', 'json-summary'],
       thresholds: { lines: 74, statements: 71, branches: 66, functions: 64 },
     },

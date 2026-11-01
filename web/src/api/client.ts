@@ -40,7 +40,29 @@ export function setCsrf(token: string) {
 
 type Method = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE'
 
-async function request<T>(method: Method, path: string, body?: unknown): Promise<T> {
+/** A reply read to the end, so more than one caller can parse it. */
+interface Reply { status: number; statusText: string; ok: boolean; text: string }
+
+/**
+ * Reads in flight, by path. The same read asked for again before the first
+ * has answered shares its reply: an admin page opening read the gateway's
+ * status three times at once (the corner's update bell, the restart notice
+ * and the dashboard), and the portal's targets page read the user's grants
+ * twice (the live console, 2026-11-01). Nothing is kept once the reply is
+ * in, and any change made through the client forgets the reads in flight,
+ * so a read asked for after a change never gets an answer from before it.
+ * Only a read started in the last JOIN_MS is shared: one that hangs (a
+ * session check while the machine slept) must not hold every later attempt.
+ */
+const inflight = new Map<string, { reply: Promise<Reply>; at: number }>()
+const JOIN_MS = 1000
+
+/** forgetReads stops sharing every read in flight. Tests call it between cases. */
+export function forgetReads() {
+  inflight.clear()
+}
+
+async function send(method: Method, path: string, body?: unknown): Promise<Reply> {
   const headers: Record<string, string> = { Accept: 'application/json' }
   if (body !== undefined) headers['Content-Type'] = 'application/json'
   if (method !== 'GET' && csrfToken) headers['X-CSRF-Token'] = csrfToken
@@ -50,8 +72,28 @@ async function request<T>(method: Method, path: string, body?: unknown): Promise
     credentials: 'same-origin',
     body: body === undefined ? undefined : JSON.stringify(body),
   })
+  return { status: res.status, statusText: res.statusText, ok: res.ok, text: res.status === 204 ? '' : await res.text() }
+}
+
+function read(path: string): Promise<Reply> {
+  const now = Date.now()
+  const open = inflight.get(path)
+  if (open && now - open.at < JOIN_MS) return open.reply
+  const mine = { reply: send('GET', path), at: now }
+  const done = () => {
+    if (inflight.get(path) === mine) inflight.delete(path)
+  }
+  mine.reply.then(done, done)
+  inflight.set(path, mine)
+  return mine.reply
+}
+
+async function request<T>(method: Method, path: string, body?: unknown): Promise<T> {
+  if (method !== 'GET') forgetReads()
+  const res = method === 'GET' ? await read(path) : await send(method, path, body)
   if (res.status === 204) return undefined as T
-  const parsed = parseBody(await res.text())
+  // Parsed per caller: no caller sees another's changes to the result.
+  const parsed = parseBody(res.text)
   if (!res.ok) raise(res, parsed, path)
   return parsed as T
 }
@@ -72,7 +114,7 @@ function parseBody(text: string): unknown {
  * page reports itself. Anywhere else it means the session this page was
  * relying on has gone.
  */
-function raise(res: Response, parsed: unknown, path: string): never {
+function raise(res: Pick<Response, 'status' | 'statusText'>, parsed: unknown, path: string): never {
   const err = new ApiError(res.status, parsed as ApiErrorBody | null, `${res.status} ${res.statusText}`)
   if (res.status === 401 && !path.startsWith('/auth/')) {
     err.sessionEnded = true
@@ -92,6 +134,7 @@ async function download(path: string): Promise<Blob> {
 /** upload sends a raw body (e.g. a File) with the CSRF header and returns the
  *  parsed JSON reply. Used for SSH/SFTP file uploads. */
 async function upload<T>(path: string, body: BodyInit, contentType = 'application/octet-stream'): Promise<T> {
+  forgetReads()
   const headers: Record<string, string> = { Accept: 'application/json', 'Content-Type': contentType }
   if (csrfToken) headers['X-CSRF-Token'] = csrfToken
   const res = await fetch('/api/v1' + path, { method: 'POST', headers, credentials: 'same-origin', body })
