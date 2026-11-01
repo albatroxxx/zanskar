@@ -479,6 +479,9 @@ func (h *AdminHandler) identityRefresh(w http.ResponseWriter, r *http.Request) {
 	if h.Identity != nil {
 		id = h.Identity.Refresh(r.Context())
 	}
+	if id.Detail != "" && h.Log != nil {
+		h.Log.Info("aws gateway identity not available", "reason", id.Error, "detail", id.Detail)
+	}
 	auth.Recorder{Audit: h.Audit, Log: h.Log}.Record(r, auth.ActorFor(r).Event(audit.AWSIdentityRefresh, "gateway", "aws", audit.Success, map[string]string{"source": id.Source, "principal": id.Principal}))
 	httpx.WriteJSON(w, http.StatusOK, id)
 }

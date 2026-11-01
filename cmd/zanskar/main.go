@@ -357,7 +357,7 @@ func serve(ctx context.Context) error {
 		if id.Principal != "" {
 			log.Info("aws gateway identity", "source", id.Source, "principal", id.Principal)
 		} else {
-			log.Info("aws gateway identity not available; autoscaling trust policies need ZANSKAR_AWS_GATEWAY_PRINCIPAL", "detail", id.Error)
+			log.Info("aws gateway identity not available; autoscaling trust policies need ZANSKAR_AWS_GATEWAY_PRINCIPAL", "reason", id.Error, "detail", id.Detail)
 		}
 	}()
 	// One set of address rules for every connection to a target: probes, the

@@ -33,7 +33,11 @@ type Identity struct {
 	// of a gateway that simply does not live on AWS, which is no error.
 	Platform  string    `json:"platform"`
 	CheckedAt time.Time `json:"checked_at"`
-	Error     string    `json:"error,omitempty"`
+	// Error says in a sentence why there is no identity, for the console.
+	Error string `json:"error,omitempty"`
+	// Detail is the SDK's own account of it, a paragraph of operation
+	// names and status codes: for the gateway's log, never the console.
+	Detail string `json:"-"`
 }
 
 // Identity sources.
@@ -131,19 +135,51 @@ func (g *GatewayIdentity) Refresh(ctx context.Context) Identity {
 	} else if detected, err := g.detect(ctx); err == nil {
 		id = detected
 	} else {
-		id = Identity{Source: SourceNone, Error: err.Error()}
+		id = Identity{Source: SourceNone, Error: plainReason(err), Detail: err.Error()}
 	}
 	id.Platform = g.platform(ctx)
 	if id.Source == SourceNone && id.Platform == PlatformNone {
 		// Off AWS, a missing identity is the ordinary case, not a fault:
 		// the SDK's chain-of-providers error would only alarm.
-		id.Error = "not running on AWS"
+		id.Error, id.Detail = "not running on AWS", ""
 	}
 	id.CheckedAt = time.Now().UTC()
 	g.mu.Lock()
 	g.cached = &id
 	g.mu.Unlock()
 	return id
+}
+
+// plainReason says why detection failed in words an administrator can act
+// on. The SDK's error is a paragraph of operation names, request ids and
+// status codes; the Autoscaling page showed it whole, in monospace, on an
+// EC2 gateway with no instance profile (the live console, 2026-11-01). The
+// paragraph stays in Identity.Detail for the log. The first match wins, so
+// the most specific comes first: a missing instance role also fails to get
+// credentials.
+func plainReason(err error) string {
+	s := err.Error()
+	has := func(subs ...string) bool {
+		for _, sub := range subs {
+			if strings.Contains(s, sub) {
+				return true
+			}
+		}
+		return false
+	}
+	switch {
+	case has("no EC2 IMDS role found"):
+		return "This machine has no IAM role. Attach an instance profile to it."
+	case has("ExpiredToken", "InvalidClientTokenId", "SignatureDoesNotMatch", "UnrecognizedClientException"):
+		return "AWS turned down the gateway's credentials: they have expired or are wrong."
+	case has("AccessDenied", "StatusCode: 403"):
+		return "AWS refused to say who the gateway is (access denied)."
+	case has("deadline exceeded", "i/o timeout", "Client.Timeout", "context canceled"):
+		return "AWS did not answer in time."
+	case has("failed to retrieve credentials", "no valid providers", "NoCredentialProviders", "get credentials", "failed to refresh cached credentials"):
+		return "The gateway found no AWS credentials."
+	}
+	return "AWS could not say who the gateway is; the gateway's log has the details."
 }
 
 // DetectIdentity asks STS who the gateway is, using the SDK's default chain

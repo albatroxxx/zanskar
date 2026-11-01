@@ -102,3 +102,19 @@ describe('Autoscaling group form, credentials', () => {
     expect(put.mock.calls[0][1]).toMatchObject({ credentials: { ssh: 'user_supplied' } })
   })
 })
+
+// The live console (2026-11-01): on an EC2 gateway without an instance
+// profile the page showed the AWS SDK's error whole, in monospace. The
+// gateway sends a sentence now; it reads as one.
+describe('Autoscaling, the gateway identity', () => {
+  it('says why there is none in a sentence, not as code', async () => {
+    const why = 'This machine has no IAM role. Attach an instance profile to it.'
+    vi.spyOn(api, 'get').mockImplementation(async (path: string) => {
+      if (path === '/admin/aws/identity') return { source: 'none', platform: 'aws', checked_at: '2026-11-01T10:00:00Z', error: why } as never
+      return { items: [] } as never
+    })
+    render(<Autoscaling />)
+    expect((await screen.findByText(why)).className).toBe('muted')
+    expect(screen.getByRole('button', { name: 'Check again' })).toBeDefined()
+  })
+})

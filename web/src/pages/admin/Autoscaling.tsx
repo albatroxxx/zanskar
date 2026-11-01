@@ -393,7 +393,7 @@ function IdentityCard() {
             <Badge tone="warn">AWS identity unknown</Badge> Give the gateway an instance profile (or IRSA), or set <code>ZANSKAR_AWS_GATEWAY_PRINCIPAL</code>, then restart.
             <button type="button" className="btn sm" style={{ marginLeft: 8 }} disabled={busy} onClick={() => void refresh()}>{busy ? 'Checking…' : 'Check again'}</button>
           </p>
-          {id.error && <p className="muted mono" style={{ margin: '6px 0 0', fontSize: 12 }}>{id.error}</p>}
+          {id.error && <p className="muted" style={{ margin: '6px 0 0' }}>{id.error}</p>}
         </>
       )}
     </div>
@@ -441,7 +441,7 @@ function IAMDocsView({ docs, onRefresh }: { docs: AsgIAMDocs; onRefresh?: () => 
         <>
           <Alert tone="warn">
             Gateway principal unknown. Give the gateway an AWS role (instance profile or IRSA), or set <code>ZANSKAR_AWS_GATEWAY_PRINCIPAL</code>, then restart.
-            {docs.principal_error && <div className="mono muted" style={{ marginTop: 6, fontSize: 12 }}>{docs.principal_error}</div>}
+            {docs.principal_error && <div className="muted" style={{ marginTop: 6 }}>{docs.principal_error}</div>}
             {onRefresh && <div style={{ marginTop: 6 }}><button type="button" className="btn sm" onClick={onRefresh}>Check again</button></div>}
           </Alert>
           <Field label="Permissions policy (attach to the role once it exists)">
