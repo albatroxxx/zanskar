@@ -102,6 +102,14 @@ Deferred by decision: a multi-pane workspace (browser tabs suffice), rotation of
 keys and of Windows or database passwords (the certificate authority and the owning systems
 do that). Still Phase 4: HA, SAML/SCIM, WebAuthn.
 
+## v1.12 release — shipped (v1.12.0 tagged 2026-11-01)
+
+Sessions, watches and recordings open in a tab of their own, so a person runs several sessions at
+once and an auditor inspects several side by side; a session link opened from anywhere else asks
+before it connects ([ADR 0038](adr/0038-sessions-and-reviews-open-in-their-own-tab.md)). Host
+actions can be done now without typing 0, a recordings row offers Review alone, and the player
+loses its line of keyboard instructions ([release notes](releases/v1.12.0.md)).
+
 ## v1.11 release — shipped (v1.11.0 tagged 2026-10-31, v1.11.1 and v1.11.2 2026-11-01)
 
 The dashboard on one screen, inventory first, the gateway, its clock and the storage the audit
