@@ -60,6 +60,12 @@ export interface AppsReadiness {
   checks: AppsCheck[]
 }
 
+/** One more origin of an application: its bookmark name and scheme://host[:port]. */
+export interface AppEndpoint {
+  name: string
+  url: string
+}
+
 export interface Target {
   id: string
   name: string
@@ -75,8 +81,10 @@ export interface Target {
   tls_mode?: 'disable' | 'prefer' | 'require' | 'verify-full'
   /** CA bundle the upstream is verified against: a database under verify-full, or an application's https upstream. */
   tls_ca?: string
-  /** Application targets (ADR 0034): the one origin the isolated browser can reach. */
+  /** Application targets (ADR 0034): the origin the isolated browser opens. */
   app_upstream?: string
+  /** An application's further origins, reached in the same session and listed as bookmarks (ADR 0037, amended 2026-11-02). */
+  app_endpoints?: AppEndpoint[]
   ports: Partial<Record<Protocol, number>>
   capabilities: Protocol[]
   host_key_fingerprint: string | null

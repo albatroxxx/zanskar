@@ -296,6 +296,10 @@ td.actions > * + * { margin-left: 8px; }
 .tag-editor { display: grid; gap: 6px; }
 .tag-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 2rem; gap: 8px; align-items: center; }
 .tag-row input, .tag-row select { width: 100%; min-width: 0; }
+/* An endpoint row: a short name, a longer address. */
+.endpoint-row { grid-template-columns: minmax(0, 1fr) minmax(0, 2fr) 2rem; }
+/* A list read as lines, without bullets: an application's endpoints. */
+.plain-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; }
 .tag-head { font-size: 0.78rem; color: var(--fg-muted); }
 
 /* modal

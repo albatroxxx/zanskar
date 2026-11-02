@@ -1,9 +1,9 @@
 import { cleanup, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { api } from '../../api/client'
+import { ApiError, api } from '../../api/client'
 import type { Target } from '../../api/types'
-import { TargetForm } from './TargetForm'
+import { TargetForm, targetBody } from './TargetForm'
 
 afterEach(() => {
   cleanup()
@@ -54,12 +54,83 @@ describe('TargetForm application', () => {
     await user.type(screen.getByLabelText('Upstream'), 'https://wiki.internal:8443')
     expect(screen.getByLabelText(/CA bundle/)).toBeDefined()
     expect(screen.queryByLabelText('Label')).toBeNull()
-    expect(screen.getByText('The only origin the isolated browser can reach')).toBeDefined()
+    expect(screen.getByText('The page the browser opens')).toBeDefined()
     await user.click(screen.getByRole('button', { name: 'Create' }))
 
-    expect(post).toHaveBeenCalledWith('/targets', expect.objectContaining({ name: 'Wiki', address: '', os_family: 'other', engine: '', app_upstream: 'https://wiki.internal:8443', retention_days: null, ports: {} }))
+    expect(post).toHaveBeenCalledWith('/targets', expect.objectContaining({ name: 'Wiki', address: '', os_family: 'other', engine: '', app_upstream: 'https://wiki.internal:8443', app_endpoints: [], retention_days: null, ports: {} }))
     expect((post.mock.calls[0][1] as Record<string, unknown>)).not.toHaveProperty('app_label')
     expect(saved).toHaveBeenCalled()
+  })
+})
+
+// An application's further origins (ADR 0037, amended 2026-11-02): rows of
+// name and address, as tags are edited; each is a bookmark in the session.
+describe('TargetForm application endpoints', () => {
+  const app: Target = {
+    ...host, id: 'a1', name: 'Grafana', address: 'grafana.internal', os_family: 'other', ports: {}, capabilities: [],
+    app_upstream: 'http://grafana.internal', app_endpoints: [{ name: 'API', url: 'http://api.internal:8080' }],
+  }
+  const open = async () => {
+    render(<TargetForm onClose={() => {}} onSaved={() => {}} />)
+    const user = userEvent.setup()
+    await user.click(screen.getByRole('tab', { name: 'Application' }))
+    await user.type(screen.getByLabelText('Name'), 'Grafana')
+    await user.type(screen.getByLabelText('Upstream'), 'http://grafana.internal')
+    return user
+  }
+
+  it('adds endpoints as rows, leaves an empty row out, and offers the CA bundle once one is https', async () => {
+    const post = vi.spyOn(api, 'post').mockResolvedValue({ id: 'a1' } as never)
+    const user = await open()
+    expect(screen.queryByLabelText(/CA bundle/)).toBeNull()
+    await user.click(screen.getByRole('button', { name: 'Add endpoint' }))
+    await user.type(screen.getByLabelText('Endpoint 1 name'), 'Sign-in')
+    await user.type(screen.getByLabelText('Endpoint 1 address'), 'https://sso.internal')
+    expect(screen.getByLabelText(/CA bundle/)).toBeDefined()
+    await user.click(screen.getByRole('button', { name: 'Add endpoint' }))
+    await user.click(screen.getByRole('button', { name: 'Create' }))
+    expect(post).toHaveBeenCalledWith('/targets', expect.objectContaining({ app_upstream: 'http://grafana.internal', app_endpoints: [{ name: 'Sign-in', url: 'https://sso.internal' }] }))
+  })
+
+  it('removes a row with its button', async () => {
+    const post = vi.spyOn(api, 'post').mockResolvedValue({ id: 'a1' } as never)
+    const user = await open()
+    await user.click(screen.getByRole('button', { name: 'Add endpoint' }))
+    await user.type(screen.getByLabelText('Endpoint 1 address'), 'http://old.internal')
+    await user.click(screen.getByRole('button', { name: 'Remove endpoint http://old.internal' }))
+    expect(screen.queryByLabelText('Endpoint 1 address')).toBeNull()
+    await user.click(screen.getByRole('button', { name: 'Create' }))
+    expect(post).toHaveBeenCalledWith('/targets', expect.objectContaining({ app_endpoints: [] }))
+  })
+
+  it('refuses a name without an address before sending anything', async () => {
+    const post = vi.spyOn(api, 'post').mockResolvedValue({ id: 'a1' } as never)
+    const user = await open()
+    await user.click(screen.getByRole('button', { name: 'Add endpoint' }))
+    await user.type(screen.getByLabelText('Endpoint 1 name'), 'API')
+    await user.click(screen.getByRole('button', { name: 'Create' }))
+    expect(await screen.findByText('Endpoint 1 has no address')).toBeDefined()
+    expect(post).not.toHaveBeenCalled()
+  })
+
+  it('names the row the server refused as the person counts the rows', async () => {
+    vi.spyOn(api, 'post').mockRejectedValue(new ApiError(400, { code: 'bad_request', message: 'app_endpoints[1] repeats app_endpoints[0] (http://b.internal)', request_id: 'r' }, '400'))
+    const user = await open()
+    for (let i = 0; i < 3; i++) await user.click(screen.getByRole('button', { name: 'Add endpoint' }))
+    await user.type(screen.getByLabelText('Endpoint 2 address'), 'http://b.internal')
+    await user.type(screen.getByLabelText('Endpoint 3 address'), 'http://b.internal:80')
+    await user.click(screen.getByRole('button', { name: 'Create' }))
+    expect(await screen.findByText('Endpoint 3 repeats Endpoint 2 (http://b.internal)')).toBeDefined()
+  })
+
+  it('keeps the endpoints an application was opened with, on its own save and on any other edit', async () => {
+    const put = vi.spyOn(api, 'put').mockResolvedValue(app as never)
+    render(<TargetForm initial={app} onClose={() => {}} onSaved={() => {}} />)
+    expect(screen.getByLabelText('Endpoint 1 address')).toHaveProperty('value', 'http://api.internal:8080')
+    await userEvent.click(screen.getByRole('button', { name: 'Save' }))
+    expect(put).toHaveBeenCalledWith('/targets/a1', expect.objectContaining({ app_endpoints: [{ name: 'API', url: 'http://api.internal:8080' }] }))
+    // A status switch writes the whole target too.
+    expect(targetBody(app, { status: 'disabled' })).toMatchObject({ status: 'disabled', app_endpoints: [{ name: 'API', url: 'http://api.internal:8080' }] })
   })
 })
 
