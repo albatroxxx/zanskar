@@ -4,8 +4,12 @@ package connect
 
 import (
 	"context"
+	"errors"
+	"net"
 	"net/http"
+	"net/url"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/coder/websocket"
@@ -50,6 +54,12 @@ func (h *Handler) browser(w http.ResponseWriter, r *http.Request, g *ticket.Gran
 		refuseAddress(w, r, err)
 		return
 	}
+	extras, unreachable, err := h.appEndpoints(r.Context(), ep)
+	if err != nil {
+		h.addressRefused(r, g, ep, err)
+		refuseAddress(w, r, err)
+		return
+	}
 	if h.AppsMaxSessions > 0 && h.Registry != nil && h.liveSessions(protocol.HTTP) >= h.AppsMaxSessions {
 		h.record(r, actorFor(g.UserID, ip).Event(audit.SessionConnect, "target", ep.LiveKey, audit.Failure,
 			map[string]any{"protocol": g.Protocol, "reason": "too_many_sessions", "limit": h.AppsMaxSessions}))
@@ -71,6 +81,9 @@ func (h *Handler) browser(w http.ResponseWriter, r *http.Request, g *ticket.Gran
 	run, ok := h.startRun(r, ws, g, ep, ip)
 	if !ok {
 		return
+	}
+	if len(unreachable) > 0 {
+		run.startDetails = map[string]any{"unreachable_origins": unreachable}
 	}
 	run.tell = func(msg string) {
 		wctx, cancel := detach(r.Context(), frameTimeout)
@@ -107,7 +120,7 @@ func (h *Handler) browser(w http.ResponseWriter, r *http.Request, g *ticket.Gran
 		}
 	}()
 	bs, err := browsergw.Start(r.Context(), h.Log, h.DockerPath, browsergw.Spec{
-		SessionID: run.s.ID, Upstream: upstream, UpstreamIP: upstreamIP, TLSCA: ep.TLSCA,
+		SessionID: run.s.ID, Name: ep.Name, Upstream: upstream, UpstreamIP: upstreamIP, Endpoints: extras, TLSCA: ep.TLSCA,
 		Width: width, Height: height, DevTools: run.g.AllowDevTools, BrowserImage: browserImage, RelayImage: relayImage, StateDir: h.StateDir,
 	})
 	// Nothing else writes to the socket until the keepalive has stopped.
@@ -133,6 +146,59 @@ func (h *Handler) browser(w http.ResponseWriter, r *http.Request, g *ticket.Gran
 		params.Timezone = tz
 	}
 	h.serveGuac(r, ws, run, g, ep, params, guacdAddr)
+}
+
+// appEndpoints resolves an application's further origins (ADR 0037,
+// amended 2026-11-02) under the address rules every target obeys, each host
+// once and all at once, and pins the answers: the relay dials those
+// addresses and nothing else. A forbidden answer for any of them refuses the
+// session, as the upstream's would, since it means the application names a
+// place the gateway must never connect to. A name that does not resolve
+// leaves its origin out of this session, reported in unreachable, so one
+// endpoint that is down does not keep the rest of the application from
+// opening.
+func (h *Handler) appEndpoints(ctx context.Context, ep *endpoint) (out []browsergw.Endpoint, unreachable []string, err error) {
+	if len(ep.AppEndpoints) == 0 {
+		return nil, nil, nil
+	}
+	type answer struct {
+		ip  net.IP
+		err error
+	}
+	urls := make([]*url.URL, len(ep.AppEndpoints))
+	hosts := map[string]*answer{}
+	for i, e := range ep.AppEndpoints {
+		if u, perr := target.ParseUpstream(e.URL); perr == nil {
+			urls[i] = u
+			hosts[u.Hostname()] = &answer{}
+		}
+	}
+	var wg sync.WaitGroup
+	for host, a := range hosts {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			a.ip, a.err = h.Prober.Resolve(ctx, host)
+		}()
+	}
+	wg.Wait()
+	for i, e := range ep.AppEndpoints {
+		u := urls[i]
+		if u == nil {
+			unreachable = append(unreachable, e.URL)
+			continue
+		}
+		switch a := hosts[u.Hostname()]; {
+		case errors.Is(a.err, target.ErrAddressForbidden):
+			return nil, nil, a.err
+		case a.err != nil:
+			h.Log.Warn("application endpoint lookup failed", "target", ep.LiveKey, "endpoint", u.String(), "err", a.err)
+			unreachable = append(unreachable, u.String())
+		default:
+			out = append(out, browsergw.Endpoint{Name: e.Name, URL: u, IP: a.ip})
+		}
+	}
+	return out, unreachable, nil
 }
 
 // liveSessions counts the live sessions of one protocol.

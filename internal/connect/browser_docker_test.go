@@ -96,6 +96,13 @@ type realApp struct {
 // ZANSKAR_TEST_BROWSER_IMAGE naming a built browser image.
 func openRealApp(t *testing.T, ctx context.Context, prepare func(nginxName string)) *realApp {
 	t.Helper()
+	return openRealAppWith(t, ctx, prepare, nil, nil)
+}
+
+// openRealAppWith is openRealApp for an application with further origins,
+// whose names resolver answers (nil: the system's).
+func openRealAppWith(t *testing.T, ctx context.Context, prepare func(nginxName string), endpoints []target.AppEndpoint, resolver target.Resolver) *realApp {
+	t.Helper()
 	dbtest.RequireDocker(t)
 	browserImage := os.Getenv("ZANSKAR_TEST_BROWSER_IMAGE")
 	if browserImage == "" {
@@ -127,7 +134,7 @@ func openRealApp(t *testing.T, ctx context.Context, prepare func(nginxName strin
 	f.h.GuacdAddr = func() string { return guacdAddr }
 	f.h.Storage = &recording.LocalStorage{Dir: t.TempDir()}
 	f.h.Registry = gateway.NewRegistry()
-	f.h.Prober = &target.Prober{}
+	f.h.Prober = &target.Prober{Resolver: resolver}
 	f.h.DialTimeout = 20 * time.Second
 	f.h.DockerPath = "docker"
 	f.h.StateDir = t.TempDir()
@@ -139,7 +146,7 @@ func openRealApp(t *testing.T, ctx context.Context, prepare func(nginxName strin
 	if err := f.h.Policies.Create(f.ctx, apps); err != nil {
 		t.Fatal(err)
 	}
-	tg := &target.Target{Name: "nginx", AppUpstream: "http://" + upstreamIP, Tags: map[string]string{"app": "yes"}}
+	tg := &target.Target{Name: "nginx", AppUpstream: "http://" + upstreamIP, AppEndpoints: endpoints, Tags: map[string]string{"app": "yes"}}
 	if err := f.h.Targets.Create(f.ctx, tg); err != nil {
 		t.Fatal(err)
 	}
@@ -529,5 +536,75 @@ func TestBrowserEntrypointPolicy(t *testing.T) {
 	}
 	if !slices.Contains(list(on, "URLBlocklist"), "chrome://*") {
 		t.Errorf("granting developer tools must not open chrome:// pages: %v", on["URLBlocklist"])
+	}
+}
+
+// TestApplicationEndpointsThroughRealBrowser (ADR 0037, amended 2026-11-02):
+// with the browser image, the relay built from this tree and real
+// upstreams, a session's own browser container reaches the application's
+// upstream, a further origin named by IP literal and one named by a host
+// the gateway resolved and pinned, all through the relay's SOCKS proxy, and
+// nothing else on the network; the policy it was given lists the origins as
+// one bookmarks folder. Needs ZANSKAR_TEST_DOCKER=1 and
+// ZANSKAR_TEST_BROWSER_IMAGE naming a browser image with this tree's
+// entrypoint.
+func TestApplicationEndpointsThroughRealBrowser(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Minute)
+	defer cancel()
+	dbtest.RequireDocker(t)
+	if os.Getenv("ZANSKAR_TEST_BROWSER_IMAGE") == "" {
+		t.Skip("set ZANSKAR_TEST_BROWSER_IMAGE to a built deploy/browser image")
+	}
+	page := func(name, body string) string {
+		t.Helper()
+		c, ip := container(t, "zanskar-test-"+name, "nginx:alpine")
+		dbtest.Docker(t, "exec", c, "sh", "-c", "echo '<html><body>"+body+"</body></html>' > /usr/share/nginx/html/index.html")
+		return ip
+	}
+	byIP := page("endpoint-ip", "ENDPOINT-BY-IP")
+	byName := page("endpoint-name", "ENDPOINT-BY-NAME")
+	outside := page("outside", "OUTSIDE-THE-APPLICATION")
+	app := openRealAppWith(t, ctx, func(nginx string) {
+		dbtest.Docker(t, "exec", nginx, "sh", "-c", "echo '<html><body>THE-UPSTREAM</body></html>' > /usr/share/nginx/html/index.html")
+	}, []target.AppEndpoint{
+		{Name: "By IP", URL: "http://" + byIP},
+		{Name: "By name", URL: "http://api.zanskar.invalid"},
+	}, fakeResolver{"api.zanskar.invalid": {byName}})
+	browser := "zanskar-browser-" + app.sessionID
+	upstream := dbtest.Docker(t, "inspect", "-f", "{{.NetworkSettings.Networks.bridge.IPAddress}}", app.nginx)
+
+	// A second Chromium in the session's container, under the same managed
+	// policy (so the same proxy) and resolver rules, on a profile of its own.
+	fetch := func(u string) string {
+		t.Helper()
+		out, _ := exec.CommandContext(ctx, "docker", "exec", browser, "sh", "-c", // #nosec G204 -- fixed test arguments
+			`timeout 40 chromium --headless --disable-gpu --user-data-dir=/tmp/probe-$$ --host-resolver-rules="$RESOLVER_RULES" --dump-dom "$1" 2>/dev/null`, "fetch", u).Output()
+		return string(out)
+	}
+	for u, want := range map[string]string{
+		"http://" + upstream + "/":    "THE-UPSTREAM",
+		"http://" + byIP + "/":        "ENDPOINT-BY-IP",
+		"http://api.zanskar.invalid/": "ENDPOINT-BY-NAME",
+	} {
+		if got := fetch(u); !strings.Contains(got, want) {
+			t.Errorf("%s: want %s, got %.300q", u, want, got)
+		}
+	}
+	if got := fetch("http://" + outside + "/"); strings.Contains(got, "OUTSIDE-THE-APPLICATION") {
+		t.Errorf("the browser reached an address that is not one of the application's origins")
+	}
+	raw := dbtest.Docker(t, "exec", browser, "cat", "/etc/chromium/policies/managed/zanskar.json")
+	var p map[string]any
+	if err := json.Unmarshal([]byte(raw), &p); err != nil {
+		t.Fatalf("the browser's policy is not JSON: %v\n%s", err, raw)
+	}
+	marks, _ := json.Marshal(p["ManagedBookmarks"])
+	for _, want := range []string{`"toplevel_name":"nginx"`, `"name":"By IP","url":"http://` + byIP + `/"`, `"name":"By name","url":"http://api.zanskar.invalid/"`} {
+		if !strings.Contains(string(marks), want) {
+			t.Errorf("bookmarks miss %s: %s", want, marks)
+		}
+	}
+	if p["BookmarkBarEnabled"] != true {
+		t.Errorf("the bookmarks bar is off: %v", p["BookmarkBarEnabled"])
 	}
 }
