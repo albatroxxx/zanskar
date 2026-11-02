@@ -1,4 +1,4 @@
-import { protocolName } from '../../api/format'
+import { count, protocolName } from '../../api/format'
 import { useEffect, useState, type FormEvent } from 'react'
 import { api } from '../../api/client'
 import { errorMessage } from '../../api/client'
@@ -120,7 +120,7 @@ export function TargetForm({ initial, kind, onClose, onSaved }: { initial?: Targ
   useEffect(() => {
     api
       .get<RetentionPolicy>('/admin/retention')
-      .then((r) => setGlobalRetention(r.max_age_days > 0 ? `${r.max_age_days} days` : 'no age limit'))
+      .then((r) => setGlobalRetention(r.max_age_days > 0 ? count(r.max_age_days, 'day') : 'no age limit'))
       .catch(() => setGlobalRetention(''))
   }, [])
 

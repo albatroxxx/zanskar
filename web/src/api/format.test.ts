@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { consoleZone, fmtTime, protocolName, setDisplayZone, zoneLabel, zonedInputToISO, zoneOffsetMs } from './format'
+import { consoleZone, count, fmtTime, protocolName, setDisplayZone, zoneLabel, zonedInputToISO, zoneOffsetMs } from './format'
 
 // Protocols read as names, not codes: acronyms stay acronyms, WinRM keeps its
 // spelling, and "database" is a word (the console used to show DATABASE).
@@ -44,5 +44,14 @@ describe('the console time zone', () => {
     // The morning the clocks go back, after the change.
     expect(zonedInputToISO('2026-11-01T03:00', 'America/New_York')).toBe('2026-11-01T08:00:00.000Z')
     expect(zonedInputToISO('not a time', 'UTC')).toBe('')
+  })
+})
+
+describe('count', () => {
+  it('says one in the singular and anything else in the plural', () => {
+    expect(count(1, 'day')).toBe('1 day')
+    expect(count(0, 'day')).toBe('0 days')
+    expect(count(7, 'day')).toBe('7 days')
+    expect(count(2, 'policy', 'policies')).toBe('2 policies')
   })
 })

@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -197,7 +198,11 @@ func (l *Log) List(ctx context.Context, f Filter) ([]Event, string, error) {
 		add("outcome = ?", string(f.Outcome))
 	}
 	if f.ObjectType != "" {
-		add("object_type = ?", f.ObjectType)
+		types := append([]string{f.ObjectType}, legacyObjectTypes[f.ObjectType]...)
+		where = append(where, "object_type IN (?"+strings.Repeat(", ?", len(types)-1)+")")
+		for _, t := range types {
+			args = append(args, t)
+		}
 	}
 	if f.ObjectID != "" {
 		add("object_id = ?", f.ObjectID)
@@ -551,6 +556,25 @@ type Facets struct {
 	ObjectTypes []string `json:"object_types"`
 }
 
+// legacyObjectTypes names object types an older build recorded for the same
+// thing. Events are never rewritten (the hash chain covers them), so a filter on
+// the current name also matches the old ones, and the facets offer only the
+// current name. Before 1.15.0 taking a target out of a policy recorded "policy"
+// where every other policy event says "access_policy".
+var legacyObjectTypes = map[string][]string{
+	"access_policy": {"policy"},
+}
+
+// currentObjectType maps a legacy object type to the name in use now.
+func currentObjectType(t string) string {
+	for cur, olds := range legacyObjectTypes {
+		if slices.Contains(olds, t) {
+			return cur
+		}
+	}
+	return t
+}
+
 // Facets reads the distinct action and object_type values in the log.
 func (l *Log) Facets(ctx context.Context) (Facets, error) {
 	var f Facets
@@ -558,8 +582,16 @@ func (l *Log) Facets(ctx context.Context) (Facets, error) {
 	if f.Actions, err = l.distinct(ctx, "action"); err != nil {
 		return Facets{}, err
 	}
-	if f.ObjectTypes, err = l.distinct(ctx, "object_type"); err != nil {
+	types, err := l.distinct(ctx, "object_type")
+	if err != nil {
 		return Facets{}, err
+	}
+	seen := make(map[string]bool, len(types))
+	for _, t := range types {
+		if t = currentObjectType(t); !seen[t] {
+			seen[t] = true
+			f.ObjectTypes = append(f.ObjectTypes, t)
+		}
 	}
 	return f, nil
 }

@@ -344,7 +344,7 @@ func RecordRemovals(r *http.Request, log *audit.Log, removals []policy.Removal, 
 	}
 	actor := auth.ActorFor(r)
 	for _, rm := range removals {
-		_, _ = log.Record(r.Context(), actor.Event(audit.PolicyUpdate, "policy", rm.PolicyID, audit.Success, map[string]any{
+		_, _ = log.Record(r.Context(), actor.Event(audit.PolicyUpdate, "access_policy", rm.PolicyID, audit.Success, map[string]any{
 			"name": rm.Name, "removed_target": removedID, "removed_target_name": removedName, "grants_removed": rm.GrantsRemoved, "no_grants_left": rm.NoGrantsLeft,
 		}))
 	}

@@ -1,5 +1,6 @@
 import { Fragment, useState } from 'react'
 import { Link } from 'react-router-dom'
+import { count } from '../../api/format'
 import type { AutoscalingGroup, Group, Policy, Target, User } from '../../api/types'
 import { StateIcon } from '../../components/icons'
 import { Alert, Badge, Empty, PageHead } from '../../components/ui'
@@ -154,7 +155,7 @@ function GrantsTable({ policy, nameOf }: { policy: Policy; nameOf: (id: string) 
               {g.idle_timeout_minutes}m / {g.max_session_minutes ? `${g.max_session_minutes}m` : '—'}
             </td>
             <td>{g.time_windows.length === 0 ? <span className="muted">Any time</span> : g.time_windows.length}</td>
-            <td>{g.retention_days ? `${g.retention_days} days` : <span className="muted">Default</span>}</td>
+            <td>{g.retention_days ? count(g.retention_days, 'day') : <span className="muted">Default</span>}</td>
           </tr>
         ))}
       </tbody>

@@ -166,6 +166,14 @@ function session(name?: string) {
 const str = (v: unknown) => (typeof v === 'string' ? v : '')
 export const words = (s: string) => s.replace(/_/g, ' ')
 
+/** article is "a" or "an" before a word as it is said: an acronym is spelled
+ *  out (an HTTP, an SSH, an RDP, a VNC), anything else goes by its first letter. */
+export function article(word: string): 'a' | 'an' {
+  const w = word.trim()
+  if (w.length > 1 && w === w.toUpperCase() && /^[A-Z]/.test(w)) return /^[AEFHILMNORSX]/.test(w) ? 'an' : 'a'
+  return /^[aeiou]/i.test(w) ? 'an' : 'a'
+}
+
 /** describe turns an event into the sentence a reviewer wants: who did what,
  *  to which named thing. It falls back to the raw action for anything unknown. */
 export function describe(ev: AuditEvent): string {
@@ -187,7 +195,7 @@ export function describe(ev: AuditEvent): string {
       if (!fail) return 'passed the second factor'
       return reason === 'code_reused' ? 'failed the second factor (a code already used)' : 'failed the second factor'
     case 'session.connect': return fail ? `was refused ${proto} access to ${name}${reason ? ` (${words(reason)})` : ''}` : `requested ${proto} access to ${name}`
-    case 'session.start': return s ? `opened a ${s.proto} session on ${s.target}` : `opened a session ${name}`
+    case 'session.start': return s ? `opened ${article(s.proto)} ${s.proto} session on ${s.target}` : `opened a session ${name}`
     case 'session.end': {
       // A desktop that guacd ended carries guacd's words: "target lost: Upstream error."
       const why = [reason && words(reason), str(d.detail)].filter(Boolean).join(': ')
