@@ -2576,7 +2576,10 @@ paths:
       summary: Rotate a credential
       description: >
         Replaces the secret in place for passwords, domain accounts and SSH keys (omit the key
-        for `ssh_key` to have one generated). For an `ssh_ca` credential this **prepares the
+        for `ssh_key` to have one generated). Only the sealed copy Zanskar signs in with changes;
+        nothing on the target or in the domain does. Set a new password there first, and put a
+        new key's public half (returned as `public_key`) on the target before sessions use it.
+        For an `ssh_ca` credential this **prepares the
         next authority key** instead (ADR 0022): it is generated unless `private_key` is sent,
         sealed beside the signing key, and returned as `rotation.pending_public_key` so targets
         can be told to trust both. Sessions keep using the current key until the cut-over.
