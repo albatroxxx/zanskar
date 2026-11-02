@@ -904,6 +904,16 @@ func nullIfEmpty(s string) any {
 	return s
 }
 
+// Newest is the newest event's id, 0 for an empty log: where a new
+// notification channel starts reading (ADR 0039).
+func (l *Log) Newest(ctx context.Context) (int64, error) {
+	var newest sql.NullInt64
+	if err := l.db.QueryRowContext(ctx, `SELECT MAX(id) FROM audit_events`).Scan(&newest); err != nil {
+		return 0, err
+	}
+	return newest.Int64, nil
+}
+
 // ListAfter returns up to limit events with id > afterID in ascending order.
 // It is the feed for exporters, which must see every event in chain order.
 func (l *Log) ListAfter(ctx context.Context, afterID int64, limit int) ([]Event, error) {

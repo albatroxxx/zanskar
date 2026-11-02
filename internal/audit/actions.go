@@ -85,6 +85,13 @@ const (
 	// The gateway's log.
 	LogsDownload = "logs.download"
 
+	// Notification channels (ADR 0039).
+	NotifyChannelCreate = "notify.channel.create"
+	NotifyChannelUpdate = "notify.channel.update"
+	NotifyChannelDelete = "notify.channel.delete"
+	NotifyChannelTest   = "notify.channel.test"
+	NotifyChannelKey    = "notify.channel.key"
+
 	// Access policies.
 	PolicyCreate = "policy.create"
 	PolicyUpdate = "policy.update"

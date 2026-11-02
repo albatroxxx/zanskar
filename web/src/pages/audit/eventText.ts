@@ -55,6 +55,11 @@ const actionLabels: Record<string, string> = {
   'key.rotate': 'Encryption key rotated',
   'key.rotate_master': 'Master key rotated',
   'logs.download': 'Logs downloaded',
+  'notify.channel.create': 'Notification channel added',
+  'notify.channel.update': 'Notification channel changed',
+  'notify.channel.delete': 'Notification channel removed',
+  'notify.channel.test': 'Notification channel tested',
+  'notify.channel.key': 'Notification signing key changed',
   'policy.create': 'Policy created',
   'policy.update': 'Policy updated',
   'policy.delete': 'Policy deleted',
@@ -165,6 +170,7 @@ export const typeLabel: Record<string, string> = {
   session: 'session',
   recording: 'recording',
   audit_log: 'audit log',
+  notification_channel: 'notification channel',
 }
 
 const verbs: Record<string, string> = {

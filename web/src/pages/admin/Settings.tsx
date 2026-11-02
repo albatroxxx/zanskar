@@ -9,6 +9,7 @@ import { Alert, Badge, Field, Loading, Modal, PageHead } from '../../components/
 import { TLSCard } from './TLSCard'
 import { StorageCard } from './StorageCard'
 import { RetentionCard } from './RetentionCard'
+import { NotificationsCard } from './NotificationsCard'
 
 /**
  * Settings holds the two kinds of configuration (ADR 0020): runtime settings
@@ -52,7 +53,7 @@ export function Settings() {
       <PageHead title="Settings" />
       {err && <Alert tone="danger">{err}</Alert>}
       <nav className="jump" aria-label="Sections">
-        {[...categories, 'TLS certificate', 'Recording storage', 'Recording retention', 'Set at install'].map((c) => (
+        {[...categories, 'Notifications', 'TLS certificate', 'Recording storage', 'Recording retention', 'Set at install'].map((c) => (
           <a key={c} href={'#' + sectionId(c)}>{c}</a>
         ))}
       </nav>
@@ -64,6 +65,7 @@ export function Settings() {
             .map((s) => <SettingRow key={s.key} setting={s} onChange={replace} />)}
         </div>
       ))}
+      <NotificationsCard />
       <TLSCard />
       <StorageCard />
       <RetentionCard />

@@ -47,6 +47,7 @@ import (
 	"github.com/albatroxxx/zanskar/internal/keyring"
 	"github.com/albatroxxx/zanskar/internal/lifecycle"
 	"github.com/albatroxxx/zanskar/internal/logring"
+	"github.com/albatroxxx/zanskar/internal/notify"
 	"github.com/albatroxxx/zanskar/internal/overview"
 	"github.com/albatroxxx/zanskar/internal/policy"
 	"github.com/albatroxxx/zanskar/internal/recording"
@@ -400,6 +401,12 @@ func serve(ctx context.Context) error {
 	}
 	chainChecker := &audit.Checker{Log: auditLog, Key: anchorKey, Logger: log}
 
+	// Notifications (ADR 0039): each channel follows the audit log from its
+	// own checkpoint, as the SIEM export does, and is told what it asked for.
+	notifyRepo := notify.NewRepo(db, ring)
+	notifier := &notify.Notifier{Channels: notifyRepo, Audit: auditLog, Resolve: sessionRepo.ResolveNames, Base: cfg.PublicURL, Sender: &notify.Sender{}, Log: log}
+	go notifier.Run(ctx)
+
 	deps := server.Deps{
 		TLS:   tlsMgr,
 		Theme: func() string { return runtime.String(settings.KeyTheme) },
@@ -411,6 +418,7 @@ func serve(ctx context.Context) error {
 		Handlers: []server.Registrar{
 			&adminapi.AdminHandler{Users: users, Sessions: sessions, TOTP: totp, Revoker: connectHandler, Audit: auditLog, Log: log, ProviderHolds: idpRepo.Holds},
 			&group.AdminHandler{Groups: groups, Revoker: connectHandler, Audit: auditLog, Log: log},
+			&notify.Handler{Channels: notifyRepo, Notifier: notifier, Audit: auditLog, Log: log},
 			&idpadmin.AdminHandler{Providers: idpRepo, Audit: auditLog, Log: log, LDAPTester: &ldap.Authenticator{}, Sync: userSync},
 			oidcHandler,
 			scimHandler,

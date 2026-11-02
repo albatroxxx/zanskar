@@ -4780,6 +4780,143 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
+  /admin/notifications:
+    get:
+      tags: [admin]
+      summary: Notification channels (ADR 0039)
+      description: >
+        Every channel, its kinds of event and how its deliveries are going, and `events`, the kinds a
+        channel can ask for. Secrets are never returned; `has_secret` says one is stored.
+      responses:
+        "200":
+          description: Channels.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/NotificationChannel"
+                  events:
+                    type: array
+                    items:
+                      type: string
+    post:
+      tags: [admin]
+      summary: Add a notification channel
+      description: >
+        A webhook (`webhook_url`, https, not loopback or link-local) or email (`smtp_host`,
+        `smtp_port`, `smtp_username`, `smtp_password`, `from`, `to`). The channel starts at the newest
+        audit event: it is told what happens from now on. A webhook's signing key is made here and
+        returned once as `signing_key`. Audited as `notify.channel.create`, without secrets.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/NotificationChannelInput"
+      responses:
+        "201":
+          description: Added.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  channel:
+                    $ref: "#/components/schemas/NotificationChannel"
+                  signing_key:
+                    type: string
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "409":
+          $ref: "#/components/responses/Conflict"
+  /admin/notifications/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+    put:
+      tags: [admin]
+      summary: Change a notification channel
+      description: A secret field left empty keeps the stored one. Audited as `notify.channel.update`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/NotificationChannelInput"
+      responses:
+        "200":
+          description: Changed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NotificationChannel"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+    delete:
+      tags: [admin]
+      summary: Remove a notification channel
+      responses:
+        "204":
+          description: Removed, with its place in the audit log.
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /admin/notifications/{id}/test:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+    post:
+      tags: [admin]
+      summary: Send a test message now
+      responses:
+        "204":
+          description: Delivered.
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "502":
+          description: "`delivery_failed`: the message says why."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /admin/notifications/{id}/signing-key:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+    post:
+      tags: [admin]
+      summary: Replace a webhook's signing key
+      description: The new key is returned once; the old one stops verifying at once.
+      responses:
+        "200":
+          description: The new key.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  signing_key:
+                    type: string
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
   /admin/retention:
     get:
       tags: [admin]
@@ -7271,6 +7408,94 @@ components:
         started_24h:
           type: integer
           description: Sessions started in the last 24 hours.
+    NotificationChannel:
+      type: object
+      required: [id, name, kind, events, config, enabled, has_secret]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        kind:
+          type: string
+          enum: [webhook, email]
+        events:
+          type: array
+          items:
+            type: string
+            enum: [access_requested, access_decided, session_terminated, provider_failing, recording_lost, disk_full]
+        config:
+          type: object
+          properties:
+            webhook_host:
+              type: string
+            smtp_host:
+              type: string
+            smtp_port:
+              type: integer
+            smtp_username:
+              type: string
+            from:
+              type: string
+            to:
+              type: array
+              items:
+                type: string
+        enabled:
+          type: boolean
+        has_secret:
+          type: boolean
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        status:
+          type: object
+          properties:
+            last_sent_at:
+              type: string
+              format: date-time
+            last_error:
+              type: string
+            last_error_at:
+              type: string
+              format: date-time
+    NotificationChannelInput:
+      type: object
+      required: [name, events]
+      properties:
+        name:
+          type: string
+        kind:
+          type: string
+          enum: [webhook, email]
+          description: On create only.
+        events:
+          type: array
+          items:
+            type: string
+        enabled:
+          type: boolean
+        webhook_url:
+          type: string
+          format: uri
+        smtp_host:
+          type: string
+        smtp_port:
+          type: integer
+        smtp_username:
+          type: string
+        smtp_password:
+          type: string
+          format: password
+        from:
+          type: string
+        to:
+          type: array
+          items:
+            type: string
     AuditTallies:
       type: object
       required: [events, failures, failed_logins, refused_connects]

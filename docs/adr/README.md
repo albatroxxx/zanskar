@@ -56,3 +56,4 @@ and update the status of the old one.
 | [0036](0036-access-policy-grants.md) | An access policy is an audience and a list of grants, each with its own conditions | Accepted, amended 2026-11-02 |
 | [0037](0037-application-modes-proxied-and-isolated.md) | An application opens proxied in the user's own browser, or isolated in a full browser beside the gateway | Accepted, amended 2026-11-02 |
 | [0038](0038-sessions-and-reviews-open-in-their-own-tab.md) | Sessions, watches and recordings open in a tab of their own | Accepted |
+| [0039](0039-notifications.md) | Notifications follow the audit log, to a signed webhook or by email | Accepted |
