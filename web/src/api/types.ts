@@ -139,6 +139,8 @@ export interface ReachableTarget {
   requires_approval?: Protocol[]
   /** Allowed protocols on which the user may sign in with their own login (ADR 0036). */
   own_login?: Protocol[]
+  /** Allowed protocols Zanskar signs the user in to itself, with a credential it holds; coloured apart in the portal. */
+  managed_login?: Protocol[]
   host_key_ready: boolean
   /** Private (RFC1918/ULA) IP when the target has one; withheld for public addresses/hostnames. */
   private_ip?: string

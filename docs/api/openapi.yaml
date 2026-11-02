@@ -6691,8 +6691,18 @@ components:
           description: >-
             Protocols on which the caller may sign in with their own login instead of the
             target's (ADR 0036): a grant that admits them says `sign_in: own`. Where another
-            grant lets the target decide, the UI offers *Use my own login* beside the protocol;
+            grant lets the target decide, the UI offers the own login beside the protocol;
             where none does, the connect must carry `credential`. Absent when there are none.
+          items:
+            $ref: "#/components/schemas/Protocol"
+        managed_login:
+          type: array
+          description: >-
+            Protocols Zanskar signs the caller in to itself, with a credential it holds: a grant
+            lets the target's slot decide and the slot holds a vaulted credential (a password,
+            a key, the SSH authority, EC2 Instance Connect), not the prompt for the caller's
+            own login. The portal colours them apart from the caller's own login. Absent when
+            there are none.
           items:
             $ref: "#/components/schemas/Protocol"
         host_key_ready:
