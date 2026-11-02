@@ -327,7 +327,7 @@ describe('Targets, sessions in tabs of their own', () => {
   // 2026-11-02: colour, not an "as me" button, says who signs the person in:
   // green where Zanskar does with a credential it holds, the protocol's own
   // colour where the person gives their own login. The words stay in each
-  // link's name and tooltip, and the legend under the table says them too.
+  // link's name and tooltip; there is no legend (2026-11-03).
   it('colours a protocol Zanskar signs in to green, and the person\'s own login in the protocol\'s colour', async () => {
     mount([{ ...box, capabilities: ['ssh', 'rdp'], allowed_protocols: ['ssh', 'rdp'], managed_login: ['ssh', 'rdp'] }, { ...box, id: 't2', name: 'own-box' }])
     await screen.findByText('own-box')
@@ -338,8 +338,9 @@ describe('Targets, sessions in tabs of their own', () => {
     expect(ownSSH.className).toBe('btn sm proto-terminal')
     expect(ownSSH.getAttribute('title')).toBe('SSH: your own login')
     expect(screen.queryByText('as me')).toBeNull()
-    expect(screen.getByText('Zanskar signs you in')).toBeDefined()
-    expect(screen.getByText('Your own login')).toBeDefined()
+    // No legend (2026-11-03): the words are each button's own.
+    expect(screen.queryByText('Zanskar signs you in')).toBeNull()
+    expect(screen.queryByText('Your own login')).toBeNull()
   })
 
   it('puts the person\'s own login beside a green protocol where a grant allows it, both named the protocol', async () => {

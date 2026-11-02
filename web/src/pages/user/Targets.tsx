@@ -19,16 +19,6 @@ function pick(t: ReachableTarget, family: Protocol[]): Protocol | null {
   return null
 }
 
-/** SignInLegend says what a protocol button's colour means, in words, so the colour is never the only sign. */
-function SignInLegend() {
-  return (
-    <p className="muted signin-legend">
-      <span><span className="legend-swatch proto-managed" aria-hidden="true" />Zanskar signs you in</span>
-      <span><span className="legend-swatch proto-own" aria-hidden="true" />Your own login</span>
-    </p>
-  )
-}
-
 export function Targets() {
   const [items, setItems] = useState<ReachableTarget[] | null>(null)
   const [err, setErr] = useState('')
@@ -160,7 +150,9 @@ export function Targets() {
   // when given, turns a gated protocol into a Request button. Colour says who
   // signs the person in (2026-11-02, in place of an "as me" button): green
   // where Zanskar does, with a credential it holds (managed_login), the
-  // protocol's own colour where the person gives their own login. own, when
+  // protocol's own colour where the person gives their own login; each
+  // button's tooltip and name say it in words (no legend, the owner,
+  // 2026-11-03). own, when
   // set, offers the person's own login beside a green one where a grant lets
   // them (ADR 0036), and in its place where the target's slot would not sign
   // them in anyway.
@@ -377,7 +369,6 @@ export function Targets() {
               </tbody>
             </table>
           )}
-          {statics && statics.length > 0 && <SignInLegend />}
         </div>
       )}
 
@@ -418,7 +409,6 @@ export function Targets() {
               </tbody>
             </table>
           )}
-          {groups && groups.length > 0 && <SignInLegend />}
         </div>
       )}
 

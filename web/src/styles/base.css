@@ -247,11 +247,6 @@ td.actions > * + * { margin-left: 8px; }
    whatever the protocol; their own login keeps the protocol's colour above. */
 .btn.proto-managed { background: var(--ok-soft); color: var(--ok); border-color: transparent; font-weight: 600; }
 .btn.proto-managed:hover { background: var(--ok); color: var(--accent-fg); border-color: transparent; }
-.signin-legend { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; margin: 10px 12px 2px; font-size: 0.85em; }
-.signin-legend > span { display: inline-flex; align-items: center; gap: 6px; }
-.legend-swatch { display: inline-block; width: 12px; height: 12px; border-radius: 3px; }
-.legend-swatch.proto-managed { background: var(--ok); }
-.legend-swatch.proto-own { background: var(--accent); }
 .btn.proto-database { background: var(--proto-db-soft); color: var(--proto-db); border-color: transparent; font-weight: 600; }
 .btn.proto-database:hover { background: var(--proto-db); color: var(--accent-fg); border-color: transparent; }
 .btn.proto-app { background: var(--proto-app-soft); color: var(--proto-app); border-color: transparent; font-weight: 600; text-decoration: none; }
