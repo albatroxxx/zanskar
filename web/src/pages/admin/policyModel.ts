@@ -113,6 +113,24 @@ export function rowsToMatch(rows: TagRow[]): { match: Record<string, string[]>; 
   return { match: Object.fromEntries(match) }
 }
 
+/** tagsMatch is the gateway's rule: every key present with one of its values. */
+export function tagsMatch(match: Record<string, string[]>, tags: Record<string, string> | undefined): boolean {
+  const entries = Object.entries(match)
+  return entries.length > 0 && entries.every(([k, vs]) => tags?.[k] !== undefined && vs.includes(tags[k]))
+}
+
+/**
+ * reaches is how many of its kind's targets a grant opens today: the named
+ * ones that still exist and those its tags match. Zero is a grant that opens
+ * nothing, such as an autoscaling grant by tag while no group is enrolled
+ * (2026-11-03 live audit, Q9).
+ */
+export function reaches(g: PolicyGrant, targets: Target[], asgs: AutoscalingGroup[]): number {
+  const pool: { id: string; tags?: Record<string, string> }[] = g.kind === 'autoscaling' ? asgs : targets.filter((t) => kindOf(t) === g.kind)
+  const named = new Set(g.targets.map((t) => t.id))
+  return pool.filter((t) => named.has(t.id) || (g.tags ? tagsMatch(g.tags.match, t.tags) : false)).length
+}
+
 /** A tag match as one phrase: env prod|staging, tier web. */
 export function matchPhrase(match: Record<string, string[]>): string {
   return Object.entries(match).map(([k, vs]) => `${k} ${vs.join('|')}`).join(', ')
