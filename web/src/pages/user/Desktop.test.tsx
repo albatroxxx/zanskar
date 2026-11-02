@@ -304,7 +304,8 @@ describe('Desktop, the session id from the gateway', () => {
     act(() => client.onerror?.({ code: 0x0207, message: 'the instance left the healthy pool' }))
 
     expect(screen.getByRole('dialog').querySelector('h2')?.textContent).toBe('Session ended')
-    expect(get).not.toHaveBeenCalled()
+    // The grant clock reads /me/access, which carries no session id; nothing else is asked.
+    expect(get.mock.calls.map((c) => String(c[0])).filter((p) => p !== '/me/access')).toEqual([])
   })
 })
 

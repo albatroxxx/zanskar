@@ -7,6 +7,7 @@ import { ConfirmDisconnect, SessionEndedDialog } from './SessionEnded'
 import { desktopEnd, saveBlob, SESSION_ID, useSwitched, type SessionEnd, type SessionState } from './session'
 import { useFullscreen } from './fullscreen'
 import { FullscreenButton } from './FullscreenButton'
+import { GrantClock } from '../../components/GrantClock'
 import { CONTROLS_KEY, isControlsKey, isPasteKey, keyQueue } from './keys'
 import { pointerAsCursor } from './cursor'
 import { useTitle } from '../../components/title'
@@ -469,6 +470,7 @@ function DesktopSession({ state }: { state: SessionState }) {
         {state.switched_from && <span className="stat switched">switched from {state.switched_from}</span>}
         <span className="stat">{protocolName(state.protocol)}</span>
         <span className="stat">{(ended ? 'ran for ' : 'elapsed ') + fmtSeconds(elapsed)}</span>
+        {!ended && <GrantClock session={state} />}
         <span className="grow" />
         {!ended && !connected && <span className="stat hint" role="status">Connecting…</span>}
         {!ended && <span className="stat hint" title={`Press ${CONTROLS_KEY} to move between the desktop and these controls`}>{CONTROLS_KEY}: controls</span>}

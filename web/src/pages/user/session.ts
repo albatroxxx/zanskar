@@ -15,6 +15,9 @@ export interface SessionState {
   ticket: string
   ws_path: string
   target: string
+  /** The target's id, for a session on a plain target: the grant it runs on
+   *  is found by it (GrantClock). */
+  target_id?: string
   protocol: string
   asg_id?: string
   asg_instance_id?: string
@@ -33,6 +36,7 @@ export function switchedState(from: SessionState, res: ConnectResponse): Session
     ticket: res.ticket,
     ws_path: res.ws_path,
     target: from.target,
+    target_id: from.target_id,
     protocol: from.protocol,
     asg_id: res.asg_id ?? from.asg_id,
     asg_instance_id: res.asg_instance_id,

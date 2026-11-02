@@ -11,6 +11,7 @@ import { SESSION_ID, useSwitched, type SessionEnd, type SessionState } from './s
 import { TerminalFiles } from './TerminalFiles'
 import { useFullscreen } from './fullscreen'
 import { FullscreenButton } from './FullscreenButton'
+import { GrantClock } from '../../components/GrantClock'
 import { terminalTheme } from '../../styles/theme'
 import { useTitle } from '../../components/title'
 import { CONTROLS_KEY, isControlsEvent } from './keys'
@@ -159,6 +160,7 @@ function TerminalSession({ state }: { state: SessionState }) {
         <span className="stat">{protocolName(state.protocol)}</span>
         <span className="stat">{status === 'connecting' ? 'connecting…' : (ended ? 'ran for ' : 'elapsed ') + fmtSeconds(elapsed)}</span>
         {!ended && <span className={'stat' + (idle > 600 ? ' warn' : '')}>idle {fmtSeconds(idle)}</span>}
+        {!ended && <GrantClock session={state} />}
         <span className="grow" />
         {!ended && <span className="stat hint" title={`Press ${CONTROLS_KEY} to move between the terminal and these controls`}>{CONTROLS_KEY}: controls</span>}
         <span className="sr-only" role="status">{status === 'live' && !ended ? `Connected. Press ${CONTROLS_KEY} to move from the terminal to the controls.` : ''}</span>

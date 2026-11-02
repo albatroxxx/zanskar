@@ -127,6 +127,7 @@ export function ConnectPage() {
           ticket: res.ticket,
           ws_path: res.ws_path,
           target: t.name,
+          target_id: t.kind === 'asg' ? undefined : t.id,
           protocol: intent.protocol,
           asg_id: res.asg_id,
           asg_instance_id: res.asg_instance_id,

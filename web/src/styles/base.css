@@ -432,6 +432,11 @@ td.actions > * + * { margin-left: 8px; }
 .term-bar .name { font-weight: 600; }
 .term-bar .stat { color: var(--term-fg-muted); font-variant-numeric: tabular-nums; }
 .term-bar .stat.warn { color: var(--term-warn); }
+/* A just-in-time grant's clock and its ask for more time, in a session's
+   bar (idea 6). */
+.grant-clock, .grant-ask { display: inline-flex; align-items: center; gap: 8px; }
+.grant-ask select, .grant-ask input { font-size: 0.82rem; padding: 2px 6px; }
+.grant-ask input { width: 14ch; }
 /* "Recording" with a pulsing dot: the one thing in the bar a user must never
    miss. The pulse is dropped for people who asked for reduced motion. */
 .term-bar .stat.rec { display: inline-flex; align-items: center; gap: 6px; color: var(--term-fg); }
