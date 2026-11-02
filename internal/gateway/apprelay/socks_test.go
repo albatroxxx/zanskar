@@ -182,7 +182,7 @@ func TestSOCKSDropsBadAndSilentClients(t *testing.T) {
 		_ = c.SetReadDeadline(time.Now().Add(within))
 		_, err := c.Read(make([]byte, 1))
 		var ne net.Error
-		return err != nil && !(errors.As(err, &ne) && ne.Timeout())
+		return err != nil && (!errors.As(err, &ne) || !ne.Timeout())
 	}
 	v4, err := net.Dial("tcp", addr)
 	if err != nil {

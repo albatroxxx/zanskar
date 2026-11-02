@@ -541,13 +541,17 @@ func TestBrowserEntrypointPolicy(t *testing.T) {
 
 // TestApplicationEndpointsThroughRealBrowser (ADR 0037, amended 2026-11-02):
 // with the browser image, the relay built from this tree and real
-// upstreams, a session's own browser container reaches the application's
-// upstream, a further origin named by IP literal and one named by a host
-// the gateway resolved and pinned, all through the relay's SOCKS proxy, and
-// nothing else on the network; the policy it was given lists the origins as
-// one bookmarks folder. Needs ZANSKAR_TEST_DOCKER=1 and
-// ZANSKAR_TEST_BROWSER_IMAGE naming a browser image with this tree's
-// entrypoint.
+// upstreams, the session's own browser, the one the person sees, opens the
+// application's upstream, a further origin named by IP literal and one named
+// by a host the gateway resolved and pinned, all through the relay's SOCKS
+// proxy, and shows its blocked page for an address outside the application;
+// the policy it was given lists the origins as one bookmarks folder. Each
+// address is handed to the running browser as a new tab (as a bookmark opens
+// one, without the address bar's guessing, which takes a reserved name for a
+// search) and the page is read from the window's title, which is the active
+// tab's. A headless Chromium beside it in the container hangs, so it is no
+// probe. Needs ZANSKAR_TEST_DOCKER=1 and ZANSKAR_TEST_BROWSER_IMAGE naming a
+// browser image with this tree's entrypoint.
 func TestApplicationEndpointsThroughRealBrowser(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Minute)
 	defer cancel()
@@ -555,17 +559,20 @@ func TestApplicationEndpointsThroughRealBrowser(t *testing.T) {
 	if os.Getenv("ZANSKAR_TEST_BROWSER_IMAGE") == "" {
 		t.Skip("set ZANSKAR_TEST_BROWSER_IMAGE to a built deploy/browser image")
 	}
-	page := func(name, body string) string {
+	html := func(title string) string {
+		return "echo '<html><head><title>" + title + "</title></head><body>" + title + "</body></html>' > /usr/share/nginx/html/index.html"
+	}
+	page := func(name, title string) string {
 		t.Helper()
 		c, ip := container(t, "zanskar-test-"+name, "nginx:alpine")
-		dbtest.Docker(t, "exec", c, "sh", "-c", "echo '<html><body>"+body+"</body></html>' > /usr/share/nginx/html/index.html")
+		dbtest.Docker(t, "exec", c, "sh", "-c", html(title))
 		return ip
 	}
 	byIP := page("endpoint-ip", "ENDPOINT-BY-IP")
 	byName := page("endpoint-name", "ENDPOINT-BY-NAME")
 	outside := page("outside", "OUTSIDE-THE-APPLICATION")
 	app := openRealAppWith(t, ctx, func(nginx string) {
-		dbtest.Docker(t, "exec", nginx, "sh", "-c", "echo '<html><body>THE-UPSTREAM</body></html>' > /usr/share/nginx/html/index.html")
+		dbtest.Docker(t, "exec", nginx, "sh", "-c", html("THE-UPSTREAM"))
 	}, []target.AppEndpoint{
 		{Name: "By IP", URL: "http://" + byIP},
 		{Name: "By name", URL: "http://api.zanskar.invalid"},
@@ -573,25 +580,46 @@ func TestApplicationEndpointsThroughRealBrowser(t *testing.T) {
 	browser := "zanskar-browser-" + app.sessionID
 	upstream := dbtest.Docker(t, "inspect", "-f", "{{.NetworkSettings.Networks.bridge.IPAddress}}", app.nginx)
 
-	// A second Chromium in the session's container, under the same managed
-	// policy (so the same proxy) and resolver rules, on a profile of its own.
-	fetch := func(u string) string {
-		t.Helper()
-		out, _ := exec.CommandContext(ctx, "docker", "exec", browser, "sh", "-c", // #nosec G204 -- fixed test arguments
-			`timeout 40 chromium --headless --disable-gpu --user-data-dir=/tmp/probe-$$ --host-resolver-rules="$RESOLVER_RULES" --dump-dom "$1" 2>/dev/null`, "fetch", u).Output()
-		return string(out)
+	title := func() string {
+		out, _ := exec.CommandContext(ctx, "docker", "exec", "-e", "DISPLAY=:1", browser, "xdotool", "getwindowfocus", "getwindowname").Output() // #nosec G204 -- fixed test arguments
+		return strings.TrimSpace(string(out))
 	}
-	for u, want := range map[string]string{
-		"http://" + upstream + "/":    "THE-UPSTREAM",
-		"http://" + byIP + "/":        "ENDPOINT-BY-IP",
-		"http://api.zanskar.invalid/": "ENDPOINT-BY-NAME",
+	// The start page is the upstream.
+	var got string
+	for range 60 {
+		if got = title(); strings.Contains(got, "THE-UPSTREAM") {
+			break
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+	if !strings.Contains(got, "THE-UPSTREAM") {
+		t.Fatalf("the browser did not open the upstream: window title %q", got)
+	}
+	// open hands u to the running browser and waits up to limit for the
+	// window's title to hold want; it returns the last title seen.
+	open := func(u, want string, limit time.Duration) string {
+		t.Helper()
+		dbtest.Docker(t, "exec", "-d", browser, "sh", "-c", `chromium --user-data-dir="$HOME/profile" "$1" >/dev/null 2>&1`, "open", u)
+		var last string
+		for deadline := time.Now().Add(limit); time.Now().Before(deadline); time.Sleep(250 * time.Millisecond) {
+			if last = title(); strings.Contains(last, want) {
+				break
+			}
+		}
+		return last
+	}
+	for _, c := range []struct{ url, want string }{
+		{"http://" + byIP + "/", "ENDPOINT-BY-IP"},
+		{"http://api.zanskar.invalid/", "ENDPOINT-BY-NAME"},
+		{"http://" + upstream + "/", "THE-UPSTREAM"},
 	} {
-		if got := fetch(u); !strings.Contains(got, want) {
-			t.Errorf("%s: want %s, got %.300q", u, want, got)
+		if got := open(c.url, c.want, 15*time.Second); !strings.Contains(got, c.want) {
+			relay, _ := exec.CommandContext(ctx, "docker", "logs", "zanskar-apprelay-"+app.sessionID).CombinedOutput() // #nosec G204 -- fixed test arguments
+			t.Errorf("%s: window title %q, want %s\nrelay said: %.1500s", c.url, got, c.want, relay)
 		}
 	}
-	if got := fetch("http://" + outside + "/"); strings.Contains(got, "OUTSIDE-THE-APPLICATION") {
-		t.Errorf("the browser reached an address that is not one of the application's origins")
+	if got := open("http://"+outside+"/", "OUTSIDE-THE-APPLICATION", 5*time.Second); strings.Contains(got, "OUTSIDE-THE-APPLICATION") {
+		t.Errorf("the browser reached an address that is not one of the application's origins (window title %q)", got)
 	}
 	raw := dbtest.Docker(t, "exec", browser, "cat", "/etc/chromium/policies/managed/zanskar.json")
 	var p map[string]any
