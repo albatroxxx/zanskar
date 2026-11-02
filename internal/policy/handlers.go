@@ -43,8 +43,11 @@ type AdminHandler struct {
 	// Revoker re-checks the live sessions of the people a change touches;
 	// nil leaves them to their own limits.
 	Revoker gateway.Revoker
-	Audit   *audit.Log
-	Log     *slog.Logger
+	// Directory names the people a review lists (ADR 0040); nil lists
+	// subjects without names or people.
+	Directory Directory
+	Audit     *audit.Log
+	Log       *slog.Logger
 }
 
 // Register mounts the routes.
@@ -55,6 +58,10 @@ func (h *AdminHandler) Register(mux *http.ServeMux) {
 	mux.Handle("GET /api/v1/access-policies/{id}", admin(http.HandlerFunc(h.get)))
 	mux.Handle("PUT /api/v1/access-policies/{id}", admin(http.HandlerFunc(h.update)))
 	mux.Handle("DELETE /api/v1/access-policies/{id}", admin(http.HandlerFunc(h.del)))
+	// Access reviews (ADR 0040): who a policy covers and when each last
+	// used it; the administrator's decisions.
+	mux.Handle("GET /api/v1/access-policies/{id}/review", admin(http.HandlerFunc(h.review)))
+	mux.Handle("POST /api/v1/access-policies/{id}/review", admin(http.HandlerFunc(h.completeReview)))
 }
 
 // input is the request body for create and update.

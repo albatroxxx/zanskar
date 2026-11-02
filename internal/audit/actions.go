@@ -94,6 +94,9 @@ const (
 
 	// Access policies.
 	PolicyCreate = "policy.create"
+	// PolicyReview is an access review completed (ADR 0040): who was kept,
+	// who removed, and the reviewer's note.
+	PolicyReview = "policy.review"
 	PolicyUpdate = "policy.update"
 	PolicyDelete = "policy.delete"
 

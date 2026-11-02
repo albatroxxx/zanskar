@@ -71,6 +71,9 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 /* Notification channels in Settings (ADR 0039). */
 .notify-table { width: 100%; }
+/* A policy whose access review is due (ADR 0040): a dot on its Review button. */
+.dot-due { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--warn); margin-left: 6px; vertical-align: middle; }
+tr.off td { color: var(--fg-muted); }
 .notify-table tr.off td { color: var(--fg-muted); }
 .notify-events { border: 1px solid var(--line); border-radius: 8px; padding: 8px 12px; margin: 8px 0 12px; display: grid; gap: 4px; }
 .notify-events legend { font-size: 0.86rem; color: var(--fg-muted); padding: 0 4px; }

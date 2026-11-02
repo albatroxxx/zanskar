@@ -286,6 +286,9 @@ export interface Policy {
   grants: PolicyGrant[]
   created_at: string
   updated_at: string
+  /** The last access review (ADR 0040): when, and the reviewer's id. */
+  reviewed_at?: string
+  reviewed_by?: string
 }
 
 export interface Session {

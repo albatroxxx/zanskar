@@ -61,6 +61,7 @@ const actionLabels: Record<string, string> = {
   'notify.channel.test': 'Notification channel tested',
   'notify.channel.key': 'Notification signing key changed',
   'policy.create': 'Policy created',
+  'policy.review': 'Access review completed',
   'policy.update': 'Policy updated',
   'policy.delete': 'Policy deleted',
   'recording.download': 'Recording downloaded',

@@ -112,6 +112,10 @@ type Policy struct {
 	CreatedBy   string    `json:"created_by,omitempty"`
 	CreatedAt   time.Time `json:"created_at"`
 	UpdatedAt   time.Time `json:"updated_at"`
+	// ReviewedAt and ReviewedBy are the last access review (ADR 0040):
+	// when an administrator went through who the policy covers, and who.
+	ReviewedAt *time.Time `json:"reviewed_at,omitempty"`
+	ReviewedBy string     `json:"reviewed_by,omitempty"`
 }
 
 // Errors.

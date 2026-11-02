@@ -3036,6 +3036,70 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
 
+  /access-policies/{id}/review:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+    get:
+      tags: [admin]
+      summary: The policy's access review (ADR 0040)
+      description: >
+        Each subject with its name, the people it brings (a group's members, or the person) and
+        each person's last session under the policy, the newest of them as the subject's
+        `last_used_at`; who last reviewed it, and whether a review is `due` (never made, or older
+        than 90 days).
+      responses:
+        "200":
+          description: The review.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PolicyReview"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    post:
+      tags: [admin]
+      summary: Complete an access review
+      description: >
+        Removes the subjects in `remove` from the policy (an edit: validated, and the live sessions
+        it took away end), stamps `reviewed_at` and `reviewed_by`, and records one `policy.review`
+        event with the kept and removed subjects and the note. An empty `remove` keeps everyone and
+        still stamps the review.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                remove:
+                  type: array
+                  items:
+                    $ref: "#/components/schemas/PolicySubject"
+                note:
+                  type: string
+                  maxLength: 2000
+      responses:
+        "200":
+          description: The review after it.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PolicyReview"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          description: "`unknown_subject`: a subject to remove is not one of the policy's."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
   /access-requests:
     get:
       tags: [admin]
@@ -6241,6 +6305,41 @@ components:
         and no others: `host` and `autoscaling` ssh, rdp, vnc and winrm; `database` database;
         `application` http.
       enum: [host, database, application, autoscaling]
+    PolicyReview:
+      type: object
+      required: [policy, subjects, due]
+      properties:
+        policy:
+          $ref: "#/components/schemas/AccessPolicy"
+        subjects:
+          type: array
+          items:
+            type: object
+            properties:
+              kind:
+                type: string
+                enum: [group, user]
+              id:
+                type: string
+              name:
+                type: string
+              people:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    user_id:
+                      type: string
+                    username:
+                      type: string
+                    last_used_at:
+                      $ref: "#/components/schemas/Timestamp"
+              last_used_at:
+                $ref: "#/components/schemas/Timestamp"
+        reviewer_name:
+          type: string
+        due:
+          type: boolean
     PolicySubject:
       type: object
       description: One group or user a policy applies to.
@@ -6434,6 +6533,12 @@ components:
           $ref: "#/components/schemas/Timestamp"
         updated_at:
           $ref: "#/components/schemas/Timestamp"
+        reviewed_at:
+          description: The last access review (ADR 0040); absent until the first.
+          $ref: "#/components/schemas/Timestamp"
+        reviewed_by:
+          type: string
+          description: The id of the administrator who made the last access review.
       examples:
         - id: 4f1c0a9e2b7d4e8f9a6b3c2d1e0f7a8b
           name: platform-prod

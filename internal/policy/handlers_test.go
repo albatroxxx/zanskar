@@ -69,7 +69,7 @@ func newHandlerEnv(t *testing.T) *handlerEnv {
 	users := user.NewRepo(db)
 	sessions := auth.NewSessions(db, bytes.Repeat([]byte{3}, 32), false)
 	e := &handlerEnv{db: db, users: users, audit: audit.NewLog(db), rv: &recorder{}}
-	h := &AdminHandler{Repo: NewRepo(db), Users: users, Inventory: fakeInventory{}, Revoker: e.rv, Audit: e.audit, Log: log}
+	h := &AdminHandler{Repo: NewRepo(db), Users: users, Inventory: fakeInventory{}, Revoker: e.rv, Directory: testDirectory{users: users, db: db}, Audit: e.audit, Log: log}
 	mux := http.NewServeMux()
 	h.Register(mux)
 	mw := &auth.Middleware{Sessions: sessions, Users: users, Log: log}
