@@ -777,13 +777,20 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
         "409":
-          description: The target is not reachable for this protocol (capability missing, host key untrusted or changed, or instance no longer healthy).
+          description: >-
+            The target is not reachable for this protocol (capability missing, host key untrusted
+            or changed, or instance no longer healthy); or `target_unreachable`: for a host (SSH,
+            RDP, VNC, WinRM), the pre-flight dial to its port, made after the policy allowed the
+            request, was refused, timed out after 4 seconds, or found no route. The message says
+            which.
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
         "422":
           description: >-
+            `address_forbidden`: the target's name resolves to an address the gateway does not
+            connect to.
             `credential_required`: the target uses the caller's own account for this protocol, or
             every grant that admits the caller says `sign_in: own`, so the request must carry
             `credential` (a private key is for `ssh` only).
@@ -797,6 +804,20 @@ paths:
           description: >-
             The gateway cannot broker this here: `protocol_unavailable`, `engine_unavailable`, or
             `credential_mode_unavailable`.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "503":
+          description: "`restarting`: the gateway is draining for a restart."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "507":
+          description: >-
+            `disk_full`: a volume holding the database or the recordings is 95% used or more (df's
+            Use%), so a new session could not be recorded. Running sessions go on.
           content:
             application/json:
               schema:

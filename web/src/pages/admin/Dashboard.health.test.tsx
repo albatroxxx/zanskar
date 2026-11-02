@@ -53,6 +53,46 @@ describe('sign-in provider health on the dashboard', () => {
   })
 })
 
+// 2026-11-03, idea 8: the gateway refuses new sessions from 95% used, so the
+// dashboard says so there, and warns from 80%.
+describe('the disk gauge', () => {
+  const gb = 1024 ** 3
+  function withDisk(usedGB: number, freeGB: number) {
+    vi.spyOn(api, 'get').mockImplementation(async (path: string) => {
+      if (path === '/admin/system/status') {
+        return { version: '1.15.0', started_at: '', uptime_seconds: 60, supervisor: 'systemd', live_sessions: 0, env_file: { state: 'unchanged', changed: [], checked_at: '' }, restart_required: false, draining: false } as never
+      }
+      if (path === '/admin/system/metrics') {
+        return {
+          cpu: { percent: 1, window_seconds: 10 }, cpus: 2, database_sessions: 0,
+          disks: [{ what: 'database & recordings', path: '/var/lib/zanskar', system: true, total_bytes: (usedGB + freeGB) * gb, free_bytes: freeGB * gb, used_bytes: usedGB * gb }],
+        } as never
+      }
+      return new Promise(() => {}) as never
+    })
+    render(<MemoryRouter><Dashboard /></MemoryRouter>)
+  }
+
+  it('says new sessions are refused from 95% used', async () => {
+    withDisk(96, 4)
+    expect(await screen.findByText('New sessions refused until space is freed')).toBeDefined()
+    expect(screen.getByRole('meter', { name: 'System disk' }).className).toContain('danger')
+  })
+
+  it('warns from 80% used, without the refusal', async () => {
+    withDisk(41, 9)
+    const meter = await screen.findByRole('meter', { name: 'System disk' })
+    expect(meter.className).toContain('warn')
+    expect(screen.queryByText('New sessions refused until space is freed')).toBeNull()
+  })
+
+  it('stays quiet below 80% with room to spare', async () => {
+    withDisk(30, 70)
+    const meter = await screen.findByRole('meter', { name: 'System disk' })
+    expect(meter.className).not.toMatch(/warn|danger/)
+  })
+})
+
 describe('failureDetail', () => {
   it('says all, mostly or most often, and nothing without failures', () => {
     expect(failureDetail({ failures: 2, top_failure: 'user.login', top_failure_count: 2 })).toBe('all sign-ins')

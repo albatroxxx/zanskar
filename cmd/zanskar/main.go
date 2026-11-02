@@ -371,7 +371,8 @@ func serve(ctx context.Context) error {
 		Registry: registry, Storage: storage, Audit: auditLog, Log: log, MFAEnrolled: idp.SecondFactor(users, idpRepo, totp.Enrolled), GuacdAddr: guacdAddr, Draining: restarter.Draining,
 		DockerPath: cfg.DockerPath, DBMaxSessions: cfg.DatabaseMaxSessions, DBProxyImage: func() string { return runtime.String(settings.KeyDBProxyImage) },
 		AppsMaxSessions: cfg.AppsMaxSessions, BrowserImage: func() string { return runtime.String(settings.KeyBrowserImage) }, StateDir: cfg.StateDir,
-		Prober: prober, ASGs: asgRepo, Cloud: cloudProviders}
+		Prober: prober, ASGs: asgRepo, Cloud: cloudProviders,
+		DiskFull: (&lifecycle.DiskGuard{DatabasePath: dbFileForMetrics(cfg.DBDSN), RecordingsPath: cfg.RecordingsDir}).Full}
 	// A sign-in through an identity provider that removes the user from a
 	// mapped group ends what that group granted, as an admin's removal does.
 	provisioner.Revoker = connectHandler

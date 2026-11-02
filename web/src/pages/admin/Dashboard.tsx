@@ -253,12 +253,18 @@ export function Dashboard() {
   )
 }
 
-/** diskTone marks a volume an admin should act on: warn under 10% or 5 GB
- *  free, danger under 5%. A full recordings volume stops sessions being
- *  recorded. */
-function diskTone(d: { total_bytes: number; free_bytes: number }): 'warn' | 'danger' | undefined {
-  if (d.free_bytes < d.total_bytes / 20) return 'danger'
-  if (d.free_bytes < d.total_bytes / 10 || d.free_bytes < 5 * 1024 ** 3) return 'warn'
+/** The disk guard's thresholds (2026-11-03, idea 8): the gateway refuses new
+ *  sessions from refusePct used, df's Use% (lifecycle.DiskRefusePercent),
+ *  and the dashboard warns from warnPct. */
+const diskRefusePct = 95
+const diskWarnPct = 80
+
+/** diskTone marks a volume an admin should act on: warn from 80% used or
+ *  under 5 GB free, danger from 95%, where new sessions are refused. */
+function diskTone(d: { total_bytes: number; free_bytes: number; used_bytes?: number }): 'warn' | 'danger' | undefined {
+  const { pct } = diskUse(d)
+  if (pct >= diskRefusePct) return 'danger'
+  if (pct >= diskWarnPct || d.free_bytes < 5 * 1024 ** 3) return 'warn'
   return undefined
 }
 
@@ -360,6 +366,7 @@ function HostFacts({ m }: { m: SystemMetrics }) {
                     <StateIcon state={diskTone(d) as 'warn' | 'danger'} label={`Low space: ${fmtBytes(d.free_bytes)} free`} />
                   </>
                 )}
+                {diskUse(d).pct >= diskRefusePct && <div className="disk-refusing">New sessions refused until space is freed</div>}
               </>
             }
             pct={diskUse(d).pct}
@@ -367,7 +374,7 @@ function HostFacts({ m }: { m: SystemMetrics }) {
             // The meter's tone follows its own geometry (how full); the badge
             // alone carries the absolute under-5-GB floor, so a tiny volume
             // never shows an alarmed near-empty bar.
-            tone={d.free_bytes < d.total_bytes / 20 ? 'danger' : d.free_bytes < d.total_bytes / 10 ? 'warn' : undefined}
+            tone={diskUse(d).pct >= diskRefusePct ? 'danger' : diskUse(d).pct >= diskWarnPct ? 'warn' : undefined}
           />
         ))}
         {caps.applications > 0 && (

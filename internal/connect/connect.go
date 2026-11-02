@@ -64,6 +64,9 @@ type Handler struct {
 	// before a host session's ticket is handed out (preflight); nil dials for
 	// real. Tests replace it.
 	PreflightDial func(ctx context.Context, addr string) error
+	// DiskFull says why no new session can be recorded, or "" when there is
+	// room (lifecycle.DiskGuard); nil never refuses.
+	DiskFull func() string
 	// CloseTimeout bounds each write that closes a session once its client
 	// may have gone: the row's end, the recording's size and digest. Zero
 	// means closeTimeout.
@@ -360,6 +363,14 @@ func (h *Handler) connect(w http.ResponseWriter, r *http.Request) {
 	if h.draining() {
 		deny(http.StatusServiceUnavailable, "restarting", restartingMsg)
 		return
+	}
+	// Every session is recorded: with no room for its recording it does not
+	// start (2026-11-03 live audit, idea 8). Running sessions go on.
+	if h.DiskFull != nil {
+		if msg := h.DiskFull(); msg != "" {
+			deny(http.StatusInsufficientStorage, "disk_full", msg)
+			return
+		}
 	}
 	proto := target.Protocol(req.Protocol)
 	if !target.ValidProtocol(proto) {
