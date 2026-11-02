@@ -57,6 +57,16 @@ describe('switching a grant\'s type', () => {
     expect(switchKind({ ...db, tagProtocols: [] }, 'host').targets).toEqual({})
   })
 
+  it('never sends file transfer for a database or an application, ticked before the switch or not', () => {
+    const host = { ...hosts(), allow_file_transfer: true }
+    expect(fromDraft(host, name).grant?.allow_file_transfer).toBe(true)
+    const db = { ...switchKind(host, 'database'), targets: { d1: ['database' as Protocol] } }
+    expect(fromDraft(db, name).grant?.allow_file_transfer).toBe(false)
+    const app = { ...switchKind(host, 'application'), targets: { w1: ['http' as Protocol] } }
+    expect(fromDraft(app, name).grant?.allow_file_transfer).toBe(false)
+    expect(newGrant('database', { ...newGrant('host'), allow_file_transfer: true }).allow_file_transfer).toBe(false)
+  })
+
   it('changes nothing for the type it already is', () => {
     const d = hosts()
     expect(switchKind(d, 'host')).toBe(d)

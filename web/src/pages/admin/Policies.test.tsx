@@ -256,6 +256,22 @@ describe('the policy editor', () => {
     expect((within(card).getByLabelText('wiki') as HTMLInputElement).checked).toBe(true)
   })
 
+  // 2026-11-02: files move over SSH and RDP only, so a database or an
+  // application grant offers no file transfer.
+  it('offers file transfer on host and autoscaling grants only, saying where it applies', async () => {
+    serve([])
+    at('/admin/policies/new')
+    const user = userEvent.setup()
+    const card = await screen.findByRole('region', { name: 'Grant 1' })
+    expect(within(card).getByLabelText('File transfer (SSH, RDP)')).toBeDefined()
+    for (const kind of ['Database', 'Application']) {
+      await user.click(within(card).getByRole('radio', { name: kind }))
+      expect(within(card).queryByLabelText(/File transfer/)).toBeNull()
+    }
+    await user.click(within(card).getByRole('radio', { name: 'Autoscaling' }))
+    expect(within(card).getByLabelText('File transfer (SSH, RDP)')).toBeDefined()
+  })
+
   it('names what is missing before sending, and the server\'s refusal after', async () => {
     serve([])
     const post = vi.spyOn(api, 'post').mockRejectedValue(new ApiError(422, { code: 'kind_mismatch', message: 'grant 1: t1 is a database, not a host', request_id: 'r' }, '422'))

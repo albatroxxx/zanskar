@@ -6107,6 +6107,9 @@ components:
         allow_file_transfer:
           type: boolean
           default: false
+          description: >-
+            Files move over SSH (the terminal's Files panel, SFTP) and RDP (the session's drive)
+            only. Cleared on a database or application grant, which has no way to carry them.
         allow_devtools:
           type: boolean
           default: false

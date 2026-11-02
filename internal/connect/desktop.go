@@ -265,12 +265,19 @@ func (h *Handler) serveGuac(r *http.Request, ws *websocket.Conn, run *sessionRun
 		return
 	}
 
+	// Of the sessions guacd draws, files move only over RDP, through the
+	// drive it mounts; VNC has no file channel here, and an application's
+	// browser blocks downloads and file pickers (ADR 0034). Offered anywhere
+	// else, the console showed a Files panel that never became ready
+	// (2026-11-02), and file streams are no business of those sessions.
+	files := g.AllowFileTransfer && g.Protocol == string(target.RDP)
+
 	// guacamole-common-js expects the tunnel's internal opcode with an id first.
 	// It is followed by a Zanskar-specific instruction carrying the policy
 	// flags so the browser can show or hide the file and clipboard controls.
 	// Guacamole.Client ignores opcodes it does not know, so it is harmless to
 	// a stock client and never reaches guacd.
-	if err := ws.Write(r.Context(), websocket.MessageText, []byte(guac.Encode("", run.s.ID)+FlagsInstruction(g.AllowFileTransfer, g.AllowClipboard))); err != nil {
+	if err := ws.Write(r.Context(), websocket.MessageText, []byte(guac.Encode("", run.s.ID)+FlagsInstruction(files, g.AllowClipboard))); err != nil {
 		// The recording is closed the way every other end closes it, so a
 		// close that fails is audited as recording.lost here too (B14).
 		run.finishRecording(rec, recRow)
@@ -281,7 +288,7 @@ func (h *Handler) serveGuac(r *http.Request, ws *websocket.Conn, run *sessionRun
 	ctx, done := run.live()
 	defer done()
 	h.Registry.SetGuacID(run.s.ID, gc.ID) // lets auditors join this desktop via guacd
-	reason, berr := guac.Bridge(ctx, h.Log, gc, ws, rec, guac.Limits{Idle: g.IdleTimeout, Max: g.MaxSession, AllowClipboard: g.AllowClipboard, AllowFileTransfer: g.AllowFileTransfer})
+	reason, berr := guac.Bridge(ctx, h.Log, gc, ws, rec, guac.Limits{Idle: g.IdleTimeout, Max: g.MaxSession, AllowClipboard: g.AllowClipboard, AllowFileTransfer: files})
 	run.finish(rec, recRow, reason, berr)
 }
 
