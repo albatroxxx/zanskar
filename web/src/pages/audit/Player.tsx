@@ -7,7 +7,7 @@ import { fmtBytes, fmtDuration, fmtSeconds, fmtTime, protocolName } from '../../
 import { sessionTarget, sessionUser } from '../../api/labels'
 import type { Recording } from '../../api/types'
 import { TransportIcon } from '../../components/icons'
-import { Alert, Empty, Loading, PageHead, reasonBadge } from '../../components/ui'
+import { Alert, Empty, Loading, PageHead, EndReason } from '../../components/ui'
 import { useTitle } from '../../components/title'
 import { useFullscreen } from '../user/fullscreen'
 import { FullscreenButton } from '../user/FullscreenButton'
@@ -509,7 +509,7 @@ export function Player() {
                   <dt>Duration</dt>
                   <dd>{fmtDuration(s.started_at, s.ended_at)}</dd>
                   <dt>Ended</dt>
-                  <dd>{reasonBadge(s.end_reason)}</dd>
+                  <dd><EndReason reason={s.end_reason} detail={s.end_detail} /></dd>
                 </>
               )}
               <dt>Size</dt>

@@ -307,6 +307,8 @@ export interface Session {
   started_at: string
   ended_at?: string
   end_reason?: string
+  /** What was said about the end: the gateway's sentence or the target's words (2026-11-03). */
+  end_detail?: string
   failover_from_session_id?: string
   recording_id?: string
   /** Reviewers only: retention has deleted the recording's file. */

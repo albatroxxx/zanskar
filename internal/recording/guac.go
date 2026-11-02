@@ -5,6 +5,7 @@ package recording
 import (
 	"context"
 	"errors"
+	"strings"
 )
 
 // GuacStream stores the server-to-client Guacamole instruction stream as
@@ -12,6 +13,7 @@ import (
 // format directly, and it is what guacd's own recording feature produces.
 type GuacStream struct {
 	sink
+	frames int
 }
 
 // NewGuacStream starts a desktop recording on the storage under name.
@@ -35,5 +37,18 @@ func (g *GuacStream) Write(raw string) error {
 	}
 	g.hash.Write([]byte(raw))
 	g.size += int64(len(raw))
+	g.frames += strings.Count(raw, syncOpcode)
 	return nil
+}
+
+// syncOpcode opens guacd's sync instruction, which ends each frame it draws.
+const syncOpcode = "4.sync,"
+
+// Frames is how many frames the stream has carried. None is a session that
+// never drew: guacd could not log on, say, and the desktop stayed blank
+// (2026-11-03 live audit, Q6).
+func (g *GuacStream) Frames() int {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return g.frames
 }

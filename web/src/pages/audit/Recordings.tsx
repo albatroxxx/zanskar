@@ -4,7 +4,7 @@ import { fmtDuration, fmtTime, protocolName } from '../../api/format'
 import { sessionTarget, sessionUser } from '../../api/labels'
 import type { Page, Session } from '../../api/types'
 import { usePaged } from '../../components/paged'
-import { Alert, Empty, LoadMore, PageHead, reasonBadge, TabLink } from '../../components/ui'
+import { Alert, Empty, LoadMore, PageHead, EndReason, TabLink } from '../../components/ui'
 import { useRecordingsPath } from './paths'
 
 /** keptCell says when retention deletes a recording, or that it has (Q10). */
@@ -87,7 +87,7 @@ export function Recordings() {
                   <td title={s.target_id ?? s.asg_instance_id}>{sessionTarget(s)}</td>
                   <td>{protocolName(s.protocol)}</td>
                   <td>{fmtDuration(s.started_at, s.ended_at)}</td>
-                  <td>{reasonBadge(s.end_reason)}</td>
+                  <td><EndReason reason={s.end_reason} detail={s.end_detail} /></td>
                   <td style={{ whiteSpace: 'nowrap' }}>{keptCell(s)}</td>
                   <td>
                     {/* Review only (2026-11-01): the recording's page has its

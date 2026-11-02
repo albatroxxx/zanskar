@@ -6840,6 +6840,12 @@ components:
           oneOf:
             - $ref: "#/components/schemas/EndReason"
             - type: "null"
+        end_detail:
+          type: string
+          description: >
+            What was said about the end, at most 500 characters: the sentence the person was shown
+            when the gateway ended or refused the session, or the target's side's words when it
+            ended it (for a desktop, guacd's). Absent for a plain exit.
         failover_from_session_id:
           type: [string, "null"]
     FileEntry:

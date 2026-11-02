@@ -5,7 +5,7 @@ import { fmtDuration, fmtTime, protocolName } from '../../api/format'
 import { ranges, sinceFor } from '../../api/ranges'
 import { sessionTarget, sessionUser } from '../../api/labels'
 import type { Session } from '../../api/types'
-import { Alert, Confirm, Empty, Field, Loading, PageHead, reasonBadge, TabLink } from '../../components/ui'
+import { Alert, Confirm, Empty, Field, Loading, PageHead, EndReason, TabLink } from '../../components/ui'
 import { useRecordingsPath } from '../audit/paths'
 import { useList } from './lib'
 
@@ -86,7 +86,7 @@ export function Sessions() {
                   <td>{protocolName(s.protocol)}</td>
                   <td className="mono muted">{s.client_ip}</td>
                   <td>{fmtDuration(s.started_at, s.ended_at)}</td>
-                  <td>{reasonBadge(s.end_reason)}</td>
+                  <td><EndReason reason={s.end_reason} detail={s.end_detail} /></td>
                   <td>{s.recording_id ? <TabLink className="btn sm" to={`${recordings}/${s.recording_id}`} label="Review" /> : <span className="muted">—</span>}</td>
                   <td>
                     {!s.ended_at && (

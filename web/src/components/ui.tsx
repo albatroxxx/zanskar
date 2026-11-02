@@ -442,3 +442,16 @@ export function reasonBadge(reason?: string) {
   const tone = reason === 'user_exit' ? undefined : reason === 'target_lost' || reason === 'error' ? 'danger' : 'warn'
   return <Badge tone={tone}>{reason.replace(/_/g, ' ')}</Badge>
 }
+
+/** EndReason is a session's end: the reason's badge and, under it, what was
+ *  said about it, the gateway's sentence or the target's words. A bare
+ *  "error" told nobody why (2026-11-03 live audit, Q7). */
+export function EndReason({ reason, detail }: { reason?: string; detail?: string }) {
+  if (!detail || !reason) return reasonBadge(reason)
+  return (
+    <>
+      {reasonBadge(reason)}
+      <div className="end-detail">{detail}</div>
+    </>
+  )
+}
