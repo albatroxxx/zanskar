@@ -309,6 +309,10 @@ export interface Session {
   end_reason?: string
   failover_from_session_id?: string
   recording_id?: string
+  /** Reviewers only: retention has deleted the recording's file. */
+  recording_purged?: boolean
+  /** Reviewers only: when retention deletes the recording by age; absent with no age limit. */
+  recording_kept_until?: string
 }
 
 export interface Recording {

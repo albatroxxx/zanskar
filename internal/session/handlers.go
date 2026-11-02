@@ -76,7 +76,7 @@ func (h *Handler) mySessions(w http.ResponseWriter, r *http.Request) {
 	}
 	// Users see their own session metadata, never recording ids (ADR 0006).
 	for _, s := range items {
-		s.RecordingID = ""
+		s.HideRecording()
 	}
 	httpx.WriteJSON(w, http.StatusOK, httpx.Page[*Session]{Items: items, NextCursor: next})
 }
@@ -98,6 +98,9 @@ func (h *Handler) listSessions(w http.ResponseWriter, r *http.Request) {
 		h.fail(w, r, err)
 		return
 	}
+	if !h.withRetention(w, r, items...) {
+		return
+	}
 	httpx.WriteJSON(w, http.StatusOK, httpx.Page[*Session]{Items: items, NextCursor: next})
 }
 
@@ -107,7 +110,24 @@ func (h *Handler) getSession(w http.ResponseWriter, r *http.Request) {
 		h.fail(w, r, err)
 		return
 	}
+	if !h.withRetention(w, r, s) {
+		return
+	}
 	httpx.WriteJSON(w, http.StatusOK, s)
+}
+
+// withRetention says when each session's recording goes, under the global
+// policy read once for the page. It answers the request itself on a failure.
+func (h *Handler) withRetention(w http.ResponseWriter, r *http.Request, items ...*Session) bool {
+	p, err := h.Repo.GetRetentionPolicy(r.Context())
+	if err != nil {
+		h.fail(w, r, err)
+		return false
+	}
+	for _, s := range items {
+		s.WithRetention(p)
+	}
+	return true
 }
 
 func (h *Handler) terminate(w http.ResponseWriter, r *http.Request) {

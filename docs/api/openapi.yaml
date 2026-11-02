@@ -6887,6 +6887,18 @@ components:
             recording_id:
               type: [string, "null"]
               description: Present only when the caller holds `auditor` or `admin`.
+            recording_purged:
+              type: boolean
+              description: >
+                Retention has deleted the recording's file; the row stays so its events resolve.
+                Reviewers only.
+            recording_kept_until:
+              type: string
+              format: date-time
+              description: >
+                When retention deletes the recording by age: its own date, else the global age
+                counted from when it finished. Absent with no age limit, while it is still being
+                written, or once deleted. The size cap can delete it sooner. Reviewers only.
 
     # ---------------------------------------------------------------- recordings
     Recording:

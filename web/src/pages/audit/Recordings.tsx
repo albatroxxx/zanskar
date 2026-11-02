@@ -7,6 +7,14 @@ import { usePaged } from '../../components/paged'
 import { Alert, Empty, LoadMore, PageHead, reasonBadge, TabLink } from '../../components/ui'
 import { useRecordingsPath } from './paths'
 
+/** keptCell says when retention deletes a recording, or that it has (Q10). */
+function keptCell(s: Session) {
+  if (s.recording_purged) return <span className="muted">Deleted</span>
+  if (s.recording_kept_until) return fmtTime(s.recording_kept_until)
+  if (!s.ended_at) return <span className="muted">—</span>
+  return <span className="muted">No age limit</span>
+}
+
 export function Recordings() {
   const recordingsPath = useRecordingsPath()
   // Recordings are found through the sessions list, which already carries
@@ -67,6 +75,7 @@ export function Recordings() {
                 <th>Protocol</th>
                 <th>Duration</th>
                 <th>Ended</th>
+                <th>Kept until</th>
                 <th><span className="sr-only">Actions</span></th>
               </tr>
             </thead>
@@ -79,6 +88,7 @@ export function Recordings() {
                   <td>{protocolName(s.protocol)}</td>
                   <td>{fmtDuration(s.started_at, s.ended_at)}</td>
                   <td>{reasonBadge(s.end_reason)}</td>
+                  <td style={{ whiteSpace: 'nowrap' }}>{keptCell(s)}</td>
                   <td>
                     {/* Review only (2026-11-01): the recording's page has its
                         downloads, the file and, for a terminal, the transcript. */}

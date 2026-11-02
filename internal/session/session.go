@@ -56,6 +56,42 @@ type Session struct {
 	EndReason             string     `json:"end_reason,omitempty"`
 	FailoverFromSessionID string     `json:"failover_from_session_id,omitempty"`
 	RecordingID           string     `json:"recording_id,omitempty"`
+	// RecordingPurged says retention has deleted the recording's file; the
+	// row stays so its events resolve. RecordingKeptUntil is when retention
+	// deletes it by age: its own date, else the global age from when it
+	// finished; absent with no age limit (2026-11-03 live audit, Q10). The
+	// size cap can still take it sooner. Reviewers only; set by WithRetention.
+	RecordingPurged    bool       `json:"recording_purged,omitempty"`
+	RecordingKeptUntil *time.Time `json:"recording_kept_until,omitempty"`
+
+	recOwnUntil, recFinished *time.Time
+}
+
+// WithRetention fills RecordingKeptUntil from the global policy p, by the
+// rule the retention sweeper applies (selectForPurge).
+func (s *Session) WithRetention(p RetentionPolicy) {
+	s.RecordingKeptUntil = keptUntil(s.recOwnUntil, s.recFinished, s.RecordingPurged, p)
+}
+
+// HideRecording clears everything about the session's recording, for a reader
+// who may see their own sessions but not their recordings (ADR 0006).
+func (s *Session) HideRecording() {
+	s.RecordingID, s.RecordingPurged, s.RecordingKeptUntil = "", false, nil
+}
+
+// keptUntil is when retention deletes a recording by age, or nil when it is
+// gone already, still being written, or kept without an age limit.
+func keptUntil(own, finished *time.Time, purged bool, p RetentionPolicy) *time.Time {
+	switch {
+	case purged || finished == nil:
+		return nil
+	case own != nil:
+		return own
+	case p.MaxAgeDays > 0:
+		t := finished.AddDate(0, 0, p.MaxAgeDays)
+		return &t
+	}
+	return nil
 }
 
 // Recording is the stored capture of a session.
@@ -291,7 +327,7 @@ func (r *Repo) RecordView(ctx context.Context, recordingID, userID, ip string) e
 // labels its past sessions (ADR 0019).
 const selectSessions = `SELECT s.id, s.user_id, s.policy_id, s.target_id, s.asg_id, s.asg_instance_id, s.protocol, s.credential_id,
 	s.client_ip, s.user_agent, s.started_at, s.ended_at, s.end_reason, s.failover_from_session_id, rec.id, u.username, t.name,
-	g.name, ai.instance_id
+	g.name, ai.instance_id, rec.purged_at, rec.retention_until, rec.finished_at
 	FROM access_sessions s
 	LEFT JOIN recordings rec ON rec.session_id = s.id
 	LEFT JOIN users u ON u.id = s.user_id
@@ -303,10 +339,10 @@ func scanSession(sc store.Scanner) (*Session, error) {
 	var (
 		s                                                                                     Session
 		policy, target, asg, inst, cred, reason, failover, recID, username, tname, gname, iid sql.NullString
-		started, ended                                                                        store.NullTime
+		started, ended, purged, recUntil, recFinished                                         store.NullTime
 	)
 	err := sc.Scan(&s.ID, &s.UserID, &policy, &target, &asg, &inst, &s.Protocol, &cred, &s.ClientIP, &s.UserAgent,
-		&started, &ended, &reason, &failover, &recID, &username, &tname, &gname, &iid)
+		&started, &ended, &reason, &failover, &recID, &username, &tname, &gname, &iid, &purged, &recUntil, &recFinished)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound
@@ -317,6 +353,7 @@ func scanSession(sc store.Scanner) (*Session, error) {
 	s.EndReason, s.FailoverFromSessionID, s.RecordingID = reason.String, failover.String, recID.String
 	s.Username, s.TargetName, s.ASGName, s.InstanceID = username.String, tname.String, gname.String, iid.String
 	s.StartedAt, s.EndedAt = started.Time, ended.Ptr()
+	s.RecordingPurged, s.recOwnUntil, s.recFinished = purged.Valid, recUntil.Ptr(), recFinished.Ptr()
 	return &s, nil
 }
 
