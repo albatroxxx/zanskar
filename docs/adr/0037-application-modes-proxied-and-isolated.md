@@ -10,7 +10,8 @@ Fable 5.1 whose changes are folded in: the phase order, the relay work that *als
 needs, and the hardening of the proxied mode below. Amends
 [ADR 0034](0034-applications-isolated-browser.md) (isolated mode keeps its container per
 session and becomes a full browser) and brings back, in a new shape, the reverse proxy of
-[ADR 0033](0033-applications-identity-aware-proxy.md).
+[ADR 0033](0033-applications-identity-aware-proxy.md). Amended 2026-11-02: other endpoints, reached
+through the relay as a SOCKS proxy rather than by server name, built before phase 2 (below).
 
 ## Context
 
@@ -177,7 +178,8 @@ The container per session, internal network, relay, seccomp profile and recordin
 - **Chromium's own interface.** Kiosk mode goes: the session shows Chromium's address bar,
   tabs, back, forward and reload. The console's Back / Forward / Reload / Home bar goes
   with it.
-- **Also reachable.** An application gains an optional list of further origins (its
+- **Also reachable.** *Amended 2026-11-02 (below): built as other endpoints, browsable, through
+  a SOCKS proxy.* An application gains an optional list of further origins (its
   identity provider, an API on another host). The relay forwards them, the resolver maps
   them, and Chromium's `URLAllowlist` names them, together, so the address bar and new tabs
   reach the application and that list, nothing else. The relay today maps one listener to
@@ -258,5 +260,48 @@ The owner took the recommendations; Fable's review changed the phase order.
       explicit blocklist, the lighter flag. Days.
    2. Proxied by name: the memory fix the owner's own instance needs. About three weeks
       with ADR 0033's code as the base.
-   3. *Also reachable*, with the relay routing by server name. About a week.
+   3. *Also reachable*, with the relay routing by server name. About a week. *Built first, on
+      2026-11-02, as other endpoints through a SOCKS proxy (the amendment below).*
    4. Ports.
+
+## Amendment (2026-11-02): further origins as endpoints, reached through a SOCKS proxy
+
+The owner asked for phase 3 before phase 2: an application is often several addresses (the
+application, its API on another host, its sign-in page), and a person should browse all of
+them in one session. Built for isolated mode, which is every application today; proxied mode
+(phase 2) is not built and will need its own answer for more than one name.
+
+- **Endpoints, not only background origins.** *Also reachable* becomes *Other endpoints*:
+  an application keeps its upstream, the page the browser opens, and may name up to 31
+  further origins, each with a name. The browser reaches all of them and shows them as one
+  bookmarks folder named after the application, on the bar, when there is more than one
+  origin; nothing opens at start but the upstream, since each tab costs a renderer. An
+  endpoint is an origin, as the upstream is: no path (a bookmark with a path can come
+  later). Each meets the address rules as it is saved (an IP literal) and when a session
+  starts (a name); a forbidden answer refuses the session, a name that does not resolve
+  leaves that origin out of the session, which opens and says so (`session.start`'s
+  `unreachable_origins`). Taking an endpoint off an application ends its open sessions.
+- **The relay is the browser's SOCKS5 proxy, not a router by server name.** Routing by the
+  TLS server name, as planned above, fails twice. Two https origins that are IP literals on
+  one port cannot be told apart, because a client sends no server name for an address, and
+  the operator who reaches applications by IP on a LAN without DNS is the one ADR 0034 was
+  for. And Chromium's HTTP/2 connection coalescing sends requests for one name over a
+  connection opened for another when both resolve to one address (every origin resolves to
+  the relay) and share a certificate (a wildcard), so a request would reach the wrong
+  upstream. A proxy is asked for each host and port by name, so neither arises. The relay
+  takes SOCKS5 CONNECT on the session network only, for exactly the origins' host:port
+  pairs, and dials the address the gateway resolved for each when the session started; it
+  never resolves a name. Chromium's `ProxySettings` policy names it, with `<-loopback>` so
+  even loopback goes there; the resolver maps every name but the relay's to nothing.
+  Measured against the 1.11.2 browser image before building: Chromium asks a `socks5://`
+  proxy for each host by name, an IP literal too, and the resolver's catch-all must
+  `EXCLUDE` the relay's address or the proxy is unreachable. Chromium's link-local bypass
+  does not matter: the session network has no route anywhere.
+- **The policy is built by the gateway** and passed to the browser whole, so it is tested
+  where it is made: the allowlist names each origin exactly (`http://.host:port`, the dot
+  meaning not its subdomains; an IP literal as written), prediction is off (it opened
+  connections to pages nobody asked for) and WebRTC goes through the proxy or nowhere.
+- **Mixed versions keep working.** The relay still forwards the upstream's own port and the
+  resolver still maps its name to the relay, so a browser image pinned from before opens the
+  upstream as it did; the entrypoint writes its own policy when the gateway sends none, so a
+  new image under an older gateway does too.

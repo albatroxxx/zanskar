@@ -5755,13 +5755,22 @@ components:
           enum: [disable, prefer, require, verify-full]
         tls_ca:
           type: string
-          description: PEM CA bundle the upstream's certificate is verified against; for a database target under verify-full, or an application's https upstream.
+          description: PEM CA bundle the upstream's certificate is verified against; for a database target under verify-full, or an application's https origins.
         app_upstream:
           type: string
           description: >-
-            Makes the target an application (ADR 0034): the one origin, `http://host[:port]` or
-            `https://host[:port]`, the session's isolated browser can reach. Nothing else is
-            reachable from it. Its host becomes `address`.
+            Makes the target an application (ADR 0034): the origin, `http://host[:port]` or
+            `https://host[:port]`, the session's isolated browser opens. Its host becomes
+            `address`. The browser reaches it and the `app_endpoints`, nothing else.
+        app_endpoints:
+          type: array
+          maxItems: 31
+          description: >-
+            An application's further origins (ADR 0037, amended 2026-11-02), reached in the same
+            session through the session's relay and listed as one bookmarks folder named after
+            the application. Absent when there are none.
+          items:
+            $ref: "#/components/schemas/AppEndpoint"
         os_family:
           $ref: "#/components/schemas/OsFamily"
         ports:
@@ -5861,7 +5870,26 @@ components:
             with neither is refused. require and prefer encrypt without verifying.
         tls_ca:
           type: string
-          description: PEM bundle trusted for verify-full, for example the provider's CA; required for that mode.
+          description: >-
+            PEM bundle trusted for verify-full, for example the provider's CA; required for that
+            mode. For an application, the bundle its https origins are verified against instead
+            of the system roots.
+        app_upstream:
+          type: string
+          description: >-
+            Makes the target an application (ADR 0034): `http://host[:port]` or
+            `https://host[:port]`, the origin only. Send `address` empty; it is derived.
+        app_endpoints:
+          type: array
+          maxItems: 31
+          description: >-
+            An application's further origins (ADR 0037, amended 2026-11-02), each held to the
+            upstream's rules and to the address rules as it is saved; none may repeat the
+            upstream or another (`https://a` and `https://a:443` are one origin). Replaces the
+            whole list: send the list on every update, or it is cleared. Removing one ends the
+            sessions open on the application.
+          items:
+            $ref: "#/components/schemas/AppEndpoint"
         os_family:
           $ref: "#/components/schemas/OsFamily"
         ports:
@@ -5883,6 +5911,17 @@ components:
           description: Credential id per protocol. Replaces the whole mapping.
           additionalProperties:
             type: string
+    AppEndpoint:
+      type: object
+      required: [url]
+      properties:
+        name:
+          type: string
+          maxLength: 64
+          description: The bookmark's name in the session's browser; empty takes the host.
+        url:
+          type: string
+          description: '`http://host[:port]` or `https://host[:port]`, the origin only.'
     ProbeResult:
       type: object
       required: [capabilities, host_key_status, probed_at, ports]
