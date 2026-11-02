@@ -102,6 +102,14 @@ Deferred by decision: a multi-pane workspace (browser tabs suffice), rotation of
 keys and of Windows or database passwords (the certificate authority and the owning systems
 do that). Still Phase 4: HA, SAML/SCIM, WebAuthn.
 
+## v1.15 release — shipped (v1.15.0 tagged 2026-11-03)
+
+What a walk through the live gateway found, fixed, and twelve of its suggestions built:
+notifications by signed webhook or email (ADR 0039), access reviews (ADR 0040), finding a command
+across terminal recordings (ADR 0041), four-eyes terminal sessions (ADR 0042), the configuration as
+a YAML file (ADR 0043), a pre-flight check at Connect, a disk guard, failed sessions that say why,
+Activity for each person, CSV and saved views ([release notes](releases/v1.15.0.md)).
+
 ## v1.14 release — shipped (v1.14.0 tagged 2026-11-03)
 
 An application names every address it uses and a person browses them all in one session, the
