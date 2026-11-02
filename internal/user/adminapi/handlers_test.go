@@ -244,11 +244,17 @@ func TestOnboardingPasswords(t *testing.T) {
 	if r.code != 201 || r.body["initial_password"] != nil || r.body["must_change_password"] != true {
 		t.Fatalf("admin-set password: %d %v", r.code, r.body)
 	}
-	r = e.do("POST", "/api/v1/users", map[string]any{"username": "external", "display_name": "External", "roles": []string{"user"}, "password_less": true})
-	if r.code != 201 || r.body["initial_password"] != nil || r.body["must_change_password"] != false {
-		t.Fatalf("password-less: %d %v", r.code, r.body)
-	}
 	id := r.body["id"].(string)
+	// A person who signs in through an identity provider comes from it, never
+	// from here (2026-11-02): an account with no password for a provider to
+	// adopt is refused, and nothing is made.
+	r = e.do("POST", "/api/v1/users", map[string]any{"username": "external", "display_name": "External", "roles": []string{"user"}, "password_less": true})
+	if r.code != 400 || !strings.Contains(fmt.Sprint(r.body["message"]), "comes from the provider") {
+		t.Fatalf("password-less must be refused: %d %v", r.code, r.body)
+	}
+	if _, err := e.users.GetByUsername(context.Background(), "external"); err == nil {
+		t.Fatal("a refused password-less account was made")
+	}
 	r = e.do("PUT", "/api/v1/users/"+id+"/password", map[string]any{"generate": true})
 	if r.code != 200 || len(r.body["initial_password"].(string)) != 20 || r.body["must_change_password"] != true {
 		t.Fatalf("generated reset: %d %v", r.code, r.body)

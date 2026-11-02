@@ -23,7 +23,7 @@ and update the status of the old one.
 | [0002](0002-guacd-sidecar-for-rdp-and-vnc.md) | guacd sidecar for RDP and VNC | Accepted |
 | [0003](0003-postgres-primary-sqlite-embedded.md) | PostgreSQL primary, SQLite embedded | Accepted |
 | [0004](0004-apache-2-license.md) | Apache License 2.0 | Accepted, amended by 0026 |
-| [0005](0005-separate-identity-auth-from-target-credentials.md) | Separate identity authentication from target credentials | Accepted |
+| [0005](0005-separate-identity-auth-from-target-credentials.md) | Separate identity authentication from target credentials | Accepted, amended 2026-11-02 |
 | [0006](0006-roles-admin-auditor-user.md) | Roles: admin, auditor, user | Accepted |
 | [0007](0007-envelope-encryption-for-secrets.md) | Envelope encryption for secrets | Accepted |
 | [0008](0008-hash-chained-audit-log.md) | Hash-chained audit log | Accepted |
@@ -52,7 +52,7 @@ and update the status of the old one.
 | [0032](0032-host-actions-and-updates-from-the-console.md) | Host actions and updates from the console, through systemd and polkit | Accepted |
 | [0033](0033-applications-identity-aware-proxy.md) | Applications: web apps reached through an identity-aware proxy | Superseded by 0034 |
 | [0034](0034-applications-isolated-browser.md) | Applications: web apps opened in an isolated browser | Accepted |
-| [0035](0035-identity-provider-owns-the-person.md) | A single sign-on provider owns the person: second factor, session, joining and leaving | Accepted |
-| [0036](0036-access-policy-grants.md) | An access policy is an audience and a list of grants, each with its own conditions | Accepted |
+| [0035](0035-identity-provider-owns-the-person.md) | A single sign-on provider owns the person: second factor, session, joining and leaving | Accepted, amended 2026-11-02 |
+| [0036](0036-access-policy-grants.md) | An access policy is an audience and a list of grants, each with its own conditions | Accepted, amended 2026-11-02 |
 | [0037](0037-application-modes-proxied-and-isolated.md) | An application opens proxied in the user's own browser, or isolated in a full browser beside the gateway | Accepted, amended 2026-11-02 |
 | [0038](0038-sessions-and-reviews-open-in-their-own-tab.md) | Sessions, watches and recordings open in a tab of their own | Accepted |

@@ -528,6 +528,9 @@ function ProviderModal({ existing, onClose, onSaved, onDeleted }: { existing: Pr
         <hr style={{ border: 0, borderTop: '1px solid var(--line)', margin: '16px 0' }} />
         <div className="field inline"><input id="idp-enabled" type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} /><label htmlFor="idp-enabled">Enabled</label></div>
         <div className="field inline"><input id="idp-auto" type="checkbox" checked={autoProvision} onChange={(e) => setAutoProvision(e.target.checked)} /><label htmlFor="idp-auto">Create an account for each new person</label></div>
+        {/* Zanskar no longer makes accounts for a provider (2026-11-02): with
+            this off, the provider's own push is the only way in. */}
+        {!autoProvision && <p className="muted" style={{ margin: '-4px 0 8px' }}>Off: only people the provider pushes (SCIM), or who already have an account, can sign in.</p>}
         <Field label="People arrive" hint={arrivalHint(arrival, type)}>
           <select id="idp-arrival" value={arrival} onChange={(e) => setArrival(e.target.value as Arrival)}>
             <option value="signin">At their first sign-in</option>

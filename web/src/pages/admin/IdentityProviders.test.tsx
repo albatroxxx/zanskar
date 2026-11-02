@@ -120,7 +120,12 @@ describe('Adding a provider', () => {
     await user.type(within(form).getByLabelText('Bind DN'), 'cn=svc,dc=corp,dc=example')
     await user.type(within(form).getByLabelText('Bind password'), 'bind pw')
     await user.type(within(form).getByLabelText('Base DN'), 'dc=corp,dc=example')
+    // Zanskar makes no accounts for a provider (2026-11-02), so turning the
+    // provider's own off says who can still sign in.
+    const offHint = 'Off: only people the provider pushes (SCIM), or who already have an account, can sign in.'
+    expect(within(form).queryByText(offHint)).toBeNull()
     await user.click(within(form).getByLabelText('Create an account for each new person'))
+    expect(within(form).getByText(offHint)).toBeDefined()
     await user.click(within(form).getByRole('button', { name: 'Save' }))
     await waitFor(() => expect(post).toHaveBeenCalledTimes(1))
     expect(post.mock.calls[0][1]).toEqual({

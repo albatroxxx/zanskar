@@ -637,7 +637,8 @@ var errLocked = errors.New("idp: account is disabled or locked")
 //   - Otherwise the local account with the username the provider asserts
 //     (the one just-in-time provisioning would create) is adopted when it has
 //     no password and no provider: an administrator created it for someone
-//     who signs in through a provider (the admin API's password_less). It is
+//     who signs in through a provider (the admin API's password_less, refused
+//     since 2026-11-02, so only accounts made before). It is
 //     linked to p and id.ExternalID and nothing else changes; in particular
 //     it keeps the roles the administrator chose. linked reports this, so
 //     the caller records the link (LinkEvent). A local account with a
