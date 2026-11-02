@@ -5,6 +5,7 @@ import { TileIcon } from '../../components/icons'
 import { drill } from '../../api/drilldown'
 import { Alert, PageHead, StatTile } from '../../components/ui'
 import { ChainStatus } from './Events'
+import { failureDetail } from './eventText'
 
 /** Dashboard is where a review-only account lands (ADR 0029): what happened in
  *  the last day, what is live now, and whether the log itself is intact. The
@@ -40,7 +41,7 @@ export function Dashboard() {
 
       <h2 className="stat-section">Worth a look</h2>
       <div className="stat-grid">
-        <StatTile value={o && o.events_24h.failures} label="Failures (24h)" icon={<TileIcon kind="attention" />} to={drill.failures('/audit')} tone="warn" />
+        <StatTile value={o && o.events_24h.failures} label="Failed actions (24h)" icon={<TileIcon kind="attention" />} detail={o ? failureDetail(o.events_24h) : undefined} to={drill.failures('/audit')} tone="warn" />
         <StatTile value={o && o.events_24h.failed_logins} label="Failed sign-ins (24h)" icon={<TileIcon kind="key" />} to={drill.failedSignIns('/audit')} tone="warn" />
         <StatTile value={o && o.events_24h.refused_connects} label="Refused connections (24h)" icon={<TileIcon kind="ban" />} to={drill.refusedConnections('/audit')} tone="warn" />
         <StatTile value={o && o.sessions.open} label="Open sessions" icon={<TileIcon kind="session" />} to={drill.openSessions('/audit')} />

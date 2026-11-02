@@ -31,7 +31,7 @@ describe('the auditor dashboard', () => {
       </MemoryRouter>,
     )
 
-    const failures = (await screen.findByText('Failures (24h)')).closest('a')
+    const failures = (await screen.findByText('Failed actions (24h)')).closest('a')
     expect(failures?.getAttribute('href')).toBe('/audit/events?outcome=failure&range=24h&routine=1')
     expect(failures?.textContent).toContain('5')
     // 2026-10-30: every number opens the list it counted. Recordings played
@@ -58,7 +58,7 @@ describe('the auditor dashboard', () => {
       </MemoryRouter>,
     )
 
-    await screen.findByText('Failures (24h)')
+    await screen.findByText('Failed actions (24h)')
     expect(get).not.toHaveBeenCalledWith('/audit/verify')
 
     await userEvent.setup().click(screen.getByRole('button', { name: 'Check the chain' }))

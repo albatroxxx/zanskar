@@ -171,7 +171,9 @@ export function IdentityProviders() {
                 <tr key={p.id}>
                   <td><strong>{p.name}</strong></td>
                   <td><Badge tone="accent">{p.type.toUpperCase()}</Badge></td>
-                  <td>{p.enabled ? <StateIcon state="ok" label="Enabled" /> : <StateIcon state="unknown" label="Disabled" />}</td>
+                  <td>
+                    {!p.enabled ? <StateIcon state="unknown" label="Disabled" /> : syncFailing(p) ? <StateIcon state="danger" label="Enabled · not answering" /> : <StateIcon state="ok" label="Enabled" />}
+                  </td>
                   <td>{p.has_secret ? <StateIcon state="ok" label="Secret stored" /> : <StateIcon state="warn" label="No secret stored" />}</td>
                   <td><ArrivalCell provider={p} /></td>
                   <td>{fmtTime(p.created_at)}</td>
@@ -267,12 +269,28 @@ function SyncCell({ sync, enabled }: { sync?: SyncState; enabled: boolean }) {
     : !run.ok
       ? <StateIcon state="danger" label={`Failed ${fmtTime(run.at)}: ${run.error ?? ''}`} />
       : <StateIcon state={run.held > 0 ? 'warn' : 'ok'} label={`${fmtTime(run.at)} · ${syncSummary(run)}`} />
+  // A failed run says so in words and colour, with the reason: a red mark
+  // beside "Last synced" read as a success (2026-11-03 live audit, Q1).
+  if (run && !run.ok) {
+    return (
+      <>
+        <div className="sync-failed">{icon} Sync failed {fmtTime(run.at)}</div>
+        {run.error && <div className="sync-error">{run.error}</div>}
+        <div className="muted">{nextSync(sync, enabled)}</div>
+      </>
+    )
+  }
   return (
     <>
       <div>{icon} Last synced {run ? fmtTime(run.at) : 'never'}</div>
       <div className="muted">{nextSync(sync, enabled)}</div>
     </>
   )
+}
+
+/** syncFailing: the provider is on and its last scheduled run failed. */
+function syncFailing(p: Provider): boolean {
+  return p.enabled && !!p.sync?.last && !p.sync.last.ok
 }
 
 /** nextSync says when the schedule lists the provider again. A time already

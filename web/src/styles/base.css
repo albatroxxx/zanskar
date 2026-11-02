@@ -275,6 +275,9 @@ td.actions > * + * { margin-left: 8px; }
 .field.inline input[type=checkbox] { width: auto; }
 .form-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 0 16px; }
 .badge { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 0.74rem; font-weight: 500; background: var(--bg-sunken); color: var(--fg-muted); }
+/* A provider's failed sync, in words and colour, with its reason (Q1). */
+.sync-failed { color: var(--danger); font-weight: 500; }
+.sync-error { color: var(--danger); font-size: 0.86rem; max-width: 46ch; overflow-wrap: anywhere; }
 .badge.ok { background: var(--ok-soft); color: var(--ok); }
 /* Where an account comes from: an identity provider is outlined, so it never
    reads as one of the filled role badges beside it (2026-10-31). */

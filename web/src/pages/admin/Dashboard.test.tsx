@@ -102,7 +102,7 @@ describe('the admin dashboard', () => {
     const href = (label: string) => screen.getByText(label).closest('a')?.getAttribute('href')
     expect(href('Failed sign-ins (24h)')).toBe('/admin/events?action=user.login&outcome=failure&range=24h&routine=1')
     expect(href('Refused connections (24h)')).toBe('/admin/events?action=session.connect&outcome=failure&range=24h&routine=1')
-    expect(href('Failures (24h)')).toBe('/admin/events?outcome=failure&range=24h&routine=1')
+    expect(href('Failed actions (24h)')).toBe('/admin/events?outcome=failure&range=24h&routine=1')
     // The storage tiles open the whole log and the recordings (2026-10-31).
     expect(href('Audit log')).toBe('/admin/events')
     expect(href('Recordings')).toBe('/admin/recordings')

@@ -7163,6 +7163,14 @@ components:
         refused_connects:
           type: integer
           description: Refused connections (`session.connect` failures).
+        top_failure:
+          type: string
+          description: >
+            The action most of the failures were (a tie goes to the one that sorts first). Absent
+            with no failures.
+        top_failure_count:
+          type: integer
+          description: How many of the failures were `top_failure`.
     AdminOverview:
       type: object
       required: [sessions, pending_requests, targets, inventory, autoscaling, audit_24h, posture, integrity, in_flight, trends, storage]

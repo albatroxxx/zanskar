@@ -5,6 +5,7 @@ import { consoleZone, engineName, fmtBytes, fmtTime, zoneLabel } from '../../api
 import type { AdminOverview, SystemMetrics, SystemStatus, TLSStatus } from '../../api/types'
 import { StateIcon, TileIcon } from '../../components/icons'
 import { drill } from '../../api/drilldown'
+import { failureDetail } from '../audit/eventText'
 import { Alert, Badge, PageHead, StatTile } from '../../components/ui'
 
 /** mix says what a count is made of — "2 Linux · 1 Windows" — in a tile's
@@ -83,6 +84,14 @@ export function Dashboard() {
     <>
       <PageHead title="Dashboard" />
       {err && <Alert tone="danger">The dashboard could not be fully loaded: {err}</Alert>}
+      {/* A provider that does not answer its sync is an outage of single
+          sign-on, not a number to find (2026-11-03 live audit, Q1). */}
+      {o?.integrity && o.integrity.directories.failing > 0 && (
+        <Alert tone="danger">
+          {o.integrity.directories.failing === 1 ? 'A sign-in provider' : `${o.integrity.directories.failing} sign-in providers`} failed the last sync; single sign-on may be down.{' '}
+          <Link to="/admin/identity-providers">Identity providers</Link>
+        </Alert>
+      )}
 
       {/* The tiles, inventory first, on the left; the gateway itself (its
           clock, health and storage) in a column on their right. */}
@@ -154,7 +163,16 @@ export function Dashboard() {
                 trend={o?.trends && { days: o.trends.days, values: o.trends.sessions, noun: 'session' }}
                 to={drill.sessions24h('/admin')}
               />
-              <StatTile value={o && o.audit_24h.failures} label="Failures (24h)" icon={<TileIcon kind="attention" />} to={drill.failures('/admin')} />
+              {/* Every failed action in the log, routine ones too; the detail
+                  says what most were (2026-11-03 live audit, Q2). */}
+              <StatTile
+                value={o && o.audit_24h.failures}
+                label="Failed actions (24h)"
+                icon={<TileIcon kind="attention" />}
+                detail={o ? failureDetail(o.audit_24h) : undefined}
+                to={drill.failures('/admin')}
+                tone="warn"
+              />
             </div>
           </section>
 

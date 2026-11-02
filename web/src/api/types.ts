@@ -379,6 +379,9 @@ export interface AuditTallies {
   failures: number
   failed_logins: number
   refused_connects: number
+  /** The action most failures were, and how many (2026-11-03); absent with none. */
+  top_failure?: string
+  top_failure_count?: number
 }
 
 /** GET /admin/overview (ADR 0029). Counts only, never row data. */

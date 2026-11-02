@@ -2,7 +2,7 @@
 // types and the one-line sentence per event. Kept apart from the page so the
 // wording can be tested, since a reader sees words and never ids.
 import { fmtPreciseTime, protocolName, shortId } from '../../api/format'
-import type { AuditEvent } from '../../api/types'
+import type { AuditEvent, AuditTallies } from '../../api/types'
 
 /** Readable names for the action codes the gateway records. The code stays
  *  the stored value and the filter key (and what a SIEM correlates on), so it
@@ -124,6 +124,29 @@ export function humanAction(code: string): string {
   if (actionLabels[code]) return actionLabels[code]
   const s = code.split(/[._]/).map((w) => acronyms[w] ?? w).join(' ')
   return s.charAt(0).toUpperCase() + s.slice(1)
+}
+
+/** What a failed action is called in the plural, for the common ones. */
+const failedNoun: Record<string, string> = {
+  'idp.sync': 'provider syncs',
+  'user.login': 'sign-ins',
+  'session.connect': 'refused connections',
+  'session.end': 'sessions ending in error',
+  'cli.unlock': 'command line codes',
+  'user.mfa.verify': 'second-factor checks',
+}
+
+/** failureDetail says what most of a day's failed actions were, under the
+ *  dashboards' count: "mostly provider syncs (19)", "all sign-ins", or for a
+ *  plurality "most often …" (2026-11-03 live audit, Q2). */
+export function failureDetail(t: Pick<AuditTallies, 'failures' | 'top_failure' | 'top_failure_count'>): string | undefined {
+  const n = t.top_failure_count ?? 0
+  if (!t.top_failure || n <= 0 || t.failures <= 0) return undefined
+  const what = failedNoun[t.top_failure]
+  // An action without a plural noun here is named by its label instead.
+  if (!what) return `${Math.min(n, t.failures)} of ${t.failures}: ${humanAction(t.top_failure)}`
+  if (n >= t.failures) return `all ${what}`
+  return n * 2 > t.failures ? `mostly ${what} (${n})` : `most often ${what} (${n})`
 }
 
 export const capitalize = (s: string) => s.charAt(0).toUpperCase() + s.slice(1)
