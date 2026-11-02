@@ -127,7 +127,7 @@ func TestApplicationEndpointsRepoOnEachBackend(t *testing.T) {
 
 // TestApplicationOriginsRefusedAtSave: every origin of an application is
 // held to the address rules as it is saved, the upstream included (the
-// console sends no address for an application, so until 1.14 only a
+// console sends no address for an application, so until 2026-11-02 only a
 // session checked the upstream's host). Nothing is stored and the refusal
 // is audited with the address that was refused.
 func TestApplicationOriginsRefusedAtSave(t *testing.T) {

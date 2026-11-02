@@ -1,7 +1,7 @@
 #!/bin/sh
 # The browser container's entrypoint (ADR 0034). Everything it needs comes
 # by name in the environment: APP_URL (what to open), POLICY_JSON (the whole
-# Chromium policy, from a gateway of 1.14 or later: the application's
+# Chromium policy, from a gateway that sends it (2026-11-02 on): the application's
 # origins, reached through the relay's SOCKS proxy, ADR 0037 as amended
 # 2026-11-02), APP_ORIGIN (the one origin the policy below allows, for an
 # older gateway that sends no POLICY_JSON), RESOLVER_RULES, VNC_PASSWORD,
@@ -25,7 +25,7 @@ else
 fi
 
 # Chromium policy, written where Chromium reads managed policy on Linux, a
-# tmpfs the gateway mounts. A gateway of 1.14 or later sends it whole
+# tmpfs the gateway mounts. A gateway from 2026-11-02 on sends it whole
 # (internal/gateway/browsergw/policy.go), its origins reached through the
 # relay; it is written as it came.
 if [ -n "${POLICY_JSON:-}" ]; then

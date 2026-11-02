@@ -17,7 +17,7 @@ import (
 // reach the provider at all, the usual reason a sync or a test fails, names
 // the host and what happened (no answer in time, a name that does not
 // resolve, a refused connection, no route, an untrusted certificate) rather
-// than the chain of calls it came through; until 1.14 the console showed
+// than the chain of calls it came through; until 2026-11-02 the console showed
 // `list the directory: discovery: Get "https://…/.well-known/openid-
 // configuration": context deadline exceeded (Client.Timeout exceeded while
 // awaiting headers)`. Any other error keeps its own words. The full error

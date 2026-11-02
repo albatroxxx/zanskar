@@ -678,7 +678,7 @@ certificate, no DNS record, nothing installed on the client.
   but the relay to nothing. An endpoint whose name does not resolve when the session starts is
   left out of that session, which opens anyway and names it in its `session.start` event
   (`unreachable_origins`); one that resolves to a forbidden address refuses the session. For
-  a browser image from before 1.14, which an administrator may have pinned, the relay also
+  a browser image from before other endpoints, which an administrator may have pinned, the relay also
   forwards the upstream's own port and the resolver maps the upstream's name to it, so the
   upstream opens there as before. Chromium policy allows exactly the application's origins
   (each host, not its subdomains), opens the upstream in every new tab and on Home, shows
