@@ -116,7 +116,7 @@ SOFTWARE.
 
 ### github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream
 
-* Version: `v1.7.24`
+* Version: `v1.7.25`
 
 ```
 
@@ -327,7 +327,7 @@ SOFTWARE.
 
 ### github.com/aws/aws-sdk-go-v2/config
 
-* Version: `v1.33.10`
+* Version: `v1.33.12`
 
 ```
 
@@ -538,7 +538,7 @@ SOFTWARE.
 
 ### github.com/aws/aws-sdk-go-v2/credentials
 
-* Version: `v1.20.10`
+* Version: `v1.20.12`
 
 ```
 
@@ -749,7 +749,7 @@ SOFTWARE.
 
 ### github.com/aws/aws-sdk-go-v2/feature/ec2/imds
 
-* Version: `v1.20.4`
+* Version: `v1.20.5`
 
 ```
 
@@ -960,7 +960,7 @@ SOFTWARE.
 
 ### github.com/aws/aws-sdk-go-v2/internal/configsources
 
-* Version: `v1.5.7`
+* Version: `v1.5.8`
 
 ```
 
@@ -1171,7 +1171,7 @@ SOFTWARE.
 
 ### github.com/aws/aws-sdk-go-v2/internal/endpoints/v2
 
-* Version: `v2.8.7`
+* Version: `v2.8.8`
 
 ```
 
@@ -1382,7 +1382,7 @@ SOFTWARE.
 
 ### github.com/aws/aws-sdk-go-v2/internal/v4a
 
-* Version: `v1.5.7`
+* Version: `v1.5.8`
 
 ```
 
@@ -1593,7 +1593,7 @@ SOFTWARE.
 
 ### github.com/aws/aws-sdk-go-v2/service/autoscaling
 
-* Version: `v1.79.1`
+* Version: `v1.79.2`
 
 ```
 
@@ -1804,7 +1804,7 @@ SOFTWARE.
 
 ### github.com/aws/aws-sdk-go-v2/service/ec2instanceconnect
 
-* Version: `v1.44.2`
+* Version: `v1.44.3`
 
 ```
 
@@ -2015,7 +2015,7 @@ SOFTWARE.
 
 ### github.com/aws/aws-sdk-go-v2/service/ec2
 
-* Version: `v1.341.0`
+* Version: `v1.343.0`
 
 ```
 
@@ -2226,7 +2226,7 @@ SOFTWARE.
 
 ### github.com/aws/aws-sdk-go-v2/service/elasticloadbalancingv2
 
-* Version: `v1.63.5`
+* Version: `v1.63.6`
 
 ```
 
@@ -2437,7 +2437,7 @@ SOFTWARE.
 
 ### github.com/aws/aws-sdk-go-v2/service/internal/accept-encoding
 
-* Version: `v1.13.22`
+* Version: `v1.13.23`
 
 ```
 
@@ -2648,7 +2648,7 @@ SOFTWARE.
 
 ### github.com/aws/aws-sdk-go-v2/service/internal/checksum
 
-* Version: `v1.11.8`
+* Version: `v1.11.9`
 
 ```
 
@@ -2859,7 +2859,7 @@ SOFTWARE.
 
 ### github.com/aws/aws-sdk-go-v2/service/internal/presigned-url
 
-* Version: `v1.14.7`
+* Version: `v1.14.8`
 
 ```
 
@@ -3070,7 +3070,7 @@ SOFTWARE.
 
 ### github.com/aws/aws-sdk-go-v2/service/internal/s3shared
 
-* Version: `v1.20.7`
+* Version: `v1.20.8`
 
 ```
 
@@ -3281,7 +3281,7 @@ SOFTWARE.
 
 ### github.com/aws/aws-sdk-go-v2/service/s3
 
-* Version: `v1.114.5`
+* Version: `v1.114.6`
 
 ```
 
@@ -3492,7 +3492,7 @@ SOFTWARE.
 
 ### github.com/aws/aws-sdk-go-v2/service/signin
 
-* Version: `v1.10.5`
+* Version: `v1.12.0`
 
 ```
 
@@ -3703,7 +3703,7 @@ SOFTWARE.
 
 ### github.com/aws/aws-sdk-go-v2/service/ssooidc
 
-* Version: `v1.43.5`
+* Version: `v1.44.0`
 
 ```
 
@@ -3914,7 +3914,7 @@ SOFTWARE.
 
 ### github.com/aws/aws-sdk-go-v2/service/sso
 
-* Version: `v1.38.5`
+* Version: `v1.39.0`
 
 ```
 
@@ -4125,7 +4125,7 @@ SOFTWARE.
 
 ### github.com/aws/aws-sdk-go-v2/service/sts
 
-* Version: `v1.51.5`
+* Version: `v1.51.6`
 
 ```
 
@@ -4336,7 +4336,7 @@ SOFTWARE.
 
 ### github.com/aws/aws-sdk-go-v2
 
-* Version: `v1.47.4`
+* Version: `v1.47.5`
 
 ```
 
@@ -4555,7 +4555,7 @@ Copyright 2014-2015 Stripe, Inc.
 
 ### github.com/aws/smithy-go
 
-* Version: `v1.28.6`
+* Version: `v1.28.7`
 
 ```
 
@@ -11301,7 +11301,7 @@ SOFTWARE.
 
 ### react-router
 
-* Version: `7.18.4`
+* Version: `7.18.5`
 * Declared license: `MIT`
 
 ```
@@ -11334,7 +11334,7 @@ SOFTWARE.
 
 ### react-router-dom
 
-* Version: `7.18.4`
+* Version: `7.18.5`
 * Declared license: `MIT`
 
 ```
@@ -11510,7 +11510,7 @@ ARISING OUT OF OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
 ### set-cookie-parser
 
-* Version: `2.7.2`
+* Version: `2.7.3`
 * Declared license: `MIT`
 
 ```
