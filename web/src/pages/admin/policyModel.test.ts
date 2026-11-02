@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { Policy, PolicyGrant, Protocol } from '../../api/types'
-import { accessLine, chipsFor, extrasLine, fromDraft, grantSummary, grantsLine, matchToRows, newGrant, policyRollup, reachLine, rowsToMatch, targetsCell, toDraft, whoSummary } from './policyModel'
+import { accessLine, chipsFor, extrasLine, fromDraft, grantSummary, grantsLine, matchToRows, newGrant, policyRollup, reachLine, rowsToMatch, switchKind, targetsCell, toDraft, whoSummary } from './policyModel'
 
 const name = (id: string) => ({ t1: 'web-1', t2: 'dc-1', d1: 'orders' } as Record<string, string>)[id] ?? id
 
@@ -26,6 +26,40 @@ describe('tag rows', () => {
     expect(rowsToMatch([{ key: 'env', value: '' }]).error).toBe('tag env: value is empty')
     expect(rowsToMatch([{ key: '', value: 'prod' }]).error).toBe('tag 1: key is empty')
     expect(rowsToMatch([{ key: 'env', value: 'a' }, { key: 'env', value: 'a' }]).error).toBe('tag env: a is given twice')
+  })
+})
+
+// The live console (2026-11-02): switching a grant's type to look at another
+// and back dropped what the first one held.
+describe('switching a grant\'s type', () => {
+  const hosts = () => {
+    const d = toDraft(newGrant('host'))
+    d.targets = { t1: ['ssh'], t2: ['rdp'] }
+    d.sign_in = 'own'
+    return d
+  }
+
+  it('brings the choices back after a look at other types, sign-in included', () => {
+    const back = switchKind(switchKind(switchKind(hosts(), 'application'), 'database'), 'host')
+    expect([back.kind, back.targets, back.tagProtocols, back.sign_in, back.left]).toEqual(['host', { t1: ['ssh'], t2: ['rdp'] }, ['ssh'], 'own', undefined])
+  })
+
+  it('starts the other type empty, with its own protocol and sign-in', () => {
+    const app = switchKind(hosts(), 'application')
+    expect([app.kind, app.targets, app.tagProtocols, app.sign_in]).toEqual(['application', {}, ['http'], 'target'])
+    expect(fromDraft({ ...app, targets: { w1: ['http'] } }, name).grant).not.toHaveProperty('left')
+  })
+
+  it('lets them go once something is chosen in another type, a protocol counting', () => {
+    const app = switchKind(hosts(), 'application')
+    expect(switchKind({ ...app, targets: { w1: ['http'] } }, 'host').targets).toEqual({})
+    const db = switchKind(hosts(), 'database')
+    expect(switchKind({ ...db, tagProtocols: [] }, 'host').targets).toEqual({})
+  })
+
+  it('changes nothing for the type it already is', () => {
+    const d = hosts()
+    expect(switchKind(d, 'host')).toBe(d)
   })
 })
 

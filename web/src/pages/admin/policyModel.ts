@@ -154,6 +154,38 @@ export interface GrantDraft {
   max: string
   retention: string
   windows: TimeWindow[]
+  /** What the grant held for the type it was last switched away from; never sent. */
+  left?: KindChoice
+}
+
+/** A grant's choices that belong to its type. */
+export interface KindChoice {
+  kind: TargetKind
+  targets: Record<string, Protocol[]>
+  tagProtocols: Protocol[]
+  sign_in: 'target' | 'own'
+}
+
+/** The tag protocols a grant of kind starts with. */
+export function startProtocols(kind: TargetKind): Protocol[] {
+  return kind === 'database' || kind === 'application' ? [...kindProtocols[kind]] : ['ssh']
+}
+
+/**
+ * switchKind changes a grant's type. Each type has its own targets and
+ * protocols, so the new one starts empty; but a person who only looks at
+ * another type and comes back gets their choices back (the live console,
+ * 2026-11-02: two hosts ticked, a glance at Application, and the hosts were
+ * gone). The choices of the type left are kept until something is chosen in
+ * another; then the grant has moved on, and they go.
+ */
+export function switchKind(d: GrantDraft, kind: TargetKind): GrantDraft {
+  if (kind === d.kind) return d
+  const start = startProtocols(d.kind)
+  const chose = Object.keys(d.targets).length > 0 || d.tagProtocols.length !== start.length || d.tagProtocols.some((p) => !start.includes(p))
+  const left: KindChoice | undefined = chose ? { kind: d.kind, targets: d.targets, tagProtocols: d.tagProtocols, sign_in: d.sign_in } : d.left
+  if (left?.kind === kind) return { ...d, kind, targets: left.targets, tagProtocols: left.tagProtocols, sign_in: left.sign_in, left: undefined }
+  return { ...d, kind, targets: {}, tagProtocols: startProtocols(kind), sign_in: kind === 'application' ? 'target' : d.sign_in, left }
 }
 
 export function toDraft(g: PolicyGrant): GrantDraft {
