@@ -4,6 +4,7 @@ package adminapi
 
 import (
 	"encoding/json"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -48,5 +49,28 @@ func TestConnectionTestReportsProviderSignOut(t *testing.T) {
 				t.Fatalf("test: %d %s", code, raw)
 			}
 		})
+	}
+}
+
+// TestConnectionTestSaysWhyInPlainWords: a provider the gateway cannot
+// reach is reported by host with what happened, as the sync reports it,
+// not as the chain of calls the failure came through (2026-11-02).
+func TestConnectionTestSaysWhyInPlainWords(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	closed := ln.Addr().String()
+	_ = ln.Close()
+	e := newEnv(t)
+	code, out, raw := e.do(t, "POST", "/api/v1/identity-providers", map[string]any{"name": "p", "type": "oidc", "config": map[string]any{
+		"oidc": map[string]any{"issuer": "https://" + closed + "/realms/zanskar", "client_id": "cid", "client_secret": "s"}}})
+	if code != http.StatusCreated {
+		t.Fatalf("create: %d %s", code, raw)
+	}
+	code, res, raw := e.do(t, "POST", "/api/v1/identity-providers/"+out["id"].(string)+"/test", nil)
+	want := "could not reach " + closed + ": it refused the connection"
+	if code != http.StatusBadGateway || res["message"] != want {
+		t.Fatalf("test: %d %s\nwant message %q", code, raw, want)
 	}
 }
