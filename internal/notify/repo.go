@@ -84,28 +84,8 @@ const selectChannels = `SELECT id, name, kind, events, config, secret_enc, key_v
 
 // List returns every channel, by name, with its secret opened for sending.
 func (r *Repo) List(ctx context.Context) ([]*Channel, error) {
-	rows, err := r.db.QueryContext(ctx, selectChannels+` ORDER BY name`)
+	all, err := r.listSealed(ctx)
 	if err != nil {
-		return nil, err
-	}
-	type raw struct {
-		c      *Channel
-		sealed []byte
-		ver    sql.NullInt64
-	}
-	var all []raw
-	for rows.Next() {
-		c, sealed, ver, err := scan(rows)
-		if err != nil {
-			_ = rows.Close()
-			return nil, err
-		}
-		all = append(all, raw{c, sealed, ver})
-	}
-	if err := rows.Close(); err != nil {
-		return nil, err
-	}
-	if err := rows.Err(); err != nil {
 		return nil, err
 	}
 	// Opened after the cursor is closed: unsealing reads the key ring, and
@@ -118,6 +98,31 @@ func (r *Repo) List(ctx context.Context) ([]*Channel, error) {
 		out = append(out, a.c)
 	}
 	return out, nil
+}
+
+// sealedRow is a channel as read, its secret still sealed.
+type sealedRow struct {
+	c      *Channel
+	sealed []byte
+	ver    sql.NullInt64
+}
+
+// listSealed reads every channel and closes the cursor before returning.
+func (r *Repo) listSealed(ctx context.Context) ([]sealedRow, error) {
+	rows, err := r.db.QueryContext(ctx, selectChannels+` ORDER BY name`)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	var all []sealedRow
+	for rows.Next() {
+		c, sealed, ver, err := scan(rows)
+		if err != nil {
+			return nil, err
+		}
+		all = append(all, sealedRow{c, sealed, ver})
+	}
+	return all, rows.Err()
 }
 
 // Get returns one channel with its secret opened, or ErrNotFound.
