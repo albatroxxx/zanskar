@@ -81,6 +81,15 @@ func TestMyTargets(t *testing.T) {
 	if got := byName["ok"]; len(got.RequiresApproval) != 0 {
 		t.Errorf("standing access marked as approval-gated: %+v", got)
 	}
+	// Zanskar signs in to "ok" over SSH with a credential it holds; "typed"
+	// asks the person for their own login. The portal colours the two apart
+	// (2026-11-02).
+	if got := byName["ok"]; !slices.Equal(got.ManagedLogin, []string{"ssh"}) {
+		t.Errorf("a vaulted slot is managed: %+v", got)
+	}
+	if got := byName["typed"]; got.ID == "" || len(got.ManagedLogin) != 0 {
+		t.Errorf("a slot that asks for the user's own login is not managed: %+v", got)
+	}
 	for _, it := range page.Items {
 		for _, p := range it.Allowed {
 			if p == "vnc" {
@@ -94,6 +103,34 @@ func TestMyTargets(t *testing.T) {
 	rr = f.do("GET", "/api/v1/me/targets", "", nil, bob, bobCSRF)
 	if rr.Code != http.StatusOK || rr.Body.String() != "{\"items\":[]}\n" {
 		t.Fatalf("bob's list: %d %s", rr.Code, rr.Body)
+	}
+}
+
+// TestMyTargetsOwnLoginIsNotManaged: where the only grant asks for the
+// person's own login (ADR 0036, sign_in own), the session never uses the
+// slot's vaulted credential, so the protocol is offered as their own login
+// and not as one Zanskar signs in to.
+func TestMyTargetsOwnLoginIsNotManaged(t *testing.T) {
+	f := newConnectFixture(t)
+	cookie, csrf := f.signIn(t, "carol")
+	carol, err := f.users.GetByUsername(f.ctx, "carol")
+	if err != nil {
+		t.Fatal(err)
+	}
+	g := policytest.Named(protocol.KindHost, []string{f.ids["ok"]}, "ssh")
+	g.SignIn = policy.SignInOwn
+	if err := f.h.Policies.Create(f.ctx, policytest.Policy("own-only", []policy.Subject{policytest.User(carol.ID)}, g)); err != nil {
+		t.Fatal(err)
+	}
+	rr := f.do("GET", "/api/v1/me/targets", "", nil, cookie, csrf)
+	var page struct {
+		Items []reachableTarget `json:"items"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &page); err != nil || len(page.Items) != 1 {
+		t.Fatalf("carol's list: %d %s", rr.Code, rr.Body)
+	}
+	if got := page.Items[0]; !slices.Equal(got.OwnLogin, []string{"ssh"}) || len(got.ManagedLogin) != 0 {
+		t.Fatalf("own login only: %+v", got)
 	}
 }
 

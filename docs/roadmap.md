@@ -102,6 +102,14 @@ Deferred by decision: a multi-pane workspace (browser tabs suffice), rotation of
 keys and of Windows or database passwords (the certificate authority and the owning systems
 do that). Still Phase 4: HA, SAML/SCIM, WebAuthn.
 
+## v1.14 release — shipped (v1.14.0 tagged 2026-11-03)
+
+An application names every address it uses and a person browses them all in one session, the
+relay as the browser's SOCKS5 proxy (ADR 0037, amended); the portal shows in colour who signs a
+person in; a provider brings its people and Zanskar makes its own accounts only (ADR 0035,
+amended); file transfer where files move; Disconnect asks first
+([release notes](releases/v1.14.0.md)).
+
 ## v1.13 release — shipped (v1.13.0 tagged 2026-11-01)
 
 What a walk through the live console found, fixed: a session's tab offers to connect again, the

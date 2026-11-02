@@ -652,11 +652,15 @@ certificate, no DNS record, nothing installed on the client.
   `--network` flag); the AWS reference install connects its guacd to the bridge by hand.
   Until these are in place the Applications page shows a checklist (guacd, container
   runtime, browser image) and a connect answers 501 `protocol_unavailable`.
-- **Enrolment.** Applications, *Add*: a name, the upstream, an optional CA bundle for an
-  https upstream, and tags; then a policy granting `http` on it. An https upstream is
-  verified by the browser against the system roots or against the bundle, never switched
-  off. The upstream's address follows the same rules as any target: no loopback, link-local,
-  cloud metadata service or the gateway's own listener.
+- **Enrolment.** Applications, *Add*: a name, the upstream (the page the browser opens),
+  any **other endpoints** the application uses (an API on another host, its sign-in page;
+  up to 31, each an origin with a name for its bookmark), an optional CA bundle for https
+  origins, and tags; then a policy granting `http` on it. An https origin is verified by the
+  browser against the system roots or against the bundle, never switched off. Every origin's
+  address follows the same rules as any target: no loopback, link-local, cloud metadata
+  service or the gateway's own listener, checked as it is saved when it is an IP literal and
+  each time a session starts when it is a name. Taking an endpoint off an application ends
+  the sessions open on it.
 - **What a session starts.** An internal network with no route out. A browser container,
   `ghcr.io/albatroxxx/zanskar-browser` (Debian's Chromium and TigerVNC), on that network
   alone: a full browser window with Chromium's own address bar, tabs, Back, Forward, Reload
@@ -665,14 +669,24 @@ certificate, no DNS record, nothing installed on the client.
   no capabilities, `no-new-privileges`, pid and memory limits, and a seccomp profile that is
   Docker's default plus the namespace and chroot calls the sandbox needs. A relay container,
   the gateway's own image running `zanskar apprelay`, on that network and on the default
-  bridge: it forwards the upstream's port, and only that port, to the resolved upstream
-  address, and exposes the browser's VNC port on the bridge side, where guacd connects to it
-  with a password made for the session; it accepts exactly one VNC connection. The browser's
-  resolver maps the upstream's host name to the relay and everything else to nothing.
-  Chromium policy allows the upstream's origin only, opens it in every new tab and on Home,
-  and blocks every other URL (with `chrome://`, `file://`, `javascript:` and `view-source:`
-  named), downloads, printing, extensions, sign-in, sync, password saving, autofill, safe
-  browsing, metrics and the command-line warning bar. Developer tools are off unless the
+  bridge: it is the browser's SOCKS5 proxy, on the session network only, and takes a
+  connection to an application origin's host and port and nothing else, dialling the address
+  the gateway resolved for that host when the session started (a name is never looked up
+  again; ADR 0037, amended 2026-11-02); it exposes the browser's VNC port on the bridge side,
+  where guacd connects to it with a password made for the session, and accepts exactly one
+  VNC connection. The browser resolves no destination itself: its resolver maps everything
+  but the relay to nothing. An endpoint whose name does not resolve when the session starts is
+  left out of that session, which opens anyway and names it in its `session.start` event
+  (`unreachable_origins`); one that resolves to a forbidden address refuses the session. For
+  a browser image from before other endpoints, which an administrator may have pinned, the relay also
+  forwards the upstream's own port and the resolver maps the upstream's name to it, so the
+  upstream opens there as before. Chromium policy allows exactly the application's origins
+  (each host, not its subdomains), opens the upstream in every new tab and on Home, shows
+  the origins as one bookmarks folder named after the application when there is more than
+  one, and blocks every other URL (with `chrome://`, `file://`, `javascript:` and
+  `view-source:` named), downloads, printing, extensions, sign-in, sync, password saving,
+  autofill, safe browsing, metrics, prediction, WebRTC outside the proxy and the
+  command-line warning bar. Developer tools are off unless the
   grant that admits the person allows them (**Developer tools**, an application grant's
   condition, off by default; where several grants admit, every one must allow them, and
   withdrawing them ends a running session at the next re-check). Closing the last window
@@ -747,7 +761,9 @@ can assume (ADR 0011, 0023). Enrolment is guided from **Autoscaling groups → E
    ExternalId and shows a paste-ready AWS CLI script that creates the role with the trust
    policy and the read-only permissions policy, the same role as a CloudFormation template,
    and the two policy documents on their own.
-3. **Test access.** Paste the role's ARN and test: the gateway assumes the role with the
+3. **Test access.** The role's ARN is filled in as the script creates it in the gateway's
+   own account (change the account number for a group in another account), then test: the
+   gateway assumes the role with the
    ExternalId and describes the group. A failure names the stage: the trust policy (wrong
    principal or ExternalId), the permissions policy, or no group by that name in that
    region. The test is audited as `asg.test`.

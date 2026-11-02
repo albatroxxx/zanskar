@@ -347,6 +347,28 @@ describe('Desktop, leaving by keyboard', () => {
     expect(screen.getByText('Ctrl+Shift+F6: controls')).toBeDefined()
   })
 
+  // 2026-11-02: Disconnect asks first. The question takes the keyboard however
+  // it was opened (here by a mouse click, which leaves the desktop holding the
+  // keys), so its Enter is its own and never reaches the remote machine;
+  // Cancel keeps the session, and the answer ends it.
+  it('asks before disconnecting, and the question keeps its keys from the remote machine', async () => {
+    start()
+    const client = await connected()
+    const kb = g.keyboards[0] as unknown as Kb
+    const user = userEvent.setup()
+    await user.click(screen.getByRole('button', { name: 'Disconnect' }))
+    const ask = screen.getByRole('dialog', { name: /^Disconnect from / })
+    const sentBefore = client.keys.length
+    expect(press(kb, ENTER)).toBe(true)
+    await flush()
+    expect(client.keys.slice(sentBefore)).toEqual([])
+    await user.click(within(ask).getByRole('button', { name: 'Cancel' }))
+    expect(screen.queryByRole('dialog')).toBeNull()
+    await user.click(screen.getByRole('button', { name: 'Disconnect' }))
+    await user.click(within(screen.getByRole('dialog', { name: /^Disconnect from / })).getByRole('button', { name: 'Disconnect' }))
+    expect(await screen.findByRole('dialog', { name: 'Session ended' })).toBeDefined()
+  })
+
   it('works the controls from the keyboard until Ctrl+Shift+F6 again', async () => {
     start()
     const client = await connected()

@@ -128,9 +128,13 @@ func compare(t testing.TB, what string, legacy []*legacyPolicy, current []*Polic
 	for _, g := range cur.Grants {
 		admitting[g.PolicyID] = true
 	}
+	// File transfer never did anything on a database or an application, and
+	// since 2026-11-02 their grants carry it off; it is compared where files
+	// can move.
+	files := proto != "database" && proto != "http"
 	if len(admitting) == 1 {
 		if old.IdleTimeout != cur.IdleTimeout || old.MaxSession != cur.MaxSession || old.AllowClipboard != cur.AllowClipboard ||
-			old.AllowFileTransfer != cur.AllowFileTransfer || old.RequireMFA != cur.RequireMFA || old.RetentionDays != cur.RetentionDays {
+			(files && old.AllowFileTransfer != cur.AllowFileTransfer) || old.RequireMFA != cur.RequireMFA || old.RetentionDays != cur.RetentionDays {
 			t.Fatalf("%s: one policy admits, terms differ:\nlegacy %+v\nnow    %+v", where, old, cur)
 		}
 		return

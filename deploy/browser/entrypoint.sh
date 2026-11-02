@@ -1,10 +1,12 @@
 #!/bin/sh
 # The browser container's entrypoint (ADR 0034). Everything it needs comes
-# by name in the environment: APP_URL (what to open), APP_ORIGIN (the one
-# origin Chromium policy allows), RESOLVER_RULES (the upstream's name mapped
-# to the relay, everything else to nothing), VNC_PASSWORD, SCREEN_W and
-# SCREEN_H, and CA_PEM (optional, for an https upstream). /tmp is the only
-# writable place; /tmp/ready appears once the VNC server listens.
+# by name in the environment: APP_URL (what to open), POLICY_JSON (the whole
+# Chromium policy, from a gateway that sends it (2026-11-02 on): the application's
+# origins, reached through the relay's SOCKS proxy, ADR 0037 as amended
+# 2026-11-02), APP_ORIGIN (the one origin the policy below allows, for an
+# older gateway that sends no POLICY_JSON), RESOLVER_RULES, VNC_PASSWORD,
+# SCREEN_W and SCREEN_H, and CA_PEM (optional, for https origins). /tmp is
+# the only writable place; /tmp/ready appears once the VNC server listens.
 set -eu
 
 : "${APP_URL:?}" "${APP_ORIGIN:?}" "${RESOLVER_RULES:?}" "${VNC_PASSWORD:?}"
@@ -22,15 +24,22 @@ else
   DEVTOOLS_AVAILABILITY=2 DEVTOOLS_ALLOW='' DEVTOOLS_BLOCK=',"devtools://*"'
 fi
 
-# Chromium policy: the application's origin and nothing else, with its start
-# page as the home page and every new tab; Chromium's own toolbar (ADR 0037:
-# an engineer sees the address and can open tabs), its internal pages, files,
-# javascript: and view-source: blocked by name beside the blanket rule; no
-# warning bar about the resolver rules on the command line (kiosk mode hid
-# it; it would show the session's internal addressing);
+# Chromium policy, written where Chromium reads managed policy on Linux, a
+# tmpfs the gateway mounts. A gateway from 2026-11-02 on sends it whole
+# (internal/gateway/browsergw/policy.go), its origins reached through the
+# relay; it is written as it came.
+if [ -n "${POLICY_JSON:-}" ]; then
+  printf '%s\n' "$POLICY_JSON" > /etc/chromium/policies/managed/zanskar.json
+  unset POLICY_JSON
+else
+# From an older gateway: the application's origin and nothing else, with its
+# start page as the home page and every new tab; Chromium's own toolbar (ADR
+# 0037: an engineer sees the address and can open tabs), its internal pages,
+# files, javascript: and view-source: blocked by name beside the blanket
+# rule; no warning bar about the resolver rules on the command line (kiosk
+# mode hid it; it would show the session's internal addressing);
 # downloads, printing, extensions, sign-in, sync, saved passwords, autofill,
-# safe browsing, metrics or translation. Written where Chromium reads managed
-# policy on Linux, a tmpfs the gateway mounts.
+# safe browsing, metrics or translation.
 cat > /etc/chromium/policies/managed/zanskar.json <<JSON
 {"URLAllowlist":["$APP_ORIGIN"$DEVTOOLS_ALLOW],
  "URLBlocklist":["*","chrome://*","chrome-untrusted://*","file://*","javascript:*","view-source:*"$DEVTOOLS_BLOCK],
@@ -49,6 +58,7 @@ cat > /etc/chromium/policies/managed/zanskar.json <<JSON
  "PromotionalTabsEnabled":false,"ShoppingListEnabled":false,
  "CommandLineFlagSecurityWarningsEnabled":false}
 JSON
+fi
 
 # A private CA for an https upstream, trusted for this session only.
 if [ -n "${CA_PEM:-}" ]; then

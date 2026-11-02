@@ -115,3 +115,9 @@ A group mapping key for LDAP may be the group's full DN, compared as LDAP compar
 bare name. A bare name matches every group of that name in any OU, so it is only as safe as
 control over group creation anywhere in the directory; the guide and the console recommend DNs.
 
+
+*Amended 2026-11-02:* Zanskar no longer creates such accounts. The owner asked for a clear line
+between the people Zanskar manages and the people an identity provider does: `password_less` is
+refused and the console's *Signs in through an identity provider* option is gone, so a person
+who signs in through a provider comes from it (their first sign-in, its sync, or SCIM; ADR 0035).
+Accounts made this way before are still adopted at their first sign-in, as above.

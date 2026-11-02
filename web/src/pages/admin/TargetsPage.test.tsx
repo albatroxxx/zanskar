@@ -80,6 +80,27 @@ describe('TargetsPage', () => {
     expect(within(drawer).queryByText(/Host key/)).toBeNull()
   })
 
+  // An application's further origins (ADR 0037, amended 2026-11-02): the
+  // list counts them beside the upstream, naming them on hover, and the
+  // detail lists each under the upstream.
+  it('counts an application\'s other endpoints in the list and lists them in its detail', async () => {
+    const grafana: Target = {
+      ...db, id: 'a2', name: 'Grafana', address: 'grafana.internal', engine: undefined, engine_version: undefined, database_name: undefined, tls_mode: undefined,
+      app_upstream: 'http://grafana.internal', tls_ca: '', ports: {}, capabilities: [], credentials: {},
+      app_endpoints: [{ name: 'API', url: 'http://api.internal:8080' }, { name: 'Sign-in', url: 'https://sso.internal' }],
+    }
+    serve([grafana])
+    render(<MemoryRouter><Applications /></MemoryRouter>)
+    const row = (await screen.findByText('http://grafana.internal', { exact: false })).closest('tr')!
+    const more = within(row).getByText('+2')
+    expect(more.getAttribute('title')).toBe('API: http://api.internal:8080\nSign-in: https://sso.internal')
+
+    await userEvent.setup().click(within(row).getByRole('button', { name: 'Manage' }))
+    const drawer = screen.getByRole('dialog', { name: 'Grafana' })
+    expect(within(drawer).getByText('Other endpoints')).toBeDefined()
+    expect(within(drawer).getAllByRole('listitem').map((li) => li.textContent)).toEqual(['API http://api.internal:8080', 'Sign-in https://sso.internal'])
+  })
+
   it('searches the whole fleet server-side as the user types (debounced)', async () => {
     const get = serve([db])
     render(<MemoryRouter><Databases /></MemoryRouter>)

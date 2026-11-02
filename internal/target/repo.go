@@ -25,7 +25,7 @@ func NewRepo(db *store.DB) *Repo { return &Repo{db: db} }
 const cols = `id, name, address, os_family, ports, capabilities, host_key_fingerprint, host_key_status,
 	tls_fingerprint, tags, status, notes, created_by, created_at, updated_at, last_probed_at, winrm_tls_fingerprint,
 	engine, engine_version, retention_days, database_name, tls_mode, tls_ca, tls_fingerprint_pending, winrm_tls_fingerprint_pending,
-	app_upstream`
+	app_upstream, app_endpoints`
 
 // Create validates and inserts t, including its credential mapping.
 func (r *Repo) Create(ctx context.Context, t *Target) error {
@@ -45,11 +45,11 @@ func (r *Repo) Create(ctx context.Context, t *Target) error {
 	}
 	defer tx.Rollback() //nolint:errcheck
 	_, err = tx.ExecContext(ctx, r.db.Rebind(`INSERT INTO targets
-		(id, name, address, os_family, ports, capabilities, host_key_status, tags, status, notes, created_by, created_at, updated_at, engine, engine_version, retention_days, database_name, tls_mode, tls_ca, app_upstream)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`),
+		(id, name, address, os_family, ports, capabilities, host_key_status, tags, status, notes, created_by, created_at, updated_at, engine, engine_version, retention_days, database_name, tls_mode, tls_ca, app_upstream, app_endpoints)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`),
 		t.ID, t.Name, t.Address, string(t.OSFamily), ports, capsJSON, string(HostKeyUnknown), tags, t.Status, t.Notes,
 		nullStr(t.CreatedBy), store.TimeArg(now), store.TimeArg(now), t.Engine, t.EngineVersion, nullInt(t.RetentionDays), t.DatabaseName, t.TLSMode, t.TLSCA,
-		emptyNull(t.AppUpstream))
+		emptyNull(t.AppUpstream), endpointsJSON(t.AppEndpoints))
 	if err != nil {
 		return mapErr(err)
 	}
@@ -287,10 +287,10 @@ func (r *Repo) Update(ctx context.Context, t *Target) error {
 	}
 	res, err := tx.ExecContext(ctx, r.db.Rebind(`UPDATE targets SET name = ?, address = ?, os_family = ?, ports = ?, capabilities = ?,
 		tags = ?, status = ?, notes = ?, engine = ?, engine_version = ?, retention_days = ?, database_name = ?, tls_mode = ?, tls_ca = ?,
-		app_upstream = ?, updated_at = ? WHERE id = ? AND deleted_at IS NULL`),
+		app_upstream = ?, app_endpoints = ?, updated_at = ? WHERE id = ? AND deleted_at IS NULL`),
 		t.Name, t.Address, string(t.OSFamily), mustJSON(t.Ports), mustJSON(t.Capabilities), mustJSON(t.Tags), t.Status, t.Notes,
 		t.Engine, t.EngineVersion, nullInt(t.RetentionDays), t.DatabaseName, t.TLSMode, t.TLSCA,
-		emptyNull(t.AppUpstream), store.TimeArg(now), t.ID)
+		emptyNull(t.AppUpstream), endpointsJSON(t.AppEndpoints), store.TimeArg(now), t.ID)
 	if err != nil {
 		return mapErr(err)
 	}
@@ -635,11 +635,12 @@ func scanTarget(s store.Scanner) (*Target, error) {
 		retention               sql.NullInt64
 		dbName, tlsMode, tlsCA  sql.NullString
 		appUpstream             sql.NullString
+		appEndpoints            []byte
 		created, updated, probe store.NullTime
 	)
 	err := s.Scan(&t.ID, &t.Name, &t.Address, &osFamily, &ports, &capsRaw, &hk, &hkStatus, &tlsFP, &tagsRaw,
 		&t.Status, &t.Notes, &createdBy, &created, &updated, &probe, &winrmFP, &engine, &engineVer, &retention, &dbName, &tlsMode, &tlsCA, &tlsPend, &winrmPend,
-		&appUpstream)
+		&appUpstream, &appEndpoints)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound
@@ -649,6 +650,9 @@ func scanTarget(s store.Scanner) (*Target, error) {
 	t.OSFamily, t.HostKeyStatus = OSFamily(osFamily), HostKeyStatus(hkStatus)
 	t.Engine, t.EngineVersion = engine.String, engineVer.String
 	t.AppUpstream = appUpstream.String
+	if len(appEndpoints) > 0 {
+		_ = json.Unmarshal(appEndpoints, &t.AppEndpoints)
+	}
 	if retention.Valid {
 		v := int(retention.Int64)
 		t.RetentionDays = &v
@@ -704,6 +708,15 @@ func nullStr(s *string) any {
 
 // emptyNull stores "" as NULL: the application columns are absent on every
 // other kind of target, and the label's unique index skips NULL.
+// endpointsJSON stores an application's further origins as a JSON array,
+// or NULL when it has none.
+func endpointsJSON(e []AppEndpoint) any {
+	if len(e) == 0 {
+		return nil
+	}
+	return mustJSON(e)
+}
+
 func emptyNull(s string) any {
 	if s == "" {
 		return nil

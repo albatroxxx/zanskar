@@ -60,6 +60,12 @@ export interface AppsReadiness {
   checks: AppsCheck[]
 }
 
+/** One more origin of an application: its bookmark name and scheme://host[:port]. */
+export interface AppEndpoint {
+  name: string
+  url: string
+}
+
 export interface Target {
   id: string
   name: string
@@ -75,8 +81,10 @@ export interface Target {
   tls_mode?: 'disable' | 'prefer' | 'require' | 'verify-full'
   /** CA bundle the upstream is verified against: a database under verify-full, or an application's https upstream. */
   tls_ca?: string
-  /** Application targets (ADR 0034): the one origin the isolated browser can reach. */
+  /** Application targets (ADR 0034): the origin the isolated browser opens. */
   app_upstream?: string
+  /** An application's further origins, reached in the same session and listed as bookmarks (ADR 0037, amended 2026-11-02). */
+  app_endpoints?: AppEndpoint[]
   ports: Partial<Record<Protocol, number>>
   capabilities: Protocol[]
   host_key_fingerprint: string | null
@@ -131,6 +139,8 @@ export interface ReachableTarget {
   requires_approval?: Protocol[]
   /** Allowed protocols on which the user may sign in with their own login (ADR 0036). */
   own_login?: Protocol[]
+  /** Allowed protocols Zanskar signs the user in to itself, with a credential it holds; coloured apart in the portal. */
+  managed_login?: Protocol[]
   host_key_ready: boolean
   /** Private (RFC1918/ULA) IP when the target has one; withheld for public addresses/hostnames. */
   private_ip?: string
@@ -479,6 +489,8 @@ export interface AsgIAMDocs {
   principal_source: 'environment' | 'detected' | 'none'
   principal_error?: string
   role_name: string
+  /** The role's ARN once created in the gateway's own account; the form fills it in. */
+  suggested_role_arn?: string
   trust_policy?: string
   permissions_policy: string
   cli?: string

@@ -17,6 +17,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/albatroxxx/zanskar/internal/protocol"
 )
@@ -129,7 +131,22 @@ const (
 	MaxNotesLen = 4000
 	MaxTags     = 32
 	MaxTagLen   = 64
+	// MaxAppEndpoints is how many origins an application may name beside its
+	// upstream: 32 in all, each one a bookmark in the session's browser and
+	// a line in its relay's table.
+	MaxAppEndpoints = 31
+	// MaxEndpointNameLen bounds an endpoint's bookmark name.
+	MaxEndpointNameLen = 64
 )
+
+// AppEndpoint is one more origin of an application (ADR 0037, amended
+// 2026-11-02): the session's browser reaches it beside the upstream, and
+// lists it under Name in the application's bookmarks. URL is an origin,
+// scheme://host[:port], held to the upstream's rules.
+type AppEndpoint struct {
+	Name string `json:"name"`
+	URL  string `json:"url"`
+}
 
 // Target is an enrolled machine.
 type Target struct {
@@ -157,7 +174,11 @@ type Target struct {
 	// scheme://host[:port], the session's isolated browser can reach, and
 	// nothing else. Address holds the upstream's host, so the address rules
 	// apply to it as to any target.
-	AppUpstream         string           `json:"app_upstream,omitempty"`
+	AppUpstream string `json:"app_upstream,omitempty"`
+	// AppEndpoints are the application's further origins (an API, its
+	// identity provider, an admin site on another host), reached in the same
+	// session; the upstream stays the one the browser opens.
+	AppEndpoints        []AppEndpoint    `json:"app_endpoints,omitempty"`
 	OSFamily            OSFamily         `json:"os_family"`
 	Ports               map[Protocol]int `json:"ports"`
 	Capabilities        []Protocol       `json:"capabilities"`
@@ -232,23 +253,94 @@ func ValidAddress(s string) bool {
 // optional port, and nothing else. No path, query, fragment or user, so the
 // origin is exactly what the administrator wrote and the proxy forwards every
 // path as the browser asked for it. The host is returned lowercased.
-func ParseUpstream(raw string) (*url.URL, error) {
+func ParseUpstream(raw string) (*url.URL, error) { return parseOrigin("app_upstream", raw) }
+
+// parseOrigin is ParseUpstream for any field holding an origin; field names
+// it in the error.
+func parseOrigin(field, raw string) (*url.URL, error) {
 	u, err := url.Parse(strings.TrimSpace(raw))
 	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" || u.Opaque != "" {
-		return nil, fmt.Errorf("%w: app_upstream must be http://host[:port] or https://host[:port]", ErrInvalid)
+		return nil, fmt.Errorf("%w: %s must be http://host[:port] or https://host[:port]", ErrInvalid, field)
 	}
 	if u.User != nil || (u.Path != "" && u.Path != "/") || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" {
-		return nil, fmt.Errorf("%w: app_upstream must be the origin only, with no path, query or user", ErrInvalid)
+		return nil, fmt.Errorf("%w: %s must be the origin only, with no path, query or user", ErrInvalid, field)
 	}
 	if !ValidAddress(u.Hostname()) {
-		return nil, fmt.Errorf("%w: app_upstream must name a hostname or IP", ErrInvalid)
+		return nil, fmt.Errorf("%w: %s must name a hostname or IP", ErrInvalid, field)
 	}
 	if port := u.Port(); port != "" {
 		if n, err := strconv.Atoi(port); err != nil || n < 1 || n > 65535 {
-			return nil, fmt.Errorf("%w: app_upstream port must be 1-65535", ErrInvalid)
+			return nil, fmt.Errorf("%w: %s port must be 1-65535", ErrInvalid, field)
 		}
 	}
 	return &url.URL{Scheme: u.Scheme, Host: strings.ToLower(u.Host)}, nil
+}
+
+// OriginPort is the port an origin is reached on: its own, else its scheme's.
+func OriginPort(u *url.URL) int {
+	if p := u.Port(); p != "" {
+		n, _ := strconv.Atoi(p)
+		return n
+	}
+	if u.Scheme == "https" {
+		return 443
+	}
+	return 80
+}
+
+// originKey tells two origins apart the way a browser does: scheme, host
+// without a trailing dot, and port with the scheme's default filled in, so
+// https://a and https://a:443 are one origin.
+func originKey(u *url.URL) string {
+	return u.Scheme + "://" + net.JoinHostPort(strings.TrimSuffix(u.Hostname(), "."), strconv.Itoa(OriginPort(u)))
+}
+
+// validEndpoints checks and normalises an application's further origins
+// against its upstream: each one an origin, none repeating another or the
+// upstream, each named (by default its host) in at most MaxEndpointNameLen
+// printable characters. An https one among them lets the CA bundle apply.
+func (t *Target) validEndpoints(home *url.URL) (anyHTTPS bool, err error) {
+	if len(t.AppEndpoints) > MaxAppEndpoints {
+		return false, fmt.Errorf("%w: at most %d endpoints beside the upstream", ErrInvalid, MaxAppEndpoints)
+	}
+	seen := map[string]string{originKey(home): "the upstream"}
+	for i := range t.AppEndpoints {
+		e := &t.AppEndpoints[i]
+		field := fmt.Sprintf("app_endpoints[%d]", i)
+		u, err := parseOrigin(field, e.URL)
+		if err != nil {
+			return false, err
+		}
+		if prev, dup := seen[originKey(u)]; dup {
+			return false, fmt.Errorf("%w: %s repeats %s (%s)", ErrInvalid, field, prev, u)
+		}
+		seen[originKey(u)] = field
+		e.URL = u.String()
+		e.Name = strings.TrimSpace(e.Name)
+		if e.Name == "" {
+			e.Name = u.Host
+		}
+		if utf8.RuneCountInString(e.Name) > MaxEndpointNameLen || strings.ContainsFunc(e.Name, unicode.IsControl) {
+			return false, fmt.Errorf("%w: %s name must be 1-%d printable characters", ErrInvalid, field, MaxEndpointNameLen)
+		}
+		anyHTTPS = anyHTTPS || u.Scheme == "https"
+	}
+	if len(t.AppEndpoints) == 0 {
+		t.AppEndpoints = nil
+	}
+	return anyHTTPS, nil
+}
+
+// Endpoints is every origin of an application, its upstream first under the
+// application's own name, as the session's browser lists them; nil for a
+// target that is not an application. The target is assumed validated.
+func (t *Target) Endpoints() []AppEndpoint {
+	if !t.IsApplication() {
+		return nil
+	}
+	out := make([]AppEndpoint, 0, 1+len(t.AppEndpoints))
+	out = append(out, AppEndpoint{Name: t.Name, URL: t.AppUpstream})
+	return append(out, t.AppEndpoints...)
 }
 
 // Validate checks the editable fields and normalises them.
@@ -274,16 +366,23 @@ func (t *Target) Validate() error {
 		if t.OSFamily == "" {
 			t.OSFamily = OtherOS
 		}
+		anyHTTPS, err := t.validEndpoints(u)
+		if err != nil {
+			return err
+		}
 		t.TLSCA = strings.TrimSpace(t.TLSCA)
 		if t.TLSCA != "" {
-			if u.Scheme != "https" {
-				return fmt.Errorf("%w: tls_ca applies to an https upstream", ErrInvalid)
+			if u.Scheme != "https" && !anyHTTPS {
+				return fmt.Errorf("%w: tls_ca applies to an https upstream or endpoint", ErrInvalid)
 			}
 			if err := validCABundle(t.TLSCA); err != nil {
 				return err
 			}
 		}
 		t.DatabaseName, t.TLSMode = "", ""
+	}
+	if t.AppUpstream == "" && len(t.AppEndpoints) > 0 {
+		return fmt.Errorf("%w: app_endpoints belong to an application, which needs app_upstream", ErrInvalid)
 	}
 	if !ValidAddress(t.Address) {
 		return fmt.Errorf("%w: address must be a hostname or IP without scheme or port", ErrInvalid)

@@ -139,6 +139,18 @@ export function TargetDetail({ target, credentials, onClose, onChanged, onDelete
         ) : application ? (
           <>
             <dt>Upstream</dt><dd className="mono">{t.app_upstream}</dd>
+            {(t.app_endpoints?.length ?? 0) > 0 && (
+              <>
+                <dt>Other endpoints</dt>
+                <dd>
+                  <ul className="plain-list">
+                    {t.app_endpoints?.map((e) => (
+                      <li key={e.url}>{e.name} <span className="mono muted">{e.url}</span></li>
+                    ))}
+                  </ul>
+                </dd>
+              </>
+            )}
             <dt>Upstream TLS</dt><dd>{appTLS(t).verified ? <Badge tone="ok">{appTLS(t).label}</Badge> : <Badge tone="warn">{appTLS(t).label}</Badge>}</dd>
           </>
         ) : (

@@ -150,3 +150,14 @@ Keycloak-shaped:
 
 What stays vendor-specific is an addition beside the standard path, not instead of it: the Keycloak
 listing, for a realm that cannot push.
+
+## Amendment (2026-11-02): the provider brings its people, and Zanskar does not
+
+The owner asked for a clear separation of user management: an account that signs in through an
+identity provider is the provider's to bring, not Zanskar's to make. The admin API refuses
+`password_less` and *Add user* makes local, password accounts only. A person reaches Zanskar
+through a provider by their first sign-in (when the provider creates accounts), its sync, or
+SCIM. With *Create an account for each new person* off, only people the provider pushes, and
+accounts that already exist, sign in; the provider form says so. An account an administrator
+made with no password before this change is still adopted at its first sign-in, so none is
+stranded.

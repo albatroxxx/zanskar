@@ -310,6 +310,16 @@ function CredentialForm({ onClose, onSaved }: { onClose: () => void; onSaved: (c
   )
 }
 
+// Rotating replaces what Zanskar signs in with, nothing more: the account on
+// the machine or in the domain is changed by whoever owns it, first. Saying
+// only "takes effect on every target" read as Zanskar changing the machines,
+// and an administrator locked a Windows account out that way (2026-11-02).
+const rotateNote: Partial<Record<CredentialType, string>> = {
+  password: 'Zanskar does not change the password on the machine. Change it there first, then enter it here.',
+  domain: 'Zanskar does not change the password in the domain. Change it there first, then enter it here.',
+  ssh_key: 'Zanskar does not put the key on the machine. Add the new public key to authorized_keys there first, then paste the private key here.',
+}
+
 function RotateForm({ credential, onClose, onSaved }: { credential: Credential; onClose: () => void; onSaved: () => void }) {
   const [f, setF] = useState<Record<string, string>>({ password: '', private_key: '', passphrase: '' })
   const { busy, err, submit } = useSubmit()
@@ -328,6 +338,7 @@ function RotateForm({ credential, onClose, onSaved }: { credential: Credential; 
     })
   return (
     <FormModal title={`Rotate ${credential.name}`} width={560} err={err} busy={busy} submitLabel="Rotate" onSubmit={save} onClose={onClose}>
+      {rotateNote[credential.type] && <Alert tone="warn">{rotateNote[credential.type]}</Alert>}
       <p className="muted" style={{ marginTop: 0 }}>Takes effect at once on every target using it.</p>
       <SecretFields type={credential.type} f={f} set={set} put={put} />
     </FormModal>

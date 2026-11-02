@@ -91,6 +91,31 @@ func TestValidate(t *testing.T) {
 	}
 }
 
+// TestFileTransferWhereFilesMove (2026-11-02): file transfer is kept on host
+// and autoscaling grants, whose SSH and RDP sessions carry files, and is
+// cleared, not refused, on database and application grants, where it never
+// did anything; a grant saved before with it on still saves.
+func TestFileTransferWhereFilesMove(t *testing.T) {
+	for _, c := range []struct {
+		kind  string
+		proto string
+		keep  bool
+	}{
+		{protocol.KindHost, "ssh", true},
+		{protocol.KindAutoscaling, "rdp", true},
+		{protocol.KindDatabase, "database", false},
+		{protocol.KindApplication, "http", false},
+	} {
+		p := valid(Grant{Kind: c.kind, Targets: []GrantTarget{{ID: "t1", Protocols: []string{c.proto}}}, AllowFileTransfer: true})
+		if err := p.Validate(); err != nil {
+			t.Fatalf("%s grant with file transfer: %v", c.kind, err)
+		}
+		if p.Grants[0].AllowFileTransfer != c.keep {
+			t.Errorf("%s grant: file transfer %v, want %v", c.kind, p.Grants[0].AllowFileTransfer, c.keep)
+		}
+	}
+}
+
 // TestCovers (ADR 0036): a grant covers its own kind only; a named target
 // with the protocol, or a tag rule where every key is present with one of
 // its values. An autoscaling grant names groups.

@@ -132,6 +132,9 @@ Why each condition is per grant and not per policy:
 - **Approval and MFA** are what the owner asked for per target set, and they are what Azure PIM
   and Teleport's access requests put on the thing granted, not on the person.
 - **Clipboard and file transfer** are exfiltration controls of the target, not of the person.
+  *Amended 2026-11-02:* file transfer means something only where files move, SSH (SFTP) and
+  RDP (the drive); a database or application grant carries it off, cleared rather than refused,
+  and a VNC or application session is never offered a Files panel.
 - **Idle and maximum** are the session's terms; Boundary and Identity Center keep them with the
   target or the permission set. A JIT cap (`max_session_minutes` of an approval grant) must sit
   beside the approval switch it bounds.

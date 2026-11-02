@@ -9,7 +9,7 @@ import { TagEditor } from '../../components/TagEditor'
 import { tagSuggestions } from '../../components/tags'
 import { Alert, Confirm, Empty, Field, PageHead, RemoveButton } from '../../components/ui'
 import { useList } from './lib'
-import { chipsFor, fromDraft, grantSummary, kindOf, kinds, newGrant, toDraft, unfound, type GrantDraft } from './policyModel'
+import { chipsFor, filesMove, fromDraft, grantSummary, kindOf, kinds, newGrant, switchKind, toDraft, unfound, type GrantDraft } from './policyModel'
 
 const days = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun']
 
@@ -264,7 +264,7 @@ function GrantCard({ index, draft: d, open, onToggleOpen, onChange, onRemove, on
             {kinds.map((k) => (
               <span key={k.kind} className="field inline">
                 <input id={`${p}-kind-${k.kind}`} type="radio" name={`${p}-kind`} checked={d.kind === k.kind}
-                  onChange={() => onChange({ ...d, kind: k.kind as TargetKind, targets: {}, tagProtocols: k.kind === 'database' ? ['database'] : k.kind === 'application' ? ['http'] : ['ssh'], sign_in: k.kind === 'application' ? 'target' : d.sign_in })} />
+                  onChange={() => onChange(switchKind(d, k.kind as TargetKind))} />
                 <label htmlFor={`${p}-kind-${k.kind}`}>{k.label}</label>
               </span>
             ))}
@@ -381,7 +381,9 @@ function GrantCard({ index, draft: d, open, onToggleOpen, onChange, onRemove, on
               {([
                 ['require_mfa', 'Authenticator'],
                 ['allow_clipboard', 'Clipboard'],
-                ['allow_file_transfer', 'File transfer'],
+                // Files move over SSH and RDP only: a database client or an
+                // application's browser has no way to carry them (2026-11-02).
+                ...(filesMove(d.kind) ? ([['allow_file_transfer', 'File transfer (SSH, RDP)']] as const) : []),
                 // Developer tools exist only in an application's browser (ADR 0037).
                 ...(d.kind === 'application' ? ([['allow_devtools', 'Developer tools']] as const) : []),
               ] as const).map(([k, label]) => (

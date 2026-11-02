@@ -339,7 +339,10 @@ func (h *AdminHandler) test(w http.ResponseWriter, r *http.Request) {
 	outcome := audit.Success
 	if terr != nil {
 		outcome = audit.Failure
-		result = map[string]any{"status": "failed", "message": terr.Error()}
+		result = map[string]any{"status": "failed", "message": idp.PlainError(terr)}
+		if h.Log != nil {
+			h.Log.Warn("identity provider test failed", "provider", op.Name, "err", terr)
+		}
 	}
 	h.recordOutcome(r, audit.IdPTest, &op.Provider, outcome, nil)
 	status := http.StatusOK

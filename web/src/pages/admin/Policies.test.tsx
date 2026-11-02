@@ -217,6 +217,61 @@ describe('the policy editor', () => {
     expect(box.checked).toBe(true)
   })
 
+  // The live console (2026-11-02): two hosts ticked, a look at Application,
+  // and back on Host they were gone. A look keeps them; choosing something in
+  // another type moves the grant on, and then they go.
+  it('keeps the hosts chosen when other types are only looked at, and saves them', async () => {
+    serve([policy({ grants: [grant({ targets: [] })] })])
+    const put = vi.spyOn(api, 'put').mockResolvedValue({} as never)
+    at('/admin/policies/p1')
+    const user = userEvent.setup()
+    const card = await screen.findByRole('region', { name: 'Grant 1' })
+    await user.click(within(card).getByLabelText('web-1'))
+    await user.click(within(card).getByLabelText('dc-1'))
+    await user.click(within(card).getByLabelText('RDP on dc-1'))
+    await user.click(within(card).getByRole('radio', { name: 'Application' }))
+    expect(within(card).queryByLabelText('web-1')).toBeNull()
+    await user.click(within(card).getByRole('radio', { name: 'Database' }))
+    await user.click(within(card).getByRole('radio', { name: 'Host' }))
+    expect((within(card).getByLabelText('web-1') as HTMLInputElement).checked).toBe(true)
+    expect((within(card).getByLabelText('RDP on dc-1') as HTMLInputElement).checked).toBe(true)
+    await user.click(screen.getByRole('button', { name: 'Save' }))
+    await waitFor(() => expect(put).toHaveBeenCalledTimes(1))
+    const [, body] = put.mock.calls[0] as [string, { grants: PolicyGrant[] }]
+    expect([body.grants[0].kind, body.grants[0].targets]).toEqual(['host', [{ id: 't1', protocols: ['ssh'] }, { id: 't2', protocols: ['rdp'] }]])
+  })
+
+  it('lets the hosts go once something is chosen in the other type', async () => {
+    serve([])
+    at('/admin/policies/new')
+    const user = userEvent.setup()
+    const card = await screen.findByRole('region', { name: 'Grant 1' })
+    await user.click(within(card).getByLabelText('web-1'))
+    await user.click(within(card).getByRole('radio', { name: 'Application' }))
+    await user.click(within(card).getByLabelText('wiki'))
+    await user.click(within(card).getByRole('radio', { name: 'Host' }))
+    expect((within(card).getByLabelText('web-1') as HTMLInputElement).checked).toBe(false)
+    // and the application it moved on to is what a second look brings back
+    await user.click(within(card).getByRole('radio', { name: 'Application' }))
+    expect((within(card).getByLabelText('wiki') as HTMLInputElement).checked).toBe(true)
+  })
+
+  // 2026-11-02: files move over SSH and RDP only, so a database or an
+  // application grant offers no file transfer.
+  it('offers file transfer on host and autoscaling grants only, saying where it applies', async () => {
+    serve([])
+    at('/admin/policies/new')
+    const user = userEvent.setup()
+    const card = await screen.findByRole('region', { name: 'Grant 1' })
+    expect(within(card).getByLabelText('File transfer (SSH, RDP)')).toBeDefined()
+    for (const kind of ['Database', 'Application']) {
+      await user.click(within(card).getByRole('radio', { name: kind }))
+      expect(within(card).queryByLabelText(/File transfer/)).toBeNull()
+    }
+    await user.click(within(card).getByRole('radio', { name: 'Autoscaling' }))
+    expect(within(card).getByLabelText('File transfer (SSH, RDP)')).toBeDefined()
+  })
+
   it('names what is missing before sending, and the server\'s refusal after', async () => {
     serve([])
     const post = vi.spyOn(api, 'post').mockRejectedValue(new ApiError(422, { code: 'kind_mismatch', message: 'grant 1: t1 is a database, not a host', request_id: 'r' }, '422'))

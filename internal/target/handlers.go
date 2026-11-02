@@ -8,6 +8,8 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"net/url"
+	"slices"
 	"strings"
 	"time"
 
@@ -73,6 +75,7 @@ type Write struct {
 	TLSMode       string              `json:"tls_mode"`       // database targets
 	TLSCA         string              `json:"tls_ca"`         // database and application targets
 	AppUpstream   string              `json:"app_upstream"`   // application targets (ADR 0034)
+	AppEndpoints  []AppEndpoint       `json:"app_endpoints"`  // application targets (ADR 0037, amended)
 	OSFamily      OSFamily            `json:"os_family"`
 	Ports         map[Protocol]int    `json:"ports"`
 	Capabilities  []Protocol          `json:"capabilities"`
@@ -87,7 +90,7 @@ func (w Write) apply(t *Target) {
 	t.Engine, t.EngineVersion = w.Engine, w.EngineVersion
 	t.RetentionDays = w.RetentionDays
 	t.DatabaseName, t.TLSMode, t.TLSCA = w.DatabaseName, w.TLSMode, w.TLSCA
-	t.AppUpstream = w.AppUpstream
+	t.AppUpstream, t.AppEndpoints = w.AppUpstream, w.AppEndpoints
 	t.Ports, t.Capabilities, t.Tags = w.Ports, w.Capabilities, w.Tags
 	t.Status, t.Notes, t.Credentials = w.Status, w.Notes, w.Credentials
 }
@@ -141,7 +144,11 @@ func (h *AdminHandler) create(w http.ResponseWriter, r *http.Request) {
 		h.fail(w, r, err)
 		return
 	}
-	h.record(r, audit.TargetCreate, t.ID, audit.Success, map[string]any{"name": t.Name, "address": t.Address, "os_family": t.OSFamily})
+	details := map[string]any{"name": t.Name, "address": t.Address, "os_family": t.OSFamily}
+	if t.IsApplication() {
+		details["origins"] = origins(t)
+	}
+	h.record(r, audit.TargetCreate, t.ID, audit.Success, details)
 	httpx.WriteJSON(w, http.StatusCreated, t)
 }
 
@@ -166,6 +173,7 @@ func (h *AdminHandler) update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	before := map[string]any{"name": t.Name, "address": t.Address, "status": t.Status}
+	beforeOrigins := origins(t)
 	body.apply(t)
 	if !h.addressAllowed(w, r, audit.TargetUpdate, t.ID, t) {
 		return
@@ -174,15 +182,26 @@ func (h *AdminHandler) update(w http.ResponseWriter, r *http.Request) {
 		h.fail(w, r, err)
 		return
 	}
-	details := map[string]any{"before": before, "after": map[string]any{"name": t.Name, "address": t.Address, "status": t.Status}}
+	after := map[string]any{"name": t.Name, "address": t.Address, "status": t.Status}
+	if len(beforeOrigins) > 0 || t.IsApplication() {
+		before["origins"], after["origins"] = beforeOrigins, origins(t)
+	}
+	details := map[string]any{"before": before, "after": after}
 	if before["address"] != t.Address {
 		// Repo.Update cleared the host key and certificate pins with it.
 		details["trust_reset"] = true
 	}
+	// An application's session reaches the origins it started with; one
+	// taken off the application is cut off with the session, not left
+	// reachable until its limits end it.
+	removed := slices.DeleteFunc(slices.Clone(beforeOrigins), func(o string) bool { return slices.Contains(origins(t), o) })
+	if len(removed) > 0 {
+		details["origins_removed"] = removed
+	}
 	// A target taken out of service, or moved to an address nobody has
 	// trusted yet, keeps no session: what was admitted to the old target
 	// ends now rather than at its own limits.
-	if h.Revoker != nil && ((before["status"] == StatusActive && t.Status == StatusDisabled) || before["address"] != t.Address) {
+	if h.Revoker != nil && ((before["status"] == StatusActive && t.Status == StatusDisabled) || before["address"] != t.Address || len(removed) > 0) {
 		details["live_sessions_ended"] = h.Revoker.TargetDisabled(t.ID)
 	}
 	h.record(r, audit.TargetUpdate, t.ID, audit.Success, details)
@@ -617,13 +636,47 @@ func (h *AdminHandler) unsetCredential(w http.ResponseWriter, r *http.Request) {
 // database target is never probed, so for one this is the only check its
 // address meets before a session; a name is checked each time it resolves.
 func (h *AdminHandler) addressAllowed(w http.ResponseWriter, r *http.Request, action, id string, t *Target) bool {
-	err := h.Prober.CheckLiteral(t.Address)
-	if err == nil {
-		return true
+	for _, addr := range literalHosts(t) {
+		if err := h.Prober.CheckLiteral(addr); err != nil {
+			h.record(r, action, id, audit.Failure, map[string]any{"name": t.Name, "address": strings.TrimSpace(addr), "reason": "address_forbidden"})
+			h.fail(w, r, err)
+			return false
+		}
 	}
-	h.record(r, action, id, audit.Failure, map[string]any{"name": t.Name, "address": strings.TrimSpace(t.Address), "reason": "address_forbidden"})
-	h.fail(w, r, err)
-	return false
+	return true
+}
+
+// literalHosts is every address a target is reached at that can be checked
+// before anything is resolved: its address and, for an application, the
+// host of its upstream and of each endpoint. The console sends no address
+// for an application (the server derives it from the upstream), so its
+// hosts are read from the origins themselves; one that does not parse is
+// left to Validate.
+func literalHosts(t *Target) []string {
+	out := []string{t.Address}
+	if strings.TrimSpace(t.AppUpstream) == "" {
+		return out
+	}
+	raws := []string{t.AppUpstream}
+	for _, e := range t.AppEndpoints {
+		raws = append(raws, e.URL)
+	}
+	for _, raw := range raws {
+		if u, err := url.Parse(strings.TrimSpace(raw)); err == nil && u.Hostname() != "" {
+			out = append(out, u.Hostname())
+		}
+	}
+	return out
+}
+
+// origins is an application's origins, upstream first, as stored; none for
+// any other target.
+func origins(t *Target) []string {
+	var out []string
+	for _, e := range t.Endpoints() {
+		out = append(out, e.URL)
+	}
+	return out
 }
 
 func (h *AdminHandler) record(r *http.Request, action, id string, outcome audit.Outcome, details any) {

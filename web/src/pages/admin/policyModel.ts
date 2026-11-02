@@ -66,6 +66,13 @@ export function unfound(t: Pick<Target, 'capabilities' | 'os_family'>, chosen: P
   return { missing: usualFor('host', t).filter((p) => !found.includes(p) && !stale.includes(p)), stale }
 }
 
+/** filesMove says whether a grant of kind can carry file transfer: hosts and
+ *  autoscaling groups, over SSH and RDP; never a database or an application,
+ *  where the server clears it (2026-11-02). */
+export function filesMove(kind: TargetKind): boolean {
+  return kind === 'host' || kind === 'autoscaling'
+}
+
 /** A new grant of kind, with the defaults the server would fill. */
 export function newGrant(kind: TargetKind = 'host', conditionsFrom?: PolicyGrant): PolicyGrant {
   const base: PolicyGrant = {
@@ -75,7 +82,7 @@ export function newGrant(kind: TargetKind = 'host', conditionsFrom?: PolicyGrant
   if (!conditionsFrom) return base
   const { access, sign_in, require_mfa, allow_clipboard, allow_file_transfer, idle_timeout_minutes, max_session_minutes, time_windows, retention_days } = conditionsFrom
   return {
-    ...base, access, sign_in: kind === 'application' ? 'target' : sign_in, require_mfa, allow_clipboard, allow_file_transfer,
+    ...base, access, sign_in: kind === 'application' ? 'target' : sign_in, require_mfa, allow_clipboard, allow_file_transfer: filesMove(kind) && allow_file_transfer,
     ...(kind === 'application' && conditionsFrom.allow_devtools ? { allow_devtools: true } : {}),
     idle_timeout_minutes, max_session_minutes, time_windows: time_windows.map((w) => ({ ...w, days: [...w.days] })), retention_days,
   }
@@ -154,6 +161,38 @@ export interface GrantDraft {
   max: string
   retention: string
   windows: TimeWindow[]
+  /** What the grant held for the type it was last switched away from; never sent. */
+  left?: KindChoice
+}
+
+/** A grant's choices that belong to its type. */
+export interface KindChoice {
+  kind: TargetKind
+  targets: Record<string, Protocol[]>
+  tagProtocols: Protocol[]
+  sign_in: 'target' | 'own'
+}
+
+/** The tag protocols a grant of kind starts with. */
+export function startProtocols(kind: TargetKind): Protocol[] {
+  return kind === 'database' || kind === 'application' ? [...kindProtocols[kind]] : ['ssh']
+}
+
+/**
+ * switchKind changes a grant's type. Each type has its own targets and
+ * protocols, so the new one starts empty; but a person who only looks at
+ * another type and comes back gets their choices back (the live console,
+ * 2026-11-02: two hosts ticked, a glance at Application, and the hosts were
+ * gone). The choices of the type left are kept until something is chosen in
+ * another; then the grant has moved on, and they go.
+ */
+export function switchKind(d: GrantDraft, kind: TargetKind): GrantDraft {
+  if (kind === d.kind) return d
+  const start = startProtocols(d.kind)
+  const chose = Object.keys(d.targets).length > 0 || d.tagProtocols.length !== start.length || d.tagProtocols.some((p) => !start.includes(p))
+  const left: KindChoice | undefined = chose ? { kind: d.kind, targets: d.targets, tagProtocols: d.tagProtocols, sign_in: d.sign_in } : d.left
+  if (left?.kind === kind) return { ...d, kind, targets: left.targets, tagProtocols: left.tagProtocols, sign_in: left.sign_in, left: undefined }
+  return { ...d, kind, targets: {}, tagProtocols: startProtocols(kind), sign_in: kind === 'application' ? 'target' : d.sign_in, left }
 }
 
 export function toDraft(g: PolicyGrant): GrantDraft {
@@ -197,7 +236,7 @@ export function fromDraft(d: GrantDraft, nameOf: (id: string) => string): { gran
       ...(d.id ? { id: d.id } : {}),
       kind: d.kind, targets, ...(hasTags ? { tags: { match, protocols: tagProtocols } } : {}),
       access: d.access, sign_in: d.kind === 'application' ? 'target' : d.sign_in, require_mfa: d.require_mfa,
-      allow_clipboard: d.allow_clipboard, allow_file_transfer: d.allow_file_transfer, idle_timeout_minutes: idle,
+      allow_clipboard: d.allow_clipboard, allow_file_transfer: filesMove(d.kind) && d.allow_file_transfer, idle_timeout_minutes: idle,
       ...(d.kind === 'application' && d.allow_devtools ? { allow_devtools: true } : {}),
       max_session_minutes: max, time_windows: d.windows.map((w) => ({ ...w, tz: w.tz || 'UTC' })), retention_days: retention,
     },

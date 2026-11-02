@@ -5,10 +5,11 @@
 // container (the gateway's own image running `zanskar apprelay`) that is
 // also attached to the runtime's default bridge, and a browser container
 // (Chromium in kiosk mode behind a VNC server) on the internal network
-// alone. The relay forwards the upstream's one port to the resolved upstream
-// address and the browser's VNC port to the bridge side, where guacd takes
-// it; the browser's resolver maps the upstream's name to the relay and
-// everything else to nothing. What guacd draws is bridged, recorded and
+// alone. The relay is the browser's SOCKS5 proxy to the application's
+// origins, each dialled at the address the gateway resolved (ADR 0037,
+// amended 2026-11-02), and forwards the browser's VNC port to the bridge
+// side, where guacd takes it; the browser's resolver maps every name but the
+// relay's to nothing. What guacd draws is bridged, recorded and
 // torn down by the desktop path, unchanged; Close removes the three objects
 // and the reaper in package containers removes what a crash left.
 package browsergw
@@ -47,11 +48,17 @@ const SeccompFile = "browser-seccomp.json"
 // Spec is one application session's browser.
 type Spec struct {
 	SessionID string
+	// Name is the application's, the name of its bookmarks.
+	Name string
 	// Upstream is the application's origin, scheme://host[:port], as the
-	// target stores it; UpstreamIP is its host resolved by the gateway
-	// through the address rules, the only address the relay dials.
+	// target stores it, and the page the browser opens; UpstreamIP is its
+	// host resolved by the gateway through the address rules, the only
+	// address the relay dials for it.
 	Upstream   *url.URL
 	UpstreamIP net.IP
+	// Endpoints are the application's further origins the session reaches,
+	// each with the address resolved for it the same way.
+	Endpoints []Endpoint
 	// TLSCA is an optional PEM bundle an https upstream is verified against,
 	// installed in the browser's certificate store for the session.
 	TLSCA string
@@ -66,6 +73,14 @@ type Spec struct {
 	// StateDir is where the seccomp profile is written for the daemon to
 	// read.
 	StateDir string
+}
+
+// Endpoint is one more origin of the application: its bookmark name, the
+// origin, and the address the gateway resolved for its host.
+type Endpoint struct {
+	Name string
+	URL  *url.URL
+	IP   net.IP
 }
 
 // Session is a running browser and where guacd reaches it.
@@ -126,10 +141,18 @@ func upstreamPort(u *url.URL) int {
 // addresses is the internal one once the bridge is attached.
 func relayArgs(spec Spec, network, relayName, browserName, subnet string) (args, env []string, err error) {
 	port := upstreamPort(spec.Upstream)
+	// The upstream's own forward stays beside the proxy: a browser image
+	// from before the proxy, which an administrator may have pinned, maps
+	// the upstream's name to the relay and reaches the upstream through it.
+	routes := []apprelay.Route{{Host: spec.Upstream.Hostname(), Port: port, To: net.JoinHostPort(spec.UpstreamIP.String(), strconv.Itoa(port))}}
+	for _, e := range spec.Endpoints {
+		p := upstreamPort(e.URL)
+		routes = append(routes, apprelay.Route{Host: e.URL.Hostname(), Port: p, To: net.JoinHostPort(e.IP.String(), strconv.Itoa(p))})
+	}
 	cfg := apprelay.Config{Forwards: []apprelay.Forward{
 		{Listen: "internal:" + strconv.Itoa(port), To: net.JoinHostPort(spec.UpstreamIP.String(), strconv.Itoa(port))},
 		{Listen: ":5900", To: net.JoinHostPort(browserName, "5900"), Once: true, Retry: apprelay.Duration(20 * time.Second)},
-	}, InternalSubnet: subnet}
+	}, SOCKS: &apprelay.SOCKS{Listen: "internal:" + strconv.Itoa(socksPort(spec)), Allow: routes}, InternalSubnet: subnet}
 	raw, err := marshal(cfg)
 	if err != nil {
 		return nil, nil, err
@@ -149,32 +172,36 @@ func relayArgs(spec Spec, network, relayName, browserName, subnet string) (args,
 // browserArgs builds the browser's `docker run` and its environment: the
 // policy directory is a tmpfs owned by the browser's user (the image's
 // directory is root's, and a tmpfs takes the mode of what it covers), the
-// URL, the origin the policy allows, the resolver rule that maps the
-// upstream's name to the relay and everything else to nothing, the VNC
-// password, the screen and the CA bundle. The values travel by name; the
-// argument vector shows only the names.
-func browserArgs(spec Spec, network, browserName, relayInternalIP, password, seccompPath string) (args, env []string) {
+// Chromium policy whole, the URL and the origin (which an image from before
+// the policy builds its own from), the resolver rule, the VNC password, the
+// screen and the CA bundle. The values travel by name; the argument vector
+// shows only the names.
+func browserArgs(spec Spec, network, browserName, relayInternalIP, password, seccompPath string) (args, env []string, err error) {
 	args = append([]string{"run", "-d", "--rm", "--name", browserName, "--network", network}, containers.Labels(spec.SessionID)...)
 	args = append(args,
 		"--read-only", "--tmpfs", "/tmp:rw,size=512m", "--tmpfs", "/etc/chromium/policies/managed:rw,size=1m,uid=10001,gid=10001,mode=700",
 		"--security-opt", "no-new-privileges", "--security-opt", "seccomp="+seccompPath, "--cap-drop", "ALL",
 		"--pids-limit", "512", "--memory", "1536m", "--cpus", "2",
 		"-e", "APP_URL", "-e", "APP_ORIGIN", "-e", "RESOLVER_RULES", "-e", "VNC_PASSWORD", "-e", "SCREEN_W", "-e", "SCREEN_H", "-e", "CA_PEM",
-		"-e", "DEVTOOLS",
+		"-e", "DEVTOOLS", "-e", "POLICY_JSON",
 		spec.BrowserImage,
 	)
-	origin := spec.Upstream.Scheme + "://" + spec.Upstream.Host
+	policy, err := policyJSON(spec, relayInternalIP)
+	if err != nil {
+		return nil, nil, err
+	}
 	env = []string{
-		"APP_URL=" + origin + "/",
-		"APP_ORIGIN=" + origin,
-		"RESOLVER_RULES=MAP " + spec.Upstream.Hostname() + " " + relayInternalIP + ", MAP * ~NOTFOUND",
+		"APP_URL=" + origin(spec.Upstream) + "/",
+		"APP_ORIGIN=" + origin(spec.Upstream),
+		"RESOLVER_RULES=" + resolverRules(spec, relayInternalIP),
+		"POLICY_JSON=" + policy,
 		"VNC_PASSWORD=" + password,
 		"SCREEN_W=" + strconv.Itoa(spec.Width),
 		"SCREEN_H=" + strconv.Itoa(spec.Height),
 		"CA_PEM=" + spec.TLSCA,
 		"DEVTOOLS=" + strconv.FormatBool(spec.DevTools),
 	}
-	return args, env
+	return args, env, nil
 }
 
 // writeSeccomp puts the profile under the state directory, rewriting it
@@ -235,6 +262,11 @@ func Start(ctx context.Context, log *slog.Logger, docker string, spec Spec) (*Se
 	}
 	if spec.Upstream == nil || spec.UpstreamIP == nil || spec.SessionID == "" || spec.BrowserImage == "" || spec.RelayImage == "" {
 		return nil, errors.New("browsergw: incomplete spec")
+	}
+	for _, e := range spec.Endpoints {
+		if e.URL == nil || e.IP == nil {
+			return nil, errors.New("browsergw: incomplete spec: an endpoint without its origin or address")
+		}
 	}
 	if spec.Width <= 0 || spec.Height <= 0 {
 		spec.Width, spec.Height = 1280, 800
@@ -313,7 +345,10 @@ func Start(ctx context.Context, log *slog.Logger, docker string, spec Spec) (*Se
 	}
 	s.VNCAddr = net.JoinHostPort(bridgeIP, "5900")
 
-	bargs, benv := browserArgs(spec, network, browser, s.InternalIP, password, seccompPath)
+	bargs, benv, err := browserArgs(spec, network, browser, s.InternalIP, password, seccompPath)
+	if err != nil {
+		return fail(err)
+	}
 	if err := containers.Run(suCtx, docker, benv, bargs...); err != nil {
 		return fail(fmt.Errorf("browsergw: start browser: %w", err))
 	}

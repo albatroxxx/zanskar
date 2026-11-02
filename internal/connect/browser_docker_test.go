@@ -96,6 +96,13 @@ type realApp struct {
 // ZANSKAR_TEST_BROWSER_IMAGE naming a built browser image.
 func openRealApp(t *testing.T, ctx context.Context, prepare func(nginxName string)) *realApp {
 	t.Helper()
+	return openRealAppWith(t, ctx, prepare, nil, nil)
+}
+
+// openRealAppWith is openRealApp for an application with further origins,
+// whose names resolver answers (nil: the system's).
+func openRealAppWith(t *testing.T, ctx context.Context, prepare func(nginxName string), endpoints []target.AppEndpoint, resolver target.Resolver) *realApp {
+	t.Helper()
 	dbtest.RequireDocker(t)
 	browserImage := os.Getenv("ZANSKAR_TEST_BROWSER_IMAGE")
 	if browserImage == "" {
@@ -127,7 +134,7 @@ func openRealApp(t *testing.T, ctx context.Context, prepare func(nginxName strin
 	f.h.GuacdAddr = func() string { return guacdAddr }
 	f.h.Storage = &recording.LocalStorage{Dir: t.TempDir()}
 	f.h.Registry = gateway.NewRegistry()
-	f.h.Prober = &target.Prober{}
+	f.h.Prober = &target.Prober{Resolver: resolver}
 	f.h.DialTimeout = 20 * time.Second
 	f.h.DockerPath = "docker"
 	f.h.StateDir = t.TempDir()
@@ -139,7 +146,7 @@ func openRealApp(t *testing.T, ctx context.Context, prepare func(nginxName strin
 	if err := f.h.Policies.Create(f.ctx, apps); err != nil {
 		t.Fatal(err)
 	}
-	tg := &target.Target{Name: "nginx", AppUpstream: "http://" + upstreamIP, Tags: map[string]string{"app": "yes"}}
+	tg := &target.Target{Name: "nginx", AppUpstream: "http://" + upstreamIP, AppEndpoints: endpoints, Tags: map[string]string{"app": "yes"}}
 	if err := f.h.Targets.Create(f.ctx, tg); err != nil {
 		t.Fatal(err)
 	}
@@ -529,5 +536,103 @@ func TestBrowserEntrypointPolicy(t *testing.T) {
 	}
 	if !slices.Contains(list(on, "URLBlocklist"), "chrome://*") {
 		t.Errorf("granting developer tools must not open chrome:// pages: %v", on["URLBlocklist"])
+	}
+}
+
+// TestApplicationEndpointsThroughRealBrowser (ADR 0037, amended 2026-11-02):
+// with the browser image, the relay built from this tree and real
+// upstreams, the session's own browser, the one the person sees, opens the
+// application's upstream, a further origin named by IP literal and one named
+// by a host the gateway resolved and pinned, all through the relay's SOCKS
+// proxy, and shows its blocked page for an address outside the application;
+// the policy it was given lists the origins as one bookmarks folder. Each
+// address is handed to the running browser as a new tab (as a bookmark opens
+// one, without the address bar's guessing, which takes a reserved name for a
+// search) and the page is read from the window's title, which is the active
+// tab's. A headless Chromium beside it in the container hangs, so it is no
+// probe. Needs ZANSKAR_TEST_DOCKER=1 and ZANSKAR_TEST_BROWSER_IMAGE naming a
+// browser image with this tree's entrypoint.
+func TestApplicationEndpointsThroughRealBrowser(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Minute)
+	defer cancel()
+	dbtest.RequireDocker(t)
+	if os.Getenv("ZANSKAR_TEST_BROWSER_IMAGE") == "" {
+		t.Skip("set ZANSKAR_TEST_BROWSER_IMAGE to a built deploy/browser image")
+	}
+	html := func(title string) string {
+		return "echo '<html><head><title>" + title + "</title></head><body>" + title + "</body></html>' > /usr/share/nginx/html/index.html"
+	}
+	page := func(name, title string) string {
+		t.Helper()
+		c, ip := container(t, "zanskar-test-"+name, "nginx:alpine")
+		dbtest.Docker(t, "exec", c, "sh", "-c", html(title))
+		return ip
+	}
+	byIP := page("endpoint-ip", "ENDPOINT-BY-IP")
+	byName := page("endpoint-name", "ENDPOINT-BY-NAME")
+	outside := page("outside", "OUTSIDE-THE-APPLICATION")
+	app := openRealAppWith(t, ctx, func(nginx string) {
+		dbtest.Docker(t, "exec", nginx, "sh", "-c", html("THE-UPSTREAM"))
+	}, []target.AppEndpoint{
+		{Name: "By IP", URL: "http://" + byIP},
+		{Name: "By name", URL: "http://api.zanskar.invalid"},
+	}, fakeResolver{"api.zanskar.invalid": {byName}})
+	browser := "zanskar-browser-" + app.sessionID
+	upstream := dbtest.Docker(t, "inspect", "-f", "{{.NetworkSettings.Networks.bridge.IPAddress}}", app.nginx)
+
+	title := func() string {
+		out, _ := exec.CommandContext(ctx, "docker", "exec", "-e", "DISPLAY=:1", browser, "xdotool", "getwindowfocus", "getwindowname").Output() // #nosec G204 -- fixed test arguments
+		return strings.TrimSpace(string(out))
+	}
+	// The start page is the upstream.
+	var got string
+	for range 60 {
+		if got = title(); strings.Contains(got, "THE-UPSTREAM") {
+			break
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+	if !strings.Contains(got, "THE-UPSTREAM") {
+		t.Fatalf("the browser did not open the upstream: window title %q", got)
+	}
+	// open hands u to the running browser and waits up to limit for the
+	// window's title to hold want; it returns the last title seen.
+	open := func(u, want string, limit time.Duration) string {
+		t.Helper()
+		dbtest.Docker(t, "exec", "-d", browser, "sh", "-c", `chromium --user-data-dir="$HOME/profile" "$1" >/dev/null 2>&1`, "open", u)
+		var last string
+		for deadline := time.Now().Add(limit); time.Now().Before(deadline); time.Sleep(250 * time.Millisecond) {
+			if last = title(); strings.Contains(last, want) {
+				break
+			}
+		}
+		return last
+	}
+	for _, c := range []struct{ url, want string }{
+		{"http://" + byIP + "/", "ENDPOINT-BY-IP"},
+		{"http://api.zanskar.invalid/", "ENDPOINT-BY-NAME"},
+		{"http://" + upstream + "/", "THE-UPSTREAM"},
+	} {
+		if got := open(c.url, c.want, 15*time.Second); !strings.Contains(got, c.want) {
+			relay, _ := exec.CommandContext(ctx, "docker", "logs", "zanskar-apprelay-"+app.sessionID).CombinedOutput() // #nosec G204 -- fixed test arguments
+			t.Errorf("%s: window title %q, want %s\nrelay said: %.1500s", c.url, got, c.want, relay)
+		}
+	}
+	if got := open("http://"+outside+"/", "OUTSIDE-THE-APPLICATION", 5*time.Second); strings.Contains(got, "OUTSIDE-THE-APPLICATION") {
+		t.Errorf("the browser reached an address that is not one of the application's origins (window title %q)", got)
+	}
+	raw := dbtest.Docker(t, "exec", browser, "cat", "/etc/chromium/policies/managed/zanskar.json")
+	var p map[string]any
+	if err := json.Unmarshal([]byte(raw), &p); err != nil {
+		t.Fatalf("the browser's policy is not JSON: %v\n%s", err, raw)
+	}
+	marks, _ := json.Marshal(p["ManagedBookmarks"])
+	for _, want := range []string{`"toplevel_name":"nginx"`, `"name":"By IP","url":"http://` + byIP + `/"`, `"name":"By name","url":"http://api.zanskar.invalid/"`} {
+		if !strings.Contains(string(marks), want) {
+			t.Errorf("bookmarks miss %s: %s", want, marks)
+		}
+	}
+	if p["BookmarkBarEnabled"] != true {
+		t.Errorf("the bookmarks bar is off: %v", p["BookmarkBarEnabled"])
 	}
 }

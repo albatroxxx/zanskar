@@ -138,7 +138,14 @@ type reachableTarget struct {
 	// OwnLogin lists the allowed protocols on which the user may sign in with
 	// their own login instead of the target's (ADR 0036, sign_in own): the
 	// portal offers "Use my own login" beside them.
-	OwnLogin     []string `json:"own_login,omitempty"`
+	OwnLogin []string `json:"own_login,omitempty"`
+	// ManagedLogin lists the allowed protocols whose session Zanskar signs
+	// in to itself, with a credential it holds: a deciding grant lets the
+	// target's slot decide, and the slot holds a vaulted credential (a
+	// password, a key, an SSH authority, EC2 Instance Connect), not the
+	// prompt for the user's own login. The portal colours those apart
+	// (2026-11-02): the person can tell privileged access from their own.
+	ManagedLogin []string `json:"managed_login,omitempty"`
 	HostKeyReady bool     `json:"host_key_ready"`
 	// PrivateIP is shown only when the target's address is a private (RFC1918 /
 	// ULA) IP, to help users tell their machines apart. A public address or a
@@ -162,6 +169,31 @@ func (h *Handler) myTargets(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	now := time.Now()
+	// managed is ManagedLogin: of the protocols whose slot decides, the ones
+	// bound to a vaulted credential. A credential's mode is looked up once
+	// per request, however many targets share it; one that cannot be read
+	// counts as not managed, and connect says why when it is used.
+	modes := map[string]credential.Mode{}
+	managed := func(slot []string, creds map[target.Protocol]string) []string {
+		var out []string
+		for _, p := range slot {
+			id := creds[target.Protocol(p)]
+			if id == "" || h.Vault == nil {
+				continue
+			}
+			m, seen := modes[id]
+			if !seen {
+				if c, err := h.Vault.Get(r.Context(), id); err == nil {
+					m = c.Mode
+				}
+				modes[id] = m
+			}
+			if m == credential.ModeVaulted {
+				out = append(out, p)
+			}
+		}
+		return out
+	}
 	after := ""
 	for {
 		batch, next, err := h.Targets.List(r.Context(), after, 500, target.ListFilter{})
@@ -176,7 +208,7 @@ func (h *Handler) myTargets(w http.ResponseWriter, r *http.Request) {
 			if t.IsApplication() {
 				// An application (ADR 0034) opens in an isolated browser
 				// through a ticket like a desktop; nothing of it is probed.
-				allowed, needApproval, _ := reach(pols, policy.TargetRef{Kind: t.Kind(), ID: t.ID, Tags: t.Tags}, []target.Protocol{target.HTTP}, now)
+				allowed, needApproval, _, _ := reach(pols, policy.TargetRef{Kind: t.Kind(), ID: t.ID, Tags: t.Tags}, []target.Protocol{target.HTTP}, now)
 				if len(allowed) == 0 {
 					continue
 				}
@@ -198,7 +230,7 @@ func (h *Handler) myTargets(w http.ResponseWriter, r *http.Request) {
 				}
 				protos = []target.Protocol{target.Database}
 			}
-			allowed, needApproval, ownLogin := reach(pols, policy.TargetRef{Kind: t.Kind(), ID: t.ID, Tags: t.Tags}, protos, now)
+			allowed, needApproval, ownLogin, slot := reach(pols, policy.TargetRef{Kind: t.Kind(), ID: t.ID, Tags: t.Tags}, protos, now)
 			if len(allowed) == 0 {
 				continue
 			}
@@ -211,7 +243,8 @@ func (h *Handler) myTargets(w http.ResponseWriter, r *http.Request) {
 			}
 			out = append(out, reachableTarget{
 				Kind: "target", ID: t.ID, Name: t.Name, OSFamily: t.OSFamily, Tags: t.Tags, Capabilities: t.Capabilities,
-				Allowed: allowed, RequiresApproval: needApproval, OwnLogin: ownLogin, HostKeyReady: t.HostKeyStatus == target.HostKeyTrusted, PrivateIP: privateIP, Engine: t.Engine,
+				Allowed: allowed, RequiresApproval: needApproval, OwnLogin: ownLogin, ManagedLogin: managed(slot, t.Credentials),
+				HostKeyReady: t.HostKeyStatus == target.HostKeyTrusted, PrivateIP: privateIP, Engine: t.Engine,
 			})
 		}
 		if next == "" {
@@ -226,7 +259,7 @@ func (h *Handler) myTargets(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		for _, g := range groups {
-			allowed, needApproval, ownLogin := reach(pols, policy.TargetRef{Kind: protocol.KindAutoscaling, ASGID: g.ID, Tags: g.Tags}, g.Capabilities, now)
+			allowed, needApproval, ownLogin, slot := reach(pols, policy.TargetRef{Kind: protocol.KindAutoscaling, ASGID: g.ID, Tags: g.Tags}, g.Capabilities, now)
 			if len(allowed) == 0 {
 				continue
 			}
@@ -244,7 +277,7 @@ func (h *Handler) myTargets(w http.ResponseWriter, r *http.Request) {
 			}
 			out = append(out, reachableTarget{
 				Kind: "asg", ID: g.ID, Name: g.Name, OSFamily: g.OSFamily, Tags: g.Tags, Capabilities: g.Capabilities,
-				Allowed: allowed, RequiresApproval: needApproval, OwnLogin: ownLogin, HostKeyReady: true, HealthyCount: healthy, InstanceCnt: live,
+				Allowed: allowed, RequiresApproval: needApproval, OwnLogin: ownLogin, ManagedLogin: managed(slot, g.Credentials), HostKeyReady: true, HealthyCount: healthy, InstanceCnt: live,
 			})
 		}
 	}
@@ -252,9 +285,10 @@ func (h *Handler) myTargets(w http.ResponseWriter, r *http.Request) {
 }
 
 // reach returns the protocols of protos the policies allow on ref, the ones
-// of those that need an approved request first (ADR 0018), and the ones on
-// which the user may sign in with their own login (ADR 0036).
-func reach(pols []*policy.Policy, ref policy.TargetRef, protos []target.Protocol, now time.Time) (allowed, needApproval, ownLogin []string) {
+// of those that need an approved request first (ADR 0018), the ones on
+// which the user may sign in with their own login, and the ones on which the
+// target's slot decides how (ADR 0036).
+func reach(pols []*policy.Policy, ref policy.TargetRef, protos []target.Protocol, now time.Time) (allowed, needApproval, ownLogin, slot []string) {
 	for _, proto := range protos {
 		d := policy.Evaluate(pols, ref, string(proto), now)
 		if !d.Allowed {
@@ -267,8 +301,11 @@ func reach(pols []*policy.Policy, ref policy.TargetRef, protos []target.Protocol
 		if d.SignInOwn {
 			ownLogin = append(ownLogin, string(proto))
 		}
+		if d.SignInTarget {
+			slot = append(slot, string(proto))
+		}
 	}
-	return allowed, needApproval, ownLogin
+	return allowed, needApproval, ownLogin, slot
 }
 
 type connectRequest struct {

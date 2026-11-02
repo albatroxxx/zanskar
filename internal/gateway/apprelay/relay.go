@@ -67,9 +67,35 @@ func (d *Duration) UnmarshalJSON(b []byte) error {
 	return nil
 }
 
+// SOCKS is how the browser reaches an application's origins (ADR 0037,
+// amended 2026-11-02): a SOCKS5 listener on the session network that takes
+// CONNECT for exactly the host:port pairs in Allow and dials, for each, the
+// address the gateway resolved under the address rules. The browser names
+// the host it wants and never resolves one; the relay never resolves one
+// either, so a name means what the gateway checked when the session began.
+type SOCKS struct {
+	// Listen is "internal:<port>": the session network only, never the
+	// bridge, where it would let any container there reach the origins.
+	Listen string  `json:"listen"`
+	Allow  []Route `json:"allow"`
+}
+
+// Route is one origin's host and port as the browser asks for them, and the
+// address that answers.
+type Route struct {
+	// Host is a hostname or an IP literal, compared without case, a
+	// trailing dot or brackets.
+	Host string `json:"host"`
+	Port int    `json:"port"`
+	// To is ip:port, the pinned answer; never a name.
+	To string `json:"to"`
+}
+
 // Config is the relay's whole table.
 type Config struct {
 	Forwards []Forward `json:"forwards"`
+	// SOCKS, when set, is the browser's way to the application's origins.
+	SOCKS *SOCKS `json:"socks,omitempty"`
 	// InternalSubnet is the session network's subnet, CIDR; an "internal:"
 	// listen binds the relay's address inside it. The gateway attaches the
 	// relay to the bridge right after starting it, so by the time the relay
@@ -88,10 +114,15 @@ func Parse(raw []byte) (Config, error) {
 }
 
 // Validate refuses an empty table, a listen that is not a port, and a
-// backend that is not host:port.
+// backend that is not host:port; for SOCKS, a listen off the session
+// network or shared with a forward, and a route that repeats another or
+// whose answer is a name.
 func (c *Config) Validate() error {
-	if len(c.Forwards) == 0 {
+	if len(c.Forwards) == 0 && c.SOCKS == nil {
 		return errors.New("apprelay config: no forwards")
+	}
+	if err := c.validSOCKS(); err != nil {
+		return err
 	}
 	if c.InternalSubnet != "" {
 		if _, _, err := net.ParseCIDR(c.InternalSubnet); err != nil {
@@ -135,6 +166,61 @@ func listenPort(listen string) (int, error) {
 	return n, nil
 }
 
+// validSOCKS checks the SOCKS section, when there is one.
+func (c *Config) validSOCKS() error {
+	s := c.SOCKS
+	if s == nil {
+		return nil
+	}
+	if !strings.HasPrefix(s.Listen, "internal:") {
+		return errors.New(`apprelay config: socks listen must be "internal:<port>"`)
+	}
+	port, err := listenPort(s.Listen)
+	if err != nil {
+		return fmt.Errorf("apprelay config: socks: %w", err)
+	}
+	for _, f := range c.Forwards {
+		if p, _ := listenPort(f.Listen); p == port {
+			return fmt.Errorf("apprelay config: socks listens on %d, as a forward does", port)
+		}
+	}
+	if len(s.Allow) == 0 {
+		return errors.New("apprelay config: socks allows nothing")
+	}
+	seen := map[string]bool{}
+	for i, rt := range s.Allow {
+		host := normHost(rt.Host)
+		if host == "" || rt.Port < 1 || rt.Port > 65535 {
+			return fmt.Errorf("apprelay config: socks route %d: host and a port 1-65535 are required", i)
+		}
+		key := net.JoinHostPort(host, strconv.Itoa(rt.Port))
+		if seen[key] {
+			return fmt.Errorf("apprelay config: socks route %d repeats %s", i, key)
+		}
+		seen[key] = true
+		ip, p, err := net.SplitHostPort(rt.To)
+		if err != nil || net.ParseIP(ip) == nil {
+			return fmt.Errorf("apprelay config: socks route %d: to must be ip:port, never a name", i)
+		}
+		if n, err := strconv.Atoi(p); err != nil || n < 1 || n > 65535 {
+			return fmt.Errorf("apprelay config: socks route %d: to has no valid port", i)
+		}
+	}
+	return nil
+}
+
+// normHost is a host as routes compare it: lowercase, without a trailing
+// dot or IPv6 brackets, and an IP literal in its canonical form, so the
+// browser's "APP.corp." and "[FD00::1]" find "app.corp" and "fd00::1".
+func normHost(h string) string {
+	h = strings.TrimSuffix(strings.ToLower(strings.TrimSpace(h)), ".")
+	h = strings.TrimSuffix(strings.TrimPrefix(h, "["), "]")
+	if ip := net.ParseIP(h); ip != nil {
+		return ip.String()
+	}
+	return h
+}
+
 // Relay runs a Config.
 type Relay struct {
 	Config Config
@@ -144,6 +230,9 @@ type Relay struct {
 	InternalIP string
 	// Dial is the backend dialer; nil uses net.Dialer with a 5 s timeout.
 	Dial func(ctx context.Context, addr string) (net.Conn, error)
+	// HandshakeTimeout bounds a SOCKS client's greeting and request; zero is
+	// 10 s.
+	HandshakeTimeout time.Duration
 }
 
 // Serve listens for every forward and pumps connections until ctx ends or
@@ -157,20 +246,21 @@ func (r *Relay) Serve(ctx context.Context) error {
 		r.Dial = func(ctx context.Context, addr string) (net.Conn, error) { return d.DialContext(ctx, "tcp", addr) }
 	}
 	var internal string
+	needInternal := r.Config.SOCKS != nil
 	for _, f := range r.Config.Forwards {
-		if strings.HasPrefix(f.Listen, "internal:") {
-			ip, err := r.internalIP()
-			if err != nil {
-				return err
-			}
-			internal = ip
-			break
+		needInternal = needInternal || strings.HasPrefix(f.Listen, "internal:")
+	}
+	if needInternal {
+		ip, err := r.internalIP()
+		if err != nil {
+			return err
 		}
+		internal = ip
 	}
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	var wg sync.WaitGroup
-	errc := make(chan error, len(r.Config.Forwards))
+	errc := make(chan error, len(r.Config.Forwards)+1)
 	lc := &net.ListenConfig{}
 	for _, f := range r.Config.Forwards {
 		port, _ := listenPort(f.Listen)
@@ -190,6 +280,22 @@ func (r *Relay) Serve(ctx context.Context) error {
 			defer wg.Done()
 			errc <- r.serveOne(ctx, f, ln)
 		}(f, ln)
+	}
+	if s := r.Config.SOCKS; s != nil {
+		port, _ := listenPort(s.Listen)
+		addr := net.JoinHostPort(internal, strconv.Itoa(port))
+		ln, err := lc.Listen(ctx, "tcp", addr)
+		if err != nil {
+			cancel()
+			wg.Wait()
+			return fmt.Errorf("apprelay: listen %s: %w", addr, err)
+		}
+		r.Log.Info("apprelay socks listening", "addr", ln.Addr().String(), "routes", len(s.Allow))
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			errc <- r.serveSOCKS(ctx, s, ln)
+		}()
 	}
 	wg.Wait()
 	close(errc)
@@ -244,6 +350,11 @@ func (r *Relay) pump(ctx context.Context, f Forward, c net.Conn) {
 		return
 	}
 	defer func() { _ = b.Close() }()
+	pipe(ctx, c, b)
+}
+
+// pipe copies c and b both ways until either side closes or ctx ends.
+func pipe(ctx context.Context, c, b net.Conn) {
 	done := make(chan struct{}, 2)
 	half := func(dst, src net.Conn) {
 		_, _ = io.Copy(dst, src)

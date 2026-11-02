@@ -193,6 +193,7 @@ describe('Rotating and deleting', () => {
     const user = userEvent.setup()
     await user.click(await screen.findByRole('button', { name: 'Rotate' }))
     const rotate = screen.getByRole('dialog', { name: 'Rotate deploy' })
+    expect(within(rotate).getByRole('status').textContent).toContain('Zanskar does not change the password on the machine. Change it there first')
     await user.type(within(rotate).getByLabelText('Password'), 'new one')
     await user.click(within(rotate).getByRole('button', { name: 'Rotate' }))
     await waitFor(() => expect(post).toHaveBeenCalledWith('/credentials/c1/rotate', { password: 'new one' }))
@@ -203,5 +204,25 @@ describe('Rotating and deleting', () => {
     expect(within(confirm).getByText('The sealed secret is destroyed. This cannot be undone.')).toBeDefined()
     await user.click(within(confirm).getByRole('button', { name: 'Delete' }))
     await waitFor(() => expect(del).toHaveBeenCalledWith('/credentials/c1'))
+  })
+
+  // Rotating never touches the account it signs in to. Read as changing the
+  // machines, it locked a Windows account out on a live install (2026-11-02).
+  it.each([
+    ['domain', 'Zanskar does not change the password in the domain. Change it there first'],
+    ['ssh_key', 'Zanskar does not put the key on the machine. Add the new public key to authorized_keys there first'],
+  ] as const)('says the %s account is changed elsewhere, first', async (type, words) => {
+    lists([credential({ type, domain: type === 'domain' ? 'CORP' : undefined })])
+    const post = vi.spyOn(api, 'post').mockResolvedValue({} as never)
+    render(<Credentials />)
+    const user = userEvent.setup()
+    await user.click(await screen.findByRole('button', { name: 'Rotate' }))
+    const rotate = screen.getByRole('dialog', { name: 'Rotate deploy' })
+    expect(within(rotate).getByRole('status').textContent).toContain(words)
+    // The notice is not the form's to submit: closing it leaves the dialog.
+    await user.click(within(rotate).getByRole('button', { name: 'Dismiss' }))
+    expect(within(rotate).queryByRole('status')).toBeNull()
+    expect(screen.getByRole('dialog', { name: 'Rotate deploy' })).toBeDefined()
+    expect(post).not.toHaveBeenCalled()
   })
 })

@@ -19,7 +19,12 @@ export function Applications() {
       columns={['Upstream', 'TLS', 'Tags']}
       cells={(t) => (
         <>
-          <td className="mono">{t.app_upstream}</td>
+          <td className="mono">
+            {t.app_upstream}
+            {(t.app_endpoints?.length ?? 0) > 0 && (
+              <span className="muted" title={t.app_endpoints?.map((e) => `${e.name}: ${e.url}`).join('\n')}> +{t.app_endpoints?.length}</span>
+            )}
+          </td>
           <td><StateIcon state={appTLS(t).verified ? 'ok' : 'warn'} label={'Upstream: ' + appTLS(t).label} /></td>
           <td><Tags tags={t.tags} /></td>
         </>

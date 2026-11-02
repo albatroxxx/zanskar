@@ -275,7 +275,12 @@ func (s *Syncer) Sync(ctx context.Context, p *Opened, opts SyncOptions) (*SyncSt
 	st, err := s.sync(ctx, p, opts)
 	st.At, st.OK = s.clock().UTC(), err == nil
 	if err != nil {
-		st.Error = err.Error()
+		// The console and the audit trail get the plain words; the log
+		// keeps the whole chain for whoever runs the gateway.
+		st.Error = PlainError(err)
+		if s.Log != nil {
+			s.Log.Warn("identity provider sync failed", "provider", p.Name, "err", err)
+		}
 	}
 	s.mu.Lock()
 	s.status[p.ID] = st

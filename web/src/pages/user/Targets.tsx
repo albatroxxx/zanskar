@@ -19,6 +19,16 @@ function pick(t: ReachableTarget, family: Protocol[]): Protocol | null {
   return null
 }
 
+/** SignInLegend says what a protocol button's colour means, in words, so the colour is never the only sign. */
+function SignInLegend() {
+  return (
+    <p className="muted signin-legend">
+      <span><span className="legend-swatch proto-managed" aria-hidden="true" />Zanskar signs you in</span>
+      <span><span className="legend-swatch proto-own" aria-hidden="true" />Your own login</span>
+    </p>
+  )
+}
+
 export function Targets() {
   const [items, setItems] = useState<ReachableTarget[] | null>(null)
   const [err, setErr] = useState('')
@@ -147,9 +157,13 @@ export function Targets() {
   // protoButtons renders one cell per protocol family. A machine's protocol is
   // a link that opens the session in a tab of its own (ADR 0038); an
   // autoscaling group's opens the instance chooser here (onPick). onRequest,
-  // when given, turns a gated protocol into a Request button; own, when set,
-  // adds "as me" where a grant lets the user sign in with their own login
-  // instead of the target's (ADR 0036).
+  // when given, turns a gated protocol into a Request button. Colour says who
+  // signs the person in (2026-11-02, in place of an "as me" button): green
+  // where Zanskar does, with a credential it holds (managed_login), the
+  // protocol's own colour where the person gives their own login. own, when
+  // set, offers the person's own login beside a green one where a grant lets
+  // them (ADR 0036), and in its place where the target's slot would not sign
+  // them in anyway.
   const protoButtons = (t: ReachableTarget, open: { link: true } | { onPick: (p: Protocol) => void }, onRequest?: (p: Protocol) => void, own?: boolean) => {
     const term = pick(t, terminalProtocols)
     const desk = pick(t, desktopProtocols)
@@ -162,27 +176,37 @@ export function Targets() {
           </button>
         )
       }
+      const managed = !!p && (t.managed_login ?? []).includes(p)
+      const ownToo = !!p && !!own && (t.own_login ?? []).includes(p)
+      const ownButton = (
+        blocked ? (
+          <button className={'btn sm' + colorClass} disabled aria-label={`${label} with my own login`} title={`${label}: your own login`}>{label}</button>
+        ) : (
+          <SessionLink intent={{ target: t.id, protocol: p as Protocol, own: true }} className={'btn sm' + colorClass} label={`${label} with my own login`} title={`${label}: your own login`}>
+            {label}
+          </SessionLink>
+        )
+      )
+      // The target's slot would ask for the person's login anyway: one
+      // button, their own login, which needs nothing bound to the slot.
+      if (ownToo && !managed) return ownButton
+      const cls = 'btn sm' + (managed ? ' proto-managed' : colorClass)
+      const says = managed ? `${label}: Zanskar signs you in` : `${label}: your own login`
       const main =
         p && !blocked && 'link' in open ? (
-          <SessionLink intent={{ target: t.id, protocol: p }} className={'btn sm' + colorClass} label={label} title={label}>
+          <SessionLink intent={{ target: t.id, protocol: p }} className={cls} label={label} title={says}>
             {label}
           </SessionLink>
         ) : (
-          <button className={'btn sm' + (p ? colorClass : '')} disabled={!p || blocked} onClick={() => p && 'onPick' in open && open.onPick(p)} title={p ? label : 'not allowed'}>
+          <button className={p ? cls : 'btn sm'} disabled={!p || blocked} onClick={() => p && 'onPick' in open && open.onPick(p)} title={p ? says : 'not allowed'}>
             {p ? label : '—'}
           </button>
         )
-      if (!p || !own || !(t.own_login ?? []).includes(p)) return main
+      if (!ownToo) return main
       return (
         <span className="actions">
           {main}
-          {blocked ? (
-            <button className="btn sm ghost" disabled aria-label={`${label} with my own login`} title="with my own login">as me</button>
-          ) : (
-            <SessionLink intent={{ target: t.id, protocol: p, own: true }} className="btn sm ghost" label={`${label} with my own login`} title="with my own login">
-              as me
-            </SessionLink>
-          )}
+          {ownButton}
         </span>
       )
     }
@@ -353,6 +377,7 @@ export function Targets() {
               </tbody>
             </table>
           )}
+          {statics && statics.length > 0 && <SignInLegend />}
         </div>
       )}
 
@@ -393,6 +418,7 @@ export function Targets() {
               </tbody>
             </table>
           )}
+          {groups && groups.length > 0 && <SignInLegend />}
         </div>
       )}
 

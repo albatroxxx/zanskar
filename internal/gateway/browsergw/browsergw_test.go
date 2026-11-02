@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net"
@@ -18,6 +19,8 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/albatroxxx/zanskar/internal/gateway/apprelay"
 )
 
 func spec(t *testing.T) Spec {
@@ -26,7 +29,7 @@ func spec(t *testing.T) Spec {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return Spec{SessionID: "s1", Upstream: u, UpstreamIP: net.ParseIP("10.0.0.50"), Width: 1440, Height: 900,
+	return Spec{SessionID: "s1", Name: "Wiki", Upstream: u, UpstreamIP: net.ParseIP("10.0.0.50"), Width: 1440, Height: 900,
 		BrowserImage: "ghcr.io/albatroxxx/zanskar-browser@sha256:" + strings.Repeat("ab", 32), RelayImage: "ghcr.io/albatroxxx/zanskar:1.7.0", StateDir: t.TempDir()}
 }
 
@@ -67,6 +70,38 @@ func TestRelayArgs(t *testing.T) {
 	}
 }
 
+// TestRelayArgsRoutesEveryOrigin (ADR 0037, amended 2026-11-02): the relay's
+// SOCKS proxy routes the upstream and each further origin, by the host the
+// browser names and the port it uses, to the address resolved for it, and
+// listens on a port the upstream's own forward does not hold.
+func TestRelayArgsRoutesEveryOrigin(t *testing.T) {
+	s := spec(t)
+	api, _ := url.Parse("https://api.internal")
+	byIP, _ := url.Parse("http://10.0.0.9:3000")
+	s.Endpoints = []Endpoint{{Name: "API", URL: api, IP: net.ParseIP("10.0.0.51")}, {Name: "Metrics", URL: byIP, IP: net.ParseIP("10.0.0.9")}}
+	_, env, err := relayArgs(s, "n", "r", "b", "172.30.0.0/16")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := apprelay.Parse([]byte(strings.TrimPrefix(env[0], "ZANSKAR_APPRELAY=")))
+	if err != nil {
+		t.Fatalf("the table the relay reads: %v", err)
+	}
+	want := []apprelay.Route{
+		{Host: "wiki.internal", Port: 8080, To: "10.0.0.50:8080"},
+		{Host: "api.internal", Port: 443, To: "10.0.0.51:443"},
+		{Host: "10.0.0.9", Port: 3000, To: "10.0.0.9:3000"},
+	}
+	if cfg.SOCKS == nil || cfg.SOCKS.Listen != "internal:1080" || fmt.Sprint(cfg.SOCKS.Allow) != fmt.Sprint(want) {
+		t.Fatalf("socks: %+v, want internal:1080 with %+v", cfg.SOCKS, want)
+	}
+	s.Upstream, _ = url.Parse("http://socks.internal:1080")
+	_, env, _ = relayArgs(s, "n", "r", "b", "172.30.0.0/16")
+	if cfg, err := apprelay.Parse([]byte(strings.TrimPrefix(env[0], "ZANSKAR_APPRELAY="))); err != nil || cfg.SOCKS.Listen != "internal:1081" {
+		t.Fatalf("an upstream on 1080 moves the proxy: %v %+v", err, cfg.SOCKS)
+	}
+}
+
 // TestBrowserArgs: the browser runs read-only, without capabilities, under
 // the seccomp profile and pid, memory and cpu limits, on the session
 // network only; its URL, origin, resolver rule, VNC password, screen and CA
@@ -74,11 +109,14 @@ func TestRelayArgs(t *testing.T) {
 func TestBrowserArgs(t *testing.T) {
 	s := spec(t)
 	s.TLSCA = "-----BEGIN CERTIFICATE-----\nAA==\n-----END CERTIFICATE-----"
-	args, env := browserArgs(s, "zanskar-net-s1", "zanskar-browser-s1", "172.30.0.2", "p4ssw0rd", "/var/lib/zanskar/browser-seccomp.json")
+	args, env, err := browserArgs(s, "zanskar-net-s1", "zanskar-browser-s1", "172.30.0.2", "p4ssw0rd", "/var/lib/zanskar/browser-seccomp.json")
+	if err != nil {
+		t.Fatal(err)
+	}
 	joined := strings.Join(args, " ")
 	for _, want := range []string{"--network zanskar-net-s1", "--read-only", "--tmpfs /tmp:rw,size=512m", "--tmpfs /etc/chromium/policies/managed:rw,size=1m,uid=10001,gid=10001,mode=700",
 		"--security-opt no-new-privileges", "--security-opt seccomp=/var/lib/zanskar/browser-seccomp.json", "--cap-drop ALL",
-		"--pids-limit 512", "--memory 1536m", "--cpus 2", "-e APP_URL -e APP_ORIGIN -e RESOLVER_RULES -e VNC_PASSWORD -e SCREEN_W -e SCREEN_H -e CA_PEM -e DEVTOOLS",
+		"--pids-limit 512", "--memory 1536m", "--cpus 2", "-e APP_URL -e APP_ORIGIN -e RESOLVER_RULES -e VNC_PASSWORD -e SCREEN_W -e SCREEN_H -e CA_PEM -e DEVTOOLS -e POLICY_JSON",
 		"--label zanskar.session=s1", s.BrowserImage} {
 		if !strings.Contains(joined, want) {
 			t.Errorf("browser args miss %q: %s", want, joined)
@@ -91,7 +129,7 @@ func TestBrowserArgs(t *testing.T) {
 	}
 	got := strings.Join(env, "\n")
 	for _, want := range []string{"APP_URL=http://wiki.internal:8080/", "APP_ORIGIN=http://wiki.internal:8080",
-		"RESOLVER_RULES=MAP wiki.internal 172.30.0.2, MAP * ~NOTFOUND", "VNC_PASSWORD=p4ssw0rd", "SCREEN_W=1440", "SCREEN_H=900", "CA_PEM=-----BEGIN CERTIFICATE-----", "DEVTOOLS=false"} {
+		"RESOLVER_RULES=MAP wiki.internal 172.30.0.2, EXCLUDE 172.30.0.2, MAP * ~NOTFOUND", "POLICY_JSON={", "VNC_PASSWORD=p4ssw0rd", "SCREEN_W=1440", "SCREEN_H=900", "CA_PEM=-----BEGIN CERTIFICATE-----", "DEVTOOLS=false"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("env misses %q: %s", want, got)
 		}

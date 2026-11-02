@@ -68,15 +68,13 @@ type createRequest struct {
 	Roles            []user.Role `json:"roles"`
 	Password         string      `json:"password"`
 	MustResetOnLogin *bool       `json:"must_change_password"`
-	// PasswordLess creates an account with no password at all, for someone
-	// who signs in through an identity provider. Give it the username the
-	// provider asserts: the first time a provider authenticates someone
-	// under that username, it adopts the account (links it to the provider
-	// and the person's external id) and the account keeps the roles set
-	// here, whether or not the provider auto-provisions (see
-	// idp.Provisioner.Resolve and ADR 0005). Otherwise a one-time password
-	// is generated when none is given; an account with a password is never
-	// adopted.
+	// PasswordLess asked for an account with no password, for a provider to
+	// adopt at its first sign-in (ADR 0005's addendum). Refused since
+	// 2026-11-02: a person who signs in through an identity provider comes
+	// from it (their first sign-in, its sync, or SCIM), never from Zanskar,
+	// so the two are managed apart (ADR 0035, amended). Accounts made this
+	// way before are still adopted. Without a password, a one-time one is
+	// generated.
 	PasswordLess bool `json:"password_less"`
 }
 
@@ -131,6 +129,10 @@ func (h *AdminHandler) create(w http.ResponseWriter, r *http.Request) {
 		httpx.BadRequest(w, r, "at least one role is required")
 		return
 	}
+	if req.PasswordLess {
+		httpx.BadRequest(w, r, "an account that signs in through an identity provider comes from the provider (its first sign-in, its sync or SCIM), not from here")
+		return
+	}
 	u := &user.User{
 		Username:    strings.TrimSpace(req.Username),
 		DisplayName: strings.TrimSpace(req.DisplayName),
@@ -140,18 +142,14 @@ func (h *AdminHandler) create(w http.ResponseWriter, r *http.Request) {
 	// A local account gets a password: the administrator's, or a generated
 	// one-time password returned once. Either way the user replaces it at
 	// their first sign-in unless the request says otherwise (QA finding
-	// R25). An account that will sign in through an identity provider is
-	// created with password_less: true and no password, so that its
-	// provider adopts it at the first sign-in.
-	initial, source := "", "none"
-	switch {
-	case req.Password != "":
-		if err := user.CheckPasswordPolicy(req.Password); err != nil {
+	// R25).
+	initial, source := req.Password, "set"
+	if initial != "" {
+		if err := user.CheckPasswordPolicy(initial); err != nil {
 			httpx.BadRequest(w, r, err.Error())
 			return
 		}
-		initial, source = req.Password, "set"
-	case !req.PasswordLess:
+	} else {
 		pw, err := user.GeneratePassword()
 		if err != nil {
 			httpx.Internal(w, r, h.Log, err)
@@ -159,15 +157,13 @@ func (h *AdminHandler) create(w http.ResponseWriter, r *http.Request) {
 		}
 		initial, source = pw, "generated"
 	}
-	if initial != "" {
-		hash, err := user.HashPassword(initial)
-		if err != nil {
-			httpx.Internal(w, r, h.Log, err)
-			return
-		}
-		u.PasswordHash = hash
-		u.MustResetOnLogin = req.MustResetOnLogin == nil || *req.MustResetOnLogin
+	hash, err := user.HashPassword(initial)
+	if err != nil {
+		httpx.Internal(w, r, h.Log, err)
+		return
 	}
+	u.PasswordHash = hash
+	u.MustResetOnLogin = req.MustResetOnLogin == nil || *req.MustResetOnLogin
 	if err := h.Users.CreateInGroups(r.Context(), u, req.GroupIDs); err != nil {
 		h.fail(w, r, err)
 		return

@@ -182,6 +182,14 @@ func (g *Grant) validate() error {
 	if g.AllowDevTools && g.Kind != protocol.KindApplication {
 		return fmt.Errorf("%w: developer tools are for application grants only", ErrInvalidInput)
 	}
+	// Files move over SSH (the terminal's SFTP panel) and RDP (the session's
+	// drive), never into a database client or an application's browser,
+	// which blocks downloads and file pickers (ADR 0034). The switch is
+	// cleared there rather than refused: grants saved before 2026-11-02 may
+	// carry it, and it never did anything on them.
+	if g.Kind == protocol.KindDatabase || g.Kind == protocol.KindApplication {
+		g.AllowFileTransfer = false
+	}
 	if len(g.Targets) > MaxGrantTargets {
 		return fmt.Errorf("%w: at most %d targets", ErrInvalidInput, MaxGrantTargets)
 	}

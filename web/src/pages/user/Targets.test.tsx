@@ -324,11 +324,46 @@ describe('Targets, sessions in tabs of their own', () => {
     expect((screen.getByRole('button', { name: 'SSH' }) as HTMLButtonElement).disabled).toBe(true)
   })
 
-  it('offers "as me" where a grant allows it, a link whose tab asks for the login', async () => {
-    mount([{ ...box, own_login: ['ssh'] }, { ...box, id: 't2', name: 'other', own_login: [] }])
-    await screen.findByText('other')
-    expect(screen.getAllByRole('link', { name: /with my own login/ })).toHaveLength(1)
-    sessionLink('SSH with my own login', '/connect?target=t1&protocol=ssh&own=1')
+  // 2026-11-02: colour, not an "as me" button, says who signs the person in:
+  // green where Zanskar does with a credential it holds, the protocol's own
+  // colour where the person gives their own login. The words stay in each
+  // link's name and tooltip, and the legend under the table says them too.
+  it('colours a protocol Zanskar signs in to green, and the person\'s own login in the protocol\'s colour', async () => {
+    mount([{ ...box, capabilities: ['ssh', 'rdp'], allowed_protocols: ['ssh', 'rdp'], managed_login: ['ssh', 'rdp'] }, { ...box, id: 't2', name: 'own-box' }])
+    await screen.findByText('own-box')
+    const [managedSSH, ownSSH] = screen.getAllByRole('link', { name: 'SSH, opens in a new tab' })
+    expect(managedSSH.className).toBe('btn sm proto-managed')
+    expect(managedSSH.getAttribute('title')).toBe('SSH: Zanskar signs you in')
+    expect(screen.getByRole('link', { name: 'RDP, opens in a new tab' }).className).toBe('btn sm proto-managed')
+    expect(ownSSH.className).toBe('btn sm proto-terminal')
+    expect(ownSSH.getAttribute('title')).toBe('SSH: your own login')
+    expect(screen.queryByText('as me')).toBeNull()
+    expect(screen.getByText('Zanskar signs you in')).toBeDefined()
+    expect(screen.getByText('Your own login')).toBeDefined()
+  })
+
+  it('puts the person\'s own login beside a green protocol where a grant allows it, both named the protocol', async () => {
+    mount([{ ...box, managed_login: ['ssh'], own_login: ['ssh'] }])
+    await screen.findByText('box')
+    const managed = sessionLink('SSH', '/connect?target=t1&protocol=ssh')
+    const own = sessionLink('SSH with my own login', '/connect?target=t1&protocol=ssh&own=1')
+    expect([managed.className, managed.textContent]).toEqual(['btn sm proto-managed', 'SSH'])
+    expect([own.className, own.textContent]).toEqual(['btn sm proto-terminal', 'SSH'])
+  })
+
+  it('colours an autoscaling group\'s protocol the same way', async () => {
+    mount([{ ...box, kind: 'asg', id: 'g1', name: 'web-fleet', healthy_count: 1, instance_count: 1, managed_login: ['ssh'] }])
+    await userEvent.setup().click(await screen.findByRole('tab', { name: /Autoscaling/ }))
+    const ssh = screen.getByRole('button', { name: 'SSH' })
+    expect([ssh.className, ssh.getAttribute('title')]).toEqual(['btn sm proto-managed', 'SSH: Zanskar signs you in'])
+  })
+
+  it('offers one button, the person\'s own login, where the target would not sign them in anyway', async () => {
+    mount([{ ...box, own_login: ['ssh'] }])
+    await screen.findByText('box')
+    expect(screen.getAllByRole('link', { name: /^SSH/ })).toHaveLength(1)
+    const own = sessionLink('SSH with my own login', '/connect?target=t1&protocol=ssh&own=1')
+    expect([own.className, own.textContent]).toEqual(['btn sm proto-terminal', 'SSH'])
   })
 
   it('opens the instance chooser here, and each instance, or the newest, in a tab of its own', async () => {

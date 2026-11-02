@@ -5,6 +5,7 @@ package connect
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -142,7 +143,7 @@ func TestApplicationSessionEndToEnd(t *testing.T) {
 	for _, want := range []string{
 		"network create --internal", "run -d --rm --name zanskar-apprelay-" + start.ObjectID,
 		`"to":"10.0.0.50:8080"`, "network connect bridge zanskar-apprelay-" + start.ObjectID,
-		"run -d --rm --name zanskar-browser-" + start.ObjectID, "APP_URL=http://10.0.0.50:8080/", "RESOLVER_RULES=MAP 10.0.0.50 172.30.0.2, MAP * ~NOTFOUND",
+		"run -d --rm --name zanskar-browser-" + start.ObjectID, "APP_URL=http://10.0.0.50:8080/", "RESOLVER_RULES=MAP 10.0.0.50 172.30.0.2, EXCLUDE 172.30.0.2, MAP * ~NOTFOUND",
 		"rm -f zanskar-browser-" + start.ObjectID, "rm -f zanskar-apprelay-" + start.ObjectID, "network rm zanskar-net-" + start.ObjectID,
 	} {
 		if !strings.Contains(log, want) {
@@ -256,6 +257,89 @@ func TestApplicationSessionRefusesForbiddenUpstream(t *testing.T) {
 	_ = resp.Body.Close()
 	if _, err := os.Stat(calls); err == nil {
 		t.Fatal("a container was started for a forbidden upstream")
+	}
+}
+
+// endpointApp enrols an application with further origins in the rig.
+func endpointApp(t *testing.T, r *desktopRig, name string, extra ...target.AppEndpoint) string {
+	t.Helper()
+	tg := &target.Target{Name: name, AppUpstream: "http://10.0.0.50:8080", AppEndpoints: extra, Tags: map[string]string{"app": "yes"}}
+	if err := r.h.Targets.Create(r.ctx, tg); err != nil {
+		t.Fatal(err)
+	}
+	return tg.ID
+}
+
+// TestApplicationSessionReachesEveryEndpoint (ADR 0037, amended 2026-11-02):
+// each further origin's host is resolved under the address rules when the
+// session starts and its answer pinned in the relay's table, by the host the
+// browser names and its port; one whose name does not resolve is left out
+// of the session, which opens anyway and says so in its start event.
+func TestApplicationSessionReachesEveryEndpoint(t *testing.T) {
+	r, _, calls := appRig(t)
+	r.h.Prober = &target.Prober{Resolver: fakeResolver{"api.zanskar.invalid": {"10.0.0.51"}}}
+	id := endpointApp(t, r, "grafana",
+		target.AppEndpoint{Name: "API", URL: "http://api.zanskar.invalid:9000"},
+		target.AppEndpoint{Name: "Down", URL: "http://down.zanskar.invalid"})
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	ws, _, err := r.dial(ctx, r.ticket(t, id, "http")) //nolint:bodyclose // the library closes the handshake body
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ws.CloseNow()
+	var seen string
+	for !strings.Contains(seen, "7.zanskar,") {
+		_, data, err := ws.Read(ctx)
+		if err != nil {
+			t.Fatalf("read: %v (got %q)", err, seen)
+		}
+		seen += string(data)
+	}
+	start := lastEvent(t, r.connectFixture, "session.start")
+	var d map[string]any
+	_ = json.Unmarshal(start.Details, &d)
+	if fmt.Sprint(d["unreachable_origins"]) != "[http://down.zanskar.invalid]" {
+		t.Fatalf("session.start should name the origin left out: %v", d)
+	}
+	log, _ := os.ReadFile(calls) // #nosec G304 -- test temp dir
+	for _, want := range []string{`"host":"10.0.0.50","port":8080,"to":"10.0.0.50:8080"`, `"host":"api.zanskar.invalid","port":9000,"to":"10.0.0.51:9000"`} {
+		if !strings.Contains(string(log), want) {
+			t.Errorf("the relay's table misses %s:\n%s", want, log)
+		}
+	}
+	if strings.Contains(string(log), "down.zanskar.invalid") {
+		t.Errorf("an origin that did not resolve reached the relay's table:\n%s", log)
+	}
+}
+
+// TestApplicationSessionRefusesForbiddenEndpoint: a further origin whose
+// name resolves to an address the gateway must never connect to refuses the
+// whole session before any container is made, as a forbidden upstream does,
+// and the refusal is audited with the address.
+func TestApplicationSessionRefusesForbiddenEndpoint(t *testing.T) {
+	r, _, calls := appRig(t)
+	r.h.Prober = &target.Prober{Resolver: fakeResolver{"meta.zanskar.invalid": {"169.254.169.254"}}}
+	id := endpointApp(t, r, "sneaky", target.AppEndpoint{Name: "Meta", URL: "http://meta.zanskar.invalid"})
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	ws, resp, err := r.dial(ctx, r.ticket(t, id, "http"))
+	if err == nil {
+		ws.CloseNow()
+		t.Fatal("an application with a forbidden endpoint opened")
+	}
+	if resp == nil || resp.StatusCode != http.StatusUnprocessableEntity {
+		t.Fatalf("got %v, want 422 address_forbidden", resp)
+	}
+	_ = resp.Body.Close()
+	if _, err := os.Stat(calls); err == nil {
+		t.Fatal("a container was started for a forbidden endpoint")
+	}
+	ev := lastEvent(t, r.connectFixture, "session.connect")
+	var d map[string]any
+	_ = json.Unmarshal(ev.Details, &d)
+	if d["reason"] != "address_forbidden" || !strings.Contains(fmt.Sprint(d["error"]), "169.254.169.254") {
+		t.Fatalf("refusal audit: %v", d)
 	}
 }
 

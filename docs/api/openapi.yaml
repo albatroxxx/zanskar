@@ -2576,7 +2576,10 @@ paths:
       summary: Rotate a credential
       description: >
         Replaces the secret in place for passwords, domain accounts and SSH keys (omit the key
-        for `ssh_key` to have one generated). For an `ssh_ca` credential this **prepares the
+        for `ssh_key` to have one generated). Only the sealed copy Zanskar signs in with changes;
+        nothing on the target or in the domain does. Set a new password there first, and put a
+        new key's public half (returned as `public_key`) on the target before sessions use it.
+        For an `ssh_ca` credential this **prepares the
         next authority key** instead (ADR 0022): it is generated unless `private_key` is sent,
         sealed beside the signing key, and returned as `rotation.pending_public_key` so targets
         can be told to trust both. Sessions keep using the current key until the cut-over.
@@ -5171,17 +5174,16 @@ components:
           writeOnly: true
           description: >
             Checked against a breached-password list and hashed with Argon2id. Omitted, a
-            one-time password is generated and returned once as `initial_password` (unless
-            `password_less`).
+            one-time password is generated and returned once as `initial_password`.
         password_less:
           type: boolean
           default: false
+          deprecated: true
           description: >
-            Create the account with no password at all, for someone who signs in through an
-            identity provider. Use the username the provider asserts: the first sign-in through a
-            provider under that username links the account to it, keeping the roles given here,
-            whether or not the provider creates users on first sign-in (ADR 0005). An account
-            with a password is never linked to a provider.
+            Refused (400) since 2026-11-02. Zanskar creates its own accounts only; a person who
+            signs in through an identity provider comes from the provider: their first sign-in,
+            the provider's sync, or SCIM (ADR 0035, amended). Accounts created with it before
+            are still linked at their first sign-in through a provider.
         roles:
           type: array
           minItems: 1
@@ -5752,13 +5754,22 @@ components:
           enum: [disable, prefer, require, verify-full]
         tls_ca:
           type: string
-          description: PEM CA bundle the upstream's certificate is verified against; for a database target under verify-full, or an application's https upstream.
+          description: PEM CA bundle the upstream's certificate is verified against; for a database target under verify-full, or an application's https origins.
         app_upstream:
           type: string
           description: >-
-            Makes the target an application (ADR 0034): the one origin, `http://host[:port]` or
-            `https://host[:port]`, the session's isolated browser can reach. Nothing else is
-            reachable from it. Its host becomes `address`.
+            Makes the target an application (ADR 0034): the origin, `http://host[:port]` or
+            `https://host[:port]`, the session's isolated browser opens. Its host becomes
+            `address`. The browser reaches it and the `app_endpoints`, nothing else.
+        app_endpoints:
+          type: array
+          maxItems: 31
+          description: >-
+            An application's further origins (ADR 0037, amended 2026-11-02), reached in the same
+            session through the session's relay and listed as one bookmarks folder named after
+            the application. Absent when there are none.
+          items:
+            $ref: "#/components/schemas/AppEndpoint"
         os_family:
           $ref: "#/components/schemas/OsFamily"
         ports:
@@ -5858,7 +5869,26 @@ components:
             with neither is refused. require and prefer encrypt without verifying.
         tls_ca:
           type: string
-          description: PEM bundle trusted for verify-full, for example the provider's CA; required for that mode.
+          description: >-
+            PEM bundle trusted for verify-full, for example the provider's CA; required for that
+            mode. For an application, the bundle its https origins are verified against instead
+            of the system roots.
+        app_upstream:
+          type: string
+          description: >-
+            Makes the target an application (ADR 0034): `http://host[:port]` or
+            `https://host[:port]`, the origin only. Send `address` empty; it is derived.
+        app_endpoints:
+          type: array
+          maxItems: 31
+          description: >-
+            An application's further origins (ADR 0037, amended 2026-11-02), each held to the
+            upstream's rules and to the address rules as it is saved; none may repeat the
+            upstream or another (`https://a` and `https://a:443` are one origin). Replaces the
+            whole list: send the list on every update, or it is cleared. Removing one ends the
+            sessions open on the application.
+          items:
+            $ref: "#/components/schemas/AppEndpoint"
         os_family:
           $ref: "#/components/schemas/OsFamily"
         ports:
@@ -5880,6 +5910,17 @@ components:
           description: Credential id per protocol. Replaces the whole mapping.
           additionalProperties:
             type: string
+    AppEndpoint:
+      type: object
+      required: [url]
+      properties:
+        name:
+          type: string
+          maxLength: 64
+          description: The bookmark's name in the session's browser; empty takes the host.
+        url:
+          type: string
+          description: '`http://host[:port]` or `https://host[:port]`, the origin only.'
     ProbeResult:
       type: object
       required: [capabilities, host_key_status, probed_at, ports]
@@ -6065,6 +6106,9 @@ components:
         allow_file_transfer:
           type: boolean
           default: false
+          description: >-
+            Files move over SSH (the terminal's Files panel, SFTP) and RDP (the session's drive)
+            only. Cleared on a database or application grant, which has no way to carry them.
         allow_devtools:
           type: boolean
           default: false
@@ -6500,6 +6544,13 @@ components:
         role_name:
           type: string
           description: The suggested role name, used by the script and the template.
+        suggested_role_arn:
+          type: string
+          description: >-
+            The role's ARN once the script or the template creates it in the gateway's own account
+            (the principal's account, the group's partition, `role_name`); the console fills it in.
+            Absent when the principal is unknown or in another partition. A group in another
+            account takes that account's number.
         trust_policy:
           type: string
           description: JSON document; absent when the principal is unknown.
@@ -6642,8 +6693,18 @@ components:
           description: >-
             Protocols on which the caller may sign in with their own login instead of the
             target's (ADR 0036): a grant that admits them says `sign_in: own`. Where another
-            grant lets the target decide, the UI offers *Use my own login* beside the protocol;
+            grant lets the target decide, the UI offers the own login beside the protocol;
             where none does, the connect must carry `credential`. Absent when there are none.
+          items:
+            $ref: "#/components/schemas/Protocol"
+        managed_login:
+          type: array
+          description: >-
+            Protocols Zanskar signs the caller in to itself, with a credential it holds: a grant
+            lets the target's slot decide and the slot holds a vaulted credential (a password,
+            a key, the SSH authority, EC2 Instance Connect), not the prompt for the caller's
+            own login. The portal colours them apart from the caller's own login. Absent when
+            there are none.
           items:
             $ref: "#/components/schemas/Protocol"
         host_key_ready:

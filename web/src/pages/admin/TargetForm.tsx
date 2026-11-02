@@ -1,9 +1,12 @@
 import { protocolName } from '../../api/format'
 import { useEffect, useState, type FormEvent } from 'react'
 import { api } from '../../api/client'
-import type { OSFamily, Protocol, RetentionPolicy, Target } from '../../api/types'
+import { errorMessage } from '../../api/client'
+import type { AppEndpoint, OSFamily, Protocol, RetentionPolicy, Target } from '../../api/types'
 import { useSubmit } from '../../components/submit'
 import { Alert, Field, Modal, Tabs } from '../../components/ui'
+import { EndpointEditor } from './EndpointEditor'
+import { endpointsBody, endpointWords } from './endpoints'
 import { protocols, type PortProtocol } from './lib'
 import { TagEditor } from '../../components/TagEditor'
 import { rowsToTags, tagRows, type TagRow } from '../../components/tags'
@@ -28,6 +31,9 @@ export function targetBody(t: Target, patch: Partial<Target> = {}) {
     tls_mode: u.tls_mode ?? '',
     tls_ca: u.tls_ca ?? '',
     app_upstream: u.app_upstream ?? '',
+    // Every write replaces the target, so an edit made elsewhere (a status
+    // switch) carries the endpoints or would drop them.
+    app_endpoints: u.app_endpoints ?? [],
     retention_days: u.retention_days ?? null,
     ports: u.ports,
     capabilities: u.capabilities,
@@ -63,7 +69,7 @@ const tlsModes = [
 const emptyForm = {
   name: '', address: '', os_family: 'linux' as OSFamily,
   engine: 'postgres', engine_version: '', database_name: '', tls_mode: 'verify-full', tls_ca: '',
-  app_upstream: '',
+  app_upstream: '', endpoints: [] as AppEndpoint[],
   ...defaultPorts, database: enginePorts.postgres, tags: [] as TagRow[], notes: '', retention: '',
 }
 
@@ -89,6 +95,7 @@ export function TargetForm({ initial, kind, onClose, onSaved }: { initial?: Targ
           tls_mode: initial.tls_mode || 'verify-full',
           tls_ca: initial.tls_ca ?? '',
           app_upstream: initial.app_upstream ?? '',
+          endpoints: (initial.app_endpoints ?? []).map((e) => ({ ...e })),
           ssh: initial.ports.ssh ? String(initial.ports.ssh) : defaultPorts.ssh,
           rdp: initial.ports.rdp ? String(initial.ports.rdp) : defaultPorts.rdp,
           vnc: initial.ports.vnc ? String(initial.ports.vnc) : defaultPorts.vnc,
@@ -155,10 +162,15 @@ export function TargetForm({ initial, kind, onClose, onSaved }: { initial?: Targ
       setErr('retention must be 1-3650 days')
       return
     }
+    const endpoints = endpointsBody(k === 'application' ? f.endpoints : [])
+    if (endpoints.error) {
+      setErr(endpoints.error)
+      return
+    }
     void submit(async () => {
       const database = k === 'database'
       const application = k === 'application'
-      const secure = application && f.app_upstream.trim().toLowerCase().startsWith('https://')
+      const secure = application && secureOrigins
       const body = {
         name: f.name.trim(),
         // An application's address is its upstream's host; the server derives it.
@@ -170,6 +182,7 @@ export function TargetForm({ initial, kind, onClose, onSaved }: { initial?: Targ
         tls_mode: database ? f.tls_mode : '',
         tls_ca: database || secure ? f.tls_ca.trim() : '',
         app_upstream: application ? f.app_upstream.trim() : '',
+        app_endpoints: endpoints.body,
         retention_days: application ? null : retention,
         ports,
         capabilities: initial?.capabilities ?? [],
@@ -178,13 +191,21 @@ export function TargetForm({ initial, kind, onClose, onSaved }: { initial?: Targ
         notes: f.notes,
         credentials: initial?.credentials ?? {},
       }
-      const t = initial ? await api.put<Target>(`/targets/${initial.id}`, body) : await api.post<Target>('/targets', body)
+      let t: Target
+      try {
+        t = initial ? await api.put<Target>(`/targets/${initial.id}`, body) : await api.post<Target>('/targets', body)
+      } catch (e) {
+        // The server names a row by its place in what was sent; say it as
+        // the row the person filled in.
+        throw new Error(endpointWords(errorMessage(e), endpoints.sent))
+      }
       onSaved(t)
     })
   }
 
   const title = initial ? `Edit ${initial.name}` : k === 'database' ? 'Add database' : k === 'host' ? 'Add host' : k === 'application' ? 'Add application' : 'Add target'
-  const secureUpstream = f.app_upstream.trim().toLowerCase().startsWith('https://')
+  // The CA bundle applies when any origin is https, the upstream or another.
+  const secureOrigins = [f.app_upstream, ...f.endpoints.map((e) => e.url)].some((u) => u.trim().toLowerCase().startsWith('https://'))
   return (
     <Modal title={title} onClose={onClose} width={620}>
       {err && <Alert tone="danger" onDismiss={() => setErr('')}>{err}</Alert>}
@@ -201,7 +222,7 @@ export function TargetForm({ initial, kind, onClose, onSaved }: { initial?: Targ
             </Field>
             {k === 'application' ? (
               <>
-                <Field label="Upstream" hint="The only origin the isolated browser can reach">
+                <Field label="Upstream" hint="The page the browser opens">
                   <input id="t-upstream" value={f.app_upstream} onChange={set('app_upstream')} required placeholder="https://wiki.internal:8443" />
                 </Field>
               </>
@@ -278,7 +299,12 @@ export function TargetForm({ initial, kind, onClose, onSaved }: { initial?: Targ
               )}
             </>
           )}
-          {k === 'application' && secureUpstream && (
+          {k === 'application' && (
+            <Field label="Other endpoints" info="Other addresses the application uses, reached in the same browser: an API, its sign-in page. Each is a bookmark there; nothing else is reachable.">
+              <EndpointEditor rows={f.endpoints} onChange={(endpoints) => setF({ ...f, endpoints })} />
+            </Field>
+          )}
+          {k === 'application' && secureOrigins && (
             <Field label="CA bundle (PEM, optional)">
               <textarea id="t-tls-ca" value={f.tls_ca} onChange={set('tls_ca')} placeholder="System roots" />
             </Field>

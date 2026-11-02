@@ -295,7 +295,6 @@ function OneTimePassword({ username, password, onClose }: { username: string; pa
 function UserForm({ onClose, onSaved }: { onClose: () => void; onSaved: (oneTime?: { username: string; password: string }) => void }) {
   const [f, setF] = useState({ username: '', display_name: '', email: '', password: '' })
   const [r, setR] = useState<Role[]>(['user'])
-  const [external, setExternal] = useState(false)
   // Groups can be picked as the user is made (2026-10-30, as AWS Identity
   // Center does); the server adds them in the same transaction.
   const groups = useList<Group>('/groups')
@@ -306,8 +305,7 @@ function UserForm({ onClose, onSaved }: { onClose: () => void; onSaved: (oneTime
     submit(async () => {
       const body: Record<string, unknown> = { username: f.username.trim(), display_name: f.display_name.trim(), email: f.email.trim(), roles: r }
       if (groupIDs.length) body.group_ids = groupIDs
-      if (external) body.password_less = true
-      else if (f.password) body.password = f.password
+      if (f.password) body.password = f.password
       const created = await api.post<User & { initial_password?: string }>('/users', body)
       onSaved(created.initial_password ? { username: created.username, password: created.initial_password } : undefined)
     })
@@ -316,13 +314,10 @@ function UserForm({ onClose, onSaved }: { onClose: () => void; onSaved: (oneTime
       <Field label="Username" hint="letters, digits, . _ - (2-64), or an email address"><input id="nu-username" value={f.username} onChange={set('username')} required autoFocus /></Field>
       <Field label="Display name"><input id="nu-name" value={f.display_name} onChange={set('display_name')} required /></Field>
       <Field label="Email (optional)"><input id="nu-email" type="email" value={f.email} onChange={set('email')} /></Field>
-      <div className="field inline">
-        <input id="nu-external" type="checkbox" checked={external} onChange={(e) => setExternal(e.target.checked)} />
-        <label htmlFor="nu-external">Signs in through an identity provider (no password)</label>
-      </div>
-      {!external && (
-        <Field label="Initial password"><input id="nu-password" type="password" autoComplete="new-password" value={f.password} onChange={set('password')} minLength={12} placeholder="A one-time password is generated" /></Field>
-      )}
+      <Field label="Initial password"><input id="nu-password" type="password" autoComplete="new-password" value={f.password} onChange={set('password')} minLength={12} placeholder="A one-time password is generated" /></Field>
+      {/* Zanskar adds its own accounts only; a person who signs in through an
+          identity provider comes from it (2026-11-02, ADR 0035 amended). */}
+      <p className="muted" style={{ marginTop: 0 }}>Identity provider accounts come from the provider.</p>
       <RoleChecks value={r} onChange={setR} prefix="nu" />
       {(groups.items?.length ?? 0) > 0 && (
         <Field label="Groups (optional)">

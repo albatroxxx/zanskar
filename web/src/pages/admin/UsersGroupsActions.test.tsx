@@ -136,19 +136,22 @@ describe('Users', () => {
     expect(screen.queryByText('rk2-shown-once-7q')).toBeNull()
   })
 
-  it('creates an identity-provider account with no password at all', async () => {
+  // 2026-11-02: a person who signs in through an identity provider comes from
+  // it; Add user makes Zanskar's own accounts only, and says where the
+  // others come from.
+  it('adds a Zanskar account only, never one for an identity provider', async () => {
     serve()
     const post = vi.spyOn(api, 'post').mockResolvedValue({ ...bob, id: 'u9', username: 'erin' } as never)
     const user = await show()
     await user.click(screen.getByRole('button', { name: 'Add user' }))
     const form = screen.getByRole('dialog', { name: 'Add user' })
+    expect(within(form).queryByLabelText(/identity provider/i)).toBeNull()
+    expect(within(form).getByText('Identity provider accounts come from the provider.')).toBeDefined()
+    expect(within(form).getByLabelText('Initial password')).toBeDefined()
     await user.type(within(form).getByLabelText('Username'), 'erin')
     await user.type(within(form).getByLabelText('Display name'), 'Erin')
-    await user.click(within(form).getByLabelText(/Signs in through an identity provider/))
-    expect(within(form).queryByLabelText('Initial password')).toBeNull()
     await user.click(within(form).getByRole('button', { name: 'Create' }))
-    await waitFor(() => expect(post).toHaveBeenCalledWith('/users', { username: 'erin', display_name: 'Erin', email: '', roles: ['user'], password_less: true }))
-    expect(screen.queryByRole('dialog')).toBeNull()
+    await waitFor(() => expect(post).toHaveBeenCalledWith('/users', { username: 'erin', display_name: 'Erin', email: '', roles: ['user'] }))
   })
 
   it('changes roles, resets a password by generating or by setting one, and shows the server\'s refusal', async () => {

@@ -1,6 +1,6 @@
 import { useNavigate } from 'react-router-dom'
 import { fmtSeconds, protocolName } from '../../api/format'
-import { Modal } from '../../components/ui'
+import { Confirm, Modal } from '../../components/ui'
 import { connectHref, parseIntent, recordIntent } from './intent'
 import { endText, type SessionEnd } from './session'
 
@@ -35,10 +35,21 @@ export function SessionEndedDialog({ ended, target, protocol, elapsed, again, on
       <p className="muted">
         {target} · {protocolName(protocol)} · ran for {fmtSeconds(elapsed)}.
       </p>
+      {/* Back to targets is the dialog's main way out, on the right in the
+          primary colour, with or without Connect again beside it (the owner,
+          2026-11-02). */}
       <div className="actions">
-        <button className={'btn' + (href ? '' : ' primary')} onClick={onClose}>Back to targets</button>
-        {href && <button className="btn primary" onClick={connectAgain}>Connect again</button>}
+        {href && <button className="btn" onClick={connectAgain}>Connect again</button>}
+        <button className="btn primary" onClick={onClose}>Back to targets</button>
       </div>
     </Modal>
   )
+}
+
+/** ConfirmDisconnect asks before the session's own Disconnect ends it, so a
+ *  stray click does not (the owner, 2026-11-02); the dialog saying it ended
+ *  follows as before. Placed inside the session's page, it shows in full
+ *  screen too, and Cancel leaves everything as it was. */
+export function ConfirmDisconnect({ target, onConfirm, onClose }: { target: string; onConfirm: () => void; onClose: () => void }) {
+  return <Confirm title={`Disconnect from ${target}?`} body="This ends the session." confirmLabel="Disconnect" danger onConfirm={onConfirm} onClose={onClose} />
 }

@@ -310,6 +310,51 @@ func TestDesktopRefusesMismatchedRDPCertificate(t *testing.T) {
 	r.waitEnded(t, sessionIDFrom(string(first)))
 }
 
+// TestDesktopFilesOnlyOverRDP (2026-11-02): with file transfer granted, an
+// RDP session is told files may move (through the drive guacd mounts) and a
+// VNC session is not: it has no file channel, and offering one showed a
+// Files panel that never became ready.
+func TestDesktopFilesOnlyOverRDP(t *testing.T) {
+	r := newDesktopRig(t)
+	desk, err := r.h.Policies.Get(r.ctx, r.policyIDs["desk"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	desk.Grants[0].AllowFileTransfer = true
+	if err := r.h.Policies.Update(r.ctx, desk); err != nil {
+		t.Fatal(err)
+	}
+	port, fp := fakeRDP(t)
+	for _, c := range []struct {
+		proto, flags string
+		id           string
+	}{
+		{"rdp", "7.zanskar,4.file,1.1,", r.addTarget(t, "rdp-files", map[target.Protocol]int{target.RDP: port}, fp)},
+		{"vnc", "7.zanskar,4.file,1.0,", r.addTarget(t, "vnc-files", map[target.Protocol]int{target.VNC: 5900}, "")},
+	} {
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		ws, _, err := r.dial(ctx, r.ticket(t, c.id, c.proto)) //nolint:bodyclose // the library closes the handshake body
+		if err != nil {
+			cancel()
+			t.Fatalf("%s: %v", c.proto, err)
+		}
+		var seen string
+		for !strings.Contains(seen, "7.zanskar,") {
+			_, data, err := ws.Read(ctx)
+			if err != nil {
+				t.Fatalf("%s read: %v (got %q)", c.proto, err, seen)
+			}
+			seen += string(data)
+		}
+		ws.CloseNow()
+		r.waitEnded(t, sessionIDFrom(seen))
+		cancel()
+		if !strings.Contains(seen, c.flags) {
+			t.Errorf("%s with file transfer granted: flags %q, want %s", c.proto, seen, c.flags)
+		}
+	}
+}
+
 // sessionIDFrom reads the session id from the first desktop message,
 // guac.Encode("", id): "0.,<len>.<id>;".
 func sessionIDFrom(msg string) string {
