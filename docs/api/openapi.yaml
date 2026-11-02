@@ -3573,6 +3573,27 @@ paths:
                           $ref: "#/components/schemas/AccessSession"
         "400":
           $ref: "#/components/responses/BadRequest"
+  /sessions.csv:
+    get:
+      tags: [audit]
+      summary: The sessions the filter matches, as CSV
+      description: |
+        Takes the filter `GET /sessions` takes (`user_id`, `username`, `target_id`, `open`, `from`)
+        and writes every page of it, newest first, up to 50,000 rows. Columns: id, started, ended,
+        duration_seconds, user, target, protocol, client_ip, end_reason, end_detail, recording_id,
+        recording_kept_until. Formula-like values are written as text, as for the events export.
+        Recorded as an `audit.read` of `access_session` with `format: csv`.
+      responses:
+        "200":
+          description: The sessions.
+          content:
+            text/csv:
+              schema:
+                type: string
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "403":
+          $ref: "#/components/responses/Forbidden"
   /sessions/{id}:
     get:
       tags: [auditor]
@@ -3725,6 +3746,29 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/AuditVerifyResult"
+  /audit/events.csv:
+    get:
+      tags: [audit]
+      summary: The audit events the filter matches, as CSV
+      description: |
+        Takes the filter `GET /audit/events` takes (`actor`, `actor_user_id`, `action`, `outcome`,
+        `object_type`, `object_id`, `exclude`, `from`, `to`) and writes every page of it, newest
+        first, up to 50,000 rows; a longer export ends with a row saying where it was cut. Columns:
+        id, time, actor, actor_ip, action, outcome, object_type, object_id, object_name, details
+        (the event's JSON), hash. A value a spreadsheet would run as a formula (starting with `=`,
+        `+`, `-`, `@`, a tab or a carriage return) is written with a leading apostrophe. Recorded as
+        an `audit.read` with `format: csv`, the count and whether it was cut.
+      responses:
+        "200":
+          description: The events.
+          content:
+            text/csv:
+              schema:
+                type: string
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "403":
+          $ref: "#/components/responses/Forbidden"
   /audit/facets:
     get:
       tags: [auditor]

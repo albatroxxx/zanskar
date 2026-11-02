@@ -50,6 +50,9 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.Handle("GET /api/v1/me/activity", auth.RequireAuth(http.HandlerFunc(h.myActivity)))
 
 	mux.Handle("GET /api/v1/sessions", reviewer(http.HandlerFunc(h.listSessions)))
+	// The lists as CSV, every page the filter matches (2026-11-03, idea 12).
+	mux.Handle("GET /api/v1/sessions.csv", reviewer(http.HandlerFunc(h.exportSessions)))
+	mux.Handle("GET /api/v1/audit/events.csv", reviewer(http.HandlerFunc(h.exportEvents)))
 	mux.Handle("GET /api/v1/sessions/{id}", reviewer(http.HandlerFunc(h.getSession)))
 	mux.Handle("POST /api/v1/sessions/{id}/terminate", admin(http.HandlerFunc(h.terminate)))
 
@@ -84,18 +87,29 @@ func (h *Handler) mySessions(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, httpx.Page[*Session]{Items: items, NextCursor: next})
 }
 
-func (h *Handler) listSessions(w http.ResponseWriter, r *http.Request) {
-	limit, cursor := httpx.Paging(r, 50, 500)
+// sessionFilter reads the sessions filter from a request's query, for the
+// list and its CSV export alike.
+func sessionFilter(r *http.Request) (Filter, error) {
 	q := r.URL.Query()
-	f := Filter{UserID: q.Get("user_id"), Username: q.Get("username"), TargetID: q.Get("target_id"), OpenOnly: q.Get("open") == "true", Limit: limit, Cursor: cursor}
+	f := Filter{UserID: q.Get("user_id"), Username: q.Get("username"), TargetID: q.Get("target_id"), OpenOnly: q.Get("open") == "true"}
 	if s := q.Get("from"); s != "" {
 		t, err := time.Parse(time.RFC3339, s)
 		if err != nil {
-			httpx.BadRequest(w, r, "from: expected an RFC 3339 time")
-			return
+			return f, errBadFilter("from: expected an RFC 3339 time")
 		}
 		f.From = t
 	}
+	return f, nil
+}
+
+func (h *Handler) listSessions(w http.ResponseWriter, r *http.Request) {
+	limit, cursor := httpx.Paging(r, 50, 500)
+	f, err := sessionFilter(r)
+	if err != nil {
+		h.failFilter(w, r, err)
+		return
+	}
+	f.Limit, f.Cursor = limit, cursor
 	items, next, err := h.Repo.List(r.Context(), f)
 	if err != nil {
 		h.fail(w, r, err)
@@ -409,17 +423,23 @@ func detailIDs(items []audit.Event) (map[string][]string, []map[string]string) {
 
 var excludeToken = regexp.MustCompile(`^[a-z0-9_.]{1,64}(:(success|failure))?$`)
 
-func (h *Handler) auditEvents(w http.ResponseWriter, r *http.Request) {
-	limit, cursor := httpx.Paging(r, 50, 500)
+// errBadFilter is a query the events filter cannot read; its text is the
+// answer's.
+type errBadFilter string
+
+func (e errBadFilter) Error() string { return string(e) }
+
+// auditFilter reads the events filter from a request's query, for the list
+// and its CSV export alike.
+func (h *Handler) auditFilter(r *http.Request) (audit.Filter, error) {
 	q := r.URL.Query()
-	f := audit.Filter{ActorUserID: q.Get("actor_user_id"), Action: q.Get("action"), ObjectType: q.Get("object_type"), ObjectID: q.Get("object_id"), Cursor: cursor, Limit: limit}
+	f := audit.Filter{ActorUserID: q.Get("actor_user_id"), Action: q.Get("action"), ObjectType: q.Get("object_type"), ObjectID: q.Get("object_id")}
 	// Filter by the name a reviewer knows rather than an id. An unknown name
 	// matches nothing, not everything.
 	if name := strings.TrimSpace(q.Get("actor")); name != "" {
 		id, err := h.Repo.UserIDByUsername(r.Context(), name)
 		if err != nil {
-			h.fail(w, r, err)
-			return
+			return f, err
 		}
 		if id == "" {
 			id = "-"
@@ -432,8 +452,7 @@ func (h *Handler) auditEvents(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		if !excludeToken.MatchString(ex) || len(f.Exclude) >= 16 {
-			httpx.BadRequest(w, r, "exclude: expected action or action:outcome tokens")
-			return
+			return f, errBadFilter("exclude: expected action or action:outcome tokens")
 		}
 		f.Exclude = append(f.Exclude, ex)
 	}
@@ -441,8 +460,7 @@ func (h *Handler) auditEvents(w http.ResponseWriter, r *http.Request) {
 	case "", audit.Success, audit.Failure:
 		f.Outcome = o
 	default:
-		httpx.BadRequest(w, r, "outcome: expected success or failure")
-		return
+		return f, errBadFilter("outcome: expected success or failure")
 	}
 	if s := q.Get("from"); s != "" {
 		if t, err := time.Parse(time.RFC3339, s); err == nil {
@@ -454,6 +472,26 @@ func (h *Handler) auditEvents(w http.ResponseWriter, r *http.Request) {
 			f.To = t
 		}
 	}
+	return f, nil
+}
+
+// failFilter answers a filter that could not be read.
+func (h *Handler) failFilter(w http.ResponseWriter, r *http.Request, err error) {
+	if bad, ok := errors.AsType[errBadFilter](err); ok {
+		httpx.BadRequest(w, r, string(bad))
+		return
+	}
+	h.fail(w, r, err)
+}
+
+func (h *Handler) auditEvents(w http.ResponseWriter, r *http.Request) {
+	limit, cursor := httpx.Paging(r, 50, 500)
+	f, err := h.auditFilter(r)
+	if err != nil {
+		h.failFilter(w, r, err)
+		return
+	}
+	f.Cursor, f.Limit = cursor, limit
 	items, next, err := h.Audit.List(r.Context(), f)
 	if err != nil {
 		h.fail(w, r, err)

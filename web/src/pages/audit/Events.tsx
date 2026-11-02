@@ -5,6 +5,7 @@ import { ranges, sinceFor } from '../../api/ranges'
 import { consoleZone, fmtPreciseTime, shortId, zonedInputToISO } from '../../api/format'
 import type { AuditEvent, AuditFacets, AuditVerify, Page } from '../../api/types'
 import { usePaged } from '../../components/paged'
+import { SavedViews } from '../../components/SavedViews'
 import { Alert, Badge, Empty, Loading, LoadMore, PageHead, TabLink } from '../../components/ui'
 import { capitalize, describe, detailText, humanAction, typeLabel, who, words } from './eventText'
 import { useRecordingsPath } from './paths'
@@ -127,21 +128,19 @@ export function Events() {
   const [draft, setDraft] = useState<Filters>(filters)
   // The form follows the address when it changes underneath it (a link, Back).
   useEffect(() => setDraft(filters), [filters])
+  // The filter as the API reads it: the list's pages and the CSV export.
+  const apiFilter = {
+    actor: filters.actor.trim(),
+    action: filters.action.trim(),
+    outcome: filters.outcome,
+    object_type: filters.object_type.trim(),
+    from: rangeBounds(filters).from,
+    to: rangeBounds(filters).to,
+    exclude: showRoutine ? '' : routine,
+  }
+  const apiQuery = query(apiFilter)
   const { items, next, err, setErr, busy, load, more, restart } = usePaged((cursor) =>
-    api.get<Page<AuditEvent>>(
-      '/audit/events' +
-        query({
-          actor: filters.actor.trim(),
-          action: filters.action.trim(),
-          outcome: filters.outcome,
-          object_type: filters.object_type.trim(),
-          from: rangeBounds(filters).from,
-          to: rangeBounds(filters).to,
-          exclude: showRoutine ? '' : routine,
-          cursor,
-          limit: 50,
-        }),
-    ),
+    api.get<Page<AuditEvent>>('/audit/events' + query({ ...apiFilter, cursor, limit: 50 })),
   )
 
   useEffect(() => {
@@ -198,6 +197,9 @@ export function Events() {
     <>
       <PageHead title="Audit events" lead="Viewing is logged.">
         <ChainStatus verify={verify} err={verifyErr} />
+        <SavedViews page="events" current={spKey} onOpen={(q) => { restart(); setSp(new URLSearchParams(q), { replace: true }) }} />
+        {/* Every page the filter matches, as CSV; the export is logged too. */}
+        <a className="btn sm" href={'/api/v1/audit/events.csv' + apiQuery} download>CSV</a>
       </PageHead>
       {err && <Alert tone="danger">{err}</Alert>}
 
