@@ -10,21 +10,24 @@ import (
 	"testing/fstest"
 )
 
+var testBundle = fstest.MapFS{
+	"index.html":           {Data: []byte("<title>Zanskar</title>")},
+	"assets/app-1a2b.js":   {Data: []byte("console.log(1)")},
+	"fonts/inter.woff2":    {Data: []byte("font")},
+	"assets/deep/x-9f.css": {Data: []byte("body{}")},
+	"logo-mark.svg":        {Data: []byte("<svg/>")},
+}
+
 // TestSPAServesNoDirectoryListings: /assets/ and /fonts/ answered with an
-// HTML index of every bundle file (L8). A directory is not a page: it gets
-// the app like any other unknown path, never a listing.
+// HTML index of every bundle file (L8). A directory is not a page: since
+// 1.15.0 it is not found, like any path outside the console, never a listing.
 func TestSPAServesNoDirectoryListings(t *testing.T) {
-	h := spaHandler(fstest.MapFS{
-		"index.html":           {Data: []byte("<title>Zanskar</title>")},
-		"assets/app-1a2b.js":   {Data: []byte("console.log(1)")},
-		"fonts/inter.woff2":    {Data: []byte("font")},
-		"assets/deep/x-9f.css": {Data: []byte("body{}")},
-	})
+	h := spaHandler(testBundle)
 	for _, p := range []string{"/assets/", "/assets", "/fonts/", "/assets/deep/"} {
 		rr := httptest.NewRecorder()
 		h.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, p, nil))
-		if body := rr.Body.String(); strings.Contains(body, "app-1a2b.js") || strings.Contains(body, "inter.woff2") || !strings.Contains(body, "<title>Zanskar</title>") {
-			t.Errorf("%s: %d %q, want the app, not a listing", p, rr.Code, body)
+		if body := rr.Body.String(); strings.Contains(body, "app-1a2b.js") || strings.Contains(body, "inter.woff2") || rr.Code != http.StatusNotFound {
+			t.Errorf("%s: %d %q, want not found, never a listing", p, rr.Code, body)
 		}
 	}
 	rr := httptest.NewRecorder()

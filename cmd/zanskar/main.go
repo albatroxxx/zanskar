@@ -400,8 +400,11 @@ func serve(ctx context.Context) error {
 	chainChecker := &audit.Checker{Log: auditLog, Key: anchorKey, Logger: log}
 
 	deps := server.Deps{
-		TLS:            tlsMgr,
-		Theme:          func() string { return runtime.String(settings.KeyTheme) },
+		TLS:   tlsMgr,
+		Theme: func() string { return runtime.String(settings.KeyTheme) },
+		SecurityContact: func() string {
+			return settings.SecurityContactURI(runtime.String(settings.KeySecurityContact))
+		},
 		AuthMiddleware: &auth.Middleware{Sessions: sessions, Users: users, Log: log},
 		Auth:           authHandler,
 		Handlers: []server.Registrar{
