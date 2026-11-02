@@ -35,9 +35,12 @@ export function SessionEndedDialog({ ended, target, protocol, elapsed, again, on
       <p className="muted">
         {target} · {protocolName(protocol)} · ran for {fmtSeconds(elapsed)}.
       </p>
+      {/* Back to targets is the dialog's main way out, on the right in the
+          primary colour, with or without Connect again beside it (the owner,
+          2026-11-02). */}
       <div className="actions">
-        <button className={'btn' + (href ? '' : ' primary')} onClick={onClose}>Back to targets</button>
-        {href && <button className="btn primary" onClick={connectAgain}>Connect again</button>}
+        {href && <button className="btn" onClick={connectAgain}>Connect again</button>}
+        <button className="btn primary" onClick={onClose}>Back to targets</button>
       </div>
     </Modal>
   )

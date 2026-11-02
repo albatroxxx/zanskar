@@ -156,7 +156,11 @@ describe('Terminal', () => {
     await screen.findByText('web-1')
     act(() => g.sockets[0].onclose?.({ code: 1000, reason: 'user_exit' }))
     const dialog = await screen.findByRole('dialog')
-    expect(within(dialog).getByRole('button', { name: 'Connect again' }).className).toBe('btn primary')
+    // Connect again on the left, plain; Back to targets on the right, primary.
+    expect(within(dialog).getAllByRole('button').filter((b) => b.className.startsWith('btn')).map((b) => [b.textContent, b.className])).toEqual([
+      ['Connect again', 'btn'],
+      ['Back to targets', 'btn primary'],
+    ])
   })
 
   it('rebuilds the terminal and socket when the session ticket changes, and tears both down on leave', async () => {
