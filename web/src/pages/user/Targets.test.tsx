@@ -1,4 +1,4 @@
-import { cleanup, render, screen } from '@testing-library/react'
+import { cleanup, render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router-dom'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -315,6 +315,18 @@ describe('Targets, sessions in tabs of their own', () => {
     document.dispatchEvent(new Event('visibilitychange'))
     expect(reads()).toBe(2)
     delete (document as unknown as Record<string, unknown>).visibilityState
+  })
+
+  // 2026-11-03 live audit: a protocol the target has nothing for drew a grey
+  // disabled button, and an untagged target the word "none".
+  it('leaves a protocol the target does not offer as a quiet dash, and no tags blank', async () => {
+    mount([{ ...box, capabilities: ['ssh'], allowed_protocols: ['ssh'] }])
+    await screen.findByText('box')
+    const row = screen.getByText('box').closest('tr')!
+    expect(row.querySelectorAll('button')).toHaveLength(0)
+    expect(within(row).getByLabelText('not offered').textContent).toBe('—')
+    expect(within(row).getByLabelText('no tags').textContent).toBe('—')
+    expect(within(row).queryByText('none')).toBeNull()
   })
 
   it('keeps a host whose key is not trusted yet a disabled button, not a link', async () => {

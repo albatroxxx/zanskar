@@ -423,7 +423,8 @@ export function LoadMore({ next, busy, onMore }: { next: string; busy?: boolean;
 
 export function Tags({ tags }: { tags?: Record<string, string> }) {
   const entries = Object.entries(tags ?? {})
-  if (entries.length === 0) return <span className="muted">none</span>
+  // No tags reads as the table's usual empty cell, not a word in every row.
+  if (entries.length === 0) return <span className="muted" aria-label="no tags">—</span>
   return (
     <>
       {entries.map(([k, v]) => (

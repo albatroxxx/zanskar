@@ -19,6 +19,11 @@ function pick(t: ReachableTarget, family: Protocol[]): Protocol | null {
   return null
 }
 
+/** NotOffered fills a protocol cell the target has nothing for. */
+function NotOffered() {
+  return <span className="muted" title="not offered" aria-label="not offered">—</span>
+}
+
 export function Targets() {
   const [items, setItems] = useState<ReachableTarget[] | null>(null)
   const [err, setErr] = useState('')
@@ -152,10 +157,10 @@ export function Targets() {
   // where Zanskar does, with a credential it holds (managed_login), the
   // protocol's own colour where the person gives their own login; each
   // button's tooltip and name say it in words (no legend, the owner,
-  // 2026-11-03). own, when
-  // set, offers the person's own login beside a green one where a grant lets
-  // them (ADR 0036), and in its place where the target's slot would not sign
-  // them in anyway.
+  // 2026-11-03). own, when set, offers the person's own login beside a green
+  // one where a grant lets them (ADR 0036), and in its place where the
+  // target's slot would not sign them in anyway. A protocol the target does
+  // not offer is a quiet dash, not a disabled button (2026-11-03 live audit).
   const protoButtons = (t: ReachableTarget, open: { link: true } | { onPick: (p: Protocol) => void }, onRequest?: (p: Protocol) => void, own?: boolean) => {
     const term = pick(t, terminalProtocols)
     const desk = pick(t, desktopProtocols)
@@ -184,14 +189,15 @@ export function Targets() {
       if (ownToo && !managed) return ownButton
       const cls = 'btn sm' + (managed ? ' proto-managed' : colorClass)
       const says = managed ? `${label}: Zanskar signs you in` : `${label}: your own login`
+      if (!p) return <NotOffered />
       const main =
-        p && !blocked && 'link' in open ? (
+        !blocked && 'link' in open ? (
           <SessionLink intent={{ target: t.id, protocol: p }} className={cls} label={label} title={says}>
             {label}
           </SessionLink>
         ) : (
-          <button className={p ? cls : 'btn sm'} disabled={!p || blocked} onClick={() => p && 'onPick' in open && open.onPick(p)} title={p ? says : 'not allowed'}>
-            {p ? label : '—'}
+          <button className={cls} disabled={blocked} onClick={() => 'onPick' in open && open.onPick(p)} title={says}>
+            {label}
           </button>
         )
       if (!ownToo) return main
@@ -314,7 +320,7 @@ export function Targets() {
                           p ? (
                             <SessionLink intent={{ target: t.id, protocol: p }} className="btn sm proto-database" label="SQL client" title="open the SQL client">SQL client</SessionLink>
                           ) : (
-                            <button className="btn sm" disabled title="not allowed">—</button>
+                            <NotOffered />
                           )
                         )}
                       </td>

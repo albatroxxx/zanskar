@@ -62,7 +62,9 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .main { padding: 28px 32px 48px; min-width: 0; }
 /* A page's actions sit level with its title block, never up against the
    command-line glyph in the corner above. */
-.page-head { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 20px; flex-wrap: wrap; }
+/* Actions sit on the title's row whether or not a lead sentence follows it:
+   centred, a page with a lead dropped its buttons half a line (2026-11-03). */
+.page-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 20px; flex-wrap: wrap; }
 /* A lead is one sentence now, so it gets one line on a desktop window: the
    old 64ch cap wrapped it into a narrow ragged block beside empty space. */
 .page-head p { margin: 4px 0 0; color: var(--fg-muted); max-width: 88ch; }
@@ -645,6 +647,10 @@ td.actions > * + * { margin-left: 8px; }
 
 /* In-page links to the sections of a long page (Settings, review U8). */
 .jump { display: flex; flex-wrap: wrap; gap: 6px 16px; margin: 0 0 16px; font-size: 0.86rem; }
+/* The index stays in reach down Settings' eleven sections (2026-11-03 live
+   audit); a section it jumps to lands below it, not under it. */
+.jump { position: sticky; top: 0; z-index: 3; background: var(--bg); padding: 10px 0; border-bottom: 1px solid var(--line); }
+.jump ~ [id] { scroll-margin-top: 64px; }
 /* The first load when the gateway does not answer (review U4): the brand and
    the sentence, so the page is recognisably ours while the console asks again. */
 .unreachable { min-height: 100vh; display: grid; place-content: center; justify-items: center; gap: 12px; text-align: center; color: var(--fg-muted); padding: 24px; }
