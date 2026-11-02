@@ -56,3 +56,8 @@ and update the status of the old one.
 | [0036](0036-access-policy-grants.md) | An access policy is an audience and a list of grants, each with its own conditions | Accepted, amended 2026-11-02 |
 | [0037](0037-application-modes-proxied-and-isolated.md) | An application opens proxied in the user's own browser, or isolated in a full browser beside the gateway | Accepted, amended 2026-11-02 |
 | [0038](0038-sessions-and-reviews-open-in-their-own-tab.md) | Sessions, watches and recordings open in a tab of their own | Accepted |
+| [0039](0039-notifications.md) | Notifications follow the audit log, to a signed webhook or by email | Accepted |
+| [0040](0040-access-reviews.md) | Access reviews: who a policy covers, kept or removed, on the record | Accepted |
+| [0041](0041-searching-terminal-recordings.md) | The command lines of terminal recordings are indexed and searched | Accepted |
+| [0042](0042-four-eyes-sessions.md) | Four eyes: a session waits until a second person watches it | Accepted |
+| [0043](0043-configuration-as-a-file.md) | The configuration as a file: exported by name, imported through the API | Accepted |

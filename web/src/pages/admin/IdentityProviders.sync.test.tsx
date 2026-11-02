@@ -69,6 +69,13 @@ describe('Directory user sync in the list', () => {
     render(<IdentityProviders />)
     const row = (await screen.findByText('Keycloak')).closest('tr')!
     expect(within(row).getByRole('button', { name: /Failed .*HTTP 403/ })).toBeDefined()
+    // 2026-11-03 live audit, Q1: "Last synced" beside a small red mark read
+    // as a success, and Status stayed a green tick. The failure says so.
+    expect(row.textContent).toContain('Sync failed')
+    expect(row.textContent).not.toContain('Last synced')
+    expect(within(row).getByText('keycloak admin API refused the client (HTTP 403)').className).toBe('sync-error')
+    expect(within(row).getByRole('button', { name: 'Enabled · not answering' })).toBeDefined()
+    expect(within(row).queryByRole('button', { name: 'Enabled' })).toBeNull()
     await userEvent.setup().click(within(row).getByRole('button', { name: 'Sync now' }))
     expect(await screen.findByText('Keycloak: list the directory: HTTP 403')).toBeDefined()
   })

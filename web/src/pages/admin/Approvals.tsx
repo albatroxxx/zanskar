@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { api, errorMessage } from '../../api/client'
 import { fmtTime, protocolName } from '../../api/format'
 import type { AccessRequest, Page } from '../../api/types'
-import { Alert, Badge, Empty, Field, Modal, PageHead } from '../../components/ui'
+import { Alert, Badge, Field, Loading, Modal, PageHead } from '../../components/ui'
 import { badgesChanged } from '../../components/badges'
 
 /** Approvals is the admin queue for just-in-time access requests (ADR 0018):
@@ -72,7 +72,7 @@ export function Approvals() {
         {loadErr.pending ? (
           <Alert tone="danger">The pending requests could not be loaded: {loadErr.pending}</Alert>
         ) : pending === null ? (
-          <Empty>Loading…</Empty>
+          <Loading />
         ) : pending.length === 0 ? (
           <p className="muted" style={{ margin: 0 }}>No requests are waiting.</p>
         ) : (
@@ -113,7 +113,7 @@ export function Approvals() {
         {loadErr.active ? (
           <Alert tone="danger">The active grants could not be loaded: {loadErr.active}</Alert>
         ) : active === null ? (
-          <Empty>Loading…</Empty>
+          <Loading />
         ) : active.length === 0 ? (
           <p className="muted" style={{ margin: 0 }}>No active grants.</p>
         ) : (

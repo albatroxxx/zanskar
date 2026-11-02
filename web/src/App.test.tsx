@@ -87,6 +87,15 @@ describe('App routes', () => {
     expect(await screen.findByRole('heading', { name: 'Targets' })).toBeDefined()
   })
 
+  // 2026-11-03 live audit, Q3: /admin/audit showed the dashboard as if asked for.
+  it('says Not found for an unknown page inside a portal, with a way back', async () => {
+    signedIn(['admin'])
+    open('/admin/audit')
+    expect(await screen.findByRole('heading', { name: 'Not found' })).toBeDefined()
+    expect(screen.getByRole('link', { name: 'Go to the start page' }).getAttribute('href')).toBe('/admin')
+    expect(screen.queryByRole('heading', { name: 'Dashboard' })).toBeNull()
+  })
+
   it('tells an account with no role that no portal opens for it, and offers sign-out', async () => {
     signedIn([])
     open('/')

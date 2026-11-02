@@ -86,7 +86,11 @@ type Grant struct {
 	AllowFileTransfer bool          `json:"allow_file_transfer"`
 	// AllowDevTools lets an application grant open Chromium's developer
 	// tools in its isolated browser (ADR 0037); applications only.
-	AllowDevTools      bool         `json:"allow_devtools"`
+	AllowDevTools bool `json:"allow_devtools"`
+	// RequireWatcher holds a session the grant admits until a second person,
+	// an administrator or auditor who is not its owner, watches it (ADR
+	// 0042, four eyes). Terminal sessions only; any other is refused.
+	RequireWatcher     bool         `json:"require_watcher"`
 	IdleTimeoutMinutes int          `json:"idle_timeout_minutes"`
 	MaxSessionMinutes  *int         `json:"max_session_minutes"`
 	TimeWindows        []TimeWindow `json:"time_windows"`
@@ -112,6 +116,10 @@ type Policy struct {
 	CreatedBy   string    `json:"created_by,omitempty"`
 	CreatedAt   time.Time `json:"created_at"`
 	UpdatedAt   time.Time `json:"updated_at"`
+	// ReviewedAt and ReviewedBy are the last access review (ADR 0040):
+	// when an administrator went through who the policy covers, and who.
+	ReviewedAt *time.Time `json:"reviewed_at,omitempty"`
+	ReviewedBy string     `json:"reviewed_by,omitempty"`
 }
 
 // Errors.
@@ -181,6 +189,11 @@ func (g *Grant) validate() error {
 	}
 	if g.AllowDevTools && g.Kind != protocol.KindApplication {
 		return fmt.Errorf("%w: developer tools are for application grants only", ErrInvalidInput)
+	}
+	// Four eyes holds terminal sessions (ADR 0042), which databases and
+	// applications do not have.
+	if g.RequireWatcher && g.Kind != protocol.KindHost && g.Kind != protocol.KindAutoscaling {
+		return fmt.Errorf("%w: a second person watching is for host and autoscaling grants only", ErrInvalidInput)
 	}
 	// Files move over SSH (the terminal's SFTP panel) and RDP (the session's
 	// drive), never into a database client or an application's browser,
@@ -444,6 +457,9 @@ type Decision struct {
 	AllowFileTransfer bool `json:"allow_file_transfer"`
 	AllowDevTools     bool `json:"allow_devtools"`
 	RequireMFA        bool `json:"require_mfa"`
+	// RequireWatcher: a deciding grant asks for a second person watching
+	// (ADR 0042); one is enough, as for MFA.
+	RequireWatcher bool `json:"require_watcher"`
 	// RequireApproval is true when only approval grants admit, so the
 	// person needs an active grant to connect (ADR 0018).
 	RequireApproval bool `json:"require_approval"`
@@ -521,6 +537,7 @@ func evaluate(policies []*Policy, t TargetRef, proto string, now time.Time, wind
 		d.AllowFileTransfer = d.AllowFileTransfer && g.AllowFileTransfer
 		d.AllowDevTools = d.AllowDevTools && g.AllowDevTools
 		d.RequireMFA = d.RequireMFA || g.RequireMFA
+		d.RequireWatcher = d.RequireWatcher || g.RequireWatcher
 		if g.MaxSessionMinutes != nil {
 			m := time.Duration(*g.MaxSessionMinutes) * time.Minute
 			if !maxSet || m < d.MaxSession {

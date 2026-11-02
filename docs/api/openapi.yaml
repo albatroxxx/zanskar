@@ -777,13 +777,20 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
         "409":
-          description: The target is not reachable for this protocol (capability missing, host key untrusted or changed, or instance no longer healthy).
+          description: >-
+            The target is not reachable for this protocol (capability missing, host key untrusted
+            or changed, or instance no longer healthy); or `target_unreachable`: for a host (SSH,
+            RDP, VNC, WinRM), the pre-flight dial to its port, made after the policy allowed the
+            request, was refused, timed out after 4 seconds, or found no route. The message says
+            which.
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
         "422":
           description: >-
+            `address_forbidden`: the target's name resolves to an address the gateway does not
+            connect to.
             `credential_required`: the target uses the caller's own account for this protocol, or
             every grant that admits the caller says `sign_in: own`, so the request must carry
             `credential` (a private key is for `ssh` only).
@@ -797,6 +804,20 @@ paths:
           description: >-
             The gateway cannot broker this here: `protocol_unavailable`, `engine_unavailable`, or
             `credential_mode_unavailable`.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "503":
+          description: "`restarting`: the gateway is draining for a restart."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "507":
+          description: >-
+            `disk_full`: a volume holding the database or the recordings is 95% used or more (df's
+            Use%), so a new session could not be recorded. Running sessions go on.
           content:
             application/json:
               schema:
@@ -830,6 +851,59 @@ paths:
                           $ref: "#/components/schemas/OwnSession"
         "400":
           $ref: "#/components/responses/BadRequest"
+  /me/activity:
+    get:
+      tags: [user]
+      summary: The caller's own activity
+      description: |
+        The caller's own events, newest first: those they did, and those done to their account
+        (object type `user`, their id) by an administrator or the gateway. Routine events are left
+        out (`audit.read`, and the successful `session.connect` ticket issue). Details are cut to
+        `reason`, `protocol`, `detail`, `idp`, `method` and `duration_minutes`. `ip` is blank when
+        another person did it. Any signed-in account may read its own; reading records no event.
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+      responses:
+        "200":
+          description: Events.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/PagedResponse"
+                  - type: object
+                    properties:
+                      items:
+                        type: array
+                        items:
+                          type: object
+                          required: [id, ts, action, outcome, ip]
+                          properties:
+                            id:
+                              type: integer
+                            ts:
+                              type: string
+                              format: date-time
+                            action:
+                              type: string
+                            outcome:
+                              type: string
+                              enum: [success, failure]
+                            ip:
+                              type: string
+                            by:
+                              type: string
+                              description: Who did it when it was not the caller; `gateway` for the gateway itself.
+                            object_type:
+                              type: string
+                            object_name:
+                              type: string
+                            details:
+                              type: object
+                              additionalProperties: true
+        "401":
+          $ref: "#/components/responses/Unauthorized"
   /sessions/{id}/failover:
     post:
       tags: [user]
@@ -2962,6 +3036,70 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
 
+  /access-policies/{id}/review:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+    get:
+      tags: [admin]
+      summary: The policy's access review (ADR 0040)
+      description: >
+        Each subject with its name, the people it brings (a group's members, or the person) and
+        each person's last session under the policy, the newest of them as the subject's
+        `last_used_at`; who last reviewed it, and whether a review is `due` (never made, or older
+        than 90 days).
+      responses:
+        "200":
+          description: The review.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PolicyReview"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    post:
+      tags: [admin]
+      summary: Complete an access review
+      description: >
+        Removes the subjects in `remove` from the policy (an edit: validated, and the live sessions
+        it took away end), stamps `reviewed_at` and `reviewed_by`, and records one `policy.review`
+        event with the kept and removed subjects and the note. An empty `remove` keeps everyone and
+        still stamps the review.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                remove:
+                  type: array
+                  items:
+                    $ref: "#/components/schemas/PolicySubject"
+                note:
+                  type: string
+                  maxLength: 2000
+      responses:
+        "200":
+          description: The review after it.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PolicyReview"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          description: "`unknown_subject`: a subject to remove is not one of the policy's."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
   /access-requests:
     get:
       tags: [admin]
@@ -3499,6 +3637,27 @@ paths:
                           $ref: "#/components/schemas/AccessSession"
         "400":
           $ref: "#/components/responses/BadRequest"
+  /sessions.csv:
+    get:
+      tags: [audit]
+      summary: The sessions the filter matches, as CSV
+      description: |
+        Takes the filter `GET /sessions` takes (`user_id`, `username`, `target_id`, `open`, `from`)
+        and writes every page of it, newest first, up to 50,000 rows. Columns: id, started, ended,
+        duration_seconds, user, target, protocol, client_ip, end_reason, end_detail, recording_id,
+        recording_kept_until. Formula-like values are written as text, as for the events export.
+        Recorded as an `audit.read` of `access_session` with `format: csv`.
+      responses:
+        "200":
+          description: The sessions.
+          content:
+            text/csv:
+              schema:
+                type: string
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "403":
+          $ref: "#/components/responses/Forbidden"
   /sessions/{id}:
     get:
       tags: [auditor]
@@ -3651,6 +3810,29 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/AuditVerifyResult"
+  /audit/events.csv:
+    get:
+      tags: [audit]
+      summary: The audit events the filter matches, as CSV
+      description: |
+        Takes the filter `GET /audit/events` takes (`actor`, `actor_user_id`, `action`, `outcome`,
+        `object_type`, `object_id`, `exclude`, `from`, `to`) and writes every page of it, newest
+        first, up to 50,000 rows; a longer export ends with a row saying where it was cut. Columns:
+        id, time, actor, actor_ip, action, outcome, object_type, object_id, object_name, details
+        (the event's JSON), hash. A value a spreadsheet would run as a formula (starting with `=`,
+        `+`, `-`, `@`, a tab or a carriage return) is written with a leading apostrophe. Recorded as
+        an `audit.read` with `format: csv`, the count and whether it was cut.
+      responses:
+        "200":
+          description: The events.
+          content:
+            text/csv:
+              schema:
+                type: string
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "403":
+          $ref: "#/components/responses/Forbidden"
   /audit/facets:
     get:
       tags: [auditor]
@@ -3675,6 +3857,58 @@ paths:
                     type: array
                     items:
                       type: string
+  /recordings/search:
+    get:
+      tags: [audit]
+      summary: Find a command line across terminal recordings (ADR 0041)
+      description: >
+        Command lines containing `q` (2 to 200 characters, case-insensitive, `%` and `_` literal) in
+        terminal recordings still kept, newest sessions first. `seq` is the command's marker index:
+        the player opens there with `?marker=<seq>`. Each search is recorded as `recording.search`
+        with its term and how many it found.
+      parameters:
+        - name: q
+          in: query
+          required: true
+          schema:
+            type: string
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: Hits.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        recording_id:
+                          type: string
+                        session_id:
+                          type: string
+                        username:
+                          type: string
+                        target_name:
+                          type: string
+                        protocol:
+                          type: string
+                        started_at:
+                          $ref: "#/components/schemas/Timestamp"
+                        seq:
+                          type: integer
+                        at_ms:
+                          type: integer
+                          format: int64
+                        command:
+                          type: string
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "403":
+          $ref: "#/components/responses/Forbidden"
   /recordings/{id}:
     get:
       tags: [auditor]
@@ -4662,6 +4896,206 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
+  /admin/config/export:
+    get:
+      tags: [admin]
+      summary: The configuration as a YAML file (ADR 0043)
+      description: >
+        Groups (members by username), hosts, databases, applications (credentials by name) and access
+        policies (subjects and grant targets by name). No ids and no secrets. Read through the API as
+        the caller. Recorded as `config.export`.
+      responses:
+        "200":
+          description: The file.
+          content:
+            application/yaml:
+              schema:
+                type: string
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /admin/config/import:
+    post:
+      tags: [admin]
+      summary: Import a configuration file (ADR 0043)
+      description: >
+        Without `apply=true`, the plan: each group, target and policy in the file marked `create`,
+        `update` or `unchanged`, with any `problem` (a name that does not exist). With `apply=true`,
+        refused whole (422, the plan) while any problem remains; otherwise applied through the API as
+        the caller, groups then targets then policies, stopping at the first change the API refuses
+        (409, `error` on it and `applied` on those that ran). Additive: nothing the file leaves out is
+        deleted. Recorded as `config.import`, beside each change's own event.
+      parameters:
+        - name: apply
+          in: query
+          schema:
+            type: boolean
+      requestBody:
+        required: true
+        content:
+          application/yaml:
+            schema:
+              type: string
+              maxLength: 2097152
+      responses:
+        "200":
+          description: The plan, or the changes made.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConfigImportResult"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          description: Applied in part; the API refused a change, named by its `error`.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConfigImportResult"
+        "422":
+          description: The plan has problems; nothing changed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConfigImportResult"
+  /admin/notifications:
+    get:
+      tags: [admin]
+      summary: Notification channels (ADR 0039)
+      description: >
+        Every channel, its kinds of event and how its deliveries are going, and `events`, the kinds a
+        channel can ask for. Secrets are never returned; `has_secret` says one is stored.
+      responses:
+        "200":
+          description: Channels.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/NotificationChannel"
+                  events:
+                    type: array
+                    items:
+                      type: string
+    post:
+      tags: [admin]
+      summary: Add a notification channel
+      description: >
+        A webhook (`webhook_url`, https, not loopback or link-local) or email (`smtp_host`,
+        `smtp_port`, `smtp_username`, `smtp_password`, `from`, `to`). The channel starts at the newest
+        audit event: it is told what happens from now on. A webhook's signing key is made here and
+        returned once as `signing_key`. Audited as `notify.channel.create`, without secrets.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/NotificationChannelInput"
+      responses:
+        "201":
+          description: Added.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  channel:
+                    $ref: "#/components/schemas/NotificationChannel"
+                  signing_key:
+                    type: string
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "409":
+          $ref: "#/components/responses/Conflict"
+  /admin/notifications/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+    put:
+      tags: [admin]
+      summary: Change a notification channel
+      description: A secret field left empty keeps the stored one. Audited as `notify.channel.update`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/NotificationChannelInput"
+      responses:
+        "200":
+          description: Changed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NotificationChannel"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+    delete:
+      tags: [admin]
+      summary: Remove a notification channel
+      responses:
+        "204":
+          description: Removed, with its place in the audit log.
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /admin/notifications/{id}/test:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+    post:
+      tags: [admin]
+      summary: Send a test message now
+      responses:
+        "204":
+          description: Delivered.
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "502":
+          description: "`delivery_failed`: the message says why."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /admin/notifications/{id}/signing-key:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+    post:
+      tags: [admin]
+      summary: Replace a webhook's signing key
+      description: The new key is returned once; the old one stops verifying at once.
+      responses:
+        "200":
+          description: The new key.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  signing_key:
+                    type: string
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
   /admin/retention:
     get:
       tags: [admin]
@@ -4982,7 +5416,7 @@ components:
       enum: [asciicast, guac]
     EndReason:
       type: string
-      enum: [user_exit, idle_timeout, max_duration, admin_terminated, policy_revoked, trust_lost, gateway_restart, target_lost, failover, error]
+      enum: [user_exit, idle_timeout, max_duration, admin_terminated, policy_revoked, trust_lost, gateway_restart, target_lost, failover, error, no_watcher]
     Ports:
       type: object
       description: Port per protocol. Missing keys use defaults 22, 3389, 5900, 5986.
@@ -5986,6 +6420,41 @@ components:
         and no others: `host` and `autoscaling` ssh, rdp, vnc and winrm; `database` database;
         `application` http.
       enum: [host, database, application, autoscaling]
+    PolicyReview:
+      type: object
+      required: [policy, subjects, due]
+      properties:
+        policy:
+          $ref: "#/components/schemas/AccessPolicy"
+        subjects:
+          type: array
+          items:
+            type: object
+            properties:
+              kind:
+                type: string
+                enum: [group, user]
+              id:
+                type: string
+              name:
+                type: string
+              people:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    user_id:
+                      type: string
+                    username:
+                      type: string
+                    last_used_at:
+                      $ref: "#/components/schemas/Timestamp"
+              last_used_at:
+                $ref: "#/components/schemas/Timestamp"
+        reviewer_name:
+          type: string
+        due:
+          type: boolean
     PolicySubject:
       type: object
       description: One group or user a policy applies to.
@@ -6116,6 +6585,15 @@ components:
             Chromium's developer tools in the application's isolated browser (ADR 0037).
             Allowed only on an `application` grant; where several grants admit a person, every
             one must allow them.
+        require_watcher:
+          type: boolean
+          default: false
+          description: >
+            Four eyes (ADR 0042): a terminal session (SSH, the WinRM console) the grant admits is
+            held, its owner told why, until an administrator or auditor other than its owner
+            watches it, and ends `no_watcher` after 5 minutes without one. Any other session the
+            grant admits is refused at Connect (`409 watcher_unavailable`). Allowed on `host` and
+            `autoscaling` grants; where several grants admit a person, one asking for it is enough.
         idle_timeout_minutes:
           type: integer
           minimum: 1
@@ -6179,6 +6657,12 @@ components:
           $ref: "#/components/schemas/Timestamp"
         updated_at:
           $ref: "#/components/schemas/Timestamp"
+        reviewed_at:
+          description: The last access review (ADR 0040); absent until the first.
+          $ref: "#/components/schemas/Timestamp"
+        reviewed_by:
+          type: string
+          description: The id of the administrator who made the last access review.
       examples:
         - id: 4f1c0a9e2b7d4e8f9a6b3c2d1e0f7a8b
           name: platform-prod
@@ -6840,6 +7324,12 @@ components:
           oneOf:
             - $ref: "#/components/schemas/EndReason"
             - type: "null"
+        end_detail:
+          type: string
+          description: >
+            What was said about the end, at most 500 characters: the sentence the person was shown
+            when the gateway ended or refused the session, or the target's side's words when it
+            ended it (for a desktop, guacd's). Absent for a plain exit.
         failover_from_session_id:
           type: [string, "null"]
     FileEntry:
@@ -6887,6 +7377,18 @@ components:
             recording_id:
               type: [string, "null"]
               description: Present only when the caller holds `auditor` or `admin`.
+            recording_purged:
+              type: boolean
+              description: >
+                Retention has deleted the recording's file; the row stays so its events resolve.
+                Reviewers only.
+            recording_kept_until:
+              type: string
+              format: date-time
+              description: >
+                When retention deletes the recording by age: its own date, else the global age
+                counted from when it finished. Absent with no age limit, while it is still being
+                written, or once deleted. The size cap can delete it sooner. Reviewers only.
 
     # ---------------------------------------------------------------- recordings
     Recording:
@@ -7135,6 +7637,119 @@ components:
         started_24h:
           type: integer
           description: Sessions started in the last 24 hours.
+    ConfigImportResult:
+      type: object
+      required: [applied, changes]
+      properties:
+        applied:
+          type: boolean
+        changes:
+          type: array
+          items:
+            type: object
+            properties:
+              kind:
+                type: string
+                enum: [group, target, policy]
+              name:
+                type: string
+              action:
+                type: string
+                enum: [create, update, unchanged]
+              problem:
+                type: string
+              error:
+                type: string
+              applied:
+                type: boolean
+    NotificationChannel:
+      type: object
+      required: [id, name, kind, events, config, enabled, has_secret]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        kind:
+          type: string
+          enum: [webhook, email]
+        events:
+          type: array
+          items:
+            type: string
+            enum: [access_requested, access_decided, watcher_needed, session_terminated, provider_failing, recording_lost, disk_full]
+        config:
+          type: object
+          properties:
+            webhook_host:
+              type: string
+            smtp_host:
+              type: string
+            smtp_port:
+              type: integer
+            smtp_username:
+              type: string
+            from:
+              type: string
+            to:
+              type: array
+              items:
+                type: string
+        enabled:
+          type: boolean
+        has_secret:
+          type: boolean
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        status:
+          type: object
+          properties:
+            last_sent_at:
+              type: string
+              format: date-time
+            last_error:
+              type: string
+            last_error_at:
+              type: string
+              format: date-time
+    NotificationChannelInput:
+      type: object
+      required: [name, events]
+      properties:
+        name:
+          type: string
+        kind:
+          type: string
+          enum: [webhook, email]
+          description: On create only.
+        events:
+          type: array
+          items:
+            type: string
+        enabled:
+          type: boolean
+        webhook_url:
+          type: string
+          format: uri
+        smtp_host:
+          type: string
+        smtp_port:
+          type: integer
+        smtp_username:
+          type: string
+        smtp_password:
+          type: string
+          format: password
+        from:
+          type: string
+        to:
+          type: array
+          items:
+            type: string
     AuditTallies:
       type: object
       required: [events, failures, failed_logins, refused_connects]
@@ -7151,6 +7766,14 @@ components:
         refused_connects:
           type: integer
           description: Refused connections (`session.connect` failures).
+        top_failure:
+          type: string
+          description: >
+            The action most of the failures were (a tie goes to the one that sorts first). Absent
+            with no failures.
+        top_failure_count:
+          type: integer
+          description: How many of the failures were `top_failure`.
     AdminOverview:
       type: object
       required: [sessions, pending_requests, targets, inventory, autoscaling, audit_24h, posture, integrity, in_flight, trends, storage]

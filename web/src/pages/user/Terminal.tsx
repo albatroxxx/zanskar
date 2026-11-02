@@ -11,6 +11,7 @@ import { SESSION_ID, useSwitched, type SessionEnd, type SessionState } from './s
 import { TerminalFiles } from './TerminalFiles'
 import { useFullscreen } from './fullscreen'
 import { FullscreenButton } from './FullscreenButton'
+import { GrantClock } from '../../components/GrantClock'
 import { terminalTheme } from '../../styles/theme'
 import { useTitle } from '../../components/title'
 import { CONTROLS_KEY, isControlsEvent } from './keys'
@@ -38,6 +39,9 @@ function TerminalSession({ state }: { state: SessionState }) {
   const [askDisconnect, setAskDisconnect] = useState(false)
   const endedRef = useRef(false)
   const [status, setStatus] = useState<'connecting' | 'live'>('connecting')
+  // Four eyes (ADR 0042): the gateway holds the session until a second
+  // person watches it, and says so.
+  const [waiting, setWaiting] = useState('')
   const [filesAllowed, setFilesAllowed] = useState(false)
   const [panelOpen, setPanelOpen] = useState(false)
   const wsRef = useRef<WebSocket | null>(null)
@@ -89,7 +93,9 @@ function TerminalSession({ state }: { state: SessionState }) {
       }
       try {
         const c = JSON.parse(ev.data as string) as { t: string; reason?: string; msg?: string; session_id?: string; files?: boolean }
+        if (c.t === 'waiting') setWaiting(c.msg ?? 'waiting for a second person to watch')
         if (c.t === 'ready') {
+          setWaiting('')
           setStatus('live')
           // The id addresses the file-transfer endpoints, so accept only the
           // shape the gateway generates (store.NewID: 32 hex chars).
@@ -158,7 +164,9 @@ function TerminalSession({ state }: { state: SessionState }) {
         {state.switched_from && <span className="stat switched">switched from {state.switched_from}</span>}
         <span className="stat">{protocolName(state.protocol)}</span>
         <span className="stat">{status === 'connecting' ? 'connecting…' : (ended ? 'ran for ' : 'elapsed ') + fmtSeconds(elapsed)}</span>
+        {waiting && !ended && <span className="stat warn" role="status">{waiting}</span>}
         {!ended && <span className={'stat' + (idle > 600 ? ' warn' : '')}>idle {fmtSeconds(idle)}</span>}
+        {!ended && <GrantClock session={state} />}
         <span className="grow" />
         {!ended && <span className="stat hint" title={`Press ${CONTROLS_KEY} to move between the terminal and these controls`}>{CONTROLS_KEY}: controls</span>}
         <span className="sr-only" role="status">{status === 'live' && !ended ? `Connected. Press ${CONTROLS_KEY} to move from the terminal to the controls.` : ''}</span>

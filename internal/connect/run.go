@@ -4,6 +4,7 @@ package connect
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"maps"
@@ -83,16 +84,17 @@ func (h *Handler) startRun(r *http.Request, ws *websocket.Conn, g *ticket.Grant,
 	// target_lost, before it issued the ticket; this only catches a row that
 	// close missed.
 	if g.FailoverFrom != "" {
-		run.endRow(g.FailoverFrom, session.EndFailover)
+		run.endRow(g.FailoverFrom, session.EndFailover, "")
 	}
 	return run, true
 }
 
-// endRow closes a session's row.
-func (run *sessionRun) endRow(id, reason string) {
+// endRow closes a session's row, keeping detail, what was said about the
+// end, beside its reason.
+func (run *sessionRun) endRow(id, reason, detail string) {
 	ctx, cancel := run.closing()
 	defer cancel()
-	if err := run.h.Sessions.End(ctx, id, reason); err != nil {
+	if err := run.h.Sessions.EndWithDetail(ctx, id, reason, detail); err != nil {
 		run.h.Log.Error("end session", "session", id, "err", err)
 	}
 }
@@ -102,7 +104,14 @@ func (run *sessionRun) endRow(id, reason string) {
 // ended the session. With a message, the client is told why and the socket
 // closes as a policy violation, the close the console shows a reason for.
 func (run *sessionRun) end(reason, msg string, more map[string]string) {
-	run.endRow(run.s.ID, reason)
+	// The row keeps what was said (2026-11-03 live audit, Q7): the target's
+	// side's words when it ended the session, else the gateway's sentence
+	// to the person. Both lists show it beside the reason.
+	detail := more["detail"]
+	if detail == "" {
+		detail = msg
+	}
+	run.endRow(run.s.ID, reason, detail)
 	details := map[string]string{"reason": reason, "target_id": run.ep.LiveKey}
 	maps.Copy(details, more)
 	run.h.record(run.r, run.actor.Event(audit.SessionEnd, "access_session", run.s.ID, audit.Success, details))
@@ -188,12 +197,78 @@ func (run *sessionRun) finish(rec recorder, row *session.Recording, reason strin
 	// A desktop that guacd ended (the RDP server disconnecting, say) keeps
 	// guacd's words and status; the reason alone reads "target lost" for a
 	// dropped network and a Windows logoff alike.
-	var more map[string]string
+	more := map[string]string{}
 	if up, ok := errors.AsType[*guac.UpstreamError](err); ok {
-		more = map[string]string{"detail": up.Message, "status": fmt.Sprintf("0x%04X", up.Status)}
+		more["detail"], more["status"] = up.Message, fmt.Sprintf("0x%04X", up.Status)
+	}
+	if run.discardIfBlank(rec, row) {
+		more["recording"] = "discarded: the session drew nothing"
 	}
 	run.end(reason, "", more)
 	_ = run.ws.Close(websocket.StatusNormalClosure, reason)
+}
+
+// watchWait is how long a session held for a second person waits for one
+// (ADR 0042).
+var watchWait = 5 * time.Minute
+
+// awaitWatcher holds a session whose grant asks for four eyes until someone
+// other than its owner, an administrator or auditor, watches it (ADR 0042).
+// The session is live (in the registry, its tap ready) so it can be
+// watched, but nothing passes between the person and the target yet. The
+// person is told why; the wait is audited, which a notification channel can
+// relay to the watchers. It reports whether the session goes on; when it
+// does not, it has ended it: nobody came in time, or it was terminated.
+func (run *sessionRun) awaitWatcher(ctx context.Context, rec recorder, row *session.Recording) bool {
+	if !run.g.RequireWatcher {
+		return true
+	}
+	run.h.record(run.r, run.actor.Event(audit.SessionWatcherWait, "access_session", run.s.ID, audit.Success,
+		map[string]any{"target_id": run.ep.LiveKey, "protocol": run.g.Protocol}))
+	wctx, cancel := detach(run.r.Context(), frameTimeout)
+	b, _ := json.Marshal(map[string]string{"t": "waiting", "msg": "waiting for a second person to watch this session (four eyes)"})
+	_ = run.ws.Write(wctx, websocket.MessageText, b)
+	cancel()
+	err := run.h.Registry.AwaitWatcher(ctx, run.s.ID, watchWait)
+	if err == nil {
+		return true
+	}
+	run.finishRecording(rec, row)
+	if errors.Is(err, gateway.ErrNoWatcher) {
+		run.end(session.EndNoWatcher, fmt.Sprintf("nobody watched this session within %d minutes; it needs a second person watching (four eyes)", int(watchWait/time.Minute)), nil)
+		return false
+	}
+	reason, msg := gateway.CancelReason(ctx)
+	run.end(reason, msg, nil)
+	return false
+}
+
+// framer is a recording that counts the frames it carried: a desktop's.
+type framer interface{ Frames() int }
+
+// discardIfBlank deletes the recording of a desktop session that never drew
+// a frame, and marks its row discarded, which lists leave out (2026-11-03
+// live audit, Q6: a Windows host refusing the log-on left six recordings of
+// a blank screen in three minutes). Nothing was shown, so nothing is lost;
+// the session's row and its events stay, the end event saying the recording
+// was discarded. It reports whether it discarded the recording. A recording
+// that could not be closed is left as finishRecording left it.
+func (run *sessionRun) discardIfBlank(rec recorder, row *session.Recording) bool {
+	f, ok := rec.(framer)
+	if !ok || row == nil || f.Frames() > 0 {
+		return false
+	}
+	ctx, cancel := run.closing()
+	defer cancel()
+	if err := run.h.Storage.Delete(ctx, row.StorageURI); err != nil {
+		run.h.Log.Warn("discard blank recording", "session", run.s.ID, "err", err)
+		return false
+	}
+	if err := run.h.Sessions.DiscardRecording(ctx, row.ID, time.Now()); err != nil {
+		run.h.Log.Error("mark recording discarded", "session", run.s.ID, "err", err)
+		return false
+	}
+	return true
 }
 
 // finishRecording closes the session's recording and records its size and

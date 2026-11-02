@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { api, errorMessage, query } from '../../api/client'
 import { fmtPreciseTime } from '../../api/format'
 import type { LogRecord, LogsPage } from '../../api/types'
-import { Alert, Badge, Empty, PageHead } from '../../components/ui'
+import { Alert, Badge, Empty, Loading, PageHead } from '../../components/ui'
 
 const levels = ['debug', 'info', 'warn', 'error'] as const
 
@@ -75,7 +75,7 @@ export function Logs() {
       )}
       <div className="card table-wrap">
         {page === null ? (
-          <Empty>Loading…</Empty>
+          <Loading />
         ) : page.items.length === 0 ? (
           <Empty>No log lines match.</Empty>
         ) : (

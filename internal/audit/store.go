@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -154,7 +155,11 @@ func (l *Log) Record(ctx context.Context, e Event) (Event, error) {
 // by a previous List call.
 type Filter struct {
 	ActorUserID string
-	Action      string
+	// Subject narrows to one person's events: those they did and those done
+	// to their account (object type user, object id theirs), for the access
+	// portal's Activity page (2026-11-03, idea 11).
+	Subject string
+	Action  string
 	// Outcome narrows to successes or failures; empty means both. The
 	// dashboards' failure counts open the list with it.
 	Outcome    Outcome
@@ -190,6 +195,10 @@ func (l *Log) List(ctx context.Context, f Filter) ([]Event, string, error) {
 	if f.ActorUserID != "" {
 		add("actor_user_id = ?", f.ActorUserID)
 	}
+	if f.Subject != "" {
+		where = append(where, "(actor_user_id = ? OR (object_type = 'user' AND object_id = ?))")
+		args = append(args, f.Subject, f.Subject)
+	}
 	if f.Action != "" {
 		add("action = ?", f.Action)
 	}
@@ -197,7 +206,11 @@ func (l *Log) List(ctx context.Context, f Filter) ([]Event, string, error) {
 		add("outcome = ?", string(f.Outcome))
 	}
 	if f.ObjectType != "" {
-		add("object_type = ?", f.ObjectType)
+		types := append([]string{f.ObjectType}, legacyObjectTypes[f.ObjectType]...)
+		where = append(where, "object_type IN (?"+strings.Repeat(", ?", len(types)-1)+")")
+		for _, t := range types {
+			args = append(args, t)
+		}
 	}
 	if f.ObjectID != "" {
 		add("object_id = ?", f.ObjectID)
@@ -551,6 +564,25 @@ type Facets struct {
 	ObjectTypes []string `json:"object_types"`
 }
 
+// legacyObjectTypes names object types an older build recorded for the same
+// thing. Events are never rewritten (the hash chain covers them), so a filter on
+// the current name also matches the old ones, and the facets offer only the
+// current name. Before 1.15.0 taking a target out of a policy recorded "policy"
+// where every other policy event says "access_policy".
+var legacyObjectTypes = map[string][]string{
+	"access_policy": {"policy"},
+}
+
+// currentObjectType maps a legacy object type to the name in use now.
+func currentObjectType(t string) string {
+	for cur, olds := range legacyObjectTypes {
+		if slices.Contains(olds, t) {
+			return cur
+		}
+	}
+	return t
+}
+
 // Facets reads the distinct action and object_type values in the log.
 func (l *Log) Facets(ctx context.Context) (Facets, error) {
 	var f Facets
@@ -558,8 +590,16 @@ func (l *Log) Facets(ctx context.Context) (Facets, error) {
 	if f.Actions, err = l.distinct(ctx, "action"); err != nil {
 		return Facets{}, err
 	}
-	if f.ObjectTypes, err = l.distinct(ctx, "object_type"); err != nil {
+	types, err := l.distinct(ctx, "object_type")
+	if err != nil {
 		return Facets{}, err
+	}
+	seen := make(map[string]bool, len(types))
+	for _, t := range types {
+		if t = currentObjectType(t); !seen[t] {
+			seen[t] = true
+			f.ObjectTypes = append(f.ObjectTypes, t)
+		}
 	}
 	return f, nil
 }
@@ -862,6 +902,16 @@ func nullIfEmpty(s string) any {
 		return nil
 	}
 	return s
+}
+
+// Newest is the newest event's id, 0 for an empty log: where a new
+// notification channel starts reading (ADR 0039).
+func (l *Log) Newest(ctx context.Context) (int64, error) {
+	var newest sql.NullInt64
+	if err := l.db.QueryRowContext(ctx, `SELECT MAX(id) FROM audit_events`).Scan(&newest); err != nil {
+		return 0, err
+	}
+	return newest.Int64, nil
 }
 
 // ListAfter returns up to limit events with id > afterID in ascending order.

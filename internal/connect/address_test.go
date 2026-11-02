@@ -70,12 +70,16 @@ func wantAddressRefused(t *testing.T, f *connectFixture, targetID, proto string)
 func TestTerminalRefusesForbiddenName(t *testing.T) {
 	port, fp := shellTarget(t)
 	r := newTerminalRig(t, port, fp)
+	// The name turns forbidden after Connect, whose pre-flight would refuse
+	// it first (TestConnectPreflightRefusesForbiddenName): the session's own
+	// lookup is what stops a name rebound in between.
+	tk := r.ticket(t)
 	r.h.Prober = &target.Prober{}
 	r.setAddress(t, r.targetID, "localhost")
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
-	ws, _, err := r.dial(ctx, r.ticket(t)) //nolint:bodyclose // the library closes the handshake body
+	ws, _, err := r.dial(ctx, tk) //nolint:bodyclose // the library closes the handshake body
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -101,11 +105,17 @@ func TestTerminalRefusesForbiddenName(t *testing.T) {
 func TestWinRMRefusesForbiddenName(t *testing.T) {
 	r := newWinRMRig(t)
 	id := r.winTarget(t, "win-named", "admin", r.wsm.Fingerprint())
+	// Rebound after Connect, as in TestTerminalRefusesForbiddenName.
+	code, out := r.postConnect(t, r.url, id, "winrm")
+	tok, _ := out["ticket"].(string)
+	if code != http.StatusOK || tok == "" {
+		t.Fatalf("connect: %d %v", code, out)
+	}
 	r.h.Prober = &target.Prober{}
 	r.setAddress(t, id, "localhost")
 	before := r.wsm.Requests.Load()
 
-	ws, resp, err := r.open(t, id)
+	ws, resp, err := websocket.Dial(context.Background(), "ws"+strings.TrimPrefix(r.url, "http")+"/ws/winrm?cols=100&rows=30&ticket="+tok, r.wsOptions())
 	if resp != nil {
 		_ = resp.Body.Close()
 	}
@@ -132,12 +142,16 @@ func TestDesktopRefusesForbiddenName(t *testing.T) {
 		"vnc": r.addTarget(t, "vnc-named", map[target.Protocol]int{target.VNC: 5900}, ""),
 		"rdp": r.addTarget(t, "rdp-named", map[target.Protocol]int{target.RDP: rdpPort}, pin),
 	}
-	r.h.Prober = &target.Prober{}
+	loose := r.h.Prober
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	for proto, id := range ids {
+		// Rebound after Connect, as in TestTerminalRefusesForbiddenName.
+		r.h.Prober = loose
+		tk := r.ticket(t, id, proto)
+		r.h.Prober = &target.Prober{}
 		r.setAddress(t, id, "localhost")
-		ws, resp, err := r.dial(ctx, r.ticket(t, id, proto))
+		ws, resp, err := r.dial(ctx, tk)
 		if resp != nil {
 			_ = resp.Body.Close()
 		}

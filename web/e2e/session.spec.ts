@@ -56,7 +56,7 @@ test.describe('An SSH session from the browser', () => {
     const theirs = page.getByRole('row').filter({ hasText: 'fake-1' }).first()
     await expect(theirs).toBeVisible()
     await expect(theirs).toContainText('root')
-    const [rec] = await Promise.all([context.waitForEvent('page'), theirs.getByRole('link', { name: 'play, opens in a new tab' }).click()])
+    const [rec] = await Promise.all([context.waitForEvent('page'), theirs.getByRole('link', { name: 'Review, opens in a new tab' }).click()])
     await expect(rec).toHaveURL(/\/admin\/recordings\//)
     await expect(rec.getByRole('link', { name: 'Download recording' })).toBeVisible()
     // Playing is a deliberate act: the page says a view is audited, then

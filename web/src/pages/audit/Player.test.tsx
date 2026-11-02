@@ -255,6 +255,25 @@ describe('Player, the command list', () => {
 
     expect(h.seeks).toEqual([{ marker: 1 }])
   })
+
+  // 2026-11-03, idea 5: a command search's hit opens the recording at it.
+  it('opens at the command a search found, and ignores a marker out of range', async () => {
+    const cast = ['{"version": 2, "width": 80, "height": 24}', '[1.0, "m", "ls -la"]', '[2.5, "m", "systemctl stop nginx"]'].join('\n')
+    gateway({
+      [`/api/v1/recordings/${RID}`]: [() => json(200, recording()), () => json(200, recording())],
+      [`/api/v1/recordings/${RID}/stream`]: [() => new Response(cast), () => new Response(cast)],
+    })
+    open(`/audit/recordings/${RID}?marker=1`)
+    const user = userEvent.setup()
+    await user.click(await screen.findByRole('button', { name: 'Play' }))
+    await waitFor(() => expect(h.seeks).toEqual([{ marker: 1 }]))
+    cleanup()
+    h.seeks.length = 0
+    open(`/audit/recordings/${RID}?marker=7`)
+    await user.click(await screen.findByRole('button', { name: 'Play' }))
+    await screen.findByRole('button', { name: /systemctl/ })
+    expect(h.seeks).toEqual([])
+  })
 })
 
 // The player's controls were words (Replay, −10s, Play, +10s) and it had no

@@ -267,7 +267,7 @@ describe('Settings, the section list', () => {
     await screen.findByLabelText('Keep recordings for (days)')
     const nav = screen.getByRole('navigation', { name: 'Sections' })
     const links = within(nav).getAllByRole('link')
-    expect(links.map((a) => a.textContent)).toEqual(['Updates', 'Sign-in', 'Logging', 'Desktops', 'TLS certificate', 'Recording storage', 'Recording retention', 'Set at install'])
+    expect(links.map((a) => a.textContent)).toEqual(['Updates', 'Sign-in', 'Logging', 'Desktops', 'Notifications', 'Configuration file', 'TLS certificate', 'Recording storage', 'Recording retention', 'Set at install'])
     for (const a of links) {
       const id = a.getAttribute('href')!.slice(1)
       expect(document.getElementById(id), `${a.textContent} has a section`).not.toBeNull()

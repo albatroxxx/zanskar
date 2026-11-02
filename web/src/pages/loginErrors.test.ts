@@ -10,6 +10,9 @@ describe('signInError', () => {
     expect(signInError('domain_not_allowed')).toMatch(/email domain/)
     expect(signInError('reauth_not_done')).toMatch(/instead of asking for your password again/)
     expect(signInError('auth_time_missing')).toMatch(/auth_time claim/)
+    // 2026-11-03: with the provider down, the page says single sign-on is
+    // not answering and that a password account still works.
+    expect(signInError('provider_unavailable')).toMatch(/^Single sign-on is not answering right now\..*password here can still sign in/)
   })
 
   it('never repeats text it was handed', () => {

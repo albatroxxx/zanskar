@@ -36,6 +36,22 @@ describe('Recordings, a row', () => {
     expect(document.querySelector('a[href$="/download"], a[href$="/transcript"]')).toBeNull()
   })
 
+  // 2026-11-03 live audit, Q10: the global policy said 1 day while October
+  // recordings stayed, kept by their own dates; each row now says when it goes.
+  it('says when each recording goes, or that it is gone', async () => {
+    const ended = '2026-10-06T10:05:00Z'
+    page([
+      session(1, { recording_id: 'r1', ended_at: ended, recording_kept_until: '2026-12-01T00:00:00Z' }),
+      session(2, { recording_id: 'r2', ended_at: ended, recording_purged: true }),
+      session(3, { recording_id: 'r3', ended_at: ended }),
+      session(4, { recording_id: 'r4' }),
+    ])
+    expect(await screen.findByRole('columnheader', { name: 'Kept until' })).toBeDefined()
+    const cells = screen.getAllByRole('row').slice(1).map((r) => r.querySelectorAll('td')[6].textContent)
+    expect(cells[0]).toMatch(/2026/)
+    expect(cells.slice(1)).toEqual(['Deleted', 'No age limit', '—'])
+  })
+
   it('writes the protocol the way every other page does', async () => {
     page([session(1, { recording_id: 'r1', protocol: 'winrm' }), session(2, { recording_id: 'r2', protocol: 'ssh' })])
     expect(await screen.findByRole('cell', { name: 'WinRM' })).toBeDefined()

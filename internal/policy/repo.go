@@ -25,6 +25,10 @@ func NewRepo(db *store.DB) *Repo { return &Repo{db: db} }
 
 const cols = `id, name, description, enabled, grants, created_by, created_at, updated_at`
 
+// readCols are what a read returns: cols, then the last access review
+// (ADR 0040), which only Reviewed writes.
+const readCols = cols + `, reviewed_at, reviewed_by`
+
 // Create validates and inserts p with its subjects, setting the ids of the
 // policy and of every grant, and the timestamps.
 func (r *Repo) Create(ctx context.Context, p *Policy) error {
@@ -109,7 +113,7 @@ func (r *Repo) inTx(ctx context.Context, fn func(*sql.Tx) error) (err error) {
 
 // Get returns one policy with its subjects.
 func (r *Repo) Get(ctx context.Context, id string) (*Policy, error) {
-	p, err := scan(r.db.QueryRowContext(ctx, r.db.Rebind(`SELECT `+cols+` FROM access_policies WHERE id = ?`), id))
+	p, err := scan(r.db.QueryRowContext(ctx, r.db.Rebind(`SELECT `+readCols+` FROM access_policies WHERE id = ?`), id))
 	if err != nil {
 		return nil, err
 	}
@@ -124,7 +128,7 @@ func (r *Repo) List(ctx context.Context, afterName string, limit int) ([]*Policy
 	if limit <= 0 || limit > 500 {
 		limit = 50
 	}
-	out, err := r.query(ctx, `SELECT `+cols+` FROM access_policies WHERE name > ? ORDER BY name LIMIT ?`, afterName, limit+1)
+	out, err := r.query(ctx, `SELECT `+readCols+` FROM access_policies WHERE name > ? ORDER BY name LIMIT ?`, afterName, limit+1)
 	if err != nil {
 		return nil, "", err
 	}
@@ -150,7 +154,7 @@ type Exposure struct {
 // CountStandingNoMFA counts Exposure over every enabled policy.
 func (r *Repo) CountStandingNoMFA(ctx context.Context) (Exposure, error) {
 	var e Exposure
-	ps, err := r.query(ctx, `SELECT `+cols+` FROM access_policies WHERE enabled = ?`, true)
+	ps, err := r.query(ctx, `SELECT `+readCols+` FROM access_policies WHERE enabled = ?`, true)
 	if err != nil {
 		return e, err
 	}
@@ -295,7 +299,7 @@ func (r *Repo) TargetUsage(ctx context.Context, targetID, asgID string) ([]Remov
 func (r *Repo) RemoveTargetTx(ctx context.Context, tx *sql.Tx, targetID, asgID string) ([]Removal, error) {
 	// Every policy read, and the cursor closed, before the first write:
 	// SQLite runs on one connection.
-	rows, err := tx.QueryContext(ctx, r.db.Rebind(`SELECT `+cols+` FROM access_policies ORDER BY name`))
+	rows, err := tx.QueryContext(ctx, r.db.Rebind(`SELECT `+readCols+` FROM access_policies ORDER BY name`))
 	if err != nil {
 		return nil, err
 	}
@@ -346,7 +350,7 @@ func (r *Repo) Delete(ctx context.Context, id string) error {
 // through a group they belong to, in name order. It is the input to
 // Evaluate.
 func (r *Repo) ForUser(ctx context.Context, userID string) ([]*Policy, error) {
-	out, err := r.query(ctx, `SELECT `+qualify(cols, "p")+` FROM access_policies p
+	out, err := r.query(ctx, `SELECT `+qualify(readCols, "p")+` FROM access_policies p
 		WHERE p.enabled = TRUE AND EXISTS (SELECT 1 FROM access_policy_subjects s WHERE s.policy_id = p.id
 			AND (s.user_id = ? OR s.group_id IN (SELECT group_id FROM group_members WHERE user_id = ?)))
 		ORDER BY p.name`, userID, userID)
@@ -360,7 +364,7 @@ func (r *Repo) ForUser(ctx context.Context, userID string) ([]*Policy, error) {
 // name order: the policies a change to the group's membership, or its
 // deletion, touches.
 func (r *Repo) ForGroup(ctx context.Context, groupID string) ([]*Policy, error) {
-	out, err := r.query(ctx, `SELECT `+qualify(cols, "p")+` FROM access_policies p
+	out, err := r.query(ctx, `SELECT `+qualify(readCols, "p")+` FROM access_policies p
 		WHERE EXISTS (SELECT 1 FROM access_policy_subjects s WHERE s.policy_id = p.id AND s.group_id = ?) ORDER BY p.name`, groupID)
 	if err != nil {
 		return nil, err
@@ -421,12 +425,12 @@ func encodeGrants(p *Policy) ([]byte, error) {
 
 func scan(s store.Scanner) (*Policy, error) {
 	var (
-		p                Policy
-		grants           []byte
-		createdBy        sql.NullString
-		created, updated store.NullTime
+		p                          Policy
+		grants                     []byte
+		createdBy, reviewedBy      sql.NullString
+		created, updated, reviewed store.NullTime
 	)
-	if err := s.Scan(&p.ID, &p.Name, &p.Description, &p.Enabled, &grants, &createdBy, &created, &updated); err != nil {
+	if err := s.Scan(&p.ID, &p.Name, &p.Description, &p.Enabled, &grants, &createdBy, &created, &updated, &reviewed, &reviewedBy); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound
 		}
@@ -450,7 +454,41 @@ func scan(s store.Scanner) (*Policy, error) {
 	p.Subjects = []Subject{}
 	p.CreatedBy = createdBy.String
 	p.CreatedAt, p.UpdatedAt = created.Time, updated.Time
+	p.ReviewedAt, p.ReviewedBy = reviewed.Ptr(), reviewedBy.String
 	return &p, nil
+}
+
+// Reviewed stamps the policy's access review: now, by reviewerID.
+func (r *Repo) Reviewed(ctx context.Context, id, reviewerID string, at time.Time) error {
+	res, err := r.db.ExecContext(ctx, r.db.Rebind(`UPDATE access_policies SET reviewed_at = ?, reviewed_by = ? WHERE id = ?`),
+		store.TimeArg(at), nullStr(reviewerID), id)
+	if err != nil {
+		return err
+	}
+	return store.Affected(res, ErrNotFound)
+}
+
+// LastUse is when each person last started a session under the policy:
+// user id to the newest session's start (ADR 0040). People with none are
+// absent.
+func (r *Repo) LastUse(ctx context.Context, policyID string) (map[string]time.Time, error) {
+	rows, err := r.db.QueryContext(ctx, r.db.Rebind(`SELECT user_id, MAX(started_at) FROM access_sessions WHERE policy_id = ? GROUP BY user_id`), policyID)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	out := map[string]time.Time{}
+	for rows.Next() {
+		var uid string
+		var at store.NullTime
+		if err := rows.Scan(&uid, &at); err != nil {
+			return nil, err
+		}
+		if at.Valid {
+			out[uid] = at.Time
+		}
+	}
+	return out, rows.Err()
 }
 
 func qualify(columns, alias string) string {

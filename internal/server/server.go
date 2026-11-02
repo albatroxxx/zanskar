@@ -55,6 +55,9 @@ type Deps struct {
 	// Theme is the console's theme for everyone (display.theme), written
 	// into the pre-paint theme script; nil serves the bundle's file as is.
 	Theme func() string
+	// SecurityContact is security.txt's Contact URI from Settings
+	// (security.contact); "" or nil and /.well-known/security.txt is not found.
+	SecurityContact func() string
 }
 
 // New builds a Server with the system routes and the given handlers registered.
@@ -74,11 +77,21 @@ func New(cfg *config.Config, db *store.DB, log *slog.Logger, deps Deps) *Server 
 			mux.Handle("GET /theme.js", h)
 		}
 	}
+	if deps.SecurityContact != nil {
+		mux.Handle("GET /.well-known/security.txt", securityTxt(deps.SecurityContact, cfg.PublicURL))
+	}
 	if deps.Auth != nil {
 		deps.Auth.Register(mux)
 	}
 	for _, h := range deps.Handlers {
 		h.Register(mux)
+	}
+	// A handler that works through the gateway's own routes (the
+	// configuration import, ADR 0043) is handed them once all are in.
+	for _, h := range deps.Handlers {
+		if u, ok := h.(interface{ UseMux(http.Handler) }); ok {
+			u.UseMux(mux)
+		}
 	}
 
 	// The request id comes first, so even a recovered panic answers and logs

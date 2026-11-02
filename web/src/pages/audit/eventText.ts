@@ -2,7 +2,7 @@
 // types and the one-line sentence per event. Kept apart from the page so the
 // wording can be tested, since a reader sees words and never ids.
 import { fmtPreciseTime, protocolName, shortId } from '../../api/format'
-import type { AuditEvent } from '../../api/types'
+import type { AuditEvent, AuditTallies } from '../../api/types'
 
 /** Readable names for the action codes the gateway records. The code stays
  *  the stored value and the filter key (and what a SIEM correlates on), so it
@@ -30,6 +30,8 @@ const actionLabels: Record<string, string> = {
   'audit.read': 'Audit log viewed',
   'audit.reseal': 'Audit chain resealed',
   'aws.identity.refresh': 'AWS principal checked',
+  'config.export': 'Configuration exported',
+  'config.import': 'Configuration imported',
   'credential.create': 'Credential created',
   'credential.update': 'Credential updated',
   'credential.delete': 'Credential deleted',
@@ -55,12 +57,19 @@ const actionLabels: Record<string, string> = {
   'key.rotate': 'Encryption key rotated',
   'key.rotate_master': 'Master key rotated',
   'logs.download': 'Logs downloaded',
+  'notify.channel.create': 'Notification channel added',
+  'notify.channel.update': 'Notification channel changed',
+  'notify.channel.delete': 'Notification channel removed',
+  'notify.channel.test': 'Notification channel tested',
+  'notify.channel.key': 'Notification signing key changed',
   'policy.create': 'Policy created',
+  'policy.review': 'Access review completed',
   'policy.update': 'Policy updated',
   'policy.delete': 'Policy deleted',
   'recording.download': 'Recording downloaded',
   'recording.lost': 'Recording could not be saved',
   'recording.purge': 'Recordings purged',
+  'recording.search': 'Recordings searched',
   'recording.view': 'Recording played',
   'recording.storage.move': 'Recordings moved to new storage',
   'recording.storage.update': 'Recording storage changed',
@@ -70,6 +79,7 @@ const actionLabels: Record<string, string> = {
   'session.start': 'Session started',
   'session.end': 'Session ended',
   'session.terminate': 'Session terminated',
+  'session.watcher.wait': 'Session waiting for a watcher',
   'session.failover': 'Session failed over',
   'session.shadow.start': 'Started watching a session',
   'session.shadow.end': 'Stopped watching a session',
@@ -126,6 +136,29 @@ export function humanAction(code: string): string {
   return s.charAt(0).toUpperCase() + s.slice(1)
 }
 
+/** What a failed action is called in the plural, for the common ones. */
+const failedNoun: Record<string, string> = {
+  'idp.sync': 'provider syncs',
+  'user.login': 'sign-ins',
+  'session.connect': 'refused connections',
+  'session.end': 'sessions ending in error',
+  'cli.unlock': 'command line codes',
+  'user.mfa.verify': 'second-factor checks',
+}
+
+/** failureDetail says what most of a day's failed actions were, under the
+ *  dashboards' count: "mostly provider syncs (19)", "all sign-ins", or for a
+ *  plurality "most often …" (2026-11-03 live audit, Q2). */
+export function failureDetail(t: Pick<AuditTallies, 'failures' | 'top_failure' | 'top_failure_count'>): string | undefined {
+  const n = t.top_failure_count ?? 0
+  if (!t.top_failure || n <= 0 || t.failures <= 0) return undefined
+  const what = failedNoun[t.top_failure]
+  // An action without a plural noun here is named by its label instead.
+  if (!what) return `${Math.min(n, t.failures)} of ${t.failures}: ${humanAction(t.top_failure)}`
+  if (n >= t.failures) return `all ${what}`
+  return n * 2 > t.failures ? `mostly ${what} (${n})` : `most often ${what} (${n})`
+}
+
 export const capitalize = (s: string) => s.charAt(0).toUpperCase() + s.slice(1)
 
 export const typeLabel: Record<string, string> = {
@@ -142,6 +175,7 @@ export const typeLabel: Record<string, string> = {
   session: 'session',
   recording: 'recording',
   audit_log: 'audit log',
+  notification_channel: 'notification channel',
 }
 
 const verbs: Record<string, string> = {
@@ -166,6 +200,14 @@ function session(name?: string) {
 const str = (v: unknown) => (typeof v === 'string' ? v : '')
 export const words = (s: string) => s.replace(/_/g, ' ')
 
+/** article is "a" or "an" before a word as it is said: an acronym is spelled
+ *  out (an HTTP, an SSH, an RDP, a VNC), anything else goes by its first letter. */
+export function article(word: string): 'a' | 'an' {
+  const w = word.trim()
+  if (w.length > 1 && w === w.toUpperCase() && /^[A-Z]/.test(w)) return /^[AEFHILMNORSX]/.test(w) ? 'an' : 'a'
+  return /^[aeiou]/i.test(w) ? 'an' : 'a'
+}
+
 /** describe turns an event into the sentence a reviewer wants: who did what,
  *  to which named thing. It falls back to the raw action for anything unknown. */
 export function describe(ev: AuditEvent): string {
@@ -187,7 +229,7 @@ export function describe(ev: AuditEvent): string {
       if (!fail) return 'passed the second factor'
       return reason === 'code_reused' ? 'failed the second factor (a code already used)' : 'failed the second factor'
     case 'session.connect': return fail ? `was refused ${proto} access to ${name}${reason ? ` (${words(reason)})` : ''}` : `requested ${proto} access to ${name}`
-    case 'session.start': return s ? `opened a ${s.proto} session on ${s.target}` : `opened a session ${name}`
+    case 'session.start': return s ? `opened ${article(s.proto)} ${s.proto} session on ${s.target}` : `opened a session ${name}`
     case 'session.end': {
       // A desktop that guacd ended carries guacd's words: "target lost: Upstream error."
       const why = [reason && words(reason), str(d.detail)].filter(Boolean).join(': ')

@@ -36,7 +36,7 @@ func TestClosingWritesAreBounded(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		run.endRow(s.ID, session.EndError)
+		run.endRow(s.ID, session.EndError, "")
 		run.finishRecording(closedRecording{}, &session.Recording{ID: "r1", SessionID: s.ID})
 	}()
 	select {

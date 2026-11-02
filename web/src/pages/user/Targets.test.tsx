@@ -1,4 +1,4 @@
-import { cleanup, render, screen } from '@testing-library/react'
+import { cleanup, render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router-dom'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -317,6 +317,18 @@ describe('Targets, sessions in tabs of their own', () => {
     delete (document as unknown as Record<string, unknown>).visibilityState
   })
 
+  // 2026-11-03 live audit: a protocol the target has nothing for drew a grey
+  // disabled button, and an untagged target the word "none".
+  it('leaves a protocol the target does not offer as a quiet dash, and no tags blank', async () => {
+    mount([{ ...box, capabilities: ['ssh'], allowed_protocols: ['ssh'] }])
+    await screen.findByText('box')
+    const row = screen.getByText('box').closest('tr')!
+    expect(row.querySelectorAll('button')).toHaveLength(0)
+    expect(within(row).getByLabelText('not offered').textContent).toBe('—')
+    expect(within(row).getByLabelText('no tags').textContent).toBe('—')
+    expect(within(row).queryByText('none')).toBeNull()
+  })
+
   it('keeps a host whose key is not trusted yet a disabled button, not a link', async () => {
     mount([{ ...box, host_key_ready: false }])
     await screen.findByText('box')
@@ -327,7 +339,7 @@ describe('Targets, sessions in tabs of their own', () => {
   // 2026-11-02: colour, not an "as me" button, says who signs the person in:
   // green where Zanskar does with a credential it holds, the protocol's own
   // colour where the person gives their own login. The words stay in each
-  // link's name and tooltip, and the legend under the table says them too.
+  // link's name and tooltip; there is no legend (2026-11-03).
   it('colours a protocol Zanskar signs in to green, and the person\'s own login in the protocol\'s colour', async () => {
     mount([{ ...box, capabilities: ['ssh', 'rdp'], allowed_protocols: ['ssh', 'rdp'], managed_login: ['ssh', 'rdp'] }, { ...box, id: 't2', name: 'own-box' }])
     await screen.findByText('own-box')
@@ -338,8 +350,9 @@ describe('Targets, sessions in tabs of their own', () => {
     expect(ownSSH.className).toBe('btn sm proto-terminal')
     expect(ownSSH.getAttribute('title')).toBe('SSH: your own login')
     expect(screen.queryByText('as me')).toBeNull()
-    expect(screen.getByText('Zanskar signs you in')).toBeDefined()
-    expect(screen.getByText('Your own login')).toBeDefined()
+    // No legend (2026-11-03): the words are each button's own.
+    expect(screen.queryByText('Zanskar signs you in')).toBeNull()
+    expect(screen.queryByText('Your own login')).toBeNull()
   })
 
   it('puts the person\'s own login beside a green protocol where a grant allows it, both named the protocol', async () => {

@@ -3,7 +3,7 @@ import { api, errorMessage } from '../../api/client'
 import { accessDrill, expiresSoon } from '../../api/drilldown'
 import type { AccessRequest, Page, Protocol, ReachableInstance, ReachableTarget, Session } from '../../api/types'
 import { DatabaseIcon, OSIcon, StateIcon } from '../../components/icons'
-import { Alert, Badge, Empty, Field, Modal, PageHead, StatTile, Tabs, Tags } from '../../components/ui'
+import { Alert, Badge, Empty, Field, Loading, Modal, PageHead, StatTile, Tabs, Tags } from '../../components/ui'
 import { badgesChanged } from '../../components/badges'
 import { engineName, protocolName } from '../../api/format'
 import { fmtAgo } from './Failover'
@@ -19,14 +19,9 @@ function pick(t: ReachableTarget, family: Protocol[]): Protocol | null {
   return null
 }
 
-/** SignInLegend says what a protocol button's colour means, in words, so the colour is never the only sign. */
-function SignInLegend() {
-  return (
-    <p className="muted signin-legend">
-      <span><span className="legend-swatch proto-managed" aria-hidden="true" />Zanskar signs you in</span>
-      <span><span className="legend-swatch proto-own" aria-hidden="true" />Your own login</span>
-    </p>
-  )
+/** NotOffered fills a protocol cell the target has nothing for. */
+function NotOffered() {
+  return <span className="muted" title="not offered" aria-label="not offered">—</span>
 }
 
 export function Targets() {
@@ -160,10 +155,12 @@ export function Targets() {
   // when given, turns a gated protocol into a Request button. Colour says who
   // signs the person in (2026-11-02, in place of an "as me" button): green
   // where Zanskar does, with a credential it holds (managed_login), the
-  // protocol's own colour where the person gives their own login. own, when
-  // set, offers the person's own login beside a green one where a grant lets
-  // them (ADR 0036), and in its place where the target's slot would not sign
-  // them in anyway.
+  // protocol's own colour where the person gives their own login; each
+  // button's tooltip and name say it in words (no legend, the owner,
+  // 2026-11-03). own, when set, offers the person's own login beside a green
+  // one where a grant lets them (ADR 0036), and in its place where the
+  // target's slot would not sign them in anyway. A protocol the target does
+  // not offer is a quiet dash, not a disabled button (2026-11-03 live audit).
   const protoButtons = (t: ReachableTarget, open: { link: true } | { onPick: (p: Protocol) => void }, onRequest?: (p: Protocol) => void, own?: boolean) => {
     const term = pick(t, terminalProtocols)
     const desk = pick(t, desktopProtocols)
@@ -192,14 +189,15 @@ export function Targets() {
       if (ownToo && !managed) return ownButton
       const cls = 'btn sm' + (managed ? ' proto-managed' : colorClass)
       const says = managed ? `${label}: Zanskar signs you in` : `${label}: your own login`
+      if (!p) return <NotOffered />
       const main =
-        p && !blocked && 'link' in open ? (
+        !blocked && 'link' in open ? (
           <SessionLink intent={{ target: t.id, protocol: p }} className={cls} label={label} title={says}>
             {label}
           </SessionLink>
         ) : (
-          <button className={p ? cls : 'btn sm'} disabled={!p || blocked} onClick={() => p && 'onPick' in open && open.onPick(p)} title={p ? says : 'not allowed'}>
-            {p ? label : '—'}
+          <button className={cls} disabled={blocked} onClick={() => 'onPick' in open && open.onPick(p)} title={says}>
+            {label}
           </button>
         )
       if (!ownToo) return main
@@ -256,7 +254,7 @@ export function Targets() {
       {tab === 'application' && (
         <div className="card table-wrap">
           {applications === null ? (
-            <Empty>Loading…</Empty>
+            <Loading />
           ) : applications.length === 0 ? (
             <Empty>{emptyFor('applications', 'No applications are assigned to you. Ask an administrator for access.')}</Empty>
           ) : (
@@ -294,7 +292,7 @@ export function Targets() {
       {tab === 'database' && (
         <div className="card table-wrap">
           {databases === null ? (
-            <Empty>Loading…</Empty>
+            <Loading />
           ) : databases.length === 0 ? (
             <Empty>{emptyFor('databases', 'No databases are assigned to you. Ask an administrator for access.')}</Empty>
           ) : (
@@ -322,7 +320,7 @@ export function Targets() {
                           p ? (
                             <SessionLink intent={{ target: t.id, protocol: p }} className="btn sm proto-database" label="SQL client" title="open the SQL client">SQL client</SessionLink>
                           ) : (
-                            <button className="btn sm" disabled title="not allowed">—</button>
+                            <NotOffered />
                           )
                         )}
                       </td>
@@ -338,7 +336,7 @@ export function Targets() {
       {tab === 'static' && (
         <div className="card table-wrap">
           {statics === null ? (
-            <Empty>Loading…</Empty>
+            <Loading />
           ) : statics.length === 0 ? (
             <Empty>{emptyFor('hosts', 'No hosts are assigned to you yet. Ask an administrator for access.')}</Empty>
           ) : (
@@ -377,14 +375,13 @@ export function Targets() {
               </tbody>
             </table>
           )}
-          {statics && statics.length > 0 && <SignInLegend />}
         </div>
       )}
 
       {tab === 'asg' && (
         <div className="card table-wrap">
           {groups === null ? (
-            <Empty>Loading…</Empty>
+            <Loading />
           ) : groups.length === 0 ? (
             <Empty>{emptyFor('autoscaling groups', 'No autoscaling groups are assigned to you. Ask an administrator for access.')}</Empty>
           ) : (
@@ -418,7 +415,6 @@ export function Targets() {
               </tbody>
             </table>
           )}
-          {groups && groups.length > 0 && <SignInLegend />}
         </div>
       )}
 

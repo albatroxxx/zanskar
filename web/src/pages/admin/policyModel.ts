@@ -73,6 +73,13 @@ export function filesMove(kind: TargetKind): boolean {
   return kind === 'host' || kind === 'autoscaling'
 }
 
+/** watchable: a grant of kind can ask for a second person watching (ADR
+ *  0042), whose sessions are held until one does: hosts and autoscaling
+ *  groups, for their terminal sessions. */
+export function watchable(kind: TargetKind): boolean {
+  return kind === 'host' || kind === 'autoscaling'
+}
+
 /** A new grant of kind, with the defaults the server would fill. */
 export function newGrant(kind: TargetKind = 'host', conditionsFrom?: PolicyGrant): PolicyGrant {
   const base: PolicyGrant = {
@@ -84,6 +91,7 @@ export function newGrant(kind: TargetKind = 'host', conditionsFrom?: PolicyGrant
   return {
     ...base, access, sign_in: kind === 'application' ? 'target' : sign_in, require_mfa, allow_clipboard, allow_file_transfer: filesMove(kind) && allow_file_transfer,
     ...(kind === 'application' && conditionsFrom.allow_devtools ? { allow_devtools: true } : {}),
+    ...(watchable(kind) && conditionsFrom.require_watcher ? { require_watcher: true } : {}),
     idle_timeout_minutes, max_session_minutes, time_windows: time_windows.map((w) => ({ ...w, days: [...w.days] })), retention_days,
   }
 }
@@ -113,6 +121,32 @@ export function rowsToMatch(rows: TagRow[]): { match: Record<string, string[]>; 
   return { match: Object.fromEntries(match) }
 }
 
+/** An access review stands for a quarter (policy.ReviewDue, ADR 0040). */
+export const reviewDueMs = 90 * 24 * 60 * 60_000
+
+/** reviewDue: the policy was never reviewed, or not within a quarter of now. */
+export function reviewDue(p: Pick<Policy, 'reviewed_at'>, now: number): boolean {
+  return !p.reviewed_at || now - Date.parse(p.reviewed_at) > reviewDueMs
+}
+
+/** tagsMatch is the gateway's rule: every key present with one of its values. */
+export function tagsMatch(match: Record<string, string[]>, tags: Record<string, string> | undefined): boolean {
+  const entries = Object.entries(match)
+  return entries.length > 0 && entries.every(([k, vs]) => tags?.[k] !== undefined && vs.includes(tags[k]))
+}
+
+/**
+ * reaches is how many of its kind's targets a grant opens today: the named
+ * ones that still exist and those its tags match. Zero is a grant that opens
+ * nothing, such as an autoscaling grant by tag while no group is enrolled
+ * (2026-11-03 live audit, Q9).
+ */
+export function reaches(g: PolicyGrant, targets: Target[], asgs: AutoscalingGroup[]): number {
+  const pool: { id: string; tags?: Record<string, string> }[] = g.kind === 'autoscaling' ? asgs : targets.filter((t) => kindOf(t) === g.kind)
+  const named = new Set(g.targets.map((t) => t.id))
+  return pool.filter((t) => named.has(t.id) || (g.tags ? tagsMatch(g.tags.match, t.tags) : false)).length
+}
+
 /** A tag match as one phrase: env prod|staging, tier web. */
 export function matchPhrase(match: Record<string, string[]>): string {
   return Object.entries(match).map(([k, vs]) => `${k} ${vs.join('|')}`).join(', ')
@@ -139,6 +173,7 @@ export function grantSummary(g: PolicyGrant, nameOf: (id: string) => string): st
   if (g.allow_clipboard) parts.push('clipboard')
   if (g.allow_file_transfer) parts.push('files')
   if (g.allow_devtools) parts.push('dev tools')
+  if (g.require_watcher) parts.push('four eyes')
   parts.push(`${g.idle_timeout_minutes}m`)
   if (g.time_windows.length) parts.push(g.time_windows.length === 1 ? '1 window' : `${g.time_windows.length} windows`)
   return parts.join(' · ')
@@ -157,6 +192,7 @@ export interface GrantDraft {
   allow_clipboard: boolean
   allow_file_transfer: boolean
   allow_devtools: boolean
+  require_watcher: boolean
   idle: string
   max: string
   retention: string
@@ -202,7 +238,7 @@ export function toDraft(g: PolicyGrant): GrantDraft {
     tagRows: matchToRows(g.tags?.match),
     tagProtocols: g.tags ? [...g.tags.protocols] : g.kind === 'database' || g.kind === 'application' ? kindProtocols[g.kind] : ['ssh'],
     access: g.access, sign_in: g.sign_in, require_mfa: g.require_mfa, allow_clipboard: g.allow_clipboard,
-    allow_file_transfer: g.allow_file_transfer, allow_devtools: !!g.allow_devtools, idle: String(g.idle_timeout_minutes),
+    allow_file_transfer: g.allow_file_transfer, allow_devtools: !!g.allow_devtools, require_watcher: !!g.require_watcher, idle: String(g.idle_timeout_minutes),
     max: g.max_session_minutes ? String(g.max_session_minutes) : '', retention: g.retention_days ? String(g.retention_days) : '',
     windows: g.time_windows.map((w) => ({ ...w, days: [...w.days] })),
   }
@@ -238,6 +274,7 @@ export function fromDraft(d: GrantDraft, nameOf: (id: string) => string): { gran
       access: d.access, sign_in: d.kind === 'application' ? 'target' : d.sign_in, require_mfa: d.require_mfa,
       allow_clipboard: d.allow_clipboard, allow_file_transfer: filesMove(d.kind) && d.allow_file_transfer, idle_timeout_minutes: idle,
       ...(d.kind === 'application' && d.allow_devtools ? { allow_devtools: true } : {}),
+      ...(watchable(d.kind) && d.require_watcher ? { require_watcher: true } : {}),
       max_session_minutes: max, time_windows: d.windows.map((w) => ({ ...w, tz: w.tz || 'UTC' })), retention_days: retention,
     },
   }

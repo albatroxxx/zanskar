@@ -10,11 +10,15 @@ export class ApiError extends Error {
    * once; a page has nothing useful to add, so errorMessage stays quiet.
    */
   sessionEnded = false
+  /** The refusal's whole answer, for a route whose refusal says more than a
+   *  message (a configuration import's plan, ADR 0043). */
+  body: unknown
   constructor(status: number, body: ApiErrorBody | null, fallback: string) {
     super(body?.message ?? fallback)
     this.status = status
     this.code = body?.code ?? 'error'
     this.requestId = body?.request_id
+    this.body = body
   }
 }
 

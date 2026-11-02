@@ -30,19 +30,19 @@ describe('Sessions', () => {
   it('lets an admin watch and terminate', async () => {
     at('/admin/sessions')
     // A watch and a recording open in tabs of their own (ADR 0038), several at once.
-    for (const name of ['Watch, opens in a new tab', 'play, opens in a new tab']) {
+    for (const name of ['Watch, opens in a new tab', 'Review, opens in a new tab']) {
       const link = await screen.findByRole('link', { name })
       expect([link.getAttribute('target'), link.getAttribute('rel')]).toEqual(['_blank', 'noopener noreferrer'])
     }
     expect(screen.getByRole('button', { name: 'Terminate' })).toBeDefined()
-    expect(screen.getByRole('link', { name: 'play, opens in a new tab' }).getAttribute('href')).toBe('/admin/recordings/r1')
+    expect(screen.getByRole('link', { name: 'Review, opens in a new tab' }).getAttribute('href')).toBe('/admin/recordings/r1')
   })
 
   it('lets an auditor watch but not terminate', async () => {
     at('/audit/sessions')
     expect((await screen.findByRole('link', { name: 'Watch, opens in a new tab' })).getAttribute('href')).toMatch(/^\/audit\/shadow\/s1/)
     expect(screen.queryByRole('button', { name: 'Terminate' })).toBeNull()
-    expect(screen.getByRole('link', { name: 'play, opens in a new tab' }).getAttribute('href')).toBe('/audit/recordings/r1')
+    expect(screen.getByRole('link', { name: 'Review, opens in a new tab' }).getAttribute('href')).toBe('/audit/recordings/r1')
   })
 
   // An application session (ADR 0034) is a browser streamed through guacd,

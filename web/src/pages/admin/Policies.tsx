@@ -1,10 +1,11 @@
 import { Fragment, useState } from 'react'
 import { Link } from 'react-router-dom'
-import type { AutoscalingGroup, Group, Policy, Target, User } from '../../api/types'
+import { count, fmtTime } from '../../api/format'
+import type { AutoscalingGroup, Group, Policy, PolicyGrant, Target, User } from '../../api/types'
 import { StateIcon } from '../../components/icons'
-import { Alert, Badge, Empty, PageHead } from '../../components/ui'
+import { Alert, Badge, Empty, Loading, PageHead } from '../../components/ui'
 import { useList } from './lib'
-import { accessLine, extrasLine, grantsLine, kinds, policyRollup, reachLine, targetsCell, whoSummary } from './policyModel'
+import { accessLine, extrasLine, grantsLine, kinds, policyRollup, reaches, reachLine, reviewDue, targetsCell, whoSummary } from './policyModel'
 
 /**
  * Policies lists the access policies (ADR 0036, amended 2026-10-30): who each
@@ -19,6 +20,8 @@ export function Policies() {
   const targets = useList<Target>('/targets')
   const asgs = useList<AutoscalingGroup>('/autoscaling-groups')
   const [open, setOpen] = useState<string[]>([])
+  // When an access review falls due is measured against this page load.
+  const [now] = useState(() => Date.now())
   // Until every list has loaded a name cannot be called missing.
   const loaded = !!targets.items && !!asgs.items && !targets.truncated && !asgs.truncated
   const found = (id: string) => targets.items?.find((t) => t.id === id)?.name ?? asgs.items?.find((g) => g.id === id)?.name
@@ -34,7 +37,7 @@ export function Policies() {
       {err && <Alert tone="danger" onDismiss={() => setErr('')}>{err}</Alert>}
       <div className="card table-wrap">
         {items === null ? (
-          err ? null : <Empty>Loading…</Empty>
+          err ? null : <Loading />
         ) : items.length === 0 ? (
           <Empty>No policies yet. Nobody can connect until a policy grants access.</Empty>
         ) : (
@@ -54,6 +57,7 @@ export function Policies() {
                 const r = policyRollup(p)
                 const who = whoSummary(p, groupName, userName)
                 const missing = loaded ? new Set(p.grants.flatMap((g) => g.targets.map((t) => t.id)).filter((id) => !found(id))).size : 0
+                const idle = loaded ? p.grants.filter((g) => reaches(g, targets.items!, asgs.items!) === 0).length : 0
                 const isOpen = open.includes(p.id)
                 const detail = `policy-${p.id}-grants`
                 const extras = extrasLine(r)
@@ -78,6 +82,7 @@ export function Policies() {
                           </button>
                         )}
                         {missing > 0 && <Badge tone="warn">{missing} not found</Badge>}
+                        {idle > 0 && <Badge tone="warn">{idle === 1 && r.count === 1 ? 'opens nothing' : `${idle} open nothing`}</Badge>}
                       </td>
                       <td className="access">
                         {r.count === 0 ? (
@@ -97,6 +102,10 @@ export function Policies() {
                       </td>
                       <td>{p.enabled ? <StateIcon state="ok" label="Enabled" /> : <StateIcon state="unknown" label="Disabled" />}</td>
                       <td className="actions">
+                        {/* An access review a quarter old, or never made, is due (ADR 0040). */}
+                        <Link className="btn sm" to={`/admin/policies/${p.id}/review`} title={p.reviewed_at ? `Reviewed ${fmtTime(p.reviewed_at)}` : 'Never reviewed'}>
+                          Review{reviewDue(p, now) && <span className="dot-due" aria-label="due" />}
+                        </Link>
                         <Link className="btn sm" to={`/admin/policies/${p.id}`}>Edit</Link>
                       </td>
                     </tr>
@@ -109,7 +118,7 @@ export function Policies() {
                               {p.subjects.map((s) => (s.kind === 'group' ? groupName(s.id) : userName(s.id))).join(', ')}
                             </p>
                           )}
-                          <GrantsTable policy={p} nameOf={nameOf} />
+                          <GrantsTable policy={p} nameOf={nameOf} reach={loaded ? (g) => reaches(g, targets.items!, asgs.items!) : undefined} />
                         </td>
                       </tr>
                     )}
@@ -125,7 +134,7 @@ export function Policies() {
 }
 
 /** GrantsTable is one policy's grants side by side, the expanded row. */
-function GrantsTable({ policy, nameOf }: { policy: Policy; nameOf: (id: string) => string }) {
+function GrantsTable({ policy, nameOf, reach }: { policy: Policy; nameOf: (id: string) => string; reach?: (g: PolicyGrant) => number }) {
   return (
     <table className="grants-table" aria-label={`Grants of ${policy.name}`}>
       <thead>
@@ -145,16 +154,24 @@ function GrantsTable({ policy, nameOf }: { policy: Policy; nameOf: (id: string) 
         {policy.grants.map((g, i) => (
           <tr key={g.id ?? i}>
             <td>{kinds.find((k) => k.kind === g.kind)?.label ?? g.kind}</td>
-            <td>{targetsCell(g, nameOf)}</td>
+            <td>
+              {targetsCell(g, nameOf)}
+              {reach && reach(g) === 0 && (
+                <>
+                  {' '}
+                  <Badge tone="warn">opens nothing</Badge>
+                </>
+              )}
+            </td>
             <td>{g.access === 'approval' ? 'Approval' : 'Standing'}</td>
             <td>{g.require_mfa ? 'MFA' : <Badge tone={g.access === 'approval' ? 'warn' : 'danger'}>no MFA</Badge>}</td>
-            <td>{[g.allow_clipboard && 'clipboard', g.allow_file_transfer && 'files', g.allow_devtools && 'dev tools'].filter(Boolean).join(', ') || <span className="muted">—</span>}</td>
+            <td>{[g.allow_clipboard && 'clipboard', g.allow_file_transfer && 'files', g.allow_devtools && 'dev tools', g.require_watcher && 'four eyes'].filter(Boolean).join(', ') || <span className="muted">—</span>}</td>
             <td>{g.sign_in === 'own' ? 'Own login' : 'Target'}</td>
             <td>
               {g.idle_timeout_minutes}m / {g.max_session_minutes ? `${g.max_session_minutes}m` : '—'}
             </td>
             <td>{g.time_windows.length === 0 ? <span className="muted">Any time</span> : g.time_windows.length}</td>
-            <td>{g.retention_days ? `${g.retention_days} days` : <span className="muted">Default</span>}</td>
+            <td>{g.retention_days ? count(g.retention_days, 'day') : <span className="muted">Default</span>}</td>
           </tr>
         ))}
       </tbody>

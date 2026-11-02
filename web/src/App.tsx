@@ -2,7 +2,7 @@ import { lazy, Suspense } from 'react'
 import { Navigate, Route, Routes, useLocation } from 'react-router-dom'
 import { useAuth } from './auth/AuthContext'
 import { SessionExpired } from './auth/SessionExpired'
-import { Empty } from './components/ui'
+import { Empty, Loading, NotFound } from './components/ui'
 import { SessionLoading } from './components/SessionSplash'
 import { Shell } from './components/Shell'
 import type { Role } from './api/types'
@@ -15,6 +15,7 @@ import { ConnectPage } from './pages/user/connect'
 import { loadDesktop, loadTerminal } from './pages/user/sessionPages'
 import { MySessions } from './pages/user/MySessions'
 import { MyAccess } from './pages/user/MyAccess'
+import { MyActivity } from './pages/user/MyActivity'
 
 // The terminal pulls in xterm; load it only when a session opens.
 const Terminal = lazy(loadTerminal)
@@ -26,7 +27,7 @@ import { adminAuditRoutes, auditRoutes } from './pages/audit'
 function Guard({ roles, children }: { roles?: Role[]; children: React.ReactNode }) {
   const auth = useAuth()
   const loc = useLocation()
-  if (auth.status === 'loading') return <div className="empty">Loading…</div>
+  if (auth.status === 'loading') return <Loading />
   if (auth.status === 'unreachable') return <Unreachable />
   // The query string is part of where the user was going (a filter, a tab).
   if (auth.status !== 'full') return <Navigate to="/login" state={{ from: loc.pathname + loc.search }} replace />
@@ -81,7 +82,7 @@ function AdminToConsole({ children }: { children: React.ReactNode }) {
 // admits them too, instead of the console.
 function Home() {
   const auth = useAuth()
-  if (auth.status === 'loading') return <div className="empty">Loading…</div>
+  if (auth.status === 'loading') return <Loading />
   if (auth.status === 'unreachable') return <Unreachable />
   if (auth.status !== 'full') return <Navigate to="/" replace />
   return <Navigate to={homeFor(auth.user)} replace />
@@ -143,6 +144,7 @@ export default function App() {
                 { to: '/', label: 'Targets', end: true },
                 { to: '/access', label: 'Access' },
                 { to: '/sessions', label: 'Sessions' },
+                { to: '/activity', label: 'Activity' },
               ]}
             />
           </Guard>
@@ -153,6 +155,7 @@ export default function App() {
         <Route path="connect" element={<ConnectPage />} />
         <Route path="access" element={<MyAccess />} />
         <Route path="sessions" element={<MySessions />} />
+        <Route path="activity" element={<MyActivity />} />
       </Route>
       <Route
         path="/admin"
@@ -183,6 +186,10 @@ export default function App() {
       >
         {adminRoutes}
         {adminAuditRoutes}
+        {/* An unknown address inside a portal says so there, rather than
+            landing on the dashboard as if it were asked for (Q3). Top-level
+            unknown paths still go to the account's own portal. */}
+        <Route path="*" element={<NotFound home="/admin" />} />
       </Route>
       <Route
         path="/audit"
@@ -203,6 +210,7 @@ export default function App() {
         }
       >
         {auditRoutes}
+        <Route path="*" element={<NotFound home="/audit" />} />
       </Route>
       {/* The sign-in landing: resolves to the portal the account belongs in
           (ADR 0029). A named route rather than the * fallback, so the login

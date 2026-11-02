@@ -1,13 +1,14 @@
 import { useEffect, useState } from 'react'
 import { useLocation, useSearchParams } from 'react-router-dom'
-import { api, errorMessage } from '../../api/client'
+import { api, errorMessage, query } from '../../api/client'
 import { fmtDuration, fmtTime, protocolName } from '../../api/format'
 import { ranges, sinceFor } from '../../api/ranges'
 import { sessionTarget, sessionUser } from '../../api/labels'
 import type { Session } from '../../api/types'
-import { Alert, Confirm, Empty, Field, PageHead, reasonBadge, TabLink } from '../../components/ui'
+import { Alert, Confirm, Empty, Field, Loading, PageHead, EndReason, TabLink } from '../../components/ui'
 import { useRecordingsPath } from '../audit/paths'
 import { useList } from './lib'
+import { SavedViews } from '../../components/SavedViews'
 
 // Mounted in the admin console and, without Terminate, in the audit portal,
 // where an auditor watches live sessions read-only (ADR 0006).
@@ -55,11 +56,14 @@ export function Sessions() {
         <input id="s-user" className="filter-control" placeholder="filter by username" aria-label="Filter by username" value={username} onChange={(e) => setUsername(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && set('user', username.trim())} />
         <button className="btn sm" onClick={() => set('user', username.trim())}>Filter</button>
         <button className="btn sm" onClick={() => (range ? setFrom(sinceFor(range)) : void reload())}>Refresh</button>
+        <SavedViews page="sessions" current={sp.toString()} onOpen={(q) => setSp(new URLSearchParams(q), { replace: true })} />
+        {/* Every session the filter matches, as CSV; the export is logged. */}
+        <a className="btn sm" href={'/api/v1/sessions.csv' + query({ open: openOnly ? 'true' : undefined, username: applied || undefined, from: from || undefined })} download>CSV</a>
       </PageHead>
       {err && <Alert tone="danger" onDismiss={() => setErr('')}>{err}</Alert>}
       <div className="card table-wrap">
         {items === null ? (
-          err ? null : <Empty>Loading…</Empty>
+          err ? null : <Loading />
         ) : items.length === 0 ? (
           <Empty>{applied || openOnly || range ? 'No sessions match.' : 'No sessions yet.'}</Empty>
         ) : (
@@ -86,8 +90,8 @@ export function Sessions() {
                   <td>{protocolName(s.protocol)}</td>
                   <td className="mono muted">{s.client_ip}</td>
                   <td>{fmtDuration(s.started_at, s.ended_at)}</td>
-                  <td>{reasonBadge(s.end_reason)}</td>
-                  <td>{s.recording_id ? <TabLink to={`${recordings}/${s.recording_id}`} label="play" /> : <span className="muted">—</span>}</td>
+                  <td><EndReason reason={s.end_reason} detail={s.end_detail} /></td>
+                  <td>{s.recording_id ? <TabLink className="btn sm" to={`${recordings}/${s.recording_id}`} label="Review" /> : <span className="muted">—</span>}</td>
                   <td>
                     {!s.ended_at && (
                       <span className="actions">

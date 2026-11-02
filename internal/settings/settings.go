@@ -91,6 +91,12 @@ const (
 	KeyACME          = "tls.acme"
 	KeyACMEEmail     = "tls.acme_email"
 	KeyACMEDirectory = "tls.acme_directory"
+	// KeySecurityContact is where someone who finds a weakness in this
+	// gateway writes: an email address or an https:// page. Set, the gateway
+	// publishes it at /.well-known/security.txt (RFC 9116); empty, that path
+	// is not found (2026-11-03 live audit, S1). The operator's contact, never
+	// the project's.
+	KeySecurityContact = "security.contact"
 )
 
 // LetsEncryptDirectory is the ACME directory KeyACMEDirectory defaults to.
@@ -167,6 +173,24 @@ func RequireDigest(v string) error {
 // emailRe is an address the CA can write to: no spaces, one @, a dotted domain.
 var emailRe = regexp.MustCompile(`^[^@\s]{1,64}@[A-Za-z0-9.-]{1,253}\.[A-Za-z]{2,63}$`)
 
+// SecurityContactURI is a security contact as security.txt's Contact field
+// writes it: mailto: for an email address, the URL itself for an https://
+// page. Anything else, a line break or an http:// page among it, is "", so
+// no setting can add a line of its own to the file.
+func SecurityContactURI(v string) string {
+	v = strings.TrimSpace(v)
+	if strings.ContainsAny(v, "\r\n\t <>\"") {
+		return ""
+	}
+	if emailRe.MatchString(strings.TrimPrefix(v, "mailto:")) {
+		return "mailto:" + strings.TrimPrefix(v, "mailto:")
+	}
+	if u, err := url.Parse(v); err == nil && u.Scheme == "https" && u.Host != "" && u.User == nil {
+		return u.String()
+	}
+	return ""
+}
+
 // MaxLoginBanner bounds the banner: long enough for a legal notice, short
 // enough that the sign-in form stays on the page.
 const MaxLoginBanner = 4000
@@ -192,6 +216,8 @@ type Definition struct {
 var Definitions = []Definition{
 	{Key: KeyLoginBanner, Category: "Sign-in", Title: "Login banner", Type: TypeText,
 		Description: "Shown above the sign-in form. Plain text; empty hides it."},
+	{Key: KeySecurityContact, Category: "Sign-in", Title: "Security contact", Type: TypeString,
+		Description: "An email address or https:// page for reporting a weakness, published at /.well-known/security.txt. Empty publishes nothing."},
 	{Key: KeyRequireMFA, Category: "Sign-in", Title: "Require an authenticator", Type: TypeBool, Default: "true", EnvVar: "ZANSKAR_REQUIRE_MFA",
 		Description: "Password sign-ins, local or LDAP, must enrol an authenticator. Single sign-on providers enforce their own."},
 	{Key: KeyUpdateCheck, Category: "Updates", Title: "Check for new versions", Type: TypeBool, Default: "true",
@@ -334,6 +360,10 @@ func Validate(d Definition, value string) (string, error) {
 		case KeyACMEDirectory:
 			if u, err := url.Parse(v); err != nil || u.Scheme != "https" || u.Host == "" {
 				return "", fmt.Errorf("%w: %s must be an https:// URL", ErrInvalid, d.Key)
+			}
+		case KeySecurityContact:
+			if v != "" && SecurityContactURI(v) == "" {
+				return "", fmt.Errorf("%w: %s must be an email address or an https:// URL", ErrInvalid, d.Key)
 			}
 		}
 		// The relay image is an argument of `docker run`; free text there

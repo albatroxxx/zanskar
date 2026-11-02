@@ -270,6 +270,8 @@ export interface PolicyGrant {
   allow_file_transfer: boolean
   /** Chromium's developer tools in an application's isolated browser (ADR 0037); applications only. */
   allow_devtools?: boolean
+  /** Four eyes (ADR 0042): a session waits until a second person watches it; terminal sessions only. */
+  require_watcher?: boolean
   idle_timeout_minutes: number
   max_session_minutes: number | null
   time_windows: TimeWindow[]
@@ -286,6 +288,9 @@ export interface Policy {
   grants: PolicyGrant[]
   created_at: string
   updated_at: string
+  /** The last access review (ADR 0040): when, and the reviewer's id. */
+  reviewed_at?: string
+  reviewed_by?: string
 }
 
 export interface Session {
@@ -307,8 +312,14 @@ export interface Session {
   started_at: string
   ended_at?: string
   end_reason?: string
+  /** What was said about the end: the gateway's sentence or the target's words (2026-11-03). */
+  end_detail?: string
   failover_from_session_id?: string
   recording_id?: string
+  /** Reviewers only: retention has deleted the recording's file. */
+  recording_purged?: boolean
+  /** Reviewers only: when retention deletes the recording by age; absent with no age limit. */
+  recording_kept_until?: string
 }
 
 export interface Recording {
@@ -375,6 +386,9 @@ export interface AuditTallies {
   failures: number
   failed_logins: number
   refused_connects: number
+  /** The action most failures were, and how many (2026-11-03); absent with none. */
+  top_failure?: string
+  top_failure_count?: number
 }
 
 /** GET /admin/overview (ADR 0029). Counts only, never row data. */

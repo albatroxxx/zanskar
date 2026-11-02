@@ -6,7 +6,7 @@ import { sessionTarget } from '../../api/labels'
 import type { Page, Session } from '../../api/types'
 import { FilterChips } from '../../components/FilterChips'
 import { usePaged } from '../../components/paged'
-import { Alert, Empty, LoadMore, PageHead, reasonBadge } from '../../components/ui'
+import { Alert, Empty, Loading, LoadMore, PageHead, EndReason } from '../../components/ui'
 
 export function MySessions() {
   // open=1, from the Targets page's "Open sessions" (2026-10-30), narrows to
@@ -28,7 +28,7 @@ export function MySessions() {
       <FilterChips chips={openOnly ? [{ label: 'Open only', onClear: () => setSp(new URLSearchParams(), { replace: true }) }] : []} />
       <div className="card table-wrap">
         {items === null ? (
-          err ? null : <Empty>Loading…</Empty>
+          err ? null : <Loading />
         ) : items.length === 0 ? (
           <Empty>{openOnly ? 'No open sessions.' : 'No sessions yet.'}</Empty>
         ) : (
@@ -49,7 +49,7 @@ export function MySessions() {
                   <td title={s.target_id ?? s.asg_instance_id}>{sessionTarget(s)}</td>
                   <td>{protocolName(s.protocol)}</td>
                   <td>{fmtDuration(s.started_at, s.ended_at)}</td>
-                  <td>{reasonBadge(s.end_reason)}</td>
+                  <td><EndReason reason={s.end_reason} detail={s.end_detail} /></td>
                 </tr>
               ))}
             </tbody>

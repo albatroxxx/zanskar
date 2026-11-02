@@ -60,6 +60,13 @@ type Handler struct {
 	// a nil Prober cannot do.
 	Prober      *target.Prober
 	DialTimeout time.Duration
+	// PreflightDial opens the TCP connection the pre-flight check makes
+	// before a host session's ticket is handed out (preflight); nil dials for
+	// real. Tests replace it.
+	PreflightDial func(ctx context.Context, addr string) error
+	// DiskFull says why no new session can be recorded, or "" when there is
+	// room (lifecycle.DiskGuard); nil never refuses.
+	DiskFull func() string
 	// CloseTimeout bounds each write that closes a session once its client
 	// may have gone: the row's end, the recording's size and digest. Zero
 	// means closeTimeout.
@@ -357,6 +364,14 @@ func (h *Handler) connect(w http.ResponseWriter, r *http.Request) {
 		deny(http.StatusServiceUnavailable, "restarting", restartingMsg)
 		return
 	}
+	// Every session is recorded: with no room for its recording it does not
+	// start (2026-11-03 live audit, idea 8). Running sessions go on.
+	if h.DiskFull != nil {
+		if msg := h.DiskFull(); msg != "" {
+			deny(http.StatusInsufficientStorage, "disk_full", msg)
+			return
+		}
+	}
 	proto := target.Protocol(req.Protocol)
 	if !target.ValidProtocol(proto) {
 		httpx.BadRequest(w, r, "unknown protocol")
@@ -409,6 +424,12 @@ func (h *Handler) connect(w http.ResponseWriter, r *http.Request) {
 		deny(codeStatus(code), code, msg)
 		return
 	}
+	// After the policy has said yes, so nobody learns from it whether a
+	// target they may not reach is up.
+	if code, msg := h.preflight(r.Context(), ep, proto); code != "" {
+		deny(codeStatus(code), code, msg)
+		return
+	}
 	h.record(r, actor.Event(audit.SessionConnect, "target", ep.LiveKey, audit.Success, map[string]any{"protocol": req.Protocol, "asg_id": ep.ASGID, "instance": ep.CloudInstanceID}))
 	httpx.WriteJSON(w, http.StatusOK, res)
 }
@@ -441,6 +462,12 @@ func (h *Handler) issueTicket(ctx context.Context, p *auth.Principal, ip string,
 	d, code, msg, err := h.admits(ctx, p.User.ID, ep, proto)
 	if err != nil || code != "" {
 		return nil, code, msg, err
+	}
+	// Four eyes (ADR 0042) holds a terminal session until someone watches
+	// it; a session of any other kind cannot be held that way, so it is
+	// refused rather than run unwatched.
+	if d.RequireWatcher && !protocol.Terminal(string(proto)) {
+		return nil, "watcher_unavailable", "this access needs a second person watching, which the gateway offers for terminal sessions (SSH, the WinRM console); ask an administrator", nil
 	}
 	switch proto {
 	case target.SSH:
@@ -501,7 +528,7 @@ func (h *Handler) issueTicket(ctx context.Context, p *auth.Principal, ip string,
 		Protocol: string(proto), CredentialID: credID, PolicyID: d.Policy.ID,
 		IdleTimeout: d.IdleTimeout, MaxSession: d.MaxSession, RetentionDays: retentionDays(ep, d),
 		AllowClipboard: d.AllowClipboard, AllowFileTransfer: d.AllowFileTransfer, AllowDevTools: d.AllowDevTools,
-		ClientIP: ip, FailoverFrom: failoverFrom,
+		RequireWatcher: d.RequireWatcher, ClientIP: ip, FailoverFrom: failoverFrom,
 	}
 	switch cred.Mode {
 	case credential.ModeVaulted:
@@ -567,7 +594,7 @@ func (h *Handler) issueCredentialless(p *auth.Principal, ep *endpoint, proto tar
 		Protocol: string(proto), PolicyID: d.Policy.ID,
 		IdleTimeout: d.IdleTimeout, MaxSession: d.MaxSession, RetentionDays: retentionDays(ep, d),
 		AllowClipboard: d.AllowClipboard, AllowFileTransfer: d.AllowFileTransfer, AllowDevTools: d.AllowDevTools,
-		ClientIP: ip, FailoverFrom: failoverFrom,
+		RequireWatcher: d.RequireWatcher, ClientIP: ip, FailoverFrom: failoverFrom,
 	}
 	tok, err := h.Tickets.Issue(grant)
 	if err != nil {
@@ -580,7 +607,7 @@ func codeStatus(code string) int {
 	switch code {
 	case "policy_denied", "mfa_required_by_policy", "approval_required", "login_user_not_permitted":
 		return http.StatusForbidden
-	case "credential_required", "credential_invalid":
+	case "credential_required", "credential_invalid", "address_forbidden":
 		return http.StatusUnprocessableEntity
 	case "protocol_unavailable", "credential_mode_unavailable", "engine_unavailable":
 		return http.StatusNotImplemented
@@ -755,6 +782,9 @@ func (h *Handler) terminal(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, done := run.live()
 	defer done()
+	if !run.awaitWatcher(ctx, rec, recRow) {
+		return
+	}
 
 	lim := sshgw.Limits{Idle: g.IdleTimeout, Max: g.MaxSession, SessionID: run.s.ID, AllowFiles: g.AllowFileTransfer}
 	// The registry made the tap that shadowing watchers subscribe to (ADR

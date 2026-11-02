@@ -32,6 +32,7 @@ import (
 	"github.com/albatroxxx/zanskar/internal/auth"
 	"github.com/albatroxxx/zanskar/internal/cloud"
 	"github.com/albatroxxx/zanskar/internal/config"
+	"github.com/albatroxxx/zanskar/internal/configio"
 	"github.com/albatroxxx/zanskar/internal/connect"
 	"github.com/albatroxxx/zanskar/internal/credential"
 	"github.com/albatroxxx/zanskar/internal/crypto"
@@ -47,6 +48,7 @@ import (
 	"github.com/albatroxxx/zanskar/internal/keyring"
 	"github.com/albatroxxx/zanskar/internal/lifecycle"
 	"github.com/albatroxxx/zanskar/internal/logring"
+	"github.com/albatroxxx/zanskar/internal/notify"
 	"github.com/albatroxxx/zanskar/internal/overview"
 	"github.com/albatroxxx/zanskar/internal/policy"
 	"github.com/albatroxxx/zanskar/internal/recording"
@@ -371,7 +373,8 @@ func serve(ctx context.Context) error {
 		Registry: registry, Storage: storage, Audit: auditLog, Log: log, MFAEnrolled: idp.SecondFactor(users, idpRepo, totp.Enrolled), GuacdAddr: guacdAddr, Draining: restarter.Draining,
 		DockerPath: cfg.DockerPath, DBMaxSessions: cfg.DatabaseMaxSessions, DBProxyImage: func() string { return runtime.String(settings.KeyDBProxyImage) },
 		AppsMaxSessions: cfg.AppsMaxSessions, BrowserImage: func() string { return runtime.String(settings.KeyBrowserImage) }, StateDir: cfg.StateDir,
-		Prober: prober, ASGs: asgRepo, Cloud: cloudProviders}
+		Prober: prober, ASGs: asgRepo, Cloud: cloudProviders,
+		DiskFull: (&lifecycle.DiskGuard{DatabasePath: dbFileForMetrics(cfg.DBDSN), RecordingsPath: cfg.RecordingsDir}).Full}
 	// A sign-in through an identity provider that removes the user from a
 	// mapped group ends what that group granted, as an admin's removal does.
 	provisioner.Revoker = connectHandler
@@ -399,20 +402,31 @@ func serve(ctx context.Context) error {
 	}
 	chainChecker := &audit.Checker{Log: auditLog, Key: anchorKey, Logger: log}
 
+	// Notifications (ADR 0039): each channel follows the audit log from its
+	// own checkpoint, as the SIEM export does, and is told what it asked for.
+	notifyRepo := notify.NewRepo(db, ring)
+	notifier := &notify.Notifier{Channels: notifyRepo, Audit: auditLog, Resolve: sessionRepo.ResolveNames, Base: cfg.PublicURL, Sender: &notify.Sender{}, Log: log}
+	go notifier.Run(ctx)
+
 	deps := server.Deps{
-		TLS:            tlsMgr,
-		Theme:          func() string { return runtime.String(settings.KeyTheme) },
+		TLS:   tlsMgr,
+		Theme: func() string { return runtime.String(settings.KeyTheme) },
+		SecurityContact: func() string {
+			return settings.SecurityContactURI(runtime.String(settings.KeySecurityContact))
+		},
 		AuthMiddleware: &auth.Middleware{Sessions: sessions, Users: users, Log: log},
 		Auth:           authHandler,
 		Handlers: []server.Registrar{
 			&adminapi.AdminHandler{Users: users, Sessions: sessions, TOTP: totp, Revoker: connectHandler, Audit: auditLog, Log: log, ProviderHolds: idpRepo.Holds},
 			&group.AdminHandler{Groups: groups, Revoker: connectHandler, Audit: auditLog, Log: log},
+			&notify.Handler{Channels: notifyRepo, Notifier: notifier, Audit: auditLog, Log: log},
+			&configio.Handler{Audit: auditLog, Log: log},
 			&idpadmin.AdminHandler{Providers: idpRepo, Audit: auditLog, Log: log, LDAPTester: &ldap.Authenticator{}, Sync: userSync},
 			oidcHandler,
 			scimHandler,
 			&credential.AdminHandler{Vault: vault, Audit: auditLog, Log: log},
 			&target.AdminHandler{Repo: targets, Prober: prober, Policies: policies, Requests: accessReqs, Live: registry, Revoker: connectHandler, Vault: vault, Audit: auditLog, Log: log},
-			&policy.AdminHandler{Repo: policies, Users: users, Inventory: policyInventory{targets: targets, groups: asgRepo}, Revoker: connectHandler, Audit: auditLog, Log: log},
+			&policy.AdminHandler{Repo: policies, Users: users, Inventory: policyInventory{targets: targets, groups: asgRepo}, Revoker: connectHandler, Directory: reviewDirectory{users: users, groups: groups}, Audit: auditLog, Log: log},
 			&access.Handler{Requests: accessReqs, Policies: policies, Targets: targets, ASGs: asgRepo, Revoker: connectHandler, Audit: auditLog, Log: log},
 			&asg.AdminHandler{Repo: asgRepo, Sync: syncer.SyncGroup, Identity: awsIdentity, Providers: asg.AWSFresh(), Policies: policies, Requests: accessReqs, Live: registry, Revoker: connectHandler, Vault: vault, Audit: auditLog, Log: log},
 			&session.Handler{Repo: sessionRepo, Audit: auditLog, AnchorKey: anchorKey, Registry: registry, Storage: storage, Log: log},
@@ -456,6 +470,11 @@ func serve(ctx context.Context) error {
 	// (ADR 0015). Off until an admin sets a policy in the console.
 	retention := &session.RetentionSweeper{Repo: sessionRepo, Storage: storage, Audit: auditLog, Log: log}
 	go retention.Run(ctx, time.Hour)
+
+	// Index the command lines of finished terminal recordings for search
+	// (ADR 0041): new ones within a pass, older ones once.
+	indexer := &session.CommandIndexer{Repo: sessionRepo, Storage: storage, Log: log}
+	go indexer.Run(ctx)
 
 	// Expire lapsed just-in-time access grants and audit each (ADR 0018).
 	grantSweeper := &access.Sweeper{Repo: accessReqs, Revoker: connectHandler, Audit: auditLog, Log: log}

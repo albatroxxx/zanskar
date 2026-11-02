@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
-import { Link, useParams } from 'react-router-dom'
+import { Link, useParams, useSearchParams } from 'react-router-dom'
 import * as AsciinemaPlayer from 'asciinema-player'
 import 'asciinema-player/dist/bundle/asciinema-player.css'
 import { api, errorMessage } from '../../api/client'
@@ -7,7 +7,7 @@ import { fmtBytes, fmtDuration, fmtSeconds, fmtTime, protocolName } from '../../
 import { sessionTarget, sessionUser } from '../../api/labels'
 import type { Recording } from '../../api/types'
 import { TransportIcon } from '../../components/icons'
-import { Alert, Empty, PageHead, reasonBadge } from '../../components/ui'
+import { Alert, Empty, Loading, PageHead, EndReason } from '../../components/ui'
 import { useTitle } from '../../components/title'
 import { useFullscreen } from '../user/fullscreen'
 import { FullscreenButton } from '../user/FullscreenButton'
@@ -116,6 +116,10 @@ function IconButton({ label, onClick, primary, children }: { label: string; onCl
 export function Player() {
   const recordingsPath = useRecordingsPath()
   const { id = '' } = useParams()
+  // ?marker=<n>, from a command search (ADR 0041): the terminal opens at the
+  // n-th command once Play is pressed.
+  const [sp] = useSearchParams()
+  const startMarker = /^[0-9]{1,6}$/.test(sp.get('marker') ?? '') ? Number(sp.get('marker')) : null
   const [rec, setRec] = useState<Recording | null>(null)
   const [err, setErr] = useState('')
   const [phase, setPhase] = useState<'idle' | 'loading' | 'playing'>('idle')
@@ -231,6 +235,9 @@ export function Player() {
     // Play takes its own button away; focus goes to the player rather than
     // falling to the page, so the player's own keys answer straight away.
     mountTerminal(0, speed, true, true)
+    // Opened from a command search: go to that command, by marker index as
+    // the Commands list does (the player's clock is idle-compressed).
+    if (startMarker !== null && startMarker < parsed.commands.length) void term.current?.seek({ marker: startMarker })
   }
 
   const changeSpeed = (rate: number) => {
@@ -490,7 +497,7 @@ export function Player() {
         <Link className="btn" to={recordingsPath}>Back to recordings</Link>
       </PageHead>
       {err && <Alert tone="danger" onDismiss={() => setErr('')}>{err}</Alert>}
-      {!rec && !err && <Empty>Loading…</Empty>}
+      {!rec && !err && <Loading />}
       {rec && (
         <>
           <div className="card">
@@ -509,7 +516,7 @@ export function Player() {
                   <dt>Duration</dt>
                   <dd>{fmtDuration(s.started_at, s.ended_at)}</dd>
                   <dt>Ended</dt>
-                  <dd>{reasonBadge(s.end_reason)}</dd>
+                  <dd><EndReason reason={s.end_reason} detail={s.end_detail} /></dd>
                 </>
               )}
               <dt>Size</dt>

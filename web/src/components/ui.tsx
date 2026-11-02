@@ -389,6 +389,28 @@ export function Empty({ children }: { children: ReactNode }) {
   return <div className="empty">{children}</div>
 }
 
+/** Loading stands where a list or page will be. It shows only once a load has
+ *  taken 400 ms (CSS), so a fast load paints no "Loading…" flash before the
+ *  page (2026-11-03 live audit, Q11). */
+export function Loading() {
+  return <div className="empty pending">Loading…</div>
+}
+
+/** NotFound is a portal's page for an address it has no page for: said, not
+ *  silently swapped for the dashboard (2026-11-03 live audit, Q3). */
+export function NotFound({ home }: { home: string }) {
+  return (
+    <>
+      <PageHead title="Not found" />
+      <div className="card">
+        <Empty>
+          This address has no page. <Link to={home}>Go to the start page</Link>
+        </Empty>
+      </div>
+    </>
+  )
+}
+
 /** LoadMore is the button under a list read a page at a time; it is shown only while there is a next page. */
 export function LoadMore({ next, busy, onMore }: { next: string; busy?: boolean; onMore: () => void }) {
   if (!next) return null
@@ -401,7 +423,8 @@ export function LoadMore({ next, busy, onMore }: { next: string; busy?: boolean;
 
 export function Tags({ tags }: { tags?: Record<string, string> }) {
   const entries = Object.entries(tags ?? {})
-  if (entries.length === 0) return <span className="muted">none</span>
+  // No tags reads as the table's usual empty cell, not a word in every row.
+  if (entries.length === 0) return <span className="muted" aria-label="no tags">—</span>
   return (
     <>
       {entries.map(([k, v]) => (
@@ -418,4 +441,17 @@ export function reasonBadge(reason?: string) {
   if (!reason) return <Badge tone="accent">live</Badge>
   const tone = reason === 'user_exit' ? undefined : reason === 'target_lost' || reason === 'error' ? 'danger' : 'warn'
   return <Badge tone={tone}>{reason.replace(/_/g, ' ')}</Badge>
+}
+
+/** EndReason is a session's end: the reason's badge and, under it, what was
+ *  said about it, the gateway's sentence or the target's words. A bare
+ *  "error" told nobody why (2026-11-03 live audit, Q7). */
+export function EndReason({ reason, detail }: { reason?: string; detail?: string }) {
+  if (!detail || !reason) return reasonBadge(reason)
+  return (
+    <>
+      {reasonBadge(reason)}
+      <div className="end-detail">{detail}</div>
+    </>
+  )
 }

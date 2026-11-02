@@ -127,6 +127,9 @@ func (h *Handler) winrm(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, done := run.live()
 	defer done()
+	if !run.awaitWatcher(ctx, rec, recRow) {
+		return
+	}
 
 	lim := winrmgw.Limits{Idle: g.IdleTimeout, Max: g.MaxSession, SessionID: run.s.ID}
 	// The registry's tap feeds shadowing watchers (ADR 0006); see terminal.

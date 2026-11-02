@@ -235,21 +235,34 @@ type auditTallies struct {
 	Failures        int64 `json:"failures"`
 	FailedLogins    int64 `json:"failed_logins"`
 	RefusedConnects int64 `json:"refused_connects"`
+	// TopFailure is the action most of the failures were, and how many:
+	// the live dashboard's 28 failures were mostly a provider's sync, which
+	// the bare number did not say (2026-11-03 live audit, Q2). Empty with
+	// no failures; a tie goes to the action that sorts first.
+	TopFailure      string `json:"top_failure,omitempty"`
+	TopFailureCount int64  `json:"top_failure_count,omitempty"`
 }
 
 func foldTallies(ts []audit.Tally) auditTallies {
 	var a auditTallies
+	byAction := map[string]int64{}
 	for _, t := range ts {
 		a.Events += t.Count
 		if t.Outcome != audit.Failure {
 			continue
 		}
 		a.Failures += t.Count
+		byAction[t.Action] += t.Count
 		switch t.Action {
 		case audit.UserLogin:
 			a.FailedLogins += t.Count
 		case audit.SessionConnect:
 			a.RefusedConnects += t.Count
+		}
+	}
+	for action, n := range byAction {
+		if n > a.TopFailureCount || (n == a.TopFailureCount && action < a.TopFailure) {
+			a.TopFailure, a.TopFailureCount = action, n
 		}
 	}
 	return a

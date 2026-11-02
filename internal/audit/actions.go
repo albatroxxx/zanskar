@@ -85,14 +85,29 @@ const (
 	// The gateway's log.
 	LogsDownload = "logs.download"
 
+	// Notification channels (ADR 0039).
+	NotifyChannelCreate = "notify.channel.create"
+	NotifyChannelUpdate = "notify.channel.update"
+	NotifyChannelDelete = "notify.channel.delete"
+	NotifyChannelTest   = "notify.channel.test"
+	NotifyChannelKey    = "notify.channel.key"
+
+	// The configuration exported and imported as a file (ADR 0043).
+	ConfigExport = "config.export"
+	ConfigImport = "config.import"
+
 	// Access policies.
 	PolicyCreate = "policy.create"
+	// PolicyReview is an access review completed (ADR 0040): who was kept,
+	// who removed, and the reviewer's note.
+	PolicyReview = "policy.review"
 	PolicyUpdate = "policy.update"
 	PolicyDelete = "policy.delete"
 
 	// Session recordings and where they are stored.
 	RecordingDownload      = "recording.download"
 	RecordingLost          = "recording.lost"
+	RecordingSearch        = "recording.search"
 	RecordingPurge         = "recording.purge"
 	RecordingView          = "recording.view"
 	RecordingStorageMove   = "recording.storage.move"
@@ -103,10 +118,13 @@ const (
 	RetentionPolicyUpdate = "retention.policy.update"
 
 	// Sessions: the ticket, the session itself, failover and watching.
-	SessionConnect     = "session.connect"
-	SessionStart       = "session.start"
-	SessionEnd         = "session.end"
-	SessionTerminate   = "session.terminate"
+	SessionConnect   = "session.connect"
+	SessionStart     = "session.start"
+	SessionEnd       = "session.end"
+	SessionTerminate = "session.terminate"
+	// SessionWatcherWait: a session held for a second person to watch it
+	// (four eyes, ADR 0042).
+	SessionWatcherWait = "session.watcher.wait"
 	SessionFailover    = "session.failover"
 	SessionShadowStart = "session.shadow.start"
 	SessionShadowEnd   = "session.shadow.end"

@@ -185,6 +185,17 @@ func TestDrainingRefusesNewSessions(t *testing.T) {
 	if code, out := connect(); code != 404 || out["code"] != "not_found" {
 		t.Fatalf("after cancel: %d %v", code, out)
 	}
+	// 2026-11-03 live audit, idea 8: with no room for a recording, no new
+	// session starts; the refusal says why.
+	full := "the gateway's recordings disk is 96% full; new sessions are refused until an administrator frees space, so none runs unrecorded"
+	h.DiskFull = func() string { return full }
+	if code, out := connect(); code != 507 || out["code"] != "disk_full" || out["message"] != full {
+		t.Fatalf("a full disk: %d %v", code, out)
+	}
+	h.DiskFull = func() string { return "" }
+	if code, out := connect(); code != 404 {
+		t.Fatalf("with room again: %d %v", code, out)
+	}
 	// A ticket cannot be redeemed during a drain either.
 	draining = true
 	req := httptest.NewRequest("GET", "/ws/terminal?ticket=whatever", nil)

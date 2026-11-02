@@ -110,7 +110,12 @@ func (r *Repo) markRecordingPurged(ctx context.Context, id, uri string, when tim
 		return false, err
 	}
 	n, err := res.RowsAffected()
-	return n == 1, err
+	if err != nil || n != 1 {
+		return false, err
+	}
+	// The command index is the recording's content: it goes with the file
+	// (ADR 0041), so retention leaves nothing searchable behind.
+	return true, r.forgetCommands(ctx, id)
 }
 
 // selectForPurge decides which candidates to delete under the policy and why.
