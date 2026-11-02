@@ -15,6 +15,7 @@ import { ConnectPage } from './pages/user/connect'
 import { loadDesktop, loadTerminal } from './pages/user/sessionPages'
 import { MySessions } from './pages/user/MySessions'
 import { MyAccess } from './pages/user/MyAccess'
+import { MyActivity } from './pages/user/MyActivity'
 
 // The terminal pulls in xterm; load it only when a session opens.
 const Terminal = lazy(loadTerminal)
@@ -143,6 +144,7 @@ export default function App() {
                 { to: '/', label: 'Targets', end: true },
                 { to: '/access', label: 'Access' },
                 { to: '/sessions', label: 'Sessions' },
+                { to: '/activity', label: 'Activity' },
               ]}
             />
           </Guard>
@@ -153,6 +155,7 @@ export default function App() {
         <Route path="connect" element={<ConnectPage />} />
         <Route path="access" element={<MyAccess />} />
         <Route path="sessions" element={<MySessions />} />
+        <Route path="activity" element={<MyActivity />} />
       </Route>
       <Route
         path="/admin"

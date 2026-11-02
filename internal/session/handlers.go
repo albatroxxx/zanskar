@@ -45,6 +45,9 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	// One's own session history belongs to the user portal, which auditor-only
 	// accounts do not have (they review everyone's sessions below instead).
 	mux.Handle("GET /api/v1/me/sessions", auth.RequireConnect(http.HandlerFunc(h.mySessions)))
+	// One's own activity: sign-ins, sessions, requests and what was done to
+	// one's account (2026-11-03, idea 11). Every signed-in account has one.
+	mux.Handle("GET /api/v1/me/activity", auth.RequireAuth(http.HandlerFunc(h.myActivity)))
 
 	mux.Handle("GET /api/v1/sessions", reviewer(http.HandlerFunc(h.listSessions)))
 	mux.Handle("GET /api/v1/sessions/{id}", reviewer(http.HandlerFunc(h.getSession)))

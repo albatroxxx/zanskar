@@ -155,7 +155,11 @@ func (l *Log) Record(ctx context.Context, e Event) (Event, error) {
 // by a previous List call.
 type Filter struct {
 	ActorUserID string
-	Action      string
+	// Subject narrows to one person's events: those they did and those done
+	// to their account (object type user, object id theirs), for the access
+	// portal's Activity page (2026-11-03, idea 11).
+	Subject string
+	Action  string
 	// Outcome narrows to successes or failures; empty means both. The
 	// dashboards' failure counts open the list with it.
 	Outcome    Outcome
@@ -190,6 +194,10 @@ func (l *Log) List(ctx context.Context, f Filter) ([]Event, string, error) {
 	}
 	if f.ActorUserID != "" {
 		add("actor_user_id = ?", f.ActorUserID)
+	}
+	if f.Subject != "" {
+		where = append(where, "(actor_user_id = ? OR (object_type = 'user' AND object_id = ?))")
+		args = append(args, f.Subject, f.Subject)
 	}
 	if f.Action != "" {
 		add("action = ?", f.Action)

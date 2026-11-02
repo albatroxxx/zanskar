@@ -5,6 +5,8 @@ package server
 import (
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -21,7 +23,7 @@ func TestOnlyConsolePagesGetTheApp(t *testing.T) {
 		return rr
 	}
 	for _, p := range []string{
-		"/", "/login", "/login?error=x", "/home", "/connect?target=t1&protocol=ssh", "/access", "/sessions",
+		"/", "/login", "/login?error=x", "/home", "/connect?target=t1&protocol=ssh", "/access", "/sessions", "/activity",
 		"/terminal", "/desktop", "/admin", "/admin/hosts", "/admin/hosts/abc", "/admin/no-such-page",
 		"/audit", "/audit/recordings/r1",
 	} {
@@ -41,6 +43,27 @@ func TestOnlyConsolePagesGetTheApp(t *testing.T) {
 	// Bundle files are still served, at the root too.
 	if rr := get("/logo-mark.svg"); rr.Code != http.StatusOK || rr.Body.String() != "<svg/>" {
 		t.Errorf("a bundle file at the root: %d %q", rr.Code, rr.Body)
+	}
+}
+
+// Every top-level page the console routes to is a console path here, or a
+// reload of it would be not found: this reads the routes and the portals'
+// links out of web/src/App.tsx.
+func TestConsoleRootsMatchTheConsolesRoutes(t *testing.T) {
+	src, err := os.ReadFile("../../web/src/App.tsx")
+	if err != nil {
+		t.Skipf("no console source here: %v", err)
+	}
+	re := regexp.MustCompile(`(?:path="|to: ')/([a-z-]*)`)
+	seen := 0
+	for _, m := range re.FindAllStringSubmatch(string(src), -1) {
+		seen++
+		if !consoleRoots[m[1]] {
+			t.Errorf("the console routes to /%s, which the gateway answers not found: add it to consoleRoots", m[1])
+		}
+	}
+	if seen < 10 {
+		t.Fatalf("read only %d routes from App.tsx; the pattern no longer matches it", seen)
 	}
 }
 

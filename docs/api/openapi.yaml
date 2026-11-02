@@ -851,6 +851,59 @@ paths:
                           $ref: "#/components/schemas/OwnSession"
         "400":
           $ref: "#/components/responses/BadRequest"
+  /me/activity:
+    get:
+      tags: [user]
+      summary: The caller's own activity
+      description: |
+        The caller's own events, newest first: those they did, and those done to their account
+        (object type `user`, their id) by an administrator or the gateway. Routine events are left
+        out (`audit.read`, and the successful `session.connect` ticket issue). Details are cut to
+        `reason`, `protocol`, `detail`, `idp`, `method` and `duration_minutes`. `ip` is blank when
+        another person did it. Any signed-in account may read its own; reading records no event.
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+      responses:
+        "200":
+          description: Events.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/PagedResponse"
+                  - type: object
+                    properties:
+                      items:
+                        type: array
+                        items:
+                          type: object
+                          required: [id, ts, action, outcome, ip]
+                          properties:
+                            id:
+                              type: integer
+                            ts:
+                              type: string
+                              format: date-time
+                            action:
+                              type: string
+                            outcome:
+                              type: string
+                              enum: [success, failure]
+                            ip:
+                              type: string
+                            by:
+                              type: string
+                              description: Who did it when it was not the caller; `gateway` for the gateway itself.
+                            object_type:
+                              type: string
+                            object_name:
+                              type: string
+                            details:
+                              type: object
+                              additionalProperties: true
+        "401":
+          $ref: "#/components/responses/Unauthorized"
   /sessions/{id}/failover:
     post:
       tags: [user]
