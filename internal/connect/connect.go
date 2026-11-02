@@ -60,6 +60,10 @@ type Handler struct {
 	// a nil Prober cannot do.
 	Prober      *target.Prober
 	DialTimeout time.Duration
+	// PreflightDial opens the TCP connection the pre-flight check makes
+	// before a host session's ticket is handed out (preflight); nil dials for
+	// real. Tests replace it.
+	PreflightDial func(ctx context.Context, addr string) error
 	// CloseTimeout bounds each write that closes a session once its client
 	// may have gone: the row's end, the recording's size and digest. Zero
 	// means closeTimeout.
@@ -409,6 +413,12 @@ func (h *Handler) connect(w http.ResponseWriter, r *http.Request) {
 		deny(codeStatus(code), code, msg)
 		return
 	}
+	// After the policy has said yes, so nobody learns from it whether a
+	// target they may not reach is up.
+	if code, msg := h.preflight(r.Context(), ep, proto); code != "" {
+		deny(codeStatus(code), code, msg)
+		return
+	}
 	h.record(r, actor.Event(audit.SessionConnect, "target", ep.LiveKey, audit.Success, map[string]any{"protocol": req.Protocol, "asg_id": ep.ASGID, "instance": ep.CloudInstanceID}))
 	httpx.WriteJSON(w, http.StatusOK, res)
 }
@@ -580,7 +590,7 @@ func codeStatus(code string) int {
 	switch code {
 	case "policy_denied", "mfa_required_by_policy", "approval_required", "login_user_not_permitted":
 		return http.StatusForbidden
-	case "credential_required", "credential_invalid":
+	case "credential_required", "credential_invalid", "address_forbidden":
 		return http.StatusUnprocessableEntity
 	case "protocol_unavailable", "credential_mode_unavailable", "engine_unavailable":
 		return http.StatusNotImplemented

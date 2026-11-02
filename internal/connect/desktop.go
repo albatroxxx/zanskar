@@ -203,10 +203,16 @@ func (h *Handler) desktop(w http.ResponseWriter, r *http.Request) {
 			h.Log.Warn("rdp certificate pin check failed", "target", ep.LiveKey, "err", err)
 			// A different certificate is the ADR 0012 case and is audited, as
 			// WinRM's and SSH's are; an unreachable target is only logged.
-			if mm, ok := errors.AsType[*certMismatchError](err); ok {
-				h.record(r, actorFor(g.UserID, ip).Event(audit.TargetTLSMismatch, "target", ep.LiveKey, audit.Failure,
-					map[string]string{"protocol": protocol.RDP, "expected": mm.want, "seen": mm.got}))
+			mm, ok := errors.AsType[*certMismatchError](err)
+			if !ok {
+				// The check could not reach the target, or it showed no
+				// certificate: not a mismatch, which is what this said
+				// for a host that was merely down (2026-11-03 live audit).
+				httpx.WriteError(w, r, http.StatusConflict, "target_unavailable", "could not reach the target to check its certificate")
+				return
 			}
+			h.record(r, actorFor(g.UserID, ip).Event(audit.TargetTLSMismatch, "target", ep.LiveKey, audit.Failure,
+				map[string]string{"protocol": protocol.RDP, "expected": mm.want, "seen": mm.got}))
 			httpx.WriteError(w, r, http.StatusConflict, "certificate_mismatch", "the target's certificate does not match the pinned fingerprint")
 			return
 		}
