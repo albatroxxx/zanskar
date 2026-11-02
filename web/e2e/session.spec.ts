@@ -1,4 +1,11 @@
-import { expect, test } from '@playwright/test'
+import { expect, test, type Page } from '@playwright/test'
+
+/** disconnect ends a session from its own bar, answering the question it
+ *  asks first (2026-11-02). */
+async function disconnect(tab: Page) {
+  await tab.getByRole('button', { name: 'Disconnect' }).click()
+  await tab.getByRole('dialog', { name: /^Disconnect from / }).getByRole('button', { name: 'Disconnect' }).click()
+}
 
 // The whole reason the gateway exists: a person signs in, picks a machine,
 // gets a shell in the browser, leaves, and the session and its recording are
@@ -27,7 +34,7 @@ test.describe('An SSH session from the browser', () => {
     await tab.keyboard.type('hello e2e\n')
     await expect(tab.locator('.xterm')).toContainText('HELLO E2E')
 
-    await tab.getByRole('button', { name: 'Disconnect' }).click()
+    await disconnect(tab)
     const ended = tab.getByRole('dialog', { name: 'Session ended' })
     await expect(ended).toBeVisible()
     await expect(tab.getByText('Ended · recording saved')).toBeVisible()
@@ -84,7 +91,7 @@ test.describe('An SSH session from the browser', () => {
     // Both are live at once, and the list never left.
     await expect(first.locator('.xterm')).not.toContainText('TAB TWO')
     await expect(page.getByRole('heading', { name: 'Targets' })).toBeVisible()
-    for (const tab of [first, second]) await tab.getByRole('button', { name: 'Disconnect' }).click()
+    for (const tab of [first, second]) await disconnect(tab)
   })
 
   // A link to /connect that no page of ours just clicked (another site, a
@@ -107,7 +114,7 @@ test.describe('An SSH session from the browser', () => {
     const ssh = page.getByRole('row').filter({ hasText: 'fake-1' }).getByRole('link', { name: 'SSH, opens in a new tab' })
     const [tab] = await Promise.all([context.waitForEvent('page'), ssh.click()])
     await expect(tab.locator('.xterm')).toContainText('welcome to fakessh', { timeout: 15_000 })
-    await tab.getByRole('button', { name: 'Disconnect' }).click()
+    await disconnect(tab)
     const ended = tab.getByRole('dialog', { name: 'Session ended' })
     await ended.getByRole('button', { name: 'Connect again' }).click()
     await expect(ended).toBeHidden()
@@ -117,7 +124,7 @@ test.describe('An SSH session from the browser', () => {
     await tab.locator('.xterm').click()
     await tab.keyboard.type('again\n')
     await expect(tab.locator('.xterm')).toContainText('AGAIN')
-    await tab.getByRole('button', { name: 'Disconnect' }).click()
+    await disconnect(tab)
     await tab.close()
   })
 })

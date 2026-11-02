@@ -3,7 +3,7 @@ import { Navigate, useLocation, useNavigate } from 'react-router-dom'
 import type { Client, Display, GuacObject, InputStream, Keyboard } from 'guacamole-common-js'
 import { fmtBytes, fmtSeconds, protocolName } from '../../api/format'
 import { FailoverDialog } from './Failover'
-import { SessionEndedDialog } from './SessionEnded'
+import { ConfirmDisconnect, SessionEndedDialog } from './SessionEnded'
 import { desktopEnd, saveBlob, SESSION_ID, useSwitched, type SessionEnd, type SessionState } from './session'
 import { useFullscreen } from './fullscreen'
 import { FullscreenButton } from './FullscreenButton'
@@ -22,6 +22,14 @@ function typingInField(): boolean {
   const el = document.activeElement
   if (!(el instanceof HTMLElement)) return false
   return el instanceof HTMLTextAreaElement || el instanceof HTMLInputElement || el.isContentEditable
+}
+
+/** inDialog reports whether keyboard focus is in a dialog over the desktop
+ *  (asking whether to disconnect, for one): its Enter, Escape and Tab are the
+ *  dialog's, not the remote machine's, however the dialog was opened. */
+function inDialog(): boolean {
+  const el = document.activeElement
+  return el instanceof HTMLElement && !!el.closest('[role="dialog"]')
 }
 
 /**
@@ -62,6 +70,8 @@ function DesktopSession({ state }: { state: SessionState }) {
   const [sessionId, setSessionId] = useState('')
   const [elapsed, setElapsed] = useState(0)
   const [ended, setEnded] = useState<SessionEnd | null>(null)
+  // Disconnect asks first (2026-11-02).
+  const [askDisconnect, setAskDisconnect] = useState(false)
   // False until guacd has drawn the first frame; an application's browser
   // can take a while to start, and the pane is black until then.
   const [connected, setConnected] = useState(false)
@@ -260,7 +270,7 @@ function DesktopSession({ state }: { state: SessionState }) {
           if (controlsKey) backToDesktop()
           return true
         }
-        if (typingInField()) return true
+        if (typingInField() || inDialog()) return true
         // CONTROLS_KEY moves the keyboard to the bar. F6 still goes out after
         // the Ctrl and Shift already sent, so the remote machine sees a whole
         // Ctrl+Shift+F6, not a bare Ctrl+Shift, which Windows can take as its
@@ -278,7 +288,7 @@ function DesktopSession({ state }: { state: SessionState }) {
       // Releases always go out, Ctrl's and Shift's after CONTROLS_KEY among
       // them; releasing a key the desktop never saw pressed does nothing.
       kb.onkeyup = (k: number) => {
-        if (typingInField()) return
+        if (typingInField() || inDialog()) return
         void sendKey(0, k)
       }
       client.connect('')
@@ -478,7 +488,7 @@ function DesktopSession({ state }: { state: SessionState }) {
             {panelOpen ? 'Hide files' : 'Files'}
           </button>
         )}
-        {!ended && <button className="btn sm" onClick={() => disconnectRef.current()}>Disconnect</button>}
+        {!ended && <button className="btn sm" onClick={() => setAskDisconnect(true)}>Disconnect</button>}
       </div>
       <div className="desk-body">
         <div className="term-host desk-host" ref={host} />
@@ -536,6 +546,9 @@ function DesktopSession({ state }: { state: SessionState }) {
       )}
       {ended && !failover && (
         <SessionEndedDialog ended={ended} target={state.target} protocol={state.protocol} elapsed={elapsed} again={state.again} onClose={() => nav('/')} />
+      )}
+      {askDisconnect && !ended && (
+        <ConfirmDisconnect target={state.target} onConfirm={() => disconnectRef.current()} onClose={() => setAskDisconnect(false)} />
       )}
     </div>
   )

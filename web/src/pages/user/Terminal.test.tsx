@@ -135,12 +135,28 @@ describe('Terminal', () => {
     await screen.findByText('web-1')
     message(JSON.stringify({ t: 'ready' }))
     const user = userEvent.setup()
+    // Disconnect asks first (2026-11-02); the session ends on the answer.
     await user.click(screen.getByRole('button', { name: 'Disconnect' }))
+    const ask = screen.getByRole('dialog', { name: 'Disconnect from web-1?' })
+    expect(g.sockets[0].closed).toBeNull()
+    await user.click(within(ask).getByRole('button', { name: 'Disconnect' }))
     expect(g.sockets[0].closed).toEqual({ code: 1000, reason: 'user_exit' })
-    expect(await screen.findByRole('dialog')).toBeDefined()
+    expect(await screen.findByRole('dialog', { name: 'Session ended' })).toBeDefined()
     expect(screen.getByText('Ended · recording saved')).toBeDefined()
     expect(document.querySelector('.term-bar')!.textContent).toContain('ran for ')
     expect(screen.queryByRole('button', { name: 'Disconnect' })).toBeNull()
+  })
+
+  it('keeps the session when the question is answered Cancel', async () => {
+    open()
+    await screen.findByText('web-1')
+    message(JSON.stringify({ t: 'ready' }))
+    const user = userEvent.setup()
+    await user.click(screen.getByRole('button', { name: 'Disconnect' }))
+    await user.click(within(screen.getByRole('dialog', { name: 'Disconnect from web-1?' })).getByRole('button', { name: 'Cancel' }))
+    expect(screen.queryByRole('dialog')).toBeNull()
+    expect(g.sockets[0].closed).toBeNull()
+    expect(screen.getByRole('button', { name: 'Disconnect' })).toBeDefined()
   })
 
   it('tells the policy\'s refusal apart from a lost target when the socket closes', async () => {

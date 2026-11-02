@@ -6,7 +6,7 @@ import { WebLinksAddon } from '@xterm/addon-web-links'
 import '@xterm/xterm/css/xterm.css'
 import { fmtSeconds, protocolName } from '../../api/format'
 import { FailoverDialog } from './Failover'
-import { SessionEndedDialog } from './SessionEnded'
+import { ConfirmDisconnect, SessionEndedDialog } from './SessionEnded'
 import { SESSION_ID, useSwitched, type SessionEnd, type SessionState } from './session'
 import { TerminalFiles } from './TerminalFiles'
 import { useFullscreen } from './fullscreen'
@@ -34,6 +34,8 @@ function TerminalSession({ state }: { state: SessionState }) {
   const [elapsed, setElapsed] = useState(0)
   const [idle, setIdle] = useState(0)
   const [ended, setEnded] = useState<SessionEnd | null>(null)
+  // Disconnect asks first (2026-11-02).
+  const [askDisconnect, setAskDisconnect] = useState(false)
   const endedRef = useRef(false)
   const [status, setStatus] = useState<'connecting' | 'live'>('connecting')
   const [filesAllowed, setFilesAllowed] = useState(false)
@@ -171,7 +173,7 @@ function TerminalSession({ state }: { state: SessionState }) {
             {panelOpen ? 'Hide files' : 'Files'}
           </button>
         )}
-        {!ended && <button className="btn sm" onClick={() => wsRef.current?.close(1000, 'user_exit')}>Disconnect</button>}
+        {!ended && <button className="btn sm" onClick={() => setAskDisconnect(true)}>Disconnect</button>}
       </div>
       <div className="desk-body">
         <div className="term-host" ref={host} />
@@ -182,6 +184,9 @@ function TerminalSession({ state }: { state: SessionState }) {
       )}
       {ended && !failover && (
         <SessionEndedDialog ended={ended} target={state.target} protocol={state.protocol} elapsed={elapsed} again={state.again} onClose={() => nav('/')} />
+      )}
+      {askDisconnect && !ended && (
+        <ConfirmDisconnect target={state.target} onConfirm={() => wsRef.current?.close(1000, 'user_exit')} onClose={() => setAskDisconnect(false)} />
       )}
     </div>
   )
