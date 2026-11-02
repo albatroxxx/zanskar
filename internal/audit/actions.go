@@ -103,6 +103,7 @@ const (
 	// Session recordings and where they are stored.
 	RecordingDownload      = "recording.download"
 	RecordingLost          = "recording.lost"
+	RecordingSearch        = "recording.search"
 	RecordingPurge         = "recording.purge"
 	RecordingView          = "recording.view"
 	RecordingStorageMove   = "recording.storage.move"

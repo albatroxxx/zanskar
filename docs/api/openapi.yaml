@@ -3857,6 +3857,58 @@ paths:
                     type: array
                     items:
                       type: string
+  /recordings/search:
+    get:
+      tags: [audit]
+      summary: Find a command line across terminal recordings (ADR 0041)
+      description: >
+        Command lines containing `q` (2 to 200 characters, case-insensitive, `%` and `_` literal) in
+        terminal recordings still kept, newest sessions first. `seq` is the command's marker index:
+        the player opens there with `?marker=<seq>`. Each search is recorded as `recording.search`
+        with its term and how many it found.
+      parameters:
+        - name: q
+          in: query
+          required: true
+          schema:
+            type: string
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: Hits.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        recording_id:
+                          type: string
+                        session_id:
+                          type: string
+                        username:
+                          type: string
+                        target_name:
+                          type: string
+                        protocol:
+                          type: string
+                        started_at:
+                          $ref: "#/components/schemas/Timestamp"
+                        seq:
+                          type: integer
+                        at_ms:
+                          type: integer
+                          format: int64
+                        command:
+                          type: string
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "403":
+          $ref: "#/components/responses/Forbidden"
   /recordings/{id}:
     get:
       tags: [auditor]

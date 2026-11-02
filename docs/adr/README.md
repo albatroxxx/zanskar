@@ -58,3 +58,4 @@ and update the status of the old one.
 | [0038](0038-sessions-and-reviews-open-in-their-own-tab.md) | Sessions, watches and recordings open in a tab of their own | Accepted |
 | [0039](0039-notifications.md) | Notifications follow the audit log, to a signed webhook or by email | Accepted |
 | [0040](0040-access-reviews.md) | Access reviews: who a policy covers, kept or removed, on the record | Accepted |
+| [0041](0041-searching-terminal-recordings.md) | The command lines of terminal recordings are indexed and searched | Accepted |

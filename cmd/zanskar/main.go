@@ -469,6 +469,11 @@ func serve(ctx context.Context) error {
 	retention := &session.RetentionSweeper{Repo: sessionRepo, Storage: storage, Audit: auditLog, Log: log}
 	go retention.Run(ctx, time.Hour)
 
+	// Index the command lines of finished terminal recordings for search
+	// (ADR 0041): new ones within a pass, older ones once.
+	indexer := &session.CommandIndexer{Repo: sessionRepo, Storage: storage, Log: log}
+	go indexer.Run(ctx)
+
 	// Expire lapsed just-in-time access grants and audit each (ADR 0018).
 	grantSweeper := &access.Sweeper{Repo: accessReqs, Revoker: connectHandler, Audit: auditLog, Log: log}
 	go grantSweeper.Run(ctx, time.Minute)

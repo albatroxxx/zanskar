@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
-import { Link, useParams } from 'react-router-dom'
+import { Link, useParams, useSearchParams } from 'react-router-dom'
 import * as AsciinemaPlayer from 'asciinema-player'
 import 'asciinema-player/dist/bundle/asciinema-player.css'
 import { api, errorMessage } from '../../api/client'
@@ -116,6 +116,10 @@ function IconButton({ label, onClick, primary, children }: { label: string; onCl
 export function Player() {
   const recordingsPath = useRecordingsPath()
   const { id = '' } = useParams()
+  // ?marker=<n>, from a command search (ADR 0041): the terminal opens at the
+  // n-th command once Play is pressed.
+  const [sp] = useSearchParams()
+  const startMarker = /^[0-9]{1,6}$/.test(sp.get('marker') ?? '') ? Number(sp.get('marker')) : null
   const [rec, setRec] = useState<Recording | null>(null)
   const [err, setErr] = useState('')
   const [phase, setPhase] = useState<'idle' | 'loading' | 'playing'>('idle')
@@ -231,6 +235,9 @@ export function Player() {
     // Play takes its own button away; focus goes to the player rather than
     // falling to the page, so the player's own keys answer straight away.
     mountTerminal(0, speed, true, true)
+    // Opened from a command search: go to that command, by marker index as
+    // the Commands list does (the player's clock is idle-compressed).
+    if (startMarker !== null && startMarker < parsed.commands.length) void term.current?.seek({ marker: startMarker })
   }
 
   const changeSpeed = (rate: number) => {

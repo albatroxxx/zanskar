@@ -57,6 +57,8 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.Handle("POST /api/v1/sessions/{id}/terminate", admin(http.HandlerFunc(h.terminate)))
 
 	mux.Handle("GET /api/v1/recordings/{id}", reviewer(http.HandlerFunc(h.getRecording)))
+	// The command lines terminal sessions submitted, searched (ADR 0041).
+	mux.Handle("GET /api/v1/recordings/search", reviewer(http.HandlerFunc(h.searchCommands)))
 	mux.Handle("GET /api/v1/recordings/{id}/stream", reviewer(http.HandlerFunc(h.streamRecording)))
 	// Downloads for evidence handling: the raw recording, and for terminal
 	// sessions the command transcript. Each is a recorded view and an audit

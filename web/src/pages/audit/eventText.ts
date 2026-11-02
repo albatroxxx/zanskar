@@ -67,6 +67,7 @@ const actionLabels: Record<string, string> = {
   'recording.download': 'Recording downloaded',
   'recording.lost': 'Recording could not be saved',
   'recording.purge': 'Recordings purged',
+  'recording.search': 'Recordings searched',
   'recording.view': 'Recording played',
   'recording.storage.move': 'Recordings moved to new storage',
   'recording.storage.update': 'Recording storage changed',

@@ -1,11 +1,89 @@
-import { useEffect, useState } from 'react'
-import { api, query } from '../../api/client'
+import { useEffect, useState, type FormEvent } from 'react'
+import { api, errorMessage, query } from '../../api/client'
 import { fmtDuration, fmtTime, protocolName } from '../../api/format'
 import { sessionTarget, sessionUser } from '../../api/labels'
 import type { Page, Session } from '../../api/types'
 import { usePaged } from '../../components/paged'
 import { Alert, Empty, LoadMore, PageHead, EndReason, TabLink } from '../../components/ui'
 import { useRecordingsPath } from './paths'
+
+/** A command line a search found (GET /recordings/search, ADR 0041). */
+interface CommandHit {
+  recording_id: string
+  session_id: string
+  username?: string
+  target_name?: string
+  protocol: string
+  started_at: string
+  seq: number
+  at_ms: number
+  command: string
+}
+
+/**
+ * CommandSearch finds a command across every terminal recording still kept
+ * (2026-11-03, idea 5): "who ran systemctl stop nginx?" Each hit opens the
+ * recording at that command. A search reads recordings' content and is
+ * logged with its term.
+ */
+function CommandSearch({ recordingsPath }: { recordingsPath: string }) {
+  const [q, setQ] = useState('')
+  const [hits, setHits] = useState<CommandHit[] | null>(null)
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState('')
+  const search = async (e: FormEvent) => {
+    e.preventDefault()
+    if (q.trim().length < 2) return
+    setBusy(true)
+    setErr('')
+    try {
+      const r = await api.get<{ items: CommandHit[] }>('/recordings/search' + query({ q: q.trim() }))
+      setHits(r.items ?? [])
+    } catch (e2) {
+      setErr(errorMessage(e2))
+    } finally {
+      setBusy(false)
+    }
+  }
+  return (
+    <div className="card">
+      <form className="actions" onSubmit={search}>
+        <input className="mono filter-control" style={{ minWidth: 280 }} placeholder="find a command, e.g. systemctl stop" aria-label="Find a command" value={q} onChange={(e) => setQ(e.target.value)} maxLength={200} />
+        <button type="submit" className="btn sm" disabled={busy || q.trim().length < 2}>{busy ? 'Searching…' : 'Find'}</button>
+        <span className="muted">Terminal sessions; searches are logged.</span>
+      </form>
+      {err && <Alert tone="danger">{err}</Alert>}
+      {hits !== null && (hits.length === 0 ? (
+        <p className="muted">No command matches.</p>
+      ) : (
+        <table className="command-hits">
+          <thead>
+            <tr>
+              <th>When</th>
+              <th>User</th>
+              <th>Machine</th>
+              <th>Command</th>
+              <th><span className="sr-only">Actions</span></th>
+            </tr>
+          </thead>
+          <tbody>
+            {hits.map((h) => (
+              <tr key={`${h.recording_id}:${h.seq}`}>
+                <td style={{ whiteSpace: 'nowrap' }}>{fmtTime(new Date(Date.parse(h.started_at) + h.at_ms).toISOString())}</td>
+                <td>{h.username}</td>
+                <td>{h.target_name}</td>
+                <td className="mono">{h.command}</td>
+                <td>
+                  <TabLink className="btn sm" to={`${recordingsPath}/${encodeURIComponent(h.recording_id)}?marker=${h.seq}`} label="Review" />
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      ))}
+    </div>
+  )
+}
 
 /** keptCell says when retention deletes a recording, or that it has (Q10). */
 function keptCell(s: Session) {
@@ -57,6 +135,7 @@ export function Recordings() {
         />
       </PageHead>
       {err && <Alert tone="danger">{err}</Alert>}
+      <CommandSearch recordingsPath={recordingsPath} />
       {next && visible.length > 0 && (
         <p className="muted">Showing recordings from the newest {scanned} sessions; the filter searches only these. Load more to go further back.</p>
       )}
