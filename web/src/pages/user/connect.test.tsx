@@ -103,9 +103,15 @@ describe('the record of a session link just clicked', () => {
   })
 
   it('lapses after a minute, and goes from storage on the next write', () => {
+    // A key's random part can spell t1 (1045 in base 36), and failed this one
+    // run in a hundred (CI, 2026-11-02): pin it there and look for the address.
+    vi.spyOn(crypto, 'getRandomValues').mockImplementation((a) => {
+      if (a instanceof Uint32Array) a.fill(1045)
+      return a
+    })
     recordIntent(href, 1_000)
     recordIntent('/connect?target=t2&protocol=ssh', 1_000 + intentTTL)
-    expect(stored()).not.toContain('t1')
+    expect(stored()).not.toContain('target=t1')
     expect(takeIntent(href, 1_000 + intentTTL)).toBe(false)
   })
 
