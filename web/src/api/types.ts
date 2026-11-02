@@ -270,6 +270,8 @@ export interface PolicyGrant {
   allow_file_transfer: boolean
   /** Chromium's developer tools in an application's isolated browser (ADR 0037); applications only. */
   allow_devtools?: boolean
+  /** Four eyes (ADR 0042): a session waits until a second person watches it; terminal sessions only. */
+  require_watcher?: boolean
   idle_timeout_minutes: number
   max_session_minutes: number | null
   time_windows: TimeWindow[]

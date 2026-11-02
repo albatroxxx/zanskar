@@ -87,6 +87,7 @@ type grantInput struct {
 	AllowClipboard     bool          `json:"allow_clipboard"`
 	AllowFileTransfer  bool          `json:"allow_file_transfer"`
 	AllowDevTools      bool          `json:"allow_devtools"`
+	RequireWatcher     bool          `json:"require_watcher"`
 	IdleTimeoutMinutes int           `json:"idle_timeout_minutes"`
 	MaxSessionMinutes  *int          `json:"max_session_minutes"`
 	TimeWindows        []TimeWindow  `json:"time_windows"`
@@ -104,7 +105,7 @@ func (in *input) apply(p *Policy) {
 		p.Grants = append(p.Grants, Grant{
 			ID: g.ID, Kind: g.Kind, Targets: g.Targets, Tags: g.Tags, Access: g.Access, SignIn: g.SignIn,
 			RequireMFA: g.RequireMFA == nil || *g.RequireMFA, AllowClipboard: g.AllowClipboard, AllowFileTransfer: g.AllowFileTransfer,
-			AllowDevTools: g.AllowDevTools, IdleTimeoutMinutes: g.IdleTimeoutMinutes, MaxSessionMinutes: g.MaxSessionMinutes, TimeWindows: g.TimeWindows, RetentionDays: g.RetentionDays,
+			AllowDevTools: g.AllowDevTools, RequireWatcher: g.RequireWatcher, IdleTimeoutMinutes: g.IdleTimeoutMinutes, MaxSessionMinutes: g.MaxSessionMinutes, TimeWindows: g.TimeWindows, RetentionDays: g.RetentionDays,
 		})
 	}
 }

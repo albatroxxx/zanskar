@@ -41,8 +41,11 @@ type Grant struct {
 	// AllowDevTools opens Chromium's developer tools to an application
 	// session's isolated browser (ADR 0037).
 	AllowDevTools bool
-	ClientIP      string
-	FailoverFrom  string
+	// RequireWatcher holds the session until a second person watches it
+	// (ADR 0042).
+	RequireWatcher bool
+	ClientIP       string
+	FailoverFrom   string
 	// UserSecret carries a user-supplied password for the target, if the
 	// credential mode requires one; UserKey a user-supplied SSH private key,
 	// already unlocked (OpenSSH PEM, unencrypted). Neither is stored; both

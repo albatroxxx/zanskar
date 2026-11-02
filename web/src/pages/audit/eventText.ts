@@ -77,6 +77,7 @@ const actionLabels: Record<string, string> = {
   'session.start': 'Session started',
   'session.end': 'Session ended',
   'session.terminate': 'Session terminated',
+  'session.watcher.wait': 'Session waiting for a watcher',
   'session.failover': 'Session failed over',
   'session.shadow.start': 'Started watching a session',
   'session.shadow.end': 'Stopped watching a session',

@@ -82,6 +82,11 @@ func (h *ShadowHandler) shadowTerminal(w http.ResponseWriter, r *http.Request, l
 	defer ws.CloseNow()
 	ch, replay, cancel := tap.Subscribe()
 	defer cancel()
+	// Counted as watching from here, while the stream reaches this socket;
+	// the first watcher other than the owner releases a session held for a
+	// second person (ADR 0042).
+	h.Registry.Watch(live.SessionID, actor.UserID, +1)
+	defer h.Registry.Watch(live.SessionID, actor.UserID, -1)
 	h.record(r, actor.Event(audit.SessionShadowStart, "access_session", live.SessionID, audit.Success, details))
 	defer h.record(r, actor.Event(audit.SessionShadowEnd, "access_session", live.SessionID, audit.Success, details))
 

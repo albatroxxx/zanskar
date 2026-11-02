@@ -9,7 +9,7 @@ import { TagEditor } from '../../components/TagEditor'
 import { tagSuggestions } from '../../components/tags'
 import { Alert, Confirm, Field, Loading, PageHead, RemoveButton } from '../../components/ui'
 import { useList } from './lib'
-import { chipsFor, filesMove, fromDraft, grantSummary, kindOf, kinds, newGrant, switchKind, toDraft, unfound, type GrantDraft } from './policyModel'
+import { chipsFor, filesMove, fromDraft, grantSummary, kindOf, kinds, newGrant, switchKind, toDraft, unfound, watchable, type GrantDraft } from './policyModel'
 
 const days = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun']
 
@@ -386,6 +386,8 @@ function GrantCard({ index, draft: d, open, onToggleOpen, onChange, onRemove, on
                 ...(filesMove(d.kind) ? ([['allow_file_transfer', 'File transfer (SSH, RDP)']] as const) : []),
                 // Developer tools exist only in an application's browser (ADR 0037).
                 ...(d.kind === 'application' ? ([['allow_devtools', 'Developer tools']] as const) : []),
+                // Four eyes (ADR 0042): a terminal session waits for a watcher.
+                ...(watchable(d.kind) ? ([['require_watcher', 'Second person watches (SSH, WinRM)']] as const) : []),
               ] as const).map(([k, label]) => (
                 <span key={k} className="field inline">
                   <input id={`${p}-${k}`} type="checkbox" checked={d[k]} onChange={(e) => up({ [k]: e.target.checked } as Partial<GrantDraft>)} />

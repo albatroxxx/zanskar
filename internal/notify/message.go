@@ -18,10 +18,11 @@ const (
 	EventProviderFailing   = "provider_failing"
 	EventRecordingLost     = "recording_lost"
 	EventDiskFull          = "disk_full"
+	EventWatcherNeeded     = "watcher_needed"
 )
 
 // Events lists every kind, in the order the console offers them.
-var Events = []string{EventAccessRequested, EventAccessDecided, EventSessionTerminated, EventProviderFailing, EventRecordingLost, EventDiskFull}
+var Events = []string{EventAccessRequested, EventAccessDecided, EventWatcherNeeded, EventSessionTerminated, EventProviderFailing, EventRecordingLost, EventDiskFull}
 
 // kindOf is the kind of notification an audit event is, or "" for one no
 // channel is told about.
@@ -33,6 +34,8 @@ func kindOf(e audit.Event) string {
 		return EventAccessDecided
 	case audit.SessionTerminate:
 		return EventSessionTerminated
+	case audit.SessionWatcherWait:
+		return EventWatcherNeeded
 	case audit.IdPSync:
 		if e.Outcome == audit.Failure {
 			return EventProviderFailing
@@ -107,6 +110,11 @@ func message(e audit.Event, kind string, names Names, base string) Message {
 		m.Subject = fmt.Sprintf("%s %s %s access to %s", who, verb, proto, target)
 		m.Text = m.Subject + "."
 		m.Link = base + "/admin/approvals"
+	case EventWatcherNeeded:
+		target = names("target", detail(e, "target_id"))
+		m.Subject = fmt.Sprintf("%s waits for a second person to watch a %s session on %s", who, proto, target)
+		m.Text = m.Subject + ". Watch it from Sessions within 5 minutes, or it ends."
+		m.Link = base + "/admin/sessions?open=1"
 	case EventSessionTerminated:
 		m.Subject = fmt.Sprintf("%s ended a session", who)
 		m.Text = m.Subject + "."

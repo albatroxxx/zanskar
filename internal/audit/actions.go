@@ -114,10 +114,13 @@ const (
 	RetentionPolicyUpdate = "retention.policy.update"
 
 	// Sessions: the ticket, the session itself, failover and watching.
-	SessionConnect     = "session.connect"
-	SessionStart       = "session.start"
-	SessionEnd         = "session.end"
-	SessionTerminate   = "session.terminate"
+	SessionConnect   = "session.connect"
+	SessionStart     = "session.start"
+	SessionEnd       = "session.end"
+	SessionTerminate = "session.terminate"
+	// SessionWatcherWait: a session held for a second person to watch it
+	// (four eyes, ADR 0042).
+	SessionWatcherWait = "session.watcher.wait"
 	SessionFailover    = "session.failover"
 	SessionShadowStart = "session.shadow.start"
 	SessionShadowEnd   = "session.shadow.end"

@@ -5353,7 +5353,7 @@ components:
       enum: [asciicast, guac]
     EndReason:
       type: string
-      enum: [user_exit, idle_timeout, max_duration, admin_terminated, policy_revoked, trust_lost, gateway_restart, target_lost, failover, error]
+      enum: [user_exit, idle_timeout, max_duration, admin_terminated, policy_revoked, trust_lost, gateway_restart, target_lost, failover, error, no_watcher]
     Ports:
       type: object
       description: Port per protocol. Missing keys use defaults 22, 3389, 5900, 5986.
@@ -6522,6 +6522,15 @@ components:
             Chromium's developer tools in the application's isolated browser (ADR 0037).
             Allowed only on an `application` grant; where several grants admit a person, every
             one must allow them.
+        require_watcher:
+          type: boolean
+          default: false
+          description: >
+            Four eyes (ADR 0042): a terminal session (SSH, the WinRM console) the grant admits is
+            held, its owner told why, until an administrator or auditor other than its owner
+            watches it, and ends `no_watcher` after 5 minutes without one. Any other session the
+            grant admits is refused at Connect (`409 watcher_unavailable`). Allowed on `host` and
+            `autoscaling` grants; where several grants admit a person, one asking for it is enough.
         idle_timeout_minutes:
           type: integer
           minimum: 1
@@ -7580,7 +7589,7 @@ components:
           type: array
           items:
             type: string
-            enum: [access_requested, access_decided, session_terminated, provider_failing, recording_lost, disk_full]
+            enum: [access_requested, access_decided, watcher_needed, session_terminated, provider_failing, recording_lost, disk_full]
         config:
           type: object
           properties:

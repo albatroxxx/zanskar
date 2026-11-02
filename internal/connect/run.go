@@ -4,6 +4,7 @@ package connect
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"maps"
@@ -205,6 +206,41 @@ func (run *sessionRun) finish(rec recorder, row *session.Recording, reason strin
 	}
 	run.end(reason, "", more)
 	_ = run.ws.Close(websocket.StatusNormalClosure, reason)
+}
+
+// watchWait is how long a session held for a second person waits for one
+// (ADR 0042).
+var watchWait = 5 * time.Minute
+
+// awaitWatcher holds a session whose grant asks for four eyes until someone
+// other than its owner, an administrator or auditor, watches it (ADR 0042).
+// The session is live (in the registry, its tap ready) so it can be
+// watched, but nothing passes between the person and the target yet. The
+// person is told why; the wait is audited, which a notification channel can
+// relay to the watchers. It reports whether the session goes on; when it
+// does not, it has ended it: nobody came in time, or it was terminated.
+func (run *sessionRun) awaitWatcher(ctx context.Context, rec recorder, row *session.Recording) bool {
+	if !run.g.RequireWatcher {
+		return true
+	}
+	run.h.record(run.r, run.actor.Event(audit.SessionWatcherWait, "access_session", run.s.ID, audit.Success,
+		map[string]any{"target_id": run.ep.LiveKey, "protocol": run.g.Protocol}))
+	wctx, cancel := detach(run.r.Context(), frameTimeout)
+	b, _ := json.Marshal(map[string]string{"t": "waiting", "msg": "waiting for a second person to watch this session (four eyes)"})
+	_ = run.ws.Write(wctx, websocket.MessageText, b)
+	cancel()
+	err := run.h.Registry.AwaitWatcher(ctx, run.s.ID, watchWait)
+	if err == nil {
+		return true
+	}
+	run.finishRecording(rec, row)
+	if errors.Is(err, gateway.ErrNoWatcher) {
+		run.end(session.EndNoWatcher, fmt.Sprintf("nobody watched this session within %d minutes; it needs a second person watching (four eyes)", int(watchWait/time.Minute)), nil)
+		return false
+	}
+	reason, msg := gateway.CancelReason(ctx)
+	run.end(reason, msg, nil)
+	return false
 }
 
 // framer is a recording that counts the frames it carried: a desktop's.

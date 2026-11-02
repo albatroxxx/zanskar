@@ -29,6 +29,9 @@ const (
 	// EndTrustLost: the target's pinned host key or certificate changed
 	// while the session ran (ADR 0013).
 	EndTrustLost = "trust_lost"
+	// EndNoWatcher: a session held for a second person (four eyes, ADR
+	// 0042) that nobody watched in time.
+	EndNoWatcher = "no_watcher"
 )
 
 // Session is one connection from a user to a target.
