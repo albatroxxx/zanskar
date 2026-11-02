@@ -4,7 +4,7 @@ import { api } from '../../api/client'
 import type { AppsReadiness, Credential, Target } from '../../api/types'
 import { FilterChips } from '../../components/FilterChips'
 import { StateIcon } from '../../components/icons'
-import { Alert, Badge, Empty, PageHead } from '../../components/ui'
+import { Alert, Badge, Empty, Loading, PageHead } from '../../components/ui'
 import { useDebounced, useList } from './lib'
 import { TargetDetail } from './TargetDetail'
 import { TargetForm, type TargetKind } from './TargetForm'
@@ -108,7 +108,7 @@ export function TargetsPage({ kind, title, addLabel, empty, columns, cells }: {
           ...(activeOnly ? [{ label: 'Active only', onClear: () => drop('status') }] : []),
         ]} />
         {items === null ? (
-          err ? null : <Empty>Loading…</Empty>
+          err ? null : <Loading />
         ) : items.length === 0 ? (
           <Empty>{dq || attention || activeOnly ? `No ${noun} match.` : empty}</Empty>
         ) : (

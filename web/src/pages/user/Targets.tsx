@@ -3,7 +3,7 @@ import { api, errorMessage } from '../../api/client'
 import { accessDrill, expiresSoon } from '../../api/drilldown'
 import type { AccessRequest, Page, Protocol, ReachableInstance, ReachableTarget, Session } from '../../api/types'
 import { DatabaseIcon, OSIcon, StateIcon } from '../../components/icons'
-import { Alert, Badge, Empty, Field, Modal, PageHead, StatTile, Tabs, Tags } from '../../components/ui'
+import { Alert, Badge, Empty, Field, Loading, Modal, PageHead, StatTile, Tabs, Tags } from '../../components/ui'
 import { badgesChanged } from '../../components/badges'
 import { engineName, protocolName } from '../../api/format'
 import { fmtAgo } from './Failover'
@@ -248,7 +248,7 @@ export function Targets() {
       {tab === 'application' && (
         <div className="card table-wrap">
           {applications === null ? (
-            <Empty>Loading…</Empty>
+            <Loading />
           ) : applications.length === 0 ? (
             <Empty>{emptyFor('applications', 'No applications are assigned to you. Ask an administrator for access.')}</Empty>
           ) : (
@@ -286,7 +286,7 @@ export function Targets() {
       {tab === 'database' && (
         <div className="card table-wrap">
           {databases === null ? (
-            <Empty>Loading…</Empty>
+            <Loading />
           ) : databases.length === 0 ? (
             <Empty>{emptyFor('databases', 'No databases are assigned to you. Ask an administrator for access.')}</Empty>
           ) : (
@@ -330,7 +330,7 @@ export function Targets() {
       {tab === 'static' && (
         <div className="card table-wrap">
           {statics === null ? (
-            <Empty>Loading…</Empty>
+            <Loading />
           ) : statics.length === 0 ? (
             <Empty>{emptyFor('hosts', 'No hosts are assigned to you yet. Ask an administrator for access.')}</Empty>
           ) : (
@@ -375,7 +375,7 @@ export function Targets() {
       {tab === 'asg' && (
         <div className="card table-wrap">
           {groups === null ? (
-            <Empty>Loading…</Empty>
+            <Loading />
           ) : groups.length === 0 ? (
             <Empty>{emptyFor('autoscaling groups', 'No autoscaling groups are assigned to you. Ask an administrator for access.')}</Empty>
           ) : (

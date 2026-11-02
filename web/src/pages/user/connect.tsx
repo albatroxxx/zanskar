@@ -9,7 +9,7 @@ import { protocolName } from '../../api/format'
 import type { ConnectResponse, Page, Protocol, ReachableTarget } from '../../api/types'
 import { SessionSplash } from '../../components/SessionSplash'
 import { useTitle } from '../../components/title'
-import { Alert, Empty, Field, Modal, PageHead } from '../../components/ui'
+import { Alert, Empty, Field, Loading, Modal, PageHead } from '../../components/ui'
 import { connectHref, parseIntent, recordIntent, takeIntent, type ConnectIntent } from './intent'
 import { preloadSessionPage } from './sessionPages'
 
@@ -222,7 +222,7 @@ export function ConnectPage() {
           {protocol} access to {target?.name} needs an approved request. <Link to="/">Request it from Targets</Link>.
         </Alert>
       )}
-      {target === undefined && !err && <Empty>Loading…</Empty>}
+      {target === undefined && !err && <Loading />}
       {target === null && (
         <>
           <Empty>{err ? 'The targets could not be listed.' : `${protocol} to that machine is not among your targets.`}</Empty>

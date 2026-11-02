@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom'
 import { count } from '../../api/format'
 import type { AutoscalingGroup, Group, Policy, Target, User } from '../../api/types'
 import { StateIcon } from '../../components/icons'
-import { Alert, Badge, Empty, PageHead } from '../../components/ui'
+import { Alert, Badge, Empty, Loading, PageHead } from '../../components/ui'
 import { useList } from './lib'
 import { accessLine, extrasLine, grantsLine, kinds, policyRollup, reachLine, targetsCell, whoSummary } from './policyModel'
 
@@ -35,7 +35,7 @@ export function Policies() {
       {err && <Alert tone="danger" onDismiss={() => setErr('')}>{err}</Alert>}
       <div className="card table-wrap">
         {items === null ? (
-          err ? null : <Empty>Loading…</Empty>
+          err ? null : <Loading />
         ) : items.length === 0 ? (
           <Empty>No policies yet. Nobody can connect until a policy grants access.</Empty>
         ) : (

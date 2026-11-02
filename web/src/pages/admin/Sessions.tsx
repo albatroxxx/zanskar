@@ -5,7 +5,7 @@ import { fmtDuration, fmtTime, protocolName } from '../../api/format'
 import { ranges, sinceFor } from '../../api/ranges'
 import { sessionTarget, sessionUser } from '../../api/labels'
 import type { Session } from '../../api/types'
-import { Alert, Confirm, Empty, Field, PageHead, reasonBadge, TabLink } from '../../components/ui'
+import { Alert, Confirm, Empty, Field, Loading, PageHead, reasonBadge, TabLink } from '../../components/ui'
 import { useRecordingsPath } from '../audit/paths'
 import { useList } from './lib'
 
@@ -59,7 +59,7 @@ export function Sessions() {
       {err && <Alert tone="danger" onDismiss={() => setErr('')}>{err}</Alert>}
       <div className="card table-wrap">
         {items === null ? (
-          err ? null : <Empty>Loading…</Empty>
+          err ? null : <Loading />
         ) : items.length === 0 ? (
           <Empty>{applied || openOnly || range ? 'No sessions match.' : 'No sessions yet.'}</Empty>
         ) : (
@@ -87,7 +87,7 @@ export function Sessions() {
                   <td className="mono muted">{s.client_ip}</td>
                   <td>{fmtDuration(s.started_at, s.ended_at)}</td>
                   <td>{reasonBadge(s.end_reason)}</td>
-                  <td>{s.recording_id ? <TabLink to={`${recordings}/${s.recording_id}`} label="play" /> : <span className="muted">—</span>}</td>
+                  <td>{s.recording_id ? <TabLink className="btn sm" to={`${recordings}/${s.recording_id}`} label="Review" /> : <span className="muted">—</span>}</td>
                   <td>
                     {!s.ended_at && (
                       <span className="actions">

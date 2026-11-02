@@ -5,7 +5,7 @@ import { setConsoleTheme } from '../../styles/theme'
 import type { BootSetting, HostStatus, RuntimeSetting, SettingsListing, SystemMetrics, SystemStatus } from '../../api/types'
 import { HostActionDialog, type BootChange } from '../../components/HostActionDialog'
 import { TimeZonePicker } from '../../components/TimeZonePicker'
-import { Alert, Badge, Empty, Field, Modal, PageHead } from '../../components/ui'
+import { Alert, Badge, Field, Loading, Modal, PageHead } from '../../components/ui'
 import { TLSCard } from './TLSCard'
 import { StorageCard } from './StorageCard'
 import { RetentionCard } from './RetentionCard'
@@ -42,7 +42,7 @@ export function Settings() {
       .catch(() => {})
   }, [])
 
-  if (!listing && !err) return <Empty>Loading…</Empty>
+  if (!listing && !err) return <Loading />
   const categories: string[] = []
   for (const s of listing?.runtime ?? []) if (!categories.includes(s.category)) categories.push(s.category)
   const replace = (v: RuntimeSetting) => setListing((l) => (l ? { ...l, runtime: l.runtime.map((s) => (s.key === v.key ? v : s)) } : l))

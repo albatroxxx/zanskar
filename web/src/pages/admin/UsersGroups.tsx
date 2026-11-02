@@ -5,7 +5,7 @@ import type { Group, GroupMember, Role, User } from '../../api/types'
 import { useAuth } from '../../auth/AuthContext'
 import { PickList } from '../../components/PickList'
 import { useSubmit } from '../../components/submit'
-import { Alert, Badge, Confirm, Empty, Field, FormModal, Modal, PageHead, Tabs } from '../../components/ui'
+import { Alert, Badge, Confirm, Empty, Field, FormModal, Loading, Modal, PageHead, Tabs } from '../../components/ui'
 import { useList } from './lib'
 import { StateIcon } from '../../components/icons'
 
@@ -93,7 +93,7 @@ function Users() {
       </div>
       <div className="card table-wrap">
         {items === null ? (
-          err ? null : <Empty>Loading…</Empty>
+          err ? null : <Loading />
         ) : items.length === 0 ? (
           <Empty>No users.</Empty>
         ) : (
@@ -388,7 +388,7 @@ function Groups() {
       </div>
       <div className="card table-wrap">
         {items === null ? (
-          err ? null : <Empty>Loading…</Empty>
+          err ? null : <Loading />
         ) : items.length === 0 ? (
           <Empty>No groups. A policy can name users without one.</Empty>
         ) : (
@@ -507,7 +507,7 @@ function MembersForm({ group, onClose, onSaved }: { group: Group; onClose: () =>
     <Modal title={`Members of ${group.name}`} onClose={onClose}>
       {err && <Alert tone="danger">{err}</Alert>}
       {selected === null || users.items === null ? (
-        <Empty>Loading…</Empty>
+        <Loading />
       ) : (
         <div style={{ maxHeight: 320, overflowY: 'auto' }}>
           {users.items.map((u) => (

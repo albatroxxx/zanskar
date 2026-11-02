@@ -2,7 +2,7 @@ import { useEffect, useState, type FormEvent } from 'react'
 import { api, errorMessage } from '../../api/client'
 import { fmtTime, protocolName } from '../../api/format'
 import type { AsgAccessTest, AsgIAMDocs, AsgInstance, AutoscalingGroup, AwsIdentity, Credential, OSFamily, Protocol } from '../../api/types'
-import { Alert, Badge, Confirm, Empty, Field, Modal, PageHead, Tags } from '../../components/ui'
+import { Alert, Badge, Confirm, Empty, Field, Loading, Modal, PageHead, Tags } from '../../components/ui'
 import { DeleteAsset } from './DeleteAsset'
 import { protocols, useList, type PortProtocol } from './lib'
 import { TagEditor } from '../../components/TagEditor'
@@ -31,7 +31,7 @@ export function Autoscaling() {
       <IdentityCard />
       <div className="card table-wrap">
         {items === null ? (
-          err ? null : <Empty>Loading…</Empty>
+          err ? null : <Loading />
         ) : items.length === 0 ? (
           <Empty>No autoscaling groups enrolled yet.</Empty>
         ) : (
@@ -481,7 +481,7 @@ function IAMPanel({ group, onClose }: { group: AutoscalingGroup; onClose: () => 
         For the role <span className="mono">{group.role_arn}</span>. After changing anything here, use <strong>Test access</strong> on the group.
       </p>
       {err && <Alert tone="danger">{err}</Alert>}
-      {docs ? <IAMDocsView docs={docs} onRefresh={load} /> : !err && <Empty>Loading…</Empty>}
+      {docs ? <IAMDocsView docs={docs} onRefresh={load} /> : !err && <Loading />}
       <div className="actions">
         <button className="btn primary" onClick={onClose}>Done</button>
       </div>
@@ -639,7 +639,7 @@ function GroupDetail({ group, credentials, onClose, onChanged, onDeleted }: { gr
       </div>
       <div className="table-wrap">
         {instances === null ? (
-          <Empty>Loading…</Empty>
+          <Loading />
         ) : instances.length === 0 ? (
           <Empty>No instances seen yet. Sync to poll the cloud.</Empty>
         ) : (

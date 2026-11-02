@@ -3,7 +3,7 @@ import { api, errorMessage } from '../../api/client'
 import { fmtTime } from '../../api/format'
 import type { Group, Page, Role } from '../../api/types'
 import { useSubmit } from '../../components/submit'
-import { Alert, Badge, Confirm, Empty, Field, Modal, PageHead, RemoveButton } from '../../components/ui'
+import { Alert, Badge, Confirm, Empty, Field, Loading, Modal, PageHead, RemoveButton } from '../../components/ui'
 import { useList } from './lib'
 import { mappingRows, rowsToMapping, type MappingRow } from './groupMapping'
 import { StateIcon } from '../../components/icons'
@@ -150,7 +150,7 @@ export function IdentityProviders() {
       {notice && <Alert tone={notice.tone} onDismiss={() => setNotice(null)}>{notice.text}</Alert>}
       <div className="card table-wrap">
         {items === null ? (
-          err ? null : <Empty>Loading…</Empty>
+          err ? null : <Loading />
         ) : items.length === 0 ? (
           <Empty>No identity providers yet.</Empty>
         ) : (

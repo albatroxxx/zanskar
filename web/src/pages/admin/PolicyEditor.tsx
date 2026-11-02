@@ -7,7 +7,7 @@ import { canConnect } from '../../auth/home'
 import { PickList } from '../../components/PickList'
 import { TagEditor } from '../../components/TagEditor'
 import { tagSuggestions } from '../../components/tags'
-import { Alert, Confirm, Empty, Field, PageHead, RemoveButton } from '../../components/ui'
+import { Alert, Confirm, Field, Loading, PageHead, RemoveButton } from '../../components/ui'
 import { useList } from './lib'
 import { chipsFor, filesMove, fromDraft, grantSummary, kindOf, kinds, newGrant, switchKind, toDraft, unfound, type GrantDraft } from './policyModel'
 
@@ -109,7 +109,7 @@ export function PolicyEditor() {
     window.scrollTo?.({ top: 0 })
   }
 
-  if (id && !loaded && !err) return <Empty>Loading…</Empty>
+  if (id && !loaded && !err) return <Loading />
   const people = (users.items ?? []).filter(canConnect)
   return (
     <div className="policy-editor">

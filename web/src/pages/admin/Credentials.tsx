@@ -3,7 +3,7 @@ import { api, errorMessage } from '../../api/client'
 import { fmtTime } from '../../api/format'
 import type { Credential, CredentialType } from '../../api/types'
 import { useSubmit } from '../../components/submit'
-import { Alert, Confirm, Empty, Field, FormModal, PageHead } from '../../components/ui'
+import { Alert, Confirm, Empty, Field, FormModal, Loading, PageHead } from '../../components/ui'
 import { useList } from './lib'
 import { CAInstall, CASetup, DEFAULT_CERT_TTL, parsePrincipals } from './SSHCA'
 import { StateIcon } from '../../components/icons'
@@ -54,7 +54,7 @@ export function Credentials() {
       )}
       <div className="card table-wrap">
         {items === null ? (
-          err ? null : <Empty>Loading…</Empty>
+          err ? null : <Loading />
         ) : items.length === 0 ? (
           <Empty>No credentials yet.</Empty>
         ) : (

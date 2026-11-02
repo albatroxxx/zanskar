@@ -5,7 +5,7 @@ import { expiresSoon } from '../../api/drilldown'
 import { fmtTime, protocolName } from '../../api/format'
 import type { AccessRequest, AccessStatus, Page } from '../../api/types'
 import { FilterChips } from '../../components/FilterChips'
-import { Alert, Badge, Empty, Field, Modal, PageHead } from '../../components/ui'
+import { Alert, Badge, Empty, Field, Loading, Modal, PageHead } from '../../components/ui'
 import { badgesChanged } from '../../components/badges'
 
 const tone: Record<AccessStatus, 'ok' | 'warn' | 'danger' | undefined> = {
@@ -94,7 +94,7 @@ export function MyAccess() {
       <FilterChips chips={show ? [{ label: show === 'pending' ? 'Pending' : 'Expiring within the hour', onClear: () => setParams({}, { replace: true }) }] : []} />
       <div className="card table-wrap">
         {shown === null ? (
-          <Empty>Loading…</Empty>
+          <Loading />
         ) : shown.length === 0 ? (
           <Empty>{show ? 'None right now.' : "You haven't requested access to any approval-gated machines."}</Empty>
         ) : (

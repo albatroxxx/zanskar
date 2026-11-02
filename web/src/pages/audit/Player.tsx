@@ -7,7 +7,7 @@ import { fmtBytes, fmtDuration, fmtSeconds, fmtTime, protocolName } from '../../
 import { sessionTarget, sessionUser } from '../../api/labels'
 import type { Recording } from '../../api/types'
 import { TransportIcon } from '../../components/icons'
-import { Alert, Empty, PageHead, reasonBadge } from '../../components/ui'
+import { Alert, Empty, Loading, PageHead, reasonBadge } from '../../components/ui'
 import { useTitle } from '../../components/title'
 import { useFullscreen } from '../user/fullscreen'
 import { FullscreenButton } from '../user/FullscreenButton'
@@ -490,7 +490,7 @@ export function Player() {
         <Link className="btn" to={recordingsPath}>Back to recordings</Link>
       </PageHead>
       {err && <Alert tone="danger" onDismiss={() => setErr('')}>{err}</Alert>}
-      {!rec && !err && <Empty>Loading…</Empty>}
+      {!rec && !err && <Loading />}
       {rec && (
         <>
           <div className="card">
