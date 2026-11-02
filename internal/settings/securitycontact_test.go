@@ -19,6 +19,9 @@ func TestSecurityContactURI(t *testing.T) {
 		"security@example.com\nPolicy: https://x.com": "",
 		"https://example.com/\r\nHiring: yes":         "",
 		"not an address":                              "",
+		"https://example.com/a b":                     "",
+		"https://example.com/<script>":                "",
+		`https://example.com/"q"`:                     "",
 		"javascript:alert(1)":                         "",
 		"":                                            "",
 	} {
