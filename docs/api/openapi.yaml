@@ -4896,6 +4896,69 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
+  /admin/config/export:
+    get:
+      tags: [admin]
+      summary: The configuration as a YAML file (ADR 0043)
+      description: >
+        Groups (members by username), hosts, databases, applications (credentials by name) and access
+        policies (subjects and grant targets by name). No ids and no secrets. Read through the API as
+        the caller. Recorded as `config.export`.
+      responses:
+        "200":
+          description: The file.
+          content:
+            application/yaml:
+              schema:
+                type: string
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /admin/config/import:
+    post:
+      tags: [admin]
+      summary: Import a configuration file (ADR 0043)
+      description: >
+        Without `apply=true`, the plan: each group, target and policy in the file marked `create`,
+        `update` or `unchanged`, with any `problem` (a name that does not exist). With `apply=true`,
+        refused whole (422, the plan) while any problem remains; otherwise applied through the API as
+        the caller, groups then targets then policies, stopping at the first change the API refuses
+        (409, `error` on it and `applied` on those that ran). Additive: nothing the file leaves out is
+        deleted. Recorded as `config.import`, beside each change's own event.
+      parameters:
+        - name: apply
+          in: query
+          schema:
+            type: boolean
+      requestBody:
+        required: true
+        content:
+          application/yaml:
+            schema:
+              type: string
+              maxLength: 2097152
+      responses:
+        "200":
+          description: The plan, or the changes made.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConfigImportResult"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          description: Applied in part; the API refused a change, named by its `error`.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConfigImportResult"
+        "422":
+          description: The plan has problems; nothing changed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConfigImportResult"
   /admin/notifications:
     get:
       tags: [admin]
@@ -7574,6 +7637,31 @@ components:
         started_24h:
           type: integer
           description: Sessions started in the last 24 hours.
+    ConfigImportResult:
+      type: object
+      required: [applied, changes]
+      properties:
+        applied:
+          type: boolean
+        changes:
+          type: array
+          items:
+            type: object
+            properties:
+              kind:
+                type: string
+                enum: [group, target, policy]
+              name:
+                type: string
+              action:
+                type: string
+                enum: [create, update, unchanged]
+              problem:
+                type: string
+              error:
+                type: string
+              applied:
+                type: boolean
     NotificationChannel:
       type: object
       required: [id, name, kind, events, config, enabled, has_secret]

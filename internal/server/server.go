@@ -86,6 +86,13 @@ func New(cfg *config.Config, db *store.DB, log *slog.Logger, deps Deps) *Server 
 	for _, h := range deps.Handlers {
 		h.Register(mux)
 	}
+	// A handler that works through the gateway's own routes (the
+	// configuration import, ADR 0043) is handed them once all are in.
+	for _, h := range deps.Handlers {
+		if u, ok := h.(interface{ UseMux(http.Handler) }); ok {
+			u.UseMux(mux)
+		}
+	}
 
 	// The request id comes first, so even a recovered panic answers and logs
 	// with it. RealIP runs before accessLog and the handlers so the forwarded

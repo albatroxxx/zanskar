@@ -92,6 +92,10 @@ const (
 	NotifyChannelTest   = "notify.channel.test"
 	NotifyChannelKey    = "notify.channel.key"
 
+	// The configuration exported and imported as a file (ADR 0043).
+	ConfigExport = "config.export"
+	ConfigImport = "config.import"
+
 	// Access policies.
 	PolicyCreate = "policy.create"
 	// PolicyReview is an access review completed (ADR 0040): who was kept,

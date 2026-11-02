@@ -60,3 +60,4 @@ and update the status of the old one.
 | [0040](0040-access-reviews.md) | Access reviews: who a policy covers, kept or removed, on the record | Accepted |
 | [0041](0041-searching-terminal-recordings.md) | The command lines of terminal recordings are indexed and searched | Accepted |
 | [0042](0042-four-eyes-sessions.md) | Four eyes: a session waits until a second person watches it | Accepted |
+| [0043](0043-configuration-as-a-file.md) | The configuration as a file: exported by name, imported through the API | Accepted |

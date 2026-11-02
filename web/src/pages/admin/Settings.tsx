@@ -10,6 +10,7 @@ import { TLSCard } from './TLSCard'
 import { StorageCard } from './StorageCard'
 import { RetentionCard } from './RetentionCard'
 import { NotificationsCard } from './NotificationsCard'
+import { ConfigCard } from './ConfigCard'
 
 /**
  * Settings holds the two kinds of configuration (ADR 0020): runtime settings
@@ -53,7 +54,7 @@ export function Settings() {
       <PageHead title="Settings" />
       {err && <Alert tone="danger">{err}</Alert>}
       <nav className="jump" aria-label="Sections">
-        {[...categories, 'Notifications', 'TLS certificate', 'Recording storage', 'Recording retention', 'Set at install'].map((c) => (
+        {[...categories, 'Notifications', 'Configuration file', 'TLS certificate', 'Recording storage', 'Recording retention', 'Set at install'].map((c) => (
           <a key={c} href={'#' + sectionId(c)}>{c}</a>
         ))}
       </nav>
@@ -66,6 +67,7 @@ export function Settings() {
         </div>
       ))}
       <NotificationsCard />
+      <ConfigCard />
       <TLSCard />
       <StorageCard />
       <RetentionCard />

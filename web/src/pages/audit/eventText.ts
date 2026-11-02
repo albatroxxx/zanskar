@@ -30,6 +30,8 @@ const actionLabels: Record<string, string> = {
   'audit.read': 'Audit log viewed',
   'audit.reseal': 'Audit chain resealed',
   'aws.identity.refresh': 'AWS principal checked',
+  'config.export': 'Configuration exported',
+  'config.import': 'Configuration imported',
   'credential.create': 'Credential created',
   'credential.update': 'Credential updated',
   'credential.delete': 'Credential deleted',
