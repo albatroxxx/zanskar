@@ -274,6 +274,24 @@ func (g *Group) SuggestedRoleName() string {
 	return "zanskar-" + strings.Trim(name, "-")
 }
 
+// SuggestedRoleARN is the ARN the guided enrolment's role has once the
+// script or the template creates it in the gateway's own account: the
+// principal's account and SuggestedRoleName, in the group's partition. It is
+// a guess the console fills in for the administrator (2026-11-02: the role
+// ARN was typed by hand though the gateway knew its account), right whenever
+// the group lives in the gateway's account; a group in another account
+// takes that account's number, and the access test says which it is. Empty
+// when the principal is not an IAM ARN with an account, or is in another
+// partition, where the gateway's account cannot hold the group's role.
+func (g *Group) SuggestedRoleARN(principal string) string {
+	parts := strings.Split(principal, ":")
+	if len(parts) < 6 || parts[0] != "arn" || parts[2] != "iam" || parts[1] != partition(g.Region) ||
+		len(parts[4]) != 12 || strings.Trim(parts[4], "0123456789") != "" {
+		return ""
+	}
+	return "arn:" + parts[1] + ":iam::" + parts[4] + ":role/" + g.SuggestedRoleName()
+}
+
 // RoleCLI is a paste-ready AWS CLI script that creates the role with the
 // trust and permissions policies and prints its ARN. The role name is
 // SuggestedRoleName's, which holds only letters, digits, "-" and "_"; the

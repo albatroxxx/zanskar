@@ -38,6 +38,11 @@ func TestGuidedEnrolment(t *testing.T) {
 	if body["role_name"] != "zanskar-web-asg" || !strings.Contains(cli, "aws iam create-role --role-name zanskar-web-asg") || !strings.Contains(cf, "RoleName: zanskar-web-asg") {
 		t.Fatalf("role docs: %v", body)
 	}
+	// The role's ARN, as the script creates it in the gateway's account, for
+	// the console to fill in.
+	if body["suggested_role_arn"] != "arn:aws:iam::111111111111:role/zanskar-web-asg" {
+		t.Fatalf("suggested role ARN: %v", body["suggested_role_arn"])
+	}
 	// The same ExternalId can be previewed again (the customer re-opens the step).
 	if code, body = e.do("POST", "/api/v1/autoscaling-groups/iam-preview", map[string]any{"region": "ap-south-1", "external_name": "web-asg", "external_id": ext}, e.admin); code != 200 || body["external_id"] != ext {
 		t.Fatalf("preview with id: %d %v", code, body)
@@ -116,5 +121,32 @@ func TestNoPrincipalNoPlaceholder(t *testing.T) {
 	docs := h.iamDocs(context.Background(), &Group{ExternalID: "zanskar-0123456789abcdef0123456789abcdef", ExternalName: "web-asg", Region: "ap-south-1"})
 	if docs.PrincipalSource != cloud.SourceNone || docs.TrustPolicy != "" || docs.CLI != "" || docs.CloudFormation != "" || docs.PermissionsPolicy == "" {
 		t.Fatalf("docs without a principal: %+v", docs)
+	}
+}
+
+// TestSuggestedRoleARN: the role the guided enrolment proposes is named in
+// the gateway's own account and the group's partition, so the console can
+// fill it in; a principal in another partition, or one that names no
+// account, suggests nothing rather than something wrong. What it suggests
+// is a role ARN the group accepts.
+func TestSuggestedRoleARN(t *testing.T) {
+	for _, c := range []struct{ region, name, principal, want string }{
+		{"ap-south-1", "web-asg", "arn:aws:iam::892748149884:role/Zanskar-Gateway-Role", "arn:aws:iam::892748149884:role/zanskar-web-asg"},
+		{"us-gov-west-1", "web", "arn:aws-us-gov:iam::111111111111:role/gw", "arn:aws-us-gov:iam::111111111111:role/zanskar-web"},
+		{"cn-north-1", "web", "arn:aws:iam::111111111111:role/gw", ""},
+		{"ap-south-1", "web", "arn:aws:iam::12345:role/gw", ""},
+		{"ap-south-1", "web", "arn:aws:sts::111111111111:assumed-role/gw/session", ""},
+		{"ap-south-1", "web", "", ""},
+		{"ap-south-1", "web fleet/blue", "arn:aws:iam::111111111111:role/gw", "arn:aws:iam::111111111111:role/zanskar-web-fleet-blue"},
+	} {
+		g := &Group{Region: c.region, ExternalName: c.name}
+		got := g.SuggestedRoleARN(c.principal)
+		if got != c.want {
+			t.Errorf("%s %q %q: got %q, want %q", c.region, c.name, c.principal, got, c.want)
+			continue
+		}
+		if got != "" && !roleARNRe.MatchString(got) {
+			t.Errorf("the suggestion %q is not a role ARN the group accepts", got)
+		}
 	}
 }

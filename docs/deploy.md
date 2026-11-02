@@ -761,7 +761,9 @@ can assume (ADR 0011, 0023). Enrolment is guided from **Autoscaling groups → E
    ExternalId and shows a paste-ready AWS CLI script that creates the role with the trust
    policy and the read-only permissions policy, the same role as a CloudFormation template,
    and the two policy documents on their own.
-3. **Test access.** Paste the role's ARN and test: the gateway assumes the role with the
+3. **Test access.** The role's ARN is filled in as the script creates it in the gateway's
+   own account (change the account number for a group in another account), then test: the
+   gateway assumes the role with the
    ExternalId and describes the group. A failure names the stage: the trust policy (wrong
    principal or ExternalId), the permissions policy, or no group by that name in that
    region. The test is audited as `asg.test`.

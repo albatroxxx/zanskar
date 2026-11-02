@@ -496,11 +496,14 @@ func (h *AdminHandler) gatewayIdentity(ctx context.Context) cloud.Identity {
 // IAMDocs is everything the customer needs to create the role, with the
 // real gateway principal or nothing: never a placeholder (ADR 0023).
 type IAMDocs struct {
-	ExternalID        string `json:"external_id"`
-	GatewayPrincipal  string `json:"gateway_principal,omitempty"`
-	PrincipalSource   string `json:"principal_source"`
-	PrincipalError    string `json:"principal_error,omitempty"`
-	RoleName          string `json:"role_name"`
+	ExternalID       string `json:"external_id"`
+	GatewayPrincipal string `json:"gateway_principal,omitempty"`
+	PrincipalSource  string `json:"principal_source"`
+	PrincipalError   string `json:"principal_error,omitempty"`
+	RoleName         string `json:"role_name"`
+	// SuggestedRoleARN is the role's ARN when it is created in the
+	// gateway's own account, for the console to fill in.
+	SuggestedRoleARN  string `json:"suggested_role_arn,omitempty"`
 	TrustPolicy       string `json:"trust_policy,omitempty"`
 	PermissionsPolicy string `json:"permissions_policy"`
 	CLI               string `json:"cli,omitempty"`
@@ -515,6 +518,7 @@ func (h *AdminHandler) iamDocs(ctx context.Context, g *Group) IAMDocs {
 		return docs
 	}
 	docs.TrustPolicy = g.TrustPolicy(id.Principal)
+	docs.SuggestedRoleARN = g.SuggestedRoleARN(id.Principal)
 	docs.CLI = g.RoleCLI(docs.RoleName, docs.TrustPolicy)
 	docs.CloudFormation = g.RoleCloudFormation(docs.RoleName, docs.TrustPolicy)
 	return docs

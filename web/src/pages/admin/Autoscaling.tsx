@@ -185,7 +185,11 @@ function GroupForm({ initial, credentials, onClose, onSaved }: { initial?: Autos
     setErr('')
     setDocsBusy(true)
     try {
-      setDocs(await api.post<AsgIAMDocs>('/autoscaling-groups/iam-preview', { region: f.region.trim(), external_name: f.external_name.trim(), external_id: docs?.external_id ?? '' }))
+      const d = await api.post<AsgIAMDocs>('/autoscaling-groups/iam-preview', { region: f.region.trim(), external_name: f.external_name.trim(), external_id: docs?.external_id ?? '' })
+      setDocs(d)
+      // The gateway knows its account and the role's name, so the ARN the
+      // script creates there is filled in; a typed one is never replaced.
+      if (d.suggested_role_arn) setF((s) => (s.role_arn.trim() ? s : { ...s, role_arn: d.suggested_role_arn ?? '' }))
     } catch (ex) {
       setErr(errorMessage(ex))
     } finally {
@@ -312,7 +316,7 @@ function GroupForm({ initial, credentials, onClose, onSaved }: { initial?: Autos
               <IAMDocsView docs={docs} onRefresh={() => void preview()} />
             )}
             <div className="form-grid" style={{ marginTop: 12 }}>
-              <Field label="2. Role ARN">
+              <Field label="2. Role ARN" hint={docs?.suggested_role_arn && f.role_arn.trim() === docs.suggested_role_arn ? 'In this gateway\'s account. A group in another account: its account number.' : undefined}>
                 <input id="asg-role" className="mono" value={f.role_arn} onChange={(e) => up({ role_arn: e.target.value })} placeholder="arn:aws:iam::123456789012:role/zanskar-web" required />
               </Field>
             </div>

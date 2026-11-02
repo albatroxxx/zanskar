@@ -487,6 +487,8 @@ export interface AsgIAMDocs {
   principal_source: 'environment' | 'detected' | 'none'
   principal_error?: string
   role_name: string
+  /** The role's ARN once created in the gateway's own account; the form fills it in. */
+  suggested_role_arn?: string
   trust_policy?: string
   permissions_policy: string
   cli?: string

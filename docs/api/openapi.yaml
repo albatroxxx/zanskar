@@ -6542,6 +6542,13 @@ components:
         role_name:
           type: string
           description: The suggested role name, used by the script and the template.
+        suggested_role_arn:
+          type: string
+          description: >-
+            The role's ARN once the script or the template creates it in the gateway's own account
+            (the principal's account, the group's partition, `role_name`); the console fills it in.
+            Absent when the principal is unknown or in another partition. A group in another
+            account takes that account's number.
         trust_policy:
           type: string
           description: JSON document; absent when the principal is unknown.

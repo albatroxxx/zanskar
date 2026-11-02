@@ -118,3 +118,45 @@ describe('Autoscaling, the gateway identity', () => {
     expect(screen.getByRole('button', { name: 'Check again' })).toBeDefined()
   })
 })
+
+// The live console (2026-11-02): the gateway showed the role it runs as, but
+// the enrolment form still asked for the group's role ARN by hand. The role
+// the setup script creates in the gateway's account has a known ARN, so the
+// form fills it in, never over one the administrator typed.
+describe('Autoscaling enrolment, the role ARN', () => {
+  const suggested = 'arn:aws:iam::892748149884:role/zanskar-web-asg'
+  const hint = 'In this gateway\'s account. A group in another account: its account number.'
+  const enrol = async (typed?: string) => {
+    vi.spyOn(api, 'get').mockImplementation(async (path: string) => {
+      if (path === '/admin/aws/identity') return { source: 'detected', platform: 'aws', principal: 'arn:aws:iam::892748149884:role/Zanskar-Gateway-Role', checked_at: '2026-11-02T10:00:00Z' } as never
+      return { items: [] } as never
+    })
+    const post = vi.spyOn(api, 'post').mockResolvedValue({
+      external_id: 'zanskar-0123', gateway_principal: 'arn:aws:iam::892748149884:role/Zanskar-Gateway-Role', principal_source: 'detected',
+      role_name: 'zanskar-web-asg', suggested_role_arn: suggested, trust_policy: '{}', permissions_policy: '{}', cli: 'aws iam create-role', cloudformation: 'Resources:',
+    } as never)
+    render(<Autoscaling />)
+    const user = userEvent.setup()
+    await user.click(await screen.findByRole('button', { name: 'Enroll group' }))
+    await user.type(screen.getByLabelText('Region'), 'ap-south-1')
+    await user.type(screen.getByLabelText('Auto Scaling group name'), 'web-asg')
+    if (typed) await user.type(screen.getByLabelText('2. Role ARN'), typed)
+    await user.click(screen.getByRole('button', { name: '1. Show IAM setup' }))
+    await waitFor(() => expect(post).toHaveBeenCalledWith('/autoscaling-groups/iam-preview', expect.anything()))
+    await screen.findByText(/The role trusts/)
+    return screen.getByLabelText('2. Role ARN') as HTMLInputElement
+  }
+
+  it('fills in the ARN of the role the script creates in the gateway\'s account, and says so', async () => {
+    const role = await enrol()
+    expect(role.value).toBe(suggested)
+    expect(screen.getByText(hint)).toBeDefined()
+  })
+
+  it('keeps a role ARN the administrator typed', async () => {
+    const typed = 'arn:aws:iam::111122223333:role/zanskar-web-asg'
+    const role = await enrol(typed)
+    expect(role.value).toBe(typed)
+    expect(screen.queryByText(hint)).toBeNull()
+  })
+})
