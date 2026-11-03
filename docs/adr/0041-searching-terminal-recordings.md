@@ -39,3 +39,31 @@ is open to it.
 - Desktop and application sessions have no command lines and are not searched.
 - The index makes command lines queryable in the database; anyone with the database already had the
   recordings' paths, and on SQLite the files beside it.
+
+## Amendment, 2026-11-03: what a session printed is searched too
+
+The live audit's idea 5 asked for full-text search across terminal recordings; 1.15.0 searched
+what was typed. Output is now searched as well.
+
+- **A second index, `recording_output`.** One row per line a session printed: the stream's
+  escape sequences (colour, cursor, window title) stripped, a carriage return that rewrites a
+  line (a progress bar) leaving the line as it ended, backspaces applied. Lines with fewer than
+  two visible characters, and a line the same as the one before, are left out. A line is cut at
+  2,000 bytes; a recording keeps its first 5,000 lines (a log followed for an hour is searchable
+  in its first ones, the recording keeping all of it).
+- **One read for both.** The indexer reads a new recording once for its commands and its
+  output; recordings from before this release are read once more, for their output, in the
+  background.
+- **Searched the same way.** `GET /recordings/search?in=output`: the same `LIKE ... ESCAPE` on
+  both engines, reviewers only, each search recorded with its term and `in`. Each hit names the
+  last command typed before the line (`after`), and Review opens the player at the moment the
+  line was printed (`?at=<ms>`, turned into the player's idle-compressed clock).
+- **A setting, on by default.** *Search what sessions printed* (`recordings.index_output`,
+  Settings › Recordings). Off, the next pass empties the output index, and searching output
+  answers `409 output_not_indexed`; on again, it is read again.
+- **Gone with the recording.** Retention deletes a recording's output lines with its commands.
+
+What a session printed holds what the person saw, a secret printed by `cat .env` included: the
+index puts it in the database beside the command lines. The recording file already held it;
+the setting is there for a deployment whose database is copied where its recordings are not.
+Passwords typed at a prompt are not echoed, so they are not in the output either.

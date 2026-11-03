@@ -35,6 +35,9 @@ type Handler struct {
 	Registry  *gateway.Registry
 	Storage   recording.Storage
 	Log       *slog.Logger
+	// IndexOutput says whether what sessions printed is indexed and so
+	// searchable (the runtime setting); nil searches it whatever is there.
+	IndexOutput func() bool
 }
 
 // Register mounts the routes.

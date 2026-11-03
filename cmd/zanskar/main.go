@@ -269,6 +269,9 @@ func serve(ctx context.Context) error {
 	applyLevel(runtime.String(settings.KeyLogLevel))
 	runtime.Subscribe(settings.KeyLogLevel, applyLevel)
 	requireMFA := func() bool { return runtime.Bool(settings.KeyRequireMFA) }
+	// What terminal sessions printed, indexed for search while this is on
+	// (2026-11-03, idea 5).
+	indexOutput := func() bool { return runtime.Bool(settings.KeyIndexOutput) }
 	guacdAddr := func() string { return runtime.String(settings.KeyGuacdAddr) }
 	// What the console may point a vaulted credential at (threat model risk
 	// 7): guacd only on this gateway's own network, the relay image only by
@@ -430,7 +433,7 @@ func serve(ctx context.Context) error {
 			&access.Handler{Requests: accessReqs, Policies: policies, Targets: targets, ASGs: asgRepo, Revoker: connectHandler, Audit: auditLog, Log: log,
 				ApproveStepUp: func() bool { return runtime.Bool(settings.KeyApproveStepUp) }, MFAEnrolled: totp.Enrolled},
 			&asg.AdminHandler{Repo: asgRepo, Sync: syncer.SyncGroup, Identity: awsIdentity, Providers: asg.AWSFresh(), Policies: policies, Requests: accessReqs, Live: registry, Revoker: connectHandler, Vault: vault, Audit: auditLog, Log: log},
-			&session.Handler{Repo: sessionRepo, Audit: auditLog, AnchorKey: anchorKey, Registry: registry, Storage: storage, Log: log},
+			&session.Handler{Repo: sessionRepo, Audit: auditLog, AnchorKey: anchorKey, Registry: registry, Storage: storage, Log: log, IndexOutput: indexOutput},
 			&browsergw.Readiness{Guacd: func() string { return runtime.String(settings.KeyGuacdAddr) }, BrowserImage: func() string { return runtime.String(settings.KeyBrowserImage) }, Docker: cfg.DockerPath},
 			&overview.Handler{Sessions: sessionRepo, Requests: accessReqs, Targets: targets, ASGs: asgRepo, Audit: auditLog, Log: log,
 				Users: users, Policies: policies, MFAOwners: idpRepo.MFAOwners,
@@ -477,7 +480,7 @@ func serve(ctx context.Context) error {
 
 	// Index the command lines of finished terminal recordings for search
 	// (ADR 0041): new ones within a pass, older ones once.
-	indexer := &session.CommandIndexer{Repo: sessionRepo, Storage: storage, Log: log}
+	indexer := &session.CommandIndexer{Repo: sessionRepo, Storage: storage, Log: log, IndexOutput: indexOutput}
 	go indexer.Run(ctx)
 
 	// Expire lapsed just-in-time access grants and audit each (ADR 0018).

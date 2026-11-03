@@ -3895,18 +3895,28 @@ paths:
   /recordings/search:
     get:
       tags: [audit]
-      summary: Find a command line across terminal recordings (ADR 0041)
+      summary: Find a command line, or printed text, across terminal recordings (ADR 0041)
       description: >
         Command lines containing `q` (2 to 200 characters, case-insensitive, `%` and `_` literal) in
         terminal recordings still kept, newest sessions first. `seq` is the command's marker index:
-        the player opens there with `?marker=<seq>`. Each search is recorded as `recording.search`
-        with its term and how many it found.
+        the player opens there with `?marker=<seq>`. With `in=output`, lines the sessions printed
+        instead (escape sequences stripped, at most 5,000 a recording), each with `line`, its
+        `at_ms` (the player opens there with `?at=<at_ms>`) and `after`, the last command typed
+        before it; a hit has no `seq` or `command` then. Each search is recorded as
+        `recording.search` with its term, `in` and how many it found.
       parameters:
         - name: q
           in: query
           required: true
           schema:
             type: string
+        - name: in
+          in: query
+          required: false
+          description: What to search; `commands` when absent.
+          schema:
+            type: string
+            enum: [commands, output]
         - $ref: "#/components/parameters/Limit"
       responses:
         "200":
@@ -3940,10 +3950,22 @@ paths:
                           format: int64
                         command:
                           type: string
+                        line:
+                          type: string
+                          description: With `in=output`, the printed line.
+                        after:
+                          type: string
+                          description: With `in=output`, the last command typed before the line.
         "400":
           $ref: "#/components/responses/BadRequest"
         "403":
           $ref: "#/components/responses/Forbidden"
+        "409":
+          description: "`output_not_indexed`: `in=output` while the setting *Search what sessions printed* is off."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
   /recordings/{id}:
     get:
       tags: [auditor]

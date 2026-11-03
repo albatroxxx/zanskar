@@ -79,6 +79,22 @@ function rawTime(times: number[], compressed: number): number {
   return compressed + shift
 }
 
+/** playerTime is rawTime the other way: where an event at recording time
+ *  raw sits on the player's idle-compressed clock, for opening the player at
+ *  a printed line a search found (2026-11-03, idea 5). The line's time is
+ *  whole milliseconds, so an event up to 1 ms after it is its own. */
+function playerTime(times: number[], raw: number): number {
+  let prev = 0
+  let shift = 0
+  for (const t of times) {
+    if (t > raw + 0.001) break
+    const excess = t - prev - IDLE_LIMIT
+    if (excess > 0) shift += excess
+    prev = t
+  }
+  return Math.max(0, raw - shift)
+}
+
 /** Recording ids are 16 random bytes, hex-encoded (store.NewID). The id in
  *  the address bar goes into API paths, so the player asks for nothing of
  *  another shape: encoding keeps a slash from adding a path segment, but no
@@ -120,6 +136,9 @@ export function Player() {
   // n-th command once Play is pressed.
   const [sp] = useSearchParams()
   const startMarker = /^[0-9]{1,6}$/.test(sp.get('marker') ?? '') ? Number(sp.get('marker')) : null
+  // ?at=<ms>, from a search of what was printed (2026-11-03, idea 5): the
+  // terminal opens at that moment of the recording once Play is pressed.
+  const startAt = startMarker === null && /^[0-9]{1,10}$/.test(sp.get('at') ?? '') ? Number(sp.get('at')) : null
   const [rec, setRec] = useState<Recording | null>(null)
   const [err, setErr] = useState('')
   const [phase, setPhase] = useState<'idle' | 'loading' | 'playing'>('idle')
@@ -238,6 +257,9 @@ export function Player() {
     // Opened from a command search: go to that command, by marker index as
     // the Commands list does (the player's clock is idle-compressed).
     if (startMarker !== null && startMarker < parsed.commands.length) void term.current?.seek({ marker: startMarker })
+    // Opened from a search of the output: at the line's own moment, on the
+    // player's clock.
+    if (startAt !== null && parsed.times.length > 0 && startAt / 1000 <= parsed.times[parsed.times.length - 1]) void term.current?.seek(playerTime(parsed.times, startAt / 1000))
   }
 
   const changeSpeed = (rate: number) => {

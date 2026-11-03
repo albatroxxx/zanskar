@@ -31,6 +31,7 @@ type env struct {
 	cookies map[string]*http.Cookie
 	csrf    map[string]string
 	ids     map[string]string // username -> user id
+	h       *Handler
 }
 
 // testAnchorKey signs and checks the audit anchors in these tests.
@@ -48,6 +49,7 @@ func newEnv(t *testing.T) *env {
 	sessions := auth.NewSessions(db, bytes.Repeat([]byte{6}, 32), false)
 	e := &env{db: db, repo: NewRepo(db), audit: audit.NewLog(db), storage: &recording.LocalStorage{Dir: t.TempDir()}, cookies: map[string]*http.Cookie{}, csrf: map[string]string{}, ids: map[string]string{}}
 	h := &Handler{Repo: e.repo, Audit: e.audit, AnchorKey: testAnchorKey, Storage: e.storage, Log: log}
+	e.h = h
 	mux := http.NewServeMux()
 	h.Register(mux)
 	mw := &auth.Middleware{Sessions: sessions, Users: users, Log: log}

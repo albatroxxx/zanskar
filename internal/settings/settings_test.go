@@ -388,3 +388,12 @@ func TestEnvValuesReportsWhatItCannotUse(t *testing.T) {
 		t.Fatalf("the good values still come through: %v", vals)
 	}
 }
+
+// TestOutputIsSearchedByDefault (2026-11-03, idea 5): what sessions printed
+// is indexed unless an administrator turns it off, under Recordings.
+func TestOutputIsSearchedByDefault(t *testing.T) {
+	d, ok := Lookup(KeyIndexOutput)
+	if !ok || d.Type != TypeBool || d.Default != "true" || d.Category != "Recordings" || d.EnvVar != "" {
+		t.Fatalf("output index setting: %+v %v", d, ok)
+	}
+}
