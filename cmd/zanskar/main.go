@@ -249,8 +249,6 @@ func serve(ctx context.Context) error {
 			logLevel.Set(lvl)
 		}
 	}
-	if tlsMgr != nil {
-	}
 	applyLevel(runtime.String(settings.KeyLogLevel))
 	runtime.Subscribe(settings.KeyLogLevel, applyLevel)
 	requireMFA := func() bool { return runtime.Bool(settings.KeyRequireMFA) }

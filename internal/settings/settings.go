@@ -350,11 +350,8 @@ func Validate(d Definition, value string) (string, error) {
 		if !utf8.ValidString(v) || len(v) > 4096 {
 			return "", fmt.Errorf("%w: %s must be valid UTF-8 up to 4096 bytes", ErrInvalid, d.Key)
 		}
-		switch d.Key {
-		case KeySecurityContact:
-			if v != "" && SecurityContactURI(v) == "" {
-				return "", fmt.Errorf("%w: %s must be an email address or an https:// URL", ErrInvalid, d.Key)
-			}
+		if d.Key == KeySecurityContact && v != "" && SecurityContactURI(v) == "" {
+			return "", fmt.Errorf("%w: %s must be an email address or an https:// URL", ErrInvalid, d.Key)
 		}
 		// The relay image is an argument of `docker run`; free text there
 		// could be read as one of its flags (--privileged, a host mount).

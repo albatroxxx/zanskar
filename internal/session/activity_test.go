@@ -73,7 +73,7 @@ func TestMyActivity(t *testing.T) {
 	}
 	// An administrator's activity: their session and what was done to
 	// their account, never what they did in the admin portal.
-	rr, body = e.get("/api/v1/me/activity", "root")
+	_, body = e.get("/api/v1/me/activity", "root")
 	var actions []string
 	for _, it := range body["items"].([]any) {
 		actions = append(actions, it.(map[string]any)["action"].(string))
