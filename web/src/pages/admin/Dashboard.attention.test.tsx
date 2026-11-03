@@ -1,5 +1,4 @@
-import { cleanup, render, screen, waitFor, within } from '@testing-library/react'
-import userEvent from '@testing-library/user-event'
+import { cleanup, render, screen, within } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { api } from '../../api/client'
@@ -14,8 +13,8 @@ afterEach(() => {
 
 // 2026-11-03, after 1.15.0: what 1.15.0 left of the live audit. Failed
 // actions and a failing sign-in provider are things to look at, so they sit
-// in Needs attention (UI/UX, idea 1); a recordings disk that fills offers
-// the move to the bucket where it warns (idea 8).
+// in Needs attention (UI/UX, idea 1). A recordings disk that fills warns;
+// the move to the bucket is on Settings, not here.
 
 const gb = 1024 ** 3
 
@@ -76,7 +75,7 @@ describe('Needs attention', () => {
     expect(within(section('Activity')).queryByText('Failed actions (24h)')).toBeNull()
   })
 
-  it('keeps the providers tile quiet at zero and leaves it out with no provider', async () => {
+  it('keeps the providers tile quiet at zero, and keeps it with no provider so the row stays whole', async () => {
     open(overview(0), null)
     const tile = (await screen.findByText('Sign-in providers failing')).closest('a')!
     expect(tile.className).not.toContain('danger')
@@ -84,58 +83,43 @@ describe('Needs attention', () => {
     vi.restoreAllMocks()
     open(overview(0, 0), null)
     await screen.findByText('Failed actions (24h)')
-    expect(screen.queryByText('Sign-in providers failing')).toBeNull()
+    expect(within(section('Needs attention')).getByText('Sign-in providers failing')).toBeDefined()
+  })
+
+  // 2026-11-03: six tiles under Needs attention and three under Activity
+  // left ragged rows; every section holds four, one row on a wide window.
+  it('puts four tiles in every section, the 24h counts under Activity', async () => {
+    for (const providers of [1, 0]) {
+      cleanup()
+      vi.restoreAllMocks()
+      open(overview(0, providers), null)
+      await screen.findByText('Failed actions (24h)')
+      for (const name of ['Inventory', 'Needs attention', 'Activity', 'Security posture']) {
+        expect(section(name).querySelectorAll('.stat-tile').length, name).toBe(4)
+      }
+      const activity = within(section('Activity'))
+      expect(activity.getByText('Failed sign-ins (24h)')).toBeDefined()
+      expect(activity.getByText('Refused connections (24h)')).toBeDefined()
+      expect(screen.queryByText('Grants active')).toBeNull()
+    }
   })
 })
 
 describe('a recordings disk that fills', () => {
-  it('moves the local recordings to the bucket in one confirmed step', async () => {
-    const { post } = open(overview(0), { what: 'database & recordings', usedGB: 85, freeGB: 15 })
-    await userEvent.setup().click(await screen.findByRole('button', { name: 'Move 3 local recordings to the bucket' }))
-    expect(screen.getByText(/copied to s3:\/\/recs, verified and removed locally/)).toBeDefined()
-    expect(post).not.toHaveBeenCalled()
-    await userEvent.setup().click(screen.getByRole('button', { name: 'Move' }))
-    await waitFor(() => expect(post).toHaveBeenCalledWith('/admin/storage/move'))
-    expect(await screen.findByText(/Moving local recordings to the bucket/)).toBeDefined()
-    expect(screen.queryByRole('button', { name: /Move 3/ })).toBeNull()
-  })
-
-  it('points to Recording storage when no bucket is set up', async () => {
-    open(overview(0), { what: 'recordings', usedGB: 81, freeGB: 19 }, storage({ source: 'local', active: undefined, counts: { local: 40 } }))
-    const link = await screen.findByRole('link', { name: 'Recording storage' })
-    expect(link.getAttribute('href')).toBe('/admin/settings#settings-recording-storage')
-    expect(screen.getByText(/Record to an S3 bucket instead/)).toBeDefined()
-  })
-
-  it('says a move is under way rather than offering another', async () => {
-    open(overview(0), { what: 'recordings', usedGB: 90, freeGB: 10 }, storage({ move: { running: true, moved: 1, failed: 0, total: 3 } }))
-    expect(await screen.findByText(/Moving local recordings to the bucket/)).toBeDefined()
-    expect(screen.queryByRole('button', { name: /local recording/ })).toBeNull()
-  })
-
-  it('offers nothing with every recording in the bucket already', async () => {
-    const { get } = open(overview(0), { what: 'recordings', usedGB: 90, freeGB: 10 }, storage({ counts: { recs: 12 } }))
-    await waitFor(() => expect(get).toHaveBeenCalledWith('/admin/storage'))
-    await screen.findByRole('meter', { name: 'System disk' })
-    expect(screen.queryByText(/local recording/)).toBeNull()
-    expect(screen.queryByText(/Record to an S3 bucket/)).toBeNull()
-  })
-
-  it('reads nothing below 80% or on a disk without recordings', async () => {
-    const below = open(overview(0), { what: 'database & recordings', usedGB: 79, freeGB: 21 })
-    await screen.findByRole('meter', { name: 'System disk' })
-    expect(below.get).not.toHaveBeenCalledWith('/admin/storage')
-    cleanup()
-    vi.restoreAllMocks()
-    const db = open(overview(0), { what: 'database', usedGB: 90, freeGB: 10 })
-    await screen.findByRole('meter', { name: 'System disk' })
-    expect(db.get).not.toHaveBeenCalledWith('/admin/storage')
-  })
-
-  it('stays quiet when the storage status cannot be read', async () => {
-    const { get } = open(overview(0), { what: 'recordings', usedGB: 90, freeGB: 10 }, new Error('forbidden'))
-    await waitFor(() => expect(get).toHaveBeenCalledWith('/admin/storage'))
-    await screen.findByRole('meter', { name: 'System disk' })
-    expect(screen.queryByText(/bucket/)).toBeNull()
+  // 2026-11-03: the owner wants the dashboard clean. The disk still warns;
+  // setting up a bucket and moving recordings to it stay on Settings,
+  // Recording storage, and the dashboard neither offers them nor reads them.
+  it('warns, and offers no bucket and no move', async () => {
+    for (const st of [storage(), storage({ source: 'local', active: undefined, counts: { local: 40 } })]) {
+      cleanup()
+      vi.restoreAllMocks()
+      const { get } = open(overview(0), { what: 'database & recordings', usedGB: 90, freeGB: 10 }, st)
+      await screen.findByRole('meter', { name: 'System disk' })
+      expect(screen.getByRole('button', { name: /Low space/ })).toBeDefined()
+      expect(screen.queryByText(/bucket|S3/)).toBeNull()
+      expect(screen.queryByRole('link', { name: 'Recording storage' })).toBeNull()
+      expect(screen.queryByRole('button', { name: /recording/i })).toBeNull()
+      expect(get).not.toHaveBeenCalledWith('/admin/storage')
+    }
   })
 })

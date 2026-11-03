@@ -305,3 +305,53 @@ them in one session. Built for isolated mode, which is every application today; 
   resolver still maps its name to the relay, so a browser image pinned from before opens the
   upstream as it did; the entrypoint writes its own policy when the gateway sends none, so a
   new image under an older gateway does too.
+
+## Amendment (2026-11-03): an application's dependencies load from anywhere public
+
+**This widens what an isolated session can reach.** From this change, a session's relay lets
+the application's pages fetch from any public address on port 80 or 443, and every
+application already enrolled takes that default when the gateway is upgraded (migration
+0048). An owner who wants a session held to its origins, as every session was before, sets
+the application's dependencies to *its origins only*.
+
+The owner found that applications enrolled by their main address came up unstyled: their
+pages load stylesheets, scripts, fonts, images and API calls from third parties (a CDN, a
+font service, an API on another host), which the relay refused because only the origins
+were listed. Listing each is not practical; an application should work whole, while opening
+anything in a tab stays limited to the approved addresses.
+
+- **Two layers, two jobs.** Chromium's `URLBlocklist` and `URLAllowlist` govern navigation
+  only: the address bar, links, new tabs and frames. They never applied to a page's
+  sub-resources, which the relay alone was refusing (proved at the relay's log before
+  building: Chromium asked its SOCKS proxy for `cdn.jsdelivr.net:443` and was refused). So
+  the policy stays as it is and keeps the person to the origins; the relay changes.
+- **The relay's second rule.** A SOCKS CONNECT that matches no route is now accepted, under
+  the application's `public` setting, when the port is 80 or 443 and every address the host
+  resolves to is public: `ipspace.Reserved` says nothing of it. Loopback, link-local (the
+  cloud metadata services), private ranges, unique local, shared address space, multicast,
+  the documentation and benchmarking ranges, and the IPv6 ranges that carry an IPv4 address
+  inside them (NAT64, 6to4, Teredo) are refused, with the reason at debug. The relay
+  resolves the name once itself, checks every answer and dials the one it checked, IPv4
+  first, never the name again. A dependency on a private address, on another port, or
+  embedded as a frame is listed as an endpoint, as before.
+- **The browser's own traffic stays in.** Seen at the relay with every policy and flag
+  applied: Chromium still asks for `accounts.google.com`, `update.googleapis.com` and
+  `clients2.google.com`. No application's page depends on them, so the relay refuses them
+  under `public` too; an application that signs in with Google lists `accounts.google.com`
+  as an endpoint, which it needs for the sign-in page anyway.
+- **The setting.** `app_dependencies` on an application: `public` (the default) or
+  `origins`. In the console, *Dependencies: Any public address / Its origins only*, on the
+  detail page, in the configuration file and in the Terraform provider. Narrowing an
+  application to its origins ends its open sessions, as removing an endpoint does; the
+  session's start event says which it ran with (`dependencies`).
+- **The relay logs at the gateway's level.** At debug it says what each request asked for
+  and what it decided, so an operator can see what a page fetches and why something was
+  refused; the gateway passes `ZANSKAR_LOG_LEVEL` to the relay by value.
+- **No image change.** The relay is the gateway's own image, so this ships with the
+  gateway; the browser image is untouched.
+
+Rejected: resolving dependencies through a list of allowed public hosts per application
+(the list the owner does not want to maintain); any port to a public address (web
+dependencies are on 80 and 443, and a wider rule makes the relay a general proxy); letting
+frames through (a frame is a navigation to Chromium's policy, which cannot tell a frame
+from a tab, and a page that may frame anything can show anything).

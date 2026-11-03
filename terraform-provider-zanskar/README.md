@@ -96,7 +96,7 @@ resource "zanskar_access_policy" "prod" {
 | Type | What |
 |---|---|
 | `zanskar_group` | A group's name and description. Members come from the identity provider or the console. |
-| `zanskar_target` | A host (`os_family`, `ports`), a database (`engine`, `tls_mode`, `database_name`, `tls_ca`) or an application (`app_upstream`, `app_endpoints`), with `tags`, `credentials` (ids by protocol), `notes`, `status`, `retention_days`. `capabilities` and `host_key_status` are read only: probing and trusting a host key stay a person's acts in the console. |
+| `zanskar_target` | A host (`os_family`, `ports`), a database (`engine`, `tls_mode`, `database_name`, `tls_ca`) or an application (`app_upstream`, `app_endpoints`, `app_dependencies`), with `tags`, `credentials` (ids by protocol), `notes`, `status`, `retention_days`. `capabilities` and `host_key_status` are read only: probing and trusting a host key stay a person's acts in the console. |
 | `zanskar_access_policy` | `subjects` (groups and users by id) and `grants`, each with targets by id or by tag, `access` (standing or approval), `sign_in`, `require_mfa`, the clipboard, file transfer and developer tools switches, `idle_timeout_minutes`, `max_session_minutes`, `time_windows` and `retention_days`. A grant keeps its id across updates. Access reviews stay in the console. |
 | `data.zanskar_credential` | A vaulted credential's id, by name. |
 | `data.zanskar_group` | A group's id, by name. |

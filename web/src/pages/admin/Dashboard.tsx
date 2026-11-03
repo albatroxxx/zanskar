@@ -2,12 +2,12 @@ import { Fragment, useEffect, useState, type ReactNode } from 'react'
 import { Link } from 'react-router-dom'
 import { api, errorMessage } from '../../api/client'
 import { consoleZone, engineName, fmtBytes, fmtTime, zoneLabel } from '../../api/format'
-import type { AdminOverview, StorageStatus, SystemMetrics, SystemStatus, TLSStatus } from '../../api/types'
+import type { AdminOverview, SystemMetrics, SystemStatus, TLSStatus } from '../../api/types'
 import { StateIcon, TileIcon } from '../../components/icons'
 import { drill } from '../../api/drilldown'
 import { failureDetail } from '../audit/eventText'
 import { dismiss, dismissal, forget, shown } from './dismissals'
-import { Alert, Badge, Confirm, PageHead, StatTile } from '../../components/ui'
+import { Alert, Badge, PageHead, StatTile } from '../../components/ui'
 
 /** mix says what a count is made of — "2 Linux · 1 Windows" — in a tile's
  *  detail line, largest first, empty when there is nothing to split. */
@@ -31,6 +31,16 @@ function uptime(seconds: number): string {
   if (seconds < 3600) return n(Math.max(1, Math.floor(seconds / 60)), 'minute')
   if (seconds < 48 * 3600) return n(Math.floor(seconds / 3600), 'hour')
   return n(Math.floor(seconds / 86400), 'day')
+}
+
+/** approvalsDetail says how long the oldest request has waited and how many
+ *  grants are live, the ones ending soon among them: the approvals page holds
+ *  both, so one tile does (2026-11-03, four tiles a section). */
+function approvalsDetail(pending: number, f: { active: number; ending_soon: number; oldest_pending_seconds: number }): string | undefined {
+  const parts: string[] = []
+  if (pending > 0 && f.oldest_pending_seconds > 0) parts.push(`oldest waiting ${uptime(f.oldest_pending_seconds)}`)
+  if (f.active > 0) parts.push(`${f.active} granted` + (f.ending_soon > 0 ? `, ${f.ending_soon} ending within the hour` : ''))
+  return parts.length ? parts.join(' · ') : undefined
 }
 
 /** Dashboard is where an admin lands (ADR 0029): what waits on a decision,
@@ -147,26 +157,16 @@ export function Dashboard() {
                 value={o && o.pending_requests}
                 label="Pending approvals"
                 icon={<TileIcon kind="approvals" />}
-                detail={o?.in_flight && o.pending_requests > 0 && o.in_flight.oldest_pending_seconds > 0 ? `oldest waiting ${uptime(o.in_flight.oldest_pending_seconds)}` : undefined}
+                detail={o?.in_flight ? approvalsDetail(o.pending_requests, o.in_flight) : undefined}
                 to="/admin/approvals"
                 tone="warn"
               />
               <StatTile value={attention} label="Hosts needing attention" icon={<TileIcon kind="attention" />} to={drill.hostsNeedingAttention} tone="warn" />
               {/* A provider that fails its sync is single sign-on down; a
                   tile beside the notice, which can be closed (2026-11-03,
-                  idea 1). Shown once a provider is configured. */}
-              {(!o?.integrity || o.integrity.directories.listed > 0) && (
-                <StatTile value={failing} label="Sign-in providers failing" icon={<TileIcon kind="key" />} to="/admin/identity-providers" tone="danger" />
-              )}
-              <StatTile value={o && o.audit_24h.failed_logins} label="Failed sign-ins (24h)" icon={<TileIcon kind="key" />} to={drill.failedSignIns('/admin')} tone="warn" />
-              <StatTile
-                value={o && o.audit_24h.refused_connects}
-                label="Refused connections (24h)"
-                icon={<TileIcon kind="ban" />}
-                trend={o?.trends && { days: o.trends.days, values: o.trends.refused, noun: 'refused connection' }}
-                to={drill.refusedConnections('/admin')}
-                tone="warn"
-              />
+                  idea 1). Shown with no provider too, at zero, so the
+                  section keeps its four. */}
+              <StatTile value={failing} label="Sign-in providers failing" icon={<TileIcon kind="key" />} to="/admin/identity-providers" tone="danger" />
               {/* Every failed action in the log, routine ones too; the detail
                   says what most were (2026-11-03 live audit, Q2). With the
                   others that want a look, not with the activity counts. */}
@@ -186,19 +186,21 @@ export function Dashboard() {
             <div className="stat-grid">
               <StatTile value={o && o.sessions.open} label="Open sessions" icon={<TileIcon kind="session" />} to={drill.openSessions('/admin')} />
               <StatTile
-                value={o?.in_flight ? o.in_flight.active : null}
-                label="Grants active"
-                icon={<TileIcon kind="key" />}
-                detail={o?.in_flight && o.in_flight.ending_soon > 0 ? `${o.in_flight.ending_soon} end within the hour` : undefined}
-                to="/admin/approvals"
-              />
-              <StatTile
                 value={o && o.sessions.started_24h}
                 label="Sessions (24h)"
                 icon={<TileIcon kind="clock" />}
                 trend={o?.trends && { days: o.trends.days, values: o.trends.sessions, noun: 'session' }}
                 to={drill.sessions24h('/admin')}
               />
+              <StatTile
+                value={o && o.audit_24h.refused_connects}
+                label="Refused connections (24h)"
+                icon={<TileIcon kind="ban" />}
+                trend={o?.trends && { days: o.trends.days, values: o.trends.refused, noun: 'refused connection' }}
+                to={drill.refusedConnections('/admin')}
+                tone="warn"
+              />
+              <StatTile value={o && o.audit_24h.failed_logins} label="Failed sign-ins (24h)" icon={<TileIcon kind="key" />} to={drill.failedSignIns('/admin')} tone="warn" />
             </div>
           </section>
 
@@ -336,42 +338,6 @@ function plural(n: number, noun: string): string {
   return `${n} ${noun}${n === 1 ? '' : 's'}`
 }
 
-/** ToBucket is the way out of a filling recordings disk, under its gauge
- *  (2026-11-03, idea 8): with a bucket in use, the move of the local
- *  recordings to it in one step, confirmed; without one, the card that sets
- *  one up. Read only when the disk warns. */
-function ToBucket() {
-  const [s, setS] = useState<StorageStatus | null>(null)
-  const [asking, setAsking] = useState(false)
-  const [started, setStarted] = useState(false)
-  useEffect(() => {
-    api.get<StorageStatus>('/admin/storage').then(setS).catch(() => {})
-  }, [])
-  if (!s) return null
-  const local = s.counts.local ?? 0
-  const setUp = <Link to="/admin/settings#settings-recording-storage">Recording storage</Link>
-  if (!s.active) return <div className="disk-out">Record to an S3 bucket instead: {setUp}</div>
-  if (s.move.running || started) return <div className="disk-out">Moving local recordings to the bucket; progress in {setUp}.</div>
-  if (local === 0) return null
-  return (
-    <div className="disk-out">
-      <button type="button" onClick={() => setAsking(true)}>Move {plural(local, 'local recording')} to the bucket</button>
-      {asking && (
-        <Confirm
-          title={`Move ${plural(local, 'local recording')}?`}
-          body={`Finished recordings are copied to s3://${s.active.bucket}, verified and removed locally, in the background.`}
-          confirmLabel="Move"
-          onClose={() => setAsking(false)}
-          onConfirm={async () => {
-            await api.post('/admin/storage/move')
-            setStarted(true)
-          }}
-        />
-      )}
-    </div>
-  )
-}
-
 /** HostFacts is the gateway host right now: a gauge per ratio, then a line
  *  for the facts that are not ratios. Words carry every state the colour
  *  does. A kind of session with a cap is a gauge against it (2026-10-31);
@@ -429,7 +395,6 @@ function HostFacts({ m }: { m: SystemMetrics }) {
                   </>
                 )}
                 {diskUse(d).pct >= diskRefusePct && <div className="disk-refusing">New sessions refused until space is freed</div>}
-                {d.what.includes('recordings') && diskUse(d).pct >= diskWarnPct && <ToBucket />}
               </>
             }
             pct={diskUse(d).pct}

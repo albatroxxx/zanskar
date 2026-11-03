@@ -6362,7 +6362,8 @@ components:
           description: >-
             Makes the target an application (ADR 0034): the origin, `http://host[:port]` or
             `https://host[:port]`, the session's isolated browser opens. Its host becomes
-            `address`. The browser reaches it and the `app_endpoints`, nothing else.
+            `address`. A page opens there and at the `app_endpoints`, nowhere else; what the
+            pages load is `app_dependencies`.
         app_endpoints:
           type: array
           maxItems: 31
@@ -6372,6 +6373,14 @@ components:
             the application. Absent when there are none.
           items:
             $ref: "#/components/schemas/AppEndpoint"
+        app_dependencies:
+          type: string
+          enum: [public, origins]
+          description: >-
+            Where an application's pages may load what they depend on (scripts, styles, fonts,
+            images, APIs) beside its origins (2026-11-03): `public`, any public address on port 80
+            or 443, through the session's relay; `origins`, the upstream and the endpoints only.
+            Opening a page is held to the origins either way. Absent on a host or a database.
         os_family:
           $ref: "#/components/schemas/OsFamily"
         ports:
@@ -6491,6 +6500,14 @@ components:
             sessions open on the application.
           items:
             $ref: "#/components/schemas/AppEndpoint"
+        app_dependencies:
+          type: string
+          enum: [public, origins]
+          description: >-
+            For an application: `public` (the default when absent), its pages load from any public
+            address on port 80 or 443; `origins`, from the upstream and the endpoints only. Going
+            from `public` to `origins` ends the sessions open on the application. Refused on a host
+            or a database.
         os_family:
           $ref: "#/components/schemas/OsFamily"
         ports:

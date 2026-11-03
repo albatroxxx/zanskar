@@ -28,7 +28,18 @@ func runAppRelay() error {
 	if err != nil {
 		return err
 	}
-	log := slog.New(slog.NewJSONHandler(os.Stderr, nil))
+	// The gateway passes its own level on (ZANSKAR_LOG_LEVEL): at debug the
+	// relay says what each SOCKS request asked for and what it decided.
+	level := slog.LevelInfo
+	switch os.Getenv("ZANSKAR_LOG_LEVEL") {
+	case "debug":
+		level = slog.LevelDebug
+	case "warn":
+		level = slog.LevelWarn
+	case "error":
+		level = slog.LevelError
+	}
+	log := slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: level}))
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 	return (&apprelay.Relay{Config: cfg, Log: log}).Serve(ctx)

@@ -47,6 +47,9 @@ type endpoint struct {
 	// AppEndpoints are its further origins (ADR 0037, amended 2026-11-02).
 	AppUpstream  string
 	AppEndpoints []target.AppEndpoint
+	// AppDependencies is target.DependenciesPublic or DependenciesOrigins:
+	// whether the session's relay lets the pages' dependencies out.
+	AppDependencies string
 
 	// Exactly one of TargetID or (ASGID, ASGInstanceID) is set.
 	TargetID      string
@@ -93,7 +96,7 @@ func (e *endpoint) policyRef() policy.TargetRef {
 func fromTarget(t *target.Target) *endpoint {
 	e := &endpoint{Name: t.Name, Address: t.Address, Ports: t.Ports, Tags: t.Tags, Credentials: t.Credentials,
 		HostKeyTrusted: t.HostKeyStatus == target.HostKeyTrusted, Active: t.Status == "active", TargetID: t.ID, LiveKey: t.ID,
-		Engine: t.Engine, EngineVersion: t.EngineVersion, DatabaseName: t.DatabaseName, TLSMode: t.TLSMode, TLSCA: t.TLSCA, AppUpstream: t.AppUpstream, AppEndpoints: t.AppEndpoints}
+		Engine: t.Engine, EngineVersion: t.EngineVersion, DatabaseName: t.DatabaseName, TLSMode: t.TLSMode, TLSCA: t.TLSCA, AppUpstream: t.AppUpstream, AppEndpoints: t.AppEndpoints, AppDependencies: t.AppDependencies}
 	if t.RetentionDays != nil {
 		e.RetentionDays = *t.RetentionDays
 	}

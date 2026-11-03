@@ -139,6 +139,18 @@ const (
 	MaxEndpointNameLen = 64
 )
 
+// An application's dependencies (Target.AppDependencies): where its pages
+// load from beside its origins.
+const (
+	// DependenciesPublic: any public address, on port 80 or 443. The
+	// default: an application works whole without its every dependency
+	// listed.
+	DependenciesPublic = "public"
+	// DependenciesOrigins: the upstream and the endpoints only, as every
+	// session was before 2026-11-03.
+	DependenciesOrigins = "origins"
+)
+
 // AppEndpoint is one more origin of an application (ADR 0037, amended
 // 2026-11-02): the session's browser reaches it beside the upstream, and
 // lists it under Name in the application's bookmarks. URL is an origin,
@@ -178,7 +190,14 @@ type Target struct {
 	// AppEndpoints are the application's further origins (an API, its
 	// identity provider, an admin site on another host), reached in the same
 	// session; the upstream stays the one the browser opens.
-	AppEndpoints        []AppEndpoint    `json:"app_endpoints,omitempty"`
+	AppEndpoints []AppEndpoint `json:"app_endpoints,omitempty"`
+	// AppDependencies says where an application's pages may load what they
+	// depend on (scripts, styles, fonts, images, APIs) beside its origins
+	// (2026-11-03): DependenciesPublic, any public address on port 80 or
+	// 443, through the session's relay; or DependenciesOrigins, the
+	// upstream and the endpoints and nothing else. Opening a page is held
+	// to the origins either way. Empty on a host or a database.
+	AppDependencies     string           `json:"app_dependencies,omitempty"`
 	OSFamily            OSFamily         `json:"os_family"`
 	Ports               map[Protocol]int `json:"ports"`
 	Capabilities        []Protocol       `json:"capabilities"`
@@ -370,6 +389,13 @@ func (t *Target) Validate() error {
 		if err != nil {
 			return err
 		}
+		switch t.AppDependencies = strings.ToLower(strings.TrimSpace(t.AppDependencies)); t.AppDependencies {
+		case "":
+			t.AppDependencies = DependenciesPublic
+		case DependenciesPublic, DependenciesOrigins:
+		default:
+			return fmt.Errorf("%w: app_dependencies must be %s or %s", ErrInvalid, DependenciesPublic, DependenciesOrigins)
+		}
 		t.TLSCA = strings.TrimSpace(t.TLSCA)
 		if t.TLSCA != "" {
 			if u.Scheme != "https" && !anyHTTPS {
@@ -383,6 +409,9 @@ func (t *Target) Validate() error {
 	}
 	if t.AppUpstream == "" && len(t.AppEndpoints) > 0 {
 		return fmt.Errorf("%w: app_endpoints belong to an application, which needs app_upstream", ErrInvalid)
+	}
+	if t.AppUpstream == "" && strings.TrimSpace(t.AppDependencies) != "" {
+		return fmt.Errorf("%w: app_dependencies belong to an application, which needs app_upstream", ErrInvalid)
 	}
 	if !ValidAddress(t.Address) {
 		return fmt.Errorf("%w: address must be a hostname or IP without scheme or port", ErrInvalid)

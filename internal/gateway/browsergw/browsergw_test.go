@@ -17,6 +17,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 
@@ -55,11 +56,36 @@ func TestRelayArgs(t *testing.T) {
 	if len(env) != 1 || !strings.HasPrefix(env[0], "ZANSKAR_APPRELAY=") {
 		t.Fatalf("env: %v", env)
 	}
+	if strings.Contains(joined, "ZANSKAR_LOG_LEVEL") {
+		t.Errorf("a gateway not at debug passed a level on: %s", joined)
+	}
+	// At debug the relay is told, by value: the CLI's environment is not
+	// the gateway's.
+	debug := spec(t)
+	debug.Debug = true
+	dargs, denv, err := relayArgs(debug, "n", "r", "b", "172.30.0.0/16")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(strings.Join(dargs, " "), "-e ZANSKAR_LOG_LEVEL ") || !slices.Contains(denv, "ZANSKAR_LOG_LEVEL=debug") {
+		t.Errorf("debug: args %v env %v", dargs, denv)
+	}
 	table := env[0]
 	for _, want := range []string{`"listen":"internal:8080"`, `"to":"10.0.0.50:8080"`, `"listen":":5900"`, `"to":"zanskar-browser-s1:5900"`, `"once":true`, `"retry":"20s"`, `"internal_subnet":"172.30.0.0/16"`} {
 		if !strings.Contains(table, want) {
 			t.Errorf("table misses %s: %s", want, table)
 		}
+	}
+	// The relay lets dependencies out only when the application says so
+	// (2026-11-03); held to its origins, the table says nothing of it.
+	if strings.Contains(table, `"public"`) {
+		t.Errorf("an application held to its origins got public egress: %s", table)
+	}
+	open := spec(t)
+	open.PublicDependencies = true
+	_, oenv, _ := relayArgs(open, "n", "r", "b", "172.30.0.0/16")
+	if !strings.Contains(oenv[0], `"public":true`) {
+		t.Errorf("public dependencies missing from the table: %s", oenv[0])
 	}
 	// An https upstream without a port is 443.
 	s := spec(t)

@@ -34,6 +34,7 @@ export function targetBody(t: Target, patch: Partial<Target> = {}) {
     // Every write replaces the target, so an edit made elsewhere (a status
     // switch) carries the endpoints or would drop them.
     app_endpoints: u.app_endpoints ?? [],
+    app_dependencies: u.app_dependencies ?? '',
     retention_days: u.retention_days ?? null,
     ports: u.ports,
     capabilities: u.capabilities,
@@ -69,7 +70,7 @@ const tlsModes = [
 const emptyForm = {
   name: '', address: '', os_family: 'linux' as OSFamily,
   engine: 'postgres', engine_version: '', database_name: '', tls_mode: 'verify-full', tls_ca: '',
-  app_upstream: '', endpoints: [] as AppEndpoint[],
+  app_upstream: '', endpoints: [] as AppEndpoint[], dependencies: 'public' as 'public' | 'origins',
   ...defaultPorts, database: enginePorts.postgres, tags: [] as TagRow[], notes: '', retention: '',
 }
 
@@ -96,6 +97,7 @@ export function TargetForm({ initial, kind, onClose, onSaved }: { initial?: Targ
           tls_ca: initial.tls_ca ?? '',
           app_upstream: initial.app_upstream ?? '',
           endpoints: (initial.app_endpoints ?? []).map((e) => ({ ...e })),
+          dependencies: initial.app_dependencies ?? 'public',
           ssh: initial.ports.ssh ? String(initial.ports.ssh) : defaultPorts.ssh,
           rdp: initial.ports.rdp ? String(initial.ports.rdp) : defaultPorts.rdp,
           vnc: initial.ports.vnc ? String(initial.ports.vnc) : defaultPorts.vnc,
@@ -183,6 +185,7 @@ export function TargetForm({ initial, kind, onClose, onSaved }: { initial?: Targ
         tls_ca: database || secure ? f.tls_ca.trim() : '',
         app_upstream: application ? f.app_upstream.trim() : '',
         app_endpoints: endpoints.body,
+        app_dependencies: application ? f.dependencies : '',
         retention_days: application ? null : retention,
         ports,
         capabilities: initial?.capabilities ?? [],
@@ -300,8 +303,16 @@ export function TargetForm({ initial, kind, onClose, onSaved }: { initial?: Targ
             </>
           )}
           {k === 'application' && (
-            <Field label="Other endpoints" info="Other addresses the application uses, reached in the same browser: an API, its sign-in page. Each is a bookmark there; nothing else is reachable.">
+            <Field label="Other endpoints" info="Other addresses the application opens pages at, in the same browser: an API, its sign-in page, a private address its pages load from. Each is a bookmark there; a page opens nowhere else.">
               <EndpointEditor rows={f.endpoints} onChange={(endpoints) => setF({ ...f, endpoints })} />
+            </Field>
+          )}
+          {k === 'application' && (
+            <Field label="Dependencies" info="What its pages load beside its origins: scripts, styles, fonts, images, APIs. Any public address, over port 80 or 443, or its origins only. Opening a page is held to its origins either way; a private address is an endpoint.">
+              <select id="t-dependencies" value={f.dependencies} onChange={(e) => setF({ ...f, dependencies: e.target.value as 'public' | 'origins' })}>
+                <option value="public">Any public address</option>
+                <option value="origins">Its origins only</option>
+              </select>
             </Field>
           )}
           {k === 'application' && secureOrigins && (

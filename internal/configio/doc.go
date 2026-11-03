@@ -40,21 +40,24 @@ type Endpoint struct {
 // Target is a host, database or application, as the target API writes it,
 // its credentials named.
 type Target struct {
-	Name          string            `yaml:"name"`
-	Address       string            `yaml:"address,omitempty"`
-	OSFamily      string            `yaml:"os_family,omitempty"`
-	Engine        string            `yaml:"engine,omitempty"`
-	EngineVersion string            `yaml:"engine_version,omitempty"`
-	DatabaseName  string            `yaml:"database_name,omitempty"`
-	TLSMode       string            `yaml:"tls_mode,omitempty"`
-	TLSCA         string            `yaml:"tls_ca,omitempty"`
-	AppUpstream   string            `yaml:"app_upstream,omitempty"`
-	AppEndpoints  []Endpoint        `yaml:"app_endpoints,omitempty"`
-	Ports         map[string]int    `yaml:"ports,omitempty"`
-	Tags          map[string]string `yaml:"tags,omitempty"`
-	Status        string            `yaml:"status,omitempty"`
-	Notes         string            `yaml:"notes,omitempty"`
-	RetentionDays *int              `yaml:"retention_days,omitempty"`
+	Name          string     `yaml:"name"`
+	Address       string     `yaml:"address,omitempty"`
+	OSFamily      string     `yaml:"os_family,omitempty"`
+	Engine        string     `yaml:"engine,omitempty"`
+	EngineVersion string     `yaml:"engine_version,omitempty"`
+	DatabaseName  string     `yaml:"database_name,omitempty"`
+	TLSMode       string     `yaml:"tls_mode,omitempty"`
+	TLSCA         string     `yaml:"tls_ca,omitempty"`
+	AppUpstream   string     `yaml:"app_upstream,omitempty"`
+	AppEndpoints  []Endpoint `yaml:"app_endpoints,omitempty"`
+	// AppDependencies: public (the default) or origins; where an
+	// application's pages may load from beside its origins.
+	AppDependencies string            `yaml:"app_dependencies,omitempty"`
+	Ports           map[string]int    `yaml:"ports,omitempty"`
+	Tags            map[string]string `yaml:"tags,omitempty"`
+	Status          string            `yaml:"status,omitempty"`
+	Notes           string            `yaml:"notes,omitempty"`
+	RetentionDays   *int              `yaml:"retention_days,omitempty"`
 	// Credentials names the credential each protocol signs in with.
 	Credentials map[string]string `yaml:"credentials,omitempty"`
 }

@@ -85,6 +85,8 @@ export interface Target {
   app_upstream?: string
   /** An application's further origins, reached in the same session and listed as bookmarks (ADR 0037, amended 2026-11-02). */
   app_endpoints?: AppEndpoint[]
+  /** Where an application's pages load from beside its origins (2026-11-03): any public address on 80/443, or its origins only. */
+  app_dependencies?: 'public' | 'origins'
   ports: Partial<Record<Protocol, number>>
   capabilities: Protocol[]
   host_key_fingerprint: string | null

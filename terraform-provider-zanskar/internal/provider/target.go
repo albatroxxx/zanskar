@@ -33,75 +33,78 @@ type apiEndpoint struct {
 
 // apiTarget is a target as the API answers it.
 type apiTarget struct {
-	ID            string            `json:"id"`
-	Name          string            `json:"name"`
-	Address       string            `json:"address"`
-	Engine        string            `json:"engine"`
-	EngineVersion string            `json:"engine_version"`
-	RetentionDays *int              `json:"retention_days"`
-	DatabaseName  string            `json:"database_name"`
-	TLSMode       string            `json:"tls_mode"`
-	TLSCA         string            `json:"tls_ca"`
-	AppUpstream   string            `json:"app_upstream"`
-	AppEndpoints  []apiEndpoint     `json:"app_endpoints"`
-	OSFamily      string            `json:"os_family"`
-	Ports         map[string]int    `json:"ports"`
-	Capabilities  []string          `json:"capabilities"`
-	Tags          map[string]string `json:"tags"`
-	Status        string            `json:"status"`
-	Notes         string            `json:"notes"`
-	Credentials   map[string]string `json:"credentials"`
-	HostKeyStatus string            `json:"host_key_status"`
+	ID              string            `json:"id"`
+	Name            string            `json:"name"`
+	Address         string            `json:"address"`
+	Engine          string            `json:"engine"`
+	EngineVersion   string            `json:"engine_version"`
+	RetentionDays   *int              `json:"retention_days"`
+	DatabaseName    string            `json:"database_name"`
+	TLSMode         string            `json:"tls_mode"`
+	TLSCA           string            `json:"tls_ca"`
+	AppUpstream     string            `json:"app_upstream"`
+	AppEndpoints    []apiEndpoint     `json:"app_endpoints"`
+	AppDependencies string            `json:"app_dependencies"`
+	OSFamily        string            `json:"os_family"`
+	Ports           map[string]int    `json:"ports"`
+	Capabilities    []string          `json:"capabilities"`
+	Tags            map[string]string `json:"tags"`
+	Status          string            `json:"status"`
+	Notes           string            `json:"notes"`
+	Credentials     map[string]string `json:"credentials"`
+	HostKeyStatus   string            `json:"host_key_status"`
 }
 
 // targetWrite is the body POST and PUT take: exactly these fields, every
 // one (a PUT replaces the target).
 type targetWrite struct {
-	Name          string            `json:"name"`
-	Address       string            `json:"address"`
-	Engine        string            `json:"engine"`
-	EngineVersion string            `json:"engine_version"`
-	RetentionDays *int              `json:"retention_days"`
-	DatabaseName  string            `json:"database_name"`
-	TLSMode       string            `json:"tls_mode"`
-	TLSCA         string            `json:"tls_ca"`
-	AppUpstream   string            `json:"app_upstream"`
-	AppEndpoints  []apiEndpoint     `json:"app_endpoints"`
-	OSFamily      string            `json:"os_family"`
-	Ports         map[string]int    `json:"ports"`
-	Capabilities  []string          `json:"capabilities"`
-	Tags          map[string]string `json:"tags"`
-	Status        string            `json:"status"`
-	Notes         string            `json:"notes"`
-	Credentials   map[string]string `json:"credentials"`
+	Name            string            `json:"name"`
+	Address         string            `json:"address"`
+	Engine          string            `json:"engine"`
+	EngineVersion   string            `json:"engine_version"`
+	RetentionDays   *int              `json:"retention_days"`
+	DatabaseName    string            `json:"database_name"`
+	TLSMode         string            `json:"tls_mode"`
+	TLSCA           string            `json:"tls_ca"`
+	AppUpstream     string            `json:"app_upstream"`
+	AppEndpoints    []apiEndpoint     `json:"app_endpoints"`
+	AppDependencies string            `json:"app_dependencies"`
+	OSFamily        string            `json:"os_family"`
+	Ports           map[string]int    `json:"ports"`
+	Capabilities    []string          `json:"capabilities"`
+	Tags            map[string]string `json:"tags"`
+	Status          string            `json:"status"`
+	Notes           string            `json:"notes"`
+	Credentials     map[string]string `json:"credentials"`
 }
 
 func (t *apiTarget) write() targetWrite {
 	return targetWrite{Name: t.Name, Address: t.Address, Engine: t.Engine, EngineVersion: t.EngineVersion, RetentionDays: t.RetentionDays,
-		DatabaseName: t.DatabaseName, TLSMode: t.TLSMode, TLSCA: t.TLSCA, AppUpstream: t.AppUpstream, AppEndpoints: t.AppEndpoints,
+		DatabaseName: t.DatabaseName, TLSMode: t.TLSMode, TLSCA: t.TLSCA, AppUpstream: t.AppUpstream, AppEndpoints: t.AppEndpoints, AppDependencies: t.AppDependencies,
 		OSFamily: t.OSFamily, Ports: t.Ports, Capabilities: t.Capabilities, Tags: t.Tags, Status: t.Status, Notes: t.Notes, Credentials: t.Credentials}
 }
 
 type targetModel struct {
-	ID            types.String `tfsdk:"id"`
-	Name          types.String `tfsdk:"name"`
-	Address       types.String `tfsdk:"address"`
-	OSFamily      types.String `tfsdk:"os_family"`
-	Engine        types.String `tfsdk:"engine"`
-	EngineVersion types.String `tfsdk:"engine_version"`
-	DatabaseName  types.String `tfsdk:"database_name"`
-	TLSMode       types.String `tfsdk:"tls_mode"`
-	TLSCA         types.String `tfsdk:"tls_ca"`
-	AppUpstream   types.String `tfsdk:"app_upstream"`
-	AppEndpoints  types.List   `tfsdk:"app_endpoints"`
-	Ports         types.Map    `tfsdk:"ports"`
-	Tags          types.Map    `tfsdk:"tags"`
-	Credentials   types.Map    `tfsdk:"credentials"`
-	Status        types.String `tfsdk:"status"`
-	Notes         types.String `tfsdk:"notes"`
-	RetentionDays types.Int64  `tfsdk:"retention_days"`
-	Capabilities  types.List   `tfsdk:"capabilities"`
-	HostKeyStatus types.String `tfsdk:"host_key_status"`
+	ID              types.String `tfsdk:"id"`
+	Name            types.String `tfsdk:"name"`
+	Address         types.String `tfsdk:"address"`
+	OSFamily        types.String `tfsdk:"os_family"`
+	Engine          types.String `tfsdk:"engine"`
+	EngineVersion   types.String `tfsdk:"engine_version"`
+	DatabaseName    types.String `tfsdk:"database_name"`
+	TLSMode         types.String `tfsdk:"tls_mode"`
+	TLSCA           types.String `tfsdk:"tls_ca"`
+	AppUpstream     types.String `tfsdk:"app_upstream"`
+	AppEndpoints    types.List   `tfsdk:"app_endpoints"`
+	AppDependencies types.String `tfsdk:"app_dependencies"`
+	Ports           types.Map    `tfsdk:"ports"`
+	Tags            types.Map    `tfsdk:"tags"`
+	Credentials     types.Map    `tfsdk:"credentials"`
+	Status          types.String `tfsdk:"status"`
+	Notes           types.String `tfsdk:"notes"`
+	RetentionDays   types.Int64  `tfsdk:"retention_days"`
+	Capabilities    types.List   `tfsdk:"capabilities"`
+	HostKeyStatus   types.String `tfsdk:"host_key_status"`
 }
 
 var endpointType = types.ObjectType{AttrTypes: map[string]attr.Type{"name": types.StringType, "url": types.StringType}}
@@ -117,6 +120,7 @@ func (m *targetModel) from(ctx context.Context, t *apiTarget) diag.Diagnostics {
 	m.ID, m.Name, m.Address, m.OSFamily = types.StringValue(t.ID), types.StringValue(t.Name), types.StringValue(t.Address), types.StringValue(t.OSFamily)
 	m.Engine, m.EngineVersion, m.DatabaseName = types.StringValue(t.Engine), types.StringValue(t.EngineVersion), types.StringValue(t.DatabaseName)
 	m.TLSMode, m.TLSCA, m.AppUpstream = types.StringValue(t.TLSMode), types.StringValue(t.TLSCA), types.StringValue(t.AppUpstream)
+	m.AppDependencies = types.StringValue(t.AppDependencies)
 	m.Status, m.Notes, m.HostKeyStatus = types.StringValue(t.Status), types.StringValue(t.Notes), types.StringValue(t.HostKeyStatus)
 	m.RetentionDays = types.Int64Null()
 	if t.RetentionDays != nil {
@@ -177,6 +181,7 @@ func (m *targetModel) onto(ctx context.Context, w *targetWrite) diag.Diagnostics
 	str(m.TLSMode, &w.TLSMode)
 	str(m.TLSCA, &w.TLSCA)
 	str(m.AppUpstream, &w.AppUpstream)
+	str(m.AppDependencies, &w.AppDependencies)
 	str(m.Status, &w.Status)
 	str(m.Notes, &w.Notes)
 	if !m.RetentionDays.IsUnknown() {
@@ -249,6 +254,7 @@ func (r *targetResource) Schema(_ context.Context, _ resource.SchemaRequest, res
 					"url":  schema.StringAttribute{Required: true},
 				}},
 			},
+			"app_dependencies": gateway("For an application: public (the default), its pages load from any public address on port 80 or 443; origins, from its upstream and endpoints only."),
 			"ports": schema.MapAttribute{ElementType: types.Int64Type, Optional: true, Computed: true,
 				PlanModifiers: []planmodifier.Map{mapplanmodifier.UseStateForUnknown()},
 				Description:   "Ports by protocol (ssh, rdp, vnc, winrm, database); the gateway fills the usual ones."},

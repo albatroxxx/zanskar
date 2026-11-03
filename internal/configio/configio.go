@@ -96,24 +96,25 @@ type (
 		Description string `json:"description"`
 	}
 	apiTarget struct {
-		ID            string            `json:"id"`
-		Name          string            `json:"name"`
-		Address       string            `json:"address"`
-		OSFamily      string            `json:"os_family"`
-		Engine        string            `json:"engine"`
-		EngineVersion string            `json:"engine_version"`
-		DatabaseName  string            `json:"database_name"`
-		TLSMode       string            `json:"tls_mode"`
-		TLSCA         string            `json:"tls_ca"`
-		AppUpstream   string            `json:"app_upstream"`
-		AppEndpoints  []Endpoint        `json:"app_endpoints"`
-		Ports         map[string]int    `json:"ports"`
-		Capabilities  []string          `json:"capabilities"`
-		Tags          map[string]string `json:"tags"`
-		Status        string            `json:"status"`
-		Notes         string            `json:"notes"`
-		RetentionDays *int              `json:"retention_days"`
-		Credentials   map[string]string `json:"credentials"`
+		ID              string            `json:"id"`
+		Name            string            `json:"name"`
+		Address         string            `json:"address"`
+		OSFamily        string            `json:"os_family"`
+		Engine          string            `json:"engine"`
+		EngineVersion   string            `json:"engine_version"`
+		DatabaseName    string            `json:"database_name"`
+		TLSMode         string            `json:"tls_mode"`
+		TLSCA           string            `json:"tls_ca"`
+		AppUpstream     string            `json:"app_upstream"`
+		AppEndpoints    []Endpoint        `json:"app_endpoints"`
+		AppDependencies string            `json:"app_dependencies"`
+		Ports           map[string]int    `json:"ports"`
+		Capabilities    []string          `json:"capabilities"`
+		Tags            map[string]string `json:"tags"`
+		Status          string            `json:"status"`
+		Notes           string            `json:"notes"`
+		RetentionDays   *int              `json:"retention_days"`
+		Credentials     map[string]string `json:"credentials"`
 	}
 	apiSubject struct {
 		Kind string `json:"kind"`
@@ -247,7 +248,7 @@ func (s *state) targetDoc(t apiTarget) Target {
 		creds[proto] = s.byID[id]
 	}
 	return Target{Name: t.Name, Address: t.Address, OSFamily: t.OSFamily, Engine: t.Engine, EngineVersion: t.EngineVersion, DatabaseName: t.DatabaseName,
-		TLSMode: t.TLSMode, TLSCA: t.TLSCA, AppUpstream: t.AppUpstream, AppEndpoints: t.AppEndpoints, Ports: emptyNil(t.Ports), Tags: emptyNil(t.Tags),
+		TLSMode: t.TLSMode, TLSCA: t.TLSCA, AppUpstream: t.AppUpstream, AppEndpoints: t.AppEndpoints, AppDependencies: t.AppDependencies, Ports: emptyNil(t.Ports), Tags: emptyNil(t.Tags),
 		Status: t.Status, Notes: t.Notes, RetentionDays: t.RetentionDays, Credentials: emptyNil(creds)}
 }
 
@@ -300,7 +301,7 @@ func (s *state) writeTarget(t Target) (map[string]any, string) {
 		status = "active"
 	}
 	return map[string]any{"name": t.Name, "address": t.Address, "os_family": t.OSFamily, "engine": t.Engine, "engine_version": t.EngineVersion,
-		"database_name": t.DatabaseName, "tls_mode": t.TLSMode, "tls_ca": t.TLSCA, "app_upstream": t.AppUpstream, "app_endpoints": t.AppEndpoints,
+		"database_name": t.DatabaseName, "tls_mode": t.TLSMode, "tls_ca": t.TLSCA, "app_upstream": t.AppUpstream, "app_endpoints": t.AppEndpoints, "app_dependencies": t.AppDependencies,
 		"ports": t.Ports, "tags": t.Tags, "status": status, "notes": t.Notes, "retention_days": t.RetentionDays, "credentials": creds}, ""
 }
 
