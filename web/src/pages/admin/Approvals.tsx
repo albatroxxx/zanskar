@@ -4,7 +4,7 @@ import { ApiError, api, errorMessage } from '../../api/client'
 import { fmtTime, protocolName } from '../../api/format'
 import type { AccessRequest, Page } from '../../api/types'
 import { Alert, Badge, Field, Loading, Modal, PageHead } from '../../components/ui'
-import { badgesChanged } from '../../components/badges'
+import { badgesChanged, shareBadgeCount } from '../../components/badges'
 
 /** Approvals is the admin queue for just-in-time access requests (ADR 0018):
  *  approve or deny what's pending, and revoke grants that are still active. */
@@ -101,7 +101,11 @@ export function Approvals() {
         .then((p) => {
           set(p.items)
           setLoadErr((cur) => ({ ...cur, [list]: '' }))
-          if (list === 'pending') openLinked(p.items)
+          if (list === 'pending') {
+            // The sidebar's badge counts these; it need not read them too.
+            shareBadgeCount('/admin/approvals', p.items.length)
+            openLinked(p.items)
+          }
         })
         .catch((e) => setLoadErr((cur) => ({ ...cur, [list]: errorMessage(e) })))
     void read('pending', 'pending', setPending)

@@ -4,6 +4,7 @@ import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { ApiError, api } from '../../api/client'
 import type { AccessRequest } from '../../api/types'
+import { onBadgeCount } from '../../components/badges'
 import { Approvals } from './Approvals'
 
 afterEach(() => {
@@ -65,6 +66,17 @@ describe('a link to one request', () => {
   it('says a request it cannot find was not found', async () => {
     open('/admin/approvals?request=nope')
     expect(await screen.findByText('The request in the link was not found.')).toBeDefined()
+  })
+
+  // 2026-11-03 live audit, Q12: the page hands the pending count to the
+  // sidebar's badge rather than the badge reading it a third time.
+  it('hands the pending count to the sidebar badge', async () => {
+    const counts: number[] = []
+    const off = onBadgeCount('/admin/approvals', (n) => counts.push(n))
+    open('/admin/approvals')
+    await screen.findByText('bob')
+    off()
+    expect(counts).toEqual([2])
   })
 
   it('reads no single request without a link', async () => {
