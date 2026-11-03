@@ -405,11 +405,8 @@ func serve(ctx context.Context) error {
 	go notifier.Run(ctx)
 
 	deps := server.Deps{
-		TLS:   tlsMgr,
-		Theme: func() string { return runtime.String(settings.KeyTheme) },
-		SecurityContact: func() string {
-			return settings.SecurityContactURI(runtime.String(settings.KeySecurityContact))
-		},
+		TLS:            tlsMgr,
+		Theme:          func() string { return runtime.String(settings.KeyTheme) },
 		AuthMiddleware: &auth.Middleware{Sessions: sessions, Users: users, Log: log, Tokens: apiTokens},
 		Auth:           authHandler,
 		Handlers: []server.Registrar{

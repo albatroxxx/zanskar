@@ -16,7 +16,6 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
-	"net/url"
 	"os"
 	"regexp"
 	"slices"
@@ -89,12 +88,6 @@ const (
 	// for searching across recordings (2026-11-03, idea 5). Off, the index
 	// is emptied and only command lines are searched.
 	KeyIndexOutput = "recordings.index_output"
-	// KeySecurityContact is where someone who finds a weakness in this
-	// gateway writes: an email address or an https:// page. Set, the gateway
-	// publishes it at /.well-known/security.txt (RFC 9116); empty, that path
-	// is not found (2026-11-03 live audit, S1). The operator's contact, never
-	// the project's.
-	KeySecurityContact = "security.contact"
 	// KeyApproveStepUp has approving an access request ask an approver who
 	// has an authenticator for a code proved in the last auth.StepUpWindow,
 	// so a notification's link opens the request and a stolen session or a
@@ -170,27 +163,6 @@ func RequireDigest(v string) error {
 	return nil
 }
 
-// emailRe is an address the CA can write to: no spaces, one @, a dotted domain.
-var emailRe = regexp.MustCompile(`^[^@\s]{1,64}@[A-Za-z0-9.-]{1,253}\.[A-Za-z]{2,63}$`)
-
-// SecurityContactURI is a security contact as security.txt's Contact field
-// writes it: mailto: for an email address, the URL itself for an https://
-// page. Anything else, a line break or an http:// page among it, is "", so
-// no setting can add a line of its own to the file.
-func SecurityContactURI(v string) string {
-	v = strings.TrimSpace(v)
-	if strings.ContainsAny(v, "\r\n\t <>\"") {
-		return ""
-	}
-	if emailRe.MatchString(strings.TrimPrefix(v, "mailto:")) {
-		return "mailto:" + strings.TrimPrefix(v, "mailto:")
-	}
-	if u, err := url.Parse(v); err == nil && u.Scheme == "https" && u.Host != "" && u.User == nil {
-		return u.String()
-	}
-	return ""
-}
-
 // MaxLoginBanner bounds the banner: long enough for a legal notice, short
 // enough that the sign-in form stays on the page.
 const MaxLoginBanner = 4000
@@ -216,8 +188,6 @@ type Definition struct {
 var Definitions = []Definition{
 	{Key: KeyLoginBanner, Category: "Sign-in", Title: "Login banner", Type: TypeText,
 		Description: "Above the sign-in form; empty hides it."},
-	{Key: KeySecurityContact, Category: "Sign-in", Title: "Security contact", Type: TypeString,
-		Description: "Published at /.well-known/security.txt; empty publishes nothing."},
 	{Key: KeyRequireMFA, Category: "Sign-in", Title: "Require an authenticator", Type: TypeBool, Default: "true", EnvVar: "ZANSKAR_REQUIRE_MFA",
 		Description: "For password sign-ins; single sign-on providers enforce their own."},
 	{Key: KeyApproveStepUp, Category: "Sign-in", Title: "Approving asks for a code", Type: TypeBool, Default: "true", StepUp: true},
@@ -348,9 +318,6 @@ func Validate(d Definition, value string) (string, error) {
 		v := strings.TrimSpace(value)
 		if !utf8.ValidString(v) || len(v) > 4096 {
 			return "", fmt.Errorf("%w: %s must be valid UTF-8 up to 4096 bytes", ErrInvalid, d.Key)
-		}
-		if d.Key == KeySecurityContact && v != "" && SecurityContactURI(v) == "" {
-			return "", fmt.Errorf("%w: %s must be an email address or an https:// URL", ErrInvalid, d.Key)
 		}
 		// The relay image is an argument of `docker run`; free text there
 		// could be read as one of its flags (--privileged, a host mount).

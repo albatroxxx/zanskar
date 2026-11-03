@@ -3,41 +3,12 @@
 package server
 
 import (
-	"fmt"
 	"io"
 	"io/fs"
 	"net/http"
 	"path"
 	"strings"
-	"time"
 )
-
-// securityTxt serves /.well-known/security.txt (RFC 9116) with the contact an
-// operator set in Settings, or not found when none is set: the project's own
-// address never goes into every operator's gateway. contact returns the
-// Contact field's URI ("" for none); publicURL, when known, makes the file
-// say where it canonically lives. The file is written fresh on each request,
-// so Expires is always a quarter ahead.
-func securityTxt(contact func() string, publicURL string) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		markStatic(r)
-		c := contact()
-		if c == "" {
-			http.NotFound(w, r)
-			return
-		}
-		var b strings.Builder
-		fmt.Fprintf(&b, "Contact: %s\n", c)
-		fmt.Fprintf(&b, "Expires: %s\n", time.Now().UTC().AddDate(0, 3, 0).Truncate(time.Hour).Format(time.RFC3339))
-		if publicURL != "" {
-			fmt.Fprintf(&b, "Canonical: %s/.well-known/security.txt\n", strings.TrimRight(publicURL, "/"))
-		}
-		b.WriteString("Preferred-Languages: en\n")
-		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-		w.Header().Set("Cache-Control", "no-store")
-		_, _ = io.WriteString(w, b.String())
-	})
-}
 
 // consoleRoots are the first path segments the console has pages under; ""
 // is the access portal's own root. A path under one of them gets index.html,

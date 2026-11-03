@@ -9,7 +9,6 @@ import (
 	"regexp"
 	"strings"
 	"testing"
-	"time"
 )
 
 // 2026-11-03 live audit, S1: every path answered 200 with the app, so
@@ -72,32 +71,5 @@ func TestRobotsKeepsCrawlersOut(t *testing.T) {
 	spaHandler(testBundle).ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/robots.txt", nil))
 	if rr.Code != http.StatusOK || rr.Body.String() != "User-agent: *\nDisallow: /\n" || !strings.HasPrefix(rr.Header().Get("Content-Type"), "text/plain") {
 		t.Fatalf("robots.txt: %d %q %q", rr.Code, rr.Header().Get("Content-Type"), rr.Body)
-	}
-}
-
-// security.txt names the operator's contact only once they have set one; the
-// project's address never goes into every gateway.
-func TestSecurityTxtOnlyWithAContact(t *testing.T) {
-	contact := ""
-	h := securityTxt(func() string { return contact }, "https://gw.example.com/")
-	get := func() *httptest.ResponseRecorder {
-		rr := httptest.NewRecorder()
-		h.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/.well-known/security.txt", nil))
-		return rr
-	}
-	if rr := get(); rr.Code != http.StatusNotFound {
-		t.Fatalf("no contact: %d, want not found", rr.Code)
-	}
-	contact = "mailto:security@example.com"
-	rr := get()
-	body := rr.Body.String()
-	if rr.Code != http.StatusOK || !strings.HasPrefix(body, "Contact: mailto:security@example.com\nExpires: ") ||
-		!strings.Contains(body, "\nCanonical: https://gw.example.com/.well-known/security.txt\n") {
-		t.Fatalf("security.txt: %d %q", rr.Code, body)
-	}
-	line := strings.Split(body, "\n")[1]
-	exp, err := time.Parse(time.RFC3339, strings.TrimPrefix(line, "Expires: "))
-	if err != nil || time.Until(exp) < 80*24*time.Hour || time.Until(exp) > 366*24*time.Hour {
-		t.Fatalf("Expires %q (%v): RFC 9116 wants it ahead and under a year", line, err)
 	}
 }
