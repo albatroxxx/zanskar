@@ -48,8 +48,10 @@ type endpoint struct {
 	AppUpstream  string
 	AppEndpoints []target.AppEndpoint
 	// AppDependencies is target.DependenciesPublic or DependenciesOrigins:
-	// whether the session's relay lets the pages' dependencies out.
+	// whether the session's relay lets the pages' dependencies out;
+	// AppPrivate, the private addresses they may reach then.
 	AppDependencies string
+	AppPrivate      *target.AppPrivate
 
 	// Exactly one of TargetID or (ASGID, ASGInstanceID) is set.
 	TargetID      string
@@ -96,7 +98,7 @@ func (e *endpoint) policyRef() policy.TargetRef {
 func fromTarget(t *target.Target) *endpoint {
 	e := &endpoint{Name: t.Name, Address: t.Address, Ports: t.Ports, Tags: t.Tags, Credentials: t.Credentials,
 		HostKeyTrusted: t.HostKeyStatus == target.HostKeyTrusted, Active: t.Status == "active", TargetID: t.ID, LiveKey: t.ID,
-		Engine: t.Engine, EngineVersion: t.EngineVersion, DatabaseName: t.DatabaseName, TLSMode: t.TLSMode, TLSCA: t.TLSCA, AppUpstream: t.AppUpstream, AppEndpoints: t.AppEndpoints, AppDependencies: t.AppDependencies}
+		Engine: t.Engine, EngineVersion: t.EngineVersion, DatabaseName: t.DatabaseName, TLSMode: t.TLSMode, TLSCA: t.TLSCA, AppUpstream: t.AppUpstream, AppEndpoints: t.AppEndpoints, AppDependencies: t.AppDependencies, AppPrivate: t.AppPrivate}
 	if t.RetentionDays != nil {
 		e.RetentionDays = *t.RetentionDays
 	}

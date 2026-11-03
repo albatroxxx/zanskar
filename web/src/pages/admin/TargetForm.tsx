@@ -6,7 +6,7 @@ import type { AppEndpoint, OSFamily, Protocol, RetentionPolicy, Target } from '.
 import { useSubmit } from '../../components/submit'
 import { Alert, Field, Modal, Tabs } from '../../components/ui'
 import { EndpointEditor } from './EndpointEditor'
-import { endpointsBody, endpointWords } from './endpoints'
+import { endpointsBody, endpointWords, privateBody, privateWords } from './endpoints'
 import { protocols, type PortProtocol } from './lib'
 import { TagEditor } from '../../components/TagEditor'
 import { rowsToTags, tagRows, type TagRow } from '../../components/tags'
@@ -35,6 +35,7 @@ export function targetBody(t: Target, patch: Partial<Target> = {}) {
     // switch) carries the endpoints or would drop them.
     app_endpoints: u.app_endpoints ?? [],
     app_dependencies: u.app_dependencies ?? '',
+    app_private: u.app_private ?? null,
     retention_days: u.retention_days ?? null,
     ports: u.ports,
     capabilities: u.capabilities,
@@ -70,7 +71,7 @@ const tlsModes = [
 const emptyForm = {
   name: '', address: '', os_family: 'linux' as OSFamily,
   engine: 'postgres', engine_version: '', database_name: '', tls_mode: 'verify-full', tls_ca: '',
-  app_upstream: '', endpoints: [] as AppEndpoint[], dependencies: 'public' as 'public' | 'origins',
+  app_upstream: '', endpoints: [] as AppEndpoint[], dependencies: 'public' as 'public' | 'origins', private_networks: '', private_hosts: '',
   ...defaultPorts, database: enginePorts.postgres, tags: [] as TagRow[], notes: '', retention: '',
 }
 
@@ -98,6 +99,8 @@ export function TargetForm({ initial, kind, onClose, onSaved }: { initial?: Targ
           app_upstream: initial.app_upstream ?? '',
           endpoints: (initial.app_endpoints ?? []).map((e) => ({ ...e })),
           dependencies: initial.app_dependencies ?? 'public',
+          private_networks: (initial.app_private?.networks ?? []).join('\n'),
+          private_hosts: (initial.app_private?.hosts ?? []).join('\n'),
           ssh: initial.ports.ssh ? String(initial.ports.ssh) : defaultPorts.ssh,
           rdp: initial.ports.rdp ? String(initial.ports.rdp) : defaultPorts.rdp,
           vnc: initial.ports.vnc ? String(initial.ports.vnc) : defaultPorts.vnc,
@@ -186,6 +189,7 @@ export function TargetForm({ initial, kind, onClose, onSaved }: { initial?: Targ
         app_upstream: application ? f.app_upstream.trim() : '',
         app_endpoints: endpoints.body,
         app_dependencies: application ? f.dependencies : '',
+        app_private: application ? privateBody(f.private_networks, f.private_hosts) : null,
         retention_days: application ? null : retention,
         ports,
         capabilities: initial?.capabilities ?? [],
@@ -200,7 +204,7 @@ export function TargetForm({ initial, kind, onClose, onSaved }: { initial?: Targ
       } catch (e) {
         // The server names a row by its place in what was sent; say it as
         // the row the person filled in.
-        throw new Error(endpointWords(errorMessage(e), endpoints.sent))
+        throw new Error(privateWords(endpointWords(errorMessage(e), endpoints.sent)))
       }
       onSaved(t)
     })
@@ -303,17 +307,27 @@ export function TargetForm({ initial, kind, onClose, onSaved }: { initial?: Targ
             </>
           )}
           {k === 'application' && (
-            <Field label="Other endpoints" info="Other addresses the application opens pages at, in the same browser: an API, its sign-in page, a private address its pages load from. Each is a bookmark there; a page opens nowhere else.">
+            <Field label="Other endpoints" info="Other addresses the application opens pages at, in the same browser: an API with its own pages, its sign-in page. Each is a bookmark there; a page opens nowhere else.">
               <EndpointEditor rows={f.endpoints} onChange={(endpoints) => setF({ ...f, endpoints })} />
             </Field>
           )}
           {k === 'application' && (
-            <Field label="Dependencies" info="What its pages load beside its origins: scripts, styles, fonts, images, APIs. Any public address, over port 80 or 443, or its origins only. Opening a page is held to its origins either way; a private address is an endpoint.">
+            <Field label="Dependencies" info="What its pages load beside its origins: scripts, styles, fonts, images, frames, APIs. Any public address, on any port, through a relay that reads the session's requests; or its origins only, nothing read. Opening a page is held to its origins either way.">
               <select id="t-dependencies" value={f.dependencies} onChange={(e) => setF({ ...f, dependencies: e.target.value as 'public' | 'origins' })}>
                 <option value="public">Any public address</option>
                 <option value="origins">Its origins only</option>
               </select>
             </Field>
+          )}
+          {k === 'application' && f.dependencies === 'public' && (
+            <div className="row2">
+              <Field label="Private networks" info="Private networks its pages may also load from, one per line, in CIDR form (10.20.0.0/16). Anything private is refused until listed here or under private hosts; the application's page shows what was refused.">
+                <textarea id="t-private-networks" value={f.private_networks} onChange={set('private_networks')} placeholder={'10.20.0.0/16'} rows={3} />
+              </Field>
+              <Field label="Private hosts" info="Private hosts its pages may also load from, one per line, as host:port (cdn.corp:443).">
+                <textarea id="t-private-hosts" value={f.private_hosts} onChange={set('private_hosts')} placeholder={'cdn.corp:443'} rows={3} />
+              </Field>
+            </div>
           )}
           {k === 'application' && secureOrigins && (
             <Field label="CA bundle (PEM, optional)">

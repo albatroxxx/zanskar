@@ -126,6 +126,8 @@ func (h *Handler) browser(w http.ResponseWriter, r *http.Request, g *ticket.Gran
 	bs, err := browsergw.Start(r.Context(), h.Log, h.DockerPath, browsergw.Spec{
 		SessionID: run.s.ID, Name: ep.Name, Upstream: upstream, UpstreamIP: upstreamIP, Endpoints: extras, TLSCA: ep.TLSCA,
 		PublicDependencies: ep.AppDependencies == target.DependenciesPublic,
+		PrivateNetworks:    privateNetworks(ep.AppPrivate),
+		PrivateHosts:       privateHosts(ep.AppPrivate),
 		Width:              width, Height: height, DevTools: run.g.AllowDevTools, BrowserImage: browserImage, RelayImage: relayImage, StateDir: h.StateDir,
 		Debug: h.Log.Enabled(r.Context(), slog.LevelDebug),
 	})
@@ -138,6 +140,11 @@ func (h *Handler) browser(w http.ResponseWriter, r *http.Request, g *ticket.Gran
 		return
 	}
 	defer bs.Close()
+	// What the relay's proxy refuses is learned from its log while the
+	// session lives and once more as it ends, before the container goes.
+	if ep.AppDependencies == target.DependenciesPublic {
+		defer h.collectRefusals(r.Context(), bs.RelayName, ep.LiveKey)()
+	}
 
 	// What guacd sees is a VNC server; the session itself keeps its http
 	// protocol in its row, the registry and the audit trail.

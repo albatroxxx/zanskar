@@ -1,7 +1,8 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { api, errorMessage } from '../../api/client'
 import { appTLS, dbTLS, engineName, fmtTime, protocolName } from '../../api/format'
-import type { CertificateProbe, Credential, ProbeResponse, Protocol, Target } from '../../api/types'
+import type { CertificateProbe, Credential, DependencyRefusal, ProbeResponse, Protocol, Target } from '../../api/types'
+import { StateIcon } from '../../components/icons'
 import { Alert, Badge, Confirm, Modal, Tags } from '../../components/ui'
 import { DeleteAsset } from './DeleteAsset'
 import { hostKeyBadge, protocols, usesHostKey } from './lib'
@@ -26,11 +27,23 @@ export function TargetDetail({ target, credentials, onClose, onChanged, onDelete
   // The RDP or WinRM certificate the administrator is about to accept.
   const [trustCert, setTrustCert] = useState<{ protocol: 'rdp' | 'winrm'; pinned: string; seen: string } | null>(null)
   const [err, setErr] = useState('')
+  // What the application's sessions were refused as dependencies (ADR
+  // 0037, amended 2026-11-03, later), learned from the relay; read when
+  // the dependencies may come from anywhere, which is when it fills.
+  const [blocked, setBlocked] = useState<DependencyRefusal[] | null>(null)
   const t = target
   const kind = kindOf(t)
   const database = kind === 'database'
   const application = kind === 'application'
   const host = kind === 'host'
+  const learns = application && t.app_dependencies !== 'origins'
+  useEffect(() => {
+    if (!learns) return
+    api
+      .get<{ items: DependencyRefusal[] }>(`/targets/${t.id}/dependencies`)
+      .then((r) => setBlocked(r.items))
+      .catch(() => setBlocked([]))
+  }, [t.id, learns])
 
   const run = async (fn: () => Promise<unknown>) => {
     setErr('')
@@ -139,7 +152,13 @@ export function TargetDetail({ target, credentials, onClose, onChanged, onDelete
         ) : application ? (
           <>
             <dt>Upstream</dt><dd className="mono">{t.app_upstream}</dd>
-            <dt>Dependencies</dt><dd>{t.app_dependencies === 'origins' ? 'Its origins only' : 'Any public address'}</dd>
+            <dt>Dependencies</dt>
+            <dd>
+              {t.app_dependencies === 'origins' ? 'Its origins only' : 'Any public address'}
+              {t.app_dependencies !== 'origins' && (t.app_private?.networks?.length || t.app_private?.hosts?.length) ? (
+                <span className="muted"> · and {[...(t.app_private?.networks ?? []), ...(t.app_private?.hosts ?? [])].join(', ')}</span>
+              ) : null}
+            </dd>
             {(t.app_endpoints?.length ?? 0) > 0 && (
               <>
                 <dt>Other endpoints</dt>
@@ -153,6 +172,31 @@ export function TargetDetail({ target, credentials, onClose, onChanged, onDelete
               </>
             )}
             <dt>Upstream TLS</dt><dd>{appTLS(t).verified ? <Badge tone="ok">{appTLS(t).label}</Badge> : <Badge tone="warn">{appTLS(t).label}</Badge>}</dd>
+            {learns && (
+              <>
+                <dt>Blocked</dt>
+                <dd>
+                  <BlockedDependencies
+                    target={t}
+                    items={blocked}
+                    onAllow={(hostport) =>
+                      run(async () => {
+                        const hosts = [...(t.app_private?.hosts ?? []), hostport]
+                        const u = await api.put<Target>(`/targets/${t.id}`, targetBody(t, { app_private: { ...(t.app_private ?? {}), hosts } }))
+                        setBlocked((b) => (b ?? []).filter((x) => `${x.host}:${x.port}` !== hostport))
+                        onChanged(u)
+                      })
+                    }
+                    onClear={() =>
+                      run(async () => {
+                        await api.del(`/targets/${t.id}/dependencies`)
+                        setBlocked([])
+                      })
+                    }
+                  />
+                </dd>
+              </>
+            )}
           </>
         ) : (
           <>
@@ -328,5 +372,49 @@ export function TargetDetail({ target, credentials, onClose, onChanged, onDelete
       )}
       {confirm === 'delete' && <DeleteAsset name={t.name} path={`/targets/${t.id}`} onClose={() => setConfirm(null)} onDeleted={onDeleted} />}
     </Modal>
+  )
+}
+
+/**
+ * BlockedDependencies lists what the application's sessions were refused,
+ * newest first, each with what asked and from which page: a private host is
+ * allowed in one click (it joins the private hosts); a page someone tried to
+ * open is an endpoint's business; a loopback, link-local or metadata address
+ * can never be allowed and is marked. What is allowed already is left out.
+ */
+function BlockedDependencies({ target, items, onAllow, onClear }: { target: Target; items: DependencyRefusal[] | null; onAllow: (hostport: string) => void; onClear: () => void }) {
+  if (items === null) return <span className="muted">Loading…</span>
+  const allowed = new Set(target.app_private?.hosts ?? [])
+  const shown = items.filter((x) => !allowed.has(`${x.host}:${x.port}`))
+  if (shown.length === 0) return <span className="muted">Nothing refused</span>
+  return (
+    <>
+      <table className="compact">
+        <thead>
+          <tr><th>Host</th><th>What</th><th>From</th><th>Seen</th><th aria-label="action"></th></tr>
+        </thead>
+        <tbody>
+          {shown.map((x) => {
+            const hostport = `${x.host}:${x.port}`
+            const page = x.why === 'not an origin of the application'
+            const never = x.why !== 'private' && !page
+            return (
+              <tr key={`${hostport}|${x.why}|${x.what}|${x.from}`}>
+                <td className="mono">{hostport}</td>
+                <td>{x.what}</td>
+                <td className="muted">{x.from || '—'}</td>
+                <td className="muted">{x.count} × · {fmtTime(x.last_seen)}</td>
+                <td>
+                  {x.why === 'private' && <button className="btn sm" onClick={() => onAllow(hostport)} title="allow this private host for the application's dependencies">Allow</button>}
+                  {page && <span className="muted" title="someone tried to open a page there; an endpoint would allow it">page</span>}
+                  {never && <StateIcon state="warn" label={`Never allowed: ${x.why}`} />}
+                </td>
+              </tr>
+            )
+          })}
+        </tbody>
+      </table>
+      <a href="#clear" className="muted" onClick={(e) => { e.preventDefault(); onClear() }}>Clear</a>
+    </>
   )
 }

@@ -37,6 +37,13 @@ type Endpoint struct {
 	URL  string `yaml:"url" json:"url"`
 }
 
+// Private is the private address space an application's dependencies may
+// reach beside its origins: networks as CIDRs, hosts as host:port.
+type Private struct {
+	Networks []string `yaml:"networks,omitempty" json:"networks,omitempty"`
+	Hosts    []string `yaml:"hosts,omitempty" json:"hosts,omitempty"`
+}
+
 // Target is a host, database or application, as the target API writes it,
 // its credentials named.
 type Target struct {
@@ -52,12 +59,15 @@ type Target struct {
 	AppEndpoints  []Endpoint `yaml:"app_endpoints,omitempty"`
 	// AppDependencies: public (the default) or origins; where an
 	// application's pages may load from beside its origins.
-	AppDependencies string            `yaml:"app_dependencies,omitempty"`
-	Ports           map[string]int    `yaml:"ports,omitempty"`
-	Tags            map[string]string `yaml:"tags,omitempty"`
-	Status          string            `yaml:"status,omitempty"`
-	Notes           string            `yaml:"notes,omitempty"`
-	RetentionDays   *int              `yaml:"retention_days,omitempty"`
+	AppDependencies string `yaml:"app_dependencies,omitempty"`
+	// AppPrivate: the private networks and hosts the dependencies may
+	// reach, under public.
+	AppPrivate    *Private          `yaml:"app_private,omitempty"`
+	Ports         map[string]int    `yaml:"ports,omitempty"`
+	Tags          map[string]string `yaml:"tags,omitempty"`
+	Status        string            `yaml:"status,omitempty"`
+	Notes         string            `yaml:"notes,omitempty"`
+	RetentionDays *int              `yaml:"retention_days,omitempty"`
 	// Credentials names the credential each protocol signs in with.
 	Credentials map[string]string `yaml:"credentials,omitempty"`
 }

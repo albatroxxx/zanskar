@@ -25,7 +25,7 @@ func NewRepo(db *store.DB) *Repo { return &Repo{db: db} }
 const cols = `id, name, address, os_family, ports, capabilities, host_key_fingerprint, host_key_status,
 	tls_fingerprint, tags, status, notes, created_by, created_at, updated_at, last_probed_at, winrm_tls_fingerprint,
 	engine, engine_version, retention_days, database_name, tls_mode, tls_ca, tls_fingerprint_pending, winrm_tls_fingerprint_pending,
-	app_upstream, app_endpoints, app_dependencies`
+	app_upstream, app_endpoints, app_dependencies, app_private`
 
 // Create validates and inserts t, including its credential mapping.
 func (r *Repo) Create(ctx context.Context, t *Target) error {
@@ -45,11 +45,11 @@ func (r *Repo) Create(ctx context.Context, t *Target) error {
 	}
 	defer tx.Rollback() //nolint:errcheck
 	_, err = tx.ExecContext(ctx, r.db.Rebind(`INSERT INTO targets
-		(id, name, address, os_family, ports, capabilities, host_key_status, tags, status, notes, created_by, created_at, updated_at, engine, engine_version, retention_days, database_name, tls_mode, tls_ca, app_upstream, app_endpoints, app_dependencies)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`),
+		(id, name, address, os_family, ports, capabilities, host_key_status, tags, status, notes, created_by, created_at, updated_at, engine, engine_version, retention_days, database_name, tls_mode, tls_ca, app_upstream, app_endpoints, app_dependencies, app_private)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`),
 		t.ID, t.Name, t.Address, string(t.OSFamily), ports, capsJSON, string(HostKeyUnknown), tags, t.Status, t.Notes,
 		nullStr(t.CreatedBy), store.TimeArg(now), store.TimeArg(now), t.Engine, t.EngineVersion, nullInt(t.RetentionDays), t.DatabaseName, t.TLSMode, t.TLSCA,
-		emptyNull(t.AppUpstream), endpointsJSON(t.AppEndpoints), emptyNull(t.AppDependencies))
+		emptyNull(t.AppUpstream), endpointsJSON(t.AppEndpoints), emptyNull(t.AppDependencies), privateJSON(t.AppPrivate))
 	if err != nil {
 		return mapErr(err)
 	}
@@ -287,10 +287,10 @@ func (r *Repo) Update(ctx context.Context, t *Target) error {
 	}
 	res, err := tx.ExecContext(ctx, r.db.Rebind(`UPDATE targets SET name = ?, address = ?, os_family = ?, ports = ?, capabilities = ?,
 		tags = ?, status = ?, notes = ?, engine = ?, engine_version = ?, retention_days = ?, database_name = ?, tls_mode = ?, tls_ca = ?,
-		app_upstream = ?, app_endpoints = ?, app_dependencies = ?, updated_at = ? WHERE id = ? AND deleted_at IS NULL`),
+		app_upstream = ?, app_endpoints = ?, app_dependencies = ?, app_private = ?, updated_at = ? WHERE id = ? AND deleted_at IS NULL`),
 		t.Name, t.Address, string(t.OSFamily), mustJSON(t.Ports), mustJSON(t.Capabilities), mustJSON(t.Tags), t.Status, t.Notes,
 		t.Engine, t.EngineVersion, nullInt(t.RetentionDays), t.DatabaseName, t.TLSMode, t.TLSCA,
-		emptyNull(t.AppUpstream), endpointsJSON(t.AppEndpoints), emptyNull(t.AppDependencies), store.TimeArg(now), t.ID)
+		emptyNull(t.AppUpstream), endpointsJSON(t.AppEndpoints), emptyNull(t.AppDependencies), privateJSON(t.AppPrivate), store.TimeArg(now), t.ID)
 	if err != nil {
 		return mapErr(err)
 	}
@@ -635,12 +635,12 @@ func scanTarget(s store.Scanner) (*Target, error) {
 		retention               sql.NullInt64
 		dbName, tlsMode, tlsCA  sql.NullString
 		appUpstream, appDeps    sql.NullString
-		appEndpoints            []byte
+		appEndpoints, appPriv   []byte
 		created, updated, probe store.NullTime
 	)
 	err := s.Scan(&t.ID, &t.Name, &t.Address, &osFamily, &ports, &capsRaw, &hk, &hkStatus, &tlsFP, &tagsRaw,
 		&t.Status, &t.Notes, &createdBy, &created, &updated, &probe, &winrmFP, &engine, &engineVer, &retention, &dbName, &tlsMode, &tlsCA, &tlsPend, &winrmPend,
-		&appUpstream, &appEndpoints, &appDeps)
+		&appUpstream, &appEndpoints, &appDeps, &appPriv)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound
@@ -652,6 +652,12 @@ func scanTarget(s store.Scanner) (*Target, error) {
 	t.AppUpstream, t.AppDependencies = appUpstream.String, appDeps.String
 	if len(appEndpoints) > 0 {
 		_ = json.Unmarshal(appEndpoints, &t.AppEndpoints)
+	}
+	if len(appPriv) > 0 {
+		var p AppPrivate
+		if json.Unmarshal(appPriv, &p) == nil && len(p.Entries()) > 0 {
+			t.AppPrivate = &p
+		}
 	}
 	// A row from before the column (migration 0048 fills it; a backup
 	// restored from before may not be) reads as the default.
@@ -720,6 +726,15 @@ func endpointsJSON(e []AppEndpoint) any {
 		return nil
 	}
 	return mustJSON(e)
+}
+
+// privateJSON is the stored form of an application's private dependencies:
+// NULL for none.
+func privateJSON(p *AppPrivate) any {
+	if len(p.Entries()) == 0 {
+		return nil
+	}
+	return mustJSON(p)
 }
 
 func emptyNull(s string) any {

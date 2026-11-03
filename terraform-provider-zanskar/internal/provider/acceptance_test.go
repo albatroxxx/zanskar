@@ -256,6 +256,14 @@ resource "zanskar_target" "held" {
   app_upstream     = "https://held.example.internal"
   app_dependencies = "origins"
 }
+resource "zanskar_target" "intranet" {
+  name         = "acc-intranet"
+  app_upstream = "https://intranet.example.internal"
+  app_private = {
+    networks = ["10.20.0.0/16"]
+    hosts    = ["cdn.example.internal:443"]
+  }
+}
 `, gw.cred, env, env)
 	}
 	resource.Test(t, resource.TestCase{
@@ -271,6 +279,9 @@ resource "zanskar_target" "held" {
 				// The gateway's default, and the word set (2026-11-03).
 				resource.TestCheckResourceAttr("zanskar_target.wiki", "app_dependencies", "public"),
 				resource.TestCheckResourceAttr("zanskar_target.held", "app_dependencies", "origins"),
+				resource.TestCheckResourceAttr("zanskar_target.intranet", "app_private.networks.0", "10.20.0.0/16"),
+				resource.TestCheckResourceAttr("zanskar_target.intranet", "app_private.hosts.0", "cdn.example.internal:443"),
+				resource.TestCheckNoResourceAttr("zanskar_target.wiki", "app_private.networks.0"),
 			)},
 			// A change of tags is an update in place, keeping the target.
 			{Config: cfg("prod"), Check: resource.ComposeAggregateTestCheckFunc(

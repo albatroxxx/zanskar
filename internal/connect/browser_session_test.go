@@ -37,7 +37,10 @@ func stubBrowserDocker(t *testing.T) (docker, calls string) {
 	script := "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '" + calls + "'\n" +
 		"if [ \"$1\" = inspect ]; then for a in \"$@\"; do n=$a; done; n=${n#zanskar-apprelay-}; printf 'bridge=127.0.0.1\\nzanskar-net-%s=172.30.0.2\\n' \"$n\"; fi\n" +
 		"if [ \"$1\" = network ] && [ \"$2\" = inspect ]; then printf '172.30.0.0/16\\n'; fi\n" +
-		"if [ \"$1\" = run ]; then echo \"ENV APP_URL=$APP_URL RESOLVER_RULES=$RESOLVER_RULES ZANSKAR_APPRELAY=$ZANSKAR_APPRELAY DEVTOOLS=$DEVTOOLS\" >> '" + calls + "'; fi\nexit 0\n"
+		"if [ \"$1\" = run ]; then echo \"ENV APP_URL=$APP_URL RESOLVER_RULES=$RESOLVER_RULES ZANSKAR_APPRELAY=$ZANSKAR_APPRELAY CA_PEM=$CA_PEM DEVTOOLS=$DEVTOOLS\" >> '" + calls + "'; fi\n" +
+		// The relay's log, as `docker logs` gives it: one refusal among other lines.
+		"if [ \"$1\" = logs ]; then printf '%s\\n' '{\"time\":\"2026-11-03T10:00:00Z\",\"level\":\"INFO\",\"msg\":\"apprelay proxy listening\"}' " +
+		"'{\"time\":\"2026-11-03T10:00:05Z\",\"level\":\"INFO\",\"msg\":\"apprelay refused\",\"host\":\"fonts.corp\",\"port\":\"443\",\"why\":\"private\",\"what\":\"font\",\"from\":\"http://10.0.0.50:8080\",\"count\":4}'; fi\nexit 0\n"
 	docker = filepath.Join(dir, "docker")
 	if err := os.WriteFile(docker, []byte(script), 0o700); err != nil { // #nosec G306 -- an executable test stub
 		t.Fatal(err)
@@ -309,13 +312,69 @@ func TestApplicationSessionReachesEveryEndpoint(t *testing.T) {
 		t.Fatalf("session.start should say the dependencies' reach: %v", d)
 	}
 	log, _ := os.ReadFile(calls) // #nosec G304 -- test temp dir
-	for _, want := range []string{`"host":"10.0.0.50","port":8080,"to":"10.0.0.50:8080"`, `"host":"api.zanskar.invalid","port":9000,"to":"10.0.0.51:9000"`, `"public":true`} {
+	for _, want := range []string{`"host":"10.0.0.50","port":8080,"to":"10.0.0.50:8080"`, `"host":"api.zanskar.invalid","port":9000,"to":"10.0.0.51:9000"`, `"proxy":{`} {
 		if !strings.Contains(string(log), want) {
 			t.Errorf("the relay's table misses %s:\n%s", want, log)
 		}
 	}
 	if strings.Contains(string(log), "down.zanskar.invalid") {
 		t.Errorf("an origin that did not resolve reached the relay's table:\n%s", log)
+	}
+}
+
+// TestApplicationSessionLearnsRefusals (ADR 0037, amended 2026-11-03,
+// later): under public dependencies the relay is the proxy that inspects,
+// with a certificate authority made for the session (the browser is given
+// its certificate, not the application's bundle) and the application's
+// private allowances in its table; what the proxy refused is read from the
+// container's log as the session ends and kept on the application.
+func TestApplicationSessionLearnsRefusals(t *testing.T) {
+	r, _, calls := appRig(t)
+	tg := &target.Target{Name: "learns", AppUpstream: "http://10.0.0.50:8080", Tags: map[string]string{"app": "yes"},
+		AppPrivate: &target.AppPrivate{Networks: []string{"10.20.0.0/16"}, Hosts: []string{"cdn.corp:443"}}}
+	if err := r.h.Targets.Create(r.ctx, tg); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	ws, _, err := r.dial(ctx, r.ticket(t, tg.ID, "http")) //nolint:bodyclose // the library closes the handshake body
+	if err != nil {
+		t.Fatal(err)
+	}
+	var seen string
+	for !strings.Contains(seen, "7.zanskar,") {
+		_, data, err := ws.Read(ctx)
+		if err != nil {
+			t.Fatalf("read: %v (got %q)", err, seen)
+		}
+		seen += string(data)
+	}
+	log, _ := os.ReadFile(calls) // #nosec G304 -- test temp dir
+	for _, want := range []string{`"proxy":{`, `"listen":"internal:3128"`, `"private_networks":["10.20.0.0/16"]`, `"private_hosts":["cdn.corp:443"]`, `"name":"learns"`, "CA_PEM=-----BEGIN CERTIFICATE-----"} {
+		if !strings.Contains(string(log), want) {
+			t.Errorf("the relay's table or the browser's environment misses %s:\n%s", want, log)
+		}
+	}
+	if strings.Contains(string(log), `"socks":{`) {
+		t.Errorf("a SOCKS listener under public dependencies:\n%s", log)
+	}
+	ws.CloseNow()
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		got, err := r.h.Targets.ListRefusals(context.Background(), tg.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(got) == 1 {
+			if x := got[0]; x.Host != "fonts.corp" || x.Port != 443 || x.Why != "private" || x.What != "font" || x.From != "http://10.0.0.50:8080" || x.Count != 4 {
+				t.Fatalf("learned: %+v", x)
+			}
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("the refusal was not learned from the relay's log: %+v", got)
+		}
+		time.Sleep(100 * time.Millisecond)
 	}
 }
 
@@ -350,8 +409,8 @@ func TestApplicationSessionHeldToOrigins(t *testing.T) {
 		t.Fatalf("session.start: %v", d)
 	}
 	log, _ := os.ReadFile(calls) // #nosec G304 -- test temp dir
-	if !strings.Contains(string(log), `"host":"10.0.0.50","port":8080`) || strings.Contains(string(log), `"public"`) {
-		t.Errorf("the relay's table should route the upstream and let nothing else out:\n%s", log)
+	if !strings.Contains(string(log), `"socks":{`) || !strings.Contains(string(log), `"host":"10.0.0.50","port":8080`) || strings.Contains(string(log), `"proxy":{`) {
+		t.Errorf("the relay's table should be the SOCKS tunnel to the upstream and nothing that inspects:\n%s", log)
 	}
 }
 

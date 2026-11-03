@@ -2596,6 +2596,40 @@ paths:
           description: Retired.
         "404":
           $ref: "#/components/responses/NotFound"
+  /targets/{id}/dependencies:
+    parameters:
+      - $ref: "#/components/parameters/Id"
+    get:
+      tags: [admin]
+      summary: What an application's sessions were refused as dependencies
+      description: >-
+        Learned from each session relay's log (ADR 0037, amended 2026-11-03, later), newest
+        sighting first, at most 200: a private host a page loaded from, a page someone tried to
+        open, an address that is never allowable. Read only; the console offers each private one
+        to allow by adding it to `app_private`.
+      responses:
+        "200":
+          description: The list.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/DependencyRefusal"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    delete:
+      tags: [admin]
+      summary: Forget the list
+      description: Audited as `target.update` with `dependencies_cleared`; the next session fills it again with what is still refused.
+      responses:
+        "204":
+          description: Forgotten.
+        "404":
+          $ref: "#/components/responses/NotFound"
   /targets/{id}/usage:
     parameters:
       - $ref: "#/components/parameters/Id"
@@ -6378,9 +6412,12 @@ components:
           enum: [public, origins]
           description: >-
             Where an application's pages may load what they depend on (scripts, styles, fonts,
-            images, APIs) beside its origins (2026-11-03): `public`, any public address on port 80
-            or 443, through the session's relay; `origins`, the upstream and the endpoints only.
+            images, frames, APIs) beside its origins (2026-11-03): `public`, any public address on
+            any port, through a session relay that reads the session's requests, and the private
+            addresses in `app_private`; `origins`, the upstream and the endpoints only, nothing read.
             Opening a page is held to the origins either way. Absent on a host or a database.
+        app_private:
+          $ref: "#/components/schemas/AppPrivate"
         os_family:
           $ref: "#/components/schemas/OsFamily"
         ports:
@@ -6505,8 +6542,15 @@ components:
           enum: [public, origins]
           description: >-
             For an application: `public` (the default when absent), its pages load from any public
-            address on port 80 or 443; `origins`, from the upstream and the endpoints only. Going
-            from `public` to `origins` ends the sessions open on the application. Refused on a host
+            address, on any port, and from `app_private`; `origins`, from the upstream and the
+            endpoints only. Going from `public` to `origins` ends the sessions open on the
+            application. Refused on a host or a database.
+        app_private:
+          allOf:
+            - $ref: "#/components/schemas/AppPrivate"
+          description: >-
+            For an application under `public`: replaces the whole allowance; absent or empty is
+            none. Taking an entry away ends the sessions open on the application. Refused on a host
             or a database.
         os_family:
           $ref: "#/components/schemas/OsFamily"
@@ -6540,6 +6584,53 @@ components:
         url:
           type: string
           description: '`http://host[:port]` or `https://host[:port]`, the origin only.'
+    AppPrivate:
+      type: object
+      description: >-
+        The private address space an application's dependencies may reach beside its origins
+        (ADR 0037, amended 2026-11-03, later), under `app_dependencies: public`. A private
+        address is refused until it is here; what was refused is read at
+        `GET /targets/{id}/dependencies`.
+      properties:
+        networks:
+          type: array
+          maxItems: 64
+          description: Networks in CIDR form, each written as its network address, in private space (`10.20.0.0/16`, `fd00:1::/64`).
+          items:
+            type: string
+        hosts:
+          type: array
+          maxItems: 64
+          description: '`host:port` pairs (`cdn.corp:443`); an IP literal must be private.'
+          items:
+            type: string
+    DependencyRefusal:
+      type: object
+      description: >-
+        One thing an application's sessions were refused as a dependency, learned from the
+        session relay's log and counted across sessions.
+      properties:
+        host:
+          type: string
+        port:
+          type: integer
+        why:
+          type: string
+          description: '`private`, `link-local`, `a cloud metadata service`, `not an origin of the application` (a page someone tried to open), and the like.'
+        what:
+          type: string
+          description: "The browser's fetch destination that asked: `script`, `style`, `image`, `font`, `iframe`, `empty` (a fetch), `document` (a page)."
+        from:
+          type: string
+          description: The origin of the page that asked; empty when the browser did not say.
+        count:
+          type: integer
+        first_seen:
+          type: string
+          format: date-time
+        last_seen:
+          type: string
+          format: date-time
     ProbeResult:
       type: object
       required: [capabilities, host_key_status, probed_at, ports]
