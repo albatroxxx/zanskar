@@ -181,6 +181,9 @@ export const typeLabel: Record<string, string> = {
   recording: 'recording',
   audit_log: 'audit log',
   notification_channel: 'notification channel',
+  email_server: 'email server',
+  retention_policy: 'retention policy',
+  cli: 'command line',
 }
 
 const verbs: Record<string, string> = {
@@ -211,6 +214,15 @@ export function article(word: string): 'a' | 'an' {
   const w = word.trim()
   if (w.length > 1 && w === w.toUpperCase() && /^[A-Z]/.test(w)) return /^[AEFHILMNORSX]/.test(w) ? 'an' : 'a'
   return /^[aeiou]/i.test(w) ? 'an' : 'a'
+}
+
+/** installVariables are the environment variables an install settings change
+ *  names. The request records them as {NAME: value} (the values stay in the
+ *  details), the helper's answer as a list of names; neither holds a secret. */
+function installVariables(d: Record<string, unknown>): string[] {
+  const v = d.changes ?? d.changed
+  if (Array.isArray(v)) return v.filter((n): n is string => typeof n === 'string' && n !== '')
+  return v && typeof v === 'object' ? Object.keys(v) : []
 }
 
 /** describe turns an event into the sentence a reviewer wants: who did what,
@@ -291,6 +303,32 @@ export function describe(ev: AuditEvent): string {
     case 'user.password.reset': return `reset the password of user ${name}`
     case 'user.mfa.reset': return `reset the authenticator of user ${name}`
     case 'user.sessions.revoke': return `signed user ${name} out everywhere`
+    // The gateway itself (object: system, gateway) and the mail server (object:
+    // email_server, id 1): the sentence names the thing, never its id. A
+    // success of a restart, an update or an install settings change is the
+    // request; it happens after the drain, and a failure is a row of its own.
+    case 'settings.boot_request': {
+      const vars = installVariables(d)
+      return `${fail ? 'failed to request' : 'requested'} an install settings change${vars.length ? ` (${vars.join(', ')})` : ''}`
+    }
+    case 'settings.boot_apply':
+      if (!fail) return 'applied an install settings change'
+      // rolled_back: written, the gateway did not come back, the old file is back.
+      return `failed to apply an install settings change${d.state === 'rolled_back' ? ': rolled back' : ''}`
+    case 'system.update': {
+      const to = str(d.version) ? ` to ${str(d.version)}` : ''
+      return fail ? `failed to update the gateway${to}` : `requested a gateway update${to}`
+    }
+    case 'system.restart': return fail ? 'failed to request a gateway restart' : 'requested a gateway restart'
+    case 'system.restart_cancel': return fail ? 'failed to cancel the gateway restart' : 'cancelled the gateway restart'
+    case 'system.reboot': return fail ? 'failed to request a host reboot' : 'requested a host reboot'
+    case 'system.poweroff': return fail ? 'failed to request a host power-off' : 'requested a host power-off'
+    case 'system.images_remove': return fail ? 'failed to remove old images' : 'removed old images'
+    case 'config.export': return fail ? 'failed to export the configuration' : 'exported the configuration'
+    case 'config.import': return fail ? 'failed to import the configuration' : 'imported the configuration'
+    case 'notify.email_server.update': return fail ? 'failed to set the email server' : 'set the email server'
+    case 'notify.email_server.delete': return fail ? 'failed to remove the email server' : 'removed the email server'
+    case 'notify.email_server.test': return fail ? 'failed to test the email server' : 'tested the email server'
     default: {
       const parts = ev.action.split('.')
       const verb = verbs[parts[parts.length - 1]] ?? words(parts[parts.length - 1])
