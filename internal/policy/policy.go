@@ -190,10 +190,10 @@ func (g *Grant) validate() error {
 	if g.AllowDevTools && g.Kind != protocol.KindApplication {
 		return fmt.Errorf("%w: developer tools are for application grants only", ErrInvalidInput)
 	}
-	// Four eyes holds terminal sessions (ADR 0042), which databases and
-	// applications do not have.
-	if g.RequireWatcher && g.Kind != protocol.KindHost && g.Kind != protocol.KindAutoscaling {
-		return fmt.Errorf("%w: a second person watching is for host and autoscaling grants only", ErrInvalidInput)
+	// Four eyes holds terminals, desktops and applications' browsers (ADR
+	// 0042 and its amendment); a database session cannot be watched.
+	if g.RequireWatcher && g.Kind != protocol.KindHost && g.Kind != protocol.KindAutoscaling && g.Kind != protocol.KindApplication {
+		return fmt.Errorf("%w: a second person watching is for host, autoscaling and application grants; a database session cannot be watched", ErrInvalidInput)
 	}
 	// Files move over SSH (the terminal's SFTP panel) and RDP (the session's
 	// drive), never into a database client or an application's browser,

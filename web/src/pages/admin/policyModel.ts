@@ -74,10 +74,11 @@ export function filesMove(kind: TargetKind): boolean {
 }
 
 /** watchable: a grant of kind can ask for a second person watching (ADR
- *  0042), whose sessions are held until one does: hosts and autoscaling
- *  groups, for their terminal sessions. */
+ *  0042 and its amendment), whose sessions are held until one does: hosts
+ *  and autoscaling groups (terminals and desktops) and applications. A
+ *  database session cannot be watched. */
 export function watchable(kind: TargetKind): boolean {
-  return kind === 'host' || kind === 'autoscaling'
+  return kind === 'host' || kind === 'autoscaling' || kind === 'application'
 }
 
 /** A new grant of kind, with the defaults the server would fill. */

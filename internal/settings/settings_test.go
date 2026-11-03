@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -386,6 +387,38 @@ func TestEnvValuesReportsWhatItCannotUse(t *testing.T) {
 	}
 	if vals[KeyLogLevel] != "info" {
 		t.Fatalf("the good values still come through: %v", vals)
+	}
+}
+
+// TestFourEyesTags (2026-11-03, idea 7): the tags every session to which
+// waits for a watcher are key=value pairs, kept tidy, a repeat kept once;
+// anything else is refused with the reason.
+func TestFourEyesTags(t *testing.T) {
+	d, ok := Lookup(KeyFourEyesTags)
+	if !ok || d.Default != "" || !d.StepUp || d.Category != "Sessions" {
+		t.Fatalf("four eyes tags setting: %+v %v", d, ok)
+	}
+	for in, want := range map[string]string{
+		"":                                     "",
+		" , ":                                  "",
+		"env=prod":                             "env=prod",
+		" env = prod ,tier=payments, env=prod": "env=prod, tier=payments",
+		"env=prod,env=staging":                 "env=prod, env=staging",
+	} {
+		got, err := Validate(d, in)
+		if err != nil || got != want {
+			t.Fatalf("%q: %q %v, want %q", in, got, err, want)
+		}
+	}
+	long := strings.Repeat("k", 65)
+	many := ""
+	for i := range 33 {
+		many += "k" + strconv.Itoa(i) + "=v,"
+	}
+	for _, bad := range []string{"env", "env=", "=prod", "env=prod, staging", long + "=v", "k=" + long, many} {
+		if _, err := Validate(d, bad); !errors.Is(err, ErrInvalid) {
+			t.Fatalf("%q accepted: %v", bad, err)
+		}
 	}
 }
 

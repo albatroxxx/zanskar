@@ -15,6 +15,8 @@ import (
 
 	"github.com/albatroxxx/zanskar/internal/audit"
 	"github.com/albatroxxx/zanskar/internal/session"
+	"github.com/albatroxxx/zanskar/internal/settings"
+	"github.com/albatroxxx/zanskar/internal/target"
 )
 
 // fourEyes makes the fixture's test-all policy ask for a second person
@@ -138,14 +140,20 @@ func TestFourEyesNobodyCame(t *testing.T) {
 	}
 }
 
-// A grant asking for four eyes admits no session that cannot be held:
-// refused at Connect rather than run unwatched.
-func TestFourEyesRefusesWhatCannotBeHeld(t *testing.T) {
+// Four eyes admits no session that cannot be watched: a database session
+// under a four-eyes tag (no database grant can ask for it) is refused at
+// Connect rather than run unwatched (ADR 0042 amendment).
+func TestFourEyesRefusesWhatCannotBeWatched(t *testing.T) {
 	port, fp := shellTarget(t)
 	r := newTerminalRig(t, port, fp)
-	fourEyes(t, r.connectFixture)
-	code, out := r.postConnect(t, r.url, r.targetID, "rdp")
-	if code != http.StatusConflict || out["code"] != "watcher_unavailable" {
-		t.Fatalf("rdp under four eyes: %d %v", code, out)
+	r.h.FourEyesTags = func() []settings.FourEyesTag { return []settings.FourEyesTag{{Key: "env", Value: "test"}} }
+	db := &target.Target{Name: "orders-db", Address: "10.0.0.20", Engine: "postgres", TLSMode: "require", Tags: map[string]string{"env": "test"},
+		Ports: map[target.Protocol]int{target.Database: 5432}, Credentials: map[target.Protocol]string{target.Database: r.vaulted}}
+	if err := r.h.Targets.Create(r.ctx, db); err != nil {
+		t.Fatal(err)
+	}
+	code, out := r.postConnect(t, r.url, db.ID, "database")
+	if code != http.StatusConflict || out["code"] != "watcher_unavailable" || !strings.Contains(out["message"].(string), "database") {
+		t.Fatalf("a database under four eyes: %d %v", code, out)
 	}
 }

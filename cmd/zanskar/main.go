@@ -377,7 +377,12 @@ func serve(ctx context.Context) error {
 		DockerPath: cfg.DockerPath, DBMaxSessions: cfg.DatabaseMaxSessions, DBProxyImage: func() string { return runtime.String(settings.KeyDBProxyImage) },
 		AppsMaxSessions: cfg.AppsMaxSessions, BrowserImage: func() string { return runtime.String(settings.KeyBrowserImage) }, StateDir: cfg.StateDir,
 		Prober: prober, ASGs: asgRepo, Cloud: cloudProviders,
-		DiskFull: (&lifecycle.DiskGuard{DatabasePath: dbFileForMetrics(cfg.DBDSN), RecordingsPath: cfg.RecordingsDir}).Full}
+		DiskFull: (&lifecycle.DiskGuard{DatabasePath: dbFileForMetrics(cfg.DBDSN), RecordingsPath: cfg.RecordingsDir}).Full,
+		// Read at each Connect; the setting was checked when it was saved.
+		FourEyesTags: func() []settings.FourEyesTag {
+			tags, _ := settings.ParseFourEyesTags(runtime.String(settings.KeyFourEyesTags))
+			return tags
+		}}
 	// A sign-in through an identity provider that removes the user from a
 	// mapped group ends what that group granted, as an admin's removal does.
 	provisioner.Revoker = connectHandler

@@ -43,3 +43,26 @@ watcher subscribes to before a byte flows.
   until then a four-eyes grant on a Windows host admits its WinRM console and refuses RDP.
 - A person who closes the tab while waiting leaves the target's connection open until the wait
   ends, at most 5 minutes.
+
+## Amendment, 2026-11-03: desktops and applications are held, and tags ask for four eyes
+
+The live audit's idea 7 asked for four eyes on tagged targets (`env=prod`); 1.15.0 made it a grant
+switch and held terminal sessions only. Two things change.
+
+- **Held before guacd draws.** A desktop (RDP, VNC) or an application's browser cannot wait once
+  guacd is drawing it, so it waits before: the session is live (in the registry, so it can be
+  watched) but guacd is not dialled, nor the application's browser started, until someone other
+  than its owner watches. The console says *waiting for a second person to watch this session*;
+  a nop every few seconds keeps its tunnel open. A watcher of a held desktop is counted at once,
+  which releases it, and their view joins guacd read-only as soon as the session has dialled it,
+  so they see it from its first frame. Nobody within 5 minutes ends it `no_watcher`; it never
+  dialled the target and keeps no recording. Watching a desktop now counts as watching for four
+  eyes, as watching a terminal always did. Application grants may ask for four eyes.
+- **Four eyes for tags.** *Four eyes for tags* (`access.four_eyes_tags`, Settings › Sessions):
+  `key=value` pairs, comma-separated. Every session to a host or autoscaling group carrying one
+  of them waits for a watcher, whichever policy admits the person, so a team's `env=prod` cannot
+  be opened unwatched by a grant that forgot the switch. Changing it asks for a recent code, or a
+  stolen session could empty it.
+- **What cannot be watched is refused.** A database session has no screen to watch: under four
+  eyes, by grant or by tag, it is refused at Connect (`watcher_unavailable`), never run
+  unwatched. A database grant still cannot ask for four eyes.

@@ -387,7 +387,7 @@ function GrantCard({ index, draft: d, open, onToggleOpen, onChange, onRemove, on
                 // Developer tools exist only in an application's browser (ADR 0037).
                 ...(d.kind === 'application' ? ([['allow_devtools', 'Developer tools']] as const) : []),
                 // Four eyes (ADR 0042): a terminal session waits for a watcher.
-                ...(watchable(d.kind) ? ([['require_watcher', 'Second person watches (SSH, WinRM)']] as const) : []),
+                ...(watchable(d.kind) ? ([['require_watcher', 'Second person watches']] as const) : []),
               ] as const).map(([k, label]) => (
                 <span key={k} className="field inline">
                   <input id={`${p}-${k}`} type="checkbox" checked={d[k]} onChange={(e) => up({ [k]: e.target.checked } as Partial<GrantDraft>)} />

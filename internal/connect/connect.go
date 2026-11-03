@@ -30,6 +30,7 @@ import (
 	"github.com/albatroxxx/zanskar/internal/protocol"
 	"github.com/albatroxxx/zanskar/internal/recording"
 	"github.com/albatroxxx/zanskar/internal/session"
+	"github.com/albatroxxx/zanskar/internal/settings"
 	"github.com/albatroxxx/zanskar/internal/sshca"
 	"github.com/albatroxxx/zanskar/internal/target"
 	"github.com/albatroxxx/zanskar/internal/ticket"
@@ -39,6 +40,9 @@ import (
 type Handler struct {
 	Targets  *target.Repo
 	Policies *policy.Repo
+	// FourEyesTags names the target tags whose every session waits for a
+	// watcher (the runtime setting, ADR 0042 amendment); nil names none.
+	FourEyesTags func() []settings.FourEyesTag
 	// Access holds the just-in-time grants that gate approval-required policies
 	// (ADR 0018); nil leaves every policy standing.
 	Access   *access.Repo
@@ -443,6 +447,27 @@ func (h *Handler) admits(ctx context.Context, userID string, ep *endpoint, proto
 	return h.gate().Admit(ctx, userID, ep.policyRef(), string(proto), time.Now())
 }
 
+// watchable reports whether a session over proto can be held for a watcher
+// and watched: terminals, desktops and applications' browsers.
+func watchable(proto target.Protocol) bool {
+	p := string(proto)
+	return protocol.Terminal(p) || protocol.Desktop(p) || p == protocol.HTTP
+}
+
+// fourEyesTagged reports whether ep carries a tag the four-eyes setting
+// names (2026-11-03, idea 7).
+func (h *Handler) fourEyesTagged(ep *endpoint) bool {
+	if h.FourEyesTags == nil {
+		return false
+	}
+	for _, t := range h.FourEyesTags() {
+		if v, ok := ep.Tags[t.Key]; ok && v == t.Value {
+			return true
+		}
+	}
+	return false
+}
+
 // issueTicket runs policy, pinning and credential checks for an endpoint and
 // issues a connect ticket. A non-empty code is a user-facing refusal.
 
@@ -463,11 +488,17 @@ func (h *Handler) issueTicket(ctx context.Context, p *auth.Principal, ip string,
 	if err != nil || code != "" {
 		return nil, code, msg, err
 	}
-	// Four eyes (ADR 0042) holds a terminal session until someone watches
-	// it; a session of any other kind cannot be held that way, so it is
-	// refused rather than run unwatched.
-	if d.RequireWatcher && !protocol.Terminal(string(proto)) {
-		return nil, "watcher_unavailable", "this access needs a second person watching, which the gateway offers for terminal sessions (SSH, the WinRM console); ask an administrator", nil
+	// A target with a four-eyes tag waits for a watcher whichever policy
+	// admitted the person (2026-11-03, idea 7; ADR 0042 amendment).
+	if !d.RequireWatcher && h.fourEyesTagged(ep) {
+		d.RequireWatcher = true
+	}
+	// Four eyes (ADR 0042) holds a session until someone watches it: a
+	// terminal once it is dialled, a desktop or an application before guacd
+	// draws it. A database session cannot be watched, so it is refused
+	// rather than run unwatched.
+	if d.RequireWatcher && !watchable(proto) {
+		return nil, "watcher_unavailable", "this access needs a second person watching, which a database session cannot have; ask an administrator", nil
 	}
 	switch proto {
 	case target.SSH:

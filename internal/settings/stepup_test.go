@@ -68,9 +68,10 @@ func TestCredentialRoutingSettingsAskForAStepUp(t *testing.T) {
 			stepUp = append(stepUp, v.Key)
 		}
 	}
-	// The approval step-up too (2026-11-03, idea 3): a stolen session that
-	// could switch it off could then approve without a code.
-	if strings.Join(stepUp, ",") != KeyApproveStepUp+","+KeyGuacdAddr+","+KeyDBProxyImage+","+KeyBrowserImage {
+	// The approval step-up and the four-eyes tags too (2026-11-03, ideas 3
+	// and 7): a stolen session that could switch either off could then
+	// approve without a code, or connect unwatched.
+	if strings.Join(stepUp, ",") != KeyApproveStepUp+","+KeyGuacdAddr+","+KeyDBProxyImage+","+KeyBrowserImage+","+KeyFourEyesTags {
 		t.Fatalf("settings marked step_up: %v", stepUp)
 	}
 }

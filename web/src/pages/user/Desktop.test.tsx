@@ -166,6 +166,24 @@ describe('Desktop, while connecting', () => {
     act(() => c.onstatechange?.(3))
     expect(screen.queryByRole('status')).toBeNull()
   })
+
+  // 2026-11-03, idea 7 (ADR 0042 amendment): a desktop under four eyes is
+  // held before guacd draws it; the bar says why until the session starts,
+  // and the flags that follow still turn the controls on.
+  it('says it waits for a second person, until the session starts', async () => {
+    start()
+    const c = await connected()
+    act(() => c.tunnel.oninstruction?.('', [SESSION]))
+    act(() => c.tunnel.oninstruction?.('zanskar', ['waiting', 'waiting for a second person to watch this session (four eyes)']))
+    const status = screen.getByRole('status')
+    expect(status.textContent).toBe('waiting for a second person to watch this session (four eyes)')
+    expect(screen.queryByText('Connecting…')).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Files' })).toBeNull()
+    act(() => c.tunnel.oninstruction?.('zanskar', ['file', '1', 'clipboard', '1']))
+    expect(screen.queryByText(/second person/)).toBeNull()
+    expect(screen.getByRole('button', { name: 'Files' })).toBeDefined()
+    expect(screen.getByRole('button', { name: 'Clipboard' })).toBeDefined()
+  })
 })
 
 // B23: the desktop page's clock kept running after the session ended, and

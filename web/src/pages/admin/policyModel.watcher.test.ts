@@ -1,14 +1,16 @@
 import { describe, expect, it } from 'vitest'
 import { fromDraft, grantSummary, newGrant, toDraft, watchable } from './policyModel'
 
-// 2026-11-03, idea 7 (ADR 0042): a second person watching is a host or
-// autoscaling grant's switch; it travels with the grant and says so.
+// 2026-11-03, idea 7 (ADR 0042 and its amendment): a second person
+// watching is a host, autoscaling or application grant's switch (a
+// database session cannot be watched); it travels with the grant and says
+// so.
 describe('four eyes in a grant', () => {
-  it('is offered on hosts and autoscaling groups only', () => {
+  it('is offered on hosts, autoscaling groups and applications, never databases', () => {
     expect(watchable('host')).toBe(true)
     expect(watchable('autoscaling')).toBe(true)
+    expect(watchable('application')).toBe(true)
     expect(watchable('database')).toBe(false)
-    expect(watchable('application')).toBe(false)
   })
 
   it('is sent when on, and never for a kind that cannot hold a session', () => {

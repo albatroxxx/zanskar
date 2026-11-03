@@ -6648,11 +6648,14 @@ components:
           type: boolean
           default: false
           description: >
-            Four eyes (ADR 0042): a terminal session (SSH, the WinRM console) the grant admits is
-            held, its owner told why, until an administrator or auditor other than its owner
-            watches it, and ends `no_watcher` after 5 minutes without one. Any other session the
-            grant admits is refused at Connect (`409 watcher_unavailable`). Allowed on `host` and
-            `autoscaling` grants; where several grants admit a person, one asking for it is enough.
+            Four eyes (ADR 0042 and its amendment): a session the grant admits is held, its owner
+            told why, until an administrator or auditor other than its owner watches it, and ends
+            `no_watcher` after 5 minutes without one. A terminal is held once connected; a desktop
+            or an application's browser before guacd is dialled. Allowed on `host`, `autoscaling`
+            and `application` grants; where several grants admit a person, one asking for it is
+            enough. The setting `access.four_eyes_tags` asks it of every session to a target with
+            one of its tags. A database session under four eyes is refused at Connect (`409
+            watcher_unavailable`): it cannot be watched.
         idle_timeout_minutes:
           type: integer
           minimum: 1

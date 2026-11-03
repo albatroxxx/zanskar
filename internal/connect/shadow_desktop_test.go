@@ -67,22 +67,18 @@ func joinRecorder(t *testing.T) (string, <-chan [2]string) {
 // TestShadowDesktopJoinsReadOnly: a reviewer watching a live desktop session
 // joins its guacd connection read-only, so they can see but never type or
 // click into someone else's desktop; watching starts and ends as audit
-// events. A desktop session cannot be joined while guacd is unset or before
-// it has a guacd connection.
+// events. A desktop session cannot be joined while guacd is unset; one with
+// no guacd connection yet is waited for (foureyes_desktop_test.go).
 func TestShadowDesktopJoinsReadOnly(t *testing.T) {
 	e := newShadowEnv(t)
 	auditor := e.cookieFor(t, "auditor", user.RoleAuditor)
 	addr, got := joinRecorder(t)
 	e.reg.Add(context.Background(), gateway.Live{SessionID: "d1", UserID: "owner", TargetID: "t1", Protocol: "rdp", GuacID: "$conn-9"})
-	e.reg.Add(context.Background(), gateway.Live{SessionID: "d2", UserID: "owner", TargetID: "t1", Protocol: "vnc"})
 
 	if _, code := dialShadow(t, e, "d1", auditor); code != 404 {
 		t.Fatalf("guacd unset: %d, want 404", code)
 	}
 	e.h.GuacdAddr = func() string { return addr }
-	if _, code := dialShadow(t, e, "d2", auditor); code != 404 {
-		t.Fatalf("no guacd connection yet: %d, want 404", code)
-	}
 
 	ws, code := dialShadow(t, e, "d1", auditor)
 	if ws == nil {

@@ -247,6 +247,10 @@ func (h *Handler) desktop(w http.ResponseWriter, r *http.Request) {
 	if g.AllowFileTransfer && proto == target.RDP {
 		params.Args["drive-path"] = drivePathFor(run.s.ID)
 	}
+	// Four eyes: nobody watching, guacd is not dialled (ADR 0042 amendment).
+	if !run.holdDesktop() {
+		return
+	}
 	h.serveGuac(r, ws, run, g, ep, params, guacdAddr)
 }
 
@@ -283,7 +287,11 @@ func (h *Handler) serveGuac(r *http.Request, ws *websocket.Conn, run *sessionRun
 	// flags so the browser can show or hide the file and clipboard controls.
 	// Guacamole.Client ignores opcodes it does not know, so it is harmless to
 	// a stock client and never reaches guacd.
-	if err := ws.Write(r.Context(), websocket.MessageText, []byte(guac.Encode("", run.s.ID)+FlagsInstruction(files, g.AllowClipboard))); err != nil {
+	open := guac.Encode("", run.s.ID)
+	if run.tunnelOpen {
+		open = "" // a desktop's hold opened it
+	}
+	if err := ws.Write(r.Context(), websocket.MessageText, []byte(open+FlagsInstruction(files, g.AllowClipboard))); err != nil {
 		// The recording is closed the way every other end closes it, so a
 		// close that fails is audited as recording.lost here too (B14).
 		run.finishRecording(rec, recRow)

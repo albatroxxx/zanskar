@@ -61,6 +61,7 @@ func appRig(t *testing.T) (*desktopRig, string, string) {
 	if err := r.h.Policies.Create(r.ctx, apps); err != nil {
 		t.Fatal(err)
 	}
+	r.policyIDs[apps.Name] = apps.ID
 	tg := &target.Target{Name: "wiki", AppUpstream: "http://10.0.0.50:8080", Tags: map[string]string{"app": "yes"}}
 	if err := r.h.Targets.Create(r.ctx, tg); err != nil {
 		t.Fatal(err)
