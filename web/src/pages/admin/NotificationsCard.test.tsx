@@ -93,7 +93,10 @@ describe('Notifications, the email server', () => {
     render(<NotificationsCard />)
     const block = within(await screen.findByTestId('email-server'))
     expect(block.getByText('smtp.example.com:587')).toBeDefined()
-    expect(block.getByText(/account svc/)).toBeDefined()
+    expect(block.getByText('svc')).toBeDefined()
+    expect(block.getByText(/password stored/)).toBeDefined()
+    // The server's actions are a row of their own, not words inside a sentence.
+    expect(block.getByRole('button', { name: 'Test' }).closest('.actions')).not.toBeNull()
     const user = userEvent.setup()
     await user.click(block.getByRole('button', { name: 'Test' }))
     await user.type(screen.getByLabelText('To'), 'me@example.com')

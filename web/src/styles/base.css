@@ -74,6 +74,14 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--accent); }
 .actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 /* Notification channels in Settings (ADR 0039). */
 .notify-table { width: 100%; }
+/* The mail server above the channels (ADR 0039, amended 2026-11-03): its
+   facts as key–values and its buttons on a row of their own, parted from
+   the channel table by a rule. Before, the buttons sat inside a sentence
+   and broke onto a line of their own, indented. */
+.email-server { padding-bottom: 14px; margin-bottom: 14px; border-bottom: 1px solid var(--line); }
+.email-server h3, #settings-notifications > h3 { font-size: 1rem; margin-bottom: 8px; }
+.email-server > p.muted { margin: 0; font-size: 0.86rem; }
+.email-server .actions { margin-top: 10px; }
 /* A policy whose access review is due (ADR 0040): a dot on its Review button. */
 .dot-due { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--warn); margin-left: 6px; vertical-align: middle; }
 tr.off td { color: var(--fg-muted); }
