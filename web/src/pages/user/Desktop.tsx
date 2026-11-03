@@ -78,9 +78,6 @@ function DesktopSession({ state }: { state: SessionState }) {
   const [connected, setConnected] = useState(false)
   const endedRef = useRef(false)
   const [flags, setFlags] = useState({ files: false, clipboard: false })
-  // Four eyes (ADR 0042 amendment): the gateway holds the session until a
-  // second person watches, and says so; the flags arrive once it starts.
-  const [waiting, setWaiting] = useState('')
   const [panelOpen, setPanelOpen] = useState(false)
   const [fsReady, setFsReady] = useState(false)
   const [cwd, setCwd] = useState('/')
@@ -304,12 +301,7 @@ function DesktopSession({ state }: { state: SessionState }) {
         // It addresses the failover endpoint, so only the shape the gateway
         // generates is taken, as on the terminal page.
         if (opcode === '' && SESSION_ID.test(args[0] ?? '')) setSessionId((cur) => cur || args[0])
-        if (opcode === 'zanskar' && args[0] === 'waiting') {
-          setWaiting(args[1] || 'waiting for a second person to watch this session')
-          return
-        }
         if (opcode === 'zanskar') {
-          setWaiting('')
           const next = { files: false, clipboard: false }
           for (let i = 0; i + 1 < args.length; i += 2) {
             if (args[i] === 'file') next.files = args[i + 1] === '1'
@@ -480,8 +472,7 @@ function DesktopSession({ state }: { state: SessionState }) {
         <span className="stat">{(ended ? 'ran for ' : 'elapsed ') + fmtSeconds(elapsed)}</span>
         {!ended && <GrantClock session={state} />}
         <span className="grow" />
-        {waiting && !ended && <span className="stat warn" role="status">{waiting}</span>}
-        {!ended && !connected && !waiting && <span className="stat hint" role="status">Connecting…</span>}
+        {!ended && !connected && <span className="stat hint" role="status">Connecting…</span>}
         {!ended && <span className="stat hint" title={`Press ${CONTROLS_KEY} to move between the desktop and these controls`}>{CONTROLS_KEY}: controls</span>}
         {ended ? (
           <span className="stat">Ended · recording saved</span>

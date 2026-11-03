@@ -82,11 +82,6 @@ func (h *ShadowHandler) shadowTerminal(w http.ResponseWriter, r *http.Request, l
 	defer ws.CloseNow()
 	ch, replay, cancel := tap.Subscribe()
 	defer cancel()
-	// Counted as watching from here, while the stream reaches this socket;
-	// the first watcher other than the owner releases a session held for a
-	// second person (ADR 0042).
-	h.Registry.Watch(live.SessionID, actor.UserID, +1)
-	defer h.Registry.Watch(live.SessionID, actor.UserID, -1)
 	h.record(r, actor.Event(audit.SessionShadowStart, "access_session", live.SessionID, audit.Success, details))
 	defer h.record(r, actor.Event(audit.SessionShadowEnd, "access_session", live.SessionID, audit.Success, details))
 
@@ -138,13 +133,8 @@ func (h *ShadowHandler) shadowDesktop(w http.ResponseWriter, r *http.Request, li
 	if h.GuacdAddr != nil {
 		guacdAddr = h.GuacdAddr()
 	}
-	if guacdAddr == "" {
+	if guacdAddr == "" || live.GuacID == "" {
 		httpx.WriteError(w, r, http.StatusNotFound, "not_live", "desktop session cannot be joined")
-		return
-	}
-	if live.GuacID == "" {
-		// Held for a watcher, or a moment from guacd (ADR 0042 amendment).
-		h.shadowHeldDesktop(w, r, live, actor, details, guacdAddr)
 		return
 	}
 	width, height, _ := screenSize(r)
@@ -164,92 +154,12 @@ func (h *ShadowHandler) shadowDesktop(w http.ResponseWriter, r *http.Request, li
 		return
 	}
 	defer ws.CloseNow()
-	// Counted as watching, as a terminal's watcher is (ADR 0042).
-	h.Registry.Watch(live.SessionID, actor.UserID, +1)
-	defer h.Registry.Watch(live.SessionID, actor.UserID, -1)
 	h.record(r, actor.Event(audit.SessionShadowStart, "access_session", live.SessionID, audit.Success, details))
 	defer h.record(r, actor.Event(audit.SessionShadowEnd, "access_session", live.SessionID, audit.Success, details))
 	if err := ws.Write(r.Context(), websocket.MessageText, []byte(guac.Encode("", live.SessionID))); err != nil {
 		return
 	}
 	if err := guac.Relay(r.Context(), gc, ws); err != nil {
-		h.Log.Warn("shadow relay ended with error", "session", live.SessionID, "err", err)
-	}
-	_ = ws.Close(websocket.StatusNormalClosure, "session_ended")
-}
-
-// heldPoll is how often a watcher of a held desktop looks for guacd's
-// connection; heldBeat how often it keeps the console's tunnel open.
-var (
-	heldPoll = 200 * time.Millisecond
-	heldBeat = 3 * time.Second
-)
-
-// shadowHeldDesktop watches a desktop that guacd is not drawing yet: one held
-// for a second person (ADR 0042 amendment), or in the moment before guacd
-// answers. The watcher is counted at once, which releases a held session;
-// the view joins guacd as soon as the session has dialled it, so the
-// watcher sees it from its first frame. The session ending first, or
-// nothing drawn within watchWait, closes the view with the reason.
-func (h *ShadowHandler) shadowHeldDesktop(w http.ResponseWriter, r *http.Request, live gateway.Live, actor audit.Actor, details map[string]string, guacdAddr string) {
-	ws, err := websocket.Accept(w, r, &websocket.AcceptOptions{Subprotocols: []string{"guacamole"}, CompressionMode: websocket.CompressionDisabled})
-	if err != nil {
-		return
-	}
-	defer ws.CloseNow()
-	h.Registry.Watch(live.SessionID, actor.UserID, +1)
-	defer h.Registry.Watch(live.SessionID, actor.UserID, -1)
-	h.record(r, actor.Event(audit.SessionShadowStart, "access_session", live.SessionID, audit.Success, details))
-	defer h.record(r, actor.Event(audit.SessionShadowEnd, "access_session", live.SessionID, audit.Success, details))
-	ctx := r.Context()
-	write := func(raw string) error { return ws.Write(ctx, websocket.MessageText, []byte(raw)) }
-	if write(guac.Encode("", live.SessionID)) != nil || write(guac.Encode("zanskar", "waiting", "the session starts now that you watch it")) != nil {
-		return
-	}
-	closeWith := func(msg string) {
-		_ = write(guac.ErrorInstruction(msg, guac.StatusSessionClosed))
-		_ = ws.Close(websocket.StatusNormalClosure, "session_ended")
-	}
-	poll := time.NewTicker(heldPoll)
-	defer poll.Stop()
-	beat := time.NewTicker(heldBeat)
-	defer beat.Stop()
-	give := time.NewTimer(watchWait)
-	defer give.Stop()
-	var guacID string
-	for guacID == "" {
-		select {
-		case <-ctx.Done():
-			return
-		case <-give.C:
-			closeWith("the session did not start")
-			return
-		case <-beat.C:
-			if write(guac.Encode("nop")) != nil {
-				return
-			}
-		case <-poll.C:
-			l, ok := h.Registry.Get(live.SessionID)
-			if !ok {
-				closeWith("the session ended before it started")
-				return
-			}
-			guacID = l.GuacID
-		}
-	}
-	width, height, _ := screenSize(r)
-	timeout := h.DialTimeout
-	if timeout <= 0 {
-		timeout = 10 * time.Second
-	}
-	gc, err := guac.Join(ctx, guacdAddr, guacID, width, height, timeout)
-	if err != nil {
-		h.Log.Warn("guacd join failed", "session", live.SessionID, "err", err)
-		closeWith("could not join the desktop session")
-		return
-	}
-	defer func() { _ = gc.Close() }()
-	if err := guac.Relay(ctx, gc, ws); err != nil {
 		h.Log.Warn("shadow relay ended with error", "session", live.SessionID, "err", err)
 	}
 	_ = ws.Close(websocket.StatusNormalClosure, "session_ended")

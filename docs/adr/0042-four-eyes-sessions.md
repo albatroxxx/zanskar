@@ -4,8 +4,9 @@ Date: 2026-11-03
 
 ## Status
 
-Accepted 2026-11-03, idea 7 of the 2026-11-03 live audit, which the owner asked to build.
-Terminal sessions only, for now; see Consequences.
+Withdrawn 2026-11-03: the owner removed four eyes in 1.16.0 (see the end). It was accepted the
+same day, idea 7 of the 2026-11-03 live audit, and shipped in 1.15.0 for terminal sessions; the
+amendment below was built after 1.15.0 and never released.
 
 ## Context
 
@@ -66,3 +67,21 @@ switch and held terminal sessions only. Two things change.
 - **What cannot be watched is refused.** A database session has no screen to watch: under four
   eyes, by grant or by tag, it is refused at Connect (`watcher_unavailable`), never run
   unwatched. A database grant still cannot ask for four eyes.
+
+## Withdrawal, 2026-11-03: removed in 1.16.0
+
+The owner asked for the feature to be removed. 1.16.0 takes it out whole: the grant switch, the
+hold of terminal sessions (and the desktop and application hold and the tag rule of the
+amendment above, which never shipped), the `watcher_needed` notification kind and the console's
+switch and waiting notices.
+
+- A policy saved with `require_watcher` keeps it in its stored grants, where it is no longer
+  read: its sessions start without waiting, as any other's do. The release notes say so.
+- The API and the configuration file refuse `require_watcher: true` with the reason
+  (`400 four_eyes_removed`; a planning problem for an import) rather than drop a control in
+  silence; `false`, as a 1.15.0 client sends it, is accepted.
+- A channel that asked for `watcher_needed` keeps its other kinds; the retired one is left out of
+  what it lists and saves.
+- What 1.15.0 recorded stays readable: `session.watcher.wait` events keep their label and
+  sessions that ended `no_watcher` keep their reason.
+- Watching a live session (ADR 0006) is unchanged.

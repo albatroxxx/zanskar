@@ -90,11 +90,6 @@ func (h *Handler) browser(w http.ResponseWriter, r *http.Request, g *ticket.Gran
 		_ = ws.Write(wctx, websocket.MessageText, []byte(guac.ErrorInstruction(msg, guac.StatusSessionClosed)))
 		cancel()
 	}
-	// Four eyes: nobody watching, the application's browser is not started
-	// (ADR 0042 amendment).
-	if !run.holdDesktop() {
-		return
-	}
 	// The console's tunnel drops a socket that stays silent for fifteen
 	// seconds, and starting the containers takes longer than that on a slow
 	// host, or the first time, when the images are pulled. A nop every few

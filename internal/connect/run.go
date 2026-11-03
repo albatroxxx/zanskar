@@ -4,7 +4,6 @@ package connect
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"maps"
@@ -41,13 +40,6 @@ type sessionRun struct {
 	// socket closes: the desktop's client reads a guacamole error
 	// instruction, not the close reason.
 	tell func(msg string)
-	// liveCtx is the session's context once it is in the registry: a
-	// desktop held for a watcher is added before guacd is dialled, and the
-	// bridge goes on under the same one.
-	liveCtx context.Context
-	// tunnelOpen: the guacamole tunnel's opening instruction (the session
-	// id) has been sent, by a desktop's hold.
-	tunnelOpen bool
 }
 
 // closeTimeout is the default bound on one closing write (Handler.CloseTimeout).
@@ -185,12 +177,10 @@ func (run *sessionRun) register(rec recorder, format, uri string) (*session.Reco
 // runs under, which a terminate or a revocation cancels; call done when the
 // bridge returns.
 func (run *sessionRun) live() (ctx context.Context, done func()) {
-	if run.liveCtx == nil {
-		run.liveCtx = run.h.Registry.Add(run.r.Context(), gateway.Live{SessionID: run.s.ID, UserID: run.g.UserID, TargetID: run.ep.LiveKey,
-			Protocol: run.g.Protocol, PolicyID: run.g.PolicyID, AllowClipboard: run.g.AllowClipboard, AllowFileTransfer: run.g.AllowFileTransfer,
-			AllowDevTools: run.g.AllowDevTools})
-	}
-	return run.liveCtx, func() { run.h.Registry.Remove(run.s.ID) }
+	ctx = run.h.Registry.Add(run.r.Context(), gateway.Live{SessionID: run.s.ID, UserID: run.g.UserID, TargetID: run.ep.LiveKey,
+		Protocol: run.g.Protocol, PolicyID: run.g.PolicyID, AllowClipboard: run.g.AllowClipboard, AllowFileTransfer: run.g.AllowFileTransfer,
+		AllowDevTools: run.g.AllowDevTools})
+	return ctx, func() { run.h.Registry.Remove(run.s.ID) }
 }
 
 // finish closes the recording once the bridge returns and ends the session
@@ -215,104 +205,6 @@ func (run *sessionRun) finish(rec recorder, row *session.Recording, reason strin
 	}
 	run.end(reason, "", more)
 	_ = run.ws.Close(websocket.StatusNormalClosure, reason)
-}
-
-// watchWait is how long a session held for a second person waits for one
-// (ADR 0042).
-var watchWait = 5 * time.Minute
-
-// awaitWatcher holds a session whose grant asks for four eyes until someone
-// other than its owner, an administrator or auditor, watches it (ADR 0042).
-// The session is live (in the registry, its tap ready) so it can be
-// watched, but nothing passes between the person and the target yet. The
-// person is told why; the wait is audited, which a notification channel can
-// relay to the watchers. It reports whether the session goes on; when it
-// does not, it has ended it: nobody came in time, or it was terminated.
-func (run *sessionRun) awaitWatcher(ctx context.Context, rec recorder, row *session.Recording) bool {
-	if !run.g.RequireWatcher {
-		return true
-	}
-	run.h.record(run.r, run.actor.Event(audit.SessionWatcherWait, "access_session", run.s.ID, audit.Success,
-		map[string]any{"target_id": run.ep.LiveKey, "protocol": run.g.Protocol}))
-	wctx, cancel := detach(run.r.Context(), frameTimeout)
-	b, _ := json.Marshal(map[string]string{"t": "waiting", "msg": "waiting for a second person to watch this session (four eyes)"})
-	_ = run.ws.Write(wctx, websocket.MessageText, b)
-	cancel()
-	err := run.h.Registry.AwaitWatcher(ctx, run.s.ID, watchWait)
-	if err == nil {
-		return true
-	}
-	run.finishRecording(rec, row)
-	if errors.Is(err, gateway.ErrNoWatcher) {
-		run.end(session.EndNoWatcher, fmt.Sprintf("nobody watched this session within %d minutes; it needs a second person watching (four eyes)", int(watchWait/time.Minute)), nil)
-		return false
-	}
-	reason, msg := gateway.CancelReason(ctx)
-	run.end(reason, msg, nil)
-	return false
-}
-
-// holdDesktop is four eyes for a session guacd draws, a desktop or an
-// application's browser (ADR 0042 amendment). Such a session cannot wait
-// once guacd is drawing it, so it waits before: the session is live (in the
-// registry, so it can be watched) but guacd is not dialled, nor the
-// application's browser started, until someone other than its owner
-// watches. The watcher's view joins guacd as soon as the session does, from
-// its first frame. Meanwhile a nop every few seconds keeps the console's
-// tunnel open and a zanskar instruction says why it waits. No recording has
-// started, so a session nobody watched leaves none. It reports whether the
-// session goes on; when it does not, it has ended it.
-func (run *sessionRun) holdDesktop() bool {
-	if !run.g.RequireWatcher {
-		return true
-	}
-	ctx, done := run.live()
-	run.h.record(run.r, run.actor.Event(audit.SessionWatcherWait, "access_session", run.s.ID, audit.Success,
-		map[string]any{"target_id": run.ep.LiveKey, "protocol": run.g.Protocol}))
-	write := func(raw string) error {
-		wctx, cancel := detach(run.r.Context(), frameTimeout)
-		defer cancel()
-		return run.ws.Write(wctx, websocket.MessageText, []byte(raw))
-	}
-	// The tunnel opens first, as serveGuac would open it, so the console
-	// reads what follows.
-	run.tunnelOpen = write(guac.Encode("", run.s.ID)) == nil
-	_ = write(guac.Encode("zanskar", "waiting", "waiting for a second person to watch this session (four eyes)"))
-	beat := run.h.StartKeepalive
-	if beat <= 0 {
-		beat = 3 * time.Second
-	}
-	kaCtx, stop := context.WithCancel(ctx)
-	kaDone := make(chan struct{})
-	go func() {
-		defer close(kaDone)
-		t := time.NewTicker(beat)
-		defer t.Stop()
-		for {
-			select {
-			case <-kaCtx.Done():
-				return
-			case <-t.C:
-				if write(guac.Encode("nop")) != nil {
-					return
-				}
-			}
-		}
-	}()
-	err := run.h.Registry.AwaitWatcher(ctx, run.s.ID, watchWait)
-	stop()
-	<-kaDone
-	if err == nil {
-		return true
-	}
-	done()
-	if errors.Is(err, gateway.ErrNoWatcher) {
-		run.end(session.EndNoWatcher, fmt.Sprintf("nobody watched this session within %d minutes; it needs a second person watching (four eyes)", int(watchWait/time.Minute)), nil)
-		return false
-	}
-	reason, msg := gateway.CancelReason(ctx)
-	run.end(reason, msg, nil)
-	return false
 }
 
 // framer is a recording that counts the frames it carried: a desktop's.

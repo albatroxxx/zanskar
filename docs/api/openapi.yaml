@@ -5583,6 +5583,7 @@ components:
       enum: [asciicast, guac]
     EndReason:
       type: string
+      # no_watcher: a session that ended so under four eyes, which 1.16.0 removed; old rows keep it.
       enum: [user_exit, idle_timeout, max_duration, admin_terminated, policy_revoked, trust_lost, gateway_restart, target_lost, failover, error, no_watcher]
     Ports:
       type: object
@@ -6754,16 +6755,11 @@ components:
             one must allow them.
         require_watcher:
           type: boolean
-          default: false
+          deprecated: true
           description: >
-            Four eyes (ADR 0042 and its amendment): a session the grant admits is held, its owner
-            told why, until an administrator or auditor other than its owner watches it, and ends
-            `no_watcher` after 5 minutes without one. A terminal is held once connected; a desktop
-            or an application's browser before guacd is dialled. Allowed on `host`, `autoscaling`
-            and `application` grants; where several grants admit a person, one asking for it is
-            enough. The setting `access.four_eyes_tags` asks it of every session to a target with
-            one of its tags. A database session under four eyes is refused at Connect (`409
-            watcher_unavailable`): it cannot be watched.
+            Four eyes was removed in 1.16.0 (ADR 0042, withdrawn). `false` or absent is accepted;
+            `true` is refused with `400 four_eyes_removed`, so a client asking for it hears so.
+            Policies never carry it in an answer.
         idle_timeout_minutes:
           type: integer
           minimum: 1
@@ -7872,7 +7868,7 @@ components:
           type: array
           items:
             type: string
-            enum: [access_requested, access_decided, watcher_needed, session_terminated, provider_failing, recording_lost, disk_full]
+            enum: [access_requested, access_decided, session_terminated, provider_failing, recording_lost, disk_full]
         config:
           type: object
           properties:

@@ -127,7 +127,8 @@ const (
 	SessionEnd       = "session.end"
 	SessionTerminate = "session.terminate"
 	// SessionWatcherWait: a session held for a second person to watch it
-	// (four eyes, ADR 0042).
+	// (four eyes, ADR 0042). No longer recorded: four eyes was removed in
+	// 1.16.0; kept so the events 1.15.0 recorded keep their name.
 	SessionWatcherWait = "session.watcher.wait"
 	SessionFailover    = "session.failover"
 	SessionShadowStart = "session.shadow.start"

@@ -134,7 +134,6 @@ type (
 		AllowClipboard     bool             `json:"allow_clipboard"`
 		AllowFileTransfer  bool             `json:"allow_file_transfer"`
 		AllowDevTools      bool             `json:"allow_devtools"`
-		RequireWatcher     bool             `json:"require_watcher"`
 		IdleTimeoutMinutes int              `json:"idle_timeout_minutes"`
 		MaxSessionMinutes  *int             `json:"max_session_minutes"`
 		TimeWindows        []TimeWindow     `json:"time_windows"`
@@ -263,7 +262,7 @@ func (s *state) policyDoc(p apiPolicy) Policy {
 	}
 	for _, g := range p.Grants {
 		dg := Grant{Kind: g.Kind, Tags: g.Tags, Access: g.Access, SignIn: g.SignIn, RequireMFA: g.RequireMFA, AllowClipboard: g.AllowClipboard,
-			AllowFileTransfer: g.AllowFileTransfer, AllowDevTools: g.AllowDevTools, RequireWatcher: g.RequireWatcher, IdleTimeoutMinutes: g.IdleTimeoutMinutes,
+			AllowFileTransfer: g.AllowFileTransfer, AllowDevTools: g.AllowDevTools, IdleTimeoutMinutes: g.IdleTimeoutMinutes,
 			MaxSessionMinutes: g.MaxSessionMinutes, TimeWindows: g.TimeWindows, RetentionDays: g.RetentionDays}
 		for _, gt := range g.Targets {
 			dg.Targets = append(dg.Targets, GrantTarget{Name: s.byID[gt.ID], Protocols: gt.Protocols})
@@ -329,8 +328,13 @@ func (s *state) writePolicy(p Policy, old *apiPolicy) (apiPolicy, string) {
 		}
 	}
 	for i, g := range p.Grants {
+		// A file from 1.15.0 may ask for four eyes, which 1.16.0 removed: said,
+		// not dropped in silence.
+		if g.RequireWatcher {
+			return out, fmt.Sprintf("grant %d asks for a second person watching (four eyes), which was removed in 1.16.0; take require_watcher out", i+1)
+		}
 		ag := apiGrant{Kind: g.Kind, Targets: []apiGrantTarget{}, Tags: g.Tags, Access: g.Access, SignIn: g.SignIn, RequireMFA: g.RequireMFA,
-			AllowClipboard: g.AllowClipboard, AllowFileTransfer: g.AllowFileTransfer, AllowDevTools: g.AllowDevTools, RequireWatcher: g.RequireWatcher,
+			AllowClipboard: g.AllowClipboard, AllowFileTransfer: g.AllowFileTransfer, AllowDevTools: g.AllowDevTools,
 			IdleTimeoutMinutes: g.IdleTimeoutMinutes, MaxSessionMinutes: g.MaxSessionMinutes, TimeWindows: g.TimeWindows, RetentionDays: g.RetentionDays}
 		if ag.TimeWindows == nil {
 			ag.TimeWindows = []TimeWindow{}

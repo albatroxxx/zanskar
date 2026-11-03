@@ -57,11 +57,6 @@ func TestValidate(t *testing.T) {
 		}, `a database does not serve "ssh"`},
 		{"database on a host", func(p *Policy) { p.Grants[0].Targets[0].Protocols = []string{"database"} }, `a host does not serve "database"`},
 		{"developer tools on a host", func(p *Policy) { p.Grants[0].AllowDevTools = true }, "developer tools are for application grants only"},
-		// Four eyes holds terminals, desktops and applications' browsers; a
-		// database session cannot be watched (ADR 0042 amendment).
-		{"four eyes on a database", func(p *Policy) {
-			p.Grants[0] = Grant{Kind: protocol.KindDatabase, Targets: []GrantTarget{{ID: "d1", Protocols: []string{"database"}}}, RequireWatcher: true}
-		}, "a database session cannot be watched"},
 		{"a protocol twice", func(p *Policy) { p.Grants[0].Targets[0].Protocols = []string{"ssh", "ssh"} }, "given twice"},
 		{"tags with no key", func(p *Policy) { p.Grants[0].Tags = tags(map[string][]string{}, "ssh") }, "at least one key"},
 		{"a tag with no value", func(p *Policy) { p.Grants[0].Tags = tags(map[string][]string{"env": {}}, "ssh") }, "needs 1-16 values"},
@@ -93,16 +88,6 @@ func TestValidate(t *testing.T) {
 				t.Fatalf("got %v, want an invalid input naming %q", err, c.want)
 			}
 		})
-	}
-	// An application's browser and a host's desktop can be held for a
-	// watcher (ADR 0042 amendment).
-	for _, g := range []Grant{
-		{Kind: protocol.KindApplication, Targets: []GrantTarget{{ID: "a1", Protocols: []string{"http"}}}, RequireWatcher: true},
-		{Kind: protocol.KindHost, Targets: []GrantTarget{{ID: "t1", Protocols: []string{"rdp"}}}, RequireWatcher: true},
-	} {
-		if err := valid(g).Validate(); err != nil {
-			t.Fatalf("four eyes on %s: %v", g.Kind, err)
-		}
 	}
 }
 

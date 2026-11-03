@@ -59,7 +59,6 @@ type apiGrant struct {
 	AllowClipboard     bool             `json:"allow_clipboard"`
 	AllowFileTransfer  bool             `json:"allow_file_transfer"`
 	AllowDevTools      bool             `json:"allow_devtools"`
-	RequireWatcher     bool             `json:"require_watcher"`
 	IdleTimeoutMinutes int              `json:"idle_timeout_minutes"`
 	MaxSessionMinutes  *int             `json:"max_session_minutes"`
 	TimeWindows        []apiWindow      `json:"time_windows"`
@@ -93,7 +92,7 @@ var (
 	grantType       = types.ObjectType{AttrTypes: map[string]attr.Type{
 		"id": types.StringType, "kind": types.StringType, "targets": types.ListType{ElemType: grantTargetType}, "tags": tagMatchType,
 		"access": types.StringType, "sign_in": types.StringType, "require_mfa": types.BoolType, "allow_clipboard": types.BoolType,
-		"allow_file_transfer": types.BoolType, "allow_devtools": types.BoolType, "require_watcher": types.BoolType,
+		"allow_file_transfer": types.BoolType, "allow_devtools": types.BoolType,
 		"idle_timeout_minutes": types.Int64Type, "max_session_minutes": types.Int64Type, "time_windows": types.ListType{ElemType: windowType},
 		"retention_days": types.Int64Type,
 	}}
@@ -141,7 +140,6 @@ type grantModel struct {
 	AllowClipboard     types.Bool   `tfsdk:"allow_clipboard"`
 	AllowFileTransfer  types.Bool   `tfsdk:"allow_file_transfer"`
 	AllowDevTools      types.Bool   `tfsdk:"allow_devtools"`
-	RequireWatcher     types.Bool   `tfsdk:"require_watcher"`
 	IdleTimeoutMinutes types.Int64  `tfsdk:"idle_timeout_minutes"`
 	MaxSessionMinutes  types.Int64  `tfsdk:"max_session_minutes"`
 	TimeWindows        types.List   `tfsdk:"time_windows"`
@@ -193,8 +191,8 @@ func (m *policyModel) write(ctx context.Context) (policyWrite, diag.Diagnostics)
 	for _, g := range grants {
 		ag := apiGrant{Kind: g.Kind.ValueString(), Access: g.Access.ValueString(), SignIn: g.SignIn.ValueString(),
 			AllowClipboard: g.AllowClipboard.ValueBool(), AllowFileTransfer: g.AllowFileTransfer.ValueBool(), AllowDevTools: g.AllowDevTools.ValueBool(),
-			RequireWatcher: g.RequireWatcher.ValueBool(), IdleTimeoutMinutes: int(g.IdleTimeoutMinutes.ValueInt64()),
-			MaxSessionMinutes: intPtr(g.MaxSessionMinutes), RetentionDays: intPtr(g.RetentionDays), Targets: []apiGrantTarget{}, TimeWindows: []apiWindow{}}
+			IdleTimeoutMinutes: int(g.IdleTimeoutMinutes.ValueInt64()),
+			MaxSessionMinutes:  intPtr(g.MaxSessionMinutes), RetentionDays: intPtr(g.RetentionDays), Targets: []apiGrantTarget{}, TimeWindows: []apiWindow{}}
 		if known(g.ID) {
 			ag.ID = g.ID.ValueString()
 		}
@@ -234,7 +232,7 @@ func (m *policyModel) from(ctx context.Context, p *apiPolicy) diag.Diagnostics {
 	for _, g := range p.Grants {
 		gm := grantModel{ID: types.StringValue(g.ID), Kind: types.StringValue(g.Kind), Access: types.StringValue(g.Access), SignIn: types.StringValue(g.SignIn),
 			RequireMFA: types.BoolValue(g.RequireMFA == nil || *g.RequireMFA), AllowClipboard: types.BoolValue(g.AllowClipboard),
-			AllowFileTransfer: types.BoolValue(g.AllowFileTransfer), AllowDevTools: types.BoolValue(g.AllowDevTools), RequireWatcher: types.BoolValue(g.RequireWatcher),
+			AllowFileTransfer: types.BoolValue(g.AllowFileTransfer), AllowDevTools: types.BoolValue(g.AllowDevTools),
 			IdleTimeoutMinutes: types.Int64Value(int64(g.IdleTimeoutMinutes)), MaxSessionMinutes: int64Of(g.MaxSessionMinutes), RetentionDays: int64Of(g.RetentionDays)}
 		targets := make([]grantTargetModel, 0, len(g.Targets))
 		for _, t := range g.Targets {
@@ -319,7 +317,6 @@ func (r *policyResource) Schema(_ context.Context, _ resource.SchemaRequest, res
 					"allow_clipboard":      falseDefault(""),
 					"allow_file_transfer":  falseDefault(""),
 					"allow_devtools":       falseDefault("Applications only."),
-					"require_watcher":      falseDefault("Four eyes: a second person watches (ADR 0042)."),
 					"idle_timeout_minutes": schema.Int64Attribute{Optional: true, Computed: true, Default: int64default.StaticInt64(15)},
 					"max_session_minutes":  schema.Int64Attribute{Optional: true},
 					"time_windows": schema.ListNestedAttribute{

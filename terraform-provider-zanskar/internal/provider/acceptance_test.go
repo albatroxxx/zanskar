@@ -276,7 +276,7 @@ resource "zanskar_target" "wiki" {
 
 func TestAccPolicy(t *testing.T) {
 	url, token := gateway(t)
-	cfg := func(watch bool, idle int) string {
+	cfg := func(clipboard bool, idle int) string {
 		return providerBlock(url, token) + fmt.Sprintf(`
 resource "zanskar_group" "dba" {
   name = "acc-dba"
@@ -308,13 +308,13 @@ resource "zanskar_access_policy" "prod" {
     {
       kind            = "host"
       tags            = { match = { env = ["prod"] }, protocols = ["ssh"] }
-      require_watcher = %t
+      allow_clipboard = %t
       idle_timeout_minutes = %d
       time_windows = [{ days = ["mon", "tue", "wed", "thu", "fri"], from = "08:00", to = "20:00", tz = "Europe/Berlin" }]
     },
   ]
 }
-`, watch, idle)
+`, clipboard, idle)
 	}
 	var firstGrant string
 	resource.Test(t, resource.TestCase{
@@ -335,10 +335,10 @@ resource "zanskar_access_policy" "prod" {
 					return nil
 				},
 			)},
-			// Four eyes on, a longer idle: the same policy, its grants
+			// The clipboard on, a longer idle: the same policy, its grants
 			// keeping their ids.
 			{Config: cfg(true, 30), Check: resource.ComposeAggregateTestCheckFunc(
-				resource.TestCheckResourceAttr("zanskar_access_policy.prod", "grants.1.require_watcher", "true"),
+				resource.TestCheckResourceAttr("zanskar_access_policy.prod", "grants.1.allow_clipboard", "true"),
 				resource.TestCheckResourceAttr("zanskar_access_policy.prod", "grants.1.idle_timeout_minutes", "30"),
 				func(s *terraform.State) error {
 					if got := s.RootModule().Resources["zanskar_access_policy.prod"].Primary.Attributes["grants.0.id"]; got != firstGrant {
@@ -371,9 +371,9 @@ resource "zanskar_group" "auditors" {
 resource "zanskar_access_policy" "bad" {
   name     = "acc-bad"
   subjects = [{ kind = "group", id = zanskar_group.auditors.id }]
-  grants   = [{ kind = "database", require_watcher = true, tags = { match = { env = ["prod"] }, protocols = ["database"] } }]
+  grants   = [{ kind = "host", allow_devtools = true, tags = { match = { env = ["prod"] }, protocols = ["ssh"] } }]
 }`,
-				ExpectError: regexpMust(`cannot be\s+watched`),
+				ExpectError: regexpMust(`developer tools are for\s+application\s+grants only`),
 			},
 		},
 	})

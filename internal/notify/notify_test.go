@@ -244,6 +244,37 @@ func TestWebhookChannel(t *testing.T) {
 }
 
 // One pass sends at most 20 messages and one line for the rest.
+// A channel that asked for watcher_needed before four eyes was removed
+// (1.16.0) keeps its other kinds: the retired one is left out of its list
+// and of what it saves, so the console can still save it.
+func TestARetiredKindIsLeftOut(t *testing.T) {
+	e := newEnv(t, toHook{newHook(t)})
+	_, out, _ := e.do(t, "POST", "/api/v1/admin/notifications", map[string]any{
+		"name": "ops", "kind": "webhook", "events": []string{"access_requested", "watcher_needed"}, "webhook_url": "https://hooks.example.com/x",
+	})
+	ch, _ := out["channel"].(map[string]any)
+	id, _ := ch["id"].(string)
+	if id == "" || strings.Contains(fmt.Sprint(ch["events"]), "watcher_needed") {
+		t.Fatalf("made with a retired kind: %v", out)
+	}
+	// As 1.15.0 kept it.
+	if _, err := e.db.ExecContext(context.Background(), e.db.Rebind(`UPDATE notification_channels SET events = ? WHERE id = ?`), `["access_requested","watcher_needed"]`, id); err != nil {
+		t.Fatal(err)
+	}
+	_, _, list := e.do(t, "GET", "/api/v1/admin/notifications", nil)
+	if strings.Contains(list, `"watcher_needed"`) || !strings.Contains(list, `"access_requested"`) {
+		t.Fatalf("the list: %s", list)
+	}
+	if code, _, raw := e.do(t, "PUT", "/api/v1/admin/notifications/"+id, map[string]any{"name": "ops", "events": []string{"access_requested", "watcher_needed"}}); code != 200 {
+		t.Fatalf("saving it again: %d %s", code, raw)
+	}
+	if code, _, raw := e.do(t, "POST", "/api/v1/admin/notifications", map[string]any{
+		"name": "x", "kind": "webhook", "events": []string{"no_such_kind"}, "webhook_url": "https://hooks.example.com/y",
+	}); code != 400 {
+		t.Fatalf("an unknown kind is still refused: %d %s", code, raw)
+	}
+}
+
 func TestFloodIsBounded(t *testing.T) {
 	h := newHook(t)
 	e := newEnv(t, toHook{h})

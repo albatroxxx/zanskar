@@ -21,7 +21,6 @@ export interface NotificationChannel {
 const eventWords: Record<string, string> = {
   access_requested: 'Access requested',
   access_decided: 'Access approved, denied or revoked',
-  watcher_needed: 'A session waits for a second person to watch',
   session_terminated: 'Session ended by an administrator',
   provider_failing: 'Sign-in provider failing its sync',
   recording_lost: 'Recording lost',

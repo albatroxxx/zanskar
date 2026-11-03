@@ -89,10 +89,6 @@ const (
 	// for searching across recordings (2026-11-03, idea 5). Off, the index
 	// is emptied and only command lines are searched.
 	KeyIndexOutput = "recordings.index_output"
-	// KeyFourEyesTags names target tags whose every session waits for a
-	// second person to watch it, whichever policy admits it (2026-11-03,
-	// idea 7; ADR 0042 amendment): "env=prod, tier=payments".
-	KeyFourEyesTags = "access.four_eyes_tags"
 	// KeyACME, KeyACMEEmail and KeyACMEDirectory get the gateway's
 	// certificate from an ACME CA when it serves TLS itself (ADR 0021,
 	// amended 2026-10-30).
@@ -247,8 +243,6 @@ var Definitions = []Definition{
 		Description: "Relay for database and application sessions. A custom image, for a private registry mirror, is pinned by digest."},
 	{Key: KeyBrowserImage, Category: "Applications", Title: "Browser image", Type: TypeString, Default: DefaultBrowserImage(), EnvVar: "ZANSKAR_BROWSER_IMAGE", StepUp: true,
 		Description: "Isolated browser for application sessions. A custom image, for a private registry mirror, is pinned by digest."},
-	{Key: KeyFourEyesTags, Category: "Sessions", Title: "Four eyes for tags", Type: TypeString, StepUp: true,
-		Description: "Every session to a host or group with one of these tags waits for a second person to watch it, whatever the policy says. key=value, comma-separated: env=prod, tier=payments."},
 	{Key: KeyIndexOutput, Category: "Recordings", Title: "Search what sessions printed", Type: TypeBool, Default: "true",
 		Description: "Terminal output is indexed beside the commands, up to 5,000 lines a recording, so reviewers can find it. Off empties that index."},
 	{Key: KeyACME, Category: "Let's Encrypt", Title: "Certificate from Let's Encrypt", Type: TypeBool, Default: "false",
@@ -384,12 +378,6 @@ func Validate(d Definition, value string) (string, error) {
 			if v != "" && SecurityContactURI(v) == "" {
 				return "", fmt.Errorf("%w: %s must be an email address or an https:// URL", ErrInvalid, d.Key)
 			}
-		case KeyFourEyesTags:
-			tags, err := ParseFourEyesTags(v)
-			if err != nil {
-				return "", fmt.Errorf("%w: %s %w", ErrInvalid, d.Key, err)
-			}
-			v = FormatFourEyesTags(tags)
 		}
 		// The relay image is an argument of `docker run`; free text there
 		// could be read as one of its flags (--privileged, a host mount).
@@ -662,52 +650,4 @@ func (s *Service) Subscribe(key string, fn func(string)) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.subs[key] = append(s.subs[key], fn)
-}
-
-// FourEyesTag is one key=value of KeyFourEyesTags.
-type FourEyesTag struct{ Key, Value string }
-
-// maxFourEyesTags bounds KeyFourEyesTags; maxFourEyesTagLen is a target
-// tag's own limit (target.MaxTagLen).
-const (
-	maxFourEyesTags   = 32
-	maxFourEyesTagLen = 64
-)
-
-// ParseFourEyesTags reads KeyFourEyesTags: comma-separated key=value pairs,
-// spaces around each part ignored, a pair given twice kept once. Empty is
-// none.
-func ParseFourEyesTags(v string) ([]FourEyesTag, error) {
-	var out []FourEyesTag
-	for part := range strings.SplitSeq(v, ",") {
-		part = strings.TrimSpace(part)
-		if part == "" {
-			continue
-		}
-		k, val, ok := strings.Cut(part, "=")
-		k, val = strings.TrimSpace(k), strings.TrimSpace(val)
-		if !ok || k == "" || val == "" {
-			return nil, fmt.Errorf("must be key=value pairs, comma-separated (got %q)", part)
-		}
-		if len(k) > maxFourEyesTagLen || len(val) > maxFourEyesTagLen {
-			return nil, fmt.Errorf("tag keys and values are at most %d characters", maxFourEyesTagLen)
-		}
-		t := FourEyesTag{k, val}
-		if !slices.Contains(out, t) {
-			out = append(out, t)
-		}
-	}
-	if len(out) > maxFourEyesTags {
-		return nil, fmt.Errorf("at most %d tags", maxFourEyesTags)
-	}
-	return out, nil
-}
-
-// FormatFourEyesTags writes tags the way the setting keeps them.
-func FormatFourEyesTags(tags []FourEyesTag) string {
-	parts := make([]string, len(tags))
-	for i, t := range tags {
-		parts[i] = t.Key + "=" + t.Value
-	}
-	return strings.Join(parts, ", ")
 }
