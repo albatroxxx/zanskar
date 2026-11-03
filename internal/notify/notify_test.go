@@ -196,7 +196,7 @@ func TestWebhookChannel(t *testing.T) {
 	if len(got) != 2 {
 		t.Fatalf("sent %d messages, want the request and the provider: %v", len(got), got)
 	}
-	if got[0] != "user:u-bob asks for SSH access to target:t1. Approve or deny it in the console. https://gw.example.com/admin/approvals" {
+	if got[0] != "user:u-bob asks for SSH access to target:t1. Open it to approve or deny. https://gw.example.com/admin/approvals?request=r1" {
 		t.Fatalf("request message: %q", got[0])
 	}
 	if !strings.HasPrefix(got[1], "Sign-in provider identity_provider:kc failed its sync: could not reach keycloak.") {

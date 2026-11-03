@@ -203,6 +203,9 @@ const (
 	resultDenied    = "denied"
 	resultError     = "error"
 	resultLocked    = "locked"
+	// resultStepUp: the API asked for a newer code than the command line's
+	// own (approving access, a setting that routes credentials).
+	resultStepUp = "code_required"
 )
 
 func (h *Handler) exec(w http.ResponseWriter, r *http.Request) {
@@ -248,6 +251,13 @@ func (h *Handler) exec(w http.ResponseWriter, r *http.Request) {
 	s.lastUse = now
 	h.mu.Unlock()
 	h.audit(r, line, name, result, calls)
+	if result == resultStepUp {
+		// The console asks for a code and runs the line again (2026-11-03,
+		// idea 3): a code the command line accepted 10 minutes ago opens
+		// the command line, not an approval.
+		httpx.WriteError(w, r, http.StatusForbidden, "cli_fresh_code_required", "this command asks for a code from the last 5 minutes")
+		return
+	}
 	httpx.WriteJSON(w, http.StatusOK, reply)
 }
 
@@ -320,6 +330,10 @@ func (h *Handler) run(r *http.Request, s *signIn, line, confirm string, now time
 		}
 	}
 	if err := c.exec(x); err != nil {
+		var ae *apiError
+		if errors.As(err, &ae) && ae.Code == "step_up_required" {
+			return execReply{Status: "error", Lines: o.lines}, c.name, resultStepUp, x.api.calls
+		}
 		return h.failed(x, c, err)
 	}
 	return execReply{Status: "ok", Lines: o.lines}, c.name, result, x.api.calls

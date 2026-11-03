@@ -56,3 +56,22 @@ email. The vendor-neutral rule (2026-10-30) says the standard path first.
   signature and reshapes the JSON, or a later adapter beside the standard path.
 - A message names people and targets; a channel is as sensitive as the audit log's export,
   and only administrators manage channels (each change audited).
+
+## Amendment, 2026-11-03: the link opens the request, and approving asks for a code
+
+The live audit's idea 3 asked for an approve link gated by MFA. A link still grants nothing,
+for the reason above; what changed is where it goes and what approving takes.
+
+- A request's message, asked or decided, links to that request
+  (`/admin/approvals?request=<id>`): it opens in the approve dialog while it waits, and the
+  page says what became of it (approved by whom, when) when it no longer does.
+  `GET /access-requests/{id}` serves it, administrators only.
+- Approving asks an approver who has an authenticator for a code proved in the last 5
+  minutes (`step_up_required`, the host actions' rule, ADR 0032). The dialog shows a code
+  field and approves once the code is in; the console command line asks for a code and runs
+  the line again. A stolen session or a forwarded link alone cannot grant access. An
+  approver without one (single sign-on, whose provider proved them at sign-in) is not asked.
+  Denying and revoking take access away and never ask.
+- The setting *Approving asks for a code* (`access.approve_step_up`, Settings › Sign-in) is
+  on by default. Switching it off asks for a code too, or a stolen session could switch it
+  off and approve.

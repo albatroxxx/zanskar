@@ -294,10 +294,12 @@ td.actions > * + * { margin-left: 8px; }
 .end-detail { margin-top: 4px; font-size: 0.82rem; color: var(--fg-muted); max-width: 42ch; overflow-wrap: anywhere; }
 /* Under a disk the gateway is refusing sessions for (idea 8). */
 .disk-refusing { color: var(--danger); font-weight: 500; margin-top: 2px; }
+/* The row a notification's link opened. */
+tr[aria-current="true"] td { background: var(--accent-soft); }
 /* The way out of a filling recordings disk, under its gauge. */
 .disk-out { margin-top: 2px; }
 .disk-out > button { padding: 0; border: 0; background: none; color: var(--accent); font: inherit; cursor: pointer; }
-.disk-out > button:hover { color: var(--accent-hover); text-decoration: underline; }
+.disk-out > button:hover { color: var(--accent-hover); }
 /* Where an account comes from: an identity provider is outlined, so it never
    reads as one of the filled role badges beside it (2026-10-31). */
 .badge.source-idp { background: transparent; color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }

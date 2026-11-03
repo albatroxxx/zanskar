@@ -3134,6 +3134,25 @@ paths:
                           $ref: "#/components/schemas/AccessRequest"
         "400":
           $ref: "#/components/responses/BadRequest"
+  /access-requests/{id}:
+    parameters:
+      - $ref: "#/components/parameters/Id"
+    get:
+      tags: [admin]
+      summary: One access request
+      description: >-
+        A single request, whatever its status, with the names resolved as in the list. A
+        notification's link opens it (ADR 0039 amendment): approve it while it waits, or see
+        who decided it and when.
+      responses:
+        "200":
+          description: The request.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AccessRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
   /access-requests/{id}/approve:
     parameters:
       - $ref: "#/components/parameters/Id"
@@ -3163,6 +3182,15 @@ paths:
                 $ref: "#/components/schemas/AccessRequest"
         "400":
           description: "`minutes` below 1, or the granted duration over the approval grant's current maximum (`duration_too_long`)."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: >-
+            `step_up_required`: the setting *Approving asks for a code* is on, the approver has an
+            authenticator, and the session has not proved a code in the last 5 minutes. Prove one at
+            `POST /auth/mfa/step-up` and approve again. The request stays pending.
           content:
             application/json:
               schema:
@@ -4844,8 +4872,10 @@ paths:
                         style: { type: string, enum: [head, ok, warn, error, muted] }
         "403":
           description: >
-            `cli_code_required`: a fresh authenticator code is needed first. Or the caller is not
-            an administrator.
+            `cli_code_required`: a fresh authenticator code is needed first.
+            `cli_fresh_code_required`: the command (approving access, a setting that routes
+            credentials) asks for a code from the last 5 minutes, newer than the command line's own;
+            unlock again and run the line again. Or the caller is not an administrator.
           content:
             application/json:
               schema:

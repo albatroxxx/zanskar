@@ -5,6 +5,7 @@ package notify
 import (
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"strings"
 
 	"github.com/albatroxxx/zanskar/internal/audit"
@@ -103,13 +104,15 @@ func message(e audit.Event, kind string, names Names, base string) Message {
 	switch kind {
 	case EventAccessRequested:
 		m.Subject = fmt.Sprintf("%s asks for %s access to %s", who, proto, target)
-		m.Text = m.Subject + ". Approve or deny it in the console."
-		m.Link = base + "/admin/approvals"
+		m.Text = m.Subject + ". Open it to approve or deny."
+		// The request itself, never a token that decides it (ADR 0039):
+		// approving there asks for a recent code (2026-11-03, idea 3).
+		m.Link = base + "/admin/approvals?request=" + url.QueryEscape(e.ObjectID)
 	case EventAccessDecided:
 		verb := map[string]string{audit.AccessRequestApprove: "approved", audit.AccessRequestDeny: "denied", audit.AccessRequestRevoke: "revoked"}[e.Action]
 		m.Subject = fmt.Sprintf("%s %s %s access to %s", who, verb, proto, target)
 		m.Text = m.Subject + "."
-		m.Link = base + "/admin/approvals"
+		m.Link = base + "/admin/approvals?request=" + url.QueryEscape(e.ObjectID)
 	case EventWatcherNeeded:
 		target = names("target", detail(e, "target_id"))
 		m.Subject = fmt.Sprintf("%s waits for a second person to watch a %s session on %s", who, proto, target)

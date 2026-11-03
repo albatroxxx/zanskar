@@ -125,6 +125,31 @@ describe('ConsoleCLI', () => {
     expect(await screen.findByLabelText('Authenticator code')).toBeDefined()
   })
 
+  // 2026-11-03, idea 3: approving asks for a code from the last 5 minutes,
+  // newer than the command line's own may be; the console asks for one and
+  // runs the line again once it is in.
+  it('asks for a newer code when a command needs one, then runs the line again', async () => {
+    vi.spyOn(api, 'get').mockResolvedValue(state() as never)
+    let proved = false
+    const post = vi.spyOn(api, 'post').mockImplementation(async (path: string) => {
+      if (path === '/admin/cli/unlock') {
+        proved = true
+        return { unlocked: true } as never
+      }
+      if (!proved) throw new ApiError(403, { code: 'cli_fresh_code_required', message: 'this command asks for a code from the last 5 minutes' }, '403')
+      return { status: 'ok', lines: [{ text: '✓ Approved.', style: 'ok' }] } as never
+    })
+    render(<ConsoleCLI />)
+    const user = await openPanel()
+    await user.type(screen.getByLabelText('zanskar>'), 'request approve 9c1d2e3f{Enter}')
+    expect(await screen.findByText('This command asks for a code from the last 5 minutes. Enter one; it runs again.')).toBeDefined()
+    expect(screen.queryByText(/closed after a while without use/)).toBeNull()
+    await user.type(await screen.findByLabelText('Authenticator code'), '123456{Enter}')
+    expect(await screen.findByText('✓ Approved.')).toBeDefined()
+    const lines = post.mock.calls.filter(([p]) => p === '/admin/cli').map(([, b]) => (b as { line: string }).line)
+    expect(lines).toEqual(['request approve 9c1d2e3f', 'request approve 9c1d2e3f'])
+  })
+
   it('says the command line is closed after too many wrong codes, not that it needs one', async () => {
     vi.spyOn(api, 'get').mockResolvedValue(state() as never)
     vi.spyOn(api, 'post').mockRejectedValue(
