@@ -10,12 +10,13 @@ const SOON_MS = 10 * 60_000
 const FRESH_MS = 10 * 60_000
 
 /**
- * AccessNotices tells a user about their just-in-time grants without them
- * having to look: a grant approved in the last ten minutes (with the minutes
- * the approver actually gave, which may differ from what was asked), and a
- * grant that expires within ten minutes, with a link to ask for an extension
- * (manual QA findings R16 and R17). Polled once a minute; each notice can be
- * dismissed for the rest of the page's life.
+ * AccessNotices tells a user about their just-in-time requests without them
+ * having to look: a request approved in the last ten minutes (with the
+ * minutes the approver actually gave, which may differ from what was asked),
+ * one denied in the last ten minutes (with the approver's note), and a grant
+ * that expires within ten minutes, with a link to ask for an extension
+ * (manual QA findings R16 and R17; denials 2026-11-03, later). Polled once a
+ * minute; each notice can be dismissed for the rest of the page's life.
  */
 export function AccessNotices() {
   const [grants, setGrants] = useState<AccessRequest[]>([])
@@ -26,7 +27,7 @@ export function AccessNotices() {
   useEffect(() => {
     const load = () =>
       api
-        .get<Page<AccessRequest>>('/me/access')
+        .get<Page<AccessRequest>>('/me/access-requests')
         .then((p) => {
           setGrants(p.items ?? [])
           setNow(Date.now())
@@ -39,11 +40,21 @@ export function AccessNotices() {
 
   const dismiss = (key: string) => setDismissed((d) => new Set(d).add(key))
   const what = (g: AccessRequest) => `${protocolName(g.protocol)} on ${g.target_name || g.asg_name || 'the target'}`
-  const notices: { key: string; tone: 'ok' | 'warn'; body: React.ReactNode }[] = []
+  const notices: { key: string; tone: 'ok' | 'warn' | 'danger'; body: React.ReactNode }[] = []
   for (const g of grants) {
-    if (!g.expires_at) continue
-    const expires = new Date(g.expires_at).getTime()
     const decided = g.decided_at ? new Date(g.decided_at).getTime() : 0
+    if (g.status === 'denied') {
+      if (decided && now - decided < FRESH_MS && !dismissed.has('denied:' + g.id)) {
+        notices.push({
+          key: 'denied:' + g.id,
+          tone: 'danger',
+          body: <>Your request for {what(g)} was <strong>denied</strong>{g.decision_note ? <>: {g.decision_note}</> : null}.</>,
+        })
+      }
+      continue
+    }
+    if (!g.expires_at || g.status !== 'approved') continue
+    const expires = new Date(g.expires_at).getTime()
     const minutes = g.approved_minutes || g.requested_minutes
     if (decided && now - decided < FRESH_MS && !dismissed.has('approved:' + g.id)) {
       notices.push({

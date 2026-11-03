@@ -57,6 +57,20 @@ describe('AccessNotices', () => {
     expect(screen.getByText(/you asked for 60/)).toBeDefined()
   })
 
+  // 2026-11-03, later: a denial is said as an approval is; the requests are
+  // read, not the active grants alone, since a denied request is no grant.
+  it('announces a fresh denial with the note, and nothing for an old one', async () => {
+    mount([
+      grant('d1', { status: 'denied', decided_at: iso(-3 * min), decision_note: 'ask your lead first', expires_at: undefined }),
+      grant('d2', { status: 'denied', decided_at: iso(-30 * min), expires_at: undefined }),
+    ])
+    expect(await screen.findByText(/was/)).toBeDefined()
+    expect(screen.getByText('denied')).toBeDefined()
+    expect(screen.getByText(/ask your lead first/)).toBeDefined()
+    expect(screen.getAllByRole('button', { name: 'Dismiss' })).toHaveLength(1)
+    expect(vi.mocked(api.get).mock.calls[0][0]).toBe('/me/access-requests')
+  })
+
   it('can be dismissed, and stays dismissed', async () => {
     mount([grant('r1', { expires_at: iso(5 * min), decided_at: iso(-50 * min) })])
     await screen.findByText(/ends in about/)
