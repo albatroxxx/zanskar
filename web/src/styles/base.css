@@ -30,6 +30,9 @@ h1 { font-size: 1.45rem; font-weight: 700; letter-spacing: -0.02em; }
 h2 { font-size: 1.05rem; }
 code, .mono { font-family: var(--mono); font-size: 0.86em; }
 button, input, select, textarea { font: inherit; color: inherit; }
+/* Checkboxes and radios in the console's accent, not the browser's own blue
+   (2026-11-03: the role checks in Users & groups were system blue). */
+input[type="checkbox"], input[type="radio"] { accent-color: var(--accent); }
 :focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
 
 /* layout */
