@@ -136,7 +136,9 @@ describe('the admin dashboard', () => {
     expect(disk.className).toContain('danger')
     expect(disk.parentElement?.textContent).toContain('96% used · 4.0 GB free of 100.0 GB')
     expect(disk.parentElement?.querySelector('.gauge-pct')?.className).toContain('danger')
-    expect(screen.getByRole('button', { name: /Low space: 4\.0 GB free/ })).toBeDefined()
+    // The bar's colour says it; no icon beside the reading (2026-11-03, later).
+    expect(screen.getByRole('meter', { name: 'System disk' }).className).toMatch(/warn|danger/)
+    expect(screen.queryByRole('button', { name: /Low space/ })).toBeNull()
     expect(screen.getByText(/1 database session/)).toBeDefined()
     expect(screen.getByText(/unreachable at 127\.0\.0\.1:4822/)).toBeDefined()
   })
@@ -172,9 +174,10 @@ describe('the admin dashboard', () => {
     at('/')
     const approvals = (await screen.findByText('Pending approvals')).closest('a') as HTMLAnchorElement
     expect(approvals.textContent).toContain('oldest waiting 2 hours')
-    // Live grants are on the approvals page too, so on the same tile.
-    expect(approvals.getAttribute('href')).toBe('/admin/approvals')
-    expect(approvals.textContent).toContain('oldest waiting 2 hours · 3 granted, 1 ending within the hour')
+    const grants = (await screen.findByText('Grants active')).closest('a') as HTMLAnchorElement
+    expect(grants.getAttribute('href')).toBe('/admin/approvals')
+    expect(grants.textContent).toContain('3')
+    expect(grants.textContent).toContain('1 end within the hour')
     expect(screen.queryByText('Audit events (24h)')).toBeNull()
   })
 

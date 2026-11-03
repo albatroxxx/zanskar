@@ -38,6 +38,18 @@ var activityDetailKeys = []string{"reason", "protocol", "detail", "idp", "method
 // before every session (the session itself is listed).
 var activityRoutine = []string{audit.AuditRead, audit.SessionConnect + ":success"}
 
+// activityOwn are the actions a person's activity lists of what they did
+// themselves: what they do as a user of the access portal. What an
+// administrator does in the admin portal (enrolling a target, changing a
+// policy) is the Events page's, not their own activity's (2026-11-03,
+// later); what another administrator or the gateway did to the person's
+// account is listed whatever the action.
+var activityOwn = []string{
+	audit.UserLogin, audit.UserLogout, audit.UserMFAEnroll, audit.UserMFAConfirm, audit.UserMFAVerify, audit.UserPasswordChange,
+	audit.SessionConnect, audit.SessionStart, audit.SessionEnd, audit.SessionFailover,
+	audit.AccessRequestCreate,
+}
+
 // myActivity answers GET /api/v1/me/activity: the caller's own events,
 // newest first, a page at a time (2026-11-03, idea 11). Their sign-ins,
 // failed ones too, from where; their sessions and requests; and what an
@@ -47,7 +59,7 @@ var activityRoutine = []string{audit.AuditRead, audit.SessionConnect + ":success
 func (h *Handler) myActivity(w http.ResponseWriter, r *http.Request) {
 	p, _ := auth.FromContext(r.Context())
 	limit, cursor := httpx.Paging(r, 50, 200)
-	items, next, err := h.Audit.List(r.Context(), audit.Filter{Subject: p.User.ID, Exclude: activityRoutine, Cursor: cursor, Limit: limit})
+	items, next, err := h.Audit.List(r.Context(), audit.Filter{Subject: p.User.ID, OwnActions: activityOwn, Exclude: activityRoutine, Cursor: cursor, Limit: limit})
 	if err != nil {
 		h.fail(w, r, err)
 		return

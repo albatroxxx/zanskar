@@ -20,6 +20,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringdefault"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/types"
+	"github.com/hashicorp/terraform-plugin-framework/types/basetypes"
 )
 
 // A target is a host, a database or an application, as the API has them:
@@ -45,6 +46,7 @@ type apiTarget struct {
 	AppUpstream     string            `json:"app_upstream"`
 	AppEndpoints    []apiEndpoint     `json:"app_endpoints"`
 	AppDependencies string            `json:"app_dependencies"`
+	AppPrivate      *apiPrivate       `json:"app_private,omitempty"`
 	OSFamily        string            `json:"os_family"`
 	Ports           map[string]int    `json:"ports"`
 	Capabilities    []string          `json:"capabilities"`
@@ -69,6 +71,7 @@ type targetWrite struct {
 	AppUpstream     string            `json:"app_upstream"`
 	AppEndpoints    []apiEndpoint     `json:"app_endpoints"`
 	AppDependencies string            `json:"app_dependencies"`
+	AppPrivate      *apiPrivate       `json:"app_private,omitempty"`
 	OSFamily        string            `json:"os_family"`
 	Ports           map[string]int    `json:"ports"`
 	Capabilities    []string          `json:"capabilities"`
@@ -80,7 +83,7 @@ type targetWrite struct {
 
 func (t *apiTarget) write() targetWrite {
 	return targetWrite{Name: t.Name, Address: t.Address, Engine: t.Engine, EngineVersion: t.EngineVersion, RetentionDays: t.RetentionDays,
-		DatabaseName: t.DatabaseName, TLSMode: t.TLSMode, TLSCA: t.TLSCA, AppUpstream: t.AppUpstream, AppEndpoints: t.AppEndpoints, AppDependencies: t.AppDependencies,
+		DatabaseName: t.DatabaseName, TLSMode: t.TLSMode, TLSCA: t.TLSCA, AppUpstream: t.AppUpstream, AppEndpoints: t.AppEndpoints, AppDependencies: t.AppDependencies, AppPrivate: t.AppPrivate,
 		OSFamily: t.OSFamily, Ports: t.Ports, Capabilities: t.Capabilities, Tags: t.Tags, Status: t.Status, Notes: t.Notes, Credentials: t.Credentials}
 }
 
@@ -97,6 +100,7 @@ type targetModel struct {
 	AppUpstream     types.String `tfsdk:"app_upstream"`
 	AppEndpoints    types.List   `tfsdk:"app_endpoints"`
 	AppDependencies types.String `tfsdk:"app_dependencies"`
+	AppPrivate      types.Object `tfsdk:"app_private"`
 	Ports           types.Map    `tfsdk:"ports"`
 	Tags            types.Map    `tfsdk:"tags"`
 	Credentials     types.Map    `tfsdk:"credentials"`
@@ -108,6 +112,22 @@ type targetModel struct {
 }
 
 var endpointType = types.ObjectType{AttrTypes: map[string]attr.Type{"name": types.StringType, "url": types.StringType}}
+
+// apiPrivate is an application's private allowance as the API carries it.
+type apiPrivate struct {
+	Networks []string `json:"networks,omitempty"`
+	Hosts    []string `json:"hosts,omitempty"`
+}
+
+var privateType = types.ObjectType{AttrTypes: map[string]attr.Type{
+	"networks": types.ListType{ElemType: types.StringType},
+	"hosts":    types.ListType{ElemType: types.StringType},
+}}
+
+type privateModel struct {
+	Networks types.List `tfsdk:"networks"`
+	Hosts    types.List `tfsdk:"hosts"`
+}
 
 type endpointModel struct {
 	Name types.String `tfsdk:"name"`
@@ -121,6 +141,16 @@ func (m *targetModel) from(ctx context.Context, t *apiTarget) diag.Diagnostics {
 	m.Engine, m.EngineVersion, m.DatabaseName = types.StringValue(t.Engine), types.StringValue(t.EngineVersion), types.StringValue(t.DatabaseName)
 	m.TLSMode, m.TLSCA, m.AppUpstream = types.StringValue(t.TLSMode), types.StringValue(t.TLSCA), types.StringValue(t.AppUpstream)
 	m.AppDependencies = types.StringValue(t.AppDependencies)
+	m.AppPrivate = types.ObjectNull(privateType.AttrTypes)
+	if p := t.AppPrivate; p != nil && (len(p.Networks) > 0 || len(p.Hosts) > 0) {
+		nets, d1 := types.ListValueFrom(ctx, types.StringType, nonNilList(p.Networks))
+		hosts, d2 := types.ListValueFrom(ctx, types.StringType, nonNilList(p.Hosts))
+		diags.Append(d1...)
+		diags.Append(d2...)
+		obj, d3 := types.ObjectValue(privateType.AttrTypes, map[string]attr.Value{"networks": nets, "hosts": hosts})
+		diags.Append(d3...)
+		m.AppPrivate = obj
+	}
 	m.Status, m.Notes, m.HostKeyStatus = types.StringValue(t.Status), types.StringValue(t.Notes), types.StringValue(t.HostKeyStatus)
 	m.RetentionDays = types.Int64Null()
 	if t.RetentionDays != nil {
@@ -150,6 +180,13 @@ func (m *targetModel) from(ctx context.Context, t *apiTarget) diag.Diagnostics {
 	m.Capabilities, d = types.ListValueFrom(ctx, types.StringType, caps)
 	diags.Append(d...)
 	return diags
+}
+
+func nonNilList(l []string) []string {
+	if l == nil {
+		return []string{}
+	}
+	return l
 }
 
 func nonNilMap(m map[string]string) map[string]string {
@@ -182,6 +219,21 @@ func (m *targetModel) onto(ctx context.Context, w *targetWrite) diag.Diagnostics
 	str(m.TLSCA, &w.TLSCA)
 	str(m.AppUpstream, &w.AppUpstream)
 	str(m.AppDependencies, &w.AppDependencies)
+	if !m.AppPrivate.IsUnknown() {
+		w.AppPrivate = nil
+		if !m.AppPrivate.IsNull() {
+			var pm privateModel
+			diags.Append(m.AppPrivate.As(ctx, &pm, basetypes.ObjectAsOptions{})...)
+			p := &apiPrivate{}
+			if known(pm.Networks) {
+				diags.Append(pm.Networks.ElementsAs(ctx, &p.Networks, false)...)
+			}
+			if known(pm.Hosts) {
+				diags.Append(pm.Hosts.ElementsAs(ctx, &p.Hosts, false)...)
+			}
+			w.AppPrivate = p
+		}
+	}
 	str(m.Status, &w.Status)
 	str(m.Notes, &w.Notes)
 	if !m.RetentionDays.IsUnknown() {
@@ -254,7 +306,15 @@ func (r *targetResource) Schema(_ context.Context, _ resource.SchemaRequest, res
 					"url":  schema.StringAttribute{Required: true},
 				}},
 			},
-			"app_dependencies": gateway("For an application: public (the default), its pages load from any public address on port 80 or 443; origins, from its upstream and endpoints only."),
+			"app_dependencies": gateway("For an application: public (the default), its pages load from any public address, on any port, and from app_private; origins, from its upstream and endpoints only."),
+			"app_private": schema.SingleNestedAttribute{
+				Optional:    true,
+				Description: "For an application under public: the private networks (CIDRs) and hosts (host:port) its pages may also load from. Absent is none.",
+				Attributes: map[string]schema.Attribute{
+					"networks": schema.ListAttribute{ElementType: types.StringType, Optional: true, Description: "Networks in CIDR form, each its network address, in private space."},
+					"hosts":    schema.ListAttribute{ElementType: types.StringType, Optional: true, Description: "host:port pairs; an IP literal must be private."},
+				},
+			},
 			"ports": schema.MapAttribute{ElementType: types.Int64Type, Optional: true, Computed: true,
 				PlanModifiers: []planmodifier.Map{mapplanmodifier.UseStateForUnknown()},
 				Description:   "Ports by protocol (ssh, rdp, vnc, winrm, database); the gateway fills the usual ones."},

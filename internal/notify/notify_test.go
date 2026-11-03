@@ -104,7 +104,7 @@ func newEnv(t *testing.T, transport http.RoundTripper) *env {
 		}
 		return m, nil
 	}
-	e.notifier = &Notifier{Channels: e.repo, Audit: e.audit, Resolve: names, Base: "https://gw.example.com", Sender: &Sender{Transport: transport, AllowLoopback: true}, Log: log}
+	e.notifier = &Notifier{Channels: e.repo, Audit: e.audit, Resolve: names, Base: "https://gw.example.com", Sender: &Sender{Transport: transport, AllowLoopback: true, Server: e.repo.Server}, Log: log}
 	users := user.NewRepo(db)
 	sessions := auth.NewSessions(db, bytes.Repeat([]byte{2}, 32), false)
 	mux := http.NewServeMux()
@@ -302,8 +302,8 @@ func TestChannelInputIsChecked(t *testing.T) {
 		{map[string]any{"name": "x", "kind": "webhook", "events": []string{"access_requested"}, "webhook_url": "https://169.254.169.254/latest"}, "link-local"},
 		{map[string]any{"name": "x", "kind": "webhook", "events": []string{"access_requested"}, "webhook_url": "https://127.0.0.1/x"}, "loopback"},
 		{map[string]any{"name": "x", "kind": "webhook", "events": []string{"nope"}, "webhook_url": "https://h.example.com/x"}, "unknown kind"},
-		{map[string]any{"name": "x", "kind": "email", "events": []string{}, "smtp_host": "mail.example.com", "from": "gw@example.com\r\nBcc: x@evil.com", "to": []string{"ops@example.com"}}, "from:"},
-		{map[string]any{"name": "x", "kind": "email", "events": []string{}, "smtp_host": "mail.example.com", "from": "gw@example.com", "to": []string{"ops@example.com\nBcc: y@evil.com"}}, "to:"},
+		{map[string]any{"name": "x", "kind": "email", "events": []string{}, "to": []string{"ops@example.com\nBcc: y@evil.com"}}, "to:"},
+		{map[string]any{"name": "x", "kind": "email", "events": []string{}, "to": []string{}}, "to:"},
 		{map[string]any{"name": "x", "kind": "carrier-pigeon", "events": []string{}}, "kind"},
 	} {
 		code, _, raw := e.do(t, "POST", "/api/v1/admin/notifications", c.body)
@@ -377,8 +377,11 @@ func fakeSMTP(t *testing.T) (port int, got func() string) {
 func TestEmailChannel(t *testing.T) {
 	port, got := fakeSMTP(t)
 	e := newEnv(t, nil)
-	c := &Channel{Name: "mail", Kind: KindEmail, Enabled: true, Events: []string{EventDiskFull},
-		Config: Config{SMTPHost: "127.0.0.1", SMTPPort: port, From: "gw@example.com", To: []string{"ops@example.com", "sec@example.com"}}}
+	// The mail server is the gateway's (2026-11-03, later); the channel names recipients alone.
+	if err := e.repo.SetServer(context.Background(), &Server{Host: "127.0.0.1", Port: port, From: "gw@example.com"}, ""); err != nil {
+		t.Fatal(err)
+	}
+	c := &Channel{Name: "mail", Kind: KindEmail, Enabled: true, Events: []string{EventDiskFull}, Config: Config{To: []string{"ops@example.com", "sec@example.com"}}}
 	if err := e.repo.Create(context.Background(), c, Secret{}); err != nil {
 		t.Fatal(err)
 	}

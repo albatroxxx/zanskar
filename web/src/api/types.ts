@@ -66,6 +66,24 @@ export interface AppEndpoint {
   url: string
 }
 
+/** The private address space an application's dependencies may reach (ADR 0037, amended 2026-11-03, later). */
+export interface AppPrivate {
+  networks?: string[]
+  hosts?: string[]
+}
+
+/** One thing an application's sessions were refused as a dependency, learned from the relay. */
+export interface DependencyRefusal {
+  host: string
+  port: number
+  why: string
+  what: string
+  from: string
+  count: number
+  first_seen: string
+  last_seen: string
+}
+
 export interface Target {
   id: string
   name: string
@@ -85,8 +103,10 @@ export interface Target {
   app_upstream?: string
   /** An application's further origins, reached in the same session and listed as bookmarks (ADR 0037, amended 2026-11-02). */
   app_endpoints?: AppEndpoint[]
-  /** Where an application's pages load from beside its origins (2026-11-03): any public address on 80/443, or its origins only. */
+  /** Where an application's pages load from beside its origins (2026-11-03): any public address, or its origins only. */
   app_dependencies?: 'public' | 'origins'
+  /** The private networks (CIDRs) and hosts (host:port) the dependencies may reach, under 'public'; absent for none. */
+  app_private?: AppPrivate
   ports: Partial<Record<Protocol, number>>
   capabilities: Protocol[]
   host_key_fingerprint: string | null
@@ -637,8 +657,6 @@ export interface TLSStatus {
   uploaded?: TLSCertInfo
   generated?: TLSCertInfo
   file_hint?: string
-  /** Let's Encrypt, when the gateway serves TLS itself (ADR 0021, amended 2026-10-30). */
-  acme?: { on: boolean; names: string[] | null; not_after?: string; issuer?: string; last_error?: string }
 }
 
 /** Recording storage as the console edits it; the secret is write-only. Mirrors internal/recstorage.Config. */

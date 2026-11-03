@@ -355,3 +355,91 @@ Rejected: resolving dependencies through a list of allowed public hosts per appl
 dependencies are on 80 and 443, and a wider rule makes the relay a general proxy); letting
 frames through (a frame is a navigation to Chromium's policy, which cannot tell a frame
 from a tab, and a page that may frame anything can show anything).
+
+## Amendment (2026-11-03, later): the relay inspects, so frames, private hosts and any port work
+
+**Under *Dependencies: Any public address*, the session's relay now reads the session's HTTP
+in clear, cookies and tokens included.** It terminates TLS with a certificate authority made
+for that session alone and verifies the real origin itself. It logs the host and the kind of
+each request it refuses, never a path, a header or a body. An application whose session must
+not be decrypted is set to *Its origins only*, which is unchanged from before: a blind tunnel
+to the listed origins and nothing else.
+
+The owner asked for the three limits of the amendment above to go: frames from third parties,
+dependencies on private addresses, and ports other than 80 and 443, each of which still needed
+an endpoint listed. A SOCKS tunnel cannot tell a frame from a tab, cannot tell a page's fetch
+from a raw TCP connection, and cannot say what asked for a refused host. An HTTP proxy that
+inspects can.
+
+- **The relay is an HTTP proxy that inspects.** Chromium's `ProxySettings` name it as an
+  `http://` proxy. A plain `http://` request arrives whole. For `https://` the browser sends
+  `CONNECT host:port`; for a destination the rules allow, the relay answers, looks at the first
+  byte (a TLS record under `wss://`, `https://`; plain HTTP under `ws://`), and, for TLS,
+  presents a leaf certificate for that host signed by the session's CA, speaks HTTP/1.1 with
+  the browser, and forwards each request to the real origin over TLS verified against the
+  system roots, or against the application's CA bundle for its own origins, dialling the
+  address the gateway pinned for an origin or the address the relay checked for anything
+  else, never a name again. The session's CA (an ECDSA key made when the session starts) is
+  trusted by that session's browser alone, through the certificate store the entrypoint
+  already fills (`CA_PEM`); its key lives in the relay's memory and dies with the container.
+  The upstream's own CA bundle no longer goes to the browser: the relay verifies the upstream.
+- **A page opens only at the origins; everything else is a dependency.** Chromium sends
+  `Sec-Fetch-Dest` and `Sec-Fetch-Mode` with every request to a secure destination. A
+  top-level document (`navigate` + `document`: the address bar, a link, a new tab, a popup, a
+  redirect's end) is allowed at the upstream and the endpoints and answered with the relay's
+  own *blocked* page anywhere else, which is also how a person sees it was Zanskar that said
+  no. A frame, a script, a style, a font, an image, a fetch, a WebSocket, a worker is a
+  dependency and goes through under the dependency rules. Chromium's `URLBlocklist` catch-all
+  goes under *Any public address*, since it blocks frames too (checked on the rig before
+  building); the scheme blocks (`chrome://`, `file://`, `javascript:`, `view-source:`,
+  `devtools://` unless granted) stay. Under *Its origins only* the catch-all and the allowlist
+  stay as they were.
+- **Frames.** A frame from a public host is a dependency: reCAPTCHA, a payment frame, an
+  embedded video load. A frame's own navigations are frames, so a page framed from elsewhere
+  cannot become a tab; `window.open` is a document, so a popup to a third party is still
+  refused unless the origin is listed.
+- **Ports.** For a public host the relay only ever speaks HTTP on whatever port the page
+  named, so there is no port to restrict: a browser can make nothing but HTTP through it. The
+  80/443 rule of the amendment above goes with the blind tunnel it guarded.
+- **Private addresses: learned, then allowed.** A dependency on a private address stays
+  refused until an administrator allows it, because a page that may reach any private host
+  reaches the gateway's neighbours too. The relay says what it refused, one aggregated line
+  per destination per minute (`apprelay dependency refused`: host, port, why, what asked —
+  the `Sec-Fetch-Dest` — and the page's origin, never its path), and the gateway reads those
+  lines from the container's log every 30 seconds and once more before it removes the
+  container, keeping them per application. The application's page in the console shows them
+  under *Blocked dependencies*: for a private host, **Allow** adds `host:port` to the
+  application's private dependencies, reachable for dependencies and frames, never as a page,
+  with no bookmark; a loopback, link-local or metadata address, or the gateway's own, is
+  shown with a warning and cannot be allowed. *Private networks* (`10.20.0.0/16`) lets an
+  administrator allow a whole network instead of clicking each host. In the API,
+  `app_private: {networks: [...], hosts: ["cdn.corp:443"]}` on an application, in the
+  configuration file and the Terraform provider likewise; what was learned is read-only
+  through the API. A blocked page open (a person typing a third-party address) is kept the
+  same way: it is worth an auditor's look.
+- **Learning through the container's log** rather than a listener on the bridge: the gateway
+  already owns the containers through the Docker CLI, a log line costs the relay nothing, and
+  nothing new listens where other sessions' relays could reach it.
+- **What the relay keeps from itself.** Every server the relay runs has a header timeout and
+  a header size cap; the block page is rendered through `html/template`; the relay's own
+  addresses are private, so a request aimed at them is refused by the rule; the browser's own
+  service hosts stay refused; a request the proxy cannot parse is dropped.
+
+Residuals, stated: Chromium sends no `Sec-Fetch` headers to an insecure (`http://`)
+destination, so a plain-http third party framed by a plain-http page cannot be told from a
+navigation and is refused as one (a secure page cannot frame plain http anyway); a browser
+image pinned from before 1.12 verifies an `https` upstream itself and no longer gets its CA
+bundle, so such an upstream under a private CA needs the 1.12 image or newer; a private name
+resolves through Docker's embedded DNS, that is, the host's resolver, as the upstream's did;
+an application that pins its own certificate in script cannot be inspected and is set to *Its
+origins only*; the session's CA key travels to the container as the VNC password and the
+relay's table do, in the container's environment, readable to root on the host and to no one
+else.
+
+Rejected: a browser extension with `declarativeNetRequest` rules that block `main_frame` and
+pass `sub_frame` (delivering a force-installed extension under the session's policy needs an
+update server and a signed package, and the policy that blocks extensions would have to open;
+fragile where the proxy is plain); allowing private hosts by heuristic (the upstream's own
+/24, or static loads only), which is a server-side request forgery into the gateway's network
+on a page's say-so; a bridge-side endpoint the gateway polls for refusals (one more listener,
+and the gateway cannot reach a bridge address on every host it runs on).

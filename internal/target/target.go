@@ -20,6 +20,8 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"github.com/albatroxxx/zanskar/internal/ipspace"
+
 	"github.com/albatroxxx/zanskar/internal/protocol"
 )
 
@@ -151,6 +153,28 @@ const (
 	DependenciesOrigins = "origins"
 )
 
+// AppPrivate is the private address space an application's dependencies
+// may reach beside its origins (ADR 0037, amended 2026-11-03, later), under
+// DependenciesPublic: networks as CIDRs, hosts as host:port. A page fetches
+// from any public address without it; a private address is refused until it
+// is here, and the application's page in the console offers each refused
+// one to allow.
+type AppPrivate struct {
+	Networks []string `json:"networks,omitempty"`
+	Hosts    []string `json:"hosts,omitempty"`
+}
+
+// MaxPrivateEntries bounds each of an application's private lists.
+const MaxPrivateEntries = 64
+
+// Entries is every allowance as one list, networks first.
+func (p *AppPrivate) Entries() []string {
+	if p == nil {
+		return nil
+	}
+	return append(append([]string(nil), p.Networks...), p.Hosts...)
+}
+
 // AppEndpoint is one more origin of an application (ADR 0037, amended
 // 2026-11-02): the session's browser reaches it beside the upstream, and
 // lists it under Name in the application's bookmarks. URL is an origin,
@@ -197,7 +221,10 @@ type Target struct {
 	// 443, through the session's relay; or DependenciesOrigins, the
 	// upstream and the endpoints and nothing else. Opening a page is held
 	// to the origins either way. Empty on a host or a database.
-	AppDependencies     string           `json:"app_dependencies,omitempty"`
+	AppDependencies string `json:"app_dependencies,omitempty"`
+	// AppPrivate is the private address space the dependencies may reach,
+	// under DependenciesPublic; nil for none.
+	AppPrivate          *AppPrivate      `json:"app_private,omitempty"`
 	OSFamily            OSFamily         `json:"os_family"`
 	Ports               map[Protocol]int `json:"ports"`
 	Capabilities        []Protocol       `json:"capabilities"`
@@ -350,6 +377,78 @@ func (t *Target) validEndpoints(home *url.URL) (anyHTTPS bool, err error) {
 	return anyHTTPS, nil
 }
 
+// validPrivate checks and normalises an application's private dependencies:
+// each network a CIDR written as its network address, in private space
+// (RFC 1918, unique local); each host host:port, the host lowercased, an IP
+// literal private (a name is checked when it resolves, by the relay); none
+// repeating; at most MaxPrivateEntries of each. Nothing is stored as none.
+func (t *Target) validPrivate() error {
+	p := t.AppPrivate
+	if p == nil {
+		return nil
+	}
+	if len(p.Networks) > MaxPrivateEntries || len(p.Hosts) > MaxPrivateEntries {
+		return fmt.Errorf("%w: app_private holds at most %d networks and %d hosts", ErrInvalid, MaxPrivateEntries, MaxPrivateEntries)
+	}
+	seen := map[string]bool{}
+	var nets, hosts []string
+	for i, raw := range p.Networks {
+		field := fmt.Sprintf("app_private.networks[%d]", i)
+		ip, n, err := net.ParseCIDR(strings.TrimSpace(raw))
+		if err != nil {
+			return fmt.Errorf("%w: %s must be a network in CIDR form, such as 10.20.0.0/16", ErrInvalid, field)
+		}
+		if !ip.Equal(n.IP) {
+			return fmt.Errorf("%w: %s: %s is not the network's address; use %s", ErrInvalid, field, strings.TrimSpace(raw), n)
+		}
+		if why := ipspace.Reserved(n.IP); why != "private" {
+			if why == "" {
+				why = "public"
+			}
+			return fmt.Errorf("%w: %s: %s is %s, not a private network", ErrInvalid, field, n, why)
+		}
+		if seen[n.String()] {
+			return fmt.Errorf("%w: %s repeats %s", ErrInvalid, field, n)
+		}
+		seen[n.String()] = true
+		nets = append(nets, n.String())
+	}
+	for i, raw := range p.Hosts {
+		field := fmt.Sprintf("app_private.hosts[%d]", i)
+		host, port, err := net.SplitHostPort(strings.TrimSpace(raw))
+		if err != nil || strings.TrimSpace(host) == "" {
+			return fmt.Errorf("%w: %s must be host:port, such as cdn.corp:443", ErrInvalid, field)
+		}
+		host = strings.TrimSuffix(strings.ToLower(strings.TrimSpace(host)), ".")
+		if n, err := strconv.Atoi(port); err != nil || n < 1 || n > 65535 {
+			return fmt.Errorf("%w: %s has no valid port", ErrInvalid, field)
+		}
+		if ip := net.ParseIP(host); ip != nil {
+			if why := ipspace.Reserved(ip); why != "private" {
+				if why == "" {
+					why = "public"
+				}
+				return fmt.Errorf("%w: %s: %s is %s, not a private address", ErrInvalid, field, host, why)
+			}
+			host = ip.String()
+		} else if !ValidAddress(host) {
+			return fmt.Errorf("%w: %s: %s is not a host name", ErrInvalid, field, host)
+		}
+		key := net.JoinHostPort(host, port)
+		if seen[key] {
+			return fmt.Errorf("%w: %s repeats %s", ErrInvalid, field, key)
+		}
+		seen[key] = true
+		hosts = append(hosts, key)
+	}
+	if len(nets) == 0 && len(hosts) == 0 {
+		t.AppPrivate = nil
+		return nil
+	}
+	t.AppPrivate = &AppPrivate{Networks: nets, Hosts: hosts}
+	return nil
+}
+
 // Endpoints is every origin of an application, its upstream first under the
 // application's own name, as the session's browser lists them; nil for a
 // target that is not an application. The target is assumed validated.
@@ -396,6 +495,9 @@ func (t *Target) Validate() error {
 		default:
 			return fmt.Errorf("%w: app_dependencies must be %s or %s", ErrInvalid, DependenciesPublic, DependenciesOrigins)
 		}
+		if err := t.validPrivate(); err != nil {
+			return err
+		}
 		t.TLSCA = strings.TrimSpace(t.TLSCA)
 		if t.TLSCA != "" {
 			if u.Scheme != "https" && !anyHTTPS {
@@ -412,6 +514,12 @@ func (t *Target) Validate() error {
 	}
 	if t.AppUpstream == "" && strings.TrimSpace(t.AppDependencies) != "" {
 		return fmt.Errorf("%w: app_dependencies belong to an application, which needs app_upstream", ErrInvalid)
+	}
+	if t.AppUpstream == "" && len(t.AppPrivate.Entries()) > 0 {
+		return fmt.Errorf("%w: app_private belongs to an application, which needs app_upstream", ErrInvalid)
+	}
+	if t.AppUpstream == "" {
+		t.AppPrivate = nil
 	}
 	if !ValidAddress(t.Address) {
 		return fmt.Errorf("%w: address must be a hostname or IP without scheme or port", ErrInvalid)

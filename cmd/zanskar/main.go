@@ -19,7 +19,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"net/url"
 	"os"
 	"os/signal"
 	"strings"
@@ -250,23 +249,6 @@ func serve(ctx context.Context) error {
 			logLevel.Set(lvl)
 		}
 	}
-	if tlsMgr != nil {
-		// A certificate from Let's Encrypt, when the console turns it on
-		// (ADR 0021, amended 2026-10-30), for the public URL's name and the
-		// DNS names among the TLS hosts only.
-		publicHost := ""
-		if u, err := url.Parse(cfg.PublicURL); err == nil {
-			publicHost = u.Hostname()
-		}
-		tlsMgr.ACME = &tlscert.ACME{
-			Names: tlscert.NamesFor(publicHost, cfg.TLSHosts),
-			Settings: func() (bool, string, string) {
-				return runtime.Bool(settings.KeyACME), runtime.String(settings.KeyACMEEmail), runtime.String(settings.KeyACMEDirectory)
-			},
-			Cache: tlscert.DBCache{Repo: tlsMgr.Repo},
-			Log:   log,
-		}
-	}
 	applyLevel(runtime.String(settings.KeyLogLevel))
 	runtime.Subscribe(settings.KeyLogLevel, applyLevel)
 	requireMFA := func() bool { return runtime.Bool(settings.KeyRequireMFA) }
@@ -411,7 +393,15 @@ func serve(ctx context.Context) error {
 	// Notifications (ADR 0039): each channel follows the audit log from its
 	// own checkpoint, as the SIEM export does, and is told what it asked for.
 	notifyRepo := notify.NewRepo(db, ring)
-	notifier := &notify.Notifier{Channels: notifyRepo, Audit: auditLog, Resolve: sessionRepo.ResolveNames, Base: cfg.PublicURL, Sender: &notify.Sender{}, Log: log}
+	// The mail server is the gateway's, one for every email channel
+	// (2026-11-03, later); a channel from before carrying its own hands it
+	// over at the first start after the upgrade.
+	if adopted, err := notifyRepo.AdoptServer(ctx); err != nil {
+		log.Warn("mail server not adopted from the email channels", "err", err)
+	} else if adopted != nil {
+		log.Info("mail server adopted from the first email channel", "host", adopted.Host, "port", adopted.Port, "from", adopted.From)
+	}
+	notifier := &notify.Notifier{Channels: notifyRepo, Audit: auditLog, Resolve: sessionRepo.ResolveNames, Base: cfg.PublicURL, Sender: &notify.Sender{Server: notifyRepo.Server}, Log: log}
 	go notifier.Run(ctx)
 
 	deps := server.Deps{

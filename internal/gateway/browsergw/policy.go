@@ -18,6 +18,15 @@ func socksPort(spec Spec) int {
 	return 1080
 }
 
+// proxyPort is where the relay's proxy that inspects listens: 3128, or
+// 3129 when the upstream's own forward already holds 3128.
+func proxyPort(spec Spec) int {
+	if upstreamPort(spec.Upstream) == 3128 {
+		return 3129
+	}
+	return 3128
+}
+
 // origin is an origin as the browser writes it, scheme://host[:port].
 func origin(u *url.URL) string { return u.Scheme + "://" + u.Host }
 
@@ -55,11 +64,26 @@ type bookmark struct {
 // open only when the session's grant allows them.
 func policyJSON(spec Spec, relayIP string) (string, error) {
 	home := origin(spec.Upstream) + "/"
-	allow := []string{allowEntry(spec.Upstream)}
-	for _, e := range spec.Endpoints {
-		allow = append(allow, allowEntry(e.URL))
+	// Under public dependencies (ADR 0037, amended 2026-11-03, later) the
+	// relay's proxy reads every request and keeps a page to the origins
+	// itself, and Chromium's catch-all goes: it blocked frames too, which
+	// are dependencies. Held to its origins, the catch-all and the
+	// allowlist keep the browser to them before anything leaves it.
+	var allow, block []string
+	proxy := "socks5://" + net.JoinHostPort(relayIP, strconv.Itoa(socksPort(spec)))
+	if spec.PublicDependencies {
+		// The proxy's own address is plain: it is on the session's private
+		// network, two containers with no route out, and what goes through
+		// it is TLS end to end with the relay (CONNECT).
+		proxy = "http://" + net.JoinHostPort(relayIP, strconv.Itoa(proxyPort(spec))) // NOSONAR
+	} else {
+		allow = []string{allowEntry(spec.Upstream)}
+		for _, e := range spec.Endpoints {
+			allow = append(allow, allowEntry(e.URL))
+		}
+		block = []string{"*"}
 	}
-	block := []string{"*", "chrome://*", "chrome-untrusted://*", "file://*", "javascript:*", "view-source:*"}
+	block = append(block, "chrome://*", "chrome-untrusted://*", "file://*", "javascript:*", "view-source:*")
 	devtools := 2
 	if spec.DevTools {
 		devtools = 1
@@ -73,10 +97,9 @@ func policyJSON(spec Spec, relayIP string) (string, error) {
 		// container, the VNC server least of all, is a page's to reach.
 		"ProxySettings": map[string]any{
 			"ProxyMode":       "fixed_servers",
-			"ProxyServer":     "socks5://" + net.JoinHostPort(relayIP, strconv.Itoa(socksPort(spec))),
+			"ProxyServer":     proxy,
 			"ProxyBypassList": "<-loopback>",
 		},
-		"URLAllowlist":              allow,
 		"URLBlocklist":              block,
 		"DownloadRestrictions":      3,
 		"AllowFileSelectionDialogs": false, "PromptForDownloadLocation": false,
@@ -104,6 +127,11 @@ func policyJSON(spec Spec, relayIP string) (string, error) {
 		// The command line carries the resolver rules; the bar warning
 		// about them would show the session's internal addressing.
 		"CommandLineFlagSecurityWarningsEnabled": false,
+	}
+	// No allowlist at all rather than an empty one: Chromium reads an empty
+	// list as a policy set to nothing.
+	if len(allow) > 0 {
+		p["URLAllowlist"] = allow
 	}
 	if len(spec.Endpoints) > 0 {
 		name := spec.Name

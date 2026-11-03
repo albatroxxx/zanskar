@@ -87,6 +87,46 @@ describe('TargetForm application', () => {
     await user.click(screen.getByRole('button', { name: 'Create' }))
     expect(hostPost).toHaveBeenCalledWith('/targets', expect.objectContaining({ app_dependencies: '' }))
   })
+
+  // 2026-11-03, later: the private networks and hosts the dependencies may
+  // reach, one per line, offered under any public address alone; blank
+  // lines are left out and nothing is sent as null.
+  it('takes private networks and hosts one per line, under any public address only', async () => {
+    const post = vi.spyOn(api, 'post').mockResolvedValue({ id: 'a1' } as never)
+    render(<TargetForm onClose={() => {}} onSaved={() => {}} />)
+    const user = userEvent.setup()
+    await user.click(screen.getByRole('tab', { name: 'Application' }))
+    await user.type(screen.getByLabelText('Name'), 'Wiki')
+    await user.type(screen.getByLabelText('Upstream'), 'http://wiki.internal')
+    await user.type(screen.getByLabelText('Private networks'), '10.20.0.0/16{enter}{enter}')
+    await user.type(screen.getByLabelText('Private hosts'), 'cdn.corp:443')
+    await user.click(screen.getByRole('button', { name: 'Create' }))
+    expect(post).toHaveBeenCalledWith('/targets', expect.objectContaining({ app_private: { networks: ['10.20.0.0/16'], hosts: ['cdn.corp:443'] } }))
+
+    cleanup()
+    vi.restoreAllMocks()
+    const heldPost = vi.spyOn(api, 'post').mockResolvedValue({ id: 'a2' } as never)
+    render(<TargetForm onClose={() => {}} onSaved={() => {}} />)
+    await user.click(screen.getByRole('tab', { name: 'Application' }))
+    await user.selectOptions(screen.getByLabelText('Dependencies'), 'origins')
+    expect(screen.queryByLabelText('Private networks')).toBeNull()
+    await user.type(screen.getByLabelText('Name'), 'Held')
+    await user.type(screen.getByLabelText('Upstream'), 'http://held.internal')
+    await user.click(screen.getByRole('button', { name: 'Create' }))
+    expect(heldPost).toHaveBeenCalledWith('/targets', expect.objectContaining({ app_dependencies: 'origins', app_private: null }))
+  })
+
+  it('names the private line the server refused as the person sees it', async () => {
+    vi.spyOn(api, 'post').mockRejectedValue(new ApiError(400, { code: 'bad_request', message: 'app_private.hosts[1] must be host:port, such as cdn.corp:443', request_id: 'r' }, '400'))
+    render(<TargetForm onClose={() => {}} onSaved={() => {}} />)
+    const user = userEvent.setup()
+    await user.click(screen.getByRole('tab', { name: 'Application' }))
+    await user.type(screen.getByLabelText('Name'), 'Wiki')
+    await user.type(screen.getByLabelText('Upstream'), 'http://wiki.internal')
+    await user.type(screen.getByLabelText('Private hosts'), 'cdn.corp:443{enter}nope')
+    await user.click(screen.getByRole('button', { name: 'Create' }))
+    expect(await screen.findByText(/Private host 2 must be host:port/)).toBeDefined()
+  })
 })
 
 // An application's further origins (ADR 0037, amended 2026-11-02): rows of

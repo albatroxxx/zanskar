@@ -95,3 +95,59 @@ describe('TargetDetail, an application\'s dependencies', () => {
     expect(screen.queryByText('Dependencies')).toBeNull()
   })
 })
+
+// 2026-11-03, later: what the application's sessions were refused as
+// dependencies, learned from the relay, with a private host allowed in one
+// click, a page marked as an endpoint's business, and an address that can
+// never be allowed marked as such; an application held to its origins
+// learns nothing and shows nothing.
+describe('TargetDetail, blocked dependencies', () => {
+  const wiki: Target = { ...web, id: 'w1', name: 'wiki', address: 'wiki.corp', os_family: 'other', ports: {}, capabilities: [], app_upstream: 'http://wiki.corp' }
+  const refused = [
+    { host: 'cdn.corp', port: 443, why: 'private', what: 'script', from: 'http://wiki.corp', count: 7, first_seen: '2026-11-03T10:00:00Z', last_seen: '2026-11-03T10:05:00Z' },
+    { host: '169.254.169.254', port: 80, why: 'link-local', what: 'image', from: 'http://wiki.corp', count: 1, first_seen: '2026-11-03T10:00:00Z', last_seen: '2026-11-03T10:00:00Z' },
+    { host: 'news.example', port: 443, why: 'not an origin of the application', what: 'document', from: '', count: 2, first_seen: '2026-11-03T10:00:00Z', last_seen: '2026-11-03T10:01:00Z' },
+  ]
+  const serve = () =>
+    vi.spyOn(api, 'get').mockImplementation(async (path: string) => {
+      if (path === '/targets/w1/dependencies') return { items: refused } as never
+      return new Promise(() => {}) as never
+    })
+
+  it('lists them with what asked, allows a private host in one click and marks the rest', async () => {
+    const get = serve()
+    const onChanged = vi.fn()
+    const allowed = { ...wiki, app_private: { hosts: ['cdn.corp:443'] } }
+    const put = vi.spyOn(api, 'put').mockResolvedValue(allowed as never)
+    render(<TargetDetail target={wiki} credentials={[]} onClose={() => {}} onChanged={onChanged} onDeleted={() => {}} onError={() => {}} />)
+    expect(await screen.findByText('cdn.corp:443')).toBeDefined()
+    expect(get).toHaveBeenCalledWith('/targets/w1/dependencies')
+    expect(screen.getByText('script')).toBeDefined()
+    expect(screen.getByRole('button', { name: 'Never allowed: link-local' })).toBeDefined()
+    expect(screen.getByText('page')).toBeDefined()
+    await userEvent.setup().click(screen.getByRole('button', { name: 'Allow' }))
+    await waitFor(() => expect(put).toHaveBeenCalledWith('/targets/w1', expect.objectContaining({ app_private: { hosts: ['cdn.corp:443'] } })))
+    expect(onChanged).toHaveBeenCalledWith(allowed)
+    await waitFor(() => expect(screen.queryByText('cdn.corp:443')).toBeNull())
+    expect(screen.getByText('169.254.169.254:80')).toBeDefined()
+  })
+
+  it('leaves out what is allowed already, and forgets the list on Clear', async () => {
+    serve()
+    const del = vi.spyOn(api, 'del').mockResolvedValue(undefined as never)
+    render(<TargetDetail target={{ ...wiki, app_private: { hosts: ['cdn.corp:443'] } }} credentials={[]} onClose={() => {}} onChanged={() => {}} onDeleted={() => {}} onError={() => {}} />)
+    expect(await screen.findByText('169.254.169.254:80')).toBeDefined()
+    expect(screen.queryByText('cdn.corp:443')).toBeNull()
+    await userEvent.setup().click(screen.getByRole('link', { name: 'Clear' }))
+    await waitFor(() => expect(del).toHaveBeenCalledWith('/targets/w1/dependencies'))
+    expect(await screen.findByText('Nothing refused')).toBeDefined()
+  })
+
+  it('shows nothing for an application held to its origins', async () => {
+    const get = serve()
+    render(<TargetDetail target={{ ...wiki, app_dependencies: 'origins' }} credentials={[]} onClose={() => {}} onChanged={() => {}} onDeleted={() => {}} onError={() => {}} />)
+    expect(screen.getByText('Its origins only')).toBeDefined()
+    expect(screen.queryByText('Blocked')).toBeNull()
+    expect(get).not.toHaveBeenCalledWith('/targets/w1/dependencies')
+  })
+})

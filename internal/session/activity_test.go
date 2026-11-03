@@ -4,6 +4,7 @@ package session
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	"github.com/albatroxxx/zanskar/internal/audit"
@@ -29,6 +30,12 @@ func TestMyActivity(t *testing.T) {
 	rec(audit.Actor{UserID: alice, IP: "198.51.100.7"}.Event(audit.AuditRead, "audit_log", "", audit.Success, nil))
 	rec(audit.Actor{UserID: reviewer, IP: "10.1.1.1"}.Event(audit.UserLogin, "user", reviewer, audit.Success, nil))
 	rec(audit.Actor{UserID: root, IP: "10.9.9.9"}.Event("user.roles.update", "user", reviewer, audit.Success, nil))
+	// What root did as an administrator is the Events page's; what root did
+	// as a user, and what was done to root's account, is root's activity
+	// (2026-11-03, later).
+	rec(audit.Actor{UserID: root, IP: "10.9.9.9"}.Event(audit.TargetCreate, "target", "t2", audit.Success, map[string]any{"name": "web-2"}))
+	rec(audit.Actor{UserID: root, IP: "10.9.9.9"}.Event(audit.SessionStart, "access_session", "s9", audit.Success, map[string]any{"protocol": "ssh"}))
+	rec(audit.Actor{UserID: alice, IP: "198.51.100.7"}.Event(audit.UserPasswordReset, "user", root, audit.Success, nil))
 
 	rr, body := e.get("/api/v1/me/activity", "alice")
 	if rr.Code != 200 {
@@ -63,6 +70,16 @@ func TestMyActivity(t *testing.T) {
 	// Every role has its own activity, the auditor too.
 	if rr, _ := e.get("/api/v1/me/activity", "reviewer"); rr.Code != 200 {
 		t.Fatalf("auditor: %d", rr.Code)
+	}
+	// An administrator's activity: their session and what was done to
+	// their account, never what they did in the admin portal.
+	_, body = e.get("/api/v1/me/activity", "root")
+	var actions []string
+	for _, it := range body["items"].([]any) {
+		actions = append(actions, it.(map[string]any)["action"].(string))
+	}
+	if fmt.Sprint(actions) != "[user.password.reset session.start]" {
+		t.Fatalf("root's activity: %v", actions)
 	}
 	// Reading it records nothing.
 	if evs, _, _ := e.audit.List(ctx, audit.Filter{Action: audit.AuditRead, ActorUserID: alice}); len(evs) != 1 {

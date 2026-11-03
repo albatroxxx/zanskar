@@ -63,32 +63,30 @@ function open(o: AdminOverview, disk: { what: string; usedGB: number; freeGB: nu
 const section = (name: string) => screen.getByRole('heading', { name }).closest('section') as HTMLElement
 
 describe('Needs attention', () => {
-  it('holds failed actions and failing sign-in providers, which Activity no longer does', async () => {
+  it('holds the failed actions and the failed sign-ins; Activity holds the live grants and the refused connections', async () => {
     open(overview(2), null)
     await screen.findByText('Failed actions (24h)')
     const attention = within(section('Needs attention'))
     expect(attention.getByText('Failed actions (24h)')).toBeDefined()
-    const providers = attention.getByText('Sign-in providers failing').closest('a')!
-    expect(providers.getAttribute('href')).toBe('/admin/identity-providers')
-    expect(providers.textContent).toContain('2')
-    expect(providers.className).toContain('danger')
-    expect(within(section('Activity')).queryByText('Failed actions (24h)')).toBeNull()
+    expect(attention.getByText('Failed sign-ins (24h)')).toBeDefined()
+    const activity = within(section('Activity'))
+    expect(activity.getByText('Grants active')).toBeDefined()
+    expect(activity.getByText('Refused connections (24h)')).toBeDefined()
+    expect(activity.queryByText('Failed actions (24h)')).toBeNull()
   })
 
-  it('keeps the providers tile quiet at zero, and keeps it with no provider so the row stays whole', async () => {
-    open(overview(0), null)
-    const tile = (await screen.findByText('Sign-in providers failing')).closest('a')!
-    expect(tile.className).not.toContain('danger')
-    cleanup()
-    vi.restoreAllMocks()
-    open(overview(0, 0), null)
+  // 2026-11-03, later: the owner took the providers tile out ("an
+  // unnecessary attempt to make four boxes"); the notice that a provider
+  // failed its sync stays, above the tiles.
+  it('has no tile for failing providers, only the notice', async () => {
+    open(overview(2), null)
     await screen.findByText('Failed actions (24h)')
-    expect(within(section('Needs attention')).getByText('Sign-in providers failing')).toBeDefined()
+    expect(screen.queryByText('Sign-in providers failing')).toBeNull()
+    expect(screen.getByText(/failed the last sync/)).toBeDefined()
   })
 
-  // 2026-11-03: six tiles under Needs attention and three under Activity
-  // left ragged rows; every section holds four, one row on a wide window.
-  it('puts four tiles in every section, the 24h counts under Activity', async () => {
+  // Four tiles in every section, so a row is four or two, never ragged.
+  it('puts four tiles in every section', async () => {
     for (const providers of [1, 0]) {
       cleanup()
       vi.restoreAllMocks()
@@ -97,10 +95,6 @@ describe('Needs attention', () => {
       for (const name of ['Inventory', 'Needs attention', 'Activity', 'Security posture']) {
         expect(section(name).querySelectorAll('.stat-tile').length, name).toBe(4)
       }
-      const activity = within(section('Activity'))
-      expect(activity.getByText('Failed sign-ins (24h)')).toBeDefined()
-      expect(activity.getByText('Refused connections (24h)')).toBeDefined()
-      expect(screen.queryByText('Grants active')).toBeNull()
     }
   })
 })
@@ -114,8 +108,10 @@ describe('a recordings disk that fills', () => {
       cleanup()
       vi.restoreAllMocks()
       const { get } = open(overview(0), { what: 'database & recordings', usedGB: 90, freeGB: 10 }, st)
-      await screen.findByRole('meter', { name: 'System disk' })
-      expect(screen.getByRole('button', { name: /Low space/ })).toBeDefined()
+      // The bar's colour says it (2026-11-03: no icon beside the reading).
+      const meter = await screen.findByRole('meter', { name: 'System disk' })
+      expect(meter.className).toContain('warn')
+      expect(screen.queryByRole('button', { name: /Low space/ })).toBeNull()
       expect(screen.queryByText(/bucket|S3/)).toBeNull()
       expect(screen.queryByRole('link', { name: 'Recording storage' })).toBeNull()
       expect(screen.queryByRole('button', { name: /recording/i })).toBeNull()

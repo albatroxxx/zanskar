@@ -30,7 +30,6 @@ var notRewritten = map[string]string{
 	"users.directory_removed_at":               "added by 0033, after the rewrite, so it has no older rows; written only through TimeArg (user.Repo.DisableRemoved)",
 	"users.scim_deleted_at":                    "added by 0034, after the rewrite; written only through TimeArg (user.Repo.SetSCIM)",
 	"identity_providers.scim_token_created_at": "added by 0034, after the rewrite; written only through TimeArg (idp.Repo.SetSCIMToken)",
-	"acme_cache.updated_at":                    "created by 0038, after the rewrite; written only through TimeArg (tlscert.DBCache.Put)",
 	"recordings.discarded_at":                  "added by 0041, after the rewrite; written only through TimeArg (session.Repo.DiscardRecording)",
 	"notification_channels.created_at":         "created by 0042, after the rewrite; written only through TimeArg (notify.Repo.Create)",
 	"notification_channels.updated_at":         "created by 0042, after the rewrite; written only through TimeArg (notify.Repo.Create and Update)",
@@ -39,6 +38,9 @@ var notRewritten = map[string]string{
 	"api_tokens.expires_at":                    "created by 0046, after the rewrite; written only through TimeArg (apitoken.Repo.Create)",
 	"api_tokens.last_used_at":                  "created by 0046, after the rewrite; written only through TimeArg (apitoken.Repo.Authenticate)",
 	"api_tokens.revoked_at":                    "created by 0046, after the rewrite; written only through TimeArg (apitoken.Repo.Revoke)",
+	"app_dependency_refusals.first_seen":       "created by 0050, after the rewrite; written only through TimeArg (target.Repo.RecordRefusals)",
+	"app_dependency_refusals.last_seen":        "created by 0050, after the rewrite; written only through TimeArg (target.Repo.RecordRefusals)",
+	"email_server.updated_at":                  "created by 0051, after the rewrite; written only through TimeArg (notify.Repo.SetServer)",
 }
 
 // TestEveryTimestampColumnIsRewritten fails when the migrated SQLite schema

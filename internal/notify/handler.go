@@ -38,6 +38,11 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.Handle("DELETE /api/v1/admin/notifications/{id}", admin(http.HandlerFunc(h.remove)))
 	mux.Handle("POST /api/v1/admin/notifications/{id}/test", admin(http.HandlerFunc(h.test)))
 	mux.Handle("POST /api/v1/admin/notifications/{id}/signing-key", admin(http.HandlerFunc(h.newKey)))
+	// The mail server, one for every email channel (2026-11-03, later).
+	mux.Handle("GET /api/v1/admin/notifications/email-server", admin(http.HandlerFunc(h.getServer)))
+	mux.Handle("PUT /api/v1/admin/notifications/email-server", admin(http.HandlerFunc(h.putServer)))
+	mux.Handle("DELETE /api/v1/admin/notifications/email-server", admin(http.HandlerFunc(h.deleteServer)))
+	mux.Handle("POST /api/v1/admin/notifications/email-server/test", admin(http.HandlerFunc(h.testServer)))
 }
 
 // channelView is a channel as the API shows it: never its secret, with how
@@ -48,19 +53,15 @@ type channelView struct {
 }
 
 // channelInput is what the console sends. A secret field left empty on an
-// update keeps the stored one.
+// update keeps the stored one. An email channel names its recipients
+// alone: the mail server is the gateway's (2026-11-03, later).
 type channelInput struct {
-	Name         string   `json:"name"`
-	Kind         string   `json:"kind"`
-	Events       []string `json:"events"`
-	Enabled      *bool    `json:"enabled"`
-	WebhookURL   string   `json:"webhook_url"`
-	SMTPHost     string   `json:"smtp_host"`
-	SMTPPort     int      `json:"smtp_port"`
-	SMTPUsername string   `json:"smtp_username"`
-	SMTPPassword string   `json:"smtp_password"`
-	From         string   `json:"from"`
-	To           []string `json:"to"`
+	Name       string   `json:"name"`
+	Kind       string   `json:"kind"`
+	Events     []string `json:"events"`
+	Enabled    *bool    `json:"enabled"`
+	WebhookURL string   `json:"webhook_url"`
+	To         []string `json:"to"`
 }
 
 var (
@@ -100,17 +101,6 @@ func apply(in channelInput, c *Channel, s *Secret) string {
 			return "webhook_url: required"
 		}
 	case KindEmail:
-		host := strings.TrimSpace(in.SMTPHost)
-		if !hostRe.MatchString(host) {
-			return "smtp_host: a host name or address"
-		}
-		if in.SMTPPort < 0 || in.SMTPPort > 65535 {
-			return "smtp_port: 1-65535, or empty for 587"
-		}
-		from := strings.TrimSpace(in.From)
-		if !emailRe.MatchString(from) {
-			return "from: an email address"
-		}
 		var to []string
 		for _, t := range in.To {
 			if t = strings.TrimSpace(t); t == "" {
@@ -124,16 +114,10 @@ func apply(in channelInput, c *Channel, s *Secret) string {
 		if len(to) == 0 || len(to) > 20 {
 			return "to: 1 to 20 email addresses"
 		}
-		if strings.ContainsAny(in.SMTPUsername, "\r\n") {
-			return "smtp_username: one line"
-		}
-		c.Config = Config{SMTPHost: host, SMTPPort: in.SMTPPort, SMTPUsername: strings.TrimSpace(in.SMTPUsername), From: from, To: to}
-		if in.SMTPPassword != "" {
-			s.SMTPPassword = in.SMTPPassword
-		}
-		if c.Config.SMTPUsername == "" {
-			s.SMTPPassword = ""
-		}
+		// A server a channel carried from before the gateway had one is
+		// left behind on its first save: the gateway's serves from then on.
+		c.Config = Config{To: to}
+		s.SMTPPassword = ""
 	default:
 		return "kind: webhook or email"
 	}
@@ -214,7 +198,7 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
 		h.fail(w, r, err)
 		return
 	}
-	h.record(r, audit.NotifyChannelUpdate, c, map[string]any{"secret_changed": in.WebhookURL != "" || in.SMTPPassword != ""})
+	h.record(r, audit.NotifyChannelUpdate, c, map[string]any{"secret_changed": in.WebhookURL != ""})
 	httpx.WriteJSON(w, http.StatusOK, channelView{c, h.Notifier.Status(c.ID)})
 }
 

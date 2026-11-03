@@ -108,6 +108,7 @@ type (
 		AppUpstream     string            `json:"app_upstream"`
 		AppEndpoints    []Endpoint        `json:"app_endpoints"`
 		AppDependencies string            `json:"app_dependencies"`
+		AppPrivate      *Private          `json:"app_private"`
 		Ports           map[string]int    `json:"ports"`
 		Capabilities    []string          `json:"capabilities"`
 		Tags            map[string]string `json:"tags"`
@@ -248,7 +249,7 @@ func (s *state) targetDoc(t apiTarget) Target {
 		creds[proto] = s.byID[id]
 	}
 	return Target{Name: t.Name, Address: t.Address, OSFamily: t.OSFamily, Engine: t.Engine, EngineVersion: t.EngineVersion, DatabaseName: t.DatabaseName,
-		TLSMode: t.TLSMode, TLSCA: t.TLSCA, AppUpstream: t.AppUpstream, AppEndpoints: t.AppEndpoints, AppDependencies: t.AppDependencies, Ports: emptyNil(t.Ports), Tags: emptyNil(t.Tags),
+		TLSMode: t.TLSMode, TLSCA: t.TLSCA, AppUpstream: t.AppUpstream, AppEndpoints: t.AppEndpoints, AppDependencies: t.AppDependencies, AppPrivate: t.AppPrivate, Ports: emptyNil(t.Ports), Tags: emptyNil(t.Tags),
 		Status: t.Status, Notes: t.Notes, RetentionDays: t.RetentionDays, Credentials: emptyNil(creds)}
 }
 
@@ -301,7 +302,7 @@ func (s *state) writeTarget(t Target) (map[string]any, string) {
 		status = "active"
 	}
 	return map[string]any{"name": t.Name, "address": t.Address, "os_family": t.OSFamily, "engine": t.Engine, "engine_version": t.EngineVersion,
-		"database_name": t.DatabaseName, "tls_mode": t.TLSMode, "tls_ca": t.TLSCA, "app_upstream": t.AppUpstream, "app_endpoints": t.AppEndpoints, "app_dependencies": t.AppDependencies,
+		"database_name": t.DatabaseName, "tls_mode": t.TLSMode, "tls_ca": t.TLSCA, "app_upstream": t.AppUpstream, "app_endpoints": t.AppEndpoints, "app_dependencies": t.AppDependencies, "app_private": t.AppPrivate,
 		"ports": t.Ports, "tags": t.Tags, "status": status, "notes": t.Notes, "retention_days": t.RetentionDays, "credentials": creds}, ""
 }
 

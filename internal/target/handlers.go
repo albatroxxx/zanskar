@@ -56,6 +56,8 @@ func (h *AdminHandler) Register(mux *http.ServeMux) {
 	mux.Handle("PUT /api/v1/targets/{id}", admin(http.HandlerFunc(h.update)))
 	mux.Handle("DELETE /api/v1/targets/{id}", admin(http.HandlerFunc(h.delete)))
 	mux.Handle("GET /api/v1/targets/{id}/usage", admin(http.HandlerFunc(h.usage)))
+	mux.Handle("GET /api/v1/targets/{id}/dependencies", admin(http.HandlerFunc(h.listDependencies)))
+	mux.Handle("DELETE /api/v1/targets/{id}/dependencies", admin(http.HandlerFunc(h.clearDependencies)))
 	mux.Handle("POST /api/v1/targets/{id}/probe", admin(http.HandlerFunc(h.probe)))
 	mux.Handle("POST /api/v1/targets/{id}/probe-certificate", admin(http.HandlerFunc(h.probeCertificate)))
 	mux.Handle("POST /api/v1/targets/{id}/host-key/trust", admin(http.HandlerFunc(h.trustHostKey)))
@@ -77,6 +79,7 @@ type Write struct {
 	AppUpstream     string              `json:"app_upstream"`     // application targets (ADR 0034)
 	AppEndpoints    []AppEndpoint       `json:"app_endpoints"`    // application targets (ADR 0037, amended)
 	AppDependencies string              `json:"app_dependencies"` // application targets: public (default) or origins
+	AppPrivate      *AppPrivate         `json:"app_private"`      // application targets: private networks and hosts the dependencies may reach
 	OSFamily        OSFamily            `json:"os_family"`
 	Ports           map[Protocol]int    `json:"ports"`
 	Capabilities    []Protocol          `json:"capabilities"`
@@ -91,7 +94,7 @@ func (w Write) apply(t *Target) {
 	t.Engine, t.EngineVersion = w.Engine, w.EngineVersion
 	t.RetentionDays = w.RetentionDays
 	t.DatabaseName, t.TLSMode, t.TLSCA = w.DatabaseName, w.TLSMode, w.TLSCA
-	t.AppUpstream, t.AppEndpoints, t.AppDependencies = w.AppUpstream, w.AppEndpoints, w.AppDependencies
+	t.AppUpstream, t.AppEndpoints, t.AppDependencies, t.AppPrivate = w.AppUpstream, w.AppEndpoints, w.AppDependencies, w.AppPrivate
 	t.Ports, t.Capabilities, t.Tags = w.Ports, w.Capabilities, w.Tags
 	t.Status, t.Notes, t.Credentials = w.Status, w.Notes, w.Credentials
 }
@@ -147,7 +150,7 @@ func (h *AdminHandler) create(w http.ResponseWriter, r *http.Request) {
 	}
 	details := map[string]any{"name": t.Name, "address": t.Address, "os_family": t.OSFamily}
 	if t.IsApplication() {
-		details["origins"], details["dependencies"] = origins(t), t.AppDependencies
+		details["origins"], details["dependencies"], details["private"] = origins(t), t.AppDependencies, t.AppPrivate.Entries()
 	}
 	h.record(r, audit.TargetCreate, t.ID, audit.Success, details)
 	httpx.WriteJSON(w, http.StatusCreated, t)
@@ -174,7 +177,7 @@ func (h *AdminHandler) update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	before := map[string]any{"name": t.Name, "address": t.Address, "status": t.Status}
-	beforeOrigins, beforeDeps := origins(t), t.AppDependencies
+	beforeOrigins, beforeDeps, beforePrivate := origins(t), t.AppDependencies, t.AppPrivate.Entries()
 	body.apply(t)
 	if !h.addressAllowed(w, r, audit.TargetUpdate, t.ID, t) {
 		return
@@ -187,6 +190,7 @@ func (h *AdminHandler) update(w http.ResponseWriter, r *http.Request) {
 	if len(beforeOrigins) > 0 || t.IsApplication() {
 		before["origins"], after["origins"] = beforeOrigins, origins(t)
 		before["dependencies"], after["dependencies"] = beforeDeps, t.AppDependencies
+		before["private"], after["private"] = beforePrivate, t.AppPrivate.Entries()
 	}
 	details := map[string]any{"before": before, "after": after}
 	if before["address"] != t.Address {
@@ -206,10 +210,16 @@ func (h *AdminHandler) update(w http.ResponseWriter, r *http.Request) {
 	if narrowed {
 		details["dependencies_narrowed"] = true
 	}
+	// And a private allowance taken away: the session's relay still holds it.
+	afterPrivate := t.AppPrivate.Entries()
+	privateRemoved := slices.DeleteFunc(slices.Clone(beforePrivate), func(p string) bool { return slices.Contains(afterPrivate, p) })
+	if len(privateRemoved) > 0 {
+		details["private_removed"] = privateRemoved
+	}
 	// A target taken out of service, or moved to an address nobody has
 	// trusted yet, keeps no session: what was admitted to the old target
 	// ends now rather than at its own limits.
-	if h.Revoker != nil && ((before["status"] == StatusActive && t.Status == StatusDisabled) || before["address"] != t.Address || len(removed) > 0 || narrowed) {
+	if h.Revoker != nil && ((before["status"] == StatusActive && t.Status == StatusDisabled) || before["address"] != t.Address || len(removed) > 0 || narrowed || len(privateRemoved) > 0) {
 		details["live_sessions_ended"] = h.Revoker.TargetDisabled(t.ID)
 	}
 	h.record(r, audit.TargetUpdate, t.ID, audit.Success, details)

@@ -16,8 +16,6 @@ import (
 	"strings"
 	"time"
 
-	"golang.org/x/crypto/acme"
-
 	"github.com/albatroxxx/zanskar/internal/auth"
 	"github.com/albatroxxx/zanskar/internal/config"
 	"github.com/albatroxxx/zanskar/internal/httpx"
@@ -115,11 +113,6 @@ func New(cfg *config.Config, db *store.DB, log *slog.Logger, deps Deps) *Server 
 	}
 	if cfg.ServesTLS() && deps.TLS != nil {
 		s.http.TLSConfig = &tls.Config{GetCertificate: deps.TLS.GetCertificate, MinVersion: tls.VersionTLS12}
-		if deps.TLS.ACME != nil {
-			// TLS-ALPN-01 (ADR 0021, amended 2026-10-30): the CA's
-			// validator offers only this protocol; browsers never do.
-			s.http.TLSConfig.NextProtos = []string{"h2", "http/1.1", acme.ALPNProto}
-		}
 	}
 	if cfg.ServesTLS() && cfg.RedirectAddr != "" {
 		var covered func() []string
@@ -127,10 +120,6 @@ func New(cfg *config.Config, db *store.DB, log *slog.Logger, deps Deps) *Server 
 			covered = deps.TLS.Covered
 		}
 		s.redirect = newRedirectServer(cfg.RedirectAddr, cfg.ListenAddr, covered)
-		if deps.TLS != nil && deps.TLS.ACME != nil {
-			// HTTP-01 is answered on the plain listener, before its redirect.
-			s.redirect.Handler = deps.TLS.ACME.HTTPHandler(s.redirect.Handler)
-		}
 	}
 	return s
 }

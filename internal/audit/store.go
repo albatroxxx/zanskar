@@ -159,7 +159,12 @@ type Filter struct {
 	// to their account (object type user, object id theirs), for the access
 	// portal's Activity page (2026-11-03, idea 11).
 	Subject string
-	Action  string
+	// OwnActions, with Subject, keeps of what the person did themselves
+	// only these actions; what others did to their account is kept whole.
+	// The access portal shows a person what they did as a user, not what
+	// they did as an administrator (2026-11-03, later).
+	OwnActions []string
+	Action     string
 	// Outcome narrows to successes or failures; empty means both. The
 	// dashboards' failure counts open the list with it.
 	Outcome    Outcome
@@ -198,6 +203,13 @@ func (l *Log) List(ctx context.Context, f Filter) ([]Event, string, error) {
 	if f.Subject != "" {
 		where = append(where, "(actor_user_id = ? OR (object_type = 'user' AND object_id = ?))")
 		args = append(args, f.Subject, f.Subject)
+		if len(f.OwnActions) > 0 {
+			where = append(where, "(actor_user_id <> ? OR actor_user_id IS NULL OR action IN (?"+strings.Repeat(", ?", len(f.OwnActions)-1)+"))")
+			args = append(args, f.Subject)
+			for _, a := range f.OwnActions {
+				args = append(args, a)
+			}
+		}
 	}
 	if f.Action != "" {
 		add("action = ?", f.Action)

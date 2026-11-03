@@ -1,4 +1,4 @@
-import type { AppEndpoint } from '../../api/types'
+import type { AppEndpoint, AppPrivate } from '../../api/types'
 
 /** How many origins an application may name beside its upstream (the server's MaxAppEndpoints). */
 export const maxAppEndpoints = 31
@@ -20,6 +20,26 @@ export function endpointsBody(rows: AppEndpoint[]): { body: AppEndpoint[]; sent:
     sent.push(i + 1)
   }
   return { body, sent }
+}
+
+/**
+ * privateBody is an application's private allowance as the form sends it:
+ * one entry per line in each box, blank lines left out, null when both are
+ * empty. The server checks each entry and names the one it refuses.
+ */
+export function privateBody(networks: string, hosts: string): AppPrivate | null {
+  const lines = (s: string) => s.split('\n').map((l) => l.trim()).filter(Boolean)
+  const n = lines(networks)
+  const h = lines(hosts)
+  if (n.length === 0 && h.length === 0) return null
+  return { ...(n.length ? { networks: n } : {}), ...(h.length ? { hosts: h } : {}) }
+}
+
+/** privateWords says the server's app_private.networks[i] / hosts[i] as the line the person sees. */
+export function privateWords(msg: string): string {
+  return msg
+    .replace(/app_private\.networks\[(\d+)\]/g, (_, n: string) => `Private network ${Number(n) + 1}`)
+    .replace(/app_private\.hosts\[(\d+)\]/g, (_, n: string) => `Private host ${Number(n) + 1}`)
 }
 
 /** endpointWords says the server's app_endpoints[i] as the row the person filled in, and app_upstream as Upstream. */
