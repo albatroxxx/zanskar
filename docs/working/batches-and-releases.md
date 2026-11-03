@@ -50,7 +50,7 @@ pull request's title as the subject; `--admin` bypasses the review count, never 
    a **draft** release.
 4. Verify the draft before publishing: every asset present, checksums, `cosign verify-blob`, the
    SLSA provenance, the binary's version and commit, both images for both platforms signed and
-   tagged `latest` (the project keeps a verification script for this; it prints one line per
+   tagged `latest` (`hack/verify-release.sh X.Y.Z` does all of it and prints one line per
    check). Nothing is published until all of it passes.
 5. `gh release edit vX.Y.Z --draft=false --latest`. Then check that the Pages deploy ran and
    `https://albatroxxx.github.io/zanskar/releases/latest.json` reads the new version: every
