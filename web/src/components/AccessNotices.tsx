@@ -7,20 +7,42 @@ import { Alert } from './ui'
 
 const POLL_MS = 60_000
 const SOON_MS = 10 * 60_000
-const FRESH_MS = 10 * 60_000
+const FRESH_MS = 24 * 60 * 60_000
+const DISMISSED_KEY = 'zanskar.dismissed.access'
+
+/** readDismissed and writeDismissed keep the dismissed notices' keys in the
+ *  browser, the newest fifty, so a dismissal outlives the page. */
+function readDismissed(): string[] {
+  try {
+    const v = JSON.parse(localStorage.getItem(DISMISSED_KEY) ?? '[]')
+    return Array.isArray(v) ? v.filter((k): k is string => typeof k === 'string') : []
+  } catch {
+    return []
+  }
+}
+
+function writeDismissed(keys: Set<string>) {
+  try {
+    localStorage.setItem(DISMISSED_KEY, JSON.stringify([...keys].slice(-50)))
+  } catch {
+    // Storage full or forbidden: the dismissal lasts the page, as before.
+  }
+}
 
 /**
  * AccessNotices tells a user about their just-in-time requests without them
- * having to look: a request approved in the last ten minutes (with the
- * minutes the approver actually gave, which may differ from what was asked),
- * one denied in the last ten minutes (with the approver's note), and a grant
- * that expires within ten minutes, with a link to ask for an extension
- * (manual QA findings R16 and R17; denials 2026-11-03, later). Polled once a
- * minute; each notice can be dismissed for the rest of the page's life.
+ * having to look: a request approved in the last day (with the minutes the
+ * approver actually gave, which may differ from what was asked), one denied
+ * in the last day (with the approver's note), and a grant that expires
+ * within ten minutes, with a link to ask for an extension (manual QA
+ * findings R16 and R17; denials 2026-11-03, later). Polled once a minute. A
+ * notice stays until dismissed, and a dismissal is kept by the browser, so
+ * a person away for eleven minutes still learns of a decision and is not
+ * told twice (live, 2026-11-03: ten minutes and one page's life lost it).
  */
 export function AccessNotices() {
   const [grants, setGrants] = useState<AccessRequest[]>([])
-  const [dismissed, setDismissed] = useState<Set<string>>(new Set())
+  const [dismissed, setDismissed] = useState<Set<string>>(() => new Set(readDismissed()))
   // Set by each poll rather than read during render, so a render is pure.
   const [now, setNow] = useState(0)
 
@@ -38,7 +60,12 @@ export function AccessNotices() {
     return () => clearInterval(t)
   }, [])
 
-  const dismiss = (key: string) => setDismissed((d) => new Set(d).add(key))
+  const dismiss = (key: string) =>
+    setDismissed((d) => {
+      const next = new Set(d).add(key)
+      writeDismissed(next)
+      return next
+    })
   const what = (g: AccessRequest) => `${protocolName(g.protocol)} on ${g.target_name || g.asg_name || 'the target'}`
   const notices: { key: string; tone: 'ok' | 'warn' | 'danger'; body: React.ReactNode }[] = []
   for (const g of grants) {

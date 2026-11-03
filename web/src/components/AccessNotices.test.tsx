@@ -9,6 +9,7 @@ import { AccessNotices } from './AccessNotices'
 afterEach(() => {
   cleanup()
   vi.restoreAllMocks()
+  localStorage.clear()
 })
 
 const grant = (id: string, over: Partial<AccessRequest>): AccessRequest => ({
@@ -33,7 +34,7 @@ const iso = (offsetMs: number) => new Date(Date.now() + offsetMs).toISOString()
 // at 8% branch coverage for the same reason.
 describe('AccessNotices', () => {
   it('warns about a grant that ends within ten minutes, with a link to extend it', async () => {
-    mount([grant('r1', { expires_at: iso(5 * min), decided_at: iso(-50 * min) })])
+    mount([grant('r1', { expires_at: iso(5 * min), decided_at: iso(-30 * 60 * min) })])
     expect(await screen.findByText(/ends in about/)).toBeDefined()
     expect(screen.getByText(/5 min/)).toBeDefined()
     expect(screen.getByRole('link', { name: 'Ask to extend it' }).getAttribute('href')).toBe('/access?extend=r1')
@@ -41,8 +42,8 @@ describe('AccessNotices', () => {
 
   it('says nothing about a grant that already ended or one with a long way to go', async () => {
     mount([
-      grant('over', { expires_at: iso(-5 * min), decided_at: iso(-70 * min) }),
-      grant('plenty', { expires_at: iso(55 * min), decided_at: iso(-30 * min) }),
+      grant('over', { expires_at: iso(-5 * min), decided_at: iso(-30 * 60 * min) }),
+      grant('plenty', { expires_at: iso(55 * min), decided_at: iso(-30 * 60 * min) }),
     ])
     // Give the poll a turn to land, then there must be no notice at all.
     await new Promise((r) => setTimeout(r, 20))
@@ -62,7 +63,7 @@ describe('AccessNotices', () => {
   it('announces a fresh denial with the note, and nothing for an old one', async () => {
     mount([
       grant('d1', { status: 'denied', decided_at: iso(-3 * min), decision_note: 'ask your lead first', expires_at: undefined }),
-      grant('d2', { status: 'denied', decided_at: iso(-30 * min), expires_at: undefined }),
+      grant('d2', { status: 'denied', decided_at: iso(-48 * 60 * min), expires_at: undefined }),
     ])
     expect(await screen.findByText(/was/)).toBeDefined()
     expect(screen.getByText('denied')).toBeDefined()
@@ -72,7 +73,7 @@ describe('AccessNotices', () => {
   })
 
   it('can be dismissed, and stays dismissed', async () => {
-    mount([grant('r1', { expires_at: iso(5 * min), decided_at: iso(-50 * min) })])
+    mount([grant('r1', { expires_at: iso(5 * min), decided_at: iso(-30 * 60 * min) })])
     await screen.findByText(/ends in about/)
     await userEvent.setup().click(screen.getByRole('button', { name: 'Dismiss' }))
     expect(screen.queryByText(/ends in about/)).toBeNull()
