@@ -554,7 +554,6 @@ export function Player() {
             <h2>{isDesktop ? 'Desktop playback' : 'Terminal playback'}</h2>
             {phase === 'idle' && (
               <>
-                <Alert tone="warn">Playing is logged with your name.</Alert>
                 <div className="actions">
                   <button id="play" className="btn primary" onClick={() => void play()}>Play</button>
                 </div>

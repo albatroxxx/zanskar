@@ -166,7 +166,6 @@ export function RestartNotice() {
                 <input id="rs-now" type="radio" name="rs" checked={!wait} onChange={() => setWait(false)} />
                 <label htmlFor="rs-now">End live sessions and restart now</label>
               </p>
-              <p className="muted">Ended sessions are recorded as ended by a restart.</p>
             </div>
           }
         />

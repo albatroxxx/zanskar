@@ -269,7 +269,6 @@ export function Login() {
             </div>
           )}
         </div>
-        <div className="foot">Sign-in attempts are recorded.</div>
       </div>
     </div>
   )

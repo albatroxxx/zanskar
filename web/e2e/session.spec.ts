@@ -48,7 +48,7 @@ test.describe('An SSH session from the browser', () => {
     const mine = page.getByRole('row').filter({ hasText: 'fake-1' }).first()
     await expect(mine).toBeVisible()
     await expect(mine).toContainText(/ssh/i)
-    await expect(page.getByText('Sessions are recorded.')).toBeVisible()
+    await expect(page.getByRole('heading', { name: 'Sessions' })).toBeVisible()
 
     // The administrator sees it with its recording, which opens in a tab of
     // its own, and plays.
@@ -59,9 +59,9 @@ test.describe('An SSH session from the browser', () => {
     const [rec] = await Promise.all([context.waitForEvent('page'), theirs.getByRole('link', { name: 'Review, opens in a new tab' }).click()])
     await expect(rec).toHaveURL(/\/admin\/recordings\//)
     await expect(rec.getByRole('link', { name: 'Download recording' })).toBeVisible()
-    // Playing is a deliberate act: the page says a view is audited, then
-    // loads the player on Play, and the audit log holds the view.
-    await expect(rec.getByText('Playing is logged with your name.')).toBeVisible()
+    // Playing is a deliberate act: the player loads on Play, and the audit
+    // log holds the view.
+    await expect(rec.getByRole('button', { name: 'Play' })).toBeVisible()
     await rec.getByRole('button', { name: 'Play' }).click()
     await expect(rec.locator('.player-host .ap-wrapper, .player-host .ap-player').first()).toBeVisible({ timeout: 15_000 })
     const views = await rec.evaluate(() => fetch('/api/v1/audit/events?action=recording.view').then((r) => r.json()))

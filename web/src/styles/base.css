@@ -441,7 +441,6 @@ tr[aria-current="true"] td { background: var(--accent-soft); }
 /* Addresses to copy into another system: the value and its Copy button. */
 .copy-row { display: flex; gap: 8px; align-items: center; }
 .copy-row input { flex: 1; min-width: 0; font-family: var(--mono); font-size: 0.8rem; background: var(--bg-sunken); }
-.login .foot { text-align: center; color: var(--fg-faint); font-size: 0.78rem; margin-top: 16px; }
 .qr { border-radius: 6px; background: var(--qr-bg); }
 .recovery-codes { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; font-family: var(--mono); background: var(--bg-sunken); padding: 12px; border-radius: var(--radius); }
 

@@ -195,7 +195,7 @@ export function Events() {
 
   return (
     <>
-      <PageHead title="Audit events" lead="Viewing is logged.">
+      <PageHead title="Audit events">
         <ChainStatus verify={verify} err={verifyErr} />
         <SavedViews page="events" current={spKey} onOpen={(q) => { restart(); setSp(new URLSearchParams(q), { replace: true }) }} />
         {/* Every page the filter matches, as CSV; the export is logged too. */}

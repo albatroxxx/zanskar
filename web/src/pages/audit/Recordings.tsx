@@ -87,7 +87,7 @@ function CommandSearch({ recordingsPath }: { recordingsPath: string }) {
           maxLength={200}
         />
         <button type="submit" className="btn sm" disabled={busy || q.trim().length < 2}>{busy ? 'Searching…' : 'Find'}</button>
-        <span className="muted">Terminal sessions; searches are logged.</span>
+        <span className="muted">Terminal sessions.</span>
       </form>
       {err && <Alert tone="danger">{err}</Alert>}
       {hits?.scope === 'output' && (hits.items.length === 0 ? (
@@ -192,7 +192,7 @@ export function Recordings() {
 
   return (
     <>
-      <PageHead title="Recordings" lead="Playback and downloads are logged.">
+      <PageHead title="Recordings">
         <input
           className="mono filter-control"
           style={{ minWidth: 220 }}
