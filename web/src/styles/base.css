@@ -49,7 +49,7 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--accent); }
 .sidebar nav a .nav-badge { margin-left: auto; min-width: 20px; padding: 1px 6px; border-radius: 999px; background: var(--accent); color: var(--accent-fg); font-size: 0.72rem; font-weight: 600; text-align: center; line-height: 1.5; }
 .access-notices { display: flex; flex-direction: column; gap: 8px; margin-bottom: 12px; }
 .access-notices .alert { display: flex; align-items: center; gap: 12px; margin-bottom: 0; }
-.sidebar nav a.active { background: var(--accent-soft); color: var(--accent); font-weight: 600; box-shadow: inset 3px 0 0 var(--accent); }
+.sidebar nav a.active { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
 .sidebar .spacer { flex: 1; }
 .sidebar .me { border-top: 1px solid var(--line); padding-top: 12px; font-size: 0.86rem; color: var(--fg-muted); display: flex; flex-direction: column; gap: 6px; }
 .sidebar .me strong { color: var(--fg); font-weight: 500; }
