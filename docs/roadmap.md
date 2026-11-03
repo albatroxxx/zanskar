@@ -102,9 +102,17 @@ Deferred by decision: a multi-pane workspace (browser tabs suffice), rotation of
 keys and of Windows or database passwords (the certificate authority and the owning systems
 do that). Still Phase 4: HA, SAML/SCIM, WebAuthn.
 
+## v1.16 release — shipped (v1.16.0 tagged 2026-11-03)
+
+The rest of the walk's suggestions: API tokens and a Terraform provider (ADR 0044), searching what
+terminal sessions printed (ADR 0041 amendment), approving from a notification with a recent code
+(ADR 0039 amendment), a provider that is not answering said on the sign-in page, admin including
+auditor and user. Four eyes (ADR 0042) removed at the owner's request
+([release notes](releases/v1.16.0.md)).
+
 ## v1.15 release — shipped (v1.15.0 tagged 2026-11-03)
 
-What a walk through the live gateway found, fixed, and twelve of its suggestions built:
+What a walk through the live gateway found, fixed, and eleven of its twelve suggestions built:
 notifications by signed webhook or email (ADR 0039), access reviews (ADR 0040), finding a command
 across terminal recordings (ADR 0041), four-eyes terminal sessions (ADR 0042), the configuration as
 a YAML file (ADR 0043), a pre-flight check at Connect, a disk guard, failed sessions that say why,
