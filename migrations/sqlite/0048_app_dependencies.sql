@@ -6,4 +6,4 @@
 -- take 'public', the owner's choice, so they work whole; a host or a
 -- database holds nothing here.
 ALTER TABLE targets ADD COLUMN app_dependencies TEXT;
-UPDATE targets SET app_dependencies = 'public' WHERE app_upstream IS NOT NULL AND app_upstream <> '';
+UPDATE targets SET app_dependencies = 'public' WHERE app_upstream IS NOT NULL;
