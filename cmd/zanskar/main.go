@@ -27,6 +27,7 @@ import (
 	"time"
 
 	"github.com/albatroxxx/zanskar/internal/access"
+	"github.com/albatroxxx/zanskar/internal/apitoken"
 	"github.com/albatroxxx/zanskar/internal/asg"
 	"github.com/albatroxxx/zanskar/internal/audit"
 	"github.com/albatroxxx/zanskar/internal/auth"
@@ -305,6 +306,8 @@ func serve(ctx context.Context) error {
 		return err
 	}
 	totp := auth.NewTOTP(db, ring, cfg.Issuer)
+	// API tokens for automation, scoped to the configuration API (ADR 0044).
+	apiTokens := apitoken.NewRepo(db)
 	authHandler := auth.NewHandler(users, sessions, totp, auditLog, log)
 	authHandler.RequireMFA = requireMFA
 	authHandler.TimeZone = func() string { return runtime.String(settings.KeyTimeZone) }
@@ -422,12 +425,13 @@ func serve(ctx context.Context) error {
 		SecurityContact: func() string {
 			return settings.SecurityContactURI(runtime.String(settings.KeySecurityContact))
 		},
-		AuthMiddleware: &auth.Middleware{Sessions: sessions, Users: users, Log: log},
+		AuthMiddleware: &auth.Middleware{Sessions: sessions, Users: users, Log: log, Tokens: apiTokens},
 		Auth:           authHandler,
 		Handlers: []server.Registrar{
 			&adminapi.AdminHandler{Users: users, Sessions: sessions, TOTP: totp, Revoker: connectHandler, Audit: auditLog, Log: log, ProviderHolds: idpRepo.Holds},
 			&group.AdminHandler{Groups: groups, Revoker: connectHandler, Audit: auditLog, Log: log},
 			&notify.Handler{Channels: notifyRepo, Notifier: notifier, Audit: auditLog, Log: log},
+			&apitoken.Handler{Repo: apiTokens, Audit: auditLog, Log: log, MFAEnrolled: totp.Enrolled},
 			&configio.Handler{Audit: auditLog, Log: log},
 			&idpadmin.AdminHandler{Providers: idpRepo, Audit: auditLog, Log: log, LDAPTester: &ldap.Authenticator{}, Sync: userSync},
 			oidcHandler,

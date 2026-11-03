@@ -21,6 +21,9 @@ import (
 type Principal struct {
 	Session *Session
 	User    *user.User
+	// TokenID is the API token the request came with (ADR 0044), "" for a
+	// browser session.
+	TokenID string
 }
 
 // StepUpWindow is how recent a session's authenticator proof must be for an
@@ -144,6 +147,8 @@ type Middleware struct {
 	Sessions *Sessions
 	Users    *user.Repo
 	Log      *slog.Logger
+	// Tokens checks API tokens (ADR 0044); nil accepts none.
+	Tokens TokenStore
 }
 
 // Authenticate attaches a Principal when the cookie names a live session of
@@ -152,6 +157,14 @@ type Middleware struct {
 // right now is neither accepted nor thrown away: see unchecked.
 func (m *Middleware) Authenticate(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// An API token, when one is sent, is the whole of the request's
+		// identity; the cookie is not read (ADR 0044).
+		if m.Tokens != nil {
+			if secret := bearerSecret(r); secret != "" {
+				m.bearer(w, r, next, secret)
+				return
+			}
+		}
 		c, err := r.Cookie(m.Sessions.CookieName())
 		if err != nil {
 			next.ServeHTTP(w, r)
@@ -294,6 +307,12 @@ func (m *Middleware) CSRF(next http.Handler) http.Handler {
 			return
 		}
 		if p, ok := FromContext(r.Context()); ok {
+			// A token is not a cookie: nothing rides along with a forged
+			// request, so there is no CSRF token to carry (ADR 0044).
+			if p.TokenID != "" {
+				next.ServeHTTP(w, r)
+				return
+			}
 			if !m.Sessions.CheckCSRF(p.Session.ID, r.Header.Get("X-CSRF-Token")) {
 				httpx.WriteError(w, r, http.StatusForbidden, "csrf_invalid", "missing or invalid X-CSRF-Token")
 				return

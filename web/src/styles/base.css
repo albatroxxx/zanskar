@@ -294,6 +294,9 @@ td.actions > * + * { margin-left: 8px; }
 .end-detail { margin-top: 4px; font-size: 0.82rem; color: var(--fg-muted); max-width: 42ch; overflow-wrap: anywhere; }
 /* Under a disk the gateway is refusing sessions for (idea 8). */
 .disk-refusing { color: var(--danger); font-weight: 500; margin-top: 2px; }
+/* A new API token's secret, shown once. */
+.token-secret { margin-top: 6px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.token-secret code { overflow-wrap: anywhere; }
 /* The command a printed line followed, under it in an output search. */
 .hit-after { margin-top: 2px; font-size: 0.8rem; }
 /* The row a notification's link opened. */

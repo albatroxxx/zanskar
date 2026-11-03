@@ -18,6 +18,10 @@ const (
 	AccessRequestDeny    = "access.request.deny"
 	AccessRequestRevoke  = "access.request.revoke"
 
+	// API tokens for automation (ADR 0044).
+	APITokenCreate = "api_token.create"
+	APITokenRevoke = "api_token.revoke"
+
 	// Autoscaling groups and the instances the sync loop sees come and go.
 	ASGCreate                     = "asg.create"
 	ASGUpdate                     = "asg.update"

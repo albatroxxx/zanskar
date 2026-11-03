@@ -35,6 +35,10 @@ var notRewritten = map[string]string{
 	"notification_channels.created_at":         "created by 0042, after the rewrite; written only through TimeArg (notify.Repo.Create)",
 	"notification_channels.updated_at":         "created by 0042, after the rewrite; written only through TimeArg (notify.Repo.Create and Update)",
 	"access_policies.reviewed_at":              "added by 0043, after the rewrite; written only through TimeArg (policy.Repo.Reviewed)",
+	"api_tokens.created_at":                    "created by 0046, after the rewrite; written only through TimeArg (apitoken.Repo.Create)",
+	"api_tokens.expires_at":                    "created by 0046, after the rewrite; written only through TimeArg (apitoken.Repo.Create)",
+	"api_tokens.last_used_at":                  "created by 0046, after the rewrite; written only through TimeArg (apitoken.Repo.Authenticate)",
+	"api_tokens.revoked_at":                    "created by 0046, after the rewrite; written only through TimeArg (apitoken.Repo.Revoke)",
 }
 
 // TestEveryTimestampColumnIsRewritten fails when the migrated SQLite schema

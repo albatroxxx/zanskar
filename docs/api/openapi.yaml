@@ -32,6 +32,19 @@ info:
     because its database does not answer, API calls and WebSocket upgrades get `503` with code
     `unavailable` and the cookie is kept: try again in a moment.
 
+    ## API tokens
+
+    For automation (the Terraform provider, a pipeline importing the configuration file), an
+    administrator makes an API token under Settings › API tokens (ADR 0044) and sends it as
+    `Authorization: Bearer zapi_...`. The token is that administrator, on the configuration API
+    only: `GET /auth/me`; groups and targets, read and written; access policies by id, but not
+    their reviews; credentials, read only; `GET /admin/config/export` and
+    `POST /admin/config/import`. Anything else answers `403 token_scope`; a token that is unknown,
+    expired or revoked, or whose owner is no longer an active administrator, answers
+    `401 invalid_token`, and the cookie is not read instead. A token carries no CSRF token and
+    proves no second factor, so nothing that asks for a recent code is reachable with one. A
+    change made with a token is audited as its owner, with `api_token` naming the token.
+
     ## CSRF
 
     Every mutating request (`POST`, `PUT`, `PATCH`, `DELETE`) must send the `X-CSRF-Token` header.
@@ -5018,6 +5031,97 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ConfigImportResult"
+  /admin/api-tokens:
+    get:
+      tags: [admin]
+      summary: List API tokens (ADR 0044)
+      description: Every token, newest first, with its owner, prefix, expiry, last use and revocation. Never a secret.
+      responses:
+        "200":
+          description: Tokens.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/APIToken"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    post:
+      tags: [admin]
+      summary: Make an API token
+      description: >-
+        A token for the signed-in administrator, lapsing after `days` (1 to 365, 90 when absent). The
+        answer carries `secret` once; only its SHA-256 is kept. An administrator who has an
+        authenticator proves a code from the last 5 minutes first (`403 step_up_required`): the
+        token acts without one. At most 20 active tokens an administrator (`409 too_many_tokens`).
+        A token cannot make another. Audited as `api_token.create`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name:
+                  type: string
+                  maxLength: 100
+                  description: What the token is for.
+                days:
+                  type: integer
+                  minimum: 1
+                  maximum: 365
+                  default: 90
+      responses:
+        "201":
+          description: The token, with its secret this once.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/APIToken"
+                  - type: object
+                    required: [secret]
+                    properties:
+                      secret:
+                        type: string
+                        description: "`zapi_` and 43 characters. Shown once."
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "403":
+          description: Not an administrator, or `step_up_required`.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: "`too_many_tokens`."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /admin/api-tokens/{id}:
+    parameters:
+      - $ref: "#/components/parameters/Id"
+    delete:
+      tags: [admin]
+      summary: Revoke an API token
+      description: The token stops at once. Revoking one already revoked keeps its first time. Audited as `api_token.revoke`.
+      responses:
+        "200":
+          description: The token, revoked.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/APIToken"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
   /admin/notifications:
     get:
       tags: [admin]
@@ -5216,6 +5320,10 @@ components:
       in: cookie
       name: __Host-zanskar_session
       description: Opaque session token (`zanskar_session` on plain-HTTP loopback). Mutating requests also require the `X-CSRF-Token` header.
+    apiToken:
+      type: http
+      scheme: bearer
+      description: An administrator's API token (`zapi_...`, ADR 0044), on the configuration API only.
     scimBearer:
       type: http
       scheme: bearer
@@ -6807,6 +6915,31 @@ components:
     AccessRequestStatus:
       type: string
       enum: [pending, approved, denied, expired, revoked]
+    APIToken:
+      type: object
+      description: An API token as listed (ADR 0044); never its secret.
+      required: [id, user_id, name, prefix, created_at, expires_at]
+      properties:
+        id:
+          type: string
+        user_id:
+          type: string
+          description: The administrator the token acts as.
+        username:
+          type: string
+        name:
+          type: string
+        prefix:
+          type: string
+          description: The token's first 12 characters, to tell it apart.
+        created_at:
+          $ref: "#/components/schemas/Timestamp"
+        expires_at:
+          $ref: "#/components/schemas/Timestamp"
+        last_used_at:
+          $ref: "#/components/schemas/Timestamp"
+        revoked_at:
+          $ref: "#/components/schemas/Timestamp"
     AccessRequest:
       type: object
       description: >-

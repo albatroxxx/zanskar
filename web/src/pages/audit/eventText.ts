@@ -13,6 +13,8 @@ const actionLabels: Record<string, string> = {
   'access.request.create': 'Access requested',
   'access.request.deny': 'Access request denied',
   'access.request.revoke': 'Access request revoked',
+  'api_token.create': 'API token created',
+  'api_token.revoke': 'API token revoked',
   'asg.create': 'Autoscaling group created',
   'asg.update': 'Autoscaling group updated',
   'asg.delete': 'Autoscaling group deleted',
