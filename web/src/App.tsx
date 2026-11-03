@@ -89,7 +89,7 @@ function Home() {
 }
 
 // pendingApprovals feeds the Approvals badge: how many requests await a decision.
-const pendingApprovals = () => api.get<Page<AccessRequest>>('/access-requests?status=pending').then((p) => (p.items ?? []).length)
+const pendingApprovals = () => api.cached<Page<AccessRequest>>('/access-requests?status=pending', 30_000).then((p) => (p.items ?? []).length)
 
 // The user portal and the session pages are for accounts that can connect
 // (ADR 0006); the API refuses auditor-only accounts on every route behind

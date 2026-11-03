@@ -61,9 +61,18 @@ interface Reply { status: number; statusText: string; ok: boolean; text: string 
 const inflight = new Map<string, { reply: Promise<Reply>; at: number }>()
 const JOIN_MS = 1000
 
-/** forgetReads stops sharing every read in flight. Tests call it between cases. */
+/** recent holds, for a while, the answers of the reads asked for with
+ *  api.cached: the shell mounts afresh on every page, and its corner bar,
+ *  approvals badge and command-line state asked the gateway six times a
+ *  click for what changes once a minute (live, 2026-11-03). A change forgets
+ *  them, as it forgets the reads in flight; a refused read is not kept. */
+const recent = new Map<string, { reply: Promise<unknown>; at: number }>()
+
+/** forgetReads stops sharing every read in flight and forgets the recent
+ *  answers. Tests call it between cases. */
 export function forgetReads() {
   inflight.clear()
+  recent.clear()
 }
 
 async function send(method: Method, path: string, body?: unknown): Promise<Reply> {
@@ -169,6 +178,21 @@ async function upload<T>(path: string, body: BodyInit, contentType = 'applicatio
 
 export const api = {
   get: <T>(path: string) => request<T>('GET', path),
+  /** cached is get for what changes slowly: an answer under `keep` ms old is
+   *  given again without a request; any change forgets it, and a refused
+   *  read is not kept. It goes through get, so a test's stand-in for get
+   *  answers it too. */
+  cached: <T>(path: string, keep = 60_000): Promise<T> => {
+    const now = Date.now()
+    const kept = recent.get(path)
+    if (kept && now - kept.at < keep) return kept.reply as Promise<T>
+    const mine = { reply: api.get<T>(path) as Promise<unknown>, at: now }
+    recent.set(path, mine)
+    mine.reply.catch(() => {
+      if (recent.get(path) === mine) recent.delete(path)
+    })
+    return mine.reply as Promise<T>
+  },
   post: <T>(path: string, body?: unknown) => request<T>('POST', path, body ?? {}),
   put: <T>(path: string, body?: unknown) => request<T>('PUT', path, body ?? {}),
   patch: <T>(path: string, body?: unknown) => request<T>('PATCH', path, body ?? {}),

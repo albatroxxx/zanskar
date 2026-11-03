@@ -75,7 +75,7 @@ function TerminalIcon({ size = 24 }: { size?: number }) {
 // means it is switched off (ZANSKAR_CONSOLE_CLI=off), and the icon hides.
 async function fetchState(): Promise<CLIState | null> {
   try {
-    return await api.get<CLIState>('/admin/cli')
+    return await api.cached<CLIState>('/admin/cli')
   } catch (err) {
     if (err instanceof ApiError && err.status === 404) return { enabled: false, unlocked: false, mfa_enrolled: false, idle_minutes: 15 }
     return null
