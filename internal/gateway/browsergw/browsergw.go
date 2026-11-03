@@ -59,6 +59,10 @@ type Spec struct {
 	// Endpoints are the application's further origins the session reaches,
 	// each with the address resolved for it the same way.
 	Endpoints []Endpoint
+	// PublicDependencies lets the relay take the pages' dependencies out to
+	// any public address on port 80 or 443 (target.DependenciesPublic);
+	// off, the origins are all the browser reaches.
+	PublicDependencies bool
 	// TLSCA is an optional PEM bundle an https upstream is verified against,
 	// installed in the browser's certificate store for the session.
 	TLSCA string
@@ -70,6 +74,9 @@ type Spec struct {
 	// BrowserImage and RelayImage are the two images; the relay's is the
 	// gateway's own.
 	BrowserImage, RelayImage string
+	// Debug has the relay log at debug, as the gateway does: what each
+	// SOCKS request asked for and what the relay decided.
+	Debug bool
 	// StateDir is where the seccomp profile is written for the daemon to
 	// read.
 	StateDir string
@@ -152,7 +159,7 @@ func relayArgs(spec Spec, network, relayName, browserName, subnet string) (args,
 	cfg := apprelay.Config{Forwards: []apprelay.Forward{
 		{Listen: "internal:" + strconv.Itoa(port), To: net.JoinHostPort(spec.UpstreamIP.String(), strconv.Itoa(port))},
 		{Listen: ":5900", To: net.JoinHostPort(browserName, "5900"), Once: true, Retry: apprelay.Duration(20 * time.Second)},
-	}, SOCKS: &apprelay.SOCKS{Listen: "internal:" + strconv.Itoa(socksPort(spec)), Allow: routes}, InternalSubnet: subnet}
+	}, SOCKS: &apprelay.SOCKS{Listen: "internal:" + strconv.Itoa(socksPort(spec)), Allow: routes, Public: spec.PublicDependencies}, InternalSubnet: subnet}
 	raw, err := marshal(cfg)
 	if err != nil {
 		return nil, nil, err
@@ -164,9 +171,14 @@ func relayArgs(spec Spec, network, relayName, browserName, subnet string) (args,
 		// start, and 64m had the kernel kill it before it listened.
 		"--pids-limit", "64", "--memory", "192m",
 		"-e", "ZANSKAR_APPRELAY",
-		spec.RelayImage, "apprelay",
 	)
-	return args, []string{"ZANSKAR_APPRELAY=" + raw}, nil
+	env = []string{"ZANSKAR_APPRELAY=" + raw}
+	if spec.Debug {
+		args = append(args, "-e", "ZANSKAR_LOG_LEVEL")
+		env = append(env, "ZANSKAR_LOG_LEVEL=debug")
+	}
+	args = append(args, spec.RelayImage, "apprelay")
+	return args, env, nil
 }
 
 // browserArgs builds the browser's `docker run` and its environment: the

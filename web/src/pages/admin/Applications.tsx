@@ -24,6 +24,7 @@ export function Applications() {
             {(t.app_endpoints?.length ?? 0) > 0 && (
               <span className="muted" title={t.app_endpoints?.map((e) => `${e.name}: ${e.url}`).join('\n')}> +{t.app_endpoints?.length}</span>
             )}
+            {t.app_dependencies === 'origins' && <span className="muted" title="dependencies: its origins only"> · origins only</span>}
           </td>
           <td><StateIcon state={appTLS(t).verified ? 'ok' : 'warn'} label={'Upstream: ' + appTLS(t).label} /></td>
           <td><Tags tags={t.tags} /></td>

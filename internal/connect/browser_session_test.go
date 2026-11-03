@@ -303,14 +303,55 @@ func TestApplicationSessionReachesEveryEndpoint(t *testing.T) {
 	if fmt.Sprint(d["unreachable_origins"]) != "[http://down.zanskar.invalid]" {
 		t.Fatalf("session.start should name the origin left out: %v", d)
 	}
+	// The start event says the relay let dependencies out (2026-11-03),
+	// the application's default, and the relay's table carries it.
+	if d["dependencies"] != "public" {
+		t.Fatalf("session.start should say the dependencies' reach: %v", d)
+	}
 	log, _ := os.ReadFile(calls) // #nosec G304 -- test temp dir
-	for _, want := range []string{`"host":"10.0.0.50","port":8080,"to":"10.0.0.50:8080"`, `"host":"api.zanskar.invalid","port":9000,"to":"10.0.0.51:9000"`} {
+	for _, want := range []string{`"host":"10.0.0.50","port":8080,"to":"10.0.0.50:8080"`, `"host":"api.zanskar.invalid","port":9000,"to":"10.0.0.51:9000"`, `"public":true`} {
 		if !strings.Contains(string(log), want) {
 			t.Errorf("the relay's table misses %s:\n%s", want, log)
 		}
 	}
 	if strings.Contains(string(log), "down.zanskar.invalid") {
 		t.Errorf("an origin that did not resolve reached the relay's table:\n%s", log)
+	}
+}
+
+// TestApplicationSessionHeldToOrigins (2026-11-03): an application whose
+// dependencies are its origins gets a relay that lets nothing else out, and
+// its start event says so.
+func TestApplicationSessionHeldToOrigins(t *testing.T) {
+	r, _, calls := appRig(t)
+	tg := &target.Target{Name: "held-to-origins", AppUpstream: "http://10.0.0.50:8080", AppDependencies: target.DependenciesOrigins, Tags: map[string]string{"app": "yes"}}
+	if err := r.h.Targets.Create(r.ctx, tg); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	ws, _, err := r.dial(ctx, r.ticket(t, tg.ID, "http")) //nolint:bodyclose // the library closes the handshake body
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ws.CloseNow()
+	var seen string
+	for !strings.Contains(seen, "7.zanskar,") {
+		_, data, err := ws.Read(ctx)
+		if err != nil {
+			t.Fatalf("read: %v (got %q)", err, seen)
+		}
+		seen += string(data)
+	}
+	start := lastEvent(t, r.connectFixture, "session.start")
+	var d map[string]any
+	_ = json.Unmarshal(start.Details, &d)
+	if d["dependencies"] != "origins" {
+		t.Fatalf("session.start: %v", d)
+	}
+	log, _ := os.ReadFile(calls) // #nosec G304 -- test temp dir
+	if !strings.Contains(string(log), `"host":"10.0.0.50","port":8080`) || strings.Contains(string(log), `"public"`) {
+		t.Errorf("the relay's table should route the upstream and let nothing else out:\n%s", log)
 	}
 }
 

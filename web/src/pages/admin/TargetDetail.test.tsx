@@ -76,3 +76,22 @@ describe('TargetDetail, Disable', () => {
     expect(put).toHaveBeenCalledTimes(1)
   })
 })
+
+// 2026-11-03: an application says where its pages load from beside its
+// origins; one enrolled before the word reads as the default.
+describe('TargetDetail, an application\'s dependencies', () => {
+  const show = (t: Target) => render(<TargetDetail target={t} credentials={[]} onClose={() => {}} onChanged={() => {}} onDeleted={() => {}} onError={() => {}} />)
+  const wiki: Target = { ...web, name: 'wiki', address: 'wiki.corp', os_family: 'other', ports: {}, capabilities: [], app_upstream: 'http://wiki.corp' }
+
+  it('says any public address by default, and its origins only when held to them', () => {
+    show(wiki)
+    expect(screen.getByText('Dependencies')).toBeDefined()
+    expect(screen.getByText('Any public address')).toBeDefined()
+    cleanup()
+    show({ ...wiki, app_dependencies: 'origins' })
+    expect(screen.getByText('Its origins only')).toBeDefined()
+    cleanup()
+    show(web)
+    expect(screen.queryByText('Dependencies')).toBeNull()
+  })
+})

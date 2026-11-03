@@ -5,6 +5,7 @@ package connect
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/url"
@@ -82,8 +83,11 @@ func (h *Handler) browser(w http.ResponseWriter, r *http.Request, g *ticket.Gran
 	if !ok {
 		return
 	}
+	// The audit says whether this session's relay let dependencies out
+	// (2026-11-03), and which origins were left out of it.
+	run.startDetails = map[string]any{"dependencies": ep.AppDependencies}
 	if len(unreachable) > 0 {
-		run.startDetails = map[string]any{"unreachable_origins": unreachable}
+		run.startDetails["unreachable_origins"] = unreachable
 	}
 	run.tell = func(msg string) {
 		wctx, cancel := detach(r.Context(), frameTimeout)
@@ -121,7 +125,9 @@ func (h *Handler) browser(w http.ResponseWriter, r *http.Request, g *ticket.Gran
 	}()
 	bs, err := browsergw.Start(r.Context(), h.Log, h.DockerPath, browsergw.Spec{
 		SessionID: run.s.ID, Name: ep.Name, Upstream: upstream, UpstreamIP: upstreamIP, Endpoints: extras, TLSCA: ep.TLSCA,
-		Width: width, Height: height, DevTools: run.g.AllowDevTools, BrowserImage: browserImage, RelayImage: relayImage, StateDir: h.StateDir,
+		PublicDependencies: ep.AppDependencies == target.DependenciesPublic,
+		Width:              width, Height: height, DevTools: run.g.AllowDevTools, BrowserImage: browserImage, RelayImage: relayImage, StateDir: h.StateDir,
+		Debug: h.Log.Enabled(r.Context(), slog.LevelDebug),
 	})
 	// Nothing else writes to the socket until the keepalive has stopped.
 	stopKeepalive()

@@ -7,10 +7,11 @@ import (
 	"errors"
 	"fmt"
 	"net"
-	"slices"
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/albatroxxx/zanskar/internal/ipspace"
 )
 
 // ErrAddressForbidden is returned for an address the gateway must never
@@ -23,23 +24,9 @@ type Resolver interface {
 	LookupIPAddr(ctx context.Context, host string) ([]net.IPAddr, error)
 }
 
-// metadataAddrs are cloud platform services outside the link-local range,
-// which already covers 169.254.169.254 (AWS, Azure, GCP, OCI), ECS's
-// 169.254.170.2 and EKS Pod Identity's 169.254.170.23. Each is refused by its
-// exact address, so a neighbour is still a target: Alibaba's sits in the shared
-// address space that carrier-grade NAT and Tailscale also use, and Oracle's in
-// a block of protocol assignments.
-var metadataAddrs = []net.IP{
-	net.ParseIP("fd00:ec2::254"),   // AWS instance metadata over IPv6
-	net.ParseIP("fd00:ec2::23"),    // EKS Pod Identity over IPv6, which hands pods AWS credentials
-	net.ParseIP("100.100.100.200"), // Alibaba Cloud metadata
-	net.ParseIP("168.63.129.16"),   // Azure WireServer: VM agent and extension settings, sometimes with secrets
-	net.ParseIP("192.0.0.192"),     // Oracle Cloud's legacy metadata endpoint
-}
-
 // refusal says why the gateway must never connect to ip, or is empty when it
 // may. The net.IP tests see through IPv4-mapped IPv6, so ::ffff:127.0.0.1 is
-// loopback too.
+// loopback too. The cloud metadata services are ipspace.Metadata.
 func (p *Prober) refusal(ip net.IP) string {
 	switch {
 	case ip.IsUnspecified():
@@ -53,7 +40,7 @@ func (p *Prober) refusal(ip net.IP) string {
 	case p.Self != nil && ip.Equal(p.Self):
 		return "the address the gateway listens on"
 	}
-	if slices.ContainsFunc(metadataAddrs, ip.Equal) {
+	if ipspace.IsMetadata(ip) {
 		return "a cloud metadata service"
 	}
 	return ""

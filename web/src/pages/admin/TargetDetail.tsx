@@ -139,6 +139,7 @@ export function TargetDetail({ target, credentials, onClose, onChanged, onDelete
         ) : application ? (
           <>
             <dt>Upstream</dt><dd className="mono">{t.app_upstream}</dd>
+            <dt>Dependencies</dt><dd>{t.app_dependencies === 'origins' ? 'Its origins only' : 'Any public address'}</dd>
             {(t.app_endpoints?.length ?? 0) > 0 && (
               <>
                 <dt>Other endpoints</dt>

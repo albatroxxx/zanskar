@@ -78,6 +78,15 @@ type SOCKS struct {
 	// bridge, where it would let any container there reach the origins.
 	Listen string  `json:"listen"`
 	Allow  []Route `json:"allow"`
+	// Public lets CONNECT through to any other host too, on port 80 or 443,
+	// when every address it resolves to is public (ipspace.Reserved says
+	// nothing of it): an application's dependencies, the scripts, styles,
+	// fonts, images and APIs its pages load from wherever its code names
+	// (2026-11-03). The relay resolves such a name itself and dials the
+	// address it checked, never the name again. Anything private, link-local
+	// or a cloud metadata service stays refused unless it is a route; so
+	// does the browser's own service traffic (browserServices).
+	Public bool `json:"public,omitempty"`
 }
 
 // Route is one origin's host and port as the browser asks for them, and the
@@ -221,6 +230,12 @@ func normHost(h string) string {
 	return h
 }
 
+// Resolver is the part of *net.Resolver the relay uses, so tests can answer
+// lookups themselves.
+type Resolver interface {
+	LookupIPAddr(ctx context.Context, host string) ([]net.IPAddr, error)
+}
+
 // Relay runs a Config.
 type Relay struct {
 	Config Config
@@ -230,6 +245,9 @@ type Relay struct {
 	InternalIP string
 	// Dial is the backend dialer; nil uses net.Dialer with a 5 s timeout.
 	Dial func(ctx context.Context, addr string) (net.Conn, error)
+	// Resolver answers the lookups SOCKS.Public needs; nil is
+	// net.DefaultResolver.
+	Resolver Resolver
 	// HandshakeTimeout bounds a SOCKS client's greeting and request; zero is
 	// 10 s.
 	HandshakeTimeout time.Duration

@@ -66,23 +66,24 @@ func (h *AdminHandler) Register(mux *http.ServeMux) {
 
 // Write is the request body for create and update.
 type Write struct {
-	Name          string              `json:"name"`
-	Address       string              `json:"address"`
-	Engine        string              `json:"engine"`         // database targets (ADR 0017)
-	EngineVersion string              `json:"engine_version"` // database targets
-	RetentionDays *int                `json:"retention_days"` // recording retention override; null defers
-	DatabaseName  string              `json:"database_name"`  // database targets
-	TLSMode       string              `json:"tls_mode"`       // database targets
-	TLSCA         string              `json:"tls_ca"`         // database and application targets
-	AppUpstream   string              `json:"app_upstream"`   // application targets (ADR 0034)
-	AppEndpoints  []AppEndpoint       `json:"app_endpoints"`  // application targets (ADR 0037, amended)
-	OSFamily      OSFamily            `json:"os_family"`
-	Ports         map[Protocol]int    `json:"ports"`
-	Capabilities  []Protocol          `json:"capabilities"`
-	Tags          map[string]string   `json:"tags"`
-	Status        string              `json:"status"`
-	Notes         string              `json:"notes"`
-	Credentials   map[Protocol]string `json:"credentials"`
+	Name            string              `json:"name"`
+	Address         string              `json:"address"`
+	Engine          string              `json:"engine"`           // database targets (ADR 0017)
+	EngineVersion   string              `json:"engine_version"`   // database targets
+	RetentionDays   *int                `json:"retention_days"`   // recording retention override; null defers
+	DatabaseName    string              `json:"database_name"`    // database targets
+	TLSMode         string              `json:"tls_mode"`         // database targets
+	TLSCA           string              `json:"tls_ca"`           // database and application targets
+	AppUpstream     string              `json:"app_upstream"`     // application targets (ADR 0034)
+	AppEndpoints    []AppEndpoint       `json:"app_endpoints"`    // application targets (ADR 0037, amended)
+	AppDependencies string              `json:"app_dependencies"` // application targets: public (default) or origins
+	OSFamily        OSFamily            `json:"os_family"`
+	Ports           map[Protocol]int    `json:"ports"`
+	Capabilities    []Protocol          `json:"capabilities"`
+	Tags            map[string]string   `json:"tags"`
+	Status          string              `json:"status"`
+	Notes           string              `json:"notes"`
+	Credentials     map[Protocol]string `json:"credentials"`
 }
 
 func (w Write) apply(t *Target) {
@@ -90,7 +91,7 @@ func (w Write) apply(t *Target) {
 	t.Engine, t.EngineVersion = w.Engine, w.EngineVersion
 	t.RetentionDays = w.RetentionDays
 	t.DatabaseName, t.TLSMode, t.TLSCA = w.DatabaseName, w.TLSMode, w.TLSCA
-	t.AppUpstream, t.AppEndpoints = w.AppUpstream, w.AppEndpoints
+	t.AppUpstream, t.AppEndpoints, t.AppDependencies = w.AppUpstream, w.AppEndpoints, w.AppDependencies
 	t.Ports, t.Capabilities, t.Tags = w.Ports, w.Capabilities, w.Tags
 	t.Status, t.Notes, t.Credentials = w.Status, w.Notes, w.Credentials
 }
@@ -146,7 +147,7 @@ func (h *AdminHandler) create(w http.ResponseWriter, r *http.Request) {
 	}
 	details := map[string]any{"name": t.Name, "address": t.Address, "os_family": t.OSFamily}
 	if t.IsApplication() {
-		details["origins"] = origins(t)
+		details["origins"], details["dependencies"] = origins(t), t.AppDependencies
 	}
 	h.record(r, audit.TargetCreate, t.ID, audit.Success, details)
 	httpx.WriteJSON(w, http.StatusCreated, t)
@@ -173,7 +174,7 @@ func (h *AdminHandler) update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	before := map[string]any{"name": t.Name, "address": t.Address, "status": t.Status}
-	beforeOrigins := origins(t)
+	beforeOrigins, beforeDeps := origins(t), t.AppDependencies
 	body.apply(t)
 	if !h.addressAllowed(w, r, audit.TargetUpdate, t.ID, t) {
 		return
@@ -185,6 +186,7 @@ func (h *AdminHandler) update(w http.ResponseWriter, r *http.Request) {
 	after := map[string]any{"name": t.Name, "address": t.Address, "status": t.Status}
 	if len(beforeOrigins) > 0 || t.IsApplication() {
 		before["origins"], after["origins"] = beforeOrigins, origins(t)
+		before["dependencies"], after["dependencies"] = beforeDeps, t.AppDependencies
 	}
 	details := map[string]any{"before": before, "after": after}
 	if before["address"] != t.Address {
@@ -198,10 +200,16 @@ func (h *AdminHandler) update(w http.ResponseWriter, r *http.Request) {
 	if len(removed) > 0 {
 		details["origins_removed"] = removed
 	}
+	// Likewise a session whose relay lets dependencies out to any public
+	// address, once the application is held to its origins.
+	narrowed := beforeDeps == DependenciesPublic && t.AppDependencies == DependenciesOrigins
+	if narrowed {
+		details["dependencies_narrowed"] = true
+	}
 	// A target taken out of service, or moved to an address nobody has
 	// trusted yet, keeps no session: what was admitted to the old target
 	// ends now rather than at its own limits.
-	if h.Revoker != nil && ((before["status"] == StatusActive && t.Status == StatusDisabled) || before["address"] != t.Address || len(removed) > 0) {
+	if h.Revoker != nil && ((before["status"] == StatusActive && t.Status == StatusDisabled) || before["address"] != t.Address || len(removed) > 0 || narrowed) {
 		details["live_sessions_ended"] = h.Revoker.TargetDisabled(t.ID)
 	}
 	h.record(r, audit.TargetUpdate, t.ID, audit.Success, details)

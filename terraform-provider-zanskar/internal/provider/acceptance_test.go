@@ -251,6 +251,11 @@ resource "zanskar_target" "wiki" {
   app_upstream = "https://wiki.example.internal"
   tags         = { app = "yes" }
 }
+resource "zanskar_target" "held" {
+  name             = "acc-held"
+  app_upstream     = "https://held.example.internal"
+  app_dependencies = "origins"
+}
 `, gw.cred, env, env)
 	}
 	resource.Test(t, resource.TestCase{
@@ -263,6 +268,9 @@ resource "zanskar_target" "wiki" {
 				resource.TestCheckResourceAttr("zanskar_target.db", "engine", "postgres"),
 				resource.TestCheckResourceAttr("zanskar_target.db", "tls_mode", "require"),
 				resource.TestCheckResourceAttr("zanskar_target.wiki", "app_upstream", "https://wiki.example.internal"),
+				// The gateway's default, and the word set (2026-11-03).
+				resource.TestCheckResourceAttr("zanskar_target.wiki", "app_dependencies", "public"),
+				resource.TestCheckResourceAttr("zanskar_target.held", "app_dependencies", "origins"),
 			)},
 			// A change of tags is an update in place, keeping the target.
 			{Config: cfg("prod"), Check: resource.ComposeAggregateTestCheckFunc(

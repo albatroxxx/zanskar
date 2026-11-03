@@ -131,13 +131,15 @@ func TestExportImportRoundTrip(t *testing.T) {
 		"tags": map[string]string{"env": "prod"}, "credentials": map[string]string{"ssh": credID}})
 	a.json(t, "POST", "/api/v1/access-policies", map[string]any{"name": "ops-web", "subjects": []map[string]string{{"kind": "group", "id": grp["id"].(string)}},
 		"grants": []map[string]any{{"kind": "host", "targets": []map[string]any{{"id": web["id"], "protocols": []string{"ssh"}}}, "allow_clipboard": true}}})
+	// An application held to its origins (2026-11-03): the word travels.
+	a.json(t, "POST", "/api/v1/targets", map[string]any{"name": "wiki", "app_upstream": "http://wiki.corp", "app_dependencies": "origins"})
 
 	code, file := a.do(t, "GET", "/api/v1/admin/config/export", nil)
 	if code != 200 {
 		t.Fatalf("export: %d %s", code, file)
 	}
 	text := string(file)
-	for _, want := range []string{"zanskar: 1", "name: ops", "- ann", "name: web-1", "ssh: linux-key", "env: prod", "name: ops-web", "group: ops", "name: web-1", "allow_clipboard: true"} {
+	for _, want := range []string{"zanskar: 1", "name: ops", "- ann", "name: web-1", "ssh: linux-key", "env: prod", "name: ops-web", "group: ops", "name: web-1", "allow_clipboard: true", "app_upstream: http://wiki.corp", "app_dependencies: origins"} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("the export lacks %q:\n%s", want, text)
 		}
@@ -149,14 +151,14 @@ func TestExportImportRoundTrip(t *testing.T) {
 	b := newGW(t)
 	// The plan first: everything is new, nothing changed yet.
 	code, out := b.do(t, "POST", "/api/v1/admin/config/import", file)
-	if code != 200 || !strings.Contains(string(out), `"applied":false`) || strings.Count(string(out), `"action":"create"`) != 3 {
+	if code != 200 || !strings.Contains(string(out), `"applied":false`) || strings.Count(string(out), `"action":"create"`) != 4 {
 		t.Fatalf("plan: %d %s", code, out)
 	}
 	if n := count(t, b.db, "targets"); n != 0 {
 		t.Fatalf("a plan changed something: %d targets", n)
 	}
 	code, out = b.do(t, "POST", "/api/v1/admin/config/import?apply=true", file)
-	if code != 200 || strings.Count(string(out), `"applied":true`) != 4 {
+	if code != 200 || strings.Count(string(out), `"applied":true`) != 5 {
 		t.Fatalf("apply: %d %s", code, out)
 	}
 	// B now exports what A did.
@@ -170,7 +172,7 @@ func TestExportImportRoundTrip(t *testing.T) {
 		t.Fatalf("a second import changed things: %s", out)
 	}
 	// Every change went through the API, so each is in the log as usual.
-	if evs, _, _ := b.audit.List(context.Background(), audit.Filter{Action: audit.TargetCreate}); len(evs) != 1 {
+	if evs, _, _ := b.audit.List(context.Background(), audit.Filter{Action: audit.TargetCreate}); len(evs) != 2 {
 		t.Fatalf("target.create events: %d", len(evs))
 	}
 	if evs, _, _ := b.audit.List(context.Background(), audit.Filter{Action: audit.ConfigImport}); len(evs) != 2 {

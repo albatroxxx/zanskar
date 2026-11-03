@@ -57,9 +57,35 @@ describe('TargetForm application', () => {
     expect(screen.getByText('The page the browser opens')).toBeDefined()
     await user.click(screen.getByRole('button', { name: 'Create' }))
 
-    expect(post).toHaveBeenCalledWith('/targets', expect.objectContaining({ name: 'Wiki', address: '', os_family: 'other', engine: '', app_upstream: 'https://wiki.internal:8443', app_endpoints: [], retention_days: null, ports: {} }))
+    expect(post).toHaveBeenCalledWith('/targets', expect.objectContaining({ name: 'Wiki', address: '', os_family: 'other', engine: '', app_upstream: 'https://wiki.internal:8443', app_endpoints: [], app_dependencies: 'public', retention_days: null, ports: {} }))
     expect((post.mock.calls[0][1] as Record<string, unknown>)).not.toHaveProperty('app_label')
     expect(saved).toHaveBeenCalled()
+  })
+
+  // 2026-11-03: where the pages load from beside the origins; public by
+  // default, its origins only when chosen; a host sends nothing.
+  it('offers the dependencies\' reach, public unless held to the origins', async () => {
+    const post = vi.spyOn(api, 'post').mockResolvedValue({ id: 'a1' } as never)
+    render(<TargetForm onClose={() => {}} onSaved={() => {}} />)
+    const user = userEvent.setup()
+    await user.click(screen.getByRole('tab', { name: 'Application' }))
+    expect(screen.getByLabelText('Dependencies')).toHaveProperty('value', 'public')
+    await user.type(screen.getByLabelText('Name'), 'Wiki')
+    await user.type(screen.getByLabelText('Upstream'), 'http://wiki.internal')
+    await user.selectOptions(screen.getByLabelText('Dependencies'), 'origins')
+    await user.click(screen.getByRole('button', { name: 'Create' }))
+    expect(post).toHaveBeenCalledWith('/targets', expect.objectContaining({ app_dependencies: 'origins' }))
+
+    cleanup()
+    vi.restoreAllMocks()
+    const hostPost = vi.spyOn(api, 'post').mockResolvedValue({ id: 'h1' } as never)
+    render(<TargetForm onClose={() => {}} onSaved={() => {}} />)
+    await user.click(screen.getByRole('tab', { name: 'Host' }))
+    expect(screen.queryByLabelText('Dependencies')).toBeNull()
+    await user.type(screen.getByLabelText('Name'), 'web')
+    await user.type(screen.getByLabelText('Hostname or IP address'), '10.0.0.5')
+    await user.click(screen.getByRole('button', { name: 'Create' }))
+    expect(hostPost).toHaveBeenCalledWith('/targets', expect.objectContaining({ app_dependencies: '' }))
   })
 })
 
@@ -68,7 +94,7 @@ describe('TargetForm application', () => {
 describe('TargetForm application endpoints', () => {
   const app: Target = {
     ...host, id: 'a1', name: 'Grafana', address: 'grafana.internal', os_family: 'other', ports: {}, capabilities: [],
-    app_upstream: 'http://grafana.internal', app_endpoints: [{ name: 'API', url: 'http://api.internal:8080' }],
+    app_upstream: 'http://grafana.internal', app_endpoints: [{ name: 'API', url: 'http://api.internal:8080' }], app_dependencies: 'origins',
   }
   const open = async () => {
     render(<TargetForm onClose={() => {}} onSaved={() => {}} />)
@@ -130,7 +156,8 @@ describe('TargetForm application endpoints', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Save' }))
     expect(put).toHaveBeenCalledWith('/targets/a1', expect.objectContaining({ app_endpoints: [{ name: 'API', url: 'http://api.internal:8080' }] }))
     // A status switch writes the whole target too.
-    expect(targetBody(app, { status: 'disabled' })).toMatchObject({ status: 'disabled', app_endpoints: [{ name: 'API', url: 'http://api.internal:8080' }] })
+    expect(targetBody(app, { status: 'disabled' })).toMatchObject({ status: 'disabled', app_endpoints: [{ name: 'API', url: 'http://api.internal:8080' }], app_dependencies: 'origins' })
+    expect(screen.getByLabelText('Dependencies')).toHaveProperty('value', 'origins')
   })
 })
 

@@ -88,6 +88,12 @@ func policyJSON(spec Spec, relayIP string) (string, error) {
 		"SafeBrowsingEnabled": false, "MetricsReportingEnabled": false, "TranslateEnabled": false,
 		"DnsOverHttpsMode": "off", "BackgroundModeEnabled": false,
 		"NetworkPredictionOptions": 2, "WebRtcIPHandlingPolicy": "disable_non_proxied_udp",
+		// No search from the address bar: with dependencies let out to
+		// public addresses (2026-11-03), what a person types would
+		// otherwise go to the search engine as suggestions, keystroke by
+		// keystroke (seen at the relay: duckduckgo.com), and a search is a
+		// page the policy blocks anyway.
+		"DefaultSearchProviderEnabled": false, "SearchSuggestEnabled": false,
 		"AudioCaptureAllowed": false, "VideoCaptureAllowed": false, "ScreenCaptureAllowed": false,
 		"DefaultGeolocationSetting": 2, "DefaultNotificationsSetting": 2,
 		"IncognitoModeAvailability": 1, "BrowserGuestModeEnabled": false, "BrowserAddPersonEnabled": false,
