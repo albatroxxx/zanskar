@@ -6,8 +6,10 @@ import (
 	"context"
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/albatroxxx/zanskar/internal/audit"
+	"github.com/albatroxxx/zanskar/internal/store"
 )
 
 // 2026-11-03, idea 11: each person sees their own activity: their sign-ins,
@@ -23,6 +25,9 @@ func TestMyActivity(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	// The password stage of a two-step sign-in is the Events page's routine
+	// line; a person's activity lists the sign-in once (live, 2026-11-03).
+	rec(audit.Actor{UserID: alice, IP: "198.51.100.7"}.Event(audit.UserLogin, "user", alice, audit.Success, map[string]any{"stage": "password", "session_id": "s1"}))
 	rec(audit.Actor{UserID: alice, IP: "198.51.100.7"}.Event(audit.UserLogin, "user", alice, audit.Success, map[string]any{"method": "password"}))
 	rec(audit.Actor{IP: "203.0.113.66"}.Event(audit.UserLogin, "user", alice, audit.Failure, map[string]any{"reason": "bad_password", "username": "alice"}))
 	rec(audit.Actor{UserID: root, IP: "10.9.9.9"}.Event("user.roles.update", "user", alice, audit.Success, map[string]any{"roles": []string{"user"}, "secretish": "x"}))
@@ -36,18 +41,28 @@ func TestMyActivity(t *testing.T) {
 	rec(audit.Actor{UserID: root, IP: "10.9.9.9"}.Event(audit.TargetCreate, "target", "t2", audit.Success, map[string]any{"name": "web-2"}))
 	rec(audit.Actor{UserID: root, IP: "10.9.9.9"}.Event(audit.SessionStart, "access_session", "s9", audit.Success, map[string]any{"protocol": "ssh"}))
 	rec(audit.Actor{UserID: alice, IP: "198.51.100.7"}.Event(audit.UserPasswordReset, "user", root, audit.Success, nil))
+	// A decision on the person's own request is theirs to see, whoever took
+	// it (2026-11-04): root denies alice's request for RDP access.
+	now := store.TimeArg(time.Now().UTC())
+	if _, err := e.db.ExecContext(ctx, e.db.Rebind(`INSERT INTO access_requests (id, user_id, target_id, protocol, reason, requested_minutes, status, created_at, updated_at) VALUES (?, ?, 't1', 'rdp', 'need', 60, 'denied', ?, ?)`), "ar1", alice, now, now); err != nil {
+		t.Fatal(err)
+	}
+	rec(audit.Actor{UserID: root, IP: "10.9.9.9"}.Event(audit.AccessRequestDeny, "access_request", "ar1", audit.Success, map[string]any{"protocol": "rdp"}))
 
 	rr, body := e.get("/api/v1/me/activity", "alice")
 	if rr.Code != 200 {
 		t.Fatalf("activity: %d %s", rr.Code, rr.Body)
 	}
 	items := body["items"].([]any)
-	if len(items) != 3 {
-		t.Fatalf("got %d events, want alice's sign-in, the failed one and root's change: %s", len(items), rr.Body)
+	if len(items) != 4 {
+		t.Fatalf("got %d events, want the denial, root's change, the failed sign-in and the sign-in (once): %s", len(items), rr.Body)
 	}
 	byAction := func(i int) map[string]any { return items[i].(map[string]any) }
-	// Newest first: root's change, the failed sign-in, the sign-in.
-	change, failed, signin := byAction(0), byAction(1), byAction(2)
+	// Newest first: the denial, root's change, the failed sign-in, the sign-in.
+	denied, change, failed, signin := byAction(0), byAction(1), byAction(2), byAction(3)
+	if denied["action"] != audit.AccessRequestDeny || denied["by"] != "root" || denied["details"].(map[string]any)["protocol"] != "rdp" {
+		t.Fatalf("a decision on the person's request: %v", denied)
+	}
 	if change["action"] != "user.roles.update" || change["by"] != "root" || change["ip"] != "" {
 		t.Fatalf("an administrator's change: %v", change)
 	}

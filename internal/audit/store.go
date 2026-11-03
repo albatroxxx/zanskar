@@ -201,14 +201,19 @@ func (l *Log) List(ctx context.Context, f Filter) ([]Event, string, error) {
 		add("actor_user_id = ?", f.ActorUserID)
 	}
 	if f.Subject != "" {
-		where = append(where, "(actor_user_id = ? OR (object_type = 'user' AND object_id = ?))")
-		args = append(args, f.Subject, f.Subject)
+		// Theirs: what they did, what was done to their account, and what
+		// was decided on their access requests (approved, denied, revoked;
+		// 2026-11-04) — a decision is done to the person, whoever took it.
+		const theirRequest = "(object_type = 'access_request' AND object_id IN (SELECT id FROM access_requests WHERE user_id = ?))"
+		where = append(where, "(actor_user_id = ? OR (object_type = 'user' AND object_id = ?) OR "+theirRequest+")")
+		args = append(args, f.Subject, f.Subject, f.Subject)
 		if len(f.OwnActions) > 0 {
-			where = append(where, "(actor_user_id <> ? OR actor_user_id IS NULL OR action IN (?"+strings.Repeat(", ?", len(f.OwnActions)-1)+"))")
+			where = append(where, "(actor_user_id <> ? OR actor_user_id IS NULL OR action IN (?"+strings.Repeat(", ?", len(f.OwnActions)-1)+") OR "+theirRequest+")")
 			args = append(args, f.Subject)
 			for _, a := range f.OwnActions {
 				args = append(args, a)
 			}
+			args = append(args, f.Subject)
 		}
 	}
 	if f.Action != "" {

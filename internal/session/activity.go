@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net"
 	"net/http"
+	"slices"
 	"time"
 
 	"github.com/albatroxxx/zanskar/internal/audit"
@@ -50,6 +51,19 @@ var activityOwn = []string{
 	audit.AccessRequestCreate,
 }
 
+// passwordStage is the first step of a two-step sign-in, which the Events
+// page hides as routine: a person's activity lists each sign-in once, at
+// its end, not twice a second apart (live, 2026-11-03).
+func passwordStage(e audit.Event) bool {
+	if e.Action != audit.UserLogin || e.Outcome != audit.Success || len(e.Details) == 0 {
+		return false
+	}
+	var d struct {
+		Stage string `json:"stage"`
+	}
+	return json.Unmarshal(e.Details, &d) == nil && d.Stage == "password"
+}
+
 // myActivity answers GET /api/v1/me/activity: the caller's own events,
 // newest first, a page at a time (2026-11-03, idea 11). Their sign-ins,
 // failed ones too, from where; their sessions and requests; and what an
@@ -64,6 +78,7 @@ func (h *Handler) myActivity(w http.ResponseWriter, r *http.Request) {
 		h.fail(w, r, err)
 		return
 	}
+	items = slices.DeleteFunc(items, passwordStage)
 	rows, err := h.decorate(r.Context(), items)
 	if err != nil {
 		h.fail(w, r, err)
