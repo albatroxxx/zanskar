@@ -59,10 +59,15 @@ type Spec struct {
 	// Endpoints are the application's further origins the session reaches,
 	// each with the address resolved for it the same way.
 	Endpoints []Endpoint
-	// PublicDependencies lets the relay take the pages' dependencies out to
-	// any public address on port 80 or 443 (target.DependenciesPublic);
-	// off, the origins are all the browser reaches.
+	// PublicDependencies makes the relay the proxy that inspects (ADR 0037,
+	// amended 2026-11-03, later): the pages' dependencies go out to any
+	// public address, and to the private ones named below, while a page
+	// opens at the origins only. Off, the relay is a blind tunnel to the
+	// origins and nothing else.
 	PublicDependencies bool
+	// PrivateNetworks (CIDRs) and PrivateHosts (host:port) are the private
+	// addresses the dependencies may reach, under PublicDependencies.
+	PrivateNetworks, PrivateHosts []string
 	// TLSCA is an optional PEM bundle an https upstream is verified against,
 	// installed in the browser's certificate store for the session.
 	TLSCA string
@@ -99,8 +104,15 @@ type Session struct {
 	// InternalIP is the relay's address on the session network, the one
 	// the browser's resolver maps the upstream's name to.
 	InternalIP string
-	closers    []func()
+	// RelayName is the relay container's, whose log says what its proxy
+	// refused.
+	RelayName string
+	closers   []func()
 }
+
+// sessionCA is the certificate authority made for one session (PEM), which
+// the browser trusts and the relay's proxy signs with.
+type sessionCA struct{ cert, key string }
 
 // Close removes the session's containers and network, newest first. Safe
 // to call more than once.
@@ -146,7 +158,7 @@ func upstreamPort(u *url.URL) int {
 // relayArgs builds the relay's `docker run` and the table it reads by name;
 // subnet is the session network's, so the relay knows which of its
 // addresses is the internal one once the bridge is attached.
-func relayArgs(spec Spec, network, relayName, browserName, subnet string) (args, env []string, err error) {
+func relayArgs(spec Spec, network, relayName, browserName, subnet string, ca *sessionCA) (args, env []string, err error) {
 	port := upstreamPort(spec.Upstream)
 	// The upstream's own forward stays beside the proxy: a browser image
 	// from before the proxy, which an administrator may have pinned, maps
@@ -159,7 +171,19 @@ func relayArgs(spec Spec, network, relayName, browserName, subnet string) (args,
 	cfg := apprelay.Config{Forwards: []apprelay.Forward{
 		{Listen: "internal:" + strconv.Itoa(port), To: net.JoinHostPort(spec.UpstreamIP.String(), strconv.Itoa(port))},
 		{Listen: ":5900", To: net.JoinHostPort(browserName, "5900"), Once: true, Retry: apprelay.Duration(20 * time.Second)},
-	}, SOCKS: &apprelay.SOCKS{Listen: "internal:" + strconv.Itoa(socksPort(spec)), Allow: routes, Public: spec.PublicDependencies}, InternalSubnet: subnet}
+	}, InternalSubnet: subnet}
+	if spec.PublicDependencies {
+		// The proxy that inspects, with the session's CA and the bundle the
+		// application's own https origins are verified against (the browser
+		// no longer verifies them: the relay does).
+		if ca == nil {
+			return nil, nil, errors.New("browsergw: public dependencies need the session's CA")
+		}
+		cfg.Proxy = &apprelay.Proxy{Listen: "internal:" + strconv.Itoa(proxyPort(spec)), CACert: ca.cert, CAKey: ca.key, Allow: routes, TLSCA: spec.TLSCA,
+			PrivateNetworks: spec.PrivateNetworks, PrivateHosts: spec.PrivateHosts, Name: spec.Name}
+	} else {
+		cfg.SOCKS = &apprelay.SOCKS{Listen: "internal:" + strconv.Itoa(socksPort(spec)), Allow: routes}
+	}
 	raw, err := marshal(cfg)
 	if err != nil {
 		return nil, nil, err
@@ -168,8 +192,9 @@ func relayArgs(spec Spec, network, relayName, browserName, subnet string) (args,
 	args = append(args,
 		"--security-opt", "no-new-privileges", "--cap-drop", "ALL", "--read-only",
 		// The gateway's binary carries the console; it maps about 70 MB at
-		// start, and 64m had the kernel kill it before it listened.
-		"--pids-limit", "64", "--memory", "192m",
+		// start, and 64m had the kernel kill it before it listened. The
+		// proxy terminates TLS for every host a page names: 256m.
+		"--pids-limit", "64", "--memory", "256m",
 		"-e", "ZANSKAR_APPRELAY",
 	)
 	env = []string{"ZANSKAR_APPRELAY=" + raw}
@@ -188,7 +213,7 @@ func relayArgs(spec Spec, network, relayName, browserName, subnet string) (args,
 // the policy builds its own from), the resolver rule, the VNC password, the
 // screen and the CA bundle. The values travel by name; the argument vector
 // shows only the names.
-func browserArgs(spec Spec, network, browserName, relayInternalIP, password, seccompPath string) (args, env []string, err error) {
+func browserArgs(spec Spec, network, browserName, relayInternalIP, password, seccompPath string, ca *sessionCA) (args, env []string, err error) {
 	args = append([]string{"run", "-d", "--rm", "--name", browserName, "--network", network}, containers.Labels(spec.SessionID)...)
 	args = append(args,
 		"--read-only", "--tmpfs", "/tmp:rw,size=512m", "--tmpfs", "/etc/chromium/policies/managed:rw,size=1m,uid=10001,gid=10001,mode=700",
@@ -202,6 +227,17 @@ func browserArgs(spec Spec, network, browserName, relayInternalIP, password, sec
 	if err != nil {
 		return nil, nil, err
 	}
+	// What the browser trusts: under public dependencies the session's CA,
+	// which signs for every host the relay's proxy terminates (the relay
+	// verifies the application's own https origins); otherwise the
+	// application's bundle, as before.
+	caPEM := spec.TLSCA
+	if spec.PublicDependencies {
+		if ca == nil {
+			return nil, nil, errors.New("browsergw: public dependencies need the session's CA")
+		}
+		caPEM = ca.cert
+	}
 	env = []string{
 		"APP_URL=" + origin(spec.Upstream) + "/",
 		"APP_ORIGIN=" + origin(spec.Upstream),
@@ -210,7 +246,7 @@ func browserArgs(spec Spec, network, browserName, relayInternalIP, password, sec
 		"VNC_PASSWORD=" + password,
 		"SCREEN_W=" + strconv.Itoa(spec.Width),
 		"SCREEN_H=" + strconv.Itoa(spec.Height),
-		"CA_PEM=" + spec.TLSCA,
+		"CA_PEM=" + caPEM,
 		"DEVTOOLS=" + strconv.FormatBool(spec.DevTools),
 	}
 	return args, env, nil
@@ -333,10 +369,21 @@ func Start(ctx context.Context, log *slog.Logger, docker string, spec Spec) (*Se
 		return fail(err)
 	}
 
-	rargs, renv, err := relayArgs(spec, network, relay, browser, subnet)
+	// Under public dependencies the relay inspects: a certificate authority
+	// for this session alone, trusted by its browser, signing in its relay.
+	var ca *sessionCA
+	if spec.PublicDependencies {
+		cert, key, err := apprelay.NewSessionCA("Zanskar session " + spec.SessionID)
+		if err != nil {
+			return fail(fmt.Errorf("browsergw: session CA: %w", err))
+		}
+		ca = &sessionCA{cert: cert, key: key}
+	}
+	rargs, renv, err := relayArgs(spec, network, relay, browser, subnet, ca)
 	if err != nil {
 		return fail(err)
 	}
+	s.RelayName = relay
 	if err := containers.Run(suCtx, docker, renv, rargs...); err != nil {
 		return fail(fmt.Errorf("browsergw: start relay: %w", err))
 	}
@@ -357,7 +404,7 @@ func Start(ctx context.Context, log *slog.Logger, docker string, spec Spec) (*Se
 	}
 	s.VNCAddr = net.JoinHostPort(bridgeIP, "5900")
 
-	bargs, benv, err := browserArgs(spec, network, browser, s.InternalIP, password, seccompPath)
+	bargs, benv, err := browserArgs(spec, network, browser, s.InternalIP, password, seccompPath, ca)
 	if err != nil {
 		return fail(err)
 	}

@@ -13,6 +13,7 @@ package apprelay
 
 import (
 	"context"
+	"crypto/x509"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -78,15 +79,6 @@ type SOCKS struct {
 	// bridge, where it would let any container there reach the origins.
 	Listen string  `json:"listen"`
 	Allow  []Route `json:"allow"`
-	// Public lets CONNECT through to any other host too, on port 80 or 443,
-	// when every address it resolves to is public (ipspace.Reserved says
-	// nothing of it): an application's dependencies, the scripts, styles,
-	// fonts, images and APIs its pages load from wherever its code names
-	// (2026-11-03). The relay resolves such a name itself and dials the
-	// address it checked, never the name again. Anything private, link-local
-	// or a cloud metadata service stays refused unless it is a route; so
-	// does the browser's own service traffic (browserServices).
-	Public bool `json:"public,omitempty"`
 }
 
 // Route is one origin's host and port as the browser asks for them, and the
@@ -103,8 +95,13 @@ type Route struct {
 // Config is the relay's whole table.
 type Config struct {
 	Forwards []Forward `json:"forwards"`
-	// SOCKS, when set, is the browser's way to the application's origins.
+	// SOCKS, when set, is the browser's way to the application's origins
+	// and nothing else: an application held to its origins.
 	SOCKS *SOCKS `json:"socks,omitempty"`
+	// Proxy, when set, is the browser's way out that inspects: an
+	// application whose dependencies come from any public address (ADR
+	// 0037, amended 2026-11-03, later). A session has one or the other.
+	Proxy *Proxy `json:"proxy,omitempty"`
 	// InternalSubnet is the session network's subnet, CIDR; an "internal:"
 	// listen binds the relay's address inside it. The gateway attaches the
 	// relay to the bridge right after starting it, so by the time the relay
@@ -127,10 +124,13 @@ func Parse(raw []byte) (Config, error) {
 // network or shared with a forward, and a route that repeats another or
 // whose answer is a name.
 func (c *Config) Validate() error {
-	if len(c.Forwards) == 0 && c.SOCKS == nil {
+	if len(c.Forwards) == 0 && c.SOCKS == nil && c.Proxy == nil {
 		return errors.New("apprelay config: no forwards")
 	}
 	if err := c.validSOCKS(); err != nil {
+		return err
+	}
+	if err := c.validProxy(); err != nil {
 		return err
 	}
 	if c.InternalSubnet != "" {
@@ -193,26 +193,35 @@ func (c *Config) validSOCKS() error {
 			return fmt.Errorf("apprelay config: socks listens on %d, as a forward does", port)
 		}
 	}
-	if len(s.Allow) == 0 {
-		return errors.New("apprelay config: socks allows nothing")
+	if err := validRoutes(s.Allow); err != nil {
+		return fmt.Errorf("apprelay config: socks %w", err)
+	}
+	return nil
+}
+
+// validRoutes checks a table of origins: at least one, each a host and a
+// port, none repeating another, each answered by ip:port, never a name.
+func validRoutes(routes []Route) error {
+	if len(routes) == 0 {
+		return errors.New("allows nothing")
 	}
 	seen := map[string]bool{}
-	for i, rt := range s.Allow {
+	for i, rt := range routes {
 		host := normHost(rt.Host)
 		if host == "" || rt.Port < 1 || rt.Port > 65535 {
-			return fmt.Errorf("apprelay config: socks route %d: host and a port 1-65535 are required", i)
+			return fmt.Errorf("route %d: host and a port 1-65535 are required", i)
 		}
 		key := net.JoinHostPort(host, strconv.Itoa(rt.Port))
 		if seen[key] {
-			return fmt.Errorf("apprelay config: socks route %d repeats %s", i, key)
+			return fmt.Errorf("route %d repeats %s", i, key)
 		}
 		seen[key] = true
 		ip, p, err := net.SplitHostPort(rt.To)
 		if err != nil || net.ParseIP(ip) == nil {
-			return fmt.Errorf("apprelay config: socks route %d: to must be ip:port, never a name", i)
+			return fmt.Errorf("route %d: to must be ip:port, never a name", i)
 		}
 		if n, err := strconv.Atoi(p); err != nil || n < 1 || n > 65535 {
-			return fmt.Errorf("apprelay config: socks route %d: to has no valid port", i)
+			return fmt.Errorf("route %d: to has no valid port", i)
 		}
 	}
 	return nil
@@ -245,9 +254,16 @@ type Relay struct {
 	InternalIP string
 	// Dial is the backend dialer; nil uses net.Dialer with a 5 s timeout.
 	Dial func(ctx context.Context, addr string) (net.Conn, error)
-	// Resolver answers the lookups SOCKS.Public needs; nil is
+	// Resolver answers the lookups the proxy needs; nil is
 	// net.DefaultResolver.
 	Resolver Resolver
+	// Classify says what reserved space an address is in, "" for a public
+	// one; nil is ipspace.Reserved. Tests, whose origins are loopback,
+	// answer it themselves.
+	Classify func(net.IP) string
+	// Roots are what the proxy verifies a site that is not the
+	// application's against; nil is the system's. Tests set their own.
+	Roots *x509.CertPool
 	// HandshakeTimeout bounds a SOCKS client's greeting and request; zero is
 	// 10 s.
 	HandshakeTimeout time.Duration
@@ -264,7 +280,7 @@ func (r *Relay) Serve(ctx context.Context) error {
 		r.Dial = func(ctx context.Context, addr string) (net.Conn, error) { return d.DialContext(ctx, "tcp", addr) }
 	}
 	var internal string
-	needInternal := r.Config.SOCKS != nil
+	needInternal := r.Config.SOCKS != nil || r.Config.Proxy != nil
 	for _, f := range r.Config.Forwards {
 		needInternal = needInternal || strings.HasPrefix(f.Listen, "internal:")
 	}
@@ -313,6 +329,22 @@ func (r *Relay) Serve(ctx context.Context) error {
 		go func() {
 			defer wg.Done()
 			errc <- r.serveSOCKS(ctx, s, ln)
+		}()
+	}
+	if p := r.Config.Proxy; p != nil {
+		port, _ := listenPort(p.Listen)
+		addr := net.JoinHostPort(internal, strconv.Itoa(port))
+		ln, err := lc.Listen(ctx, "tcp", addr)
+		if err != nil {
+			cancel()
+			wg.Wait()
+			return fmt.Errorf("apprelay: listen %s: %w", addr, err)
+		}
+		r.Log.Info("apprelay proxy listening", "addr", ln.Addr().String(), "origins", len(p.Allow), "private_networks", len(p.PrivateNetworks), "private_hosts", len(p.PrivateHosts))
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			errc <- r.serveProxy(ctx, p, ln)
 		}()
 	}
 	wg.Wait()

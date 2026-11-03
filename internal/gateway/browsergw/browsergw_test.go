@@ -39,7 +39,7 @@ func spec(t *testing.T) Spec {
 // internal side and forwarded to the resolved address, and the VNC port
 // taken once; nothing of the table is in the argument vector.
 func TestRelayArgs(t *testing.T) {
-	args, env, err := relayArgs(spec(t), "zanskar-net-s1", "zanskar-apprelay-s1", "zanskar-browser-s1", "172.30.0.0/16")
+	args, env, err := relayArgs(spec(t), "zanskar-net-s1", "zanskar-apprelay-s1", "zanskar-browser-s1", "172.30.0.0/16", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -63,7 +63,7 @@ func TestRelayArgs(t *testing.T) {
 	// the gateway's.
 	debug := spec(t)
 	debug.Debug = true
-	dargs, denv, err := relayArgs(debug, "n", "r", "b", "172.30.0.0/16")
+	dargs, denv, err := relayArgs(debug, "n", "r", "b", "172.30.0.0/16", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -76,21 +76,47 @@ func TestRelayArgs(t *testing.T) {
 			t.Errorf("table misses %s: %s", want, table)
 		}
 	}
-	// The relay lets dependencies out only when the application says so
-	// (2026-11-03); held to its origins, the table says nothing of it.
-	if strings.Contains(table, `"public"`) {
-		t.Errorf("an application held to its origins got public egress: %s", table)
+	// Held to its origins, the relay is the blind SOCKS tunnel and nothing
+	// inspects; under public dependencies (2026-11-03, later) it is the
+	// proxy that inspects, with the session's CA, the application's bundle
+	// and its private allowances, and no SOCKS listener.
+	if !strings.Contains(table, `"socks"`) || strings.Contains(table, `"proxy"`) {
+		t.Errorf("an application held to its origins: %s", table)
+	}
+	bundle, _, err := apprelay.NewSessionCA("the application's CA")
+	if err != nil {
+		t.Fatal(err)
 	}
 	open := spec(t)
-	open.PublicDependencies = true
-	_, oenv, _ := relayArgs(open, "n", "r", "b", "172.30.0.0/16")
-	if !strings.Contains(oenv[0], `"public":true`) {
-		t.Errorf("public dependencies missing from the table: %s", oenv[0])
+	open.PublicDependencies, open.TLSCA = true, bundle
+	open.PrivateNetworks, open.PrivateHosts = []string{"10.20.0.0/16"}, []string{"cdn.corp:8443"}
+	if _, _, err := relayArgs(open, "n", "r", "b", "172.30.0.0/16", nil); err == nil {
+		t.Error("public dependencies without a session CA built a table")
+	}
+	cert, key, err := apprelay.NewSessionCA("s1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	oargs, oenv, err := relayArgs(open, "n", "r", "b", "172.30.0.0/16", &sessionCA{cert: cert, key: key})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ocfg, err := apprelay.Parse([]byte(strings.TrimPrefix(oenv[0], "ZANSKAR_APPRELAY=")))
+	if err != nil {
+		t.Fatalf("the proxy table does not parse: %v", err)
+	}
+	if ocfg.SOCKS != nil || ocfg.Proxy == nil || ocfg.Proxy.Listen != "internal:3128" || ocfg.Proxy.CACert != cert || ocfg.Proxy.CAKey != key ||
+		ocfg.Proxy.TLSCA != open.TLSCA || ocfg.Proxy.Name != "Wiki" || len(ocfg.Proxy.Allow) != 1 || ocfg.Proxy.Allow[0].To != "10.0.0.50:8080" ||
+		fmt.Sprint(ocfg.Proxy.PrivateNetworks) != "[10.20.0.0/16]" || fmt.Sprint(ocfg.Proxy.PrivateHosts) != "[cdn.corp:8443]" {
+		t.Errorf("proxy table: %+v", ocfg.Proxy)
+	}
+	if j := strings.Join(oargs, " "); strings.Contains(j, "BEGIN") {
+		t.Errorf("the CA leaked into argv: %s", j)
 	}
 	// An https upstream without a port is 443.
 	s := spec(t)
 	s.Upstream, _ = url.Parse("https://grafana.internal")
-	_, env, _ = relayArgs(s, "n", "r", "b", "172.30.0.0/16")
+	_, env, _ = relayArgs(s, "n", "r", "b", "172.30.0.0/16", nil)
 	if !strings.Contains(env[0], `"listen":"internal:443"`) || !strings.Contains(env[0], `"to":"10.0.0.50:443"`) {
 		t.Errorf("https default port: %s", env[0])
 	}
@@ -105,7 +131,7 @@ func TestRelayArgsRoutesEveryOrigin(t *testing.T) {
 	api, _ := url.Parse("https://api.internal")
 	byIP, _ := url.Parse("http://10.0.0.9:3000")
 	s.Endpoints = []Endpoint{{Name: "API", URL: api, IP: net.ParseIP("10.0.0.51")}, {Name: "Metrics", URL: byIP, IP: net.ParseIP("10.0.0.9")}}
-	_, env, err := relayArgs(s, "n", "r", "b", "172.30.0.0/16")
+	_, env, err := relayArgs(s, "n", "r", "b", "172.30.0.0/16", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -122,7 +148,7 @@ func TestRelayArgsRoutesEveryOrigin(t *testing.T) {
 		t.Fatalf("socks: %+v, want internal:1080 with %+v", cfg.SOCKS, want)
 	}
 	s.Upstream, _ = url.Parse("http://socks.internal:1080")
-	_, env, _ = relayArgs(s, "n", "r", "b", "172.30.0.0/16")
+	_, env, _ = relayArgs(s, "n", "r", "b", "172.30.0.0/16", nil)
 	if cfg, err := apprelay.Parse([]byte(strings.TrimPrefix(env[0], "ZANSKAR_APPRELAY="))); err != nil || cfg.SOCKS.Listen != "internal:1081" {
 		t.Fatalf("an upstream on 1080 moves the proxy: %v %+v", err, cfg.SOCKS)
 	}
@@ -135,7 +161,7 @@ func TestRelayArgsRoutesEveryOrigin(t *testing.T) {
 func TestBrowserArgs(t *testing.T) {
 	s := spec(t)
 	s.TLSCA = "-----BEGIN CERTIFICATE-----\nAA==\n-----END CERTIFICATE-----"
-	args, env, err := browserArgs(s, "zanskar-net-s1", "zanskar-browser-s1", "172.30.0.2", "p4ssw0rd", "/var/lib/zanskar/browser-seccomp.json")
+	args, env, err := browserArgs(s, "zanskar-net-s1", "zanskar-browser-s1", "172.30.0.2", "p4ssw0rd", "/var/lib/zanskar/browser-seccomp.json", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
