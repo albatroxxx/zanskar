@@ -89,12 +89,6 @@ const (
 	// for searching across recordings (2026-11-03, idea 5). Off, the index
 	// is emptied and only command lines are searched.
 	KeyIndexOutput = "recordings.index_output"
-	// KeyACME, KeyACMEEmail and KeyACMEDirectory get the gateway's
-	// certificate from an ACME CA when it serves TLS itself (ADR 0021,
-	// amended 2026-10-30).
-	KeyACME          = "tls.acme"
-	KeyACMEEmail     = "tls.acme_email"
-	KeyACMEDirectory = "tls.acme_directory"
 	// KeySecurityContact is where someone who finds a weakness in this
 	// gateway writes: an email address or an https:// page. Set, the gateway
 	// publishes it at /.well-known/security.txt (RFC 9116); empty, that path
@@ -107,9 +101,6 @@ const (
 	// forwarded link alone cannot grant access (2026-11-03, idea 3).
 	KeyApproveStepUp = "access.approve_step_up"
 )
-
-// LetsEncryptDirectory is the ACME directory KeyACMEDirectory defaults to.
-const LetsEncryptDirectory = "https://acme-v02.api.letsencrypt.org/directory"
 
 // DefaultDBProxyImage is the gateway's own image at the running version. A
 // development build has no published tag, so it points at latest and the
@@ -245,12 +236,6 @@ var Definitions = []Definition{
 		Description: "Isolated browser for application sessions. A custom image, for a private registry mirror, is pinned by digest."},
 	{Key: KeyIndexOutput, Category: "Recordings", Title: "Search what sessions printed", Type: TypeBool, Default: "true",
 		Description: "Terminal output is indexed beside the commands, up to 5,000 lines a recording, so reviewers can find it. Off empties that index."},
-	{Key: KeyACME, Category: "Let's Encrypt", Title: "Certificate from Let's Encrypt", Type: TypeBool, Default: "false",
-		Description: "When the gateway serves TLS itself: a certificate for the public URL's name, renewed on its own. An uploaded one still wins."},
-	{Key: KeyACMEEmail, Category: "Let's Encrypt", Title: "Account email", Type: TypeString,
-		Description: "Where the CA writes about the certificate."},
-	{Key: KeyACMEDirectory, Category: "Let's Encrypt", Title: "ACME directory", Type: TypeString, Default: LetsEncryptDirectory,
-		Description: "Let's Encrypt by default; its staging, or a private ACME CA."},
 	{Key: KeyTimeZone, Category: "Display", Title: "Time zone", Type: TypeTimeZone, Default: HostZone(),
 		Description: "Every time in the console and the dashboard clock. The default is the gateway host's."},
 	{Key: KeyTheme, Category: "Display", Title: "Theme", Type: TypeEnum, Default: ThemeSystem, Enum: []string{ThemeSystem, ThemeLight, ThemeDark},
@@ -366,14 +351,6 @@ func Validate(d Definition, value string) (string, error) {
 			return "", fmt.Errorf("%w: %s must be valid UTF-8 up to 4096 bytes", ErrInvalid, d.Key)
 		}
 		switch d.Key {
-		case KeyACMEEmail:
-			if v != "" && !emailRe.MatchString(v) {
-				return "", fmt.Errorf("%w: %s must be an email address", ErrInvalid, d.Key)
-			}
-		case KeyACMEDirectory:
-			if u, err := url.Parse(v); err != nil || u.Scheme != "https" || u.Host == "" {
-				return "", fmt.Errorf("%w: %s must be an https:// URL", ErrInvalid, d.Key)
-			}
 		case KeySecurityContact:
 			if v != "" && SecurityContactURI(v) == "" {
 				return "", fmt.Errorf("%w: %s must be an email address or an https:// URL", ErrInvalid, d.Key)

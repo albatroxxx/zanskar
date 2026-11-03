@@ -75,6 +75,9 @@ type Sender struct {
 	Transport http.RoundTripper
 	// AllowLoopback lets tests reach a server on 127.0.0.1.
 	AllowLoopback bool
+	// Server reads the gateway's mail server (Repo.Server); nil, or nil
+	// from it, leaves an email channel to the server it carries itself.
+	Server func(context.Context) (*Server, error)
 }
 
 // Send delivers m on c.
@@ -139,21 +142,45 @@ func (s *Sender) webhook(ctx context.Context, c *Channel, m Message) error {
 	return nil
 }
 
-// email sends the message over SMTP: TLS from the start on port 465, else
-// STARTTLS, which is required unless the server is this host's own; the
-// account's password is sent only over TLS.
+// email sends the message through the gateway's mail server (ADR 0039,
+// amended 2026-11-03, later) to the channel's recipients. A channel from
+// before the gateway had one carries its own server until it is saved
+// again; that one serves while no server is set.
 func (s *Sender) email(ctx context.Context, c *Channel, m Message) error {
-	cfg := c.Config
-	if cfg.SMTPHost == "" || len(cfg.To) == 0 || cfg.From == "" {
-		return errors.New("the email channel needs a server, a sender and recipients")
+	if len(c.Config.To) == 0 {
+		return errors.New("the email channel needs recipients")
 	}
-	port := cfg.SMTPPort
+	var srv *Server
+	if s.Server != nil {
+		var err error
+		if srv, err = s.Server(ctx); err != nil {
+			return fmt.Errorf("the mail server could not be read: %w", err)
+		}
+	}
+	if srv == nil {
+		cfg := c.Config
+		if cfg.SMTPHost == "" || cfg.From == "" {
+			return errors.New("no mail server is set: Settings, Notifications, Email server")
+		}
+		srv = &Server{Host: cfg.SMTPHost, Port: cfg.SMTPPort, Username: cfg.SMTPUsername, From: cfg.From, password: c.secret.SMTPPassword}
+	}
+	return s.SendThrough(ctx, srv, c.Config.To, m)
+}
+
+// SendThrough sends m to the recipients through srv over SMTP: TLS from the
+// start on port 465, else STARTTLS, which is required unless the server is
+// this host's own; the account's password is sent only over TLS.
+func (s *Sender) SendThrough(ctx context.Context, srv *Server, to []string, m Message) error {
+	if srv.Host == "" || srv.From == "" || len(to) == 0 {
+		return errors.New("the mail server needs a host, a sender and recipients")
+	}
+	port := srv.Port
 	if port == 0 {
 		port = 587
 	}
-	addr := net.JoinHostPort(cfg.SMTPHost, strconv.Itoa(port))
+	addr := net.JoinHostPort(srv.Host, strconv.Itoa(port))
 	dialer := guardedDialer(true)
-	tlsCfg := &tls.Config{ServerName: cfg.SMTPHost, MinVersion: tls.VersionTLS12}
+	tlsCfg := &tls.Config{ServerName: srv.Host, MinVersion: tls.VersionTLS12}
 	var conn net.Conn
 	var err error
 	if port == 465 {
@@ -167,7 +194,7 @@ func (s *Sender) email(ctx context.Context, c *Channel, m Message) error {
 	if dl, ok := ctx.Deadline(); ok {
 		_ = conn.SetDeadline(dl)
 	}
-	cl, err := smtp.NewClient(conn, cfg.SMTPHost)
+	cl, err := smtp.NewClient(conn, srv.Host)
 	if err != nil {
 		_ = conn.Close()
 		return fmt.Errorf("the mail server did not greet: %w", err)
@@ -178,28 +205,28 @@ func (s *Sender) email(ctx context.Context, c *Channel, m Message) error {
 			if err := cl.StartTLS(tlsCfg); err != nil {
 				return fmt.Errorf("the mail server's TLS failed: %w", err)
 			}
-		} else if !isLocal(cfg.SMTPHost) {
+		} else if !isLocal(srv.Host) {
 			return errors.New("the mail server offers no STARTTLS; mail is sent only over TLS")
 		}
 	}
-	if cfg.SMTPUsername != "" {
-		if err := cl.Auth(smtp.PlainAuth("", cfg.SMTPUsername, c.secret.SMTPPassword, cfg.SMTPHost)); err != nil {
+	if srv.Username != "" {
+		if err := cl.Auth(smtp.PlainAuth("", srv.Username, srv.password, srv.Host)); err != nil {
 			return fmt.Errorf("the mail server refused the account: %w", err)
 		}
 	}
-	if err := cl.Mail(cfg.From); err != nil {
+	if err := cl.Mail(srv.From); err != nil {
 		return fmt.Errorf("the mail server refused the sender: %w", err)
 	}
-	for _, to := range cfg.To {
-		if err := cl.Rcpt(to); err != nil {
-			return fmt.Errorf("the mail server refused %s: %w", to, err)
+	for _, rcpt := range to {
+		if err := cl.Rcpt(rcpt); err != nil {
+			return fmt.Errorf("the mail server refused %s: %w", rcpt, err)
 		}
 	}
 	w, err := cl.Data()
 	if err != nil {
 		return err
 	}
-	if _, err := w.Write(mailBody(cfg, m)); err != nil {
+	if _, err := w.Write(mailBody(srv.From, to, m)); err != nil {
 		return err
 	}
 	if err := w.Close(); err != nil {
@@ -218,10 +245,10 @@ func isLocal(host string) bool {
 
 // mailBody is the message as RFC 5322 text: the subject Q-encoded, the
 // body plain UTF-8 with the link on its own line.
-func mailBody(cfg Config, m Message) []byte {
+func mailBody(from string, to []string, m Message) []byte {
 	var b strings.Builder
-	fmt.Fprintf(&b, "From: %s\r\n", cfg.From)
-	fmt.Fprintf(&b, "To: %s\r\n", strings.Join(cfg.To, ", "))
+	fmt.Fprintf(&b, "From: %s\r\n", from)
+	fmt.Fprintf(&b, "To: %s\r\n", strings.Join(to, ", "))
 	fmt.Fprintf(&b, "Subject: %s\r\n", mime.QEncoding.Encode("utf-8", "Zanskar: "+m.Subject))
 	fmt.Fprintf(&b, "Date: %s\r\n", time.Now().UTC().Format(time.RFC1123Z))
 	b.WriteString("MIME-Version: 1.0\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Transfer-Encoding: 8bit\r\n\r\n")

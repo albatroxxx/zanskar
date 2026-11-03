@@ -38,9 +38,11 @@ function CertFacts({ c, now }: { c: TLSCertInfo; now: number }) {
   )
 }
 
-/** PEMFields is the certificate-and-key pair an upload needs, typed or picked
- *  as files. (The key is `privateKey`: `key` is React's own prop name.) */
-function PEMFields({ id, cert, privateKey, onCert, onKey }: { id: string; cert: string; privateKey: string; onCert: (v: string) => void; onKey: (v: string) => void }) {
+/** PEMFields is what an upload needs, typed or picked as files, laid out as
+ *  a certificate manager does: the certificate, its private key, and the
+ *  chain the CA gave (optional; it may also be pasted under the certificate).
+ *  (The key is `privateKey`: `key` is React's own prop name.) */
+function PEMFields({ id, cert, privateKey, chain, onCert, onKey, onChain }: { id: string; cert: string; privateKey: string; chain: string; onCert: (v: string) => void; onKey: (v: string) => void; onChain: (v: string) => void }) {
   return (
     <div className="form-grid">
       <Field label="Certificate (PEM)">
@@ -50,6 +52,10 @@ function PEMFields({ id, cert, privateKey, onCert, onKey }: { id: string; cert: 
       <Field label="Private key (PEM)">
         <textarea id={`${id}-key`} value={privateKey} onChange={(e) => onKey(e.target.value)} placeholder="-----BEGIN PRIVATE KEY-----" />
         <input type="file" accept=".pem,.key" onChange={(e) => e.target.files?.[0] && readFile(e.target.files[0], onKey)} />
+      </Field>
+      <Field label="Certificate chain (PEM, optional)" hint="The intermediates, from the CA">
+        <textarea id={`${id}-chain`} value={chain} onChange={(e) => onChain(e.target.value)} placeholder="-----BEGIN CERTIFICATE-----" />
+        <input type="file" accept=".pem,.crt,.cer,.ca-bundle" onChange={(e) => e.target.files?.[0] && readFile(e.target.files[0], onChain)} />
       </Field>
     </div>
   )
@@ -73,6 +79,7 @@ export function TLSCard() {
   const [ok, setOk] = useState('')
   const [certPEM, setCertPEM] = useState('')
   const [keyPEM, setKeyPEM] = useState('')
+  const [chainPEM, setChainPEM] = useState('')
   const [hosts, setHosts] = useState('')
   const [busy, setBusy] = useState(false)
   const [confirm, setConfirm] = useState<'reset' | 'regenerate' | null>(null)
@@ -106,9 +113,11 @@ export function TLSCard() {
   const upload = () =>
     run(
       () =>
-        api.put<TLSStatus>('/admin/tls', { cert_pem: certPEM, key_pem: keyPEM }).then((s) => {
+        // The chain travels under the certificate, as a bundle.
+        api.put<TLSStatus>('/admin/tls', { cert_pem: chainPEM.trim() ? certPEM.trim() + '\n' + chainPEM.trim() + '\n' : certPEM, key_pem: keyPEM }).then((s) => {
           setCertPEM('')
           setKeyPEM('')
+          setChainPEM('')
           return s
         }),
       'Certificate uploaded and serving.',
@@ -123,23 +132,12 @@ export function TLSCard() {
       <h2>TLS certificate</h2>
       {status.mode === 'proxy' ? (
         <p className="muted">
-          The proxy in front of the gateway holds the certificate (<code>ZANSKAR_TLS_MODE=proxy</code>). To upload one here, or have the gateway get one from Let's Encrypt, switch the TLS mode to managed under Set at install.
+          The proxy in front of the gateway holds the certificate (<code>ZANSKAR_TLS_MODE=proxy</code>): install and renew it there. To upload one here instead, switch the TLS mode to managed under Set at install.
         </p>
       ) : (
         <>
           {err && <Alert tone="danger" onDismiss={() => setErr('')}>{err}</Alert>}
           {ok && <Alert tone="ok" onDismiss={() => setOk('')}>{ok}</Alert>}
-          {status.acme?.on && (
-            <p className="acme-line">
-              <strong>Let's Encrypt</strong>{' '}
-              {!status.acme.names?.length
-                ? 'is on, but there is no name to order: set the public URL.'
-                : status.acme.not_after
-                  ? `serves ${status.acme.names.join(', ')} until ${fmtTime(status.acme.not_after)}${status.acme.issuer ? ` (${status.acme.issuer})` : ''}.`
-                  : `will order ${status.acme.names.join(', ')} at the first visit by that name.`}
-              {status.acme.last_error && <span className="muted"> Last attempt: {status.acme.last_error}</span>}
-            </p>
-          )}
           {status.uploaded?.problem && (
             <Alert tone="warn">
               The uploaded certificate ({status.uploaded.subject}) is not in use: {status.uploaded.problem}. Upload a replacement below, or remove it.
@@ -153,9 +151,9 @@ export function TLSCard() {
               <CertFacts c={a} now={now} />
             </>
           )}
-          <h3 style={{ marginTop: 16 }}>Upload a certificate</h3>
-          <p className="muted">PEM: the certificate with its chain, and the unencrypted key.</p>
-          <PEMFields id="tls" cert={certPEM} privateKey={keyPEM} onCert={setCertPEM} onKey={setKeyPEM} />
+          <h3 style={{ marginTop: 16 }}>Install or replace the certificate</h3>
+          <p className="muted">PEM files from your CA: the certificate, its unencrypted private key, and the chain. The new one serves from the next connection; the old one is kept until you remove it.</p>
+          <PEMFields id="tls" cert={certPEM} privateKey={keyPEM} chain={chainPEM} onCert={setCertPEM} onKey={setKeyPEM} onChain={setChainPEM} />
           <div className="actions">
             <button className="btn primary" disabled={busy || !certPEM.trim() || !keyPEM.trim()} onClick={() => void upload()}>Upload and serve</button>
             {status.uploaded && <button className="btn" disabled={busy} onClick={() => setConfirm('reset')}>Remove uploaded certificate</button>}

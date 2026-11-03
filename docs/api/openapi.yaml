@@ -5156,6 +5156,64 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+  /admin/notifications/email-server:
+    get:
+      tags: [admin]
+      summary: The mail server every email channel sends through
+      responses:
+        "200":
+          description: The server, or `null` when none is set.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EmailServer"
+    put:
+      tags: [admin]
+      summary: Set the mail server
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EmailServerInput"
+      responses:
+        "200":
+          description: Set.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EmailServer"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+    delete:
+      tags: [admin]
+      summary: Forget the mail server
+      responses:
+        "204":
+          description: Forgotten; email channels send nothing until one is set again.
+  /admin/notifications/email-server/test:
+    post:
+      tags: [admin]
+      summary: Send one test message through the mail server
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [to]
+              properties:
+                to:
+                  type: string
+      responses:
+        "204":
+          description: Sent.
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "409":
+          description: No mail server is set (`no_mail_server`).
+        "502":
+          description: The server did not take it (`delivery_failed`), the reason in the message.
   /admin/notifications:
     get:
       tags: [admin]
@@ -8034,21 +8092,47 @@ components:
         webhook_url:
           type: string
           format: uri
-        smtp_host:
-          type: string
-        smtp_port:
-          type: integer
-        smtp_username:
-          type: string
-        smtp_password:
-          type: string
-          format: password
-        from:
-          type: string
         to:
           type: array
+          description: "An email channel's recipients, 1 to 20; sent through the gateway's mail server (2026-11-03, later)."
           items:
             type: string
+    EmailServer:
+      type: object
+      description: >-
+        The mail server every email channel sends through (ADR 0039, amended 2026-11-03,
+        later); its password is never returned.
+      properties:
+        host:
+          type: string
+        port:
+          type: integer
+          description: 587 when empty; 465 is TLS from the start, anything else STARTTLS.
+        username:
+          type: string
+        from:
+          type: string
+        has_password:
+          type: boolean
+        updated_at:
+          type: string
+          format: date-time
+    EmailServerInput:
+      type: object
+      required: [host, from]
+      properties:
+        host:
+          type: string
+        port:
+          type: integer
+        username:
+          type: string
+        password:
+          type: string
+          format: password
+          description: Left empty on an update, the stored one is kept; required with a username.
+        from:
+          type: string
     AuditTallies:
       type: object
       required: [events, failures, failed_logins, refused_connects]

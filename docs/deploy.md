@@ -493,46 +493,6 @@ upstream and is on no interface, so name it with `ZANSKAR_TLS_HOSTS` (comma sepa
 regenerates the self-signed certificate so it carries it; an uploaded or file certificate is
 never touched.
 
-### A certificate from Let's Encrypt
-
-In `managed` (or `file`) mode the gateway can get its certificate from an ACME CA itself,
-Let's Encrypt by default, instead of running Caddy or another proxy only to hold one (ADR
-0021, amended 2026-10-30). Three runtime settings under Settings › Let's Encrypt turn it on:
-`tls.acme` (*Certificate from Let's Encrypt*, off by default), `tls.acme_email` (the account
-email the CA writes to about the certificate) and `tls.acme_directory` (the ACME directory,
-`https://acme-v02.api.letsencrypt.org/directory` by default; Let's Encrypt's staging
-directory or a private ACME CA, `https://` only).
-
-- **What it orders.** The host of `ZANSKAR_PUBLIC_URL` and the DNS names among
-  `ZANSKAR_TLS_HOSTS`, and nothing else: IP addresses, bare words and `localhost` are left
-  out, and a TLS handshake naming anything else never starts an order, so a stranger's SNI
-  cannot make the gateway ask the CA for a certificate. The names are read at start; a
-  change to either variable takes effect with the restart it needs anyway.
-- **The challenge.** The CA must reach the gateway from the internet on that name. TLS-ALPN-01
-  is answered on the TLS listener (443 in the default install) and HTTP-01 on the
-  `ZANSKAR_HTTP_REDIRECT_ADDR` listener (80), before its redirect. A gateway reachable only
-  on a private network cannot use Let's Encrypt; upload a certificate from your own CA.
-- **Which certificate is served.** An uploaded certificate first, for every name; then ACME's,
-  for the names it covers, while it is on; then the file (`file` mode); then the self-signed
-  one. Turning ACME off goes back to the next in that order at once.
-- **Orders and failures.** An order runs in the background. A handshake waits for it at most
-  10 seconds and is then served the next certificate in the order above, so a CA outage never
-  holds connections; one order per name runs at a time, and a name whose order failed is not
-  tried again for 10 minutes. Certificates are renewed 30 days before they expire.
-- **Where it is kept.** The ACME account key and the certificates are sealed with the master
-  key in the `acme_cache` table (migration 0038, on SQLite and PostgreSQL), so a second
-  gateway on the same database serves the same certificate instead of ordering its own;
-  `zanskar key status` counts its rows by key version like every other sealed table.
-- **What the console shows.** The TLS certificate card says what Let's Encrypt serves and
-  until when, or why it could not get one. In `proxy` mode the card says the proxy holds the
-  certificate and how to switch the mode (see the next section).
-
-Moving from Caddy to the gateway's own certificate on a package install: set the public URL
-to the name Caddy served, turn Let's Encrypt on, stop and disable Caddy
-(`sudo systemctl disable --now caddy`), then switch the TLS mode to *managed* under Settings
-› Set at install. Caddy must be stopped first: the gateway takes 443 and 80, and if it cannot
-bind them the change is rolled back after about a minute.
-
 ## Recording storage
 
 Recordings go to the local directory by default. To keep them in an S3-compatible bucket,

@@ -75,3 +75,24 @@ for the reason above; what changed is where it goes and what approving takes.
 - The setting *Approving asks for a code* (`access.approve_step_up`, Settings › Sign-in) is
   on by default. Switching it off asks for a code too, or a stolen session could switch it
   off and approve.
+
+## Amendment, 2026-11-03 (later): one mail server, apart from the channels
+
+Each email channel carried its own SMTP server, account, password and sender, so adding a
+second list of recipients meant typing the server again, and a password lived in every
+channel. The owner asked for the server to be set once, apart from the people.
+
+- **The mail server** (`email_server`, migration 0051): host, port (587 STARTTLS, 465 TLS),
+  an account with its password sealed by the key ring, and the sender. Set, tested with one
+  message to an address of the administrator's choosing, and removed under Settings ›
+  Notifications › Email server; `GET`, `PUT`, `DELETE` and `POST …/test` on
+  `/admin/notifications/email-server`; each audited (`notify.email_server.*`), the password
+  never in the API or the log.
+- **An email channel names its recipients alone.** `smtp_*` and `from` are no longer taken
+  on a channel. With no mail server set, an email channel's deliveries fail saying where to
+  set one; the test button says the same.
+- **Upgrading.** At its first start after the upgrade the gateway adopts the first email
+  channel's server, password included, as the mail server, and takes the server out of every
+  email channel, which keeps its recipients (logged, not audited: no person did it). A channel
+  that still carries a server, because the adoption has not run, sends through its own until
+  it is saved again.

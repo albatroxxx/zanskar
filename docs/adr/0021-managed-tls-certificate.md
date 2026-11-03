@@ -103,3 +103,16 @@ source between the upload and the file.
 
 The live gateway can move off Caddy by switching to the `managed` preset (ADR 0020,
 2026-10-30) and turning ACME on. `proxy` mode stays supported.
+
+## Withdrawn (2026-11-03): the certificate from Let's Encrypt
+
+The amendment above is withdrawn and its code removed. The owner had asked for one place to
+install and replace the gateway's certificate, which the TLS certificate card already was (an
+upload serves from the next connection; a replacement is another upload); a global setting
+that orders certificates from a CA was more than was asked and sat beside the card as a
+second way. The card now takes the certificate, its private key and the CA's chain as three
+files, as a certificate manager does. Settings › Let's Encrypt and the three `tls.acme*` keys
+are gone; `acme_cache` is dropped (migration 0052). A certificate from an ACME CA is the
+business of the proxy in front of the gateway (`proxy` mode: Caddy, nginx), as it was before
+the amendment. The resolution order is the upload, then the file, then the self-signed
+certificate.

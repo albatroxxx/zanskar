@@ -95,6 +95,11 @@ const (
 	NotifyChannelDelete = "notify.channel.delete"
 	NotifyChannelTest   = "notify.channel.test"
 	NotifyChannelKey    = "notify.channel.key"
+	// The mail server every email channel sends through (ADR 0039, amended
+	// 2026-11-03, later).
+	NotifyEmailServerUpdate = "notify.email_server.update"
+	NotifyEmailServerDelete = "notify.email_server.delete"
+	NotifyEmailServerTest   = "notify.email_server.test"
 
 	// The configuration exported and imported as a file (ADR 0043).
 	ConfigExport = "config.export"
