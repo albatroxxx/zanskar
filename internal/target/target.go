@@ -12,8 +12,6 @@ import (
 	"fmt"
 	"net"
 	"net/url"
-
-	"github.com/albatroxxx/zanskar/internal/ipspace"
 	"regexp"
 	"slices"
 	"strconv"
@@ -21,6 +19,8 @@ import (
 	"time"
 	"unicode"
 	"unicode/utf8"
+
+	"github.com/albatroxxx/zanskar/internal/ipspace"
 
 	"github.com/albatroxxx/zanskar/internal/protocol"
 )
