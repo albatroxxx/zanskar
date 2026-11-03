@@ -466,6 +466,9 @@ func serve(ctx context.Context) error {
 	// Directory users: joiners and leavers, per provider (ADR 0035).
 	go userSync.Run(ctx)
 
+	// Single sign-on providers: is each answering, for the sign-in page.
+	go oidcHandler.Watch(ctx, oidc.ProbeEvery)
+
 	// Recording retention: delete recordings past the admin-configured policy
 	// (ADR 0015). Off until an admin sets a policy in the console.
 	retention := &session.RetentionSweeper{Repo: sessionRepo, Storage: storage, Audit: auditLog, Log: log}

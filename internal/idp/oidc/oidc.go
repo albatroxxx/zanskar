@@ -74,6 +74,9 @@ type Handler struct {
 	Ring *keyring.Ring
 
 	cache sync.Map // idp id -> *cached
+	// health is what the gateway last found asking each provider for its
+	// discovery document (health.go): idp id -> answer.
+	health sync.Map
 }
 
 type cached struct {
@@ -92,6 +95,11 @@ type publicProvider struct {
 	ID   string   `json:"id"`
 	Name string   `json:"name"`
 	Type idp.Type `json:"type"`
+	// NotAnswering says the gateway's last request for the provider's
+	// discovery document failed, so its button would fail too; the sign-in
+	// page says so before anyone tries (health.go). Nothing a visitor could
+	// not learn by pressing the button.
+	NotAnswering bool `json:"not_answering,omitempty"`
 }
 
 func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
@@ -101,8 +109,9 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	out := make([]publicProvider, 0, len(ps))
+	now := time.Now()
 	for _, p := range ps {
-		out = append(out, publicProvider{ID: p.ID, Name: p.Name, Type: p.Type})
+		out = append(out, publicProvider{ID: p.ID, Name: p.Name, Type: p.Type, NotAnswering: p.Type == idp.TypeOIDC && h.notAnswering(p.ID, now)})
 	}
 	httpx.WriteJSON(w, http.StatusOK, httpx.Page[publicProvider]{Items: out})
 }
@@ -426,8 +435,12 @@ func (h *Handler) open(ctx context.Context, id string) (*idp.Opened, *gooidc.Pro
 	defer cancel()
 	prov, err := gooidc.NewProvider(dctx, op.Config.OIDC.Issuer)
 	if err != nil {
+		if ctx.Err() == nil {
+			h.answered(id, false, time.Now())
+		}
 		return nil, nil, nil, fmt.Errorf("discovery: %w", err)
 	}
+	h.answered(id, true, time.Now())
 	h.cache.Store(id, &cached{updated: op.UpdatedAt, provider: prov})
 	return op, prov, op.Config.OIDC, nil
 }

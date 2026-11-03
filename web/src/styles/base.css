@@ -414,6 +414,7 @@ td.actions > * + * { margin-left: 8px; }
 .sso-btn svg { color: var(--accent); flex: none; }
 .sso-btn:hover { background: var(--bg-sunken); border-color: var(--fg-faint); }
 .sso-btn:active { transform: translateY(1px); }
+.sso-down { margin: -2px 0 2px; font-size: 0.82rem; color: var(--danger); text-align: center; }
 /* Filters a list was opened with, each removable (FilterChips). */
 .filter-chips { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 12px; }
 .chip { display: inline-flex; align-items: center; gap: 8px; padding: 3px 10px; border-radius: 999px; border: 1px solid transparent; background: var(--accent-soft); color: var(--accent); font: inherit; font-size: 0.8rem; font-weight: 500; cursor: pointer; transition: border-color 0.12s ease; }

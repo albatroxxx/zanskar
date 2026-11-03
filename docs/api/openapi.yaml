@@ -483,8 +483,9 @@ paths:
       summary: Sign-in providers
       description: |
         The enabled identity providers, by name, for the sign-in page to offer. Callable before
-        signing in. Only `id`, `name` and `type` are returned; no configuration. Not paged:
-        every enabled provider is in `items`.
+        signing in. Only `id`, `name`, `type` and, for an OpenID provider the gateway could not
+        reach, `not_answering` are returned; no configuration. Not paged: every enabled provider
+        is in `items`.
       security: []
       responses:
         "200":
@@ -509,6 +510,12 @@ paths:
                         type:
                           type: string
                           enum: [oidc, ldap]
+                        not_answering:
+                          type: boolean
+                          description: |
+                            True when the gateway's last request for this OpenID provider's discovery
+                            document (every 2 minutes, and at each sign-in that fetches it) failed
+                            within the last 10 minutes; absent otherwise. Its button would fail too.
   /auth/oidc/{id}/start:
     get:
       tags: [auth]

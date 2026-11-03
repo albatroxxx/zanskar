@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from 'react'
+import { Fragment, useEffect, useState, type FormEvent } from 'react'
 import { Navigate, useLocation } from 'react-router-dom'
 import QRCode from 'qrcode'
 import { useAuth } from '../auth/AuthContext'
@@ -26,7 +26,7 @@ export function Login() {
   const [err, setErr] = useState(() => signInError(new URLSearchParams(window.location.search).get('error')))
   const [busy, setBusy] = useState(false)
   const [enroll, setEnroll] = useState<{ secret: string; otpauth_url: string; qr: string } | null>(null)
-  const [providers, setProviders] = useState<{ id: string; name: string; type: string }[]>([])
+  const [providers, setProviders] = useState<{ id: string; name: string; type: string; not_answering?: boolean }[]>([])
   // The system-use notification an admin configured, shown before any
   // credential is entered. Read without a session; empty means none.
   const [banner, setBanner] = useState('')
@@ -40,7 +40,7 @@ export function Login() {
   const effectiveStep: Step = step === 'password' && auth.status === 'partial' ? (auth.pending === 'enroll' ? 'enroll' : auth.pending === 'password' ? 'change' : 'verify') : step
 
   useEffect(() => {
-    api.get<{ items: { id: string; name: string; type: string }[] }>('/auth/providers')
+    api.get<{ items: { id: string; name: string; type: string; not_answering?: boolean }[] }>('/auth/providers')
       .then((r) => setProviders(r.items ?? []))
       .catch(() => {})
     api.get<{ text: string }>('/system/banner')
@@ -173,10 +173,19 @@ export function Login() {
                 <div className="sso">
                   <div className="sso-divider" role="separator" aria-label="or"><span aria-hidden="true">or</span></div>
                   {sso.map((p) => (
-                    <a key={p.id} className="btn sso-btn" href={`/api/v1/auth/oidc/${p.id}/start?next=${encodeURIComponent(from)}`}>
-                      <SignInIcon />
-                      <span>Continue with {p.name}</span>
-                    </a>
+                    <Fragment key={p.id}>
+                      <a className="btn sso-btn" href={`/api/v1/auth/oidc/${p.id}/start?next=${encodeURIComponent(from)}`} aria-describedby={p.not_answering ? `sso-down-${p.id}` : undefined}>
+                        <SignInIcon />
+                        <span>Continue with {p.name}</span>
+                      </a>
+                      {/* The gateway could not reach the provider: said
+                          before anyone presses and waits (2026-11-03, idea 1). */}
+                      {p.not_answering && (
+                        <p className="sso-down" id={`sso-down-${p.id}`}>
+                          {p.name} is not answering right now. A password account still works.
+                        </p>
+                      )}
+                    </Fragment>
                   ))}
                 </div>
               )}
