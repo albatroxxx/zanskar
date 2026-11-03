@@ -119,7 +119,7 @@ export function MyAccess() {
                   <td>{protocolName(r.protocol)}</td>
                   <td>{r.reason}{r.extends_request_id && <> <Badge tone="warn">extension</Badge></>}{r.decision_note && <div className="muted">Note: {r.decision_note}</div>}</td>
                   <td><Badge tone={tone[r.status]}>{r.status}</Badge></td>
-                  <td>{r.approved_minutes ? <>{r.approved_minutes} min{r.approved_minutes !== r.requested_minutes && <span className="muted"> (asked {r.requested_minutes})</span>}</> : <span className="muted">{r.requested_minutes} min asked</span>}</td>
+                  <td>{r.approved_minutes ? <>{r.approved_minutes} min{r.approved_minutes !== r.requested_minutes && <span className="muted"> (asked {r.requested_minutes})</span>}</> : <span className="muted">— (asked {r.requested_minutes})</span>}</td>
                   <td className="muted">{r.status === 'approved' && r.expires_at ? fmtTime(r.expires_at) : '—'}</td>
                   <td>{active(r) && <button className="btn sm" onClick={() => openExtend(r)}>Extend…</button>}</td>
                 </tr>

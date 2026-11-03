@@ -39,7 +39,9 @@ describe('MyAccess', () => {
     const rows = screen.getAllByRole('row').slice(1)
     const pending = rows[0]
     expect(within(pending).getByText('incident 42')).toBeDefined()
-    expect(within(pending).getByText('60 min asked')).toBeDefined()
+    // One phrasing in the Granted column: what was granted, then "(asked N)";
+    // nothing granted is a dash, not a second phrasing ("60 min asked").
+    expect(within(pending).getByText('— (asked 60)')).toBeDefined()
     expect(within(pending).queryByRole('button')).toBeNull()
 
     expect(within(rows[1]).getByText('approved')).toBeDefined()
@@ -47,11 +49,16 @@ describe('MyAccess', () => {
     expect(within(rows[1]).getByText('(asked 60)')).toBeDefined()
     expect(within(rows[1]).getByText('Note: keep it short')).toBeDefined()
     expect(within(rows[1]).getByRole('button', { name: 'Extend…' })).toBeDefined()
-    // Approved but already over: nothing to extend.
+    // Approved but already over: nothing to extend. Granted what was asked,
+    // so no "(asked N)" beside it.
     expect(within(rows[2]).queryByRole('button')).toBeNull()
+    expect(within(rows[2]).getByText('60 min')).toBeDefined()
+    expect(within(rows[2]).queryByText(/asked/)).toBeNull()
     expect(within(rows[3]).getByText('fleet')).toBeDefined()
     expect(within(rows[3]).getByText('RDP')).toBeDefined()
     expect(within(rows[3]).getByText('extension')).toBeDefined()
+    expect(within(rows[3]).getByText('— (asked 60)')).toBeDefined()
+    expect(screen.queryByText(/min asked/)).toBeNull()
   })
 
   it('asks for an extension with the grant\'s own terms prefilled, pointing at the grant', async () => {
