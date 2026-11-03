@@ -81,6 +81,7 @@ func (f *fakeHost) helper(env, state string) *configHelper {
 			}
 			return errors.New("connection refused")
 		},
+		Journal: func(context.Context) string { return "listen tcp :443: bind: address already in use" },
 	}
 }
 
@@ -211,6 +212,11 @@ func TestConfigApplyRollsBack(t *testing.T) {
 	r := result(t, state)
 	if r.State != bootedit.RolledBack || !strings.Contains(r.Message, "the previous file is back") {
 		t.Fatalf("result: %+v", r)
+	}
+	// The cause, in the service's own words, read before the rollback's
+	// restart (2026-11-03: a port the proxy still held).
+	if !strings.Contains(r.Message, "Its last lines: listen tcp :443: bind: address already in use") {
+		t.Fatalf("the message does not carry the service's last lines: %q", r.Message)
 	}
 	if after, _ := os.ReadFile(env); string(after) != string(before) {
 		t.Fatalf("the previous file is not back:\n%s", after)

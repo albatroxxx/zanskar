@@ -95,6 +95,8 @@ type configHelper struct {
 	// tests; nil is the real thing.
 	Run    func(ctx context.Context, name string, args ...string) error
 	Health func(ctx context.Context, port string) error
+	// Journal stands in for the service's last log lines in tests.
+	Journal func(ctx context.Context) string
 	// Wait is how long the restarted gateway has to answer; zero is 60 s.
 	Wait time.Duration
 }
@@ -159,8 +161,17 @@ func (h *configHelper) apply(ctx context.Context, req bootedit.Request, perr err
 		if rerr := writeLike(h.Env, cur, st); rerr != nil {
 			return bootedit.Result{State: bootedit.RolledBack, Changed: names, Message: fmt.Sprintf("the gateway did not come back (%v), and the previous file could not be put back (%v): restore %s from %s by hand", err, rerr, h.Env, previous)}
 		}
+		// Why it did not come back is in its own last lines (a port another
+		// process holds, a file it cannot read), read before the rollback's
+		// restart writes over them; the helper itself sees only that nothing
+		// listens (live, 2026-11-03: a switch to managed TLS with the proxy
+		// still on 443 said nothing of the port).
+		msg := fmt.Sprintf("the gateway did not come back with the new settings (%v); the previous file is back", err)
+		if lines := h.journal(ctx); lines != "" {
+			msg += ". Its last lines: " + lines
+		}
 		_ = h.run(ctx, systemctl(), "restart", "zanskar")
-		return bootedit.Result{State: bootedit.RolledBack, Changed: names, Message: fmt.Sprintf("the gateway did not come back with the new settings (%v); the previous file is back", err)}
+		return bootedit.Result{State: bootedit.RolledBack, Changed: names, Message: msg}
 	}
 	return bootedit.Result{State: bootedit.Applied, Changed: names}
 }
@@ -195,6 +206,33 @@ func (h *configHelper) run(ctx context.Context, name string, args ...string) err
 		return h.Run(ctx, name, args...)
 	}
 	return exec.CommandContext(ctx, name, args...).Run() // #nosec G204 -- systemctl with fixed arguments
+}
+
+// journal is what the service last logged, at most a kilobyte of it, or
+// nothing when the journal cannot be read.
+func (h *configHelper) journal(ctx context.Context) string {
+	if h.Journal != nil {
+		return h.Journal(ctx)
+	}
+	out, err := exec.CommandContext(ctx, journalctl(), "-u", "zanskar", "-n", "8", "--no-pager", "-o", "cat").Output() // #nosec G204 -- journalctl with fixed arguments
+	if err != nil {
+		return ""
+	}
+	s := strings.TrimSpace(string(out))
+	if len(s) > 1024 {
+		s = s[len(s)-1024:]
+	}
+	return s
+}
+
+// journalctl is systemd's journal reader by absolute path, as systemctl is.
+func journalctl() string {
+	for _, p := range []string{"/usr/bin/journalctl", "/bin/journalctl"} {
+		if _, err := os.Stat(p); err == nil {
+			return p
+		}
+	}
+	return "/usr/bin/journalctl"
 }
 
 // health reports whether the restarted gateway is up (2026-10-31): the
