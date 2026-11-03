@@ -33,6 +33,16 @@ function uptime(seconds: number): string {
   return n(Math.floor(seconds / 86400), 'day')
 }
 
+/** approvalsDetail says how long the oldest request has waited and how many
+ *  grants are live, the ones ending soon among them: the approvals page holds
+ *  both, so one tile does (2026-11-03, four tiles a section). */
+function approvalsDetail(pending: number, f: { active: number; ending_soon: number; oldest_pending_seconds: number }): string | undefined {
+  const parts: string[] = []
+  if (pending > 0 && f.oldest_pending_seconds > 0) parts.push(`oldest waiting ${uptime(f.oldest_pending_seconds)}`)
+  if (f.active > 0) parts.push(`${f.active} granted` + (f.ending_soon > 0 ? `, ${f.ending_soon} ending within the hour` : ''))
+  return parts.length ? parts.join(' · ') : undefined
+}
+
 /** Dashboard is where an admin lands (ADR 0029): what waits on a decision,
  *  what is live, and whether the gateway itself is healthy. Every number links
  *  to the page that manages it; the dashboard itself changes nothing. */
@@ -147,26 +157,16 @@ export function Dashboard() {
                 value={o && o.pending_requests}
                 label="Pending approvals"
                 icon={<TileIcon kind="approvals" />}
-                detail={o?.in_flight && o.pending_requests > 0 && o.in_flight.oldest_pending_seconds > 0 ? `oldest waiting ${uptime(o.in_flight.oldest_pending_seconds)}` : undefined}
+                detail={o?.in_flight ? approvalsDetail(o.pending_requests, o.in_flight) : undefined}
                 to="/admin/approvals"
                 tone="warn"
               />
               <StatTile value={attention} label="Hosts needing attention" icon={<TileIcon kind="attention" />} to={drill.hostsNeedingAttention} tone="warn" />
               {/* A provider that fails its sync is single sign-on down; a
                   tile beside the notice, which can be closed (2026-11-03,
-                  idea 1). Shown once a provider is configured. */}
-              {(!o?.integrity || o.integrity.directories.listed > 0) && (
-                <StatTile value={failing} label="Sign-in providers failing" icon={<TileIcon kind="key" />} to="/admin/identity-providers" tone="danger" />
-              )}
-              <StatTile value={o && o.audit_24h.failed_logins} label="Failed sign-ins (24h)" icon={<TileIcon kind="key" />} to={drill.failedSignIns('/admin')} tone="warn" />
-              <StatTile
-                value={o && o.audit_24h.refused_connects}
-                label="Refused connections (24h)"
-                icon={<TileIcon kind="ban" />}
-                trend={o?.trends && { days: o.trends.days, values: o.trends.refused, noun: 'refused connection' }}
-                to={drill.refusedConnections('/admin')}
-                tone="warn"
-              />
+                  idea 1). Shown with no provider too, at zero, so the
+                  section keeps its four. */}
+              <StatTile value={failing} label="Sign-in providers failing" icon={<TileIcon kind="key" />} to="/admin/identity-providers" tone="danger" />
               {/* Every failed action in the log, routine ones too; the detail
                   says what most were (2026-11-03 live audit, Q2). With the
                   others that want a look, not with the activity counts. */}
@@ -186,19 +186,21 @@ export function Dashboard() {
             <div className="stat-grid">
               <StatTile value={o && o.sessions.open} label="Open sessions" icon={<TileIcon kind="session" />} to={drill.openSessions('/admin')} />
               <StatTile
-                value={o?.in_flight ? o.in_flight.active : null}
-                label="Grants active"
-                icon={<TileIcon kind="key" />}
-                detail={o?.in_flight && o.in_flight.ending_soon > 0 ? `${o.in_flight.ending_soon} end within the hour` : undefined}
-                to="/admin/approvals"
-              />
-              <StatTile
                 value={o && o.sessions.started_24h}
                 label="Sessions (24h)"
                 icon={<TileIcon kind="clock" />}
                 trend={o?.trends && { days: o.trends.days, values: o.trends.sessions, noun: 'session' }}
                 to={drill.sessions24h('/admin')}
               />
+              <StatTile
+                value={o && o.audit_24h.refused_connects}
+                label="Refused connections (24h)"
+                icon={<TileIcon kind="ban" />}
+                trend={o?.trends && { days: o.trends.days, values: o.trends.refused, noun: 'refused connection' }}
+                to={drill.refusedConnections('/admin')}
+                tone="warn"
+              />
+              <StatTile value={o && o.audit_24h.failed_logins} label="Failed sign-ins (24h)" icon={<TileIcon kind="key" />} to={drill.failedSignIns('/admin')} tone="warn" />
             </div>
           </section>
 

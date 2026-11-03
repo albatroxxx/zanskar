@@ -172,10 +172,9 @@ describe('the admin dashboard', () => {
     at('/')
     const approvals = (await screen.findByText('Pending approvals')).closest('a') as HTMLAnchorElement
     expect(approvals.textContent).toContain('oldest waiting 2 hours')
-    const grants = (await screen.findByText('Grants active')).closest('a') as HTMLAnchorElement
-    expect(grants.getAttribute('href')).toBe('/admin/approvals')
-    expect(grants.textContent).toContain('3')
-    expect(grants.textContent).toContain('1 end within the hour')
+    // Live grants are on the approvals page too, so on the same tile.
+    expect(approvals.getAttribute('href')).toBe('/admin/approvals')
+    expect(approvals.textContent).toContain('oldest waiting 2 hours · 3 granted, 1 ending within the hour')
     expect(screen.queryByText('Audit events (24h)')).toBeNull()
   })
 

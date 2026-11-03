@@ -76,7 +76,7 @@ describe('Needs attention', () => {
     expect(within(section('Activity')).queryByText('Failed actions (24h)')).toBeNull()
   })
 
-  it('keeps the providers tile quiet at zero and leaves it out with no provider', async () => {
+  it('keeps the providers tile quiet at zero, and keeps it with no provider so the row stays whole', async () => {
     open(overview(0), null)
     const tile = (await screen.findByText('Sign-in providers failing')).closest('a')!
     expect(tile.className).not.toContain('danger')
@@ -84,7 +84,25 @@ describe('Needs attention', () => {
     vi.restoreAllMocks()
     open(overview(0, 0), null)
     await screen.findByText('Failed actions (24h)')
-    expect(screen.queryByText('Sign-in providers failing')).toBeNull()
+    expect(within(section('Needs attention')).getByText('Sign-in providers failing')).toBeDefined()
+  })
+
+  // 2026-11-03: six tiles under Needs attention and three under Activity
+  // left ragged rows; every section holds four, one row on a wide window.
+  it('puts four tiles in every section, the 24h counts under Activity', async () => {
+    for (const providers of [1, 0]) {
+      cleanup()
+      vi.restoreAllMocks()
+      open(overview(0, providers), null)
+      await screen.findByText('Failed actions (24h)')
+      for (const name of ['Inventory', 'Needs attention', 'Activity', 'Security posture']) {
+        expect(section(name).querySelectorAll('.stat-tile').length, name).toBe(4)
+      }
+      const activity = within(section('Activity'))
+      expect(activity.getByText('Failed sign-ins (24h)')).toBeDefined()
+      expect(activity.getByText('Refused connections (24h)')).toBeDefined()
+      expect(screen.queryByText('Grants active')).toBeNull()
+    }
   })
 })
 
