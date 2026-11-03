@@ -2,12 +2,12 @@ import { Fragment, useEffect, useState, type ReactNode } from 'react'
 import { Link } from 'react-router-dom'
 import { api, errorMessage } from '../../api/client'
 import { consoleZone, engineName, fmtBytes, fmtTime, zoneLabel } from '../../api/format'
-import type { AdminOverview, StorageStatus, SystemMetrics, SystemStatus, TLSStatus } from '../../api/types'
+import type { AdminOverview, SystemMetrics, SystemStatus, TLSStatus } from '../../api/types'
 import { StateIcon, TileIcon } from '../../components/icons'
 import { drill } from '../../api/drilldown'
 import { failureDetail } from '../audit/eventText'
 import { dismiss, dismissal, forget, shown } from './dismissals'
-import { Alert, Badge, Confirm, PageHead, StatTile } from '../../components/ui'
+import { Alert, Badge, PageHead, StatTile } from '../../components/ui'
 
 /** mix says what a count is made of — "2 Linux · 1 Windows" — in a tile's
  *  detail line, largest first, empty when there is nothing to split. */
@@ -338,42 +338,6 @@ function plural(n: number, noun: string): string {
   return `${n} ${noun}${n === 1 ? '' : 's'}`
 }
 
-/** ToBucket is the way out of a filling recordings disk, under its gauge
- *  (2026-11-03, idea 8): with a bucket in use, the move of the local
- *  recordings to it in one step, confirmed; without one, the card that sets
- *  one up. Read only when the disk warns. */
-function ToBucket() {
-  const [s, setS] = useState<StorageStatus | null>(null)
-  const [asking, setAsking] = useState(false)
-  const [started, setStarted] = useState(false)
-  useEffect(() => {
-    api.get<StorageStatus>('/admin/storage').then(setS).catch(() => {})
-  }, [])
-  if (!s) return null
-  const local = s.counts.local ?? 0
-  const setUp = <Link to="/admin/settings#settings-recording-storage">Recording storage</Link>
-  if (!s.active) return <div className="disk-out">Record to an S3 bucket instead: {setUp}</div>
-  if (s.move.running || started) return <div className="disk-out">Moving local recordings to the bucket; progress in {setUp}.</div>
-  if (local === 0) return null
-  return (
-    <div className="disk-out">
-      <button type="button" onClick={() => setAsking(true)}>Move {plural(local, 'local recording')} to the bucket</button>
-      {asking && (
-        <Confirm
-          title={`Move ${plural(local, 'local recording')}?`}
-          body={`Finished recordings are copied to s3://${s.active.bucket}, verified and removed locally, in the background.`}
-          confirmLabel="Move"
-          onClose={() => setAsking(false)}
-          onConfirm={async () => {
-            await api.post('/admin/storage/move')
-            setStarted(true)
-          }}
-        />
-      )}
-    </div>
-  )
-}
-
 /** HostFacts is the gateway host right now: a gauge per ratio, then a line
  *  for the facts that are not ratios. Words carry every state the colour
  *  does. A kind of session with a cap is a gauge against it (2026-10-31);
@@ -431,7 +395,6 @@ function HostFacts({ m }: { m: SystemMetrics }) {
                   </>
                 )}
                 {diskUse(d).pct >= diskRefusePct && <div className="disk-refusing">New sessions refused until space is freed</div>}
-                {d.what.includes('recordings') && diskUse(d).pct >= diskWarnPct && <ToBucket />}
               </>
             }
             pct={diskUse(d).pct}
