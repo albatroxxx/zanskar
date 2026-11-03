@@ -689,6 +689,12 @@ tr[aria-current="true"] td { background: var(--accent-soft); }
    name an icon-only control would otherwise lack. Not display:none, which
    screen readers skip too. */
 .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+/* The shell's skip link is .sr-only until it has focus, then a small card over
+   everything. It stays out of flow in both states (absolute, then fixed), so
+   the shell's grid never gains a third item. The page it jumps to takes focus
+   without being a control, so it gets no ring around the whole column. */
+.skip-link:focus { position: fixed; top: 8px; left: 8px; z-index: 60; width: auto; height: auto; margin: 0; padding: 8px 14px; overflow: visible; clip: auto; white-space: normal; background: var(--bg-raised); color: var(--fg); font-weight: 600; border: 1px solid var(--line-strong); border-radius: var(--radius); box-shadow: var(--shadow); }
+.main:focus { outline: none; }
 
 /* In-page links to the sections of a long page (Settings, review U8). */
 .jump { display: flex; flex-wrap: wrap; gap: 6px 16px; margin: 0 0 16px; font-size: 0.86rem; }

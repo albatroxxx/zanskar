@@ -124,3 +124,38 @@ describe('a nav badge', () => {
     expect(screen.getByLabelText('3 pending')).toBeDefined()
   })
 })
+
+// 2026-11-04 live QA of 1.18.0: a keyboard went through the whole sidebar to
+// reach the page. The skip link is the shell's first stop, in every portal
+// (one Shell serves the access portal, the console and the audit portal), and
+// leads to the main column.
+describe('the skip link', () => {
+  it.each(['user', 'admin', 'audit'] as const)('is the first stop in the %s portal and leads to its main column', async (portal) => {
+    vi.spyOn(api, 'get').mockImplementation(async (path: string) => {
+      if (path === '/auth/me') return { user: { ...alice, roles: ['user', 'admin', 'auditor'] }, csrf_token: 't', mfa_enrolled: true } as never
+      // The admin portal's restart banner reads this; unanswered, it shows nothing.
+      if (path === '/admin/system/status') throw new Error('not answering')
+      return { items: [] } as never
+    })
+    render(
+      <MemoryRouter>
+        <AuthProvider>
+          <Shell portal={portal} items={[{ to: '/', label: 'Targets', end: true }]} />
+        </AuthProvider>
+      </MemoryRouter>,
+    )
+
+    const skip = await screen.findByRole('link', { name: 'Skip to content' })
+    expect(skip.getAttribute('href')).toBe('#main')
+    const main = screen.getByRole('main')
+    expect(main.id).toBe('main')
+    // The fragment finds the main column, which takes focus when it is the target.
+    expect(document.querySelector('#main')).toBe(main)
+    expect(main.getAttribute('tabindex')).toBe('-1')
+
+    // Before the brand, the navigation and the account: the first Tab lands on it.
+    await userEvent.setup().tab()
+    expect(document.activeElement).toBe(skip)
+    expect(document.body.querySelector('.shell > :first-child')).toBe(skip)
+  })
+})
