@@ -2,12 +2,12 @@ import { Fragment, useEffect, useState, type ReactNode } from 'react'
 import { Link } from 'react-router-dom'
 import { api, errorMessage } from '../../api/client'
 import { consoleZone, engineName, fmtBytes, fmtTime, zoneLabel } from '../../api/format'
-import type { AdminOverview, SystemMetrics, SystemStatus, TLSStatus } from '../../api/types'
+import type { AdminOverview, StorageStatus, SystemMetrics, SystemStatus, TLSStatus } from '../../api/types'
 import { StateIcon, TileIcon } from '../../components/icons'
 import { drill } from '../../api/drilldown'
 import { failureDetail } from '../audit/eventText'
 import { dismiss, dismissal, forget, shown } from './dismissals'
-import { Alert, Badge, PageHead, StatTile } from '../../components/ui'
+import { Alert, Badge, Confirm, PageHead, StatTile } from '../../components/ui'
 
 /** mix says what a count is made of — "2 Linux · 1 Windows" — in a tile's
  *  detail line, largest first, empty when there is nothing to split. */
@@ -152,6 +152,12 @@ export function Dashboard() {
                 tone="warn"
               />
               <StatTile value={attention} label="Hosts needing attention" icon={<TileIcon kind="attention" />} to={drill.hostsNeedingAttention} tone="warn" />
+              {/* A provider that fails its sync is single sign-on down; a
+                  tile beside the notice, which can be closed (2026-11-03,
+                  idea 1). Shown once a provider is configured. */}
+              {(!o?.integrity || o.integrity.directories.listed > 0) && (
+                <StatTile value={failing} label="Sign-in providers failing" icon={<TileIcon kind="key" />} to="/admin/identity-providers" tone="danger" />
+              )}
               <StatTile value={o && o.audit_24h.failed_logins} label="Failed sign-ins (24h)" icon={<TileIcon kind="key" />} to={drill.failedSignIns('/admin')} tone="warn" />
               <StatTile
                 value={o && o.audit_24h.refused_connects}
@@ -159,6 +165,17 @@ export function Dashboard() {
                 icon={<TileIcon kind="ban" />}
                 trend={o?.trends && { days: o.trends.days, values: o.trends.refused, noun: 'refused connection' }}
                 to={drill.refusedConnections('/admin')}
+                tone="warn"
+              />
+              {/* Every failed action in the log, routine ones too; the detail
+                  says what most were (2026-11-03 live audit, Q2). With the
+                  others that want a look, not with the activity counts. */}
+              <StatTile
+                value={o && o.audit_24h.failures}
+                label="Failed actions (24h)"
+                icon={<TileIcon kind="attention" />}
+                detail={o ? failureDetail(o.audit_24h) : undefined}
+                to={drill.failures('/admin')}
                 tone="warn"
               />
             </div>
@@ -181,16 +198,6 @@ export function Dashboard() {
                 icon={<TileIcon kind="clock" />}
                 trend={o?.trends && { days: o.trends.days, values: o.trends.sessions, noun: 'session' }}
                 to={drill.sessions24h('/admin')}
-              />
-              {/* Every failed action in the log, routine ones too; the detail
-                  says what most were (2026-11-03 live audit, Q2). */}
-              <StatTile
-                value={o && o.audit_24h.failures}
-                label="Failed actions (24h)"
-                icon={<TileIcon kind="attention" />}
-                detail={o ? failureDetail(o.audit_24h) : undefined}
-                to={drill.failures('/admin')}
-                tone="warn"
               />
             </div>
           </section>
@@ -329,6 +336,42 @@ function plural(n: number, noun: string): string {
   return `${n} ${noun}${n === 1 ? '' : 's'}`
 }
 
+/** ToBucket is the way out of a filling recordings disk, under its gauge
+ *  (2026-11-03, idea 8): with a bucket in use, the move of the local
+ *  recordings to it in one step, confirmed; without one, the card that sets
+ *  one up. Read only when the disk warns. */
+function ToBucket() {
+  const [s, setS] = useState<StorageStatus | null>(null)
+  const [asking, setAsking] = useState(false)
+  const [started, setStarted] = useState(false)
+  useEffect(() => {
+    api.get<StorageStatus>('/admin/storage').then(setS).catch(() => {})
+  }, [])
+  if (!s) return null
+  const local = s.counts.local ?? 0
+  const setUp = <Link to="/admin/settings#settings-recording-storage">Recording storage</Link>
+  if (!s.active) return <div className="disk-out">Record to an S3 bucket instead: {setUp}</div>
+  if (s.move.running || started) return <div className="disk-out">Moving local recordings to the bucket; progress in {setUp}.</div>
+  if (local === 0) return null
+  return (
+    <div className="disk-out">
+      <button type="button" onClick={() => setAsking(true)}>Move {plural(local, 'local recording')} to the bucket</button>
+      {asking && (
+        <Confirm
+          title={`Move ${plural(local, 'local recording')}?`}
+          body={`Finished recordings are copied to s3://${s.active.bucket}, verified and removed locally, in the background.`}
+          confirmLabel="Move"
+          onClose={() => setAsking(false)}
+          onConfirm={async () => {
+            await api.post('/admin/storage/move')
+            setStarted(true)
+          }}
+        />
+      )}
+    </div>
+  )
+}
+
 /** HostFacts is the gateway host right now: a gauge per ratio, then a line
  *  for the facts that are not ratios. Words carry every state the colour
  *  does. A kind of session with a cap is a gauge against it (2026-10-31);
@@ -386,6 +429,7 @@ function HostFacts({ m }: { m: SystemMetrics }) {
                   </>
                 )}
                 {diskUse(d).pct >= diskRefusePct && <div className="disk-refusing">New sessions refused until space is freed</div>}
+                {d.what.includes('recordings') && diskUse(d).pct >= diskWarnPct && <ToBucket />}
               </>
             }
             pct={diskUse(d).pct}
