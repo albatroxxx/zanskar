@@ -116,7 +116,6 @@ export function NotificationsCard() {
   return (
     <div className="card" id="settings-notifications">
       <h2>Notifications</h2>
-      <p className="muted">Who hears of what, without the console open. Each channel hears what happens from when it is added.</p>
       {err && <Alert tone="danger" onDismiss={() => setErr('')}>{err}</Alert>}
       {notice && <Alert tone={notice.tone} onDismiss={() => setNotice(null)}>{notice.text}</Alert>}
       {key && (
@@ -145,7 +144,7 @@ export function NotificationsCard() {
           </>
         ) : (
           <>
-            <p className="muted">None: email channels send nothing until one is set.</p>
+            <p className="muted">None set; email channels send nothing.</p>
             <div className="actions">
               <button type="button" className="btn sm" onClick={() => setServerForm(true)}>Set the email server</button>
             </div>
@@ -315,10 +314,10 @@ function ChannelForm({ existing, events, hasServer, onClose, onSaved, onNewKey }
         </Field>
       ) : (
         <>
-          <Field label="To" hint="Addresses, separated by commas; sent through the email server">
+          <Field label="To" hint="Comma-separated">
             <input value={d.to} onChange={set('to')} placeholder="ops@example.com, security@example.com" required />
           </Field>
-          {!hasServer && <p className="muted">No email server is set yet: this channel sends nothing until one is.</p>}
+          {!hasServer && <p className="muted">No email server is set; this channel sends nothing.</p>}
         </>
       )}
       <fieldset className="notify-events">

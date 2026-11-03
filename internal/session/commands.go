@@ -291,7 +291,7 @@ func (h *Handler) searchCommands(w http.ResponseWriter, r *http.Request) {
 		hits, count = found, len(found)
 	case "output":
 		if h.IndexOutput != nil && !h.IndexOutput() {
-			httpx.WriteError(w, r, http.StatusConflict, "output_not_indexed", "what sessions printed is not indexed: the setting Search what sessions printed is off")
+			httpx.WriteError(w, r, http.StatusConflict, "output_not_indexed", "terminal output is not indexed: the setting Index terminal output is off")
 			return
 		}
 		var found []OutputHit

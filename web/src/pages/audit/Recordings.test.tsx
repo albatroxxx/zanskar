@@ -80,7 +80,7 @@ describe('Recordings', () => {
     expect(screen.getByText(/No recordings among the newest 3 sessions match\. Load more to search further back\./)).toBeDefined()
 
     await userEvent.setup().clear(screen.getByLabelText('Filter recordings'))
-    expect(screen.getByText(/Showing recordings from the newest 3 sessions; the filter searches only these\./)).toBeDefined()
+    expect(screen.getByText(/Newest 3 sessions; the filter searches these\./)).toBeDefined()
   })
 
   it('keeps the plain answers once every session is loaded', async () => {

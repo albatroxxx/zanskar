@@ -71,7 +71,7 @@ export function Logs() {
       </PageHead>
       {err && <Alert tone="danger">{err}</Alert>}
       {page && (
-        <p className="muted">Showing {page.items.length} of the last {page.capacity} lines kept in memory ({page.seen} logged since start). Older lines are in the journal.</p>
+        <p className="muted">{page.items.length} of the last {page.capacity} lines; older ones are in the journal.</p>
       )}
       <div className="card table-wrap">
         {page === null ? (

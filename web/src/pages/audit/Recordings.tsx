@@ -205,7 +205,7 @@ export function Recordings() {
       {err && <Alert tone="danger">{err}</Alert>}
       <CommandSearch recordingsPath={recordingsPath} />
       {next && visible.length > 0 && (
-        <p className="muted">Showing recordings from the newest {scanned} sessions; the filter searches only these. Load more to go further back.</p>
+        <p className="muted">Newest {scanned} sessions; the filter searches these.</p>
       )}
       <div className="card table-wrap">
         {items === null ? (

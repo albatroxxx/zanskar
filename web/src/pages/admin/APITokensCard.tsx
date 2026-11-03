@@ -85,7 +85,7 @@ export function APITokensCard() {
   return (
     <div className="card" id="settings-api-tokens">
       <h2>API tokens</h2>
-      <p className="muted">For automation, such as the Terraform provider. A token acts as you on the configuration API only, with no second factor. Its secret is shown once.</p>
+      <p className="muted">A token acts as you on the configuration API, without a second factor.</p>
       {made && (
         <Alert tone="ok" onDismiss={() => setMade(null)}>
           <div>Token “{made.name}” made. Copy it now; it is not shown again.</div>
@@ -141,7 +141,7 @@ export function APITokensCard() {
         <button type="submit" className="btn primary sm" disabled={busy || !name.trim() || (needCode && !code.trim())}>{busy ? 'Making…' : 'Make token'}</button>
       </form>
       {needCode && (
-        <Field label="Authenticator code" hint="A token acts without a second factor, so making one asks for a recent code">
+        <Field label="Authenticator code" hint="Needed to make a token">
           <input id="token-code" inputMode="numeric" autoComplete="one-time-code" value={code} onChange={(e) => setCode(e.target.value)} autoFocus />
         </Field>
       )}

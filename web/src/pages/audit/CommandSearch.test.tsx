@@ -67,7 +67,7 @@ describe('Recordings, find printed text', () => {
     let refuse = false
     vi.spyOn(api, 'get').mockImplementation(async (path: string) => {
       if (path.startsWith('/recordings/search') && refuse) {
-        throw new ApiError(409, { code: 'output_not_indexed', message: 'what sessions printed is not indexed: the setting Search what sessions printed is off' }, '409')
+        throw new ApiError(409, { code: 'output_not_indexed', message: 'terminal output is not indexed: the setting Index terminal output is off' }, '409')
       }
       return { items: [] } as never
     })
@@ -78,7 +78,7 @@ describe('Recordings, find printed text', () => {
     expect(await screen.findByText('No output matches.')).toBeDefined()
     refuse = true
     await user.click(screen.getByRole('button', { name: 'Find' }))
-    expect(await screen.findByText(/the setting Search what sessions printed is off/)).toBeDefined()
+    expect(await screen.findByText(/the setting Index terminal output is off/)).toBeDefined()
     expect(screen.queryByText('No output matches.')).toBeNull()
   })
 
