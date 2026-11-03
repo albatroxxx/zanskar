@@ -91,7 +91,7 @@ tr.off td { color: var(--fg-muted); }
 /* A list page's named filters (idea 12), beside its other actions. */
 .saved-views { display: inline-flex; gap: 6px; align-items: center; }
 .saved-views select, .saved-views input { font-size: 0.86rem; padding: 4px 8px; }
-@media (max-width: 760px) {
+@media (max-width: 900px) {
   .shell { grid-template-columns: 1fr; }
   .sidebar { position: static; height: auto; flex-direction: row; flex-wrap: wrap; align-items: center; }
   .sidebar nav { display: flex; flex-wrap: wrap; gap: 2px; }
