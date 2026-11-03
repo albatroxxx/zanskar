@@ -621,20 +621,10 @@ func (px *proxy) tlsDialer(protos []string) func(ctx context.Context, network, a
 		if px.hosts[host] && px.pool != nil {
 			pool = px.pool
 		}
-		cfg := &tls.Config{MinVersion: tls.VersionTLS12, NextProtos: protos, RootCAs: pool}
-		if ip := net.ParseIP(host); ip != nil {
-			cfg.InsecureSkipVerify = true // #nosec G402 -- VerifyConnection below verifies the chain and the address
-			cfg.VerifyConnection = func(cs tls.ConnectionState) error {
-				opts := x509.VerifyOptions{DNSName: host, Roots: pool, Intermediates: x509.NewCertPool()}
-				for _, c := range cs.PeerCertificates[1:] {
-					opts.Intermediates.AddCert(c)
-				}
-				_, err := cs.PeerCertificates[0].Verify(opts)
-				return err
-			}
-		} else {
-			cfg.ServerName = host
-		}
+		// ServerName verifies the certificate against the name, an IP
+		// literal included (its address among the SANs); Go sends no SNI
+		// for an IP, as a browser would not.
+		cfg := &tls.Config{MinVersion: tls.VersionTLS12, NextProtos: protos, RootCAs: pool, ServerName: host}
 		tc := tls.Client(conn, cfg)
 		if err := tc.HandshakeContext(ctx); err != nil {
 			_ = conn.Close()

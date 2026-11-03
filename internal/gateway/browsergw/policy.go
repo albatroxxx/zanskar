@@ -72,7 +72,10 @@ func policyJSON(spec Spec, relayIP string) (string, error) {
 	var allow, block []string
 	proxy := "socks5://" + net.JoinHostPort(relayIP, strconv.Itoa(socksPort(spec)))
 	if spec.PublicDependencies {
-		proxy = "http://" + net.JoinHostPort(relayIP, strconv.Itoa(proxyPort(spec)))
+		// The proxy's own address is plain: it is on the session's private
+		// network, two containers with no route out, and what goes through
+		// it is TLS end to end with the relay (CONNECT).
+		proxy = "http://" + net.JoinHostPort(relayIP, strconv.Itoa(proxyPort(spec))) // NOSONAR
 	} else {
 		allow = []string{allowEntry(spec.Upstream)}
 		for _, e := range spec.Endpoints {
