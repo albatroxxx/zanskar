@@ -244,6 +244,8 @@ func Validate(p *Provider, c *Config) error {
 	if len(c.DefaultRoles) == 0 {
 		c.DefaultRoles = []user.Role{user.RoleUser}
 	}
+	// Admin alone when it is there: it holds what the others hold.
+	c.DefaultRoles = user.NormalizeRoles(c.DefaultRoles)
 	switch p.Type {
 	case TypeOIDC:
 		if c.OIDC == nil || c.LDAP != nil {

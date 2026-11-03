@@ -41,6 +41,25 @@ async function act(user: ReturnType<typeof userEvent.setup>, username: string, a
   await user.selectOptions(screen.getByLabelText(`actions for ${username}`), action)
 }
 
+// 2026-11-03: an administrator kept, before migration 0047, with auditor and
+// user beside admin reads as admin alone, in the list and in Roles.
+describe('Users, an administrator kept with all three roles', () => {
+  it('reads as admin alone', async () => {
+    serve([{ ...alice, roles: ['admin', 'auditor', 'user'] }, bob])
+    const user = await show()
+    const row = screen.getByText('alice').closest('tr') as HTMLElement
+    expect(within(row).getByText('admin')).toBeDefined()
+    expect(within(row).queryByText('auditor')).toBeNull()
+    expect(within(row).queryByText('user')).toBeNull()
+    const put = vi.spyOn(api, 'put').mockResolvedValue({} as never)
+    await act(user, 'alice', 'roles')
+    const roles = screen.getByRole('dialog', { name: 'Roles for alice' })
+    expect((within(roles).getByLabelText('user') as HTMLInputElement).disabled).toBe(true)
+    await user.click(within(roles).getByRole('button', { name: 'Save' }))
+    await waitFor(() => expect(put).toHaveBeenCalledWith('/users/u1/roles', { roles: ['admin'] }))
+  })
+})
+
 describe('Users', () => {
   // 2026-10-31: the list did not say which people come from an identity
   // provider and which were made in Zanskar.
@@ -129,7 +148,7 @@ describe('Users', () => {
     await user.click(within(form).getByLabelText('auditor'))
     expect((within(form).getByLabelText('Initial password') as HTMLInputElement).type).toBe('password')
     await user.click(within(form).getByRole('button', { name: 'Create' }))
-    await waitFor(() => expect(post).toHaveBeenCalledWith('/users', { username: 'dave', display_name: 'Dave', email: '', roles: ['user', 'auditor'] }))
+    await waitFor(() => expect(post).toHaveBeenCalledWith('/users', { username: 'dave', display_name: 'Dave', email: '', roles: ['auditor', 'user'] }))
     const once = await screen.findByRole('dialog', { name: 'One-time password for dave' })
     expect(within(once).getByText('rk2-shown-once-7q')).toBeDefined()
     await user.click(within(once).getByRole('button', { name: 'Done' }))
@@ -166,7 +185,7 @@ describe('Users', () => {
     const roles = screen.getByRole('dialog', { name: 'Roles for bob' })
     await user.click(within(roles).getByLabelText('admin'))
     await user.click(within(roles).getByRole('button', { name: 'Save' }))
-    await waitFor(() => expect(put).toHaveBeenCalledWith('/users/u2/roles', { roles: ['user', 'admin'] }))
+    await waitFor(() => expect(put).toHaveBeenCalledWith('/users/u2/roles', { roles: ['admin'] }))
 
     await act(user, 'bob', 'password')
     const pw = screen.getByRole('dialog', { name: 'Reset password for bob' })

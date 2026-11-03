@@ -4,12 +4,13 @@ import { fmtTime } from '../../api/format'
 import type { Group, GroupMember, Role, User } from '../../api/types'
 import { useAuth } from '../../auth/AuthContext'
 import { PickList } from '../../components/PickList'
+import { RolePicker } from '../../components/RolePicker'
+import { normalizeRoles } from '../../api/roles'
 import { useSubmit } from '../../components/submit'
 import { Alert, Badge, Confirm, Empty, Field, FormModal, Loading, Modal, PageHead, Tabs } from '../../components/ui'
 import { useList } from './lib'
 import { StateIcon } from '../../components/icons'
 
-const roles: Role[] = ['admin', 'auditor', 'user']
 
 export function UsersGroups() {
   const [tab, setTab] = useState<'users' | 'groups'>('users')
@@ -123,7 +124,7 @@ function Users() {
                     <td>
                       <Source idp={u.idp_id} providerSignIn={u.provider_sign_in} providers={providers} />
                     </td>
-                    <td>{u.roles.map((r) => <Badge key={r} tone={r === 'admin' ? 'accent' : undefined}>{r}</Badge>)}</td>
+                    <td>{normalizeRoles(u.roles).map((r) => <Badge key={r} tone={r === 'admin' ? 'accent' : undefined}>{r}</Badge>)}</td>
                     <td>
                       <StateIcon
                         state={u.status === 'active' ? 'ok' : 'warn'}
@@ -262,14 +263,7 @@ function Users() {
 function RoleChecks({ value, onChange, prefix }: { value: Role[]; onChange: (r: Role[]) => void; prefix: string }) {
   return (
     <Field label="Roles">
-      <div className="actions">
-        {roles.map((r) => (
-          <span key={r} className="field inline" style={{ margin: 0 }}>
-            <input id={`${prefix}-role-${r}`} type="checkbox" checked={value.includes(r)} onChange={(e) => onChange(e.target.checked ? [...value, r] : value.filter((x) => x !== r))} />
-            <label htmlFor={`${prefix}-role-${r}`}>{r}</label>
-          </span>
-        ))}
-      </div>
+      <RolePicker value={value} onChange={onChange} idPrefix={prefix} />
     </Field>
   )
 }
@@ -336,7 +330,7 @@ function UserForm({ onClose, onSaved }: { onClose: () => void; onSaved: (oneTime
 }
 
 function RolesForm({ user, onClose, onSaved }: { user: User; onClose: () => void; onSaved: () => void }) {
-  const [r, setR] = useState<Role[]>(user.roles)
+  const [r, setR] = useState<Role[]>(normalizeRoles(user.roles))
   const { busy, err, submit } = useSubmit()
   const save = () =>
     submit(async () => {
