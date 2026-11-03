@@ -4,6 +4,11 @@ Thanks for your interest in Zanskar. This guide covers how to report issues and 
 code. Zanskar is licensed under [Apache 2.0](LICENSE); by contributing you agree your contributions
 are licensed under the same terms.
 
+How the project works — who decides and how it is recorded, how work is batched and released,
+what every change must pass, how the console speaks, the security rules, the documentation rules
+and where things live — is in [docs/working](docs/working/README.md). Read it before your first
+change; it is short.
+
 ## Reporting bugs and requesting features
 
 Open an issue and pick a form:
