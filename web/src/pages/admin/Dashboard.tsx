@@ -6,6 +6,7 @@ import type { AdminOverview, SystemMetrics, SystemStatus, TLSStatus } from '../.
 import { StateIcon, TileIcon } from '../../components/icons'
 import { drill } from '../../api/drilldown'
 import { failureDetail } from '../audit/eventText'
+import { dismiss, dismissal, forget, shown } from './dismissals'
 import { Alert, Badge, PageHead, StatTile } from '../../components/ui'
 
 /** mix says what a count is made of — "2 Linux · 1 Windows" — in a tile's
@@ -37,6 +38,9 @@ function uptime(seconds: number): string {
  *  to the page that manages it; the dashboard itself changes nothing. */
 /** How often the gateway card's numbers are read again while the page is open. */
 const METRICS_EVERY_MS = 10_000
+
+/** The dismissal key of the notice that sign-in providers fail their sync. */
+const PROVIDERS_FAILING = 'providers-failing'
 
 export function Dashboard() {
   // Read once per mount: a clock read during render is impure and would
@@ -74,6 +78,14 @@ export function Dashboard() {
   }, [])
 
   const o = overview
+  // The provider notice, once closed, stays closed in this browser while
+  // providers keep failing; it is forgotten when they recover, and said
+  // again when more fail or after a day (dismissals.ts).
+  const failing = o?.integrity ? o.integrity.directories.failing : null
+  const [providersClosed, setProvidersClosed] = useState(() => dismissal(PROVIDERS_FAILING))
+  useEffect(() => {
+    if (failing === 0) forget(PROVIDERS_FAILING)
+  }, [failing])
   // Each host once, however many decisions it waits on: what the list it
   // opens holds.
   const attention = o ? o.targets.needing_attention : null
@@ -86,9 +98,16 @@ export function Dashboard() {
       {err && <Alert tone="danger">The dashboard could not be fully loaded: {err}</Alert>}
       {/* A provider that does not answer its sync is an outage of single
           sign-on, not a number to find (2026-11-03 live audit, Q1). */}
-      {o?.integrity && o.integrity.directories.failing > 0 && (
-        <Alert tone="danger">
-          {o.integrity.directories.failing === 1 ? 'A sign-in provider' : `${o.integrity.directories.failing} sign-in providers`} failed the last sync; single sign-on may be down.{' '}
+      {failing !== null && failing > 0 && shown(providersClosed, failing, now) && (
+        <Alert
+          tone="danger"
+          onDismiss={() => {
+            const d = { at: Date.now(), count: failing }
+            dismiss(PROVIDERS_FAILING, d)
+            setProvidersClosed(d)
+          }}
+        >
+          {failing === 1 ? 'A sign-in provider' : `${failing} sign-in providers`} failed the last sync; single sign-on may be down.{' '}
           <Link to="/admin/identity-providers">Identity providers</Link>
         </Alert>
       )}
