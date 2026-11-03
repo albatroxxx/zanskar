@@ -4,8 +4,11 @@ Date: 2026-11-03
 
 ## Status
 
-Proposed, at the owner's ask ("add Kubernetes support as well, just like host, database, etc.").
-A draft for the owner to decide on; the open decisions are at the end. Nothing is built.
+Accepted 2026-11-03 as recommended, and **parked**: the owner asked for the plan ("add Kubernetes
+support as well, just like host, database, etc."), took the recommendations below as they stand
+(phase 1 first; impersonation required, with a labelled shared-identity switch; port-forward off
+by default; bodies never recorded; *Clusters*, `kube`, `pod`; the inventory tile settled when
+phase 1 is built), and set the work aside for later. Nothing is built; the plan is the record.
 
 ## Context
 
