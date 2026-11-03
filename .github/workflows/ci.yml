@@ -158,6 +158,35 @@ jobs:
           # fail CI on unchanged code. Bump it with the toolchain.
           version: v2.14.0
 
+  terraform-provider:
+    # The Terraform provider is a module of its own (ADR 0044), which the
+    # gateway's ./... does not reach. Its acceptance tests build the gateway
+    # from this checkout and run Terraform against it, where the runner has
+    # Terraform.
+    name: Terraform provider
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: terraform-provider-zanskar
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: terraform-provider-zanskar/go.mod
+      - name: Format, vet and unit tests
+        run: |
+          test -z "$(gofmt -l .)"
+          go vet ./...
+          go test -race ./...
+      - name: Acceptance tests against a gateway built here
+        run: |
+          if command -v terraform >/dev/null; then
+            TF_ACC=1 go test -count=1 ./internal/provider/
+          else
+            echo "::notice::terraform is not on this runner; acceptance tests skipped"
+          fi
+
   vuln:
     name: govulncheck
     runs-on: ubuntu-latest

@@ -37,6 +37,35 @@ func TestSPAServesNoDirectoryListings(t *testing.T) {
 	}
 }
 
+// TestCSPInlineIsForStylesOnly (2026-11-03 live audit, S3): style-src keeps
+// 'unsafe-inline' because xterm's renderer writes each cell's colours as a
+// style attribute and sizes its viewport with a <style> element; without it
+// every terminal and recording renders unstyled. Nothing else may be inline:
+// scripts come from our origin alone (no 'unsafe-inline', no 'unsafe-eval'),
+// so a CSS injection still needs an HTML injection, which React escapes.
+func TestCSPInlineIsForStylesOnly(t *testing.T) {
+	dirs := map[string]string{}
+	for d := range strings.SplitSeq(uiCSP, ";") {
+		d = strings.TrimSpace(d)
+		name, rest, _ := strings.Cut(d, " ")
+		dirs[name] = rest
+	}
+	if dirs["script-src"] != "'self' 'wasm-unsafe-eval'" {
+		t.Fatalf("script-src %q: our origin and WebAssembly only", dirs["script-src"])
+	}
+	if dirs["style-src"] != "'self' 'unsafe-inline'" {
+		t.Fatalf("style-src %q", dirs["style-src"])
+	}
+	for name, v := range dirs {
+		if name != "style-src" && (strings.Contains(v, "'unsafe-inline'") || strings.Contains(v, "'unsafe-eval'")) {
+			t.Fatalf("%s %q allows inline or eval", name, v)
+		}
+	}
+	if dirs["default-src"] != "'none'" || dirs["object-src"] != "" && dirs["object-src"] != "'none'" {
+		t.Fatalf("default-src %q", dirs["default-src"])
+	}
+}
+
 // TestCSPConnectsOnlyToItsOwnOrigin: connect-src listed ws: and wss:, which
 // let a page open a WebSocket to any host at all, though the comment above
 // it said connections stay on our origin (L5). 'self' covers our own

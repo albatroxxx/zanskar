@@ -48,6 +48,8 @@ func (r *Repo) CreateInGroups(ctx context.Context, u *User, groupIDs []string) e
 			return ErrInvalidRole
 		}
 	}
+	// The account answers with the roles it is kept with.
+	u.Roles = NormalizeRoles(u.Roles)
 	if u.Status == "" {
 		u.Status = StatusActive
 	}
@@ -425,16 +427,13 @@ func (r *Repo) roles(ctx context.Context, id string) ([]Role, error) {
 	return roles, rows.Err()
 }
 
+// setRolesTx replaces a user's roles with roles as they are kept
+// (NormalizeRoles): admin alone when it is there.
 func setRolesTx(ctx context.Context, tx *sql.Tx, db *store.DB, id string, roles []Role) error {
 	if _, err := tx.ExecContext(ctx, db.Rebind(`DELETE FROM user_roles WHERE user_id = ?`), id); err != nil {
 		return err
 	}
-	seen := map[Role]bool{}
-	for _, role := range roles {
-		if seen[role] {
-			continue
-		}
-		seen[role] = true
+	for _, role := range NormalizeRoles(roles) {
 		if _, err := tx.ExecContext(ctx, db.Rebind(`INSERT INTO user_roles (user_id, role) VALUES (?, ?)`), id, string(role)); err != nil {
 			return err
 		}

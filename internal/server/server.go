@@ -300,14 +300,22 @@ func (s *Server) accessLog(next http.Handler) http.Handler {
 			level = slog.LevelDebug
 		}
 		// Query strings are intentionally not logged: connect tickets travel there.
-		s.log.Log(r.Context(), level, "http",
+		attrs := []any{
 			"request_id", httpx.RequestID(r.Context()),
 			"method", r.Method,
 			"path", r.URL.Path,
 			"status", rec.Status,
 			"duration_ms", time.Since(start).Milliseconds(),
-			"remote", auth.ClientIP(r),
-		)
+		}
+		// The client's address only where a request failed, which is when it
+		// is wanted (a probe, a flood): a served request's line is the
+		// gateway's own traffic, and kept beside its path the address was a
+		// trail of where each person went (2026-11-03 live audit, S4). The
+		// audit log keeps the address of every sign-in, connect and change.
+		if rec.Status >= 400 {
+			attrs = append(attrs, "remote", auth.ClientIP(r))
+		}
+		s.log.Log(r.Context(), level, "http", attrs...)
 	})
 }
 

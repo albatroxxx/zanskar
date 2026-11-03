@@ -274,6 +274,35 @@ describe('Player, the command list', () => {
     await screen.findByRole('button', { name: /systemctl/ })
     expect(h.seeks).toEqual([])
   })
+
+  // 2026-11-03, idea 5: a hit in what was printed opens at the moment it was
+  // printed, on the player's clock, where idle gaps over 2 s are squeezed.
+  it('opens at a printed line a search found, on the idle-compressed clock', async () => {
+    // a at 1 s, b at 2 s, then 6 s idle: c at 8 s plays at 4 s.
+    const cast = ['{"version": 2, "width": 80, "height": 24}', '[1.0, "o", "a"]', '[2.0, "m", "tail log"]', '[8.0, "o", "c"]'].join('\n')
+    const twice = () => ({
+      [`/api/v1/recordings/${RID}`]: [() => json(200, recording()), () => json(200, recording()), () => json(200, recording())],
+      [`/api/v1/recordings/${RID}/stream`]: [() => new Response(cast), () => new Response(cast), () => new Response(cast)],
+    })
+    gateway(twice())
+    open(`/audit/recordings/${RID}?at=8000`)
+    const user = userEvent.setup()
+    await user.click(await screen.findByRole('button', { name: 'Play' }))
+    await waitFor(() => expect(h.seeks).toEqual([4]))
+    // Past the end of the recording: it plays from the start.
+    cleanup()
+    h.seeks.length = 0
+    open(`/audit/recordings/${RID}?at=99000`)
+    await user.click(await screen.findByRole('button', { name: 'Play' }))
+    await screen.findByRole('button', { name: /tail log/ })
+    expect(h.seeks).toEqual([])
+    // A marker wins over a time.
+    cleanup()
+    h.seeks.length = 0
+    open(`/audit/recordings/${RID}?marker=0&at=8000`)
+    await user.click(await screen.findByRole('button', { name: 'Play' }))
+    await waitFor(() => expect(h.seeks).toEqual([{ marker: 0 }]))
+  })
 })
 
 // The player's controls were words (Replay, −10s, Play, +10s) and it had no

@@ -65,7 +65,8 @@ func TestCreateGetListRoles(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.ID != u.ID || len(got.Roles) != 2 || !got.HasRole(RoleAdmin) || got.Status != StatusActive {
+	// Admin alone: it holds what user holds (NormalizeRoles).
+	if got.ID != u.ID || len(got.Roles) != 1 || !got.HasRole(RoleAdmin) || got.Status != StatusActive || len(u.Roles) != 1 {
 		t.Fatalf("unexpected user: %+v", got)
 	}
 	if err := r.Create(ctx, &User{Username: "ALICE", DisplayName: "dup"}); !errors.Is(err, ErrDuplicate) {

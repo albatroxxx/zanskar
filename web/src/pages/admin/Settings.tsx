@@ -8,6 +8,7 @@ import { TimeZonePicker } from '../../components/TimeZonePicker'
 import { Alert, Badge, Field, Loading, Modal, PageHead } from '../../components/ui'
 import { TLSCard } from './TLSCard'
 import { StorageCard } from './StorageCard'
+import { APITokensCard } from './APITokensCard'
 import { RetentionCard } from './RetentionCard'
 import { NotificationsCard } from './NotificationsCard'
 import { ConfigCard } from './ConfigCard'
@@ -54,7 +55,7 @@ export function Settings() {
       <PageHead title="Settings" />
       {err && <Alert tone="danger">{err}</Alert>}
       <nav className="jump" aria-label="Sections">
-        {[...categories, 'Notifications', 'Configuration file', 'TLS certificate', 'Recording storage', 'Recording retention', 'Set at install'].map((c) => (
+        {[...categories, 'Notifications', 'Configuration file', 'API tokens', 'TLS certificate', 'Recording storage', 'Recording retention', 'Set at install'].map((c) => (
           <a key={c} href={'#' + sectionId(c)}>{c}</a>
         ))}
       </nav>
@@ -68,6 +69,7 @@ export function Settings() {
       ))}
       <NotificationsCard />
       <ConfigCard />
+      <APITokensCard />
       <TLSCard />
       <StorageCard />
       <RetentionCard />

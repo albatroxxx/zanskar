@@ -1,5 +1,7 @@
 # binaries
 /bin/
+# The Terraform provider's binary, built in its module (ADR 0044).
+/terraform-provider-zanskar/terraform-provider-zanskar
 /dist/
 /zanskar
 *.exe

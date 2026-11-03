@@ -85,6 +85,10 @@ const (
 	// (2026-11-01): system follows each device's light or dark setting. A
 	// person's corner switch still picks their own browser's theme.
 	KeyTheme = "display.theme"
+	// KeyIndexOutput has the gateway index what terminal sessions printed,
+	// for searching across recordings (2026-11-03, idea 5). Off, the index
+	// is emptied and only command lines are searched.
+	KeyIndexOutput = "recordings.index_output"
 	// KeyACME, KeyACMEEmail and KeyACMEDirectory get the gateway's
 	// certificate from an ACME CA when it serves TLS itself (ADR 0021,
 	// amended 2026-10-30).
@@ -97,6 +101,11 @@ const (
 	// is not found (2026-11-03 live audit, S1). The operator's contact, never
 	// the project's.
 	KeySecurityContact = "security.contact"
+	// KeyApproveStepUp has approving an access request ask an approver who
+	// has an authenticator for a code proved in the last auth.StepUpWindow,
+	// so a notification's link opens the request and a stolen session or a
+	// forwarded link alone cannot grant access (2026-11-03, idea 3).
+	KeyApproveStepUp = "access.approve_step_up"
 )
 
 // LetsEncryptDirectory is the ACME directory KeyACMEDirectory defaults to.
@@ -206,9 +215,9 @@ type Definition struct {
 	EnvVar      string   `json:"env_var,omitempty"`
 	Enum        []string `json:"enum,omitempty"`
 	// StepUp marks a setting that decides where a vaulted credential is
-	// sent; changing or resetting it from the console asks for an
-	// authenticator code proved in the last auth.StepUpWindow (ADR 0020,
-	// threat model risk 7).
+	// sent, or that guards another action with a code; changing or
+	// resetting it from the console asks for an authenticator code proved
+	// in the last auth.StepUpWindow (ADR 0020, threat model risk 7).
 	StepUp bool `json:"step_up,omitempty"`
 }
 
@@ -220,6 +229,8 @@ var Definitions = []Definition{
 		Description: "An email address or https:// page for reporting a weakness, published at /.well-known/security.txt. Empty publishes nothing."},
 	{Key: KeyRequireMFA, Category: "Sign-in", Title: "Require an authenticator", Type: TypeBool, Default: "true", EnvVar: "ZANSKAR_REQUIRE_MFA",
 		Description: "Password sign-ins, local or LDAP, must enrol an authenticator. Single sign-on providers enforce their own."},
+	{Key: KeyApproveStepUp, Category: "Sign-in", Title: "Approving asks for a code", Type: TypeBool, Default: "true", StepUp: true,
+		Description: "An approver with an authenticator enters a code from the last 5 minutes to approve access. Denying and revoking never ask."},
 	{Key: KeyUpdateCheck, Category: "Updates", Title: "Check for new versions", Type: TypeBool, Default: "true",
 		Description: "Daily check of the project site for a newer version. Nothing is sent."},
 	{Key: KeyRemoveOldImages, Category: "Updates", Title: "Remove old images", Type: TypeBool, Default: "true",
@@ -232,6 +243,8 @@ var Definitions = []Definition{
 		Description: "Relay for database and application sessions. A custom image, for a private registry mirror, is pinned by digest."},
 	{Key: KeyBrowserImage, Category: "Applications", Title: "Browser image", Type: TypeString, Default: DefaultBrowserImage(), EnvVar: "ZANSKAR_BROWSER_IMAGE", StepUp: true,
 		Description: "Isolated browser for application sessions. A custom image, for a private registry mirror, is pinned by digest."},
+	{Key: KeyIndexOutput, Category: "Recordings", Title: "Search what sessions printed", Type: TypeBool, Default: "true",
+		Description: "Terminal output is indexed beside the commands, up to 5,000 lines a recording, so reviewers can find it. Off empties that index."},
 	{Key: KeyACME, Category: "Let's Encrypt", Title: "Certificate from Let's Encrypt", Type: TypeBool, Default: "false",
 		Description: "When the gateway serves TLS itself: a certificate for the public URL's name, renewed on its own. An uploaded one still wins."},
 	{Key: KeyACMEEmail, Category: "Let's Encrypt", Title: "Account email", Type: TypeString,

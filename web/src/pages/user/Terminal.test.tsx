@@ -120,17 +120,6 @@ describe('Terminal', () => {
     expect(g.sockets[0].sent[1]).toBe(JSON.stringify({ t: 'r', c: 100, r: 30 }))
   })
 
-  // 2026-11-03, idea 7 (ADR 0042): a four-eyes session is held until a
-  // second person watches, and says so until it runs.
-  it('says it waits for a second person until the session is ready', async () => {
-    open()
-    await screen.findByText('web-1')
-    message(JSON.stringify({ t: 'waiting', msg: 'waiting for a second person to watch this session (four eyes)' }))
-    expect(screen.getByText('waiting for a second person to watch this session (four eyes)')).toBeDefined()
-    message(JSON.stringify({ t: 'ready' }))
-    expect(screen.queryByText(/waiting for a second person/)).toBeNull()
-  })
-
   it('refuses a session id that is not the gateway\'s shape, so the file panel never addresses an arbitrary path', async () => {
     open()
     await screen.findByText('web-1')

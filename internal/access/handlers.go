@@ -3,6 +3,7 @@
 package access
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -35,6 +36,13 @@ type Handler struct {
 	Revoker gateway.Revoker
 	Audit   *audit.Log
 	Log     *slog.Logger
+	// ApproveStepUp says whether approving asks an approver who has an
+	// authenticator for a code proved in the last auth.StepUpWindow (the
+	// runtime setting); nil never asks.
+	ApproveStepUp func() bool
+	// MFAEnrolled reports whether a user has a confirmed authenticator; nil
+	// counts every approver as having one, so the code is asked.
+	MFAEnrolled func(ctx context.Context, userID string) (bool, error)
 }
 
 // Register mounts the routes. Creating and viewing one's own requests needs an
@@ -46,6 +54,7 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.Handle("GET /api/v1/me/access-requests", auth.RequireConnect(http.HandlerFunc(h.myList)))
 	mux.Handle("GET /api/v1/me/access", auth.RequireConnect(http.HandlerFunc(h.myActive)))
 	mux.Handle("GET /api/v1/access-requests", admin(http.HandlerFunc(h.adminList)))
+	mux.Handle("GET /api/v1/access-requests/{id}", admin(http.HandlerFunc(h.one)))
 	mux.Handle("POST /api/v1/access-requests/{id}/approve", admin(http.HandlerFunc(h.approve)))
 	mux.Handle("POST /api/v1/access-requests/{id}/deny", admin(http.HandlerFunc(h.deny)))
 	mux.Handle("POST /api/v1/access-requests/{id}/revoke", admin(http.HandlerFunc(h.revoke)))
@@ -243,6 +252,43 @@ func (h *Handler) adminList(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, httpx.Page[*Request]{Items: list})
 }
 
+// one is a single request, for the link a notification carries: it opens
+// the request whether it still waits or was decided meanwhile.
+func (h *Handler) one(w http.ResponseWriter, r *http.Request) {
+	req, err := h.Requests.Get(r.Context(), r.PathValue("id"))
+	if err != nil {
+		h.fail(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, req)
+}
+
+// steppedUp refuses an approval, while the setting asks for it, from an
+// approver who has an authenticator and has not proved it in the last
+// auth.StepUpWindow (2026-11-03, idea 3). A notification links to the
+// request, never a token that approves it (ADR 0039); this makes the
+// approval itself need the approver's second factor, so a stolen session or
+// a forwarded link alone cannot grant access. An approver without one
+// (single sign-on, whose provider proved them at sign-in) is not asked.
+// Denying and revoking take access away and never ask.
+func (h *Handler) steppedUp(w http.ResponseWriter, r *http.Request, p *auth.Principal) bool {
+	if h.ApproveStepUp == nil || !h.ApproveStepUp() || p.StepUpFresh() {
+		return true
+	}
+	if h.MFAEnrolled != nil {
+		has, err := h.MFAEnrolled(r.Context(), p.User.ID)
+		if err != nil {
+			h.fail(w, r, err)
+			return false
+		}
+		if !has {
+			return true
+		}
+	}
+	httpx.WriteError(w, r, http.StatusForbidden, "step_up_required", "prove your authenticator first: approving access asks for a recent code")
+	return false
+}
+
 func (h *Handler) approve(w http.ResponseWriter, r *http.Request) {
 	pr, _ := auth.FromContext(r.Context())
 	cur, err := h.Requests.Get(r.Context(), r.PathValue("id"))
@@ -252,6 +298,9 @@ func (h *Handler) approve(w http.ResponseWriter, r *http.Request) {
 	}
 	if cur.Status != StatusPending {
 		httpx.WriteError(w, r, http.StatusConflict, "conflict", "request is not pending")
+		return
+	}
+	if !h.steppedUp(w, r, pr) {
 		return
 	}
 	d := h.decision(r)

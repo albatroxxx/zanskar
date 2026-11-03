@@ -81,6 +81,33 @@ func TestAccessLogStaticFiles(t *testing.T) {
 	}
 }
 
+// TestAccessLogAddressOnlyOnFailure (2026-11-03 live audit, S4): a served
+// request's line carries no client address, so the Logs page is not a trail
+// of where each person went; a failed one keeps it, for a probe or a flood.
+func TestAccessLogAddressOnlyOnFailure(t *testing.T) {
+	ring := logring.New(50)
+	level := new(slog.LevelVar)
+	level.Set(slog.LevelInfo)
+	s := &Server{log: slog.New(ring.Wrap(slog.NewTextHandler(discard{}, &slog.HandlerOptions{Level: level})))}
+	for _, code := range []int{200, 302, 401, 404, 500} {
+		h := s.accessLog(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(code) }))
+		r := httptest.NewRequest("GET", "/api/v1/targets", nil)
+		r.RemoteAddr = "198.51.100.7:4242"
+		h.ServeHTTP(httptest.NewRecorder(), r)
+	}
+	got := ring.Snapshot(slog.LevelDebug, "", 50)
+	if len(got) != 5 {
+		t.Fatalf("lines: %d", len(got))
+	}
+	for _, e := range got {
+		_, has := e.Attrs["remote"]
+		failed := e.Attrs["status"] >= "400"
+		if has != failed || (has && e.Attrs["remote"] != "198.51.100.7") {
+			t.Fatalf("status %s: remote %q", e.Attrs["status"], e.Attrs["remote"])
+		}
+	}
+}
+
 type discard struct{}
 
 func (discard) Write(p []byte) (int, error) { return len(p), nil }

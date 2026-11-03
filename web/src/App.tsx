@@ -171,7 +171,7 @@ export default function App() {
                 { to: '/admin/autoscaling', label: 'Autoscaling' },
                 { to: '/admin/credentials', label: 'Credentials' },
                 { to: '/admin/policies', label: 'Policies' },
-                { to: '/admin/approvals', label: 'Approvals', badge: pendingApprovals },
+                { to: '/admin/approvals', label: 'Approvals', badge: pendingApprovals, badgeShared: true },
                 { to: '/admin/users', label: 'Users & groups' },
                 { to: '/admin/identity-providers', label: 'Identity providers' },
                 { to: '/admin/sessions', label: 'Sessions' },

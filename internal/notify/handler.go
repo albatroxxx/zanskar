@@ -76,6 +76,7 @@ func apply(in channelInput, c *Channel, s *Secret) string {
 	if !nameRe.MatchString(in.Name) {
 		return "name: up to 64 letters, digits, spaces, dots, dashes or underscores"
 	}
+	in.Events = current(in.Events)
 	for _, e := range in.Events {
 		if !slices.Contains(Events, e) {
 			return "events: unknown kind " + e
@@ -147,6 +148,7 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 	}
 	views := make([]channelView, len(channels))
 	for i, c := range channels {
+		c.Events = current(c.Events)
 		views[i] = channelView{c, h.Notifier.Status(c.ID)}
 	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"items": views, "events": Events})

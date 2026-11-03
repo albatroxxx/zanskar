@@ -77,21 +77,24 @@ type input struct {
 // (an authenticator required, clipboard and file transfer off, 15 minutes
 // idle, standing access, the target's own sign-in).
 type grantInput struct {
-	ID                 string        `json:"id"`
-	Kind               string        `json:"kind"`
-	Targets            []GrantTarget `json:"targets"`
-	Tags               *TagMatch     `json:"tags"`
-	Access             string        `json:"access"`
-	SignIn             string        `json:"sign_in"`
-	RequireMFA         *bool         `json:"require_mfa"`
-	AllowClipboard     bool          `json:"allow_clipboard"`
-	AllowFileTransfer  bool          `json:"allow_file_transfer"`
-	AllowDevTools      bool          `json:"allow_devtools"`
-	RequireWatcher     bool          `json:"require_watcher"`
-	IdleTimeoutMinutes int           `json:"idle_timeout_minutes"`
-	MaxSessionMinutes  *int          `json:"max_session_minutes"`
-	TimeWindows        []TimeWindow  `json:"time_windows"`
-	RetentionDays      *int          `json:"retention_days"`
+	ID                string        `json:"id"`
+	Kind              string        `json:"kind"`
+	Targets           []GrantTarget `json:"targets"`
+	Tags              *TagMatch     `json:"tags"`
+	Access            string        `json:"access"`
+	SignIn            string        `json:"sign_in"`
+	RequireMFA        *bool         `json:"require_mfa"`
+	AllowClipboard    bool          `json:"allow_clipboard"`
+	AllowFileTransfer bool          `json:"allow_file_transfer"`
+	AllowDevTools     bool          `json:"allow_devtools"`
+	// RequireWatcher is read only to refuse it: four eyes was removed in
+	// 1.16.0 (ADR 0042, withdrawn), and a client asking for it must hear so
+	// rather than have it dropped in silence.
+	RequireWatcher     bool         `json:"require_watcher"`
+	IdleTimeoutMinutes int          `json:"idle_timeout_minutes"`
+	MaxSessionMinutes  *int         `json:"max_session_minutes"`
+	TimeWindows        []TimeWindow `json:"time_windows"`
+	RetentionDays      *int         `json:"retention_days"`
 }
 
 func (in *input) apply(p *Policy) {
@@ -105,7 +108,7 @@ func (in *input) apply(p *Policy) {
 		p.Grants = append(p.Grants, Grant{
 			ID: g.ID, Kind: g.Kind, Targets: g.Targets, Tags: g.Tags, Access: g.Access, SignIn: g.SignIn,
 			RequireMFA: g.RequireMFA == nil || *g.RequireMFA, AllowClipboard: g.AllowClipboard, AllowFileTransfer: g.AllowFileTransfer,
-			AllowDevTools: g.AllowDevTools, RequireWatcher: g.RequireWatcher, IdleTimeoutMinutes: g.IdleTimeoutMinutes, MaxSessionMinutes: g.MaxSessionMinutes, TimeWindows: g.TimeWindows, RetentionDays: g.RetentionDays,
+			AllowDevTools: g.AllowDevTools, IdleTimeoutMinutes: g.IdleTimeoutMinutes, MaxSessionMinutes: g.MaxSessionMinutes, TimeWindows: g.TimeWindows, RetentionDays: g.RetentionDays,
 		})
 	}
 }
@@ -138,6 +141,13 @@ func decode(w http.ResponseWriter, r *http.Request, in *input) bool {
 	if err := dec.Decode(in); err != nil {
 		httpx.BadRequest(w, r, "malformed JSON body: "+err.Error())
 		return false
+	}
+	for _, g := range in.Grants {
+		if g.RequireWatcher {
+			httpx.WriteError(w, r, http.StatusBadRequest, "four_eyes_removed",
+				"a second person watching (four eyes) was removed in 1.16.0; send require_watcher false or leave it out")
+			return false
+		}
 	}
 	return true
 }

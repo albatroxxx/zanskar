@@ -5,6 +5,8 @@ package notify
 import (
 	"encoding/json"
 	"fmt"
+	"net/url"
+	"slices"
 	"strings"
 
 	"github.com/albatroxxx/zanskar/internal/audit"
@@ -18,11 +20,27 @@ const (
 	EventProviderFailing   = "provider_failing"
 	EventRecordingLost     = "recording_lost"
 	EventDiskFull          = "disk_full"
-	EventWatcherNeeded     = "watcher_needed"
 )
 
 // Events lists every kind, in the order the console offers them.
-var Events = []string{EventAccessRequested, EventAccessDecided, EventWatcherNeeded, EventSessionTerminated, EventProviderFailing, EventRecordingLost, EventDiskFull}
+var Events = []string{EventAccessRequested, EventAccessDecided, EventSessionTerminated, EventProviderFailing, EventRecordingLost, EventDiskFull}
+
+// retired are kinds a channel could ask for once and no longer can: a
+// channel that asked for one keeps its other kinds, and the retired one is
+// left out of what it lists and saves (watcher_needed went with four eyes
+// in 1.16.0).
+var retired = []string{"watcher_needed"}
+
+// current is events without the retired kinds.
+func current(events []string) []string {
+	out := make([]string, 0, len(events))
+	for _, e := range events {
+		if !slices.Contains(retired, e) {
+			out = append(out, e)
+		}
+	}
+	return out
+}
 
 // kindOf is the kind of notification an audit event is, or "" for one no
 // channel is told about.
@@ -34,8 +52,6 @@ func kindOf(e audit.Event) string {
 		return EventAccessDecided
 	case audit.SessionTerminate:
 		return EventSessionTerminated
-	case audit.SessionWatcherWait:
-		return EventWatcherNeeded
 	case audit.IdPSync:
 		if e.Outcome == audit.Failure {
 			return EventProviderFailing
@@ -103,18 +119,15 @@ func message(e audit.Event, kind string, names Names, base string) Message {
 	switch kind {
 	case EventAccessRequested:
 		m.Subject = fmt.Sprintf("%s asks for %s access to %s", who, proto, target)
-		m.Text = m.Subject + ". Approve or deny it in the console."
-		m.Link = base + "/admin/approvals"
+		m.Text = m.Subject + ". Open it to approve or deny."
+		// The request itself, never a token that decides it (ADR 0039):
+		// approving there asks for a recent code (2026-11-03, idea 3).
+		m.Link = base + "/admin/approvals?request=" + url.QueryEscape(e.ObjectID)
 	case EventAccessDecided:
 		verb := map[string]string{audit.AccessRequestApprove: "approved", audit.AccessRequestDeny: "denied", audit.AccessRequestRevoke: "revoked"}[e.Action]
 		m.Subject = fmt.Sprintf("%s %s %s access to %s", who, verb, proto, target)
 		m.Text = m.Subject + "."
-		m.Link = base + "/admin/approvals"
-	case EventWatcherNeeded:
-		target = names("target", detail(e, "target_id"))
-		m.Subject = fmt.Sprintf("%s waits for a second person to watch a %s session on %s", who, proto, target)
-		m.Text = m.Subject + ". Watch it from Sessions within 5 minutes, or it ends."
-		m.Link = base + "/admin/sessions?open=1"
+		m.Link = base + "/admin/approvals?request=" + url.QueryEscape(e.ObjectID)
 	case EventSessionTerminated:
 		m.Subject = fmt.Sprintf("%s ended a session", who)
 		m.Text = m.Subject + "."

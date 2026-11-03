@@ -68,8 +68,20 @@ func TestCredentialRoutingSettingsAskForAStepUp(t *testing.T) {
 			stepUp = append(stepUp, v.Key)
 		}
 	}
-	if strings.Join(stepUp, ",") != KeyGuacdAddr+","+KeyDBProxyImage+","+KeyBrowserImage {
+	// The approval step-up too (2026-11-03, idea 3): a stolen session that
+	// could switch it off could then approve without a code.
+	if strings.Join(stepUp, ",") != KeyApproveStepUp+","+KeyGuacdAddr+","+KeyDBProxyImage+","+KeyBrowserImage {
 		t.Fatalf("settings marked step_up: %v", stepUp)
+	}
+}
+
+// TestApprovingAsksForACodeByDefault (2026-11-03, idea 3): a gateway that
+// never touched the setting asks approvers with an authenticator for a
+// recent code; switching it off is a choice made, and asks for one too.
+func TestApprovingAsksForACodeByDefault(t *testing.T) {
+	d, ok := Lookup(KeyApproveStepUp)
+	if !ok || d.Type != TypeBool || d.Default != "true" || !d.StepUp || d.Category != "Sign-in" {
+		t.Fatalf("approval step-up setting: %+v %v", d, ok)
 	}
 }
 

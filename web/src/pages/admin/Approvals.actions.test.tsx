@@ -1,4 +1,5 @@
 import { cleanup, render, screen, within } from '@testing-library/react'
+import { MemoryRouter } from 'react-router-dom'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { api } from '../../api/client'
@@ -21,7 +22,7 @@ const active: AccessRequest = {
 function mount() {
   vi.spyOn(api, 'get').mockImplementation(async (path: string) => ({ items: path.includes('status=pending') ? [pending] : [active] }) as never)
   const post = vi.spyOn(api, 'post').mockResolvedValue({} as never)
-  render(<Approvals />)
+  render(<MemoryRouter><Approvals /></MemoryRouter>)
   return post
 }
 

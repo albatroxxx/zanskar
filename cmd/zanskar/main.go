@@ -27,6 +27,7 @@ import (
 	"time"
 
 	"github.com/albatroxxx/zanskar/internal/access"
+	"github.com/albatroxxx/zanskar/internal/apitoken"
 	"github.com/albatroxxx/zanskar/internal/asg"
 	"github.com/albatroxxx/zanskar/internal/audit"
 	"github.com/albatroxxx/zanskar/internal/auth"
@@ -269,6 +270,9 @@ func serve(ctx context.Context) error {
 	applyLevel(runtime.String(settings.KeyLogLevel))
 	runtime.Subscribe(settings.KeyLogLevel, applyLevel)
 	requireMFA := func() bool { return runtime.Bool(settings.KeyRequireMFA) }
+	// What terminal sessions printed, indexed for search while this is on
+	// (2026-11-03, idea 5).
+	indexOutput := func() bool { return runtime.Bool(settings.KeyIndexOutput) }
 	guacdAddr := func() string { return runtime.String(settings.KeyGuacdAddr) }
 	// What the console may point a vaulted credential at (threat model risk
 	// 7): guacd only on this gateway's own network, the relay image only by
@@ -302,6 +306,8 @@ func serve(ctx context.Context) error {
 		return err
 	}
 	totp := auth.NewTOTP(db, ring, cfg.Issuer)
+	// API tokens for automation, scoped to the configuration API (ADR 0044).
+	apiTokens := apitoken.NewRepo(db)
 	authHandler := auth.NewHandler(users, sessions, totp, auditLog, log)
 	authHandler.RequireMFA = requireMFA
 	authHandler.TimeZone = func() string { return runtime.String(settings.KeyTimeZone) }
@@ -414,12 +420,13 @@ func serve(ctx context.Context) error {
 		SecurityContact: func() string {
 			return settings.SecurityContactURI(runtime.String(settings.KeySecurityContact))
 		},
-		AuthMiddleware: &auth.Middleware{Sessions: sessions, Users: users, Log: log},
+		AuthMiddleware: &auth.Middleware{Sessions: sessions, Users: users, Log: log, Tokens: apiTokens},
 		Auth:           authHandler,
 		Handlers: []server.Registrar{
 			&adminapi.AdminHandler{Users: users, Sessions: sessions, TOTP: totp, Revoker: connectHandler, Audit: auditLog, Log: log, ProviderHolds: idpRepo.Holds},
 			&group.AdminHandler{Groups: groups, Revoker: connectHandler, Audit: auditLog, Log: log},
 			&notify.Handler{Channels: notifyRepo, Notifier: notifier, Audit: auditLog, Log: log},
+			&apitoken.Handler{Repo: apiTokens, Audit: auditLog, Log: log, MFAEnrolled: totp.Enrolled},
 			&configio.Handler{Audit: auditLog, Log: log},
 			&idpadmin.AdminHandler{Providers: idpRepo, Audit: auditLog, Log: log, LDAPTester: &ldap.Authenticator{}, Sync: userSync},
 			oidcHandler,
@@ -427,9 +434,10 @@ func serve(ctx context.Context) error {
 			&credential.AdminHandler{Vault: vault, Audit: auditLog, Log: log},
 			&target.AdminHandler{Repo: targets, Prober: prober, Policies: policies, Requests: accessReqs, Live: registry, Revoker: connectHandler, Vault: vault, Audit: auditLog, Log: log},
 			&policy.AdminHandler{Repo: policies, Users: users, Inventory: policyInventory{targets: targets, groups: asgRepo}, Revoker: connectHandler, Directory: reviewDirectory{users: users, groups: groups}, Audit: auditLog, Log: log},
-			&access.Handler{Requests: accessReqs, Policies: policies, Targets: targets, ASGs: asgRepo, Revoker: connectHandler, Audit: auditLog, Log: log},
+			&access.Handler{Requests: accessReqs, Policies: policies, Targets: targets, ASGs: asgRepo, Revoker: connectHandler, Audit: auditLog, Log: log,
+				ApproveStepUp: func() bool { return runtime.Bool(settings.KeyApproveStepUp) }, MFAEnrolled: totp.Enrolled},
 			&asg.AdminHandler{Repo: asgRepo, Sync: syncer.SyncGroup, Identity: awsIdentity, Providers: asg.AWSFresh(), Policies: policies, Requests: accessReqs, Live: registry, Revoker: connectHandler, Vault: vault, Audit: auditLog, Log: log},
-			&session.Handler{Repo: sessionRepo, Audit: auditLog, AnchorKey: anchorKey, Registry: registry, Storage: storage, Log: log},
+			&session.Handler{Repo: sessionRepo, Audit: auditLog, AnchorKey: anchorKey, Registry: registry, Storage: storage, Log: log, IndexOutput: indexOutput},
 			&browsergw.Readiness{Guacd: func() string { return runtime.String(settings.KeyGuacdAddr) }, BrowserImage: func() string { return runtime.String(settings.KeyBrowserImage) }, Docker: cfg.DockerPath},
 			&overview.Handler{Sessions: sessionRepo, Requests: accessReqs, Targets: targets, ASGs: asgRepo, Audit: auditLog, Log: log,
 				Users: users, Policies: policies, MFAOwners: idpRepo.MFAOwners,
@@ -466,6 +474,9 @@ func serve(ctx context.Context) error {
 	// Directory users: joiners and leavers, per provider (ADR 0035).
 	go userSync.Run(ctx)
 
+	// Single sign-on providers: is each answering, for the sign-in page.
+	go oidcHandler.Watch(ctx, oidc.ProbeEvery)
+
 	// Recording retention: delete recordings past the admin-configured policy
 	// (ADR 0015). Off until an admin sets a policy in the console.
 	retention := &session.RetentionSweeper{Repo: sessionRepo, Storage: storage, Audit: auditLog, Log: log}
@@ -473,7 +484,7 @@ func serve(ctx context.Context) error {
 
 	// Index the command lines of finished terminal recordings for search
 	// (ADR 0041): new ones within a pass, older ones once.
-	indexer := &session.CommandIndexer{Repo: sessionRepo, Storage: storage, Log: log}
+	indexer := &session.CommandIndexer{Repo: sessionRepo, Storage: storage, Log: log, IndexOutput: indexOutput}
 	go indexer.Run(ctx)
 
 	// Expire lapsed just-in-time access grants and audit each (ADR 0018).

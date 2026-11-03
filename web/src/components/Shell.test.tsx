@@ -4,8 +4,8 @@ import { MemoryRouter } from 'react-router-dom'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { api } from '../api/client'
 import { AuthProvider } from '../auth/AuthContext'
-import { badgesChanged } from './badges'
-import { Shell } from './Shell'
+import { badgesChanged, shareBadgeCount } from './badges'
+import { BADGE_FRESH_MS, Shell } from './Shell'
 
 afterEach(() => {
   cleanup()
@@ -54,32 +54,73 @@ describe('the sidebar account', () => {
 
 // 2026-10-30 walkthrough: the Approvals badge kept a decided request's count
 // until a reload. A badge reads again when the page says its count changed,
-// and on every move to another page, not only on its minute.
+// and on a move to another page once its count is not fresh, not only on its
+// minute. 2026-11-03 live audit, Q12: it read on every page change, and on
+// Approvals a third time beside the page's own two reads; a count under
+// BADGE_FRESH_MS old is kept, and the page it counts for hands it over.
 describe('a nav badge', () => {
-  it('reads again on badgesChanged and on navigation, and hides at zero', async () => {
+  function mount(load: () => Promise<number>, shared = false) {
     vi.spyOn(api, 'get').mockImplementation(async (path: string) => {
       if (path === '/auth/me') return { user: alice, csrf_token: 't', mfa_enrolled: true } as never
       return { items: [] } as never
     })
-    let pending = 2
-    const load = vi.fn(async () => pending)
     render(
       <MemoryRouter initialEntries={['/']}>
         <AuthProvider>
-          <Shell portal="user" items={[{ to: '/', label: 'Targets', end: true }, { to: '/approvals', label: 'Approvals', badge: load }]} />
+          <Shell
+            portal="user"
+            items={[
+              { to: '/', label: 'Targets', end: true },
+              { to: '/sessions', label: 'Sessions' },
+              { to: '/approvals', label: 'Approvals', badge: load, badgeShared: shared },
+            ]}
+          />
         </AuthProvider>
       </MemoryRouter>,
     )
+  }
+
+  it('reads again on badgesChanged, and on navigation once the count is stale, and hides at zero', async () => {
+    let pending = 2
+    const load = vi.fn(async () => pending)
+    mount(load)
     expect(await screen.findByLabelText('2 pending')).toBeDefined()
 
     pending = 1
     act(() => badgesChanged())
     expect(await screen.findByLabelText('1 pending')).toBeDefined()
 
+    // Fresh: a page change reads nothing.
     pending = 0
+    const user = userEvent.setup()
     const calls = load.mock.calls.length
-    await userEvent.setup().click(screen.getByRole('link', { name: /Approvals/ }))
+    await user.click(screen.getByRole('link', { name: /Sessions/ }))
+    await new Promise((r) => setTimeout(r, 50))
+    expect(load.mock.calls.length).toBe(calls)
+    expect(screen.getByLabelText('1 pending')).toBeDefined()
+
+    // Stale: the next page change reads it.
+    const now = Date.now()
+    vi.spyOn(Date, 'now').mockReturnValue(now + BADGE_FRESH_MS + 1000)
+    await user.click(screen.getByRole('link', { name: /Targets/ }))
     await waitFor(() => expect(load.mock.calls.length).toBeGreaterThan(calls))
     await waitFor(() => expect(screen.queryByLabelText(/pending$/)).toBeNull())
+  })
+
+  it('takes the count its page shares, and does not read it on that page', async () => {
+    const load = vi.fn(async () => 4)
+    mount(load, true)
+    expect(await screen.findByLabelText('4 pending')).toBeDefined()
+    const calls = load.mock.calls.length
+    const now = Date.now()
+    vi.spyOn(Date, 'now').mockReturnValue(now + BADGE_FRESH_MS + 1000)
+    await userEvent.setup().click(screen.getByRole('link', { name: /Approvals/ }))
+    act(() => shareBadgeCount('/approvals', 3))
+    expect(await screen.findByLabelText('3 pending')).toBeDefined()
+    await new Promise((r) => setTimeout(r, 50))
+    expect(load.mock.calls.length).toBe(calls)
+    // Another page's count is not this badge's.
+    act(() => shareBadgeCount('/elsewhere', 9))
+    expect(screen.getByLabelText('3 pending')).toBeDefined()
   })
 })

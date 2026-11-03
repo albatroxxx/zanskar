@@ -110,7 +110,10 @@ func isFile(bundle fs.FS, name string) bool {
 
 // uiCSP is the policy for HTML and bundle responses. Scripts and styles come
 // only from our own origin; xterm and the recording player inject inline
-// styles, so style-src allows them. 'wasm-unsafe-eval' lets the asciicast
+// styles, so style-src allows them: xterm's renderer writes each cell's
+// colours as a style attribute and sizes its viewport with a <style>
+// element, and terminals open in tabs of their own that a route-scoped
+// policy would not follow (re-checked for the 2026-11-03 live audit, S3). 'wasm-unsafe-eval' lets the asciicast
 // player instantiate its WebAssembly terminal emulator; without it recording
 // playback is a blank screen. It permits WebAssembly only, not JavaScript
 // eval, so script injection protection is unchanged. Connections stay on our

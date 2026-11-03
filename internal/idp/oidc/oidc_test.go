@@ -17,6 +17,7 @@ import (
 	"net/url"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -46,6 +47,8 @@ type fakeIdP struct {
 	endSession string
 	// idToken is the last ID token the token endpoint issued.
 	idToken string
+	// down makes discovery answer 503, a provider that is not answering.
+	down atomic.Bool
 }
 
 func newFakeIdP(t *testing.T) *fakeIdP {
@@ -57,6 +60,10 @@ func newFakeIdP(t *testing.T) *fakeIdP {
 	f := &fakeIdP{key: key, codes: map[string]bool{}}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/.well-known/openid-configuration", func(w http.ResponseWriter, _ *http.Request) {
+		if f.down.Load() {
+			http.Error(w, "unavailable", http.StatusServiceUnavailable)
+			return
+		}
 		w.Header().Set("Content-Type", "application/json")
 		doc := map[string]any{
 			"issuer": f.srv.URL, "authorization_endpoint": f.srv.URL + "/authorize", "token_endpoint": f.srv.URL + "/token",

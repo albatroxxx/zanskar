@@ -1,11 +1,11 @@
-import { Fragment, Suspense, useEffect, useState } from 'react'
+import { Fragment, Suspense, useEffect, useRef, useState } from 'react'
 import { Link, NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import type { User } from '../api/types'
 import { fmtTime } from '../api/format'
 import { useAuth } from '../auth/AuthContext'
 import { canConnect } from '../auth/home'
 import { AccessNotices } from './AccessNotices'
-import { onBadgesChanged } from './badges'
+import { onBadgeCount, onBadgesChanged } from './badges'
 import { CornerBar, CornerThemeOnly } from './CornerBar'
 import { RestartNotice } from './RestartNotice'
 import { Badge, Modal } from './ui'
@@ -14,25 +14,44 @@ export interface NavItem {
   to: string
   label: string
   end?: boolean
-  /** badge, when set, is read once a minute, on every page change and on
-   *  badgesChanged; a positive count shows beside the label. */
+  /** badge, when set, is read once a minute, on badgesChanged, and on a
+   *  page change when its count is older than BADGE_FRESH_MS; a positive
+   *  count shows beside the label. */
   badge?: () => Promise<number>
+  /** badgeShared: the page at to shares the badge's count when it reads it
+   *  (shareBadgeCount), so the badge does not read it there itself. */
+  badgeShared?: boolean
 }
 
+/** A badge's count read (or shared) within this long is not read again on a
+ *  page change; the minute's poll and badgesChanged still read it
+ *  (2026-11-03 live audit, Q12: a read on every page change). */
+export const BADGE_FRESH_MS = 30_000
+
 /** NavBadge shows a count next to a nav label: 1 to 99, then "99+", nothing at zero. */
-function NavBadge({ load }: { load: () => Promise<number> }) {
+function NavBadge({ load, to, shared }: { load: () => Promise<number>; to: string; shared?: boolean }) {
   const [n, setN] = useState(0)
+  // When the count was last read or shared; kept across page changes.
+  const at = useRef(0)
   const { pathname } = useLocation()
   useEffect(() => {
-    const tick = () => load().then(setN).catch(() => {})
-    void tick()
+    const tick = () => {
+      at.current = Date.now()
+      load().then(setN).catch(() => {})
+    }
+    if (Date.now() - at.current >= BADGE_FRESH_MS && !(shared && pathname === to)) void tick()
     const t = setInterval(tick, 60_000)
     const off = onBadgesChanged(() => void tick())
+    const offShared = onBadgeCount(to, (c) => {
+      at.current = Date.now()
+      setN(c)
+    })
     return () => {
       clearInterval(t)
       off()
+      offShared()
     }
-  }, [load, pathname])
+  }, [load, pathname, to, shared])
   if (n <= 0) return null
   return <span className="nav-badge" aria-label={`${n} pending`}>{n > 99 ? '99+' : n}</span>
 }
@@ -75,7 +94,7 @@ export function Shell({ portal, items }: { portal: 'user' | 'admin' | 'audit'; i
           {items.map((it) => (
             <NavLink key={it.to} to={it.to} end={it.end}>
               {it.label}
-              {it.badge && <NavBadge load={it.badge} />}
+              {it.badge && <NavBadge load={it.badge} to={it.to} shared={it.badgeShared} />}
             </NavLink>
           ))}
         </nav>

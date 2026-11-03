@@ -9,6 +9,25 @@ import (
 	"github.com/albatroxxx/zanskar/internal/user"
 )
 
+// TestDefaultRolesKeptWithAdminAlone (2026-11-03): a provider whose
+// provisioned people are administrators gives them admin alone; admin holds
+// what auditor and user hold.
+func TestDefaultRolesKeptWithAdminAlone(t *testing.T) {
+	c := okOIDC()
+	c.DefaultRoles = []user.Role{user.RoleUser, user.RoleAdmin, user.RoleAuditor}
+	if err := Validate(&Provider{Name: "corp", Type: TypeOIDC}, c); err != nil {
+		t.Fatal(err)
+	}
+	if len(c.DefaultRoles) != 1 || c.DefaultRoles[0] != user.RoleAdmin {
+		t.Fatalf("default roles: %v", c.DefaultRoles)
+	}
+	c = okOIDC()
+	c.DefaultRoles = []user.Role{user.RoleUser, user.RoleAuditor}
+	if err := Validate(&Provider{Name: "corp", Type: TypeOIDC}, c); err != nil || len(c.DefaultRoles) != 2 {
+		t.Fatalf("without admin, as asked: %v %v", c.DefaultRoles, err)
+	}
+}
+
 func okOIDC() *Config {
 	return &Config{OIDC: &OIDCConfig{Issuer: "https://login.example.com", ClientID: "zanskar", ClientSecret: "s"}}
 }

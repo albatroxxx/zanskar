@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -237,6 +238,9 @@ func TestPolicyAPIRefusals(t *testing.T) {
 			b["grants"] = []map[string]any{{"kind": "autoscaling", "targets": []map[string]any{{"id": "no-fleet", "protocols": []string{"ssh"}}}}}
 		}, 422, "unknown_target", "no-fleet is not a live autoscaling"},
 		{"a grant id on a new policy", func(b map[string]any) { b["grants"].([]map[string]any)[0]["id"] = "g-123" }, 422, "unknown_grant", "carry no id"},
+		// Four eyes was removed in 1.16.0: asked for, it is refused by name,
+		// not dropped in silence.
+		{"four eyes", func(b map[string]any) { b["grants"].([]map[string]any)[0]["require_watcher"] = true }, 400, "four_eyes_removed", "removed in 1.16.0"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -250,6 +254,17 @@ func TestPolicyAPIRefusals(t *testing.T) {
 	}
 	if code, out := e.do("GET", "/api/v1/access-policies", nil); code != 200 || len(out["items"].([]any)) != 0 {
 		t.Fatalf("a refused policy was stored: %v", out)
+	}
+
+	// require_watcher false, as a 1.15.0 client sends it, is no change.
+	off := e.body()
+	off["grants"].([]map[string]any)[0]["require_watcher"] = false
+	if code, out := e.do("POST", "/api/v1/access-policies", off); code != 201 {
+		t.Fatalf("require_watcher false: %d %v", code, out)
+	} else if strings.Contains(fmt.Sprint(out), "require_watcher") {
+		t.Fatalf("the policy still names four eyes: %v", out)
+	} else if code, _ := e.do("DELETE", "/api/v1/access-policies/"+out["id"].(string), nil); code != 204 && code != 200 {
+		t.Fatalf("delete: %d", code)
 	}
 
 	// An edit may not bring a grant id of its own invention.

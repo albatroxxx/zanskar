@@ -30,7 +30,8 @@ const (
 	// while the session ran (ADR 0013).
 	EndTrustLost = "trust_lost"
 	// EndNoWatcher: a session held for a second person (four eyes, ADR
-	// 0042) that nobody watched in time.
+	// 0042) that nobody watched in time. No longer given: four eyes was
+	// removed in 1.16.0; kept for the sessions 1.15.0 ended so.
 	EndNoWatcher = "no_watcher"
 )
 

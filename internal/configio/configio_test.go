@@ -102,6 +102,7 @@ func (g *gw) do(t *testing.T, method, path string, body []byte) (int, []byte) {
 	return rr.Code, rr.Body.Bytes()
 }
 
+//nolint:unparam // every call so far posts; the method stays for the next that does not
 func (g *gw) json(t *testing.T, method, path string, v any) map[string]any {
 	t.Helper()
 	b, _ := json.Marshal(v)
@@ -129,14 +130,14 @@ func TestExportImportRoundTrip(t *testing.T) {
 	web := a.json(t, "POST", "/api/v1/targets", map[string]any{"name": "web-1", "address": "10.0.0.5", "os_family": "linux",
 		"tags": map[string]string{"env": "prod"}, "credentials": map[string]string{"ssh": credID}})
 	a.json(t, "POST", "/api/v1/access-policies", map[string]any{"name": "ops-web", "subjects": []map[string]string{{"kind": "group", "id": grp["id"].(string)}},
-		"grants": []map[string]any{{"kind": "host", "targets": []map[string]any{{"id": web["id"], "protocols": []string{"ssh"}}}, "require_watcher": true}}})
+		"grants": []map[string]any{{"kind": "host", "targets": []map[string]any{{"id": web["id"], "protocols": []string{"ssh"}}}, "allow_clipboard": true}}})
 
 	code, file := a.do(t, "GET", "/api/v1/admin/config/export", nil)
 	if code != 200 {
 		t.Fatalf("export: %d %s", code, file)
 	}
 	text := string(file)
-	for _, want := range []string{"zanskar: 1", "name: ops", "- ann", "name: web-1", "ssh: linux-key", "env: prod", "name: ops-web", "group: ops", "name: web-1", "require_watcher: true"} {
+	for _, want := range []string{"zanskar: 1", "name: ops", "- ann", "name: web-1", "ssh: linux-key", "env: prod", "name: ops-web", "group: ops", "name: web-1", "allow_clipboard: true"} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("the export lacks %q:\n%s", want, text)
 		}
@@ -206,6 +207,31 @@ func TestImportRefusals(t *testing.T) {
 	g.srv.ServeHTTP(rr, req)
 	if rr.Code != 403 {
 		t.Fatalf("a user exported the configuration: %d", rr.Code)
+	}
+}
+
+// A file from 1.15.0 asking for a second person watching is refused with
+// the reason: four eyes was removed in 1.16.0, and a control asked for must
+// not be dropped in silence. Without it, the same policy goes in.
+func TestImportRefusesFourEyes(t *testing.T) {
+	g := newGW(t)
+	g.json(t, "POST", "/api/v1/groups", map[string]any{"name": "ops"})
+	file := func(watch bool) []byte {
+		w := ""
+		if watch {
+			w = "\n        require_watcher: true"
+		}
+		return []byte("zanskar: 1\npolicies:\n  - name: prod\n    enabled: true\n    subjects: [{group: ops}]\n    grants:\n      - kind: host\n        tags: {match: {env: [prod]}, protocols: [ssh]}" + w + "\n")
+	}
+	code, out := g.do(t, "POST", "/api/v1/admin/config/import?apply=true", file(true))
+	if code != 422 || !strings.Contains(string(out), "four eyes") || !strings.Contains(string(out), "removed in 1.16.0") {
+		t.Fatalf("four eyes asked for: %d %s", code, out)
+	}
+	if count(t, g.db, "access_policies") != 0 {
+		t.Fatal("a refused import made the policy")
+	}
+	if code, out := g.do(t, "POST", "/api/v1/admin/config/import?apply=true", file(false)); code != 200 {
+		t.Fatalf("without it: %d %s", code, out)
 	}
 }
 

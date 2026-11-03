@@ -94,6 +94,9 @@ export function ConsoleCLI() {
   const [afterUnlock, setAfterUnlock] = useState<string | null>(null)
   const [code, setCode] = useState('')
   const [codeError, setCodeError] = useState('')
+  // Why the code is asked again, on the card that asks for it: a command
+  // that needs a code from the last 5 minutes (2026-11-03, idea 3).
+  const [codeWhy, setCodeWhy] = useState('')
   const [height, setHeight] = useState(() => load(() => localStorage, HEIGHT_KEY, 420))
   const [maximised, setMaximised] = useState(() => load(() => localStorage, MAX_KEY, false))
   const history = useRef<string[]>(load(() => sessionStorage, HISTORY_KEY, []))
@@ -152,10 +155,16 @@ export function ConsoleCLI() {
       append(reply.lines)
       setConfirm(reply.status === 'confirm' && reply.expect ? { line, expect: reply.expect } : null)
     } catch (err) {
-      if (err instanceof ApiError && err.code === 'cli_code_required') {
+      if (err instanceof ApiError && (err.code === 'cli_code_required' || err.code === 'cli_fresh_code_required')) {
         setAfterUnlock(confirmWord === undefined ? line : null)
         setState((s) => (s ? { ...s, unlocked: false } : s))
-        append([{ text: 'The command line closed after a while without use. Enter a fresh code to go on.', style: 'muted' }])
+        const fresh = err.code === 'cli_fresh_code_required'
+        setCodeWhy(fresh ? 'This command asks for a code from the last 5 minutes. Enter one; it runs again.' : '')
+        append([
+          fresh
+            ? { text: 'A newer code was asked for.', style: 'muted' }
+            : { text: 'The command line closed after a while without use. Enter a fresh code to go on.', style: 'muted' },
+        ])
       } else if (err instanceof ApiError && err.code === 'cli_locked') {
         // Closed after too many wrong codes: the code form shows why, so the
         // admin is not just asked for a code the gateway would refuse.
@@ -224,6 +233,7 @@ export function ConsoleCLI() {
     try {
       await api.post('/admin/cli/unlock', { code: code.trim() })
       setCode('')
+      setCodeWhy('')
       setState((s) => (s ? { ...s, unlocked: true } : s))
       const again = afterUnlock
       setAfterUnlock(null)
@@ -372,7 +382,7 @@ export function ConsoleCLI() {
               {state.mfa_enrolled ? (
                 <form className="cli-card" onSubmit={(e) => void unlock(e)}>
                   <h3>Confirm it's you</h3>
-                  <p>Enter a code from your authenticator.</p>
+                  <p>{codeWhy || 'Enter a code from your authenticator.'}</p>
                   <label htmlFor="cli-code">Authenticator code</label>
                   <input
                     id="cli-code"

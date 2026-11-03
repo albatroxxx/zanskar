@@ -20,15 +20,34 @@ interface CommandHit {
   command: string
 }
 
+/** A printed line a search found (GET /recordings/search?in=output). */
+interface OutputHit {
+  recording_id: string
+  session_id: string
+  username?: string
+  target_name?: string
+  protocol: string
+  started_at: string
+  at_ms: number
+  line: string
+  /** The last command typed before the line was printed. */
+  after?: string
+}
+
+/** when is a hit's moment: its session's start plus its offset. */
+const when = (h: { started_at: string; at_ms: number }) => fmtTime(new Date(Date.parse(h.started_at) + h.at_ms).toISOString())
+
 /**
  * CommandSearch finds a command across every terminal recording still kept
- * (2026-11-03, idea 5): "who ran systemctl stop nginx?" Each hit opens the
- * recording at that command. A search reads recordings' content and is
- * logged with its term.
+ * (2026-11-03, idea 5): "who ran systemctl stop nginx?", or, in Output, what
+ * a session printed: "where did bind() to 0.0.0.0:443 fail?". Each hit opens
+ * the recording at that command or line. A search reads recordings' content
+ * and is logged with its term.
  */
 function CommandSearch({ recordingsPath }: { recordingsPath: string }) {
   const [q, setQ] = useState('')
-  const [hits, setHits] = useState<CommandHit[] | null>(null)
+  const [scope, setScope] = useState<'commands' | 'output'>('commands')
+  const [hits, setHits] = useState<{ scope: 'commands'; items: CommandHit[] } | { scope: 'output'; items: OutputHit[] } | null>(null)
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState('')
   const search = async (e: FormEvent) => {
@@ -37,9 +56,15 @@ function CommandSearch({ recordingsPath }: { recordingsPath: string }) {
     setBusy(true)
     setErr('')
     try {
-      const r = await api.get<{ items: CommandHit[] }>('/recordings/search' + query({ q: q.trim() }))
-      setHits(r.items ?? [])
+      if (scope === 'output') {
+        const r = await api.get<{ items: OutputHit[] }>('/recordings/search' + query({ q: q.trim(), in: 'output' }))
+        setHits({ scope, items: r.items ?? [] })
+      } else {
+        const r = await api.get<{ items: CommandHit[] }>('/recordings/search' + query({ q: q.trim() }))
+        setHits({ scope, items: r.items ?? [] })
+      }
     } catch (e2) {
+      setHits(null)
       setErr(errorMessage(e2))
     } finally {
       setBusy(false)
@@ -48,12 +73,55 @@ function CommandSearch({ recordingsPath }: { recordingsPath: string }) {
   return (
     <div className="card">
       <form className="actions" onSubmit={search}>
-        <input className="mono filter-control" style={{ minWidth: 280 }} placeholder="find a command, e.g. systemctl stop" aria-label="Find a command" value={q} onChange={(e) => setQ(e.target.value)} maxLength={200} />
+        <select className="filter-control" aria-label="Search in" value={scope} onChange={(e) => setScope(e.target.value as 'commands' | 'output')}>
+          <option value="commands">Commands</option>
+          <option value="output">Output</option>
+        </select>
+        <input
+          className="mono filter-control"
+          style={{ minWidth: 280 }}
+          placeholder={scope === 'output' ? 'find printed text, e.g. permission denied' : 'find a command, e.g. systemctl stop'}
+          aria-label={scope === 'output' ? 'Find printed text' : 'Find a command'}
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
+          maxLength={200}
+        />
         <button type="submit" className="btn sm" disabled={busy || q.trim().length < 2}>{busy ? 'Searching…' : 'Find'}</button>
         <span className="muted">Terminal sessions; searches are logged.</span>
       </form>
       {err && <Alert tone="danger">{err}</Alert>}
-      {hits !== null && (hits.length === 0 ? (
+      {hits?.scope === 'output' && (hits.items.length === 0 ? (
+        <p className="muted">No output matches.</p>
+      ) : (
+        <table className="command-hits">
+          <thead>
+            <tr>
+              <th>When</th>
+              <th>User</th>
+              <th>Machine</th>
+              <th>Printed</th>
+              <th><span className="sr-only">Actions</span></th>
+            </tr>
+          </thead>
+          <tbody>
+            {hits.items.map((h) => (
+              <tr key={`${h.recording_id}:${h.at_ms}:${h.line}`}>
+                <td style={{ whiteSpace: 'nowrap' }}>{when(h)}</td>
+                <td>{h.username}</td>
+                <td>{h.target_name}</td>
+                <td>
+                  <div className="mono">{h.line}</div>
+                  {h.after && <div className="muted mono hit-after">after {h.after}</div>}
+                </td>
+                <td>
+                  <TabLink className="btn sm" to={`${recordingsPath}/${encodeURIComponent(h.recording_id)}?at=${h.at_ms}`} label="Review" />
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      ))}
+      {hits?.scope === 'commands' && (hits.items.length === 0 ? (
         <p className="muted">No command matches.</p>
       ) : (
         <table className="command-hits">
@@ -67,9 +135,9 @@ function CommandSearch({ recordingsPath }: { recordingsPath: string }) {
             </tr>
           </thead>
           <tbody>
-            {hits.map((h) => (
+            {hits.items.map((h) => (
               <tr key={`${h.recording_id}:${h.seq}`}>
-                <td style={{ whiteSpace: 'nowrap' }}>{fmtTime(new Date(Date.parse(h.started_at) + h.at_ms).toISOString())}</td>
+                <td style={{ whiteSpace: 'nowrap' }}>{when(h)}</td>
                 <td>{h.username}</td>
                 <td>{h.target_name}</td>
                 <td className="mono">{h.command}</td>

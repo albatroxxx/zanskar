@@ -39,6 +39,9 @@ type env struct {
 	audit    *audit.Log
 	ids      map[string]string // username -> user id
 	login    func(name string, roles ...user.Role) (*http.Cookie, string)
+	h        *Handler
+	sessions *auth.Sessions
+	sessIDs  map[string]string // username -> session id
 }
 
 // newEnv wires the handler behind the real auth middleware with one
@@ -60,7 +63,8 @@ func newEnv(t *testing.T) *env {
 	mux := http.NewServeMux()
 	h.Register(mux)
 	mw := &auth.Middleware{Sessions: sessions, Users: users, Log: log}
-	e := &env{srv: mw.Authenticate(mw.CSRF(mux)), requests: requests, policies: policies, revoker: revoker, audit: auditLog, ids: map[string]string{}}
+	e := &env{srv: mw.Authenticate(mw.CSRF(mux)), requests: requests, policies: policies, revoker: revoker, audit: auditLog, ids: map[string]string{},
+		h: h, sessions: sessions, sessIDs: map[string]string{}}
 
 	login := func(name string, roles ...user.Role) (*http.Cookie, string) {
 		u := &user.User{Username: name, DisplayName: name, Roles: roles}
@@ -72,6 +76,7 @@ func newEnv(t *testing.T) *env {
 		if err != nil {
 			t.Fatal(err)
 		}
+		e.sessIDs[name] = sess.ID
 		if name == "alice" {
 			most := 120
 			// Eligibility comes through tag rules, one per kind (ADR 0036),

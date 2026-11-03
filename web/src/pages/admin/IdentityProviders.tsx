@@ -3,6 +3,8 @@ import { api, errorMessage } from '../../api/client'
 import { fmtTime } from '../../api/format'
 import type { Group, Page, Role } from '../../api/types'
 import { useSubmit } from '../../components/submit'
+import { RolePicker } from '../../components/RolePicker'
+import { normalizeRoles } from '../../api/roles'
 import { Alert, Badge, Confirm, Empty, Field, Loading, Modal, PageHead, RemoveButton } from '../../components/ui'
 import { useList } from './lib'
 import { mappingRows, rowsToMapping, type MappingRow } from './groupMapping'
@@ -106,7 +108,6 @@ function arrivalOf(c?: IdPConfig): Arrival {
   return c?.scim ? 'scim' : c?.sync_users ? 'list' : 'signin'
 }
 
-const roleOptions: Role[] = ['user', 'auditor', 'admin']
 
 function csv(v?: string[]): string {
   return (v ?? []).join(', ')
@@ -397,7 +398,7 @@ function ProviderModal({ existing, onClose, onSaved, onDeleted }: { existing: Pr
   const [autoProvision, setAutoProvision] = useState(existing?.config?.auto_provision ?? true)
   const [arrival, setArrival] = useState<Arrival>(arrivalOf(existing?.config))
   const [syncMinutes, setSyncMinutes] = useState(String(existing?.config?.sync_minutes || 15))
-  const [roles, setRoles] = useState<Role[]>(existing?.config?.default_roles ?? ['user'])
+  const [roles, setRoles] = useState<Role[]>(normalizeRoles(existing?.config?.default_roles ?? ['user']))
   const [mapping, setMapping] = useState<MappingRow[]>(mappingRows(existing?.config?.group_mapping))
   const [oidc, setOidc] = useState<OIDCConfig>(existing?.config?.oidc ?? {})
   const [ldap, setLdap] = useState<LDAPConfig>(existing?.config?.ldap ?? {})
@@ -418,7 +419,7 @@ function ProviderModal({ existing, onClose, onSaved, onDeleted }: { existing: Pr
         setAutoProvision(p.config?.auto_provision ?? true)
         setArrival(arrivalOf(p.config))
         setSyncMinutes(String(p.config?.sync_minutes || 15))
-        setRoles(p.config?.default_roles ?? ['user'])
+        setRoles(normalizeRoles(p.config?.default_roles ?? ['user']))
         setMapping(mappingRows(p.config?.group_mapping))
         setOidc(p.config?.oidc ?? {})
         setLdap(p.config?.ldap ?? {})
@@ -429,7 +430,6 @@ function ProviderModal({ existing, onClose, onSaved, onDeleted }: { existing: Pr
     api.get<Page<Group>>('/groups').then((g) => setGroups(g.items ?? [])).catch(() => {})
   }, [existing, setLocalErr])
 
-  const toggleRole = (r: Role) => setRoles((cur) => (cur.includes(r) ? cur.filter((x) => x !== r) : [...cur, r]))
 
   const build = (): { body?: Record<string, unknown>; error?: string } => {
     if (!name.trim()) return { error: 'name is required' }
@@ -563,13 +563,7 @@ function ProviderModal({ existing, onClose, onSaved, onDeleted }: { existing: Pr
         )}
         {arrival === 'scim' && (existing ? <SCIMSetup provider={loaded ?? existing} /> : <p className="hint">Save the provider, then make its SCIM token here.</p>)}
         <Field label="Default roles for provisioned users">
-          <div className="actions">
-            {roleOptions.map((r) => (
-              <label key={r} style={{ display: 'inline-flex', gap: 4, alignItems: 'center' }}>
-                <input type="checkbox" checked={roles.includes(r)} onChange={() => toggleRole(r)} /> {r}
-              </label>
-            ))}
-          </div>
+          <RolePicker value={roles} onChange={setRoles} idPrefix="idp" />
         </Field>
         <Field label="Group mapping" hint={type === 'ldap' ? "Use the group's full DN; a plain name matches that name in any OU." : undefined}>
           <GroupMappingEditor rows={mapping} groups={groups} onChange={setMapping} placeholder={type === 'ldap' ? 'cn=ops,ou=groups,dc=…' : 'ops-team'} />

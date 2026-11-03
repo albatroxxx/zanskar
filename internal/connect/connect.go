@@ -463,12 +463,6 @@ func (h *Handler) issueTicket(ctx context.Context, p *auth.Principal, ip string,
 	if err != nil || code != "" {
 		return nil, code, msg, err
 	}
-	// Four eyes (ADR 0042) holds a terminal session until someone watches
-	// it; a session of any other kind cannot be held that way, so it is
-	// refused rather than run unwatched.
-	if d.RequireWatcher && !protocol.Terminal(string(proto)) {
-		return nil, "watcher_unavailable", "this access needs a second person watching, which the gateway offers for terminal sessions (SSH, the WinRM console); ask an administrator", nil
-	}
 	switch proto {
 	case target.SSH:
 		if !ep.HostKeyTrusted || ep.HostKeyFingerprint == "" {
@@ -528,7 +522,7 @@ func (h *Handler) issueTicket(ctx context.Context, p *auth.Principal, ip string,
 		Protocol: string(proto), CredentialID: credID, PolicyID: d.Policy.ID,
 		IdleTimeout: d.IdleTimeout, MaxSession: d.MaxSession, RetentionDays: retentionDays(ep, d),
 		AllowClipboard: d.AllowClipboard, AllowFileTransfer: d.AllowFileTransfer, AllowDevTools: d.AllowDevTools,
-		RequireWatcher: d.RequireWatcher, ClientIP: ip, FailoverFrom: failoverFrom,
+		ClientIP: ip, FailoverFrom: failoverFrom,
 	}
 	switch cred.Mode {
 	case credential.ModeVaulted:
@@ -594,7 +588,7 @@ func (h *Handler) issueCredentialless(p *auth.Principal, ep *endpoint, proto tar
 		Protocol: string(proto), PolicyID: d.Policy.ID,
 		IdleTimeout: d.IdleTimeout, MaxSession: d.MaxSession, RetentionDays: retentionDays(ep, d),
 		AllowClipboard: d.AllowClipboard, AllowFileTransfer: d.AllowFileTransfer, AllowDevTools: d.AllowDevTools,
-		RequireWatcher: d.RequireWatcher, ClientIP: ip, FailoverFrom: failoverFrom,
+		ClientIP: ip, FailoverFrom: failoverFrom,
 	}
 	tok, err := h.Tickets.Issue(grant)
 	if err != nil {
@@ -782,9 +776,6 @@ func (h *Handler) terminal(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, done := run.live()
 	defer done()
-	if !run.awaitWatcher(ctx, rec, recRow) {
-		return
-	}
 
 	lim := sshgw.Limits{Idle: g.IdleTimeout, Max: g.MaxSession, SessionID: run.s.ID, AllowFiles: g.AllowFileTransfer}
 	// The registry made the tap that shadowing watchers subscribe to (ADR

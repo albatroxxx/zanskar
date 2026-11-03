@@ -39,11 +39,7 @@ type Live struct {
 	// GuacID is the guacd connection id of a desktop session, set by the
 	// desktop bridge via SetGuacID so a watcher can join it read-only.
 	GuacID string
-	// watchers counts who watches the session, by user (ADR 0042); watched
-	// closes when someone other than its owner first does.
-	watchers map[string]int
-	watched  chan struct{}
-	cancel   context.CancelCauseFunc
+	cancel context.CancelCauseFunc
 	// ended is set by the first terminate, so two changes that withdraw
 	// the same session at once count it once between them.
 	ended bool
@@ -119,7 +115,6 @@ func (r *Registry) Add(parent context.Context, l Live) context.Context {
 	if l.Tap == nil && protocol.Terminal(l.Protocol) {
 		l.Tap = NewTap()
 	}
-	l.watchers, l.watched = map[string]int{}, make(chan struct{})
 	r.mu.Lock()
 	r.live[l.SessionID] = &l
 	r.mu.Unlock()
@@ -146,67 +141,6 @@ func (r *Registry) Get(sessionID string) (Live, bool) {
 		return Live{}, false
 	}
 	return *l, true
-}
-
-// Watch records watcherID starting (delta +1) or stopping (-1) to watch a
-// live session (ADR 0042). The first watcher who is not the session's owner
-// releases a session held for one; an owner watching themself counts for
-// nothing.
-func (r *Registry) Watch(sessionID, watcherID string, delta int) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	l, ok := r.live[sessionID]
-	if !ok || watcherID == "" || watcherID == l.UserID {
-		return
-	}
-	l.watchers[watcherID] += delta
-	if l.watchers[watcherID] <= 0 {
-		delete(l.watchers, watcherID)
-	}
-	if len(l.watchers) > 0 {
-		select {
-		case <-l.watched:
-		default:
-			close(l.watched)
-		}
-	}
-}
-
-// Watched reports whether someone other than its owner watches the session.
-func (r *Registry) Watched(sessionID string) bool {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	l, ok := r.live[sessionID]
-	return ok && len(l.watchers) > 0
-}
-
-// ErrNoWatcher is a session held for a second person that nobody watched in
-// time (ADR 0042).
-var ErrNoWatcher = errors.New("no second person watched the session in time")
-
-// AwaitWatcher holds until someone other than the session's owner watches
-// it, wait passes (ErrNoWatcher), or ctx ends (its cause).
-func (r *Registry) AwaitWatcher(ctx context.Context, sessionID string, wait time.Duration) error {
-	r.mu.Lock()
-	l, ok := r.live[sessionID]
-	var ch chan struct{}
-	if ok {
-		ch = l.watched
-	}
-	r.mu.Unlock()
-	if !ok {
-		return errors.New("gateway: session not live")
-	}
-	t := time.NewTimer(wait)
-	defer t.Stop()
-	select {
-	case <-ch:
-		return nil
-	case <-t.C:
-		return ErrNoWatcher
-	case <-ctx.Done():
-		return context.Cause(ctx)
-	}
 }
 
 // Tap returns the output tap of a live terminal session, or nil.

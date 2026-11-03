@@ -1,4 +1,5 @@
 import { cleanup, render, screen } from '@testing-library/react'
+import { MemoryRouter } from 'react-router-dom'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { ApiError, api } from '../../api/client'
 import { Approvals } from './Approvals'
@@ -18,7 +19,7 @@ describe('Approvals, when a list cannot be read', () => {
       if (path.includes('status=approved')) throw locked()
       return { items: [] } as never
     })
-    render(<Approvals />)
+    render(<MemoryRouter><Approvals /></MemoryRouter>)
 
     expect(await screen.findByText('No requests are waiting.')).toBeDefined()
     expect(screen.queryByText('No active grants.')).toBeNull()
@@ -30,7 +31,7 @@ describe('Approvals, when a list cannot be read', () => {
       if (path.includes('status=pending')) throw locked()
       return { items: [] } as never
     })
-    render(<Approvals />)
+    render(<MemoryRouter><Approvals /></MemoryRouter>)
 
     expect(await screen.findByText('No active grants.')).toBeDefined()
     expect(screen.queryByText('Loading…')).toBeNull()

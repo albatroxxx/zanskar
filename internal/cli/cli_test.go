@@ -18,6 +18,7 @@ import (
 
 	"github.com/albatroxxx/zanskar/internal/audit"
 	"github.com/albatroxxx/zanskar/internal/auth"
+	"github.com/albatroxxx/zanskar/internal/httpx"
 	"github.com/albatroxxx/zanskar/internal/policy"
 	"github.com/albatroxxx/zanskar/internal/store/storetest"
 	"github.com/albatroxxx/zanskar/internal/user"
@@ -55,6 +56,9 @@ type env struct {
 	nocsrf  string
 	auditDB *audit.Log
 	verify  string // the fake audit verify reply; guarded by mu
+	// stepUp makes the fake approve answer step_up_required, as the real
+	// one does without a code from the last 5 minutes; guarded by mu.
+	stepUp bool
 }
 
 // newEnv builds the command line over a router whose API routes are fakes
@@ -112,9 +116,21 @@ func (e *env) fakeAPI(mux *http.ServeMux) {
 		{"id":"8b20e4ffcccccccccccccccccccccccc","username":"dave","asg_name":"web-fleet","protocol":"winrm","started_at":"2026-10-05T08:00:00Z"}]}`)
 	reply("POST /api/v1/sessions/{id}/terminate", 200, `{}`)
 	reply("GET /api/v1/access-requests", 200, `{"items":[{"id":"9c1d2e3f0000000000000000000000aa","username":"alice","target_name":"orders-db","protocol":"database","requested_minutes":60,"status":"pending","reason":"INC-4821"}]}`)
-	for _, v := range []string{"approve", "deny", "revoke"} {
+	for _, v := range []string{"deny", "revoke"} {
 		reply("POST /api/v1/access-requests/{id}/"+v, 200, `{}`)
 	}
+	mux.Handle("POST /api/v1/access-requests/{id}/approve", admin(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		e.mu.Lock()
+		e.calls = append(e.calls, r.Method+" "+r.URL.Path)
+		ask := e.stepUp
+		e.mu.Unlock()
+		if ask {
+			httpx.WriteError(w, r, http.StatusForbidden, "step_up_required", "prove your authenticator first: approving access asks for a recent code")
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{}`)
+	})))
 	reply("GET /api/v1/targets", 200, `{"items":[{"id":"t1","name":"web-01","address":"10.0.0.5","os_family":"linux","host_key_status":"trusted","tags":{"env":"prod"}},{"id":"t2","name":"orders-db","address":"db.internal","os_family":"linux","engine":"postgres","tags":{"env":"staging"}}]}`)
 	reply("POST /api/v1/targets/{id}/probe", 200, `{"host_key_fingerprint":"SHA256:abc","capabilities":["ssh"]}`)
 	// Built from the policy package's types (ADR 0036), so the reply has the
@@ -233,6 +249,44 @@ func TestLockedUntilAFreshCode(t *testing.T) {
 	// Not for other roles at all.
 	if code, _ := e.post("/api/v1/admin/cli", map[string]string{"line": "help"}, e.plain, e.pcsrf); code != 403 {
 		t.Fatalf("a non-admin: %d, want 403", code)
+	}
+}
+
+// TestACommandAskingForANewerCodeAsksForIt (2026-11-03, idea 3): approving
+// asks for a code from the last 5 minutes, newer than the command line's
+// own may be; the command line answers so the console asks for a code and
+// runs the line again, rather than printing a refusal nobody can act on.
+func TestACommandAskingForANewerCodeAsksForIt(t *testing.T) {
+	e := newEnv(t)
+	e.unlock()
+	e.mu.Lock()
+	e.stepUp = true
+	e.mu.Unlock()
+	line := "request approve 9c1d2e3f0000000000000000000000aa"
+	code, out := e.post("/api/v1/admin/cli", map[string]string{"line": line}, e.admin, e.csrf)
+	if code != 403 || out["code"] != "cli_fresh_code_required" {
+		t.Fatalf("approve without a recent code: %d %v, want 403 cli_fresh_code_required", code, out)
+	}
+	events, _, err := e.auditDB.List(context.Background(), audit.Filter{Action: audit.CLICommand})
+	if err != nil || len(events) == 0 {
+		t.Fatalf("audit: %v %d", err, len(events))
+	}
+	var details map[string]any
+	_ = json.Unmarshal(events[0].Details, &details)
+	if details["result"] != resultStepUp || events[0].Outcome != audit.Failure {
+		t.Fatalf("the line is recorded as asking for a code: %v %s", details, events[0].Outcome)
+	}
+	// A fresh code, and the line runs again.
+	e.unlock()
+	e.mu.Lock()
+	e.stepUp = false
+	e.mu.Unlock()
+	if status, lines := e.run(line, ""); status != "ok" || !strings.Contains(lines, "Approved") {
+		t.Fatalf("after a fresh code: %s %s", status, lines)
+	}
+	// Any other refusal is printed as before.
+	if status, _ := e.run("status", ""); status != "ok" {
+		t.Fatalf("the command line stays open: %s", status)
 	}
 }
 

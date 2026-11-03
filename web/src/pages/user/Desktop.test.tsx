@@ -166,6 +166,7 @@ describe('Desktop, while connecting', () => {
     act(() => c.onstatechange?.(3))
     expect(screen.queryByRole('status')).toBeNull()
   })
+
 })
 
 // B23: the desktop page's clock kept running after the session ended, and

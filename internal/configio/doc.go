@@ -88,20 +88,22 @@ type TimeWindow struct {
 
 // Grant is one grant of a policy, its targets named.
 type Grant struct {
-	Kind               string        `yaml:"kind"`
-	Targets            []GrantTarget `yaml:"targets,omitempty"`
-	Tags               *TagMatch     `yaml:"tags,omitempty"`
-	Access             string        `yaml:"access,omitempty"`
-	SignIn             string        `yaml:"sign_in,omitempty"`
-	RequireMFA         bool          `yaml:"require_mfa"`
-	AllowClipboard     bool          `yaml:"allow_clipboard,omitempty"`
-	AllowFileTransfer  bool          `yaml:"allow_file_transfer,omitempty"`
-	AllowDevTools      bool          `yaml:"allow_devtools,omitempty"`
-	RequireWatcher     bool          `yaml:"require_watcher,omitempty"`
-	IdleTimeoutMinutes int           `yaml:"idle_timeout_minutes,omitempty"`
-	MaxSessionMinutes  *int          `yaml:"max_session_minutes,omitempty"`
-	TimeWindows        []TimeWindow  `yaml:"time_windows,omitempty"`
-	RetentionDays      *int          `yaml:"retention_days,omitempty"`
+	Kind              string        `yaml:"kind"`
+	Targets           []GrantTarget `yaml:"targets,omitempty"`
+	Tags              *TagMatch     `yaml:"tags,omitempty"`
+	Access            string        `yaml:"access,omitempty"`
+	SignIn            string        `yaml:"sign_in,omitempty"`
+	RequireMFA        bool          `yaml:"require_mfa"`
+	AllowClipboard    bool          `yaml:"allow_clipboard,omitempty"`
+	AllowFileTransfer bool          `yaml:"allow_file_transfer,omitempty"`
+	AllowDevTools     bool          `yaml:"allow_devtools,omitempty"`
+	// RequireWatcher is read only to refuse it: four eyes was removed in
+	// 1.16.0, and a file from 1.15.0 may still ask for it.
+	RequireWatcher     bool         `yaml:"require_watcher,omitempty"`
+	IdleTimeoutMinutes int          `yaml:"idle_timeout_minutes,omitempty"`
+	MaxSessionMinutes  *int         `yaml:"max_session_minutes,omitempty"`
+	TimeWindows        []TimeWindow `yaml:"time_windows,omitempty"`
+	RetentionDays      *int         `yaml:"retention_days,omitempty"`
 }
 
 // Policy is an audience and its grants (ADR 0036).

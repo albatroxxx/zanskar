@@ -4,6 +4,7 @@ package auth
 
 import (
 	"context"
+	"encoding/json"
 	"log/slog"
 	"net/http"
 	"time"
@@ -49,6 +50,11 @@ func (rc Recorder) Record(r *http.Request, e audit.Event) {
 	if rc.Audit == nil {
 		return
 	}
+	// A change made with an API token names the token beside its owner
+	// (ADR 0044).
+	if p, ok := FromContext(r.Context()); ok && p.TokenID != "" {
+		e.Details = withDetail(e.Details, "api_token", p.TokenID)
+	}
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), recordTimeout)
 	defer cancel()
 	if _, err := rc.Audit.Record(ctx, e); err != nil {
@@ -58,4 +64,21 @@ func (rc Recorder) Record(r *http.Request, e audit.Event) {
 		}
 		log.Error("audit record failed", "action", e.Action, "route", httpx.Route(r), "err", err)
 	}
+}
+
+// withDetail sets key to value in an event's details, a JSON object or none.
+// Details that are not an object are kept as they are.
+func withDetail(details json.RawMessage, key string, value any) json.RawMessage {
+	m := map[string]any{}
+	if len(details) > 0 {
+		if err := json.Unmarshal(details, &m); err != nil || m == nil {
+			return details
+		}
+	}
+	m[key] = value
+	b, err := json.Marshal(m)
+	if err != nil {
+		return details
+	}
+	return b
 }

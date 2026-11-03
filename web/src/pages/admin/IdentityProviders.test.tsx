@@ -86,7 +86,7 @@ describe('Adding a provider', () => {
     expect(post.mock.calls[0]).toEqual(['/identity-providers', {
       name: 'Okta', type: 'oidc', enabled: true,
       config: {
-        default_roles: ['user', 'auditor'],
+        default_roles: ['auditor', 'user'],
         group_mapping: { 'ops-team': 'g1', 'cn=dba,ou=groups,dc=corp': 'g1' },
         auto_provision: true,
         oidc: { issuer: 'https://login.example.com', client_id: 'zanskar', client_secret: 's3cr3t', scopes: ['openid', 'email', 'groups'], allowed_domains: ['example.com'], zanskar_mfa: true },

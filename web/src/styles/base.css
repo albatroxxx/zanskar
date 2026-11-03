@@ -30,6 +30,9 @@ h1 { font-size: 1.45rem; font-weight: 700; letter-spacing: -0.02em; }
 h2 { font-size: 1.05rem; }
 code, .mono { font-family: var(--mono); font-size: 0.86em; }
 button, input, select, textarea { font: inherit; color: inherit; }
+/* Checkboxes and radios in the console's accent, not the browser's own blue
+   (2026-11-03: the role checks in Users & groups were system blue). */
+input[type="checkbox"], input[type="radio"] { accent-color: var(--accent); }
 :focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
 
 /* layout */
@@ -294,6 +297,17 @@ td.actions > * + * { margin-left: 8px; }
 .end-detail { margin-top: 4px; font-size: 0.82rem; color: var(--fg-muted); max-width: 42ch; overflow-wrap: anywhere; }
 /* Under a disk the gateway is refusing sessions for (idea 8). */
 .disk-refusing { color: var(--danger); font-weight: 500; margin-top: 2px; }
+/* A new API token's secret, shown once. */
+.token-secret { margin-top: 6px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.token-secret code { overflow-wrap: anywhere; }
+/* The command a printed line followed, under it in an output search. */
+.hit-after { margin-top: 2px; font-size: 0.8rem; }
+/* The row a notification's link opened. */
+tr[aria-current="true"] td { background: var(--accent-soft); }
+/* The way out of a filling recordings disk, under its gauge. */
+.disk-out { margin-top: 2px; }
+.disk-out > button { padding: 0; border: 0; background: none; color: var(--accent); font: inherit; cursor: pointer; }
+.disk-out > button:hover { color: var(--accent-hover); }
 /* Where an account comes from: an identity provider is outlined, so it never
    reads as one of the filled role badges beside it (2026-10-31). */
 .badge.source-idp { background: transparent; color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
@@ -410,6 +424,7 @@ td.actions > * + * { margin-left: 8px; }
 .sso-btn svg { color: var(--accent); flex: none; }
 .sso-btn:hover { background: var(--bg-sunken); border-color: var(--fg-faint); }
 .sso-btn:active { transform: translateY(1px); }
+.sso-down { margin: -2px 0 2px; font-size: 0.82rem; color: var(--danger); text-align: center; }
 /* Filters a list was opened with, each removable (FilterChips). */
 .filter-chips { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 12px; }
 .chip { display: inline-flex; align-items: center; gap: 8px; padding: 3px 10px; border-radius: 999px; border: 1px solid transparent; background: var(--accent-soft); color: var(--accent); font: inherit; font-size: 0.8rem; font-weight: 500; cursor: pointer; transition: border-color 0.12s ease; }
