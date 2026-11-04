@@ -323,7 +323,12 @@ tr[aria-current="true"] td { background: var(--accent-soft); }
 .badge.danger { background: var(--danger-soft); color: var(--danger); }
 .badge.accent { background: var(--accent-soft); color: var(--accent); }
 .alert { display: flex; align-items: flex-start; gap: 10px; padding: 10px 12px; border-radius: var(--radius); border: 1px solid var(--line); background: var(--bg-sunken); margin-bottom: 12px; }
-.alert-body { flex: 1; min-width: 0; }
+/* A word longer than the box (a path, a hash, a line of JSON) breaks rather
+   than runs past the border (live, 2026-11-04). */
+.alert-body { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.alert-log { margin-top: 8px; }
+.alert-log summary { cursor: pointer; font-size: 0.82rem; user-select: none; }
+.alert-log pre { margin: 6px 0 0; max-height: 14em; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font-family: var(--mono); font-size: 0.74rem; line-height: 1.45; color: var(--fg); background: var(--bg); border: 1px solid var(--line); border-radius: var(--radius); padding: 8px 10px; }
 /* Every notice can be dismissed (2026-11-01): an x in its own colour, at the
    top right, a square to hit. */
 .alert-close { flex: none; display: inline-flex; margin: -3px -5px -3px 0; padding: 3px; border: 0; border-radius: var(--radius); background: none; color: inherit; opacity: 0.7; cursor: pointer; }
@@ -533,7 +538,7 @@ tr[aria-current="true"] td { background: var(--accent-soft); }
 .event-what summary { cursor: pointer; font-size: 0.78rem; color: var(--fg-muted); user-select: none; }
 .event-meta { display: grid; grid-template-columns: auto 1fr; gap: 2px 10px; margin: 6px 0 0; font-size: 0.78rem; }
 .event-meta dt { color: var(--fg-faint); }
-.event-meta dd { margin: 0; color: var(--fg-muted); }
+.event-meta dd { margin: 0; min-width: 0; color: var(--fg-muted); overflow-wrap: anywhere; }
 .event-what pre { margin: 6px 0 0; white-space: pre-wrap; word-break: break-all; max-width: 560px; font-size: 0.78rem; background: var(--bg-sunken); padding: 8px 10px; border-radius: var(--radius); }
 .commands { list-style: none; margin: 0; padding: 0; border: 1px solid var(--line); border-radius: var(--radius); max-height: 340px; overflow-y: auto; }
 .commands li { border-bottom: 1px solid var(--line); }

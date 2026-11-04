@@ -112,11 +112,21 @@ func TestAckConfigResult(t *testing.T) {
 	if len(evs) != 1 || evs[0].Outcome != audit.Success || evs[0].ActorUserID != admin {
 		t.Fatalf("applied audit: %+v", evs)
 	}
-	write(bootedit.Result{ID: "r2", RequestedBy: "not an id; DROP TABLE", State: bootedit.RolledBack, Message: "readyz never answered", At: time.Now()})
+	write(bootedit.Result{ID: "r2", RequestedBy: "not an id; DROP TABLE", State: bootedit.RolledBack, Message: "readyz never answered",
+		Log: `{"level":"INFO","msg":"starting zanskar"}` + "\nerror: listen tcp :80: bind: address already in use", At: time.Now()})
 	AckConfigResult(context.Background(), dir, e.auditLog)
 	evs = e.events(audit.SettingsBootApply)
 	if len(evs) != 2 || evs[0].Outcome != audit.Failure || evs[0].ActorUserID != "" || !strings.Contains(fmt.Sprint(string(evs[0].Details)), "readyz") {
 		t.Fatalf("rolled-back audit: %+v", evs)
+	}
+	// The service's last lines are for the console, folded; the audit
+	// record keeps the message alone (live, 2026-11-04: a kilobyte of JSON
+	// log went into it).
+	if d := string(evs[0].Details); strings.Contains(d, "starting zanskar") || strings.Contains(d, `"log"`) {
+		t.Fatalf("the service's lines went into the audit record: %s", d)
+	}
+	if res, err := readConfigResult(dir); err != nil || !res.Acknowledged || !strings.Contains(res.Log, "address already in use") {
+		t.Fatalf("the acknowledged result lost its lines for the console: %+v, %v", res, err)
 	}
 	write(bootedit.Result{ID: "r3", State: bootedit.Refused, At: time.Now()})
 	AckConfigResult(context.Background(), dir, e.auditLog)

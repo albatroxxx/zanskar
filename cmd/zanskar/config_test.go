@@ -16,6 +16,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/albatroxxx/zanskar/internal/bootedit"
 )
@@ -61,11 +62,28 @@ func result(t *testing.T, state string) bootedit.Result {
 	return r
 }
 
+// liveJournal is the shape of what the service logged on the live gateway
+// on 2026-11-04 when a switch to managed TLS met the proxy still on port 80
+// (addresses and the fingerprint made up): JSON lines, the gateway's own
+// last word, then systemd's. Nine lines, one more than the helper keeps.
+var liveJournal = strings.Join([]string{
+	`{"time":"2026-11-04T05:45:10.21Z","level":"INFO","msg":"database ready","driver":"sqlite"}`,
+	`{"time":"2026-11-04T05:45:10.23965877Z","level":"INFO","msg":"tls certificate","source":"generated","subject":"CN=Zanskar gateway,O=Zanskar self-signed","hosts":["127.0.0.1","203.0.113.10","203-0-113-10.sslip.io","localhost"],"not_after":"2028-10-01T08:10:50Z","sha256":"3c48fcd3c495fe01"}`,
+	`{"time":"2026-11-04T05:45:10.240283283Z","level":"INFO","msg":"recordings storage","backend":"local","dir":"/var/lib/zanskar/recordings"}`,
+	`{"time":"2026-11-04T05:45:10.24071685Z","level":"INFO","msg":"starting zanskar","version":"1.18.1","db_driver":"sqlite","key_version":1,"web_ui":true,"env_file":"/etc/zanskar/env"}`,
+	`{"time":"2026-11-04T05:45:10.242559786Z","level":"INFO","msg":"redirecting plain HTTP to HTTPS","addr":":80"}`,
+	`error: listen tcp :80: bind: address already in use`,
+	`zanskar.service: Main process exited, code=exited, status=1/FAILURE`,
+	`zanskar.service: Failed with result 'exit-code'.`,
+	`zanskar.service: Consumed 633ms CPU time over 3.744s wall clock time, 75.3M memory peak.`,
+}, "\n") + "\n"
+
 // fakeHost records systemctl and answers /readyz as told.
 type fakeHost struct {
 	runs    [][]string
 	healthy bool
 	asked   []string
+	since   []time.Time
 }
 
 func (f *fakeHost) helper(env, state string) *configHelper {
@@ -81,7 +99,10 @@ func (f *fakeHost) helper(env, state string) *configHelper {
 			}
 			return errors.New("connection refused")
 		},
-		Journal: func(context.Context) string { return "listen tcp :443: bind: address already in use" },
+		Journal: func(_ context.Context, since time.Time) string {
+			f.since = append(f.since, since)
+			return liveJournal
+		},
 	}
 }
 
@@ -206,17 +227,32 @@ func TestConfigApplyRollsBack(t *testing.T) {
 	before, _ := os.ReadFile(env)
 	request(t, state, `{"id":"r6","tls_mode":"managed"}`)
 	host := &fakeHost{healthy: false}
+	asked := time.Now()
 	if err := host.helper(env, state).Apply(context.Background()); err != nil {
 		t.Fatal(err)
+	}
+	// Only what this start logged: an earlier failed start's last word must
+	// not be read as this one's.
+	if len(host.since) != 1 || host.since[0].Before(asked) || len(host.runs) == 0 {
+		t.Fatalf("journal read since %v, want once, from the restart on (asked %v)", host.since, asked)
 	}
 	r := result(t, state)
 	if r.State != bootedit.RolledBack || !strings.Contains(r.Message, "the previous file is back") {
 		t.Fatalf("result: %+v", r)
 	}
-	// The cause, in the service's own words, read before the rollback's
-	// restart (2026-11-03: a port the proxy still held).
-	if !strings.Contains(r.Message, "Its last lines: listen tcp :443: bind: address already in use") {
-		t.Fatalf("the message does not carry the service's last lines: %q", r.Message)
+	// The cause, read before the rollback's restart, said as a sentence
+	// (2026-11-03: a port the proxy still held); the lines themselves beside
+	// it, whole, for the console to fold (2026-11-04: a kilobyte of JSON in
+	// the message ran out of the dialog).
+	if want := "the gateway did not start with the new settings: port 80 is in use by another program, such as a proxy in front of the gateway; the previous file is back"; r.Message != want {
+		t.Fatalf("message:\n got %q\nwant %q", r.Message, want)
+	}
+	if strings.Contains(r.Message, "{") || strings.Contains(r.Message, "zanskar.service") {
+		t.Fatalf("the message carries log lines: %q", r.Message)
+	}
+	if !strings.HasPrefix(r.Log, `{"time":"2026-11-04T05:45:10.23965877Z"`) || strings.Contains(r.Log, "database ready") ||
+		!strings.Contains(r.Log, "\nerror: listen tcp :80: bind: address already in use\n") || !strings.HasSuffix(r.Log, "75.3M memory peak.") {
+		t.Fatalf("the lines beside the message, the last eight whole: %q", r.Log)
 	}
 	if after, _ := os.ReadFile(env); string(after) != string(before) {
 		t.Fatalf("the previous file is not back:\n%s", after)
@@ -331,5 +367,54 @@ func TestListensOnLinux(t *testing.T) {
 		if err := listens("/proc", os.Getpid(), port); err == nil {
 			t.Errorf("%s still counted after it closed", l.Addr())
 		}
+	}
+}
+
+// TestStartCause: the cause in the message is the gateway's own last word,
+// a port another program holds said as a sentence, an unknown one as it
+// is (bounded, since the audit record keeps it), and nothing when no line
+// says; the rollback then names what the helper saw instead.
+func TestStartCause(t *testing.T) {
+	for _, c := range []struct {
+		name  string
+		lines []string
+		want  string
+	}{
+		{"port held", strings.Split(strings.TrimSpace(liveJournal), "\n"), "port 80 is in use by another program, such as a proxy in front of the gateway"},
+		{"port held on an address", []string{"error: listen tcp 0.0.0.0:443: bind: address already in use"}, "port 443 is in use by another program, such as a proxy in front of the gateway"},
+		{"the last word wins", []string{"error: first", "x", "error: open /etc/zanskar/tls.key: permission denied", "zanskar.service: Failed"}, "open /etc/zanskar/tls.key: permission denied"},
+		{"no word", []string{`{"level":"INFO","msg":"starting zanskar"}`, "zanskar.service: Failed with result 'exit-code'."}, ""},
+		{"a JSON line naming an error is not the last word", []string{`{"level":"ERROR","msg":"error: x"}`}, ""},
+		{"nothing read", nil, ""},
+	} {
+		if got := startCause(c.lines); got != c.want {
+			t.Errorf("%s: got %q, want %q", c.name, got, c.want)
+		}
+	}
+	long := startCause([]string{"error: " + strings.Repeat("é", 400)})
+	if !strings.HasSuffix(long, "…") || len(long) > causeBytes+len("…") || !utf8.ValidString(long) {
+		t.Errorf("a long cause is not bounded whole: %d bytes, valid %v", len(long), utf8.ValidString(long))
+	}
+}
+
+// TestTailLines: whole lines, the newest kept, blank ones dropped; the
+// oldest go first when the count or the bytes run out; one line longer
+// than the whole allowance is cut at its end, never mid-character.
+func TestTailLines(t *testing.T) {
+	if got := tailLines("a\n\n  \nb\r\nc\n", 8, 100); !slices.Equal(got, []string{"a", "b", "c"}) {
+		t.Errorf("blank lines and line ends: %q", got)
+	}
+	if got := tailLines("1\n2\n3\n4", 2, 100); !slices.Equal(got, []string{"3", "4"}) {
+		t.Errorf("by count: %q", got)
+	}
+	if got := tailLines("aaaa\nbbbb\ncccc", 8, 10); !slices.Equal(got, []string{"bbbb", "cccc"}) {
+		t.Errorf("by bytes, whole lines: %q", got)
+	}
+	got := tailLines("x\n"+strings.Repeat("é", 50), 8, 21)
+	if len(got) != 1 || !strings.HasSuffix(got[0], "…") || !utf8.ValidString(got[0]) || len(got[0]) > 21+len("…") {
+		t.Errorf("one long line: %q", got)
+	}
+	if got := tailLines("", 8, 100); got != nil {
+		t.Errorf("nothing: %q", got)
 	}
 }

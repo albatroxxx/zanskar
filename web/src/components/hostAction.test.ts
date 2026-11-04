@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { SystemStatus, UpdateStatus } from '../api/types'
-import { deadlineFor, doneTitle, initialProgress, observe, poweroffQuietMs, progressWatch, stepLabel, type HostAction, type Progress, type Start } from './hostAction'
+import { deadlineFor, doneTitle, initialProgress, observe, poweroffQuietMs, progressWatch, sentence, stepLabel, type HostAction, type Progress, type Start } from './hostAction'
 
 const t0 = 1_000_000
 const status = (over: Partial<SystemStatus> = {}): SystemStatus =>
@@ -115,10 +115,34 @@ describe('host action progress', () => {
       ['running', 'restart'],
       ['done', 'back'],
     ])
-    expect(observe(s, initialProgress, { at: t0 + 1, status: status({ draining: false }), config: answer('refused') })).toMatchObject({ state: 'failed', message: 'refused because' })
-    expect(observe(s, initialProgress, { at: t0 + 1, status: status({ started_at: 'later' }), config: answer('rolled_back') })).toMatchObject({ state: 'failed', step: 'back', message: 'rolled_back because' })
+    // The helper writes in Go's lower case; the console reads it as a sentence.
+    expect(observe(s, initialProgress, { at: t0 + 1, status: status({ draining: false }), config: answer('refused') })).toMatchObject({ state: 'failed', message: 'Refused because.' })
+    expect(observe(s, initialProgress, { at: t0 + 1, status: status({ started_at: 'later' }), config: answer('rolled_back') })).toMatchObject({ state: 'failed', step: 'back', message: 'Rolled_back because.' })
+    // Live, 2026-11-04: the service's last lines travel beside the cause,
+    // for the dialog to fold, not in the message.
+    const rolled = { ...answer('rolled_back'), message: 'the gateway did not start with the new settings: port 80 is in use; the previous file is back', log: 'line one\nerror: listen tcp :80' }
+    expect(observe(s, initialProgress, { at: t0 + 1, status: status({ started_at: 'later' }), config: rolled })).toEqual({
+      state: 'failed',
+      step: 'back',
+      message: 'The gateway did not start with the new settings: port 80 is in use; the previous file is back.',
+      log: 'line one\nerror: listen tcp :80',
+    })
+    expect(observe(s, initialProgress, { at: t0 + 1, status: status({ started_at: 'later' }), config: { id: 'req-1', state: 'rolled_back', at: 'now' } })).toEqual({
+      state: 'failed',
+      step: 'back',
+      message: 'The gateway did not come back; the previous settings are back.',
+      log: undefined,
+    })
     expect(stepLabel('install', s)).toBe('Applying the settings')
     expect(doneTitle(s)).toBe('Install settings applied')
+  })
+
+  it('reads the helper’s words as a sentence', () => {
+    expect(sentence('cannot read the environment file: x')).toBe('Cannot read the environment file: x.')
+    expect(sentence('Already one.')).toBe('Already one.')
+    expect(sentence('  ends with a question?  ')).toBe('Ends with a question?')
+    expect(sentence('')).toBe('')
+    expect(sentence(undefined)).toBe('')
   })
 
   it('names the steps and the outcome', () => {

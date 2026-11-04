@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -95,8 +96,8 @@ type configHelper struct {
 	// tests; nil is the real thing.
 	Run    func(ctx context.Context, name string, args ...string) error
 	Health func(ctx context.Context, port string) error
-	// Journal stands in for the service's last log lines in tests.
-	Journal func(ctx context.Context) string
+	// Journal stands in for the service's log since a time, in tests.
+	Journal func(ctx context.Context, since time.Time) string
 	// Wait is how long the restarted gateway has to answer; zero is 60 s.
 	Wait time.Duration
 }
@@ -157,6 +158,7 @@ func (h *configHelper) apply(ctx context.Context, req bootedit.Request, perr err
 		return bootedit.Result{State: bootedit.Refused, Message: err.Error()}
 	}
 	syncDir(filepath.Dir(h.Env))
+	restarted := time.Now()
 	if err := h.restartAndWait(ctx, cfg); err != nil {
 		if rerr := writeLike(h.Env, cur, st); rerr != nil {
 			return bootedit.Result{State: bootedit.RolledBack, Changed: names, Message: fmt.Sprintf("the gateway did not come back (%v), and the previous file could not be put back (%v): restore %s from %s by hand", err, rerr, h.Env, previous)}
@@ -165,13 +167,17 @@ func (h *configHelper) apply(ctx context.Context, req bootedit.Request, perr err
 		// process holds, a file it cannot read), read before the rollback's
 		// restart writes over them; the helper itself sees only that nothing
 		// listens (live, 2026-11-03: a switch to managed TLS with the proxy
-		// still on 443 said nothing of the port).
+		// still on 443 said nothing of the port). The message names the
+		// cause alone; the lines go beside it, for the console to fold away,
+		// and never into the audit record (live, 2026-11-04: a kilobyte of
+		// JSON log in the message ran out of the dialog).
+		lines := h.journal(ctx, restarted)
 		msg := fmt.Sprintf("the gateway did not come back with the new settings (%v); the previous file is back", err)
-		if lines := h.journal(ctx); lines != "" {
-			msg += ". Its last lines: " + lines
+		if c := startCause(lines); c != "" {
+			msg = "the gateway did not start with the new settings: " + c + "; the previous file is back"
 		}
 		_ = h.run(ctx, systemctl(), "restart", "zanskar")
-		return bootedit.Result{State: bootedit.RolledBack, Changed: names, Message: msg}
+		return bootedit.Result{State: bootedit.RolledBack, Changed: names, Message: msg, Log: strings.Join(lines, "\n")}
 	}
 	return bootedit.Result{State: bootedit.Applied, Changed: names}
 }
@@ -208,21 +214,82 @@ func (h *configHelper) run(ctx context.Context, name string, args ...string) err
 	return exec.CommandContext(ctx, name, args...).Run() // #nosec G204 -- systemctl with fixed arguments
 }
 
-// journal is what the service last logged, at most a kilobyte of it, or
-// nothing when the journal cannot be read.
-func (h *configHelper) journal(ctx context.Context) string {
+// journalLines and journalBytes bound what the service's last lines may
+// take: whole lines, the oldest dropped first, and a line longer than the
+// whole allowance cut at its end rather than its start.
+const (
+	journalLines = 8
+	journalBytes = 4096
+	causeBytes   = 300
+)
+
+// journal is what the service logged since the restart, its last lines,
+// whole, oldest first, or nothing when the journal cannot be read. Only
+// since: an earlier failed start's last word must not be read as this
+// one's.
+func (h *configHelper) journal(ctx context.Context, since time.Time) []string {
+	var s string
 	if h.Journal != nil {
-		return h.Journal(ctx)
+		s = h.Journal(ctx, since)
+	} else {
+		out, err := exec.CommandContext(ctx, journalctl(), "-u", "zanskar", "--since", "@"+strconv.FormatInt(since.Add(-time.Second).Unix(), 10), "-n", strconv.Itoa(journalLines), "--no-pager", "-o", "cat").Output() // #nosec G204 -- journalctl with fixed arguments
+		if err != nil {
+			return nil
+		}
+		s = string(out)
 	}
-	out, err := exec.CommandContext(ctx, journalctl(), "-u", "zanskar", "-n", "8", "--no-pager", "-o", "cat").Output() // #nosec G204 -- journalctl with fixed arguments
-	if err != nil {
-		return ""
+	return tailLines(s, journalLines, journalBytes)
+}
+
+// tailLines keeps the last n non-empty lines of s that fit in max bytes
+// together, dropping whole lines from the front.
+func tailLines(s string, n, max int) []string {
+	var lines []string
+	for _, l := range strings.Split(s, "\n") {
+		if l = strings.TrimRight(l, "\r \t"); strings.TrimSpace(l) != "" {
+			lines = append(lines, l)
+		}
 	}
-	s := strings.TrimSpace(string(out))
-	if len(s) > 1024 {
-		s = s[len(s)-1024:]
+	if len(lines) > n {
+		lines = lines[len(lines)-n:]
 	}
-	return s
+	size := 0
+	for i := len(lines) - 1; i >= 0; i-- {
+		size += len(lines[i]) + 1
+		if size > max {
+			if i == len(lines)-1 {
+				return []string{strings.ToValidUTF8(lines[i][:max], "") + "…"}
+			}
+			return lines[i+1:]
+		}
+	}
+	return lines
+}
+
+// bindInUse is a listen that failed because another program holds the
+// port, as Go's net package words it.
+var bindInUse = regexp.MustCompile(`listen tcp \S*:(\d+): bind: address already in use`)
+
+// startCause is why the service did not start, from its last lines: the
+// gateway's own last word (main prints "error: …" as it exits), with a port
+// another program holds said as such. "" when no line says.
+func startCause(lines []string) string {
+	for i := len(lines) - 1; i >= 0; i-- {
+		c, ok := strings.CutPrefix(lines[i], "error: ")
+		if !ok {
+			continue
+		}
+		c = strings.TrimSpace(c)
+		if m := bindInUse.FindStringSubmatch(c); m != nil {
+			return "port " + m[1] + " is in use by another program, such as a proxy in front of the gateway"
+		}
+		// The audit record keeps the message: a sentence, not a log.
+		if len(c) > causeBytes {
+			c = strings.ToValidUTF8(c[:causeBytes], "") + "…"
+		}
+		return c
+	}
+	return ""
 }
 
 // journalctl is systemd's journal reader by absolute path, as systemctl is.

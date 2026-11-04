@@ -602,6 +602,8 @@ export interface ConfigResult {
   id: string
   state: 'applied' | 'refused' | 'rolled_back'
   message?: string
+  /** The service's last lines, when it did not come back. */
+  log?: string
   changed?: string[]
   at: string
 }
