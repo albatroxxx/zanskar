@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { useLocation, useSearchParams } from 'react-router-dom'
+import { Link, useLocation, useSearchParams } from 'react-router-dom'
 import { api, errorMessage, query } from '../../api/client'
 import { fmtDuration, fmtTime, protocolName } from '../../api/format'
 import { ranges, sinceFor } from '../../api/ranges'
@@ -114,7 +114,11 @@ export function Sessions() {
           title="Terminate this session?"
           body={
             <div>
-              <p>The user's terminal closes now.</p>
+              {/* Terminate ends the session, not the access (live, 2026-11-04: an
+                  administrator expected the portal to go back to Request). */}
+              <p>
+                The session closes now; access stays. To take it away, revoke the grant under <Link to="/admin/approvals">Approvals</Link> or change the policy.
+              </p>
               <Field label="Reason (optional, recorded in the audit log)">
                 <input id="s-reason" value={reason} onChange={(e) => setReason(e.target.value)} />
               </Field>
