@@ -5,7 +5,9 @@ package group
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
+	"time"
 
 	"github.com/albatroxxx/zanskar/internal/store"
 	"github.com/albatroxxx/zanskar/internal/store/storetest"
@@ -126,17 +128,52 @@ func TestSyncedGroupRejectsManualMembership(t *testing.T) {
 	}
 }
 
-// TestListPagesThroughNamesThatDifferInCase: names are unique as written, so
-// "Ops" and "ops" can both exist, but the list paged by LOWER(name) alone
-// (B6): with the two on either side of a page boundary, the next page began
-// after "ops" and skipped "Ops". Paging by the lower-cased name and then the
-// name itself visits every group exactly once.
-func TestListPagesThroughNamesThatDifferInCase(t *testing.T) {
+// TestNamesDifferingOnlyInCaseAreTheSameName (2026-11-04, live walkthrough):
+// "QA-WALK-GROUP" was made beside "qa-walk-group", two names that read as one
+// to a person picking a group in a policy, while usernames were already
+// case-insensitive. Creating (alone or with members) or renaming into another
+// group's name in another case is a duplicate; changing a group's own name's
+// case is not.
+func TestNamesDifferingOnlyInCaseAreTheSameName(t *testing.T) {
 	ctx := context.Background()
 	r := NewRepo(testDB(t))
+	ops := &Group{Name: "qa-walk-group"}
+	if err := r.Create(ctx, ops); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.Create(ctx, &Group{Name: "QA-WALK-GROUP"}); !errors.Is(err, ErrDuplicate) {
+		t.Fatalf("create in another case: %v", err)
+	}
+	if err := r.CreateWithMembers(ctx, &Group{Name: "Qa-Walk-Group"}, nil); !errors.Is(err, ErrDuplicate) {
+		t.Fatalf("create with members in another case: %v", err)
+	}
+	dev := &Group{Name: "dev"}
+	if err := r.Create(ctx, dev); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.Update(ctx, dev.ID, "QA-walk-GROUP", ""); !errors.Is(err, ErrDuplicate) {
+		t.Fatalf("rename into another case of a name: %v", err)
+	}
+	if err := r.Update(ctx, ops.ID, "QA-Walk-Group", "same group, new case"); err != nil {
+		t.Fatalf("a group may change the case of its own name: %v", err)
+	}
+}
+
+// TestListPagesThroughNamesThatDifferInCase: the schema is unique as written,
+// so a gateway made before names were checked without regard to case may hold
+// "Ops" and "ops" (the repository now refuses a new pair; see
+// TestNamesDifferingOnlyInCaseAreTheSameName). The list paged by LOWER(name)
+// alone (B6): with the two on either side of a page boundary, the next page
+// began after "ops" and skipped "Ops". Paging by the lower-cased name and
+// then the name itself visits every group exactly once.
+func TestListPagesThroughNamesThatDifferInCase(t *testing.T) {
+	ctx := context.Background()
+	db := testDB(t)
+	r := NewRepo(db)
 	want := []string{"alpha", "Ops", "ops", "OPS", "zeta"}
-	for _, n := range want {
-		if err := r.Create(ctx, &Group{Name: n}); err != nil {
+	for i, n := range want {
+		stamp := store.TimeArg(time.Now())
+		if _, err := db.ExecContext(ctx, db.Rebind(`INSERT INTO groups (id, name, description, created_at, updated_at) VALUES (?, ?, '', ?, ?)`), fmt.Sprintf("g%d", i), n, stamp, stamp); err != nil {
 			t.Fatal(err)
 		}
 	}

@@ -204,12 +204,12 @@ export function Dashboard() {
                 label="Standing access without MFA"
                 icon={<TileIcon kind="shield" />}
                 detail={o?.posture && o.posture.standing_no_mfa.grants > 0 ? `in ${o.posture.standing_no_mfa.policies} ${o.posture.standing_no_mfa.policies === 1 ? 'policy' : 'policies'}` : undefined}
-                to="/admin/policies"
+                to={drill.standingNoMFA}
                 tone="danger"
               />
-              <StatTile value={o?.posture ? o.posture.not_enrolled : null} label="No authenticator yet" icon={<TileIcon kind="phone" />} to="/admin/users" tone="warn" />
-              <StatTile value={o?.posture ? o.posture.dormant : null} label="Dormant (90 days)" icon={<TileIcon kind="moon" />} to="/admin/users" tone="warn" />
-              <StatTile value={o?.posture ? o.posture.admins : null} label="Administrators" icon={<TileIcon kind="admin" />} to="/admin/users" />
+              <StatTile value={o?.posture ? o.posture.not_enrolled : null} label="No authenticator yet" icon={<TileIcon kind="phone" />} to={drill.accountsWithoutAuthenticator} tone="warn" />
+              <StatTile value={o?.posture ? o.posture.dormant : null} label="Dormant (90 days)" icon={<TileIcon kind="moon" />} to={drill.dormantAccounts} tone="warn" />
+              <StatTile value={o?.posture ? o.posture.admins : null} label="Administrators" icon={<TileIcon kind="admin" />} to={drill.adminAccounts} />
             </div>
           </section>
         </div>

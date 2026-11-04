@@ -1417,8 +1417,24 @@ paths:
             $ref: "#/components/schemas/Role"
         - name: q
           in: query
+          description: >
+            Words to find, in any case, in the username, display name or email: every word must
+            appear in at least one of them, anywhere in it. The closest matches come first (an exact
+            name, then one that starts with the word, then one where it starts a word, then one that
+            merely contains it). A search is not paged: it returns up to 500 matches and no
+            `next_cursor`, and `limit` and `cursor` do not apply.
           schema:
             type: string
+        - name: posture
+          in: query
+          description: >
+            The accounts a dashboard security-posture count covers, so the list is the set the
+            number counted: `admins` (active, holding admin), `dormant` (active, last sign-in or
+            creation older than 90 days) or `not_enrolled` (active, needs a Zanskar authenticator
+            and has not confirmed one). Combines with `q`. Not paged, like a search.
+          schema:
+            type: string
+            enum: [admins, dormant, not_enrolled]
       responses:
         "200":
           description: Users.

@@ -226,6 +226,15 @@ func TestProbeForbiddenAddressIs422(t *testing.T) {
 	}
 	if code, body := e.do("POST", "/api/v1/targets/"+tg.ID+"/probe", nil, e.admin); code != 422 || body["code"] != "address_forbidden" {
 		t.Fatalf("expected 422 address_forbidden, got %d %v", code, body)
+	} else if msg, _ := body["message"].(string); strings.HasPrefix(msg, "target:") || !strings.Contains(msg, "169.254.169.254") {
+		// 2026-11-04: the person is told the address, not the package ("target: address refused: ...").
+		t.Fatalf("the refusal reads %q", msg)
+	}
+	// The same words when a save is refused.
+	if code, body := e.do("POST", "/api/v1/targets", map[string]any{"name": "meta2", "address": "169.254.169.254", "os_family": "linux"}, e.admin); code != 422 {
+		t.Fatalf("a metadata-address save: %d %v", code, body)
+	} else if msg, _ := body["message"].(string); !strings.HasPrefix(msg, "address refused: 169.254.169.254") {
+		t.Fatalf("the save refusal reads %q", msg)
 	}
 }
 

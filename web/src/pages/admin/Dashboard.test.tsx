@@ -149,13 +149,19 @@ describe('the admin dashboard', () => {
     at('/')
     const tile = async (label: string) => (await screen.findByText(label)).closest('a') as HTMLAnchorElement
     const standing = await tile('Standing access without MFA')
-    expect(standing.getAttribute('href')).toBe('/admin/policies')
+    expect(standing.getAttribute('href')).toBe('/admin/policies?show=standing_no_mfa')
     expect(standing.textContent).toContain('3')
     expect(standing.textContent).toContain('in 2 policies')
     expect(standing.className).toContain('danger')
-    expect((await tile('No authenticator yet')).textContent).toContain('1')
-    expect((await tile('Dormant (90 days)')).textContent).toContain('4')
+    // 2026-11-04: each tile opens the set it counted, not the whole list.
+    const noAuthenticator = await tile('No authenticator yet')
+    expect(noAuthenticator.textContent).toContain('1')
+    expect(noAuthenticator.getAttribute('href')).toBe('/admin/users?posture=not_enrolled')
+    const dormant = await tile('Dormant (90 days)')
+    expect(dormant.textContent).toContain('4')
+    expect(dormant.getAttribute('href')).toBe('/admin/users?posture=dormant')
     const admins = await tile('Administrators')
+    expect(admins.getAttribute('href')).toBe('/admin/users?posture=admins')
     expect(admins.textContent).toContain('2')
     expect(admins.className).not.toContain('warn')
     // 2026-10-31: inventory first, then what needs a decision, what is

@@ -84,7 +84,15 @@ export function PolicyEditor() {
     if (grants.length === 0) return fail('Add a grant')
     const out: PolicyGrant[] = []
     for (const [i, d] of grants.entries()) {
-      const { grant, error } = fromDraft(d, nameOf)
+      const offered = (tid: string): Protocol[] => {
+        if (d.kind === 'autoscaling') {
+          const g = asgs.items?.find((x) => x.id === tid)
+          return g ? chipsFor('autoscaling', g) : []
+        }
+        const t = targets.items?.find((x) => x.id === tid)
+        return t ? chipsFor(d.kind, t) : []
+      }
+      const { grant, error } = fromDraft(d, nameOf, offered)
       if (error || !grant) {
         setOpen((o) => (o.includes(i) ? o : [...o, i]))
         return fail(`Grant ${i + 1}: ${error}`)

@@ -67,11 +67,31 @@ func validName(name string) error {
 	return nil
 }
 
+// nameTaken reports whether another group already has name, whatever its
+// case: usernames are unique that way, and two groups differing only in case
+// (2026-11-04: qa-walk-group and QA-WALK-GROUP) are one name to a person
+// picking one in a policy. The schema's UNIQUE is exact, and a gateway that
+// already holds such a pair could not be given a stricter index, so the rule
+// is the repository's, for the names it is asked to make or change.
+func (r *Repo) nameTaken(ctx context.Context, name, exceptID string) (bool, error) {
+	var one int
+	err := r.db.QueryRowContext(ctx, r.db.Rebind(`SELECT 1 FROM groups WHERE LOWER(name) = LOWER(?) AND id <> ?`), name, exceptID).Scan(&one)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	return err == nil, err
+}
+
 // Create inserts g. ID and timestamps are set.
 func (r *Repo) Create(ctx context.Context, g *Group) error {
 	g.Name = strings.TrimSpace(g.Name)
 	if err := validName(g.Name); err != nil {
 		return err
+	}
+	if taken, err := r.nameTaken(ctx, g.Name, ""); err != nil {
+		return err
+	} else if taken {
+		return ErrDuplicate
 	}
 	now := time.Now().UTC()
 	g.ID = store.NewID()
@@ -96,6 +116,11 @@ func (r *Repo) CreateWithMembers(ctx context.Context, g *Group, userIDs []string
 	g.Name = strings.TrimSpace(g.Name)
 	if err := validName(g.Name); err != nil {
 		return err
+	}
+	if taken, err := r.nameTaken(ctx, g.Name, ""); err != nil {
+		return err
+	} else if taken {
+		return ErrDuplicate
 	}
 	now := time.Now().UTC()
 	g.ID = store.NewID()
@@ -190,6 +215,11 @@ func (r *Repo) Update(ctx context.Context, id, name, description string) error {
 	name = strings.TrimSpace(name)
 	if err := validName(name); err != nil {
 		return err
+	}
+	if taken, err := r.nameTaken(ctx, name, id); err != nil {
+		return err
+	} else if taken {
+		return ErrDuplicate
 	}
 	res, err := r.db.ExecContext(ctx, r.db.Rebind(`UPDATE groups SET name = ?, description = ?, updated_at = ? WHERE id = ?`),
 		name, description, store.TimeArg(time.Now()), id)

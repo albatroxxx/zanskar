@@ -270,9 +270,11 @@ func (r *Repo) List(ctx context.Context, f Filter) ([]*Session, string, error) {
 		q += ` AND s.user_id = ?`
 		args = append(args, f.UserID)
 	}
-	if f.Username != "" {
-		q += ` AND COALESCE(u.username, s.user_username) = ?`
-		args = append(args, strings.ToLower(strings.TrimSpace(f.Username)))
+	// A part of a name finds it, in any case (2026-11-04: the whole name was
+	// needed); the list stays newest first, not ranked.
+	if s, ok := store.NewSearch(f.Username, "COALESCE(u.username, s.user_username)"); ok {
+		q += ` AND ` + s.Where
+		args = append(args, s.WhereArgs...)
 	}
 	if f.TargetID != "" {
 		q += ` AND s.target_id = ?`

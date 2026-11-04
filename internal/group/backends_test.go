@@ -14,8 +14,8 @@ import (
 
 // TestRepoOnEachBackend proves the group repository on both engines: the
 // LOWER()-ordered listing and paging, the members join and the
-// groups-for-user lookup (review Q1, finding 2). Names are unique as written,
-// not case-insensitively; the listing order is what LOWER() decides.
+// groups-for-user lookup (review Q1, finding 2). Names are unique without
+// regard to case (2026-11-04); the listing order is what LOWER() decides.
 func TestRepoOnEachBackend(t *testing.T) {
 	storetest.ForEachBackend(t, func(t *testing.T, db *store.DB) {
 		ctx := context.Background()

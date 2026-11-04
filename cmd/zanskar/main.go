@@ -410,7 +410,7 @@ func serve(ctx context.Context) error {
 		AuthMiddleware: &auth.Middleware{Sessions: sessions, Users: users, Log: log, Tokens: apiTokens},
 		Auth:           authHandler,
 		Handlers: []server.Registrar{
-			&adminapi.AdminHandler{Users: users, Sessions: sessions, TOTP: totp, Revoker: connectHandler, Audit: auditLog, Log: log, ProviderHolds: idpRepo.Holds},
+			&adminapi.AdminHandler{Users: users, Sessions: sessions, TOTP: totp, Revoker: connectHandler, Audit: auditLog, Log: log, ProviderHolds: idpRepo.Holds, MFAOwners: idpRepo.MFAOwners},
 			&group.AdminHandler{Groups: groups, Revoker: connectHandler, Audit: auditLog, Log: log},
 			&notify.Handler{Channels: notifyRepo, Notifier: notifier, Audit: auditLog, Log: log},
 			&apitoken.Handler{Repo: apiTokens, Audit: auditLog, Log: log, MFAEnrolled: totp.Enrolled},

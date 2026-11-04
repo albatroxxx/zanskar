@@ -219,6 +219,16 @@ func TestAuditStillNamesADeletedPerson(t *testing.T) {
 			t.Fatalf("the session list filtered by a deleted name: %+v %v", list, err)
 		}
 
+		// A part of the name, in any case, finds the sessions of a live or a gone account.
+		for _, part := range []string{"ali", "LIC", "alice"} {
+			if list, _, err := r.List(ctx, Filter{Username: part}); err != nil || len(list) != 1 {
+				t.Fatalf("the session list filtered by %q: %+v %v", part, list, err)
+			}
+		}
+		if list, _, err := r.List(ctx, Filter{Username: "zzz"}); err != nil || len(list) != 0 {
+			t.Fatalf("a part nobody has: %+v %v", list, err)
+		}
+
 		// With no event to say, the copy on the person's session names them.
 		if _, err := db.ExecContext(ctx, `DELETE FROM audit_events WHERE object_id = 'u1'`); err != nil {
 			t.Fatal(err)

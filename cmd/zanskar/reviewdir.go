@@ -38,13 +38,19 @@ func (d reviewDirectory) Group(ctx context.Context, id string) (string, []policy
 	if err != nil {
 		return "", nil, err
 	}
-	members, err := d.groups.Members(ctx, id)
+	members, err := d.groups.MemberUsers(ctx, id)
 	if err != nil {
 		return "", nil, err
 	}
-	out := make([]policy.Person, len(members))
-	for i, m := range members {
-		out[i] = policy.Person{UserID: m.UserID, Username: m.Username}
+	// A review-only account (auditor alone) is refused even when a policy
+	// names it (user.CanConnect), so the policy gives it nothing to review:
+	// listing it showed a person who "never used" access they cannot have
+	// (2026-11-04).
+	out := make([]policy.Person, 0, len(members))
+	for _, m := range members {
+		if m.CanConnect() {
+			out = append(out, policy.Person{UserID: m.ID, Username: m.Username})
+		}
 	}
 	return g.Name, out, nil
 }

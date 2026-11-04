@@ -239,11 +239,16 @@ export function toDraft(g: PolicyGrant): GrantDraft {
  * The checks are the server's, made here so the common ones never take a
  * round trip.
  */
-export function fromDraft(d: GrantDraft, nameOf: (id: string) => string): { grant?: PolicyGrant; error?: string } {
+export function fromDraft(d: GrantDraft, nameOf: (id: string) => string, offered?: (id: string) => Protocol[]): { grant?: PolicyGrant; error?: string } {
   const implicit = d.kind === 'database' || d.kind === 'application'
   const targets = Object.entries(d.targets).map(([id, ps]) => ({ id, protocols: implicit ? kindProtocols[d.kind] : ps }))
   for (const t of targets) {
-    if (t.protocols.length === 0) return { error: `${nameOf(t.id)} has no protocol` }
+    if (t.protocols.length === 0) {
+      // A ticked host with several protocols has none picked for the admin
+      // (2026-11-04: "has no protocol" did not say there was a choice).
+      const choices = offered?.(t.id) ?? []
+      return { error: choices.length ? `${nameOf(t.id)}: choose ${choices.map(protocolName).join(' or ')}` : `${nameOf(t.id)} has no protocol` }
+    }
   }
   const { match, error } = rowsToMatch(d.tagRows)
   if (error) return { error }
@@ -299,6 +304,11 @@ export interface Rollup {
   files: number
   ownLogin: number
 }
+
+/** standingNoMFA is what the dashboard's "Standing access without MFA" tile
+ *  counts (policy.Repo.CountStandingNoMFA): an enabled policy with a grant
+ *  that is not approval-gated and does not ask for an authenticator. */
+export const standingNoMFA = (p: Policy) => p.enabled && p.grants.some((g) => g.access !== 'approval' && !g.require_mfa)
 
 export function policyRollup(p: Policy): Rollup {
   const gs = p.grants

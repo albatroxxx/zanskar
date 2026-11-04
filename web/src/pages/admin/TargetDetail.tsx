@@ -207,7 +207,7 @@ export function TargetDetail({ target, credentials, onClose, onChanged, onDelete
         <dt>Status</dt><dd>{t.status}</dd>
         {host && (
           <>
-            <dt>Capabilities</dt><dd>{t.capabilities.length ? t.capabilities.map(protocolName).join(', ') : <span className="muted">unprobed</span>}</dd>
+            <dt>Capabilities</dt><dd>{t.capabilities.length ? t.capabilities.map(protocolName).join(', ') : <span className="muted">{t.last_probed_at ? 'none found' : 'unprobed'}</span>}</dd>
           </>
         )}
         {host && usesHostKey(t) && (

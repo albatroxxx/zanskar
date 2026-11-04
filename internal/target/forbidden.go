@@ -18,6 +18,13 @@ import (
 // connect to; the message says which address and why.
 var ErrAddressForbidden = errors.New("target: address refused")
 
+// addressRefusal is err as the person is told it: without the package's
+// "target: " prefix, which names nothing they know (2026-11-04: "target:
+// address refused: 127.0.0.1 is loopback").
+func addressRefusal(err error) string {
+	return strings.TrimPrefix(err.Error(), "target: ")
+}
+
 // Resolver is the part of *net.Resolver the address rules use, so tests can
 // answer lookups themselves.
 type Resolver interface {

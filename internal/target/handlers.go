@@ -387,7 +387,7 @@ func (h *AdminHandler) probe(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		h.record(r, audit.TargetProbe, t.ID, audit.Failure, map[string]any{"address": t.Address, "error": err.Error()})
 		if errors.Is(err, ErrAddressForbidden) {
-			httpx.WriteError(w, r, http.StatusUnprocessableEntity, "address_forbidden", err.Error())
+			httpx.WriteError(w, r, http.StatusUnprocessableEntity, "address_forbidden", addressRefusal(err))
 			return
 		}
 		httpx.WriteError(w, r, http.StatusBadGateway, "probe_failed", err.Error())
@@ -712,7 +712,7 @@ func (h *AdminHandler) fail(w http.ResponseWriter, r *http.Request, err error) {
 	case errors.Is(err, ErrInvalidCredential):
 		httpx.BadRequest(w, r, "credential does not exist")
 	case errors.Is(err, ErrAddressForbidden):
-		httpx.WriteError(w, r, http.StatusUnprocessableEntity, "address_forbidden", err.Error())
+		httpx.WriteError(w, r, http.StatusUnprocessableEntity, "address_forbidden", addressRefusal(err))
 	case errors.Is(err, ErrFingerprintMismatch):
 		httpx.WriteError(w, r, http.StatusConflict, "fingerprint_mismatch", "the fingerprint does not match the one awaiting trust; probe again and review")
 	case errors.Is(err, ErrNoPendingHostKey):
