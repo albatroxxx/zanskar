@@ -1,6 +1,6 @@
 import { useEffect, useState, type FormEvent } from 'react'
 import { api, errorMessage } from '../../api/client'
-import { accessDrill, expiresSoon } from '../../api/drilldown'
+import { accessDrill, expiresSoon, expiringSoonMs } from '../../api/drilldown'
 import type { AccessRequest, Page, Protocol, ReachableInstance, ReachableTarget, Session } from '../../api/types'
 import { DatabaseIcon, OSIcon, StateIcon } from '../../components/icons'
 import { Alert, Badge, Empty, Field, Loading, Modal, PageHead, StatTile, Tabs, Tags } from '../../components/ui'
@@ -48,12 +48,23 @@ export function Targets() {
   // content reports its own errors.
   const [strip, setStrip] = useState({ open: 0, pending: 0, expiring: 0 })
 
+  // When the grants next change by themselves: the soonest grant's end, or the
+  // moment one starts to count as expiring soon (ms since the epoch).
+  const [nextChange, setNextChange] = useState<number | null>(null)
+
   const loadGrants = () =>
     api
       .get<Page<AccessRequest>>('/me/access')
       .then((p) => {
         setGrants(new Set(p.items.map((g) => `${g.target_id ?? g.asg_id}:${g.protocol}`)))
         setStrip((s) => ({ ...s, expiring: p.items.filter((g) => expiresSoon(g.expires_at)).length }))
+        const now = Date.now()
+        const ends = p.items.flatMap((g) => (g.expires_at ? [new Date(g.expires_at).getTime()] : []))
+        const moments = ends.flatMap((t) => [t, t - expiringSoonMs]).filter((t) => t > now)
+        // A grant the gateway still lists but this browser's clock has seen
+        // end: the clocks differ, so look again shortly rather than never.
+        if (ends.some((t) => t <= now)) moments.push(now + 30_000)
+        setNextChange(moments.length ? Math.min(...moments) : null)
       })
       .catch(() => {})
 
@@ -63,15 +74,44 @@ export function Targets() {
       .then((p) => setStrip((s) => ({ ...s, open: p.items.length })))
       .catch(() => {})
 
-  // A session started from here runs in a tab of its own (ADR 0038), so the
-  // open-sessions count is read again whenever this tab is looked at.
+  const countPending = () =>
+    api
+      .get<Page<AccessRequest>>('/me/access-requests')
+      .then((p) => setStrip((s) => ({ ...s, pending: p.items.filter((r) => r.status === 'pending').length })))
+      .catch(() => {})
+
+  // What a person may open changes while this page stays open: a session
+  // started from here runs and ends in a tab of its own (ADR 0038), an
+  // administrator revokes a grant or decides a request, a grant runs out. So
+  // the grants, the open sessions and the pending requests are read again
+  // whenever this page is looked at again, from another tab or another window
+  // (live, 2026-11-04: a revoked grant still showed RDP and "1 grant expiring
+  // soon" until a reload). Switching tabs fires both events; one read serves.
   useEffect(() => {
+    let last = 0
     const look = () => {
-      if (document.visibilityState === 'visible') void countOpen()
+      if (document.visibilityState !== 'visible' || Date.now() - last < 2000) return
+      last = Date.now()
+      void loadGrants()
+      void countOpen()
+      void countPending()
     }
     document.addEventListener('visibilitychange', look)
-    return () => document.removeEventListener('visibilitychange', look)
+    window.addEventListener('focus', look)
+    return () => {
+      document.removeEventListener('visibilitychange', look)
+      window.removeEventListener('focus', look)
+    }
   }, [])
+
+  // ...and when a grant runs out, or starts to count as expiring soon, with the
+  // page in view: its button goes back to Request at its end, not at a reload.
+  // An hour at most between looks, so a sleeping laptop's clock catches up.
+  useEffect(() => {
+    if (nextChange === null) return
+    const t = window.setTimeout(() => void loadGrants(), Math.min(Math.max(nextChange - Date.now(), 0) + 1000, 60 * 60_000))
+    return () => window.clearTimeout(t)
+  }, [nextChange])
 
   useEffect(() => {
     api
@@ -90,10 +130,7 @@ export function Targets() {
       .catch((e) => setErr(errorMessage(e)))
     void loadGrants()
     void countOpen()
-    api
-      .get<Page<AccessRequest>>('/me/access-requests')
-      .then((p) => setStrip((s) => ({ ...s, pending: p.items.filter((r) => r.status === 'pending').length })))
-      .catch(() => {})
+    void countPending()
   }, [])
 
   // A protocol is gated when the policy requires approval and the user holds no
