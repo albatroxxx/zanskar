@@ -211,6 +211,13 @@ group('install, gateway, configuration and mail server events read as what happe
     expect(describe(event({ action: 'target.create', object_type: 'target', object_id: 'd2091e4b9c3a4f10a1b2c3d4e5f60718' }))).toBe('created target d2091e4b')
   })
 
+  it('names what a refused create asked for, and why it was refused', () => {
+    expect(describe(event({ action: 'target.create', object_type: 'target', outcome: 'failure', details: { name: 'qa-walk-app', reason: 'address_forbidden' } })))
+      .toBe('failed to create target qa-walk-app (address forbidden)')
+    // A failure that has an object keeps naming that object; a success never reads a reason.
+    expect(describe(event({ action: 'target.update', object_type: 'target', object_id: 't1', object_name: 'web-1', outcome: 'failure' }))).toBe('failed to update target web-1')
+  })
+
   it('reads a completed access review as reviewed', () => {
     expect(describe(event({ action: 'policy.review', object_type: 'policy', object_id: 'p1', object_name: 'prod-ssh' }))).toBe('reviewed policy prod-ssh')
   })

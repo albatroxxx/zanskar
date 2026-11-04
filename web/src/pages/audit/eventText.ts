@@ -339,7 +339,11 @@ export function describe(ev: AuditEvent): string {
       const parts = ev.action.split('.')
       const verb = verbs[parts[parts.length - 1]] ?? words(parts[parts.length - 1])
       const type = typeLabel[ev.object_type] ?? words(ev.object_type || parts[0])
-      return `${fail ? 'failed to ' + (verbs[parts[parts.length - 1]] ? parts[parts.length - 1] : verb) : verb} ${type}${name ? ' ' + name : ''}`
+      // A failed create has no object yet; the name asked for and why it was
+      // refused are in its details (2026-11-04: "failed to create target").
+      const label = name || (fail ? str(d.name) : '')
+      const why = fail && reason ? ` (${words(reason)})` : ''
+      return `${fail ? 'failed to ' + (verbs[parts[parts.length - 1]] ? parts[parts.length - 1] : verb) : verb} ${type}${label ? ' ' + label : ''}${why}`
     }
   }
 }
