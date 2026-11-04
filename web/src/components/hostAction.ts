@@ -37,6 +37,9 @@ export interface Progress {
   until?: string
   /** The installer's words, or why it failed. */
   message?: string
+  /** Every report of the installer the view caught, each once, in order. A
+   *  stage that began and ended between two polls is not among them. */
+  seen?: string[]
   /** The service's last lines when an install settings change did not
    *  come back: shown folded under the message, never in it. */
   log?: string
@@ -54,8 +57,16 @@ export interface Observation {
   error?: 'offline' | 'signed_out'
 }
 
-/** pacing is how often the progress view asks; tests shorten it. */
-export const pacing = { pollMs: 2000 }
+/** pacing is how often the progress view asks; tests shorten it. fastMs is
+ *  the pace while the installer works and the gateway restarts, stages that
+ *  last a second or two (an update took about 7 seconds from the request to the
+ *  new process, 2026-11-05): at the slow pace most were never seen. */
+export const pacing = { pollMs: 2000, fastMs: 500 }
+
+/** pollDelay is how long to wait before asking again, by the stage shown. */
+export function pollDelay(step: Step): number {
+  return step === 'install' || step === 'restart' ? pacing.fastMs : pacing.pollMs
+}
 
 /** How long a gateway asked to power off must stay away before it counts as stopped. */
 export const poweroffQuietMs = 15_000
@@ -87,18 +98,21 @@ export function observe(start: Start, prev: Progress, o: Observation): Progress 
   const s = o.status
   if (start.action === 'config') return observeConfig(start, prev, o, s)
   const inst = thisInstall(start, o.update)
+  // The installer's words, each once, in the order they were caught: a stage
+  // that ends between two polls is never seen, but one that is, is kept.
+  const seen = noted(prev.seen, inst?.message)
   if (s.started_at !== start.startedAt) {
     if (start.action === 'update' && s.version !== start.target) {
       return { state: 'failed', step: 'back', message: `Back on ${s.version}; ${start.target} was not installed.${inst?.message ? ' ' + inst.message : ''}` }
     }
-    return { state: 'done', step: 'back' }
+    return { state: 'done', step: 'back', message: inst?.message, seen }
   }
   if (inst?.state === 'failed') return { state: 'failed', step: 'install', message: inst.message || 'The installer failed.' }
   if (o.at > start.deadline) return timedOut(start, prev)
   if (s.draining) {
-    if (inst) return { state: 'running', step: inst.state === 'done' ? 'restart' : 'install', message: inst.message }
-    if (s.live_sessions > 0) return { state: 'running', step: 'drain', live: s.live_sessions, until: s.drain?.deadline }
-    return { state: 'running', step: start.action === 'update' ? 'install' : 'restart' }
+    if (inst) return { state: 'running', step: inst.state === 'done' ? 'restart' : 'install', message: inst.message, seen }
+    if (s.live_sessions > 0) return { state: 'running', step: 'drain', live: s.live_sessions, until: s.drain?.deadline, seen }
+    return { state: 'running', step: start.action === 'update' ? 'install' : 'restart', seen }
   }
   // The same process, serving again: cancelled, or the action failed.
   return { state: 'failed', step: prev.step, message: `The ${noun(start)} did not go ahead. Events has the reason.` }
@@ -134,6 +148,13 @@ function observeConfig(start: Start, prev: Progress, o: Observation, s: SystemSt
     return { state: 'running', step: 'install' }
   }
   return { state: 'failed', step: prev.step, message: 'The change did not go ahead. Events has the reason.' }
+}
+
+/** noted adds the installer's latest words to those already caught, once. */
+function noted(seen: string[] | undefined, message: string | undefined): string[] | undefined {
+  const m = message?.trim()
+  if (!m || seen?.includes(m)) return seen
+  return [...(seen ?? []), m]
 }
 
 /** thisInstall is the installer's report for this request, if it has written one. */

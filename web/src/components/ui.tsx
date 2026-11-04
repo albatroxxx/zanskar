@@ -1,9 +1,13 @@
 import { Children, cloneElement, isValidElement, useEffect, useId, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactElement, type ReactNode } from 'react'
 import { Link } from 'react-router-dom'
 import { useSubmit } from './submit'
+import { useTitle } from './title'
 import { CloseIcon, StateIcon } from './icons'
 
 export function PageHead({ title, lead, children }: { title: string; lead?: string; children?: ReactNode }) {
+  // Every page names its tab (2026-11-04: every tab and history entry read
+  // just "Zanskar"), and a screen reader announces where it landed.
+  useTitle(title)
   return (
     <div className="page-head">
       <div>

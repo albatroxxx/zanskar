@@ -39,6 +39,12 @@ type Search struct {
 // separators begin a word inside a value.
 const separators = " -_./@"
 
+// The most words, and the longest word, a search looks at.
+const (
+	maxWords     = 8
+	maxWordRunes = 64
+)
+
 // NewSearch builds the Search for query over cols, each a column expression
 // such as "u.username". It reports false for a query of only spaces, which
 // matches everything and ranks nothing.
@@ -46,6 +52,18 @@ func NewSearch(query string, cols ...string) (Search, bool) {
 	words := strings.Fields(strings.ToLower(query))
 	if len(words) == 0 || len(cols) == 0 {
 		return Search{}, false
+	}
+	// Each word adds a few dozen placeholders per column, and an engine takes
+	// only so many (SQLite 32766, PostgreSQL 65535): a query of 2000 words was a
+	// 500 on 1.18.4 (2026-11-04, live). A person types a handful; the rest are
+	// not looked for, and a word is cut to what a name could hold.
+	if len(words) > maxWords {
+		words = words[:maxWords]
+	}
+	for i, w := range words {
+		if r := []rune(w); len(r) > maxWordRunes {
+			words[i] = string(r[:maxWordRunes])
+		}
 	}
 	var s Search
 	var wheres, ranks []string

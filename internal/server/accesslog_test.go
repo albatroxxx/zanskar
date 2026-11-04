@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"slices"
+	"strconv"
 	"testing"
 	"testing/fstest"
 
@@ -105,6 +106,59 @@ func TestAccessLogAddressOnlyOnFailure(t *testing.T) {
 		if has != failed || (has && e.Attrs["remote"] != "198.51.100.7") {
 			t.Fatalf("status %s: remote %q", e.Attrs["status"], e.Attrs["remote"])
 		}
+	}
+}
+
+// TestShellReadsAreQuiet (2026-11-05, live): every console page makes about
+// eight reads of its own on opening, which filled the 2000-line ring and pushed
+// the restart out of it within minutes. A served GET of one is at debug; a
+// change to the same path, and a failure, stay at info, and a read of
+// something a person asked for is still a line.
+func TestShellReadsAreQuiet(t *testing.T) {
+	ring := logring.New(50)
+	level := new(slog.LevelVar)
+	level.Set(slog.LevelDebug)
+	s := &Server{log: slog.New(ring.Wrap(slog.NewTextHandler(discard{}, &slog.HandlerOptions{Level: level})))}
+	for _, c := range []struct {
+		method, path string
+		status       int
+		info         bool
+	}{
+		{"GET", "/api/v1/auth/me", 200, false},
+		{"GET", "/api/v1/access-requests", 200, false},
+		{"GET", "/api/v1/admin/system/update", 200, false},
+		{"GET", "/api/v1/admin/system/host", 200, false},
+		{"GET", "/api/v1/admin/system/metrics", 200, false},
+		{"GET", "/api/v1/admin/cli", 200, false},
+		{"GET", "/api/v1/auth/me", 401, true},          // a failure is wanted
+		{"POST", "/api/v1/access-requests", 201, true}, // a change is wanted
+		{"POST", "/api/v1/admin/system/update", 200, true},
+		{"GET", "/api/v1/users", 200, true}, // what a person asked for
+		{"GET", "/api/v1/audit/events", 200, true},
+	} {
+		h := s.accessLog(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(c.status) }))
+		h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(c.method, c.path, nil))
+	}
+	info := map[string]bool{}
+	for _, e := range ring.Snapshot(slog.LevelInfo, "", 50) {
+		info[e.Attrs["method"]+" "+e.Attrs["path"]+" "+e.Attrs["status"]] = true
+	}
+	for _, c := range []struct {
+		method, path string
+		status       int
+		info         bool
+	}{
+		{"GET", "/api/v1/auth/me", 200, false}, {"GET", "/api/v1/admin/cli", 200, false},
+		{"GET", "/api/v1/auth/me", 401, true}, {"POST", "/api/v1/access-requests", 201, true},
+		{"POST", "/api/v1/admin/system/update", 200, true}, {"GET", "/api/v1/users", 200, true},
+	} {
+		key := c.method + " " + c.path + " " + strconv.Itoa(c.status)
+		if info[key] != c.info {
+			t.Errorf("%s at info = %v, want %v", key, info[key], c.info)
+		}
+	}
+	if len(info) != 5 {
+		t.Errorf("info lines: %v", info)
 	}
 }
 

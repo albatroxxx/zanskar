@@ -118,6 +118,18 @@ func New(cfg *config.Config, db *store.DB, log *slog.Logger, deps Deps) *Server 
 	return s
 }
 
+// plainListenerLevel is how loudly a listener without TLS is logged. An
+// operator who set the proxy mode and said the proxy terminates TLS
+// (ZANSKAR_TRUST_PROXY_TLS) has configured the supported deployment, so it is
+// information; the warning, which every start of that deployment wrote
+// (2026-11-04, live), is for a plain listener nobody said a proxy fronts.
+func plainListenerLevel(cfg *config.Config) slog.Level {
+	if cfg.TLSMode == config.TLSProxy && cfg.TrustProxyTLS {
+		return slog.LevelInfo
+	}
+	return slog.LevelWarn
+}
+
 // ListenAndServe blocks until ctx is cancelled, then shuts down gracefully.
 func (s *Server) ListenAndServe(ctx context.Context) error {
 	errCh := make(chan error, 1)
@@ -131,7 +143,7 @@ func (s *Server) ListenAndServe(ctx context.Context) error {
 			s.log.Info("listening", "addr", s.cfg.ListenAddr, "tls", true)
 			err = s.http.ListenAndServeTLS(s.cfg.TLSCert, s.cfg.TLSKey)
 		default:
-			s.log.Warn("listening without TLS; acceptable only behind a TLS-terminating proxy on loopback or a private container network", "addr", s.cfg.ListenAddr)
+			s.log.Log(ctx, plainListenerLevel(s.cfg), "listening without TLS; acceptable only behind a TLS-terminating proxy on loopback or a private container network", "addr", s.cfg.ListenAddr)
 			err = s.http.ListenAndServe()
 		}
 		if !errors.Is(err, http.ErrServerClosed) {
@@ -252,9 +264,19 @@ func (s *Server) securityHeaders(next http.Handler) http.Handler {
 // quietPaths are polled by health checks and by the console itself; at
 // info they would flood the log (and the console's in-memory ring) with
 // their own traffic, so they are logged at debug.
+//
+// The shell reads every console page makes when it opens (who is signed in,
+// the update check, the host, the command line, the pending requests, the
+// metrics) are listed too: about eight lines a page view, which pushed the
+// restart and the update out of the 2000-line ring within minutes (2026-11-05,
+// live). Only a served GET is quiet: a change, and anything that fails, is
+// logged at info as before.
 var quietPaths = map[string]bool{
 	"/healthz": true, "/readyz": true,
 	"/api/v1/admin/logs": true, "/api/v1/admin/system/status": true,
+	"/api/v1/auth/me": true, "/api/v1/access-requests": true,
+	"/api/v1/admin/system/update": true, "/api/v1/admin/system/host": true,
+	"/api/v1/admin/system/metrics": true, "/api/v1/admin/cli": true,
 }
 
 // staticKey carries the mark a request for one of the console's own files
@@ -279,7 +301,7 @@ func (s *Server) accessLog(next http.Handler) http.Handler {
 		static := new(bool)
 		next.ServeHTTP(rec, r.WithContext(context.WithValue(r.Context(), staticKey{}, static)))
 		level := slog.LevelInfo
-		if (quietPaths[r.URL.Path] || *static) && rec.Status < 400 {
+		if ((quietPaths[r.URL.Path] && r.Method == http.MethodGet) || *static) && rec.Status < 400 {
 			level = slog.LevelDebug
 		}
 		// Query strings are intentionally not logged: connect tickets travel there.

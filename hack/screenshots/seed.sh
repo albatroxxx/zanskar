@@ -47,8 +47,12 @@ sleep $((30 - $(date +%s) % 30 + 1))
 api -X POST "$B/admin/cli/unlock" -d "{\"code\":\"$(totp "$SECRET")\"}" >/dev/null
 
 # People and groups.
-ALICE=$(api -X POST "$B/users" -d '{"username":"alice","display_name":"Alice Moreau","password":"alice temporary pw 1","roles":["user"]}' | id)
-CAROL=$(api -X POST "$B/users" -d '{"username":"carol","display_name":"Carol Diaz","password":"carol temporary pw 1","roles":["user"]}' | id)
+# Their first passwords are made up per run, not written here: they are used once below to sign
+# in and change them, and a literal one in a script is what a credential scanner is for.
+ALICE_PW="alice-$(openssl rand -hex 12)"
+CAROL_PW="carol-$(openssl rand -hex 12)"
+ALICE=$(api -X POST "$B/users" -d "{\"username\":\"alice\",\"display_name\":\"Alice Moreau\",\"password\":\"$ALICE_PW\",\"roles\":[\"user\"]}" | id)
+CAROL=$(api -X POST "$B/users" -d "{\"username\":\"carol\",\"display_name\":\"Carol Diaz\",\"password\":\"$CAROL_PW\",\"roles\":[\"user\"]}" | id)
 OPS=$(api -X POST "$B/groups" -d '{"name":"platform-ops","description":"Runs the web tier and bastions"}' | id)
 DBA=$(api -X POST "$B/groups" -d '{"name":"dba","description":"Database administrators"}' | id)
 api -X PUT "$B/groups/$OPS/members" -d "{\"user_ids\":[\"$ALICE\"]}" >/dev/null
@@ -107,10 +111,10 @@ as_user() { # name first-pw new-pw -> sets USER_CSRF and cookie jar
   USER_CSRF=$(login "$1" "$3" | jget 'd["csrf_token"]')
 }
 ask() { curl -s -b "$DIR/$1.jar" -H "X-CSRF-Token: $USER_CSRF" -H 'Content-Type: application/json' -X POST "$B/me/access-requests" -d "$2" | id; }
-as_user carol 'carol temporary pw 1' 'carol chose this passphrase'
+as_user carol "$CAROL_PW" 'carol chose this passphrase'
 GRANT=$(ask carol "{\"target_id\":\"$BILLING\",\"protocol\":\"database\",\"reason\":\"Month-end reconciliation\",\"minutes\":60}")
 api -X POST "$B/access-requests/$GRANT/approve" -d '{"note":"ok for month-end"}' >/dev/null
-as_user alice 'alice temporary pw 1' 'alice chose this passphrase'
+as_user alice "$ALICE_PW" 'alice chose this passphrase'
 ask alice "{\"target_id\":\"$ORDERS\",\"protocol\":\"database\",\"reason\":\"INC-4821: investigate slow order lookups on the primary\",\"minutes\":60}" >/dev/null
 ask alice "{\"target_id\":\"$BASTION\",\"protocol\":\"ssh\",\"reason\":\"Rotate the bastion's authorized_keys after the on-call handover\",\"minutes\":45}" >/dev/null
 

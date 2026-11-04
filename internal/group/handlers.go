@@ -214,7 +214,8 @@ func (h *AdminHandler) fail(w http.ResponseWriter, r *http.Request, err error) {
 	case errors.Is(err, ErrUnknownUser):
 		httpx.WriteError(w, r, http.StatusUnprocessableEntity, "invalid_user", err.Error())
 	case errors.Is(err, ErrInvalidInput):
-		httpx.BadRequest(w, r, err.Error())
+		// Without the package's "group: invalid input: ", which names nothing a person knows.
+		httpx.BadRequest(w, r, strings.TrimPrefix(err.Error(), ErrInvalidInput.Error()+": "))
 	default:
 		httpx.Internal(w, r, h.Log, err)
 	}

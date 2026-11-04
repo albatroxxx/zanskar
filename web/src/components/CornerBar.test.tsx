@@ -46,6 +46,7 @@ function strip() {
 
 beforeEach(() => {
   pacing.pollMs = 5
+  pacing.fastMs = 5
 })
 
 describe('the corner strip', () => {
@@ -173,7 +174,7 @@ describe('the corner strip', () => {
 
   it('installs a newer release and says when it is back on it', async () => {
     let calls = 0
-    serve(() => ({ ...newer, installable: true, ...(calls++ > 2 ? { install: { state: 'running', version: '1.5.0', message: 'downloading', at: 'now' } } : {}) }), host, [
+    serve(() => ({ ...newer, installable: true, ...{ install: { state: 'running', version: '1.5.0', message: 'downloading', at: 'at-' + calls++ } } }), host, [
       up(),
       up(),
       up({ draining: true }),
@@ -192,6 +193,13 @@ describe('the corner strip', () => {
 
     expect(await screen.findByText('Updated to 1.5.0')).toBeDefined()
     expect(screen.getByRole('button', { name: 'Reload console' })).toBeDefined()
+    // 2026-11-05, live: the stage list was swapped for the green tick, so a
+    // stage that ended between two polls (Restarting, Back on) was never seen
+    // ticked. It stays, every stage done, with what the installer reported
+    // under the install stage.
+    const stages = screen.getAllByRole('listitem').filter((li) => li.classList.contains('action-step'))
+    expect(stages.map((li) => li.textContent)).toEqual(['Waiting for live sessions', 'Installing 1.5.0 · Downloading', 'Restarting', 'Back on 1.5.0'])
+    expect(stages.every((li) => li.classList.contains('done'))).toBe(true)
     expect(post.mock.calls[0]).toEqual(['/auth/mfa/step-up', { code: '654321' }])
     expect(post.mock.calls[1]).toEqual(['/admin/system/update/install', { version: '1.5.0', wait_minutes: 15, confirm: 'gw-test' }])
   })

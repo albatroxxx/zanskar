@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { SystemStatus, UpdateStatus } from '../api/types'
-import { deadlineFor, doneTitle, initialProgress, observe, poweroffQuietMs, progressWatch, sentence, stepLabel, type HostAction, type Progress, type Start } from './hostAction'
+import { deadlineFor, doneTitle, initialProgress, observe, pacing, pollDelay, poweroffQuietMs, progressWatch, sentence, stepLabel, type HostAction, type Progress, type Start } from './hostAction'
 
 const t0 = 1_000_000
 const status = (over: Partial<SystemStatus> = {}): SystemStatus =>
@@ -72,6 +72,39 @@ describe('host action progress', () => {
   it('catches a restart quick enough to fall between two polls', () => {
     const [p] = run(start('restart'), [{ at: t0 + 2000, status: status({ started_at: 'later', draining: false }) }])
     expect(p.state).toBe('done')
+  })
+
+  // 2026-11-05, live: the installer's stages last a second or two and the view
+  // asked every two seconds, so most were never seen and the stage list was
+  // swapped for the green tick. What was caught is kept, each once, in order,
+  // and the finish carries the installer's last words.
+  it('keeps what the installer reported, once each in order, and its last words at the finish', () => {
+    const s = start('update', { installBefore: '2026-10-29T09:00:00Z' })
+    const seen = run(s, [
+      { at: t0 + 500, status: status(), update: installer('running', 'downloading 1.9.0') },
+      { at: t0 + 1000, status: status(), update: installer('running', 'downloading 1.9.0') },
+      { at: t0 + 1500, status: status(), update: installer('running', 'verifying the release signature') },
+      { at: t0 + 2000, status: status({ started_at: '2026-10-30T10:06:00Z', version: '1.9.0', draining: false }), update: installer('done', 'installed 1.9.0; the gateway restarted') },
+    ])
+    const last = seen[seen.length - 1]
+    expect(last.state).toBe('done')
+    expect(last.message).toBe('installed 1.9.0; the gateway restarted')
+    expect(last.seen).toEqual(['downloading 1.9.0', 'verifying the release signature', 'installed 1.9.0; the gateway restarted'])
+  })
+
+  it('has nothing to keep when the restart fell between two polls', () => {
+    const [p] = run(start('update', { installBefore: 'earlier' }), [{ at: t0 + 2000, status: status({ started_at: 'later', version: '1.9.0', draining: false }) }])
+    expect(p.state).toBe('done')
+    expect(p.seen).toBeUndefined()
+    expect(p.message).toBeUndefined()
+  })
+
+  it('asks faster while the installer works and the gateway restarts', () => {
+    expect(pollDelay('install')).toBe(pacing.fastMs)
+    expect(pollDelay('restart')).toBe(pacing.fastMs)
+    expect(pollDelay('drain')).toBe(pacing.pollMs)
+    expect(pollDelay('back')).toBe(pacing.pollMs)
+    expect(pacing.fastMs).toBeLessThan(pacing.pollMs)
   })
 
   it('counts a stop done once the gateway has stayed away', () => {

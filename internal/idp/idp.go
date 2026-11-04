@@ -30,6 +30,7 @@ import (
 	"github.com/albatroxxx/zanskar/internal/gateway"
 	"github.com/albatroxxx/zanskar/internal/keyring"
 	"github.com/albatroxxx/zanskar/internal/store"
+	"github.com/albatroxxx/zanskar/internal/textsafe"
 	"github.com/albatroxxx/zanskar/internal/user"
 )
 
@@ -235,6 +236,9 @@ func Validate(p *Provider, c *Config) error {
 	p.Name = strings.TrimSpace(p.Name)
 	if p.Name == "" || len(p.Name) > 64 {
 		return fmt.Errorf("%w: name must be 1-64 characters", ErrInvalidInput)
+	}
+	if err := textsafe.Name(p.Name); err != nil {
+		return fmt.Errorf("%w: name %w", ErrInvalidInput, err)
 	}
 	for _, r := range c.DefaultRoles {
 		if !user.ValidRole(r) {

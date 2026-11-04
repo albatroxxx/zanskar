@@ -74,6 +74,10 @@ func TestValidate(t *testing.T) {
 		{"a bad window", func(p *Policy) {
 			p.Grants[0].TimeWindows = []TimeWindow{{Days: []string{"mon"}, From: "9am", To: "18:00"}}
 		}, "HH:MM"},
+		// 2026-11-04: a name cannot hide what it is (an override reorders it, a zero-width space twins it).
+		{"name with an override", func(p *Policy) { p.Name = "prod" + string(rune(0x202E)) + "txt.exe" }, "name must not contain"},
+		{"name of nothing visible", func(p *Policy) { p.Name = string(rune(0x200D)) + string(rune(0x200C)) }, "name must contain a visible"},
+		{"description with a bell", func(p *Policy) { p.Description = "ring" + string(rune(7)) }, "description must not contain"},
 		{"two grants, one id", func(p *Policy) {
 			p.Grants = []Grant{hostGrant("t1"), hostGrant("t2")}
 			p.Grants[0].ID, p.Grants[1].ID = "same", "same"

@@ -16,6 +16,8 @@ import (
 	"time"
 
 	"golang.org/x/crypto/ssh"
+
+	"github.com/albatroxxx/zanskar/internal/textsafe"
 )
 
 // Type of credential.
@@ -162,6 +164,9 @@ func validateAndPrepare(c *Credential, s *Secret) (*prepared, error) {
 	c.Domain = strings.TrimSpace(c.Domain)
 	if c.Name == "" || len(c.Name) > 255 {
 		return nil, fmt.Errorf("%w: name required (1-255 characters)", ErrInvalid)
+	}
+	if err := textsafe.Name(c.Name); err != nil {
+		return nil, fmt.Errorf("%w: name %w", ErrInvalid, err)
 	}
 	if !ValidType(c.Type) {
 		return nil, fmt.Errorf("%w: unknown type %q", ErrInvalid, c.Type)

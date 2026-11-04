@@ -17,6 +17,7 @@ import (
 	"github.com/albatroxxx/zanskar/internal/auth"
 	"github.com/albatroxxx/zanskar/internal/gateway"
 	"github.com/albatroxxx/zanskar/internal/httpx"
+	"github.com/albatroxxx/zanskar/internal/textsafe"
 	"github.com/albatroxxx/zanskar/internal/user"
 )
 
@@ -184,6 +185,10 @@ func (h *AdminHandler) create(w http.ResponseWriter, r *http.Request) {
 		httpx.BadRequest(w, r, "an account that signs in through an identity provider comes from the provider (its first sign-in, its sync or SCIM), not from here")
 		return
 	}
+	if err := textsafe.Name(strings.TrimSpace(req.DisplayName)); err != nil {
+		httpx.BadRequest(w, r, "name "+err.Error())
+		return
+	}
 	u := &user.User{
 		Username:    strings.TrimSpace(req.Username),
 		DisplayName: strings.TrimSpace(req.DisplayName),
@@ -257,6 +262,9 @@ func (h *AdminHandler) update(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.DisplayName == "" {
 		req.DisplayName = existing.DisplayName
+	} else if err := textsafe.Name(req.DisplayName); err != nil {
+		httpx.BadRequest(w, r, "name "+err.Error())
+		return
 	}
 	if req.Status == "" {
 		req.Status = existing.Status

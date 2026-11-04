@@ -5,6 +5,7 @@ package user
 import (
 	"context"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -80,6 +81,37 @@ func TestSearchFindsAWordAndRanksTheClosest(t *testing.T) {
 		// The limit holds.
 		if list, err := r.Search(ctx, "zanskar", 2); err != nil || len(list) != 2 || list[0].Username != "zanskar" {
 			t.Errorf("limit 2: %v %v", list, err)
+		}
+	})
+}
+
+// TestSearchBoundsWhatItBuilds (2026-11-04, live walkthrough of 1.18.4): a
+// query of 2000 words was a 500, each word adding placeholders until the
+// engine refused the statement. A search looks at the first words, each cut
+// short, so any query answers, on SQLite and PostgreSQL.
+func TestSearchBoundsWhatItBuilds(t *testing.T) {
+	storetest.ForEachBackend(t, func(t *testing.T, db *store.DB) {
+		ctx := context.Background()
+		r := NewRepo(db)
+		if err := r.Create(ctx, &User{Username: "zanskar", DisplayName: "Zanskar", Roles: []Role{RoleUser}}); err != nil {
+			t.Fatal(err)
+		}
+		for name, q := range map[string]string{
+			"2000 words":      strings.Repeat("zanskar ", 2000),
+			"one 10k word":    strings.Repeat("a", 10000),
+			"10k of wildcard": strings.Repeat("%_", 5000),
+			"multibyte":       strings.Repeat("é😀", 3000),
+		} {
+			if _, err := r.Search(ctx, q, 0); err != nil {
+				t.Errorf("%s: %v", name, err)
+			}
+		}
+		// The first words still find the account, and a long word is cut, not refused.
+		if list, err := r.Search(ctx, strings.Repeat("zanskar ", 2000), 0); err != nil || len(list) != 1 {
+			t.Errorf("the words it keeps: %v %v", list, err)
+		}
+		if list, err := r.Search(ctx, "zanskar"+strings.Repeat("x", 500), 0); err != nil || len(list) != 0 {
+			t.Errorf("a word too long for any name finds nothing, quietly: %v %v", list, err)
 		}
 	})
 }
