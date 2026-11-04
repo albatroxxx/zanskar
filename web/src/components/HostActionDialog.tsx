@@ -3,7 +3,7 @@ import { ApiError, api, errorMessage } from '../api/client'
 import { fmtTime } from '../api/format'
 import type { ConfigResult, HostStatus, SystemStatus, UpdateStatus } from '../api/types'
 import { DoneIcon } from './icons'
-import { deadlineFor, doneTitle, initialProgress, observe, pacing, progressWatch, stepLabel, stepsFor, type HostAction, type Observation, type Progress, type Start } from './hostAction'
+import { deadlineFor, doneTitle, initialProgress, observe, pacing, pollDelay, progressWatch, sentence, stepLabel, stepsFor, type HostAction, type Observation, type Progress, type Start } from './hostAction'
 import { Alert, Field, Modal } from './ui'
 
 /** Each action's title, its button's verb, and the verb in "End live
@@ -100,7 +100,7 @@ export function HostActionDialog({ action, version, change, onClose }: { action:
       if (stop) return
       const next = observe(start, latest.current, o)
       setProgress(next)
-      if (next.state === 'running') timer = setTimeout(() => void tick(), pacing.pollMs)
+      if (next.state === 'running') timer = setTimeout(() => void tick(), pollDelay(next.step))
     }
     let timer = setTimeout(() => void tick(), pacing.pollMs)
     return () => {
@@ -153,7 +153,36 @@ export function HostActionDialog({ action, version, change, onClose }: { action:
     const at = steps.indexOf(progress.step)
     return (
       <Modal title={title} onClose={onClose} width={480}>
-        {progress.state === 'done' ? (
+        {/* The stages stay in view when it ends, every one ticked: the end (a fresh
+            process on the version asked for) is proof that each happened, and a
+            stage that lasted less than a poll was never shown (2026-11-05, live:
+            the list was swapped for the green tick, so Restarting and Back were
+            never seen). What the installer reported, as far as it was caught, is
+            under the install stage. */}
+        <ol className="action-steps" aria-live="polite">
+          {steps.map((s, i) => {
+            const finished = progress.state === 'done'
+            const state = finished ? 'done' : progress.state === 'failed' && i === at ? 'failed' : i < at ? 'done' : i === at && progress.state === 'running' ? 'now' : 'todo'
+            const reported = finished && s === 'install' && action === 'update' && progress.seen?.length ? progress.seen.map((m) => sentence(m).replace(/\.$/, '')).join(' · ') : ''
+            return (
+              <li key={s} className={'action-step ' + state} aria-current={state === 'now' ? 'step' : undefined}>
+                <span className="action-mark" aria-hidden="true" />
+                <span>
+                  {stepLabel(s, start)}
+                  {state === 'now' && s === 'drain' && progress.live ? (
+                    <span className="muted">
+                      {' '}
+                      · {progress.live} live{progress.until ? `, until ${fmtTime(progress.until)}` : ''}
+                    </span>
+                  ) : null}
+                  {state === 'now' && s === 'install' && progress.message ? <span className="muted"> · {progress.message}</span> : null}
+                  {reported ? <span className="muted action-reported"> · {reported}</span> : null}
+                </span>
+              </li>
+            )
+          })}
+        </ol>
+        {progress.state === 'done' && (
           <div className="action-done" role="status">
             <DoneIcon />
             <div>
@@ -161,27 +190,6 @@ export function HostActionDialog({ action, version, change, onClose }: { action:
               {action === 'poweroff' && <p className="muted">Start it again from the host or the cloud console.</p>}
             </div>
           </div>
-        ) : (
-          <ol className="action-steps" aria-live="polite">
-            {steps.map((s, i) => {
-              const state = progress.state === 'failed' && i === at ? 'failed' : i < at ? 'done' : i === at && progress.state === 'running' ? 'now' : 'todo'
-              return (
-                <li key={s} className={'action-step ' + state} aria-current={state === 'now' ? 'step' : undefined}>
-                  <span className="action-mark" aria-hidden="true" />
-                  <span>
-                    {stepLabel(s, start)}
-                    {state === 'now' && s === 'drain' && progress.live ? (
-                      <span className="muted">
-                        {' '}
-                        · {progress.live} live{progress.until ? `, until ${fmtTime(progress.until)}` : ''}
-                      </span>
-                    ) : null}
-                    {state === 'now' && s === 'install' && progress.message ? <span className="muted"> · {progress.message}</span> : null}
-                  </span>
-                </li>
-              )
-            })}
-          </ol>
         )}
         {progress.state === 'failed' && <FailedNotice progress={progress} />}
         {progress.state === 'cancelled' && <Alert tone="ok">Cancelled; the gateway carries on.</Alert>}
