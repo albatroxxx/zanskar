@@ -1,11 +1,12 @@
 import { Fragment, useState } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useSearchParams } from 'react-router-dom'
 import { count, fmtTime } from '../../api/format'
 import type { AutoscalingGroup, Group, Policy, PolicyGrant, Target, User } from '../../api/types'
+import { FilterChips } from '../../components/FilterChips'
 import { StateIcon } from '../../components/icons'
 import { Alert, Badge, Empty, Loading, PageHead } from '../../components/ui'
 import { useList } from './lib'
-import { accessLine, extrasLine, grantsLine, kinds, policyRollup, reaches, reachLine, reviewDue, targetsCell, whoSummary } from './policyModel'
+import { accessLine, extrasLine, grantsLine, kinds, policyRollup, reaches, reachLine, reviewDue, standingNoMFA, targetsCell, whoSummary } from './policyModel'
 
 /**
  * Policies lists the access policies (ADR 0036, amended 2026-10-30): who each
@@ -14,7 +15,10 @@ import { accessLine, extrasLine, grantsLine, kinds, policyRollup, reaches, reach
  * stands out. A row opens to a table of its grants; editing has a page.
  */
 export function Policies() {
-  const { items, err, setErr } = useList<Policy>('/access-policies')
+  const [sp, setSp] = useSearchParams()
+  const onlyNoMFA = sp.get('show') === 'standing_no_mfa'
+  const { items: all, err, setErr } = useList<Policy>('/access-policies')
+  const items = onlyNoMFA && all ? all.filter(standingNoMFA) : all
   const groups = useList<Group>('/groups')
   const users = useList<User>('/users')
   const targets = useList<Target>('/targets')
@@ -35,11 +39,12 @@ export function Policies() {
         <Link className="btn primary" to="/admin/policies/new">Add policy</Link>
       </PageHead>
       {err && <Alert tone="danger" onDismiss={() => setErr('')}>{err}</Alert>}
+      <FilterChips chips={onlyNoMFA ? [{ label: 'Standing access without MFA', onClear: () => setSp({}, { replace: true }) }] : []} />
       <div className="card table-wrap">
         {items === null ? (
           err ? null : <Loading />
         ) : items.length === 0 ? (
-          <Empty>No policies yet. Nobody can connect until a policy grants access.</Empty>
+          <Empty>{onlyNoMFA ? 'No policies match.' : 'No policies yet. Nobody can connect until a policy grants access.'}</Empty>
         ) : (
           <table className="policy-table">
             <thead>

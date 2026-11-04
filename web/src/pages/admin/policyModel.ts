@@ -300,6 +300,11 @@ export interface Rollup {
   ownLogin: number
 }
 
+/** standingNoMFA is what the dashboard's "Standing access without MFA" tile
+ *  counts (policy.Repo.CountStandingNoMFA): an enabled policy with a grant
+ *  that is not approval-gated and does not ask for an authenticator. */
+export const standingNoMFA = (p: Policy) => p.enabled && p.grants.some((g) => g.access !== 'approval' && !g.require_mfa)
+
 export function policyRollup(p: Policy): Rollup {
   const gs = p.grants
   const named = new Set(gs.flatMap((g) => g.targets.map((t) => t.id)))

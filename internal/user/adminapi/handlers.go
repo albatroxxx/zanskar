@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/albatroxxx/zanskar/internal/audit"
 	"github.com/albatroxxx/zanskar/internal/auth"
@@ -42,6 +43,10 @@ type AdminHandler struct {
 	// ProviderHolds says whether an identity provider still decides who
 	// its people are, and its name (idp.Repo.Holds); nil holds nothing.
 	ProviderHolds func(ctx context.Context, idpID string) (name string, holds bool, err error)
+	// MFAOwners lists the enabled providers whose own sign-in is the second
+	// factor (idp.Repo.MFAOwners), which the posture filter needs to tell who
+	// still lacks an authenticator; nil lists none.
+	MFAOwners func(ctx context.Context) ([]string, error)
 }
 
 // Register mounts the routes behind the admin role.
@@ -107,6 +112,10 @@ type createResponse struct {
 }
 
 func (h *AdminHandler) list(w http.ResponseWriter, r *http.Request) {
+	if kind := r.URL.Query().Get("posture"); kind != "" {
+		h.listPosture(w, r, user.PostureKind(kind))
+		return
+	}
 	limit, cursor := httpx.Paging(r, 50, 500)
 	users, next, err := h.Users.List(r.Context(), cursor, limit)
 	if err != nil {
@@ -117,6 +126,33 @@ func (h *AdminHandler) list(w http.ResponseWriter, r *http.Request) {
 		users = []*user.User{}
 	}
 	httpx.WriteJSON(w, http.StatusOK, httpx.Page[*user.User]{Items: users, NextCursor: next})
+}
+
+// listPosture answers the users list's posture filter with the accounts a
+// dashboard tile counted, so a tile opens what it said (2026-11-04). The
+// list is the whole set, not a page: it is as long as the number on the tile.
+func (h *AdminHandler) listPosture(w http.ResponseWriter, r *http.Request, kind user.PostureKind) {
+	if !user.ValidPosture(string(kind)) {
+		httpx.BadRequest(w, r, "posture must be admins, dormant or not_enrolled")
+		return
+	}
+	var owners []string
+	if h.MFAOwners != nil {
+		var err error
+		if owners, err = h.MFAOwners(r.Context()); err != nil {
+			httpx.Internal(w, r, h.Log, err)
+			return
+		}
+	}
+	users, err := h.Users.ListPosture(r.Context(), kind, time.Now(), owners)
+	if err != nil {
+		httpx.Internal(w, r, h.Log, err)
+		return
+	}
+	if users == nil {
+		users = []*user.User{}
+	}
+	httpx.WriteJSON(w, http.StatusOK, httpx.Page[*user.User]{Items: users})
 }
 
 func (h *AdminHandler) create(w http.ResponseWriter, r *http.Request) {

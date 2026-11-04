@@ -5,6 +5,7 @@ package user
 import (
 	"context"
 	"errors"
+	"slices"
 	"testing"
 	"time"
 
@@ -178,6 +179,49 @@ func TestCountPostureOnEachBackend(t *testing.T) {
 		exec(`UPDATE users SET last_login_at = ? WHERE username = ?`, old, "gone")
 		if p, err = r.CountPosture(ctx, now, []string{"p-owns"}); err != nil || p.Dormant != 2 {
 			t.Fatalf("dormant: %+v %v, want local and waiting", p, err)
+		}
+
+		// The list behind each tile is the set the tile counted (2026-11-04:
+		// the tiles opened the whole user list), by username, with roles.
+		names := func(kind PostureKind, owners []string) []string {
+			t.Helper()
+			list, err := r.ListPosture(ctx, kind, now, owners)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var out []string
+			for _, u := range list {
+				out = append(out, u.Username)
+				if len(u.Roles) == 0 {
+					t.Fatalf("%s listed without roles", u.Username)
+				}
+			}
+			return out
+		}
+		for _, c := range []struct {
+			kind   PostureKind
+			owners []string
+			want   []string
+		}{
+			{PostureAdmins, nil, []string{"admin1"}},
+			{PostureDormant, []string{"p-owns"}, []string{"local", "waiting"}},
+			{PostureNotEnrolled, []string{"p-owns"}, []string{"half", "ldap", "local", "zmfa"}},
+			{PostureNotEnrolled, nil, []string{"half", "ldap", "local", "sso", "zmfa"}},
+		} {
+			if got := names(c.kind, c.owners); !slices.Equal(got, c.want) {
+				t.Errorf("%s with owners %v lists %v, want %v", c.kind, c.owners, got, c.want)
+			}
+			counted, err := r.CountPosture(ctx, now, c.owners)
+			if err != nil {
+				t.Fatal(err)
+			}
+			n := map[PostureKind]int{PostureAdmins: counted.Admins, PostureDormant: counted.Dormant, PostureNotEnrolled: counted.NotEnrolled}[c.kind]
+			if n != len(c.want) {
+				t.Errorf("%s: the tile counts %d, the list holds %d", c.kind, n, len(c.want))
+			}
+		}
+		if ValidPosture("everyone") || !ValidPosture("dormant") {
+			t.Error("ValidPosture accepts the wrong names")
 		}
 	})
 }

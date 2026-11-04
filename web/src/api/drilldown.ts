@@ -17,6 +17,11 @@ export const drill = {
   recordingsDownloaded: (portal: string) => events(portal, { action: 'recording.download', outcome: 'success' }),
   openSessions: (portal: string) => `${portal}/sessions?open=1`,
   sessions24h: (portal: string) => `${portal}/sessions?range=24h`,
+  // The security posture tiles open the set each counted (2026-11-04).
+  standingNoMFA: '/admin/policies?show=standing_no_mfa',
+  adminAccounts: '/admin/users?posture=admins',
+  accountsWithoutAuthenticator: '/admin/users?posture=not_enrolled',
+  dormantAccounts: '/admin/users?posture=dormant',
   hostsNeedingAttention: '/admin/hosts?attention=1',
   activeHosts: '/admin/hosts?status=active',
   activeDatabases: '/admin/databases?status=active',

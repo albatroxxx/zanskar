@@ -373,14 +373,44 @@ type Posture struct {
 // provider that leaves the second factor to Zanskar) needs one.
 func (r *Repo) CountPosture(ctx context.Context, now time.Time, providerMFA []string) (Posture, error) {
 	var p Posture
-	var err error
-	if p.Admins, err = r.CountAdmins(ctx); err != nil {
-		return p, err
+	for kind, n := range map[PostureKind]*int{PostureAdmins: &p.Admins, PostureDormant: &p.Dormant, PostureNotEnrolled: &p.NotEnrolled} {
+		where, args := postureWhere(kind, now, providerMFA)
+		if err := r.db.QueryRowContext(ctx, r.db.Rebind(`SELECT COUNT(*) FROM users u WHERE `+where), args...).Scan(n); err != nil {
+			return p, err
+		}
 	}
-	err = r.db.QueryRowContext(ctx, r.db.Rebind(`SELECT COUNT(*) FROM users
-		WHERE status = 'active' AND COALESCE(last_login_at, created_at) < ?`), store.TimeArg(now.Add(-DormantAfter))).Scan(&p.Dormant)
-	if err != nil {
-		return p, err
+	return p, nil
+}
+
+// PostureKind names one of the dashboard's account counts, so the list
+// behind a tile is the set the tile counted (2026-11-04: the tiles opened
+// the whole user list).
+type PostureKind string
+
+// The kinds, as the users list's posture filter spells them.
+const (
+	PostureAdmins      PostureKind = "admins"
+	PostureDormant     PostureKind = "dormant"
+	PostureNotEnrolled PostureKind = "not_enrolled"
+)
+
+// ValidPosture reports whether s names a PostureKind.
+func ValidPosture(s string) bool {
+	switch PostureKind(s) {
+	case PostureAdmins, PostureDormant, PostureNotEnrolled:
+		return true
+	}
+	return false
+}
+
+// postureWhere is the one definition of who a posture count covers: the
+// count and the list both put it after WHERE, over users aliased u.
+func postureWhere(kind PostureKind, now time.Time, providerMFA []string) (string, []any) {
+	switch kind {
+	case PostureAdmins:
+		return `u.status = 'active' AND EXISTS (SELECT 1 FROM user_roles ur WHERE ur.user_id = u.id AND ur.role = 'admin')`, nil
+	case PostureDormant:
+		return `u.status = 'active' AND COALESCE(u.last_login_at, u.created_at) < ?`, []any{store.TimeArg(now.Add(-DormantAfter))}
 	}
 	linked := `u.idp_id IS NOT NULL`
 	args := []any{}
@@ -391,11 +421,38 @@ func (r *Repo) CountPosture(ctx context.Context, now time.Time, providerMFA []st
 			args = append(args, id)
 		}
 	}
-	err = r.db.QueryRowContext(ctx, r.db.Rebind(`SELECT COUNT(*) FROM users u
-		WHERE u.status = 'active'
+	return `u.status = 'active'
 		AND NOT EXISTS (SELECT 1 FROM mfa_totp m WHERE m.user_id = u.id AND m.confirmed_at IS NOT NULL)
-		AND ((u.idp_id IS NULL AND u.password_hash IS NOT NULL) OR (`+linked+`))`), args...).Scan(&p.NotEnrolled)
-	return p, err
+		AND ((u.idp_id IS NULL AND u.password_hash IS NOT NULL) OR (` + linked + `))`, args
+}
+
+// ListPosture returns the accounts CountPosture counted for kind, by
+// username. A count is a number of accounts, so the list is not paged.
+func (r *Repo) ListPosture(ctx context.Context, kind PostureKind, now time.Time, providerMFA []string) ([]*User, error) {
+	where, args := postureWhere(kind, now, providerMFA)
+	rows, err := r.db.QueryContext(ctx, r.db.Rebind(`SELECT `+userCols+` FROM users u WHERE `+where+` ORDER BY LOWER(u.username)`), args...)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	var out []*User
+	for rows.Next() {
+		u, err := scanUser(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, u)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	_ = rows.Close() // one connection on SQLite: the roles are read next
+	for _, u := range out {
+		if u.Roles, err = r.roles(ctx, u.ID); err != nil {
+			return nil, err
+		}
+	}
+	return out, nil
 }
 
 func (r *Repo) roles(ctx context.Context, id string) ([]Role, error) {

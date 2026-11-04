@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { ApiError, api } from '../../api/client'
 import type { User } from '../../api/types'
+import { MemoryRouter } from 'react-router-dom'
 import { AuthProvider } from '../../auth/AuthContext'
 import { UsersGroups } from './UsersGroups'
 
@@ -28,9 +29,9 @@ function serve(users: User[] = [alice, bob, carol], groups: unknown[] = [], memb
 
 async function show() {
   render(
-    <AuthProvider>
+    <MemoryRouter><AuthProvider>
       <UsersGroups />
-    </AuthProvider>,
+    </AuthProvider></MemoryRouter>,
   )
   await screen.findByText('alice')
   return userEvent.setup()

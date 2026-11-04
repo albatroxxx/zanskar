@@ -2,6 +2,7 @@ import { cleanup, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { api } from '../../api/client'
+import { MemoryRouter } from 'react-router-dom'
 import { AuthProvider } from '../../auth/AuthContext'
 import { UsersGroups } from './UsersGroups'
 
@@ -18,9 +19,9 @@ describe('UsersGroups tabs', () => {
   it('are a tab list that says which tab is open, and arrows move between them', async () => {
     vi.spyOn(api, 'get').mockImplementation(async (path: string) => (path === '/auth/me' ? me : { items: [] }) as never)
     render(
-      <AuthProvider>
+      <MemoryRouter><AuthProvider>
         <UsersGroups />
-      </AuthProvider>,
+      </AuthProvider></MemoryRouter>,
     )
 
     const tabs = await screen.findByRole('tablist', { name: 'Users and groups' })
@@ -54,9 +55,9 @@ describe('UsersGroups linking', () => {
     serve()
     const post = vi.spyOn(api, 'post').mockResolvedValue({ id: 'u9', username: 'cara' } as never)
     render(
-      <AuthProvider>
+      <MemoryRouter><AuthProvider>
         <UsersGroups />
-      </AuthProvider>,
+      </AuthProvider></MemoryRouter>,
     )
     const user = userEvent.setup()
     await user.click(await screen.findByRole('button', { name: 'Add user' }))
@@ -76,9 +77,9 @@ describe('UsersGroups linking', () => {
     serve()
     const post = vi.spyOn(api, 'post').mockResolvedValue({ id: 'g9', name: 'sre' } as never)
     render(
-      <AuthProvider>
+      <MemoryRouter><AuthProvider>
         <UsersGroups />
-      </AuthProvider>,
+      </AuthProvider></MemoryRouter>,
     )
     const user = userEvent.setup()
     await user.click(await screen.findByRole('tab', { name: 'Groups' }))

@@ -1,8 +1,10 @@
 import { useEffect, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { api, errorMessage } from '../../api/client'
 import { fmtTime } from '../../api/format'
 import type { Group, GroupMember, Role, User } from '../../api/types'
 import { useAuth } from '../../auth/AuthContext'
+import { FilterChips } from '../../components/FilterChips'
 import { PickList } from '../../components/PickList'
 import { RolePicker } from '../../components/RolePicker'
 import { normalizeRoles } from '../../api/roles'
@@ -76,9 +78,15 @@ function Source({ idp, providerSignIn, providers, group }: { idp?: string; provi
   )
 }
 
+/** The dashboard's posture tiles, by the name the users list filters them
+ *  under (2026-11-04: a tile opened the whole list); the label is the tile's. */
+const postureLabels: Record<string, string> = { admins: 'Administrators', not_enrolled: 'No authenticator yet', dormant: 'Dormant (90 days)' }
+
 function Users() {
   const me = useAuth().user
-  const { items, err, setErr, reload } = useList<User>('/users')
+  const [sp, setSp] = useSearchParams()
+  const posture = postureLabels[sp.get('posture') ?? ''] ? sp.get('posture')! : ''
+  const { items, err, setErr, reload } = useList<User>('/users', { posture: posture || undefined })
   const providers = useProviders()
   const [adding, setAdding] = useState(false)
   const [showOnce, setShowOnce] = useState<{ username: string; password: string } | null>(null)
@@ -92,11 +100,12 @@ function Users() {
       <div className="actions" style={{ marginBottom: 12 }}>
         <button className="btn primary" onClick={() => setAdding(true)}>Add user</button>
       </div>
+      <FilterChips chips={posture ? [{ label: postureLabels[posture], onClear: () => setSp({}, { replace: true }) }] : []} />
       <div className="card table-wrap">
         {items === null ? (
           err ? null : <Loading />
         ) : items.length === 0 ? (
-          <Empty>No users.</Empty>
+          <Empty>{posture ? 'No users match.' : 'No users.'}</Empty>
         ) : (
           <table>
             <thead>
