@@ -116,3 +116,32 @@ are gone; `acme_cache` is dropped (migration 0052). A certificate from an ACME C
 business of the proxy in front of the gateway (`proxy` mode: Caddy, nginx), as it was before
 the amendment. The resolution order is the upload, then the file, then the self-signed
 certificate.
+
+## Parked (2026-11-04): certificates from a commercial CA
+
+The owner asked how a certificate from DigiCert, GlobalSign or a similar CA is used. It works
+today, two ways. Behind a proxy (`proxy` mode), the proxy holds it: most commercial CAs offer
+ACME with External Account Binding for paid certificates, so Caddy can fetch and renew one as
+it does Let's Encrypt's, or it is pointed at the files. In `managed` mode, the TLS certificate
+card takes it as an upload (or `ZANSKAR_TLS_CERT` and `ZANSKAR_TLS_KEY` name the files). The
+live gateway stays in `proxy` mode with Caddy, on the owner's word.
+
+Three improvements were recommended and are **parked**, nothing built, by the owner's decision
+of 2026-11-04 ("park the changes as per your recommendation"):
+
+1. **Notice before expiry.** A notification kind (ADR 0039) when the certificate the gateway
+   serves, an upload or a file, has 30 and then 7 days left. Today the dashboard and the card
+   show a badge from 30 days and nothing is sent. It matters more each year: a public
+   certificate issued since 15 March 2026 lasts at most 200 days, and from March 2027 at most
+   100 (the CA/Browser Forum's schedule), so a certificate renewed by hand is renewed at least
+   twice a year.
+2. **The key and the request made on the gateway.** The card would generate the private key
+   (sealed with the master key, as an upload's is), show the certificate signing request to
+   give the CA, and take back the certificate and its chain. The private key would never be
+   made on a laptop or pasted through a browser, as appliances that hold their own
+   certificates do.
+3. **Warnings at upload.** Today an upload is refused when the key does not match, the dates
+   do not hold, the certificate does not allow server authentication or the key is encrypted.
+   Two more checks would warn, not refuse: the certificate's names do not cover the public
+   URL's host, and the chain does not verify to a system root (a private CA is legitimate,
+   hence a warning). A wrong certificate today shows only as a browser error.

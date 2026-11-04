@@ -200,3 +200,33 @@ never writes the environment file.** A change is a request that a root helper ap
 A stolen administrator session with a current code can therefore change how the gateway
 names itself and how many sessions it runs. It cannot change what the gateway trusts, where it
 keeps data, or what it executes.
+
+## Parked (2026-11-04): a check on the ports before the restart, and the sign-in notice
+
+Two recommendations from the owner's checks of 1.18.1 on the live gateway are **parked**,
+nothing built, by the owner's decision of 2026-11-04 ("park the changes as per your
+recommendation").
+
+**A check on the ports before the restart.** Switching from `proxy` to `managed` with Caddy
+still on ports 80 and 443 restarted the gateway, drained its sessions, and rolled back. The
+rollback now names the cause ("port 80 is in use by another program"), with the service's last
+lines folded beneath it. The recommendation: before it writes the file, the helper, which runs
+as root, tries to bind each address the change newly asks for (never one the gateway already
+holds), and refuses the request when another program has it, naming that program, so a switch
+that cannot work never restarts anything. Behind it is a limit worth knowing: from `proxy` to
+`managed`, the console's switch cannot succeed while the proxy is the way to the console.
+Leave the proxy running and the gateway cannot take its ports; stop it first and the console
+is unreachable. That switch is a change made on the host, with the certificate in place first,
+since a browser that has seen this gateway's HSTS refuses the self-signed certificate it would
+otherwise serve. The install guide says so.
+
+**The sign-in notice.** The login banner is a runtime setting (above); since 1.18.1 it is the
+one place the console tells people their sessions are recorded. The review of the live sign-in
+page found the notice heavier than the form it precedes: a filled box with an amber strip that
+reads as a warning (the sidebar's strip was removed for the same reason), four paragraphs that
+push the provider's button below the fold at 1440 by 860, and an inner scroll box past 40% of
+the window's height that can hide part of a legal notice. The recommendation: on screens
+900 px and wider, the notice sits beside the form and is read first; no fill and no strip; a
+small *Notice* label; the whole text, never scrolled inside a box; stacked above the form, as
+light, on narrow screens. The text stays the operator's. An explicit acknowledgement before
+signing in would be a setting only if an operator's policy asked for one; none has.
