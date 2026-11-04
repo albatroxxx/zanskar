@@ -121,4 +121,14 @@ describe('TargetsPage', () => {
     await userEvent.setup().type(screen.getByRole('searchbox', { name: 'Search databases' }), 'zzz')
     expect(await screen.findByText(/No databases match/)).toBeDefined()
   })
+
+  // 2026-11-04, live walkthrough: a host probed with nothing answering still
+  // read "unprobed" beside a last-probed time.
+  it('tells a host nothing answered from one never probed', async () => {
+    const host = (name: string, probed: string | null): Target => ({ ...db, id: name, name, address: '172.31.0.1', os_family: 'linux', engine: undefined, capabilities: [], ports: {}, credentials: {}, last_probed_at: probed })
+    serve([host('fresh', null), host('silent', '2026-11-04T17:33:00Z')])
+    render(<MemoryRouter><Targets /></MemoryRouter>)
+    expect(within((await screen.findByText('fresh')).closest('tr')!).getByText('unprobed')).toBeDefined()
+    expect(within(screen.getByText('silent').closest('tr')!).getByText('none found')).toBeDefined()
+  })
 })
