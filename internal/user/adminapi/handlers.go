@@ -112,8 +112,23 @@ type createResponse struct {
 }
 
 func (h *AdminHandler) list(w http.ResponseWriter, r *http.Request) {
+	q := strings.TrimSpace(r.URL.Query().Get("q"))
 	if kind := r.URL.Query().Get("posture"); kind != "" {
-		h.listPosture(w, r, user.PostureKind(kind))
+		h.listPosture(w, r, user.PostureKind(kind), q)
+		return
+	}
+	if q != "" {
+		// A search is ranked by how closely a username, name or email matches,
+		// so it has no cursor to resume from: it is the best of the matches.
+		users, err := h.Users.Search(r.Context(), q, 500)
+		if err != nil {
+			httpx.Internal(w, r, h.Log, err)
+			return
+		}
+		if users == nil {
+			users = []*user.User{}
+		}
+		httpx.WriteJSON(w, http.StatusOK, httpx.Page[*user.User]{Items: users})
 		return
 	}
 	limit, cursor := httpx.Paging(r, 50, 500)
@@ -131,7 +146,7 @@ func (h *AdminHandler) list(w http.ResponseWriter, r *http.Request) {
 // listPosture answers the users list's posture filter with the accounts a
 // dashboard tile counted, so a tile opens what it said (2026-11-04). The
 // list is the whole set, not a page: it is as long as the number on the tile.
-func (h *AdminHandler) listPosture(w http.ResponseWriter, r *http.Request, kind user.PostureKind) {
+func (h *AdminHandler) listPosture(w http.ResponseWriter, r *http.Request, kind user.PostureKind, q string) {
 	if !user.ValidPosture(string(kind)) {
 		httpx.BadRequest(w, r, "posture must be admins, dormant or not_enrolled")
 		return
@@ -144,7 +159,7 @@ func (h *AdminHandler) listPosture(w http.ResponseWriter, r *http.Request, kind 
 			return
 		}
 	}
-	users, err := h.Users.ListPosture(r.Context(), kind, time.Now(), owners)
+	users, err := h.Users.ListPosture(r.Context(), kind, time.Now(), owners, q)
 	if err != nil {
 		httpx.Internal(w, r, h.Log, err)
 		return

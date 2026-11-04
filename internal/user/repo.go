@@ -427,10 +427,42 @@ func postureWhere(kind PostureKind, now time.Time, providerMFA []string) (string
 }
 
 // ListPosture returns the accounts CountPosture counted for kind, by
-// username. A count is a number of accounts, so the list is not paged.
-func (r *Repo) ListPosture(ctx context.Context, kind PostureKind, now time.Time, providerMFA []string) ([]*User, error) {
+// username, or by how closely they match q when there is one. A count is a
+// number of accounts, so the list is not paged.
+func (r *Repo) ListPosture(ctx context.Context, kind PostureKind, now time.Time, providerMFA []string, q string) ([]*User, error) {
 	where, args := postureWhere(kind, now, providerMFA)
-	rows, err := r.db.QueryContext(ctx, r.db.Rebind(`SELECT `+userCols+` FROM users u WHERE `+where+` ORDER BY LOWER(u.username)`), args...)
+	return r.listMatching(ctx, where, args, q, searchLimit)
+}
+
+// searchLimit caps a search or a posture list; both are far shorter in
+// practice, and neither is paged (a ranking has no stable place to resume).
+const searchLimit = 500
+
+// Search finds accounts by a word in the username, display name or email,
+// closest match first (store.Search); with a blank q it lists from the start
+// of the username order. Up to limit are returned.
+func (r *Repo) Search(ctx context.Context, q string, limit int) ([]*User, error) {
+	if limit <= 0 || limit > searchLimit {
+		limit = searchLimit
+	}
+	return r.listMatching(ctx, "", nil, q, limit)
+}
+
+// listMatching reads the users where holds (over users aliased u), narrowed
+// and ordered by q when there is one, with their roles.
+func (r *Repo) listMatching(ctx context.Context, where string, args []any, q string, limit int) ([]*User, error) {
+	conds, order := []string{"1 = 1"}, `LOWER(u.username)`
+	if where != "" {
+		conds = append(conds, "("+where+")")
+	}
+	if s, ok := store.NewSearch(q, "u.username", "u.display_name", "u.email"); ok {
+		conds = append(conds, "("+s.Where+")")
+		args = append(args, s.WhereArgs...)
+		order = s.Rank + ", " + order
+		args = append(args, s.RankArgs...)
+	}
+	args = append(args, limit)
+	rows, err := r.db.QueryContext(ctx, r.db.Rebind(`SELECT `+userCols+` FROM users u WHERE `+strings.Join(conds, " AND ")+` ORDER BY `+order+` LIMIT ?`), args...)
 	if err != nil {
 		return nil, err
 	}

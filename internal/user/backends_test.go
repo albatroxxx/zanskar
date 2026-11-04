@@ -185,7 +185,7 @@ func TestCountPostureOnEachBackend(t *testing.T) {
 		// the tiles opened the whole user list), by username, with roles.
 		names := func(kind PostureKind, owners []string) []string {
 			t.Helper()
-			list, err := r.ListPosture(ctx, kind, now, owners)
+			list, err := r.ListPosture(ctx, kind, now, owners, "")
 			if err != nil {
 				t.Fatal(err)
 			}

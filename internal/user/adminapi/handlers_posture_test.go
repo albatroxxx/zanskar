@@ -56,6 +56,20 @@ func TestUsersListPostureFilter(t *testing.T) {
 		t.Fatalf("no filter lists everyone: %v", usernames(t, r))
 	}
 
+	// 2026-11-04: q finds a word in the name, closest first, alone or inside a tile's set.
+	if got := usernames(t, e.do("GET", "/api/v1/users?q=pw", nil)); !slices.Equal(got, []string{"pw", "pw-admin"}) {
+		t.Fatalf("q=pw: %v", got)
+	}
+	if got := usernames(t, e.do("GET", "/api/v1/users?q=ADM", nil)); !slices.Equal(got, []string{"pw-admin"}) {
+		t.Fatalf("q=ADM (a word inside, any case): %v", got)
+	}
+	if got := usernames(t, e.do("GET", "/api/v1/users?posture=admins&q=pw", nil)); !slices.Equal(got, []string{"pw-admin"}) {
+		t.Fatalf("posture and q: %v", got)
+	}
+	if got := usernames(t, e.do("GET", "/api/v1/users?q=nobodyhasthis", nil)); len(got) != 0 {
+		t.Fatalf("q matching nothing: %v", got)
+	}
+
 	e.h.MFAOwners = func(context.Context) ([]string, error) { return nil, errors.New("providers unreadable") }
 	if r := e.do("GET", "/api/v1/users?posture=not_enrolled", nil); r.code != 500 {
 		t.Fatalf("a provider failure must not answer with a list: %d %v", r.code, r.body)

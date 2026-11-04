@@ -10,7 +10,7 @@ import { RolePicker } from '../../components/RolePicker'
 import { normalizeRoles } from '../../api/roles'
 import { useSubmit } from '../../components/submit'
 import { Alert, Badge, Confirm, Empty, Field, FormModal, Loading, Modal, PageHead, Tabs } from '../../components/ui'
-import { useList } from './lib'
+import { useDebounced, useList } from './lib'
 import { StateIcon } from '../../components/icons'
 
 
@@ -86,7 +86,12 @@ function Users() {
   const me = useAuth().user
   const [sp, setSp] = useSearchParams()
   const posture = postureLabels[sp.get('posture') ?? ''] ? sp.get('posture')! : ''
-  const { items, err, setErr, reload } = useList<User>('/users', { posture: posture || undefined })
+  // A word finds an account by part of its username, name or email, the
+  // closest match first (2026-11-04); the server ranks, so the list is shown
+  // in the order it comes. Debounced so a fetch fires once typing pauses.
+  const [q, setQ] = useState('')
+  const dq = useDebounced(q.trim())
+  const { items, err, setErr, reload } = useList<User>('/users', { posture: posture || undefined, q: dq || undefined })
   const providers = useProviders()
   const [adding, setAdding] = useState(false)
   const [showOnce, setShowOnce] = useState<{ username: string; password: string } | null>(null)
@@ -102,10 +107,13 @@ function Users() {
       </div>
       <FilterChips chips={posture ? [{ label: postureLabels[posture], onClear: () => setSp({}, { replace: true }) }] : []} />
       <div className="card table-wrap">
+        <div className="list-search">
+          <input type="search" placeholder="Search users by name or email" aria-label="Search users" value={q} onChange={(e) => setQ(e.target.value)} />
+        </div>
         {items === null ? (
           err ? null : <Loading />
         ) : items.length === 0 ? (
-          <Empty>{posture ? 'No users match.' : 'No users.'}</Empty>
+          <Empty>{posture || dq ? 'No users match.' : 'No users.'}</Empty>
         ) : (
           <table>
             <thead>
