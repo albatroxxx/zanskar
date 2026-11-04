@@ -14,8 +14,9 @@ documentation (the guide on the site, the ADRs, the release notes) is where word
 2. **No mechanism narration.** Not "a custom image, for a private registry mirror, is pinned by
    digest" but "a custom image is pinned by digest". Not "so reviewers can find it".
 3. **No "is recorded" and "is logged" captions.** They sat on nearly every page. The audit log
-   records everything regardless; the person is told once, by the login banner, whose default
-   text says every session is recorded and may be reviewed, and which the operator words.
+   records everything regardless; the person is told once, by the login banner, which the
+   operator words. It has no default text, only an example in the field ("every session is
+   recorded and may be reviewed"), so an empty banner tells nobody; the 1.18.1 notes say so.
 4. **A title that is ambiguous to the owner is wrong.** "Search what sessions printed" under
    *Recordings* read as desktop video to them; it is "Index terminal output".
 5. **Four tiles a row, and never an invented one.** When a row needs a fourth box, use something

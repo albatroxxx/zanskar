@@ -29,6 +29,25 @@ export interface BootChange {
 }
 
 /**
+ * FailedNotice says why an action did not happen: the cause in a sentence,
+ * and the service's own last lines, when there are any, folded beneath it
+ * (live, 2026-11-04: the lines inline ran out of the dialog).
+ */
+export function FailedNotice({ progress }: { progress: Progress }) {
+  return (
+    <Alert tone="danger">
+      {progress.message}
+      {progress.log ? (
+        <details className="alert-log">
+          <summary>Service log</summary>
+          <pre>{progress.log}</pre>
+        </details>
+      ) : null}
+    </Alert>
+  )
+}
+
+/**
  * HostActionDialog asks for an update, a restart, a reboot or a stop (ADR
  * 0032), then follows it to the end: the drain, the install or restart, the
  * gateway away, and back (2026-10-30: the dialog used to say "Installing…"
@@ -164,7 +183,7 @@ export function HostActionDialog({ action, version, change, onClose }: { action:
             })}
           </ol>
         )}
-        {progress.state === 'failed' && <Alert tone="danger">{progress.message}</Alert>}
+        {progress.state === 'failed' && <FailedNotice progress={progress} />}
         {progress.state === 'cancelled' && <Alert tone="ok">Cancelled; the gateway carries on.</Alert>}
         {err && <Alert tone="danger" onDismiss={() => setErr('')}>{err}</Alert>}
         <div className="actions">

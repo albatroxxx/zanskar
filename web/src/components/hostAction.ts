@@ -37,6 +37,9 @@ export interface Progress {
   until?: string
   /** The installer's words, or why it failed. */
   message?: string
+  /** The service's last lines when an install settings change did not
+   *  come back: shown folded under the message, never in it. */
+  log?: string
   /** When the gateway was first found away (ms); a power-off is done once it stays away. */
   offlineSince?: number
 }
@@ -101,6 +104,14 @@ export function observe(start: Start, prev: Progress, o: Observation): Progress 
   return { state: 'failed', step: prev.step, message: `The ${noun(start)} did not go ahead. Events has the reason.` }
 }
 
+/** sentence reads the helper's words, written in Go's lower-case style, as
+ *  the console's: a capital first and a full stop last. */
+export function sentence(s: string | undefined): string {
+  const t = (s ?? '').trim()
+  if (!t) return ''
+  return t[0].toUpperCase() + t.slice(1) + (/[.!?…]$/.test(t) ? '' : '.')
+}
+
 /**
  * observeConfig follows a change of the environment file (ADR 0020, amended
  * 2026-10-30): the helper's answer for this request decides. Refused, it
@@ -109,8 +120,10 @@ export function observe(start: Start, prev: Progress, o: Observation): Progress 
  */
 function observeConfig(start: Start, prev: Progress, o: Observation, s: SystemStatus): Progress {
   const res = o.config && o.config.id === start.target ? o.config : undefined
-  if (res?.state === 'refused') return { state: 'failed', step: 'install', message: res.message || 'The change was refused.' }
-  if (res?.state === 'rolled_back') return { state: 'failed', step: 'back', message: res.message || 'The gateway did not come back; the previous settings are back.' }
+  if (res?.state === 'refused') return { state: 'failed', step: 'install', message: sentence(res.message) || 'The change was refused.' }
+  if (res?.state === 'rolled_back') {
+    return { state: 'failed', step: 'back', message: sentence(res.message) || 'The gateway did not come back; the previous settings are back.', log: res.log || undefined }
+  }
   if (o.at > start.deadline) return timedOut(start, prev)
   if (s.started_at !== start.startedAt) {
     // A fresh process: done once the helper says the change held.

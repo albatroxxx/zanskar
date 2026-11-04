@@ -4308,7 +4308,8 @@ paths:
                 properties:
                   id: { type: string }
                   state: { type: string, enum: [applied, refused, rolled_back] }
-                  message: { type: string }
+                  message: { type: string, description: "Why, in a sentence: for a rollback, the gateway's own cause when its last lines name one." }
+                  log: { type: string, description: "The service's last lines (at most eight, whole) when it did not come back. Not kept in the audit record." }
                   changed: { type: array, items: { type: string }, description: Variable names only. }
                   at: { type: string, format: date-time }
                   requested_by: { type: string, description: User id of the administrator who asked. }

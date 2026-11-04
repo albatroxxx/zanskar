@@ -63,11 +63,15 @@ type Result struct {
 	ID string `json:"id"`
 	// RequestedBy is the request's, so the gateway can audit the outcome
 	// under the administrator who asked.
-	RequestedBy string    `json:"requested_by,omitempty"`
-	State       string    `json:"state"`
-	Message     string    `json:"message,omitempty"`
-	Changed     []string  `json:"changed,omitempty"` // variable names only
-	At          time.Time `json:"at"`
+	RequestedBy string `json:"requested_by,omitempty"`
+	State       string `json:"state"`
+	Message     string `json:"message,omitempty"`
+	// Log is the service's last lines when it did not come back, for the
+	// console to show folded under the message. It stays out of the audit
+	// record, which keeps the message alone.
+	Log     string    `json:"log,omitempty"`
+	Changed []string  `json:"changed,omitempty"` // variable names only
+	At      time.Time `json:"at"`
 	// Acknowledged marks a result the gateway has audited.
 	Acknowledged bool `json:"acknowledged,omitempty"`
 }

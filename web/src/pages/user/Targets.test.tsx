@@ -1,4 +1,4 @@
-import { cleanup, render, screen, within } from '@testing-library/react'
+import { cleanup, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router-dom'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -392,5 +392,93 @@ describe('Targets, sessions in tabs of their own', () => {
     // The chooser stays, so another instance can be opened from it.
     expect(screen.getByRole('dialog', { name: 'Connect to web-fleet' })).toBeDefined()
     expect(records()).toEqual(['/connect?asg=g1&instance=i9&protocol=ssh'])
+  })
+})
+
+// Live, 2026-11-04: an administrator revoked a user's grant while its RDP
+// session ran. The session ended in its own tab, but the portal tab still
+// showed RDP and "1 grant expiring soon" until a reload: the grants were read
+// once, when the page opened.
+describe('Targets, grants that change while the page is open', () => {
+  const desk: ReachableTarget = {
+    kind: 'target', id: 't1', name: 'win-app-01', os_family: 'windows', tags: {},
+    capabilities: ['rdp'], allowed_protocols: ['rdp'], requires_approval: ['rdp'], host_key_ready: true,
+  }
+  const grant = (expires: number) => ({ id: 'r1', target_id: 't1', protocol: 'rdp', expires_at: new Date(expires).toISOString() })
+  const page = () =>
+    render(
+      <MemoryRouter>
+        <Targets />
+      </MemoryRouter>,
+    )
+
+  it('goes back to Request when the page is looked at again after a revoke', async () => {
+    let granted = true
+    vi.spyOn(api, 'get').mockImplementation(async (p: string) => {
+      if (p === '/me/targets') return { items: [desk] } as never
+      if (p === '/me/access') return { items: granted ? [grant(Date.now() + 30 * 60000)] : [] } as never
+      return { items: [] } as never
+    })
+    page()
+    expect(await screen.findByText('Grants expiring soon')).toBeDefined()
+    expect(screen.getByRole('link', { name: /^RDP/ })).toBeDefined()
+    expect(screen.queryByRole('button', { name: 'Request' })).toBeNull()
+
+    granted = false
+    window.dispatchEvent(new Event('focus'))
+    expect(await screen.findByRole('button', { name: 'Request' })).toBeDefined()
+    expect(screen.queryByRole('link', { name: /^RDP/ })).toBeNull()
+    expect(screen.queryByText('Grants expiring soon')).toBeNull()
+  })
+
+  it('goes back to Request when the grant runs out, with no reload', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    try {
+      const end = Date.now() + 5 * 60000
+      vi.spyOn(api, 'get').mockImplementation(async (p: string) => {
+        if (p === '/me/targets') return { items: [desk] } as never
+        if (p === '/me/access') return { items: Date.now() < end ? [grant(end)] : [] } as never
+        return { items: [] } as never
+      })
+      page()
+      await screen.findByRole('link', { name: /^RDP/ })
+      await vi.advanceTimersByTimeAsync(5 * 60000 + 2000)
+      expect(await screen.findByRole('button', { name: 'Request' })).toBeDefined()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('looks again shortly when the gateway still lists a grant this clock has seen end', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    try {
+      const get = vi.spyOn(api, 'get').mockImplementation(async (p: string) => {
+        if (p === '/me/targets') return { items: [desk] } as never
+        if (p === '/me/access') return { items: [grant(Date.now() - 1000)] } as never
+        return { items: [] } as never
+      })
+      page()
+      await screen.findByText('win-app-01')
+      const reads = () => get.mock.calls.filter(([p]) => p === '/me/access').length
+      const before = reads()
+      await vi.advanceTimersByTimeAsync(31_000)
+      expect(reads()).toBeGreaterThan(before)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('reads once when a tab switch fires both events, and reads the rest of the strip too', async () => {
+    const get = vi.spyOn(api, 'get').mockImplementation(async (p: string) => ({ items: p === '/me/targets' ? [desk] : [] }) as never)
+    page()
+    await screen.findByText('win-app-01')
+    const reads = (path: string) => get.mock.calls.filter(([p]) => p === path).length
+    const access = reads('/me/access')
+    const requests = reads('/me/access-requests')
+    document.dispatchEvent(new Event('visibilitychange'))
+    window.dispatchEvent(new Event('focus'))
+    await waitFor(() => expect(reads('/me/access')).toBe(access + 1))
+    expect(reads('/me/access-requests')).toBe(requests + 1)
+    expect(get.mock.calls.filter(([p]) => String(p).startsWith('/me/sessions')).length).toBeGreaterThanOrEqual(2)
   })
 })
