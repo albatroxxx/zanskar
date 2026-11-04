@@ -236,19 +236,19 @@ describe('Users', () => {
 
     await act(user, 'bob', 'delete')
     dialog = screen.getByRole('dialog', { name: 'Delete bob?' })
-    expect(within(dialog).getByText(/An account with session history cannot be deleted/)).toBeDefined()
+    expect(within(dialog).getByText(/Their past sessions stay in the record/)).toBeDefined()
     await user.click(within(dialog).getByRole('button', { name: 'Delete' }))
     await waitFor(() => expect(del).toHaveBeenCalledWith('/users/u2'))
   })
 
   it('keeps a refused delete in the dialog and names it on the page', async () => {
     serve()
-    vi.spyOn(api, 'del').mockRejectedValue(new ApiError(409, { code: 'has_history', message: 'bob has opened sessions; disable the account instead', request_id: 'r' }, '409'))
+    vi.spyOn(api, 'del').mockRejectedValue(new ApiError(409, { code: 'last_admin', message: 'this is the last active admin', request_id: 'r' }, '409'))
     const user = await show()
     await act(user, 'bob', 'delete')
     const dialog = screen.getByRole('dialog', { name: 'Delete bob?' })
     await user.click(within(dialog).getByRole('button', { name: 'Delete' }))
-    expect(await within(dialog).findByText('bob has opened sessions; disable the account instead')).toBeDefined()
+    expect(await within(dialog).findByText('this is the last active admin')).toBeDefined()
     expect(screen.getByRole('dialog', { name: 'Delete bob?' })).toBeDefined()
   })
 
@@ -257,8 +257,8 @@ describe('Users', () => {
   // an alert that only hid itself stayed hidden and the retry said nothing.
   it('names the same refusal again after the first was dismissed', async () => {
     serve()
-    const refusal = 'bob has opened sessions; disable the account instead'
-    vi.spyOn(api, 'del').mockRejectedValue(new ApiError(409, { code: 'has_history', message: refusal, request_id: 'r' }, '409'))
+    const refusal = 'this is the last active admin'
+    vi.spyOn(api, 'del').mockRejectedValue(new ApiError(409, { code: 'last_admin', message: refusal, request_id: 'r' }, '409'))
     const user = await show()
     const onPage = () => screen.queryAllByText(refusal).filter((el) => !el.closest('[role="dialog"]'))
     const tryDelete = async () => {

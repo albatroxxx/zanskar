@@ -12,8 +12,10 @@ export function sessionTarget(s: Pick<Session, 'target_name' | 'asg_name' | 'ins
   return id ? shortId(id) + '…' : '—'
 }
 
-/** sessionUser names who opened a session, falling back to a short id for a
- *  user row that no longer exists. */
-export function sessionUser(s: Pick<Session, 'username' | 'user_id'>): string {
-  return s.username || (s.user_id ? shortId(s.user_id) + '…' : '—')
+/** sessionUser names who opened a session. An account since deleted keeps the
+ *  name it had, marked; a session from before names were kept falls back to a
+ *  short id. */
+export function sessionUser(s: Pick<Session, 'username' | 'user_id' | 'user_deleted'>): string {
+  if (!s.username) return s.user_id ? shortId(s.user_id) + '…' : '—'
+  return s.user_deleted ? `${s.username} (deleted)` : s.username
 }

@@ -167,7 +167,7 @@ func (r *Repo) SearchCommands(ctx context.Context, q string, limit int) ([]Comma
 	if limit <= 0 || limit > 500 {
 		limit = 100
 	}
-	rows, err := r.db.QueryContext(ctx, r.db.Rebind(`SELECT c.recording_id, s.id, u.username, t.name, s.protocol, s.started_at, c.seq, c.at_ms, c.command
+	rows, err := r.db.QueryContext(ctx, r.db.Rebind(`SELECT c.recording_id, s.id, COALESCE(u.username, NULLIF(s.user_username, '')), t.name, s.protocol, s.started_at, c.seq, c.at_ms, c.command
 		FROM recording_commands c
 		JOIN recordings rec ON rec.id = c.recording_id
 		JOIN access_sessions s ON s.id = rec.session_id
@@ -236,7 +236,7 @@ func (r *Repo) SearchOutput(ctx context.Context, q string, limit int) ([]OutputH
 
 // outputHits is SearchOutput's scan, its cursor closed when it returns.
 func (r *Repo) outputHits(ctx context.Context, q string, limit int) ([]OutputHit, error) {
-	rows, err := r.db.QueryContext(ctx, r.db.Rebind(`SELECT o.recording_id, s.id, u.username, t.name, s.protocol, s.started_at, o.at_ms, o.line
+	rows, err := r.db.QueryContext(ctx, r.db.Rebind(`SELECT o.recording_id, s.id, COALESCE(u.username, NULLIF(s.user_username, '')), t.name, s.protocol, s.started_at, o.at_ms, o.line
 		FROM recording_output o
 		JOIN recordings rec ON rec.id = o.recording_id
 		JOIN access_sessions s ON s.id = rec.session_id

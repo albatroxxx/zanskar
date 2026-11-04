@@ -241,7 +241,7 @@ function Users() {
       {action?.a === 'delete' && (
         <Confirm
           title={`Delete ${action.u.username}?`}
-          body="An account with session history cannot be deleted; disable it instead."
+          body="Their sign-ins and live sessions end. Their past sessions stay in the record under their name."
           confirmLabel="Delete"
           danger
           onClose={() => setAction(null)}

@@ -63,3 +63,4 @@ and update the status of the old one.
 | [0043](0043-configuration-as-a-file.md) | The configuration as a file: exported by name, imported through the API | Accepted |
 | [0044](0044-api-tokens-and-terraform-provider.md) | API tokens for automation, and a Terraform provider over them | Accepted |
 | [0045](0045-kubernetes-clusters-as-targets.md) | Kubernetes clusters as targets: access through the gateway, as the person, every request on the record | Proposed |
+| [0046](0046-deleting-a-user-keeps-their-history.md) | Deleting a user keeps their history: sessions and recording views carry who the person was | Accepted |

@@ -37,10 +37,13 @@ const (
 
 // Session is one connection from a user to a target.
 type Session struct {
-	ID         string `json:"id"`
-	UserID     string `json:"user_id"`
-	Username   string `json:"username,omitempty"`
-	TargetName string `json:"target_name,omitempty"`
+	ID       string `json:"id"`
+	UserID   string `json:"user_id"`
+	Username string `json:"username,omitempty"`
+	// UserDeleted marks a session whose account no longer exists; Username is
+	// then the name it had when the session started (ADR 0046).
+	UserDeleted bool   `json:"user_deleted,omitempty"`
+	TargetName  string `json:"target_name,omitempty"`
 	// ASGName and InstanceID label a session on an autoscaling instance the
 	// way TargetName labels one on a static target: the group's name and the
 	// cloud instance id. Resolved at read time from rows that outlive deletion
@@ -121,6 +124,10 @@ type Recording struct {
 // ErrNotFound is returned for unknown ids.
 var ErrNotFound = errors.New("session: not found")
 
+// ErrUnknownUser is returned when a session or a recording view names an
+// account that does not exist.
+var ErrUnknownUser = errors.New("session: unknown user")
+
 // Repo persists sessions and recordings.
 type Repo struct {
 	db *store.DB
@@ -133,12 +140,28 @@ func NewRepo(db *store.DB) *Repo { return &Repo{db: db} }
 func (r *Repo) Start(ctx context.Context, s *Session) error {
 	s.ID = store.NewID()
 	s.StartedAt = time.Now().UTC()
-	_, err := r.db.ExecContext(ctx, r.db.Rebind(`INSERT INTO access_sessions
-		(id, user_id, policy_id, target_id, asg_id, asg_instance_id, protocol, credential_id, client_ip, user_agent, started_at, failover_from_session_id)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`),
-		s.ID, s.UserID, nullStr(s.PolicyID), nullStr(s.TargetID), nullStr(s.ASGID), nullStr(s.ASGInstanceID), s.Protocol,
+	username, display, err := r.identity(ctx, s.UserID)
+	if err != nil {
+		return err
+	}
+	_, err = r.db.ExecContext(ctx, r.db.Rebind(`INSERT INTO access_sessions
+		(id, user_id, user_username, user_display_name, policy_id, target_id, asg_id, asg_instance_id, protocol, credential_id, client_ip, user_agent, started_at, failover_from_session_id)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`),
+		s.ID, s.UserID, username, display, nullStr(s.PolicyID), nullStr(s.TargetID), nullStr(s.ASGID), nullStr(s.ASGInstanceID), s.Protocol,
 		nullStr(s.CredentialID), s.ClientIP, s.UserAgent, store.TimeArg(s.StartedAt), nullStr(s.FailoverFromSessionID))
 	return err
+}
+
+// identity returns the username and display name a row is written with, so
+// the row still says who the person was after the account is deleted (ADR
+// 0046). Nothing but this lookup stops a row from naming an account that does
+// not exist: there is no foreign key.
+func (r *Repo) identity(ctx context.Context, userID string) (username, display string, err error) {
+	err = r.db.QueryRowContext(ctx, r.db.Rebind(`SELECT username, display_name FROM users WHERE id = ?`), userID).Scan(&username, &display)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", "", ErrUnknownUser
+	}
+	return username, display, err
 }
 
 // End closes a session with a reason. Ending twice is a no-op.
@@ -248,7 +271,7 @@ func (r *Repo) List(ctx context.Context, f Filter) ([]*Session, string, error) {
 		args = append(args, f.UserID)
 	}
 	if f.Username != "" {
-		q += ` AND u.username = ?`
+		q += ` AND COALESCE(u.username, s.user_username) = ?`
 		args = append(args, strings.ToLower(strings.TrimSpace(f.Username)))
 	}
 	if f.TargetID != "" {
@@ -349,8 +372,13 @@ func (r *Repo) GetRecording(ctx context.Context, id string) (*Recording, error) 
 
 // RecordView logs that a person viewed a recording (ADR 0006).
 func (r *Repo) RecordView(ctx context.Context, recordingID, userID, ip string) error {
-	_, err := r.db.ExecContext(ctx, r.db.Rebind(`INSERT INTO recording_views (id, recording_id, user_id, ip, viewed_at) VALUES (?, ?, ?, ?, ?)`),
-		store.NewID(), recordingID, userID, ip, store.TimeArg(time.Now()))
+	username, display, err := r.identity(ctx, userID)
+	if err != nil {
+		return err
+	}
+	_, err = r.db.ExecContext(ctx, r.db.Rebind(`INSERT INTO recording_views (id, recording_id, user_id, user_username, user_display_name, ip, viewed_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?)`),
+		store.NewID(), recordingID, userID, username, display, ip, store.TimeArg(time.Now()))
 	return err
 }
 
@@ -358,7 +386,7 @@ func (r *Repo) RecordView(ctx context.Context, recordingID, userID, ip string) e
 // joins deliberately ignore deleted_at: a retired target or group still
 // labels its past sessions (ADR 0019).
 const selectSessions = `SELECT s.id, s.user_id, s.policy_id, s.target_id, s.asg_id, s.asg_instance_id, s.protocol, s.credential_id,
-	s.client_ip, s.user_agent, s.started_at, s.ended_at, s.end_reason, s.failover_from_session_id, rec.id, u.username, t.name,
+	s.client_ip, s.user_agent, s.started_at, s.ended_at, s.end_reason, s.failover_from_session_id, rec.id, COALESCE(u.username, s.user_username), u.id, t.name,
 	g.name, ai.instance_id, rec.purged_at, rec.retention_until, rec.finished_at, s.end_detail
 	FROM access_sessions s
 	LEFT JOIN recordings rec ON rec.session_id = s.id AND rec.discarded_at IS NULL
@@ -369,12 +397,12 @@ const selectSessions = `SELECT s.id, s.user_id, s.policy_id, s.target_id, s.asg_
 
 func scanSession(sc store.Scanner) (*Session, error) {
 	var (
-		s                                                                                             Session
-		policy, target, asg, inst, cred, reason, failover, recID, username, tname, gname, iid, detail sql.NullString
-		started, ended, purged, recUntil, recFinished                                                 store.NullTime
+		s                                                                                                     Session
+		policy, target, asg, inst, cred, reason, failover, recID, username, liveID, tname, gname, iid, detail sql.NullString
+		started, ended, purged, recUntil, recFinished                                                         store.NullTime
 	)
 	err := sc.Scan(&s.ID, &s.UserID, &policy, &target, &asg, &inst, &s.Protocol, &cred, &s.ClientIP, &s.UserAgent,
-		&started, &ended, &reason, &failover, &recID, &username, &tname, &gname, &iid, &purged, &recUntil, &recFinished, &detail)
+		&started, &ended, &reason, &failover, &recID, &username, &liveID, &tname, &gname, &iid, &purged, &recUntil, &recFinished, &detail)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound
@@ -384,6 +412,7 @@ func scanSession(sc store.Scanner) (*Session, error) {
 	s.PolicyID, s.TargetID, s.ASGID, s.ASGInstanceID, s.CredentialID = policy.String, target.String, asg.String, inst.String, cred.String
 	s.EndReason, s.FailoverFromSessionID, s.RecordingID = reason.String, failover.String, recID.String
 	s.Username, s.TargetName, s.ASGName, s.InstanceID = username.String, tname.String, gname.String, iid.String
+	s.UserDeleted = !liveID.Valid
 	s.StartedAt, s.EndedAt = started.Time, ended.Ptr()
 	s.RecordingPurged, s.recOwnUntil, s.recFinished = purged.Valid, recUntil.Ptr(), recFinished.Ptr()
 	s.EndDetail = detail.String

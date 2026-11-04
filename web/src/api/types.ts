@@ -317,6 +317,8 @@ export interface Session {
   id: string
   user_id: string
   username?: string
+  /** The account no longer exists; username is the name it had. */
+  user_deleted?: boolean
   target_name?: string
   /** For a session on an autoscaling instance: the group's name and the cloud instance id. */
   asg_name?: string
