@@ -32,6 +32,6 @@ for img in zanskar zanskar-browser; do
   arch=$(docker manifest inspect "$ref:$V" 2>&1 | grep -c '"architecture": "a')
   a=$(docker manifest inspect "$ref:$V" 2>&1 | grep '"digest"' | sort | tr -d ' \n')
   b=$(docker manifest inspect "$ref:latest" 2>&1 | grep '"digest"' | sort | tr -d ' \n')
-  if [ -n "$a" ] && [ "$a" = "$b" ]; then echo "$img: $arch platforms, latest == $V"; else echo "$img: $arch platforms, latest DIFFERS or empty"; fi
+  if [[ -n $a && $a == "$b" ]]; then echo "$img: $arch platforms, latest == $V"; else echo "$img: $arch platforms, latest DIFFERS or empty"; fi
   if cosign verify "$ref:$V" --certificate-identity "$ID" --certificate-oidc-issuer "$ISSUER" >/dev/null 2>&1; then echo "$img: signed ok"; else echo "$img: signature FAILED"; fi
 done
