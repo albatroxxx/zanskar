@@ -14,6 +14,26 @@ import (
 // TestApplicationValidate: an application (ADR 0033) is its upstream origin
 // (ADR 0034). The upstream must be exactly an origin, the address is the
 // upstream's host, and the CA bundle belongs to an https upstream only.
+// TestATargetNameCannotHideWhatItIs (2026-11-04): a host, database or
+// application is named in lists and audit sentences, so its name may not hold
+// a control character, a direction override or a zero-width space.
+func TestATargetNameCannotHideWhatItIs(t *testing.T) {
+	for label, name := range map[string]string{
+		"newline":   "web\n1",
+		"override":  "db" + string(rune(0x202E)) + "gpj.exe",
+		"zero":      "web" + string(rune(0x200B)) + "1",
+		"invisible": string(rune(0x200B)),
+	} {
+		tg := &Target{Name: name, Address: "10.0.0.5", OSFamily: Linux}
+		if err := tg.Validate(); !errors.Is(err, ErrInvalid) {
+			t.Errorf("%s: Validate = %v, want ErrInvalid", label, err)
+		}
+	}
+	if err := (&Target{Name: "Zurich web-1", Address: "10.0.0.5", OSFamily: Linux}).Validate(); err != nil {
+		t.Errorf("a plain name: %v", err)
+	}
+}
+
 func TestApplicationValidate(t *testing.T) {
 	app := &Target{Name: "Wiki (internal)", AppUpstream: " HTTP://Wiki.Example.com:8080/ "}
 	if err := app.Validate(); err != nil {

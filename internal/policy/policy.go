@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/albatroxxx/zanskar/internal/protocol"
+	"github.com/albatroxxx/zanskar/internal/textsafe"
 )
 
 // Subject kinds: a policy names groups and users.
@@ -137,6 +138,12 @@ func (p *Policy) Validate() error {
 	p.Name = strings.TrimSpace(p.Name)
 	if p.Name == "" || len(p.Name) > 64 {
 		return fmt.Errorf("%w: name must be 1-64 characters", ErrInvalidInput)
+	}
+	if err := textsafe.Name(p.Name); err != nil {
+		return fmt.Errorf("%w: name %w", ErrInvalidInput, err)
+	}
+	if err := textsafe.Text(p.Description); err != nil {
+		return fmt.Errorf("%w: description %w", ErrInvalidInput, err)
 	}
 	// No subject is allowed: a policy whose last group or user was deleted
 	// grants nobody and may still be edited or switched off. A new policy

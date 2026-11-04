@@ -369,7 +369,7 @@ func (h *AdminHandler) fail(w http.ResponseWriter, r *http.Request, err error) {
 	case errors.Is(err, idp.ErrDuplicate):
 		httpx.WriteError(w, r, http.StatusConflict, "conflict", "a provider with that name exists")
 	case errors.Is(err, idp.ErrInvalidInput):
-		httpx.BadRequest(w, r, err.Error())
+		httpx.BadRequest(w, r, strings.TrimPrefix(err.Error(), idp.ErrInvalidInput.Error()+": "))
 	default:
 		httpx.Internal(w, r, h.Log, err)
 	}

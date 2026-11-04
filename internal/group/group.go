@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/albatroxxx/zanskar/internal/store"
+	"github.com/albatroxxx/zanskar/internal/textsafe"
 	"github.com/albatroxxx/zanskar/internal/user"
 )
 
@@ -63,6 +64,9 @@ func validName(name string) error {
 	name = strings.TrimSpace(name)
 	if len(name) < 1 || len(name) > 64 {
 		return fmt.Errorf("%w: name must be 1-64 characters", ErrInvalidInput)
+	}
+	if err := textsafe.Name(name); err != nil {
+		return fmt.Errorf("%w: name %w", ErrInvalidInput, err)
 	}
 	return nil
 }

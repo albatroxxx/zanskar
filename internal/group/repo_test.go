@@ -128,6 +128,37 @@ func TestSyncedGroupRejectsManualMembership(t *testing.T) {
 	}
 }
 
+// TestAGroupNameCannotHideWhatItIs (2026-11-04, live walkthrough of 1.18.4):
+// groups were made with a bell, a newline, a right-to-left override, a
+// zero-width space, and one of nothing but zero-width spaces: spoofs of other
+// names, and a row with no name. Each is refused, and the message names the
+// rule, not the package.
+func TestAGroupNameCannotHideWhatItIs(t *testing.T) {
+	ctx := context.Background()
+	r := NewRepo(testDB(t))
+	for label, name := range map[string]string{
+		"bell":           "qa-ctrl" + string(rune(7)) + "bell",
+		"newline":        "qa-line1\nline2",
+		"bidi override":  "qa-bidi" + string(rune(0x202E)) + "txt.exe",
+		"zero-width":     "qa-zw" + string(rune(0x200B)) + "space",
+		"only invisible": string(rune(0x200B)) + string(rune(0x200B)),
+	} {
+		if err := r.Create(ctx, &Group{Name: name}); !errors.Is(err, ErrInvalidInput) {
+			t.Errorf("%s: Create = %v, want ErrInvalidInput", label, err)
+		}
+		if err := r.CreateWithMembers(ctx, &Group{Name: name}, nil); !errors.Is(err, ErrInvalidInput) {
+			t.Errorf("%s: CreateWithMembers = %v, want ErrInvalidInput", label, err)
+		}
+	}
+	ok := &Group{Name: "Zurich Buro"}
+	if err := r.Create(ctx, ok); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.Update(ctx, ok.ID, "renamed"+string(rune(0x2066)), ""); !errors.Is(err, ErrInvalidInput) {
+		t.Errorf("rename to an isolate: %v", err)
+	}
+}
+
 // TestNamesDifferingOnlyInCaseAreTheSameName (2026-11-04, live walkthrough):
 // "QA-WALK-GROUP" was made beside "qa-walk-group", two names that read as one
 // to a person picking a group in a policy, while usernames were already

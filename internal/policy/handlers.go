@@ -13,6 +13,7 @@ import (
 	"slices"
 	"sort"
 	"strconv"
+	"strings"
 
 	"github.com/albatroxxx/zanskar/internal/audit"
 	"github.com/albatroxxx/zanskar/internal/auth"
@@ -400,7 +401,7 @@ func (h *AdminHandler) fail(w http.ResponseWriter, r *http.Request, err error) {
 	case errors.Is(err, ErrUnknownSubject):
 		httpx.WriteError(w, r, http.StatusUnprocessableEntity, "invalid_subject", err.Error())
 	case errors.Is(err, ErrInvalidInput):
-		httpx.BadRequest(w, r, err.Error())
+		httpx.BadRequest(w, r, strings.TrimPrefix(err.Error(), ErrInvalidInput.Error()+": "))
 	default:
 		httpx.Internal(w, r, h.Log, err)
 	}

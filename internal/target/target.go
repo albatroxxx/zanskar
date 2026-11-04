@@ -21,6 +21,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/albatroxxx/zanskar/internal/ipspace"
+	"github.com/albatroxxx/zanskar/internal/textsafe"
 
 	"github.com/albatroxxx/zanskar/internal/protocol"
 )
@@ -467,6 +468,9 @@ func (t *Target) Validate() error {
 	t.Address = strings.TrimSpace(t.Address)
 	if t.Name == "" || len(t.Name) > MaxNameLen {
 		return fmt.Errorf("%w: name must be 1-%d characters", ErrInvalid, MaxNameLen)
+	}
+	if err := textsafe.Name(t.Name); err != nil {
+		return fmt.Errorf("%w: name %w", ErrInvalid, err)
 	}
 	t.AppUpstream = strings.TrimSpace(t.AppUpstream)
 	if t.AppUpstream != "" {
