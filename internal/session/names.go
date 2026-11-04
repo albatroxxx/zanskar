@@ -5,6 +5,7 @@ package session
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -68,13 +69,101 @@ func (r *Repo) ResolveNames(ctx context.Context, kind string, ids []string) (map
 			out[id] = name.String
 		}
 	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if kind != "user" {
+		return out, nil
+	}
+	_ = rows.Close() // one connection on SQLite: the lookups below wait for it
+	return r.nameDeletedUsers(ctx, out, uniq)
+}
+
+// nameDeletedUsers adds a name, marked "(deleted)", for each id in ids that
+// names no account any more, so the events a deleted person acted in still say
+// who it was (ADR 0046). The name comes from the user.delete event, which
+// records it, and for an account deleted before that event carried one, from
+// the copy kept on its sessions.
+func (r *Repo) nameDeletedUsers(ctx context.Context, out map[string]string, ids []string) (map[string]string, error) {
+	var missing []string
+	for _, id := range ids {
+		if _, ok := out[id]; !ok && id != "" {
+			missing = append(missing, id)
+		}
+	}
+	if len(missing) == 0 {
+		return out, nil
+	}
+	deleted, err := r.deletedUsers(ctx, missing)
+	if err != nil {
+		return nil, err
+	}
+	for _, d := range deleted {
+		out[d.id] = d.username + " (deleted)"
+	}
+	var rest []string
+	for _, id := range missing {
+		if _, ok := out[id]; !ok {
+			rest = append(rest, id)
+		}
+	}
+	if len(rest) == 0 {
+		return out, nil
+	}
+	rows, err := r.db.QueryContext(ctx, r.db.Rebind(`SELECT user_id, MAX(user_username) FROM access_sessions
+		WHERE user_id IN (`+placeholders(len(rest))+`) AND user_username <> '' GROUP BY user_id`), toArgs(rest)...)
+	if err != nil {
+		return nil, fmt.Errorf("session: resolve deleted users: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var id, name string
+		if err := rows.Scan(&id, &name); err != nil {
+			return nil, err
+		}
+		out[id] = name + " (deleted)"
+	}
+	return out, rows.Err()
+}
+
+// deletedUser is an account a user.delete event says was deleted, with the
+// username the event recorded.
+type deletedUser struct{ id, username string }
+
+// deletedUsers reads the user.delete events for the given ids, or for every
+// account when ids is nil, oldest first.
+func (r *Repo) deletedUsers(ctx context.Context, ids []string) ([]deletedUser, error) {
+	q := `SELECT object_id, CAST(details AS TEXT) FROM audit_events WHERE action = 'user.delete'`
+	var args []any
+	if ids != nil {
+		q += ` AND object_id IN (` + placeholders(len(ids)) + `)`
+		args = toArgs(ids)
+	}
+	rows, err := r.db.QueryContext(ctx, r.db.Rebind(q+` ORDER BY id`), args...)
+	if err != nil {
+		return nil, fmt.Errorf("session: resolve deleted users: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	var out []deletedUser
+	for rows.Next() {
+		var id, details string
+		if err := rows.Scan(&id, &details); err != nil {
+			return nil, err
+		}
+		var d struct {
+			Username string `json:"username"`
+		}
+		if json.Unmarshal([]byte(details), &d) == nil && d.Username != "" {
+			out = append(out, deletedUser{id, d.Username})
+		}
+	}
 	return out, rows.Err()
 }
 
 // sessionLabels builds "user → target (protocol)" for sessions keyed by the
 // given column; the optional join lets recordings resolve through their session.
 func (r *Repo) sessionLabels(ctx context.Context, keyCol, join string, ids []string) (map[string]string, error) {
-	return r.labels(ctx, `SELECT `+keyCol+`, u.username, t.name, ai.instance_id, s.protocol FROM access_sessions s `+join+`
+	return r.labels(ctx, `SELECT `+keyCol+`, COALESCE(u.username, NULLIF(s.user_username, '')), t.name, ai.instance_id, s.protocol FROM access_sessions s `+join+`
 		LEFT JOIN users u ON u.id = s.user_id
 		LEFT JOIN targets t ON t.id = s.target_id
 		LEFT JOIN asg_instances ai ON ai.id = s.asg_instance_id
@@ -119,9 +208,27 @@ func (r *Repo) UserIDByUsername(ctx context.Context, username string) (string, e
 	var id string
 	err := r.db.QueryRowContext(ctx, r.db.Rebind(`SELECT id FROM users WHERE lower(username) = lower(?)`), username).Scan(&id)
 	if err == sql.ErrNoRows {
-		return "", nil
+		return r.deletedUserID(ctx, username)
 	}
 	return id, err
+}
+
+// deletedUserID finds the id of a deleted account by the username its
+// user.delete event recorded, so an auditor can still ask what a person who
+// has left did. A name deleted twice gives the newer account. It returns ""
+// for a name nobody had.
+func (r *Repo) deletedUserID(ctx context.Context, username string) (string, error) {
+	deleted, err := r.deletedUsers(ctx, nil)
+	if err != nil {
+		return "", err
+	}
+	id := ""
+	for _, d := range deleted {
+		if strings.EqualFold(d.username, strings.TrimSpace(username)) {
+			id = d.id
+		}
+	}
+	return id, nil
 }
 
 func dedupe(ids []string) []string {

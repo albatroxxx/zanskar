@@ -254,7 +254,9 @@ func (r *Repo) SetPasswordHash(ctx context.Context, id, hash string, mustChange 
 	return store.Affected(res, ErrNotFound)
 }
 
-// Delete removes the user. Audit rows keep the id as plain text by design.
+// Delete removes the user. Audit events, sessions and recording views keep the
+// id as plain text, and sessions and views the name as it was, so the history
+// of a deleted account stays whole (ADR 0046).
 func (r *Repo) Delete(ctx context.Context, id string) error {
 	u, err := r.GetByID(ctx, id)
 	if err != nil {
@@ -272,23 +274,9 @@ func (r *Repo) Delete(ctx context.Context, id string) error {
 	}
 	res, err := r.db.ExecContext(ctx, r.db.Rebind(`DELETE FROM users WHERE id = ?`), id)
 	if err != nil {
-		// Sessions and recording views keep the account (ON DELETE RESTRICT);
-		// a history that appeared after HasHistory was asked lands here.
-		if store.IsForeignKeyViolation(err) {
-			return ErrHasHistory
-		}
 		return err
 	}
 	return store.Affected(res, ErrNotFound)
-}
-
-// HasHistory reports whether sessions or recording views name the account,
-// which keeps it from being deleted (the record keeps it; ADR 0019's reason).
-func (r *Repo) HasHistory(ctx context.Context, id string) (bool, error) {
-	var n int
-	err := r.db.QueryRowContext(ctx, r.db.Rebind(`SELECT (SELECT COUNT(*) FROM access_sessions WHERE user_id = ?)
-		+ (SELECT COUNT(*) FROM recording_views WHERE user_id = ?)`), id, id).Scan(&n)
-	return n > 0, err
 }
 
 // RecordLoginFailure counts a wrong password or a wrong second-factor code

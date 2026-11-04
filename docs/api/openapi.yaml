@@ -1513,9 +1513,11 @@ paths:
       tags: [admin]
       summary: Delete a user
       description: >
-        Audit events referencing the user are retained; `actor_user_id` keeps the old id. An
-        account that sessions or recording views name is kept for the record and cannot be
-        deleted; disable it instead (`status: disabled`), which also ends its sessions.
+        Any account can be deleted except your own and the last active admin. Its sign-ins are
+        revoked and its live sessions end. Audit events keep `actor_user_id`, and its sessions and
+        recording views keep the id and the username and display name it had, so the record stays
+        whole: a listed session of a deleted account carries `user_deleted: true` and the old
+        `username`. Disable the account instead (`status: disabled`) to keep it for later.
       responses:
         "204":
           description: Deleted.
@@ -1524,7 +1526,6 @@ paths:
         "409":
           description: >
             `self`: you cannot delete yourself. `last_admin`: this is the last active admin.
-            `has_history`: sessions on record keep the account; nothing was revoked or ended.
           content:
             application/json:
               schema:
@@ -7722,6 +7723,10 @@ components:
               type: string
             username:
               type: string
+              description: The account's username; for a deleted account, the one it had (ADR 0046).
+            user_deleted:
+              type: boolean
+              description: The account no longer exists. Absent while it does.
             policy_id:
               type: [string, "null"]
             credential_id:
