@@ -61,3 +61,5 @@ and update the status of the old one.
 | [0041](0041-searching-terminal-recordings.md) | The command lines of terminal recordings are indexed and searched | Accepted |
 | [0042](0042-four-eyes-sessions.md) | Four eyes: a session waits until a second person watches it | Accepted |
 | [0043](0043-configuration-as-a-file.md) | The configuration as a file: exported by name, imported through the API | Accepted |
+| [0044](0044-api-tokens-and-terraform-provider.md) | API tokens for automation, and a Terraform provider over them | Accepted |
+| [0045](0045-kubernetes-clusters-as-targets.md) | Kubernetes clusters as targets: access through the gateway, as the person, every request on the record | Proposed |

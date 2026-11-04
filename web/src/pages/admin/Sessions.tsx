@@ -42,7 +42,6 @@ export function Sessions() {
     <>
       <PageHead
         title="Sessions"
-        lead={admin ? undefined : 'Watching is logged.'}
       >
         <span className="field inline" style={{ margin: 0 }}>
           <input id="s-open" type="checkbox" checked={openOnly} onChange={(e) => set('open', e.target.checked ? '1' : '')} />
@@ -115,7 +114,7 @@ export function Sessions() {
           title="Terminate this session?"
           body={
             <div>
-              <p>The user's terminal closes now. The session is recorded as ended by an administrator.</p>
+              <p>The user's terminal closes now.</p>
               <Field label="Reason (optional, recorded in the audit log)">
                 <input id="s-reason" value={reason} onChange={(e) => setReason(e.target.value)} />
               </Field>

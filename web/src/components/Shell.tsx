@@ -82,6 +82,9 @@ export function Shell({ portal, items }: { portal: 'user' | 'admin' | 'audit'; i
   if (portal !== 'audit' && hasRole('auditor') && !hasRole('admin')) others.push({ to: '/audit', label: 'Audit' })
   return (
     <div className="shell">
+      {/* The keyboard's first stop, past the sidebar to the page. Out of sight
+          until it has focus (.sr-only), and out of the grid in both states. */}
+      <a className="sr-only skip-link" href="#main">Skip to content</a>
       <aside className="sidebar">
         <Link className="brand" to={home} onClick={(e) => void goHome(e)} title="Back to the first page">
           <img src="/logo-mark.svg" alt="" />
@@ -125,7 +128,7 @@ export function Shell({ portal, items }: { portal: 'user' | 'admin' | 'audit'; i
           </button>
         </div>
       </aside>
-      <main className="main">
+      <main className="main" id="main" tabIndex={-1}>
         {portal === 'admin' ? <CornerBar /> : <CornerThemeOnly />}
         {portal === 'user' && <AccessNotices />}
         {portal === 'admin' && <RestartNotice />}

@@ -73,7 +73,7 @@ describe('Notifications, the email server', () => {
     serve([])
     const put = vi.spyOn(api, 'put').mockResolvedValue(smtp as never)
     render(<NotificationsCard />)
-    expect(await screen.findByText(/None: email channels send nothing/)).toBeDefined()
+    expect(await screen.findByText(/email channels send nothing/)).toBeDefined()
     const user = userEvent.setup()
     await user.click(screen.getByRole('button', { name: 'Set the email server' }))
     await user.type(screen.getByLabelText('Server'), 'smtp.example.com')
@@ -93,7 +93,10 @@ describe('Notifications, the email server', () => {
     render(<NotificationsCard />)
     const block = within(await screen.findByTestId('email-server'))
     expect(block.getByText('smtp.example.com:587')).toBeDefined()
-    expect(block.getByText(/account svc/)).toBeDefined()
+    expect(block.getByText('svc')).toBeDefined()
+    expect(block.getByText(/password stored/)).toBeDefined()
+    // The server's actions are a row of their own, not words inside a sentence.
+    expect(block.getByRole('button', { name: 'Test' }).closest('.actions')).not.toBeNull()
     const user = userEvent.setup()
     await user.click(block.getByRole('button', { name: 'Test' }))
     await user.type(screen.getByLabelText('To'), 'me@example.com')
@@ -104,7 +107,7 @@ describe('Notifications, the email server', () => {
     const dialog = screen.getByRole('dialog')
     await user.click(within(dialog).getByRole('button', { name: 'Remove' }))
     await waitFor(() => expect(del).toHaveBeenCalledWith('/admin/notifications/email-server'))
-    expect(await screen.findByText(/None: email channels send nothing/)).toBeDefined()
+    expect(await screen.findByText(/email channels send nothing/)).toBeDefined()
   })
 
   it('asks an email channel for its recipients alone, and says when no server is set', async () => {
@@ -116,7 +119,7 @@ describe('Notifications, the email server', () => {
     await user.type(screen.getByLabelText('Name'), 'security')
     await user.selectOptions(screen.getByLabelText('Kind'), 'email')
     expect(screen.queryByLabelText('SMTP server')).toBeNull()
-    expect(screen.getByText(/No email server is set yet/)).toBeDefined()
+    expect(screen.getByText(/No email server is set/)).toBeDefined()
     await user.type(screen.getByLabelText('To'), 'sec@example.com, ops@example.com')
     await user.click(screen.getByRole('button', { name: 'Add' }))
     const [, body] = post.mock.calls[0] as [string, Record<string, unknown>]

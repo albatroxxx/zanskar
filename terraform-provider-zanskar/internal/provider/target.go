@@ -292,7 +292,7 @@ func (r *targetResource) Schema(_ context.Context, _ resource.SchemaRequest, res
 			"name":           schema.StringAttribute{Required: true, Description: "Unique name."},
 			"address":        gateway("Host name or IP. For an application, the gateway may fill it from app_upstream."),
 			"os_family":      gateway("linux or windows, for a host."),
-			"engine":         empty("For a database: postgres, mysql, mariadb, mssql."),
+			"engine":         empty("For a database: postgres, mysql, mariadb."),
 			"engine_version": empty("For a database, as shown."),
 			"database_name":  empty("For a database: the one a session opens."),
 			"tls_mode":       gateway("For a database: verify-full (the gateway's default), require or prefer."),

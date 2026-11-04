@@ -1,6 +1,6 @@
 import { describe as group, expect, it } from 'vitest'
 import type { AuditEvent } from '../../api/types'
-import { describe, detailText, humanAction, who } from './eventText'
+import { describe, detailText, humanAction, typeLabel, who } from './eventText'
 
 const event = (over: Partial<AuditEvent>): AuditEvent => ({
   id: 1, ts: '2026-10-02T14:40:40Z', actor_user_id: 'u1', actor_username: 'root', actor_ip: '127.0.0.1',
@@ -130,5 +130,77 @@ group('sign-in, session and recording events read as what happened', () => {
     const text = describe(event({ action: 'user.login', outcome: 'failure', details: { username: 'bob' } }))
     expect(text).not.toMatch(/^signed in/)
     expect(text).toMatch(/^failed to sign in/)
+  })
+})
+
+// 2026-11-04 live QA of 1.18.0: the gateway's own actions and the mail server
+// fell to the generic "<verb> <type> <name>" and read "boot request system
+// gateway", "images remove system gateway", "updated system gateway", "export
+// gateway" and "deleted email server 1".
+group('install, gateway, configuration and mail server events read as what happened', () => {
+  const sys = { object_type: 'system', object_id: 'gateway' }
+  const mail = { object_type: 'email_server', object_id: '1' }
+  const failed = { outcome: 'failure' as const }
+  // The request records the variables as {NAME: value}; the helper's answer
+  // lists the names it changed.
+  const asked = { request_id: 'r1', changes: { ZANSKAR_LISTEN_ADDR: ':443', ZANSKAR_TLS_MODE: 'managed' }, tls_mode: 'managed', wait_minutes: 5, live_sessions: 0 }
+
+  const cases: [string, Partial<AuditEvent>, string][] = [
+    ['an install settings change asked for names its variables', { action: 'settings.boot_request', ...sys, details: asked }, 'requested an install settings change (ZANSKAR_LISTEN_ADDR, ZANSKAR_TLS_MODE)'],
+    ['a list of changed names reads the same', { action: 'settings.boot_request', ...sys, details: { changed: ['ZANSKAR_TLS_HOSTS'] } }, 'requested an install settings change (ZANSKAR_TLS_HOSTS)'],
+    ['no names, no brackets', { action: 'settings.boot_request', ...sys }, 'requested an install settings change'],
+    ['no brackets for a list that is not names', { action: 'settings.boot_request', ...sys, details: { changes: [1, ''] } }, 'requested an install settings change'],
+    ['a change applied', { action: 'settings.boot_apply', ...sys, details: { request_id: 'r1', state: 'applied', changed: ['ZANSKAR_TLS_MODE'] } }, 'applied an install settings change'],
+    ['a change the gateway never saw applied', { action: 'settings.boot_apply', ...sys, ...failed, details: { request_id: 'r1', error: 'the helper did not answer within 10m0s' } }, 'failed to apply an install settings change'],
+    ['a change rolled back', { action: 'settings.boot_apply', ...sys, ...failed, details: { request_id: 'r1', state: 'rolled_back', changed: ['ZANSKAR_TLS_MODE'], message: 'did not come back' } }, 'failed to apply an install settings change: rolled back'],
+    ['an update asked for, from a version to a version', { action: 'system.update', ...sys, details: { version: '1.19.0', from: '1.18.0' } }, 'requested a gateway update to 1.19.0'],
+    ['an update with no version recorded', { action: 'system.update', ...sys }, 'requested a gateway update'],
+    ['an update that failed', { action: 'system.update', ...sys, ...failed, details: { version: '1.19.0', error: 'the installer did not finish' } }, 'failed to update the gateway to 1.19.0'],
+    ['an update that failed with no version', { action: 'system.update', ...sys, ...failed }, 'failed to update the gateway'],
+    ['a restart', { action: 'system.restart', ...sys }, 'requested a gateway restart'],
+    ['a restart cancelled', { action: 'system.restart_cancel', ...sys }, 'cancelled the gateway restart'],
+    ['a reboot', { action: 'system.reboot', ...sys }, 'requested a host reboot'],
+    ['a power-off', { action: 'system.poweroff', ...sys }, 'requested a host power-off'],
+    ['old images removed', { action: 'system.images_remove', ...sys, actor_user_id: '', actor_username: undefined, actor_ip: 'system', details: { images: ['zanskar-browser:1.17.0'] } }, 'removed old images'],
+    ['the configuration exported', { action: 'config.export', object_type: 'gateway', object_id: '', details: { groups: 2, targets: 5, policies: 3 } }, 'exported the configuration'],
+    ['the configuration imported', { action: 'config.import', object_type: 'gateway', object_id: '', details: { changed: { targets: 2 }, failed: '' } }, 'imported the configuration'],
+    ['the email server set', { action: 'notify.email_server.update', ...mail, details: { host: 'smtp.example.test', port: 587 } }, 'set the email server'],
+    ['the email server removed', { action: 'notify.email_server.delete', ...mail }, 'removed the email server'],
+    ['the email server tested', { action: 'notify.email_server.test', ...mail, details: { to: 'ops@example.test' } }, 'tested the email server'],
+    ['the email server test that failed', { action: 'notify.email_server.test', ...mail, ...failed, details: { to: 'ops@example.test' } }, 'failed to test the email server'],
+  ]
+
+  it.each(cases)('%s', (_name, over, want) => {
+    expect(describe(event(over))).toBe(want)
+  })
+
+  // The generic reading is what these replaced: raw action words, the type
+  // and the object's id. None of it may come back for these actions.
+  const raw = /boot |images remove|system gateway|gateway gateway|email server \d|\b1$|^(export|import|restart|reboot|poweroff)\b/
+  it.each(cases)('%s: no raw action words or object id', (_name, over) => {
+    expect(describe(event(over))).not.toMatch(raw)
+  })
+
+  // The review finding of the sign-in sentences, for these: a failure must
+  // not read as the thing having happened.
+  const config = { object_type: 'gateway', object_id: '' }
+  const everyAction: [string, Partial<AuditEvent>][] = [
+    ['settings.boot_request', sys], ['settings.boot_apply', sys], ['system.update', sys], ['system.restart', sys],
+    ['system.restart_cancel', sys], ['system.reboot', sys], ['system.poweroff', sys], ['system.images_remove', sys],
+    ['config.export', config], ['config.import', config],
+    ['notify.email_server.update', mail], ['notify.email_server.delete', mail], ['notify.email_server.test', mail],
+  ]
+  it.each(everyAction)('%s that failed reads as a failure', (action, where) => {
+    expect(describe(event({ ...where, action, ...failed }))).toMatch(/^failed to /)
+  })
+
+  it('names the object types the Object-type filter listed raw', () => {
+    expect(typeLabel.email_server).toBe('email server')
+    expect(typeLabel.retention_policy).toBe('retention policy')
+    expect(typeLabel.cli).toBe('command line')
+  })
+
+  it('reads a retention policy change by its type in words, as before the label', () => {
+    expect(describe(event({ action: 'retention.policy.update', object_type: 'retention_policy', object_id: 'default' }))).toMatch(/^updated retention policy\b/)
   })
 })

@@ -76,7 +76,7 @@ export function ConfigCard() {
   return (
     <div className="card" id="settings-configuration-file">
       <h2>Configuration file</h2>
-      <p className="muted">Groups, hosts, databases, applications and policies as YAML, by name, for git or another gateway. Credentials are named, never copied.</p>
+      <p className="muted">Groups, hosts, databases, applications and policies as YAML; credentials by name only.</p>
       {err && <Alert tone="danger" onDismiss={() => setErr('')}>{err}</Alert>}
       <div className="actions">
         <a className="btn" href="/api/v1/admin/config/export" download>Export</a>

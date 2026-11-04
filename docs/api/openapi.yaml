@@ -4008,7 +4008,7 @@ paths:
         "403":
           $ref: "#/components/responses/Forbidden"
         "409":
-          description: "`output_not_indexed`: `in=output` while the setting *Search what sessions printed* is off."
+          description: "`output_not_indexed`: `in=output` while the setting *Index terminal output* is off."
           content:
             application/json:
               schema:

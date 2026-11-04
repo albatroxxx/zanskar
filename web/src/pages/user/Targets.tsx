@@ -458,7 +458,7 @@ export function Targets() {
 
       {reqModal && (
         <Modal title={`Request access to ${reqModal.target.name}`} onClose={() => setReqModal(null)}>
-          <p className="muted">{reqModal.target.kind === 'asg' ? 'This autoscaling group' : reqModal.target.kind === 'application' ? 'This application' : 'This machine'} requires approval for {protocolName(reqModal.protocol)}. Say why and for how long; an administrator approves before you can {reqModal.target.kind === 'application' ? 'open it' : 'connect'}.</p>
+          <p className="muted">Approval is needed for {protocolName(reqModal.protocol)}: say why and for how long.</p>
           <form onSubmit={(e) => void submitRequest(e)}>
             <Field label="Reason">
               <textarea id="req-reason" autoFocus value={reqForm.reason} onChange={(e) => setReqForm({ ...reqForm, reason: e.target.value })} required placeholder="What you need to do" />

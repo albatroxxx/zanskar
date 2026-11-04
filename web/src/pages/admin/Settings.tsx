@@ -231,7 +231,7 @@ function SettingRow({ setting, onChange }: { setting: RuntimeSetting; onChange: 
         </label>
         {sourceBadge(setting)}
       </div>
-      <p className="muted">{setting.description}</p>
+      {setting.description && <p className="muted">{setting.description}</p>}
       {input}
       {customImage && <Alert tone="warn">A custom image does not follow upgrades: change it with each release, or Reset to follow the gateway.</Alert>}
       {setting.key === 'login_banner' && value.trim() && (
@@ -280,7 +280,7 @@ function BootTable({ boot, changed }: { boot: BootSetting[]; changed: string[] }
     <div className="card table-wrap" id="settings-set-at-install">
       <h2>Set at install</h2>
       <p className="muted">
-        From <code>/etc/zanskar/env</code>. {hostOff ? `Edit: ${host?.reason ?? 'Needs a systemd host.'}` : 'Some can be changed here; the gateway restarts to apply them.'}
+        From <code>/etc/zanskar/env</code>. {hostOff ? `Edit: ${host?.reason ?? 'Needs a systemd host.'}` : 'A change here restarts the gateway.'}
       </p>
       <table>
         <thead>

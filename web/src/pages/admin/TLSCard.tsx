@@ -132,7 +132,7 @@ export function TLSCard() {
       <h2>TLS certificate</h2>
       {status.mode === 'proxy' ? (
         <p className="muted">
-          The proxy in front of the gateway holds the certificate (<code>ZANSKAR_TLS_MODE=proxy</code>): install and renew it there. To upload one here instead, switch the TLS mode to managed under Set at install.
+          Held by the proxy in front (<code>ZANSKAR_TLS_MODE=proxy</code>); to upload one here, switch the TLS mode to managed under Set at install.
         </p>
       ) : (
         <>
@@ -152,7 +152,7 @@ export function TLSCard() {
             </>
           )}
           <h3 style={{ marginTop: 16 }}>Install or replace the certificate</h3>
-          <p className="muted">PEM files from your CA: the certificate, its unencrypted private key, and the chain. The new one serves from the next connection; the old one is kept until you remove it.</p>
+          <p className="muted">Certificate, unencrypted key and chain, as PEM; serves from the next connection.</p>
           <PEMFields id="tls" cert={certPEM} privateKey={keyPEM} chain={chainPEM} onCert={setCertPEM} onKey={setKeyPEM} onChain={setChainPEM} />
           <div className="actions">
             <button className="btn primary" disabled={busy || !certPEM.trim() || !keyPEM.trim()} onClick={() => void upload()}>Upload and serve</button>

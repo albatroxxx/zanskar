@@ -88,8 +88,8 @@ function UpdateBell() {
   const [installing, setInstalling] = useState(false)
 
   useEffect(() => {
-    api.get<UpdateStatus>('/admin/system/update').then(setSt).catch(() => setSt(null))
-    api.get<SystemStatus>('/admin/system/status').then(setSys).catch(() => setSys(null))
+    api.cached<UpdateStatus>('/admin/system/update').then(setSt).catch(() => setSt(null))
+    api.cached<SystemStatus>('/admin/system/status').then(setSys).catch(() => setSys(null))
   }, [])
 
   const check = async () => {
@@ -184,7 +184,7 @@ function GearMenu() {
   const [action, setAction] = useState<HostAction | null>(null)
 
   useEffect(() => {
-    api.get<HostStatus>('/admin/system/host').then(setHost).catch(() => setHost(null))
+    api.cached<HostStatus>('/admin/system/host').then(setHost).catch(() => setHost(null))
   }, [])
 
   const hostOff = host !== null && !host.available

@@ -58,6 +58,35 @@ describe('api.get, the same read at once', () => {
     expect(g.seen).toHaveLength(1)
   })
 
+  // 2026-11-04: the shell mounts afresh on every page; what changes once a
+  // minute is read once a minute, and read again after any change.
+  it('cached: answers again from the recent answer, until a change forgets it', async () => {
+    const g = gateway()
+    const a = api.cached<{ v: number }>('/admin/system/status')
+    g.answer({ v: 1 })
+    expect((await a).v).toBe(1)
+    expect((await api.cached<{ v: number }>('/admin/system/status')).v).toBe(1)
+    expect(g.seen).toEqual(['GET /api/v1/admin/system/status'])
+    const p = api.post('/admin/system/update/check')
+    g.answer({})
+    await p
+    const c = api.cached<{ v: number }>('/admin/system/status')
+    g.answer({ v: 2 })
+    expect((await c).v).toBe(2)
+    expect(g.seen).toHaveLength(3)
+  })
+
+  it('cached: does not keep a refusal', async () => {
+    const g = gateway()
+    const a = api.cached('/admin/system/status')
+    g.answer({ code: 'forbidden', message: 'no' }, 403)
+    await expect(a).rejects.toMatchObject({ status: 403 })
+    const b = api.cached<{ v: number }>('/admin/system/status')
+    g.answer({ v: 1 })
+    expect((await b).v).toBe(1)
+    expect(g.seen).toHaveLength(2)
+  })
+
   it('never answers a read asked for after a change with one from before it', () => {
     const g = gateway()
     void api.get('/users')
