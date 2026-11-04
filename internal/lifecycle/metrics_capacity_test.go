@@ -16,6 +16,65 @@ import (
 	"github.com/albatroxxx/zanskar/internal/gateway"
 )
 
+// TestImagesReadAgainSoonAfterAnEmptyRead (2026-11-05, live): the first read
+// runs as the gateway starts, before an update's images are pulled, and found
+// nothing; that was kept five minutes. An empty read, or a failed one, is tried
+// again within seconds; a found size is kept the full five minutes.
+func TestImagesReadAgainSoonAfterAnEmptyRead(t *testing.T) {
+	var reads atomic.Int32
+	var size atomic.Int64
+	c := &imagesCache{}
+	read := func() *int64 {
+		return c.read(func(context.Context) (int64, error) { reads.Add(1); return size.Load(), nil })
+	}
+	settle := func() {
+		for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); time.Sleep(2 * time.Millisecond) {
+			c.mu.Lock()
+			done := !c.reading
+			c.mu.Unlock()
+			if done {
+				return
+			}
+		}
+		t.Fatal("the read did not end")
+	}
+	ago := func(d time.Duration) {
+		c.mu.Lock()
+		c.at = time.Now().Add(-d)
+		c.mu.Unlock()
+	}
+
+	read() // as the gateway starts: nothing pulled yet
+	settle()
+	if got := read(); got == nil || *got != 0 || reads.Load() != 1 {
+		t.Fatalf("an empty first read: %v, %d reads", got, reads.Load())
+	}
+	ago(imagesRetry - 5*time.Second) // sooner than the retry: no new read
+	read()
+	if reads.Load() != 1 {
+		t.Fatalf("read again before the retry: %d", reads.Load())
+	}
+	size.Store(900_000_000) // the images have been pulled
+	ago(imagesRetry + time.Second)
+	read()
+	settle()
+	if got := read(); got == nil || *got != 900_000_000 || reads.Load() != 2 {
+		t.Fatalf("after the retry: %v, %d reads", got, reads.Load())
+	}
+	// A size that was found is kept the full five minutes, not retried.
+	ago(imagesRetry + time.Second)
+	read()
+	if reads.Load() != 2 {
+		t.Fatalf("a found size was read again after only the retry interval: %d", reads.Load())
+	}
+	ago(imagesEvery + time.Second)
+	read()
+	settle()
+	if reads.Load() != 3 {
+		t.Fatalf("not read again after five minutes: %d", reads.Load())
+	}
+}
+
 // TestMetricsCapacity (2026-10-31): application and database sessions
 // counted from the registry beside their caps, and the images' size read in
 // the background, at most every five minutes; a failed read leaves it out.

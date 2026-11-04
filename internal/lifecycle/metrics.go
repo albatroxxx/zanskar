@@ -369,13 +369,22 @@ func deviceID(info os.FileInfo) uint64 {
 // host should not fork docker that often.
 const imagesEvery = 5 * time.Minute
 
-// imagesCache keeps the last images size, when a read last started, and
-// whether one is running.
+// imagesRetry is how soon a read that found nothing (zero bytes, or a
+// failure) is tried again. The first read happens as the gateway starts,
+// while an update's images are still being pulled, and its zero was kept for
+// the whole five minutes: the dashboard read "Container images 0 B" for six
+// minutes after an update that had pulled them in thirty seconds (2026-11-05,
+// live).
+const imagesRetry = 20 * time.Second
+
+// imagesCache keeps the last images size, when a read last started, whether
+// that read found nothing, and whether one is running.
 type imagesCache struct {
 	mu      sync.Mutex
 	at      time.Time
 	bytes   *int64
 	reading bool
+	empty   bool
 }
 
 // read returns the last size read and, when that is older than imagesEvery,
@@ -388,7 +397,11 @@ func (c *imagesCache) read(size func(context.Context) (int64, error)) *int64 {
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if !c.reading && (c.at.IsZero() || time.Since(c.at) >= imagesEvery) {
+	every := imagesEvery
+	if c.empty {
+		every = imagesRetry
+	}
+	if !c.reading && (c.at.IsZero() || time.Since(c.at) >= every) {
 		c.reading, c.at = true, time.Now()
 		go func() {
 			// Not the request's context: the read outlives the response.
@@ -400,6 +413,7 @@ func (c *imagesCache) read(size func(context.Context) (int64, error)) *int64 {
 			if err == nil {
 				c.bytes = &n
 			}
+			c.empty = err != nil || n == 0
 		}()
 	}
 	return c.bytes
