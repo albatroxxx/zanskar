@@ -203,4 +203,21 @@ group('install, gateway, configuration and mail server events read as what happe
   it('reads a retention policy change by its type in words, as before the label', () => {
     expect(describe(event({ action: 'retention.policy.update', object_type: 'retention_policy', object_id: 'default' }))).toMatch(/^updated retention policy\b/)
   })
+
+  // 2026-11-04, live walkthrough of 1.18.3.
+  it('keeps a setting key whole: it is the name, not an id to shorten', () => {
+    expect(describe(event({ action: 'settings.update', object_type: 'setting', object_id: 'display.theme' }))).toBe('updated setting display.theme')
+    expect(describe(event({ action: 'settings.reset', object_type: 'setting', object_id: 'login_banner' }))).toBe('reset setting login_banner')
+    expect(describe(event({ action: 'target.create', object_type: 'target', object_id: 'd2091e4b9c3a4f10a1b2c3d4e5f60718' }))).toBe('created target d2091e4b')
+  })
+
+  it('reads a completed access review as reviewed', () => {
+    expect(describe(event({ action: 'policy.review', object_type: 'policy', object_id: 'p1', object_name: 'prod-ssh' }))).toBe('reviewed policy prod-ssh')
+  })
+
+  it('says a deleted account once: the delete event does not repeat "(deleted)"', () => {
+    expect(describe(event({ action: 'user.delete', object_type: 'user', object_id: 'u1', object_name: 'alice (deleted)' }))).toBe('deleted user alice')
+    // Other events by or about a gone account keep the mark.
+    expect(describe(event({ action: 'user.update', object_type: 'user', object_id: 'u1', object_name: 'alice (deleted)' }))).toBe('updated user alice (deleted)')
+  })
 })

@@ -190,7 +190,7 @@ const verbs: Record<string, string> = {
   create: 'created', update: 'updated', delete: 'deleted', probe: 'probed', sync: 'synced', rotate: 'rotated',
   set: 'set', unset: 'removed', trust: 'trusted', reset: 'reset', revoke: 'revoked', test: 'tested',
   change: 'changed', approve: 'approved', deny: 'denied', expire: 'expired', upload: 'uploaded',
-  download: 'downloaded', purge: 'purged', move: 'moved', regenerate: 'regenerated',
+  download: 'downloaded', purge: 'purged', move: 'moved', regenerate: 'regenerated', review: 'reviewed',
 }
 
 // How a command line entry ended, beside the line itself; ok needs no note.
@@ -230,7 +230,13 @@ function installVariables(d: Record<string, unknown>): string[] {
 export function describe(ev: AuditEvent): string {
   const d = ev.details ?? {}
   const fail = ev.outcome === 'failure'
-  const name = ev.object_name || (ev.object_id ? shortId(ev.object_id) : '')
+  // An id is shortened, a setting's key ("display.theme", "login_banner") is
+  // its name and is not (it read "updated setting display."), and the delete
+  // event of an account already says what it did, so the "(deleted)" the
+  // resolver appends to a gone account's name is dropped from its sentence.
+  const opaque = /^[0-9a-f]{8,}$/.test(ev.object_id ?? '')
+  let name = ev.object_name || (ev.object_id ? (opaque ? shortId(ev.object_id) : ev.object_id) : '')
+  if (ev.action === 'user.delete') name = name.replace(/ \(deleted\)$/, '')
   const s = session(ev.object_name)
   const proto = s?.proto ?? protocolName(str(d.protocol))
   const reason = str(d.reason)
