@@ -87,7 +87,7 @@ export function Policies() {
                           </button>
                         )}
                         {missing > 0 && <Badge tone="warn">{missing} not found</Badge>}
-                        {idle > 0 && <Badge tone="warn">{idle === 1 && r.count === 1 ? 'opens nothing' : `${idle} open nothing`}</Badge>}
+                        {idle > 0 && <Badge tone="warn">{idle === 1 ? (r.count === 1 ? 'opens nothing' : '1 opens nothing') : `${idle} open nothing`}</Badge>}
                       </td>
                       <td className="access">
                         {r.count === 0 ? (
@@ -97,8 +97,12 @@ export function Policies() {
                             <div>{accessLine(r)}</div>
                             {(r.standingNoMFA > 0 || r.approvalNoMFA > 0) && (
                               <div className="access-flags">
-                                {r.standingNoMFA > 0 && <Badge tone="danger">standing, no MFA{r.standingNoMFA > 1 || r.count > 1 ? ` ×${r.standingNoMFA}` : ''}</Badge>}
-                                {r.approvalNoMFA > 0 && <Badge tone="warn">no MFA{r.approvalNoMFA > 1 || r.count > 1 ? ` ×${r.approvalNoMFA}` : ''}</Badge>}
+                                {/* The line above already says "Standing" when no grant is
+                                    approval-gated, so the flag does not say it twice; a disabled
+                                    policy grants nothing, so its flag is not the alarm the
+                                    dashboard's count leaves it out of (2026-11-04). */}
+                                {r.standingNoMFA > 0 && <Badge tone={p.enabled ? 'danger' : undefined}>{r.approval === 0 ? 'no MFA' : 'standing, no MFA'}{r.standingNoMFA > 1 || r.count > 1 ? ` ×${r.standingNoMFA}` : ''}</Badge>}
+                                {r.approvalNoMFA > 0 && <Badge tone={p.enabled ? 'warn' : undefined}>no MFA{r.approvalNoMFA > 1 || r.count > 1 ? ` ×${r.approvalNoMFA}` : ''}</Badge>}
                               </div>
                             )}
                             {extras && <div className="muted">{extras}</div>}

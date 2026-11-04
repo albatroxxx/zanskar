@@ -100,7 +100,11 @@ describe('the policy list', () => {
 
     const orphan = screen.getByText('orphan').closest('tr')!
     expect(within(orphan).getByText('no one')).toBeDefined()
-    expect(within(orphan).getByText('standing, no MFA')).toBeDefined()
+    // All its grants are standing, so the Access line says so and the flag does not
+    // repeat it; the policy is disabled, so the flag is not the red alarm.
+    expect(within(orphan).getByText('Standing')).toBeDefined()
+    expect(within(orphan).getByText('no MFA').className).not.toContain('danger')
+    expect(within(first).getByText('no MFA ×1').className).toContain('warn')
     expect(within(orphan).getByRole('button', { name: 'Disabled' })).toBeDefined()
     expect(within(first).getByRole('link', { name: 'Edit' }).getAttribute('href')).toBe('/admin/policies/p1')
   })
@@ -286,7 +290,7 @@ describe('the policy editor', () => {
     const card = screen.getByRole('region', { name: 'Grant 1' })
     await user.click(within(card).getByLabelText('build')) // two protocols possible: none ticked
     await user.click(screen.getByRole('button', { name: 'Create' }))
-    expect(await screen.findByText('Grant 1: build has no protocol')).toBeDefined()
+    expect(await screen.findByText(/^Grant 1: build: choose (SSH|RDP|VNC)( or (SSH|RDP|VNC|WinRM))*$/)).toBeDefined()
     expect(post).not.toHaveBeenCalled()
     await user.click(within(card).getByLabelText('SSH on build'))
     await user.click(screen.getByRole('button', { name: 'Create' }))

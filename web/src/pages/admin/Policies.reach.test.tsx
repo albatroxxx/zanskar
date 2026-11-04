@@ -64,7 +64,7 @@ describe('the policy list', () => {
       return { items } as never
     })
     render(<MemoryRouter><Policies /></MemoryRouter>)
-    expect(await screen.findByText('1 open nothing')).toBeDefined()
+    expect(await screen.findByText('1 opens nothing')).toBeDefined()
     await userEvent.click(screen.getByRole('button', { name: /2 grants/ }))
     const rows = within(screen.getByRole('table', { name: 'Grants of host-access' })).getAllByRole('row')
     expect(within(rows[1]).queryByText('opens nothing')).toBeNull()

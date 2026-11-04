@@ -95,6 +95,9 @@ describe('a grant draft', () => {
     expect(fromDraft(d, name).error).toBe('choose targets, or match tags')
     d.targets = { t1: [] }
     expect(fromDraft(d, name).error).toBe('web-1 has no protocol')
+    // 2026-11-04: with protocols on offer, the message says there is a choice.
+    expect(fromDraft(d, name, () => ['ssh', 'vnc']).error).toBe('web-1: choose SSH or VNC')
+    expect(fromDraft(d, name, () => []).error).toBe('web-1 has no protocol')
     d.targets = { t1: ['ssh'] }
     d.idle = '0'
     expect(fromDraft(d, name).error).toBe('idle timeout must be 1-1440 minutes')
