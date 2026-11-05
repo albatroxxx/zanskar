@@ -343,6 +343,38 @@ func TestProxyPrivateDependencies(t *testing.T) {
 	}
 }
 
+// TestProxyRefusedPageIsTheBlockPage (live, 2026-11-05): a page typed at a
+// private address was answered with the bare text "Zanskar: private", where
+// a public address that is not an endpoint got the block page. Both get the
+// block page now, the private one saying why; a script still gets the bare
+// 403. The browser's own request for /favicon.ico after the refused page is
+// not a refusal of its own: the live list showed one visit as two rows.
+func TestProxyRefusedPageIsTheBlockPage(t *testing.T) {
+	pub := echoOrigin(t, true)
+	pubURL := "https://" + pub.Listener.Addr().String()
+	pr := newProxyRig(t, echoOrigin(t, true), func(net.IP) string { return "private" }, nil)
+	code, body := pr.get(t, pubURL+"/", document)
+	if code != 403 || !strings.Contains(body, "This page is blocked") || !strings.Contains(body, "private address") || strings.Contains(body, "may still load") {
+		t.Fatalf("private page: %d %q", code, body)
+	}
+	icon := map[string]string{"Sec-Fetch-Mode": "no-cors", "Sec-Fetch-Dest": "image"}
+	if code, _ := pr.get(t, pubURL+"/favicon.ico", icon); code != 403 {
+		t.Fatalf("favicon: %d", code)
+	}
+	if code, body := pr.get(t, pubURL+"/x.js", script); code != 403 || strings.Contains(body, "<html") {
+		t.Fatalf("a script is still bare: %d %q", code, body)
+	}
+	lines := pr.log.lines("apprelay refused")
+	for _, l := range lines {
+		if l["what"] == "image" {
+			t.Fatalf("the favicon was said as a refusal: %v", lines)
+		}
+	}
+	if len(lines) != 2 {
+		t.Fatalf("want the page and the script, got %v", lines)
+	}
+}
+
 // TestProxyRefusesWhatItCannotVerifyOrResolve: a site whose certificate no
 // root vouches for is answered 502 and never served; a name that does not
 // resolve, and the browser's own service hosts, are refused at CONNECT.
