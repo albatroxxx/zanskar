@@ -26,6 +26,10 @@ export interface SessionState {
   /** The address of the page that connected (connectHref), for Connect
    *  again when the session ends. */
   again?: string
+  /** The tab was opened by one of our own session links, so a portal tab
+   *  waits behind it and the ended dialog may close the tab instead of
+   *  leaving it on Targets (ADR 0038, amended 2026-11-05). */
+  from_portal?: boolean
 }
 
 /** switchedState is the state for the session a failover moved to: the new
@@ -43,6 +47,7 @@ export function switchedState(from: SessionState, res: ConnectResponse): Session
     instance_label: res.instance_label,
     switched_from: from.instance_label,
     again: from.again,
+    from_portal: from.from_portal,
   }
 }
 

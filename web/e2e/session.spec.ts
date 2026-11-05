@@ -38,9 +38,11 @@ test.describe('An SSH session from the browser', () => {
     const ended = tab.getByRole('dialog', { name: 'Session ended' })
     await expect(ended).toBeVisible()
     await expect(tab.getByText('Ended · recording saved')).toBeVisible()
-    await ended.getByRole('button', { name: 'Back to targets' }).click()
-    await expect(tab).toHaveURL(/\/$/)
-    await tab.close()
+    // A tab a session link opened closes itself (the owner, 2026-11-05): the
+    // browser allows it because the tab's one history entry was replaced, not
+    // pushed, and the list is still where it was.
+    await Promise.all([tab.waitForEvent('close'), ended.getByRole('button', { name: 'Close tab' }).click()])
+    expect(tab.isClosed()).toBe(true)
     await expect(page).toHaveURL(/\/$/)
 
     // The person sees their session, without the recording.

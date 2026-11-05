@@ -179,6 +179,45 @@ describe('Terminal', () => {
     ])
   })
 
+  // A tab one of our links opened closes itself rather than showing a second
+  // Targets list (the owner, 2026-11-05); a browser that refuses leaves it,
+  // and it goes to Targets as before. A tab opened any other way has no portal
+  // tab behind it and keeps Back to targets.
+  describe('leaving once the session ended', () => {
+    const ended = async (state: unknown) => {
+      open(state)
+      await screen.findByText('web-1')
+      act(() => g.sockets[0].onclose?.({ code: 1000, reason: 'user_exit' }))
+      return within(await screen.findByRole('dialog'))
+    }
+
+    it('closes the tab a session link opened', async () => {
+      const close = vi.spyOn(window, 'close').mockImplementation(() => {})
+      const dialog = await ended({ ...session, from_portal: true })
+      expect(dialog.queryByRole('button', { name: 'Back to targets' })).toBeNull()
+      await userEvent.setup().click(dialog.getByRole('button', { name: 'Close tab' }))
+      expect(close).toHaveBeenCalledTimes(1)
+      close.mockRestore()
+    })
+
+    it('goes to Targets when the browser leaves the tab open', async () => {
+      const close = vi.spyOn(window, 'close').mockImplementation(() => {})
+      const dialog = await ended({ ...session, from_portal: true })
+      await userEvent.setup().click(dialog.getByRole('button', { name: 'Close tab' }))
+      await vi.waitFor(() => expect(screen.getByText('target list')).toBeDefined())
+      close.mockRestore()
+    })
+
+    it('keeps Back to targets, and never closes, in a tab opened any other way', async () => {
+      const close = vi.spyOn(window, 'close').mockImplementation(() => {})
+      const dialog = await ended(session)
+      await userEvent.setup().click(dialog.getByRole('button', { name: 'Back to targets' }))
+      expect(screen.getByText('target list')).toBeDefined()
+      expect(close).not.toHaveBeenCalled()
+      close.mockRestore()
+    })
+  })
+
   it('rebuilds the terminal and socket when the session ticket changes, and tears both down on leave', async () => {
     const { unmount } = open()
     await screen.findByText('web-1')
