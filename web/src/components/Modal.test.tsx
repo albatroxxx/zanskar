@@ -106,4 +106,11 @@ describe('Modal and the page behind it', () => {
     rerender(<Siblings a={false} b={false} />)
     expect(document.body.style.overflow).toBe('')
   })
+
+  it('is centred unless a form inside it grows, then anchored at the top', () => {
+    const { rerender } = render(<Modal title="Edit" onClose={() => {}}><input aria-label="Name" /></Modal>)
+    expect(document.querySelector('.modal-backdrop')?.classList.contains('anchored')).toBe(false)
+    rerender(<Modal title="Edit" onClose={() => {}} anchored><input aria-label="Name" /></Modal>)
+    expect(document.querySelector('.modal-backdrop')?.classList.contains('anchored')).toBe(true)
+  })
 })

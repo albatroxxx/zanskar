@@ -209,7 +209,13 @@ function focusable(el: HTMLElement): HTMLElement[] {
   ).filter((n) => !n.closest('[hidden], [inert]'))
 }
 
-export function Modal({ title, onClose, children, width }: { title: string; onClose: () => void; children: ReactNode; width?: number }) {
+/*
+ * `anchored` keeps the dialog's top edge where it opened when a form inside it
+ * grows (Add application gains a CA bundle field once the upstream is https;
+ * a centred dialog moved up under the pointer, live 2026-11-05). Without it
+ * the dialog is centred, as every short one is.
+ */
+export function Modal({ title, onClose, children, width, anchored }: { title: string; onClose: () => void; children: ReactNode; width?: number; anchored?: boolean }) {
   const me = useRef(Symbol('modal'))
   const box = useRef<HTMLDivElement>(null)
   const titleId = useId()
@@ -268,7 +274,7 @@ export function Modal({ title, onClose, children, width }: { title: string; onCl
   }, [onClose])
 
   return (
-    <div className="modal-backdrop" role="presentation" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
+    <div className={anchored ? 'modal-backdrop anchored' : 'modal-backdrop'} role="presentation" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
       <div ref={box} className="modal" role="dialog" aria-modal="true" aria-labelledby={titleId} tabIndex={-1} style={width ? { width: `min(${width}px, 100%)` } : undefined}>
         <div className="modal-head">
           <h2 id={titleId}>{title}</h2>

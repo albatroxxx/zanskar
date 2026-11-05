@@ -214,7 +214,7 @@ export function TargetForm({ initial, kind, onClose, onSaved }: { initial?: Targ
   // The CA bundle applies when any origin is https, the upstream or another.
   const secureOrigins = [f.app_upstream, ...f.endpoints.map((e) => e.url)].some((u) => u.trim().toLowerCase().startsWith('https://'))
   return (
-    <Modal title={title} onClose={onClose} width={620}>
+    <Modal title={title} onClose={onClose} width={620} anchored>
       {err && <Alert tone="danger" onDismiss={() => setErr('')}>{err}</Alert>}
       {!initial && !kind && (
         <>

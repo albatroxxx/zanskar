@@ -389,7 +389,7 @@ function BlockedDependencies({ target, items, onAllow, onClear }: { target: Targ
   if (shown.length === 0) return <span className="muted">Nothing refused</span>
   return (
     <>
-      <table className="compact">
+      <table className="compact blocked">
         <thead>
           <tr><th>Host</th><th>What</th><th>From</th><th>Seen</th><th aria-label="action"></th></tr>
         </thead>
@@ -402,11 +402,11 @@ function BlockedDependencies({ target, items, onAllow, onClear }: { target: Targ
               <tr key={`${hostport}|${x.why}|${x.what}|${x.from}`}>
                 <td className="mono">{hostport}</td>
                 <td>{x.what}</td>
-                <td className="muted">{x.from || '—'}</td>
+                <td className="muted from">{x.from || '—'}</td>
                 <td className="muted">{x.count} × · {fmtTime(x.last_seen)}</td>
                 <td>
                   {x.why === 'private' && <button className="btn sm" onClick={() => onAllow(hostport)} title="allow this private host for the application's dependencies">Allow</button>}
-                  {page && <span className="muted" title="someone tried to open a page there; an endpoint would allow it">page</span>}
+                  {page && <span className="muted" title="someone tried to open a page there; an endpoint would allow it">not an endpoint</span>}
                   {never && <StateIcon state="warn" label={`Never allowed: ${x.why}`} />}
                 </td>
               </tr>

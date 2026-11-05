@@ -124,7 +124,10 @@ describe('TargetDetail, blocked dependencies', () => {
     expect(get).toHaveBeenCalledWith('/targets/w1/dependencies')
     expect(screen.getByText('script')).toBeDefined()
     expect(screen.getByRole('button', { name: 'Never allowed: link-local' })).toBeDefined()
-    expect(screen.getByText('page')).toBeDefined()
+    expect(screen.getByText('not an endpoint')).toBeDefined()
+    // a host, a kind and a time stay on one line each (live 2026-11-05: ":8/0", "docume/nt"); only the asking page may break
+    expect(screen.getByRole('table').className).toContain('blocked')
+    expect(screen.getByText('cdn.corp:443').closest('tr')?.querySelector('td.from')?.textContent).toBe('http://wiki.corp')
     await userEvent.setup().click(screen.getByRole('button', { name: 'Allow' }))
     await waitFor(() => expect(put).toHaveBeenCalledWith('/targets/w1', expect.objectContaining({ app_private: { hosts: ['cdn.corp:443'] } })))
     expect(onChanged).toHaveBeenCalledWith(allowed)
