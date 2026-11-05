@@ -677,13 +677,21 @@ func from(req *http.Request) string {
 func (px *proxy) handle(w http.ResponseWriter, req *http.Request, dest, scheme string) {
 	d := px.destination(req.Context(), dest)
 	if d.kind == kindRefused {
-		px.refused.add(dest, d.why, what(req), from(req))
+		// A browser asks for /favicon.ico unprompted after a page it was
+		// refused; that second row said nothing the first had not.
+		if !isFavicon(req) {
+			px.refused.add(dest, d.why, what(req), from(req))
+		}
+		if isDocument(req) {
+			px.blocked(w, dest, scheme, refusedNote(d.why))
+			return
+		}
 		http.Error(w, "Zanskar: "+d.why, http.StatusForbidden)
 		return
 	}
 	if d.kind != kindOrigin && isDocument(req) {
 		px.refused.add(dest, "not an origin of the application", "document", from(req))
-		px.blocked(w, req, dest, scheme)
+		px.blocked(w, dest, scheme, "")
 		return
 	}
 	px.r.Log.Debug("apprelay request", "host", dest, "what", what(req), "kind", d.kind)
@@ -697,7 +705,7 @@ func (px *proxy) handle(w http.ResponseWriter, req *http.Request, dest, scheme s
 
 // blocked is the relay's own page: a page opens at the application's
 // addresses only.
-func (px *proxy) blocked(w http.ResponseWriter, req *http.Request, dest, scheme string) {
+func (px *proxy) blocked(w http.ResponseWriter, dest, scheme, note string) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(http.StatusForbidden)
@@ -706,8 +714,23 @@ func (px *proxy) blocked(w http.ResponseWriter, req *http.Request, dest, scheme 
 	if (scheme == "https" && port != "443") || (scheme == "http" && port != "80") {
 		shown = dest
 	}
-	_ = px.block.Execute(w, map[string]string{"App": px.cfg.Name, "Host": shown})
-	_ = req
+	_ = px.block.Execute(w, map[string]string{"App": px.cfg.Name, "Host": shown, "Note": note})
+}
+
+// isFavicon reports whether req is the browser's own unprompted request for
+// a site's icon: not a page, and for that path.
+func isFavicon(req *http.Request) bool {
+	return req.URL.Path == "/favicon.ico" && !isDocument(req)
+}
+
+// refusedNote says, for a page the proxy will not reach at all, why: the
+// page that comes back for it would otherwise be the same as for a public
+// address that is only not an endpoint.
+func refusedNote(why string) string {
+	if why == "private" {
+		return "It is a private address, and the gateway reaches those only when an administrator allows them."
+	}
+	return "The gateway does not reach it: " + why + "."
 }
 
 const blockPage = `<!DOCTYPE html>
@@ -716,7 +739,7 @@ const blockPage = `<!DOCTYPE html>
 main{max-width:34rem;padding:2rem}h1{font-size:1.4rem;margin:0 0 .5rem}p{margin:.4rem 0;color:#5c5955}code{background:#e9e4dc;padding:0 .3em;border-radius:3px}</style></head>
 <body><main><h1>This page is blocked</h1>
 <p>Zanskar opens pages at {{if .App}}<strong>{{.App}}</strong>{{else}}this application{{end}} only; <code>{{.Host}}</code> is not one of its addresses.</p>
-<p>Its pages may still load what they need from there.</p></main></body></html>
+{{if .Note}}<p>{{.Note}}</p>{{else}}<p>Its pages may still load what they need from there.</p>{{end}}</main></body></html>
 `
 
 // refusals keeps what the proxy refused and says it in the log, one line
