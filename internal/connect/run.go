@@ -180,7 +180,11 @@ func (run *sessionRun) live() (ctx context.Context, done func()) {
 	ctx = run.h.Registry.Add(run.r.Context(), gateway.Live{SessionID: run.s.ID, UserID: run.g.UserID, TargetID: run.ep.LiveKey,
 		Protocol: run.g.Protocol, PolicyID: run.g.PolicyID, AllowClipboard: run.g.AllowClipboard, AllowFileTransfer: run.g.AllowFileTransfer,
 		AllowDevTools: run.g.AllowDevTools})
-	return ctx, func() { run.h.Registry.Remove(run.s.ID) }
+	stop := watchClient(run.ws)
+	return ctx, func() {
+		stop()
+		run.h.Registry.Remove(run.s.ID)
+	}
 }
 
 // finish closes the recording once the bridge returns and ends the session
