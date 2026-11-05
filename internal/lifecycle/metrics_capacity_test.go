@@ -61,7 +61,11 @@ func TestImagesReadAgainSoonAfterAnEmptyRead(t *testing.T) {
 	if got := read(); got == nil || *got != 900_000_000 || reads.Load() != 2 {
 		t.Fatalf("after the retry: %v, %d reads", got, reads.Load())
 	}
-	// A size that was found is kept the full five minutes, not retried.
+	// A size that was found, once the gateway has settled, is kept the full
+	// five minutes, not retried.
+	c.mu.Lock()
+	c.first = time.Now().Add(-imagesSettle - time.Second)
+	c.mu.Unlock()
 	ago(imagesRetry + time.Second)
 	read()
 	if reads.Load() != 2 {
@@ -72,6 +76,59 @@ func TestImagesReadAgainSoonAfterAnEmptyRead(t *testing.T) {
 	settle()
 	if reads.Load() != 3 {
 		t.Fatalf("not read again after five minutes: %d", reads.Load())
+	}
+}
+
+// TestImagesReadAgainWhileTheGatewaySettles (2026-11-05, live, 1.18.6): an
+// update pulls the gateway's image and, nine seconds later, the browser's; a
+// read between them found 20 MB of the 272 and kept it five minutes. Whatever
+// a read found, the size is read again every few seconds for the first two
+// minutes, and kept five minutes after that.
+func TestImagesReadAgainWhileTheGatewaySettles(t *testing.T) {
+	var reads atomic.Int32
+	var size atomic.Int64
+	c := &imagesCache{}
+	read := func() *int64 {
+		return c.read(func(context.Context) (int64, error) { reads.Add(1); return size.Load(), nil })
+	}
+	settle := func() {
+		for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); time.Sleep(2 * time.Millisecond) {
+			c.mu.Lock()
+			done := !c.reading
+			c.mu.Unlock()
+			if done {
+				return
+			}
+		}
+		t.Fatal("the read did not end")
+	}
+	ago := func(d time.Duration) {
+		c.mu.Lock()
+		c.at = time.Now().Add(-d)
+		c.mu.Unlock()
+	}
+
+	size.Store(20_000_000) // the gateway's image only
+	read()
+	settle()
+	if got := read(); got == nil || *got != 20_000_000 {
+		t.Fatalf("the partial read: %v", got)
+	}
+	size.Store(272_000_000) // the browser's image has arrived
+	ago(imagesRetry + time.Second)
+	read()
+	settle()
+	if got := read(); got == nil || *got != 272_000_000 || reads.Load() != 2 {
+		t.Fatalf("a partial read was kept: %v, %d reads", got, reads.Load())
+	}
+	// Settled: a size is kept for the five minutes.
+	c.mu.Lock()
+	c.first = time.Now().Add(-imagesSettle - time.Second)
+	c.mu.Unlock()
+	ago(imagesRetry + time.Second)
+	read()
+	if reads.Load() != 2 {
+		t.Fatalf("read again after settling: %d", reads.Load())
 	}
 }
 
