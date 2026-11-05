@@ -34,7 +34,13 @@ const asked = new ApiError(422, { code: 'credential_required', message: 'this ta
 
 /** Again shows the address the session page was given for Connect again. */
 function Again() {
-  return <output data-testid="again">{(useLocation().state as { again?: string } | null)?.again}</output>
+  const state = useLocation().state as { again?: string; from_portal?: boolean } | null
+  return (
+    <>
+      <output data-testid="again">{state?.again}</output>
+      <output data-testid="portal">{String(state?.from_portal)}</output>
+    </>
+  )
 }
 
 let page = 0
@@ -218,6 +224,8 @@ describe('the tab a session link opened', () => {
     expect(post.mock.calls).toEqual([['/connect', { target_id: 't1', protocol: 'ssh' }]])
     // the session page can come back here to connect again
     expect(screen.getByTestId('again').textContent).toBe('/connect?target=t1&protocol=ssh')
+    // and it may close this tab when the session ends: a portal tab waits behind it
+    expect(screen.getByTestId('portal').textContent).toBe('true')
   })
 
   it('asks first when it was opened any other way, and connects on Connect', async () => {
@@ -229,6 +237,8 @@ describe('the tab a session link opened', () => {
     await userEvent.setup().click(screen.getByRole('button', { name: 'Connect' }))
     expect(await screen.findByText('terminal page')).toBeDefined()
     expect(post).toHaveBeenCalledTimes(1)
+    // a pasted or bookmarked address has no portal tab behind it
+    expect(screen.getByTestId('portal').textContent).toBe('false')
   })
 
   it('connects once under StrictMode, which runs its first steps twice', async () => {

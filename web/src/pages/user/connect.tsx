@@ -133,6 +133,7 @@ export function ConnectPage() {
           asg_instance_id: res.asg_instance_id,
           instance_label: res.instance_label,
           again: href,
+          from_portal: auto,
         },
       })
     } catch (e) {

@@ -547,7 +547,7 @@ function DesktopSession({ state }: { state: SessionState }) {
         <FailoverDialog sessionId={sessionId} asgId={state.asg_id!} protocol={state.protocol} lostLabel={state.instance_label} onExit={() => nav('/')} onSwitched={onSwitched} />
       )}
       {ended && !failover && (
-        <SessionEndedDialog ended={ended} target={state.target} protocol={state.protocol} elapsed={elapsed} again={state.again} onClose={() => nav('/')} />
+        <SessionEndedDialog ended={ended} target={state.target} protocol={state.protocol} elapsed={elapsed} again={state.again} closable={state.from_portal} onClose={() => nav('/')} />
       )}
       {askDisconnect && !ended && (
         <ConfirmDisconnect target={state.target} onConfirm={() => disconnectRef.current()} onClose={() => setAskDisconnect(false)} />

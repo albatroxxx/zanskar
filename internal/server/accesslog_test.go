@@ -130,6 +130,13 @@ func TestShellReadsAreQuiet(t *testing.T) {
 		{"GET", "/api/v1/admin/system/host", 200, false},
 		{"GET", "/api/v1/admin/system/metrics", 200, false},
 		{"GET", "/api/v1/admin/cli", 200, false},
+		{"GET", "/api/v1/admin/settings", 200, false}, // the Settings page's own reads
+		{"GET", "/api/v1/admin/tls", 200, false},
+		{"GET", "/api/v1/admin/overview", 200, false},
+		{"GET", "/api/v1/me/targets", 200, false},
+		{"GET", "/api/v1/me/sessions", 200, false},
+		{"GET", "/api/v1/admin/settings", 500, true},   // a failed one is wanted
+		{"PUT", "/api/v1/admin/settings", 200, true},   // so is a change
 		{"GET", "/api/v1/auth/me", 401, true},          // a failure is wanted
 		{"POST", "/api/v1/access-requests", 201, true}, // a change is wanted
 		{"POST", "/api/v1/admin/system/update", 200, true},
@@ -151,13 +158,16 @@ func TestShellReadsAreQuiet(t *testing.T) {
 		{"GET", "/api/v1/auth/me", 200, false}, {"GET", "/api/v1/admin/cli", 200, false},
 		{"GET", "/api/v1/auth/me", 401, true}, {"POST", "/api/v1/access-requests", 201, true},
 		{"POST", "/api/v1/admin/system/update", 200, true}, {"GET", "/api/v1/users", 200, true},
+		{"GET", "/api/v1/admin/settings", 200, false}, {"GET", "/api/v1/admin/tls", 200, false},
+		{"GET", "/api/v1/admin/overview", 200, false}, {"GET", "/api/v1/me/targets", 200, false},
+		{"GET", "/api/v1/admin/settings", 500, true}, {"PUT", "/api/v1/admin/settings", 200, true},
 	} {
 		key := c.method + " " + c.path + " " + strconv.Itoa(c.status)
 		if info[key] != c.info {
 			t.Errorf("%s at info = %v, want %v", key, info[key], c.info)
 		}
 	}
-	if len(info) != 5 {
+	if len(info) != 7 {
 		t.Errorf("info lines: %v", info)
 	}
 }

@@ -377,10 +377,18 @@ const imagesEvery = 5 * time.Minute
 // live).
 const imagesRetry = 20 * time.Second
 
+// imagesSettle is how long after the first read the size is read every
+// imagesRetry whatever it found. An update pulls the gateway's image and then
+// the browser's, nine seconds later; a read between them found 20 MB of the
+// 272 and kept it five minutes (2026-11-05, live, 1.18.6). Not zero, so the
+// empty-read retry did not apply.
+const imagesSettle = 2 * time.Minute
+
 // imagesCache keeps the last images size, when a read last started, whether
 // that read found nothing, and whether one is running.
 type imagesCache struct {
 	mu      sync.Mutex
+	first   time.Time
 	at      time.Time
 	bytes   *int64
 	reading bool
@@ -398,11 +406,14 @@ func (c *imagesCache) read(size func(context.Context) (int64, error)) *int64 {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	every := imagesEvery
-	if c.empty {
+	if c.empty || (!c.first.IsZero() && time.Since(c.first) < imagesSettle) {
 		every = imagesRetry
 	}
 	if !c.reading && (c.at.IsZero() || time.Since(c.at) >= every) {
 		c.reading, c.at = true, time.Now()
+		if c.first.IsZero() {
+			c.first = c.at
+		}
 		go func() {
 			// Not the request's context: the read outlives the response.
 			// The reader bounds itself (containers.ImagesSize, 10 s).
