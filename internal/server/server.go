@@ -277,6 +277,15 @@ var quietPaths = map[string]bool{
 	"/api/v1/auth/me": true, "/api/v1/access-requests": true,
 	"/api/v1/admin/system/update": true, "/api/v1/admin/system/host": true,
 	"/api/v1/admin/system/metrics": true, "/api/v1/admin/cli": true,
+	// What the Settings, dashboard and portal pages read as they open: eight
+	// or more lines a page view that still filled the ring after the shell's
+	// own were quiet (the live log, 2026-11-05).
+	"/api/v1/admin/settings": true, "/api/v1/admin/notifications": true,
+	"/api/v1/admin/notifications/email-server": true, "/api/v1/admin/tls": true,
+	"/api/v1/admin/storage": true, "/api/v1/admin/api-tokens": true,
+	"/api/v1/admin/retention": true, "/api/v1/admin/overview": true,
+	"/api/v1/me/targets": true, "/api/v1/me/sessions": true,
+	"/api/v1/me/access": true, "/api/v1/me/access-requests": true,
 }
 
 // staticKey carries the mark a request for one of the console's own files
