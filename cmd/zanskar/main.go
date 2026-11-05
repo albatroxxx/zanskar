@@ -580,6 +580,14 @@ func serve(ctx context.Context) error {
 		}
 	}()
 
+	// Rows the last process left open are closed now, and any later row left
+	// open by a failed end is closed within minutes (live, 2026-11-05: two
+	// sessions listed as live after the tabs were gone). The registry is the
+	// truth about what this gateway runs.
+	sweeper := &session.Sweeper{Repo: sessionRepo, Live: func(id string) bool { _, ok := registry.Get(id); return ok }, Audit: auditLog, Log: log}
+	sweeper.Startup(ctx, time.Now())
+	go sweeper.Run(ctx)
+
 	log.Info("starting zanskar", "version", version.Version, "db_driver", cfg.DBDriver, "key_version", ring.ActiveVersion(), "web_ui", web.Enabled, "env_file", cfg.EnvFile)
 	err = server.New(cfg, db, log, deps).ListenAndServe(ctx)
 	if err == nil && restarter.Draining() {
