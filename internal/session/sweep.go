@@ -22,24 +22,8 @@ import (
 // abandoned, not another gateway's.
 func (r *Repo) EndAbandoned(ctx context.Context, cutoff time.Time, live func(id string) bool, reason, detail string) ([]string, error) {
 	// The ids first, the cursor closed before any write: SQLite runs on one connection.
-	rows, err := r.db.QueryContext(ctx, r.db.Rebind(`SELECT id FROM access_sessions WHERE ended_at IS NULL AND started_at < ?`), store.TimeArg(cutoff))
+	open, err := r.openBefore(ctx, cutoff)
 	if err != nil {
-		return nil, err
-	}
-	var open []string
-	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
-			_ = rows.Close()
-			return nil, err
-		}
-		open = append(open, id)
-	}
-	if err := rows.Err(); err != nil {
-		_ = rows.Close()
-		return nil, err
-	}
-	if err := rows.Close(); err != nil {
 		return nil, err
 	}
 	var ended []string
@@ -58,6 +42,24 @@ func (r *Repo) EndAbandoned(ctx context.Context, cutoff time.Time, live func(id 
 		}
 	}
 	return ended, nil
+}
+
+// openBefore lists the ids of the rows still open that started before cutoff.
+func (r *Repo) openBefore(ctx context.Context, cutoff time.Time) ([]string, error) {
+	rows, err := r.db.QueryContext(ctx, r.db.Rebind(`SELECT id FROM access_sessions WHERE ended_at IS NULL AND started_at < ?`), store.TimeArg(cutoff))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
 }
 
 // Sweeper ends the rows of sessions this gateway no longer runs.
