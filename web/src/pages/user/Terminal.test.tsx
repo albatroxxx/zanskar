@@ -208,6 +208,25 @@ describe('Terminal', () => {
       close.mockRestore()
     })
 
+    // Esc and a click outside the dialog are the same way out as its button
+    // (live, 2026-11-05: they went to Targets in the tab, a second list).
+    it('closes the tab on Esc, as the button does', async () => {
+      const close = vi.spyOn(window, 'close').mockImplementation(() => {})
+      await ended({ ...session, from_portal: true })
+      await userEvent.setup().keyboard('{Escape}')
+      expect(close).toHaveBeenCalledTimes(1)
+      close.mockRestore()
+    })
+
+    it('goes to Targets on Esc in a tab opened any other way, without closing', async () => {
+      const close = vi.spyOn(window, 'close').mockImplementation(() => {})
+      await ended(session)
+      await userEvent.setup().keyboard('{Escape}')
+      expect(screen.getByText('target list')).toBeDefined()
+      expect(close).not.toHaveBeenCalled()
+      close.mockRestore()
+    })
+
     it('keeps Back to targets, and never closes, in a tab opened any other way', async () => {
       const close = vi.spyOn(window, 'close').mockImplementation(() => {})
       const dialog = await ended(session)
