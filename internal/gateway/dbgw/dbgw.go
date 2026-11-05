@@ -16,6 +16,7 @@ package dbgw
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net"
@@ -427,8 +428,10 @@ func Bridge(ctx context.Context, log *slog.Logger, docker string, spec Spec, ws 
 			if n > 0 {
 				if rec != nil {
 					if werr := rec.Output(buf[:n]); werr != nil {
-						log.Error("recording write failed; ending session", "err", werr)
-						setEnd("error")
+						if !errors.Is(werr, recording.ErrClosed) {
+							log.Error("recording write failed; ending session", "err", werr)
+							setEnd("error")
+						}
 						return
 					}
 				}

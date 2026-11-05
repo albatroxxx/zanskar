@@ -253,8 +253,10 @@ func Bridge(ctx context.Context, log *slog.Logger, client *ssh.Client, ws *webso
 			if n > 0 {
 				if rec != nil {
 					if rerr := rec.Output(buf[:n]); rerr != nil {
-						log.Error("recording write failed; ending session", "err", rerr)
-						setEnd("error")
+						if !errors.Is(rerr, recording.ErrClosed) {
+							log.Error("recording write failed; ending session", "err", rerr)
+							setEnd("error")
+						}
 						return
 					}
 				}

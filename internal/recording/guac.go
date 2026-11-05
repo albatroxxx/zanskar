@@ -8,6 +8,12 @@ import (
 	"strings"
 )
 
+// ErrClosed is what a write to a recording that was closed answers. A bridge's
+// last read can reach the recording just after the session's end closed it: that
+// is the session ending, not a recording that failed (live, 2026-11-05: an
+// error line for an RDP session that ended as user exit).
+var ErrClosed = errors.New("recording: closed")
+
 // GuacStream stores the server-to-client Guacamole instruction stream as
 // guacd emitted it. guacamole-common-js's SessionRecording replays this
 // format directly, and it is what guacd's own recording feature produces.
@@ -30,7 +36,7 @@ func (g *GuacStream) Write(raw string) error {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	if g.closed {
-		return errors.New("recording: closed")
+		return ErrClosed
 	}
 	if _, err := g.w.WriteString(raw); err != nil {
 		return err
