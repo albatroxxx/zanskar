@@ -8,7 +8,37 @@ import (
 	"time"
 
 	"github.com/albatroxxx/zanskar/internal/session"
+	"github.com/albatroxxx/zanskar/internal/ticket"
 )
+
+// TestStartingUntilRegisteredOrEnded: a session counts as this gateway's from
+// its row, before its bridge registers (a dial, an image pull of minutes), until
+// its row ends, and not for ever: the sweep must neither end a session still
+// being set up nor keep one a run left behind. A later start forgets the one
+// left behind.
+func TestStartingUntilRegisteredOrEnded(t *testing.T) {
+	f := newConnectFixture(t)
+	f.h.starting.m.Store("left-behind", time.Now().Add(-startingFor))
+	g := &ticket.Grant{UserID: f.alice.ID, Protocol: "ssh"}
+	ep := &endpoint{TargetID: f.ids["ok"], LiveKey: f.ids["ok"]}
+	run, ok := f.h.startRun(httptest.NewRequest("GET", "/ws/ssh", nil), nil, g, ep, "203.0.113.5")
+	if !ok {
+		t.Fatal("startRun refused a session")
+	}
+	if !f.h.Starting(run.s.ID) {
+		t.Fatal("a session whose row is written does not count as starting")
+	}
+	if f.h.Starting("left-behind") {
+		t.Fatal("a session left behind past startingFor still counts as starting")
+	}
+	if _, held := f.h.starting.m.Load("left-behind"); held {
+		t.Fatal("the session left behind was not forgotten at the next start")
+	}
+	run.endRow(run.s.ID, session.EndUserExit, "")
+	if f.h.Starting(run.s.ID) {
+		t.Fatal("an ended session still counts as starting")
+	}
+}
 
 // closedRecording is a recording whose close has nothing left to flush.
 type closedRecording struct{}

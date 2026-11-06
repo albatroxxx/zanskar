@@ -554,8 +554,16 @@ func serve(ctx context.Context) error {
 		},
 		Log: log,
 	}
+	// live says whether this gateway runs a session: its bridge is in the
+	// registry, or its row is written and its set-up (the dial, an image pull)
+	// still under way. The container reaper and the session sweep both ask.
+	live := func(id string) bool {
+		if _, ok := registry.Get(id); ok {
+			return true
+		}
+		return connectHandler.Starting(id)
+	}
 	go func() {
-		live := func(id string) bool { _, ok := registry.Get(id); return ok }
 		t := time.NewTicker(5 * time.Minute)
 		defer t.Stop()
 		var notice reapNotice
@@ -582,9 +590,9 @@ func serve(ctx context.Context) error {
 
 	// Rows the last process left open are closed now, and any later row left
 	// open by a failed end is closed within minutes (live, 2026-11-05: two
-	// sessions listed as live after the tabs were gone). The registry is the
-	// truth about what this gateway runs.
-	sweeper := &session.Sweeper{Repo: sessionRepo, Live: func(id string) bool { _, ok := registry.Get(id); return ok }, Audit: auditLog, Log: log}
+	// sessions listed as live after the tabs were gone). What this gateway
+	// runs is live above: the registry, and the sessions still being set up.
+	sweeper := &session.Sweeper{Repo: sessionRepo, Live: live, Storage: storage, Audit: auditLog, Log: log}
 	sweeper.Startup(ctx, time.Now())
 	go sweeper.Run(ctx)
 

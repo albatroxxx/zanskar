@@ -181,9 +181,21 @@ func (r *Repo) EndWithDetail(ctx context.Context, id, reason, detail string) err
 	if len(detail) > maxEndDetail {
 		detail = strings.ToValidUTF8(detail[:maxEndDetail], "") + "…"
 	}
-	_, err := r.db.ExecContext(ctx, r.db.Rebind(`UPDATE access_sessions SET ended_at = ?, end_reason = ?, end_detail = ? WHERE id = ? AND ended_at IS NULL`),
-		store.TimeArg(time.Now()), reason, nullStr(detail), id)
+	_, err := r.endRow(ctx, id, reason, detail)
 	return err
+}
+
+// endRow closes a row that is still open and reports whether it was: one that
+// closed since the caller looked is left as it ended. The one statement that
+// ends a session, for a bridge's end and the sweep's alike.
+func (r *Repo) endRow(ctx context.Context, id, reason, detail string) (bool, error) {
+	res, err := r.db.ExecContext(ctx, r.db.Rebind(`UPDATE access_sessions SET ended_at = ?, end_reason = ?, end_detail = ? WHERE id = ? AND ended_at IS NULL`),
+		store.TimeArg(time.Now()), reason, nullStr(detail), id)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n > 0, err
 }
 
 // DiscardRecording deletes nothing itself: it marks a recording whose
@@ -340,6 +352,23 @@ func (r *Repo) FinishRecording(ctx context.Context, id string, size int64, sha25
 	_, err := r.db.ExecContext(ctx, r.db.Rebind(`UPDATE recordings SET size_bytes = ?, sha256 = ?, finished_at = ? WHERE id = ?`),
 		size, sha256, store.TimeArg(time.Now()), id)
 	return err
+}
+
+// UnfinishedRecording is the session's recording when its row says it never
+// finished, no size, digest or finished_at, as a bridge whose close never ran
+// leaves it. ok is false when the session has none, or it finished or was
+// purged.
+func (r *Repo) UnfinishedRecording(ctx context.Context, sessionID string) (rec *Recording, ok bool, err error) {
+	rec = &Recording{SessionID: sessionID}
+	err = r.db.QueryRowContext(ctx, r.db.Rebind(`SELECT id, storage_uri FROM recordings WHERE session_id = ? AND finished_at IS NULL AND purged_at IS NULL`), sessionID).
+		Scan(&rec.ID, &rec.StorageURI)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, err
+	}
+	return rec, true, nil
 }
 
 // RecordingTotals counts the recordings kept and the bytes they take, for

@@ -8,12 +8,14 @@ import (
 	"fmt"
 	"maps"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/coder/websocket"
 
 	"github.com/albatroxxx/zanskar/internal/audit"
 	"github.com/albatroxxx/zanskar/internal/gateway"
+	"github.com/albatroxxx/zanskar/internal/gateway/containers"
 	"github.com/albatroxxx/zanskar/internal/gateway/guac"
 	"github.com/albatroxxx/zanskar/internal/recording"
 	"github.com/albatroxxx/zanskar/internal/session"
@@ -40,6 +42,46 @@ type sessionRun struct {
 	// socket closes: the desktop's client reads a guacamole error
 	// instruction, not the close reason.
 	tell func(msg string)
+	// watch pings the browser while the bridge runs (watchClient); set by live.
+	watch *clientWatch
+}
+
+// startingSet holds the sessions between their row and their bridge's
+// registration, each with when it started; see Handler.Starting.
+type startingSet struct{ m sync.Map }
+
+// startingFor bounds how long a session counts as starting: longer than any
+// set-up, the first pull of an image on a slow link included
+// (containers.PullTimeout). A row a run left open and never registered is the
+// sweep's after that.
+const startingFor = containers.PullTimeout + 5*time.Minute
+
+// Starting reports whether a session's row is written and its bridge not yet
+// registered: still being set up (the dial, an image pull, a container's
+// start), so this gateway's, not abandoned. The sweep asks before it ends a
+// row the registry does not hold: a first application session pulls its
+// images for minutes before it registers (browser.go), longer than the sweep's
+// grace.
+func (h *Handler) Starting(id string) bool {
+	v, ok := h.starting.m.Load(id)
+	if !ok {
+		return false
+	}
+	since, _ := v.(time.Time)
+	return time.Since(since) < startingFor
+}
+
+// markStarting notes a session as starting and forgets any left behind past
+// startingFor: a row ended by something other than its run (an admin's
+// terminate while it was starting) is never told to this set.
+func (h *Handler) markStarting(id string) {
+	h.starting.m.Range(func(k, v any) bool {
+		if since, _ := v.(time.Time); time.Since(since) >= startingFor {
+			h.starting.m.Delete(k)
+		}
+		return true
+	})
+	h.starting.m.Store(id, time.Now())
 }
 
 // closeTimeout is the default bound on one closing write (Handler.CloseTimeout).
@@ -78,6 +120,7 @@ func (h *Handler) startRun(r *http.Request, ws *websocket.Conn, g *ticket.Grant,
 		_ = ws.Close(websocket.StatusInternalError, "could not start session")
 		return nil, false
 	}
+	h.markStarting(s.ID)
 	run := &sessionRun{h: h, r: r, ws: ws, g: g, ep: ep, actor: actorFor(g.UserID, ip), s: s}
 	// The failover route closed the session this one replaces, as
 	// target_lost, before it issued the ticket; this only catches a row that
@@ -89,8 +132,10 @@ func (h *Handler) startRun(r *http.Request, ws *websocket.Conn, g *ticket.Grant,
 }
 
 // endRow closes a session's row, keeping detail, what was said about the
-// end, beside its reason.
+// end, beside its reason. The session stops counting as starting first, so a
+// write that hangs leaves the row to the sweep.
 func (run *sessionRun) endRow(id, reason, detail string) {
+	run.h.starting.m.Delete(id)
 	ctx, cancel := run.closing()
 	defer cancel()
 	if err := run.h.Sessions.EndWithDetail(ctx, id, reason, detail); err != nil {
@@ -175,14 +220,16 @@ func (run *sessionRun) register(rec recorder, format, uri string) (*session.Reco
 
 // live puts the session in the registry and returns the context its bridge
 // runs under, which a terminate or a revocation cancels; call done when the
-// bridge returns.
+// bridge returns. Registered, the session is no longer starting: the registry
+// holds it from here.
 func (run *sessionRun) live() (ctx context.Context, done func()) {
 	ctx = run.h.Registry.Add(run.r.Context(), gateway.Live{SessionID: run.s.ID, UserID: run.g.UserID, TargetID: run.ep.LiveKey,
 		Protocol: run.g.Protocol, PolicyID: run.g.PolicyID, AllowClipboard: run.g.AllowClipboard, AllowFileTransfer: run.g.AllowFileTransfer,
 		AllowDevTools: run.g.AllowDevTools})
-	stop := watchClient(run.ws)
+	run.h.starting.m.Delete(run.s.ID)
+	run.watch = watchClient(run.ws)
 	return ctx, func() {
-		stop()
+		run.watch.Stop()
 		run.h.Registry.Remove(run.s.ID)
 	}
 }
@@ -206,6 +253,11 @@ func (run *sessionRun) finish(rec recorder, row *session.Recording, reason strin
 	}
 	if run.discardIfBlank(rec, row) {
 		more["recording"] = "discarded: the session drew nothing"
+	}
+	// A browser the watch closed sent no close of its own: the bridge saw the
+	// socket end as it does when the person leaves. The row keeps which it was.
+	if run.watch != nil && run.watch.Lost() && reason == session.EndUserExit && more["detail"] == "" {
+		more["detail"] = clientLostDetail
 	}
 	run.end(reason, "", more)
 	_ = run.ws.Close(websocket.StatusNormalClosure, reason)
