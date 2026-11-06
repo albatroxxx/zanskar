@@ -194,7 +194,7 @@ func (a *Asciicast) event(kind, data string) error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	if a.closed {
-		return errors.New("recording: closed")
+		return ErrClosed
 	}
 	elapsed := time.Since(a.start).Seconds()
 	line, err := json.Marshal([]any{elapsed, kind, data})

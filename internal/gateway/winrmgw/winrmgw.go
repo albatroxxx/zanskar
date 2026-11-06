@@ -287,8 +287,10 @@ func Bridge(ctx context.Context, log *slog.Logger, sh Shell, ws *websocket.Conn,
 		}
 		if rec != nil {
 			if err := rec.Output(b); err != nil {
-				log.Error("recording write failed; ending session", "err", err)
-				setEnd("error")
+				if !errors.Is(err, recording.ErrClosed) {
+					log.Error("recording write failed; ending session", "err", err)
+					setEnd("error")
+				}
 				return false
 			}
 		}

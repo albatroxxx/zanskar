@@ -74,6 +74,9 @@ type Handler struct {
 	// Draining reports that the gateway is about to restart: no new session
 	// starts, live ones run on until the drain ends them.
 	Draining func() bool
+	// starting holds the sessions between their row and their bridge's
+	// registration; Starting tells the sweep they are this gateway's.
+	starting startingSet
 	// GuacdAddr returns the guacd host:port that relays RDP and VNC; empty
 	// (or nil) disables desktop sessions. A function so the runtime setting
 	// applies to the next session without a restart.

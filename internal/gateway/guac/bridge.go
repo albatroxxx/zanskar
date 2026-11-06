@@ -17,6 +17,7 @@ import (
 	"github.com/coder/websocket"
 
 	"github.com/albatroxxx/zanskar/internal/gateway"
+	"github.com/albatroxxx/zanskar/internal/recording"
 )
 
 // Recorder receives the server-to-client instruction stream. Replaying it
@@ -281,8 +282,11 @@ func Bridge(ctx context.Context, log *slog.Logger, c *Conn, ws *websocket.Conn, 
 			}
 			if rec != nil {
 				if err := rec.Write(raw); err != nil {
-					log.Error("recording write failed; ending session", "err", err)
-					setEnd("error")
+					// Closed is the session's own end reaching this reader late.
+					if !errors.Is(err, recording.ErrClosed) {
+						log.Error("recording write failed; ending session", "err", err)
+						setEnd("error")
+					}
 					return
 				}
 			}

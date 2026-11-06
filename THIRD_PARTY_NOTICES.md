@@ -7942,7 +7942,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 ### github.com/klauspost/compress
 
-* Version: `v1.18.7`
+* Version: `v1.20.2`
 
 ```
 Copyright (c) 2012 The Go Authors. All rights reserved.

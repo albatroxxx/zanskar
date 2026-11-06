@@ -39,7 +39,10 @@ export function SessionEndedDialog({ ended, target, protocol, elapsed, again, cl
     window.setTimeout(onClose, 200)
   }
   return (
-    <Modal title="Session ended" onClose={onClose}>
+    // Esc and a click outside leave the way the button does: they used to go to
+    // Targets in this tab, the second list the button no longer leaves behind
+    // (live, 2026-11-05).
+    <Modal title="Session ended" onClose={leave}>
       <p>{lead}</p>
       {detail && <p className="muted">{detail}</p>}
       <p className="muted">

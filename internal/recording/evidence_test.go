@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -40,8 +41,24 @@ func TestGuacStreamSizeAndHash(t *testing.T) {
 	if size2, sum2, err := g.Close(); err != nil || size2 != size || sum2 != sum {
 		t.Fatalf("second close: %d %s %v", size2, sum2, err)
 	}
-	if err := g.Write("4.sync;"); err == nil {
-		t.Fatal("a closed recording accepted more data")
+	if err := g.Write("4.sync;"); !errors.Is(err, ErrClosed) {
+		t.Fatalf("a closed recording: %v, want ErrClosed (a bridge tells that from a real failure)", err)
+	}
+}
+
+// TestAsciicastClosedIsErrClosed: the same for a terminal recording, which the
+// SSH, WinRM and database bridges write to.
+func TestAsciicastClosedIsErrClosed(t *testing.T) {
+	st := &LocalStorage{Dir: t.TempDir()}
+	a, _, err := NewAsciicast(context.Background(), st, "c1.cast", Header{Width: 80, Height: 24})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := a.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.Output([]byte("late")); !errors.Is(err, ErrClosed) {
+		t.Fatalf("output after close: %v, want ErrClosed", err)
 	}
 }
 

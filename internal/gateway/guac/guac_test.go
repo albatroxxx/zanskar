@@ -16,6 +16,7 @@ import (
 	"github.com/coder/websocket"
 
 	"github.com/albatroxxx/zanskar/internal/gateway"
+	"github.com/albatroxxx/zanskar/internal/recording"
 )
 
 func TestEncodeParseRoundTrip(t *testing.T) {
@@ -213,6 +214,63 @@ func TestBridgeRelayAndPolicy(t *testing.T) {
 	}
 	if len(recorded) < 2 || !strings.HasPrefix(recorded[0], "4.echo") {
 		t.Fatalf("recording captured %v", recorded)
+	}
+}
+
+// TestBridgeRecordingClosedIsNotAFailure (live, 2026-11-05): the last read from
+// guacd can reach the recording just after the session's end closed it, which
+// logged "recording write failed" at error for an RDP session that ended as
+// user exit. A closed recording is the session ending, not a failure; any other
+// write error still ends it as an error.
+func TestBridgeRecordingClosedIsNotAFailure(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		err  error
+		want string
+	}{
+		{"closed", recording.ErrClosed, "user_exit"},
+		{"a real failure", errors.New("disk full"), "error"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			addr := fakeGuacd(t, nil)
+			reasonCh := make(chan string, 1)
+			rec := recFunc(func(string) error { return c.err })
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				ws, err := websocket.Accept(w, r, &websocket.AcceptOptions{InsecureSkipVerify: true})
+				if err != nil {
+					return
+				}
+				gc, err := Dial(r.Context(), addr, Params{Protocol: "vnc", Args: map[string]string{}}, 2*time.Second)
+				if err != nil {
+					t.Errorf("dial: %v", err)
+					return
+				}
+				defer gc.Close()
+				reason, _ := Bridge(r.Context(), nil, gc, ws, rec, Limits{Idle: time.Minute, tick: 20 * time.Millisecond})
+				reasonCh <- reason
+				_ = ws.Close(websocket.StatusNormalClosure, "")
+			}))
+			defer srv.Close()
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			ws, _, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(srv.URL, "http"), nil) //nolint:bodyclose
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer ws.CloseNow()
+			// guacd echoes this; the echo is what reaches the recording.
+			if err := ws.Write(ctx, websocket.MessageText, []byte(Encode("key", "65", "1"))); err != nil {
+				t.Fatal(err)
+			}
+			select {
+			case r := <-reasonCh:
+				if r != c.want {
+					t.Fatalf("reason %q, want %q", r, c.want)
+				}
+			case <-time.After(5 * time.Second):
+				t.Fatal("bridge did not end")
+			}
+		})
 	}
 }
 
