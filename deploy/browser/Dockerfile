@@ -12,7 +12,7 @@
 # itself, so none of them is used: about 660 MB on disk instead of 900 MB,
 # a 270 MB download instead of 340 MB. The build fails if one comes back
 # under a new name.
-FROM debian:trixie-slim@sha256:f6b08b09a05725f9431502d3b5714f5c4576e82c1a84fa1debe0c24a7e0c3ec4
+FROM debian:trixie-slim@sha256:a72b4433de1cf7d6bae0c4cee74d0547f58601a643b3375f070c51600d63b6b2
 # packages lists what the layer below installs. PACKAGES is a digest of the
 # versions apt would install from it, worked out by release.yml before the
 # build: when it matches the last release's, the layer comes from that
