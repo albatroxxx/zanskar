@@ -467,6 +467,9 @@ export function reasonBadge(reason?: string) {
  *  the gateway's word for it, not the absence of a reason (ADR 0047). */
 export function EndReason({ state, reason, detail }: { state?: string; reason?: string; detail?: string }) {
   if (state === 'live') return <StateBadge lifecycle="session" state="live" />
+  // An ended row with no reason (a build older than the reasons) is ended,
+  // not live: the state is the gateway's word, the reason only says why.
+  if (state === 'ended' && !reason) return <StateBadge lifecycle="session" state="ended" />
   if (!detail || !reason) return reasonBadge(reason)
   return (
     <>

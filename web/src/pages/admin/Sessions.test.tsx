@@ -51,6 +51,15 @@ describe('Sessions', () => {
     expect(within(dialog).getByRole('link', { name: 'Approvals' }).getAttribute('href')).toBe('/admin/approvals')
   })
 
+  // ADR 0047 (2026-11-09): "live" was the absence of an end reason; an
+  // ended row with none read live. The state is the gateway's word.
+  it('reads the state, not the absence of a reason', async () => {
+    at('/admin/sessions', [{ ...live, id: 's2', state: 'ended', ended_at: '2026-10-06T10:05:00Z', recording_id: undefined }])
+    expect(await screen.findByText('ended')).toBeDefined()
+    expect(screen.queryByText('live')).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Terminate' })).toBeNull()
+  })
+
   it('lets an auditor watch but not terminate', async () => {
     at('/audit/sessions')
     expect((await screen.findByRole('link', { name: 'Watch, opens in a new tab' })).getAttribute('href')).toMatch(/^\/audit\/shadow\/s1/)
