@@ -18,6 +18,7 @@ import (
 	"github.com/albatroxxx/zanskar/internal/httpx"
 	"github.com/albatroxxx/zanskar/internal/policy"
 	"github.com/albatroxxx/zanskar/internal/protocol"
+	"github.com/albatroxxx/zanskar/internal/states"
 	"github.com/albatroxxx/zanskar/internal/target"
 	"github.com/albatroxxx/zanskar/internal/user"
 )
@@ -426,7 +427,13 @@ func (h *Handler) fail(w http.ResponseWriter, r *http.Request, err error) {
 	case errors.Is(err, ErrNotFound):
 		httpx.WriteError(w, r, http.StatusNotFound, "not_found", "access request not found")
 	case errors.Is(err, ErrState):
-		httpx.WriteError(w, r, http.StatusConflict, "conflict", "request is not in a state for that action")
+		// The refusal names the state the request is in and the one the
+		// action needs, when the repository could read it (ADR 0047).
+		msg := "request is not in a state for that action"
+		if serr, ok := errors.AsType[*states.Error](err); ok {
+			msg = serr.Error()
+		}
+		httpx.WriteError(w, r, http.StatusConflict, "conflict", msg)
 	case errors.Is(err, ErrDuplicate):
 		httpx.WriteError(w, r, http.StatusConflict, "duplicate_request", err.Error())
 	case errors.Is(err, ErrInvalid):
