@@ -515,8 +515,24 @@ func TestCertificateAuthorityRotation(t *testing.T) {
 	if _, err := v.OpenPending(ctx, c.ID); !errors.Is(err, ErrNoRotation) {
 		t.Fatalf("nothing pending after cut over, got %v", err)
 	}
-	if got, err = v.Retire(ctx, c.ID); err != nil || got.Rotation != nil {
-		t.Fatalf("retire: %v %+v", err, got.Rotation)
+	// One rotation at a time (ADR 0047, 2026-11-09): while the old key waits
+	// to be confirmed removed from targets, a next key is refused; a second
+	// cut-over used to overwrite the reminder.
+	third, _ := GenerateSSHKey()
+	if _, err := v.PrepareRotation(ctx, c.ID, &Secret{PrivateKey: third}); !errors.Is(err, ErrRotationUnconfirmed) {
+		t.Fatalf("prepare over an unconfirmed retired key must be refused, got %v", err)
+	}
+	if got, _ = v.Get(ctx, c.ID); got.RotationState != RotationCutOver || got.Rotation.RetiredPublicKey != oldPub {
+		t.Fatalf("the retired key must survive the refused prepare: %+v", got.Rotation)
+	}
+	if got, err = v.Retire(ctx, c.ID); err != nil || got.Rotation != nil || got.RotationState != RotationNone {
+		t.Fatalf("retire: %v %+v %s", err, got.Rotation, got.RotationState)
+	}
+	if got, err = v.PrepareRotation(ctx, c.ID, &Secret{PrivateKey: third}); err != nil || got.RotationState != RotationPrepared {
+		t.Fatalf("prepare after the old key is confirmed removed: %v %s", err, got.RotationState)
+	}
+	if _, err := v.CancelRotation(ctx, c.ID); err != nil {
+		t.Fatal(err)
 	}
 	if _, err := v.Retire(ctx, c.ID); !errors.Is(err, ErrNoRotation) {
 		t.Fatalf("second retire: %v", err)
@@ -560,6 +576,9 @@ func TestCertificateAuthorityRotationRoutes(t *testing.T) {
 		t.Fatalf("cut over: %d %s", code, body)
 	}
 	assertNoSecrets(t, body)
+	if code, body = e.do("POST", "/api/v1/credentials/"+c.ID+"/rotate", map[string]any{}); code != 409 || !strings.Contains(body, "rotation_pending") || !strings.Contains(body, "waits to be removed") {
+		t.Fatalf("prepare while the old key is unconfirmed: %d %s", code, body)
+	}
 	if code, body = e.do("POST", "/api/v1/credentials/"+c.ID+"/rotate/retire", nil); code != 200 || strings.Contains(body, "retired_public_key") {
 		t.Fatalf("retire: %d %s", code, body)
 	}

@@ -339,6 +339,8 @@ func (h *AdminHandler) fail(w http.ResponseWriter, r *http.Request, err error) {
 		httpx.WriteError(w, r, http.StatusConflict, "in_use", "credential is still referenced by a target or autoscaling group")
 	case errors.Is(err, ErrRotationPending):
 		httpx.WriteError(w, r, http.StatusConflict, "rotation_pending", "a next key is already prepared; cut over or cancel it first")
+	case errors.Is(err, ErrRotationUnconfirmed):
+		httpx.WriteError(w, r, http.StatusConflict, "rotation_pending", strings.TrimPrefix(err.Error(), "credential: "))
 	case errors.Is(err, ErrNoRotation):
 		httpx.WriteError(w, r, http.StatusConflict, "no_rotation", "no rotation is in progress for this credential")
 	case errors.Is(err, ErrInvalid), errors.Is(err, ErrBadKey), errors.Is(err, ErrPassphrase), errors.Is(err, ErrNoSecret):
