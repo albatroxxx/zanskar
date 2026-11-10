@@ -32,6 +32,22 @@ CLAUDE.md at the root is the short form the tools read; this is the same set wit
 - A table that holds a sealed value is in the key-rotation list; a column that holds a time is in
   the rewrite guard test.
 
+## Lifecycles
+
+- A record whose life is a state machine (a session, a request, a token, a rotation) declares it
+  **once**, beside its types, with `internal/states` ([ADR 0047](../adr/0047-lifecycles-declared-once.md)):
+  the states in order, the moves with what makes each (the audit action, else the verb), and one
+  derivation `StateOf(row, now)`, pure over the struct, never a query. `status` is what was set;
+  `state` is what holds now. The handlers put `StateOf`'s answer in the record's `state` field; the
+  console reads it (`web/src/api/states.ts`, `StateBadge`) and derives nothing from raw fields.
+- A move from the wrong state is refused **in the statement** (the predicate names the columns the
+  state is read from, compare-and-swap), and the refusal names both states: `states.Error`, or the
+  package's own sentence. Error codes do not change for it; messages do.
+- A new lifecycle, state or move goes in the declaration, the catalog
+  (`internal/states/catalog`), the label table, the OpenAPI enum and `docs/lifecycles.md`
+  (`go run ./hack/gen-lifecycles > docs/lifecycles.md`); the guard tests in
+  `cmd/zanskar/lifecycles_test.go` name whichever copy was forgotten.
+
 ## Tests
 
 - Unit tests run on SQLite in memory (`file::memory:?_pragma=foreign_keys(1)` plus

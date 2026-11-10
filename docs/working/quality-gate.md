@@ -46,6 +46,9 @@ Some facts are written in more than one place, and a test holds them together:
   `internal/store`);
 - the two migration sets have the same file names (`make migrate-check`, also in CI);
 - the OpenAPI document parses and names every route (`cmd/zanskar/openapi_test.go`);
+- every declared lifecycle's states have console labels, match the OpenAPI enum of their `state`
+  field, and render to the checked-in `docs/lifecycles.md` (`cmd/zanskar/lifecycles_test.go`,
+  ADR 0047; regenerate with `go run ./hack/gen-lifecycles > docs/lifecycles.md`);
 - the third-party notices match the dependency graph (regenerated with every dependency bump).
 
 When adding a copy of a table (a protocol list, a kind list), add it to a guard test or do not add

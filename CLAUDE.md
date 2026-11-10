@@ -28,6 +28,12 @@ Agentless VM access gateway in Go. Module path `github.com/albatroxxx/zanskar`. 
   postgres:16-alpine` and `ZANSKAR_TEST_POSTGRES_DSN='postgres://zanskar:zanskar@127.0.0.1:5433/zanskar_test?sslmode=disable'`.
 - Tests hash passwords with reduced argon2id parameters (`internal/user/password.go`, gated on
   `testing.Testing()`); nothing a test does can change what a built binary hashes with.
+- A record's lifecycle is declared once beside its types with `internal/states` (ADR 0047), with
+  one `StateOf(row, now)`; `status` is what was set, `state` is what holds now and goes on the
+  wire. The console reads `state` (`web/src/api/states.ts`) and never derives it. A wrong-state
+  move is refused in the SQL predicate with both states named. New states go in the declaration,
+  the label table, the OpenAPI enum and `docs/lifecycles.md` (`go run ./hack/gen-lifecycles`);
+  `cmd/zanskar/lifecycles_test.go` names the copy forgotten.
 
 ## Before committing
 
