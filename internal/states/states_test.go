@@ -150,8 +150,16 @@ func TestMermaidAndMarkdown(t *testing.T) {
 			t.Errorf("Markdown lacks %q:\n%s", want, md)
 		}
 	}
-	plain := New("connect flow", []string{"ticket issued", "live"}, Move{From: "ticket issued", To: "live", By: "upgrade"})
+	plain := New("connect flow", []string{"ticket issued", "live"}, Move{From: "ticket issued", To: "live", By: "the dial: it answered; the recording started"})
 	if md := plain.Markdown(); !strings.Contains(md, "No API field carries it") || !strings.Contains(plain.Mermaid(), "ticket_issued --> live") {
 		t.Errorf("unexposed lifecycle:\n%s\n%s", md, plain.Mermaid())
+	}
+	// A colon or a semicolon inside a label would end it for the renderer:
+	// the diagram reads commas, the table keeps the words.
+	if mm := plain.Mermaid(); !strings.Contains(mm, "ticket_issued --> live: the dial, it answered, the recording started") {
+		t.Errorf("Mermaid label not made safe:\n%s", mm)
+	}
+	if md := plain.Markdown(); !strings.Contains(md, "| ticket issued | live | the dial: it answered; the recording started |") {
+		t.Errorf("the moves table lacks the full text:\n%s", md)
 	}
 }

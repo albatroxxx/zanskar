@@ -170,7 +170,7 @@ func (l Lifecycle) Mermaid() string {
 		fmt.Fprintf(&b, "    [*] --> %s\n", ident(l.states[0]))
 	}
 	for _, m := range l.moves {
-		fmt.Fprintf(&b, "    %s --> %s: %s\n", ident(m.From), ident(m.To), m.By)
+		fmt.Fprintf(&b, "    %s --> %s: %s\n", ident(m.From), ident(m.To), label(m.By))
 	}
 	for _, s := range l.states {
 		if len(l.Next(s)) == 0 && s != l.states[0] {
@@ -197,6 +197,14 @@ func (l Lifecycle) Markdown() string {
 	b.WriteString("```mermaid\n")
 	b.WriteString(l.Mermaid())
 	b.WriteString("```\n")
+	// The moves as a table too: the diagram's labels are shortened for the
+	// renderer, and a table is what a reader (or an agent) greps.
+	if len(l.moves) > 0 {
+		b.WriteString("\n| From | To | By |\n|---|---|---|\n")
+		for _, m := range l.moves {
+			fmt.Fprintf(&b, "| %s | %s | %s |\n", m.From, m.To, strings.ReplaceAll(m.By, "|", "\\|"))
+		}
+	}
 	for _, n := range l.Notes {
 		fmt.Fprintf(&b, "\n- %s", n)
 	}
@@ -205,6 +213,11 @@ func (l Lifecycle) Markdown() string {
 	}
 	return b.String()
 }
+
+// label makes a move's By safe as a Mermaid transition description: a colon
+// or a semicolon inside it would end the label or the statement, so they
+// read as commas there. The moves table keeps the full text.
+func label(by string) string { return strings.NewReplacer(": ", ", ", ":", ",", ";", ",").Replace(by) }
 
 // Sorted returns the states sorted, for comparisons that do not care about
 // declaration order (the OpenAPI enum, the label table).
