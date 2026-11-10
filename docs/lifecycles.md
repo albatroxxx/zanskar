@@ -230,3 +230,246 @@ stateDiagram-v2
 ```
 
 - Editing a policy does not reset its review.
+
+## Environment file
+
+Field `state` on `EnvFileReport`. States: `unchanged`, `changed`, `missing`, `unreadable`, `none`.
+
+Diffed on each status read against the environment the process started with (secrets as digests), cached on the file's size and mtime. `restart_required` is `state == changed`.
+
+```mermaid
+stateDiagram-v2
+    [*] --> unchanged
+    unchanged --> changed: the file is edited (any variable differs, either way)
+    changed --> unchanged: the edit is undone, or the process restarts and reads the file
+    unchanged --> missing: the file is removed
+    unchanged --> unreadable: the service user may no longer read it, or it does not parse
+    missing --> [*]
+    unreadable --> [*]
+    none --> [*]
+```
+
+- `none`: no path is configured or found (a container whose environment came from elsewhere).
+
+## TLS certificate source
+
+Field `source` on `TLSCertInfo`. States: `generated`, `file`, `uploaded`.
+
+`TLSStatus.active.source`; the mode (`file`, `managed`, `proxy`) is fixed for the process and says who terminates TLS, not which certificate.
+
+```mermaid
+stateDiagram-v2
+    [*] --> generated
+    generated --> uploaded: tls.certificate.upload
+    file --> uploaded: tls.certificate.upload
+    uploaded --> file: tls.certificate.reset with ZANSKAR_TLS_CERT set
+    uploaded --> generated: tls.certificate.reset with no file; or at start, when the upload can no longer serve
+    generated --> generated: tls.certificate.regenerate; the 6-hourly renewal within 30 days of its end (no event)
+```
+
+- An uploaded certificate that expires while the process runs keeps serving until a restart; only the generated one is renewed.
+
+## Connect flow
+
+No API field carries it. States: `requested`, `ticket issued`, `redeemed`, `starting`, `live`, `ending`, `closing`, `gone`.
+
+In memory only. The row (`AccessSession.state`) says `live` from `starting` to `closing` and `ended` at `gone`; terminate, revocation, the caps and the drain act on the registry, which knows the session from `live` on.
+
+```mermaid
+stateDiagram-v2
+    [*] --> requested
+    requested --> ticket_issued: session.connect (policy gate, pins, credentials, pre-flight)
+    ticket_issued --> redeemed: the browser opens the WebSocket with the ticket (30 s, once, same browser)
+    redeemed --> starting: the row is written and the session is in the starting set
+    starting --> live: the dial, the recording and session.start; the registry knows it
+    starting --> ending: the dial or the containers fail (end_reason error)
+    live --> ending: the bridge returns: the person, a timeout, session.terminate, a revocation, the ping watch
+    ending --> closing: the end frame is sent; the recording is closed and uploaded
+    closing --> gone: session.end; the registry forgets it; containers are torn down
+    gone --> [*]
+```
+
+- A session in `starting` (dialling, pulling images) cannot be terminated or revoked and is not counted by the caps: an open question of ADR 0047.
+- The sweep closes a row older than three minutes that is neither in the registry nor in the starting set (`error`), and every open row at start (`gateway_restart`).
+- Database sessions enter the registry before their containers start; application sessions after. The two therefore differ in what terminate reaches.
+
+## Sign-in
+
+No API field carries it. States: `password`, `verify`, `enroll`, `change`, `signed in`.
+
+`LoginResponse.status` after the password or the change; `Me.pending` (`verify`, `enroll`, `password`) for a partial session that is read again; single sign-on enters at `signed in`, or at `verify` or `enroll` when the provider leaves the second factor to Zanskar.
+
+```mermaid
+stateDiagram-v2
+    [*] --> password
+    password --> signed_in: user.login (no authenticator, none required, no change owed): ok
+    password --> verify: user.login with an authenticator enrolled: mfa_required
+    password --> enroll: user.login with one required and none enrolled: mfa_enrollment_required
+    password --> change: user.login with a change owed and no authenticator: password_change_required
+    verify --> signed_in: user.mfa.verify
+    verify --> change: user.mfa.verify with a change owed: /auth/me says pending password
+    enroll --> signed_in: user.mfa.confirm
+    change --> signed_in: user.password.change
+    change --> verify: user.password.change with an authenticator enrolled
+    change --> enroll: user.password.change with one required and none enrolled
+    verify --> password: too many wrong codes, or the partial session lapsed (sign_in_ended)
+    enroll --> password: too many wrong codes, or the partial session lapsed
+    signed_in --> [*]
+```
+
+- The console's own step follows the gateway's word after every answer (2026-11-09: it stayed on the code form after a right code when a password change was owed).
+- A partial session may call only the sign-in routes, `/auth/me` and `/auth/logout`.
+
+## Sign-in session
+
+No API field carries it. States: `partial`, `full`, `expired`, `revoked`, `swept`.
+
+Usable while `revoked_at` is null, `expires_at` is ahead and `last_seen_at` is within the idle limit; `mfa_verified` tells partial from full. Idle expiry is known only to Lookup: nothing selects it, so an idle-ended row stays until the sweep.
+
+```mermaid
+stateDiagram-v2
+    [*] --> partial
+    partial --> full: the owed step is done (mfa_verified set)
+    partial --> revoked: too many wrong codes; the account is locked; sign-out
+    partial --> expired: the absolute or idle limit passes
+    full --> expired: 12 h since sign-in, or 60 min idle
+    full --> revoked: user.logout, a sign-in that replaces it, user.sessions.revoke, a password reset or change, an authenticator reset, the account disabled or deleted
+    expired --> swept: the hourly sweep, 24 h after the absolute expiry
+    revoked --> swept: the hourly sweep
+    swept --> [*]
+```
+
+- `mfa_verified_at` is the proof a code was typed; three windows read it (5 min for step-up, 15 min with a slide for the command line, 5 min from sign-in to enrol without a password).
+- A disabled account's session is not revoked by the check that notices it; each status writer revokes.
+
+## Authenticator
+
+No API field carries it. States: `none`, `enrolling`, `confirmed`.
+
+No row is `none`; a row with `confirmed_at` null is `enrolling`; `confirmed_at` set is `confirmed` (`Me.mfa_enrolled`).
+
+```mermaid
+stateDiagram-v2
+    [*] --> none
+    none --> enrolling: user.mfa.enroll
+    enrolling --> enrolling: user.mfa.enroll again: a fresh secret
+    enrolling --> confirmed: user.mfa.confirm (eight recovery codes made)
+    confirmed --> none: user.mfa.reset
+    enrolling --> none: user.mfa.reset
+```
+
+- Recovery codes have no count on the wire; their use is an audit detail.
+- "Enrolled" is read three ways: the raw row (sign-in, tokens, approvals, the command line), the provider-aware rule (the connect gate), and the posture SQL (the dashboard).
+
+## Restart drain
+
+No API field carries it. States: `idle`, `draining`, `ended sessions`, `exited`.
+
+`SystemStatus.draining` with `drain{requested_at, deadline, wait_minutes, action}`; `idle` is the field absent. In memory only: a restart forgets it.
+
+```mermaid
+stateDiagram-v2
+    [*] --> idle
+    idle --> draining: system.restart, system.reboot, system.poweroff, system.update or settings.boot_request
+    draining --> draining: another request replaces the drain and its action (no event for the one dropped)
+    draining --> idle: system.restart_cancel; a host command or the request file failing
+    draining --> ended_sessions: the live sessions end, or the deadline passes (gateway_restart)
+    ended_sessions --> exited: the bridges close (30 s grace); the process exits or the host acts
+    exited --> [*]
+```
+
+- The completion of a restart, reboot, power-off or update is never audited; the console infers it from a new `started_at`.
+- "Cancel restart" cancels any drain, whatever its action.
+
+## Install settings change
+
+No API field carries it. States: `requested`, `written`, `applied`, `refused`, `rolled_back`.
+
+`ConfigResult.state` is the helper's result file (`applied`, `refused`, `rolled_back`), read back by `GET /admin/settings/boot/result` and matched to the request id; `requested` and `written` are phases of the drain.
+
+```mermaid
+stateDiagram-v2
+    [*] --> requested
+    requested --> written: settings.boot_request; after the drain the request file is written for the helper
+    written --> refused: settings.boot_apply (failure): the helper refused it, or did not answer within 10 min
+    written --> applied: settings.boot_apply by the next process, which came back with the new file
+    written --> rolled_back: settings.boot_apply (failure) by the next process: the previous file is back
+    applied --> [*]
+    refused --> [*]
+    rolled_back --> [*]
+```
+
+- The result file is a singleton that never expires: every reader compares the request id.
+
+## Installer run
+
+No API field carries it. States: `requested`, `running`, `done`, `failed`.
+
+`UpdateStatus.install.state` is the installer's last report (`running`, `done`, `failed`), kept until the next run; `requested` is the drain.
+
+```mermaid
+stateDiagram-v2
+    [*] --> requested
+    requested --> running: system.update; after the drain the request file is written and the installer starts
+    running --> done: the package installed and the service restarted
+    running --> failed: the installer failed, or the service did not restart; or no report within 20 min (system.update failure)
+    done --> [*]
+    failed --> [*]
+```
+
+- The words are written by a shell script and read by Go, the console and the OpenAPI enum; nothing shares them.
+
+## Directory sync
+
+No API field carries it. States: `not run`, `running`, `ok`, `held`, `failed`.
+
+`IdentityProvider.sync`: `running`, `last{ok, error, held}` and `next_at`; absent for a provider that does not list (SCIM, sign-in only). The dashboard counts `failing`, `not_run` and `held_back`.
+
+```mermaid
+stateDiagram-v2
+    [*] --> not_run
+    not_run --> running: the first tick after start, or a manual run
+    ok --> running: the interval passes, or a manual run
+    held --> running: the interval passes, or a manual run (with apply_removals to force)
+    failed --> running: the interval passes, or a manual run
+    running --> ok: idp.sync when something changed, or on a manual run
+    running --> held: removals held back: the listing was empty, or more than half the active accounts would go
+    running --> failed: idp.sync (failure) on a new or changed error; notified as provider_failing
+```
+
+- After a restart every provider reads `not run` until its first tick, so a failing provider's banner disappears and its next failure is announced again.
+- "Not answering" on the sign-in page is the discovery probe, a different check from the sync.
+
+## Notification channel
+
+No API field carries it. States: `on`, `off`, `failing`.
+
+`enabled` on the row; `status{last_sent_at, last_error, last_error_at}` from memory: `failing` is a `last_error` that no later delivery cleared.
+
+```mermaid
+stateDiagram-v2
+    [*] --> on
+    on --> off: notify.channel.update with enabled false
+    off --> on: notify.channel.update with enabled true (the backlog since it went off is delivered)
+    on --> failing: a delivery fails; retried with a backoff up to 5 min
+    failing --> on: a pass delivers at least one message
+    failing --> off: notify.channel.update with enabled false
+```
+
+- Delivery health is lost at restart; a stale error outlives a fix until a new matching event is delivered, and a passing Test does not clear it.
+
+## Data key version
+
+No API field carries it. States: `active`, `superseded`, `retired`.
+
+`active` is the highest id with `retired_at` null; any other such row is `superseded`; `retired_at` set is `retired` and the version is not loaded. `rotated_at` is a different fact: the version was rewrapped by `key rotate-master`.
+
+```mermaid
+stateDiagram-v2
+    [*] --> active
+    active --> superseded: zanskar key rotate makes a newer version (key.rotate): this one only decrypts
+    superseded --> retired: not built: nothing sets retired_at; ADR 0007 calls it future work
+    retired --> [*]
+```
+
+- `retired_at` has readers and no writer; a version retired by hand while rows still reference it makes those rows unreadable.

@@ -73,6 +73,18 @@ export const stateLabels = {
     current: { label: 'reviewed' },
     due: { label: 'review due', tone: 'warn' },
   },
+  environment_file: {
+    unchanged: { label: 'unchanged' },
+    changed: { label: 'changed, restart required', tone: 'warn' },
+    missing: { label: 'missing' },
+    unreadable: { label: 'cannot be checked', tone: 'warn' },
+    none: { label: 'none' },
+  },
+  tls_certificate_source: {
+    uploaded: { label: 'uploaded' },
+    file: { label: 'from ZANSKAR_TLS_CERT' },
+    generated: { label: 'self-signed' },
+  },
 } as const satisfies Record<string, Record<string, StateLabel>>
 
 export type Lifecycle = keyof typeof stateLabels

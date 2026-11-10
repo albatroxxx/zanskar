@@ -11,11 +11,18 @@ import (
 	"github.com/albatroxxx/zanskar/internal/access"
 	"github.com/albatroxxx/zanskar/internal/apitoken"
 	"github.com/albatroxxx/zanskar/internal/asg"
+	"github.com/albatroxxx/zanskar/internal/auth"
+	"github.com/albatroxxx/zanskar/internal/connect"
 	"github.com/albatroxxx/zanskar/internal/credential"
+	"github.com/albatroxxx/zanskar/internal/idp"
+	"github.com/albatroxxx/zanskar/internal/keyring"
+	"github.com/albatroxxx/zanskar/internal/lifecycle"
+	"github.com/albatroxxx/zanskar/internal/notify"
 	"github.com/albatroxxx/zanskar/internal/policy"
 	"github.com/albatroxxx/zanskar/internal/session"
 	"github.com/albatroxxx/zanskar/internal/states"
 	"github.com/albatroxxx/zanskar/internal/target"
+	"github.com/albatroxxx/zanskar/internal/tlscert"
 	"github.com/albatroxxx/zanskar/internal/user"
 )
 
@@ -34,6 +41,20 @@ func All() []states.Lifecycle {
 		apitoken.Lifecycle,
 		credential.RotationLifecycle,
 		policy.ReviewLifecycle,
+		lifecycle.EnvFileLifecycle,
+		tlscert.SourceLifecycle,
+		// Declared and documented, carried by no field of their own: the
+		// phases live in memory or in words the schema already has.
+		connect.FlowLifecycle,
+		auth.SignInLifecycle,
+		auth.SessionLifecycle,
+		auth.AuthenticatorLifecycle,
+		lifecycle.DrainLifecycle,
+		lifecycle.BootChangeLifecycle,
+		lifecycle.InstallLifecycle,
+		idp.SyncLifecycle,
+		notify.ChannelLifecycle,
+		keyring.VersionLifecycle,
 	}
 }
 
