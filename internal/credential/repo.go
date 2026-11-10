@@ -340,13 +340,13 @@ func (v *Vault) rotationMiss(ctx context.Context, id string, want RotationState)
 	if err != nil {
 		return err
 	}
-	switch got := RotationStateOf(c.Rotation); {
-	case got == want:
+	switch RotationStateOf(c.Rotation) {
+	case want:
 		// The row moved under us and back; say the move did not apply.
 		return ErrNoRotation
-	case got == RotationPrepared:
+	case RotationPrepared:
 		return ErrRotationPending
-	case got == RotationCutOver:
+	case RotationCutOver:
 		return ErrRotationUnconfirmed
 	}
 	return ErrNoRotation
