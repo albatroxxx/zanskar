@@ -21,6 +21,7 @@ import (
 	"github.com/albatroxxx/zanskar/internal/httpx"
 	"github.com/albatroxxx/zanskar/internal/policy"
 	"github.com/albatroxxx/zanskar/internal/store/storetest"
+	"github.com/albatroxxx/zanskar/internal/tlscert"
 	"github.com/albatroxxx/zanskar/internal/user"
 )
 
@@ -156,8 +157,21 @@ func (e *env) fakeAPI(mux *http.ServeMux) {
 	}})
 	reply("GET /api/v1/access-policies", 200, string(pols))
 	reply("GET /api/v1/groups", 200, `{"items":[{"id":"grp-dba","name":"dba","member_count":2}]}`)
-	reply("GET /api/v1/autoscaling-groups", 200, `{"items":[{"id":"g1","name":"web-fleet","provider":"aws","region":"eu-west-2","external_name":"web-asg","os_family":"linux","status":"ok","last_synced_at":"2026-10-05T09:00:00Z"}]}`)
-	reply("POST /api/v1/autoscaling-groups/{id}/sync", 200, `{}`)
+	reply("GET /api/v1/autoscaling-groups", 200, `{"items":[{"id":"g1","name":"web-fleet","provider":"aws","region":"eu-west-2","external_name":"web-asg","os_family":"linux","status":"ok","last_synced_at":"2026-10-05T09:00:00Z"},
+		{"id":"g2","name":"broken-fleet","provider":"aws","region":"eu-west-2","external_name":"broken-asg","os_family":"linux","status":"active","last_synced_at":"2026-10-05T09:00:00Z","last_error":"AssumeRole refused"}]}`)
+	// A sync the cloud refused answers 200 with the error in the body (the
+	// console shows it beside the last known state).
+	mux.Handle("POST /api/v1/autoscaling-groups/{id}/sync", admin(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		e.mu.Lock()
+		e.calls = append(e.calls, r.Method+" "+r.URL.Path)
+		e.mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		if r.PathValue("id") == "g2" {
+			_, _ = io.WriteString(w, `{"summary":{"seen":0},"error":"AssumeRole refused: the trust policy names another ExternalId"}`)
+			return
+		}
+		_, _ = io.WriteString(w, `{"summary":{"seen":3,"healthy":3}}`)
+	})))
 	reply("POST /api/v1/admin/storage/test", 200, `{"ok":true}`)
 	reply("GET /api/v1/admin/storage", 200, `{"source":"s3","counts":{"s3":4},"move":{"running":true,"moved":2,"failed":1,"total":4}}`)
 	reply("GET /api/v1/admin/system/status", 200, `{"version":"1.2.2","uptime_seconds":273600,"live_sessions":2,"draining":true}`)
@@ -176,7 +190,12 @@ func (e *env) fakeAPI(mux *http.ServeMux) {
 		_, _ = io.WriteString(w, body)
 	})))
 	reply("GET /api/v1/admin/logs", 200, `{"items":[{"time":"2026-10-05T09:00:00Z","level":"WARN","msg":"slow probe","attrs":{"target":"web-01"}},{"time":"2026-10-05T09:00:01Z","level":"ERROR","msg":"boom"},{"time":"2026-10-05T09:00:02Z","level":"DEBUG","msg":"tick"}]}`)
-	reply("GET /api/v1/admin/tls", 200, `{"mode":"managed","subject":"CN=gw","hosts":["gw.example.test"],"not_after":"2027-01-01T00:00:00Z"}`)
+	// The reply is the server's own shape, marshalled, so the fixture cannot
+	// drift from it again (2026-11-09: a flat fixture hid that the command
+	// read the wrong depth and printed the mode alone).
+	tlsBody, _ := json.Marshal(tlscert.Status{Mode: "managed", Active: &tlscert.Info{Source: "generated", Subject: "CN=gw", Hosts: []string{"gw.example.test"},
+		NotAfter: time.Date(2027, 1, 1, 0, 0, 0, 0, time.UTC), Fingerprint: "ab12"}})
+	reply("GET /api/v1/admin/tls", 200, string(tlsBody))
 	reply("GET /api/v1/users", 200, `{"items":[{"id":"u1","username":"alice","display_name":"Alice","roles":["user"],"status":"active"}]}`)
 	reply("DELETE /api/v1/users/{id}/mfa", 204, ``)
 	reply("DELETE /api/v1/users/{id}/sessions", 200, `{"revoked":2}`)
@@ -351,13 +370,14 @@ func TestCommandsOverTheAPI(t *testing.T) {
 		{"policy show old", "", "ok", []string{"Applies to no one", "Grant 1 · autoscaling", "web-fleet (RDP, SSH)", "sat all day UTC"}},
 		{"asgs", "", "ok", []string{"web-fleet", "aws eu-west-2"}},
 		{"asg sync web-fleet", "", "ok", []string{"Synced web-fleet"}},
+		{"asg sync broken-fleet", "", "error", []string{"Sync of broken-fleet failed: AssumeRole refused"}},
 		{"storage", "", "ok", []string{"running: 2 of 4 moved, 1 failed"}},
 		{"storage test", "", "ok", []string{"accepted a test object"}},
 		{"status", "", "ok", []string{"up 3d 4h", "restarting once live sessions end", "CHAIN BROKEN at event 7"}},
 		{"audit verify", "", "ok", []string{"Chain broken at event 7: hash mismatch", "host-only"}},
 		{"logs --level warn --search probe --last 3", "", "ok", []string{"WARN  slow probe  target=web-01", "ERROR boom", "tick"}},
 		{"logs --last 0", "", "error", []string{"--last takes a number"}},
-		{"tls", "", "ok", []string{"managed", "CN=gw", "gw.example.test"}},
+		{"tls", "", "ok", []string{"managed", "CN=gw", "gw.example.test", "2027-01-01", "generated"}},
 		{"restart --wait 15", "", "confirm", []string{"once the 2 live sessions end, or after 15 minutes"}},
 		{"restart --wait 15", "restart", "ok", []string{"Restart started"}},
 		{"restart --wait 0", "", "confirm", []string{"restarts the gateway now. 2 live sessions end"}},

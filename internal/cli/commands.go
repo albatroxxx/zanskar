@@ -1105,8 +1105,11 @@ func cmdTLS(x *run) error {
 		return err
 	}
 	kv := [][2]string{{"mode", str(t, "mode")}}
+	// The certificate being served sits under "active" (tlscert.Status);
+	// reading it at the top level printed the mode alone (2026-11-09).
+	active := sub(t, "active")
 	for _, k := range []string{"subject", "issuer", "hosts", "not_after", "fingerprint", "source"} {
-		if v := str(t, k); v != "" {
+		if v := str(active, k); v != "" {
 			kv = append(kv, [2]string{strings.ReplaceAll(k, "_", " "), v})
 		}
 	}
@@ -1307,8 +1310,17 @@ func cmdASGSync(x *run) error {
 	if err != nil {
 		return err
 	}
-	if err := x.api.do(http.MethodPost, pathf("/autoscaling-groups/%s/sync", str(g, "id")), nil, nil); err != nil {
+	// A cloud-side failure answers 200 with the error in the body, so the
+	// console can show it beside the last known state; the command line
+	// said "Synced" over it (2026-11-09).
+	var res obj
+	if err := x.api.do(http.MethodPost, pathf("/autoscaling-groups/%s/sync", str(g, "id")), nil, &res); err != nil {
 		return err
+	}
+	if msg := str(res, "error"); msg != "" {
+		// Said the way an API refusal is: the cloud refused, and the words
+		// are the gateway's, so the person reads them rather than a log hint.
+		return &apiError{Status: http.StatusBadGateway, Code: "sync_failed", Message: fmt.Sprintf("sync of %s failed: %s", str(g, "name"), msg)}
 	}
 	x.out.addf(styleOK, "✓ Synced %s.", str(g, "name"))
 	return nil
