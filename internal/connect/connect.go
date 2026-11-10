@@ -788,6 +788,14 @@ func (h *Handler) terminal(w http.ResponseWriter, r *http.Request) {
 		lim.Tap = tap
 	}
 	reason, berr := sshgw.Bridge(ctx, h.Log, client, ws, rec, cols, rows, lim)
+	// File transfer stops the moment the bridge ends, not when the recording
+	// has been closed and uploaded: a revoked right or a changed host key
+	// ends the session so that it stops at once, and finish may take minutes
+	// on a slow bucket (2026-11-09). The deferred remove still covers the
+	// early returns above.
+	if g.AllowFileTransfer {
+		h.Files.remove(run.s.ID)
+	}
 	run.finish(rec, recRow, reason, berr)
 }
 
