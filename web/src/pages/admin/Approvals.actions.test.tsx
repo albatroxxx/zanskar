@@ -13,10 +13,10 @@ afterEach(() => {
 
 const pending: AccessRequest = {
   id: 'r1', user_id: 'u1', username: 'bob', target_id: 't1', target_name: 'web-1', protocol: 'ssh', reason: 'deploy',
-  requested_minutes: 60, status: 'pending', created_at: '2026-10-26T10:00:00Z', updated_at: '2026-10-26T10:00:00Z',
+  requested_minutes: 60, status: 'pending', state: 'pending', created_at: '2026-10-26T10:00:00Z', updated_at: '2026-10-26T10:00:00Z',
 }
 const active: AccessRequest = {
-  ...pending, id: 'r2', username: 'carol', status: 'approved', approved_minutes: 30, expires_at: '2026-10-26T11:00:00Z',
+  ...pending, id: 'r2', username: 'carol', status: 'approved', state: 'approved', approved_minutes: 30, expires_at: '2026-10-26T11:00:00Z',
 }
 
 function mount() {

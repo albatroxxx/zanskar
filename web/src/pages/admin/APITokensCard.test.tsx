@@ -15,7 +15,7 @@ afterEach(() => {
 const future = new Date(Date.now() + 30 * 86400_000).toISOString()
 const past = new Date(Date.now() - 86400_000).toISOString()
 const tok = (over: Partial<APIToken>): APIToken => ({
-  id: 't1', user_id: 'u1', username: 'root', name: 'terraform', prefix: 'zapi_AbCdEfG', created_at: past, expires_at: future, ...over,
+  id: 't1', user_id: 'u1', username: 'root', name: 'terraform', prefix: 'zapi_AbCdEfG', created_at: past, expires_at: future, state: 'active', ...over,
 })
 
 function mount(items: APIToken[], post: (path: string, body?: unknown) => Promise<unknown> = async () => ({})) {
@@ -28,7 +28,7 @@ function mount(items: APIToken[], post: (path: string, body?: unknown) => Promis
 
 describe('API tokens', () => {
   it('lists each token by its prefix, never a secret, with its state', async () => {
-    mount([tok({}), tok({ id: 't2', name: 'old', revoked_at: past }), tok({ id: 't3', name: 'lapsed', expires_at: past })])
+    mount([tok({}), tok({ id: 't2', name: 'old', revoked_at: past, state: 'revoked' }), tok({ id: 't3', name: 'lapsed', expires_at: past, state: 'expired' })])
     const row = (name: string) => screen.getByText(name).closest('tr') as HTMLElement
     await screen.findByText('terraform')
     expect(within(row('terraform')).getByText('zapi_AbCdEfG…')).toBeDefined()

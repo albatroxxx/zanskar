@@ -6,7 +6,7 @@ import { FilterChips } from '../../components/FilterChips'
 import { StateIcon } from '../../components/icons'
 import { Alert, Badge, Empty, Loading, PageHead } from '../../components/ui'
 import { useList } from './lib'
-import { accessLine, extrasLine, grantsLine, kinds, policyRollup, reaches, reachLine, reviewDue, standingNoMFA, targetsCell, whoSummary } from './policyModel'
+import { accessLine, extrasLine, grantsLine, kinds, policyRollup, reaches, reachLine, standingNoMFA, targetsCell, whoSummary } from './policyModel'
 
 /**
  * Policies lists the access policies (ADR 0036, amended 2026-10-30): who each
@@ -24,8 +24,6 @@ export function Policies() {
   const targets = useList<Target>('/targets')
   const asgs = useList<AutoscalingGroup>('/autoscaling-groups')
   const [open, setOpen] = useState<string[]>([])
-  // When an access review falls due is measured against this page load.
-  const [now] = useState(() => Date.now())
   // Until every list has loaded a name cannot be called missing.
   const loaded = !!targets.items && !!asgs.items && !targets.truncated && !asgs.truncated
   const found = (id: string) => targets.items?.find((t) => t.id === id)?.name ?? asgs.items?.find((g) => g.id === id)?.name
@@ -113,7 +111,7 @@ export function Policies() {
                       <td className="actions">
                         {/* An access review a quarter old, or never made, is due (ADR 0040). */}
                         <Link className="btn sm" to={`/admin/policies/${p.id}/review`} title={p.reviewed_at ? `Reviewed ${fmtTime(p.reviewed_at)}` : 'Never reviewed'}>
-                          Review{reviewDue(p, now) && <span className="dot-due" aria-label="due" />}
+                          Review{p.review_state !== 'current' && <span className="dot-due" aria-label="due" />}
                         </Link>
                         <Link className="btn sm" to={`/admin/policies/${p.id}`}>Edit</Link>
                       </td>

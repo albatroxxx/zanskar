@@ -16,7 +16,7 @@ afterEach(() => {
 const db: Target = {
   id: 't1', name: 'orders', address: 'orders.rds.example', os_family: 'other', engine: 'postgres', engine_version: '16', database_name: 'orders',
   tls_mode: 'require', ports: { database: 5432 }, capabilities: ['database'], host_key_fingerprint: null, host_key_status: 'unknown',
-  tls_fingerprint: null, winrm_tls_fingerprint: null, tags: {}, status: 'active', notes: '', credentials: { database: 'c1' },
+  tls_fingerprint: null, winrm_tls_fingerprint: null, tags: {}, status: 'active', state: 'active', tls_status: 'none', winrm_tls_status: 'none', notes: '', credentials: { database: 'c1' },
   created_at: '2026-10-06T10:00:00Z', updated_at: '2026-10-06T10:00:00Z', last_probed_at: null,
 }
 

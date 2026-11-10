@@ -12,7 +12,8 @@ afterEach(() => {
 })
 
 const session = (i: number, over: Partial<Session> = {}): Session => ({
-  id: 's' + i, user_id: 'u1', username: 'alice', target_name: 'web-01', protocol: 'ssh', client_ip: '127.0.0.1', started_at: '2026-10-06T10:00:00Z', ...over,
+  id: 's' + i, user_id: 'u1', username: 'alice', target_name: 'web-01', protocol: 'ssh', client_ip: '127.0.0.1', started_at: '2026-10-06T10:00:00Z',
+  state: over.ended_at ? 'ended' : 'live', ...over,
 })
 
 function page(items: Session[], next = '') {
@@ -42,7 +43,7 @@ describe('Recordings, a row', () => {
     const ended = '2026-10-06T10:05:00Z'
     page([
       session(1, { recording_id: 'r1', ended_at: ended, recording_kept_until: '2026-12-01T00:00:00Z' }),
-      session(2, { recording_id: 'r2', ended_at: ended, recording_purged: true }),
+      session(2, { recording_id: 'r2', ended_at: ended, recording_purged: true, recording_state: 'purged' }),
       session(3, { recording_id: 'r3', ended_at: ended }),
       session(4, { recording_id: 'r4' }),
     ])

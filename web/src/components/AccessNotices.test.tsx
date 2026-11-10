@@ -14,7 +14,7 @@ afterEach(() => {
 
 const grant = (id: string, over: Partial<AccessRequest>): AccessRequest => ({
   id, user_id: 'u1', target_name: 'web-1', protocol: 'ssh', reason: 'deploy', requested_minutes: 60, approved_minutes: 60,
-  status: 'approved', created_at: '2026-10-26T09:00:00Z', updated_at: '2026-10-26T09:00:00Z', ...over,
+  status: 'approved', state: 'approved', created_at: '2026-10-26T09:00:00Z', updated_at: '2026-10-26T09:00:00Z', ...over,
 })
 
 function mount(grants: AccessRequest[]) {

@@ -1,5 +1,7 @@
 // Types mirror docs/api/openapi.yaml and the Go JSON tags.
 
+import type { StateOf } from './states'
+
 export type Role = 'admin' | 'auditor' | 'user'
 
 export interface User {
@@ -8,6 +10,8 @@ export interface User {
   email?: string
   display_name: string
   status: 'active' | 'disabled' | 'locked'
+  /** What holds now: the status, or locked_out while wrong passwords lock an active account (ADR 0047). */
+  state: StateOf<'user'>
   roles: Role[]
   /** An administrator set the password; the user replaces it at the next sign-in. */
   must_change_password?: boolean
@@ -46,6 +50,8 @@ export interface ApiErrorBody { code: string; message: string; request_id?: stri
 export type Protocol = 'ssh' | 'rdp' | 'vnc' | 'winrm' | 'database' | 'http'
 export type OSFamily = 'linux' | 'windows' | 'other'
 export type HostKeyStatus = 'unknown' | 'pending' | 'trusted' | 'changed'
+/** A Windows listener's pinned certificate: none seen, pinned, or changed since (ADR 0047). */
+export type CertificateStatus = StateOf<'certificate_pin'>
 
 /** One prerequisite of opening applications, from GET /admin/applications/readiness (ADR 0034):
  *  a guacd address, a container runtime the service can reach, and the browser image. */
@@ -118,6 +124,11 @@ export interface Target {
   winrm_tls_fingerprint_pending?: string | null
   tags: Record<string, string>
   status: 'active' | 'disabled'
+  /** The status as it holds now (ADR 0047); retired targets are never listed. */
+  state: StateOf<'target'>
+  /** The RDP and WinRM certificate pins: none, pinned, or changed since (ADR 0012, ADR 0047). */
+  tls_status: CertificateStatus
+  winrm_tls_status: CertificateStatus
   notes: string
   credentials: Partial<Record<Protocol, string>>
   created_at: string
@@ -191,6 +202,8 @@ export interface AccessRequest {
   reason: string
   requested_minutes: number
   status: AccessStatus
+  /** The status as it holds now: an approval past its window reads expired before the sweeper writes it (ADR 0047). */
+  state: AccessStatus
   approver_user_id?: string
   /** What the approver granted; may differ from requested_minutes. Zero until decided. */
   approved_minutes?: number
@@ -240,6 +253,8 @@ export interface Credential {
   certificate_principals?: string[]
   /** ssh_ca only: a prepared next key and/or a retired public key still to remove from targets (two-phase rotation, ADR 0022). */
   rotation?: { pending_public_key?: string; pending_since?: string; retired_public_key?: string; retired_at?: string }
+  /** ssh_ca only: where the rotation stands, none, prepared or cut_over (ADR 0047). */
+  rotation_state?: StateOf<'authority_rotation'>
 }
 
 /** POST /targets/{id}/probe-certificate: one real login with a certificate from the bound authority, then disconnect. */
@@ -311,6 +326,8 @@ export interface Policy {
   /** The last access review (ADR 0040): when, and the reviewer's id. */
   reviewed_at?: string
   reviewed_by?: string
+  /** Where the review stands now (ADR 0047). */
+  review_state: StateOf<'access_review'>
 }
 
 export interface Session {
@@ -333,6 +350,8 @@ export interface Session {
   user_agent?: string
   started_at: string
   ended_at?: string
+  /** live while ended_at is null, else ended (ADR 0047). */
+  state: StateOf<'session'>
   end_reason?: string
   /** What was said about the end: the gateway's sentence or the target's words (2026-11-03). */
   end_detail?: string
@@ -342,6 +361,8 @@ export interface Session {
   recording_purged?: boolean
   /** Reviewers only: when retention deletes the recording by age; absent with no age limit. */
   recording_kept_until?: string
+  /** Reviewers only: the recording's own state (ADR 0047). */
+  recording_state?: StateOf<'recording'>
 }
 
 export interface Recording {
@@ -349,6 +370,10 @@ export interface Recording {
   session_id: string
   /** Set once retention deleted the blob; the row stays so audit events resolve. */
   purged_at?: string
+  /** Set when the gateway deleted a recording its desktop session never drew into. */
+  discarded_at?: string
+  /** What holds now: recording, finished, lost, purged or discarded (ADR 0047). */
+  state: StateOf<'recording'>
   /** The session this recording belongs to, with user and target names resolved. */
   session?: Session
   format: 'asciicast' | 'guac'
@@ -495,6 +520,8 @@ export interface AutoscalingGroup {
   poll_interval_seconds: number
   tags: Record<string, string>
   status: 'active' | 'disabled'
+  /** The status as it holds now (ADR 0047). */
+  state: StateOf<'target'>
   last_synced_at: string | null
   last_error?: string
   credentials: Partial<Record<Protocol, string>>
@@ -560,6 +587,8 @@ export interface AsgInstance {
   last_seen_at: string
   terminated_at?: string
   healthy: boolean
+  /** What holds now: healthy, unhealthy or terminated (ADR 0047). */
+  state: StateOf<'autoscaling_instance'>
 }
 
 /** Values the audit filter can offer, taken from what the log contains. */

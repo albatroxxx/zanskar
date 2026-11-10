@@ -1,7 +1,7 @@
 import { useEffect, useState, type FormEvent } from 'react'
 import { ApiError, api, errorMessage } from '../../api/client'
 import { fmtTime } from '../../api/format'
-import { Alert, Badge, Confirm, Field, Loading } from '../../components/ui'
+import { Alert, Confirm, Field, Loading, StateBadge } from '../../components/ui'
 import { CopyButton } from '../../components/CopyButton'
 
 /** An API token as listed (ADR 0044); never its secret. */
@@ -15,6 +15,8 @@ export interface APIToken {
   expires_at: string
   last_used_at?: string
   revoked_at?: string
+  /** What holds now: active, expired or revoked (ADR 0047). */
+  state: 'active' | 'expired' | 'revoked'
 }
 
 const lives = [
@@ -22,13 +24,6 @@ const lives = [
   { days: 90, label: '90 days' },
   { days: 365, label: '1 year' },
 ]
-
-/** state says whether a token stands, and why not. */
-function state(t: APIToken, now: number): { label: string; tone?: 'ok' | 'warn' | 'danger' } {
-  if (t.revoked_at) return { label: 'revoked', tone: 'danger' }
-  if (Date.parse(t.expires_at) <= now) return { label: 'expired', tone: 'warn' }
-  return { label: 'active', tone: 'ok' }
-}
 
 /**
  * APITokensCard, in Settings, makes the tokens automation signs in with
@@ -48,7 +43,6 @@ export function APITokensCard() {
   const [err, setErr] = useState('')
   const [made, setMade] = useState<{ name: string; secret: string } | null>(null)
   const [revoking, setRevoking] = useState<APIToken | null>(null)
-  const [now] = useState(() => Date.now())
 
   const load = () =>
     api
@@ -114,7 +108,6 @@ export function APITokensCard() {
             </thead>
             <tbody>
               {tokens.map((t) => {
-                const st = state(t, now)
                 return (
                   <tr key={t.id}>
                     <td>{t.name}</td>
@@ -122,8 +115,8 @@ export function APITokensCard() {
                     <td className="mono">{t.prefix}…</td>
                     <td className="muted">{fmtTime(t.expires_at)}</td>
                     <td className="muted">{t.last_used_at ? fmtTime(t.last_used_at) : 'never'}</td>
-                    <td><Badge tone={st.tone}>{st.label}</Badge></td>
-                    <td>{st.label === 'active' && <button className="btn sm" onClick={() => setRevoking(t)}>Revoke…</button>}</td>
+                    <td><StateBadge lifecycle="api_token" state={t.state} /></td>
+                    <td>{t.state === 'active' && <button className="btn sm" onClick={() => setRevoking(t)}>Revoke…</button>}</td>
                   </tr>
                 )
               })}

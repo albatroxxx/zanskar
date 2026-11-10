@@ -52,7 +52,7 @@ describe('reaches', () => {
 describe('the policy list', () => {
   it('flags a grant that opens nothing, on the row and in its grants', async () => {
     const p: Policy = {
-      id: 'p1', name: 'host-access', description: '', enabled: true, subjects: [{ kind: 'user', id: 'u1' }],
+      id: 'p1', name: 'host-access', description: '', enabled: true, review_state: 'never_reviewed', subjects: [{ kind: 'user', id: 'u1' }],
       grants: [
         grant({ id: 'g1', targets: [{ id: 't1', protocols: ['ssh'] }] }),
         grant({ id: 'g2', kind: 'autoscaling', targets: [], tags: { match: { env: ['test'] }, protocols: ['ssh'] } }),
@@ -73,7 +73,7 @@ describe('the policy list', () => {
 
   it('says nothing while the lists are still loading', async () => {
     const p: Policy = {
-      id: 'p1', name: 'x', description: '', enabled: true, subjects: [],
+      id: 'p1', name: 'x', description: '', enabled: true, review_state: 'never_reviewed', subjects: [],
       grants: [grant({ id: 'g1', targets: [{ id: 't1', protocols: ['ssh'] }] })], created_at: '', updated_at: '',
     }
     vi.spyOn(api, 'get').mockImplementation(async (path: string) => {

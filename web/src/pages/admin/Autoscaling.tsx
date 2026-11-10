@@ -1,4 +1,5 @@
 import { useEffect, useState, type FormEvent } from 'react'
+import { capitalised, stateLabel } from '../../api/states'
 import { api, errorMessage } from '../../api/client'
 import { fmtTime, protocolName } from '../../api/format'
 import type { AsgAccessTest, AsgIAMDocs, AsgInstance, AutoscalingGroup, AwsIdentity, Credential, OSFamily, Protocol } from '../../api/types'
@@ -670,7 +671,7 @@ function GroupDetail({ group, credentials, onClose, onChanged, onDeleted }: { gr
                     {i.host_key_source === 'console' ? <StateIcon state="ok" label="Host key pinned from the console" /> : i.host_key_source === 'tofu' ? <StateIcon state="warn" label="Trust on first use — not pinned yet" /> : <StateIcon state="unknown" label="No host key" />}
                   </td>
                   <td className="muted">{i.launched_at ? fmtTime(i.launched_at) : '—'}</td>
-                  <td>{i.terminated_at ? <StateIcon state="unknown" label="Terminated" /> : i.healthy ? <StateIcon state="ok" label="Healthy" /> : <StateIcon state="danger" label="Unhealthy" />}</td>
+                  <td><StateIcon state={i.state === 'terminated' ? 'unknown' : i.state === 'healthy' ? 'ok' : 'danger'} label={capitalised(stateLabel('autoscaling_instance', i.state).label)} /></td>
                 </tr>
               ))}
             </tbody>

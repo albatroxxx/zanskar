@@ -70,6 +70,10 @@ function CARotation({ credential, onChanged, onError }: { credential: Credential
   const [confirm, setConfirm] = useState<'prepare' | 'cutover' | 'cancel' | 'retire' | null>(null)
   const pending = credential.rotation?.pending_public_key
   const retired = credential.rotation?.retired_public_key
+  // Where the rotation stands is the gateway's word (ADR 0047). A next key
+  // is prepared only from `none`: while the old key waits to be removed from
+  // targets, a second rotation would overwrite that reminder (2026-11-09).
+  const state = credential.rotation_state ?? 'none'
   const step = async (fn: () => Promise<Credential>) => {
     try {
       onChanged(await fn())
@@ -96,9 +100,9 @@ function CARotation({ credential, onChanged, onError }: { credential: Credential
         </Alert>
       )}
       <div className="actions">
-        {!pending && <button type="button" className="btn" onClick={() => setConfirm('prepare')}>Prepare next key</button>}
-        {pending && <button type="button" className="btn primary" onClick={() => setConfirm('cutover')}>Cut over to the next key</button>}
-        {pending && <button type="button" className="btn" onClick={() => setConfirm('cancel')}>Discard next key</button>}
+        {state === 'none' && <button type="button" className="btn" onClick={() => setConfirm('prepare')}>Prepare next key</button>}
+        {state === 'prepared' && <button type="button" className="btn primary" onClick={() => setConfirm('cutover')}>Cut over to the next key</button>}
+        {state === 'prepared' && <button type="button" className="btn" onClick={() => setConfirm('cancel')}>Discard next key</button>}
         {retired && <button type="button" className="btn" onClick={() => setConfirm('retire')}>Old key removed from targets</button>}
       </div>
       {confirm === 'prepare' && (

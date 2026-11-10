@@ -538,7 +538,7 @@ export function Player() {
                   <dt>Duration</dt>
                   <dd>{fmtDuration(s.started_at, s.ended_at)}</dd>
                   <dt>Ended</dt>
-                  <dd><EndReason reason={s.end_reason} detail={s.end_detail} /></dd>
+                  <dd><EndReason state={s.state} reason={s.end_reason} detail={s.end_detail} /></dd>
                 </>
               )}
               <dt>Size</dt>

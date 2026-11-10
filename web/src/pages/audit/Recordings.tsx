@@ -153,9 +153,11 @@ function CommandSearch({ recordingsPath }: { recordingsPath: string }) {
   )
 }
 
-/** keptCell says when retention deletes a recording, or that it has (Q10). */
+/** keptCell says when retention deletes a recording, or that it has (Q10),
+ *  or that its session ended with it unfinished (ADR 0047). */
 function keptCell(s: Session) {
-  if (s.recording_purged) return <span className="muted">Deleted</span>
+  if (s.recording_state === 'purged') return <span className="muted">Deleted</span>
+  if (s.recording_state === 'lost') return <span className="muted">Lost</span>
   if (s.recording_kept_until) return fmtTime(s.recording_kept_until)
   if (!s.ended_at) return <span className="muted">—</span>
   return <span className="muted">No age limit</span>
@@ -234,7 +236,7 @@ export function Recordings() {
                   <td title={s.target_id ?? s.asg_instance_id}>{sessionTarget(s)}</td>
                   <td>{protocolName(s.protocol)}</td>
                   <td>{fmtDuration(s.started_at, s.ended_at)}</td>
-                  <td><EndReason reason={s.end_reason} detail={s.end_detail} /></td>
+                  <td><EndReason state={s.state} reason={s.end_reason} detail={s.end_detail} /></td>
                   <td style={{ whiteSpace: 'nowrap' }}>{keptCell(s)}</td>
                   <td>
                     {/* Review only (2026-11-01): the recording's page has its

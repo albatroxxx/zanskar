@@ -97,7 +97,7 @@ vi.mock('guacamole-common-js', () => {
 const RID = '0123456789abcdef0123456789abcdef'
 
 const recording = (over: Partial<Recording> = {}): Recording => ({
-  id: RID, session_id: 's1', format: 'asciicast', size_bytes: 10, started_at: '2026-10-06T10:00:00Z', created_at: '2026-10-06T10:00:00Z', ...over,
+  id: RID, session_id: 's1', format: 'asciicast', size_bytes: 10, started_at: '2026-10-06T10:00:00Z', created_at: '2026-10-06T10:00:00Z', state: 'finished', ...over,
 })
 
 const json = (status: number, body: unknown) => new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } })

@@ -122,7 +122,7 @@ describe('searching the users list', () => {
 })
 
 const policy = (id: string, name: string, over: Partial<Policy> & { mfa?: boolean; access?: 'standing' | 'approval' }): Policy => ({
-  id, name, description: '', enabled: true, subjects: [{ kind: 'user', id: 'u1' }], created_at: '', updated_at: '',
+  id, name, description: '', enabled: true, review_state: 'never_reviewed', subjects: [{ kind: 'user', id: 'u1' }], created_at: '', updated_at: '',
   grants: [{ ...newGrant('host'), id: id + 'g', targets: [{ id: 't1', protocols: ['ssh'] }], access: over.access ?? 'standing', require_mfa: over.mfa ?? true }],
   ...over,
 })

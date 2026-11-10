@@ -125,10 +125,10 @@ export function TargetDetail({ target, credentials, onClose, onChanged, onDelete
         </Alert>
       )}
       {([
-        ['rdp', 'RDP', t.tls_fingerprint, t.tls_fingerprint_pending],
-        ['winrm', 'WinRM', t.winrm_tls_fingerprint, t.winrm_tls_fingerprint_pending],
-      ] as const).map(([protocol, label, pinned, seen]) =>
-        pinned && seen ? (
+        ['rdp', 'RDP', t.tls_fingerprint, t.tls_fingerprint_pending, t.tls_status],
+        ['winrm', 'WinRM', t.winrm_tls_fingerprint, t.winrm_tls_fingerprint_pending, t.winrm_tls_status],
+      ] as const).map(([protocol, label, pinned, seen, status]) =>
+        status === 'changed' && pinned && seen ? (
           <Alert key={protocol} tone="danger">
             The {label} certificate changed after it was pinned. {label} connections are refused until an administrator accepts the new one; check it with the machine's owner first.
             <div className="mono" style={{ marginTop: 6, wordBreak: 'break-all' }}>pinned {pinned}<br />now {seen}</div>

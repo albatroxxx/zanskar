@@ -1,4 +1,5 @@
 import { Children, cloneElement, isValidElement, useEffect, useId, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactElement, type ReactNode } from 'react'
+import { stateLabel, type Lifecycle } from '../api/states'
 import { Link } from 'react-router-dom'
 import { useSubmit } from './submit'
 import { useTitle } from './title'
@@ -447,16 +448,25 @@ export function Tags({ tags }: { tags?: Record<string, string> }) {
   )
 }
 
+/** StateBadge shows a record's computed state in the one table's words
+ *  (ADR 0047): the page reads `state` and works nothing out itself. */
+export function StateBadge({ lifecycle, state }: { lifecycle: Lifecycle; state: string | undefined }) {
+  const l = stateLabel(lifecycle, state)
+  return <Badge tone={l.tone}>{l.label}</Badge>
+}
+
 export function reasonBadge(reason?: string) {
-  if (!reason) return <Badge tone="accent">live</Badge>
+  if (!reason) return <StateBadge lifecycle="session" state="live" />
   const tone = reason === 'user_exit' ? undefined : reason === 'target_lost' || reason === 'error' ? 'danger' : 'warn'
   return <Badge tone={tone}>{reason.replace(/_/g, ' ')}</Badge>
 }
 
 /** EndReason is a session's end: the reason's badge and, under it, what was
  *  said about it, the gateway's sentence or the target's words. A bare
- *  "error" told nobody why (2026-11-03 live audit, Q7). */
-export function EndReason({ reason, detail }: { reason?: string; detail?: string }) {
+ *  "error" told nobody why (2026-11-03 live audit, Q7). A live session is
+ *  the gateway's word for it, not the absence of a reason (ADR 0047). */
+export function EndReason({ state, reason, detail }: { state?: string; reason?: string; detail?: string }) {
+  if (state === 'live') return <StateBadge lifecycle="session" state="live" />
   if (!detail || !reason) return reasonBadge(reason)
   return (
     <>

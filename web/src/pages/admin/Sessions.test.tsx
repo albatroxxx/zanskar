@@ -13,7 +13,7 @@ afterEach(() => {
 
 const live: Session = {
   id: 's1', user_id: 'u1', username: 'alice', target_name: 'web-01', protocol: 'ssh',
-  client_ip: '127.0.0.1', started_at: '2026-10-06T10:00:00Z', recording_id: 'r1',
+  client_ip: '127.0.0.1', started_at: '2026-10-06T10:00:00Z', state: 'live', recording_id: 'r1',
 }
 
 function at(path: string, items: Session[] = [live]) {

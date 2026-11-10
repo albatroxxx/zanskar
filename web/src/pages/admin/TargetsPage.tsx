@@ -4,7 +4,7 @@ import { api } from '../../api/client'
 import type { AppsReadiness, Credential, Target } from '../../api/types'
 import { FilterChips } from '../../components/FilterChips'
 import { StateIcon } from '../../components/icons'
-import { Alert, Badge, Empty, Loading, PageHead } from '../../components/ui'
+import { Alert, Empty, Loading, PageHead, StateBadge } from '../../components/ui'
 import { useDebounced, useList } from './lib'
 import { TargetDetail } from './TargetDetail'
 import { TargetForm, type TargetKind } from './TargetForm'
@@ -126,7 +126,7 @@ export function TargetsPage({ kind, title, addLabel, empty, columns, cells }: {
               {items.map((t) => (
                 <tr key={t.id}>
                   <td>
-                    <strong>{t.name}</strong> {t.status === 'disabled' && <Badge>disabled</Badge>}
+                    <strong>{t.name}</strong> {t.state === 'disabled' && <StateBadge lifecycle="target" state={t.state} />}
                   </td>
                   {cells(t, creds.items ?? [])}
                   <td>
