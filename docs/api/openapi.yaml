@@ -139,7 +139,10 @@ paths:
     get:
       tags: [system]
       summary: Readiness probe
-      description: Returns 200 only when the database and, if configured, guacd are reachable.
+      description: >-
+        Returns 200 (`ready`) when the database answers and no migration is pending; 503 with
+        `database unavailable` or `migrations pending` (and the pending names) otherwise. guacd is
+        not part of readiness; `/admin/system/metrics` reports it.
       security: []
       responses:
         "200":
@@ -5644,12 +5647,13 @@ components:
       properties:
         status:
           type: string
-          enum: [ok, degraded, down]
-        checks:
-          type: object
-          additionalProperties:
+          description: "`ok` from `/healthz`; `ready`, `database unavailable` or `migrations pending` from `/readyz`."
+          enum: [ok, ready, database unavailable, migrations pending]
+        pending:
+          type: array
+          items:
             type: string
-          description: Component name to `ok` or a short failure word. Present on `/readyz` only.
+          description: The migrations not yet applied; with `migrations pending` only.
     Timestamp:
       type: string
       format: date-time
@@ -5682,6 +5686,14 @@ components:
     HostKeyStatus:
       type: string
       enum: [unknown, pending, trusted, changed]
+    CertificateStatus:
+      type: string
+      description: >-
+        A Windows listener's pinned certificate (RDP for `tls_status`, WinRM for `winrm_tls_status`;
+        ADR 0012): `none` before a probe saw one, `pinned`, or `changed` while a different certificate
+        a probe saw waits in `tls_fingerprint_pending` for an administrator to accept it. The host
+        key's words, so trust reads the same way for both.
+      enum: [none, pinned, changed]
     ProbeHealth:
       type: string
       enum: [unknown, healthy, unhealthy]
@@ -5694,7 +5706,8 @@ components:
     EndReason:
       type: string
       # no_watcher: a session that ended so under four eyes, which 1.16.0 removed; old rows keep it.
-      enum: [user_exit, idle_timeout, max_duration, admin_terminated, policy_revoked, trust_lost, gateway_restart, target_lost, failover, error, no_watcher]
+      # target_deleted: the target or group was retired while the session ran (ADR 0019).
+      enum: [user_exit, idle_timeout, max_duration, admin_terminated, policy_revoked, trust_lost, gateway_restart, target_lost, target_deleted, failover, error, no_watcher]
     Ports:
       type: object
       description: Port per protocol. Missing keys use defaults 22, 3389, 5900, 5986.
@@ -5800,8 +5813,14 @@ components:
     # ---------------------------------------------------------------- users and groups
     User:
       type: object
-      required: [id, username, display_name, status, roles, created_at, updated_at]
+      required: [id, username, display_name, status, state, roles, created_at, updated_at]
       properties:
+        state:
+          type: string
+          enum: [active, locked_out, disabled, locked]
+          description: >-
+            `status` is what was set; `state` is what holds now, from the row and the clock (ADR 0047). `disabled` and `locked` are the status; an active account whose
+            `locked_until` is in the future is `locked_out`; otherwise `active`.
         must_change_password:
           type: boolean
           description: An administrator set the password; the user replaces it at their next sign-in.
@@ -6335,6 +6354,14 @@ components:
       type: object
       required: [id, name, type, mode, created_at, updated_at, in_use_by]
       properties:
+        rotation_state:
+          type: string
+          enum: [none, prepared, cut_over]
+          description: >-
+            `ssh_ca` only: where the two-phase rotation stands (ADR 0022, ADR 0047). `prepared` while
+            `rotation.pending_public_key` is set, `cut_over` while `rotation.retired_public_key` waits to
+            be confirmed removed from targets, else `none`. One rotation at a time: a next key cannot be
+            prepared while one is `cut_over`.
         id:
           type: string
         name:
@@ -6445,8 +6472,18 @@ components:
     # ---------------------------------------------------------------- targets
     Target:
       type: object
-      required: [id, name, address, os_family, ports, capabilities, host_key_status, tags, status, credentials, created_at, updated_at]
+      required: [id, name, address, os_family, ports, capabilities, host_key_status, tags, status, state, tls_status, winrm_tls_status, credentials, created_at, updated_at]
       properties:
+        state:
+          type: string
+          enum: [active, disabled, retired]
+          description: >-
+            `status` is what was set; `state` is what holds now, from the row and the clock (ADR 0047). The status as a state; `retired` (ADR 0019) is declared and never
+            returned, since a retired target leaves every list and lookup.
+        tls_status:
+          $ref: "#/components/schemas/CertificateStatus"
+        winrm_tls_status:
+          $ref: "#/components/schemas/CertificateStatus"
         id:
           type: string
         name:
@@ -6981,7 +7018,7 @@ components:
         names them or a group they belong to. A deleted group leaves the policies that named it,
         so a policy can be read back with no subjects: it grants no one, and a write must name
         someone again.
-      required: [id, name, description, enabled, subjects, grants, created_at, updated_at]
+      required: [id, name, description, enabled, subjects, grants, review_state, created_at, updated_at]
       properties:
         id:
           type: string
@@ -6992,6 +7029,12 @@ components:
         enabled:
           type: boolean
           description: Off, the policy grants nothing, and the live sessions it admitted are re-checked.
+        review_state:
+          type: string
+          enum: [never_reviewed, current, due]
+          description: >-
+            Where the access review stands now (ADR 0040, ADR 0047): `never_reviewed` with no
+            `reviewed_at`, `due` when it is older than ninety days, else `current`. Ignored on a write.
         subjects:
           type: array
           items:
@@ -7098,8 +7141,15 @@ components:
     APIToken:
       type: object
       description: An API token as listed (ADR 0044); never its secret.
-      required: [id, user_id, name, prefix, created_at, expires_at]
+      required: [id, user_id, name, prefix, created_at, expires_at, state]
       properties:
+        state:
+          type: string
+          enum: [active, expired, revoked]
+          description: >-
+            What holds now (ADR 0047): `revoked` when `revoked_at` is set, else `expired` when
+            `expires_at` has passed, else `active`. The owner's own state is not part of it: a token
+            whose owner is disabled or owes a password change reads `active` and is refused with 401.
         id:
           type: string
         user_id:
@@ -7127,8 +7177,14 @@ components:
         `requested_minutes` is the duration asked for; on approval `expires_at` is set that many
         minutes ahead and the grant lets `/connect` issue tickets until then. Exactly one of
         `target_id` and `asg_id` is set.
-      required: [id, user_id, protocol, reason, requested_minutes, status, created_at, updated_at]
+      required: [id, user_id, protocol, reason, requested_minutes, status, state, created_at, updated_at]
       properties:
+        state:
+          $ref: "#/components/schemas/AccessRequestStatus"
+          description: >-
+            `status` is what was set; `state` is what holds now, from the row and the clock (ADR 0047). The status, except that an `approved` request whose `expires_at` has
+            passed reads `expired` before the sweeper writes it; a grant is active while `state` is
+            `approved`.
         id:
           type: string
         user_id:
@@ -7233,8 +7289,13 @@ components:
     # ---------------------------------------------------------------- autoscaling
     AutoscalingGroup:
       type: object
-      required: [id, name, provider, region, external_name, role_arn, external_id, os_family, ports, capabilities, address_preference, poll_interval_seconds, tags, status, last_synced_at, credentials, created_at, updated_at]
+      required: [id, name, provider, region, external_name, role_arn, external_id, os_family, ports, capabilities, address_preference, poll_interval_seconds, tags, status, state, last_synced_at, credentials, created_at, updated_at]
       properties:
+        state:
+          type: string
+          enum: [active, disabled, retired]
+          description: >-
+            `status` is what was set; `state` is what holds now, from the row and the clock (ADR 0047). The status as a state; `retired` is declared and never returned.
         id:
           type: string
         name:
@@ -7441,8 +7502,20 @@ components:
           type: integer
     AsgInstance:
       type: object
-      required: [id, asg_id, instance_id, lifecycle_state, probe_health, healthy, first_seen_at, last_seen_at]
+      required: [id, asg_id, instance_id, lifecycle_state, probe_health, healthy, state, first_seen_at, last_seen_at]
       properties:
+        state:
+          type: string
+          enum: [healthy, unhealthy, terminated]
+          description: >-
+            What holds now (ADR 0047): `terminated` when `terminated_at` is set, else `healthy` when
+            `healthy` holds, else `unhealthy`.
+        host_key_source:
+          type: string
+          enum: [console, tofu]
+          description: >-
+            Where the pinned host key came from: the serial console, or trust on first use when the
+            console printed none. Absent with no key.
         id:
           type: string
         asg_id:
@@ -7669,8 +7742,14 @@ components:
     # ---------------------------------------------------------------- sessions
     OwnSession:
       type: object
-      required: [id, protocol, target_name, started_at]
+      required: [id, protocol, target_name, started_at, state]
       properties:
+        state:
+          type: string
+          enum: [live, ended]
+          description: >-
+            What holds now (ADR 0047): `live` while `ended_at` is null, else `ended`; `end_reason`
+            says why. A session that is still starting or still closing its recording reads `live`.
         id:
           type: string
         protocol:
@@ -7733,8 +7812,11 @@ components:
       allOf:
         - $ref: "#/components/schemas/OwnSession"
         - type: object
-          required: [user_id, username, client_ip, has_recording]
+          required: [user_id, username, client_ip]
           properties:
+            recording_state:
+              $ref: "#/components/schemas/RecordingState"
+              description: The recording's state (see `Recording.state`). Reviewers only; absent with no recording.
             user_id:
               type: string
             username:
@@ -7751,8 +7833,6 @@ components:
               type: string
             user_agent:
               type: string
-            has_recording:
-              type: boolean
             recording_id:
               type: [string, "null"]
               description: Present only when the caller holds `auditor` or `admin`.
@@ -7770,10 +7850,30 @@ components:
                 written, or once deleted. The size cap can delete it sooner. Reviewers only.
 
     # ---------------------------------------------------------------- recordings
+    RecordingState:
+      type: string
+      description: >-
+        What holds of a recording now (ADR 0047): `recording` while its session runs, `finished`
+        once closed with its size and digest, `lost` when its session ended with it still open,
+        `purged` once retention deleted the file, `discarded` when a desktop session drew no frame
+        and the gateway deleted it at once.
+      enum: [recording, finished, lost, purged, discarded]
     Recording:
       type: object
-      required: [id, session_id, format, size_bytes, started_at, created_at, session, view_count]
+      required: [id, session_id, format, size_bytes, started_at, created_at, state]
       properties:
+        state:
+          $ref: "#/components/schemas/RecordingState"
+        purged_at:
+          oneOf:
+            - $ref: "#/components/schemas/Timestamp"
+            - type: "null"
+          description: When retention deleted the file; the row stays so audit events resolve.
+        discarded_at:
+          oneOf:
+            - $ref: "#/components/schemas/Timestamp"
+            - type: "null"
+          description: When the gateway deleted a recording its desktop session never drew into.
         id:
           type: string
         session_id:
@@ -7800,8 +7900,6 @@ components:
           $ref: "#/components/schemas/Timestamp"
         session:
           $ref: "#/components/schemas/AccessSession"
-        view_count:
-          type: integer
     Setting:
       type: object
       description: A runtime setting resolved with its precedence (ADR 0020).
@@ -8579,6 +8677,10 @@ components:
               $ref: "#/components/schemas/Timestamp"
             wait_minutes:
               type: integer
+            action:
+              type: string
+              enum: [restart, reboot, poweroff, update, config]
+              description: What the drain ends in (ADR 0032); `restart` unless a host action asked.
     RetentionPolicy:
       type: object
       required: [max_age_days, max_total_bytes]

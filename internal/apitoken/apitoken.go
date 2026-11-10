@@ -33,6 +33,8 @@ type Token struct {
 	ExpiresAt  time.Time  `json:"expires_at"`
 	LastUsedAt *time.Time `json:"last_used_at,omitempty"`
 	RevokedAt  *time.Time `json:"revoked_at,omitempty"`
+	// State is what holds now: active, expired or revoked (ADR 0047).
+	State State `json:"state"`
 }
 
 // Active reports whether t stands at now: not revoked, not expired.
@@ -88,7 +90,7 @@ func (r *Repo) Create(ctx context.Context, userID, name string, ttl time.Duratio
 		return nil, "", err
 	}
 	now := r.now().UTC()
-	t := &Token{ID: store.NewID(), UserID: userID, Name: name, Prefix: secret[:prefixLen], CreatedAt: now, ExpiresAt: now.Add(ttl)}
+	t := &Token{ID: store.NewID(), UserID: userID, Name: name, Prefix: secret[:prefixLen], CreatedAt: now, ExpiresAt: now.Add(ttl), State: StateActive}
 	if _, err := r.db.ExecContext(ctx, r.db.Rebind(`INSERT INTO api_tokens (id, user_id, name, token_hash, prefix, created_at, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?)`),
 		t.ID, t.UserID, t.Name, hashOf(secret), t.Prefix, store.TimeArg(t.CreatedAt), store.TimeArg(t.ExpiresAt)); err != nil {
 		return nil, "", err
@@ -98,7 +100,7 @@ func (r *Repo) Create(ctx context.Context, userID, name string, ttl time.Duratio
 
 const cols = `t.id, t.user_id, u.username, t.name, t.prefix, t.created_at, t.expires_at, t.last_used_at, t.revoked_at`
 
-func scan(sc interface{ Scan(...any) error }) (*Token, error) {
+func scan(sc interface{ Scan(...any) error }, now time.Time) (*Token, error) {
 	var (
 		t                               Token
 		username                        sql.NullString
@@ -108,6 +110,7 @@ func scan(sc interface{ Scan(...any) error }) (*Token, error) {
 		return nil, err
 	}
 	t.Username, t.CreatedAt, t.ExpiresAt, t.LastUsedAt, t.RevokedAt = username.String, created.Time, expires.Time, used.Ptr(), revoked.Ptr()
+	t.State = StateOf(t.ExpiresAt, t.RevokedAt, now)
 	return &t, nil
 }
 
@@ -120,7 +123,7 @@ func (r *Repo) List(ctx context.Context) ([]*Token, error) {
 	defer func() { _ = rows.Close() }()
 	out := []*Token{}
 	for rows.Next() {
-		t, err := scan(rows)
+		t, err := scan(rows, r.now())
 		if err != nil {
 			return nil, err
 		}
@@ -146,7 +149,7 @@ func (r *Repo) CountActive(ctx context.Context, userID string) (int, error) {
 
 // Get returns one token.
 func (r *Repo) Get(ctx context.Context, id string) (*Token, error) {
-	t, err := scan(r.db.QueryRowContext(ctx, r.db.Rebind(`SELECT `+cols+` FROM api_tokens t LEFT JOIN users u ON u.id = t.user_id WHERE t.id = ?`), id))
+	t, err := scan(r.db.QueryRowContext(ctx, r.db.Rebind(`SELECT `+cols+` FROM api_tokens t LEFT JOIN users u ON u.id = t.user_id WHERE t.id = ?`), id), r.now())
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}

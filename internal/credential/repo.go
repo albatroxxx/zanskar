@@ -484,6 +484,9 @@ func scan(s store.Scanner) (*Credential, error) {
 	if pendingPub.Valid || retiredPub.Valid {
 		c.Rotation = &Rotation{PendingPublicKey: pendingPub.String, PendingSince: pendingAt.Ptr(), RetiredPublicKey: retiredPub.String, RetiredAt: retiredAt.Ptr()}
 	}
+	if c.Type == TypeSSHCA {
+		c.RotationState = RotationStateOf(c.Rotation)
+	}
 	c.CreatedAt, c.UpdatedAt, c.RotatedAt = created.Time, updated.Time, rotated.Ptr()
 	return &c, nil
 }

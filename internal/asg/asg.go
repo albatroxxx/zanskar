@@ -25,26 +25,29 @@ import (
 
 // Group is an enrolled autoscaling group.
 type Group struct {
-	ID                  string                     `json:"id"`
-	Name                string                     `json:"name"`
-	Provider            string                     `json:"provider"`
-	Region              string                     `json:"region"`
-	ExternalName        string                     `json:"external_name"`
-	RoleARN             string                     `json:"role_arn"`
-	ExternalID          string                     `json:"external_id"`
-	OSFamily            target.OSFamily            `json:"os_family"`
-	Ports               map[target.Protocol]int    `json:"ports"`
-	Capabilities        []target.Protocol          `json:"capabilities"`
-	AddressPreference   string                     `json:"address_preference"` // private | public
-	PollIntervalSeconds int                        `json:"poll_interval_seconds"`
-	Tags                map[string]string          `json:"tags"`
-	Status              string                     `json:"status"`
-	LastSyncedAt        *time.Time                 `json:"last_synced_at"`
-	LastError           string                     `json:"last_error,omitempty"`
-	Credentials         map[target.Protocol]string `json:"credentials"`
-	CreatedBy           string                     `json:"created_by,omitempty"`
-	CreatedAt           time.Time                  `json:"created_at"`
-	UpdatedAt           time.Time                  `json:"updated_at"`
+	ID                  string                  `json:"id"`
+	Name                string                  `json:"name"`
+	Provider            string                  `json:"provider"`
+	Region              string                  `json:"region"`
+	ExternalName        string                  `json:"external_name"`
+	RoleARN             string                  `json:"role_arn"`
+	ExternalID          string                  `json:"external_id"`
+	OSFamily            target.OSFamily         `json:"os_family"`
+	Ports               map[target.Protocol]int `json:"ports"`
+	Capabilities        []target.Protocol       `json:"capabilities"`
+	AddressPreference   string                  `json:"address_preference"` // private | public
+	PollIntervalSeconds int                     `json:"poll_interval_seconds"`
+	Tags                map[string]string       `json:"tags"`
+	Status              string                  `json:"status"`
+	// State is Status as it holds now (ADR 0047); a retired group is never
+	// returned.
+	State        target.State               `json:"state"`
+	LastSyncedAt *time.Time                 `json:"last_synced_at"`
+	LastError    string                     `json:"last_error,omitempty"`
+	Credentials  map[target.Protocol]string `json:"credentials"`
+	CreatedBy    string                     `json:"created_by,omitempty"`
+	CreatedAt    time.Time                  `json:"created_at"`
+	UpdatedAt    time.Time                  `json:"updated_at"`
 }
 
 // Instance is one member as last seen by the sync loop.
@@ -69,6 +72,8 @@ type Instance struct {
 	TerminatedAt        *time.Time `json:"terminated_at,omitempty"`
 	// Healthy is derived: InService, LB healthy or absent, probe healthy.
 	Healthy bool `json:"healthy"`
+	// State is what holds now: healthy, unhealthy or terminated (ADR 0047).
+	State InstanceState `json:"state"`
 }
 
 // Errors.
@@ -374,6 +379,7 @@ func (r *Repo) Create(ctx context.Context, g *Group) error {
 	}
 	now := time.Now().UTC()
 	g.ID, g.CreatedAt, g.UpdatedAt = store.NewID(), now, now
+	g.State = stateOf(g)
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -398,6 +404,7 @@ func (r *Repo) Update(ctx context.Context, g *Group) error {
 		return err
 	}
 	g.UpdatedAt = time.Now().UTC()
+	g.State = stateOf(g)
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -535,7 +542,7 @@ func (r *Repo) UpsertInstance(ctx context.Context, in *Instance) (stored *Instan
 		if err != nil {
 			return nil, false, err
 		}
-		in.Healthy = derive(in)
+		in.derive()
 		return in, true, nil
 	case err != nil:
 		return nil, false, err
@@ -560,7 +567,7 @@ func (r *Repo) UpsertInstance(ctx context.Context, in *Instance) (stored *Instan
 	if err != nil {
 		return nil, false, err
 	}
-	in.Healthy = derive(in)
+	in.derive()
 	return in, false, nil
 }
 
@@ -586,7 +593,7 @@ func (r *Repo) MarkTerminated(ctx context.Context, groupID string, keepIDs []str
 		}
 		in.TerminatedAt = &now
 		in.LifecycleState = "Terminated"
-		in.Healthy = false
+		in.Healthy, in.State = false, InstanceTerminated
 		gone = append(gone, in)
 	}
 	return gone, nil
@@ -718,6 +725,7 @@ func scanGroup(s store.Scanner) (*Group, error) {
 	}
 	g.LastError, g.CreatedBy = lastErr.String, createdBy.String
 	g.LastSyncedAt, g.CreatedAt, g.UpdatedAt = synced.Ptr(), created.Time, updated.Time
+	g.State = stateOf(&g)
 	return &g, nil
 }
 
@@ -738,7 +746,7 @@ func scanInstance(s store.Scanner) (*Instance, error) {
 	in.HostKeyFingerprint, in.HostKeySource = hk.String, hks.String
 	in.TLSFingerprint, in.WinRMTLSFingerprint = tf.String, wtf.String
 	in.LaunchedAt, in.FirstSeenAt, in.LastSeenAt, in.TerminatedAt = launched.Ptr(), first.Time, last.Time, terminated.Ptr()
-	in.Healthy = derive(&in)
+	in.derive()
 	return &in, nil
 }
 

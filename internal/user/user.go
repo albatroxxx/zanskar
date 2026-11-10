@@ -61,11 +61,14 @@ const (
 
 // User is an account. PasswordHash is never serialised.
 type User struct {
-	ID           string     `json:"id"`
-	Username     string     `json:"username"`
-	Email        string     `json:"email,omitempty"`
-	DisplayName  string     `json:"display_name"`
-	Status       Status     `json:"status"`
+	ID          string `json:"id"`
+	Username    string `json:"username"`
+	Email       string `json:"email,omitempty"`
+	DisplayName string `json:"display_name"`
+	Status      Status `json:"status"`
+	// State is what holds now: Status, or locked_out while wrong passwords
+	// have locked an active account (ADR 0047). Derived when read.
+	State        State      `json:"state"`
 	Roles        []Role     `json:"roles"`
 	IdPID        string     `json:"idp_id,omitempty"`
 	ExternalID   string     `json:"external_id,omitempty"`

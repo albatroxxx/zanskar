@@ -38,7 +38,7 @@ const selectRequests = `SELECT r.id, r.user_id, r.policy_id, r.target_id, r.asg_
 func (r *Repo) Create(ctx context.Context, req *Request) error {
 	now := time.Now().UTC()
 	req.ID = store.NewID()
-	req.Status = StatusPending
+	req.Status, req.State = StatusPending, StatusPending
 	req.CreatedAt, req.UpdatedAt = now, now
 	_, err := r.db.ExecContext(ctx, r.db.Rebind(`INSERT INTO access_requests (`+cols+`)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`),
@@ -291,6 +291,7 @@ func scan(s store.Scanner) (*Request, error) {
 	req.Status = Status(status)
 	req.DecidedAt, req.ExpiresAt = decided.Ptr(), expires.Ptr()
 	req.CreatedAt, req.UpdatedAt = created.Time, updated.Time
+	req.State = StateOf(req.Status, req.ExpiresAt, time.Now())
 	return &req, nil
 }
 

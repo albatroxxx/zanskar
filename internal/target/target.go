@@ -236,16 +236,22 @@ type Target struct {
 	// TLSFingerprintPending and WinRMTLSFingerprintPending hold a different
 	// certificate a probe saw after one was pinned (ADR 0012). The pinned
 	// one stays and keeps refusing it until an administrator confirms.
-	TLSFingerprintPending      *string             `json:"tls_fingerprint_pending,omitempty"`
-	WinRMTLSFingerprintPending *string             `json:"winrm_tls_fingerprint_pending,omitempty"`
-	Tags                       map[string]string   `json:"tags"`
-	Status                     string              `json:"status"`
-	Notes                      string              `json:"notes"`
-	Credentials                map[Protocol]string `json:"credentials"`
-	CreatedBy                  *string             `json:"created_by"`
-	CreatedAt                  time.Time           `json:"created_at"`
-	UpdatedAt                  time.Time           `json:"updated_at"`
-	LastProbedAt               *time.Time          `json:"last_probed_at"`
+	TLSFingerprintPending      *string           `json:"tls_fingerprint_pending,omitempty"`
+	WinRMTLSFingerprintPending *string           `json:"winrm_tls_fingerprint_pending,omitempty"`
+	Tags                       map[string]string `json:"tags"`
+	Status                     string            `json:"status"`
+	// State, TLSStatus and WinRMTLSStatus are what holds now, derived when
+	// read (ADR 0047): the status as a state, and each Windows listener's
+	// pin as none, pinned or changed.
+	State          State               `json:"state"`
+	TLSStatus      CertificateStatus   `json:"tls_status"`
+	WinRMTLSStatus CertificateStatus   `json:"winrm_tls_status"`
+	Notes          string              `json:"notes"`
+	Credentials    map[Protocol]string `json:"credentials"`
+	CreatedBy      *string             `json:"created_by"`
+	CreatedAt      time.Time           `json:"created_at"`
+	UpdatedAt      time.Time           `json:"updated_at"`
+	LastProbedAt   *time.Time          `json:"last_probed_at"`
 }
 
 // Port returns the effective port for p.

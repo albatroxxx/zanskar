@@ -81,6 +81,9 @@ type Credential struct {
 	// Rotation is the state of a two-phase authority rotation; nil when no
 	// next key is prepared and no retired key is left to remove.
 	Rotation *Rotation `json:"rotation,omitempty"`
+	// RotationState names where the rotation stands (ADR 0047): none,
+	// prepared or cut_over. ssh_ca only; derived when read.
+	RotationState RotationState `json:"rotation_state,omitempty"`
 }
 
 // Rotation is a certificate authority's two-phase key rotation (ADR 0022).
