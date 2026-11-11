@@ -121,11 +121,13 @@ func (c *Log) record(s *submitted) {
 				break
 			}
 		}
-		// The echoes of lines still waiting are in the same output: it is
-		// emptied once none is.
-		if len(c.pending) == 0 {
-			c.out = c.out[:0]
-		}
+		// The output is emptied after every line, even with others waiting:
+		// kept for them, one line's output could pass for another's echo,
+		// and a secret typed at a prompt that does not echo would be
+		// recorded as itself when the line before printed the same text. A
+		// second line typed within the wait may read as hidden; it never
+		// leaks (review, 2026-11-11).
+		c.out = c.out[:0]
 		c.mu.Unlock()
 		if !echoed {
 			c.mark("(hidden input)")
