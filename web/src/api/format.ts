@@ -1,3 +1,5 @@
+import type { CredentialType } from './types'
+
 // The zone every time in the console is shown in: the display.time_zone
 // setting, from /auth/me (2026-10-30). Unset, the browser's own applies.
 let displayZone: string | undefined
@@ -132,19 +134,23 @@ export function appTLS(t: { app_upstream?: string; tls_ca?: string }): { label: 
   return { label: t.tls_ca ? 'TLS, verified against the CA bundle' : 'TLS, verified against the system roots', verified: true }
 }
 
-const credentialTypeNames: Record<string, string> = {
-  password: 'password',
-  ssh_key: 'SSH key',
-  ssh_ca: 'SSH certificate authority',
-  ec2_instance_connect: 'EC2 Instance Connect',
-}
+/** credentialTypes are the kinds of credential, in the order the Add form
+ *  offers them, each with the one name it reads as everywhere. */
+export const credentialTypes: { v: CredentialType; label: string }[] = [
+  { v: 'password', label: 'Password' },
+  { v: 'ssh_key', label: 'SSH private key' },
+  { v: 'ssh_ca', label: 'SSH certificate authority' },
+  { v: 'domain', label: 'Windows domain account' },
+  { v: 'ec2_instance_connect', label: 'EC2 Instance Connect' },
+]
 
 /** credentialTypeName is how a credential's type reads, the same on the
- *  Credentials page and in every credential menu: the page showed the code
- *  ("ec2_instance_connect") where a menu said "ec2 instance connect"
- *  (2026-11-11). An unknown type reads as itself, without underscores. */
+ *  Credentials page, in its Add form and in every credential menu: the page
+ *  showed the code ("ec2_instance_connect") where a menu said "ec2 instance
+ *  connect" (2026-11-11). An unknown type reads as itself, without
+ *  underscores. */
 export function credentialTypeName(type: string): string {
-  return credentialTypeNames[type] ?? type.replace(/_/g, ' ')
+  return credentialTypes.find((t) => t.v === type)?.label ?? type.replace(/_/g, ' ')
 }
 
 export function engineName(engine?: string | null, version?: string | null): string {

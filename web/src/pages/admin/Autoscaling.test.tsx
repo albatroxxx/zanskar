@@ -93,7 +93,7 @@ describe('Autoscaling group form, credentials', () => {
     expect(Array.from(ssh.options).map((o) => o.textContent)).toEqual([
       '— none —',
       'User supplied: ask the user for their own login',
-      'deploy-key (SSH key, ec2-user)',
+      'deploy-key (SSH private key, ec2-user)',
     ])
     expect(ssh.value).toBe('user_supplied')
 

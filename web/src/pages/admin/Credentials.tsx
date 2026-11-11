@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { api, errorMessage } from '../../api/client'
-import { credentialTypeName, fmtTime } from '../../api/format'
+import { credentialTypeName, credentialTypes, fmtTime } from '../../api/format'
 import type { Credential, CredentialType } from '../../api/types'
 import { useSubmit } from '../../components/submit'
 import { Alert, Confirm, Empty, Field, FormModal, Loading, PageHead } from '../../components/ui'
@@ -8,13 +8,6 @@ import { useList } from './lib'
 import { CAInstall, CASetup, DEFAULT_CERT_TTL, parsePrincipals } from './SSHCA'
 import { StateIcon } from '../../components/icons'
 
-const types: { v: CredentialType; label: string }[] = [
-  { v: 'password', label: 'Password' },
-  { v: 'ssh_key', label: 'SSH private key' },
-  { v: 'ssh_ca', label: 'SSH certificate authority' },
-  { v: 'domain', label: 'Windows domain account' },
-  { v: 'ec2_instance_connect', label: 'EC2 Instance Connect' },
-]
 function inUse(c: Credential) {
   return (c.in_use_by?.targets ?? 0) + (c.in_use_by?.autoscaling_groups ?? 0)
 }
@@ -265,7 +258,7 @@ function CredentialForm({ onClose, onSaved }: { onClose: () => void; onSaved: (c
       <div className="form-grid">
         <Field label="Type">
           <select id="c-type" value={f.type} onChange={set('type')}>
-            {types.map((t) => (
+            {credentialTypes.map((t) => (
               <option key={t.v} value={t.v}>{t.label}</option>
             ))}
           </select>

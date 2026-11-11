@@ -45,7 +45,7 @@ describe('Credentials list', () => {
     render(<Credentials />)
 
     const deploy = (await screen.findByText('deploy', { selector: 'strong' })).closest('tr')!
-    expect(within(deploy).getByText('password')).toBeDefined()
+    expect(within(deploy).getByText('Password')).toBeDefined()
     expect(within(deploy).getByRole('button', { name: 'Secret stored' })).toBeDefined()
     expect(within(deploy).getByText('never')).toBeDefined()
     expect(within(deploy).getByRole('button', { name: 'Rotate' })).toBeDefined()
@@ -55,6 +55,8 @@ describe('Credentials list', () => {
 
     const svc = screen.getByText('svc', { selector: 'strong' }).closest('tr')!
     expect(within(svc).getByText('CORP\\svc')).toBeDefined()
+    // The same name the Add form gives the type (review, 2026-11-11: "domain").
+    expect(within(svc).getByText('Windows domain account')).toBeDefined()
     expect(within(svc).getByText('3')).toBeDefined()
     const del = within(svc).getByRole('button', { name: 'Delete' }) as HTMLButtonElement
     expect(del.disabled).toBe(true)
@@ -239,7 +241,7 @@ describe('Credentials list, the words', () => {
     render(<Credentials />)
     const key = (await screen.findByText('deploy-key')).closest('tr')!
     const eic = screen.getByText('asg-ubuntu').closest('tr')!
-    expect(within(key).getByText('SSH key')).toBeDefined()
+    expect(within(key).getByText('SSH private key')).toBeDefined()
     expect(within(eic).getByText('EC2 Instance Connect')).toBeDefined()
     expect(within(eic).queryByRole('button', { name: 'No secret stored' })).toBeNull()
   })
