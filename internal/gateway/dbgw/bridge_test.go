@@ -54,6 +54,56 @@ func wantEnd(cause error) (reason, msg string) {
 	return gateway.CancelReason(ctx)
 }
 
+// TestBridgeOutputReachesTap: what the client prints goes to the session's
+// tap as well as the browser, so an admin can watch it live (2026-11-11:
+// the bridge wrote only to the recording and the browser).
+func TestBridgeOutputReachesTap(t *testing.T) {
+	docker := stubDocker(t)
+	spec := Spec{Engine: "postgres", Host: "db.internal", Port: 5432, Database: "app", Username: "svc", Password: "x", SessionID: "s1", TLSMode: "disable"}
+	reg := gateway.NewRegistry()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ws, err := websocket.Accept(w, r, &websocket.AcceptOptions{InsecureSkipVerify: true})
+		if err != nil {
+			return
+		}
+		defer ws.CloseNow()
+		ctx := reg.Add(r.Context(), gateway.Live{SessionID: spec.SessionID, Protocol: "database"})
+		defer reg.Remove(spec.SessionID)
+		_, _ = Bridge(ctx, nil, docker, spec, ws, nil, 80, 24, Limits{SessionID: spec.SessionID, Idle: time.Minute, Tap: reg.Tap(spec.SessionID), tick: 20 * time.Millisecond})
+	}))
+	defer srv.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	ws, _, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(srv.URL, "http"), nil) //nolint:bodyclose // the library closes the handshake body
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ws.CloseNow()
+	b, _ := json.Marshal(clientFrame{T: "i", D: "ping\r"})
+	if err := ws.Write(ctx, websocket.MessageText, b); err != nil {
+		t.Fatal(err)
+	}
+	var screen string
+	for strings.Count(screen, "ping") < 2 {
+		typ, data, err := ws.Read(ctx)
+		if err != nil {
+			t.Fatalf("waiting for the echo: %v (screen %q)", err, screen)
+		}
+		if typ == websocket.MessageBinary {
+			screen += string(data)
+		}
+	}
+	tap := reg.Tap(spec.SessionID)
+	if tap == nil {
+		t.Fatal("the session is not in the registry")
+	}
+	_, replay, unsub := tap.Subscribe()
+	defer unsub()
+	if string(replay) != screen {
+		t.Fatalf("tap holds %q, the browser saw %q", replay, screen)
+	}
+}
+
 // TestBridgeRegistryEndReachesBrowser: a database session the registry ends
 // (an administrator, a restart, a policy change) still tells the browser why
 // in the end frame, and the socket then closes normally, rather than

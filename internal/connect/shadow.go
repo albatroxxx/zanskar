@@ -59,7 +59,7 @@ func (h *ShadowHandler) shadow(w http.ResponseWriter, r *http.Request) {
 	details := map[string]string{"session_id": live.SessionID, "target_id": live.TargetID, "owner_user_id": live.UserID, "protocol": live.Protocol}
 
 	switch {
-	case protocol.Terminal(live.Protocol):
+	case protocol.Tapped(live.Protocol):
 		h.shadowTerminal(w, r, live, actor, details)
 	case protocol.Desktop(live.Protocol), live.Protocol == protocol.HTTP:
 		// An application session (ADR 0034) is drawn through guacd too.

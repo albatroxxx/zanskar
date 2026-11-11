@@ -284,7 +284,10 @@ type Limits struct {
 	SessionID string
 	Idle      time.Duration
 	Max       time.Duration
-	tick      time.Duration
+	// Tap, when set, receives every output chunk after it is recorded, so
+	// an admin can watch the session live. Writes must never block.
+	Tap  interface{ Write([]byte) }
+	tick time.Duration
 }
 
 // Bridge sets up the per-session network + proxy sidecar, runs the client under
@@ -434,6 +437,9 @@ func Bridge(ctx context.Context, log *slog.Logger, docker string, spec Spec, ws 
 						}
 						return
 					}
+				}
+				if lim.Tap != nil {
+					lim.Tap.Write(buf[:n])
 				}
 				if werr := ws.Write(wsCtx, websocket.MessageBinary, buf[:n]); werr != nil {
 					return

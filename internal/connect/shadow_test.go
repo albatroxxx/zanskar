@@ -121,6 +121,37 @@ func TestShadowTerminalReplayAndLive(t *testing.T) {
 	}
 }
 
+// TestShadowDatabaseSession: a database session is a client in a pty, so it
+// is watched as a terminal. Live, 2026-11-11: Watch on one was refused with
+// "protocol cannot be shadowed" and the page said the session had ended.
+func TestShadowDatabaseSession(t *testing.T) {
+	e := newShadowEnv(t)
+	admin := e.cookieFor(t, "admin", user.RoleAdmin)
+	e.reg.Add(context.Background(), gateway.Live{SessionID: "db1", UserID: "owner", TargetID: "t1", Protocol: "database"})
+	tap := e.reg.Tap("db1")
+	if tap == nil {
+		t.Fatal("a database session has no tap")
+	}
+	tap.Write([]byte("mysql> select 1;\r\n"))
+
+	ws, code := dialShadow(t, e, "db1", admin)
+	if ws == nil {
+		t.Fatalf("dial failed with %d", code)
+	}
+	defer ws.CloseNow()
+	ctx := context.Background()
+	if _, first, err := ws.Read(ctx); err != nil || !strings.Contains(string(first), `"ready"`) {
+		t.Fatalf("ready: %v %s", err, first)
+	}
+	if _, replay, err := ws.Read(ctx); err != nil || string(replay) != "mysql> select 1;\r\n" {
+		t.Fatalf("replay: %v %q", err, replay)
+	}
+	tap.Write([]byte("| 1 |"))
+	if _, live, err := ws.Read(ctx); err != nil || string(live) != "| 1 |" {
+		t.Fatalf("live: %v %q", err, live)
+	}
+}
+
 func TestShadowAuthz(t *testing.T) {
 	e := newShadowEnv(t)
 	e.reg.Add(context.Background(), gateway.Live{SessionID: "s1", UserID: "owner", TargetID: "t1", Protocol: "ssh"})

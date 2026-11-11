@@ -63,6 +63,10 @@ func TestRegistryTapLifecycle(t *testing.T) {
 	if r.Tap("s1") == nil {
 		t.Fatal("ssh session must get a tap")
 	}
+	r.Add(context.Background(), Live{SessionID: "db1", UserID: "u1", Protocol: "database"})
+	if r.Tap("db1") == nil {
+		t.Fatal("a database session must get a tap, or nobody can watch it live")
+	}
 	r.Add(context.Background(), Live{SessionID: "d1", UserID: "u1", Protocol: "rdp"})
 	if r.Tap("d1") != nil {
 		t.Fatal("desktop session must not get a tap")
