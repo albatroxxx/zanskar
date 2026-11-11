@@ -15,7 +15,7 @@ const fp = 'SHA256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
 const pendingKey: Target = {
   id: 't1', name: 'web-01', address: '10.0.0.5', os_family: 'linux', ports: { ssh: 22 }, capabilities: ['ssh'],
   host_key_fingerprint: fp, host_key_status: 'pending', tls_fingerprint: null, winrm_tls_fingerprint: null,
-  tags: {}, status: 'active', notes: '', credentials: {}, created_at: '2026-10-06T10:00:00Z', updated_at: '2026-10-06T10:00:00Z', last_probed_at: '2026-10-06T10:00:00Z',
+  tags: {}, status: 'active', state: 'active', tls_status: 'none', winrm_tls_status: 'none', notes: '', credentials: {}, created_at: '2026-10-06T10:00:00Z', updated_at: '2026-10-06T10:00:00Z', last_probed_at: '2026-10-06T10:00:00Z',
 }
 
 function Drawer({ target }: { target: Target }) {

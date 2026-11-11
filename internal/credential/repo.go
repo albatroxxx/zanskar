@@ -301,6 +301,9 @@ func (v *Vault) PrepareRotation(ctx context.Context, id string, s *Secret) (*Cre
 	if c.Rotation != nil && c.Rotation.PendingPublicKey != "" {
 		return nil, ErrRotationPending
 	}
+	if c.Rotation != nil && c.Rotation.RetiredPublicKey != "" {
+		return nil, ErrRotationUnconfirmed
+	}
 	if s == nil || s.PrivateKey == "" {
 		return nil, fmt.Errorf("%w: private_key required", ErrInvalid)
 	}
@@ -317,15 +320,36 @@ func (v *Vault) PrepareRotation(ctx context.Context, id string, s *Secret) (*Cre
 		return nil, err
 	}
 	now := store.TimeArg(time.Now())
+	// The state the move needs is in the statement (ADR 0047): a prepare
+	// that raced another prepare or a cut-over writes nothing.
 	res, err := v.db.ExecContext(ctx, v.db.Rebind(`UPDATE credentials SET pending_secret_enc = ?, pending_public_key = ?, pending_key_version = ?,
-		pending_created_at = ?, updated_at = ? WHERE id = ?`), sealed, pub, ver, now, now, id)
+		pending_created_at = ?, updated_at = ? WHERE id = ? AND pending_public_key IS NULL AND retired_public_key IS NULL`), sealed, pub, ver, now, now, id)
 	if err != nil {
 		return nil, err
 	}
-	if err := store.Affected(res, ErrNotFound); err != nil {
-		return nil, err
+	if n, _ := res.RowsAffected(); n == 0 {
+		return nil, v.rotationMiss(ctx, id, RotationNone)
 	}
 	return v.Get(ctx, id)
+}
+
+// rotationMiss says why a rotation statement matched no row: the credential
+// is gone, or its rotation is not in the state the move needs (want).
+func (v *Vault) rotationMiss(ctx context.Context, id string, want RotationState) error {
+	c, err := v.Get(ctx, id)
+	if err != nil {
+		return err
+	}
+	switch RotationStateOf(c.Rotation) {
+	case want:
+		// The row moved under us and back; say the move did not apply.
+		return ErrNoRotation
+	case RotationPrepared:
+		return ErrRotationPending
+	case RotationCutOver:
+		return ErrRotationUnconfirmed
+	}
+	return ErrNoRotation
 }
 
 // CutOver makes the prepared key the signing key. The old public key is kept
@@ -351,15 +375,17 @@ func (v *Vault) CutOver(ctx context.Context, id string) (*Credential, error) {
 		return nil, err
 	}
 	now := store.TimeArg(time.Now())
+	// The key cut over to is the one that was unsealed: a prepare that
+	// replaced it meanwhile makes this statement match nothing.
 	res, err := v.db.ExecContext(ctx, v.db.Rebind(`UPDATE credentials SET secret_enc = ?, key_version = ?, public_key = pending_public_key,
 		retired_public_key = public_key, retired_at = ?, rotated_at = ?, updated_at = ?,
-		pending_secret_enc = NULL, pending_public_key = NULL, pending_key_version = NULL, pending_created_at = NULL WHERE id = ?`),
-		sealed, ver, now, now, now, id)
+		pending_secret_enc = NULL, pending_public_key = NULL, pending_key_version = NULL, pending_created_at = NULL WHERE id = ? AND pending_public_key = ?`),
+		sealed, ver, now, now, now, id, c.Rotation.PendingPublicKey)
 	if err != nil {
 		return nil, err
 	}
-	if err := store.Affected(res, ErrNotFound); err != nil {
-		return nil, err
+	if n, _ := res.RowsAffected(); n == 0 {
+		return nil, v.rotationMiss(ctx, id, RotationPrepared)
 	}
 	return v.Get(ctx, id)
 }
@@ -374,12 +400,12 @@ func (v *Vault) CancelRotation(ctx context.Context, id string) (*Credential, err
 		return nil, ErrNoRotation
 	}
 	res, err := v.db.ExecContext(ctx, v.db.Rebind(`UPDATE credentials SET pending_secret_enc = NULL, pending_public_key = NULL,
-		pending_key_version = NULL, pending_created_at = NULL, updated_at = ? WHERE id = ?`), store.TimeArg(time.Now()), id)
+		pending_key_version = NULL, pending_created_at = NULL, updated_at = ? WHERE id = ? AND pending_public_key IS NOT NULL`), store.TimeArg(time.Now()), id)
 	if err != nil {
 		return nil, err
 	}
-	if err := store.Affected(res, ErrNotFound); err != nil {
-		return nil, err
+	if n, _ := res.RowsAffected(); n == 0 {
+		return nil, v.rotationMiss(ctx, id, RotationPrepared)
 	}
 	return v.Get(ctx, id)
 }
@@ -394,13 +420,13 @@ func (v *Vault) Retire(ctx context.Context, id string) (*Credential, error) {
 	if c.Rotation == nil || c.Rotation.RetiredPublicKey == "" {
 		return nil, ErrNoRotation
 	}
-	res, err := v.db.ExecContext(ctx, v.db.Rebind(`UPDATE credentials SET retired_public_key = NULL, retired_at = NULL, updated_at = ? WHERE id = ?`),
+	res, err := v.db.ExecContext(ctx, v.db.Rebind(`UPDATE credentials SET retired_public_key = NULL, retired_at = NULL, updated_at = ? WHERE id = ? AND retired_public_key IS NOT NULL`),
 		store.TimeArg(time.Now()), id)
 	if err != nil {
 		return nil, err
 	}
-	if err := store.Affected(res, ErrNotFound); err != nil {
-		return nil, err
+	if n, _ := res.RowsAffected(); n == 0 {
+		return nil, v.rotationMiss(ctx, id, RotationCutOver)
 	}
 	return v.Get(ctx, id)
 }
@@ -483,6 +509,9 @@ func scan(s store.Scanner) (*Credential, error) {
 	}
 	if pendingPub.Valid || retiredPub.Valid {
 		c.Rotation = &Rotation{PendingPublicKey: pendingPub.String, PendingSince: pendingAt.Ptr(), RetiredPublicKey: retiredPub.String, RetiredAt: retiredAt.Ptr()}
+	}
+	if c.Type == TypeSSHCA {
+		c.RotationState = RotationStateOf(c.Rotation)
 	}
 	c.CreatedAt, c.UpdatedAt, c.RotatedAt = created.Time, updated.Time, rotated.Ptr()
 	return &c, nil

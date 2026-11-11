@@ -13,7 +13,7 @@ afterEach(() => {
 const fleet: AutoscalingGroup = {
   id: 'g1', name: 'web-fleet', provider: 'aws', region: 'eu-west-1', external_name: 'web-asg', role_arn: 'arn:aws:iam::123456789012:role/zanskar',
   external_id: 'x1', os_family: 'linux', ports: { ssh: 22 }, capabilities: ['ssh'], address_preference: 'private', poll_interval_seconds: 30,
-  tags: {}, status: 'active', last_synced_at: null, credentials: {}, created_at: '2026-10-06T10:00:00Z', updated_at: '2026-10-06T10:00:00Z',
+  tags: {}, status: 'active', state: 'active', last_synced_at: null, credentials: {}, created_at: '2026-10-06T10:00:00Z', updated_at: '2026-10-06T10:00:00Z',
 }
 
 /** gateway answers the page's reads; the group list returns whatever was last saved. */

@@ -6,6 +6,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/albatroxxx/zanskar/internal/store"
@@ -38,7 +39,7 @@ const selectRequests = `SELECT r.id, r.user_id, r.policy_id, r.target_id, r.asg_
 func (r *Repo) Create(ctx context.Context, req *Request) error {
 	now := time.Now().UTC()
 	req.ID = store.NewID()
-	req.Status = StatusPending
+	req.Status, req.State = StatusPending, StatusPending
 	req.CreatedAt, req.UpdatedAt = now, now
 	_, err := r.db.ExecContext(ctx, r.db.Rebind(`INSERT INTO access_requests (`+cols+`)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`),
@@ -168,23 +169,25 @@ func (r *Repo) Decide(ctx context.Context, id, approverID string, status Status,
 		return nil, err
 	}
 	if n, _ := res.RowsAffected(); n == 0 {
-		return nil, r.missOrState(ctx, id)
+		return nil, r.missOrState(ctx, id, status)
 	}
 	return r.Get(ctx, id)
 }
 
-// Revoke ends an approved grant early. It fails with ErrState unless the
-// request is currently approved.
+// Revoke ends an active grant early. It fails with ErrState unless the
+// request is approved and its window has not passed: a lapsed grant is
+// expired whether or not the sweeper has written it, and revoking it made
+// the row and the sessions' end reason depend on timing (ADR 0047).
 func (r *Repo) Revoke(ctx context.Context, id, note string) (*Request, error) {
 	now := time.Now().UTC()
 	res, err := r.db.ExecContext(ctx, r.db.Rebind(`UPDATE access_requests
-		SET status = ?, decision_note = ?, updated_at = ? WHERE id = ? AND status = ?`),
-		string(StatusRevoked), note, store.TimeArg(now), id, string(StatusApproved))
+		SET status = ?, decision_note = ?, updated_at = ? WHERE id = ? AND status = ? AND expires_at > ?`),
+		string(StatusRevoked), note, store.TimeArg(now), id, string(StatusApproved), store.TimeArg(now))
 	if err != nil {
 		return nil, err
 	}
 	if n, _ := res.RowsAffected(); n == 0 {
-		return nil, r.missOrState(ctx, id)
+		return nil, r.missOrState(ctx, id, StatusRevoked)
 	}
 	return r.Get(ctx, id)
 }
@@ -243,10 +246,19 @@ func (r *Repo) ExpireDue(ctx context.Context, now time.Time) (int64, error) {
 }
 
 // missOrState distinguishes a missing request from one that was not in the
-// expected state for the update.
-func (r *Repo) missOrState(ctx context.Context, id string) error {
-	if _, err := r.Get(ctx, id); errors.Is(err, ErrNotFound) {
+// state the move to `to` needs. The refusal names the state the request is
+// in and the state the move is allowed from (ADR 0047); it still wraps
+// ErrState for callers that only ask which kind of refusal it was.
+func (r *Repo) missOrState(ctx context.Context, id string, to Status) error {
+	cur, err := r.Get(ctx, id)
+	if errors.Is(err, ErrNotFound) {
 		return ErrNotFound
+	}
+	if err != nil {
+		return err
+	}
+	if serr := Lifecycle.Check(string(cur.State), string(to)); serr != nil {
+		return fmt.Errorf("%w: %w", ErrState, serr)
 	}
 	return ErrState
 }
@@ -291,6 +303,7 @@ func scan(s store.Scanner) (*Request, error) {
 	req.Status = Status(status)
 	req.DecidedAt, req.ExpiresAt = decided.Ptr(), expires.Ptr()
 	req.CreatedAt, req.UpdatedAt = created.Time, updated.Time
+	req.State = StateOf(req.Status, req.ExpiresAt, time.Now())
 	return &req, nil
 }
 

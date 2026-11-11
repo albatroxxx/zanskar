@@ -42,6 +42,9 @@ export function Approvals() {
       return true
     } catch (e) {
       setErr(errorMessage(e))
+      // The request is no longer in the state the action needs (decided
+      // elsewhere, or lapsed): the page reads again so it no longer offers it.
+      if (e instanceof ApiError && e.status === 409) load()
       return false
     } finally {
       setBusy('')
@@ -99,7 +102,9 @@ export function Approvals() {
       api
         .get<Page<AccessRequest>>(`/access-requests?status=${status}`)
         .then((p) => {
-          set(p.items)
+          // A grant whose window passed is expired whatever the row still
+          // says; the gateway's state is the word (ADR 0047, 2026-11-09).
+          set(list === 'active' ? p.items.filter((r) => r.state === 'approved') : p.items)
           setLoadErr((cur) => ({ ...cur, [list]: '' }))
           if (list === 'pending') {
             // The sidebar's badge counts these; it need not read them too.

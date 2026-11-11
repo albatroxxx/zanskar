@@ -51,7 +51,10 @@ type Request struct {
 	// from the decision, so back-to-back grants leave no gap.
 	ExtendsRequestID string `json:"extends_request_id,omitempty"`
 	Status           Status `json:"status"`
-	ApproverUserID   string `json:"approver_user_id,omitempty"`
+	// State is Status as it holds now: an approval past its window reads
+	// expired before the sweeper writes it (ADR 0047). Derived when read.
+	State          Status `json:"state"`
+	ApproverUserID string `json:"approver_user_id,omitempty"`
 	// Names resolved at read time so every list reads as people and machines
 	// rather than ids; a retired target or group still labels its requests.
 	Username         string     `json:"username,omitempty"`

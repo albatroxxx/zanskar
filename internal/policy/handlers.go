@@ -14,6 +14,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/albatroxxx/zanskar/internal/audit"
 	"github.com/albatroxxx/zanskar/internal/auth"
@@ -72,6 +73,12 @@ type input struct {
 	Enabled     *bool        `json:"enabled"`
 	Subjects    []Subject    `json:"subjects"`
 	Grants      []grantInput `json:"grants"`
+	// The review's fields are read only to be ignored: a policy read back and
+	// written again carries them (ADR 0047), and a review is made through
+	// its own route, never by a write.
+	ReviewState string `json:"review_state"`
+	ReviewedAt  any    `json:"reviewed_at"`
+	ReviewedBy  string `json:"reviewed_by"`
 }
 
 // grantInput is a grant as written: a switch left out takes its default
@@ -204,6 +211,7 @@ func (h *AdminHandler) create(w http.ResponseWriter, r *http.Request) {
 		more["live_sessions_ended"] = n
 	}
 	h.record(r, audit.PolicyCreate, p, more)
+	p.ReviewState = ReviewStateOf(p.ReviewedAt, time.Now())
 	httpx.WriteJSON(w, http.StatusCreated, p)
 }
 
@@ -243,6 +251,7 @@ func (h *AdminHandler) update(w http.ResponseWriter, r *http.Request) {
 		more["live_sessions_ended"] = n
 	}
 	h.record(r, audit.PolicyUpdate, p, more)
+	p.ReviewState = ReviewStateOf(p.ReviewedAt, time.Now())
 	httpx.WriteJSON(w, http.StatusOK, p)
 }
 

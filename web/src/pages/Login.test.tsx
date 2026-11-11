@@ -81,6 +81,41 @@ describe('Login', () => {
     expect((await screen.findByTestId('landed')).textContent).toBe('/home')
   })
 
+  // 2026-11-09 (ADR 0047): an enrolled account whose password an administrator
+  // set typed a right code and stayed on the code form, because the page's own
+  // step never read the next step the gateway reported. What is owed next is
+  // the gateway's to say.
+  it('moves to the password change after a right code when one is owed', async () => {
+    let verified = false
+    vi.spyOn(api, 'get').mockImplementation(async (path: string) => {
+      if (path === '/auth/me') {
+        if (verified) return { csrf_token: 't2', mfa_enrolled: true, pending: 'password' } as never
+        throw new ApiError(401, { code: 'unauthenticated', message: 'sign in required' }, '401')
+      }
+      if (path === '/auth/providers') return { items: [] } as never
+      return { text: '' } as never
+    })
+    vi.spyOn(api, 'post').mockImplementation(async (path: string) => {
+      if (path === '/auth/login') return { status: 'mfa_required', csrf_token: 't' } as never
+      verified = true
+      return { csrf_token: 't2' } as never
+    })
+    render(
+      <MemoryRouter>
+        <AuthProvider>
+          <Login />
+        </AuthProvider>
+      </MemoryRouter>,
+    )
+    const user = userEvent.setup()
+    await user.type(await screen.findByLabelText('Username'), 'alice')
+    await user.type(screen.getByLabelText('Password'), 'a long enough passphrase{Enter}')
+    await user.type(await screen.findByLabelText('Code'), '123456{Enter}')
+    expect(await screen.findByLabelText('New password')).toBeDefined()
+    expect(screen.getByLabelText('Current password')).toBeDefined()
+    expect(screen.queryByLabelText('Code')).toBeNull()
+  })
+
   it('stays on the code step after a wrong code', async () => {
     const user = await atCodeStep(() => Promise.reject(wrong()))
     await user.type(screen.getByLabelText('Code'), '000000{Enter}')

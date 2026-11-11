@@ -14,7 +14,7 @@ afterEach(() => {
 const web: Target = {
   id: 't1', name: 'web-01', address: '10.0.0.5', os_family: 'linux', ports: { ssh: 22 }, capabilities: ['ssh'],
   host_key_fingerprint: null, host_key_status: 'trusted', tls_fingerprint: null, winrm_tls_fingerprint: null,
-  tags: {}, status: 'active', notes: '', credentials: {}, created_at: '2026-10-06T10:00:00Z', updated_at: '2026-10-06T10:00:00Z', last_probed_at: null,
+  tags: {}, status: 'active', state: 'active', tls_status: 'none', winrm_tls_status: 'none', notes: '', credentials: {}, created_at: '2026-10-06T10:00:00Z', updated_at: '2026-10-06T10:00:00Z', last_probed_at: null,
 }
 
 /** Drawer holds the target the way the targets page does: what a save returns is shown. */

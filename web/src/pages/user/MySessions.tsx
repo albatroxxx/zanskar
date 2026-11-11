@@ -49,7 +49,7 @@ export function MySessions() {
                   <td title={s.target_id ?? s.asg_instance_id}>{sessionTarget(s)}</td>
                   <td>{protocolName(s.protocol)}</td>
                   <td>{fmtDuration(s.started_at, s.ended_at)}</td>
-                  <td><EndReason reason={s.end_reason} detail={s.end_detail} /></td>
+                  <td><EndReason state={s.state} reason={s.end_reason} detail={s.end_detail} /></td>
                 </tr>
               ))}
             </tbody>

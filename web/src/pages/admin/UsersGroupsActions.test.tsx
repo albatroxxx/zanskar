@@ -12,9 +12,9 @@ afterEach(() => {
   vi.restoreAllMocks()
 })
 
-const alice = { id: 'u1', username: 'alice', display_name: 'Alice', status: 'active', roles: ['admin'], created_at: '2026-10-01T00:00:00Z', updated_at: '2026-10-01T00:00:00Z' } as User
-const bob = { id: 'u2', username: 'bob', display_name: 'Bob', email: 'bob@example.com', status: 'active', roles: ['user'], last_login_at: '2026-10-20T10:00:00Z', must_change_password: true, created_at: '2026-10-01T00:00:00Z', updated_at: '2026-10-01T00:00:00Z' } as User
-const carol = { id: 'u3', username: 'carol', display_name: 'Carol', status: 'disabled', roles: ['auditor'], created_at: '2026-10-01T00:00:00Z', updated_at: '2026-10-01T00:00:00Z' } as User
+const alice = { id: 'u1', username: 'alice', display_name: 'Alice', status: 'active', state: 'active', roles: ['admin'], created_at: '2026-10-01T00:00:00Z', updated_at: '2026-10-01T00:00:00Z' } as User
+const bob = { id: 'u2', username: 'bob', display_name: 'Bob', email: 'bob@example.com', status: 'active', state: 'active', roles: ['user'], last_login_at: '2026-10-20T10:00:00Z', must_change_password: true, created_at: '2026-10-01T00:00:00Z', updated_at: '2026-10-01T00:00:00Z' } as User
+const carol = { id: 'u3', username: 'carol', display_name: 'Carol', status: 'disabled', state: 'disabled', roles: ['auditor'], created_at: '2026-10-01T00:00:00Z', updated_at: '2026-10-01T00:00:00Z' } as User
 const me = { user: alice, csrf_token: 't', mfa_enrolled: true }
 
 function serve(users: User[] = [alice, bob, carol], groups: unknown[] = [], members: { user_id: string }[] = []) {
@@ -89,7 +89,7 @@ describe('Users', () => {
   // sync disabled their account, and the console let it be enabled again.
   it('keeps Enable away from an account its provider took away, while the provider decides', async () => {
     const gone = { ...carol, idp_id: 'p1', directory_removed_at: '2026-10-31T09:00:00Z' } as User
-    const byHand = { ...bob, status: 'disabled', idp_id: 'p1' } as User
+    const byHand = { ...bob, status: 'disabled', state: 'disabled', idp_id: 'p1' } as User
     const pushedOff = { ...carol, id: 'u4', username: 'dora', idp_id: 'p2', directory_removed_at: '2026-10-31T09:00:00Z' } as User
     const get = serve([alice, gone, byHand, pushedOff])
     const base = get.getMockImplementation() as (path: string) => Promise<unknown>
@@ -112,6 +112,17 @@ describe('Users', () => {
     expect(enable('bob').disabled).toBe(false)
     // A provider that no longer decides (here disabled) lets go of its people.
     expect(enable('dora').disabled).toBe(false)
+  })
+
+  // 2026-11-09 (ADR 0047): an account locked by wrong passwords read Active,
+  // because the lock lives in locked_until and the cell read status. The
+  // gateway's state names it, and the cell says when the lock lifts.
+  it('says an account is locked out, and until when', async () => {
+    serve([alice, { ...bob, state: 'locked_out', locked_until: '2026-11-09T12:15:00Z' } as User])
+    await show()
+    const row = (await screen.findByText('bob')).closest('tr')!
+    expect(within(row).getByRole('button', { name: /^Locked out until / })).toBeDefined()
+    expect(within(row).queryByRole('button', { name: 'Active' })).toBeNull()
   })
 
   it('shows each account, marks the signed-in one, and keeps disable and delete away from it', async () => {

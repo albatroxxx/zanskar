@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { api, errorMessage } from '../../api/client'
 import { fmtTime } from '../../api/format'
+import { capitalised, stateLabel } from '../../api/states'
 import type { Group, GroupMember, Role, User } from '../../api/types'
 import { useAuth } from '../../auth/AuthContext'
 import { FilterChips } from '../../components/FilterChips'
@@ -144,8 +145,14 @@ function Users() {
                     <td>{normalizeRoles(u.roles).map((r) => <Badge key={r} tone={r === 'admin' ? 'accent' : undefined}>{r}</Badge>)}</td>
                     <td>
                       <StateIcon
-                        state={u.status === 'active' ? 'ok' : 'warn'}
-                        label={u.status === 'active' ? 'Active' : u.status === 'locked' ? 'Locked' : leftFor ? `Disabled: ${leftFor} no longer has this person` : 'Disabled'}
+                        state={u.state === 'active' ? 'ok' : 'warn'}
+                        label={
+                          u.state === 'disabled' && leftFor
+                            ? `Disabled: ${leftFor} no longer has this person`
+                            : u.state === 'locked_out' && u.locked_until
+                              ? `Locked out until ${fmtTime(u.locked_until)}`
+                              : capitalised(stateLabel('user', u.state).label)
+                        }
                       />
                       {u.must_change_password && (
                         <>

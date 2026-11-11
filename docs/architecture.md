@@ -72,6 +72,10 @@ behind the `webui` build tag.
   and hourly as an anchor that is also logged (ADR 0008); `zanskar audit verify` checks both.
 - **Recordings**: asciicast for terminals, Guacamole format for desktops, on local disk or in an
   S3-compatible bucket, with retention per policy (ADR 0015).
+- **Lifecycles**: every record with a life (a session, a recording, a request, a token, a
+  rotation) declares its states and moves once, and the API carries the computed `state` beside
+  the stored `status` (ADR 0047). [lifecycles.md](lifecycles.md) is generated from the
+  declarations and draws each one.
 
 ## Deployment shapes
 

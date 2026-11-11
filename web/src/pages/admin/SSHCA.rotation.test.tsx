@@ -12,10 +12,10 @@ afterEach(() => {
 
 const ca: Credential = {
   id: 'ca1', name: 'fleet-ca', type: 'ssh_ca', mode: 'vaulted', has_secret: true, public_key: 'ssh-ed25519 AAAA fleet-ca',
-  created_at: '2026-10-06T10:00:00Z', updated_at: '2026-10-06T10:00:00Z', in_use_by: { targets: 0 },
+  created_at: '2026-10-06T10:00:00Z', updated_at: '2026-10-06T10:00:00Z', in_use_by: { targets: 0 }, rotation_state: 'none',
 }
-const prepared: Credential = { ...ca, rotation: { pending_public_key: 'ssh-ed25519 BBBB next', pending_since: '2026-10-06T11:00:00Z' } }
-const cutOver: Credential = { ...ca, public_key: 'ssh-ed25519 BBBB next', rotation: { retired_public_key: 'ssh-ed25519 AAAA fleet-ca', retired_at: '2026-10-06T12:00:00Z' } }
+const prepared: Credential = { ...ca, rotation_state: 'prepared', rotation: { pending_public_key: 'ssh-ed25519 BBBB next', pending_since: '2026-10-06T11:00:00Z' } }
+const cutOver: Credential = { ...ca, public_key: 'ssh-ed25519 BBBB next', rotation_state: 'cut_over', rotation: { retired_public_key: 'ssh-ed25519 AAAA fleet-ca', retired_at: '2026-10-06T12:00:00Z' } }
 
 function mount(c: Credential) {
   vi.spyOn(api, 'get').mockResolvedValue({ items: [] } as never)
@@ -35,6 +35,16 @@ async function confirm(buttonName: string | RegExp, title: string, confirmLabel:
 // SSHCA test. Each step of the two-phase rotation (ADR 0022) must reach its
 // own endpoint: prepare and cut over are POSTs, discard is the DELETE.
 describe('SSHCA, the rotation steps', () => {
+  // 2026-11-09 (ADR 0047): a second rotation prepared over an unconfirmed
+  // retired key overwrote the reminder to remove it. One rotation at a time:
+  // the gateway's rotation_state gates the buttons.
+  it('offers no next key while the old one waits to be removed from targets', async () => {
+    mount(cutOver)
+    expect(await screen.findByRole('button', { name: 'Old key removed from targets' })).toBeDefined()
+    expect(screen.queryByRole('button', { name: 'Prepare next key' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Cut over to the next key' })).toBeNull()
+  })
+
   it('prepares a next key', async () => {
     const post = vi.spyOn(api, 'post').mockResolvedValue(prepared as never)
     const onSaved = mount(ca)

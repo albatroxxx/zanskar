@@ -56,6 +56,7 @@ func (r *Repo) Create(ctx context.Context, t *Target) error {
 	if err := replaceCredentialsTx(ctx, tx, r.db, t.ID, t.Credentials); err != nil {
 		return err
 	}
+	t.derive()
 	return tx.Commit()
 }
 
@@ -301,6 +302,7 @@ func (r *Repo) Update(ctx context.Context, t *Target) error {
 		return err
 	}
 	t.UpdatedAt = now
+	t.derive()
 	return tx.Commit()
 }
 
@@ -699,6 +701,7 @@ func scanTarget(s store.Scanner) (*Target, error) {
 	}
 	t.CreatedAt, t.UpdatedAt, t.LastProbedAt = created.Time, updated.Time, probe.Ptr()
 	t.Credentials = map[Protocol]string{}
+	t.derive()
 	return &t, nil
 }
 

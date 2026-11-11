@@ -53,6 +53,7 @@ func (r *Repo) CreateInGroups(ctx context.Context, u *User, groupIDs []string) e
 	if u.Status == "" {
 		u.Status = StatusActive
 	}
+	u.State = StateOf(u.Status, u.LockedUntil, time.Now())
 	// Usernames and emails are stored lowercase; migration 0002 enforces
 	// case-insensitive uniqueness at the database as well.
 	u.Username = strings.ToLower(u.Username)
@@ -540,6 +541,7 @@ func scanUser(s store.Scanner) (*User, error) {
 	u.Status = Status(status)
 	u.LockedUntil, u.CreatedAt, u.UpdatedAt, u.LastLoginAt = lockedUntil.Ptr(), created.Time, updated.Time, last.Ptr()
 	u.DirectoryRemovedAt, u.SCIMExternalID, u.SCIMDeletedAt = removed.Ptr(), scimExt.String, scimDeleted.Ptr()
+	u.State = StateOf(u.Status, u.LockedUntil, time.Now())
 	return &u, nil
 }
 

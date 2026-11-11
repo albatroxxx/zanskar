@@ -81,6 +81,9 @@ type Credential struct {
 	// Rotation is the state of a two-phase authority rotation; nil when no
 	// next key is prepared and no retired key is left to remove.
 	Rotation *Rotation `json:"rotation,omitempty"`
+	// RotationState names where the rotation stands (ADR 0047): none,
+	// prepared or cut_over. ssh_ca only; derived when read.
+	RotationState RotationState `json:"rotation_state,omitempty"`
 }
 
 // Rotation is a certificate authority's two-phase key rotation (ADR 0022).
@@ -149,6 +152,10 @@ var (
 	ErrRotationPending = errors.New("credential: a rotation is already prepared")
 	// ErrNoRotation: nothing is prepared or retired for this credential.
 	ErrNoRotation = errors.New("credential: no rotation in progress")
+	// ErrRotationUnconfirmed: the previous rotation's old key still waits to
+	// be confirmed removed from targets; a next key is prepared only after
+	// that (ADR 0047: a second cut-over overwrote the reminder, 2026-11-09).
+	ErrRotationUnconfirmed = errors.New("credential: the old key of the previous rotation still waits to be removed from targets; confirm that first")
 )
 
 // prepared is the validated, normalised form ready for storage.

@@ -89,10 +89,10 @@ export function Sessions() {
                   <td>{protocolName(s.protocol)}</td>
                   <td className="mono muted">{s.client_ip}</td>
                   <td>{fmtDuration(s.started_at, s.ended_at)}</td>
-                  <td><EndReason reason={s.end_reason} detail={s.end_detail} /></td>
+                  <td><EndReason state={s.state} reason={s.end_reason} detail={s.end_detail} /></td>
                   <td>{s.recording_id ? <TabLink className="btn sm" to={`${recordings}/${s.recording_id}`} label="Review" /> : <span className="muted">—</span>}</td>
                   <td>
-                    {!s.ended_at && (
+                    {s.state === 'live' && (
                       <span className="actions">
                         <TabLink className="btn sm" to={`/audit/shadow/${s.id}?protocol=${s.protocol}&target=${encodeURIComponent(sessionTarget(s))}`} label="Watch" title="Watch live, read-only; the view is audited" />
                         {admin && (

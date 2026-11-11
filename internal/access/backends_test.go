@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/albatroxxx/zanskar/internal/states"
 	"github.com/albatroxxx/zanskar/internal/store"
 	"github.com/albatroxxx/zanskar/internal/store/storetest"
 )
@@ -71,6 +72,39 @@ func TestRepoOnEachBackend(t *testing.T) {
 		}
 		if list, err := r.ListByUser(ctx, "u1"); err != nil || len(list) != 1 || list[0].ExpiresAt == nil || list[0].ExpiresAt.Sub(exp).Abs() > time.Second {
 			t.Fatalf("the stored expiry must read back as the same instant: %+v %v", list, err)
+		}
+
+		// ADR 0047 (2026-11-09): a grant whose window has passed reads
+		// expired before the sweeper writes it, and is not revoked; the
+		// refusal names both states. The comparison is on the timestamp
+		// column, so it runs on both engines.
+		lapsed := &Request{UserID: "u1", TargetID: "t1", Protocol: "rdp", Reason: "patch", RequestedMinutes: 5}
+		if err := r.Create(ctx, lapsed); err != nil {
+			t.Fatal(err)
+		}
+		past := now.Add(-time.Minute)
+		if _, err := r.Decide(ctx, lapsed.ID, "u2", StatusApproved, "", &past, 5); err != nil {
+			t.Fatal(err)
+		}
+		got, err = r.Get(ctx, lapsed.ID)
+		if err != nil || got.Status != StatusApproved || got.State != StatusExpired {
+			t.Fatalf("a lapsed approval reads expired while the row says approved: %+v %v", got, err)
+		}
+		_, err = r.Revoke(ctx, lapsed.ID, "too late")
+		var serr *states.Error
+		if !errors.Is(err, ErrState) || !errors.As(err, &serr) || serr.From != "expired" || serr.To != "revoked" {
+			t.Fatalf("revoking a lapsed grant: %v", err)
+		}
+		// A pending request becomes revoked too, when its target is deleted,
+		// so the sentence names both.
+		if want := "the access request is expired; only a pending or approved access request becomes revoked"; err.Error() != "access: request is not in a state for this action: "+want {
+			t.Fatalf("the refusal names the states:\n%s", err.Error())
+		}
+		if again, _ := r.Get(ctx, lapsed.ID); again.Status != StatusApproved || again.DecisionNote != "" {
+			t.Fatalf("a refused revoke writes nothing: %+v", again)
+		}
+		if n, err := r.ExpireDue(ctx, now); err != nil || n != 1 {
+			t.Fatalf("the sweep then writes it: %d %v", n, err)
 		}
 	})
 }

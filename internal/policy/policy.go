@@ -117,6 +117,9 @@ type Policy struct {
 	// when an administrator went through who the policy covers, and who.
 	ReviewedAt *time.Time `json:"reviewed_at,omitempty"`
 	ReviewedBy string     `json:"reviewed_by,omitempty"`
+	// ReviewState is where the review stands now (ADR 0047): never_reviewed,
+	// current or due. Derived when read.
+	ReviewState ReviewState `json:"review_state"`
 }
 
 // Errors.

@@ -30,12 +30,15 @@ internal/
   ipspace, protocol,    address classes (private, metadata, reserved); the kinds and protocols;
   store, logring,       the database layer and migrations runner; the in-memory log ring; the
   version               version string
+  states, states/catalog  a record's lifecycle declared once (ADR 0047); the catalog lists them for
+                        the guard tests and hack/gen-lifecycles (docs/lifecycles.md)
 migrations/sqlite,      the numbered pairs, identical names
 migrations/postgres
 web/                    the console (React, Vite, vitest, Playwright in web/e2e)
 site/                   the public site: guide, releases, latest.json (the update check reads it)
 docs/                   adr/ (every decision), releases/ (every version), api/openapi.yaml,
-                        architecture, threat model, roadmap, deploy, working/ (this)
+                        architecture, threat model, roadmap, deploy, lifecycles.md (generated),
+                        working/ (this)
 deploy/                 Dockerfiles, compose stacks, the Helm chart, the AWS Terraform, packaging,
                         the browser image
 hack/                   smoke.sh, e2e.sh, fakessh, wsclient, keycloak/ and authentik/ runs,

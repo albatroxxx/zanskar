@@ -37,7 +37,7 @@ function grant(over: Partial<PolicyGrant>): PolicyGrant {
 
 function policy(over: Partial<Policy> = {}): Policy {
   return {
-    id: 'p1', name: 'ops-web', description: 'Shell on the fleet', enabled: true,
+    id: 'p1', name: 'ops-web', description: 'Shell on the fleet', enabled: true, review_state: 'never_reviewed',
     subjects: [{ kind: 'group', id: 'g1' }],
     grants: [grant({ targets: [{ id: 't1', protocols: ['ssh'] }] })],
     created_at: '2026-10-01T00:00:00Z', updated_at: '2026-10-01T00:00:00Z', ...over,

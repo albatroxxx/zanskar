@@ -3,7 +3,6 @@ import userEvent from '@testing-library/user-event'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { api } from '../../api/client'
-import { reviewDue } from './policyModel'
 import { PolicyReview } from './PolicyReview'
 
 afterEach(() => {
@@ -69,14 +68,5 @@ describe('Access review', () => {
     mount()
     await userEvent.setup().click(await screen.findByRole('button', { name: 'Keep everyone and complete review' }))
     expect(post).toHaveBeenCalledWith('/access-policies/p1/review', { remove: [], note: '' })
-  })
-})
-
-describe('reviewDue', () => {
-  it('is due when never reviewed or older than a quarter', () => {
-    const now = Date.now()
-    expect(reviewDue({}, now)).toBe(true)
-    expect(reviewDue({ reviewed_at: daysAgo(10) }, now)).toBe(false)
-    expect(reviewDue({ reviewed_at: daysAgo(91) }, now)).toBe(true)
   })
 })

@@ -11,15 +11,15 @@ afterEach(() => {
   vi.restoreAllMocks()
 })
 
-const session = (id: string): Session => ({ id, user_id: 'u1', target_name: 'web-1', protocol: 'ssh', client_ip: '10.0.0.1', started_at: '2026-10-06T10:00:00Z' })
+const session = (id: string): Session => ({ id, user_id: 'u1', target_name: 'web-1', protocol: 'ssh', client_ip: '10.0.0.1', started_at: '2026-10-06T10:00:00Z', state: 'live' })
 
 // 2026-11-03 live audit, Q7: a failed session said "error" and nothing more.
 describe('My sessions, a failed session', () => {
   it('says why under the reason', async () => {
     vi.spyOn(api, 'get').mockResolvedValue({
       items: [
-        { ...session('a'), ended_at: '2026-10-06T10:00:01Z', end_reason: 'error', end_detail: 'authentication to the target failed' },
-        { ...session('b'), ended_at: '2026-10-06T10:05:00Z', end_reason: 'user_exit' },
+        { ...session('a'), state: 'ended', ended_at: '2026-10-06T10:00:01Z', end_reason: 'error', end_detail: 'authentication to the target failed' },
+        { ...session('b'), state: 'ended', ended_at: '2026-10-06T10:05:00Z', end_reason: 'user_exit' },
       ],
     } as never)
     render(<MemoryRouter><MySessions /></MemoryRouter>)

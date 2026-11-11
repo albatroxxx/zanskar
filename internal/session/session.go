@@ -60,7 +60,10 @@ type Session struct {
 	UserAgent     string     `json:"user_agent,omitempty"`
 	StartedAt     time.Time  `json:"started_at"`
 	EndedAt       *time.Time `json:"ended_at,omitempty"`
-	EndReason     string     `json:"end_reason,omitempty"`
+	// State is what holds now: live or ended (ADR 0047). EndReason says why
+	// an ended session ended.
+	State     State  `json:"state"`
+	EndReason string `json:"end_reason,omitempty"`
 	// EndDetail is what was said about the end: the gateway's sentence to
 	// the person, or the target's side's words (Q7). Empty for a plain exit.
 	EndDetail             string `json:"end_detail,omitempty"`
@@ -73,6 +76,9 @@ type Session struct {
 	// size cap can still take it sooner. Reviewers only; set by WithRetention.
 	RecordingPurged    bool       `json:"recording_purged,omitempty"`
 	RecordingKeptUntil *time.Time `json:"recording_kept_until,omitempty"`
+	// RecordingState is the recording's own state (RecordingStateOf), for
+	// reviewers; empty when the session has none they may see.
+	RecordingState RecordingState `json:"recording_state,omitempty"`
 
 	recOwnUntil, recFinished *time.Time
 }
@@ -86,7 +92,7 @@ func (s *Session) WithRetention(p RetentionPolicy) {
 // HideRecording clears everything about the session's recording, for a reader
 // who may see their own sessions but not their recordings (ADR 0006).
 func (s *Session) HideRecording() {
-	s.RecordingID, s.RecordingPurged, s.RecordingKeptUntil = "", false, nil
+	s.RecordingID, s.RecordingPurged, s.RecordingKeptUntil, s.RecordingState = "", false, nil, ""
 }
 
 // keptUntil is when retention deletes a recording by age, or nil when it is
@@ -119,6 +125,11 @@ type Recording struct {
 	// PurgedAt is set once retention has deleted the blob; the metadata row
 	// stays so audit events that reference this recording still resolve.
 	PurgedAt *time.Time `json:"purged_at,omitempty"`
+	// DiscardedAt is set when the gateway deleted a recording its desktop
+	// session never drew a frame into; PurgedAt is set with it.
+	DiscardedAt *time.Time `json:"discarded_at,omitempty"`
+	// State is what holds of the recording now (ADR 0047).
+	State RecordingState `json:"state,omitempty"`
 }
 
 // ErrNotFound is returned for unknown ids.
@@ -387,9 +398,13 @@ func (r *Repo) GetRecording(ctx context.Context, id string) (*Recording, error) 
 		rec                                        Recording
 		sha                                        sql.NullString
 		started, finished, retain, created, purged store.NullTime
+		discarded, sessionEnded                    store.NullTime
 	)
-	err := r.db.QueryRowContext(ctx, r.db.Rebind(`SELECT id, session_id, format, storage_uri, size_bytes, sha256, started_at, finished_at, retention_until, created_at, purged_at
-		FROM recordings WHERE id = ?`), id).Scan(&rec.ID, &rec.SessionID, &rec.Format, &rec.StorageURI, &rec.SizeBytes, &sha, &started, &finished, &retain, &created, &purged)
+	// The session's end is read with it: a recording its session ended
+	// without finishing is lost, not still being written (ADR 0047).
+	err := r.db.QueryRowContext(ctx, r.db.Rebind(`SELECT r.id, r.session_id, r.format, r.storage_uri, r.size_bytes, r.sha256, r.started_at, r.finished_at, r.retention_until, r.created_at, r.purged_at, r.discarded_at, s.ended_at
+		FROM recordings r LEFT JOIN access_sessions s ON s.id = r.session_id WHERE r.id = ?`), id).
+		Scan(&rec.ID, &rec.SessionID, &rec.Format, &rec.StorageURI, &rec.SizeBytes, &sha, &started, &finished, &retain, &created, &purged, &discarded, &sessionEnded)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound
@@ -398,6 +413,8 @@ func (r *Repo) GetRecording(ctx context.Context, id string) (*Recording, error) 
 	}
 	rec.SHA256 = sha.String
 	rec.StartedAt, rec.FinishedAt, rec.RetentionUntil, rec.CreatedAt, rec.PurgedAt = started.Time, finished.Ptr(), retain.Ptr(), created.Time, purged.Ptr()
+	rec.DiscardedAt = discarded.Ptr()
+	rec.State = RecordingStateOf(rec.FinishedAt, rec.PurgedAt, rec.DiscardedAt, sessionEnded.Valid)
 	return &rec, nil
 }
 
@@ -447,6 +464,11 @@ func scanSession(sc store.Scanner) (*Session, error) {
 	s.StartedAt, s.EndedAt = started.Time, ended.Ptr()
 	s.RecordingPurged, s.recOwnUntil, s.recFinished = purged.Valid, recUntil.Ptr(), recFinished.Ptr()
 	s.EndDetail = detail.String
+	s.State = StateOf(s.EndedAt)
+	if recID.Valid {
+		// Discarded recordings are left out by the join, so none reads so here.
+		s.RecordingState = RecordingStateOf(recFinished.Ptr(), purged.Ptr(), nil, s.EndedAt != nil)
+	}
 	return &s, nil
 }
 

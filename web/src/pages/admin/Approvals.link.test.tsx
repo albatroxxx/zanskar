@@ -18,7 +18,7 @@ afterEach(() => {
 
 const pending: AccessRequest = {
   id: 'r1', user_id: 'u1', username: 'bob', target_id: 't1', target_name: 'web-1', protocol: 'ssh', reason: 'deploy',
-  requested_minutes: 60, status: 'pending', created_at: '2026-11-03T10:00:00Z', updated_at: '2026-11-03T10:00:00Z',
+  requested_minutes: 60, status: 'pending', state: 'pending', created_at: '2026-11-03T10:00:00Z', updated_at: '2026-11-03T10:00:00Z',
 }
 const other: AccessRequest = { ...pending, id: 'r3', username: 'dan', target_name: 'db-1' }
 const decided: AccessRequest = {

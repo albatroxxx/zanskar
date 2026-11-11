@@ -114,12 +114,6 @@ export function rowsToMatch(rows: TagRow[]): { match: Record<string, string[]>; 
 }
 
 /** An access review stands for a quarter (policy.ReviewDue, ADR 0040). */
-export const reviewDueMs = 90 * 24 * 60 * 60_000
-
-/** reviewDue: the policy was never reviewed, or not within a quarter of now. */
-export function reviewDue(p: Pick<Policy, 'reviewed_at'>, now: number): boolean {
-  return !p.reviewed_at || now - Date.parse(p.reviewed_at) > reviewDueMs
-}
 
 /** tagsMatch is the gateway's rule: every key present with one of its values. */
 export function tagsMatch(match: Record<string, string[]>, tags: Record<string, string> | undefined): boolean {

@@ -455,6 +455,7 @@ func scan(s store.Scanner) (*Policy, error) {
 	p.CreatedBy = createdBy.String
 	p.CreatedAt, p.UpdatedAt = created.Time, updated.Time
 	p.ReviewedAt, p.ReviewedBy = reviewed.Ptr(), reviewedBy.String
+	p.ReviewState = ReviewStateOf(p.ReviewedAt, time.Now())
 	return &p, nil
 }
 

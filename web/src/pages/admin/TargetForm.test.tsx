@@ -13,7 +13,7 @@ afterEach(() => {
 const host: Target = {
   id: 't1', name: 'web-1', address: '10.0.0.5', os_family: 'linux', ports: { ssh: 22 }, capabilities: ['ssh'],
   host_key_fingerprint: 'SHA256:abc', host_key_status: 'trusted', tls_fingerprint: null, winrm_tls_fingerprint: null,
-  tags: {}, status: 'active', notes: '', credentials: {}, created_at: '', updated_at: '', last_probed_at: null,
+  tags: {}, status: 'active', state: 'active', tls_status: 'none', winrm_tls_status: 'none', notes: '', credentials: {}, created_at: '', updated_at: '', last_probed_at: null,
 }
 
 // Changing a host's address clears its trusted key and pinned certificates

@@ -122,6 +122,11 @@ export function Login() {
     setErr('')
     try {
       await auth.verifyTotp(code.trim())
+      // What is owed next is the gateway's to say (/auth/me): a password
+      // change an administrator asked for, or nothing. Leaving the local
+      // step at verify kept the code form on screen after a right code
+      // (2026-11-09; ADR 0047).
+      setStep('password')
     } catch (e) {
       afterCodeError(e)
     } finally {
