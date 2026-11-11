@@ -58,6 +58,7 @@ type Syncer struct {
 	// rather than on every poll (B3). An observation that matches the pin
 	// again, or the instance's retirement, forgets it. A restart forgets
 	// everything, so each mismatch still standing is recorded once more.
+	// It also holds which instances' unread consoles were logged (unread).
 	reported map[string]bool
 }
 
@@ -278,6 +279,31 @@ func (s *Syncer) probe(ctx context.Context, provider cloud.Provider, g *Group, i
 	default:
 		in.HostKeyFingerprint, in.HostKeySource = observed, "tofu"
 		s.consoleDue(in.InstanceID) // asked just now: the next check is a recheck away
+		s.unread(ctx, g, in, cerr)
+	}
+}
+
+// unread logs, once per instance, why its console did not settle a first-use
+// pin. Live, 2026-11-11: both of the owner's instances stayed first-use with
+// nothing in the log to say why. A read the cloud refuses (a role without
+// ec2:GetConsoleOutput, a timeout) is logged when first met; a console with
+// no fingerprints the gateway can read, only when the reads stop. An empty
+// console at first sight is how an instance boots and is not logged.
+func (s *Syncer) unread(ctx context.Context, g *Group, in *Instance, err error) {
+	if s.Log == nil || ctx.Err() != nil {
+		return
+	}
+	if errors.Is(err, cloud.ErrNoConsoleKeys) {
+		s.mu.Lock()
+		last := s.consoleTries[in.InstanceID] >= maxConsoleReads
+		s.mu.Unlock()
+		if last && s.firstSighting(in.InstanceID, "unread", "no keys") {
+			s.Log.Info("console listed no host key the gateway can read; the key stays pinned on first use", "asg", g.Name, "instance", in.InstanceID, "reads", maxConsoleReads)
+		}
+		return
+	}
+	if s.firstSighting(in.InstanceID, "unread", "error") {
+		s.Log.Warn("console host keys unreadable; the key stays pinned on first use", "asg", g.Name, "instance", in.InstanceID, "err", err)
 	}
 }
 
@@ -317,13 +343,17 @@ const maxConsoleReads = 6
 // confirms it; one that lists only other keys disowns it, which is the same
 // red flag as at first sight: the instance is held unhealthy (disowned) and
 // the mismatch audited once, the pin kept. No keys yet, or no answer, changes
-// nothing until the next recheck.
+// nothing until the next recheck; unread logs why, once.
 func (s *Syncer) recheckConsole(ctx context.Context, provider cloud.Provider, g *Group, in *Instance, timeout time.Duration) {
 	// Bounded like the probe, so a slow API does not stretch the sync.
 	cctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	keys, err := provider.ConsoleHostKeys(cctx, in.InstanceID)
-	if err != nil || len(keys) == 0 {
+	if err == nil && len(keys) == 0 {
+		err = cloud.ErrNoConsoleKeys
+	}
+	if err != nil {
+		s.unread(ctx, g, in, err)
 		return
 	}
 	s.mu.Lock()
