@@ -173,16 +173,28 @@ describe('TargetDetail, a host', () => {
     expect(slots()).toEqual(['SSH', 'RDP'])
   })
 
-  it('offers every slot when nothing is known of it yet', () => {
-    show({ ...web, capabilities: [] })
+  // Review, 2026-11-11: by the probe alone, a port closed at the moment of
+  // probing hid its slot. The operating system's usual protocols stay.
+  it('offers its operating system\'s usual protocols whatever the probe reached', () => {
+    show({ ...web, os_family: 'windows', ports: {}, capabilities: ['winrm'] })
+    expect(slots()).toEqual(['RDP', 'WinRM'])
+    cleanup()
+    show({ ...web, os_family: 'other', ports: {}, capabilities: [] })
     expect(slots()).toEqual(['SSH', 'RDP', 'VNC', 'WinRM'])
+  })
+
+  it('offers a protocol an administrator gave a port', () => {
+    show({ ...web, ports: { ssh: 22, vnc: 5901 } })
+    expect(slots()).toEqual(['SSH', 'VNC'])
   })
 })
 
 // Live, 2026-11-11 (UI pass, finding 15): a database had no way to be checked
 // before people tried it.
 describe('TargetDetail, a database', () => {
-  const orders: Target = { ...web, id: 'd1', name: 'orders', address: 'orders.internal', os_family: 'other', engine: 'postgres', ports: { database: 5432 }, capabilities: [], credentials: {} }
+  // No port of its own: the engine's default is what the gateway reaches,
+  // and what the result names (review, 2026-11-11: it named no port).
+  const orders: Target = { ...web, id: 'd1', name: 'orders', address: 'orders.internal', os_family: 'other', engine: 'postgres', ports: {}, capabilities: [], credentials: {} }
 
   it('tests the connection to its port, and says what it reached', async () => {
     const post = vi.spyOn(api, 'post').mockResolvedValue({

@@ -46,7 +46,7 @@ export function targetBody(t: Target, patch: Partial<Target> = {}) {
   }
 }
 
-const enginePorts: Record<string, string> = { postgres: '5432', mysql: '3306', mariadb: '3306' }
+export const enginePorts: Record<string, string> = { postgres: '5432', mysql: '3306', mariadb: '3306' }
 /** The ports a host field starts with; a value left at its default is stored as unset. */
 const defaultPorts: Record<PortProtocol, string> = { ssh: '22', rdp: '3389', vnc: '5900', winrm: '5986' }
 /**
@@ -54,7 +54,7 @@ const defaultPorts: Record<PortProtocol, string> = { ssh: '22', rdp: '3389', vnc
  * Linux host offered RDP, VNC and WinRM too): its usual protocols, and the
  * rarer ones it can serve behind More ports. Other shows all four.
  */
-const hostPorts: Record<OSFamily, { main: PortProtocol[]; more: PortProtocol[] }> = {
+export const hostPorts: Record<OSFamily, { main: PortProtocol[]; more: PortProtocol[] }> = {
   linux: { main: ['ssh'], more: ['vnc'] },
   windows: { main: ['rdp', 'winrm'], more: ['ssh'] },
   other: { main: ['ssh', 'rdp', 'vnc', 'winrm'], more: [] },

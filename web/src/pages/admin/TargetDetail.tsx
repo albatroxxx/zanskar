@@ -7,7 +7,7 @@ import { Alert, Badge, Confirm, Modal, Tags } from '../../components/ui'
 import { DeleteAsset } from './DeleteAsset'
 import { hostKeyBadge, protocols, usesHostKey } from './lib'
 import { CredentialBindings, type BindingChange } from './Bindings'
-import { kindOf, TargetForm, targetBody } from './TargetForm'
+import { enginePorts, hostPorts, kindOf, TargetForm, targetBody } from './TargetForm'
 
 /**
  * TargetDetail is the drawer for one host, database or application. A host
@@ -112,15 +112,16 @@ export function TargetDetail({ target, credentials, onClose, onChanged, onDelete
   const fp = probe?.host_key_fingerprint ?? t.host_key_fingerprint
   const canTrust = host && (t.host_key_status === 'pending' || t.host_key_status === 'changed') && !!fp
   const port = t.ports.database
-  // A host offers a credential slot for each protocol its probe found, and
-  // for any protocol already holding a credential so it can be taken off;
-  // one never probed, or with nothing found, offers all four. Live,
-  // 2026-11-11: an SSH-only Linux host offered RDP, VNC and WinRM slots.
+  // A host offers a credential slot for its operating system's usual
+  // protocols (as its form shows their ports), for any its probe found or
+  // an administrator gave a port, and for any already holding a credential
+  // so it can be taken off. Live, 2026-11-11: an SSH-only Linux host offered
+  // RDP, VNC and WinRM slots; and by the probe alone, a port closed at the
+  // moment of probing would hide its slot (review, same day).
+  const usual = (hostPorts[t.os_family] ?? hostPorts.other).main
   const slotProtocols: Protocol[] = database
     ? ['database']
-    : t.capabilities.length
-      ? protocols.filter((p) => t.capabilities.includes(p) || !!t.credentials?.[p])
-      : protocols
+    : protocols.filter((p) => usual.includes(p) || t.capabilities.includes(p) || !!t.ports[p] || !!t.credentials?.[p])
   // What a probe reached: a host's protocols, or a database's own port.
   const probed: Protocol[] = database ? ['database'] : protocols
 
@@ -284,7 +285,7 @@ export function TargetDetail({ target, credentials, onClose, onChanged, onDelete
               if (!r) return null
               return (
                 <span key={p} style={{ display: 'contents' }}>
-                  <dt>{p === 'database' ? `${engineName(t.engine)} port ${port ?? ''}`.trim() : protocolName(p)}</dt>
+                  <dt>{p === 'database' ? `${engineName(t.engine)} port ${port ?? enginePorts[t.engine ?? ''] ?? ''}`.trim() : protocolName(p)}</dt>
                   <dd>
                     {r.reachable ? <Badge tone="ok">reachable · {r.latency_ms} ms</Badge> : <Badge>unreachable</Badge>} {r.error && <span className="muted">{r.error}</span>}
                   </dd>
