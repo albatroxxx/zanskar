@@ -183,6 +183,36 @@ func TestRelayEndToEnd(t *testing.T) {
 	}
 }
 
+// TestRelayOutlivesItsDialTimeout: the dial timeout bounds the upstream
+// sign-in, not the connection. Live, 2026-11-11: every MySQL session lost its
+// connection 15 seconds after it opened, busy or idle, because the deadline
+// the sign-in left on the upstream socket was never cleared; the client
+// reconnected silently, dropping any open transaction.
+func TestRelayOutlivesItsDialTimeout(t *testing.T) {
+	for _, withTLS := range []bool{false, true} {
+		name := "plain"
+		if withTLS {
+			name = "tls"
+		}
+		t.Run(name, func(t *testing.T) {
+			upstream := startFake(t, "reporting", "r3port", withTLS, "")
+			relay := startRelay(t, Config{Upstream: Upstream{Addr: upstream, User: "reporting", Password: "r3port"}, DialTimeout: time.Second})
+			c, err := cli(relay, "reporting")
+			if err != nil {
+				t.Fatalf("connect through relay: %v", err)
+			}
+			defer func() { _ = c.Close() }()
+			if _, err := c.Execute("SELECT 1"); err != nil {
+				t.Fatalf("first select: %v", err)
+			}
+			time.Sleep(2 * time.Second)
+			if _, err := c.Execute("SELECT 1"); err != nil {
+				t.Fatalf("a select after the dial timeout has passed: %v", err)
+			}
+		})
+	}
+}
+
 // TestRelayRefusals: another username, a wrong upstream credential, an
 // unreachable upstream, and a client that insists on framing flags the
 // server did not offer are each refused in the client's own sign-in with

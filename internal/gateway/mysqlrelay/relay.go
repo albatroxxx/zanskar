@@ -206,6 +206,18 @@ func (r *Relay) handle(ctx context.Context, conn net.Conn) {
 	// Both handshakes are complete and, thanks to the paced reader, no byte
 	// past the last handshake packet sits in a buffer: relay the rest raw.
 	upRaw := up.Conn.Conn
+	// The library set a deadline on the upstream socket for each sign-in
+	// read and write, DialTimeout ahead; left in place it ended every
+	// session that long after it opened, busy or idle (live, 2026-11-11).
+	// The session's own limits are the bridge's, not the socket's.
+	if err := upRaw.SetDeadline(time.Time{}); err != nil {
+		r.Log.Warn("clear upstream deadline", "err", err)
+		return
+	}
+	if err := conn.SetDeadline(time.Time{}); err != nil {
+		r.Log.Warn("clear client deadline", "err", err)
+		return
+	}
 	errc := make(chan error, 2)
 	go func() { errc <- relayCommands(front, upRaw) }()
 	go func() {
