@@ -1,13 +1,17 @@
-import { Fragment, useEffect, useState, type FormEvent } from 'react'
+import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { Navigate, useLocation } from 'react-router-dom'
 import QRCode from 'qrcode'
 import { useAuth } from '../auth/AuthContext'
 import { api, ApiError, errorMessage, signInEnded } from '../api/client'
 import { Alert, Field } from '../components/ui'
-import { SignInIcon } from '../components/icons'
+import { RetryIcon, SignInIcon } from '../components/icons'
 import { safeReturnPath, signInError } from './loginErrors'
 
 type Step = 'password' | 'change' | 'verify' | 'enroll' | 'recovery'
+
+type Provider = { id: string; name: string; type: string; not_answering?: boolean }
+
+const listProviders = () => api.get<{ items: Provider[] }>('/auth/providers').then((r) => r.items ?? [])
 
 export function Login() {
   const auth = useAuth()
@@ -26,7 +30,18 @@ export function Login() {
   const [err, setErr] = useState(() => signInError(new URLSearchParams(window.location.search).get('error')))
   const [busy, setBusy] = useState(false)
   const [enroll, setEnroll] = useState<{ secret: string; otpauth_url: string; qr: string } | null>(null)
-  const [providers, setProviders] = useState<{ id: string; name: string; type: string; not_answering?: boolean }[]>([])
+  const [providers, setProviders] = useState<Provider[]>([])
+  // A provider the gateway cannot reach has its button greyed out and the
+  // reason in a tip, shown on hover, focus or a tap and closed with Esc; a
+  // check beside it reads the list again (2026-11-11, owner). The tip open
+  // is that provider's id.
+  const [tip, setTip] = useState<string | null>(null)
+  const [checking, setChecking] = useState(false)
+  const checkingNow = useRef(false)
+  const [said, setSaid] = useState('')
+  // The provider whose button takes focus once it answers again, so the
+  // check that disappears with it does not leave focus nowhere.
+  const focusOnUp = useRef<string | null>(null)
   // The system-use notification an admin configured, shown before any
   // credential is entered. Read without a session; empty means none.
   const [banner, setBanner] = useState('')
@@ -40,13 +55,22 @@ export function Login() {
   const effectiveStep: Step = step === 'password' && auth.status === 'partial' ? (auth.pending === 'enroll' ? 'enroll' : auth.pending === 'password' ? 'change' : 'verify') : step
 
   useEffect(() => {
-    api.get<{ items: { id: string; name: string; type: string; not_answering?: boolean }[] }>('/auth/providers')
-      .then((r) => setProviders(r.items ?? []))
+    listProviders()
+      .then(setProviders)
       .catch(() => {})
     api.get<{ text: string }>('/system/banner')
       .then((b) => setBanner(b.text ?? ''))
       .catch(() => {})
   }, [])
+
+  useEffect(() => {
+    if (!tip) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setTip(null)
+    }
+    document.addEventListener('keydown', onKey)
+    return () => document.removeEventListener('keydown', onKey)
+  }, [tip])
 
   useEffect(() => {
     if (effectiveStep === 'enroll' && !enroll) {
@@ -58,6 +82,36 @@ export function Login() {
   }, [effectiveStep, enroll, auth])
 
   if (auth.status === 'full' && effectiveStep !== 'recovery') return <Navigate to={from} replace />
+
+  // The list says what the gateway last found asking each provider, every
+  // 20 seconds for one that is failing (health.go); reading it never makes
+  // the gateway call out.
+  const checkAgain = async (p: Provider) => {
+    if (checkingNow.current) return
+    checkingNow.current = true
+    setChecking(true)
+    setSaid('')
+    try {
+      const items = await listProviders()
+      const now = items.find((x) => x.id === p.id)
+      if (now && !now.not_answering) {
+        focusOnUp.current = p.id
+        setTip(null)
+        setSaid(`${p.name} is answering again.`)
+        // The note a failed sign-in brought back is no longer so.
+        if (!items.some((x) => x.not_answering)) setErr((e) => (e === signInError('provider_unavailable') ? '' : e))
+      } else if (now) {
+        setTip(p.id)
+        setSaid(`${p.name} is still not answering.`)
+      }
+      setProviders(items)
+    } catch {
+      setSaid('Could not check. Try again.')
+    } finally {
+      checkingNow.current = false
+      setChecking(false)
+    }
+  }
 
   const submitPassword = async (e: FormEvent) => {
     e.preventDefault()
@@ -166,7 +220,7 @@ export function Login() {
           {effectiveStep === 'password' && (
             <form onSubmit={submitPassword}>
               <Field label="Username">
-                <input id="username" autoFocus autoComplete="username" value={username} onChange={(e) => setUsername(e.target.value)} required />
+                <input id="username" autoFocus autoComplete="username" autoCapitalize="none" spellCheck={false} value={username} onChange={(e) => setUsername(e.target.value)} required />
               </Field>
               <Field label="Password">
                 <input id="password" type="password" autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} required />
@@ -177,21 +231,44 @@ export function Login() {
               {sso.length > 0 && (
                 <div className="sso">
                   <div className="sso-divider" role="separator" aria-label="or"><span aria-hidden="true">or</span></div>
-                  {sso.map((p) => (
-                    <Fragment key={p.id}>
-                      <a className="btn sso-btn" href={`/api/v1/auth/oidc/${p.id}/start?next=${encodeURIComponent(from)}`} aria-describedby={p.not_answering ? `sso-down-${p.id}` : undefined}>
+                  {sso.map((p) =>
+                    p.not_answering ? (
+                      // The gateway could not reach the provider: said before
+                      // anyone presses and waits (2026-11-03, idea 1). The
+                      // button stays focusable so the reason can be reached.
+                      <div className="sso-row" key={p.id}>
+                        <span className="sso-wrap" onPointerEnter={(e) => e.pointerType === 'mouse' && setTip(p.id)} onPointerLeave={(e) => e.pointerType === 'mouse' && setTip(null)}>
+                          <button type="button" id={`sso-${p.id}`} className="btn sso-btn is-down" aria-disabled="true" aria-describedby={`sso-down-${p.id}`} onFocus={() => setTip(p.id)} onBlur={() => setTip(null)} onClick={() => setTip(p.id)}>
+                            <SignInIcon />
+                            <span>Continue with {p.name}</span>
+                          </button>
+                          <span role="tooltip" id={`sso-down-${p.id}`} className={'sso-tip' + (tip === p.id ? ' open' : '')}>
+                            {p.name} is not answering right now. A password account still works.
+                          </span>
+                        </span>
+                        <button type="button" className="btn sso-retry" aria-label={`Check ${p.name} again`} title="Check again" aria-busy={checking} onBlur={() => setTip(null)} onClick={() => void checkAgain(p)}>
+                          <RetryIcon />
+                        </button>
+                      </div>
+                    ) : (
+                      <a
+                        key={p.id}
+                        id={`sso-${p.id}`}
+                        className="btn sso-btn"
+                        href={`/api/v1/auth/oidc/${p.id}/start?next=${encodeURIComponent(from)}`}
+                        ref={(el) => {
+                          if (el && focusOnUp.current === p.id) {
+                            focusOnUp.current = null
+                            el.focus()
+                          }
+                        }}
+                      >
                         <SignInIcon />
                         <span>Continue with {p.name}</span>
                       </a>
-                      {/* The gateway could not reach the provider: said
-                          before anyone presses and waits (2026-11-03, idea 1). */}
-                      {p.not_answering && (
-                        <p className="sso-down" id={`sso-down-${p.id}`}>
-                          {p.name} is not answering right now. A password account still works.
-                        </p>
-                      )}
-                    </Fragment>
-                  ))}
+                    ),
+                  )}
+                  <p className="sr-only" role="status">{said}</p>
                 </div>
               )}
             </form>

@@ -442,7 +442,20 @@ tr[aria-current="true"] td { background: var(--accent-soft); }
 .sso-btn svg { color: var(--accent); flex: none; }
 .sso-btn:hover { background: var(--bg-sunken); border-color: var(--fg-faint); }
 .sso-btn:active { transform: translateY(1px); }
-.sso-down { margin: -2px 0 2px; font-size: 0.82rem; color: var(--danger); text-align: center; }
+/* A provider the gateway cannot reach: its button greyed out, the reason in
+   a tip over it, and a check again beside it (2026-11-11). */
+.sso-row { display: flex; gap: 8px; }
+.sso-wrap { position: relative; flex: 1; min-width: 0; display: flex; }
+.sso-btn.is-down, .sso-btn.is-down:hover { background: var(--bg-sunken); border-color: var(--line); color: var(--fg-faint); cursor: not-allowed; }
+.sso-btn.is-down svg { color: var(--fg-faint); }
+.sso-btn.is-down:active { transform: none; }
+.sso-tip { display: none; position: absolute; bottom: calc(100% + 6px); left: 50%; transform: translateX(-50%); z-index: 30; width: max-content; max-width: 100%; padding: 5px 9px; background: var(--bg-raised); border: 1px solid var(--line-strong); border-radius: var(--radius); font-size: 0.78rem; color: var(--fg); text-align: center; box-shadow: var(--shadow); }
+.sso-tip.open { display: block; }
+.sso-retry { flex: none; padding: 10px; color: var(--fg-muted); }
+.sso-retry svg { display: block; }
+.sso-retry[aria-busy="true"] { cursor: progress; }
+.sso-retry[aria-busy="true"] svg { animation: sso-turn 0.8s linear infinite; }
+@keyframes sso-turn { to { transform: rotate(360deg); } }
 /* Filters a list was opened with, each removable (FilterChips). */
 .filter-chips { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 12px; }
 .chip { display: inline-flex; align-items: center; gap: 8px; padding: 3px 10px; border-radius: 999px; border: 1px solid transparent; background: var(--accent-soft); color: var(--accent); font: inherit; font-size: 0.8rem; font-weight: 500; cursor: pointer; transition: border-color 0.12s ease; }
@@ -477,7 +490,7 @@ tr[aria-current="true"] td { background: var(--accent-soft); }
 .term-bar .stat.rec { display: inline-flex; align-items: center; gap: 6px; color: var(--term-fg); }
 .term-bar .rec-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--ok); box-shadow: 0 0 0 0 color-mix(in srgb, var(--ok) 55%, transparent); animation: rec-pulse 1.6s ease-out infinite; }
 @keyframes rec-pulse { 0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--ok) 55%, transparent); } 70% { box-shadow: 0 0 0 6px transparent; } 100% { box-shadow: 0 0 0 0 transparent; } }
-@media (prefers-reduced-motion: reduce) { .term-bar .rec-dot { animation: none; } .sso-btn { transition: none; } .sso-btn:active { transform: none; } }
+@media (prefers-reduced-motion: reduce) { .term-bar .rec-dot { animation: none; } .sso-btn { transition: none; } .sso-btn:active { transform: none; } .sso-retry[aria-busy="true"] svg { animation: none; } }
 .term-bar .grow { flex: 1; }
 /* The bar is always dark, whatever the theme, so its controls carry their own colours. */
 .term-bar .btn { background: var(--term-btn-bg); color: var(--term-fg); border-color: var(--term-btn-line); }
