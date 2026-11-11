@@ -23,6 +23,12 @@ import (
 // ProbeEvery is how often Watch asks each enabled provider.
 const ProbeEvery = 2 * time.Minute
 
+// RetryEvery is how often Watch asks again a provider whose last answer
+// failed. The sign-in page greys such a provider's button out and offers to
+// check again, which reads the list; asked only every ProbeEvery, a provider
+// back up would stay grey for up to two minutes (2026-11-11).
+const RetryEvery = 20 * time.Second
+
 // probeTimeout bounds one probe; a provider slower than this would make a
 // sign-in wait as long.
 const probeTimeout = 5 * time.Second
@@ -62,18 +68,37 @@ func (h *Handler) notAnswering(id string, now time.Time) bool {
 }
 
 // Watch probes every enabled OpenID provider at once and then every
-// interval, until ctx ends.
-func (h *Handler) Watch(ctx context.Context, interval time.Duration) {
+// interval, and a provider whose last answer failed every retry, until ctx
+// ends.
+func (h *Handler) Watch(ctx context.Context, interval, retry time.Duration) {
 	h.probeAll(ctx)
-	t := time.NewTicker(interval)
-	defer t.Stop()
+	all := time.NewTicker(interval)
+	defer all.Stop()
+	again := time.NewTicker(retry)
+	defer again.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case <-t.C:
+		case <-all.C:
 			h.probeAll(ctx)
+		case <-again.C:
+			h.probeFailing(ctx)
 		}
+	}
+}
+
+// probeFailing probes again each provider whose last answer failed.
+func (h *Handler) probeFailing(ctx context.Context) {
+	var ids []string
+	h.health.Range(func(k, v any) bool {
+		if !v.(answer).ok {
+			ids = append(ids, k.(string))
+		}
+		return true
+	})
+	for _, id := range ids {
+		h.probe(ctx, id)
 	}
 }
 
@@ -106,10 +131,11 @@ func (h *Handler) probeAll(ctx context.Context) {
 // probe asks provider id for its discovery document. Only a 200 is an
 // answer: a provider that times out, refuses, or serves an error page would
 // fail a sign-in the same way. Nothing is recorded when ctx ended (the
-// gateway stopping is not the provider failing).
+// gateway stopping is not the provider failing), nor for a provider no
+// longer an enabled OpenID one (probeAll forgets its answer).
 func (h *Handler) probe(ctx context.Context, id string) {
 	op, err := h.Providers.Open(ctx, id)
-	if err != nil || op.Config.OIDC == nil {
+	if err != nil || !op.Enabled || op.Type != idp.TypeOIDC || op.Config.OIDC == nil {
 		return
 	}
 	pctx, cancel := context.WithTimeout(ctx, probeTimeout)

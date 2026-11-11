@@ -188,7 +188,7 @@ func TestWatchProbesAtOnceAndStops(t *testing.T) {
 	f.down.Store(true)
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
-	go func() { e.h.Watch(ctx, time.Hour); close(done) }()
+	go func() { e.h.Watch(ctx, time.Hour, time.Hour); close(done) }()
 	deadline := time.Now().Add(5 * time.Second)
 	for !e.h.notAnswering(id, time.Now()) {
 		if time.Now().After(deadline) {
@@ -201,5 +201,76 @@ func TestWatchProbesAtOnceAndStops(t *testing.T) {
 	case <-done:
 	case <-time.After(5 * time.Second):
 		t.Fatal("Watch returns when its context ends")
+	}
+}
+
+// 2026-11-11: the sign-in page greys out a provider that is not answering and
+// offers to check again, which reads the list. A provider back up must leave
+// the list at the retry pace, not the two-minute one.
+func TestWatchAsksAFailingProviderAgainSooner(t *testing.T) {
+	f := newFakeIdP(t)
+	e, id := newEnv(t, f, oidcCfg())
+	f.down.Store(true)
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	t.Cleanup(func() { cancel(); <-done })
+	go func() { e.h.Watch(ctx, time.Hour, 20*time.Millisecond); close(done) }()
+	waitFor := func(want bool, what string) {
+		t.Helper()
+		deadline := time.Now().Add(5 * time.Second)
+		for e.h.notAnswering(id, time.Now()) != want {
+			if time.Now().After(deadline) {
+				t.Fatal(what)
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+	}
+	waitFor(true, "setup: the first probe finds it down")
+	f.down.Store(false)
+	waitFor(false, "a failing provider is asked again every retry, so its recovery shows well before the next full probe")
+}
+
+// lastAnswer is when provider id was last asked; zero when never.
+func lastAnswer(e *env, id string) time.Time {
+	v, ok := e.h.health.Load(id)
+	if !ok {
+		return time.Time{}
+	}
+	return v.(answer).at
+}
+
+func TestProbeFailingAsksOnlyFailingEnabledProviders(t *testing.T) {
+	f := newFakeIdP(t)
+	e, id := newEnv(t, f, oidcCfg())
+	ctx := context.Background()
+
+	e.h.probeAll(ctx)
+	before := lastAnswer(e, id)
+	e.h.probeFailing(ctx)
+	if !lastAnswer(e, id).Equal(before) {
+		t.Fatal("an answering provider waits for the full probe")
+	}
+
+	f.down.Store(true)
+	e.h.probeAll(ctx)
+	before = lastAnswer(e, id)
+	e.h.probeFailing(ctx)
+	if !lastAnswer(e, id).After(before) {
+		t.Fatal("a failing provider is asked again")
+	}
+
+	op, err := e.repo.Open(ctx, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	op.Enabled = false
+	cfg := op.Config
+	if err := e.repo.Update(ctx, &op.Provider, &cfg); err != nil {
+		t.Fatal(err)
+	}
+	before = lastAnswer(e, id)
+	e.h.probeFailing(ctx)
+	if !lastAnswer(e, id).Equal(before) {
+		t.Fatal("a provider disabled since its failed answer is not called out to again")
 	}
 }
