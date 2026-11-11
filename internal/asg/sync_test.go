@@ -168,6 +168,92 @@ func TestSyncRefusesToPinOnConsoleMismatch(t *testing.T) {
 	}
 }
 
+// TestSyncRechecksAFirstUsePinAgainstTheConsole: a new instance's console is
+// often empty when it is first seen, so its key is pinned on first use. Live,
+// 2026-11-11: both instances of the owner's group stayed so for their whole
+// life, the console asked only once. The pin is checked again, at most every
+// ConsoleRecheck, until the console confirms or disowns it.
+func TestSyncRechecksAFirstUsePinAgainstTheConsole(t *testing.T) {
+	ctx := context.Background()
+	s, repo, fake, _ := newSyncer(t)
+	s.ConsoleRecheck = time.Hour
+	port, fp := sshHost(t)
+	g := sample()
+	g.Ports = map[target.Protocol]int{target.SSH: port}
+	if err := repo.Create(ctx, g); err != nil {
+		t.Fatal(err)
+	}
+	fake.Set("web-asg",
+		cloud.Instance{ID: "i-1", PrivateIP: "127.0.0.1", LifecycleState: "InService"},
+		cloud.Instance{ID: "i-2", PrivateIP: "127.0.0.1", LifecycleState: "InService"},
+	)
+	source := func(id string) (string, bool) {
+		t.Helper()
+		all, err := repo.Instances(ctx, g.ID, false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, in := range all {
+			if in.InstanceID == id {
+				if in.HostKeyFingerprint != fp {
+					t.Fatalf("%s pin %q, want %q", id, in.HostKeyFingerprint, fp)
+				}
+				return in.HostKeySource, in.Healthy
+			}
+		}
+		t.Fatalf("%s not stored", id)
+		return "", false
+	}
+	sync := func() Summary {
+		t.Helper()
+		sum, err := s.SyncGroup(ctx, g)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return sum
+	}
+
+	sync()
+	if src, _ := source("i-1"); src != "tofu" {
+		t.Fatalf("no console keys at first sight: source %q", src)
+	}
+	// The console publishes; within the recheck interval nothing is asked.
+	fake.Console["i-1"] = []string{fp}
+	fake.Console["i-2"] = []string{"SHA256:SomethingElseEntirely0000000000000000000000"}
+	sync()
+	if src, _ := source("i-1"); src != "tofu" {
+		t.Fatalf("the console was asked again before the recheck was due: source %q", src)
+	}
+
+	s.ConsoleRecheck = time.Nanosecond
+	sum := sync()
+	if src, healthy := source("i-1"); src != "console" || !healthy {
+		t.Fatalf("a console listing the pinned key confirms it: source %q healthy %v", src, healthy)
+	}
+	if src, healthy := source("i-2"); src != "tofu" || healthy || sum.HostKeyMismatches != 1 {
+		t.Fatalf("a console listing only another key: source %q healthy %v, %+v", src, healthy, sum)
+	}
+	// Between rechecks the disowned instance stays out; it does not come
+	// back with every probe that answers.
+	s.ConsoleRecheck = time.Hour
+	sync()
+	if _, healthy := source("i-2"); healthy {
+		t.Fatal("a disowned pin came back healthy between rechecks")
+	}
+	s.ConsoleRecheck = time.Nanosecond
+	sync()
+	events, _, _ := s.Audit.List(ctx, audit.Filter{Action: audit.ASGInstanceHostKeyMismatch})
+	if len(events) != 1 {
+		t.Fatalf("the disowned pin is audited once, got %d", len(events))
+	}
+	// A console that lists the pin after all brings the instance back.
+	fake.Console["i-2"] = []string{fp}
+	sync()
+	if src, healthy := source("i-2"); src != "console" || !healthy {
+		t.Fatalf("a console that lists the pin after all: source %q healthy %v", src, healthy)
+	}
+}
+
 func TestSyncRecordsProviderError(t *testing.T) {
 	ctx := context.Background()
 	s, repo, fake, _ := newSyncer(t)

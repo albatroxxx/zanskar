@@ -36,9 +36,21 @@ type Syncer struct {
 	Log       *slog.Logger
 	// ProbeTimeout bounds each instance probe. Default 5 s.
 	ProbeTimeout time.Duration
+	// ConsoleRecheck is how often a key pinned on first use is checked
+	// against the instance's console output again. Default 5 min.
+	ConsoleRecheck time.Duration
 
 	mu      sync.Mutex
 	running map[string]bool
+	// consoleAsked is when each instance pinned on first use last had its
+	// console output read. A new instance's console is often empty when it
+	// is first seen; asking once left the key unchecked for its whole life
+	// (live, 2026-11-11). A restart forgets it, and the next sync asks.
+	consoleAsked map[string]time.Time
+	// consoleDisowned holds the instances whose console listed only other
+	// keys than the one pinned on first use: they stay unhealthy between
+	// rechecks rather than coming back with every probe.
+	consoleDisowned map[string]bool
 	// reported holds the mismatches already audited, by instance, kind and
 	// what was observed, so a mismatch is recorded when it is first seen
 	// rather than on every poll (B3). An observation that matches the pin
@@ -176,14 +188,20 @@ func (s *Syncer) SyncGroup(ctx context.Context, g *Group) (Summary, error) {
 		s.record(ctx, audit.ASGInstanceLeft, g, in, nil)
 		s.retire(in)
 		s.cleared(in.InstanceID, "")
+		s.mu.Lock()
+		delete(s.consoleAsked, in.InstanceID)
+		delete(s.consoleDisowned, in.InstanceID)
+		s.mu.Unlock()
 	}
 	return sum, s.Repo.RecordSync(ctx, g.ID, nil)
 }
 
 // probe checks reachability of the group's capability ports and pins the
 // SSH host key: verified against the serial console when the cloud publishes
-// it, trust-on-first-use otherwise. A console/observed mismatch is treated
-// as unhealthy and audited; the key is never pinned in that case. The RDP and
+// it, trust-on-first-use otherwise, and a first-use pin is checked against
+// the console again every ConsoleRecheck until the console confirms or
+// disowns it. A console/observed mismatch is treated as unhealthy and
+// audited; the key is never pinned in that case. The RDP and
 // WinRM certificates are pinned the same way, minus the console cross-check
 // the cloud does not offer for them (ADR 0024).
 func (s *Syncer) probe(ctx context.Context, provider cloud.Provider, g *Group, in, prev *Instance, timeout time.Duration, sum *Summary) {
@@ -224,6 +242,15 @@ func (s *Syncer) probe(ctx context.Context, provider cloud.Provider, g *Group, i
 			s.cleared(in.InstanceID, "hostkey")
 		}
 		in.HostKeyFingerprint, in.HostKeySource = prev.HostKeyFingerprint, prev.HostKeySource
+		if prev.HostKeySource == "tofu" && in.ProbeHealth == "healthy" {
+			if s.consoleDue(in.InstanceID) {
+				s.recheckConsole(ctx, provider, g, in)
+			}
+			if s.disowned(in.InstanceID) {
+				in.ProbeHealth = "unhealthy"
+				sum.HostKeyMismatches++
+			}
+		}
 		return
 	}
 	if res.SSHHostKey == nil || res.SSHHostKey.Fingerprint == "" {
@@ -247,7 +274,68 @@ func (s *Syncer) probe(ctx context.Context, provider cloud.Provider, g *Group, i
 		}
 	default:
 		in.HostKeyFingerprint, in.HostKeySource = observed, "tofu"
+		s.consoleDue(in.InstanceID) // asked just now: the next check is a recheck away
 	}
+}
+
+// consoleDue reports whether an instance's console output should be read
+// again, and if so records that it is being read now.
+func (s *Syncer) consoleDue(instanceID string) bool {
+	every := s.ConsoleRecheck
+	if every <= 0 {
+		every = 5 * time.Minute
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.consoleAsked == nil {
+		s.consoleAsked = map[string]time.Time{}
+	}
+	if last, ok := s.consoleAsked[instanceID]; ok && time.Since(last) < every {
+		return false
+	}
+	s.consoleAsked[instanceID] = time.Now()
+	return true
+}
+
+// recheckConsole checks a key pinned on first use against the console output
+// the instance has published since. A console that lists the pinned key
+// confirms it; one that lists only other keys disowns it, which is the same
+// red flag as at first sight: the instance is held unhealthy (disowned) and
+// the mismatch audited once, the pin kept. No keys yet, or no answer, changes
+// nothing until the next recheck.
+func (s *Syncer) recheckConsole(ctx context.Context, provider cloud.Provider, g *Group, in *Instance) {
+	keys, err := provider.ConsoleHostKeys(ctx, in.InstanceID)
+	if err != nil || len(keys) == 0 {
+		return
+	}
+	s.mu.Lock()
+	if s.consoleDisowned == nil {
+		s.consoleDisowned = map[string]bool{}
+	}
+	confirmed := slices.Contains(keys, in.HostKeyFingerprint)
+	if confirmed {
+		delete(s.consoleAsked, in.InstanceID)
+		delete(s.consoleDisowned, in.InstanceID)
+	} else {
+		s.consoleDisowned[in.InstanceID] = true
+	}
+	s.mu.Unlock()
+	if confirmed {
+		in.HostKeySource = "console"
+		s.cleared(in.InstanceID, "console")
+		return
+	}
+	if s.firstSighting(in.InstanceID, "console", in.HostKeyFingerprint) {
+		s.record(ctx, audit.ASGInstanceHostKeyMismatch, g, in, map[string]any{"console": keys, "observed": in.HostKeyFingerprint})
+	}
+}
+
+// disowned reports whether an instance's console has listed only other keys
+// than its first-use pin.
+func (s *Syncer) disowned(instanceID string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.consoleDisowned[instanceID]
 }
 
 // pinCertificates keeps the RDP and WinRM certificate a Windows instance was
