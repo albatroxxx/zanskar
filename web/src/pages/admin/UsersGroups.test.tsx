@@ -36,6 +36,27 @@ describe('UsersGroups tabs', () => {
     expect(screen.getByRole('tab', { name: 'Groups', selected: true })).toBeDefined()
     expect(tabs.querySelectorAll('[tabindex="0"]')).toHaveLength(1)
   })
+
+  // Live, 2026-11-11 (UI pass, finding 14): Add user sat under the tabs, where
+  // every other page has its action at the top right, in the page head.
+  it('has its Add in the page head, for the tab shown', async () => {
+    vi.spyOn(api, 'get').mockImplementation(async (path: string) => (path === '/auth/me' ? me : { items: [] }) as never)
+    render(
+      <MemoryRouter><AuthProvider>
+        <UsersGroups />
+      </AuthProvider></MemoryRouter>,
+    )
+    const user = userEvent.setup()
+    const head = (await screen.findByRole('heading', { name: 'Users & groups' })).closest('.page-head')!
+    expect(head.querySelector('button')?.textContent).toBe('Add user')
+    await user.click(screen.getByRole('button', { name: 'Add user' }))
+    expect(screen.getByRole('dialog', { name: 'Add user' })).toBeDefined()
+    await user.click(screen.getByRole('tab', { name: 'Groups' }))
+    expect(screen.queryByRole('dialog')).toBeNull()
+    expect(head.querySelector('button')?.textContent).toBe('Add group')
+    await user.click(screen.getByRole('button', { name: 'Add group' }))
+    expect(screen.getByRole('dialog', { name: 'Add group' })).toBeDefined()
+  })
 })
 
 // 2026-10-30, as AWS Identity Center does: a user's groups are picked as
