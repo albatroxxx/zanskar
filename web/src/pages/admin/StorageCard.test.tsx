@@ -33,6 +33,10 @@ describe('StorageCard', () => {
     const user = userEvent.setup()
     expect(await screen.findByText('local directory')).toBeDefined()
     expect(screen.getByText('4 in local')).toBeDefined()
+    // Not the dashboard's "kept": every recording not deleted, said as such
+    // (live, 2026-11-11: 29 here against 28 there).
+    expect(screen.getByText('Recordings held')).toBeDefined()
+    expect(screen.getByText('4 in local').getAttribute('title')).toMatch(/still being written and lost ones count too/)
     expect(screen.queryByRole('button', { name: 'Remove console setting' })).toBeNull()
     const test = screen.getByRole('button', { name: 'Test' }) as HTMLButtonElement
     expect(test.disabled).toBe(true)
