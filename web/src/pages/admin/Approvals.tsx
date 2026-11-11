@@ -212,7 +212,7 @@ export function Approvals() {
 
       {approving && (
         <Modal title={`Approve ${who(approving)} on ${what(approving)}`} onClose={() => setApproving(null)}>
-          <p className="muted">{protocolName(approving.protocol)} · asked for {approving.requested_minutes} minutes: “{approving.reason}”{approving.extends_request_id ? ' — an extension, from the end of the current grant or from now.' : ''}</p>
+          <p className="muted">{protocolName(approving.protocol)} · asked for {approving.requested_minutes} minutes: “{approving.reason}”{approving.extends_request_id ? ' — an extension.' : ''}</p>
           <form
             onSubmit={(e) => {
               e.preventDefault()
@@ -222,11 +222,11 @@ export function Approvals() {
             <Field label="Grant (minutes)" hint="Up to the policy maximum">
               <input id="ap-minutes" type="number" min={1} value={grant.minutes} autoFocus onChange={(e) => setGrant({ ...grant, minutes: Number(e.target.value) })} required />
             </Field>
-            <Field label="Note (optional, shown to the requester and recorded)">
+            <Field label="Note (optional, shown to the requester)">
               <input id="ap-note" value={grant.note} onChange={(e) => setGrant({ ...grant, note: e.target.value })} />
             </Field>
             {needCode && (
-              <Field label="Authenticator code" hint="Approving asks for a recent code">
+              <Field label="Authenticator code">
                 <input id="ap-code" inputMode="numeric" autoComplete="one-time-code" value={code} onChange={(e) => setCode(e.target.value)} autoFocus />
               </Field>
             )}

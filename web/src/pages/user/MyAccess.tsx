@@ -73,7 +73,7 @@ export function MyAccess() {
         extends_request_id: extending.id,
       })
       badgesChanged()
-      setNotice(`Asked to extend ${protocolName(extending.protocol)} access to ${extending.target_name || extending.asg_name || 'the target'} by ${ext.minutes} minutes. An administrator must approve it; the current grant continues until it expires.`)
+      setNotice(`Asked to extend ${protocolName(extending.protocol)} access to ${extending.target_name || extending.asg_name || 'the target'} by ${ext.minutes} minutes.`)
       setExtending(null)
       void load()
     } catch (e) {
@@ -96,7 +96,7 @@ export function MyAccess() {
         {shown === null ? (
           <Loading />
         ) : shown.length === 0 ? (
-          <Empty>{show ? 'None right now.' : "You haven't requested access to any approval-gated machines."}</Empty>
+          <Empty>{show ? 'None right now.' : 'No requests yet.'}</Empty>
         ) : (
           <table>
             <thead>
@@ -131,7 +131,7 @@ export function MyAccess() {
 
       {extending && (
         <Modal title={`Extend access to ${name(extending)}`} onClose={() => setExtending(null)}>
-          <p className="muted">Your {protocolName(extending.protocol)} grant runs until {extending.expires_at ? fmtTime(extending.expires_at) : '—'}; an extension starts when it ends, or at approval if that comes later.</p>
+          <p className="muted">Your {protocolName(extending.protocol)} grant runs until {extending.expires_at ? fmtTime(extending.expires_at) : '—'}.</p>
           <form onSubmit={(e) => void submitExtend(e)}>
             <Field label="Extend by (minutes)" hint="Capped by the policy">
               <input id="ext-minutes" type="number" min={1} value={ext.minutes} autoFocus onChange={(e) => setExt({ ...ext, minutes: Number(e.target.value) })} required />

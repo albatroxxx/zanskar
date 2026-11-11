@@ -79,7 +79,7 @@ export function APITokensCard() {
   return (
     <div className="card" id="settings-api-tokens">
       <h2>API tokens</h2>
-      <p className="muted">A token acts as you on the configuration API, without a second factor.</p>
+      <p className="muted">Acts as you, without a second factor.</p>
       {made && (
         <Alert tone="ok" onDismiss={() => setMade(null)}>
           <div>Token “{made.name}” made. Copy it now; it is not shown again.</div>
@@ -134,7 +134,7 @@ export function APITokensCard() {
         <button type="submit" className="btn primary sm" disabled={busy || !name.trim() || (needCode && !code.trim())}>{busy ? 'Making…' : 'Make token'}</button>
       </form>
       {needCode && (
-        <Field label="Authenticator code" hint="Needed to make a token">
+        <Field label="Authenticator code">
           <input id="token-code" inputMode="numeric" autoComplete="one-time-code" value={code} onChange={(e) => setCode(e.target.value)} autoFocus />
         </Field>
       )}

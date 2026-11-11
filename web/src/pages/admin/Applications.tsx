@@ -1,4 +1,6 @@
+import { useState } from 'react'
 import { appTLS } from '../../api/format'
+import type { Target } from '../../api/types'
 import { StateIcon } from '../../components/icons'
 import { Tags } from '../../components/ui'
 import { TargetsPage } from './TargetsPage'
@@ -19,17 +21,49 @@ export function Applications() {
       columns={['Upstream', 'TLS', 'Tags']}
       cells={(t) => (
         <>
-          <td className="mono">
-            {t.app_upstream}
-            {(t.app_endpoints?.length ?? 0) > 0 && (
-              <span className="muted" title={t.app_endpoints?.map((e) => `${e.name}: ${e.url}`).join('\n')}> +{t.app_endpoints?.length}</span>
-            )}
-            {t.app_dependencies === 'origins' && <span className="muted" title="dependencies: its origins only"> · origins only</span>}
-          </td>
+          <UpstreamCell t={t} />
           <td><StateIcon state={appTLS(t).verified ? 'ok' : 'warn'} label={'Upstream: ' + appTLS(t).label} /></td>
           <td><Tags tags={t.tags} /></td>
         </>
       )}
     />
+  )
+}
+
+/**
+ * UpstreamCell is an application's upstream and, behind a toggle, every other
+ * endpoint it reaches. The owner, 2026-11-11: "+1" in the list said there
+ * were more and showed them only in a tooltip; the toggle lists them in the
+ * row, name and address.
+ */
+function UpstreamCell({ t }: { t: Target }) {
+  const [open, setOpen] = useState(false)
+  const endpoints = t.app_endpoints ?? []
+  const n = endpoints.length
+  return (
+    <td className="mono">
+      {t.app_upstream}
+      {n > 0 && (
+        <button
+          type="button"
+          className="endpoints-toggle"
+          aria-expanded={open}
+          aria-label={`${open ? 'Hide' : 'Show'} ${n} other endpoint${n === 1 ? '' : 's'}`}
+          onClick={() => setOpen((o) => !o)}
+        >
+          +{n} <span aria-hidden="true">{open ? '▴' : '▾'}</span>
+        </button>
+      )}
+      {t.app_dependencies === 'origins' && <span className="muted" title="dependencies: its origins only"> · origins only</span>}
+      {open && (
+        <ul className="app-endpoints">
+          {endpoints.map((e) => (
+            <li key={e.url}>
+              <span className="app-endpoint-name">{e.name}</span> {e.url}
+            </li>
+          ))}
+        </ul>
+      )}
+    </td>
   )
 }

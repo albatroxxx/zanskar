@@ -3,6 +3,7 @@
 package asg
 
 import (
+	"bytes"
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
@@ -12,10 +13,13 @@ import (
 	"crypto/x509/pkix"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"io"
+	"log/slog"
 	"math/big"
 	"net"
 	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -211,6 +215,82 @@ func TestSyncStopsReadingAConsoleThatPrintsNoKeys(t *testing.T) {
 	all, _ := repo.Instances(ctx, g.ID, false)
 	if len(all) != 1 || all[0].HostKeySource != "tofu" || !all[0].Healthy {
 		t.Fatalf("instance: %+v", all)
+	}
+}
+
+// consoleRefused is a cloud whose console reads fail, as with a role that
+// lacks ec2:GetConsoleOutput.
+type consoleRefused struct{ cloud.Provider }
+
+func (consoleRefused) ConsoleHostKeys(context.Context, string) ([]string, error) {
+	return nil, fmt.Errorf("GetConsoleOutput: %w", cloud.ErrAccessDenied)
+}
+
+// lockedLog is a log the syncer's probes may write from more than one goroutine.
+type lockedLog struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (l *lockedLog) Write(p []byte) (int, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.buf.Write(p)
+}
+
+func (l *lockedLog) count(s string) int {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return strings.Count(l.buf.String(), s)
+}
+
+// TestSyncLogsWhyAConsoleLeftAPinFirstUse (live, 2026-11-11): both of the
+// owner's instances stayed pinned on first use and the log never said why. A
+// refused read is logged when first met, a console without keys once the
+// reads stop; each once per instance, however many syncs run.
+func TestSyncLogsWhyAConsoleLeftAPinFirstUse(t *testing.T) {
+	ctx := context.Background()
+	port, _ := sshHost(t)
+	for _, tc := range []struct {
+		name    string
+		refused bool
+		line    string
+	}{
+		{"refused", true, `level=WARN msg="console host keys unreadable; the key stays pinned on first use" asg=web instance=i-1 err="GetConsoleOutput: cloud: access denied`},
+		{"no keys", false, `level=INFO msg="console listed no host key the gateway can read; the key stays pinned on first use" asg=web instance=i-1 reads=6`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s, repo, fake, _ := newSyncer(t)
+			log := &lockedLog{}
+			s.Log = slog.New(slog.NewTextHandler(log, nil))
+			if tc.refused {
+				s.Providers = func(context.Context, *Group) (cloud.Provider, error) { return consoleRefused{fake}, nil }
+			}
+			s.ConsoleRecheck = time.Nanosecond
+			g := sample()
+			g.Ports = map[target.Protocol]int{target.SSH: port}
+			if err := repo.Create(ctx, g); err != nil {
+				t.Fatal(err)
+			}
+			fake.Set("web-asg", cloud.Instance{ID: "i-1", PrivateIP: "127.0.0.1", LifecycleState: "InService"})
+			for i := range 3 * maxConsoleReads {
+				if _, err := s.SyncGroup(ctx, g); err != nil {
+					t.Fatal(err)
+				}
+				// One read a sync: a console without keys is only said
+				// after the last, a refusal from the first.
+				want := 1
+				if !tc.refused && i < maxConsoleReads-1 {
+					want = 0
+				}
+				if n := log.count(tc.line); n != want {
+					t.Fatalf("after sync %d: %d lines, want %d\n%s", i+1, n, want, log.buf.String())
+				}
+			}
+			if n := log.count("stays pinned on first use"); n != 1 {
+				t.Fatalf("%d lines about the pin, want 1\n%s", n, log.buf.String())
+			}
+		})
 	}
 }
 

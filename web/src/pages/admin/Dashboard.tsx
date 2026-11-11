@@ -226,7 +226,7 @@ export function Dashboard() {
                 {status.restart_required && (
                   <Alert tone="warn">The environment file changed; <Link to="/admin/settings">restart</Link> to apply it.</Alert>
                 )}
-                {status.draining && <Alert tone="warn">A restart is in progress: the gateway is draining live sessions.</Alert>}
+                {status.draining && <Alert tone="warn">Restarting: draining live sessions.</Alert>}
                 <p style={{ margin: 0 }}>
                   Zanskar {status.version}, up {uptime(status.uptime_seconds)}
                   {status.supervisor !== 'unknown' && <> under {status.supervisor}</>}.{' '}
@@ -239,7 +239,7 @@ export function Dashboard() {
                           <Badge tone={certDays <= 7 ? 'danger' : 'warn'}>{certDays <= 0 ? 'expired' : `${certDays} days left`}</Badge>
                         </>
                       )}
-                      . Manage it in <Link to="/admin/settings">Settings</Link>.
+                      .
                     </>
                   )}
                 </p>
@@ -371,7 +371,7 @@ function HostFacts({ m }: { m: SystemMetrics }) {
             detail={
               <>
                 {fmtBytes(d.free_bytes)} free of {fmtBytes(d.total_bytes)}
-                {diskUse(d).pct >= diskRefusePct && <div className="disk-refusing">New sessions refused until space is freed</div>}
+                {diskUse(d).pct >= diskRefusePct && <div className="disk-refusing">new sessions refused</div>}
               </>
             }
             pct={diskUse(d).pct}

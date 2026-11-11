@@ -8,9 +8,9 @@ describe('endText', () => {
     // The owner, 2026-11-11: the same words for a desktop or application session, which gets the gateway's words without the code; never the administrator's reason.
     expect(endText({ reason: 'closed', msg: 'session ended by an administrator' })).toEqual({ lead: 'Terminated by an administrator. Contact your administrator.' })
     expect(endText({ reason: 'admin_terminated', msg: 'an administrator disabled or changed the target' })).toEqual({ lead: 'Terminated by an administrator. Contact your administrator.', detail: 'an administrator disabled or changed the target' })
-    expect(endText({ reason: 'idle_timeout' }).lead).toBe('Disconnected after a period without input, as the access policy requires.')
+    expect(endText({ reason: 'idle_timeout' }).lead).toBe('Disconnected after idle time.')
     expect(endText({ reason: 'user_exit' }).lead).toBe('You closed the session.')
-    expect(endText({ reason: 'trust_lost' }).lead).toBe("The target's host key or certificate changed; an administrator must trust it again.")
+    expect(endText({ reason: 'trust_lost' }).lead).toBe("The target's host key or certificate changed.")
   })
 
   it('leads with the gateway words for a reason it has no sentence for', () => {

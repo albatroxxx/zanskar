@@ -142,8 +142,8 @@ describe('ConsoleCLI', () => {
     render(<ConsoleCLI />)
     const user = await openPanel()
     await user.type(screen.getByLabelText('zanskar>'), 'request approve 9c1d2e3f{Enter}')
-    expect(await screen.findByText('This command asks for a code from the last 5 minutes. Enter one; it runs again.')).toBeDefined()
-    expect(screen.queryByText(/closed after a while without use/)).toBeNull()
+    expect(await screen.findByText('This command needs a code from the last 5 minutes.')).toBeDefined()
+    expect(screen.queryByText('Closed after idle time.')).toBeNull()
     await user.type(await screen.findByLabelText('Authenticator code'), '123456{Enter}')
     expect(await screen.findByText('✓ Approved.')).toBeDefined()
     const lines = post.mock.calls.filter(([p]) => p === '/admin/cli').map(([, b]) => (b as { line: string }).line)
@@ -168,15 +168,16 @@ describe('ConsoleCLI', () => {
     vi.spyOn(api, 'get').mockResolvedValue(state({ unlocked: false }) as never)
     render(<ConsoleCLI />)
     await openPanel()
-    expect(screen.getByRole('img', { name: 'Zanskar commands only; every line is audited' })).toBeDefined()
+    expect(screen.getByRole('img', { name: 'Zanskar commands only' })).toBeDefined()
     expect(screen.getByRole('img', { name: 'Code needed' })).toBeDefined()
     for (const name of ['Commands', 'Maximise', 'Minimise', 'Close']) {
       const b = screen.getByRole('button', { name })
       expect(b.textContent).toBe('')
       expect(b.getAttribute('title')).toBe(name)
     }
-    expect(screen.queryByText(/every line is audited/)).toBeNull()
-    expect(screen.getByText('Enter a code from your authenticator.')).toBeDefined()
+    expect(screen.queryByText('Zanskar commands only')).toBeNull()
+    expect(screen.getByLabelText('Authenticator code')).toBeDefined()
+    expect(screen.queryByText(/Enter a code/)).toBeNull()
   })
 
   // 2026-10-30: the panel could be pulled up no further than 80 px short of

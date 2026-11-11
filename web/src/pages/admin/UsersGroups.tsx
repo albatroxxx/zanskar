@@ -79,7 +79,7 @@ function Source({ idp, providerSignIn, providers, group }: { idp?: string; provi
   }
   if (providerSignIn) {
     return (
-      <span className="badge source-idp" title="Signs in through an identity provider; linked at the first sign-in">
+      <span className="badge source-idp" title="Signs in through an identity provider">
         Single sign-on
       </span>
     )
@@ -165,9 +165,7 @@ function Users({ adding, setAdding }: AddingProps) {
                       {u.must_change_password && (
                         <>
                           {' '}
-                          <span title="Signs in with a password an administrator set; must replace it first">
-                            <Badge>password change due</Badge>
-                          </span>
+                          <Badge>password change due</Badge>
                         </>
                       )}
                     </td>
@@ -180,7 +178,7 @@ function Users({ adding, setAdding }: AddingProps) {
                         <option value="sessions">Revoke sessions</option>
                         <option value="mfa">Reset authenticator</option>
                         {!self && (
-                          <option value="status" disabled={!!leftFor} title={leftFor ? `${leftFor} no longer has this person; the account is enabled again when it does` : undefined}>
+                          <option value="status" disabled={!!leftFor} title={leftFor ? `${leftFor} no longer has this person` : undefined}>
                             {u.status === 'active' ? 'Disable' : 'Enable'}
                           </option>
                         )}
@@ -255,7 +253,7 @@ function Users({ adding, setAdding }: AddingProps) {
       {action?.a === 'status' && (
         <Confirm
           title={`${action.u.status === 'active' ? 'Disable' : 'Enable'} ${action.u.username}?`}
-          body={action.u.status === 'active' ? 'They are signed out, their live sessions end, and they cannot sign in until re-enabled.' : 'They can sign in again.'}
+          body={action.u.status === 'active' ? 'They are signed out and their live sessions end.' : null}
           confirmLabel={action.u.status === 'active' ? 'Disable' : 'Enable'}
           danger={action.u.status === 'active'}
           onClose={() => setAction(null)}
@@ -273,7 +271,7 @@ function Users({ adding, setAdding }: AddingProps) {
       {action?.a === 'delete' && (
         <Confirm
           title={`Delete ${action.u.username}?`}
-          body="Their sign-ins and live sessions end. Their past sessions stay in the record under their name."
+          body="Their sign-ins and live sessions end."
           confirmLabel="Delete"
           danger
           onClose={() => setAction(null)}
@@ -308,7 +306,7 @@ function OneTimePassword({ username, password, onClose }: { username: string; pa
   const [copied, setCopied] = useState(false)
   return (
     <Modal title={`One-time password for ${username}`} onClose={onClose}>
-      <p>Shown once. They replace it at their first sign-in.</p>
+      <p>Shown once.</p>
       <p className="mono" style={{ fontSize: '1.2rem', letterSpacing: 1, wordBreak: 'break-all', padding: '10px 12px', background: 'var(--bg-sunken)', borderRadius: 6 }}>{password}</p>
       <div className="actions">
         <button className="btn" onClick={() => void navigator.clipboard?.writeText(password).then(() => setCopied(true)).catch(() => {})}>{copied ? 'Copied' : 'Copy'}</button>
@@ -343,7 +341,6 @@ function UserForm({ onClose, onSaved }: { onClose: () => void; onSaved: (oneTime
       <Field label="Initial password"><input id="nu-password" type="password" autoComplete="new-password" value={f.password} onChange={set('password')} minLength={12} placeholder="A one-time password is generated" /></Field>
       {/* Zanskar adds its own accounts only; a person who signs in through an
           identity provider comes from it (2026-11-02, ADR 0035 amended). */}
-      <p className="muted" style={{ marginTop: 0 }}>Identity provider accounts come from the provider.</p>
       <RoleChecks value={r} onChange={setR} prefix="nu" />
       {(groups.items?.length ?? 0) > 0 && (
         <Field label="Groups (optional)">
@@ -412,7 +409,7 @@ function Groups({ adding, setAdding }: AddingProps) {
         {items === null ? (
           err ? null : <Loading />
         ) : items.length === 0 ? (
-          <Empty>No groups. A policy can name users without one.</Empty>
+          <Empty>No groups.</Empty>
         ) : (
           <table>
             <thead>

@@ -56,13 +56,12 @@ describe('Sessions', () => {
   // Live, 2026-11-04: an administrator terminated a desktop session and
   // expected the user's portal to go back to Request. Terminate ends the
   // session, not the access, and the dialog says so, for any protocol.
-  it('says that terminating keeps the access, and where to take it away', async () => {
+  it('says that terminating keeps the access', async () => {
     at('/admin/sessions', [{ ...live, protocol: 'rdp' }])
     await userEvent.setup().click(await screen.findByRole('button', { name: 'Terminate' }))
     const dialog = screen.getByRole('dialog')
     expect(dialog.textContent).toContain('The session closes now; access stays.')
     expect(dialog.textContent).not.toContain('terminal')
-    expect(within(dialog).getByRole('link', { name: 'Approvals' }).getAttribute('href')).toBe('/admin/approvals')
   })
 
   // ADR 0047 (2026-11-09): "live" was the absence of an end reason; an

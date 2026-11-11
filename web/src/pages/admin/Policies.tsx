@@ -42,7 +42,7 @@ export function Policies() {
         {items === null ? (
           err ? null : <Loading />
         ) : items.length === 0 ? (
-          <Empty>{onlyNoMFA ? 'No policies match.' : 'No policies yet. Nobody can connect until a policy grants access.'}</Empty>
+          <Empty>{onlyNoMFA ? 'No policies match.' : 'No policies yet.'}</Empty>
         ) : (
           <table className="policy-table">
             <thead>

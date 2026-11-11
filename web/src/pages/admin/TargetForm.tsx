@@ -229,7 +229,7 @@ export function TargetForm({ initial, kind, onClose, onSaved }: { initial?: Targ
             </Field>
             {k === 'application' ? (
               <>
-                <Field label="Upstream" hint="The page the browser opens">
+                <Field label="Upstream">
                   <input id="t-upstream" value={f.app_upstream} onChange={set('app_upstream')} required placeholder="https://wiki.internal:8443" />
                 </Field>
               </>
@@ -307,12 +307,12 @@ export function TargetForm({ initial, kind, onClose, onSaved }: { initial?: Targ
             </>
           )}
           {k === 'application' && (
-            <Field label="Other endpoints" info="Other addresses the application opens pages at, in the same browser: an API with its own pages, its sign-in page. Each is a bookmark there; a page opens nowhere else.">
+            <Field label="Other endpoints" info="Bookmarks in its browser; pages open nowhere else.">
               <EndpointEditor rows={f.endpoints} onChange={(endpoints) => setF({ ...f, endpoints })} />
             </Field>
           )}
           {k === 'application' && (
-            <Field label="Dependencies" info="What its pages load beside its origins: scripts, styles, fonts, images, frames, APIs. Any public address, on any port, through a relay that reads the session's requests; or its origins only, nothing read. Opening a page is held to its origins either way.">
+            <Field label="Dependencies" info="Any public address goes through a relay that reads the requests.">
               <select id="t-dependencies" value={f.dependencies} onChange={(e) => setF({ ...f, dependencies: e.target.value as 'public' | 'origins' })}>
                 <option value="public">Any public address</option>
                 <option value="origins">Its origins only</option>
@@ -321,10 +321,10 @@ export function TargetForm({ initial, kind, onClose, onSaved }: { initial?: Targ
           )}
           {k === 'application' && f.dependencies === 'public' && (
             <div className="row2">
-              <Field label="Private networks" info="Private networks its pages may also load from, one per line, in CIDR form (10.20.0.0/16). Anything private is refused until listed here or under private hosts; the application's page shows what was refused.">
+              <Field label="Private networks" info="CIDR, one per line; other private addresses are refused.">
                 <textarea id="t-private-networks" value={f.private_networks} onChange={set('private_networks')} placeholder={'10.20.0.0/16'} rows={3} />
               </Field>
-              <Field label="Private hosts" info="Private hosts its pages may also load from, one per line, as host:port (cdn.corp:443).">
+              <Field label="Private hosts" info="host:port, one per line.">
                 <textarea id="t-private-hosts" value={f.private_hosts} onChange={set('private_hosts')} placeholder={'cdn.corp:443'} rows={3} />
               </Field>
             </div>
@@ -335,7 +335,7 @@ export function TargetForm({ initial, kind, onClose, onSaved }: { initial?: Targ
             </Field>
           )}
           {k !== 'application' && (
-            <Field label="Recording retention (days)" info="This target's value comes first; left empty, the policy grant's applies, then the global retention.">
+            <Field label="Recording retention (days)" info="Empty: the grant's, then global.">
               <input id="t-retention" inputMode="numeric" value={f.retention} onChange={set('retention')} placeholder={globalRetention ? `Global: ${globalRetention}` : 'Global'} />
             </Field>
           )}

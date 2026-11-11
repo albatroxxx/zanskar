@@ -146,7 +146,7 @@ describe('the policy list', () => {
     const user = userEvent.setup()
     await user.click(await screen.findByRole('button', { name: 'Delete' }))
     const dialog = screen.getByRole('dialog', { name: 'Delete policy ops-web?' })
-    expect(within(dialog).getByText(/re-checked/)).toBeDefined()
+    expect(within(dialog).getByText(/sessions only it admits end/)).toBeDefined()
     await user.click(within(dialog).getByRole('button', { name: 'Delete' }))
     await waitFor(() => expect(del).toHaveBeenCalledWith('/access-policies/p1'))
     await waitFor(() => expect(screen.getByTestId('where').textContent).toBe('/admin/policies'))

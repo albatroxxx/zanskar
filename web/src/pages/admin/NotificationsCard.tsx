@@ -120,7 +120,7 @@ export function NotificationsCard() {
       {notice && <Alert tone={notice.tone} onDismiss={() => setNotice(null)}>{notice.text}</Alert>}
       {key && (
         <Alert tone="warn" onDismiss={() => setKey(null)}>
-          Signing key for {key.name}, shown once: <code className="mono">{key.key}</code> <CopyButton text={key.key} /> The receiver checks X-Zanskar-Signature with it.
+          Signing key for {key.name}, shown once: <code className="mono">{key.key}</code> <CopyButton text={key.key} /> Signs X-Zanskar-Signature.
         </Alert>
       )}
       <div className="email-server" data-testid="email-server">
@@ -225,7 +225,7 @@ export function NotificationsCard() {
       {removingServer && (
         <Confirm
           title="Remove the email server?"
-          body="Email channels send nothing until one is set again."
+          body="Email channels stop sending."
           confirmLabel="Remove"
           danger
           onClose={() => setRemovingServer(false)}
@@ -253,7 +253,7 @@ export function NotificationsCard() {
       {removing && (
         <Confirm
           title={`Remove ${removing.name}?`}
-          body="It is told nothing more."
+          body={null}
           confirmLabel="Remove"
           danger
           onClose={() => setRemoving(null)}
@@ -317,7 +317,7 @@ function ChannelForm({ existing, events, hasServer, onClose, onSaved, onNewKey }
           <Field label="To" hint="Comma-separated">
             <input value={d.to} onChange={set('to')} placeholder="ops@example.com, security@example.com" required />
           </Field>
-          {!hasServer && <p className="muted">No email server is set; this channel sends nothing.</p>}
+          {!hasServer && <p className="muted">No email server is set.</p>}
         </>
       )}
       <fieldset className="notify-events">

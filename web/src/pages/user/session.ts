@@ -68,13 +68,13 @@ export interface SessionEnd { reason: string; msg?: string }
 // reports.
 const reasonText: Record<string, string> = {
   user_exit: 'You closed the session.',
-  idle_timeout: 'Disconnected after a period without input, as the access policy requires.',
-  max_duration: 'The session reached the maximum duration the access policy allows.',
+  idle_timeout: 'Disconnected after idle time.',
+  max_duration: 'Maximum duration reached.',
   // The owner, 2026-11-11: the person is told it was an administrator and
   // whom to ask, never the reason the administrator gave.
   admin_terminated: 'Terminated by an administrator. Contact your administrator.',
   target_lost: 'The connection to the target was lost.',
-  trust_lost: "The target's host key or certificate changed; an administrator must trust it again.",
+  trust_lost: "The target's host key or certificate changed.",
   target_deleted: 'An administrator deleted the target.',
   error: 'The session ended because of an error.',
 }

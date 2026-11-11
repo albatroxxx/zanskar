@@ -257,6 +257,6 @@ describe('Connection test and sign-out', () => {
     await user.click(await screen.findByRole('button', { name: 'Edit' }))
     const form = screen.getByRole('dialog', { name: 'Edit Okta' })
     await user.click(within(form).getByRole('button', { name: 'Test connection' }))
-    expect(await within(form).findByText(/offers no sign-out, so signing out ends the Zanskar session only/)).toBeDefined()
+    expect(await within(form).findByText(/no provider sign-out, so signing out ends the Zanskar session only/)).toBeDefined()
   })
 })

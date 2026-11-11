@@ -1,5 +1,5 @@
 import { useEffect, useId, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react'
-import { browserZone, browserZones, canonicalZone, describeZone, searchZones, zoneOptions, zoneText, type ZoneOption } from '../api/timeZones'
+import { browserZone, canonicalZone, describeZone, searchZones, zoneOptions, zoneText, type ZoneOption } from '../api/timeZones'
 
 /**
  * TimeZonePicker chooses a time zone from every one the browser knows
@@ -110,7 +110,6 @@ export function TimeZonePicker({ id, value, onChange }: { id: string; value: str
   }
 
   const optionId = (i: number) => `${listId}-${i}`
-  const noList = open && browserZones().length === 0
 
   return (
     <div className="tzpick" ref={wrap}>
@@ -186,7 +185,6 @@ export function TimeZonePicker({ id, value, onChange }: { id: string; value: str
             ))}
           </div>
           {shown.length === 0 && <p className="tzpick-note">No zone matches “{query}”.</p>}
-          {noList && <p className="tzpick-note">This browser offers no list of zones: UTC, its own and the saved one are shown.</p>}
         </div>
       )}
     </div>

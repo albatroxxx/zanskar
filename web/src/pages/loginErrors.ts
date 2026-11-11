@@ -2,13 +2,13 @@
 // the reason back as ?error=<code>; anything else in that parameter could be
 // a link's own wording, so it is never shown (L6).
 
-const tryAgain = 'Try again, or ask an administrator.'
+const tryAgain = 'Try again.'
 
 const reasons: Record<string, string> = {
   // Said only after a sign-in through the provider failed, never to a page
   // that merely loads: an unsigned visitor learns nothing about the
   // provider's health they did not just find out (2026-11-03, idea 1).
-  provider_unavailable: 'Single sign-on is not answering right now. Try again in a moment; an account with a password here can still sign in with it.',
+  provider_unavailable: 'Single sign-on is not answering.',
   provider_denied: 'The identity provider did not sign you in.',
   state_missing: 'The sign-in took too long, or began in another tab. Start it again.',
   state_invalid: 'The sign-in took too long, or began in another tab. Start it again.',
@@ -19,12 +19,12 @@ const reasons: Record<string, string> = {
   nonce_mismatch: `The identity provider's answer could not be used. ${tryAgain}`,
   claims_invalid: `The identity provider's answer could not be used. ${tryAgain}`,
   domain_not_allowed: 'Your email domain is not allowed to sign in here.',
-  email_unverified: 'Your identity provider has not verified your email address, so it cannot be used to sign in here.',
-  not_provisioned: 'There is no account for you here yet. Ask an administrator to add you.',
-  account_conflict: 'An account with your name already exists here and belongs to another sign-in method. Ask an administrator to link them.',
+  email_unverified: 'Your identity provider has not verified your email address.',
+  not_provisioned: 'There is no account for you here.',
+  account_conflict: 'This username belongs to another sign-in method.',
   provisioning_failed: `Your account could not be set up. ${tryAgain}`,
-  reauth_not_done: 'The identity provider signed you in on an earlier session instead of asking for your password again, so the sign-in was refused. Sign out of the identity provider, then sign in again.',
-  auth_time_missing: 'The identity provider did not say when you signed in, which this sign-in needs. Ask an administrator to have it send the auth_time claim.',
+  reauth_not_done: 'The identity provider did not ask for your password again; sign out there, then sign in.',
+  auth_time_missing: 'The identity provider sent no auth_time claim.',
   internal: `Something went wrong on the gateway. ${tryAgain}`,
 }
 

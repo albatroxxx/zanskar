@@ -55,7 +55,7 @@ function save(store: () => Storage, key: string, v: unknown) {
 
 /** TerminalIcon is a small window with a prompt in it. */
 /** auditNote is the command line's one rule, behind its shield glyph. */
-const auditNote = 'Zanskar commands only; every line is audited'
+const auditNote = 'Zanskar commands only'
 
 function TerminalIcon({ size = 24 }: { size?: number }) {
   return (
@@ -159,12 +159,8 @@ export function ConsoleCLI() {
         setAfterUnlock(confirmWord === undefined ? line : null)
         setState((s) => (s ? { ...s, unlocked: false } : s))
         const fresh = err.code === 'cli_fresh_code_required'
-        setCodeWhy(fresh ? 'This command asks for a code from the last 5 minutes. Enter one; it runs again.' : '')
-        append([
-          fresh
-            ? { text: 'A newer code was asked for.', style: 'muted' }
-            : { text: 'The command line closed after a while without use. Enter a fresh code to go on.', style: 'muted' },
-        ])
+        setCodeWhy(fresh ? 'This command needs a code from the last 5 minutes.' : '')
+        if (!fresh) append([{ text: 'Closed after idle time.', style: 'muted' }])
       } else if (err instanceof ApiError && err.code === 'cli_locked') {
         // Closed after too many wrong codes: the code form shows why, so the
         // admin is not just asked for a code the gateway would refuse.
@@ -382,7 +378,7 @@ export function ConsoleCLI() {
               {state.mfa_enrolled ? (
                 <form className="cli-card" onSubmit={(e) => void unlock(e)}>
                   <h3>Confirm it's you</h3>
-                  <p>{codeWhy || 'Enter a code from your authenticator.'}</p>
+                  {codeWhy && <p>{codeWhy}</p>}
                   <label htmlFor="cli-code">Authenticator code</label>
                   <input
                     id="cli-code"
@@ -412,7 +408,7 @@ export function ConsoleCLI() {
                 <div className="cli-card">
                   <h3>An authenticator is needed</h3>
                   <p>
-                    This account has no authenticator. Enrol one at your next sign-in.
+                    Enrol one at your next sign-in.
                   </p>
                 </div>
               )}

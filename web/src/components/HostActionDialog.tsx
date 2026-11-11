@@ -187,12 +187,11 @@ export function HostActionDialog({ action, version, change, onClose }: { action:
             <DoneIcon />
             <div>
               <strong>{doneTitle(start)}</strong>
-              {action === 'poweroff' && <p className="muted">Start it again from the host or the cloud console.</p>}
             </div>
           </div>
         )}
         {progress.state === 'failed' && <FailedNotice progress={progress} />}
-        {progress.state === 'cancelled' && <Alert tone="ok">Cancelled; the gateway carries on.</Alert>}
+        {progress.state === 'cancelled' && <Alert tone="ok">Cancelled.</Alert>}
         {err && <Alert tone="danger" onDismiss={() => setErr('')}>{err}</Alert>}
         <div className="actions">
           {progress.state === 'running' && progress.step === 'drain' && (
@@ -215,7 +214,7 @@ export function HostActionDialog({ action, version, change, onClose }: { action:
   }
   return (
     <Modal title={title} onClose={onClose} width={480}>
-      {action === 'poweroff' && <Alert tone="warn">Starting it again needs the host or the cloud console.</Alert>}
+      {action === 'poweroff' && <Alert tone="warn">Zanskar cannot start it again.</Alert>}
       {change && <p className="config-change">{change.summary}</p>}
       {err && <Alert tone="danger" onDismiss={() => setErr('')}>{err}</Alert>}
       <form onSubmit={submit}>

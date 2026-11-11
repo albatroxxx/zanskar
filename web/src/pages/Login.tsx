@@ -243,7 +243,7 @@ export function Login() {
                             <span>Continue with {p.name}</span>
                           </button>
                           <span role="tooltip" id={`sso-down-${p.id}`} className={'sso-tip' + (tip === p.id ? ' open' : '')}>
-                            {p.name} is not answering right now. A password account still works.
+                            {p.name} is not answering.
                           </span>
                         </span>
                         <button type="button" className="btn sso-retry" aria-label={`Check ${p.name} again`} title="Check again" aria-busy={checking} onBlur={() => setTip(null)} onClick={() => void checkAgain(p)}>
@@ -276,7 +276,6 @@ export function Login() {
 
           {effectiveStep === 'change' && (
             <form onSubmit={submitChange}>
-              <p className="muted" style={{ marginTop: 0 }}>Choose your own password to continue.</p>
               {!password && (
                 <Field label="Current password">
                   <input id="current-password" type="password" autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} required />
@@ -297,8 +296,7 @@ export function Login() {
 
           {effectiveStep === 'verify' && (
             <form onSubmit={submitVerify}>
-              <p className="muted" style={{ marginTop: 0 }}>Enter the six-digit code from your authenticator, or a recovery code.</p>
-              <Field label="Code">
+              <Field label="Authenticator or recovery code">
                 <input id="totp" autoFocus inputMode="numeric" autoComplete="one-time-code" value={code} onChange={(e) => setCode(e.target.value)} required />
               </Field>
               <div className="actions" style={{ justifyContent: 'space-between' }}>
@@ -310,7 +308,6 @@ export function Login() {
 
           {effectiveStep === 'enroll' && (
             <form onSubmit={submitConfirm}>
-              <p className="muted" style={{ marginTop: 0 }}>Scan with your authenticator app, then enter its code.</p>
               {enroll ? (
                 <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12 }}>
                   <img className="qr" src={enroll.qr} alt="TOTP enrollment QR code" width={192} height={192} />

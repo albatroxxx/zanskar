@@ -95,7 +95,7 @@ export function AccessNotices() {
       notices.push({
         key: 'expiring:' + g.id,
         tone: 'warn',
-        body: <>Your access to {what(g)} ends in about <strong>{left} min</strong>. <Link to={`/access?extend=${g.id}`}>Ask to extend it</Link>; an administrator must approve.</>,
+        body: <>Your access to {what(g)} ends in about <strong>{left} min</strong>. <Link to={`/access?extend=${g.id}`}>Ask to extend it</Link>.</>,
       })
     }
   }

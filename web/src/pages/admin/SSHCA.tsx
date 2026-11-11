@@ -85,12 +85,9 @@ function CARotation({ credential, onChanged, onError }: { credential: Credential
   return (
     <>
       <h3>Key rotation</h3>
-      {!pending && !retired && (
-        <p className="muted">Prepare a next key, install it on every target, then cut over.</p>
-      )}
       {pending && (
         <Alert tone="warn">
-          Next key prepared{credential.rotation?.pending_since ? ` ${fmtTime(credential.rotation.pending_since)}` : ''}. Install it on every target, test, then cut over.
+          Next key prepared{credential.rotation?.pending_since ? ` ${fmtTime(credential.rotation.pending_since)}` : ''}.
         </Alert>
       )}
       {retired && (
@@ -106,7 +103,7 @@ function CARotation({ credential, onChanged, onError }: { credential: Credential
         {retired && <button type="button" className="btn" onClick={() => setConfirm('retire')}>Old key removed from targets</button>}
       </div>
       {confirm === 'prepare' && (
-        <Confirm title="Prepare a next key?" body="Sessions are unaffected until you cut over." confirmLabel="Prepare" onClose={() => setConfirm(null)} onConfirm={() => step(() => api.post<Credential>(`/credentials/${credential.id}/rotate`, {}))} />
+        <Confirm title="Prepare a next key?" body={null} confirmLabel="Prepare" onClose={() => setConfirm(null)} onConfirm={() => step(() => api.post<Credential>(`/credentials/${credential.id}/rotate`, {}))} />
       )}
       {confirm === 'cutover' && (
         <Confirm title="Cut over to the next key?" body="A target that does not trust the next key will refuse logins." confirmLabel="Cut over" danger onClose={() => setConfirm(null)} onConfirm={() => step(() => api.post<Credential>(`/credentials/${credential.id}/rotate/cut-over`))} />

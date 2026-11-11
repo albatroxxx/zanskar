@@ -58,7 +58,7 @@ function NoPortal() {
   const { logout } = useAuth()
   return (
     <div className="empty">
-      <p>This account has no role that opens a portal. Ask an administrator to grant one.</p>
+      <p>This account has no role that opens a portal.</p>
       <button className="btn sm ghost" onClick={() => void logout()}>Sign out</button>
     </div>
   )

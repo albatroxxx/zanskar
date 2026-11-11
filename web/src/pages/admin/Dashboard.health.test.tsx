@@ -75,7 +75,7 @@ describe('the disk gauge', () => {
 
   it('says new sessions are refused from 95% used', async () => {
     withDisk(96, 4)
-    expect(await screen.findByText('New sessions refused until space is freed')).toBeDefined()
+    expect(await screen.findByText('new sessions refused')).toBeDefined()
     expect(screen.getByRole('meter', { name: 'System disk' }).className).toContain('danger')
   })
 
@@ -83,7 +83,7 @@ describe('the disk gauge', () => {
     withDisk(41, 9)
     const meter = await screen.findByRole('meter', { name: 'System disk' })
     expect(meter.className).toContain('warn')
-    expect(screen.queryByText('New sessions refused until space is freed')).toBeNull()
+    expect(screen.queryByText('new sessions refused')).toBeNull()
   })
 
   it('stays quiet below 80% with room to spare', async () => {

@@ -72,11 +72,11 @@ function ThemeToggle() {
 function upgradeHint(supervisor?: string): string {
   switch (supervisor) {
     case 'systemd':
-      return 'Install the new package on the host, then restart the gateway.'
+      return 'Install the new package and restart.'
     case 'kubernetes':
       return 'Roll the deployment to the new image tag.'
     default:
-      return 'Replace the binary or image, then restart the gateway.'
+      return 'Replace the binary or image and restart.'
   }
 }
 

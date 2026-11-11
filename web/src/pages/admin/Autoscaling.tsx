@@ -247,7 +247,7 @@ function GroupForm({ initial, credentials, onClose, onSaved }: { initial?: Autos
             <input id="asg-external" value={f.external_name} onChange={(e) => up({ external_name: e.target.value })} required />
           </Field>
           {initial && (
-            <Field label="Role ARN" hint="Cross-account role Zanskar assumes">
+            <Field label="Role ARN">
               <input id="asg-role" className="mono" value={f.role_arn} onChange={(e) => up({ role_arn: e.target.value })} placeholder="arn:aws:iam::123456789012:role/zanskar" required />
             </Field>
           )}
@@ -258,7 +258,7 @@ function GroupForm({ initial, credentials, onClose, onSaved }: { initial?: Autos
               <option value="other">Other</option>
             </select>
           </Field>
-          <Field label="Connect to" hint="Which address the gateway dials">
+          <Field label="Connect to">
             <select id="asg-addr" value={f.address_preference} onChange={(e) => up({ address_preference: e.target.value as 'private' | 'public' })}>
               <option value="private">Private IP</option>
               <option value="public">Public IP</option>
@@ -271,7 +271,7 @@ function GroupForm({ initial, credentials, onClose, onSaved }: { initial?: Autos
         <h2>Capabilities</h2>
         {f.os_family === 'windows' && (
           <Alert tone="warn">
-            Bake the HTTPS WinRM listener (5986) and the domain join into the image. The WinRM credential must be a local administrator.
+            The image needs the HTTPS WinRM listener (5986) and the domain join; the WinRM credential, local admin.
           </Alert>
         )}
         <div className="table-wrap">
@@ -317,12 +317,12 @@ function GroupForm({ initial, credentials, onClose, onSaved }: { initial?: Autos
               <IAMDocsView docs={docs} onRefresh={() => void redetect().then(() => preview())} />
             )}
             <div className="form-grid" style={{ marginTop: 12 }}>
-              <Field label="2. Role ARN" hint={docs?.suggested_role_arn && f.role_arn.trim() === docs.suggested_role_arn ? 'In this gateway\'s account. A group in another account: its account number.' : undefined}>
+              <Field label="2. Role ARN" hint={docs?.suggested_role_arn && f.role_arn.trim() === docs.suggested_role_arn ? 'This gateway\'s account; change the number for another.' : undefined}>
                 <input id="asg-role" className="mono" value={f.role_arn} onChange={(e) => up({ role_arn: e.target.value })} placeholder="arn:aws:iam::123456789012:role/zanskar-web" required />
               </Field>
             </div>
             <div className="actions">
-              <button type="button" className="btn" disabled={testing || !docs || !f.role_arn.trim()} onClick={() => void runTest()} title={docs ? '' : 'show the IAM setup first: the test needs its ExternalId'}>{testing ? 'Testing…' : '3. Test access'}</button>
+              <button type="button" className="btn" disabled={testing || !docs || !f.role_arn.trim()} onClick={() => void runTest()} title={docs ? '' : 'show the IAM setup first'}>{testing ? 'Testing…' : '3. Test access'}</button>
               {test && <AccessTestResult result={test} />}
             </div>
           </>
@@ -355,7 +355,7 @@ function CopyButton({ text, label }: { text: string; label: string }) {
 }
 
 function sourceLabel(source: AwsIdentity['source']) {
-  return source === 'environment' ? 'from ZANSKAR_AWS_GATEWAY_PRINCIPAL' : source === 'detected' ? 'detected from the role this gateway runs as' : 'unknown'
+  return source === 'environment' ? 'from ZANSKAR_AWS_GATEWAY_PRINCIPAL' : source === 'detected' ? 'detected' : 'unknown'
 }
 
 /** redetect asks the gateway to look up the role it runs as again (it does so
@@ -387,7 +387,7 @@ function IdentityCard() {
   return (
     <div className="card" style={{ marginBottom: 12 }}>
       <p style={{ margin: 0 }}>
-        <Badge tone="warn">AWS identity unknown</Badge> Give the gateway an instance profile (or IRSA), or set <code>ZANSKAR_AWS_GATEWAY_PRINCIPAL</code>, then restart.
+        <Badge tone="warn">AWS identity unknown</Badge> Needs an instance profile, IRSA or <code>ZANSKAR_AWS_GATEWAY_PRINCIPAL</code>.
         <button type="button" className="btn sm" style={{ marginLeft: 8 }} disabled={busy} onClick={() => void refresh()}>{busy ? 'Checking…' : 'Check again'}</button>
       </p>
       {id.error && <p className="muted" style={{ margin: '6px 0 0' }}>{id.error}</p>}
@@ -411,7 +411,7 @@ function IAMDocsView({ docs, onRefresh }: { docs: AsgIAMDocs; onRefresh?: () => 
       {docs.trust_policy ? (
         <>
           <p className="muted" style={{ marginTop: 0 }}>
-            The role trusts <span className="mono">{docs.gateway_principal}</span> ({sourceLabel(docs.principal_source)}). Create it with the script or the template, or paste the two policies by hand.
+            The role trusts <span className="mono">{docs.gateway_principal}</span> ({sourceLabel(docs.principal_source)}).
             {onRefresh && docs.principal_source === 'detected' && <button type="button" className="btn sm" style={{ marginLeft: 8 }} onClick={onRefresh}>Check again</button>}
           </p>
           <details open>
@@ -439,11 +439,11 @@ function IAMDocsView({ docs, onRefresh }: { docs: AsgIAMDocs; onRefresh?: () => 
       ) : (
         <>
           <Alert tone="warn">
-            Gateway principal unknown. Give the gateway an AWS role (instance profile or IRSA), or set <code>ZANSKAR_AWS_GATEWAY_PRINCIPAL</code>, then restart.
+            Gateway principal unknown: needs an instance profile, IRSA or <code>ZANSKAR_AWS_GATEWAY_PRINCIPAL</code>.
             {docs.principal_error && <div className="muted" style={{ marginTop: 6 }}>{docs.principal_error}</div>}
             {onRefresh && <div style={{ marginTop: 6 }}><button type="button" className="btn sm" onClick={onRefresh}>Check again</button></div>}
           </Alert>
-          <Field label="Permissions policy (attach to the role once it exists)">
+          <Field label="Permissions policy">
             <textarea id="iam-perms" readOnly value={docs.permissions_policy} style={{ minHeight: 200 }} />
             <div className="actions"><CopyButton text={docs.permissions_policy} label="Copy permissions policy" /></div>
           </Field>
@@ -456,7 +456,7 @@ function IAMDocsView({ docs, onRefresh }: { docs: AsgIAMDocs; onRefresh?: () => 
 /** AccessTestResult names the stage that failed so the fix is obvious. */
 function AccessTestResult({ result }: { result: AsgAccessTest }) {
   if (result.ok) return <Badge tone="ok">role works: group found, {result.instance_count} instance{result.instance_count === 1 ? '' : 's'}</Badge>
-  const what = result.stage === 'assume' ? "the role could not be assumed: check the trust policy names this gateway and carries this ExternalId, and that the gateway's own role may call sts:AssumeRole on it" : result.stage === 'describe' ? 'the role was assumed but cannot describe the group: attach the permissions policy' : result.stage === 'group' ? 'the role works, but no group by that name exists in that region' : 'test failed'
+  const what = result.stage === 'assume' ? 'the role could not be assumed: check its trust policy and ExternalId' : result.stage === 'describe' ? 'the role was assumed but cannot describe the group: attach the permissions policy' : result.stage === 'group' ? 'the role works, but no group by that name exists in that region' : 'test failed'
   return <span><Badge tone="danger">{what}</Badge>{result.error && <span className="muted" style={{ marginLeft: 6 }}>{result.error}</span>}</span>
 }
 
@@ -473,7 +473,7 @@ function IAMPanel({ group, onClose }: { group: AutoscalingGroup; onClose: () => 
   return (
     <Modal title={`IAM setup for ${group.name}`} onClose={onClose} width={760}>
       <p className="muted" style={{ marginTop: 0 }}>
-        For the role <span className="mono">{group.role_arn}</span>. After changing anything here, use <strong>Test access</strong> on the group.
+        For the role <span className="mono">{group.role_arn}</span>.
       </p>
       {err && <Alert tone="danger">{err}</Alert>}
       {docs ? <IAMDocsView docs={docs} onRefresh={() => void redetect().then(load)} /> : !err && <Loading />}
@@ -636,7 +636,7 @@ function GroupDetail({ group, credentials, onClose, onChanged, onDeleted }: { gr
         {instances === null ? (
           <Loading />
         ) : instances.length === 0 ? (
-          <Empty>No instances seen yet. Sync to poll the cloud.</Empty>
+          <Empty>No instances seen yet.</Empty>
         ) : (
           <table className="instances">
             <thead>

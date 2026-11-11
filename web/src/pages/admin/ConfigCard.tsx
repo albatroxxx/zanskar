@@ -76,7 +76,7 @@ export function ConfigCard() {
   return (
     <div className="card" id="settings-configuration-file">
       <h2>Configuration file</h2>
-      <p className="muted">Groups, hosts, databases, applications and policies as YAML; credentials by name only.</p>
+      <p className="muted">YAML; credentials by name only.</p>
       {err && <Alert tone="danger" onDismiss={() => setErr('')}>{err}</Alert>}
       <div className="actions">
         <a className="btn" href="/api/v1/admin/config/export" download>Export</a>
@@ -91,11 +91,11 @@ export function ConfigCard() {
             {plan.applied ? (
               <>Imported {file?.name}.</>
             ) : problems > 0 ? (
-              <>{file?.name} cannot be imported: {problems} {problems === 1 ? 'problem' : 'problems'} below. Nothing changed.</>
+              <>{file?.name} cannot be imported: {problems} {problems === 1 ? 'problem' : 'problems'} below.</>
             ) : pending === 0 ? (
               <>{file?.name} matches this gateway; nothing to change.</>
             ) : (
-              <>{file?.name} would change {pending} {pending === 1 ? 'thing' : 'things'}. Nothing has changed yet.</>
+              <>{file?.name} would change {pending} {pending === 1 ? 'thing' : 'things'}.</>
             )}
           </p>
           <table className="config-plan">

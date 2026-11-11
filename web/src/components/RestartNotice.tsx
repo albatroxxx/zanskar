@@ -8,15 +8,10 @@ import { Alert, Confirm } from './ui'
 const POLL_MS = 30_000
 const RECONNECT_MS = 2_000
 
+// Said only where a restart is not taken care of (owner, 2026-11-11: systemd
+// and Kubernetes bring it back, which needs no sentence).
 function supervisorNote(s: SystemStatus['supervisor']) {
-  switch (s) {
-    case 'systemd':
-      return 'systemd starts the service again within a few seconds.'
-    case 'kubernetes':
-      return 'The pod restarts on its own.'
-    default:
-      return 'Make sure your process manager restarts the service; without one the gateway stops.'
-  }
+  return s === 'systemd' || s === 'kubernetes' ? '' : 'Without a process manager the gateway stays stopped.'
 }
 
 /**
@@ -81,7 +76,7 @@ export function RestartNotice() {
   }, [gone, draining])
 
   if (watched) return null
-  if (gone) return <Alert tone="warn">Restarting the gateway… this page reloads when it is back.</Alert>
+  if (gone) return <Alert tone="warn">Restarting the gateway…</Alert>
   if (!status) return null
   const env = status.env_file
   const masterKey = env.changed?.includes('ZANSKAR_MASTER_KEY')
@@ -109,8 +104,8 @@ export function RestartNotice() {
       <Alert tone="warn">
         <strong>Restarting.</strong>{' '}
         {status.live_sessions > 0
-          ? `Waiting for ${sessions} to end, until ${fmtTime(status.drain.deadline)}; any still open then are ended. No new session can start meanwhile.`
-          : 'No session is live; the gateway is stopping now.'}{' '}
+          ? `Waiting for ${sessions} to end, until ${fmtTime(status.drain.deadline)}. New sessions are refused.`
+          : 'No live sessions; stopping now.'}{' '}
         {supervisorNote(status.supervisor)}
         {err && <div>{err}</div>}
         <div className="actions" style={{ marginTop: 8 }}>
@@ -125,7 +120,7 @@ export function RestartNotice() {
   if (env.state === 'unreadable') {
     return (
       <Alert tone="warn">
-        <strong>Cannot check {env.path} for changes.</strong> {env.error} Boot settings changed there apply only after a restart, and the console cannot tell you when that is due.
+        <strong>Cannot check {env.path} for changes.</strong> {env.error}
       </Alert>
     )
   }
@@ -154,7 +149,7 @@ export function RestartNotice() {
           body={
             <div>
               <p>
-                {status.live_sessions > 0 ? `${sessions} would be cut off by an immediate restart.` : 'No session is live, so a restart is quick.'} New sessions are refused until the fresh process is up. {supervisorNote(status.supervisor)}
+                {status.live_sessions > 0 ? `${sessions} would be cut off by an immediate restart.` : 'No live sessions.'} {supervisorNote(status.supervisor)}
               </p>
               <p className="field inline">
                 <input id="rs-wait" type="radio" name="rs" checked={wait} onChange={() => setWait(true)} />

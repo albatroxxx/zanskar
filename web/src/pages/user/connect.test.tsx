@@ -295,8 +295,8 @@ describe('the tab a session link opened', () => {
   it('says a lapsed grant needs a request, with the way to Targets', async () => {
     vi.spyOn(api, 'post').mockRejectedValue(new ApiError(403, { code: 'approval_required', message: 'approval required', request_id: 'r' }, '403'))
     open('/connect?target=t1&protocol=ssh')
-    expect(await screen.findByText(/SSH access to box needs an approved request\./)).toBeDefined()
-    expect(screen.getByRole('link', { name: 'Request it from Targets' }).getAttribute('href')).toBe('/')
+    expect(await screen.findByText(/SSH access to box needs an/)).toBeDefined()
+    expect(screen.getByRole('link', { name: 'approved request' }).getAttribute('href')).toBe('/')
   })
 })
 

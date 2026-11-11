@@ -122,7 +122,7 @@ describe('Adding a provider', () => {
     await user.type(within(form).getByLabelText('Base DN'), 'dc=corp,dc=example')
     // Zanskar makes no accounts for a provider (2026-11-02), so turning the
     // provider's own off says who can still sign in.
-    const offHint = 'Off: only people the provider pushes (SCIM), or who already have an account, can sign in.'
+    const offHint = 'Off: only pushed or existing accounts can sign in.'
     expect(within(form).queryByText(offHint)).toBeNull()
     await user.click(within(form).getByLabelText('Create an account for each new person'))
     expect(within(form).getByText(offHint)).toBeDefined()
@@ -182,7 +182,7 @@ describe('Editing, testing and deleting a provider', () => {
     await waitFor(() => expect((within(form).getByLabelText('Issuer URL') as HTMLInputElement).value).toBe('https://login.example.com'))
     const origin = window.location.origin
     expect((within(form).getByLabelText('Redirect URI') as HTMLInputElement).value).toBe(`${origin}/api/v1/auth/oidc/i1/callback`)
-    expect(within(form).getByText(/also the post-logout redirect URI/)).toBeDefined()
+    expect(within(form).getByText(/Also the post-logout redirect URI/)).toBeDefined()
     expect(within(form).getByRole('button', { name: 'Copy Redirect URI' })).toBeDefined()
     const ends = within(form).getByLabelText('Signing out ends the provider session too') as HTMLInputElement
     expect(ends.checked).toBe(true)
@@ -228,7 +228,14 @@ describe('Editing, testing and deleting a provider', () => {
     const user = userEvent.setup()
     await user.click((await screen.findAllByRole('button', { name: 'Edit' }))[0])
     expect(screen.getAllByRole('row').every((r) => within(r).queryByRole('button', { name: 'Delete' }) === null)).toBe(true)
-    await user.click(await within(screen.getByRole('dialog')).findByRole('button', { name: 'Delete' }))
+    // Bottom right and on its own, as in a host's drawer; Save is in the
+    // other group (live, 2026-11-11: it was bottom left).
+    const remove = await within(screen.getByRole('dialog')).findByRole('button', { name: 'Delete' })
+    const row = remove.parentElement as HTMLElement
+    expect(row.className).toBe('actions')
+    expect(row.lastElementChild).toBe(remove)
+    expect(within(row.firstElementChild as HTMLElement).getByRole('button', { name: 'Save' })).toBeDefined()
+    await user.click(remove)
     const dialog = screen.getByRole('dialog', { name: 'Delete provider' })
     expect(within(dialog).getByText(/keep their accounts but cannot sign in through it/)).toBeDefined()
     await user.click(within(dialog).getByRole('button', { name: 'Delete' }))

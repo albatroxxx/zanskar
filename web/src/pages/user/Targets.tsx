@@ -150,7 +150,7 @@ export function Targets() {
         minutes: Number(reqForm.minutes),
       })
       badgesChanged()
-      setNotice(`Requested ${protocolName(reqModal.protocol)} access to ${reqModal.target.name}. An administrator must approve it — track it under Access.`)
+      setNotice(`Requested ${protocolName(reqModal.protocol)} access to ${reqModal.target.name}.`)
       setReqModal(null)
       setReqForm({ reason: '', minutes: 60 })
       void loadGrants()
@@ -293,7 +293,7 @@ export function Targets() {
           {applications === null ? (
             <Loading />
           ) : applications.length === 0 ? (
-            <Empty>{emptyFor('applications', 'No applications are assigned to you. Ask an administrator for access.')}</Empty>
+            <Empty>{emptyFor('applications', 'No applications are assigned to you.')}</Empty>
           ) : (
             <table>
               <thead>
@@ -310,12 +310,12 @@ export function Targets() {
                     <td><Tags tags={t.tags} /></td>
                     <td>
                       {gated(t, 'http') ? (
-                        <button className="btn sm" onClick={() => setReqModal({ target: t, protocol: 'http' })} title="request access to this application">Request</button>
+                        <button className="btn sm" onClick={() => setReqModal({ target: t, protocol: 'http' })}>Request</button>
                       ) : (
                         // The application opens in an isolated browser beside
                         // the gateway, streamed like a desktop (ADR 0034), in a
                         // tab of its own (ADR 0038).
-                        <SessionLink intent={{ target: t.id, protocol: 'http' }} className="btn sm proto-app" label={`Open ${t.name}`} title="open in an isolated browser">Open</SessionLink>
+                        <SessionLink intent={{ target: t.id, protocol: 'http' }} className="btn sm proto-app" label={`Open ${t.name}`}>Open</SessionLink>
                       )}
                     </td>
                   </tr>
@@ -331,7 +331,7 @@ export function Targets() {
           {databases === null ? (
             <Loading />
           ) : databases.length === 0 ? (
-            <Empty>{emptyFor('databases', 'No databases are assigned to you. Ask an administrator for access.')}</Empty>
+            <Empty>{emptyFor('databases', 'No databases are assigned to you.')}</Empty>
           ) : (
             <table>
               <thead>
@@ -355,7 +355,7 @@ export function Targets() {
                           <button className="btn sm" onClick={() => setReqModal({ target: t, protocol: p })} title="request database access">Request</button>
                         ) : (
                           p ? (
-                            <SessionLink intent={{ target: t.id, protocol: p }} className="btn sm proto-database" label="SQL client" title="open the SQL client">SQL client</SessionLink>
+                            <SessionLink intent={{ target: t.id, protocol: p }} className="btn sm proto-database" label="SQL client">SQL client</SessionLink>
                           ) : (
                             <NotOffered />
                           )
@@ -375,7 +375,7 @@ export function Targets() {
           {statics === null ? (
             <Loading />
           ) : statics.length === 0 ? (
-            <Empty>{emptyFor('hosts', 'No hosts are assigned to you yet. Ask an administrator for access.')}</Empty>
+            <Empty>{emptyFor('hosts', 'No hosts are assigned to you.')}</Empty>
           ) : (
             <table>
               <thead>
@@ -398,7 +398,7 @@ export function Targets() {
                         {notReady && (
                           <>
                             {' '}
-                            <StateIcon state="warn" label="Awaiting host key trust — an administrator must trust this machine's key first" />
+                            <StateIcon state="warn" label="Awaiting host key trust" />
                           </>
                         )}
                       </td>
@@ -420,7 +420,7 @@ export function Targets() {
           {groups === null ? (
             <Loading />
           ) : groups.length === 0 ? (
-            <Empty>{emptyFor('autoscaling groups', 'No autoscaling groups are assigned to you. Ask an administrator for access.')}</Empty>
+            <Empty>{emptyFor('autoscaling groups', 'No autoscaling groups are assigned to you.')}</Empty>
           ) : (
             <table>
               <thead>
@@ -457,8 +457,7 @@ export function Targets() {
 
       {chooser && (
         <Modal title={`Connect to ${chooser.group.name}`} onClose={() => setChooser(null)} width={560}>
-          <p className="muted">Newest healthy instance, or pick one.</p>
-          {chooser.instances === null && <p className="muted">Loading healthy instances…</p>}
+          {chooser.instances === null && <p className="muted">Loading…</p>}
           {chooser.instances !== null && chooser.instances.length === 0 && (
             <Alert tone="warn">This group has no healthy instance right now.</Alert>
           )}
@@ -495,7 +494,6 @@ export function Targets() {
 
       {reqModal && (
         <Modal title={`Request access to ${reqModal.target.name}`} onClose={() => setReqModal(null)}>
-          <p className="muted">Approval is needed for {protocolName(reqModal.protocol)}: say why and for how long.</p>
           <form onSubmit={(e) => void submitRequest(e)}>
             <Field label="Reason">
               <textarea id="req-reason" autoFocus value={reqForm.reason} onChange={(e) => setReqForm({ ...reqForm, reason: e.target.value })} required placeholder="What you need to do" />

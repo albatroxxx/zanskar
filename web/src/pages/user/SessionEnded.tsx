@@ -64,5 +64,5 @@ export function SessionEndedDialog({ ended, target, protocol, elapsed, again, cl
  *  follows as before. Placed inside the session's page, it shows in full
  *  screen too, and Cancel leaves everything as it was. */
 export function ConfirmDisconnect({ target, onConfirm, onClose }: { target: string; onConfirm: () => void; onClose: () => void }) {
-  return <Confirm title={`Disconnect from ${target}?`} body="This ends the session." confirmLabel="Disconnect" danger onConfirm={onConfirm} onClose={onClose} />
+  return <Confirm title={`Disconnect from ${target}?`} body={null} confirmLabel="Disconnect" danger onConfirm={onConfirm} onClose={onClose} />
 }

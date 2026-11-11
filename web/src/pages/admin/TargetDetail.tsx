@@ -130,7 +130,7 @@ export function TargetDetail({ target, credentials, onClose, onChanged, onDelete
       {err && <Alert tone="danger" onDismiss={() => setErr('')}>{err}</Alert>}
       {t.host_key_status === 'changed' && (
         <Alert tone="danger">
-          The SSH host key changed after it was trusted. Connections are refused until an administrator confirms the new key. Verify it out of band before trusting it.
+          The SSH host key changed; connections are refused until it is trusted.
           {probe?.host_key_changed_from && (
             <div className="mono" style={{ marginTop: 6 }}>previous {probe.host_key_changed_from}</div>
           )}
@@ -142,7 +142,7 @@ export function TargetDetail({ target, credentials, onClose, onChanged, onDelete
       ] as const).map(([protocol, label, pinned, seen, status]) =>
         status === 'changed' && pinned && seen ? (
           <Alert key={protocol} tone="danger">
-            The {label} certificate changed after it was pinned. {label} connections are refused until an administrator accepts the new one; check it with the machine's owner first.
+            The {label} certificate changed; {label} connections are refused until it is accepted.
             <div className="mono" style={{ marginTop: 6, wordBreak: 'break-all' }}>pinned {pinned}<br />now {seen}</div>
             <div className="actions" style={{ marginTop: 8 }}>
               <button className="btn" onClick={() => setTrustCert({ protocol, pinned, seen })}>Accept the new {label} certificate…</button>
@@ -155,7 +155,7 @@ export function TargetDetail({ target, credentials, onClose, onChanged, onDelete
           <>
             <dt>Engine</dt><dd>{engineName(t.engine, t.engine_version)}</dd>
             <dt>Endpoint</dt><dd className="mono">{t.address}{port ? `:${port}` : ''}</dd>
-            <dt>Database</dt><dd>{t.database_name || <span className="muted">{t.engine === 'postgres' ? 'named after the login role' : 'none selected; users pick one with USE'}</span>}</dd>
+            <dt>Database</dt><dd>{t.database_name || <span className="muted">{t.engine === 'postgres' ? 'named after the login role' : 'none selected'}</span>}</dd>
             <dt>TLS</dt>
             <dd>
               {dbTLS(t.tls_mode).verified ? <Badge tone="ok">{dbTLS(t.tls_mode).label} against the CA bundle</Badge> : <Badge tone="warn">{dbTLS(t.tls_mode).label}</Badge>}
@@ -184,31 +184,6 @@ export function TargetDetail({ target, credentials, onClose, onChanged, onDelete
               </>
             )}
             <dt>Upstream TLS</dt><dd>{appTLS(t).verified ? <Badge tone="ok">{appTLS(t).label}</Badge> : <Badge tone="warn">{appTLS(t).label}</Badge>}</dd>
-            {learns && (
-              <>
-                <dt>Blocked</dt>
-                <dd>
-                  <BlockedDependencies
-                    target={t}
-                    items={blocked}
-                    onAllow={(hostport) =>
-                      run(async () => {
-                        const hosts = [...(t.app_private?.hosts ?? []), hostport]
-                        const u = await api.put<Target>(`/targets/${t.id}`, targetBody(t, { app_private: { ...(t.app_private ?? {}), hosts } }))
-                        setBlocked((b) => (b ?? []).filter((x) => `${x.host}:${x.port}` !== hostport))
-                        onChanged(u)
-                      })
-                    }
-                    onClear={() =>
-                      run(async () => {
-                        await api.del(`/targets/${t.id}/dependencies`)
-                        setBlocked([])
-                      })
-                    }
-                  />
-                </dd>
-              </>
-            )}
           </>
         ) : (
           <>
@@ -252,6 +227,36 @@ export function TargetDetail({ target, credentials, onClose, onChanged, onDelete
           </>
         )}
       </dl>
+
+      {/* What the application's sessions were refused, a table of its own
+          under the details: in the details' second column it was cut off at
+          the dialog's edge, its last column and Allow out of sight (live,
+          2026-11-11). */}
+      {learns && (
+        <>
+          <h2 style={{ marginTop: 18 }}>Blocked</h2>
+          <div className="table-wrap">
+            <BlockedDependencies
+              target={t}
+              items={blocked}
+              onAllow={(hostport) =>
+                run(async () => {
+                  const hosts = [...(t.app_private?.hosts ?? []), hostport]
+                  const u = await api.put<Target>(`/targets/${t.id}`, targetBody(t, { app_private: { ...(t.app_private ?? {}), hosts } }))
+                  setBlocked((b) => (b ?? []).filter((x) => `${x.host}:${x.port}` !== hostport))
+                  onChanged(u)
+                })
+              }
+              onClear={() =>
+                run(async () => {
+                  await api.del(`/targets/${t.id}/dependencies`)
+                  setBlocked([])
+                })
+              }
+            />
+          </div>
+        </>
+      )}
 
       {/* An application holds no credential: people sign in to it as
           themselves, inside the isolated browser (ADR 0034). A
@@ -327,13 +332,13 @@ export function TargetDetail({ target, credentials, onClose, onChanged, onDelete
               database protocols start TLS inside themselves, so that is
               what it says. */}
           {database && (
-            <button className="btn" onClick={() => void doProbe()} disabled={probing} title="Reaches the database port from the gateway">{probing ? 'Testing…' : 'Test connection'}</button>
+            <button className="btn" onClick={() => void doProbe()} disabled={probing}>{probing ? 'Testing…' : 'Test connection'}</button>
           )}
           {canTrust && (
             <button className="btn primary" onClick={() => setConfirm('trust')}>Trust host key</button>
           )}
           {sshCA && t.host_key_status === 'trusted' && (
-            <button className="btn" onClick={() => void testCertificate()} disabled={certProbing} title="Signs in once with a certificate from the bound authority, then disconnects">{certProbing ? 'Testing…' : 'Test certificate login'}</button>
+            <button className="btn" onClick={() => void testCertificate()} disabled={certProbing}>{certProbing ? 'Testing…' : 'Test certificate login'}</button>
           )}
           <button className="btn" onClick={() => setEditing(true)}>Edit</button>
           <button className="btn" disabled={toggling} onClick={toggleStatus} title={t.status === 'active' ? 'Open sessions on it end' : undefined}>{t.status === 'active' ? (toggling ? 'Disabling…' : 'Disable') : toggling ? 'Enabling…' : 'Enable'}</button>
@@ -357,9 +362,8 @@ export function TargetDetail({ target, credentials, onClose, onChanged, onDelete
           title="Trust this host key?"
           body={
             <div>
-              <p>Zanskar will only connect to <strong>{t.name}</strong> when it presents this key:</p>
               <p className="mono" style={{ wordBreak: 'break-all' }}>{fp}</p>
-              {t.host_key_status === 'changed' && <Alert tone="danger">Replaces a previously trusted key. Confirm the change with the machine's owner first.</Alert>}
+              {t.host_key_status === 'changed' && <Alert tone="danger">Replaces the trusted key.</Alert>}
             </div>
           }
           confirmLabel="Trust"
@@ -376,9 +380,8 @@ export function TargetDetail({ target, credentials, onClose, onChanged, onDelete
           title={`Accept the new ${trustCert.protocol === 'rdp' ? 'RDP' : 'WinRM'} certificate?`}
           body={
             <div>
-              <p>Zanskar will only connect to <strong>{t.name}</strong> over {trustCert.protocol === 'rdp' ? 'RDP' : 'WinRM'} when it presents this certificate:</p>
               <p className="mono" style={{ wordBreak: 'break-all' }}>{trustCert.seen}</p>
-              <Alert tone="danger">This replaces the pinned certificate {trustCert.pinned}. Only proceed if you confirmed the change with the machine's owner.</Alert>
+              <Alert tone="danger">Replaces {trustCert.pinned}.</Alert>
             </div>
           }
           confirmLabel="Accept"
@@ -424,8 +427,8 @@ function BlockedDependencies({ target, items, onAllow, onClear }: { target: Targ
                 <td className="muted from">{x.from || '—'}</td>
                 <td className="muted">{x.count} × · {fmtTime(x.last_seen)}</td>
                 <td>
-                  {x.why === 'private' && <button className="btn sm" onClick={() => onAllow(hostport)} title="allow this private host for the application's dependencies">Allow</button>}
-                  {page && <span className="muted" title="someone tried to open a page there; an endpoint would allow it">not an endpoint</span>}
+                  {x.why === 'private' && <button className="btn sm" onClick={() => onAllow(hostport)}>Allow</button>}
+                  {page && <span className="muted">not an endpoint</span>}
                   {never && <StateIcon state="warn" label={`Never allowed: ${x.why}`} />}
                 </td>
               </tr>

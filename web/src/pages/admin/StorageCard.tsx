@@ -86,17 +86,17 @@ export function StorageCard() {
             written and a lost one count too, which the dashboard's "kept"
             does not (live, 2026-11-11: 29 here against 28 there). */}
         <dt>Recordings held</dt>
-        <dd title="Every recording not deleted, by where it lives: those still being written and lost ones count too. The dashboard counts the finished ones.">{Object.entries(status.counts).map(([k, v]) => `${v} in ${k}`).join(', ') || 'none yet'}</dd>
+        <dd>{Object.entries(status.counts).map(([k, v]) => `${v} in ${k}`).join(', ') || 'none yet'}</dd>
       </dl>
-      {elsewhere > 0 && <Alert tone="warn">{elsewhere} recording{elsewhere === 1 ? '' : 's'} sit in a bucket that is no longer active and cannot be played until that bucket is configured again.</Alert>}
+      {elsewhere > 0 && <Alert tone="warn">{elsewhere} recording{elsewhere === 1 ? '' : 's'} in an inactive bucket cannot be played.</Alert>}
       <h3 style={{ marginTop: 16 }}>S3-compatible bucket</h3>
       <div className="form-grid">
         <Field label="Bucket"><input id="st-bucket" value={f.bucket} onChange={set('bucket')} placeholder="my-recordings" /></Field>
-        <Field label="Key prefix" hint="folder inside the bucket"><input id="st-prefix" value={f.prefix} onChange={set('prefix')} /></Field>
+        <Field label="Key prefix"><input id="st-prefix" value={f.prefix} onChange={set('prefix')} /></Field>
         <Field label="Region"><input id="st-region" value={f.region ?? ''} onChange={set('region')} placeholder="The SDK's default" /></Field>
         <Field label="Endpoint" hint="MinIO, Ceph and the like"><input id="st-endpoint" value={f.endpoint ?? ''} onChange={set('endpoint')} placeholder="https://minio.internal:9000" /></Field>
         <Field label="KMS key"><input id="st-kms" value={f.kms_key_id ?? ''} onChange={set('kms_key_id')} placeholder="AES-256 server-side encryption" /></Field>
-        <Field label="Credentials" hint={f.auth === 'role' ? 'the gateway\'s instance role or environment' : 'sealed; never shown again'}>
+        <Field label="Credentials" hint={f.auth === 'role' ? undefined : 'sealed; never shown again'}>
           <select id="st-auth" value={f.auth} onChange={set('auth')}>
             <option value="role">Instance role / SDK default</option>
             <option value="keys">Access key</option>
@@ -110,8 +110,8 @@ export function StorageCard() {
         )}
       </div>
       <div className="actions">
-        <button className="btn" disabled={busy || !f.bucket} onClick={() => void run(() => api.post('/admin/storage/test', body), 'The bucket accepted a probe object: written, read back and deleted.').catch(() => {})}>Test</button>
-        <button className="btn primary" disabled={busy || !f.bucket} onClick={() => void run(() => api.put('/admin/storage', body), 'Saved. The next session records to the bucket.').catch(() => {})}>Save and use</button>
+        <button className="btn" disabled={busy || !f.bucket} onClick={() => void run(() => api.post('/admin/storage/test', body), 'The bucket works.').catch(() => {})}>Test</button>
+        <button className="btn primary" disabled={busy || !f.bucket} onClick={() => void run(() => api.put('/admin/storage', body), 'Saved.').catch(() => {})}>Save and use</button>
         {status.source === 'console' && <button className="btn" disabled={busy} onClick={() => setConfirm('reset')}>Remove console setting</button>}
         {status.active && local > 0 && !status.move.running && <button className="btn" disabled={busy} onClick={() => setConfirm('move')}>Move {local} local recording{local === 1 ? '' : 's'} to the bucket…</button>}
       </div>
@@ -123,7 +123,7 @@ export function StorageCard() {
       {confirm === 'reset' && (
         <Confirm
           title="Remove the console storage setting?"
-          body={status.environment ? `New recordings go to the environment's bucket s3://${status.environment.bucket} again.` : 'New recordings go to the local directory again. Recordings already in the bucket stay readable only while a bucket is configured.'}
+          body={status.environment ? `New recordings go to s3://${status.environment.bucket}.` : 'New recordings go to the local directory.'}
           confirmLabel="Remove"
           danger
           onClose={() => setConfirm(null)}
@@ -133,7 +133,7 @@ export function StorageCard() {
       {confirm === 'move' && (
         <Confirm
           title={`Move ${local} local recording${local === 1 ? '' : 's'}?`}
-          body="Finished recordings are copied, verified and removed locally, in the background."
+          body="Finished recordings move; local copies are removed."
           confirmLabel="Move"
           onClose={() => setConfirm(null)}
           onConfirm={() => run(() => api.post('/admin/storage/move'), 'Move started.')}

@@ -81,8 +81,9 @@ describe('TargetsPage', () => {
   })
 
   // An application's further origins (ADR 0037, amended 2026-11-02): the
-  // list counts them beside the upstream, naming them on hover, and the
-  // detail lists each under the upstream.
+  // list counts them beside the upstream, a toggle that lists them in the
+  // row (it was a hover title until 2026-11-11), and the detail lists each
+  // under the upstream.
   it('counts an application\'s other endpoints in the list and lists them in its detail', async () => {
     const grafana: Target = {
       ...db, id: 'a2', name: 'Grafana', address: 'grafana.internal', engine: undefined, engine_version: undefined, database_name: undefined, tls_mode: undefined,
@@ -92,10 +93,13 @@ describe('TargetsPage', () => {
     serve([grafana])
     render(<MemoryRouter><Applications /></MemoryRouter>)
     const row = (await screen.findByText('http://grafana.internal', { exact: false })).closest('tr')!
-    const more = within(row).getByText('+2')
-    expect(more.getAttribute('title')).toBe('API: http://api.internal:8080\nSign-in: https://sso.internal')
+    const user = userEvent.setup()
+    const more = within(row).getByRole('button', { name: 'Show 2 other endpoints' })
+    expect(more.textContent).toContain('+2')
+    await user.click(more)
+    expect(within(row).getAllByRole('listitem').map((li) => li.textContent)).toEqual(['API http://api.internal:8080', 'Sign-in https://sso.internal'])
 
-    await userEvent.setup().click(within(row).getByRole('button', { name: 'Manage' }))
+    await user.click(within(row).getByRole('button', { name: 'Manage' }))
     const drawer = screen.getByRole('dialog', { name: 'Grafana' })
     expect(within(drawer).getByText('Other endpoints')).toBeDefined()
     expect(within(drawer).getAllByRole('listitem').map((li) => li.textContent)).toEqual(['API http://api.internal:8080', 'Sign-in https://sso.internal'])

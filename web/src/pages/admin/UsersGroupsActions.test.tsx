@@ -106,7 +106,7 @@ describe('Users', () => {
     await show()
     const enable = (username: string) => within(screen.getByLabelText(`actions for ${username}`)).getByRole('option', { name: 'Enable' }) as HTMLOptionElement
     await waitFor(() => expect(enable('carol').disabled).toBe(true))
-    expect(enable('carol').title).toBe('Keycloak no longer has this person; the account is enabled again when it does')
+    expect(enable('carol').title).toBe('Keycloak no longer has this person')
     expect(within(screen.getByText('carol').closest('tr') as HTMLElement).getByRole('button', { name: 'Disabled: Keycloak no longer has this person' })).toBeDefined()
     // Disabled by an administrator: theirs to enable.
     expect(enable('bob').disabled).toBe(false)
@@ -177,7 +177,6 @@ describe('Users', () => {
     await user.click(screen.getByRole('button', { name: 'Add user' }))
     const form = screen.getByRole('dialog', { name: 'Add user' })
     expect(within(form).queryByLabelText(/identity provider/i)).toBeNull()
-    expect(within(form).getByText('Identity provider accounts come from the provider.')).toBeDefined()
     expect(within(form).getByLabelText('Initial password')).toBeDefined()
     await user.type(within(form).getByLabelText('Username'), 'erin')
     await user.type(within(form).getByLabelText('Display name'), 'Erin')
@@ -237,7 +236,7 @@ describe('Users', () => {
 
     await act(user, 'bob', 'status')
     dialog = screen.getByRole('dialog', { name: 'Disable bob?' })
-    expect(within(dialog).getByText(/cannot sign in until re-enabled/)).toBeDefined()
+    expect(within(dialog).getByText('They are signed out and their live sessions end.')).toBeDefined()
     await user.click(within(dialog).getByRole('button', { name: 'Disable' }))
     await waitFor(() => expect(put).toHaveBeenCalledWith('/users/u2', { display_name: 'Bob', email: 'bob@example.com', status: 'disabled' }))
 
@@ -248,7 +247,7 @@ describe('Users', () => {
 
     await act(user, 'bob', 'delete')
     dialog = screen.getByRole('dialog', { name: 'Delete bob?' })
-    expect(within(dialog).getByText(/Their past sessions stay in the record/)).toBeDefined()
+    expect(within(dialog).getByText('Their sign-ins and live sessions end.')).toBeDefined()
     await user.click(within(dialog).getByRole('button', { name: 'Delete' }))
     await waitFor(() => expect(del).toHaveBeenCalledWith('/users/u2'))
   })
@@ -345,6 +344,6 @@ describe('Groups', () => {
     const user = await show()
     await user.click(screen.getByRole('tab', { name: 'Groups' }))
     // A policy names users or groups (ADR 0036); a group is not needed first.
-    expect(await screen.findByText('No groups. A policy can name users without one.')).toBeDefined()
+    expect(await screen.findByText('No groups.')).toBeDefined()
   })
 })
