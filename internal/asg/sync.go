@@ -47,6 +47,8 @@ type Syncer struct {
 	// is first seen; asking once left the key unchecked for its whole life
 	// (live, 2026-11-11). A restart forgets it, and the next sync asks.
 	consoleAsked map[string]time.Time
+	// consoleTries counts those reads, up to maxConsoleReads.
+	consoleTries map[string]int
 	// consoleDisowned holds the instances whose console listed only other
 	// keys than the one pinned on first use: they stay unhealthy between
 	// rechecks rather than coming back with every probe.
@@ -190,6 +192,7 @@ func (s *Syncer) SyncGroup(ctx context.Context, g *Group) (Summary, error) {
 		s.cleared(in.InstanceID, "")
 		s.mu.Lock()
 		delete(s.consoleAsked, in.InstanceID)
+		delete(s.consoleTries, in.InstanceID)
 		delete(s.consoleDisowned, in.InstanceID)
 		s.mu.Unlock()
 	}
@@ -244,7 +247,7 @@ func (s *Syncer) probe(ctx context.Context, provider cloud.Provider, g *Group, i
 		in.HostKeyFingerprint, in.HostKeySource = prev.HostKeyFingerprint, prev.HostKeySource
 		if prev.HostKeySource == "tofu" && in.ProbeHealth == "healthy" {
 			if s.consoleDue(in.InstanceID) {
-				s.recheckConsole(ctx, provider, g, in)
+				s.recheckConsole(ctx, provider, g, in, timeout)
 			}
 			if s.disowned(in.InstanceID) {
 				in.ProbeHealth = "unhealthy"
@@ -289,13 +292,25 @@ func (s *Syncer) consoleDue(instanceID string) bool {
 	defer s.mu.Unlock()
 	if s.consoleAsked == nil {
 		s.consoleAsked = map[string]time.Time{}
+		s.consoleTries = map[string]int{}
+	}
+	// A console that has printed no keys after this many reads never will
+	// (an image that does not print them): asking for the instance's whole
+	// life was one AWS call per instance every interval (review, 2026-11-11).
+	if s.consoleTries[instanceID] >= maxConsoleReads {
+		return false
 	}
 	if last, ok := s.consoleAsked[instanceID]; ok && time.Since(last) < every {
 		return false
 	}
 	s.consoleAsked[instanceID] = time.Now()
+	s.consoleTries[instanceID]++
 	return true
 }
+
+// maxConsoleReads bounds how often one instance's console is read for its
+// host keys: at first sight and five rechecks, half an hour at the default.
+const maxConsoleReads = 6
 
 // recheckConsole checks a key pinned on first use against the console output
 // the instance has published since. A console that lists the pinned key
@@ -303,8 +318,11 @@ func (s *Syncer) consoleDue(instanceID string) bool {
 // red flag as at first sight: the instance is held unhealthy (disowned) and
 // the mismatch audited once, the pin kept. No keys yet, or no answer, changes
 // nothing until the next recheck.
-func (s *Syncer) recheckConsole(ctx context.Context, provider cloud.Provider, g *Group, in *Instance) {
-	keys, err := provider.ConsoleHostKeys(ctx, in.InstanceID)
+func (s *Syncer) recheckConsole(ctx context.Context, provider cloud.Provider, g *Group, in *Instance, timeout time.Duration) {
+	// Bounded like the probe, so a slow API does not stretch the sync.
+	cctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	keys, err := provider.ConsoleHostKeys(cctx, in.InstanceID)
 	if err != nil || len(keys) == 0 {
 		return
 	}
@@ -315,6 +333,7 @@ func (s *Syncer) recheckConsole(ctx context.Context, provider cloud.Provider, g 
 	confirmed := slices.Contains(keys, in.HostKeyFingerprint)
 	if confirmed {
 		delete(s.consoleAsked, in.InstanceID)
+		delete(s.consoleTries, in.InstanceID)
 		delete(s.consoleDisowned, in.InstanceID)
 	} else {
 		s.consoleDisowned[in.InstanceID] = true

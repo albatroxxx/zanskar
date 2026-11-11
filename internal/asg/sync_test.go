@@ -16,6 +16,7 @@ import (
 	"math/big"
 	"net"
 	"strconv"
+	"sync"
 	"testing"
 	"time"
 
@@ -165,6 +166,51 @@ func TestSyncRefusesToPinOnConsoleMismatch(t *testing.T) {
 	all, _ := repo.Instances(ctx, g.ID, false)
 	if len(all) != 1 || all[0].HostKeyFingerprint != "" || all[0].Healthy {
 		t.Fatalf("mismatched instance must not be pinned or healthy: %+v", all[0])
+	}
+}
+
+// consoleCounter counts the console reads of the provider it wraps.
+type consoleCounter struct {
+	cloud.Provider
+	mu    sync.Mutex
+	reads int
+}
+
+func (c *consoleCounter) ConsoleHostKeys(ctx context.Context, id string) ([]string, error) {
+	c.mu.Lock()
+	c.reads++
+	c.mu.Unlock()
+	return c.Provider.ConsoleHostKeys(ctx, id)
+}
+
+// TestSyncStopsReadingAConsoleThatPrintsNoKeys (review, 2026-11-11): an
+// instance whose image never prints its host keys had its console read every
+// recheck for its whole life. The reads stop at maxConsoleReads; the pin
+// stays as first seen.
+func TestSyncStopsReadingAConsoleThatPrintsNoKeys(t *testing.T) {
+	ctx := context.Background()
+	s, repo, fake, _ := newSyncer(t)
+	counter := &consoleCounter{Provider: fake}
+	s.Providers = func(context.Context, *Group) (cloud.Provider, error) { return counter, nil }
+	s.ConsoleRecheck = time.Nanosecond
+	port, _ := sshHost(t)
+	g := sample()
+	g.Ports = map[target.Protocol]int{target.SSH: port}
+	if err := repo.Create(ctx, g); err != nil {
+		t.Fatal(err)
+	}
+	fake.Set("web-asg", cloud.Instance{ID: "i-1", PrivateIP: "127.0.0.1", LifecycleState: "InService"})
+	for range 3 * maxConsoleReads {
+		if _, err := s.SyncGroup(ctx, g); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if counter.reads != maxConsoleReads {
+		t.Fatalf("console read %d times, want %d", counter.reads, maxConsoleReads)
+	}
+	all, _ := repo.Instances(ctx, g.ID, false)
+	if len(all) != 1 || all[0].HostKeySource != "tofu" || !all[0].Healthy {
+		t.Fatalf("instance: %+v", all)
 	}
 }
 
