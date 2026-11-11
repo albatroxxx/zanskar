@@ -184,31 +184,6 @@ export function TargetDetail({ target, credentials, onClose, onChanged, onDelete
               </>
             )}
             <dt>Upstream TLS</dt><dd>{appTLS(t).verified ? <Badge tone="ok">{appTLS(t).label}</Badge> : <Badge tone="warn">{appTLS(t).label}</Badge>}</dd>
-            {learns && (
-              <>
-                <dt>Blocked</dt>
-                <dd>
-                  <BlockedDependencies
-                    target={t}
-                    items={blocked}
-                    onAllow={(hostport) =>
-                      run(async () => {
-                        const hosts = [...(t.app_private?.hosts ?? []), hostport]
-                        const u = await api.put<Target>(`/targets/${t.id}`, targetBody(t, { app_private: { ...(t.app_private ?? {}), hosts } }))
-                        setBlocked((b) => (b ?? []).filter((x) => `${x.host}:${x.port}` !== hostport))
-                        onChanged(u)
-                      })
-                    }
-                    onClear={() =>
-                      run(async () => {
-                        await api.del(`/targets/${t.id}/dependencies`)
-                        setBlocked([])
-                      })
-                    }
-                  />
-                </dd>
-              </>
-            )}
           </>
         ) : (
           <>
@@ -252,6 +227,36 @@ export function TargetDetail({ target, credentials, onClose, onChanged, onDelete
           </>
         )}
       </dl>
+
+      {/* What the application's sessions were refused, a table of its own
+          under the details: in the details' second column it was cut off at
+          the dialog's edge, its last column and Allow out of sight (live,
+          2026-11-11). */}
+      {learns && (
+        <>
+          <h2 style={{ marginTop: 18 }}>Blocked</h2>
+          <div className="table-wrap">
+            <BlockedDependencies
+              target={t}
+              items={blocked}
+              onAllow={(hostport) =>
+                run(async () => {
+                  const hosts = [...(t.app_private?.hosts ?? []), hostport]
+                  const u = await api.put<Target>(`/targets/${t.id}`, targetBody(t, { app_private: { ...(t.app_private ?? {}), hosts } }))
+                  setBlocked((b) => (b ?? []).filter((x) => `${x.host}:${x.port}` !== hostport))
+                  onChanged(u)
+                })
+              }
+              onClear={() =>
+                run(async () => {
+                  await api.del(`/targets/${t.id}/dependencies`)
+                  setBlocked([])
+                })
+              }
+            />
+          </div>
+        </>
+      )}
 
       {/* An application holds no credential: people sign in to it as
           themselves, inside the isolated browser (ADR 0034). A

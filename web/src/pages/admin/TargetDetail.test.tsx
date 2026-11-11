@@ -128,6 +128,12 @@ describe('TargetDetail, blocked dependencies', () => {
     // a host, a kind and a time stay on one line each (live 2026-11-05: ":8/0", "docume/nt"); only the asking page may break
     expect(screen.getByRole('table').className).toContain('blocked')
     expect(screen.getByText('cdn.corp:443').closest('tr')?.querySelector('td.from')?.textContent).toBe('http://wiki.corp')
+    // A table of its own, under a heading, that scrolls sideways if it must:
+    // in the details' second column it was cut off at the dialog's edge
+    // (live, 2026-11-11).
+    expect(screen.getByRole('heading', { name: 'Blocked' })).toBeDefined()
+    expect(screen.getByRole('table').closest('dl')).toBeNull()
+    expect(screen.getByRole('table').closest('.table-wrap')).not.toBeNull()
     await userEvent.setup().click(screen.getByRole('button', { name: 'Allow' }))
     await waitFor(() => expect(put).toHaveBeenCalledWith('/targets/w1', expect.objectContaining({ app_private: { hosts: ['cdn.corp:443'] } })))
     expect(onChanged).toHaveBeenCalledWith(allowed)
