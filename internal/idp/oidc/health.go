@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/albatroxxx/zanskar/internal/idp"
@@ -88,7 +89,9 @@ func (h *Handler) Watch(ctx context.Context, interval, retry time.Duration) {
 	}
 }
 
-// probeFailing probes again each provider whose last answer failed.
+// probeFailing probes again each provider whose last answer failed, all at
+// once: one after another, several down providers held the Watch loop for
+// probeTimeout each, every retry (review, 2026-11-11).
 func (h *Handler) probeFailing(ctx context.Context) {
 	var ids []string
 	h.health.Range(func(k, v any) bool {
@@ -97,9 +100,11 @@ func (h *Handler) probeFailing(ctx context.Context) {
 		}
 		return true
 	})
+	var wg sync.WaitGroup
 	for _, id := range ids {
-		h.probe(ctx, id)
+		wg.Go(func() { h.probe(ctx, id) })
 	}
+	wg.Wait()
 }
 
 // probeAll probes each enabled OpenID provider and forgets the answers of
