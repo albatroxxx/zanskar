@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type FormEvent } from 'react'
+import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
 import { api, errorMessage, query } from '../../api/client'
 import { fmtDuration, fmtTime, protocolName } from '../../api/format'
 import { sessionTarget, sessionUser } from '../../api/labels'
@@ -225,7 +225,10 @@ export function Recordings() {
   }, [load])
 
   const needle = search.trim().toLowerCase()
-  const visible = (items ?? []).filter((s) => !needle || rowText(s).includes(needle))
+  // Each row's words are worked out once per load, not on every keystroke
+  // (review, 2026-11-11: a date was formatted per row per character).
+  const texts = useMemo(() => new Map((items ?? []).map((s) => [s.id, rowText(s)])), [items])
+  const visible = (items ?? []).filter((s) => !needle || (texts.get(s.id) ?? '').includes(needle))
   // The API has no search, so the filter runs here over the sessions read so
   // far. While older ones are still unread, the page says how far back it has
   // looked instead of answering for sessions it has never seen.
