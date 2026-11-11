@@ -572,19 +572,14 @@ function ProviderModal({ existing, onClose, onSaved, onDeleted }: { existing: Pr
         <div className="actions" style={{ justifyContent: 'space-between' }}>
           {/* Delete lives where a provider is opened, as a host's does in its
               drawer, not as a red button on every row of the list (the live
-              console, 2026-11-01). */}
+              console, 2026-11-01); and, as there, alone at the bottom right,
+              away from Save (it was bottom left, 2026-11-11). */}
           <span>
-            {existing && (
-              <>
-                <button type="button" className="btn danger" onClick={() => setDeleting(true)} disabled={busy}>Delete</button>{' '}
-                <button type="button" className="btn" onClick={runTest}>Test connection</button>
-              </>
-            )}
-          </span>
-          <span>
+            {existing && <><button type="button" className="btn" onClick={runTest}>Test connection</button>{' '}</>}
             <button type="button" className="btn" onClick={onClose} disabled={busy}>Cancel</button>{' '}
             <button type="submit" className="btn primary" disabled={busy}>{busy ? 'Saving…' : 'Save'}</button>
           </span>
+          {existing && <button type="button" className="btn danger" onClick={() => setDeleting(true)} disabled={busy}>Delete</button>}
         </div>
       </form>
       {deleting && existing && (
