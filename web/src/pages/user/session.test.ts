@@ -4,7 +4,10 @@ import { desktopEnd, endText, switchedState } from './session'
 // The terminal and desktop pages both describe an end with endText (B23).
 describe('endText', () => {
   it('says each reason the gateway reports in a sentence, with its words after', () => {
-    expect(endText({ reason: 'admin_terminated', msg: 'session ended by an administrator' })).toEqual({ lead: 'An administrator ended the session.', detail: 'session ended by an administrator' })
+    expect(endText({ reason: 'admin_terminated', msg: 'session ended by an administrator' })).toEqual({ lead: 'Terminated by an administrator. Contact your administrator.' })
+    // The owner, 2026-11-11: the same words for a desktop or application session, which gets the gateway's words without the code; never the administrator's reason.
+    expect(endText({ reason: 'closed', msg: 'session ended by an administrator' })).toEqual({ lead: 'Terminated by an administrator. Contact your administrator.' })
+    expect(endText({ reason: 'admin_terminated', msg: 'an administrator disabled or changed the target' })).toEqual({ lead: 'Terminated by an administrator. Contact your administrator.', detail: 'an administrator disabled or changed the target' })
     expect(endText({ reason: 'idle_timeout' }).lead).toBe('Disconnected after a period without input, as the access policy requires.')
     expect(endText({ reason: 'user_exit' }).lead).toBe('You closed the session.')
     expect(endText({ reason: 'trust_lost' }).lead).toBe("The target's host key or certificate changed; an administrator must trust it again.")
