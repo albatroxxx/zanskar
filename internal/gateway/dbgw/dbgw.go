@@ -29,6 +29,7 @@ import (
 	"github.com/creack/pty"
 
 	"github.com/albatroxxx/zanskar/internal/gateway"
+	"github.com/albatroxxx/zanskar/internal/gateway/cmdlog"
 	"github.com/albatroxxx/zanskar/internal/gateway/containers"
 	"github.com/albatroxxx/zanskar/internal/gateway/mysqlrelay"
 	"github.com/albatroxxx/zanskar/internal/protocol"
@@ -423,6 +424,17 @@ func Bridge(ctx context.Context, log *slog.Logger, docker string, spec Spec, ws 
 	}
 	sendCtrl(control{T: "ready", SessionID: lim.SessionID})
 
+	// Submitted lines become markers on the recording, as for SSH, so the
+	// statements run can be listed and searched (live, 2026-11-11: a MySQL
+	// session's recording said "No command lines recorded.").
+	var cmds *cmdlog.Log
+	if rec != nil {
+		cmds = cmdlog.New(func(label string) { _ = rec.Marker(label) })
+		// The last statement before quitting is still waiting for its echo
+		// when the session ends; the caller closes the recording after this.
+		defer cmds.Flush()
+	}
+
 	go func() {
 		defer close(outDone)
 		buf := make([]byte, 32<<10)
@@ -437,6 +449,9 @@ func Bridge(ctx context.Context, log *slog.Logger, docker string, spec Spec, ws 
 						}
 						return
 					}
+				}
+				if cmds != nil {
+					cmds.Output(buf[:n])
 				}
 				if lim.Tap != nil {
 					lim.Tap.Write(buf[:n])
@@ -463,6 +478,9 @@ func Bridge(ctx context.Context, log *slog.Logger, docker string, spec Spec, ws 
 				mu.Lock()
 				lastIn = time.Now()
 				mu.Unlock()
+				if cmds != nil {
+					cmds.Input(data)
+				}
 				if _, werr := f.Write(data); werr != nil {
 					return
 				}
@@ -477,6 +495,9 @@ func Bridge(ctx context.Context, log *slog.Logger, docker string, spec Spec, ws 
 				mu.Lock()
 				lastIn = time.Now()
 				mu.Unlock()
+				if cmds != nil {
+					cmds.Input([]byte(fr.D))
+				}
 				if rec != nil {
 					_ = rec.Input([]byte(fr.D))
 				}

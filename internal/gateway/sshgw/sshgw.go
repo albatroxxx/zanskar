@@ -21,6 +21,7 @@ import (
 	"golang.org/x/crypto/ssh"
 
 	"github.com/albatroxxx/zanskar/internal/gateway"
+	"github.com/albatroxxx/zanskar/internal/gateway/cmdlog"
 	"github.com/albatroxxx/zanskar/internal/recording"
 )
 
@@ -239,9 +240,12 @@ func Bridge(ctx context.Context, log *slog.Logger, client *ssh.Client, ws *webso
 
 	// Submitted command lines become markers on the recording so a reviewer
 	// can list them; input the remote did not echo is recorded as hidden.
-	var cmds *commandLog
+	var cmds *cmdlog.Log
 	if rec != nil {
-		cmds = newCommandLog(func(label string) { _ = rec.Marker(label) })
+		cmds = cmdlog.New(func(label string) { _ = rec.Marker(label) })
+		// The last command before exit is still waiting for its echo when
+		// the session ends; the caller closes the recording after this.
+		defer cmds.Flush()
 	}
 
 	// target -> browser (+ recording)
@@ -261,7 +265,7 @@ func Bridge(ctx context.Context, log *slog.Logger, client *ssh.Client, ws *webso
 					}
 				}
 				if cmds != nil {
-					cmds.output(buf[:n])
+					cmds.Output(buf[:n])
 				}
 				if lim.Tap != nil {
 					lim.Tap.Write(buf[:n])
@@ -295,7 +299,7 @@ func Bridge(ctx context.Context, log *slog.Logger, client *ssh.Client, ws *webso
 				lastIn = time.Now()
 				mu.Unlock()
 				if cmds != nil {
-					cmds.input(data)
+					cmds.Input(data)
 				}
 				if _, err := stdin.Write(data); err != nil {
 					return
@@ -312,7 +316,7 @@ func Bridge(ctx context.Context, log *slog.Logger, client *ssh.Client, ws *webso
 				lastIn = time.Now()
 				mu.Unlock()
 				if cmds != nil {
-					cmds.input([]byte(f.D))
+					cmds.Input([]byte(f.D))
 				}
 				if rec != nil {
 					_ = rec.Input([]byte(f.D))

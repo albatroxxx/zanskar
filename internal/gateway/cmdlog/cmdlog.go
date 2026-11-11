@@ -1,6 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
-package sshgw
+// Package cmdlog turns a terminal session's keystrokes into the command lines
+// a reviewer can list and search. The SSH and database bridges share it: a
+// database session recorded no command line at all until 2026-11-11, so the
+// SQL people ran could not be found.
+package cmdlog
 
 import (
 	"bytes"
@@ -10,22 +14,33 @@ import (
 	"unicode"
 )
 
-// commandLog reconstructs the lines a user submits over an SSH terminal and
-// hands each one to mark, which records it as an asciicast marker. A reviewer
-// can then list what was run without replaying the whole session.
+// Log reconstructs the lines a user submits over a terminal and hands each
+// one to mark, which records it as an asciicast marker. A reviewer can then
+// list what was run without replaying the whole session.
 //
 // The gateway sees raw keystrokes and raw output, never the remote terminal's
 // modes, so it cannot know directly whether input was echoed. It infers it: a
 // submitted line is recorded verbatim only if that text appeared in the
 // output since the line began. Text the remote did not echo, which is how a
 // password prompt behaves, is recorded as "(hidden input)" and never stored.
-type commandLog struct {
+type Log struct {
 	mu    sync.Mutex
 	line  []byte
 	out   []byte
 	esc   bool
 	mark  func(string)
 	delay time.Duration // how long after Enter to wait for the last echo
+	// pending holds the submitted lines still waiting for their echo, so
+	// Flush can record them when the session ends inside the wait.
+	pending []*submitted
+}
+
+// submitted is one line between Enter and its marker; done makes sure it is
+// recorded once, by its timer or by Flush, whichever comes first.
+type submitted struct {
+	text  string
+	timer *time.Timer
+	done  sync.Once
 }
 
 const (
@@ -33,12 +48,12 @@ const (
 	maxOut  = 16 << 10
 )
 
-func newCommandLog(mark func(string)) *commandLog {
-	return &commandLog{mark: mark, delay: 250 * time.Millisecond}
+func New(mark func(string)) *Log {
+	return &Log{mark: mark, delay: 250 * time.Millisecond}
 }
 
-// output feeds bytes the target sent to the browser.
-func (c *commandLog) output(data []byte) {
+// Output feeds bytes the target sent to the browser.
+func (c *Log) Output(data []byte) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.out = append(c.out, data...)
@@ -47,8 +62,8 @@ func (c *commandLog) output(data []byte) {
 	}
 }
 
-// input feeds bytes the browser sent to the target.
-func (c *commandLog) input(data []byte) {
+// Input feeds bytes the browser sent to the target.
+func (c *Log) Input(data []byte) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	for _, b := range data {
@@ -84,23 +99,54 @@ func (c *commandLog) input(data []byte) {
 
 // submitLocked takes the current line and decides, after a short wait for the
 // last echo to arrive, whether it may be recorded verbatim.
-func (c *commandLog) submitLocked() {
+func (c *Log) submitLocked() {
 	text := strings.TrimSpace(string(c.line))
 	c.line = c.line[:0]
 	if text == "" {
 		return
 	}
-	time.AfterFunc(c.delay, func() {
+	s := &submitted{text: text}
+	c.pending = append(c.pending, s)
+	s.timer = time.AfterFunc(c.delay, func() { c.record(s) })
+}
+
+// record decides, once, whether a submitted line was echoed and marks it.
+func (c *Log) record(s *submitted) {
+	s.done.Do(func() {
 		c.mu.Lock()
-		echoed := bytes.Contains(c.out, []byte(text))
-		c.out = c.out[:0]
+		echoed := bytes.Contains(c.out, []byte(s.text))
+		for i, p := range c.pending {
+			if p == s {
+				c.pending = append(c.pending[:i], c.pending[i+1:]...)
+				break
+			}
+		}
+		// The echoes of lines still waiting are in the same output: it is
+		// emptied once none is.
+		if len(c.pending) == 0 {
+			c.out = c.out[:0]
+		}
 		c.mu.Unlock()
 		if !echoed {
 			c.mark("(hidden input)")
 			return
 		}
-		c.mark(clean(text))
+		c.mark(clean(s.text))
 	})
+}
+
+// Flush records the lines still waiting for their echo, with what has been
+// echoed so far. A bridge calls it as the session ends, before the recording
+// closes: the last statement before quitting was lost inside the wait
+// (2026-11-11).
+func (c *Log) Flush() {
+	c.mu.Lock()
+	waiting := append([]*submitted(nil), c.pending...)
+	c.mu.Unlock()
+	for _, s := range waiting {
+		s.timer.Stop()
+		c.record(s)
+	}
 }
 
 // clean drops control characters and caps the label; markers are labels on a

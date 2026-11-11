@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -124,6 +125,24 @@ func TestDatabaseSessionEndToEnd(t *testing.T) {
 			rec, err := f.h.Sessions.GetRecording(f.ctx, d["recording_id"].(string))
 			if err != nil || rec.FinishedAt == nil || rec.SizeBytes == 0 {
 				t.Fatalf("recording %+v %v", rec, err)
+			}
+			// The statement typed is a command line on the recording, which
+			// the command list and the command search read (2026-11-11).
+			rc, err := f.h.Storage.Open(f.ctx, rec.StorageURI)
+			if err != nil {
+				t.Fatal(err)
+			}
+			markers, _, _, err := recording.Index(rc, 0)
+			_ = rc.Close()
+			if err != nil {
+				t.Fatal(err)
+			}
+			var labels []string
+			for _, m := range markers {
+				labels = append(labels, m.Label)
+			}
+			if !slices.Contains(labels, "SELECT 41 + 1 AS answer;") {
+				t.Fatalf("command lines %q, want the SELECT typed", labels)
 			}
 			return
 		}
