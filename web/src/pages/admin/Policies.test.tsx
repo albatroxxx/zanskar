@@ -119,6 +119,17 @@ describe('the policy list', () => {
     expect(screen.queryByText(/gone-123/)).toBeNull()
   })
 
+  // Live, 2026-11-11 (UI pass, finding 13): "aashish-admin" broke over two
+  // lines at its hyphen. Each name is kept whole; lines break between names.
+  it('keeps each name in Who whole', async () => {
+    serve([policy({ subjects: [{ kind: 'group', id: 'g1' }, { kind: 'group', id: 'g2' }, { kind: 'user', id: 'u1' }] })])
+    at('/admin/policies')
+    const who = (await screen.findByText('ops')).closest('td')!
+    expect(who.className).toBe('who')
+    expect(Array.from(who.querySelectorAll(':scope > span')).map((s) => s.textContent)).toEqual(['ops', 'dba', 'alice'])
+    expect(who.textContent).toBe('ops, dba · alice')
+  })
+
   // Delete lives where a policy is opened, as a host's does in its drawer;
   // a red Delete on every row was the live console's finding (2026-11-01).
   it('has no Delete on a row', async () => {

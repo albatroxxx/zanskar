@@ -71,7 +71,9 @@ export function Policies() {
                         <strong>{p.name}</strong>
                         {p.description && <div className="muted">{p.description}</div>}
                       </th>
-                      <td className="who">{p.subjects.length === 0 ? <Badge tone="warn">no one</Badge> : who.text}</td>
+                      {/* Each name stays whole; a line breaks between names
+                          (live, 2026-11-11: "aashish-" over "admin"). */}
+                      <td className="who">{p.subjects.length === 0 ? <Badge tone="warn">no one</Badge> : who.text.split(/(, | · )/).map((part, i) => (i % 2 ? part : <span key={i}>{part}</span>))}</td>
                       <td>
                         {r.count === 0 ? (
                           <Badge tone="warn">no grants</Badge>
