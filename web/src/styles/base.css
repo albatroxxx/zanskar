@@ -240,6 +240,9 @@ td .muted, .muted { color: var(--fg-muted); }
    mid-word at this width (live 2026-11-05: ":8/0", "docume/nt"); the page it came from may break. */
 table.blocked th, table.blocked td { white-space: nowrap; }
 table.blocked td.from { white-space: normal; overflow-wrap: anywhere; }
+/* An autoscaling group's instances: an id and a zone are names, read whole
+   (live 2026-11-11: "i-" over "027fc5cef80dc5c3" over "7", "us-east-" over "1b"). */
+table.instances td.mono { white-space: nowrap; overflow-wrap: normal; }
 /* On a phone the card scrolls sideways, not the page (review U1): the grid
    column may shrink below its content, a table keeps a readable width and
    scrolls inside its card, and mono cells stay on one line there. */

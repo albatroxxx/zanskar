@@ -9,7 +9,7 @@ import { protocols, useList, type PortProtocol } from './lib'
 import { TagEditor } from '../../components/TagEditor'
 import { rowsToTags, tagRows, type TagRow } from '../../components/tags'
 import { CredentialBindings, CredentialSelect, shownValue, type BindingChange } from './Bindings'
-import { StateIcon } from '../../components/icons'
+import { OSIcon, StateIcon } from '../../components/icons'
 
 interface SyncSummary { Seen: number; Healthy: number; Joined: number; Left: number; Retired: number; HostKeyMismatches: number }
 interface SyncResponse { summary: SyncSummary; group: AutoscalingGroup; error?: string }
@@ -55,7 +55,7 @@ export function Autoscaling() {
                   <td><strong>{g.name}</strong></td>
                   <td className="mono">{g.region}</td>
                   <td className="mono">{g.external_name}</td>
-                  <td>{g.os_family}</td>
+                  <td><OSIcon os={g.os_family} /></td>
                   <td>
                     <Badge tone={(g.healthy_count ?? 0) > 0 ? 'ok' : (g.instance_count ?? 0) > 0 ? 'warn' : undefined}>
                       {g.healthy_count ?? 0} / {g.instance_count ?? 0}
@@ -617,7 +617,7 @@ function GroupDetail({ group, credentials, onClose, onChanged, onDeleted }: { gr
         <dt>Cloud group</dt><dd className="mono">{g.external_name}</dd>
         <dt>Role</dt><dd className="mono">{g.role_arn}</dd>
         <dt>ExternalId</dt><dd className="mono">{g.external_id}</dd>
-        <dt>OS</dt><dd>{g.os_family}</dd>
+        <dt>OS</dt><dd><OSIcon os={g.os_family} /></dd>
         <dt>Connect to</dt><dd>{g.address_preference} IP</dd>
         <dt>Poll</dt><dd>every {g.poll_interval_seconds}s</dd>
         <dt>Tags</dt><dd><Tags tags={g.tags} /></dd>
@@ -644,7 +644,7 @@ function GroupDetail({ group, credentials, onClose, onChanged, onDeleted }: { gr
         ) : instances.length === 0 ? (
           <Empty>No instances seen yet. Sync to poll the cloud.</Empty>
         ) : (
-          <table>
+          <table className="instances">
             <thead>
               <tr>
                 <th>Instance</th>
@@ -668,7 +668,11 @@ function GroupDetail({ group, credentials, onClose, onChanged, onDeleted }: { gr
                   <td>{healthBadge(i.lb_health, 'healthy')}</td>
                   <td>{healthBadge(i.probe_health, 'healthy')}</td>
                   <td>
-                    {i.host_key_source === 'console' ? <StateIcon state="ok" label="Host key pinned from the console" /> : i.host_key_source === 'tofu' ? <StateIcon state="warn" label="Trust on first use — not pinned yet" /> : <StateIcon state="unknown" label="No host key" />}
+                    {/* Live, 2026-11-11: a key pinned on first sight read "not
+                        pinned yet", though a different key already makes the
+                        instance unhealthy (sync.go); what it lacks is the
+                        check against the instance's console output. */}
+                    {i.host_key_source === 'console' ? <StateIcon state="ok" label="Pinned; matches the instance's console output" /> : i.host_key_source === 'tofu' ? <StateIcon state="warn" label="Pinned when first seen; not checked against the instance's console output" /> : <StateIcon state="unknown" label="No host key seen yet" />}
                   </td>
                   <td className="muted">{i.launched_at ? fmtTime(i.launched_at) : '—'}</td>
                   <td><StateIcon state={i.state === 'terminated' ? 'unknown' : i.state === 'healthy' ? 'ok' : 'danger'} label={capitalised(stateLabel('autoscaling_instance', i.state).label)} /></td>

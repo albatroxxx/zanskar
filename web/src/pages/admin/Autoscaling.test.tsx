@@ -160,3 +160,38 @@ describe('Autoscaling enrolment, the role ARN', () => {
     expect(screen.queryByText(hint)).toBeNull()
   })
 })
+
+// Live, 2026-11-11: the OS read "linux" where every other page says Linux, an
+// instance id broke over three lines, and a host key pinned when first seen
+// read "not pinned yet".
+describe('Autoscaling group, what it says', () => {
+  const instance = (id: string, source: string) => ({
+    id, asg_id: 'g1', instance_id: id, availability_zone: 'us-east-1b', private_ip: '172.31.14.232', lifecycle_state: 'InService',
+    probe_health: 'healthy', healthy: true, host_key_source: source, launched_at: '2026-11-10T10:12:00Z',
+  })
+  function fleetWith(instances: unknown[]) {
+    vi.spyOn(api, 'get').mockImplementation(async (path: string) => {
+      if (path.startsWith('/autoscaling-groups?')) return { items: [fleet] } as never
+      if (path.startsWith('/autoscaling-groups/g1/instances')) return { items: instances } as never
+      if (path.startsWith('/credentials')) return { items: [] } as never
+      throw new Error('no route ' + path)
+    })
+  }
+
+  it('names the OS the way the other pages do', async () => {
+    fleetWith([])
+    render(<Autoscaling />)
+    const row = (await screen.findByText('web-fleet')).closest('tr')!
+    expect(within(row).getByText('Linux')).toBeDefined()
+    expect(within(row).queryByText('linux')).toBeNull()
+  })
+
+  it('says a host key pinned when first seen is pinned, and what it was not checked against', async () => {
+    fleetWith([instance('i-0aaa', 'tofu'), instance('i-0bbb', 'console')])
+    const { drawer } = await openFleet()
+    expect(await drawer.findByRole('button', { name: "Pinned when first seen; not checked against the instance's console output" })).toBeDefined()
+    expect(drawer.getByRole('button', { name: "Pinned; matches the instance's console output" })).toBeDefined()
+    expect(drawer.queryByRole('button', { name: /not pinned yet/ })).toBeNull()
+    expect(drawer.getByText('i-0aaa').closest('table')!.className).toContain('instances')
+  })
+})
