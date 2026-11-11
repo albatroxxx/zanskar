@@ -263,6 +263,13 @@ export function describe(ev: AuditEvent): string {
     case 'session.shadow.end': return s ? `stopped watching ${s.user}'s session on ${s.target}` : `stopped watching session ${name}`
     case 'session.failover': return s ? `moved the ${s.proto} session on ${s.target} to another instance` : `failed over session ${name}`
     case 'recording.view': return s ? `played the recording of ${s.user} on ${s.target} (${s.proto})` : `played recording ${name}`
+    case 'recording.search': {
+      // Live, 2026-11-11: it read "search recording", the one row that was
+      // not a sentence; its term and count were only in the raw details.
+      const n = typeof d.count === 'number' ? d.count : undefined
+      const found = n === undefined ? '' : ` (${n} ${n === 1 ? 'match' : 'matches'})`
+      return `searched the recordings' ${d.in === 'output' ? 'output' : 'commands'} for “${str(d.q)}”${found}`
+    }
     case 'audit.read': return 'viewed the audit log'
     case 'cli.unlock':
       if (fail) return `failed to open the command line${reason ? ` (${reason})` : ''}`
