@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { api, errorMessage } from '../../api/client'
-import { fmtTime } from '../../api/format'
+import { credentialTypeName, fmtTime } from '../../api/format'
 import type { Credential, CredentialType } from '../../api/types'
 import { useSubmit } from '../../components/submit'
 import { Alert, Confirm, Empty, Field, FormModal, Loading, PageHead } from '../../components/ui'
@@ -75,10 +75,13 @@ export function Credentials() {
               {items.map((c) => (
                 <tr key={c.id}>
                   <td><strong>{c.name}</strong></td>
-                  <td>{c.type === 'ssh_ca' ? 'ssh certificate authority' : c.type}</td>
+                  <td>{credentialTypeName(c.type)}</td>
                   <td className="mono">{c.domain ? `${c.domain}\\` : ''}{c.username ?? <span className="muted">—</span>}</td>
                   <td className="mono muted" title={c.public_key}>{c.public_key ? c.public_key.slice(0, 28) + '…' : '—'}</td>
-                  <td>{c.has_secret ? <StateIcon state="ok" label="Secret stored" /> : <StateIcon state="warn" label="No secret stored" />}</td>
+                  {/* EC2 Instance Connect never stores a secret: the gateway
+                      pushes a one-time key for each session. It read as an
+                      amber "No secret stored" warning (2026-11-11). */}
+                  <td>{c.has_secret ? <StateIcon state="ok" label="Secret stored" /> : c.type === 'ec2_instance_connect' ? <StateIcon state="info" label="Nothing stored: a one-time key is pushed for each session" /> : <StateIcon state="warn" label="No secret stored" />}</td>
                   <td className="muted">{c.rotated_at ? fmtTime(c.rotated_at) : 'never'}</td>
                   <td>{inUse(c)}</td>
                   <td className="actions">

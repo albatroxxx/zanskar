@@ -61,13 +61,13 @@ describe('Credentials list', () => {
     expect(del.title).toBe('unassign it from targets first')
 
     const ca = screen.getByText('fleet-ca').closest('tr')!
-    expect(within(ca).getByText('ssh certificate authority')).toBeDefined()
+    expect(within(ca).getByText('SSH certificate authority')).toBeDefined()
     expect(within(ca).getByText('ssh-ed25519 AAAAC3NzaC1lZDI1…')).toBeDefined()
     expect(within(ca).getByRole('button', { name: 'Setup' })).toBeDefined()
     expect(within(ca).queryByRole('button', { name: 'Rotate' })).toBeNull()
 
     const eic = screen.getByText('eic').closest('tr')!
-    expect(within(eic).getByRole('button', { name: 'No secret stored' })).toBeDefined()
+    expect(within(eic).getByRole('button', { name: 'Nothing stored: a one-time key is pushed for each session' })).toBeDefined()
     expect(within(eic).queryByRole('button', { name: 'Rotate' })).toBeNull()
 
     // The shared user-supplied row is a choice on a target's slot, not a
@@ -224,5 +224,23 @@ describe('Rotating and deleting', () => {
     expect(within(rotate).queryByRole('status')).toBeNull()
     expect(screen.getByRole('dialog', { name: 'Rotate deploy' })).toBeDefined()
     expect(post).not.toHaveBeenCalled()
+  })
+})
+
+// Live, 2026-11-11 (UI pass, findings 7 and 8): types read as codes
+// ("ec2_instance_connect", "ssh_key"), and an Instance Connect credential,
+// which never stores a secret, showed an amber "No secret stored".
+describe('Credentials list, the words', () => {
+  it('names each type, and does not warn about Instance Connect holding no secret', async () => {
+    lists([
+      credential({ id: 'k', name: 'deploy-key', type: 'ssh_key' }),
+      credential({ id: 'e', name: 'asg-ubuntu', type: 'ec2_instance_connect', has_secret: false }),
+    ])
+    render(<Credentials />)
+    const key = (await screen.findByText('deploy-key')).closest('tr')!
+    const eic = screen.getByText('asg-ubuntu').closest('tr')!
+    expect(within(key).getByText('SSH key')).toBeDefined()
+    expect(within(eic).getByText('EC2 Instance Connect')).toBeDefined()
+    expect(within(eic).queryByRole('button', { name: 'No secret stored' })).toBeNull()
   })
 })

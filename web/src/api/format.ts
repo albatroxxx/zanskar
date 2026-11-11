@@ -132,6 +132,21 @@ export function appTLS(t: { app_upstream?: string; tls_ca?: string }): { label: 
   return { label: t.tls_ca ? 'TLS, verified against the CA bundle' : 'TLS, verified against the system roots', verified: true }
 }
 
+const credentialTypeNames: Record<string, string> = {
+  password: 'password',
+  ssh_key: 'SSH key',
+  ssh_ca: 'SSH certificate authority',
+  ec2_instance_connect: 'EC2 Instance Connect',
+}
+
+/** credentialTypeName is how a credential's type reads, the same on the
+ *  Credentials page and in every credential menu: the page showed the code
+ *  ("ec2_instance_connect") where a menu said "ec2 instance connect"
+ *  (2026-11-11). An unknown type reads as itself, without underscores. */
+export function credentialTypeName(type: string): string {
+  return credentialTypeNames[type] ?? type.replace(/_/g, ' ')
+}
+
 export function engineName(engine?: string | null, version?: string | null): string {
   if (!engine) return ''
   const name = engineNames[engine] ?? engine
