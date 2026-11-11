@@ -66,6 +66,10 @@ func TestDatabaseSessionEndToEnd(t *testing.T) {
 
 	var screen, sessionID, reason string
 	asked := false
+	// What an admin watching the session receives (2026-11-11: nothing, the
+	// handler gave the bridge no tap).
+	var live <-chan []byte
+	var tapped []byte
 	for reason == "" {
 		typ, data, err := ws.Read(ctx)
 		if err != nil {
@@ -80,6 +84,13 @@ func TestDatabaseSessionEndToEnd(t *testing.T) {
 			_ = json.Unmarshal(data, &c)
 			if c.T == "ready" {
 				sessionID = c.SessionID
+				tap := f.h.Registry.Tap(sessionID)
+				if tap == nil {
+					t.Fatalf("live database session %s has no tap", sessionID)
+				}
+				var unsubscribe func()
+				live, tapped, unsubscribe = tap.Subscribe()
+				t.Cleanup(unsubscribe)
 			}
 			if c.T == "end" {
 				reason = c.Reason
@@ -98,6 +109,9 @@ func TestDatabaseSessionEndToEnd(t *testing.T) {
 	}
 	if reason != "user_exit" || !strings.Contains(screen, " 42") {
 		t.Fatalf("end %q, screen %q", reason, screen)
+	}
+	if tapped = append(tapped, drainTap(t, ctx, live)...); !strings.Contains(string(tapped), " 42") {
+		t.Fatalf("a watcher saw %q, the browser %q", tapped, screen)
 	}
 	start := lastEvent(t, f, "session.start")
 	var d map[string]any
