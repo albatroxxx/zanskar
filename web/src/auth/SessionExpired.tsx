@@ -67,10 +67,6 @@ export function SessionExpired() {
 
   return (
     <Modal title="Session expired" onClose={() => void signIn()}>
-      <p>
-        You have been signed out.
-      </p>
-      <p className="muted">Signing in again brings you back to this page.</p>
       <div className="actions">
         <button className="btn primary" autoFocus disabled={leaving} onClick={() => void signIn()}>
           {leaving ? 'Taking you to sign in…' : 'Go to sign in'}
