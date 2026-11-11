@@ -116,7 +116,7 @@ SOFTWARE.
 
 ### github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream
 
-* Version: `v1.7.25`
+* Version: `v1.7.26`
 
 ```
 
@@ -327,7 +327,7 @@ SOFTWARE.
 
 ### github.com/aws/aws-sdk-go-v2/config
 
-* Version: `v1.33.12`
+* Version: `v1.33.15`
 
 ```
 
@@ -538,7 +538,7 @@ SOFTWARE.
 
 ### github.com/aws/aws-sdk-go-v2/credentials
 
-* Version: `v1.20.12`
+* Version: `v1.20.15`
 
 ```
 
@@ -749,7 +749,7 @@ SOFTWARE.
 
 ### github.com/aws/aws-sdk-go-v2/feature/ec2/imds
 
-* Version: `v1.20.5`
+* Version: `v1.20.7`
 
 ```
 
@@ -960,7 +960,7 @@ SOFTWARE.
 
 ### github.com/aws/aws-sdk-go-v2/internal/configsources
 
-* Version: `v1.5.8`
+* Version: `v1.5.10`
 
 ```
 
@@ -1171,7 +1171,7 @@ SOFTWARE.
 
 ### github.com/aws/aws-sdk-go-v2/internal/endpoints/v2
 
-* Version: `v2.8.8`
+* Version: `v2.8.10`
 
 ```
 
@@ -1382,7 +1382,7 @@ SOFTWARE.
 
 ### github.com/aws/aws-sdk-go-v2/internal/v4a
 
-* Version: `v1.5.8`
+* Version: `v1.5.10`
 
 ```
 
@@ -1593,7 +1593,7 @@ SOFTWARE.
 
 ### github.com/aws/aws-sdk-go-v2/service/autoscaling
 
-* Version: `v1.79.2`
+* Version: `v1.79.4`
 
 ```
 
@@ -1804,7 +1804,7 @@ SOFTWARE.
 
 ### github.com/aws/aws-sdk-go-v2/service/ec2instanceconnect
 
-* Version: `v1.44.3`
+* Version: `v1.44.5`
 
 ```
 
@@ -2015,7 +2015,7 @@ SOFTWARE.
 
 ### github.com/aws/aws-sdk-go-v2/service/ec2
 
-* Version: `v1.343.0`
+* Version: `v1.344.1`
 
 ```
 
@@ -2226,7 +2226,7 @@ SOFTWARE.
 
 ### github.com/aws/aws-sdk-go-v2/service/elasticloadbalancingv2
 
-* Version: `v1.63.6`
+* Version: `v1.63.8`
 
 ```
 
@@ -2437,7 +2437,7 @@ SOFTWARE.
 
 ### github.com/aws/aws-sdk-go-v2/service/internal/accept-encoding
 
-* Version: `v1.13.23`
+* Version: `v1.13.24`
 
 ```
 
@@ -2648,7 +2648,7 @@ SOFTWARE.
 
 ### github.com/aws/aws-sdk-go-v2/service/internal/checksum
 
-* Version: `v1.11.9`
+* Version: `v1.11.11`
 
 ```
 
@@ -2859,7 +2859,7 @@ SOFTWARE.
 
 ### github.com/aws/aws-sdk-go-v2/service/internal/presigned-url
 
-* Version: `v1.14.8`
+* Version: `v1.14.10`
 
 ```
 
@@ -3070,7 +3070,7 @@ SOFTWARE.
 
 ### github.com/aws/aws-sdk-go-v2/service/internal/s3shared
 
-* Version: `v1.20.8`
+* Version: `v1.20.10`
 
 ```
 
@@ -3281,7 +3281,7 @@ SOFTWARE.
 
 ### github.com/aws/aws-sdk-go-v2/service/s3
 
-* Version: `v1.114.6`
+* Version: `v1.114.8`
 
 ```
 
@@ -3492,7 +3492,7 @@ SOFTWARE.
 
 ### github.com/aws/aws-sdk-go-v2/service/signin
 
-* Version: `v1.12.0`
+* Version: `v1.12.3`
 
 ```
 
@@ -3703,7 +3703,7 @@ SOFTWARE.
 
 ### github.com/aws/aws-sdk-go-v2/service/ssooidc
 
-* Version: `v1.44.0`
+* Version: `v1.44.3`
 
 ```
 
@@ -3914,7 +3914,7 @@ SOFTWARE.
 
 ### github.com/aws/aws-sdk-go-v2/service/sso
 
-* Version: `v1.39.0`
+* Version: `v1.39.3`
 
 ```
 
@@ -4125,7 +4125,7 @@ SOFTWARE.
 
 ### github.com/aws/aws-sdk-go-v2/service/sts
 
-* Version: `v1.51.6`
+* Version: `v1.51.8`
 
 ```
 
@@ -4336,7 +4336,7 @@ SOFTWARE.
 
 ### github.com/aws/aws-sdk-go-v2
 
-* Version: `v1.47.5`
+* Version: `v1.47.7`
 
 ```
 
@@ -4555,7 +4555,7 @@ Copyright 2014-2015 Stripe, Inc.
 
 ### github.com/aws/smithy-go
 
-* Version: `v1.28.7`
+* Version: `v1.28.8`
 
 ```
 
@@ -5410,7 +5410,7 @@ SOFTWARE.
 
 ### github.com/go-jose/go-jose/v4
 
-* Version: `v4.1.6`
+* Version: `v4.1.9`
 
 ```
 
@@ -6794,7 +6794,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 ### github.com/jackc/pgx/v5
 
-* Version: `v5.11.0`
+* Version: `v5.12.0`
 
 ```
 Copyright (c) 2013-2021 Jack Christensen
@@ -6825,7 +6825,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 ### github.com/jackc/puddle/v2
 
-* Version: `v2.2.2`
+* Version: `v2.2.3`
 
 ```
 Copyright (c) 2018 Jack Christensen
@@ -10068,7 +10068,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 ### modernc.org/sqlite
 
-* Version: `v1.61.0`
+* Version: `v1.61.1`
 
 ```
 Copyright (c) 2017 The Sqlite Authors. All rights reserved.
@@ -10106,129 +10106,6 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 The following npm packages are bundled into the embedded single-page app
 (`web/dist`, compiled into the binary). The set is the production dependency
 closure; build-time-only (devDependencies) packages are not distributed.
-
-### @babel/runtime
-
-* Version: `7.29.7`
-* Declared license: `MIT`
-
-```
-MIT License
-
-Copyright (c) 2014-present Sebastian McKenzie and other contributors
-
-Permission is hereby granted, free of charge, to any person obtaining
-a copy of this software and associated documentation files (the
-"Software"), to deal in the Software without restriction, including
-without limitation the rights to use, copy, modify, merge, publish,
-distribute, sublicense, and/or sell copies of the Software, and to
-permit persons to whom the Software is furnished to do so, subject to
-the following conditions:
-
-The above copyright notice and this permission notice shall be
-included in all copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
-EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
-MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
-NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE
-LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
-OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
-WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
-```
-
----
-
-### @solid-primitives/refs
-
-* Version: `1.1.4`
-* Declared license: `MIT`
-
-```
-MIT License
-
-Copyright (c) 2021 Solid Primitives Working Group
-
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.```
-
----
-
-### @solid-primitives/transition-group
-
-* Version: `1.1.2`
-* Declared license: `MIT`
-
-```
-MIT License
-
-Copyright (c) 2021 Solid Primitives Working Group
-
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.```
-
----
-
-### @solid-primitives/utils
-
-* Version: `6.4.1`
-* Declared license: `MIT`
-
-```
-MIT License
-
-Copyright (c) 2021 Solid Primitives Working Group
-
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
-```
-
----
 
 ### @xterm/addon-fit
 
@@ -10359,7 +10236,7 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 
 ### asciinema-player
 
-* Version: `3.17.0`
+* Version: `3.18.0`
 * Declared license: `Apache-2.0`
 
 ```
@@ -11531,7 +11408,7 @@ SOFTWARE.
 
 ### seroval
 
-* Version: `1.6.11`
+* Version: `1.7.7`
 * Declared license: `MIT`
 
 ```
@@ -11547,7 +11424,7 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 
 ### seroval-plugins
 
-* Version: `1.6.11`
+* Version: `1.7.7`
 * Declared license: `MIT`
 
 ```
@@ -11618,44 +11495,13 @@ THE SOFTWARE.
 
 ### solid-js
 
-* Version: `1.9.15`
+* Version: `1.9.18`
 * Declared license: `MIT`
 
 ```
 MIT License
 
 Copyright (c) 2016-2025 Ryan Carniato
-
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
-```
-
----
-
-### solid-transition-group
-
-* Version: `0.2.3`
-* Declared license: `MIT`
-
-```
-MIT License
-
-Copyright (c) 2020-2021 Ryan Carniato
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
