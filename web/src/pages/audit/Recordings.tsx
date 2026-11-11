@@ -2,6 +2,7 @@ import { useEffect, useState, type FormEvent } from 'react'
 import { api, errorMessage, query } from '../../api/client'
 import { fmtDuration, fmtTime, protocolName } from '../../api/format'
 import { sessionTarget, sessionUser } from '../../api/labels'
+import { recordingGone } from '../../api/states'
 import type { Page, Session } from '../../api/types'
 import { usePaged } from '../../components/paged'
 import { Alert, Empty, LoadMore, PageHead, EndReason, TabLink } from '../../components/ui'
@@ -240,8 +241,14 @@ export function Recordings() {
                   <td style={{ whiteSpace: 'nowrap' }}>{keptCell(s)}</td>
                   <td>
                     {/* Review only (2026-11-01): the recording's page has its
-                        downloads, the file and, for a terminal, the transcript. */}
-                    <TabLink className="btn sm" to={`${recordingsPath}/${encodeURIComponent(s.recording_id!)}`} label="Review" />
+                        downloads, the file and, for a terminal, the transcript.
+                        None for a recording with no file left, which the
+                        Kept until cell already says (2026-11-11). */}
+                    {recordingGone(s.recording_state) ? (
+                      <span className="muted">—</span>
+                    ) : (
+                      <TabLink className="btn sm" to={`${recordingsPath}/${encodeURIComponent(s.recording_id!)}`} label="Review" />
+                    )}
                   </td>
                 </tr>
               ))}

@@ -53,6 +53,21 @@ describe('Recordings, a row', () => {
     expect(cells.slice(1)).toEqual(['Deleted', 'No age limit', '—'])
   })
 
+  // 2026-11-11, owner: a deleted recording was offered for review, and
+  // only its Play said it was gone.
+  it('offers no Review for a recording with no file left', async () => {
+    const ended = '2026-10-06T10:05:00Z'
+    page([
+      session(1, { recording_id: 'r1', ended_at: ended }),
+      session(2, { recording_id: 'r2', ended_at: ended, recording_purged: true, recording_state: 'purged' }),
+      session(3, { recording_id: 'r3', ended_at: ended, recording_state: 'discarded' }),
+      session(4, { recording_id: 'r4', ended_at: ended, recording_state: 'lost' }),
+    ])
+    await screen.findAllByRole('link', { name: 'Review, opens in a new tab' })
+    const reviews = screen.getAllByRole('row').slice(1).map((r) => r.querySelector('a')?.getAttribute('href') ?? null)
+    expect(reviews).toEqual(['/audit/recordings/r1', null, null, '/audit/recordings/r4'])
+  })
+
   it('writes the protocol the way every other page does', async () => {
     page([session(1, { recording_id: 'r1', protocol: 'winrm' }), session(2, { recording_id: 'r2', protocol: 'ssh' })])
     expect(await screen.findByRole('cell', { name: 'WinRM' })).toBeDefined()

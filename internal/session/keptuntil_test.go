@@ -70,6 +70,10 @@ func TestSessionsSayWhenRecordingsGo(t *testing.T) {
 	if byRec[gone]["recording_purged"] != true || byRec[gone]["recording_kept_until"] != nil {
 		t.Fatalf("deleted recording: %v", byRec[gone])
 	}
+	// The console offers no Review for it on this word alone (2026-11-11).
+	if byRec[gone]["recording_state"] != "purged" {
+		t.Fatalf("deleted recording's state: %v", byRec[gone]["recording_state"])
+	}
 
 	_, mine := e.get("/api/v1/me/sessions", "alice")
 	for _, it := range mine["items"].([]any) {

@@ -28,6 +28,20 @@ function at(path: string, items: Session[] = [live]) {
 // The same page serves admins and auditors (ADR 0006): both can watch a live
 // session, only an admin can end it, and recordings open in the reader's portal.
 describe('Sessions', () => {
+  // 2026-11-11, owner: a recording retention had deleted still had Review,
+  // and only its Play said it was gone.
+  it('says a recording with no file left is gone instead of offering Review', async () => {
+    const ended = { ...live, state: 'ended', ended_at: '2026-10-06T10:05:00Z' }
+    at('/admin/sessions', [
+      { ...ended, id: 's1', recording_id: 'r1', recording_state: 'purged', recording_purged: true },
+      { ...ended, id: 's2', recording_id: 'r2', recording_state: 'finished' },
+    ])
+    const rows = (await screen.findAllByRole('row')).slice(1)
+    expect(within(rows[0]).getByText('deleted')).toBeDefined()
+    expect(within(rows[0]).queryByRole('link', { name: 'Review, opens in a new tab' })).toBeNull()
+    expect(within(rows[1]).getByRole('link', { name: 'Review, opens in a new tab' }).getAttribute('href')).toBe('/admin/recordings/r2')
+  })
+
   it('lets an admin watch and terminate', async () => {
     at('/admin/sessions')
     // A watch and a recording open in tabs of their own (ADR 0038), several at once.

@@ -5,9 +5,10 @@ import 'asciinema-player/dist/bundle/asciinema-player.css'
 import { api, errorMessage } from '../../api/client'
 import { fmtBytes, fmtDuration, fmtSeconds, fmtTime, protocolName } from '../../api/format'
 import { sessionTarget, sessionUser } from '../../api/labels'
+import { recordingGone } from '../../api/states'
 import type { Recording } from '../../api/types'
 import { TransportIcon } from '../../components/icons'
-import { Alert, Empty, Loading, PageHead, EndReason } from '../../components/ui'
+import { Alert, Empty, Loading, PageHead, EndReason, StateBadge } from '../../components/ui'
 import { useTitle } from '../../components/title'
 import { useFullscreen } from '../user/fullscreen'
 import { FullscreenButton } from '../user/FullscreenButton'
@@ -504,12 +505,16 @@ export function Player() {
   const proto = s ? protocolName(s.protocol) : rec?.format
   const title = s ? `${who} on ${where}` : 'Recording'
   const isDesktop = rec?.format === 'guac'
+  // No file left: no Play and no downloads, and the page says so where Play
+  // was, rather than after a click (2026-11-11, owner).
+  const gone = recordingGone(rec?.state)
+  const goneAt = rec?.purged_at ?? rec?.discarded_at
   useTitle(rec ? (s ? `Recording · ${title}` : 'Recording') : undefined)
 
   return (
     <>
       <PageHead title={title} lead={s ? `${proto} session, ${fmtTime(s.started_at)}` : undefined}>
-        {rec && !rec.purged_at && (
+        {rec && !gone && (
           <>
             {/* Downloads are recorded views and audit events, like pressing Play. */}
             <a className="btn" href={`/api/v1${recordingPath(rec.id)}/download`} download title="Download the recording file (audited)">Download recording</a>
@@ -552,12 +557,17 @@ export function Player() {
 
           <div className="card">
             <h2>{isDesktop ? 'Desktop playback' : 'Terminal playback'}</h2>
-            {phase === 'idle' && (
-              <>
+            {gone ? (
+              <div className="actions">
+                <StateBadge lifecycle="recording" state={rec.state} />
+                {goneAt && <span className="muted">{fmtTime(goneAt)}</span>}
+              </div>
+            ) : (
+              phase === 'idle' && (
                 <div className="actions">
                   <button id="play" className="btn primary" onClick={() => void play()}>Play</button>
                 </div>
-              </>
+              )
             )}
             {phase === 'loading' && <Empty>Loading recording…</Empty>}
             <div ref={stage} className={'player-stage' + (isFull ? ' is-full' : '')}>

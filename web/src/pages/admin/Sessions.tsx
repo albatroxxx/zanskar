@@ -5,7 +5,8 @@ import { fmtDuration, fmtTime, protocolName } from '../../api/format'
 import { ranges, sinceFor } from '../../api/ranges'
 import { sessionTarget, sessionUser } from '../../api/labels'
 import type { Session } from '../../api/types'
-import { Alert, Confirm, Empty, Field, Loading, PageHead, EndReason, TabLink } from '../../components/ui'
+import { recordingGone } from '../../api/states'
+import { Alert, Confirm, Empty, Field, Loading, PageHead, EndReason, StateBadge, TabLink } from '../../components/ui'
 import { useRecordingsPath } from '../audit/paths'
 import { useList } from './lib'
 import { SavedViews } from '../../components/SavedViews'
@@ -90,7 +91,15 @@ export function Sessions() {
                   <td className="mono muted">{s.client_ip}</td>
                   <td>{fmtDuration(s.started_at, s.ended_at)}</td>
                   <td><EndReason state={s.state} reason={s.end_reason} detail={s.end_detail} /></td>
-                  <td>{s.recording_id ? <TabLink className="btn sm" to={`${recordings}/${s.recording_id}`} label="Review" /> : <span className="muted">—</span>}</td>
+                  <td>
+                    {!s.recording_id ? (
+                      <span className="muted">—</span>
+                    ) : recordingGone(s.recording_state) ? (
+                      <StateBadge lifecycle="recording" state={s.recording_state} />
+                    ) : (
+                      <TabLink className="btn sm" to={`${recordings}/${s.recording_id}`} label="Review" />
+                    )}
+                  </td>
                   <td>
                     {s.state === 'live' && (
                       <span className="actions">
