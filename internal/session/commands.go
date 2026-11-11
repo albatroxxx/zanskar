@@ -167,12 +167,16 @@ func (r *Repo) SearchCommands(ctx context.Context, q string, limit int) ([]Comma
 	if limit <= 0 || limit > 500 {
 		limit = 100
 	}
-	rows, err := r.db.QueryContext(ctx, r.db.Rebind(`SELECT c.recording_id, s.id, COALESCE(u.username, NULLIF(s.user_username, '')), t.name, s.protocol, s.started_at, c.seq, c.at_ms, c.command
+	// An autoscaling session has no target: its hit names the group and
+	// the instance, as the Sessions pages do (2026-11-11: the machine was blank).
+	rows, err := r.db.QueryContext(ctx, r.db.Rebind(`SELECT c.recording_id, s.id, COALESCE(u.username, NULLIF(s.user_username, '')), COALESCE(t.name, `+asgInstanceName+`), s.protocol, s.started_at, c.seq, c.at_ms, c.command
 		FROM recording_commands c
 		JOIN recordings rec ON rec.id = c.recording_id
 		JOIN access_sessions s ON s.id = rec.session_id
 		LEFT JOIN users u ON u.id = s.user_id
 		LEFT JOIN targets t ON t.id = s.target_id
+		LEFT JOIN asg_instances ai ON ai.id = s.asg_instance_id
+		LEFT JOIN autoscaling_groups g ON g.id = ai.asg_id
 		WHERE LOWER(c.command) LIKE ? ESCAPE '\' AND rec.purged_at IS NULL
 		ORDER BY s.started_at DESC, c.seq LIMIT ?`), likePattern(q), limit)
 	if err != nil {
@@ -236,12 +240,14 @@ func (r *Repo) SearchOutput(ctx context.Context, q string, limit int) ([]OutputH
 
 // outputHits is SearchOutput's scan, its cursor closed when it returns.
 func (r *Repo) outputHits(ctx context.Context, q string, limit int) ([]OutputHit, error) {
-	rows, err := r.db.QueryContext(ctx, r.db.Rebind(`SELECT o.recording_id, s.id, COALESCE(u.username, NULLIF(s.user_username, '')), t.name, s.protocol, s.started_at, o.at_ms, o.line
+	rows, err := r.db.QueryContext(ctx, r.db.Rebind(`SELECT o.recording_id, s.id, COALESCE(u.username, NULLIF(s.user_username, '')), COALESCE(t.name, `+asgInstanceName+`), s.protocol, s.started_at, o.at_ms, o.line
 		FROM recording_output o
 		JOIN recordings rec ON rec.id = o.recording_id
 		JOIN access_sessions s ON s.id = rec.session_id
 		LEFT JOIN users u ON u.id = s.user_id
 		LEFT JOIN targets t ON t.id = s.target_id
+		LEFT JOIN asg_instances ai ON ai.id = s.asg_instance_id
+		LEFT JOIN autoscaling_groups g ON g.id = ai.asg_id
 		WHERE LOWER(o.line) LIKE ? ESCAPE '\' AND rec.purged_at IS NULL
 		ORDER BY s.started_at DESC, o.seq LIMIT ?`), likePattern(q), limit)
 	if err != nil {
