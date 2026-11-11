@@ -59,20 +59,30 @@ export function RetentionCard() {
   }
 
   const off = days === 0 && gib === 0
+  const storedGib = loaded ? Math.round((loaded.max_total_bytes / GiB) * 100) / 100 : 0
+  const dirty = !!loaded && (days !== loaded.max_age_days || gib !== storedGib)
+  const discard = () => {
+    if (!loaded) return
+    setDays(loaded.max_age_days)
+    setGib(storedGib)
+    setErr('')
+  }
+  // The same row as every other setting (live, 2026-11-11): Save only with a
+  // change, Discard beside it, "Changed" on the same line, and number boxes
+  // the size of a number rather than the page's width.
   return (
     <form className="card" id="settings-recording-retention" onSubmit={save}>
       <h2>Recording retention</h2>
       {err && <Alert tone="danger" onDismiss={() => setErr('')}>{err}</Alert>}
-      {saved && <Alert tone="ok" onDismiss={() => setSaved(false)}>Retention policy saved.</Alert>}
       {!loaded && !err ? (
         <p className="muted">Loading…</p>
       ) : (
         <>
           <Field label="Keep recordings for (days)" hint="0 = no age limit">
-            <input type="number" min={0} step={1} value={days} onChange={(e) => setDays(Number(e.target.value))} />
+            <input className="narrow" type="number" min={0} step={1} value={days} onChange={(e) => { setDays(Number(e.target.value)); setSaved(false) }} />
           </Field>
           <Field label="Total size cap (GiB)" hint="Oldest go first past the cap; 0 = no cap">
-            <input type="number" min={0} step={0.5} value={gib} onChange={(e) => setGib(Number(e.target.value))} />
+            <input className="narrow" type="number" min={0} step={0.5} value={gib} onChange={(e) => { setGib(Number(e.target.value)); setSaved(false) }} />
           </Field>
 
           {off && (
@@ -82,13 +92,11 @@ export function RetentionCard() {
           )}
 
           <div className="actions">
-            <button type="submit" className="btn primary" disabled={busy}>{busy ? 'Saving…' : 'Save policy'}</button>
+            <button type="submit" className="btn primary sm" disabled={!dirty || busy}>{busy ? 'Saving…' : 'Save'}</button>
+            <button type="button" className="btn sm" disabled={!dirty || busy} onClick={discard}>Discard</button>
+            {saved && <span className="muted">Saved.</span>}
+            {loaded?.updated_at && <span className="muted">Changed {fmtTime(loaded.updated_at)}</span>}
           </div>
-          {loaded?.updated_at && (
-            <p className="muted" style={{ marginTop: 12, fontSize: '0.82rem' }}>
-              Last changed {fmtTime(loaded.updated_at)}. See the audit log for who changed it.
-            </p>
-          )}
         </>
       )}
     </form>

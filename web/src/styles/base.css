@@ -308,6 +308,8 @@ td.actions > * + * { margin-left: 8px; }
 .app-endpoints li { margin: 2px 0; }
 .app-endpoint-name { font-family: var(--font); color: var(--fg-muted); margin-right: 6px; }
 .field input, .field select, .field textarea { padding: 7px 10px; border: 1px solid var(--line-strong); border-radius: var(--radius); background: var(--bg-raised); width: 100%; }
+/* A number box is the size of a number, not the page's width (live, 2026-11-11). */
+.field input.narrow { max-width: 160px; }
 .field textarea { min-height: 80px; font-family: var(--mono); font-size: 0.82rem; }
 .field .hint { font-size: 0.78rem; color: var(--fg-faint); }
 .field.inline { flex-direction: row; align-items: center; gap: 8px; }
@@ -438,7 +440,9 @@ tr[aria-current="true"] td { background: var(--accent-soft); }
 .tzpick-note { margin: 0; padding: 10px 12px; color: var(--fg-muted); font-size: 0.86rem; }
 @media (max-width: 640px) { .tzpick-opt { grid-template-columns: 82px minmax(0, 1fr); } .tz-name { display: none; } }
 .setting-row > p.muted { margin: 0 0 10px; font-size: 0.86rem; }
-.setting-row textarea, .setting-row input:not([type=checkbox]), .setting-row select { width: 100%; max-width: 560px; }
+/* A setting's controls look like a form's: Log level's select was the
+   browser's bare one (live, 2026-11-11). */
+.setting-row textarea, .setting-row input:not([type=checkbox]), .setting-row select { width: 100%; max-width: 560px; padding: 7px 10px; border: 1px solid var(--line-strong); border-radius: var(--radius); background: var(--bg-raised); }
 .setting-row .actions { margin-top: 10px; }
 .login-banner { white-space: pre-wrap; margin: 0 0 18px; padding: 12px 14px; border: 1px solid var(--line-strong); border-left: 3px solid var(--warn); border-radius: var(--radius); background: var(--bg-sunken); font-size: 0.86rem; line-height: 1.45; max-height: 40vh; overflow: auto; }
 /* Single sign-on: a rule with "or" in it, then one full-width button per

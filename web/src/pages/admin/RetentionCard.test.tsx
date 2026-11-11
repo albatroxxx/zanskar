@@ -21,16 +21,32 @@ describe('Recording retention, in Settings', () => {
 
     const days = screen.getByLabelText('Keep recordings for (days)')
     const cap = screen.getByLabelText('Total size cap (GiB)')
+    // Like every other setting (live, 2026-11-11): Save only once something changed.
+    expect((screen.getByRole('button', { name: 'Save' }) as HTMLButtonElement).disabled).toBe(true)
     await user.clear(days)
     await user.type(days, '90')
     expect(screen.queryByText(/Retention is off/)).toBeNull()
     await user.clear(cap)
     await user.type(cap, '1.5')
-    await user.click(screen.getByRole('button', { name: 'Save policy' }))
+    await user.click(screen.getByRole('button', { name: 'Save' }))
     await waitFor(() => expect(put).toHaveBeenCalledWith('/admin/retention', { max_age_days: 90, max_total_bytes: 1.5 * GiB }))
-    expect(await screen.findByText('Retention policy saved.')).toBeDefined()
-    expect(screen.getByText(/Last changed /)).toBeDefined()
+    expect(await screen.findByText('Saved.')).toBeDefined()
+    expect(screen.getByText(/^Changed /)).toBeDefined()
     expect((cap as HTMLInputElement).value).toBe('1.5')
+    expect((screen.getByRole('button', { name: 'Save' }) as HTMLButtonElement).disabled).toBe(true)
+  })
+
+  it('discards a change back to the stored policy', async () => {
+    vi.spyOn(api, 'get').mockResolvedValue({ max_age_days: 30, max_total_bytes: 2 * GiB } as never)
+    render(<RetentionCard />)
+    const user = userEvent.setup()
+    const days = (await screen.findByLabelText('Keep recordings for (days)')) as HTMLInputElement
+    expect(days.className).toContain('narrow')
+    await user.clear(days)
+    await user.type(days, '7')
+    await user.click(screen.getByRole('button', { name: 'Discard' }))
+    expect(days.value).toBe('30')
+    expect((screen.getByRole('button', { name: 'Discard' }) as HTMLButtonElement).disabled).toBe(true)
   })
 
   it('shows the stored values and the server\'s refusal', async () => {
@@ -43,9 +59,9 @@ describe('Recording retention, in Settings', () => {
     expect((screen.getByLabelText('Total size cap (GiB)') as HTMLInputElement).value).toBe('2')
     await user.clear(days)
     await user.type(days, '9999')
-    await user.click(screen.getByRole('button', { name: 'Save policy' }))
+    await user.click(screen.getByRole('button', { name: 'Save' }))
     expect(await screen.findByText('max_age_days must be at most 3650')).toBeDefined()
-    expect(screen.queryByText('Retention policy saved.')).toBeNull()
+    expect(screen.queryByText('Saved.')).toBeNull()
   })
 
   it('names a failed read instead of loading forever', async () => {

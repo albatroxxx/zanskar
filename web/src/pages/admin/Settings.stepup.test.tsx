@@ -1,4 +1,4 @@
-import { cleanup, render, screen, waitFor } from '@testing-library/react'
+import { cleanup, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { ApiError, api } from '../../api/client'
@@ -13,6 +13,8 @@ afterEach(() => {
 const guacd: RuntimeSetting = { key: 'desktop.guacd_addr', category: 'Desktops', title: 'Desktops (RDP, VNC)', description: 'host:port of guacd.', type: 'hostport', default: '', value: '127.0.0.1:4822', source: 'environment', env_var: 'ZANSKAR_GUACD_ADDR', step_up: true }
 const listing: SettingsListing = { runtime: [guacd], boot: [] }
 const stepUp = () => new ApiError(403, { code: 'step_up_required', message: 'prove your authenticator first' }, '403')
+// The guacd row's own Save: Recording retention on the same page has one too.
+const rowSave = () => within(screen.getByLabelText('guacd address').closest('.setting-row') as HTMLElement).getByRole('button', { name: 'Save' })
 
 function serve() {
   vi.spyOn(api, 'get').mockImplementation(async (path: string) => {
@@ -44,13 +46,13 @@ describe('Settings, a setting that asks for an authenticator code', () => {
     const input = await screen.findByLabelText('guacd address')
     await user.clear(input)
     await user.type(input, '10.0.0.5:4822')
-    await user.click(screen.getByRole('button', { name: 'Save' }))
+    await user.click(rowSave())
 
     const codeField = await screen.findByLabelText('Authenticator code')
     expect(screen.queryByRole('alert')).toBeNull()
-    expect(screen.getByRole('button', { name: 'Save' }).hasAttribute('disabled')).toBe(true)
+    expect(rowSave().hasAttribute('disabled')).toBe(true)
     await user.type(codeField, '123456')
-    await user.click(screen.getByRole('button', { name: 'Save' }))
+    await user.click(rowSave())
 
     await waitFor(() => expect(screen.getByText('Applied.')).toBeDefined())
     expect(post).toHaveBeenCalledWith('/auth/mfa/step-up', { code: '123456' })
@@ -66,10 +68,10 @@ describe('Settings, a setting that asks for an authenticator code', () => {
     const user = userEvent.setup()
     const input = await screen.findByLabelText('guacd address')
     await user.type(input, '1')
-    await user.click(screen.getByRole('button', { name: 'Save' }))
+    await user.click(rowSave())
     await user.type(await screen.findByLabelText('Authenticator code'), '000000')
     vi.spyOn(api, 'post').mockRejectedValue(new ApiError(401, { code: 'invalid_code', message: 'the code is wrong' }, '401'))
-    await user.click(screen.getByRole('button', { name: 'Save' }))
+    await user.click(rowSave())
     expect((await screen.findByRole('alert')).textContent).toContain('the code is wrong')
     expect(screen.getByLabelText('Authenticator code')).toBeDefined()
   })
