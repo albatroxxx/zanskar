@@ -154,3 +154,47 @@ describe('TargetDetail, blocked dependencies', () => {
     expect(get).not.toHaveBeenCalledWith('/targets/w1/dependencies')
   })
 })
+
+// Live, 2026-11-11 (UI pass, findings 5 and 6): an SSH-only Linux host offered
+// RDP, VNC and WinRM credential slots, and its OS read "linux".
+describe('TargetDetail, a host', () => {
+  const show = (t: Target) => render(<TargetDetail target={t} credentials={[]} onClose={() => {}} onChanged={() => {}} onDeleted={() => {}} onError={() => {}} />)
+  const slots = () => ['SSH', 'RDP', 'VNC', 'WinRM'].filter((name) => screen.queryByLabelText(name) !== null)
+
+  it('offers a credential slot for each protocol it was found to serve', () => {
+    show(web)
+    expect(slots()).toEqual(['SSH'])
+    expect(screen.getByText('Linux')).toBeDefined()
+    expect(screen.queryByText('linux')).toBeNull()
+  })
+
+  it('keeps a slot that holds a credential, so it can be taken off', () => {
+    show({ ...web, credentials: { rdp: 'c1' } })
+    expect(slots()).toEqual(['SSH', 'RDP'])
+  })
+
+  it('offers every slot when nothing is known of it yet', () => {
+    show({ ...web, capabilities: [] })
+    expect(slots()).toEqual(['SSH', 'RDP', 'VNC', 'WinRM'])
+  })
+})
+
+// Live, 2026-11-11 (UI pass, finding 15): a database had no way to be checked
+// before people tried it.
+describe('TargetDetail, a database', () => {
+  const orders: Target = { ...web, id: 'd1', name: 'orders', address: 'orders.internal', os_family: 'other', engine: 'postgres', ports: { database: 5432 }, capabilities: [], credentials: {} }
+
+  it('tests the connection to its port, and says what it reached', async () => {
+    const post = vi.spyOn(api, 'post').mockResolvedValue({
+      target: orders, host_key_status: 'unknown', host_key_fingerprint: null,
+      probe: { address: 'orders.internal', resolved_ip: '10.0.3.4', ports: { database: { reachable: true, latency_ms: 3 } }, reachable: { database: true }, errors: {}, probed_at: '2026-11-11T06:00:00Z' },
+    } as never)
+    render(<TargetDetail target={orders} credentials={[]} onClose={() => {}} onChanged={() => {}} onDeleted={() => {}} onError={() => {}} />)
+    expect(screen.queryByRole('button', { name: 'Probe' })).toBeNull()
+    await userEvent.setup().click(screen.getByRole('button', { name: 'Test connection' }))
+    expect(post).toHaveBeenCalledWith('/targets/d1/probe')
+    expect(await screen.findByRole('heading', { name: 'Connection test' })).toBeDefined()
+    expect(screen.getByText('PostgreSQL port 5432')).toBeDefined()
+    expect(screen.getByText('reachable · 3 ms')).toBeDefined()
+  })
+})

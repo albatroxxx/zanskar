@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { api, errorMessage } from '../../api/client'
 import { appTLS, dbTLS, engineName, fmtTime, protocolName } from '../../api/format'
 import type { CertificateProbe, Credential, DependencyRefusal, ProbeResponse, Protocol, Target } from '../../api/types'
-import { StateIcon } from '../../components/icons'
+import { OSIcon, StateIcon } from '../../components/icons'
 import { Alert, Badge, Confirm, Modal, Tags } from '../../components/ui'
 import { DeleteAsset } from './DeleteAsset'
 import { hostKeyBadge, protocols, usesHostKey } from './lib'
@@ -12,8 +12,8 @@ import { kindOf, TargetForm, targetBody } from './TargetForm'
 /**
  * TargetDetail is the drawer for one host, database or application. A host
  * shows its probe state, host key and per-protocol credentials; a database
- * shows its engine, endpoint and TLS settings and a single credential slot,
- * since probing and host keys do not apply to it; an application shows its
+ * shows its engine, endpoint and TLS settings, a single credential slot and a
+ * test of its port, since host keys do not apply to it; an application shows its
  * upstream and how it is verified, and holds no credential at all (ADR 0034).
  */
 export function TargetDetail({ target, credentials, onClose, onChanged, onDeleted }: { target: Target; credentials: Credential[]; onClose: () => void; onChanged: (t: Target) => void; onDeleted: () => void; onError: (m: string) => void }) {
@@ -112,6 +112,17 @@ export function TargetDetail({ target, credentials, onClose, onChanged, onDelete
   const fp = probe?.host_key_fingerprint ?? t.host_key_fingerprint
   const canTrust = host && (t.host_key_status === 'pending' || t.host_key_status === 'changed') && !!fp
   const port = t.ports.database
+  // A host offers a credential slot for each protocol its probe found, and
+  // for any protocol already holding a credential so it can be taken off;
+  // one never probed, or with nothing found, offers all four. Live,
+  // 2026-11-11: an SSH-only Linux host offered RDP, VNC and WinRM slots.
+  const slotProtocols: Protocol[] = database
+    ? ['database']
+    : t.capabilities.length
+      ? protocols.filter((p) => t.capabilities.includes(p) || !!t.credentials?.[p])
+      : protocols
+  // What a probe reached: a host's protocols, or a database's own port.
+  const probed: Protocol[] = database ? ['database'] : protocols
 
   return (
     <Modal title={t.name} onClose={onClose} width={720}>
@@ -201,7 +212,7 @@ export function TargetDetail({ target, credentials, onClose, onChanged, onDelete
         ) : (
           <>
             <dt>Address</dt><dd className="mono">{t.address}</dd>
-            <dt>OS</dt><dd>{t.os_family}</dd>
+            <dt>OS</dt><dd><OSIcon os={t.os_family} /></dd>
           </>
         )}
         <dt>Status</dt><dd>{t.status}</dd>
@@ -249,7 +260,7 @@ export function TargetDetail({ target, credentials, onClose, onChanged, onDelete
         <>
           <h2 style={{ marginTop: 18 }}>{database ? 'Database credential' : 'Credentials per protocol'}</h2>
           <CredentialBindings
-            slots={(database ? (['database'] as Protocol[]) : protocols).map((p) => ({ protocol: p, label: p === 'database' ? `Database (${engineName(t.engine)})` : protocolName(p) }))}
+            slots={slotProtocols.map((p) => ({ protocol: p, label: p === 'database' ? `Database (${engineName(t.engine)})` : protocolName(p) }))}
             current={t.credentials}
             credentials={credentials}
             onSave={saveBindings}
@@ -265,15 +276,15 @@ export function TargetDetail({ target, credentials, onClose, onChanged, onDelete
       )}
       {probe && (
         <>
-          <h2>Probe result</h2>
+          <h2>{database ? 'Connection test' : 'Probe result'}</h2>
           <dl className="kv">
             <dt>Resolved</dt><dd className="mono">{probe.probe.resolved_ip}</dd>
-            {protocols.map((p) => {
+            {probed.map((p) => {
               const r = probe.probe.ports[p]
               if (!r) return null
               return (
                 <span key={p} style={{ display: 'contents' }}>
-                  <dt>{protocolName(p)}</dt>
+                  <dt>{p === 'database' ? `${engineName(t.engine)} port ${port ?? ''}`.trim() : protocolName(p)}</dt>
                   <dd>
                     {r.reachable ? <Badge tone="ok">reachable · {r.latency_ms} ms</Badge> : <Badge>unreachable</Badge>} {r.error && <span className="muted">{r.error}</span>}
                   </dd>
@@ -309,6 +320,13 @@ export function TargetDetail({ target, credentials, onClose, onChanged, onDelete
         <div className="actions">
           {host && (
             <button className="btn" onClick={() => void doProbe()} disabled={probing}>{probing ? 'Probing…' : 'Probe'}</button>
+          )}
+          {/* 2026-11-11: a database could not be checked before people
+              tried it. The test reaches its port from the gateway; the
+              database protocols start TLS inside themselves, so that is
+              what it says. */}
+          {database && (
+            <button className="btn" onClick={() => void doProbe()} disabled={probing} title="Reaches the database port from the gateway">{probing ? 'Testing…' : 'Test connection'}</button>
           )}
           {canTrust && (
             <button className="btn primary" onClick={() => setConfirm('trust')}>Trust host key</button>

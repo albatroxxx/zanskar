@@ -10,6 +10,7 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -218,6 +219,48 @@ func TestHandlersCreateProbeTrust(t *testing.T) {
 
 // TestProbeForbiddenAddressIs422: the API no longer saves a forbidden literal
 // (L1), but a row saved before it refused them is still refused by the probe.
+// TestProbeDatabaseTestsItsPortOnly (2026-11-11): a database could not be
+// checked before people tried it. Its probe reaches the database port and no
+// other, and records nothing on the target: no capabilities, no host key, no
+// probe time.
+func TestProbeDatabaseTestsItsPortOnly(t *testing.T) {
+	e := newEnv(t)
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = ln.Close() })
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			_ = c.Close()
+		}
+	}()
+	port := ln.Addr().(*net.TCPAddr).Port
+	tg := &Target{Name: "orders", Address: "127.0.0.1", OSFamily: OtherOS, Engine: "postgres", TLSMode: "require", Ports: map[Protocol]int{Database: port}}
+	if err := NewRepo(e.db).Create(context.Background(), tg); err != nil {
+		t.Fatal(err)
+	}
+	code, body := e.do("POST", "/api/v1/targets/"+tg.ID+"/probe", nil, e.admin)
+	if code != 200 {
+		t.Fatalf("probe: %d %v", code, body)
+	}
+	ports := body["probe"].(map[string]any)["ports"].(map[string]any)
+	if len(ports) != 1 || ports["database"].(map[string]any)["reachable"] != true {
+		t.Fatalf("probed %v, want the database port alone, reachable", ports)
+	}
+	got, err := NewRepo(e.db).Get(context.Background(), tg.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Capabilities) != 0 || got.LastProbedAt != nil || got.HostKeyStatus != tg.HostKeyStatus {
+		t.Fatalf("a database probe changed the target: %+v", got)
+	}
+}
+
 func TestProbeForbiddenAddressIs422(t *testing.T) {
 	e := newEnv(t)
 	tg := &Target{Name: "meta", Address: "169.254.169.254", OSFamily: Linux}
