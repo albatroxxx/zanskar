@@ -106,7 +106,7 @@ function CARotation({ credential, onChanged, onError }: { credential: Credential
         {retired && <button type="button" className="btn" onClick={() => setConfirm('retire')}>Old key removed from targets</button>}
       </div>
       {confirm === 'prepare' && (
-        <Confirm title="Prepare a next key?" body="Sessions are unaffected until you cut over." confirmLabel="Prepare" onClose={() => setConfirm(null)} onConfirm={() => step(() => api.post<Credential>(`/credentials/${credential.id}/rotate`, {}))} />
+        <Confirm title="Prepare a next key?" body={null} confirmLabel="Prepare" onClose={() => setConfirm(null)} onConfirm={() => step(() => api.post<Credential>(`/credentials/${credential.id}/rotate`, {}))} />
       )}
       {confirm === 'cutover' && (
         <Confirm title="Cut over to the next key?" body="A target that does not trust the next key will refuse logins." confirmLabel="Cut over" danger onClose={() => setConfirm(null)} onConfirm={() => step(() => api.post<Credential>(`/credentials/${credential.id}/rotate/cut-over`))} />

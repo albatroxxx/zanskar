@@ -42,7 +42,7 @@ export function MyActivity() {
 
   return (
     <>
-      <PageHead title="Activity" lead="A sign-in you did not make: tell an administrator." />
+      <PageHead title="Activity" />
       {err && <Alert tone="danger">{err}</Alert>}
       <div className="card table-wrap">
         {items === null ? (

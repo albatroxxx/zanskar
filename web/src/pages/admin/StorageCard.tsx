@@ -86,9 +86,9 @@ export function StorageCard() {
             written and a lost one count too, which the dashboard's "kept"
             does not (live, 2026-11-11: 29 here against 28 there). */}
         <dt>Recordings held</dt>
-        <dd title="Every recording not deleted, by where it lives: those still being written and lost ones count too. The dashboard counts the finished ones.">{Object.entries(status.counts).map(([k, v]) => `${v} in ${k}`).join(', ') || 'none yet'}</dd>
+        <dd>{Object.entries(status.counts).map(([k, v]) => `${v} in ${k}`).join(', ') || 'none yet'}</dd>
       </dl>
-      {elsewhere > 0 && <Alert tone="warn">{elsewhere} recording{elsewhere === 1 ? '' : 's'} sit in a bucket that is no longer active and cannot be played until that bucket is configured again.</Alert>}
+      {elsewhere > 0 && <Alert tone="warn">{elsewhere} recording{elsewhere === 1 ? '' : 's'} in an inactive bucket cannot be played.</Alert>}
       <h3 style={{ marginTop: 16 }}>S3-compatible bucket</h3>
       <div className="form-grid">
         <Field label="Bucket"><input id="st-bucket" value={f.bucket} onChange={set('bucket')} placeholder="my-recordings" /></Field>
@@ -123,7 +123,7 @@ export function StorageCard() {
       {confirm === 'reset' && (
         <Confirm
           title="Remove the console storage setting?"
-          body={status.environment ? `New recordings go to the environment's bucket s3://${status.environment.bucket} again.` : 'New recordings go to the local directory again. Recordings already in the bucket stay readable only while a bucket is configured.'}
+          body={status.environment ? `New recordings go to s3://${status.environment.bucket}.` : 'New recordings go to the local directory.'}
           confirmLabel="Remove"
           danger
           onClose={() => setConfirm(null)}

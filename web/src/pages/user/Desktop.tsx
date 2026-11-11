@@ -143,7 +143,7 @@ function DesktopSession({ state }: { state: SessionState }) {
       const text = await navigator.clipboard.readText()
       if (text) pushClipboard(text)
     } catch {
-      setClipNote('The browser did not allow reading your clipboard. Paste into the panel and send it to the session instead.')
+      setClipNote('The browser blocked reading the clipboard; paste here.')
     }
   }, [pushClipboard])
 
@@ -207,12 +207,12 @@ function DesktopSession({ state }: { state: SessionState }) {
           lastClipRef.current = text
           setClipText(text)
           if (!navigator.clipboard?.writeText) {
-            setClipNote('Copied in the session; this browser cannot write your clipboard, so it is in the panel.')
+            setClipNote('Copied in the session; it is here.')
             setClipOpen(true)
             return
           }
           navigator.clipboard.writeText(text).then(() => setClipNote(null)).catch(() => {
-            setClipNote('Copied in the session; the browser did not allow writing your clipboard, so it is in the panel.')
+            setClipNote('Copied in the session; it is here.')
             setClipOpen(true)
           })
         }
@@ -505,7 +505,7 @@ function DesktopSession({ state }: { state: SessionState }) {
             <textarea value={clipText} onChange={(e) => setClipText(e.target.value)} spellCheck={false} aria-label="Clipboard text" />
             <div className="row">
               <button className="btn sm primary" disabled={!clipText} onClick={() => pushClipboard(clipText)}>Send to session</button>
-              <button className="btn sm" disabled={!clipText} onClick={() => { void navigator.clipboard?.writeText(clipText).then(() => setClipNote('Copied to your clipboard.')).catch(() => setClipNote('The browser did not allow writing your clipboard; select the text and copy it.')) }}>Copy</button>
+              <button className="btn sm" disabled={!clipText} onClick={() => { void navigator.clipboard?.writeText(clipText).then(() => setClipNote('Copied.')).catch(() => setClipNote('The browser blocked the copy.')) }}>Copy</button>
             </div>
             <div className={'status' + (clipNote ? '' : ' quiet')}>{clipNote}</div>
           </aside>
@@ -544,7 +544,7 @@ function DesktopSession({ state }: { state: SessionState }) {
         )}
       </div>
       {ended && failover && (
-        <FailoverDialog sessionId={sessionId} asgId={state.asg_id!} protocol={state.protocol} lostLabel={state.instance_label} onExit={() => nav('/')} onSwitched={onSwitched} />
+        <FailoverDialog sessionId={sessionId} asgId={state.asg_id!} lostLabel={state.instance_label} onExit={() => nav('/')} onSwitched={onSwitched} />
       )}
       {ended && !failover && (
         <SessionEndedDialog ended={ended} target={state.target} protocol={state.protocol} elapsed={elapsed} again={state.again} closable={state.from_portal} onClose={() => nav('/')} />

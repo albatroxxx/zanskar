@@ -8,7 +8,7 @@ const reasons: Record<string, string> = {
   // Said only after a sign-in through the provider failed, never to a page
   // that merely loads: an unsigned visitor learns nothing about the
   // provider's health they did not just find out (2026-11-03, idea 1).
-  provider_unavailable: 'Single sign-on is not answering right now. Try again in a moment; an account with a password here can still sign in with it.',
+  provider_unavailable: 'Single sign-on is not answering.',
   provider_denied: 'The identity provider did not sign you in.',
   state_missing: 'The sign-in took too long, or began in another tab. Start it again.',
   state_invalid: 'The sign-in took too long, or began in another tab. Start it again.',

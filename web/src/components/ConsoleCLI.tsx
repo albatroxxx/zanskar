@@ -159,7 +159,7 @@ export function ConsoleCLI() {
         setAfterUnlock(confirmWord === undefined ? line : null)
         setState((s) => (s ? { ...s, unlocked: false } : s))
         const fresh = err.code === 'cli_fresh_code_required'
-        setCodeWhy(fresh ? 'This command asks for a code from the last 5 minutes. Enter one; it runs again.' : '')
+        setCodeWhy(fresh ? 'This command needs a code from the last 5 minutes.' : '')
         append([
           fresh
             ? { text: 'A newer code was asked for.', style: 'muted' }
@@ -382,7 +382,7 @@ export function ConsoleCLI() {
               {state.mfa_enrolled ? (
                 <form className="cli-card" onSubmit={(e) => void unlock(e)}>
                   <h3>Confirm it's you</h3>
-                  <p>{codeWhy || 'Enter a code from your authenticator.'}</p>
+                  {codeWhy && <p>{codeWhy}</p>}
                   <label htmlFor="cli-code">Authenticator code</label>
                   <input
                     id="cli-code"

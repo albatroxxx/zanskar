@@ -225,7 +225,7 @@ export function NotificationsCard() {
       {removingServer && (
         <Confirm
           title="Remove the email server?"
-          body="Email channels send nothing until one is set again."
+          body="Email channels stop sending."
           confirmLabel="Remove"
           danger
           onClose={() => setRemovingServer(false)}

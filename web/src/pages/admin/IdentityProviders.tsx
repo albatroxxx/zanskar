@@ -361,7 +361,7 @@ function SCIMSetup({ provider }: { provider: Provider }) {
           onConfirm={make} onClose={() => setConfirm(null)} />
       )}
       {confirm === 'revoke' && (
-        <Confirm title="Revoke the SCIM token" danger confirmLabel="Revoke" body={<p>The provider can no longer push changes until you make a new token.</p>}
+        <Confirm title="Revoke the SCIM token" danger confirmLabel="Revoke" body={<p>The provider can no longer push changes.</p>}
           onConfirm={async () => {
             await api.del(`/identity-providers/${provider.id}/scim-token`)
             setMadeAt(undefined)

@@ -182,7 +182,7 @@ function TerminalSession({ state }: { state: SessionState }) {
         {filesAllowed && panelOpen && sessionId && <TerminalFiles sessionId={sessionId} />}
       </div>
       {ended && failover && (
-        <FailoverDialog sessionId={sessionId} asgId={state.asg_id!} protocol={state.protocol} lostLabel={state.instance_label} onExit={() => nav('/')} onSwitched={onSwitched} />
+        <FailoverDialog sessionId={sessionId} asgId={state.asg_id!} lostLabel={state.instance_label} onExit={() => nav('/')} onSwitched={onSwitched} />
       )}
       {ended && !failover && (
         <SessionEndedDialog ended={ended} target={state.target} protocol={state.protocol} elapsed={elapsed} again={state.again} closable={state.from_portal} onClose={() => nav('/')} />

@@ -69,7 +69,7 @@ describe('Credentials list', () => {
     expect(within(ca).queryByRole('button', { name: 'Rotate' })).toBeNull()
 
     const eic = screen.getByText('eic').closest('tr')!
-    expect(within(eic).getByRole('button', { name: 'Nothing stored: a one-time key is pushed for each session' })).toBeDefined()
+    expect(within(eic).getByRole('button', { name: 'Nothing stored' })).toBeDefined()
     expect(within(eic).queryByRole('button', { name: 'Rotate' })).toBeNull()
 
     // The shared user-supplied row is a choice on a target's slot, not a
@@ -147,7 +147,7 @@ describe('Adding a credential', () => {
     await user.selectOptions(within(form).getByLabelText('Type'), 'ssh_key')
     await user.type(within(form).getByLabelText('Name'), 'gen')
     await user.type(within(form).getByLabelText('Username on the target'), 'ubuntu')
-    await user.click(within(form).getByLabelText(/Generate an ed25519 key for me/))
+    await user.click(within(form).getByLabelText(/Generate an ed25519 key/))
     expect(within(form).queryByLabelText('Private key (PEM)')).toBeNull()
     await user.click(within(form).getByRole('button', { name: 'Create' }))
     await waitFor(() => expect(post).toHaveBeenCalledWith('/credentials/generate-ssh-key', { name: 'gen', username: 'ubuntu' }))

@@ -142,7 +142,7 @@ describe('ConsoleCLI', () => {
     render(<ConsoleCLI />)
     const user = await openPanel()
     await user.type(screen.getByLabelText('zanskar>'), 'request approve 9c1d2e3f{Enter}')
-    expect(await screen.findByText('This command asks for a code from the last 5 minutes. Enter one; it runs again.')).toBeDefined()
+    expect(await screen.findByText('This command needs a code from the last 5 minutes.')).toBeDefined()
     expect(screen.queryByText(/closed after a while without use/)).toBeNull()
     await user.type(await screen.findByLabelText('Authenticator code'), '123456{Enter}')
     expect(await screen.findByText('✓ Approved.')).toBeDefined()
@@ -176,7 +176,8 @@ describe('ConsoleCLI', () => {
       expect(b.getAttribute('title')).toBe(name)
     }
     expect(screen.queryByText(/every line is audited/)).toBeNull()
-    expect(screen.getByText('Enter a code from your authenticator.')).toBeDefined()
+    expect(screen.getByLabelText('Authenticator code')).toBeDefined()
+    expect(screen.queryByText(/Enter a code/)).toBeNull()
   })
 
   // 2026-10-30: the panel could be pulled up no further than 80 px short of

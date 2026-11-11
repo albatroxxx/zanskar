@@ -42,7 +42,7 @@ async function atCodeStep(verify: () => Promise<never>) {
   const user = userEvent.setup()
   await user.type(await screen.findByLabelText('Username'), 'alice')
   await user.type(screen.getByLabelText('Password'), 'a long enough passphrase{Enter}')
-  await screen.findByLabelText('Code')
+  await screen.findByLabelText('Authenticator or recovery code')
   return user
 }
 
@@ -110,25 +110,25 @@ describe('Login', () => {
     const user = userEvent.setup()
     await user.type(await screen.findByLabelText('Username'), 'alice')
     await user.type(screen.getByLabelText('Password'), 'a long enough passphrase{Enter}')
-    await user.type(await screen.findByLabelText('Code'), '123456{Enter}')
+    await user.type(await screen.findByLabelText('Authenticator or recovery code'), '123456{Enter}')
     expect(await screen.findByLabelText('New password')).toBeDefined()
     expect(screen.getByLabelText('Current password')).toBeDefined()
-    expect(screen.queryByLabelText('Code')).toBeNull()
+    expect(screen.queryByLabelText('Authenticator or recovery code')).toBeNull()
   })
 
   it('stays on the code step after a wrong code', async () => {
     const user = await atCodeStep(() => Promise.reject(wrong()))
-    await user.type(screen.getByLabelText('Code'), '000000{Enter}')
+    await user.type(screen.getByLabelText('Authenticator or recovery code'), '000000{Enter}')
     expect((await screen.findByRole('alert')).textContent).toBe('invalid code')
-    expect(screen.getByLabelText('Code')).toBeDefined()
+    expect(screen.getByLabelText('Authenticator or recovery code')).toBeDefined()
   })
 
   // #205: the attempt that ends the sign-in goes back to the password step.
   it('goes back to the password step when too many wrong codes end the sign-in', async () => {
     const user = await atCodeStep(() => Promise.reject(ended()))
-    await user.type(screen.getByLabelText('Code'), '000000{Enter}')
+    await user.type(screen.getByLabelText('Authenticator or recovery code'), '000000{Enter}')
     expect((await screen.findByRole('alert')).textContent).toBe('Too many wrong codes. Sign in again.')
-    expect(screen.queryByLabelText('Code')).toBeNull()
+    expect(screen.queryByLabelText('Authenticator or recovery code')).toBeNull()
     expect(screen.getByLabelText('Username')).toBeDefined()
   })
 })

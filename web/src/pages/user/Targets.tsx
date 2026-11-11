@@ -293,7 +293,7 @@ export function Targets() {
           {applications === null ? (
             <Loading />
           ) : applications.length === 0 ? (
-            <Empty>{emptyFor('applications', 'No applications are assigned to you. Ask an administrator for access.')}</Empty>
+            <Empty>{emptyFor('applications', 'No applications are assigned to you.')}</Empty>
           ) : (
             <table>
               <thead>
@@ -331,7 +331,7 @@ export function Targets() {
           {databases === null ? (
             <Loading />
           ) : databases.length === 0 ? (
-            <Empty>{emptyFor('databases', 'No databases are assigned to you. Ask an administrator for access.')}</Empty>
+            <Empty>{emptyFor('databases', 'No databases are assigned to you.')}</Empty>
           ) : (
             <table>
               <thead>
@@ -375,7 +375,7 @@ export function Targets() {
           {statics === null ? (
             <Loading />
           ) : statics.length === 0 ? (
-            <Empty>{emptyFor('hosts', 'No hosts are assigned to you yet. Ask an administrator for access.')}</Empty>
+            <Empty>{emptyFor('hosts', 'No hosts are assigned to you.')}</Empty>
           ) : (
             <table>
               <thead>
@@ -420,7 +420,7 @@ export function Targets() {
           {groups === null ? (
             <Loading />
           ) : groups.length === 0 ? (
-            <Empty>{emptyFor('autoscaling groups', 'No autoscaling groups are assigned to you. Ask an administrator for access.')}</Empty>
+            <Empty>{emptyFor('autoscaling groups', 'No autoscaling groups are assigned to you.')}</Empty>
           ) : (
             <table>
               <thead>

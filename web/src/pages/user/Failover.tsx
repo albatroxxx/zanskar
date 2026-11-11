@@ -1,6 +1,5 @@
 import { useEffect, useState } from 'react'
 import { api, ApiError, errorMessage } from '../../api/client'
-import { protocolName } from '../../api/format'
 import type { ConnectResponse, Page, ReachableInstance } from '../../api/types'
 import { Alert, Modal } from '../../components/ui'
 
@@ -19,10 +18,9 @@ export function fmtAgo(iso?: string | null): string {
  * target_lost. It offers the healthy pool and never switches on its own. When
  * the pool is empty, only Exit remains.
  */
-export function FailoverDialog({ sessionId, asgId, protocol, lostLabel, onExit, onSwitched }: {
+export function FailoverDialog({ sessionId, asgId, lostLabel, onExit, onSwitched }: {
   sessionId: string
   asgId: string
-  protocol: string
   lostLabel?: string
   onExit: () => void
   onSwitched: (res: ConnectResponse) => void
@@ -75,12 +73,9 @@ export function FailoverDialog({ sessionId, asgId, protocol, lostLabel, onExit, 
 
   return (
     <Modal title={empty ? 'No healthy instances' : 'Instance lost'} onClose={onExit} width={560}>
-      <p>
-        {lostLabel ? `${lostLabel} left the healthy pool. ` : 'The instance you were on left the healthy pool. '}
-        {empty ? 'The group has no healthy instance to switch to right now.' : `Switch to another instance in this group over ${protocolName(protocol)}, or exit.`}
-      </p>
+      {lostLabel && <p>{lostLabel} left the healthy pool.</p>}
       {err && <Alert tone="danger" onDismiss={() => setErr('')}>{err}</Alert>}
-      {instances === null && <p className="muted">Loading healthy instances…</p>}
+      {instances === null && <p className="muted">Loading…</p>}
       {instances && instances.length > 0 && (
         <div className="failover-list">
           {instances.map((i) => (

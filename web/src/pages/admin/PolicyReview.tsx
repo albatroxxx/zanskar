@@ -88,7 +88,7 @@ export function PolicyReview() {
 
   return (
     <>
-      <PageHead title={v ? `Review ${v.policy.name}` : 'Access review'} lead="When each person last used it; keep who still needs it.">
+      <PageHead title={v ? `Review ${v.policy.name}` : 'Access review'}>
         <Link className="btn" to="/admin/policies">Policies</Link>
       </PageHead>
       {err && <Alert tone="danger" onDismiss={() => setErr('')}>{err}</Alert>}

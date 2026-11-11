@@ -127,8 +127,7 @@ export function Shadow() {
       </div>
       <div className="term-host" ref={host} style={isDesktop ? { overflow: 'hidden' } : undefined} />
       {ended && (
-        <Modal title={ended === 'refused' ? 'Could not watch' : 'Session ended'} onClose={leave}>
-          <p>{ended === 'refused' ? 'The gateway did not open this session for watching. It may have just ended.' : ended === 'session_ended' ? 'The session you were watching has ended.' : 'The connection to the gateway was lost.'}</p>
+        <Modal title={ended === 'refused' ? 'Could not watch' : ended === 'session_ended' ? 'Session ended' : 'Connection lost'} onClose={leave}>
           <div className="actions">
             <button className="btn primary" onClick={leave}>Back to sessions</button>
           </div>

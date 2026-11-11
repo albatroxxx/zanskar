@@ -332,13 +332,13 @@ export function TargetDetail({ target, credentials, onClose, onChanged, onDelete
               database protocols start TLS inside themselves, so that is
               what it says. */}
           {database && (
-            <button className="btn" onClick={() => void doProbe()} disabled={probing} title="Reaches the database port from the gateway">{probing ? 'Testing…' : 'Test connection'}</button>
+            <button className="btn" onClick={() => void doProbe()} disabled={probing}>{probing ? 'Testing…' : 'Test connection'}</button>
           )}
           {canTrust && (
             <button className="btn primary" onClick={() => setConfirm('trust')}>Trust host key</button>
           )}
           {sshCA && t.host_key_status === 'trusted' && (
-            <button className="btn" onClick={() => void testCertificate()} disabled={certProbing} title="Signs in once with a certificate from the bound authority, then disconnects">{certProbing ? 'Testing…' : 'Test certificate login'}</button>
+            <button className="btn" onClick={() => void testCertificate()} disabled={certProbing}>{certProbing ? 'Testing…' : 'Test certificate login'}</button>
           )}
           <button className="btn" onClick={() => setEditing(true)}>Edit</button>
           <button className="btn" disabled={toggling} onClick={toggleStatus} title={t.status === 'active' ? 'Open sessions on it end' : undefined}>{t.status === 'active' ? (toggling ? 'Disabling…' : 'Disable') : toggling ? 'Enabling…' : 'Enable'}</button>
@@ -362,9 +362,8 @@ export function TargetDetail({ target, credentials, onClose, onChanged, onDelete
           title="Trust this host key?"
           body={
             <div>
-              <p>Zanskar will only connect to <strong>{t.name}</strong> when it presents this key:</p>
               <p className="mono" style={{ wordBreak: 'break-all' }}>{fp}</p>
-              {t.host_key_status === 'changed' && <Alert tone="danger">Replaces a previously trusted key. Confirm the change with the machine's owner first.</Alert>}
+              {t.host_key_status === 'changed' && <Alert tone="danger">Replaces the trusted key.</Alert>}
             </div>
           }
           confirmLabel="Trust"
@@ -381,9 +380,8 @@ export function TargetDetail({ target, credentials, onClose, onChanged, onDelete
           title={`Accept the new ${trustCert.protocol === 'rdp' ? 'RDP' : 'WinRM'} certificate?`}
           body={
             <div>
-              <p>Zanskar will only connect to <strong>{t.name}</strong> over {trustCert.protocol === 'rdp' ? 'RDP' : 'WinRM'} when it presents this certificate:</p>
               <p className="mono" style={{ wordBreak: 'break-all' }}>{trustCert.seen}</p>
-              <Alert tone="danger">This replaces the pinned certificate {trustCert.pinned}. Only proceed if you confirmed the change with the machine's owner.</Alert>
+              <Alert tone="danger">Replaces {trustCert.pinned}.</Alert>
             </div>
           }
           confirmLabel="Accept"
@@ -429,8 +427,8 @@ function BlockedDependencies({ target, items, onAllow, onClear }: { target: Targ
                 <td className="muted from">{x.from || '—'}</td>
                 <td className="muted">{x.count} × · {fmtTime(x.last_seen)}</td>
                 <td>
-                  {x.why === 'private' && <button className="btn sm" onClick={() => onAllow(hostport)} title="allow this private host for the application's dependencies">Allow</button>}
-                  {page && <span className="muted" title="someone tried to open a page there; an endpoint would allow it">not an endpoint</span>}
+                  {x.why === 'private' && <button className="btn sm" onClick={() => onAllow(hostport)}>Allow</button>}
+                  {page && <span className="muted">not an endpoint</span>}
                   {never && <StateIcon state="warn" label={`Never allowed: ${x.why}`} />}
                 </td>
               </tr>

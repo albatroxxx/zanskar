@@ -106,7 +106,7 @@ describe('Users', () => {
     await show()
     const enable = (username: string) => within(screen.getByLabelText(`actions for ${username}`)).getByRole('option', { name: 'Enable' }) as HTMLOptionElement
     await waitFor(() => expect(enable('carol').disabled).toBe(true))
-    expect(enable('carol').title).toBe('Keycloak no longer has this person; the account is enabled again when it does')
+    expect(enable('carol').title).toBe('Keycloak no longer has this person')
     expect(within(screen.getByText('carol').closest('tr') as HTMLElement).getByRole('button', { name: 'Disabled: Keycloak no longer has this person' })).toBeDefined()
     // Disabled by an administrator: theirs to enable.
     expect(enable('bob').disabled).toBe(false)
@@ -237,7 +237,7 @@ describe('Users', () => {
 
     await act(user, 'bob', 'status')
     dialog = screen.getByRole('dialog', { name: 'Disable bob?' })
-    expect(within(dialog).getByText(/cannot sign in until re-enabled/)).toBeDefined()
+    expect(within(dialog).getByText('They are signed out and their live sessions end.')).toBeDefined()
     await user.click(within(dialog).getByRole('button', { name: 'Disable' }))
     await waitFor(() => expect(put).toHaveBeenCalledWith('/users/u2', { display_name: 'Bob', email: 'bob@example.com', status: 'disabled' }))
 

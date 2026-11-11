@@ -36,7 +36,7 @@ describe('StorageCard', () => {
     // Not the dashboard's "kept": every recording not deleted, said as such
     // (live, 2026-11-11: 29 here against 28 there).
     expect(screen.getByText('Recordings held')).toBeDefined()
-    expect(screen.getByText('4 in local').getAttribute('title')).toMatch(/still being written and lost ones count too/)
+    expect(screen.getByText('4 in local').getAttribute('title')).toBeNull()
     expect(screen.queryByRole('button', { name: 'Remove console setting' })).toBeNull()
     const test = screen.getByRole('button', { name: 'Test' }) as HTMLButtonElement
     expect(test.disabled).toBe(true)
@@ -69,7 +69,7 @@ describe('StorageCard', () => {
     expect(screen.getByText('Set in console')).toBeDefined()
     expect(screen.getByText(/access key AKIAEXAMPLE/)).toBeDefined()
     expect(screen.getByText('2 in local, 10 in s3://rec, 1 in s3://old')).toBeDefined()
-    expect(screen.getByText(/1 recording sit in a bucket that is no longer active/)).toBeDefined()
+    expect(screen.getByText(/^1 recording in an inactive bucket cannot be played\.$/)).toBeDefined()
     // The stored secret is never read back into the form.
     expect((screen.getByLabelText('Secret access key') as HTMLInputElement).value).toBe('')
     expect(screen.getByText('blank keeps the stored secret')).toBeDefined()
@@ -88,7 +88,7 @@ describe('StorageCard', () => {
     setStatus({ ...bucket, move: { running: false, moved: 2, failed: 0, total: 2, finished_at: '2026-10-26T09:00:00Z' }, counts: { 's3://rec': 12 } })
     await user.click(screen.getByRole('button', { name: 'Remove console setting' }))
     const reset = screen.getByRole('dialog', { name: 'Remove the console storage setting?' })
-    expect(within(reset).getByText(/New recordings go to the local directory again/)).toBeDefined()
+    expect(within(reset).getByText(/^New recordings go to the local directory\.$/)).toBeDefined()
     await user.click(within(reset).getByRole('button', { name: 'Remove' }))
     await waitFor(() => expect(del).toHaveBeenCalledWith('/admin/storage'))
     expect(await screen.findByText('Console setting removed.')).toBeDefined()

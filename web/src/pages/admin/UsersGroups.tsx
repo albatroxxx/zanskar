@@ -180,7 +180,7 @@ function Users({ adding, setAdding }: AddingProps) {
                         <option value="sessions">Revoke sessions</option>
                         <option value="mfa">Reset authenticator</option>
                         {!self && (
-                          <option value="status" disabled={!!leftFor} title={leftFor ? `${leftFor} no longer has this person; the account is enabled again when it does` : undefined}>
+                          <option value="status" disabled={!!leftFor} title={leftFor ? `${leftFor} no longer has this person` : undefined}>
                             {u.status === 'active' ? 'Disable' : 'Enable'}
                           </option>
                         )}
@@ -255,7 +255,7 @@ function Users({ adding, setAdding }: AddingProps) {
       {action?.a === 'status' && (
         <Confirm
           title={`${action.u.status === 'active' ? 'Disable' : 'Enable'} ${action.u.username}?`}
-          body={action.u.status === 'active' ? 'They are signed out, their live sessions end, and they cannot sign in until re-enabled.' : 'They can sign in again.'}
+          body={action.u.status === 'active' ? 'They are signed out and their live sessions end.' : null}
           confirmLabel={action.u.status === 'active' ? 'Disable' : 'Enable'}
           danger={action.u.status === 'active'}
           onClose={() => setAction(null)}

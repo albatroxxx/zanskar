@@ -44,7 +44,7 @@ function signIn(...lists: (Item[] | Error)[]) {
 
 const down: Item = { id: 'kc', name: 'Keycloak', type: 'oidc', not_answering: true }
 const up: Item = { id: 'kc', name: 'Keycloak', type: 'oidc' }
-const note = 'Keycloak is not answering right now. A password account still works.'
+const note = 'Keycloak is not answering.'
 
 describe('a single sign-on provider', () => {
   it('that is not answering is greyed out, with the reason in a tip and no way to start', async () => {
@@ -91,7 +91,7 @@ describe('a single sign-on provider', () => {
   it('that answers again after a check becomes the button, takes focus, and clears the failed sign-in note', async () => {
     window.history.replaceState(null, '', '/login?error=provider_unavailable')
     signIn([down], [up])
-    expect(await screen.findByText(/Single sign-on is not answering right now/)).toBeTruthy()
+    expect(await screen.findByText(/Single sign-on is not answering\./)).toBeTruthy()
     const check = await screen.findByRole('button', { name: 'Check Keycloak again' })
     await act(async () => {
       fireEvent.click(check)
@@ -101,7 +101,7 @@ describe('a single sign-on provider', () => {
     expect(document.activeElement).toBe(link)
     expect(screen.queryByRole('button', { name: 'Check Keycloak again' })).toBeNull()
     expect(screen.getByRole('status').textContent).toBe('Keycloak is answering again.')
-    expect(screen.queryByText(/Single sign-on is not answering right now/)).toBeNull()
+    expect(screen.queryByText(/Single sign-on is not answering\./)).toBeNull()
   })
 
   it('that is still not answering after a check stays greyed out and says so', async () => {

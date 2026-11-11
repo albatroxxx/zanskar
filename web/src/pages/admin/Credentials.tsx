@@ -74,7 +74,7 @@ export function Credentials() {
                   {/* EC2 Instance Connect never stores a secret: the gateway
                       pushes a one-time key for each session. It read as an
                       amber "No secret stored" warning (2026-11-11). */}
-                  <td>{c.has_secret ? <StateIcon state="ok" label="Secret stored" /> : c.type === 'ec2_instance_connect' ? <StateIcon state="info" label="Nothing stored: a one-time key is pushed for each session" /> : <StateIcon state="warn" label="No secret stored" />}</td>
+                  <td>{c.has_secret ? <StateIcon state="ok" label="Secret stored" /> : c.type === 'ec2_instance_connect' ? <StateIcon state="info" label="Nothing stored" /> : <StateIcon state="warn" label="No secret stored" />}</td>
                   <td className="muted">{c.rotated_at ? fmtTime(c.rotated_at) : 'never'}</td>
                   <td>{inUse(c)}</td>
                   <td className="actions">
@@ -279,7 +279,7 @@ function CredentialForm({ onClose, onSaved }: { onClose: () => void; onSaved: (c
       {type === 'ssh_key' && (
         <div className="field inline">
           <input id="c-generate" type="checkbox" checked={generate} onChange={(e) => setGenerate(e.target.checked)} />
-          <label htmlFor="c-generate">Generate an ed25519 key for me (you will only see the public half)</label>
+          <label htmlFor="c-generate">Generate an ed25519 key</label>
         </div>
       )}
       {isCA && (
