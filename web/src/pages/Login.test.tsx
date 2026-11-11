@@ -142,8 +142,8 @@ describe('Login after a failed single sign-on', () => {
       return { text: '' } as never
     })
     for (const [query, want] of [
-      ['?error=not_provisioned', 'There is no account for you here yet. Ask an administrator to add you.'],
-      ['?error=Your+account+is+locked.+Call+%2B1+555+0100', 'Single sign-on did not complete. Try again, or ask an administrator.'],
+      ['?error=not_provisioned', 'There is no account for you here.'],
+      ['?error=Your+account+is+locked.+Call+%2B1+555+0100', 'Single sign-on did not complete. Try again.'],
     ]) {
       window.history.pushState({}, '', '/login' + query)
       render(

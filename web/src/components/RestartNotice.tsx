@@ -76,7 +76,7 @@ export function RestartNotice() {
   }, [gone, draining])
 
   if (watched) return null
-  if (gone) return <Alert tone="warn">Restarting the gateway… this page reloads when it is back.</Alert>
+  if (gone) return <Alert tone="warn">Restarting the gateway…</Alert>
   if (!status) return null
   const env = status.env_file
   const masterKey = env.changed?.includes('ZANSKAR_MASTER_KEY')

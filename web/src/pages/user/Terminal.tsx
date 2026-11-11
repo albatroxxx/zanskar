@@ -167,7 +167,7 @@ function TerminalSession({ state }: { state: SessionState }) {
         {ended ? (
           <span className="stat">Ended · recording saved</span>
         ) : (
-          <span className="stat rec" title="This session is being recorded"><i className="rec-dot" aria-hidden="true" />Recording</span>
+          <span className="stat rec"><i className="rec-dot" aria-hidden="true" />Recording</span>
         )}
         <FullscreenButton isFull={isFull} onClick={toggleFull} />
         {filesAllowed && (

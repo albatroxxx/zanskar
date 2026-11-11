@@ -191,7 +191,7 @@ export function HostActionDialog({ action, version, change, onClose }: { action:
           </div>
         )}
         {progress.state === 'failed' && <FailedNotice progress={progress} />}
-        {progress.state === 'cancelled' && <Alert tone="ok">Cancelled; the gateway carries on.</Alert>}
+        {progress.state === 'cancelled' && <Alert tone="ok">Cancelled.</Alert>}
         {err && <Alert tone="danger" onDismiss={() => setErr('')}>{err}</Alert>}
         <div className="actions">
           {progress.state === 'running' && progress.step === 'drain' && (

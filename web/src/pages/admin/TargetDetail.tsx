@@ -130,7 +130,7 @@ export function TargetDetail({ target, credentials, onClose, onChanged, onDelete
       {err && <Alert tone="danger" onDismiss={() => setErr('')}>{err}</Alert>}
       {t.host_key_status === 'changed' && (
         <Alert tone="danger">
-          The SSH host key changed after it was trusted. Connections are refused until an administrator confirms the new key. Verify it out of band before trusting it.
+          The SSH host key changed; connections are refused until it is trusted.
           {probe?.host_key_changed_from && (
             <div className="mono" style={{ marginTop: 6 }}>previous {probe.host_key_changed_from}</div>
           )}
@@ -142,7 +142,7 @@ export function TargetDetail({ target, credentials, onClose, onChanged, onDelete
       ] as const).map(([protocol, label, pinned, seen, status]) =>
         status === 'changed' && pinned && seen ? (
           <Alert key={protocol} tone="danger">
-            The {label} certificate changed after it was pinned. {label} connections are refused until an administrator accepts the new one; check it with the machine's owner first.
+            The {label} certificate changed; {label} connections are refused until it is accepted.
             <div className="mono" style={{ marginTop: 6, wordBreak: 'break-all' }}>pinned {pinned}<br />now {seen}</div>
             <div className="actions" style={{ marginTop: 8 }}>
               <button className="btn" onClick={() => setTrustCert({ protocol, pinned, seen })}>Accept the new {label} certificate…</button>
@@ -155,7 +155,7 @@ export function TargetDetail({ target, credentials, onClose, onChanged, onDelete
           <>
             <dt>Engine</dt><dd>{engineName(t.engine, t.engine_version)}</dd>
             <dt>Endpoint</dt><dd className="mono">{t.address}{port ? `:${port}` : ''}</dd>
-            <dt>Database</dt><dd>{t.database_name || <span className="muted">{t.engine === 'postgres' ? 'named after the login role' : 'none selected; users pick one with USE'}</span>}</dd>
+            <dt>Database</dt><dd>{t.database_name || <span className="muted">{t.engine === 'postgres' ? 'named after the login role' : 'none selected'}</span>}</dd>
             <dt>TLS</dt>
             <dd>
               {dbTLS(t.tls_mode).verified ? <Badge tone="ok">{dbTLS(t.tls_mode).label} against the CA bundle</Badge> : <Badge tone="warn">{dbTLS(t.tls_mode).label}</Badge>}

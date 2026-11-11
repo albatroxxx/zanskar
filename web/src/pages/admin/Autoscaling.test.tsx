@@ -92,7 +92,7 @@ describe('Autoscaling group form, credentials', () => {
     const ssh = document.getElementById('asg-cred-ssh') as HTMLSelectElement
     expect(Array.from(ssh.options).map((o) => o.textContent)).toEqual([
       '— none —',
-      'User supplied: ask the user for their own login',
+      'User supplied',
       'deploy-key (SSH private key, ec2-user)',
     ])
     expect(ssh.value).toBe('user_supplied')
@@ -139,7 +139,7 @@ describe('Autoscaling, the gateway identity', () => {
 // form fills it in, never over one the administrator typed.
 describe('Autoscaling enrolment, the role ARN', () => {
   const suggested = 'arn:aws:iam::892748149884:role/zanskar-web-asg'
-  const hint = 'In this gateway\'s account. A group in another account: its account number.'
+  const hint = 'This gateway\'s account; change the number for another.'
   const enrol = async (typed?: string) => {
     vi.spyOn(api, 'get').mockImplementation(async (path: string) => {
       if (path === '/admin/aws/identity') return { source: 'detected', platform: 'aws', principal: 'arn:aws:iam::892748149884:role/Zanskar-Gateway-Role', checked_at: '2026-11-02T10:00:00Z' } as never

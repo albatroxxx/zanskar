@@ -101,7 +101,7 @@ describe('RestartNotice', () => {
     const dialog = screen.getByRole('dialog', { name: 'Restart the gateway?' })
     await user.click(within(dialog).getByLabelText('End live sessions and restart now'))
     await user.click(within(dialog).getByRole('button', { name: 'Restart' }))
-    expect(await screen.findByText(/Restarting the gateway… this page reloads when it is back/)).toBeDefined()
+    expect(await screen.findByText(/^Restarting the gateway…$/)).toBeDefined()
   })
 
   it('warns in red when the master key changed, and says when the file cannot be checked', async () => {
@@ -141,7 +141,7 @@ describe('RestartNotice', () => {
       render(<RestartNotice />)
       expect(await screen.findByText('Restarting.')).toBeDefined()
       await vi.advanceTimersByTimeAsync(2100)
-      expect(await screen.findByText(/Restarting the gateway… this page reloads when it is back/)).toBeDefined()
+      expect(await screen.findByText(/^Restarting the gateway…$/)).toBeDefined()
       await vi.advanceTimersByTimeAsync(2100)
       await waitFor(() => expect(reload).toHaveBeenCalled())
       expect(get.mock.calls.length).toBeGreaterThanOrEqual(3)

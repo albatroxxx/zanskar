@@ -437,7 +437,6 @@ tr[aria-current="true"] td { background: var(--accent-soft); }
 .tz-off { font-family: var(--mono); font-size: 0.8rem; color: var(--fg-muted); font-variant-numeric: tabular-nums; }
 .tz-name { font-size: 0.82rem; color: var(--fg-muted); text-align: right; }
 .tz-here { margin-left: 8px; padding: 0 6px; border-radius: 4px; background: var(--accent-soft); color: var(--accent); font-size: 0.72rem; }
-.tzpick-note { margin: 0; padding: 10px 12px; color: var(--fg-muted); font-size: 0.86rem; }
 @media (max-width: 640px) { .tzpick-opt { grid-template-columns: 82px minmax(0, 1fr); } .tz-name { display: none; } }
 .setting-row > p.muted { margin: 0 0 10px; font-size: 0.86rem; }
 .setting-row textarea, .setting-row input:not([type=checkbox]), .setting-row select { width: 100%; max-width: 560px; }

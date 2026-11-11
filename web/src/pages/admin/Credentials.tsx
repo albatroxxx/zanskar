@@ -158,7 +158,7 @@ function SecretFields({ type, f, set, put }: { type: CredentialType; f: Record<s
     e.target.value = ''
     if (!file) return
     if (file.size > MAX_KEY_FILE) {
-      setFileNote({ text: `${file.name} is ${Math.round(file.size / 1024)} KB; a private key is a few KB. Choose the key file, not a certificate bundle or archive.`, err: true })
+      setFileNote({ text: `${file.name} is ${Math.round(file.size / 1024)} KB, too large for a private key.`, err: true })
       return
     }
     file
@@ -166,7 +166,7 @@ function SecretFields({ type, f, set, put }: { type: CredentialType; f: Record<s
       .then((text) => {
         const trimmed = text.trim()
         if (!trimmed.startsWith('-----BEGIN')) {
-          setFileNote({ text: `${file.name} does not look like a PEM key (no -----BEGIN line). PuTTY .ppk files must be exported as OpenSSH first (puttygen, Conversions).`, err: true })
+          setFileNote({ text: `${file.name} is not a PEM key; export a .ppk as OpenSSH first.`, err: true })
           return
         }
         put('private_key', trimmed + '\n')
@@ -311,9 +311,9 @@ function CredentialForm({ onClose, onSaved }: { onClose: () => void; onSaved: (c
 // only "takes effect on every target" read as Zanskar changing the machines,
 // and an administrator locked a Windows account out that way (2026-11-02).
 const rotateNote: Partial<Record<CredentialType, string>> = {
-  password: 'Zanskar does not change the password on the machine. Change it there first, then enter it here.',
-  domain: 'Zanskar does not change the password in the domain. Change it there first, then enter it here.',
-  ssh_key: 'Zanskar does not put the key on the machine. Add the new public key to authorized_keys there first, then paste the private key here.',
+  password: 'Change it on the machine first; Zanskar does not.',
+  domain: 'Change it in the domain first; Zanskar does not.',
+  ssh_key: 'Add the new public key to authorized_keys first; Zanskar does not.',
 }
 
 function RotateForm({ credential, onClose, onSaved }: { credential: Credential; onClose: () => void; onSaved: () => void }) {

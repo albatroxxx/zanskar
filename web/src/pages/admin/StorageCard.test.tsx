@@ -53,10 +53,10 @@ describe('StorageCard', () => {
     await user.click(test)
     const body = { bucket: 'rec', prefix: 'recordings/', region: 'eu-west-1', endpoint: '', kms_key_id: '', auth: 'keys', access_key_id: 'AKIAEXAMPLE', secret_access_key: 'wJalrXUtnFEMI' }
     await waitFor(() => expect(post).toHaveBeenCalledWith('/admin/storage/test', body))
-    expect(await screen.findByText(/The bucket accepted a probe object/)).toBeDefined()
+    expect(await screen.findByText('The bucket works.')).toBeDefined()
     await user.click(screen.getByRole('button', { name: 'Save and use' }))
     await waitFor(() => expect(put).toHaveBeenCalledWith('/admin/storage', body))
-    expect(await screen.findByText('Saved. The next session records to the bucket.')).toBeDefined()
+    expect(await screen.findByText('Saved.')).toBeDefined()
   })
 
   it('shows the active bucket without its secret, warns about recordings left elsewhere, and offers the move and the reset', async () => {
@@ -77,7 +77,7 @@ describe('StorageCard', () => {
 
     await user.click(screen.getByRole('button', { name: 'Move 2 local recordings to the bucket…' }))
     const move = screen.getByRole('dialog', { name: 'Move 2 local recordings?' })
-    expect(within(move).getByText(/copied, verified and removed locally/)).toBeDefined()
+    expect(within(move).getByText('Finished recordings move; local copies are removed.')).toBeDefined()
     setStatus({ ...bucket, move: { running: true, moved: 1, failed: 0, total: 2 } })
     await user.click(within(move).getByRole('button', { name: 'Move' }))
     await waitFor(() => expect(post).toHaveBeenCalledWith('/admin/storage/move'))

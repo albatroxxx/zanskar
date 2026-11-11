@@ -106,7 +106,7 @@ describe('Targets, applications', () => {
     )
     const user = userEvent.setup()
     await user.click(await screen.findByRole('button', { name: 'Request' }))
-    expect(screen.getByText(/Approval is needed for HTTP/)).toBeDefined()
+    expect(screen.getByRole('dialog', { name: /Request access to/ })).toBeDefined()
     await user.type(screen.getByLabelText('Reason'), 'edit the runbook')
     await user.click(screen.getByRole('button', { name: 'Request access' }))
     expect(post).toHaveBeenCalledWith('/me/access-requests', { target_id: 'a1', protocol: 'http', reason: 'edit the runbook', minutes: 60 })

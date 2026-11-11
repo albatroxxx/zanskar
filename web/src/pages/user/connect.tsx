@@ -221,7 +221,7 @@ export function ConnectPage() {
       {err && <Alert tone="danger" onDismiss={() => setErr('')}>{err}</Alert>}
       {needsApproval && (
         <Alert tone="warn">
-          {protocol} access to {target?.name} needs an approved request. <Link to="/">Request it from Targets</Link>.
+          {protocol} access to {target?.name} needs an <Link to="/">approved request</Link>.
         </Alert>
       )}
       {target === undefined && !err && <Loading />}

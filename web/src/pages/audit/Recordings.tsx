@@ -235,8 +235,8 @@ export function Recordings() {
   let nothing = items?.length === 0 ? 'No recordings yet.' : 'No recordings match.'
   if (next) {
     nothing = items?.length === 0
-      ? `No recordings among the newest ${scanned} sessions. Load more to look further back.`
-      : `No recordings among the newest ${scanned} sessions match. Load more to search further back.`
+      ? `No recordings among the newest ${scanned} sessions.`
+      : `No recordings among the newest ${scanned} sessions match.`
   }
 
   return (
@@ -246,7 +246,6 @@ export function Recordings() {
           className="mono filter-control"
           style={{ minWidth: 280 }}
           placeholder="user, machine, protocol, end…"
-          title="Matches what the rows show: start, user, machine, protocol, how it ended, kept until"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           aria-label="Filter recordings"
@@ -255,7 +254,7 @@ export function Recordings() {
       {err && <Alert tone="danger">{err}</Alert>}
       <CommandSearch recordingsPath={recordingsPath} />
       {next && visible.length > 0 && (
-        <p className="muted">Newest {scanned} sessions; the filter searches these.</p>
+        <p className="muted">Newest {scanned} sessions.</p>
       )}
       <div className="card table-wrap">
         {items === null ? (

@@ -67,11 +67,11 @@ export function Logs() {
           <input id="l-auto" type="checkbox" checked={auto} onChange={(e) => setAuto(e.target.checked)} />
           <label htmlFor="l-auto">Follow</label>
         </span>
-        <a className="btn sm" href="/api/v1/admin/logs/download" title="Every line in memory, oldest first, one JSON object per line; recorded in the audit log">Download</a>
+        <a className="btn sm" href="/api/v1/admin/logs/download" title="JSON lines, oldest first">Download</a>
       </PageHead>
       {err && <Alert tone="danger">{err}</Alert>}
       {page && (
-        <p className="muted">{page.items.length} of the last {page.capacity} lines; older ones are in the journal.</p>
+        <p className="muted">{page.items.length} of the last {page.capacity} lines</p>
       )}
       <div className="card table-wrap">
         {page === null ? (

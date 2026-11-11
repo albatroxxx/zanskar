@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Link, useLocation, useSearchParams } from 'react-router-dom'
+import { useLocation, useSearchParams } from 'react-router-dom'
 import { api, errorMessage, query } from '../../api/client'
 import { fmtDuration, fmtTime, protocolName } from '../../api/format'
 import { ranges, sinceFor } from '../../api/ranges'
@@ -103,7 +103,7 @@ export function Sessions() {
                   <td>
                     {s.state === 'live' && (
                       <span className="actions">
-                        <TabLink className="btn sm" to={`/audit/shadow/${s.id}?protocol=${s.protocol}&target=${encodeURIComponent(sessionTarget(s))}`} label="Watch" title="Watch live, read-only; the view is audited" />
+                        <TabLink className="btn sm" to={`/audit/shadow/${s.id}?protocol=${s.protocol}&target=${encodeURIComponent(sessionTarget(s))}`} label="Watch" title="Watch live, read-only" />
                         {admin && (
                           <button className="btn sm danger" onClick={() => setTerminating(s)}>
                             Terminate
@@ -126,9 +126,9 @@ export function Sessions() {
               {/* Terminate ends the session, not the access (live, 2026-11-04: an
                   administrator expected the portal to go back to Request). */}
               <p>
-                The session closes now; access stays. To take it away, revoke the grant under <Link to="/admin/approvals">Approvals</Link> or change the policy.
+                The session closes now; access stays.
               </p>
-              <Field label="Reason (optional, recorded in the audit log)">
+              <Field label="Reason (optional)">
                 <input id="s-reason" value={reason} onChange={(e) => setReason(e.target.value)} />
               </Field>
             </div>

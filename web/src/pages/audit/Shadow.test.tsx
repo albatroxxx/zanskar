@@ -90,7 +90,7 @@ describe('Shadow', () => {
     expect(await screen.findByText('Watching web-1')).toBeDefined()
     expect(document.title).toBe('Watching web-1 · Zanskar')
     expect(screen.getByText('SSH · read-only')).toBeDefined()
-    expect(screen.getByText('this view is audited')).toBeDefined()
+    expect(screen.queryByText('this view is audited')).toBeNull()
     expect(g.sockets[0].url).toBe('ws://localhost:3000/ws/shadow/s1')
     expect(g.terms[0].options.disableStdin).toBe(true)
     expect(screen.getByText('connecting…')).toBeDefined()

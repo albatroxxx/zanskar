@@ -132,7 +132,7 @@ export function TLSCard() {
       <h2>TLS certificate</h2>
       {status.mode === 'proxy' ? (
         <p className="muted">
-          Held by the proxy in front (<code>ZANSKAR_TLS_MODE=proxy</code>); to upload one here, switch the TLS mode to managed under Set at install.
+          Held by the proxy in front (<code>ZANSKAR_TLS_MODE=proxy</code>).
         </p>
       ) : (
         <>
@@ -140,7 +140,7 @@ export function TLSCard() {
           {ok && <Alert tone="ok" onDismiss={() => setOk('')}>{ok}</Alert>}
           {status.uploaded?.problem && (
             <Alert tone="warn">
-              The uploaded certificate ({status.uploaded.subject}) is not in use: {status.uploaded.problem}. Upload a replacement below, or remove it.
+              The uploaded certificate ({status.uploaded.subject}) is not in use: {status.uploaded.problem}.
             </Alert>
           )}
           {a && (
@@ -152,7 +152,7 @@ export function TLSCard() {
             </>
           )}
           <h3 style={{ marginTop: 16 }}>Install or replace the certificate</h3>
-          <p className="muted">Certificate, unencrypted key and chain, as PEM; serves from the next connection.</p>
+          <p className="muted">Unencrypted key; serves from the next connection.</p>
           <PEMFields id="tls" cert={certPEM} privateKey={keyPEM} chain={chainPEM} onCert={setCertPEM} onKey={setKeyPEM} onChain={setChainPEM} />
           <div className="actions">
             <button className="btn primary" disabled={busy || !certPEM.trim() || !keyPEM.trim()} onClick={() => void upload()}>Upload and serve</button>

@@ -54,7 +54,6 @@ describe('TargetForm application', () => {
     await user.type(screen.getByLabelText('Upstream'), 'https://wiki.internal:8443')
     expect(screen.getByLabelText(/CA bundle/)).toBeDefined()
     expect(screen.queryByLabelText('Label')).toBeNull()
-    expect(screen.getByText('The page the browser opens')).toBeDefined()
     await user.click(screen.getByRole('button', { name: 'Create' }))
 
     expect(post).toHaveBeenCalledWith('/targets', expect.objectContaining({ name: 'Wiki', address: '', os_family: 'other', engine: '', app_upstream: 'https://wiki.internal:8443', app_endpoints: [], app_dependencies: 'public', retention_days: null, ports: {} }))
@@ -293,6 +292,6 @@ describe('TargetForm host fields', () => {
     render(<TargetForm kind="host" onClose={() => {}} onSaved={() => {}} />)
     const field = screen.getByLabelText('Recording retention (days)') as HTMLInputElement
     await vi.waitFor(() => expect(field.placeholder).toBe('Global: 90 days'))
-    expect(screen.getByRole('button', { name: /This target's value comes first; left empty, the policy grant's applies, then the global retention/ })).toBeDefined()
+    expect(screen.getByRole('button', { name: /Empty: the grant's, then global/ })).toBeDefined()
   })
 })

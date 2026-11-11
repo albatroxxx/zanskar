@@ -26,7 +26,7 @@ describe('Logs', () => {
     render(<Logs />)
     expect(await screen.findByText('request failed')).toBeDefined()
     expect(get).toHaveBeenLastCalledWith('/admin/logs?level=info&limit=100')
-    expect(screen.getByText('2 of the last 5000 lines; older ones are in the journal.')).toBeDefined()
+    expect(screen.getByText('2 of the last 5000 lines')).toBeDefined()
     const row = screen.getByText('request failed').closest('tr')!
     expect(within(row).getByText('error')).toBeDefined()
     expect(within(row).getByText('route=POST /api/v1/auth/login')).toBeDefined()

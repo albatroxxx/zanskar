@@ -105,35 +105,34 @@ func bootRows(cfg *config.Config, keyVersion int) []settings.Boot {
 		proxies = append(proxies, p.String())
 	}
 	return []settings.Boot{
-		{Key: "listen_addr", Title: "Listen address", EnvVar: "ZANSKAR_LISTEN_ADDR", Value: cfg.ListenAddr, Description: "Where the gateway accepts connections."},
+		{Key: "listen_addr", Title: "Listen address", EnvVar: "ZANSKAR_LISTEN_ADDR", Value: cfg.ListenAddr},
 		{Key: "tls", Title: "TLS", EnvVar: "ZANSKAR_TLS_MODE, ZANSKAR_TLS_CERT, ZANSKAR_TLS_KEY", Value: map[string]string{
 			config.TLSFile: "own certificate file: " + cfg.TLSCert, config.TLSManaged: "managed in the console (Settings, TLS certificate)", config.TLSProxy: "terminated by a proxy (plain HTTP on loopback)",
-		}[cfg.TLSMode], Description: "Serve TLS with a managed or a file certificate, or trust a proxy in front."},
-		{Key: "tls_hosts", Title: "Certificate names", EnvVar: "ZANSKAR_TLS_HOSTS", Value: set(strings.Join(cfg.TLSHosts, ", ")), Description: "Extra names a managed certificate covers, such as a cloud instance's public address."},
-		{Key: "http_redirect", Title: "HTTP redirect", EnvVar: "ZANSKAR_HTTP_REDIRECT_ADDR", Value: set(cfg.RedirectAddr), Description: "Plain-HTTP listener that redirects to HTTPS."},
-		{Key: "trust_proxy_tls", Title: "Trust proxy TLS", EnvVar: "ZANSKAR_TRUST_PROXY_TLS", Value: yesno(cfg.TrustProxyTLS), Description: "Cookies are marked Secure because TLS terminates in front."},
-		{Key: "public_url", Title: "Public URL", EnvVar: "ZANSKAR_PUBLIC_URL", Value: set(cfg.PublicURL), Description: "The https address people use; single sign-on redirects there."},
+		}[cfg.TLSMode]},
+		{Key: "tls_hosts", Title: "Certificate names", EnvVar: "ZANSKAR_TLS_HOSTS", Value: set(strings.Join(cfg.TLSHosts, ", ")), Description: "Extra names the managed certificate covers."},
+		{Key: "http_redirect", Title: "HTTP redirect", EnvVar: "ZANSKAR_HTTP_REDIRECT_ADDR", Value: set(cfg.RedirectAddr)},
+		{Key: "trust_proxy_tls", Title: "Trust proxy TLS", EnvVar: "ZANSKAR_TRUST_PROXY_TLS", Value: yesno(cfg.TrustProxyTLS), Description: "Marks cookies Secure."},
+		{Key: "public_url", Title: "Public URL", EnvVar: "ZANSKAR_PUBLIC_URL", Value: set(cfg.PublicURL), Description: "Single sign-on redirects here."},
 		{Key: "trusted_proxies", Title: "Trusted proxies", EnvVar: "ZANSKAR_TRUSTED_PROXIES", Value: strings.Join(proxies, ", "), Description: "Networks whose X-Forwarded-For is believed."},
 		{Key: "allow_plain_http", Title: "Allow plain HTTP", EnvVar: "ZANSKAR_ALLOW_PLAIN_HTTP", Value: yesno(cfg.AllowPlainHTTP), Description: "Development only."},
-		{Key: "db", Title: "Database", EnvVar: "ZANSKAR_DB_DRIVER, ZANSKAR_DB_DSN", Value: describeDSN(cfg.DBDriver, cfg.DBDSN), Description: "Where everything is stored."},
+		{Key: "db", Title: "Database", EnvVar: "ZANSKAR_DB_DRIVER, ZANSKAR_DB_DSN", Value: describeDSN(cfg.DBDriver, cfg.DBDSN)},
 		masterKeySetting(cfg, keyVersion),
-		{Key: "recordings_dir", Title: "Recordings directory", EnvVar: "ZANSKAR_RECORDINGS_DIR", Value: cfg.RecordingsDir, Description: "Local recording storage."},
+		{Key: "recordings_dir", Title: "Recordings directory", EnvVar: "ZANSKAR_RECORDINGS_DIR", Value: cfg.RecordingsDir},
 		{Key: "recordings_s3", Title: "Recordings in S3", EnvVar: "ZANSKAR_RECORDINGS_S3_*", Value: set(cfg.RecordingsS3Bucket), Description: "Recording storage above overrides it."},
-		{Key: "docker_path", Title: "Container runtime", EnvVar: "ZANSKAR_DOCKER_PATH", Value: map[bool]string{true: cfg.DockerPath, false: "docker (on PATH)"}[cfg.DockerPath != ""], Description: "Spawns database session containers."},
+		{Key: "docker_path", Title: "Container runtime", EnvVar: "ZANSKAR_DOCKER_PATH", Value: map[bool]string{true: cfg.DockerPath, false: "docker (on PATH)"}[cfg.DockerPath != ""], Description: "For database and application sessions."},
 		{Key: "database_max_sessions", Title: "Database session cap", EnvVar: "ZANSKAR_DATABASE_MAX_SESSIONS", Value: map[bool]string{true: strconv.Itoa(cfg.DatabaseMaxSessions), false: "no cap"}[cfg.DatabaseMaxSessions > 0], Description: "0 lifts the cap."},
 		{Key: "apps_max_sessions", Title: "Application session cap", EnvVar: "ZANSKAR_APPS_MAX_SESSIONS", Value: map[bool]string{true: strconv.Itoa(cfg.AppsMaxSessions), false: "no cap"}[cfg.AppsMaxSessions > 0], Description: "0 lifts the cap."},
-		{Key: "issuer", Title: "Authenticator issuer", EnvVar: "ZANSKAR_ISSUER", Value: cfg.Issuer, Description: "The name shown in authenticator apps."},
-		{Key: "siem", Title: "SIEM export", EnvVar: "ZANSKAR_SIEM_*", Value: map[bool]string{true: "configured", false: "(not set)"}[cfg.SIEMSyslogAddr != "" || cfg.SIEMWebhookURL != ""], Description: "Where audit events are shipped."},
+		{Key: "issuer", Title: "Authenticator issuer", EnvVar: "ZANSKAR_ISSUER", Value: cfg.Issuer},
+		{Key: "siem", Title: "SIEM export", EnvVar: "ZANSKAR_SIEM_*", Value: map[bool]string{true: "configured", false: "(not set)"}[cfg.SIEMSyslogAddr != "" || cfg.SIEMWebhookURL != ""]},
 		{Key: "log_format", Title: "Log format", EnvVar: "ZANSKAR_LOG_FORMAT", Value: cfg.LogFormat, Description: "json or text."},
-		{Key: "aws_gateway_principal", Title: "AWS gateway principal", EnvVar: "ZANSKAR_AWS_GATEWAY_PRINCIPAL", Value: set(cfg.AWSGatewayPrincipal), Description: "For autoscaling trust policies; detected when unset."},
+		{Key: "aws_gateway_principal", Title: "AWS gateway principal", EnvVar: "ZANSKAR_AWS_GATEWAY_PRINCIPAL", Value: set(cfg.AWSGatewayPrincipal), Description: "Detected when unset."},
 	}
 }
 
 // masterKeySetting says where the master key came from, never the key itself.
 func masterKeySetting(cfg *config.Config, keyVersion int) settings.Boot {
 	s := settings.Boot{Key: "master_key", Title: "Master key", EnvVar: "ZANSKAR_MASTER_KEY",
-		Value:       fmt.Sprintf("set (data-key version %d active)", keyVersion),
-		Description: "Rotate with zanskar key rotate-master."}
+		Value: fmt.Sprintf("set (data-key version %d active)", keyVersion)}
 	if cfg.MasterKeyFile != "" {
 		s.EnvVar = "ZANSKAR_MASTER_KEY_FILE"
 		s.Value = fmt.Sprintf("read from %s (data-key version %d active)", cfg.MasterKeyFile, keyVersion)

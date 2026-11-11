@@ -122,7 +122,6 @@ export function Shadow() {
         <span className="stat">{protocolName(protocol)} · read-only</span>
         <span className="stat">{status === 'connecting' ? 'connecting…' : 'watching ' + fmtSeconds(elapsed)}</span>
         <span className="grow" />
-        <span className="stat">this view is audited</span>
         <button className="btn sm" onClick={() => { closeRef.current(); leave() }}>Stop watching</button>
       </div>
       <div className="term-host" ref={host} style={isDesktop ? { overflow: 'hidden' } : undefined} />

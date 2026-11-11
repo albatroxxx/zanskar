@@ -61,7 +61,7 @@ describe('the corner strip', () => {
     expect(panel.closest('.corner-pop')).toBe(bell.closest('.corner-pop'))
     expect(within(panel).getByText('1.5.0')).toBeDefined()
     expect(within(panel).getByRole('link', { name: 'Release notes' }).getAttribute('href')).toBe('https://example.test/releases/#v1-5-0')
-    expect(within(panel).getByText(/Install the new package on the host/)).toBeDefined()
+    expect(within(panel).getByText(/Install the new package and restart/)).toBeDefined()
   })
 
   it('stays quiet when nothing is newer', async () => {

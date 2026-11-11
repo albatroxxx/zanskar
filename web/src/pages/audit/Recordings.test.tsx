@@ -84,7 +84,7 @@ describe('Recordings', () => {
 
     expect(await screen.findByRole('button', { name: 'Load more' })).toBeDefined()
     expect(screen.queryByText('No recordings yet.')).toBeNull()
-    expect(screen.getByText(/No recordings among the newest 100 sessions\. Load more to look further back\./)).toBeDefined()
+    expect(screen.getByText(/^No recordings among the newest 100 sessions\.$/)).toBeDefined()
   })
 
   it('says the filter searched only the sessions loaded so far', async () => {
@@ -93,10 +93,10 @@ describe('Recordings', () => {
 
     await userEvent.setup().type(screen.getByLabelText('Filter recordings'), 'bob')
     expect(screen.queryByText('No recordings match.')).toBeNull()
-    expect(screen.getByText(/No recordings among the newest 3 sessions match\. Load more to search further back\./)).toBeDefined()
+    expect(screen.getByText(/^No recordings among the newest 3 sessions match\.$/)).toBeDefined()
 
     await userEvent.setup().clear(screen.getByLabelText('Filter recordings'))
-    expect(screen.getByText(/Newest 3 sessions; the filter searches these\./)).toBeDefined()
+    expect(screen.getByText(/^Newest 3 sessions\.$/)).toBeDefined()
   })
 
   // 2026-11-11, the owner asked what the filter filtered by: it matched codes

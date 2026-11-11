@@ -305,11 +305,11 @@ function nextSync(sync: SyncState, enabled: boolean): string {
 function arrivalHint(a: Arrival, type: IdPType): string {
   switch (a) {
     case 'scim':
-      return 'Okta, Entra ID, OneLogin, JumpCloud, PingOne, Authentik… People deactivated or removed there are disabled here.'
+      return 'Deactivated or removed there: disabled here.'
     case 'list':
       return type === 'oidc'
-        ? 'Keycloak realms: the client needs a service account with realm-management › view-users. People who leave are disabled.'
-        : 'Everyone the user filter matches. People who leave are disabled.'
+        ? 'Keycloak: the client needs realm-management › view-users; leavers are disabled.'
+        : 'Leavers are disabled.'
   }
   return ''
 }
@@ -345,7 +345,7 @@ function SCIMSetup({ provider }: { provider: Provider }) {
             <input id="scim-token" readOnly value={token} onFocus={(e) => e.target.select()} />
             <CopyButton text={token} name="SCIM token" />
           </div>
-          <span className="hint">Shown once. Paste it at the provider as the bearer token.</span>
+          <span className="hint">Shown once; the provider's bearer token.</span>
         </div>
       ) : (
         <div className="actions" style={{ alignItems: 'center' }}>
@@ -357,7 +357,7 @@ function SCIMSetup({ provider }: { provider: Provider }) {
         </div>
       )}
       {confirm === 'replace' && (
-        <Confirm title="Replace the SCIM token" confirmLabel="Replace" body={<p>The current token stops working at once. Give the provider the new one.</p>}
+        <Confirm title="Replace the SCIM token" confirmLabel="Replace" body={<p>The current token stops working at once.</p>}
           onConfirm={make} onClose={() => setConfirm(null)} />
       )}
       {confirm === 'revoke' && (
@@ -384,7 +384,7 @@ function RegisterURI({ id }: { id: string }) {
         <input id="oidc-uri-redirect" aria-describedby="oidc-uri-hint" readOnly value={value} onFocus={(e) => e.target.select()} />
         <CopyButton text={value} name="Redirect URI" />
       </div>
-      <span className="hint" id="oidc-uri-hint">Register it at the provider; it is also the post-logout redirect URI.</span>
+      <span className="hint" id="oidc-uri-hint">Also the post-logout redirect URI.</span>
     </div>
   )
 }
@@ -470,7 +470,7 @@ function ProviderModal({ existing, onClose, onSaved, onDeleted }: { existing: Pr
     setTest(null)
     try {
       const r = await api.post<{ status: string; message?: string; provider_sign_out?: boolean }>(`/identity-providers/${existing.id}/test`)
-      if (r.status === 'ok' && r.provider_sign_out === false) setTest({ tone: 'warn', msg: 'Connection succeeded. The provider offers no sign-out, so signing out ends the Zanskar session only.' })
+      if (r.status === 'ok' && r.provider_sign_out === false) setTest({ tone: 'warn', msg: 'Connected; no provider sign-out, so signing out ends the Zanskar session only.' })
       else if (r.status === 'ok') setTest({ tone: 'ok', msg: 'Connection succeeded.' })
       else if (r.status === 'skipped') setTest({ tone: 'warn', msg: r.message ?? 'Test not available.' })
       else setTest({ tone: 'danger', msg: r.message ?? 'Connection failed.' })
@@ -489,7 +489,7 @@ function ProviderModal({ existing, onClose, onSaved, onDeleted }: { existing: Pr
       <form onSubmit={save}>
         <div className="form-grid">
           <Field label="Name"><input id="idp-name" value={name} onChange={(e) => setName(e.target.value)} required /></Field>
-          <Field label="Type" hint={existing ? 'type cannot be changed after creation' : ''}>
+          <Field label="Type">
             <select id="idp-type" value={type} onChange={(e) => setType(e.target.value as IdPType)} disabled={!!existing}>
               <option value="oidc">OpenID Connect</option>
               <option value="ldap">LDAP / Active Directory</option>
@@ -499,7 +499,7 @@ function ProviderModal({ existing, onClose, onSaved, onDeleted }: { existing: Pr
 
         {type === 'oidc' && (
           <>
-            <Field label="Issuer URL" hint="e.g. https://login.example.com — discovery is automatic">
+            <Field label="Issuer URL" hint="e.g. https://login.example.com">
               <input id="oidc-issuer" value={oidc.issuer ?? ''} onChange={(e) => setOidc({ ...oidc, issuer: e.target.value })} placeholder="https://..." />
             </Field>
             <div className="form-grid">
@@ -548,7 +548,7 @@ function ProviderModal({ existing, onClose, onSaved, onDeleted }: { existing: Pr
         <div className="field inline"><input id="idp-auto" type="checkbox" checked={autoProvision} onChange={(e) => setAutoProvision(e.target.checked)} /><label htmlFor="idp-auto">Create an account for each new person</label></div>
         {/* Zanskar no longer makes accounts for a provider (2026-11-02): with
             this off, the provider's own push is the only way in. */}
-        {!autoProvision && <p className="muted" style={{ margin: '-4px 0 8px' }}>Off: only people the provider pushes (SCIM), or who already have an account, can sign in.</p>}
+        {!autoProvision && <p className="muted" style={{ margin: '-4px 0 8px' }}>Off: only pushed or existing accounts can sign in.</p>}
         <Field label="People arrive" hint={arrivalHint(arrival, type)}>
           <select id="idp-arrival" value={arrival} onChange={(e) => setArrival(e.target.value as Arrival)}>
             <option value="signin">At their first sign-in</option>
@@ -561,7 +561,7 @@ function ProviderModal({ existing, onClose, onSaved, onDeleted }: { existing: Pr
             <input id="idp-sync-minutes" type="number" min={5} max={1440} step={1} value={syncMinutes} onChange={(e) => setSyncMinutes(e.target.value)} />
           </Field>
         )}
-        {arrival === 'scim' && (existing ? <SCIMSetup provider={loaded ?? existing} /> : <p className="hint">Save the provider, then make its SCIM token here.</p>)}
+        {arrival === 'scim' && existing && <SCIMSetup provider={loaded ?? existing} />}
         <Field label="Default roles for provisioned users">
           <RolePicker value={roles} onChange={setRoles} idPrefix="idp" />
         </Field>

@@ -89,9 +89,7 @@ function sourceBadge(s: RuntimeSetting) {
       return <Badge tone="accent">Set in console</Badge>
     case 'environment':
       return (
-        <span title={`From ${s.env_var} in the environment file`}>
-          <Badge>From {s.env_var}</Badge>
-        </span>
+        <Badge>From {s.env_var}</Badge>
       )
     default:
       return <Badge>Default</Badge>
@@ -233,14 +231,14 @@ function SettingRow({ setting, onChange }: { setting: RuntimeSetting; onChange: 
       </div>
       {setting.description && <p className="muted">{setting.description}</p>}
       {input}
-      {customImage && <Alert tone="warn">A custom image does not follow upgrades: change it with each release, or Reset to follow the gateway.</Alert>}
+      {customImage && <Alert tone="warn">A custom image does not follow upgrades.</Alert>}
       {setting.key === 'login_banner' && value.trim() && (
         <Field label="Preview">
           <div className="login-banner" aria-hidden="true">{value.trim()}</div>
         </Field>
       )}
       {needCode && (
-        <Field label="Authenticator code" hint="Required for this setting">
+        <Field label="Authenticator code">
           <input id={id + '-code'} inputMode="numeric" autoComplete="one-time-code" value={code} onChange={(e) => setCode(e.target.value)} autoFocus />
         </Field>
       )}
@@ -365,7 +363,7 @@ function BootEdit({ setting, onClose, onNext }: { setting: BootSetting; onClose:
       <form
         onSubmit={(e) => {
           e.preventDefault()
-          if (preset) onNext({ tls_mode: mode, summary: mode === 'managed' ? 'TLS mode: managed. The gateway serves HTTPS on 443 and redirects 80.' : 'TLS mode: proxy. The gateway listens on 127.0.0.1:8443 behind a TLS proxy.' })
+          if (preset) onNext({ tls_mode: mode, summary: mode === 'managed' ? 'TLS mode: managed (HTTPS on 443, 80 redirects)' : 'TLS mode: proxy (127.0.0.1:8443)' })
           else onNext({ values: { [setting.env_var]: value.trim() }, summary: `${setting.env_var} = ${value.trim() || '(unset)'}` })
         }}
       >
@@ -378,7 +376,7 @@ function BootEdit({ setting, onClose, onNext }: { setting: BootSetting; onClose:
               </select>
             </Field>
             {mode === 'managed' && setting.raw !== 'managed' && (
-              <Alert tone="warn">Stop the proxy in front first: the gateway takes ports 443 and 80. If it cannot, the change is rolled back.</Alert>
+              <Alert tone="warn">Stop the proxy in front first: the gateway takes ports 443 and 80.</Alert>
             )}
           </>
         ) : (

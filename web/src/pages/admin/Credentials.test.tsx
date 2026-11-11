@@ -129,9 +129,9 @@ describe('Adding a credential', () => {
     const input = form.querySelector('#c-private-key-file') as HTMLInputElement
     const big = new File([new Uint8Array(70 * 1024)], 'bundle.p12')
     await user.upload(input, big)
-    expect(await within(form).findByText(/bundle\.p12 is 70 KB; a private key is a few KB/)).toBeDefined()
+    expect(await within(form).findByText(/bundle\.p12 is 70 KB, too large for a private key/)).toBeDefined()
     await user.upload(input, new File(['PuTTY-User-Key-File-3: ssh-ed25519'], 'id.ppk'))
-    expect(await within(form).findByText(/id\.ppk does not look like a PEM key/)).toBeDefined()
+    expect(await within(form).findByText(/id\.ppk is not a PEM key/)).toBeDefined()
     await user.upload(input, new File([pem('OPENSSH', 'AAAA\n')], 'id_ed25519'))
     expect(await within(form).findByText('Loaded id_ed25519.')).toBeDefined()
     expect((within(form).getByLabelText('Private key (PEM)') as HTMLTextAreaElement).value).toContain(opensshBegin)
@@ -195,7 +195,7 @@ describe('Rotating and deleting', () => {
     const user = userEvent.setup()
     await user.click(await screen.findByRole('button', { name: 'Rotate' }))
     const rotate = screen.getByRole('dialog', { name: 'Rotate deploy' })
-    expect(within(rotate).getByRole('status').textContent).toContain('Zanskar does not change the password on the machine. Change it there first')
+    expect(within(rotate).getByRole('status').textContent).toContain('Change it on the machine first; Zanskar does not.')
     await user.type(within(rotate).getByLabelText('Password'), 'new one')
     await user.click(within(rotate).getByRole('button', { name: 'Rotate' }))
     await waitFor(() => expect(post).toHaveBeenCalledWith('/credentials/c1/rotate', { password: 'new one' }))
@@ -211,8 +211,8 @@ describe('Rotating and deleting', () => {
   // Rotating never touches the account it signs in to. Read as changing the
   // machines, it locked a Windows account out on a live install (2026-11-02).
   it.each([
-    ['domain', 'Zanskar does not change the password in the domain. Change it there first'],
-    ['ssh_key', 'Zanskar does not put the key on the machine. Add the new public key to authorized_keys there first'],
+    ['domain', 'Change it in the domain first; Zanskar does not.'],
+    ['ssh_key', 'Add the new public key to authorized_keys first; Zanskar does not.'],
   ] as const)('says the %s account is changed elsewhere, first', async (type, words) => {
     lists([credential({ type, domain: type === 'domain' ? 'CORP' : undefined })])
     const post = vi.spyOn(api, 'post').mockResolvedValue({} as never)

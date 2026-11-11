@@ -92,7 +92,7 @@ export function ChainStatus({ verify, err }: { verify: AuditVerify | null; err: 
   if (verify.intact) {
     const anchor = verify.last_anchor
       ? `The newest signed anchor covers event ${verify.last_anchor.event_id}, written ${fmtPreciseTime(verify.last_anchor.created_at)}.`
-      : 'No signed anchor yet; the gateway writes one at start and every hour.'
+      : 'No signed anchor yet.'
     return (
       <span title={[anchor, ...warnings].join('\n')}>
         <Badge tone={warnings.length ? 'warn' : 'ok'}>
@@ -111,7 +111,7 @@ export function ChainStatus({ verify, err }: { verify: AuditVerify | null; err: 
     )
   }
   return (
-    <span title={['Every event is hashed onto the one before it. A break means a row was altered or removed after it was written, or was written by a build whose hashing differed.', ...problems].join('\n')}>
+    <span title={['A row was altered or removed, or written by a build that hashed differently.', ...problems].join('\n')}>
       <Badge tone="danger">chain broken at event {verify.broken?.ID ?? '?'}: {verify.broken?.Reason ?? 'unknown reason'}</Badge>
     </span>
   )

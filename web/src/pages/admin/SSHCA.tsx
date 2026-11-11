@@ -85,12 +85,9 @@ function CARotation({ credential, onChanged, onError }: { credential: Credential
   return (
     <>
       <h3>Key rotation</h3>
-      {!pending && !retired && (
-        <p className="muted">Prepare a next key, install it on every target, then cut over.</p>
-      )}
       {pending && (
         <Alert tone="warn">
-          Next key prepared{credential.rotation?.pending_since ? ` ${fmtTime(credential.rotation.pending_since)}` : ''}. Install it on every target, test, then cut over.
+          Next key prepared{credential.rotation?.pending_since ? ` ${fmtTime(credential.rotation.pending_since)}` : ''}.
         </Alert>
       )}
       {retired && (

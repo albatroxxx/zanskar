@@ -60,7 +60,7 @@ export function CredentialSelect({ id, protocol, value, credentials, disabled, o
   return (
     <select id={id} value={value} disabled={disabled} onChange={(e) => onChange(e.target.value)}>
       <option value="">— none —</option>
-      <option value={USER_SUPPLIED}>User supplied: ask the user for their own login</option>
+      <option value={USER_SUPPLIED}>User supplied</option>
       {vaulted.map((c) => (
         <option key={c.id} value={c.id}>
           {c.name} ({credentialTypeName(c.type)}{c.username ? `, ${c.username}` : ''})
@@ -118,7 +118,7 @@ function BindingsEditor({ slots, current, credentials, onSave, onError }: Props)
         <div className="actions" style={{ marginTop: 4 }}>
           <button className="btn primary sm" disabled={busy} onClick={() => void save()}>{busy ? 'Saving…' : `Save ${changes.length === 1 ? 'binding' : 'bindings'}`}</button>
           <button className="btn sm" disabled={busy} onClick={() => setDraft(shown)}>Discard</button>
-          <span className="muted">Unsaved changes; closing the panel discards them.</span>
+          <span className="muted">Unsaved changes.</span>
         </div>
       )}
     </>

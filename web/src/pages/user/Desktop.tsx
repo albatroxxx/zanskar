@@ -477,7 +477,7 @@ function DesktopSession({ state }: { state: SessionState }) {
         {ended ? (
           <span className="stat">Ended · recording saved</span>
         ) : (
-          <span className="stat rec" title="This session is being recorded"><i className="rec-dot" aria-hidden="true" />Recording</span>
+          <span className="stat rec"><i className="rec-dot" aria-hidden="true" />Recording</span>
         )}
         <FullscreenButton isFull={isFull} onClick={toggleFull} />
         {flags.clipboard && (
@@ -501,7 +501,6 @@ function DesktopSession({ state }: { state: SessionState }) {
               <span className="grow" />
               <button className="btn sm" onClick={() => setClipOpen(false)}>Close</button>
             </header>
-            <div className="hint">Copied in the session shows here; send text below into it.</div>
             <textarea value={clipText} onChange={(e) => setClipText(e.target.value)} spellCheck={false} aria-label="Clipboard text" />
             <div className="row">
               <button className="btn sm primary" disabled={!clipText} onClick={() => pushClipboard(clipText)}>Send to session</button>
@@ -519,7 +518,7 @@ function DesktopSession({ state }: { state: SessionState }) {
               <button className="btn sm" disabled={!fsReady} onClick={() => fileInput.current?.click()}>Upload</button>
             </header>
             {!fsReady ? (
-              <div className="hint">Available once the session starts, as the "Zanskar" drive.</div>
+              <div className="hint">The "Zanskar" drive in the session.</div>
             ) : (
               <div className="list">
                 <div className="entry dir">{cwd}</div>

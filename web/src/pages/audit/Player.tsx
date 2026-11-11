@@ -517,8 +517,8 @@ export function Player() {
         {rec && !gone && (
           <>
             {/* Downloads are recorded views and audit events, like pressing Play. */}
-            <a className="btn" href={`/api/v1${recordingPath(rec.id)}/download`} download title="Download the recording file (audited)">Download recording</a>
-            {rec.format !== 'guac' && <a className="btn" href={`/api/v1${recordingPath(rec.id)}/transcript`} download title="Download the command lines as text (audited)">Download transcript</a>}
+            <a className="btn" href={`/api/v1${recordingPath(rec.id)}/download`} download>Download recording</a>
+            {rec.format !== 'guac' && <a className="btn" href={`/api/v1${recordingPath(rec.id)}/transcript`} download>Download transcript</a>}
           </>
         )}
         <Link className="btn" to={recordingsPath}>Back to recordings</Link>
@@ -617,7 +617,7 @@ export function Player() {
                 <p className="muted" style={{ margin: 0 }}>No command lines recorded.</p>
               ) : (
                 <>
-                  <p className="muted" style={{ marginTop: 0 }}>Choose a line to jump to it. Unechoed input is hidden.</p>
+                  <p className="muted" style={{ marginTop: 0 }}>Unechoed input is hidden.</p>
                   {/* Seek by marker INDEX, not the command's original timestamp:
                       the player compresses idle gaps (idleTimeLimit), so its
                       timeline no longer matches recording time and a raw-seconds

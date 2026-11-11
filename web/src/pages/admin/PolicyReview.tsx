@@ -149,7 +149,7 @@ export function PolicyReview() {
           <div className="card">
             <label className="field">
               <span>Note</span>
-              <textarea value={note} onChange={(e) => setNote(e.target.value)} maxLength={2000} placeholder="What this review found, for the audit log" />
+              <textarea value={note} onChange={(e) => setNote(e.target.value)} maxLength={2000} placeholder="What this review found" />
             </label>
             <div className="actions">
               <button type="button" className={'btn ' + (remove.size ? 'danger' : 'primary')} disabled={busy} onClick={() => void complete()}>

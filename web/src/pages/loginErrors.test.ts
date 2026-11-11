@@ -6,9 +6,9 @@ import { safeReturnPath, signInError } from './loginErrors'
 // the reasons the gateway sends are shown, each in plain words.
 describe('signInError', () => {
   it('says what a known reason means', () => {
-    expect(signInError('not_provisioned')).toBe('There is no account for you here yet. Ask an administrator to add you.')
+    expect(signInError('not_provisioned')).toBe('There is no account for you here.')
     expect(signInError('domain_not_allowed')).toMatch(/email domain/)
-    expect(signInError('reauth_not_done')).toMatch(/instead of asking for your password again/)
+    expect(signInError('reauth_not_done')).toMatch(/did not ask for your password again/)
     expect(signInError('auth_time_missing')).toMatch(/auth_time claim/)
     // With the provider down, the page says so and no more (owner,
     // 2026-11-11: the password form is right there).
@@ -17,8 +17,8 @@ describe('signInError', () => {
 
   it('never repeats text it was handed', () => {
     const lure = 'Your account is locked. Call +1 555 0100 to unlock it'
-    expect(signInError(lure)).toBe('Single sign-on did not complete. Try again, or ask an administrator.')
-    expect(signInError('constructor')).toBe('Single sign-on did not complete. Try again, or ask an administrator.')
+    expect(signInError(lure)).toBe('Single sign-on did not complete. Try again.')
+    expect(signInError('constructor')).toBe('Single sign-on did not complete. Try again.')
   })
 
   it('says nothing when there is no reason', () => {

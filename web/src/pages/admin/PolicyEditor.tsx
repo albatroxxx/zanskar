@@ -143,7 +143,7 @@ export function PolicyEditor() {
             <PickList label="groups" idPrefix="pe-group" selected={groupIDs} onToggle={(gid) => setGroupIDs(toggle(groupIDs, gid))} onSelect={(ids, on) => setGroupIDs(pickMany(groupIDs, ids, on))}
               options={(groups.items ?? []).map((g) => ({ id: g.id, label: g.name, detail: g.member_count !== undefined ? `${g.member_count} ${g.member_count === 1 ? 'member' : 'members'}` : undefined }))} />
           </Field>
-          <Field label="Users" hint="Review-only accounts are not offered">
+          <Field label="Users">
             <PickList label="users" idPrefix="pe-user" selected={userIDs} onToggle={(uid) => setUserIDs(toggle(userIDs, uid))} onSelect={(ids, on) => setUserIDs(pickMany(userIDs, ids, on))}
               options={people.map(personOption)} />
           </Field>
@@ -192,7 +192,7 @@ export function PolicyEditor() {
       {deleting && loaded && (
         <Confirm
           title={`Delete policy ${loaded.name}?`}
-          body="Its people lose this access; their live sessions are re-checked and end if nothing else admits them."
+          body="Its people lose this access; sessions only it admits end."
           confirmLabel="Delete"
           danger
           onClose={() => setDeleting(false)}
@@ -404,7 +404,7 @@ function GrantCard({ index, draft: d, open, onToggleOpen, onChange, onRemove, on
             <div className="form-grid">
               <Field label="Idle (minutes)"><input id={`${p}-idle`} inputMode="numeric" value={d.idle} onChange={(e) => up({ idle: e.target.value })} /></Field>
               <Field label="Maximum (minutes)"><input id={`${p}-max`} inputMode="numeric" value={d.max} onChange={(e) => up({ max: e.target.value })} placeholder="No limit" /></Field>
-              <Field label="Recording retention (days)" info="A target's own value comes first; this grant's next; left empty, the global retention."><input id={`${p}-retention`} inputMode="numeric" value={d.retention} onChange={(e) => up({ retention: e.target.value })} placeholder="Global" /></Field>
+              <Field label="Recording retention (days)" info="Target first, then this grant, then global."><input id={`${p}-retention`} inputMode="numeric" value={d.retention} onChange={(e) => up({ retention: e.target.value })} placeholder="Global" /></Field>
             </div>
             <Field label="Time windows" hint="None = always">
               <div className="windows">

@@ -90,7 +90,7 @@ describe('MyAccess', () => {
   it('says when nothing was requested, and names a failed read', async () => {
     vi.spyOn(api, 'get').mockResolvedValue({ items: [] } as never)
     const { unmount } = show()
-    expect(await screen.findByText(/You haven't requested access/)).toBeDefined()
+    expect(await screen.findByText('No requests yet.')).toBeDefined()
     unmount()
     vi.spyOn(api, 'get').mockRejectedValue(new ApiError(500, { code: 'internal', message: 'database is locked', request_id: 'req-6' }, '500'))
     show()
