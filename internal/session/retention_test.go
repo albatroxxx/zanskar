@@ -64,8 +64,13 @@ func (f *fakeStorage) Delete(_ context.Context, uri string) error {
 
 func newRetentionTestRepo(t *testing.T) *Repo {
 	t.Helper()
+	return retentionRepoOn(t, storetest.Open(t))
+}
+
+// retentionRepoOn seeds a user and a target on db and returns its repo.
+func retentionRepoOn(t *testing.T, db *store.DB) *Repo {
+	t.Helper()
 	ctx := context.Background()
-	db := storetest.Open(t)
 	now := store.TimeArg(time.Now())
 	for _, q := range []string{
 		`INSERT INTO users (id, username, display_name, created_at, updated_at) VALUES ('u1','alice','Alice',?,?)`,
@@ -177,6 +182,62 @@ func TestSweepDeletesAndMarks(t *testing.T) {
 	sort.Strings(fake.deleted)
 	if len(fake.deleted) != 1 {
 		t.Fatalf("no further deletes expected, got %v", fake.deleted)
+	}
+}
+
+// TestSweepPurgesLostRecordings: a recording whose session ended with it
+// still open is purged like a finished one, aged from the session's end.
+// Live, 2026-11-11: two lost recordings from 5 Nov stayed under a 1-day
+// policy. A recording whose session is still running is never touched.
+func TestSweepPurgesLostRecordings(t *testing.T) {
+	// The candidates are aged by COALESCE over two timestamp columns: on
+	// both engines.
+	storetest.ForEachBackend(t, func(t *testing.T, db *store.DB) { sweepPurgesLostRecordings(t, retentionRepoOn(t, db)) })
+}
+
+func sweepPurgesLostRecordings(t *testing.T, r *Repo) {
+	ctx := context.Background()
+	open := func(ended *time.Time) *Recording {
+		t.Helper()
+		s := &Session{UserID: "u1", TargetID: "t1", Protocol: "http", ClientIP: "10.0.0.1"}
+		if err := r.Start(ctx, s); err != nil {
+			t.Fatal(err)
+		}
+		rec := &Recording{SessionID: s.ID, Format: "guac", StorageURI: "file:///rec-" + s.ID + ".guac"}
+		if err := r.CreateRecording(ctx, rec); err != nil {
+			t.Fatal(err)
+		}
+		if ended != nil {
+			if _, err := r.db.ExecContext(ctx, r.db.Rebind(`UPDATE access_sessions SET ended_at = ?, end_reason = 'admin_terminated' WHERE id = ?`), store.TimeArg(*ended), s.ID); err != nil {
+				t.Fatal(err)
+			}
+		}
+		return rec
+	}
+	old, recent := time.Now().UTC().AddDate(0, 0, -6), time.Now().UTC().Add(-time.Hour)
+	lostOld, lostRecent, live := open(&old), open(&recent), open(nil)
+	if got, _ := r.GetRecording(ctx, lostOld.ID); got.State != RecordingLost {
+		t.Fatalf("setup: state %q, want lost", got.State)
+	}
+	if err := r.SetRetentionPolicy(ctx, RetentionPolicy{MaxAgeDays: 1}, "u1"); err != nil {
+		t.Fatal(err)
+	}
+	fake := &fakeStorage{}
+	sw := &RetentionSweeper{Repo: r, Storage: fake, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	if n, err := sw.Sweep(ctx); err != nil || n != 1 {
+		t.Fatalf("sweep: %d, %v", n, err)
+	}
+	if len(fake.deleted) != 1 || fake.deleted[0] != lostOld.StorageURI {
+		t.Fatalf("deleted %v, want only the lost recording past the policy", fake.deleted)
+	}
+	got, _ := r.GetRecording(ctx, lostOld.ID)
+	if got.PurgedAt == nil || got.State != RecordingPurged {
+		t.Fatalf("lost recording past the policy: %+v", got)
+	}
+	for _, id := range []string{lostRecent.ID, live.ID} {
+		if got, _ := r.GetRecording(ctx, id); got.PurgedAt != nil {
+			t.Fatalf("recording %s should be kept", id)
+		}
 	}
 }
 

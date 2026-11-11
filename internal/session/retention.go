@@ -72,12 +72,19 @@ type purgeCandidate struct {
 	until *time.Time
 }
 
-// listPurgeCandidates returns finished recordings whose blob still exists,
-// oldest first. The whole set is read before any delete runs, which the
+// listPurgeCandidates returns the recordings retention may delete, oldest
+// first: finished ones, aged from when they finished, and lost ones (their
+// session ended with them still open), aged from when the session ended. A
+// lost recording was never a candidate, so it and whatever part of its file
+// was written stayed for good past any policy (live, 2026-11-11: two from
+// 5 Nov under a 1-day policy). A recording whose session is still running is
+// never one. The whole set is read before any delete runs, which the
 // single-connection SQLite setup requires.
 func (r *Repo) listPurgeCandidates(ctx context.Context) ([]purgeCandidate, error) {
-	rows, err := r.db.QueryContext(ctx, r.db.Rebind(`SELECT id, storage_uri, size_bytes, finished_at, retention_until
-		FROM recordings WHERE purged_at IS NULL AND finished_at IS NOT NULL ORDER BY finished_at ASC`))
+	rows, err := r.db.QueryContext(ctx, r.db.Rebind(`SELECT rec.id, rec.storage_uri, rec.size_bytes, COALESCE(rec.finished_at, s.ended_at) AS aged_from, rec.retention_until
+		FROM recordings rec JOIN access_sessions s ON s.id = rec.session_id
+		WHERE rec.purged_at IS NULL AND (rec.finished_at IS NOT NULL OR s.ended_at IS NOT NULL)
+		ORDER BY aged_from ASC`))
 	if err != nil {
 		return nil, err
 	}
