@@ -7,7 +7,7 @@ import { Shadow } from './Shadow'
 interface FakeTerm { options: Record<string, unknown>; written: Uint8Array[]; disposed: boolean }
 const g = vi.hoisted(() => ({ terms: [] as FakeTerm[], sockets: [] as FakeSocket[], tunnels: [] as string[], clients: [] as FakeClient[], role: 'admin' }))
 interface FakeClient { connected: boolean; disconnected: boolean; onstatechange: ((s: number) => void) | null }
-interface FakeSocket { url: string; closed: { code?: number; reason?: string } | null; onmessage: ((ev: { data: unknown }) => void) | null; onclose: (() => void) | null; onerror: (() => void) | null }
+interface FakeSocket { url: string; closed: { code?: number; reason?: string } | null; onmessage: ((ev: { data: unknown }) => void) | null; onclose: (() => void) | null; onerror: (() => void) | null; close: (code?: number, reason?: string) => void }
 
 vi.mock('@xterm/xterm', () => ({
   Terminal: class {

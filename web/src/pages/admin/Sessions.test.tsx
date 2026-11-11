@@ -31,7 +31,7 @@ describe('Sessions', () => {
   // 2026-11-11, owner: a recording retention had deleted still had Review,
   // and only its Play said it was gone.
   it('says a recording with no file left is gone instead of offering Review', async () => {
-    const ended = { ...live, state: 'ended', ended_at: '2026-10-06T10:05:00Z' }
+    const ended: Session = { ...live, state: 'ended', ended_at: '2026-10-06T10:05:00Z' }
     at('/admin/sessions', [
       { ...ended, id: 's1', recording_id: 'r1', recording_state: 'purged', recording_purged: true },
       { ...ended, id: 's2', recording_id: 'r2', recording_state: 'finished' },
