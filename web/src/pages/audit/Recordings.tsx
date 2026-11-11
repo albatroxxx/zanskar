@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from 'react'
+import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { api, errorMessage, query } from '../../api/client'
 import { fmtDuration, fmtTime, protocolName } from '../../api/format'
 import { sessionTarget, sessionUser } from '../../api/labels'
@@ -48,21 +48,33 @@ const when = (h: { started_at: string; at_ms: number }) => fmtTime(new Date(Date
 function CommandSearch({ recordingsPath }: { recordingsPath: string }) {
   const [q, setQ] = useState('')
   const [scope, setScope] = useState<'commands' | 'output'>('commands')
-  const [hits, setHits] = useState<{ scope: 'commands'; items: CommandHit[] } | { scope: 'output'; items: OutputHit[] } | null>(null)
+  // The hits and the term they were found for: the box may since say another.
+  const [hits, setHits] = useState<{ scope: 'commands'; term: string; items: CommandHit[] } | { scope: 'output'; term: string; items: OutputHit[] } | null>(null)
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState('')
+  const box = useRef<HTMLInputElement>(null)
+  // The owner, 2026-11-11: a search's hits stayed above the recordings with
+  // no way to put them away but reloading the page. Clear, Esc in the box,
+  // or emptying it does.
+  const clear = () => {
+    setQ('')
+    setHits(null)
+    setErr('')
+    box.current?.focus()
+  }
   const search = async (e: FormEvent) => {
     e.preventDefault()
-    if (q.trim().length < 2) return
+    const term = q.trim()
+    if (term.length < 2) return
     setBusy(true)
     setErr('')
     try {
       if (scope === 'output') {
-        const r = await api.get<{ items: OutputHit[] }>('/recordings/search' + query({ q: q.trim(), in: 'output' }))
-        setHits({ scope, items: r.items ?? [] })
+        const r = await api.get<{ items: OutputHit[] }>('/recordings/search' + query({ q: term, in: 'output' }))
+        setHits({ scope, term, items: r.items ?? [] })
       } else {
-        const r = await api.get<{ items: CommandHit[] }>('/recordings/search' + query({ q: q.trim() }))
-        setHits({ scope, items: r.items ?? [] })
+        const r = await api.get<{ items: CommandHit[] }>('/recordings/search' + query({ q: term }))
+        setHits({ scope, term, items: r.items ?? [] })
       }
     } catch (e2) {
       setHits(null)
@@ -79,21 +91,41 @@ function CommandSearch({ recordingsPath }: { recordingsPath: string }) {
           <option value="output">Output</option>
         </select>
         <input
+          ref={box}
           className="mono filter-control"
           style={{ minWidth: 280 }}
           placeholder={scope === 'output' ? 'find printed text, e.g. permission denied' : 'find a command, e.g. systemctl stop'}
           aria-label={scope === 'output' ? 'Find printed text' : 'Find a command'}
           value={q}
-          onChange={(e) => setQ(e.target.value)}
+          onChange={(e) => {
+            setQ(e.target.value)
+            if (!e.target.value.trim()) {
+              setHits(null)
+              setErr('')
+            }
+          }}
+          onKeyDown={(e) => {
+            if (e.key === 'Escape' && (q || hits || err)) {
+              e.preventDefault()
+              clear()
+            }
+          }}
           maxLength={200}
         />
         <button type="submit" className="btn sm" disabled={busy || q.trim().length < 2}>{busy ? 'Searching…' : 'Find'}</button>
         <span className="muted">Terminal sessions.</span>
       </form>
-      {err && <Alert tone="danger">{err}</Alert>}
-      {hits?.scope === 'output' && (hits.items.length === 0 ? (
-        <p className="muted">No output matches.</p>
-      ) : (
+      {err && <Alert tone="danger" onDismiss={clear}>{err}</Alert>}
+      {hits && (
+        <div className="actions" style={{ marginTop: 8 }}>
+          <span className="muted">
+            {hits.items.length === 0 ? (hits.scope === 'output' ? 'No output matches.' : 'No command matches.') : `${hits.items.length} ${hits.items.length === 1 ? 'match' : 'matches'} for`}{' '}
+            {hits.items.length > 0 && <span className="mono">{hits.term}</span>}
+          </span>
+          <button type="button" className="btn sm ghost" onClick={clear}>Clear</button>
+        </div>
+      )}
+      {hits?.scope === 'output' && hits.items.length > 0 && (
         <table className="command-hits">
           <thead>
             <tr>
@@ -121,10 +153,8 @@ function CommandSearch({ recordingsPath }: { recordingsPath: string }) {
             ))}
           </tbody>
         </table>
-      ))}
-      {hits?.scope === 'commands' && (hits.items.length === 0 ? (
-        <p className="muted">No command matches.</p>
-      ) : (
+      )}
+      {hits?.scope === 'commands' && hits.items.length > 0 && (
         <table className="command-hits">
           <thead>
             <tr>
@@ -149,7 +179,7 @@ function CommandSearch({ recordingsPath }: { recordingsPath: string }) {
             ))}
           </tbody>
         </table>
-      ))}
+      )}
     </div>
   )
 }
