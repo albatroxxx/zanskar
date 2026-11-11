@@ -121,6 +121,9 @@ group('sign-in, session and recording events read as what happened', () => {
     [{ action: 'session.shadow.end', object_name: 'bob → web-1 (SSH)' }, "stopped watching bob's session on web-1"],
     [{ action: 'session.failover', object_name: 'bob → web-1 (SSH)' }, 'moved the SSH session on web-1 to another instance'],
     [{ action: 'recording.view', object_name: 'bob → web-1 (SSH)' }, 'played the recording of bob on web-1 (SSH)'],
+    // Live, 2026-11-11: "search recording", not a sentence, the term only in the raw details.
+    [{ action: 'recording.search', details: { q: 'ls', in: 'commands', count: 1 } }, "searched the recordings' commands for “ls” (1 match)"],
+    [{ action: 'recording.search', details: { q: 'permission denied', in: 'output', count: 0 } }, "searched the recordings' output for “permission denied” (0 matches)"],
     [{ action: 'audit.read' }, 'viewed the audit log'],
   ])('%j', (over, want) => {
     expect(describe(event(over as Partial<AuditEvent>))).toBe(want)

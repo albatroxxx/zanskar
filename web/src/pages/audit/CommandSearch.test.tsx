@@ -39,6 +39,45 @@ describe('Recordings, find a command', () => {
     await user.type(screen.getByLabelText('Find a command'), 'rm -rf{Enter}')
     expect(await screen.findByText('No command matches.')).toBeDefined()
   })
+
+  // The owner, 2026-11-11: the hits of a search stayed above the recordings
+  // with no way to put them away but reloading, and with the box changed
+  // they no longer said what they were for.
+  it('says what its hits are for, and puts them away with Clear, Esc or an empty box', async () => {
+    vi.spyOn(api, 'get').mockImplementation(async (path: string) => {
+      if (path.startsWith('/recordings/search')) {
+        return { items: [{ recording_id: 'r1', session_id: 's1', username: 'alice', target_name: 'web-1', protocol: 'ssh', started_at: '2026-11-02T10:00:00Z', seq: 1, at_ms: 1000, command: 'ls -la' }] } as never
+      }
+      return { items: [] } as never
+    })
+    render(<MemoryRouter initialEntries={['/admin/recordings']}><Recordings /></MemoryRouter>)
+    const user = userEvent.setup()
+    const box = screen.getByLabelText('Find a command') as HTMLInputElement
+    const find = async () => {
+      await user.clear(box)
+      await user.type(box, 'ls{Enter}')
+      await screen.findByText('ls -la')
+    }
+
+    await find()
+    expect(screen.getByText('1 match for')).toBeDefined()
+    await user.type(box, ' -la') // the box now says another thing; the hits keep their own term
+    expect(screen.getByText('ls', { selector: 'span.mono' })).toBeDefined()
+    await user.click(screen.getByRole('button', { name: 'Clear' }))
+    expect(screen.queryByText('ls -la')).toBeNull()
+    expect(box.value).toBe('')
+    expect(document.activeElement).toBe(box)
+
+    await find()
+    await user.keyboard('{Escape}')
+    expect(screen.queryByText('ls -la')).toBeNull()
+    expect(box.value).toBe('')
+
+    await find()
+    await user.clear(box)
+    expect(screen.queryByText('ls -la')).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Clear' })).toBeNull()
+  })
 })
 
 // 2026-11-03, idea 5 (ADR 0041 amendment): what a session printed, found

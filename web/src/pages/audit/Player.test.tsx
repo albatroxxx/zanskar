@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { setSessionEndedHandler } from '../../api/client'
+import { fmtTime } from '../../api/format'
 import type { Recording } from '../../api/types'
 import { Player } from './Player'
 
@@ -232,6 +233,36 @@ describe('Player, the downloads', () => {
     open(`/audit/recordings/${RID}`)
     expect((await screen.findByRole('link', { name: 'Download recording' })).getAttribute('href')).toBe(`/api/v1/recordings/${RID}/download`)
     expect(screen.queryByRole('link', { name: 'Download transcript' })).toBeNull()
+  })
+})
+
+// 2026-11-11, owner: a recording retention had deleted was offered for
+// review, and the page said so only after Play was pressed.
+describe('Player, a recording with no file left', () => {
+  it('offers no Play and no downloads for a deleted recording, and says when it went', async () => {
+    const seen = gateway({ [`/api/v1/recordings/${RID}`]: [() => json(200, recording({ state: 'purged', purged_at: '2026-11-10T00:00:00Z' }))] })
+    open(`/audit/recordings/${RID}`)
+    expect(await screen.findByText('deleted')).toBeDefined()
+    expect(screen.getByText(fmtTime('2026-11-10T00:00:00Z'))).toBeDefined()
+    expect(screen.queryByRole('button', { name: 'Play' })).toBeNull()
+    expect(screen.queryByRole('link', { name: 'Download recording' })).toBeNull()
+    expect(screen.queryByRole('link', { name: 'Download transcript' })).toBeNull()
+    // The details stay: who, where and when are the audit record.
+    expect(screen.getByRole('heading', { name: 'Details' })).toBeDefined()
+    expect(seen.some((u) => u.endsWith('/stream'))).toBe(false)
+  })
+
+  it('offers no Play for a discarded recording', async () => {
+    gateway({ [`/api/v1/recordings/${RID}`]: [() => json(200, recording({ state: 'discarded', discarded_at: '2026-11-10T00:00:00Z' }))] })
+    open(`/audit/recordings/${RID}`)
+    expect(await screen.findByText('discarded')).toBeDefined()
+    expect(screen.queryByRole('button', { name: 'Play' })).toBeNull()
+  })
+
+  it('keeps Play for a lost recording, part of which may be there', async () => {
+    gateway({ [`/api/v1/recordings/${RID}`]: [() => json(200, recording({ state: 'lost' }))] })
+    open(`/audit/recordings/${RID}`)
+    expect(await screen.findByRole('button', { name: 'Play' })).toBeDefined()
   })
 })
 

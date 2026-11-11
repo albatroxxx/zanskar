@@ -17,14 +17,26 @@ import { StateIcon } from '../../components/icons'
 
 export function UsersGroups() {
   const [tab, setTab] = useState<'users' | 'groups'>('users')
+  // The page's one action sits at its top right, as on every other page;
+  // it sat under the tabs (live, 2026-11-11). It adds to the tab shown.
+  const [adding, setAdding] = useState(false)
+  const switchTab = (t: 'users' | 'groups') => {
+    setAdding(false)
+    setTab(t)
+  }
   return (
     <>
-      <PageHead title="Users & groups" />
-      <Tabs label="Users and groups" value={tab} onChange={setTab} tabs={[{ key: 'users', label: 'Users' }, { key: 'groups', label: 'Groups' }]} />
-      {tab === 'users' ? <Users /> : <Groups />}
+      <PageHead title="Users & groups">
+        <button className="btn primary" onClick={() => setAdding(true)}>{tab === 'users' ? 'Add user' : 'Add group'}</button>
+      </PageHead>
+      <Tabs label="Users and groups" value={tab} onChange={switchTab} tabs={[{ key: 'users', label: 'Users' }, { key: 'groups', label: 'Groups' }]} />
+      {tab === 'users' ? <Users adding={adding} setAdding={setAdding} /> : <Groups adding={adding} setAdding={setAdding} />}
     </>
   )
 }
+
+/** Adding is the page's: its Add button opens the tab's form. */
+interface AddingProps { adding: boolean; setAdding: (open: boolean) => void }
 
 type UserAction = 'roles' | 'password' | 'sessions' | 'mfa' | 'status' | 'delete'
 
@@ -83,7 +95,7 @@ function Source({ idp, providerSignIn, providers, group }: { idp?: string; provi
  *  under (2026-11-04: a tile opened the whole list); the label is the tile's. */
 const postureLabels: Record<string, string> = { admins: 'Administrators', not_enrolled: 'No authenticator yet', dormant: 'Dormant (90 days)' }
 
-function Users() {
+function Users({ adding, setAdding }: AddingProps) {
   const me = useAuth().user
   const [sp, setSp] = useSearchParams()
   const posture = postureLabels[sp.get('posture') ?? ''] ? sp.get('posture')! : ''
@@ -94,7 +106,6 @@ function Users() {
   const dq = useDebounced(q.trim())
   const { items, err, setErr, reload } = useList<User>('/users', { posture: posture || undefined, q: dq || undefined })
   const providers = useProviders()
-  const [adding, setAdding] = useState(false)
   const [showOnce, setShowOnce] = useState<{ username: string; password: string } | null>(null)
   const [action, setAction] = useState<{ u: User; a: UserAction } | null>(null)
   const [notice, setNotice] = useState('')
@@ -103,9 +114,6 @@ function Users() {
     <>
       {err && <Alert tone="danger" onDismiss={() => setErr('')}>{err}</Alert>}
       {notice && <Alert tone="ok" onDismiss={() => setNotice('')}>{notice}</Alert>}
-      <div className="actions" style={{ marginBottom: 12 }}>
-        <button className="btn primary" onClick={() => setAdding(true)}>Add user</button>
-      </div>
       <FilterChips chips={posture ? [{ label: postureLabels[posture], onClear: () => setSp({}, { replace: true }) }] : []} />
       <div className="card table-wrap">
         <div className="list-search">
@@ -392,18 +400,14 @@ function PasswordForm({ user, onClose, onSaved }: { user: User; onClose: () => v
   )
 }
 
-function Groups() {
+function Groups({ adding, setAdding }: AddingProps) {
   const { items, err, setErr, reload } = useList<Group>('/groups')
   const providers = useProviders()
-  const [adding, setAdding] = useState(false)
   const [members, setMembers] = useState<Group | null>(null)
   const [deleting, setDeleting] = useState<Group | null>(null)
   return (
     <>
       {err && <Alert tone="danger" onDismiss={() => setErr('')}>{err}</Alert>}
-      <div className="actions" style={{ marginBottom: 12 }}>
-        <button className="btn primary" onClick={() => setAdding(true)}>Add group</button>
-      </div>
       <div className="card table-wrap">
         {items === null ? (
           err ? null : <Loading />

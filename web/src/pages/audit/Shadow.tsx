@@ -51,6 +51,11 @@ export function Shadow() {
       fit.fit()
       const ws = new WebSocket(`${scheme}://${location.host}/ws/shadow/${encodeURIComponent(id)}`)
       ws.binaryType = 'arraybuffer'
+      // A socket that fails before the gateway says ready was refused (the
+      // session ended a moment ago, or cannot be watched): said as such, not
+      // as a session that ended or a lost connection (2026-11-11). A browser
+      // does not show the refusal's own status, so the words stay general.
+      let ready = false
       ws.onmessage = (ev) => {
         if (ev.data instanceof ArrayBuffer) {
           term.write(new Uint8Array(ev.data))
@@ -58,14 +63,17 @@ export function Shadow() {
         }
         try {
           const c = JSON.parse(ev.data as string) as { t: string; reason?: string }
-          if (c.t === 'ready') setStatus('live')
+          if (c.t === 'ready') {
+            ready = true
+            setStatus('live')
+          }
           if (c.t === 'end') setEnded(c.reason ?? 'session_ended')
         } catch {
           /* ignore */
         }
       }
-      ws.onclose = () => setEnded((cur) => cur ?? 'session_ended')
-      ws.onerror = () => setEnded((cur) => cur ?? 'error')
+      ws.onclose = () => setEnded((cur) => cur ?? (ready ? 'session_ended' : 'refused'))
+      ws.onerror = () => setEnded((cur) => cur ?? (ready ? 'error' : 'refused'))
       const onWin = () => fit.fit()
       window.addEventListener('resize', onWin)
       closeRef.current = () => ws.close(1000, 'watcher_left')
@@ -119,8 +127,8 @@ export function Shadow() {
       </div>
       <div className="term-host" ref={host} style={isDesktop ? { overflow: 'hidden' } : undefined} />
       {ended && (
-        <Modal title="Session ended" onClose={leave}>
-          <p>{ended === 'session_ended' ? 'The session you were watching has ended.' : 'The connection to the gateway was lost.'}</p>
+        <Modal title={ended === 'refused' ? 'Could not watch' : 'Session ended'} onClose={leave}>
+          <p>{ended === 'refused' ? 'The gateway did not open this session for watching. It may have just ended.' : ended === 'session_ended' ? 'The session you were watching has ended.' : 'The connection to the gateway was lost.'}</p>
           <div className="actions">
             <button className="btn primary" onClick={leave}>Back to sessions</button>
           </div>

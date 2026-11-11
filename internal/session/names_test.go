@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/albatroxxx/zanskar/internal/audit"
+	"github.com/albatroxxx/zanskar/internal/recording"
 	"github.com/albatroxxx/zanskar/internal/store"
 	"github.com/albatroxxx/zanskar/internal/store/storetest"
 )
@@ -69,6 +70,51 @@ func TestResolveNames(t *testing.T) {
 	if err != nil || id != "" {
 		t.Fatalf("unknown username must be empty, got %q %v", id, err)
 	}
+}
+
+// TestAutoscalingInstanceNames: an autoscaling session reads "group ·
+// instance" wherever it is named, as on the Sessions pages. Live, 2026-11-11:
+// Events and Activity said "the SSH session on i-027fc5…" and a command
+// search hit had no machine at all. The name is a || concatenation: both
+// engines.
+func TestAutoscalingInstanceNames(t *testing.T) {
+	storetest.ForEachBackend(t, func(t *testing.T, db *store.DB) {
+		ctx := context.Background()
+		now := store.TimeArg(time.Now())
+		for _, q := range []string{
+			`INSERT INTO users (id, username, display_name, created_at, updated_at) VALUES ('u1', 'alice', 'Alice', ?, ?)`,
+			`INSERT INTO autoscaling_groups (id, name, provider, region, external_name, role_arn, external_id, os_family, created_at, updated_at)
+				VALUES ('g1', 'web-asg', 'aws', 'us-east-1', 'web', 'arn:aws:iam::1:role/z', 'ext', 'linux', ?, ?)`,
+			`INSERT INTO asg_instances (id, asg_id, instance_id, lifecycle_state, first_seen_at, last_seen_at) VALUES ('ai1', 'g1', 'i-0abc', 'InService', ?, ?)`,
+		} {
+			if _, err := db.ExecContext(ctx, db.Rebind(q), now, now); err != nil {
+				t.Fatal(err)
+			}
+		}
+		r := NewRepo(db)
+		s := &Session{UserID: "u1", ASGID: "g1", ASGInstanceID: "ai1", Protocol: "ssh", ClientIP: "10.0.0.1"}
+		if err := r.Start(ctx, s); err != nil {
+			t.Fatal(err)
+		}
+		rec := &Recording{SessionID: s.ID, Format: "asciicast", StorageURI: "file:///dev/null"}
+		if err := r.CreateRecording(ctx, rec); err != nil {
+			t.Fatal(err)
+		}
+		for kind, want := range map[string]string{"asg_instance": "web-asg · i-0abc", "access_session": "alice → web-asg · i-0abc (SSH)", "recording": "alice → web-asg · i-0abc (SSH)"} {
+			id := map[string]string{"asg_instance": "ai1", "access_session": s.ID, "recording": rec.ID}[kind]
+			got, err := r.ResolveNames(ctx, kind, []string{id})
+			if err != nil || got[id] != want {
+				t.Fatalf("%s: %q %v, want %q", kind, got[id], err, want)
+			}
+		}
+		if err := r.IndexCommands(ctx, rec.ID, []recording.Marker{{At: time.Second, Label: "systemctl stop nginx"}}); err != nil {
+			t.Fatal(err)
+		}
+		hits, err := r.SearchCommands(ctx, "systemctl", 10)
+		if err != nil || len(hits) != 1 || hits[0].TargetName != "web-asg · i-0abc" {
+			t.Fatalf("command hit: %+v %v", hits, err)
+		}
+	})
 }
 
 // TestDetailIDs covers the read-time labelling of ids inside audit details:

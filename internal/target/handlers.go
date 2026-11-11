@@ -383,7 +383,15 @@ func (h *AdminHandler) probe(w http.ResponseWriter, r *http.Request) {
 		h.fail(w, r, err)
 		return
 	}
-	res, err := h.Prober.Probe(r.Context(), t.Address, t.EffectivePorts(), ProbeTimeout)
+	// A database is tested at its own port and nothing else: the host ports
+	// and their host keys are not its, and the database protocols start TLS
+	// inside themselves, so reaching the port is what this says (2026-11-11:
+	// a database had no way to be checked before people tried it).
+	ports := t.EffectivePorts()
+	if t.IsDatabase() {
+		ports = map[Protocol]int{Database: t.Port(Database)}
+	}
+	res, err := h.Prober.Probe(r.Context(), t.Address, ports, ProbeTimeout)
 	if err != nil {
 		h.record(r, audit.TargetProbe, t.ID, audit.Failure, map[string]any{"address": t.Address, "error": err.Error()})
 		if errors.Is(err, ErrAddressForbidden) {
@@ -391,6 +399,12 @@ func (h *AdminHandler) probe(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		httpx.WriteError(w, r, http.StatusBadGateway, "probe_failed", err.Error())
+		return
+	}
+	if t.IsDatabase() {
+		// Nothing is recorded on the target: no capabilities, no host key.
+		h.record(r, audit.TargetProbe, t.ID, audit.Success, map[string]any{"address": t.Address, "database_reachable": res.Reachable[Database]})
+		httpx.WriteJSON(w, http.StatusOK, ProbeResponse{Target: t, Probe: res, HostKeyStatus: t.HostKeyStatus, HostKeyFingerprint: t.HostKeyFingerprint})
 		return
 	}
 	t, change, err := h.Repo.RecordProbe(r.Context(), t.ID, res)

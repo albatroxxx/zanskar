@@ -26,6 +26,12 @@ const (
 // out to a shadowing admin.
 func Terminal(p string) bool { return p == SSH || p == WinRM }
 
+// Tapped reports whether p's session is text in a pty that a tap fans out
+// to a shadowing admin: a shell, or a database client, which the gateway
+// bridges the same way (2026-11-11: watching a database session was
+// refused while its recording played fine).
+func Tapped(p string) bool { return Terminal(p) || p == Database }
+
 // Desktop reports whether p is a remote desktop drawn through guacd.
 func Desktop(p string) bool { return p == RDP || p == VNC }
 

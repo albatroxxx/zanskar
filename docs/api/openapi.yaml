@@ -530,8 +530,9 @@ paths:
                           type: boolean
                           description: |
                             True when the gateway's last request for this OpenID provider's discovery
-                            document (every 2 minutes, and at each sign-in that fetches it) failed
-                            within the last 10 minutes; absent otherwise. Its button would fail too.
+                            document (every 2 minutes, every 20 seconds while it is failing, and at each
+                            sign-in that fetches it) failed within the last 10 minutes; absent otherwise.
+                            Its button would fail too, so the sign-in page greys it out.
   /auth/oidc/{id}/start:
     get:
       tags: [auth]
@@ -2826,6 +2827,8 @@ paths:
         `capabilities`, and captures the SSH host key fingerprint and the RDP or WinRM TLS
         certificate fingerprint. A new SSH fingerprint on a target whose status was `trusted`
         sets `host_key_status=changed` and blocks SSH connects until an admin trusts it again.
+        A database target is a connection test instead: only its database port is reached, and
+        nothing is recorded on the target (`ports` in the result holds `database` alone).
       parameters:
         - $ref: "#/components/parameters/Id"
       responses:

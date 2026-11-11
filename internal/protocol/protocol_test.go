@@ -26,6 +26,13 @@ func TestKinds(t *testing.T) {
 	if !Terminal(SSH) || !Terminal(WinRM) || !Desktop(RDP) || !Desktop(VNC) {
 		t.Fatal("ssh and winrm are shells; rdp and vnc are desktops")
 	}
+	// A database client is text in a pty like a shell, so an admin can
+	// watch it (2026-11-11); it is still not a shell.
+	for p, want := range map[string]bool{SSH: true, WinRM: true, Database: true, RDP: false, VNC: false, HTTP: false} {
+		if Tapped(p) != want {
+			t.Errorf("Tapped(%s) = %v, want %v", p, !want, want)
+		}
+	}
 }
 
 // TestPolicyKinds (ADR 0036): each kind serves its own protocols and nothing else,

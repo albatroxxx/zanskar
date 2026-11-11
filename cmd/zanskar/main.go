@@ -462,7 +462,7 @@ func serve(ctx context.Context) error {
 	go userSync.Run(ctx)
 
 	// Single sign-on providers: is each answering, for the sign-in page.
-	go oidcHandler.Watch(ctx, oidc.ProbeEvery)
+	go oidcHandler.Watch(ctx, oidc.ProbeEvery, oidc.RetryEvery)
 
 	// Recording retention: delete recordings past the admin-configured policy
 	// (ADR 0015). Off until an admin sets a policy in the console.

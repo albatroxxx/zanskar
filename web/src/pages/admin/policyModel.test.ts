@@ -157,10 +157,13 @@ describe('summaries', () => {
 
   it('name the audience, and say when they cut it short', () => {
     const p = { subjects: [{ kind: 'group', id: 'g1' }, { kind: 'user', id: 'u1' }, { kind: 'user', id: 'u2' }, { kind: 'user', id: 'u3' }] } as Policy
-    expect(whoSummary(p, () => 'ops', (id) => id)).toEqual({ text: 'ops · 3 users', cut: true })
-    expect(whoSummary({ subjects: p.subjects.slice(0, 2) } as Policy, () => 'ops', () => 'ann')).toEqual({ text: 'ops · ann', cut: false })
+    expect(whoSummary(p, () => 'ops', (id) => id)).toEqual({ text: 'ops · 3 users', cut: true, lists: [['ops'], ['3 users']] })
+    expect(whoSummary({ subjects: p.subjects.slice(0, 2) } as Policy, () => 'ops', () => 'ann')).toEqual({ text: 'ops · ann', cut: false, lists: [['ops'], ['ann']] })
     const many = { subjects: ['a', 'b', 'c', 'd'].map((id) => ({ kind: 'group', id })) } as Policy
-    expect(whoSummary(many, (id) => id, () => '')).toEqual({ text: 'a, b +2', cut: true })
+    expect(whoSummary(many, (id) => id, () => '')).toEqual({ text: 'a, b +2', cut: true, lists: [['a', 'b +2']] })
+    // Review, 2026-11-11: a name holding ", " is one item, kept whole.
+    const comma = { subjects: [{ kind: 'group', id: 'g1' }, { kind: 'group', id: 'g2' }] } as Policy
+    expect(whoSummary(comma, (id) => (id === 'g1' ? 'Ops, EU' : 'dba'), () => '').lists).toEqual([['Ops, EU', 'dba']])
   })
 
   // ADR 0036, amended 2026-10-30: twelve grants made twelve lines. The list

@@ -362,7 +362,8 @@ func TestAuditEventsFiltersAndDecoration(t *testing.T) {
 	if labels["t1"]["target_id"] != "web 1" {
 		t.Errorf("static target label: %v", labels["t1"])
 	}
-	if labels["ai1"]["target_id"] != "i-0abc" || labels["ai1"]["asg_id"] != "web-asg" {
+	// An instance reads "group · instance", as on the Sessions pages (2026-11-11).
+	if labels["ai1"]["target_id"] != "web-asg · i-0abc" || labels["ai1"]["asg_id"] != "web-asg" {
 		t.Errorf("autoscaling instance label: %v", labels["ai1"])
 	}
 	if labels["gone"] != nil {

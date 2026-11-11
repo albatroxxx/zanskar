@@ -23,8 +23,13 @@ var nameSources = map[string]struct{ table, col string }{
 	"access_policy":     {"access_policies", "name"},
 	"autoscaling_group": {"autoscaling_groups", "name"},
 	"identity_provider": {"identity_providers", "name"},
-	"asg_instance":      {"asg_instances", "instance_id"},
 }
+
+// asgInstanceName is how an autoscaling instance reads, as on the Sessions
+// pages: "web-asg · i-0abc", or the bare instance id when its group is gone.
+// Events and Activity named it by the id alone (2026-11-11). Both engines
+// concatenate with ||, and a missing group makes the whole NULL.
+const asgInstanceName = `COALESCE(g.name || ' · ' || ai.instance_id, ai.instance_id)`
 
 // ResolveNames returns display names for audit object ids of one type, so a
 // reviewer sees "aws-linux" and "admin" rather than hex ids. Sessions and
@@ -47,18 +52,36 @@ func (r *Repo) ResolveNames(ctx context.Context, kind string, ids []string) (map
 			LEFT JOIN targets t ON t.id = ar.target_id
 			LEFT JOIN autoscaling_groups g ON g.id = ar.asg_id
 			WHERE ar.id IN (`+placeholders(len(uniq))+`)`, uniq)
+	case "asg_instance":
+		return r.names(ctx, `SELECT ai.id, `+asgInstanceName+` FROM asg_instances ai
+			LEFT JOIN autoscaling_groups g ON g.id = ai.asg_id
+			WHERE ai.id IN (`+placeholders(len(uniq))+`)`, uniq)
 	}
 	src, ok := nameSources[kind]
 	if !ok {
 		return map[string]string{}, nil
 	}
 	q := fmt.Sprintf("SELECT id, %s FROM %s WHERE id IN (%s)", src.col, src.table, placeholders(len(uniq))) // #nosec G201 -- table and column come from the whitelist above
-	rows, err := r.db.QueryContext(ctx, r.db.Rebind(q), toArgs(uniq)...)
+	out, err := r.names(ctx, q, uniq)
 	if err != nil {
 		return nil, fmt.Errorf("session: resolve %s names: %w", kind, err)
 	}
+	if kind != "user" {
+		return out, nil
+	}
+	return r.nameDeletedUsers(ctx, out, uniq)
+}
+
+// names runs q, which selects an id and its name, and returns the names
+// found. The rows are closed before it returns: on SQLite's one connection
+// a lookup after it would wait for them.
+func (r *Repo) names(ctx context.Context, q string, ids []string) (map[string]string, error) {
+	rows, err := r.db.QueryContext(ctx, r.db.Rebind(q), toArgs(ids)...)
+	if err != nil {
+		return nil, err
+	}
 	defer func() { _ = rows.Close() }()
-	out := make(map[string]string, len(uniq))
+	out := make(map[string]string, len(ids))
 	for rows.Next() {
 		var id string
 		var name sql.NullString
@@ -69,14 +92,7 @@ func (r *Repo) ResolveNames(ctx context.Context, kind string, ids []string) (map
 			out[id] = name.String
 		}
 	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	if kind != "user" {
-		return out, nil
-	}
-	_ = rows.Close() // one connection on SQLite: the lookups below wait for it
-	return r.nameDeletedUsers(ctx, out, uniq)
+	return out, rows.Err()
 }
 
 // nameDeletedUsers adds a name, marked "(deleted)", for each id in ids that
@@ -163,10 +179,11 @@ func (r *Repo) deletedUsers(ctx context.Context, ids []string) ([]deletedUser, e
 // sessionLabels builds "user → target (protocol)" for sessions keyed by the
 // given column; the optional join lets recordings resolve through their session.
 func (r *Repo) sessionLabels(ctx context.Context, keyCol, join string, ids []string) (map[string]string, error) {
-	return r.labels(ctx, `SELECT `+keyCol+`, COALESCE(u.username, NULLIF(s.user_username, '')), t.name, ai.instance_id, s.protocol FROM access_sessions s `+join+`
+	return r.labels(ctx, `SELECT `+keyCol+`, COALESCE(u.username, NULLIF(s.user_username, '')), t.name, `+asgInstanceName+`, s.protocol FROM access_sessions s `+join+`
 		LEFT JOIN users u ON u.id = s.user_id
 		LEFT JOIN targets t ON t.id = s.target_id
 		LEFT JOIN asg_instances ai ON ai.id = s.asg_instance_id
+		LEFT JOIN autoscaling_groups g ON g.id = ai.asg_id
 		WHERE `+keyCol+` IN (`+placeholders(len(ids))+`)`, ids)
 }
 

@@ -106,7 +106,13 @@ func (h *Handler) database(w http.ResponseWriter, r *http.Request) {
 	ctx, done := run.live()
 	defer done()
 
-	reason, berr := dbgw.Bridge(ctx, h.Log, h.DockerPath, spec, ws, rec, cols, rows, dbgw.Limits{Idle: g.IdleTimeout, Max: g.MaxSession, SessionID: run.s.ID})
+	lim := dbgw.Limits{Idle: g.IdleTimeout, Max: g.MaxSession, SessionID: run.s.ID}
+	// The registry made the tap an admin watching the session subscribes to;
+	// assigned only when present, as for a terminal (connect.go).
+	if tap := h.Registry.Tap(run.s.ID); tap != nil {
+		lim.Tap = tap
+	}
+	reason, berr := dbgw.Bridge(ctx, h.Log, h.DockerPath, spec, ws, rec, cols, rows, lim)
 	run.finish(rec, recRow, reason, berr)
 }
 

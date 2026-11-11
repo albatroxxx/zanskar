@@ -47,6 +47,7 @@ stateDiagram-v2
     recording --> lost: the session ended with it still open (recording.lost)
     lost --> finished: the sweep measures what storage holds
     finished --> purged: recording.purge
+    lost --> purged: recording.purge, aged from the session's end
     finished --> discarded: a desktop session drew no frame
     purged --> [*]
     discarded --> [*]
@@ -58,6 +59,7 @@ stateDiagram-v2
 | recording | lost | the session ended with it still open (recording.lost) |
 | lost | finished | the sweep measures what storage holds |
 | finished | purged | recording.purge |
+| lost | purged | recording.purge, aged from the session's end |
 | finished | discarded | a desktop session drew no frame |
 
 - A discarded recording is left out of the sessions list by the join; its row stays so the events that name it resolve.

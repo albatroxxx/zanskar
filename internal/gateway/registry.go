@@ -112,7 +112,7 @@ func (r *Registry) Add(parent context.Context, l Live) context.Context {
 	if l.StartedAt.IsZero() {
 		l.StartedAt = time.Now()
 	}
-	if l.Tap == nil && protocol.Terminal(l.Protocol) {
+	if l.Tap == nil && protocol.Tapped(l.Protocol) {
 		l.Tap = NewTap()
 	}
 	r.mu.Lock()

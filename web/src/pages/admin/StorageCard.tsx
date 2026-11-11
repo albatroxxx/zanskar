@@ -82,8 +82,11 @@ export function StorageCard() {
             </>
           )}
         </dd>
-        <dt>Recordings</dt>
-        <dd>{Object.entries(status.counts).map(([k, v]) => `${v} in ${k}`).join(', ') || 'none yet'}</dd>
+        {/* Every recording not deleted, wherever it lives: one still being
+            written and a lost one count too, which the dashboard's "kept"
+            does not (live, 2026-11-11: 29 here against 28 there). */}
+        <dt>Recordings held</dt>
+        <dd title="Every recording not deleted, by where it lives: those still being written and lost ones count too. The dashboard counts the finished ones.">{Object.entries(status.counts).map(([k, v]) => `${v} in ${k}`).join(', ') || 'none yet'}</dd>
       </dl>
       {elsewhere > 0 && <Alert tone="warn">{elsewhere} recording{elsewhere === 1 ? '' : 's'} sit in a bucket that is no longer active and cannot be played until that bucket is configured again.</Alert>}
       <h3 style={{ marginTop: 16 }}>S3-compatible bucket</h3>

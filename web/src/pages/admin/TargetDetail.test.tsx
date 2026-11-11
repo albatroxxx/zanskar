@@ -154,3 +154,59 @@ describe('TargetDetail, blocked dependencies', () => {
     expect(get).not.toHaveBeenCalledWith('/targets/w1/dependencies')
   })
 })
+
+// Live, 2026-11-11 (UI pass, findings 5 and 6): an SSH-only Linux host offered
+// RDP, VNC and WinRM credential slots, and its OS read "linux".
+describe('TargetDetail, a host', () => {
+  const show = (t: Target) => render(<TargetDetail target={t} credentials={[]} onClose={() => {}} onChanged={() => {}} onDeleted={() => {}} onError={() => {}} />)
+  const slots = () => ['SSH', 'RDP', 'VNC', 'WinRM'].filter((name) => screen.queryByLabelText(name) !== null)
+
+  it('offers a credential slot for each protocol it was found to serve', () => {
+    show(web)
+    expect(slots()).toEqual(['SSH'])
+    expect(screen.getByText('Linux')).toBeDefined()
+    expect(screen.queryByText('linux')).toBeNull()
+  })
+
+  it('keeps a slot that holds a credential, so it can be taken off', () => {
+    show({ ...web, credentials: { rdp: 'c1' } })
+    expect(slots()).toEqual(['SSH', 'RDP'])
+  })
+
+  // Review, 2026-11-11: by the probe alone, a port closed at the moment of
+  // probing hid its slot. The operating system's usual protocols stay.
+  it('offers its operating system\'s usual protocols whatever the probe reached', () => {
+    show({ ...web, os_family: 'windows', ports: {}, capabilities: ['winrm'] })
+    expect(slots()).toEqual(['RDP', 'WinRM'])
+    cleanup()
+    show({ ...web, os_family: 'other', ports: {}, capabilities: [] })
+    expect(slots()).toEqual(['SSH', 'RDP', 'VNC', 'WinRM'])
+  })
+
+  it('offers a protocol an administrator gave a port', () => {
+    show({ ...web, ports: { ssh: 22, vnc: 5901 } })
+    expect(slots()).toEqual(['SSH', 'VNC'])
+  })
+})
+
+// Live, 2026-11-11 (UI pass, finding 15): a database had no way to be checked
+// before people tried it.
+describe('TargetDetail, a database', () => {
+  // No port of its own: the engine's default is what the gateway reaches,
+  // and what the result names (review, 2026-11-11: it named no port).
+  const orders: Target = { ...web, id: 'd1', name: 'orders', address: 'orders.internal', os_family: 'other', engine: 'postgres', ports: {}, capabilities: [], credentials: {} }
+
+  it('tests the connection to its port, and says what it reached', async () => {
+    const post = vi.spyOn(api, 'post').mockResolvedValue({
+      target: orders, host_key_status: 'unknown', host_key_fingerprint: null,
+      probe: { address: 'orders.internal', resolved_ip: '10.0.3.4', ports: { database: { reachable: true, latency_ms: 3 } }, reachable: { database: true }, errors: {}, probed_at: '2026-11-11T06:00:00Z' },
+    } as never)
+    render(<TargetDetail target={orders} credentials={[]} onClose={() => {}} onChanged={() => {}} onDeleted={() => {}} onError={() => {}} />)
+    expect(screen.queryByRole('button', { name: 'Probe' })).toBeNull()
+    await userEvent.setup().click(screen.getByRole('button', { name: 'Test connection' }))
+    expect(post).toHaveBeenCalledWith('/targets/d1/probe')
+    expect(await screen.findByRole('heading', { name: 'Connection test' })).toBeDefined()
+    expect(screen.getByText('PostgreSQL port 5432')).toBeDefined()
+    expect(screen.getByText('reachable · 3 ms')).toBeDefined()
+  })
+})

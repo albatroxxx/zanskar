@@ -53,6 +53,21 @@ describe('Recordings, a row', () => {
     expect(cells.slice(1)).toEqual(['Deleted', 'No age limit', '—'])
   })
 
+  // 2026-11-11, owner: a deleted recording was offered for review, and
+  // only its Play said it was gone.
+  it('offers no Review for a recording with no file left', async () => {
+    const ended = '2026-10-06T10:05:00Z'
+    page([
+      session(1, { recording_id: 'r1', ended_at: ended }),
+      session(2, { recording_id: 'r2', ended_at: ended, recording_purged: true, recording_state: 'purged' }),
+      session(3, { recording_id: 'r3', ended_at: ended, recording_state: 'discarded' }),
+      session(4, { recording_id: 'r4', ended_at: ended, recording_state: 'lost' }),
+    ])
+    await screen.findAllByRole('link', { name: 'Review, opens in a new tab' })
+    const reviews = screen.getAllByRole('row').slice(1).map((r) => r.querySelector('a')?.getAttribute('href') ?? null)
+    expect(reviews).toEqual(['/audit/recordings/r1', null, null, '/audit/recordings/r4'])
+  })
+
   it('writes the protocol the way every other page does', async () => {
     page([session(1, { recording_id: 'r1', protocol: 'winrm' }), session(2, { recording_id: 'r2', protocol: 'ssh' })])
     expect(await screen.findByRole('cell', { name: 'WinRM' })).toBeDefined()
@@ -82,6 +97,42 @@ describe('Recordings', () => {
 
     await userEvent.setup().clear(screen.getByLabelText('Filter recordings'))
     expect(screen.getByText(/Newest 3 sessions; the filter searches these\./)).toBeDefined()
+  })
+
+  // 2026-11-11, the owner asked what the filter filtered by: it matched codes
+  // (user_exit where the row reads "user exit") and, for an autoscaling
+  // session, an internal id rather than the group and instance on its row.
+  it('matches what the rows show, in the words they show it', async () => {
+    const ended = '2026-10-06T10:05:00Z'
+    page([
+      session(1, { recording_id: 'r1', ended_at: ended, end_reason: 'user_exit', username: 'alice' }),
+      session(2, { recording_id: 'r2', ended_at: ended, end_reason: 'admin_terminated', username: 'bob', protocol: 'winrm' }),
+      session(3, {
+        recording_id: 'r3', ended_at: ended, end_reason: 'error', end_detail: 'authentication to the target failed', username: 'carol',
+        target_name: undefined, asg_name: 'zanskar-linux-asg', instance_id: 'i-027fc5cef80dc5c37', asg_instance_id: 'f00dfeed',
+      }),
+      session(4, { recording_id: 'r4', ended_at: ended, end_reason: 'user_exit', username: 'dave', recording_state: 'purged', recording_purged: true }),
+    ])
+    await screen.findAllByRole('link', { name: 'Review, opens in a new tab' })
+    const user = userEvent.setup()
+    const box = screen.getByLabelText('Filter recordings')
+    expect(box.getAttribute('placeholder')).toBe('user, machine, protocol, end…')
+    const shown = async (q: string) => {
+      await user.clear(box)
+      await user.type(box, q)
+      return screen.getAllByRole('row').slice(1).map((r) => r.querySelector('td strong')?.textContent ?? r.textContent)
+    }
+    expect(await shown('user exit')).toEqual(['alice', 'dave'])
+    expect(await shown('Admin Terminated')).toEqual(['bob'])
+    expect(await shown('WinRM')).toEqual(['bob'])
+    expect(await shown('zanskar-linux-asg')).toEqual(['carol'])
+    expect(await shown('i-027fc5')).toEqual(['carol'])
+    expect(await shown('authentication')).toEqual(['carol'])
+    expect(await shown('deleted')).toEqual(['dave'])
+    // The internal id a row never shows matches nothing.
+    await user.clear(box)
+    await user.type(box, 'f00dfeed')
+    expect(screen.getByText('No recordings match.')).toBeDefined()
   })
 
   it('keeps the plain answers once every session is loaded', async () => {

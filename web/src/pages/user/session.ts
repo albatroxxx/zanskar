@@ -70,12 +70,18 @@ const reasonText: Record<string, string> = {
   user_exit: 'You closed the session.',
   idle_timeout: 'Disconnected after a period without input, as the access policy requires.',
   max_duration: 'The session reached the maximum duration the access policy allows.',
-  admin_terminated: 'An administrator ended the session.',
+  // The owner, 2026-11-11: the person is told it was an administrator and
+  // whom to ask, never the reason the administrator gave.
+  admin_terminated: 'Terminated by an administrator. Contact your administrator.',
   target_lost: 'The connection to the target was lost.',
   trust_lost: "The target's host key or certificate changed; an administrator must trust it again.",
   target_deleted: 'An administrator deleted the target.',
   error: 'The session ended because of an error.',
 }
+
+/** adminWords is what the gateway says when an administrator terminates a
+ *  session (gateway.CancelReason). */
+const adminWords = 'session ended by an administrator'
 
 /** sentence starts the gateway's words with a capital and ends them with a stop. */
 function sentence(words: string): string {
@@ -90,6 +96,9 @@ function sentence(words: string): string {
  * with its words and no code, those words are the sentence.
  */
 export function endText(end: SessionEnd): { lead: string; detail?: string } {
+  // The gateway's own words for a terminate say no more than the sentence,
+  // and a desktop or application session gets the words without the code.
+  if (end.msg?.trim().toLowerCase() === adminWords) return { lead: reasonText.admin_terminated }
   const known = reasonText[end.reason]
   if (known) return { lead: known, detail: end.msg }
   if (end.msg) return { lead: sentence(end.msg) }

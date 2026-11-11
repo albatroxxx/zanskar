@@ -280,6 +280,16 @@ export function SignInIcon() {
   )
 }
 
+/** Checking again: one arrow round, drawn at the sign-in button's size. */
+export function RetryIcon() {
+  return (
+    <svg {...svgProps(18)}>
+      <path d="M20 12a8 8 0 1 1-2.34-5.66" />
+      <polyline points="20 4 20 9 15 9" />
+    </svg>
+  )
+}
+
 export function BellIcon() {
   return (
     <svg width="23" height="23" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">

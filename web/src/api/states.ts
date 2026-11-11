@@ -98,6 +98,14 @@ export function stateLabel(lifecycle: Lifecycle, state: string | undefined): Sta
   return { label: (state ?? '').replace(/_/g, ' ') }
 }
 
+/** recordingGone says a recording has no file left to play or download:
+ *  retention deleted it, or it was discarded with its session. A lost one
+ *  keeps its Play, since part of the file may be there (2026-11-11, owner:
+ *  a deleted recording was offered for review and play). */
+export function recordingGone(state: string | undefined): boolean {
+  return state === 'purged' || state === 'discarded'
+}
+
 /** capitalised is a label with its first letter up, for the places that speak
  *  in sentence case (a table's status cell), from the one lower-case table. */
 export function capitalised(s: string): string {

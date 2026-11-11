@@ -250,7 +250,8 @@ Closed 2026-09-21: WinRM TLS is pinned to the listener certificate captured by t
 probe (per-protocol fingerprint, plain HTTP refused; ADR 0012 addendum); desktop file
 transfer through RDP drive redirection with a browser Files panel, gated by policy and
 enforced in the bridge; live session shadowing for admins and auditors (terminal fan-out
-with scrollback replay, guacd read-only join for desktops, every watch audited).
+with scrollback replay for shells and database clients, guacd read-only join for desktops,
+every watch audited).
 
 Phase 2 is complete.
 

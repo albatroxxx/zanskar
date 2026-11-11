@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -66,6 +67,10 @@ func TestDatabaseSessionEndToEnd(t *testing.T) {
 
 	var screen, sessionID, reason string
 	asked := false
+	// What an admin watching the session receives (2026-11-11: nothing, the
+	// handler gave the bridge no tap).
+	var live <-chan []byte
+	var tapped []byte
 	for reason == "" {
 		typ, data, err := ws.Read(ctx)
 		if err != nil {
@@ -80,6 +85,13 @@ func TestDatabaseSessionEndToEnd(t *testing.T) {
 			_ = json.Unmarshal(data, &c)
 			if c.T == "ready" {
 				sessionID = c.SessionID
+				tap := f.h.Registry.Tap(sessionID)
+				if tap == nil {
+					t.Fatalf("live database session %s has no tap", sessionID)
+				}
+				var unsubscribe func()
+				live, tapped, unsubscribe = tap.Subscribe()
+				t.Cleanup(unsubscribe)
 			}
 			if c.T == "end" {
 				reason = c.Reason
@@ -99,6 +111,9 @@ func TestDatabaseSessionEndToEnd(t *testing.T) {
 	if reason != "user_exit" || !strings.Contains(screen, " 42") {
 		t.Fatalf("end %q, screen %q", reason, screen)
 	}
+	if tapped = append(tapped, drainTap(t, ctx, live)...); !strings.Contains(string(tapped), " 42") {
+		t.Fatalf("a watcher saw %q, the browser %q", tapped, screen)
+	}
 	start := lastEvent(t, f, "session.start")
 	var d map[string]any
 	_ = json.Unmarshal(start.Details, &d)
@@ -110,6 +125,24 @@ func TestDatabaseSessionEndToEnd(t *testing.T) {
 			rec, err := f.h.Sessions.GetRecording(f.ctx, d["recording_id"].(string))
 			if err != nil || rec.FinishedAt == nil || rec.SizeBytes == 0 {
 				t.Fatalf("recording %+v %v", rec, err)
+			}
+			// The statement typed is a command line on the recording, which
+			// the command list and the command search read (2026-11-11).
+			rc, err := f.h.Storage.Open(f.ctx, rec.StorageURI)
+			if err != nil {
+				t.Fatal(err)
+			}
+			markers, _, _, err := recording.Index(rc, 0)
+			_ = rc.Close()
+			if err != nil {
+				t.Fatal(err)
+			}
+			var labels []string
+			for _, m := range markers {
+				labels = append(labels, m.Label)
+			}
+			if !slices.Contains(labels, "SELECT 41 + 1 AS answer;") {
+				t.Fatalf("command lines %q, want the SELECT typed", labels)
 			}
 			return
 		}

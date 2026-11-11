@@ -106,6 +106,7 @@ var RecordingLifecycle = states.New("recording",
 	states.Move{From: "recording", To: "lost", By: "the session ended with it still open (" + audit.RecordingLost + ")"},
 	states.Move{From: "lost", To: "finished", By: "the sweep measures what storage holds"},
 	states.Move{From: "finished", To: "purged", By: audit.RecordingPurge},
+	states.Move{From: "lost", To: "purged", By: audit.RecordingPurge + ", aged from the session's end"},
 	states.Move{From: "finished", To: "discarded", By: "a desktop session drew no frame"},
 ).Describe(states.Doc{
 	Field:   "state",

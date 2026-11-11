@@ -71,7 +71,25 @@ export function Policies() {
                         <strong>{p.name}</strong>
                         {p.description && <div className="muted">{p.description}</div>}
                       </th>
-                      <td className="who">{p.subjects.length === 0 ? <Badge tone="warn">no one</Badge> : who.text}</td>
+                      {/* Each name stays whole; a line breaks between names
+                          (live, 2026-11-11: "aashish-" over "admin"). */}
+                      <td className="who">
+                        {p.subjects.length === 0 ? (
+                          <Badge tone="warn">no one</Badge>
+                        ) : (
+                          who.lists.map((list, li) => (
+                            <Fragment key={li}>
+                              {li > 0 && ' · '}
+                              {list.map((name, ni) => (
+                                <Fragment key={ni}>
+                                  {ni > 0 && ', '}
+                                  <span>{name}</span>
+                                </Fragment>
+                              ))}
+                            </Fragment>
+                          ))
+                        )}
+                      </td>
                       <td>
                         {r.count === 0 ? (
                           <Badge tone="warn">no grants</Badge>

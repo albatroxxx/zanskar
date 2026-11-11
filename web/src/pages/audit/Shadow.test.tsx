@@ -7,7 +7,7 @@ import { Shadow } from './Shadow'
 interface FakeTerm { options: Record<string, unknown>; written: Uint8Array[]; disposed: boolean }
 const g = vi.hoisted(() => ({ terms: [] as FakeTerm[], sockets: [] as FakeSocket[], tunnels: [] as string[], clients: [] as FakeClient[], role: 'admin' }))
 interface FakeClient { connected: boolean; disconnected: boolean; onstatechange: ((s: number) => void) | null }
-interface FakeSocket { url: string; closed: { code?: number; reason?: string } | null; onmessage: ((ev: { data: unknown }) => void) | null; onclose: (() => void) | null; onerror: (() => void) | null }
+interface FakeSocket { url: string; closed: { code?: number; reason?: string } | null; onmessage: ((ev: { data: unknown }) => void) | null; onclose: (() => void) | null; onerror: (() => void) | null; close: (code?: number, reason?: string) => void }
 
 vi.mock('@xterm/xterm', () => ({
   Terminal: class {
@@ -108,8 +108,25 @@ describe('Shadow', () => {
     unmount()
     open('/audit/shadow/s2?protocol=winrm&target=win-1')
     await screen.findByText('Watching win-1')
+    act(() => g.sockets[1].onmessage?.({ data: JSON.stringify({ t: 'ready' }) }))
     act(() => g.sockets[1].onerror?.())
     expect((await screen.findByRole('dialog', { name: 'Session ended' })).textContent).toContain('The connection to the gateway was lost.')
+  })
+
+  // 2026-11-11, live: the gateway refused to watch a database session and
+  // the page said the session had ended, while it ran on in another tab.
+  it('says it could not watch when the socket fails before the gateway is ready', async () => {
+    const { unmount } = open('/audit/shadow/db1?protocol=database&target=mysql-1')
+    await screen.findByText('Watching mysql-1')
+    act(() => g.sockets[0].onerror?.())
+    const dialog = await screen.findByRole('dialog', { name: 'Could not watch' })
+    expect(dialog.textContent).toContain('did not open this session for watching')
+    expect(screen.queryByRole('dialog', { name: 'Session ended' })).toBeNull()
+    unmount()
+    open('/audit/shadow/db2?protocol=database&target=mysql-1')
+    await screen.findByText('Watching mysql-1')
+    act(() => g.sockets[1].close())
+    expect(await screen.findByRole('dialog', { name: 'Could not watch' })).toBeDefined()
   })
 
   // 2026-11-01: a watch opens in a tab of its own, where going back went

@@ -193,7 +193,7 @@ describe('Desktop, when the session ends', () => {
 
   it.each([
     ['the user disconnects', (c: FakeClient) => c.disconnect(), 'You closed the session.', null],
-    ['the gateway ends it (523)', (c: FakeClient) => c.onerror?.({ code: 0x020b, message: 'session ended by an administrator' }), 'Session ended by an administrator.', null],
+    ['the gateway ends it (523)', (c: FakeClient) => c.onerror?.({ code: 0x020b, message: 'session ended by an administrator' }), 'Terminated by an administrator. Contact your administrator.', null],
     ['the target is lost (519)', (c: FakeClient) => c.onerror?.({ code: 0x0207, message: 'connection to the target was lost' }), 'The connection to the target was lost.', 'connection to the target was lost'],
     ['guacd refuses the login', (c: FakeClient) => c.onerror?.({ code: 0x0301, message: 'Authentication failure' }), 'The session ended because of an error.', 'Authentication failure'],
   ])('says why in a sentence when %s', async (_, end, lead, detail) => {

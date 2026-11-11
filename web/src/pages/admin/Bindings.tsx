@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { errorMessage } from '../../api/client'
+import { credentialTypeName } from '../../api/format'
 import type { Credential, CredentialType, Protocol } from '../../api/types'
 import { Field } from '../../components/ui'
 
@@ -62,12 +63,12 @@ export function CredentialSelect({ id, protocol, value, credentials, disabled, o
       <option value={USER_SUPPLIED}>User supplied: ask the user for their own login</option>
       {vaulted.map((c) => (
         <option key={c.id} value={c.id}>
-          {c.name} ({c.type.replace(/_/g, ' ')}{c.username ? `, ${c.username}` : ''})
+          {c.name} ({credentialTypeName(c.type)}{c.username ? `, ${c.username}` : ''})
         </option>
       ))}
       {extra && (
         <option value={extra.id}>
-          {extra.name} ({extra.type.replace(/_/g, ' ')}; not usual for {protocol})
+          {extra.name} ({credentialTypeName(extra.type)}; not usual for {protocol})
         </option>
       )}
       {value && !bound && value !== USER_SUPPLIED && <option value={value}>bound credential (loading…)</option>}

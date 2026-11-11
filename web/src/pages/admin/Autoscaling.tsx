@@ -9,7 +9,7 @@ import { protocols, useList, type PortProtocol } from './lib'
 import { TagEditor } from '../../components/TagEditor'
 import { rowsToTags, tagRows, type TagRow } from '../../components/tags'
 import { CredentialBindings, CredentialSelect, shownValue, type BindingChange } from './Bindings'
-import { StateIcon } from '../../components/icons'
+import { OSIcon, StateIcon } from '../../components/icons'
 
 interface SyncSummary { Seen: number; Healthy: number; Joined: number; Left: number; Retired: number; HostKeyMismatches: number }
 interface SyncResponse { summary: SyncSummary; group: AutoscalingGroup; error?: string }
@@ -55,7 +55,7 @@ export function Autoscaling() {
                   <td><strong>{g.name}</strong></td>
                   <td className="mono">{g.region}</td>
                   <td className="mono">{g.external_name}</td>
-                  <td>{g.os_family}</td>
+                  <td><OSIcon os={g.os_family} /></td>
                   <td>
                     <Badge tone={(g.healthy_count ?? 0) > 0 ? 'ok' : (g.instance_count ?? 0) > 0 ? 'warn' : undefined}>
                       {g.healthy_count ?? 0} / {g.instance_count ?? 0}
@@ -314,7 +314,7 @@ function GroupForm({ initial, credentials, onClose, onSaved }: { initial?: Autos
                 <button type="button" className="btn" disabled={!canPreview || docsBusy} onClick={() => void preview()} title={canPreview ? '' : 'fill in the region and the group name first'}>{docsBusy ? 'Preparing…' : '1. Show IAM setup'}</button>
               </div>
             ) : (
-              <IAMDocsView docs={docs} onRefresh={() => void preview()} />
+              <IAMDocsView docs={docs} onRefresh={() => void redetect().then(() => preview())} />
             )}
             <div className="form-grid" style={{ marginTop: 12 }}>
               <Field label="2. Role ARN" hint={docs?.suggested_role_arn && f.role_arn.trim() === docs.suggested_role_arn ? 'In this gateway\'s account. A group in another account: its account number.' : undefined}>
@@ -358,10 +358,16 @@ function sourceLabel(source: AwsIdentity['source']) {
   return source === 'environment' ? 'from ZANSKAR_AWS_GATEWAY_PRINCIPAL' : source === 'detected' ? 'detected from the role this gateway runs as' : 'unknown'
 }
 
+/** redetect asks the gateway to look up the role it runs as again (it does so
+ *  once at start), for a gateway given a role since. A failure leaves the last
+ *  answer, which the caller's reload then shows. */
+const redetect = () => api.post<AwsIdentity>('/admin/aws/identity/refresh').catch(() => null)
+
 /**
- * IdentityCard says which AWS principal this gateway is, since every trust
- * policy must name it (ADR 0023). Detection happens once at start; Refresh
- * repeats it, for a gateway that was given a role after it started.
+ * IdentityCard warns that this gateway runs on AWS without an identity, so no
+ * group's role can trust it (ADR 0023). A known identity is not repeated on
+ * the page: the IAM setup, where a trust policy names it, says which it is
+ * (owner, 2026-11-11: the standing sentence with the gateway's ARN was noise).
  */
 function IdentityCard() {
   const [id, setId] = useState<AwsIdentity | null>(null)
@@ -369,43 +375,30 @@ function IdentityCard() {
   useEffect(() => {
     api.get<AwsIdentity>('/admin/aws/identity').then(setId).catch(() => setId(null))
   }, [])
-  if (!id) return null
-  // A gateway that simply does not live on AWS has nothing to warn about:
-  // the card appears only with an identity to show, or on AWS compute where
-  // a missing role is a real misconfiguration. The enroll flow still says
-  // what to set when a trust policy actually needs a principal (ADR 0023).
-  if (!id.principal && id.platform !== 'aws') return null
+  // Off AWS a missing role is the ordinary case, not a fault: the enroll flow
+  // still says what to set when a trust policy needs a principal.
+  if (!id || id.principal || id.platform !== 'aws') return null
   const refresh = async () => {
     setBusy(true)
-    try {
-      setId(await api.post<AwsIdentity>('/admin/aws/identity/refresh'))
-    } catch {
-      /* the card keeps what it had */
-    } finally {
-      setBusy(false)
-    }
+    const next = await redetect()
+    if (next) setId(next)
+    setBusy(false)
   }
   return (
     <div className="card" style={{ marginBottom: 12 }}>
-      {id.principal ? (
-        <p style={{ margin: 0 }}>
-          This gateway is <span className="mono">{id.principal}</span> <span className="muted">({sourceLabel(id.source)})</span>. Roles you create for autoscaling groups trust that principal.
-          {id.source === 'detected' && <button type="button" className="btn sm" style={{ marginLeft: 8 }} disabled={busy} onClick={() => void refresh()}>{busy ? 'Checking…' : 'Refresh'}</button>}
-        </p>
-      ) : (
-        <>
-          <p style={{ margin: 0 }}>
-            <Badge tone="warn">AWS identity unknown</Badge> Give the gateway an instance profile (or IRSA), or set <code>ZANSKAR_AWS_GATEWAY_PRINCIPAL</code>, then restart.
-            <button type="button" className="btn sm" style={{ marginLeft: 8 }} disabled={busy} onClick={() => void refresh()}>{busy ? 'Checking…' : 'Check again'}</button>
-          </p>
-          {id.error && <p className="muted" style={{ margin: '6px 0 0' }}>{id.error}</p>}
-        </>
-      )}
+      <p style={{ margin: 0 }}>
+        <Badge tone="warn">AWS identity unknown</Badge> Give the gateway an instance profile (or IRSA), or set <code>ZANSKAR_AWS_GATEWAY_PRINCIPAL</code>, then restart.
+        <button type="button" className="btn sm" style={{ marginLeft: 8 }} disabled={busy} onClick={() => void refresh()}>{busy ? 'Checking…' : 'Check again'}</button>
+      </p>
+      {id.error && <p className="muted" style={{ margin: '6px 0 0' }}>{id.error}</p>}
     </div>
   )
 }
 
-/** IAMDocsView renders the documents for one group: the real principal or an explanation, never a placeholder. */
+/** IAMDocsView renders the documents for one group: the real principal or an
+ *  explanation, never a placeholder. onRefresh detects the principal again
+ *  and reloads them: the gateway reads its role once at start, and reloading
+ *  alone showed that first answer for ever. */
 function IAMDocsView({ docs, onRefresh }: { docs: AsgIAMDocs; onRefresh?: () => void }) {
   return (
     <>
@@ -419,6 +412,7 @@ function IAMDocsView({ docs, onRefresh }: { docs: AsgIAMDocs; onRefresh?: () => 
         <>
           <p className="muted" style={{ marginTop: 0 }}>
             The role trusts <span className="mono">{docs.gateway_principal}</span> ({sourceLabel(docs.principal_source)}). Create it with the script or the template, or paste the two policies by hand.
+            {onRefresh && docs.principal_source === 'detected' && <button type="button" className="btn sm" style={{ marginLeft: 8 }} onClick={onRefresh}>Check again</button>}
           </p>
           <details open>
             <summary>Create the role with the AWS CLI</summary>
@@ -482,7 +476,7 @@ function IAMPanel({ group, onClose }: { group: AutoscalingGroup; onClose: () => 
         For the role <span className="mono">{group.role_arn}</span>. After changing anything here, use <strong>Test access</strong> on the group.
       </p>
       {err && <Alert tone="danger">{err}</Alert>}
-      {docs ? <IAMDocsView docs={docs} onRefresh={load} /> : !err && <Loading />}
+      {docs ? <IAMDocsView docs={docs} onRefresh={() => void redetect().then(load)} /> : !err && <Loading />}
       <div className="actions">
         <button className="btn primary" onClick={onClose}>Done</button>
       </div>
@@ -617,7 +611,7 @@ function GroupDetail({ group, credentials, onClose, onChanged, onDeleted }: { gr
         <dt>Cloud group</dt><dd className="mono">{g.external_name}</dd>
         <dt>Role</dt><dd className="mono">{g.role_arn}</dd>
         <dt>ExternalId</dt><dd className="mono">{g.external_id}</dd>
-        <dt>OS</dt><dd>{g.os_family}</dd>
+        <dt>OS</dt><dd><OSIcon os={g.os_family} /></dd>
         <dt>Connect to</dt><dd>{g.address_preference} IP</dd>
         <dt>Poll</dt><dd>every {g.poll_interval_seconds}s</dd>
         <dt>Tags</dt><dd><Tags tags={g.tags} /></dd>
@@ -644,7 +638,7 @@ function GroupDetail({ group, credentials, onClose, onChanged, onDeleted }: { gr
         ) : instances.length === 0 ? (
           <Empty>No instances seen yet. Sync to poll the cloud.</Empty>
         ) : (
-          <table>
+          <table className="instances">
             <thead>
               <tr>
                 <th>Instance</th>
@@ -668,7 +662,11 @@ function GroupDetail({ group, credentials, onClose, onChanged, onDeleted }: { gr
                   <td>{healthBadge(i.lb_health, 'healthy')}</td>
                   <td>{healthBadge(i.probe_health, 'healthy')}</td>
                   <td>
-                    {i.host_key_source === 'console' ? <StateIcon state="ok" label="Host key pinned from the console" /> : i.host_key_source === 'tofu' ? <StateIcon state="warn" label="Trust on first use — not pinned yet" /> : <StateIcon state="unknown" label="No host key" />}
+                    {/* Live, 2026-11-11: a key pinned on first sight read "not
+                        pinned yet", though a different key already makes the
+                        instance unhealthy (sync.go); what it lacks is the
+                        check against the instance's console output. */}
+                    {i.host_key_source === 'console' ? <StateIcon state="ok" label="Pinned; matches the instance's console output" /> : i.host_key_source === 'tofu' ? <StateIcon state="warn" label="Pinned when first seen; not checked against the instance's console output" /> : <StateIcon state="unknown" label="No host key seen yet" />}
                   </td>
                   <td className="muted">{i.launched_at ? fmtTime(i.launched_at) : '—'}</td>
                   <td><StateIcon state={i.state === 'terminated' ? 'unknown' : i.state === 'healthy' ? 'ok' : 'danger'} label={capitalised(stateLabel('autoscaling_instance', i.state).label)} /></td>

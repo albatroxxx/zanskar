@@ -1,7 +1,8 @@
-import { useEffect, useState, type FormEvent } from 'react'
+import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
 import { api, errorMessage, query } from '../../api/client'
 import { fmtDuration, fmtTime, protocolName } from '../../api/format'
 import { sessionTarget, sessionUser } from '../../api/labels'
+import { recordingGone } from '../../api/states'
 import type { Page, Session } from '../../api/types'
 import { usePaged } from '../../components/paged'
 import { Alert, Empty, LoadMore, PageHead, EndReason, TabLink } from '../../components/ui'
@@ -47,21 +48,33 @@ const when = (h: { started_at: string; at_ms: number }) => fmtTime(new Date(Date
 function CommandSearch({ recordingsPath }: { recordingsPath: string }) {
   const [q, setQ] = useState('')
   const [scope, setScope] = useState<'commands' | 'output'>('commands')
-  const [hits, setHits] = useState<{ scope: 'commands'; items: CommandHit[] } | { scope: 'output'; items: OutputHit[] } | null>(null)
+  // The hits and the term they were found for: the box may since say another.
+  const [hits, setHits] = useState<{ scope: 'commands'; term: string; items: CommandHit[] } | { scope: 'output'; term: string; items: OutputHit[] } | null>(null)
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState('')
+  const box = useRef<HTMLInputElement>(null)
+  // The owner, 2026-11-11: a search's hits stayed above the recordings with
+  // no way to put them away but reloading the page. Clear, Esc in the box,
+  // or emptying it does.
+  const clear = () => {
+    setQ('')
+    setHits(null)
+    setErr('')
+    box.current?.focus()
+  }
   const search = async (e: FormEvent) => {
     e.preventDefault()
-    if (q.trim().length < 2) return
+    const term = q.trim()
+    if (term.length < 2) return
     setBusy(true)
     setErr('')
     try {
       if (scope === 'output') {
-        const r = await api.get<{ items: OutputHit[] }>('/recordings/search' + query({ q: q.trim(), in: 'output' }))
-        setHits({ scope, items: r.items ?? [] })
+        const r = await api.get<{ items: OutputHit[] }>('/recordings/search' + query({ q: term, in: 'output' }))
+        setHits({ scope, term, items: r.items ?? [] })
       } else {
-        const r = await api.get<{ items: CommandHit[] }>('/recordings/search' + query({ q: q.trim() }))
-        setHits({ scope, items: r.items ?? [] })
+        const r = await api.get<{ items: CommandHit[] }>('/recordings/search' + query({ q: term }))
+        setHits({ scope, term, items: r.items ?? [] })
       }
     } catch (e2) {
       setHits(null)
@@ -78,21 +91,41 @@ function CommandSearch({ recordingsPath }: { recordingsPath: string }) {
           <option value="output">Output</option>
         </select>
         <input
+          ref={box}
           className="mono filter-control"
           style={{ minWidth: 280 }}
           placeholder={scope === 'output' ? 'find printed text, e.g. permission denied' : 'find a command, e.g. systemctl stop'}
           aria-label={scope === 'output' ? 'Find printed text' : 'Find a command'}
           value={q}
-          onChange={(e) => setQ(e.target.value)}
+          onChange={(e) => {
+            setQ(e.target.value)
+            if (!e.target.value.trim()) {
+              setHits(null)
+              setErr('')
+            }
+          }}
+          onKeyDown={(e) => {
+            if (e.key === 'Escape' && (q || hits || err)) {
+              e.preventDefault()
+              clear()
+            }
+          }}
           maxLength={200}
         />
         <button type="submit" className="btn sm" disabled={busy || q.trim().length < 2}>{busy ? 'Searching…' : 'Find'}</button>
         <span className="muted">Terminal sessions.</span>
       </form>
-      {err && <Alert tone="danger">{err}</Alert>}
-      {hits?.scope === 'output' && (hits.items.length === 0 ? (
-        <p className="muted">No output matches.</p>
-      ) : (
+      {err && <Alert tone="danger" onDismiss={clear}>{err}</Alert>}
+      {hits && (
+        <div className="actions" style={{ marginTop: 8 }}>
+          <span className="muted">
+            {hits.items.length === 0 ? (hits.scope === 'output' ? 'No output matches.' : 'No command matches.') : `${hits.items.length} ${hits.items.length === 1 ? 'match' : 'matches'} for`}{' '}
+            {hits.items.length > 0 && <span className="mono">{hits.term}</span>}
+          </span>
+          <button type="button" className="btn sm ghost" onClick={clear}>Clear</button>
+        </div>
+      )}
+      {hits?.scope === 'output' && hits.items.length > 0 && (
         <table className="command-hits">
           <thead>
             <tr>
@@ -120,10 +153,8 @@ function CommandSearch({ recordingsPath }: { recordingsPath: string }) {
             ))}
           </tbody>
         </table>
-      ))}
-      {hits?.scope === 'commands' && (hits.items.length === 0 ? (
-        <p className="muted">No command matches.</p>
-      ) : (
+      )}
+      {hits?.scope === 'commands' && hits.items.length > 0 && (
         <table className="command-hits">
           <thead>
             <tr>
@@ -148,19 +179,35 @@ function CommandSearch({ recordingsPath }: { recordingsPath: string }) {
             ))}
           </tbody>
         </table>
-      ))}
+      )}
     </div>
   )
 }
 
-/** keptCell says when retention deletes a recording, or that it has (Q10),
+/** keptText says when retention deletes a recording, or that it has (Q10),
  *  or that its session ended with it unfinished (ADR 0047). */
-function keptCell(s: Session) {
-  if (s.recording_state === 'purged') return <span className="muted">Deleted</span>
-  if (s.recording_state === 'lost') return <span className="muted">Lost</span>
+function keptText(s: Session): string {
+  if (s.recording_state === 'purged') return 'Deleted'
+  if (s.recording_state === 'lost') return 'Lost'
   if (s.recording_kept_until) return fmtTime(s.recording_kept_until)
-  if (!s.ended_at) return <span className="muted">—</span>
-  return <span className="muted">No age limit</span>
+  if (!s.ended_at) return '—'
+  return 'No age limit'
+}
+
+/** keptCell is keptText, muted unless it is a date. */
+function keptCell(s: Session) {
+  const text = keptText(s)
+  return s.recording_kept_until && !['purged', 'lost'].includes(s.recording_state ?? '') ? text : <span className="muted">{text}</span>
+}
+
+/** rowText is what a row shows, in the words it shows them: the filter
+ *  matches that. The owner asked what it filtered by (2026-11-11): it matched
+ *  codes, so "user exit" found nothing where the row reads "user exit", and
+ *  an autoscaling session matched an internal id, not the group or the
+ *  instance on its row. */
+function rowText(s: Session): string {
+  const ended = s.state === 'live' ? 'live' : s.end_reason ? s.end_reason.replace(/_/g, ' ') : 'ended'
+  return [fmtTime(s.started_at), sessionUser(s), sessionTarget(s), protocolName(s.protocol), ended, s.end_detail ?? '', keptText(s)].join('\n').toLowerCase()
 }
 
 export function Recordings() {
@@ -178,10 +225,10 @@ export function Recordings() {
   }, [load])
 
   const needle = search.trim().toLowerCase()
-  const visible = (items ?? []).filter((s) => {
-    if (!needle) return true
-    return [s.username, s.target_name, s.protocol, s.asg_instance_id, s.end_reason].some((v) => (v ?? '').toLowerCase().includes(needle))
-  })
+  // Each row's words are worked out once per load, not on every keystroke
+  // (review, 2026-11-11: a date was formatted per row per character).
+  const texts = useMemo(() => new Map((items ?? []).map((s) => [s.id, rowText(s)])), [items])
+  const visible = (items ?? []).filter((s) => !needle || (texts.get(s.id) ?? '').includes(needle))
   // The API has no search, so the filter runs here over the sessions read so
   // far. While older ones are still unread, the page says how far back it has
   // looked instead of answering for sessions it has never seen.
@@ -197,8 +244,9 @@ export function Recordings() {
       <PageHead title="Recordings">
         <input
           className="mono filter-control"
-          style={{ minWidth: 220 }}
-          placeholder="filter"
+          style={{ minWidth: 280 }}
+          placeholder="user, machine, protocol, end…"
+          title="Matches what the rows show: start, user, machine, protocol, how it ended, kept until"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           aria-label="Filter recordings"
@@ -240,8 +288,14 @@ export function Recordings() {
                   <td style={{ whiteSpace: 'nowrap' }}>{keptCell(s)}</td>
                   <td>
                     {/* Review only (2026-11-01): the recording's page has its
-                        downloads, the file and, for a terminal, the transcript. */}
-                    <TabLink className="btn sm" to={`${recordingsPath}/${encodeURIComponent(s.recording_id!)}`} label="Review" />
+                        downloads, the file and, for a terminal, the transcript.
+                        None for a recording with no file left, which the
+                        Kept until cell already says (2026-11-11). */}
+                    {recordingGone(s.recording_state) ? (
+                      <span className="muted">—</span>
+                    ) : (
+                      <TabLink className="btn sm" to={`${recordingsPath}/${encodeURIComponent(s.recording_id!)}`} label="Review" />
+                    )}
                   </td>
                 </tr>
               ))}

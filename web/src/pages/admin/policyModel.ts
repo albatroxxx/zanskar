@@ -268,13 +268,16 @@ export function fromDraft(d: GrantDraft, nameOf: (id: string) => string, offered
   }
 }
 
-/** whoSummary names a policy's audience: the groups, then how many users. */
-export function whoSummary(p: Policy, groupName: (id: string) => string, userName: (id: string) => string): { text: string; cut: boolean } {
+/** whoSummary names a policy's audience: the groups, then how many users.
+ *  lists holds the same words as items, groups then users, so a page can
+ *  keep each name whole without splitting the text (a name may hold ", "). */
+export function whoSummary(p: Policy, groupName: (id: string) => string, userName: (id: string) => string): { text: string; cut: boolean; lists: string[][] } {
   const groups = p.subjects.filter((s) => s.kind === 'group').map((s) => groupName(s.id))
   const users = p.subjects.filter((s) => s.kind === 'user').map((s) => userName(s.id))
-  const g = groups.length > 2 ? `${groups.slice(0, 2).join(', ')} +${groups.length - 2}` : groups.join(', ')
-  const u = users.length > 2 ? `${users.length} users` : users.join(', ')
-  return { text: [g, u].filter(Boolean).join(' · '), cut: groups.length > 2 || users.length > 2 }
+  const g = groups.length > 2 ? [groups[0], `${groups[1]} +${groups.length - 2}`] : groups
+  const u = users.length > 2 ? [`${users.length} users`] : users
+  const lists = [g, u].filter((l) => l.length > 0)
+  return { text: lists.map((l) => l.join(', ')).join(' · '), cut: groups.length > 2 || users.length > 2, lists }
 }
 
 /**
