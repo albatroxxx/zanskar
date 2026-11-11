@@ -4,10 +4,11 @@ Date: 2026-11-09
 
 ## Status
 
-Proposed 2026-11-09, built the same day on the owner's instruction ("find all of the implicit
-state machines in Zanskar; make the best decision that elevates the user, developer and agent
-experience without breaking anything"). The open questions at the end are the owner's to decide;
-nothing in this batch changes a stored value, removes a field or renames a word the owner chose.
+Accepted 2026-11-10: the owner shipped it as 1.19.0 ("ship with new minor version upgrade"). Proposed
+and built 2026-11-09 on the owner's instruction ("find all of the implicit state machines in Zanskar;
+make the best decision that elevates the user, developer and agent experience without breaking
+anything"). The open questions at the end remain the owner's to decide; nothing in the batch changes
+a stored value, removes a field or renames a word the owner chose.
 
 ## Context
 
