@@ -154,14 +154,30 @@ function CommandSearch({ recordingsPath }: { recordingsPath: string }) {
   )
 }
 
-/** keptCell says when retention deletes a recording, or that it has (Q10),
+/** keptText says when retention deletes a recording, or that it has (Q10),
  *  or that its session ended with it unfinished (ADR 0047). */
-function keptCell(s: Session) {
-  if (s.recording_state === 'purged') return <span className="muted">Deleted</span>
-  if (s.recording_state === 'lost') return <span className="muted">Lost</span>
+function keptText(s: Session): string {
+  if (s.recording_state === 'purged') return 'Deleted'
+  if (s.recording_state === 'lost') return 'Lost'
   if (s.recording_kept_until) return fmtTime(s.recording_kept_until)
-  if (!s.ended_at) return <span className="muted">—</span>
-  return <span className="muted">No age limit</span>
+  if (!s.ended_at) return '—'
+  return 'No age limit'
+}
+
+/** keptCell is keptText, muted unless it is a date. */
+function keptCell(s: Session) {
+  const text = keptText(s)
+  return s.recording_kept_until && !['purged', 'lost'].includes(s.recording_state ?? '') ? text : <span className="muted">{text}</span>
+}
+
+/** rowText is what a row shows, in the words it shows them: the filter
+ *  matches that. The owner asked what it filtered by (2026-11-11): it matched
+ *  codes, so "user exit" found nothing where the row reads "user exit", and
+ *  an autoscaling session matched an internal id, not the group or the
+ *  instance on its row. */
+function rowText(s: Session): string {
+  const ended = s.state === 'live' ? 'live' : s.end_reason ? s.end_reason.replace(/_/g, ' ') : 'ended'
+  return [fmtTime(s.started_at), sessionUser(s), sessionTarget(s), protocolName(s.protocol), ended, s.end_detail ?? '', keptText(s)].join('\n').toLowerCase()
 }
 
 export function Recordings() {
@@ -179,10 +195,7 @@ export function Recordings() {
   }, [load])
 
   const needle = search.trim().toLowerCase()
-  const visible = (items ?? []).filter((s) => {
-    if (!needle) return true
-    return [s.username, s.target_name, s.protocol, s.asg_instance_id, s.end_reason].some((v) => (v ?? '').toLowerCase().includes(needle))
-  })
+  const visible = (items ?? []).filter((s) => !needle || rowText(s).includes(needle))
   // The API has no search, so the filter runs here over the sessions read so
   // far. While older ones are still unread, the page says how far back it has
   // looked instead of answering for sessions it has never seen.
@@ -198,8 +211,9 @@ export function Recordings() {
       <PageHead title="Recordings">
         <input
           className="mono filter-control"
-          style={{ minWidth: 220 }}
-          placeholder="filter"
+          style={{ minWidth: 280 }}
+          placeholder="user, machine, protocol, end…"
+          title="Matches what the rows show: start, user, machine, protocol, how it ended, kept until"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           aria-label="Filter recordings"
