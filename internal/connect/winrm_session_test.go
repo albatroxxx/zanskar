@@ -181,29 +181,28 @@ func TestWinRMOutputReachesShadowTap(t *testing.T) {
 }
 
 // TestWinRMRefusals: a listener whose certificate is not the pinned one is
-// refused before the WebSocket opens, audited as a certificate mismatch, and
+// refused before the session starts, audited as a certificate mismatch, and
 // never receives the credential; an account that authenticates but may not
-// open a shell gets the answer that says why.
+// open a shell gets the answer that says why. Both reach the console as
+// words in an end frame (testing board #183), not as a failed handshake.
 func TestWinRMRefusals(t *testing.T) {
 	r := newWinRMRig(t)
-	refused := func(targetID string, wantCode int) {
+	refused := func(targetID, reason, words string) {
 		t.Helper()
-		ws, resp, err := r.open(t, targetID)
-		if resp != nil {
-			_ = resp.Body.Close()
+		ws, _, err := r.open(t, targetID) //nolint:bodyclose // the library closes the handshake body
+		if err != nil {
+			t.Fatal(err)
 		}
-		if err == nil {
-			ws.CloseNow()
-			t.Fatal("the WebSocket opened")
-		}
-		if resp == nil || resp.StatusCode != wantCode {
-			t.Fatalf("got %v, want %d", resp, wantCode)
+		got := refusedOverSocket(t, ws)
+		var end map[string]string
+		if json.Unmarshal([]byte(got), &end) != nil || end["t"] != "end" || end["reason"] != reason || !strings.Contains(end["msg"], words) {
+			t.Fatalf("refused with %q, want an end frame %s saying %q", got, reason, words)
 		}
 	}
 
 	moved := r.winTarget(t, "win-moved", "admin", strings.Repeat("ab", 32))
 	before := r.wsm.Requests.Load()
-	refused(moved, http.StatusConflict)
+	refused(moved, session.EndTrustLost, "different certificate")
 	if ev := lastEvent(t, r.connectFixture, "target.tls.mismatch"); ev.ObjectID != moved {
 		t.Fatalf("target.tls.mismatch names %s", ev.ObjectID)
 	}
@@ -212,7 +211,7 @@ func TestWinRMRefusals(t *testing.T) {
 	}
 
 	limited := r.winTarget(t, "win-limited", "limited", r.wsm.Fingerprint())
-	refused(limited, http.StatusConflict)
+	refused(limited, session.EndError, "must be a local administrator")
 }
 
 // brokenStorage refuses every new recording, as a full disk or a lost bucket

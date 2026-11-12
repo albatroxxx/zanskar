@@ -175,7 +175,8 @@ registered to, so keys work only once it is set, to a host name (not an IP addre
 certificate browsers trust. Changing the host name later means everyone registers their keys
 again.
 
-The SQLite database and local recordings live in the `zanskar_data` volume; back them up
+The SQLite database and local recordings live in the `zanskar_data` volume (`deploy_zanskar_data`
+in `docker volume ls`: Compose prefixes the directory the compose file is in); back them up
 with `zanskar backup` (see [Backups and key custody](#backups-and-key-custody)) or by
 snapshotting the volume. To exercise the PostgreSQL path instead, use
 `deploy/docker-compose.dev.yml` — a plaintext-on-loopback development stack, not for
@@ -196,8 +197,9 @@ and, for recordings, a persistent volume or an S3 bucket.
    Secret and never writes secrets from values:
 
    ```sh
-   kubectl create secret generic zanskar-secrets \
-     --from-literal=ZANSKAR_MASTER_KEY="$(zanskar keygen)" \
+   kubectl create namespace zanskar
+   kubectl -n zanskar create secret generic zanskar-secrets \
+     --from-literal=ZANSKAR_MASTER_KEY="$(openssl rand -base64 32)" \
      --from-literal=ZANSKAR_DB_DSN="postgres://zanskar:PASSWORD@db:5432/zanskar?sslmode=require"
    ```
 
@@ -214,13 +216,17 @@ and, for recordings, a persistent volume or an S3 bucket.
      -f my-values.yaml
    ```
 
+   The recordings claim asks for `ReadWriteMany`. On kind, k3d or minikube, whose default storage
+   is `ReadWriteOnce` only, set `recordings.pvc.accessModes: [ReadWriteOnce]` in `my-values.yaml`,
+   or the claim and the gateway pod stay Pending.
+
    A pre-install/pre-upgrade hook Job runs `zanskar migrate`; the gateway refuses to
    start with migrations pending, so upgrades are a single `helm upgrade`.
 
 4. **First admin.** There is no bootstrap endpoint on purpose:
 
    ```sh
-   kubectl -n zanskar exec -it deploy/zanskar -- /zanskar admin create --username admin --name "Your Name"
+   kubectl -n zanskar exec -it deploy/zanskar-zanskar -- /zanskar admin create --username admin --name "Your Name"
    ```
 
 5. **Autoscaling groups on EKS (IRSA).** Give the gateway pod an IAM role by annotating
@@ -283,7 +289,7 @@ consistent snapshot without stopping the service. It reads the same `ZANSKAR_*`
 environment as the server:
 
 ```
-zanskar backup --out /secure/zanskar-$(date +%F).tar.gz
+zanskar backup --out /var/lib/zanskar/backup-$(date +%F).tar.gz
 ```
 
 It snapshots the database with SQLite's `VACUUM INTO` — a single transactional copy that

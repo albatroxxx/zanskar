@@ -45,6 +45,20 @@ describe('TLSCard', () => {
     expect(screen.getByRole('button', { name: 'Remove uploaded certificate' })).toBeDefined()
   })
 
+  it('regenerates with the names the certificate has, plus the ones added', async () => {
+    const before: TLSStatus = { mode: 'managed', active: cert('generated', ['10.0.0.7', 'localhost']), generated: cert('generated', ['10.0.0.7', 'localhost']) }
+    vi.spyOn(api, 'get').mockResolvedValue(before as never)
+    const post = vi.spyOn(api, 'post').mockResolvedValue(before as never)
+    render(<TLSCard />)
+    const user = userEvent.setup()
+    await user.click(await screen.findByRole('button', { name: 'Regenerate self-signed…' }))
+    const names = document.getElementById('tls-hosts') as HTMLTextAreaElement
+    expect(names.value).toBe('10.0.0.7\nlocalhost')
+    await user.type(names, '\n203.0.113.9')
+    await user.click(screen.getByRole('button', { name: 'Regenerate' }))
+    expect(post).toHaveBeenCalledWith('/admin/tls/self-signed', { hosts: ['10.0.0.7', 'localhost', '203.0.113.9'] })
+  })
+
   it('removes the uploaded certificate after a confirmation, back to the self-signed one', async () => {
     const uploaded = cert('uploaded', ['gw.example.com'])
     const generated = cert('generated', ['gw'])

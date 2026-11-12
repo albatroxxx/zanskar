@@ -95,7 +95,7 @@ describe('TargetsPage', () => {
     const row = (await screen.findByText('http://grafana.internal', { exact: false })).closest('tr')!
     const user = userEvent.setup()
     const more = within(row).getByRole('button', { name: '2 other endpoints' })
-    expect(more.textContent).toBe('+2')
+    expect(more.textContent).toBe('')
     await user.click(more)
     const detail = document.getElementById(more.getAttribute('aria-controls')!)!
     expect(within(detail).getAllByRole('listitem').map((li) => li.textContent)).toEqual(['API http://api.internal:8080', 'Sign-in https://sso.internal'])

@@ -51,17 +51,37 @@ type Controller struct {
 	// that is logged and abandoned (review finding SEC-10).
 	Grace time.Duration
 
-	mu     sync.Mutex
-	drain  *Drain
-	cancel context.CancelFunc
+	mu       sync.Mutex
+	drain    *Drain
+	cancel   context.CancelFunc
+	stopping bool
 }
 
-// Draining reports whether a restart is in progress. connect refuses new
-// sessions while it is.
+// Draining reports whether a restart is in progress, or the process is
+// stopping. connect refuses new sessions while it is.
 func (c *Controller) Draining() bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return c.drain != nil
+	return c.drain != nil || c.stopping
+}
+
+// Stop is the service manager stopping the process: systemctl restart or
+// stop, a package upgrade, docker compose up. Live sessions end now, as a
+// restart's do, each person told the gateway is restarting, and their
+// bridges get until ctx ends to finish the recording, the row and the audit
+// event. Without it the listener closed under them and the next start
+// closed their rows from what the recordings held (testing board #164). A
+// drain the console started is abandoned; no new session starts meanwhile.
+func (c *Controller) Stop(ctx context.Context) {
+	c.mu.Lock()
+	if c.cancel != nil {
+		c.cancel()
+	}
+	c.stopping = true
+	c.mu.Unlock()
+	if ended := c.endLive(ctx); ended > 0 && c.Log != nil {
+		c.Log.Warn("stopping; live sessions ended", "sessions_ended", ended, "supervisor", Supervisor())
+	}
 }
 
 // Current returns the drain in progress, or nil.
@@ -135,21 +155,46 @@ func (c *Controller) run(ctx context.Context, d Drain) {
 	if ctx.Err() != nil {
 		return
 	}
+	if c.Log != nil {
+		c.Log.Warn("restarting on an administrator's request", "requested_by", d.RequestedBy, "sessions", c.Registry.Count(), "supervisor", Supervisor())
+	}
+	c.endLive(ctx)
+	if ctx.Err() != nil {
+		return
+	}
+	if d.then != nil {
+		d.then()
+		return
+	}
+	c.Exit()
+}
+
+// endLive ends every live session with the restart's cause and waits for
+// their bridges to finish, within Grace or until ctx ends. It returns how
+// many it ended.
+func (c *Controller) endLive(ctx context.Context) int {
+	poll := c.Poll
+	if poll <= 0 {
+		poll = time.Second
+	}
+	t := time.NewTicker(poll)
+	defer t.Stop()
 	ended := 0
 	for _, l := range c.Registry.List() {
 		if c.Registry.TerminateWithCause(l.SessionID, gateway.ErrGatewayRestart) {
 			ended++
 		}
 	}
-	if c.Log != nil {
-		c.Log.Warn("restarting on an administrator's request", "requested_by", d.RequestedBy, "sessions_ended", ended, "supervisor", Supervisor())
-	}
 	// Give the bridges a moment to record how their sessions ended before
 	// the listener goes away, then sweep once more for a bridge that
 	// redeemed its ticket before the drain began and registered after the
 	// first pass, so it too ends with a recorded reason.
 	if ended > 0 {
-		time.Sleep(2 * poll)
+		select {
+		case <-ctx.Done():
+			return ended
+		case <-time.After(2 * poll):
+		}
 	}
 	for _, l := range c.Registry.List() {
 		if c.Registry.TerminateWithCause(l.SessionID, gateway.ErrGatewayRestart) {
@@ -168,7 +213,7 @@ func (c *Controller) run(ctx context.Context, d Drain) {
 	for c.Registry.Waiting() > 0 && time.Now().Before(deadline) {
 		select {
 		case <-ctx.Done():
-			return
+			deadline = time.Now()
 		case <-t.C:
 		}
 	}
@@ -178,14 +223,10 @@ func (c *Controller) run(ctx context.Context, d Drain) {
 			ids = append(ids, l.SessionID)
 		}
 		if len(ids) > 0 {
-			c.Log.Warn("restarting with sessions still finishing; their recordings or rows may be incomplete", "sessions", ids, "waited", grace.String())
+			c.Log.Warn("stopping with sessions still finishing; their recordings or rows may be incomplete", "sessions", ids, "waited", grace.String())
 		}
 	}
-	if d.then != nil {
-		d.then()
-		return
-	}
-	c.Exit()
+	return ended
 }
 
 // DefaultGrace is how long a drain waits for ended sessions' bridges to

@@ -157,7 +157,10 @@ export function TLSCard() {
           <div className="actions">
             <button className="btn primary" disabled={busy || !certPEM.trim() || !keyPEM.trim()} onClick={() => void upload()}>Upload and serve</button>
             {status.uploaded && <button className="btn" disabled={busy} onClick={() => setConfirm('reset')}>Remove uploaded certificate</button>}
-            <button className="btn" disabled={busy} onClick={() => setConfirm('regenerate')}>Regenerate self-signed…</button>
+            <button className="btn" disabled={busy} onClick={() => {
+              setHosts((status.generated?.hosts ?? []).join('\n'))
+              setConfirm('regenerate')
+            }}>Regenerate self-signed…</button>
           </div>
 
           {confirm === 'reset' && (
@@ -177,7 +180,7 @@ export function TLSCard() {
                 <div>
                   <p>Its fingerprint changes and browsers warn again.</p>
                   <Field label="Names (host names and IPs, one per line)" info="Left empty, the names detected when the gateway started.">
-                    <textarea id="tls-hosts" value={hosts} onChange={(e) => setHosts(e.target.value)} placeholder={(status.generated?.hosts ?? []).join('\n')} />
+                    <textarea id="tls-hosts" value={hosts} onChange={(e) => setHosts(e.target.value)} />
                   </Field>
                 </div>
               }

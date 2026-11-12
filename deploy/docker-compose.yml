@@ -132,6 +132,10 @@ services:
   zanskar:
     image: ghcr.io/albatroxxx/zanskar:${ZANSKAR_VERSION:-latest}
     restart: unless-stopped
+    # On a stop the gateway ends live sessions and lets their recordings
+    # finish (up to ZANSKAR's 20 s shutdown timeout); Docker's default 10 s
+    # would kill it first.
+    stop_grace_period: 30s
     depends_on:
       zanskar-migrate:
         condition: service_completed_successfully

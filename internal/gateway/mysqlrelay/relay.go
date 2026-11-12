@@ -351,14 +351,31 @@ func (a *trustAuth) GetCredential(username string) (server.Credential, bool, err
 			// holds that the server no longer accepts.
 			return server.Credential{}, false, my
 		}
-		// Anything else names the upstream host or a network detail the
-		// client container must not learn; the sidecar log has it.
-		return server.Credential{}, false, mysql.NewError(mysql.ER_UNKNOWN_ERROR, "the database did not accept the connection; the gateway log has the reason")
+		return server.Credential{}, false, mysql.NewError(mysql.ER_UNKNOWN_ERROR, upstreamWords(a.upstreamErr))
 	}
 	if username != a.user {
 		return server.Credential{}, false, mysql.NewError(mysql.ER_ACCESS_DENIED_ERROR, "this session signs in as '"+a.user+"' only")
 	}
 	return server.Credential{Passwords: []string{""}, AuthPluginName: mysql.AUTH_NATIVE_PASSWORD}, true, nil
+}
+
+// upstreamWords says why the database could not be reached, in words that
+// name no host and no network detail: the client container must not learn
+// them. The error itself goes to the relay's own log, which leaves with its
+// container, so the words have to be enough (testing board #187).
+func upstreamWords(err error) string {
+	var verify *tls.CertificateVerificationError
+	var unknown x509.UnknownAuthorityError
+	var host x509.HostnameError
+	var invalid x509.CertificateInvalidError
+	var opErr *net.OpError
+	switch {
+	case errors.As(err, &verify), errors.As(err, &unknown), errors.As(err, &host), errors.As(err, &invalid):
+		return "the database's certificate did not verify against the target's CA bundle and address"
+	case errors.As(err, &opErr):
+		return "the database could not be reached from the gateway"
+	}
+	return "the database did not accept the connection"
 }
 
 func (a *trustAuth) OnAuthSuccess(c *server.Conn) error {

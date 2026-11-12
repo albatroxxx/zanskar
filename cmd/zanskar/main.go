@@ -427,6 +427,7 @@ func serve(ctx context.Context) error {
 	deps := server.Deps{
 		TLS:            tlsMgr,
 		Theme:          func() string { return runtime.String(settings.KeyTheme) },
+		Stopping:       restarter.Stop,
 		AuthMiddleware: &auth.Middleware{Sessions: sessions, Users: users, Log: log, Tokens: apiTokens},
 		Auth:           authHandler,
 		Handlers: []server.Registrar{
@@ -618,7 +619,7 @@ func serve(ctx context.Context) error {
 
 	log.Info("starting zanskar", "version", version.Version, "db_driver", cfg.DBDriver, "key_version", ring.ActiveVersion(), "web_ui", web.Enabled, "env_file", cfg.EnvFile)
 	err = server.New(cfg, db, log, deps).ListenAndServe(ctx)
-	if err == nil && restarter.Draining() {
+	if err == nil && restarter.Current() != nil {
 		log.Info("stopped for a restart; the supervisor starts the next process", "supervisor", lifecycle.Supervisor())
 	}
 	return err

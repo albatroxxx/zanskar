@@ -334,7 +334,7 @@ describe('Groups', () => {
 
     await user.click(within(row).getByRole('button', { name: 'Delete' }))
     const confirm = screen.getByRole('dialog', { name: 'Delete group ops?' })
-    expect(within(confirm).getByText(/Its policies are deleted/)).toBeDefined()
+    expect(within(confirm).getByText('It leaves its policies. Sessions it alone allowed end.')).toBeDefined()
     await user.click(within(confirm).getByRole('button', { name: 'Delete' }))
     await waitFor(() => expect(del).toHaveBeenCalledWith('/groups/g1'))
   })

@@ -254,7 +254,7 @@ func TestRelayRefusals(t *testing.T) {
 
 	down := startRelay(t, Config{Upstream: Upstream{Addr: "127.0.0.1:1", User: "svc", Password: "s3cret"}, DialTimeout: 2 * time.Second})
 	_, err = cli(down, "svc")
-	if err == nil || !strings.Contains(err.Error(), "did not accept the connection") || strings.Contains(err.Error(), "127.0.0.1:1") {
+	if err == nil || !strings.Contains(err.Error(), "could not be reached from the gateway") || strings.Contains(err.Error(), "127.0.0.1:1") {
 		t.Fatalf("unreachable upstream must be a clean error without the address: %v", err)
 	}
 }
@@ -403,7 +403,7 @@ func TestRelayVerifyFull(t *testing.T) {
 	}
 	_ = c.Close()
 	bad := startRelay(t, Config{Upstream: Upstream{Addr: ln.Addr().String(), User: "svc", Password: "s3cret", TLS: TLSVerifyFull, CA: otherCA}, DialTimeout: 3 * time.Second})
-	if _, err := cli(bad, "svc"); err == nil || !strings.Contains(err.Error(), "did not accept") {
+	if _, err := cli(bad, "svc"); err == nil || !strings.Contains(err.Error(), "certificate did not verify") {
 		t.Fatalf("verify-full with the wrong CA must fail closed: %v", err)
 	}
 	if _, err := Parse([]byte(`{"upstream":{"addr":"db:3306","user":"svc","tls":"verify-full","ca":"not a cert"}}`)); err == nil {

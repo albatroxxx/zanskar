@@ -4,11 +4,9 @@ package connect
 
 import (
 	"context"
-	"encoding/json"
 	"io"
 	"log/slog"
 	"net"
-	"net/http"
 	"strconv"
 	"strings"
 	"syscall"
@@ -16,6 +14,7 @@ import (
 	"time"
 
 	"github.com/albatroxxx/zanskar/internal/audit"
+	"github.com/albatroxxx/zanskar/internal/gateway/guac"
 	"github.com/albatroxxx/zanskar/internal/target"
 )
 
@@ -114,19 +113,12 @@ func TestDesktopUnreachableIsNotAMismatch(t *testing.T) {
 	id := r.addTarget(t, "rdp-down", map[target.Protocol]int{target.RDP: closed}, strings.Repeat("ab", 32))
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
-	ws, resp, err := r.dial(ctx, r.ticket(t, id, "rdp"))
-	if err == nil {
-		ws.CloseNow()
-		t.Fatal("a desktop opened on a host that is down")
+	ws, _, err := r.dial(ctx, r.ticket(t, id, "rdp")) //nolint:bodyclose // the library closes the handshake body
+	if err != nil {
+		t.Fatal(err)
 	}
-	if resp == nil {
-		t.Fatalf("no answer: %v", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-	var body map[string]any
-	_ = json.NewDecoder(resp.Body).Decode(&body)
-	if resp.StatusCode != http.StatusConflict || body["code"] != "target_unavailable" {
-		t.Fatalf("got %d %v, want 409 target_unavailable", resp.StatusCode, body)
+	if words := refusedOverSocket(t, ws); words != guac.ErrorInstruction("could not reach the target to check its certificate", guac.StatusSessionClosed) {
+		t.Fatalf("refused with %q, want a guacamole error saying the target could not be reached", words)
 	}
 	if evs, _, _ := r.h.Audit.List(ctx, audit.Filter{Action: "target.tls.mismatch"}); len(evs) != 0 {
 		t.Fatalf("a host that was down was audited as a certificate mismatch: %v", evs)

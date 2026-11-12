@@ -32,6 +32,7 @@ type Server struct {
 	log      *slog.Logger
 	http     *http.Server
 	redirect *http.Server // plain HTTP to HTTPS, when configured
+	stopping func(context.Context)
 }
 
 // Registrar is anything that mounts routes on the mux. Every domain handler
@@ -53,11 +54,15 @@ type Deps struct {
 	// Theme is the console's theme for everyone (display.theme), written
 	// into the pre-paint theme script; nil serves the bundle's file as is.
 	Theme func() string
+	// Stopping runs when the process is told to stop, before the listener
+	// closes: the WebSocket sessions it would not wait for are ended there,
+	// within the shutdown timeout.
+	Stopping func(context.Context)
 }
 
 // New builds a Server with the system routes and the given handlers registered.
 func New(cfg *config.Config, db *store.DB, log *slog.Logger, deps Deps) *Server {
-	s := &Server{cfg: cfg, db: db, log: log}
+	s := &Server{cfg: cfg, db: db, log: log, stopping: deps.Stopping}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", s.handleHealthz)
 	mux.HandleFunc("GET /readyz", s.handleReadyz)
@@ -164,6 +169,11 @@ func (s *Server) ListenAndServe(ctx context.Context) error {
 	shutdown := func() error {
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), s.cfg.ShutdownTimeout)
 		defer cancel()
+		// http.Server.Shutdown neither closes nor waits for hijacked
+		// connections, which every live session is.
+		if s.stopping != nil {
+			s.stopping(shutdownCtx)
+		}
 		if s.redirect != nil {
 			_ = s.redirect.Shutdown(shutdownCtx)
 		}

@@ -391,6 +391,40 @@ func TestLoadAddsNewlyConfiguredNames(t *testing.T) {
 	}
 }
 
+// A name given on the Settings card stays when the certificate is made
+// again: by a restart that finds a configured name missing (#160 on the
+// testing board), and by a renewal near its end.
+func TestLoadKeepsNamesGivenInTheConsole(t *testing.T) {
+	ctx := context.Background()
+	repo, _ := newRepo(t)
+	m := &Manager{Repo: repo, Hosts: []string{"localhost", "10.0.0.7"}}
+	if err := m.Load(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Regenerate(ctx, []string{"203.0.113.9"}, ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Load(ctx); err != nil {
+		t.Fatal(err)
+	}
+	got := mustLeaf(t, m.Active().CertPEM)
+	if miss := missingHosts(got, []string{"localhost", "10.0.0.7", "203.0.113.9"}); len(miss) != 0 {
+		t.Fatalf("restart dropped %v (has %v)", miss, m.Active().Hosts)
+	}
+
+	m.now = func() time.Time { return got.NotAfter.Add(-24 * time.Hour) }
+	if err := m.Renew(ctx); err != nil {
+		t.Fatal(err)
+	}
+	renewed := mustLeaf(t, m.Active().CertPEM)
+	if renewed.Equal(got) {
+		t.Fatal("a certificate a day from its end must be renewed")
+	}
+	if miss := missingHosts(renewed, []string{"localhost", "10.0.0.7", "203.0.113.9"}); len(miss) != 0 {
+		t.Fatalf("renewal dropped %v (has %v)", miss, m.Active().Hosts)
+	}
+}
+
 func mustLeaf(t *testing.T, certPEM string) *x509.Certificate {
 	t.Helper()
 	blk, _ := pem.Decode([]byte(certPEM))

@@ -250,15 +250,13 @@ func TestApplicationSessionRefusesForbiddenUpstream(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	ws, resp, err := r.dial(ctx, r.ticket(t, tg.ID, "http"))
-	if err == nil {
-		ws.CloseNow()
-		t.Fatal("a forbidden upstream opened")
+	ws, _, err := r.dial(ctx, r.ticket(t, tg.ID, "http")) //nolint:bodyclose // the library closes the handshake body
+	if err != nil {
+		t.Fatal(err)
 	}
-	if resp == nil || resp.StatusCode != http.StatusUnprocessableEntity {
-		t.Fatalf("got %v, want 422 address_forbidden", resp)
+	if words := refusedOverSocket(t, ws); words != guac.ErrorInstruction(addressRefusedMsg, guac.StatusSessionClosed) {
+		t.Fatalf("refused with %q, want a guacamole error about the address", words)
 	}
-	_ = resp.Body.Close()
 	if _, err := os.Stat(calls); err == nil {
 		t.Fatal("a container was started for a forbidden upstream")
 	}
@@ -424,15 +422,13 @@ func TestApplicationSessionRefusesForbiddenEndpoint(t *testing.T) {
 	id := endpointApp(t, r, "sneaky", target.AppEndpoint{Name: "Meta", URL: "http://meta.zanskar.invalid"})
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	ws, resp, err := r.dial(ctx, r.ticket(t, id, "http"))
-	if err == nil {
-		ws.CloseNow()
-		t.Fatal("an application with a forbidden endpoint opened")
+	ws, _, err := r.dial(ctx, r.ticket(t, id, "http")) //nolint:bodyclose // the library closes the handshake body
+	if err != nil {
+		t.Fatal(err)
 	}
-	if resp == nil || resp.StatusCode != http.StatusUnprocessableEntity {
-		t.Fatalf("got %v, want 422 address_forbidden", resp)
+	if words := refusedOverSocket(t, ws); words != guac.ErrorInstruction(addressRefusedMsg, guac.StatusSessionClosed) {
+		t.Fatalf("refused with %q, want a guacamole error about the address", words)
 	}
-	_ = resp.Body.Close()
 	if _, err := os.Stat(calls); err == nil {
 		t.Fatal("a container was started for a forbidden endpoint")
 	}

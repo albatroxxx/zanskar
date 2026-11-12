@@ -29,6 +29,7 @@ import (
 	"net"
 	"os"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"sync/atomic"
@@ -379,7 +380,17 @@ func (m *Manager) loadActive(ctx context.Context) error {
 		return nil
 	}
 	certPEM, keyPEM, err := m.Repo.Get(ctx, SourceGenerated)
+	// Names an administrator gave the certificate (Regenerate on the
+	// Settings card) stay on it when it is made again, for a newly
+	// configured name or before its end: a restart or a renewal does not
+	// drop them.
+	var kept []string
 	if err == nil {
+		if blk, _ := pem.Decode([]byte(certPEM)); blk != nil {
+			if old, perr := x509.ParseCertificate(blk.Bytes); perr == nil {
+				kept = describe(SourceGenerated, old, "").Hosts
+			}
+		}
 		if cert, leaf, perr := Parse(certPEM, keyPEM); perr == nil && m.clock().Add(renewBefore).Before(leaf.NotAfter) {
 			// A name added to the configuration after the first start has to
 			// take effect, or the operator sets ZANSKAR_TLS_HOSTS, restarts,
@@ -399,7 +410,7 @@ func (m *Manager) loadActive(ctx context.Context) error {
 	// whatever served before (after Reset, the deleted upload). It takes
 	// over only once it exists: a failure leaves the previous certificate
 	// serving rather than none (B8).
-	return m.regenerate(ctx, m.Hosts, "", true)
+	return m.regenerate(ctx, dedupe(append(slices.Clone(m.Hosts), kept...)), "", true)
 }
 
 // renewBefore is how long before its end a self-signed certificate is
