@@ -4,7 +4,10 @@ Date: 2026-10-06
 
 ## Status
 
-Accepted on 2026-10-06; build parked until the project owner resumes it.
+Accepted on 2026-10-06; build parked until the project owner resumed it on 2026-11-12. Amended
+the same day, before the build: the gateway grew in the five weeks it waited, and the
+[amendment](#amendment-2026-11-12-what-changed-before-the-build) at the end replaces what no
+longer holds. Where the two differ, the amendment holds.
 
 ## Context
 
@@ -133,3 +136,114 @@ host commands.
   phone passkey.
 - Later, separately: passwordless sign-in with passkeys, and an allow-list of key models for
   organisations that want one.
+
+## Amendment (2026-11-12): what changed before the build
+
+The owner resumed this ADR on 2026-11-12 and took the recommended scope ("go ahead, update the
+ADR first"). This section brings the decision up to the gateway as it is now and settles what the
+build would otherwise decide by accident. Three points are marked *(owner to confirm)*; nothing is
+built until they are.
+
+### The public address already exists
+
+`ZANSKAR_PUBLIC_URL` arrived on 2026-10-13 (#211) for single sign-on: an https origin with no
+path, read at boot, and also the base of SCIM and notification links. WebAuthn reuses it and adds
+no setting. Its host is the relying party ID and its origin is what every signature must name;
+neither comes from the request. The boot check accepts an IP host, so "keys are off" (unset, or
+an IP) is a state the console shows, not a boot error. This replaces the context paragraph that
+says Zanskar has no setting for its address, the decision paragraph that introduces one, and the
+consequence that calls it new.
+
+### Three places take a proof, and a key works at each
+
+A second factor is proved at three endpoints, and each writes the same proof, the session's
+`mfa_verified_at` (`Sessions.MarkMFAProved`):
+
+- **Sign-in**, `POST /auth/mfa/totp/verify`: a partial session becomes full.
+- **Step-up**, `POST /auth/mfa/step-up`: every action that asks for a recent code reads the proof
+  through `Principal.StepUpFresh()` (five minutes): the settings that decide where a credential is
+  sent, approving access while *Approving asks for a code* is on, host actions and updates, boot
+  setting changes, and making an API token.
+- **The command line**, `POST /admin/cli/unlock` (fifteen minutes, sliding), and its commands that
+  ask for a code from the last five minutes.
+
+Each gains a key beside the code: a *begin* call returns a challenge bound to the session and the
+purpose, and the *finish* call verifies the signature and writes the same proof. No action that
+reads the proof changes. A failed key counts against the same limits as a wrong code: the
+per-session step-up limiter (`MFAAttempts`, then closed for `LockFor`), the command line's five,
+and at sign-in the end of the pending session. "Keys for the console's host commands", listed
+above as not in this version, is therefore no gap: host actions read the step-up proof.
+
+### Accounts with keys and no app
+
+Step-up answers `409 mfa_not_enrolled` today to an account without an authenticator app. An
+account with at least one key steps up with it.
+
+*(owner to confirm)* **Accounts whose provider owns the second factor** (ADR 0035) may register
+keys too. Their keys serve step-ups and the command line only; sign-in asks for one only when the
+provider has *Also ask for a Zanskar authenticator* on, as it does for the app now. Without this,
+an administrator who signs in through such a provider has nothing to prove a step-up with.
+
+### Recovery codes
+
+*(owner to confirm)* The codes keep their table (`mfa_recovery_codes`) and change when they are
+issued:
+
+- Once, when an account gets its first second factor of any kind: an app confirmed, or a first
+  key registered, while it has neither. Confirming an app issues new codes every time today; that
+  holds only for the first factor now.
+- Adding a key, or an app beside keys, keeps the codes the account has.
+- *New recovery codes* in the account dialog replaces them, behind a fresh second factor; the old
+  ones stop working at once.
+- An administrator's *Reset authenticator* removes the app, every key and every code, and the
+  account enrols again at its next sign-in.
+
+### What "has a second factor" means, everywhere
+
+`idp.SecondFactor(users, providers, enrolled)`, wired in `cmd/zanskar/main.go` with
+`totp.Enrolled`, takes "an app confirmed, or at least one key" instead. Its readers change with it,
+and the build checks each one: the *Require an authenticator* sign-in gate and its enrolment step,
+a grant's *Authenticator* condition, the command line's `mfa_enrolled`, the security-posture tile
+*No authenticator yet* and its `postureWhere` filter, the Users page's state glyph, and *Also ask
+for a Zanskar authenticator* on a provider.
+
+### Lifecycles (ADR 0047)
+
+*(owner to confirm)* A key is a plain row: it exists until it is removed, has no `status`, and is
+not declared with `internal/states`. The account's *authenticator* lifecycle (`mfa_totp`: none,
+enrolling, confirmed) stays the app's. What an account has as a second factor (none, app, keys,
+both) is derived where it is shown and never stored. `docs/lifecycles.md` gains no lifecycle, only
+a note under *authenticator* that keys count beside it, and the session lifecycle's note on
+`mfa_verified_at` reads "a code typed or a key touched".
+
+### Where people see it
+
+- **The account dialog** (the username in the sidebar) lists the account's keys: name, when added
+  and last used, and whether it is a synced passkey. *Add key*, *Rename*, *Remove*, and *New
+  recovery codes*.
+- **One second-factor control** at sign-in and at every code prompt (Settings, Approvals, host
+  actions, API tokens, the command line): *Use your key* when the account has one and the address
+  allows it, and the code field. Where keys cannot work (no public address, or an IP), the button
+  is disabled with its reason on hover; no paragraph explains it.
+- **The Users page** shows how many keys a person has, and *Reset authenticator* removes them.
+
+### Administrators must use a security key
+
+In this version, off by default, as described above: the owner's go of 2026-11-12 took the
+recommendation. It is a runtime setting under *Sign-in*, beside *Require an authenticator*.
+
+### Not in this version
+
+This replaces the list above: passwordless sign-in; an allow-list of key models; a rule against
+synced passkeys (the synced flag is stored, so it can come later without re-registering).
+
+### Facts pinned for the build
+
+- [go-webauthn](https://github.com/go-webauthn/webauthn) v0.18.2 (2026-09-19, needs Go 1.26; the
+  gateway builds with 1.27.4) is still the latest release.
+- Migration 0055, in both engines: `webauthn_credentials` (id, user_id, name, credential_id
+  unique, public_key, sign_count, aaguid, transports, backup_eligible, backup_state, created_at,
+  last_used_at).
+- The OpenAPI document gains the begin and finish pairs and the key routes. The Terraform provider
+  is untouched: a key belongs to a person, not to the configuration.
+- `docs/threat-model.md`'s phishing row moves to built, for accounts that sign in with a key.
