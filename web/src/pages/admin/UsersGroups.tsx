@@ -462,7 +462,7 @@ function Groups({ adding, setAdding }: AddingProps) {
       {deleting && (
         <Confirm
           title={`Delete group ${deleting.name}?`}
-          body="Its policies are deleted and the sessions they allowed end."
+          body="It leaves its policies. Sessions it alone allowed end."
           confirmLabel="Delete"
           danger
           onClose={() => setDeleting(null)}
