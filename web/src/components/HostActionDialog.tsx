@@ -3,6 +3,7 @@ import { ApiError, api, errorMessage } from '../api/client'
 import { fmtTime } from '../api/format'
 import type { ConfigResult, HostStatus, SystemStatus, UpdateStatus } from '../api/types'
 import { DoneIcon } from './icons'
+import { KeyButton } from './KeyButton'
 import { deadlineFor, doneTitle, initialProgress, observe, pacing, pollDelay, progressWatch, sentence, stepLabel, stepsFor, type HostAction, type Observation, type Progress, type Start } from './hostAction'
 import { Alert, Field, Modal } from './ui'
 
@@ -61,6 +62,8 @@ export function HostActionDialog({ action, version, change, onClose }: { action:
   const kept = useRef(DEFAULT_WAIT)
   const [confirm, setConfirm] = useState('')
   const [code, setCode] = useState('')
+  // A security key proved the step-up here (ADR 0028): no code is needed.
+  const [keyProved, setKeyProved] = useState(false)
   // The minutes of the request in flight, null when none is.
   const [busy, setBusy] = useState<number | null>(null)
   const [err, setErr] = useState('')
@@ -109,7 +112,7 @@ export function HostActionDialog({ action, version, change, onClose }: { action:
     }
   }, [start])
 
-  const needsCode = action !== 'restart' && host !== null && !host.mfa_fresh
+  const needsCode = action !== 'restart' && host !== null && !host.mfa_fresh && !keyProved
   const typed = action !== 'restart' && action !== 'config'
   const ready = busy === null && !(typed && !confirm.trim()) && !(needsCode && !code.trim())
   /** run asks for the action, letting live sessions finish for minutes (0 ends them now). */
@@ -249,6 +252,7 @@ export function HostActionDialog({ action, version, change, onClose }: { action:
             <input id="action-code" value={code} onChange={(e) => setCode(e.target.value)} inputMode="numeric" autoComplete="one-time-code" />
           </Field>
         )}
+        {needsCode && <KeyButton className="btn sm" onDone={() => setKeyProved(true)} onError={setErr} />}
         <div className="actions">
           <button type="button" className="btn ghost" onClick={onClose} disabled={busy !== null}>
             Cancel

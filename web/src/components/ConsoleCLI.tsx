@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { ApiError, api, errorMessage } from '../api/client'
 import { AuditIcon, CloseIcon, CommandsIcon, LockIcon, MaximiseIcon, MinimiseIcon, RestoreIcon } from './icons'
+import { KeyButton } from './KeyButton'
 
 /**
  * The console's command line (ADR 0027): an icon at the top right of every
@@ -228,19 +229,24 @@ export function ConsoleCLI() {
     setBusy(true)
     try {
       await api.post('/admin/cli/unlock', { code: code.trim() })
-      setCode('')
-      setCodeWhy('')
-      setState((s) => (s ? { ...s, unlocked: true } : s))
-      const again = afterUnlock
-      setAfterUnlock(null)
-      if (again) {
-        append([{ text: `zanskar> ${again}`, style: 'prompt' }])
-        await send(again)
-      }
+      await unlocked()
     } catch (err) {
       setCodeError(errorMessage(err))
     } finally {
       setBusy(false)
+    }
+  }
+  // unlocked follows a right code or an accepted key (ADR 0028): the line
+  // that asked for it runs now.
+  const unlocked = async () => {
+    setCode('')
+    setCodeWhy('')
+    setState((s) => (s ? { ...s, unlocked: true } : s))
+    const again = afterUnlock
+    setAfterUnlock(null)
+    if (again) {
+      append([{ text: `zanskar> ${again}`, style: 'prompt' }])
+      await send(again)
     }
   }
 
@@ -399,6 +405,7 @@ export function ConsoleCLI() {
                     <button className="btn primary" type="submit" disabled={busy}>
                       Open command line
                     </button>
+                    <KeyButton purpose="cli" finish={(credential) => api.post('/admin/cli/unlock', { credential })} onDone={unlocked} onError={setCodeError} />
                     <button className="cli-link" type="button" onClick={minimise}>
                       Cancel
                     </button>

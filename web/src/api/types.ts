@@ -37,6 +37,28 @@ export interface Me {
   session?: { id: string; created_at: string; expires_at: string }
   /** The console's time zone (display.time_zone); absent on a partial session. */
   time_zone?: string
+  /** What the account has as a second factor (ADR 0028). */
+  second_factor?: SecondFactor
+}
+
+/** An account's second factors: its authenticator app and security keys (ADR 0028). */
+export interface SecondFactor {
+  app: boolean
+  keys: number
+  /** Why keys cannot work at this gateway's address; empty when they can. */
+  keys_off: string
+  /** An administrator asked to add a key (auth.admins_need_key); full sessions only. */
+  key_owed?: boolean
+}
+
+/** A security key or passkey registered as a second factor (ADR 0028). */
+export interface SecurityKey {
+  id: string
+  name: string
+  created_at: string
+  last_used_at: string | null
+  /** A passkey a platform or password manager keeps in sync between devices. */
+  synced: boolean
 }
 
 export type LoginStatus = 'ok' | 'mfa_required' | 'mfa_enrollment_required' | 'password_change_required'

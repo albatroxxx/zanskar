@@ -3,6 +3,7 @@ import { ApiError, api, errorMessage } from '../../api/client'
 import { fmtTime } from '../../api/format'
 import { Alert, Confirm, Field, Loading, StateBadge } from '../../components/ui'
 import { CopyButton } from '../../components/CopyButton'
+import { KeyButton } from '../../components/KeyButton'
 
 /** An API token as listed (ADR 0044); never its secret. */
 export interface APIToken {
@@ -56,12 +57,16 @@ export function APITokensCard() {
     void load()
   }, [])
 
-  const make = async (e: FormEvent) => {
+  const make = (e: FormEvent) => {
     e.preventDefault()
+    void makeToken()
+  }
+  // viaKey: a security key just proved the step-up (ADR 0028), so no code is sent.
+  const makeToken = async (viaKey = false) => {
     setBusy(true)
     setErr('')
     try {
-      if (needCode) await api.post('/auth/mfa/step-up', { code: code.trim() })
+      if (needCode && !viaKey) await api.post('/auth/mfa/step-up', { code: code.trim() })
       const t = await api.post<APIToken & { secret: string }>('/admin/api-tokens', { name: name.trim(), days })
       setMade({ name: t.name, secret: t.secret })
       setName('')
@@ -138,6 +143,7 @@ export function APITokensCard() {
           <input id="token-code" inputMode="numeric" autoComplete="one-time-code" value={code} onChange={(e) => setCode(e.target.value)} autoFocus />
         </Field>
       )}
+      {needCode && <KeyButton className="btn sm" onDone={() => makeToken(true)} onError={setErr} />}
       {err && <Alert tone="danger" onDismiss={() => setErr('')}>{err}</Alert>}
       {revoking && (
         <Confirm

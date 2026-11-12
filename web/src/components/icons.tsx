@@ -280,6 +280,17 @@ export function SignInIcon() {
   )
 }
 
+/** A security key (ADR 0028): the dashboard tile's key at a button's size. */
+export function KeyIcon() {
+  return (
+    <svg {...svgProps(16)}>
+      <circle cx="8" cy="15" r="4" />
+      <line x1="11" y1="12" x2="20" y2="3" />
+      <line x1="16" y1="7" x2="19" y2="10" />
+    </svg>
+  )
+}
+
 /** Checking again: one arrow round, drawn at the sign-in button's size. */
 export function RetryIcon() {
   return (
