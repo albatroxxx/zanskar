@@ -7,6 +7,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"math"
 	"net"
 	"net/url"
 	"strings"
@@ -242,7 +243,12 @@ func (k *Keys) credentials(ctx context.Context, userID string) ([]webauthn.Crede
 			&c.Flags.BackupEligible, &c.Flags.BackupState, &c.Flags.UserVerified, &attType); err != nil {
 			return nil, nil, err
 		}
-		c.Authenticator.SignCount = uint32(count) //nolint:gosec // stored from a uint32
+		// Stored from a uint32, so always in range; a row that is not is
+		// refused rather than wrapped into a counter clone checks would trust.
+		if count < 0 || count > math.MaxUint32 {
+			return nil, nil, fmt.Errorf("auth: key %s has a signature counter out of range", id)
+		}
+		c.Authenticator.SignCount = uint32(count)
 		c.AttestationType = attType
 		c.Flags.UserPresent = true
 		for t := range strings.SplitSeq(transports, ",") {
