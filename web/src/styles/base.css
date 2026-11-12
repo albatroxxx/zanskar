@@ -236,10 +236,13 @@ td .muted, .muted { color: var(--fg-muted); }
    boxes count against this scroll container's overflow and not the page's:
    without it a wide table widened the page past the clipped card. */
 .table-wrap { overflow-x: auto; position: relative; }
-/* The application's Blocked list in a dialog: a host, a kind and a time break
-   mid-word at this width (live 2026-11-05: ":8/0", "docume/nt"); the page it came from may break. */
+/* The application's Blocked list, in a dialog 900 px wide so the Allow
+   column shows without scrolling (live, 2026-11-12). Every cell reads
+   whole: a host, a kind and a time broke mid-word (2026-11-05: ":8/0",
+   "docume/nt"), and so did the page it came from ("en.wikipedia.o/rg");
+   a long one is cut with an ellipsis and its title holds it all. */
 table.blocked th, table.blocked td { white-space: nowrap; }
-table.blocked td.from { white-space: normal; overflow-wrap: anywhere; min-width: 18ch; }
+table.blocked td.from { max-width: 32ch; overflow: hidden; text-overflow: ellipsis; }
 /* An autoscaling group's instances: an id and a zone are names, read whole
    (live 2026-11-11: "i-" over "027fc5cef80dc5c3" over "7", "us-east-" over "1b"). */
 table.instances td.mono { white-space: nowrap; overflow-wrap: normal; }

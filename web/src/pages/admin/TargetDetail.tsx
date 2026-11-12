@@ -126,7 +126,7 @@ export function TargetDetail({ target, credentials, onClose, onChanged, onDelete
   const probed: Protocol[] = database ? ['database'] : protocols
 
   return (
-    <Modal title={t.name} onClose={onClose} width={720}>
+    <Modal title={t.name} onClose={onClose} width={learns ? 900 : 720}>
       {err && <Alert tone="danger" onDismiss={() => setErr('')}>{err}</Alert>}
       {t.host_key_status === 'changed' && (
         <Alert tone="danger">
@@ -424,7 +424,7 @@ function BlockedDependencies({ target, items, onAllow, onClear }: { target: Targ
               <tr key={`${hostport}|${x.why}|${x.what}|${x.from}`}>
                 <td className="mono">{hostport}</td>
                 <td>{x.what}</td>
-                <td className="muted from">{x.from || '—'}</td>
+                <td className="muted from" title={x.from || undefined}>{x.from || '—'}</td>
                 <td className="muted">{x.count} × · {fmtTime(x.last_seen)}</td>
                 <td>
                   {x.why === 'private' && <button className="btn sm" onClick={() => onAllow(hostport)}>Allow</button>}
