@@ -3,11 +3,11 @@
 <head>
   <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Install Zanskar | Zanskar Docs</title>
-  <meta name="description" content="Prerequisites, package and Docker Compose installation, first sign-in, configuration reference, upgrading and removing Zanskar 1.2 on a single server.">
+  <meta name="description" content="Prerequisites, package and Docker Compose installation, first sign-in, configuration reference, upgrading and removing Zanskar on a single server.">
   <link rel="canonical" href="https://albatroxxx.github.io/zanskar/docs/">
   <meta name="robots" content="index,follow">
   <meta property="og:title" content="Install Zanskar">
-  <meta property="og:description" content="Prerequisites, installation, configuration, upgrade and removal for Zanskar 1.2.">
+  <meta property="og:description" content="Prerequisites, installation, configuration, upgrade and removal for Zanskar.">
   <meta property="og:type" content="website"><meta property="og:url" content="https://albatroxxx.github.io/zanskar/docs/">
   <meta property="og:image" content="https://albatroxxx.github.io/zanskar/assets/hosts-1.18.1.jpg"><meta name="twitter:card" content="summary_large_image">
   <link rel="icon" href="../assets/logo.svg" type="image/svg+xml"><link rel="stylesheet" href="../assets/site.css"><script src="../assets/site.js" defer></script><script src="../assets/tabs.js" defer></script>
@@ -116,13 +116,14 @@ curl -k https://localhost/readyz             # default: managed TLS on 443 (-k: 
 curl http://127.0.0.1:8443/readyz            # behind-proxy mode (plain HTTP on loopback)
 curl -k https://localhost:8443/readyz        # own-certificate mode on 8443
 # either way: {"status":"ready"}</code></pre></div>
+    <p>On RHEL, Fedora, Rocky and AlmaLinux, firewalld keeps 80 and 443 closed until you open them: <code>sudo firewall-cmd --permanent --add-service=http --add-service=https &amp;&amp; sudo firewall-cmd --reload</code>. On Ubuntu with ufw enabled: <code>sudo ufw allow 80,443/tcp</code>.</p>
     <p>In behind-proxy mode the gateway speaks plain HTTP on loopback and expects your proxy to terminate TLS on 443; probing it with <code>https://</code> fails with an OpenSSL <em>wrong version number</em> error, which is expected, not a fault. <code>journalctl -u zanskar -n 5</code> shows the listener and whether TLS is on. To switch modes later, re-run <code>zanskar init -force</code> with the new flags; the existing master key is kept.</p>
     <p class="note"><strong>Scripting the admin password.</strong> For cloud-init or Ansible, <code>admin create</code> also reads <code>ZANSKAR_ADMIN_PASSWORD</code>. Feed it from a prompt or a secrets manager, not a literal: <code>read -rs ZANSKAR_ADMIN_PASSWORD &amp;&amp; export ZANSKAR_ADMIN_PASSWORD</code>, then run the command. If you did type a password into a shell, remove that line from history (<code>history -d &lt;n&gt;</code> or delete it from <code>~/.bash_history</code>) and change the password after first sign-in.</p>
 
     <h3 id="first-visit">First visit: check the certificate, then upload yours</h3>
     <p>A default install serves HTTPS with a self-signed certificate, so the browser warns on the first visit. Before accepting, compare the SHA-256 it shows with the one the gateway logged at start (<code>journalctl -u zanskar | grep 'tls certificate'</code>). Then sign in as the admin, open <strong>Settings → TLS certificate</strong> and upload a certificate your users' browsers trust (the certificate, its unencrypted key and the CA's chain, as PEM; it applies at once). Do this before inviting users: until then an on-path attacker present at someone's first visit could impersonate the gateway. Behind a proxy (<code>init -behind-proxy</code>) the proxy's certificate is what users see.</p>
     <h3 id="guacd">Start guacd, for RDP and VNC</h3>
-    <p>Desktop sessions are relayed by <code>guacd</code>, which the package does <strong>not</strong> install. Without it, RDP and VNC targets fail with <em>the desktop service (guacd) is not running</em>, and the journal shows <code>guacd dial failed</code>. <code>zanskar init</code> checks the address you give it and prints this step when nothing is listening. The supported way is the official container, published on loopback only: guacd speaks an unauthenticated protocol and must never be reachable from anywhere but the gateway.</p>
+    <p>Desktop sessions are relayed by <code>guacd</code>, which the package does <strong>not</strong> install. Without it, RDP and VNC sessions are refused: with <em>desktop sessions are not configured on this gateway</em> while no guacd address is set, and with <em>the desktop service (guacd) is not running</em> (and <code>guacd dial failed</code> in the journal) when the address is set but nothing answers there. <code>zanskar init</code> checks the address you give it and prints this step when nothing is listening. The supported way is the official container, published on loopback only: guacd speaks an unauthenticated protocol and must never be reachable from anywhere but the gateway.</p>
     <div class="code-block"><button type="button" class="copy" aria-label="Copy the guacd start command">Copy</button><pre><code>sudo docker run -d --name guacd --restart unless-stopped -p 127.0.0.1:4822:4822 \
   -e HOME=/tmp --read-only --tmpfs /tmp:size=512m,mode=1777 guacamole/guacd:1.6.0</code></pre></div>
     <p>Then point the gateway at it. <code>init -guacd 127.0.0.1:4822</code> already did if you passed it. Otherwise add the line <strong>after</strong> <code>zanskar init</code>, never before: appending to a file that does not exist yet creates a one-line <code>/etc/zanskar/env</code> with no master key, the service restarts in a loop, and <code>init</code> then refuses to overwrite it. The block below checks first:</p>
@@ -138,7 +139,7 @@ fi</code></pre></div>
     <h3 id="tls-without-cert">TLS without a certificate: Caddy and sslip.io</h3>
     <p>Zanskar refuses plain HTTP on a non-loopback address, so a server with no certificate needs one of two things: a reverse proxy that terminates TLS, or a certificate of its own. If the host has a public IP and ports 80 and 443 reachable from the internet, you can have a real Let's Encrypt certificate in a minute without owning a domain: <a href="https://sslip.io">sslip.io</a> resolves <code>203-0-113-10.sslip.io</code> to <code>203.0.113.10</code>, and Caddy obtains and renews the certificate for that name automatically. This is what the AWS reference deployment does. A gateway in managed mode (the default install) does not get a certificate from a CA itself: it serves the one uploaded on its Settings page.</p>
     <div class="tabs" data-tabs><div class="tab-list" role="tablist"><button type="button" role="tab" aria-selected="true" data-tab="deb">Debian / Ubuntu (.deb)</button><button type="button" role="tab" aria-selected="false" data-tab="rpm">RHEL / Fedora / SUSE (.rpm)</button></div>
-    <div data-panel="deb"><div class="code-block"><button type="button" class="copy" aria-label="Copy Caddy install (deb)">Copy</button><pre><code>sudo apt update &amp;&amp; sudo apt install -y caddy</code></pre></div></div>
+    <div data-panel="deb"><div class="code-block"><button type="button" class="copy" aria-label="Copy Caddy install (deb)">Copy</button><pre><code>sudo apt update &amp;&amp; sudo apt install -y caddy</code></pre></div><p>Ubuntu 24.04 and Debian 12 or later carry the package. On Ubuntu 22.04 or Debian 11, add <a href="https://caddyserver.com/docs/install#debian-ubuntu-raspbian">Caddy's own repository</a> first.</p></div>
     <div data-panel="rpm" hidden><div class="code-block"><button type="button" class="copy" aria-label="Copy Caddy install (rpm)">Copy</button><pre><code>sudo dnf makecache &amp;&amp; sudo dnf install -y 'dnf-command(copr)' &amp;&amp; sudo dnf copr enable -y @caddy/caddy &amp;&amp; sudo dnf install -y caddy</code></pre></div></div></div>
     <div class="code-block"><button type="button" class="copy" aria-label="Copy the Caddyfile and proxy setup">Copy</button><pre><code># 1. your public IP, dashes instead of dots, becomes the hostname
 IP=$(curl -s https://api.ipify.org); HOST=${IP//./-}.sslip.io; echo $HOST
@@ -179,10 +180,10 @@ docker compose -f deploy/docker-compose.yml exec -it \
     <div class="code-block"><button type="button" class="copy" aria-label="Copy image verification command">Copy</button><pre><code>cosign verify ghcr.io/albatroxxx/zanskar:$V \
   --certificate-identity-regexp "^https://github.com/albatroxxx/zanskar/.github/workflows/release.yml@refs/tags/v$V\$" \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com</code></pre></div>
-    <p>Without a site address Caddy serves <code>https://localhost/</code> with a self-signed certificate (a browser warning, fine for a trial). With <code>ZANSKAR_SITE_ADDRESS</code> set and ports 80/443 reachable from the internet, Caddy obtains a Let's Encrypt certificate automatically. Data lives in the <code>zanskar_data</code> volume.</p>
+    <p>Without a site address Caddy serves <code>https://localhost/</code> with a self-signed certificate (a browser warning, fine for a trial). With <code>ZANSKAR_SITE_ADDRESS</code> set and ports 80/443 reachable from the internet, Caddy obtains a Let's Encrypt certificate automatically. Data lives in the <code>zanskar_data</code> volume, which Docker lists as <code>deploy_zanskar_data</code> (Compose prefixes the name of the directory the compose file is in).</p>
 
     <h2 id="first-sign-in">3. First sign-in</h2>
-    <ol><li>Open the gateway URL and sign in with the admin username and password you created.</li><li>MFA is mandatory by default. Scan the QR code with an authenticator app and enter the code to enroll. If you refresh mid-enrollment the page resumes where you were.</li><li>You land in the admin console. The <a href="../guide/">how-to guide</a> walks through credentials, targets, policies and the first session.</li></ol>
+    <ol><li>Open the gateway URL and sign in with the admin username and password you created.</li><li>MFA is mandatory by default. Scan the QR code with an authenticator app and enter the code to enroll, or choose <strong>Use a security key instead</strong> to register a security key or passkey (it needs <code>ZANSKAR_PUBLIC_URL</code>, a host name with a trusted certificate). If you refresh mid-enrollment the page resumes where you were.</li><li>You land in the admin console. The <a href="../guide/">how-to guide</a> walks through credentials, targets, policies and the first session.</li></ol>
     <p>Lost the only admin's authenticator? On the gateway host: <code>zanskar admin reset-mfa --username admin</code>. The reset is audited and the next sign-in enrolls a new one.</p>
 
     <h2 id="configuration">Configuration reference</h2>
@@ -222,7 +223,8 @@ docker compose -f deploy/docker-compose.yml exec -it \
     <p><strong>From the console.</strong> The bell at the top right of the admin console lights when a newer release is published (the gateway checks once a day; nothing about it is sent). Open it and choose <strong>Update now</strong>: the gateway lets live sessions finish, then a root-owned installer on the host downloads the release, verifies its signature exactly as step 1 does, installs the package and restarts the service. It asks for the gateway's hostname and a code from your authenticator, needs <code>cosign</code> on the host, and refuses anything that is not a newer, signed release. The update then shows its progress, from waiting for live sessions to the installer's own words, the restart and <em>Back on</em> the new version, and ends with a green tick or the installer's reason for stopping. Docker Compose and Kubernetes installs see the notice only; update them as below.</p>
     <p><strong>Disk.</strong> The relay and browser images follow the gateway's version, so a host that runs applications or MySQL sessions pulls new ones with each update; the browser image is about a 270 MB download and 660 MB on disk. From 1.9.0 the gateway removes the earlier versions' images itself once it is running on the new one (<strong>Settings → Updates → Remove old images</strong>, on by default). Before that, or with it off, remove them by hand: <code>sudo docker image ls | grep albatroxxx</code>, then <code>sudo docker image rm</code> each older tag.</p>
     <div class="code-block"><button type="button" class="copy" aria-label="Copy package update commands">Copy</button><pre><code># package path: download and verify the new package into /tmp/zanskar exactly as in step 1, then
-sudo bash -c 'set -a; . /etc/zanskar/env; set +a; runuser -u zanskar -- zanskar backup --out /secure/zanskar-$(date +%F).tar.gz'
+sudo bash -c 'set -a; . /etc/zanskar/env; set +a; runuser -u zanskar -- zanskar backup --out /var/lib/zanskar/backup-$(date +%F).tar.gz'
+# then copy the archive off the host, and remove it here
 cd /tmp/zanskar
 sudo apt install ./zanskar_${V}_linux_amd64.deb   # or: sudo rpm -U zanskar_${V}_linux_amd64.rpm
 sudo systemctl restart zanskar
@@ -230,10 +232,10 @@ zanskar version</code></pre></div>
     <div class="code-block"><button type="button" class="copy" aria-label="Copy Compose update commands">Copy</button><pre><code># Compose path: set ZANSKAR_VERSION to the new release in deploy/.env, then
 docker compose -f deploy/docker-compose.yml pull
 docker compose -f deploy/docker-compose.yml up -d</code></pre></div>
-    <p>Upgrades keep <code>/var/lib/zanskar</code>, <code>/etc/zanskar/env</code> and, on Compose, the <code>zanskar_data</code> volume. Read the <a href="../releases/">release notes</a> for anything version-specific. Live sessions get a grace period to close when the service restarts.</p>
+    <p>Upgrades keep <code>/var/lib/zanskar</code>, <code>/etc/zanskar/env</code> and, on Compose, the data volume (<code>deploy_zanskar_data</code>: Compose names it after the directory the compose file is in). Read the <a href="../releases/">release notes</a> for anything version-specific. A restart of the service ends live sessions: each person is told the gateway is restarting and can reconnect when it is back, and their recordings are finished first. <strong>Update now</strong> in the console waits for them instead.</p>
     <h3 id="restore">Restore from a backup</h3>
     <div class="code-block"><button type="button" class="copy" aria-label="Copy restore commands">Copy</button><pre><code>sudo systemctl stop zanskar
-sudo bash -c 'set -a; . /etc/zanskar/env; set +a; runuser -u zanskar -- zanskar restore --in /secure/zanskar-2026-09-25.tar.gz --force'
+sudo bash -c 'set -a; . /etc/zanskar/env; set +a; runuser -u zanskar -- zanskar restore --in /var/lib/zanskar/backup-2026-09-25.tar.gz --force'
 sudo systemctl start zanskar</code></pre></div>
     <p>Restore refuses to overwrite an existing database without <code>--force</code> and warns when the archive was sealed under a different master key, because its stored credentials would be unreadable. Restore the original key first if you have it.</p>
 
@@ -246,7 +248,8 @@ sudo systemctl start zanskar</code></pre></div>
     <div class="code-block"><button type="button" class="copy" aria-label="Copy purge commands">Copy</button><pre><code>sudo rm -rf /var/lib/zanskar /etc/zanskar
 sudo userdel zanskar</code></pre></div>
     <p class="warn">Recordings and the audit log are compliance evidence. Check your retention obligations before purging them.</p>
-    <p>On Compose, <code>docker compose -f deploy/docker-compose.yml down</code> stops the stack and keeps the data volume; add <code>-v</code> to delete the volume as well.</p>
+    <p>On a package install, Docker keeps what the gateway and you started there: remove the guacd container with <code>sudo docker rm -f guacd</code>, and the images with <code>sudo docker image ls | grep -E 'albatroxxx|guacd'</code>, then <code>sudo docker image rm</code> each.</p>
+    <p>On Compose, <code>docker compose -f deploy/docker-compose.yml down</code> stops the stack and keeps the data volume (<code>deploy_zanskar_data</code>); add <code>-v</code> to delete the volumes as well.</p>
 
     <h2 id="security">Security</h2>
     <p>Keep <code>ZANSKAR_REQUIRE_MFA=true</code>. Terminate TLS at the gateway or on the same host. Never expose <code>guacd</code> (port 4822) beyond the gateway. Escrow the master key somewhere the database backup cannot reach. Ship the audit log to your SIEM and run <code>zanskar audit verify</code> on a schedule.</p>
