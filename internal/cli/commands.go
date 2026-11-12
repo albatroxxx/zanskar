@@ -540,6 +540,8 @@ func cmdTargets(x *run) error {
 			kind = e
 		} else if str(t, "app_upstream") != "" {
 			kind = "application"
+		} else if str(t, "kube_api_server") != "" {
+			kind = "kubernetes"
 		}
 		rows = append(rows, []string{str(t, "name"), str(t, "address"), kind, str(t, "host_key_status"), str(t, "tags")})
 	}

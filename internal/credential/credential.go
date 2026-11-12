@@ -8,6 +8,7 @@ package credential
 import (
 	"crypto/ed25519"
 	"crypto/rand"
+	"crypto/tls"
 	"encoding/pem"
 	"errors"
 	"fmt"
@@ -30,12 +31,18 @@ const (
 	TypeSSHCA              Type = "ssh_ca"
 	TypeDomain             Type = "domain"
 	TypeEC2InstanceConnect Type = "ec2_instance_connect"
+	// TypeKubeToken is a Kubernetes service account's bearer token;
+	// TypeKubeClientCert a client certificate and its key, PEM (ADR 0045).
+	// Either is Zanskar's own identity in the cluster, which needs only the
+	// right to impersonate.
+	TypeKubeToken      Type = "kube_token"
+	TypeKubeClientCert Type = "kube_client_cert"
 )
 
 // ValidType reports whether t is known.
 func ValidType(t Type) bool {
 	switch t {
-	case TypePassword, TypeSSHKey, TypeSSHCA, TypeDomain, TypeEC2InstanceConnect:
+	case TypePassword, TypeSSHKey, TypeSSHCA, TypeDomain, TypeEC2InstanceConnect, TypeKubeToken, TypeKubeClientCert:
 		return true
 	}
 	return false
@@ -187,6 +194,11 @@ func validateAndPrepare(c *Credential, s *Secret) (*prepared, error) {
 	if c.Type == TypeEC2InstanceConnect && c.Mode != ModeVaulted {
 		return nil, fmt.Errorf("%w: ec2_instance_connect is always vaulted (there is no secret to supply)", ErrInvalid)
 	}
+	if (c.Type == TypeKubeToken || c.Type == TypeKubeClientCert) && c.Mode != ModeVaulted {
+		// The cluster's credential is Zanskar's own identity there, never
+		// the person's (ADR 0045): the person is impersonated through it.
+		return nil, fmt.Errorf("%w: %s is always vaulted", ErrInvalid, c.Type)
+	}
 	if err := validateCertificateSettings(c); err != nil {
 		return nil, err
 	}
@@ -240,6 +252,34 @@ func validateAndPrepare(c *Credential, s *Secret) (*prepared, error) {
 		}
 		c.PublicKey = ""
 		return &prepared{}, nil
+	case TypeKubeToken:
+		// The token travels in the password field, as the one secret the
+		// type holds; it names no user, the cluster knows the account.
+		if s.Password == "" {
+			return nil, fmt.Errorf("%w: password (the bearer token) required", ErrInvalid)
+		}
+		if s.PrivateKey != "" {
+			return nil, fmt.Errorf("%w: private_key not allowed for type %s", ErrInvalid, c.Type)
+		}
+		if strings.ContainsAny(s.Password, " \t\r\n") {
+			return nil, fmt.Errorf("%w: a bearer token has no spaces or line breaks", ErrInvalid)
+		}
+		c.Username, c.PublicKey = "", ""
+		return &prepared{plaintext: []byte(s.Password)}, nil
+	case TypeKubeClientCert:
+		// The certificate goes in private_key with its key, one PEM text,
+		// as kubectl's client-certificate-data and client-key-data joined.
+		if s.Password != "" {
+			return nil, fmt.Errorf("%w: password not allowed for type %s", ErrInvalid, c.Type)
+		}
+		if s.PrivateKey == "" {
+			return nil, fmt.Errorf("%w: private_key (the client certificate and its key, PEM) required", ErrInvalid)
+		}
+		if _, err := tls.X509KeyPair([]byte(s.PrivateKey), []byte(s.PrivateKey)); err != nil {
+			return nil, fmt.Errorf("%w: the PEM must hold a certificate and the key it belongs to: %w", ErrInvalid, err)
+		}
+		c.Username, c.PublicKey = "", ""
+		return &prepared{plaintext: []byte(s.PrivateKey)}, nil
 	}
 	return nil, ErrInvalid
 }

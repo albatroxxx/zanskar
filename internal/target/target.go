@@ -37,6 +37,8 @@ const (
 	WinRM    Protocol = protocol.WinRM
 	Database Protocol = protocol.Database
 	HTTP     Protocol = protocol.HTTP
+	Kube     Protocol = protocol.Kube
+	Pod      Protocol = protocol.Pod
 )
 
 // Protocols lists the host protocols probed in a stable order. Database is not
@@ -44,9 +46,10 @@ const (
 var Protocols = []Protocol{SSH, RDP, VNC, WinRM}
 
 // CredentialProtocols are the protocols a target may bind a vaulted credential
-// to, in a stable order: the probed host protocols plus database (ADR 0017),
-// which is not probed but still authenticates through a stored credential.
-var CredentialProtocols = []Protocol{SSH, RDP, VNC, WinRM, Database}
+// to, in a stable order: the probed host protocols plus database (ADR 0017)
+// and kube (ADR 0045), which are not probed but still authenticate through a
+// stored credential. A pod shell uses the cluster's kube credential.
+var CredentialProtocols = []Protocol{SSH, RDP, VNC, WinRM, Database, Kube}
 
 // DefaultPorts are used when a target does not override a port.
 var DefaultPorts = map[Protocol]int{SSH: 22, RDP: 3389, VNC: 5900, WinRM: 5986}
@@ -55,11 +58,12 @@ var DefaultPorts = map[Protocol]int{SSH: 22, RDP: 3389, VNC: 5900, WinRM: 5986}
 // target's port defaults from its engine (ADR 0017).
 var EngineDefaultPorts = map[string]int{protocol.Postgres: 5432, protocol.MySQL: 3306, protocol.MariaDB: 3306}
 
-// ValidProtocol reports whether p is known. Database and HTTP are not probed
-// and carry no port of their own: a database's port comes from its engine,
-// an application's from its upstream.
+// ValidProtocol reports whether p is known. Database, HTTP, Kube and Pod are
+// not probed and carry no port of their own: a database's port comes from its
+// engine, an application's from its upstream, a cluster's from its API
+// server's URL.
 func ValidProtocol(p Protocol) bool {
-	if p == Database || p == HTTP {
+	if p == Database || p == HTTP || p == Kube || p == Pod {
 		return true
 	}
 	_, ok := DefaultPorts[p]
@@ -225,7 +229,22 @@ type Target struct {
 	AppDependencies string `json:"app_dependencies,omitempty"`
 	// AppPrivate is the private address space the dependencies may reach,
 	// under DependenciesPublic; nil for none.
-	AppPrivate          *AppPrivate      `json:"app_private,omitempty"`
+	AppPrivate *AppPrivate `json:"app_private,omitempty"`
+	// KubeAPIServer makes the target a Kubernetes cluster (ADR 0045): the
+	// API server's https URL. Address holds its host, so the address rules
+	// apply to it as to any target. Sessions reach the API through the
+	// gateway, as the person (protocol kube), or a shell into a container
+	// (protocol pod).
+	KubeAPIServer string `json:"kube_api_server,omitempty"`
+	// KubeCA is the PEM bundle the API server's certificate is verified
+	// against; empty means the system roots.
+	KubeCA string `json:"kube_ca,omitempty"`
+	// KubeImpersonate, the default, sends every request as the person
+	// (Impersonate-User and the person's Zanskar groups), so the cluster's
+	// RBAC decides and its audit log names them. Off, every session acts as
+	// the credential itself: a shared identity, which the console and the
+	// audit log say.
+	KubeImpersonate     *bool            `json:"kube_impersonate,omitempty"`
 	OSFamily            OSFamily         `json:"os_family"`
 	Ports               map[Protocol]int `json:"ports"`
 	Capabilities        []Protocol       `json:"capabilities"`
@@ -519,6 +538,42 @@ func (t *Target) Validate() error {
 		}
 		t.DatabaseName, t.TLSMode = "", ""
 	}
+	t.KubeAPIServer = strings.TrimSpace(t.KubeAPIServer)
+	if t.KubeAPIServer != "" {
+		// A Kubernetes cluster (ADR 0045) is reached at its API server,
+		// never dialled by a host protocol: its address is the server's
+		// host, checked by the address rules as any target's is.
+		if t.Engine != "" || t.AppUpstream != "" {
+			return fmt.Errorf("%w: a target is a host, a database, an application or a Kubernetes cluster, not two of these", ErrInvalid)
+		}
+		u, err := ParseAPIServer(t.KubeAPIServer)
+		if err != nil {
+			return err
+		}
+		t.KubeAPIServer, t.Address = u.String(), u.Hostname()
+		if t.OSFamily == "" {
+			t.OSFamily = OtherOS
+		}
+		t.KubeCA = strings.TrimSpace(t.KubeCA)
+		if t.KubeCA != "" {
+			if err := validCABundle(t.KubeCA); err != nil {
+				return fmt.Errorf("%w: kube_ca%s", ErrInvalid, strings.TrimPrefix(err.Error(), ErrInvalid.Error()+": tls_ca"))
+			}
+		}
+		for p := range t.Ports {
+			if p != Kube && p != Pod {
+				return fmt.Errorf("%w: a Kubernetes cluster has no %s port; its API server's URL carries the port", ErrInvalid, p)
+			}
+		}
+		t.Ports, t.Capabilities = map[Protocol]int{}, []Protocol{Kube, Pod}
+	} else {
+		if t.KubeCA != "" {
+			return fmt.Errorf("%w: kube_ca belongs to a Kubernetes cluster, which needs kube_api_server", ErrInvalid)
+		}
+		if t.KubeImpersonate != nil {
+			return fmt.Errorf("%w: kube_impersonate belongs to a Kubernetes cluster, which needs kube_api_server", ErrInvalid)
+		}
+	}
 	if t.AppUpstream == "" && len(t.AppEndpoints) > 0 {
 		return fmt.Errorf("%w: app_endpoints belong to an application, which needs app_upstream", ErrInvalid)
 	}
@@ -658,13 +713,16 @@ func validCABundle(pem string) error {
 func (t *Target) IsDatabase() bool { return t.Engine != "" }
 
 // Kind is the target's kind for access policies (ADR 0036): a database when
-// it has an engine, an application when it has an upstream, else a host.
+// it has an engine, an application when it has an upstream, a Kubernetes
+// cluster when it has an API server, else a host.
 func (t *Target) Kind() string {
 	switch {
 	case t.IsDatabase():
 		return protocol.KindDatabase
 	case t.IsApplication():
 		return protocol.KindApplication
+	case t.IsKubernetes():
+		return protocol.KindKubernetes
 	}
 	return protocol.KindHost
 }
@@ -672,6 +730,27 @@ func (t *Target) Kind() string {
 // IsApplication reports whether the target is a web application reached
 // through the proxy (ADR 0033).
 func (t *Target) IsApplication() bool { return t.AppUpstream != "" }
+
+// IsKubernetes reports whether the target is a Kubernetes cluster (ADR 0045).
+func (t *Target) IsKubernetes() bool { return t.KubeAPIServer != "" }
+
+// Impersonates reports whether a cluster's sessions act as the person
+// (the default) rather than as the credential (a shared identity).
+func (t *Target) Impersonates() bool { return t.KubeImpersonate == nil || *t.KubeImpersonate }
+
+// ParseAPIServer parses a cluster's API server URL: https, a host, an
+// optional port, no path beyond "/", no credentials, no query.
+func ParseAPIServer(raw string) (*url.URL, error) {
+	u, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || u.Scheme != "https" || u.Hostname() == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
+		return nil, fmt.Errorf("%w: kube_api_server must be https://host[:port]", ErrInvalid)
+	}
+	if u.Path != "" && u.Path != "/" {
+		return nil, fmt.Errorf("%w: kube_api_server carries a path; the API is served at the root", ErrInvalid)
+	}
+	u.Path = ""
+	return u, nil
+}
 
 // MatchesTags reports whether every key in want is present with the same value.
 func (t *Target) MatchesTags(want map[string]string) bool {

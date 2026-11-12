@@ -11,6 +11,7 @@ export const kinds: { kind: TargetKind; label: string }[] = [
   { kind: 'database', label: 'Database' },
   { kind: 'application', label: 'Application' },
   { kind: 'autoscaling', label: 'Autoscaling' },
+  { kind: 'kubernetes', label: 'Kubernetes' },
 ]
 
 /** What each kind serves; a grant offers nothing else. */
@@ -19,12 +20,14 @@ export const kindProtocols: Record<TargetKind, Protocol[]> = {
   autoscaling: ['ssh', 'rdp', 'vnc', 'winrm'],
   database: ['database'],
   application: ['http'],
+  kubernetes: ['kube', 'pod'],
 }
 
-/** A target's kind: an engine makes it a database, an upstream an application. */
-export function kindOf(t: Pick<Target, 'engine' | 'app_upstream'>): TargetKind {
+/** A target's kind: an engine makes it a database, an upstream an application, an API server a Kubernetes cluster. */
+export function kindOf(t: Pick<Target, 'engine' | 'app_upstream' | 'kube_api_server'>): TargetKind {
   if (t.engine) return 'database'
   if (t.app_upstream) return 'application'
+  if (t.kube_api_server) return 'kubernetes'
   return 'host'
 }
 
@@ -34,7 +37,7 @@ export function kindOf(t: Pick<Target, 'engine' | 'app_upstream'>): TargetKind {
  * serves. An autoscaling group offers its declared capabilities.
  */
 export function chipsFor(kind: TargetKind, t: Pick<Target, 'capabilities' | 'os_family'> | Pick<AutoscalingGroup, 'capabilities' | 'os_family'>): Protocol[] {
-  if (kind === 'database' || kind === 'application') return kindProtocols[kind]
+  if (kind === 'database' || kind === 'application' || kind === 'kubernetes') return kindProtocols[kind]
   const served = kindProtocols[kind]
   const caps = (t.capabilities ?? []).filter((p) => served.includes(p))
   if (caps.length) return caps

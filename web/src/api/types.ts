@@ -69,7 +69,7 @@ export interface Page<T> { items: T[]; next_cursor?: string }
 export interface ApiErrorBody { code: string; message: string; request_id?: string }
 
 /** How a target is reached; `http` is a web application opened in an isolated browser beside the gateway (ADR 0034). */
-export type Protocol = 'ssh' | 'rdp' | 'vnc' | 'winrm' | 'database' | 'http'
+export type Protocol = 'ssh' | 'rdp' | 'vnc' | 'winrm' | 'database' | 'http' | 'kube' | 'pod'
 export type OSFamily = 'linux' | 'windows' | 'other'
 export type HostKeyStatus = 'unknown' | 'pending' | 'trusted' | 'changed'
 /** A Windows listener's pinned certificate: none seen, pinned, or changed since (ADR 0047). */
@@ -135,6 +135,10 @@ export interface Target {
   app_dependencies?: 'public' | 'origins'
   /** The private networks (CIDRs) and hosts (host:port) the dependencies may reach, under 'public'; absent for none. */
   app_private?: AppPrivate
+  /** Kubernetes clusters (ADR 0045): the API server's https URL, the CA it is verified against, and whether sessions act as the person. */
+  kube_api_server?: string
+  kube_ca?: string
+  kube_impersonate?: boolean
   ports: Partial<Record<Protocol, number>>
   capabilities: Protocol[]
   host_key_fingerprint: string | null
@@ -252,7 +256,7 @@ export interface ReachableInstance {
   healthy: boolean
 }
 
-export type CredentialType = 'password' | 'ssh_key' | 'ssh_ca' | 'domain' | 'ec2_instance_connect'
+export type CredentialType = 'password' | 'ssh_key' | 'ssh_ca' | 'domain' | 'ec2_instance_connect' | 'kube_token' | 'kube_client_cert'
 export type CredentialMode = 'vaulted' | 'user_supplied' | 'passthrough'
 
 export interface Credential {
@@ -303,7 +307,7 @@ export interface GroupMember { user_id: string; username: string; display_name: 
 
 export interface TimeWindow { days: string[]; from: string; to: string; tz: string }
 /** What a policy grant covers (ADR 0036); each kind serves its own protocols. */
-export type TargetKind = 'host' | 'database' | 'application' | 'autoscaling'
+export type TargetKind = 'host' | 'database' | 'application' | 'autoscaling' | 'kubernetes'
 
 /** One group or user a policy applies to. */
 export interface PolicySubject { kind: 'group' | 'user'; id: string }
@@ -333,6 +337,10 @@ export interface PolicyGrant {
   max_session_minutes: number | null
   time_windows: TimeWindow[]
   retention_days: number | null
+  /** A Kubernetes grant's scope (ADR 0045): the namespaces it reaches (empty: all), cluster-wide resources, port-forward. */
+  namespaces?: string[]
+  cluster_scope?: boolean
+  port_forward?: boolean
 }
 
 /** An access policy: an audience and the grants it holds (ADR 0036). */

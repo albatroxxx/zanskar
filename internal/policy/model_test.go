@@ -57,6 +57,17 @@ func TestValidate(t *testing.T) {
 		}, `a database does not serve "ssh"`},
 		{"database on a host", func(p *Policy) { p.Grants[0].Targets[0].Protocols = []string{"database"} }, `a host does not serve "database"`},
 		{"developer tools on a host", func(p *Policy) { p.Grants[0].AllowDevTools = true }, "developer tools are for application grants only"},
+		{"namespaces on a host", func(p *Policy) { p.Grants[0].Namespaces = []string{"prod"} }, "for Kubernetes grants only"},
+		{"cluster scope on a host", func(p *Policy) { p.Grants[0].ClusterScope = true }, "for Kubernetes grants only"},
+		{"a namespace that is not a name", func(p *Policy) {
+			p.Grants[0] = Grant{Kind: protocol.KindKubernetes, Targets: []GrantTarget{{ID: "k1", Protocols: []string{"kube"}}}, Namespaces: []string{"Prod Team"}}
+		}, "not a valid name"},
+		{"a namespace twice", func(p *Policy) {
+			p.Grants[0] = Grant{Kind: protocol.KindKubernetes, Targets: []GrantTarget{{ID: "k1", Protocols: []string{"kube"}}}, Namespaces: []string{"prod", " prod "}}
+		}, "named twice"},
+		{"ssh on a cluster", func(p *Policy) {
+			p.Grants[0] = Grant{Kind: protocol.KindKubernetes, Targets: []GrantTarget{{ID: "k1", Protocols: []string{"ssh"}}}}
+		}, `a kubernetes does not serve "ssh"`},
 		{"a protocol twice", func(p *Policy) { p.Grants[0].Targets[0].Protocols = []string{"ssh", "ssh"} }, "given twice"},
 		{"tags with no key", func(p *Policy) { p.Grants[0].Tags = tags(map[string][]string{}, "ssh") }, "at least one key"},
 		{"a tag with no value", func(p *Policy) { p.Grants[0].Tags = tags(map[string][]string{"env": {}}, "ssh") }, "needs 1-16 values"},

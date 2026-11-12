@@ -15,6 +15,7 @@ package policy
 import (
 	"errors"
 	"fmt"
+	"regexp"
 	"slices"
 	"strings"
 	"time"
@@ -92,6 +93,26 @@ type Grant struct {
 	MaxSessionMinutes  *int         `json:"max_session_minutes"`
 	TimeWindows        []TimeWindow `json:"time_windows"`
 	RetentionDays      *int         `json:"retention_days"`
+	// A Kubernetes grant's scope (ADR 0045), which the gateway holds the
+	// line on before the cluster's RBAC does: Namespaces the sessions may
+	// reach (empty means every namespace); ClusterScope admits cluster-wide
+	// resources (nodes, namespaces, CRDs) and listing across namespaces;
+	// PortForward admits port-forward. Both off by default. Kubernetes only.
+	Namespaces   []string `json:"namespaces,omitempty"`
+	ClusterScope bool     `json:"cluster_scope,omitempty"`
+	PortForward  bool     `json:"port_forward,omitempty"`
+}
+
+// MaxGrantNamespaces bounds a grant's namespace list.
+const MaxGrantNamespaces = 64
+
+// namespaceRe is a DNS label, which is what a namespace name is.
+var namespaceRe = regexp.MustCompile(`^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$`)
+
+// CoversNamespace reports whether the grant admits a request in ns: every
+// namespace when the list is empty, else one it names.
+func (g *Grant) CoversNamespace(ns string) bool {
+	return len(g.Namespaces) == 0 || slices.Contains(g.Namespaces, ns)
 }
 
 // TimeWindow is a recurring weekly window in a named zone.
@@ -195,6 +216,24 @@ func (g *Grant) validate() error {
 	}
 	if g.AllowDevTools && g.Kind != protocol.KindApplication {
 		return fmt.Errorf("%w: developer tools are for application grants only", ErrInvalidInput)
+	}
+	if g.Kind != protocol.KindKubernetes && (len(g.Namespaces) > 0 || g.ClusterScope || g.PortForward) {
+		return fmt.Errorf("%w: namespaces, cluster_scope and port_forward are for Kubernetes grants only", ErrInvalidInput)
+	}
+	if len(g.Namespaces) > MaxGrantNamespaces {
+		return fmt.Errorf("%w: at most %d namespaces", ErrInvalidInput, MaxGrantNamespaces)
+	}
+	seenNS := map[string]bool{}
+	for i, ns := range g.Namespaces {
+		ns = strings.TrimSpace(ns)
+		if !namespaceRe.MatchString(ns) {
+			return fmt.Errorf("%w: namespace %q is not a valid name", ErrInvalidInput, ns)
+		}
+		if seenNS[ns] {
+			return fmt.Errorf("%w: namespace %s is named twice", ErrInvalidInput, ns)
+		}
+		seenNS[ns] = true
+		g.Namespaces[i] = ns
 	}
 	// Files move over SSH (the terminal's SFTP panel) and RDP (the session's
 	// drive), never into a database client or an application's browser,

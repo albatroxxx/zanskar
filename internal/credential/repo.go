@@ -274,7 +274,9 @@ func (v *Vault) Open(ctx context.Context, id string) (*Opened, error) {
 	}
 	o := &Opened{Credential: *c}
 	switch c.Type {
-	case TypeSSHKey, TypeSSHCA:
+	case TypeSSHKey, TypeSSHCA, TypeKubeClientCert:
+		// A cluster's client certificate travels with its key in one PEM
+		// text, kept as bytes so Close zeroes it.
 		o.PrivateKey = plain
 	default:
 		o.Password = string(plain)

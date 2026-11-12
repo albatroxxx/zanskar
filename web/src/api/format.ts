@@ -166,6 +166,8 @@ export function protocolName(p: string): string {
   switch (p) {
     case 'winrm': return 'WinRM'
     case 'database': return 'database'
+    case 'kube': return 'Kubernetes'
+    case 'pod': return 'pod shell'
     default: return p.toUpperCase()
   }
 }
