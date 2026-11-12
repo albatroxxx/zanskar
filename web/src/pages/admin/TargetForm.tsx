@@ -11,11 +11,11 @@ import { protocols, type PortProtocol } from './lib'
 import { TagEditor } from '../../components/TagEditor'
 import { rowsToTags, tagRows, type TagRow } from '../../components/tags'
 
-export type TargetKind = 'host' | 'database' | 'application'
+export type TargetKind = 'host' | 'database' | 'application' | 'kubernetes'
 
-/** kindOf says what kind of target t is: an application has an upstream, a database an engine. */
-export function kindOf(t: Pick<Target, 'engine' | 'app_upstream'>): TargetKind {
-  return t.app_upstream ? 'application' : t.engine ? 'database' : 'host'
+/** kindOf says what kind of target t is: an application has an upstream, a database an engine, a cluster an API server. */
+export function kindOf(t: Pick<Target, 'engine' | 'app_upstream' | 'kube_api_server'>): TargetKind {
+  return t.app_upstream ? 'application' : t.engine ? 'database' : t.kube_api_server ? 'kubernetes' : 'host'
 }
 
 /** Body of POST/PUT /targets: every editable field travels on each write. */
@@ -36,6 +36,9 @@ export function targetBody(t: Target, patch: Partial<Target> = {}) {
     app_endpoints: u.app_endpoints ?? [],
     app_dependencies: u.app_dependencies ?? '',
     app_private: u.app_private ?? null,
+    kube_api_server: u.kube_api_server ?? '',
+    kube_ca: u.kube_ca ?? '',
+    kube_impersonate: u.kube_impersonate ?? null,
     retention_days: u.retention_days ?? null,
     ports: u.ports,
     capabilities: u.capabilities,
@@ -72,6 +75,7 @@ const emptyForm = {
   name: '', address: '', os_family: 'linux' as OSFamily,
   engine: 'postgres', engine_version: '', database_name: '', tls_mode: 'verify-full', tls_ca: '',
   app_upstream: '', endpoints: [] as AppEndpoint[], dependencies: 'public' as 'public' | 'origins', private_networks: '', private_hosts: '',
+  kube_api_server: '', kube_ca: '', kube_impersonate: true,
   ...defaultPorts, database: enginePorts.postgres, tags: [] as TagRow[], notes: '', retention: '',
 }
 
@@ -97,6 +101,9 @@ export function TargetForm({ initial, kind, onClose, onSaved }: { initial?: Targ
           tls_mode: initial.tls_mode || 'verify-full',
           tls_ca: initial.tls_ca ?? '',
           app_upstream: initial.app_upstream ?? '',
+          kube_api_server: initial.kube_api_server ?? '',
+          kube_ca: initial.kube_ca ?? '',
+          kube_impersonate: initial.kube_impersonate ?? true,
           endpoints: (initial.app_endpoints ?? []).map((e) => ({ ...e })),
           dependencies: initial.app_dependencies ?? 'public',
           private_networks: (initial.app_private?.networks ?? []).join('\n'),
@@ -175,12 +182,13 @@ export function TargetForm({ initial, kind, onClose, onSaved }: { initial?: Targ
     void submit(async () => {
       const database = k === 'database'
       const application = k === 'application'
+      const cluster = k === 'kubernetes'
       const secure = application && secureOrigins
       const body = {
         name: f.name.trim(),
-        // An application's address is its upstream's host; the server derives it.
-        address: application ? '' : f.address.trim(),
-        os_family: database || application ? 'other' : f.os_family,
+        // An application's address is its upstream's host, a cluster's its API server's; the server derives it.
+        address: application || cluster ? '' : f.address.trim(),
+        os_family: database || application || cluster ? 'other' : f.os_family,
         engine: database ? f.engine : '',
         engine_version: database ? f.engine_version.trim() : '',
         database_name: database ? f.database_name.trim() : '',
@@ -190,6 +198,9 @@ export function TargetForm({ initial, kind, onClose, onSaved }: { initial?: Targ
         app_endpoints: endpoints.body,
         app_dependencies: application ? f.dependencies : '',
         app_private: application ? privateBody(f.private_networks, f.private_hosts) : null,
+        kube_api_server: cluster ? f.kube_api_server.trim() : '',
+        kube_ca: cluster ? f.kube_ca.trim() : '',
+        kube_impersonate: cluster ? f.kube_impersonate : null,
         retention_days: application ? null : retention,
         ports,
         capabilities: initial?.capabilities ?? [],
@@ -210,7 +221,7 @@ export function TargetForm({ initial, kind, onClose, onSaved }: { initial?: Targ
     })
   }
 
-  const title = initial ? `Edit ${initial.name}` : k === 'database' ? 'Add database' : k === 'host' ? 'Add host' : k === 'application' ? 'Add application' : 'Add target'
+  const title = initial ? `Edit ${initial.name}` : k === 'database' ? 'Add database' : k === 'host' ? 'Add host' : k === 'application' ? 'Add application' : k === 'kubernetes' ? 'Add cluster' : 'Add target'
   // The CA bundle applies when any origin is https, the upstream or another.
   const secureOrigins = [f.app_upstream, ...f.endpoints.map((e) => e.url)].some((u) => u.trim().toLowerCase().startsWith('https://'))
   return (
@@ -218,7 +229,7 @@ export function TargetForm({ initial, kind, onClose, onSaved }: { initial?: Targ
       {err && <Alert tone="danger" onDismiss={() => setErr('')}>{err}</Alert>}
       {!initial && !kind && (
         <>
-          <Tabs label="Kind of target" value={k ?? ''} onChange={setK} tabs={[{ key: 'host', label: 'Host' }, { key: 'database', label: 'Database' }, { key: 'application', label: 'Application' }]} />
+          <Tabs label="Kind of target" value={k ?? ''} onChange={setK} tabs={[{ key: 'host', label: 'Host' }, { key: 'database', label: 'Database' }, { key: 'application', label: 'Application' }, { key: 'kubernetes', label: 'Kubernetes' }]} />
         </>
       )}
       {k && (
@@ -231,6 +242,18 @@ export function TargetForm({ initial, kind, onClose, onSaved }: { initial?: Targ
               <>
                 <Field label="Upstream">
                   <input id="t-upstream" value={f.app_upstream} onChange={set('app_upstream')} required placeholder="https://wiki.internal:8443" />
+                </Field>
+              </>
+            ) : k === 'kubernetes' ? (
+              <>
+                <Field label="API server">
+                  <input id="t-kube-api-server" value={f.kube_api_server} onChange={set('kube_api_server')} required placeholder="https://k8s.internal:6443" />
+                </Field>
+                <Field label="Sessions act as">
+                  <select id="t-kube-impersonate" value={f.kube_impersonate ? 'person' : 'credential'} onChange={(e) => setF({ ...f, kube_impersonate: e.target.value === 'person' })}>
+                    <option value="person">The person</option>
+                    <option value="credential">The credential (shared identity)</option>
+                  </select>
                 </Field>
               </>
             ) : k === 'host' ? (
@@ -305,6 +328,11 @@ export function TargetForm({ initial, kind, onClose, onSaved }: { initial?: Targ
                 </Field>
               )}
             </>
+          )}
+          {k === 'kubernetes' && (
+            <Field label="CA bundle (PEM)">
+              <textarea id="t-kube-ca" value={f.kube_ca} onChange={set('kube_ca')} placeholder="System roots" />
+            </Field>
           )}
           {k === 'application' && (
             <Field label="Other endpoints" info="Bookmarks in its browser; pages open nowhere else.">

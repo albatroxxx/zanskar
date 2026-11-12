@@ -309,6 +309,15 @@ export interface TimeWindow { days: string[]; from: string; to: string; tz: stri
 /** What a policy grant covers (ADR 0036); each kind serves its own protocols. */
 export type TargetKind = 'host' | 'database' | 'application' | 'autoscaling' | 'kubernetes'
 
+/** What a cluster's test found (ADR 0045): the API server's version, whether Zanskar's credential may impersonate, and the namespaces it could list. */
+export interface KubeTest {
+  version: string
+  impersonate_users: boolean
+  impersonate_groups: boolean
+  namespaces: string[]
+  namespaces_listed: boolean
+}
+
 /** One group or user a policy applies to. */
 export interface PolicySubject { kind: 'group' | 'user'; id: string }
 

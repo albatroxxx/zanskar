@@ -18,7 +18,7 @@ import { TargetForm, type TargetKind } from './TargetForm'
 /** A row's disclosure, handed to its cells: Policies' pattern (2026-11-12). */
 export type RowDisclosure = { open: boolean; toggle: () => void; detailId: string }
 
-export function TargetsPage({ kind, title, addLabel, empty, columns, cells, detail }: {
+export function TargetsPage({ kind, title, addLabel, empty, columns, cells, detail, adding: addingProp, setAdding: setAddingProp, headless }: {
   kind: TargetKind
   title: string
   addLabel: string
@@ -30,6 +30,10 @@ export function TargetsPage({ kind, title, addLabel, empty, columns, cells, deta
   cells: (t: Target, credentials: Credential[], row: RowDisclosure) => ReactNode
   /** What opens in a row under a target's (an application's other endpoints); null for nothing. */
   detail?: (t: Target) => ReactNode
+  /** A page inside Fabric (ADR 0048): the section's head and Add button own the form, so the page shows no head of its own. */
+  adding?: boolean
+  setAdding?: (v: boolean) => void
+  headless?: boolean
 }) {
   // The server does the matching (name or address, case-insensitive, wildcard
   // characters escaped — internal/target/repo.go), so search covers the whole
@@ -53,7 +57,9 @@ export function TargetsPage({ kind, title, addLabel, empty, columns, cells, deta
   })
   const noun = title.toLowerCase()
   const creds = useList<Credential>('/credentials')
-  const [adding, setAdding] = useState(false)
+  const [ownAdding, setOwnAdding] = useState(false)
+  const adding = addingProp ?? ownAdding
+  const setAdding = setAddingProp ?? setOwnAdding
   const [open, setOpen] = useState<Target | null>(null)
   const [expanded, setExpanded] = useState<string[]>([])
   // Applications open only once the gateway can run the browser beside it
@@ -77,9 +83,11 @@ export function TargetsPage({ kind, title, addLabel, empty, columns, cells, deta
 
   return (
     <>
-      <PageHead title={title}>
-        {!blocked && <button className="btn primary" onClick={() => setAdding(true)}>{addLabel}</button>}
-      </PageHead>
+      {!headless && (
+        <PageHead title={title}>
+          {!blocked && <button className="btn primary" onClick={() => setAdding(true)}>{addLabel}</button>}
+        </PageHead>
+      )}
       {err && <Alert tone="danger" onDismiss={() => setErr('')}>{err}</Alert>}
       {readiness && readiness !== 'unknown' && !readiness.ready && (
         <div className="card" aria-labelledby="apps-readiness">

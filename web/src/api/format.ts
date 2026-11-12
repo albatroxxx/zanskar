@@ -142,6 +142,8 @@ export const credentialTypes: { v: CredentialType; label: string }[] = [
   { v: 'ssh_ca', label: 'SSH certificate authority' },
   { v: 'domain', label: 'Windows domain account' },
   { v: 'ec2_instance_connect', label: 'EC2 Instance Connect' },
+  { v: 'kube_token', label: 'Kubernetes service account token' },
+  { v: 'kube_client_cert', label: 'Kubernetes client certificate' },
 ]
 
 /** credentialTypeName is how a credential's type reads, the same on the

@@ -174,6 +174,20 @@ function SecretFields({ type, f, set, put }: { type: CredentialType; f: Record<s
       })
       .catch(() => setFileNote({ text: `Could not read ${file.name}.`, err: true }))
   }
+  if (type === 'kube_token') {
+    return (
+      <Field label="Token">
+        <input id="c-password" type="password" autoComplete="off" value={f.password} onChange={set('password')} required />
+      </Field>
+    )
+  }
+  if (type === 'kube_client_cert') {
+    return (
+      <Field label="Certificate and key (PEM)">
+        <textarea id="c-private-key" value={f.private_key} onChange={set('private_key')} required placeholder="-----BEGIN CERTIFICATE-----" />
+      </Field>
+    )
+  }
   if (type === 'password' || type === 'domain') {
     return (
       <Field label="Password">
@@ -216,7 +230,8 @@ function CredentialForm({ onClose, onSaved }: { onClose: () => void; onSaved: (c
   const type = f.type as CredentialType
   const mode = 'vaulted'
   const needsSecret = type !== 'ec2_instance_connect'
-  const needsUser = type !== 'ssh_ca'
+  // A cluster credential is Zanskar's own identity there; it names no user.
+  const needsUser = type !== 'ssh_ca' && type !== 'kube_token' && type !== 'kube_client_cert'
   const isCA = type === 'ssh_ca'
 
   const save = () =>
@@ -240,7 +255,7 @@ function CredentialForm({ onClose, onSaved }: { onClose: () => void; onSaved: (c
         if (principals.length) body.certificate_principals = principals
       }
       if (needsSecret && !(isCA && generateCA)) {
-        if (type === 'password' || type === 'domain') body.password = f.password
+        if (type === 'password' || type === 'domain' || type === 'kube_token') body.password = f.password
         else {
           body.private_key = f.private_key
           if (f.passphrase) body.private_key_passphrase = f.passphrase

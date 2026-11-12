@@ -40,6 +40,9 @@ type AdminHandler struct {
 	// Vault resolves the user_supplied sentinel when a slot is set to
 	// prompt; nil disables the sentinel.
 	Vault *credential.Vault
+	// Groups names the groups a cluster's RBAC manifest lists (ADR 0045);
+	// nil prints the manifest with none.
+	Groups GroupNamer
 	// Revoker ends the live sessions a disable, an address change or a
 	// changed pin withdraws (ADR 0013); nil leaves them to their own limits.
 	Revoker gateway.Revoker
@@ -62,6 +65,9 @@ func (h *AdminHandler) Register(mux *http.ServeMux) {
 	mux.Handle("POST /api/v1/targets/{id}/probe-certificate", admin(http.HandlerFunc(h.probeCertificate)))
 	mux.Handle("POST /api/v1/targets/{id}/host-key/trust", admin(http.HandlerFunc(h.trustHostKey)))
 	mux.Handle("POST /api/v1/targets/{id}/certificate/trust", admin(http.HandlerFunc(h.trustCertificate)))
+	// A Kubernetes cluster (ADR 0045): its test is its probe, and the RBAC it needs is printed.
+	mux.Handle("POST /api/v1/targets/{id}/kube/test", admin(http.HandlerFunc(h.kubeTest)))
+	mux.Handle("GET /api/v1/targets/{id}/kube/manifest", admin(http.HandlerFunc(h.kubeManifest)))
 	mux.Handle("PUT /api/v1/targets/{id}/credentials/{protocol}", admin(http.HandlerFunc(h.setCredential)))
 	mux.Handle("DELETE /api/v1/targets/{id}/credentials/{protocol}", admin(http.HandlerFunc(h.unsetCredential)))
 }
@@ -80,6 +86,9 @@ type Write struct {
 	AppEndpoints    []AppEndpoint       `json:"app_endpoints"`    // application targets (ADR 0037, amended)
 	AppDependencies string              `json:"app_dependencies"` // application targets: public (default) or origins
 	AppPrivate      *AppPrivate         `json:"app_private"`      // application targets: private networks and hosts the dependencies may reach
+	KubeAPIServer   string              `json:"kube_api_server"`  // Kubernetes clusters (ADR 0045)
+	KubeCA          string              `json:"kube_ca"`          // Kubernetes clusters
+	KubeImpersonate *bool               `json:"kube_impersonate"` // Kubernetes clusters; nil is the default, on
 	OSFamily        OSFamily            `json:"os_family"`
 	Ports           map[Protocol]int    `json:"ports"`
 	Capabilities    []Protocol          `json:"capabilities"`
@@ -95,6 +104,7 @@ func (w Write) apply(t *Target) {
 	t.RetentionDays = w.RetentionDays
 	t.DatabaseName, t.TLSMode, t.TLSCA = w.DatabaseName, w.TLSMode, w.TLSCA
 	t.AppUpstream, t.AppEndpoints, t.AppDependencies, t.AppPrivate = w.AppUpstream, w.AppEndpoints, w.AppDependencies, w.AppPrivate
+	t.KubeAPIServer, t.KubeCA, t.KubeImpersonate = w.KubeAPIServer, w.KubeCA, w.KubeImpersonate
 	t.Ports, t.Capabilities, t.Tags = w.Ports, w.Capabilities, w.Tags
 	t.Status, t.Notes, t.Credentials = w.Status, w.Notes, w.Credentials
 }

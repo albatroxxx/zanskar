@@ -554,6 +554,12 @@ func (t *Target) Validate() error {
 		if t.OSFamily == "" {
 			t.OSFamily = OtherOS
 		}
+		if t.KubeImpersonate == nil {
+			// The default is said, not left out: a reader of the row
+			// sees which way the cluster's sessions act.
+			on := true
+			t.KubeImpersonate = &on
+		}
 		t.KubeCA = strings.TrimSpace(t.KubeCA)
 		if t.KubeCA != "" {
 			if err := validCABundle(t.KubeCA); err != nil {

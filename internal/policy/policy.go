@@ -407,6 +407,9 @@ func (g *Grant) selects(t TargetRef) bool {
 }
 
 // matches: every key present with one of its values.
+// Matches reports whether a target carrying tags is one the rule selects.
+func (m *TagMatch) Matches(tags map[string]string) bool { return m.matches(tags) }
+
 func (m *TagMatch) matches(tags map[string]string) bool {
 	if len(m.Match) == 0 {
 		return false

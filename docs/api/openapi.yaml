@@ -3195,6 +3195,85 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
 
+  /targets/{id}/kube/test:
+    post:
+      tags: [admin]
+      summary: Test a Kubernetes cluster
+      description: >
+        The cluster's probe (ADR 0045): with the credential bound to its `kube` slot, asks the API
+        server its version, whether the credential may impersonate users and groups (a
+        SelfSubjectAccessReview each), and lists the namespaces it may list. Nothing is recorded
+        on the target. Audited as `target.probe`.
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: What the cluster answered.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [version, impersonate_users, impersonate_groups, namespaces, namespaces_listed]
+                properties:
+                  version:
+                    type: string
+                    description: The API server's `gitVersion`.
+                  impersonate_users:
+                    type: boolean
+                  impersonate_groups:
+                    type: boolean
+                  namespaces:
+                    type: array
+                    items:
+                      type: string
+                  namespaces_listed:
+                    type: boolean
+                    description: False when the credential may not list namespaces, which impersonation alone does not grant.
+        "409":
+          description: >-
+            `not_a_cluster`, `no_credential` (nothing on the kube slot), `credential_unsuitable`
+            (not a kube_token or kube_client_cert), `credential_refused` (the cluster answered
+            401), or `cluster_unusable` (the CA bundle or client certificate cannot be used).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "422":
+          description: The cluster's address is one the gateway does not connect to (`address_forbidden`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "502":
+          description: The API server could not be reached or did not answer as one (`cluster_unreachable`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /targets/{id}/kube/manifest:
+    get:
+      tags: [admin]
+      summary: The RBAC a Kubernetes cluster needs
+      description: >
+        YAML to apply in the cluster (ADR 0045, 2): a ServiceAccount for Zanskar's credential, a
+        ClusterRole that may impersonate users and the `zanskar:<group>` groups whose policies
+        grant this cluster, and their binding. The administrator binds their own roles to those
+        groups. Not audited: it holds no secret and changes nothing.
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: The manifest.
+          content:
+            application/yaml:
+              schema:
+                type: string
+        "409":
+          description: The target is not a Kubernetes cluster (`not_a_cluster`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
   /targets/{id}/certificate/trust:
     post:
       tags: [admin]
