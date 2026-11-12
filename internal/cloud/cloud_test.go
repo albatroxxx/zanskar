@@ -5,6 +5,7 @@ package cloud
 import (
 	"context"
 	"encoding/base64"
+	"errors"
 	"strings"
 	"testing"
 	"unicode/utf8"
@@ -17,6 +18,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/ec2instanceconnect"
 	elbv2 "github.com/aws/aws-sdk-go-v2/service/elasticloadbalancingv2"
 	elbtypes "github.com/aws/aws-sdk-go-v2/service/elasticloadbalancingv2/types"
+	"github.com/aws/smithy-go"
 )
 
 func TestParseConsoleHostKeys(t *testing.T) {
@@ -74,6 +76,53 @@ func (f fakeEC2) DescribeInstances(context.Context, *ec2.DescribeInstancesInput,
 func (f fakeEC2) GetConsoleOutput(context.Context, *ec2.GetConsoleOutputInput, ...func(*ec2.Options)) (*ec2.GetConsoleOutputOutput, error) {
 	enc := base64.StdEncoding.EncodeToString([]byte(f.console))
 	return &ec2.GetConsoleOutputOutput{Output: &enc}, nil
+}
+
+// noLatestEC2 answers as an instance type without the latest console output
+// does (live, 2026-11-12), and serves the boot-time output otherwise.
+type noLatestEC2 struct {
+	fakeEC2
+	asks []*bool
+}
+
+func (f *noLatestEC2) GetConsoleOutput(ctx context.Context, in *ec2.GetConsoleOutputInput, o ...func(*ec2.Options)) (*ec2.GetConsoleOutputOutput, error) {
+	f.asks = append(f.asks, in.Latest)
+	if aws.ToBool(in.Latest) {
+		return nil, &smithy.GenericAPIError{Code: "UnsupportedOperation", Message: "This instance type does not support retrieving the latest console logs"}
+	}
+	return f.fakeEC2.GetConsoleOutput(ctx, in, o...)
+}
+
+// TestConsoleHostKeysFallsBackToTheBootOutput: an instance type that refuses
+// the latest console output is read from the output buffered at boot, once;
+// any other refusal is not retried.
+func TestConsoleHostKeysFallsBackToTheBootOutput(t *testing.T) {
+	keys := "-----BEGIN SSH HOST KEY FINGERPRINTS-----\n256 SHA256:AbCdEfGhIjKlMnOpQrStUvWxYz0123456789abcdefg (ED25519)\n-----END SSH HOST KEY FINGERPRINTS-----"
+	f := &noLatestEC2{fakeEC2: fakeEC2{console: keys}}
+	p := &AWS{ec2: f}
+	fps, err := p.ConsoleHostKeys(context.Background(), "i-1")
+	if err != nil || len(fps) != 1 {
+		t.Fatalf("console keys: %v %v", fps, err)
+	}
+	if len(f.asks) != 2 || !aws.ToBool(f.asks[0]) || f.asks[1] != nil {
+		t.Fatalf("asked %d times, Latest %v", len(f.asks), f.asks)
+	}
+
+	denied := &deniedEC2{}
+	p = &AWS{ec2: denied}
+	if _, err := p.ConsoleHostKeys(context.Background(), "i-1"); !errors.Is(err, ErrAccessDenied) || denied.asks != 1 {
+		t.Fatalf("access denied: %v after %d asks", err, denied.asks)
+	}
+}
+
+type deniedEC2 struct {
+	fakeEC2
+	asks int
+}
+
+func (f *deniedEC2) GetConsoleOutput(context.Context, *ec2.GetConsoleOutputInput, ...func(*ec2.Options)) (*ec2.GetConsoleOutputOutput, error) {
+	f.asks++
+	return nil, &smithy.GenericAPIError{Code: "UnauthorizedOperation", Message: "You are not authorized to perform this operation."}
 }
 
 type fakeELB struct {

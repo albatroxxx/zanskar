@@ -19,6 +19,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/ec2instanceconnect"
 	elbv2 "github.com/aws/aws-sdk-go-v2/service/elasticloadbalancingv2"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
+	"github.com/aws/smithy-go"
 )
 
 // AWSAccess names the cross-account role Zanskar assumes for one group.
@@ -178,9 +179,18 @@ func (p *AWS) DescribeGroup(ctx context.Context, groupName string) (*GroupSnapsh
 	return snap, nil
 }
 
-// ConsoleHostKeys implements Provider.
+// ConsoleHostKeys implements Provider. It asks for the latest console output
+// first; an instance type that does not keep it is asked for the output
+// buffered at its last boot, where cloud-init prints the fingerprints. Live,
+// 2026-11-12: both of the owner's instances answered UnsupportedOperation to
+// the latest, so every key pinned on first use stayed unchecked.
 func (p *AWS) ConsoleHostKeys(ctx context.Context, instanceID string) ([]string, error) {
-	out, err := p.ec2.GetConsoleOutput(ctx, &ec2.GetConsoleOutputInput{InstanceId: aws.String(instanceID), Latest: aws.Bool(true)})
+	in := &ec2.GetConsoleOutputInput{InstanceId: aws.String(instanceID), Latest: aws.Bool(true)}
+	out, err := p.ec2.GetConsoleOutput(ctx, in)
+	if unsupported(err) {
+		in.Latest = nil
+		out, err = p.ec2.GetConsoleOutput(ctx, in)
+	}
 	if err != nil {
 		return nil, wrapAWS(err)
 	}
@@ -207,6 +217,13 @@ func (p *AWS) SendSSHPublicKey(ctx context.Context, instanceID, az, osUser strin
 		AvailabilityZone: aws.String(az),
 	})
 	return wrapAWS(err)
+}
+
+// unsupported reports whether AWS refused a request the instance's type does
+// not offer.
+func unsupported(err error) bool {
+	var api smithy.APIError
+	return errors.As(err, &api) && api.ErrorCode() == "UnsupportedOperation"
 }
 
 func wrapAWS(err error) error {
