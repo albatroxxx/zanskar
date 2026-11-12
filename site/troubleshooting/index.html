@@ -90,7 +90,11 @@ ls -la /var/lib/zanskar/recordings | tail        # recordings land here as sessi
       <dt>Reboot host and Stop host are greyed out</dt>
       <dd>They need a systemd host: the gateway asks logind to reboot or power off. On Docker or Kubernetes use your platform's tools; the gear still offers Restart gateway.</dd>
       <dt>"prove your authenticator first: this action asks for a recent code"</dt>
-      <dd>Host actions and installs want a code from your authenticator proved within the last five minutes. Enter one in the dialog; an account without an authenticator enrols one first under its username in the sidebar.</dd>
+      <dd>Host actions and installs want a code from your authenticator, or your security key, proved within the last five minutes. Enter one in the dialog or press <em>Use your key</em>; an account without a second factor adds one first under its username in the sidebar.</dd>
+      <dt><em>Use your key</em> is greyed out</dt>
+      <dd>Hover it for why. Keys are registered to the host name in <code>ZANSKAR_PUBLIC_URL</code>: with none set, or an IP address there, keys are off, and the gateway logs <code>security keys are off</code> with the reason at start. Set it to the host name people use, behind a certificate browsers trust, and restart. A browser without WebAuthn support says so too.</dd>
+      <dt>A key that used to work is refused</dt>
+      <dd>A key is bound to the host name it was registered at: after <code>ZANSKAR_PUBLIC_URL</code> changes host, register keys again (a recovery code signs in meanwhile). The audit log says <em>the key's counter went back: a copy may exist</em> when a key answered with a lower signature counter than before; treat that key as copied, remove it, and register a new one.</dd>
       <dt>The audit log shows the reboot as a failure: "Interactive authentication required"</dt>
       <dd>polkit refused the service user. The package installs the rule in <code>/etc/polkit-1/rules.d/50-zanskar.rules</code> (and a <code>.pkla</code> for older polkit); reinstalling the package restores it. Until then the gateway cancels its drain and keeps serving.</dd>
       <dt>The bell says "cosign is not installed"</dt>

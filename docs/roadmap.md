@@ -31,7 +31,7 @@ What the project intends to do, in order. Dates are targets; the order matters m
    authenticator code and audited line by line ([ADR 0027](adr/0027-restricted-console-cli.md),
    [command reference](console-cli.md)).
 4. **Phase 4, enterprise** (2027). The cross-pod control channel that makes high availability and
-   the Helm chart supported; SAML and SCIM; WebAuthn; access reviews and delegated or multi-step
+   the Helm chart supported; SAML and SCIM; WebAuthn (built as a second factor, ADR 0028); access reviews and delegated or multi-step
    approvers; GCP managed instance groups and Azure scale sets.
 
 What the project does **not** intend to do in that time:
@@ -100,7 +100,7 @@ audits every command; it ships with a reference of every command. An ADR comes f
 
 Deferred by decision: a multi-pane workspace (browser tabs suffice), rotation of static SSH
 keys and of Windows or database passwords (the certificate authority and the owning systems
-do that). Still Phase 4: HA, SAML/SCIM, WebAuthn.
+do that). Still Phase 4: HA, SAML/SCIM. WebAuthn is built as a second factor (ADR 0028); passwordless sign-in with a passkey is a later, separate decision.
 
 ## v1.16 release — shipped (v1.16.0 tagged 2026-11-03)
 

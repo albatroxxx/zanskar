@@ -170,6 +170,10 @@ network in `ZANSKAR_TRUSTED_PROXIES`; if that subnet collides with an existing n
 change it in both places in the compose file. For single sign-on (OIDC) behind the proxy, also
 set `ZANSKAR_PUBLIC_URL` to the address people use (`https://<your host>`): the gateway sees
 plain HTTP from the proxy and cannot build the https redirect URI the provider has registered.
+Security keys and passkeys (ADR 0028) need it too: its host name is what every key is
+registered to, so keys work only once it is set, to a host name (not an IP address), and with a
+certificate browsers trust. Changing the host name later means everyone registers their keys
+again.
 
 The SQLite database and local recordings live in the `zanskar_data` volume; back them up
 with `zanskar backup` (see [Backups and key custody](#backups-and-key-custody)) or by

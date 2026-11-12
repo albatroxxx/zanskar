@@ -7,7 +7,8 @@ Date: 2026-10-06
 Accepted on 2026-10-06; build parked until the project owner resumed it on 2026-11-12. Amended
 the same day, before the build: the gateway grew in the five weeks it waited, and the
 [amendment](#amendment-2026-11-12-what-changed-before-the-build) at the end replaces what no
-longer holds. Where the two differ, the amendment holds.
+longer holds. Where the two differ, the amendment holds. The owner confirmed its three open
+points the same day, and it was built then.
 
 ## Context
 
@@ -141,8 +142,8 @@ host commands.
 
 The owner resumed this ADR on 2026-11-12 and took the recommended scope ("go ahead, update the
 ADR first"). This section brings the decision up to the gateway as it is now and settles what the
-build would otherwise decide by accident. Three points are marked *(owner to confirm)*; nothing is
-built until they are.
+build would otherwise decide by accident. Three points were marked *(owner to confirm)*; the owner
+confirmed all three on 2026-11-12 ("yes to all three").
 
 ### The public address already exists
 
@@ -179,14 +180,14 @@ above as not in this version, is therefore no gap: host actions read the step-up
 Step-up answers `409 mfa_not_enrolled` today to an account without an authenticator app. An
 account with at least one key steps up with it.
 
-*(owner to confirm)* **Accounts whose provider owns the second factor** (ADR 0035) may register
+*(confirmed 2026-11-12)* **Accounts whose provider owns the second factor** (ADR 0035) may register
 keys too. Their keys serve step-ups and the command line only; sign-in asks for one only when the
 provider has *Also ask for a Zanskar authenticator* on, as it does for the app now. Without this,
 an administrator who signs in through such a provider has nothing to prove a step-up with.
 
 ### Recovery codes
 
-*(owner to confirm)* The codes keep their table (`mfa_recovery_codes`) and change when they are
+*(confirmed 2026-11-12)* The codes keep their table (`mfa_recovery_codes`) and change when they are
 issued:
 
 - Once, when an account gets its first second factor of any kind: an app confirmed, or a first
@@ -209,7 +210,7 @@ a provider.
 
 ### Lifecycles (ADR 0047)
 
-*(owner to confirm)* A key is a plain row: it exists until it is removed, has no `status`, and is
+*(confirmed 2026-11-12)* A key is a plain row: it exists until it is removed, has no `status`, and is
 not declared with `internal/states`. The account's *authenticator* lifecycle (`mfa_totp`: none,
 enrolling, confirmed) stays the app's. What an account has as a second factor (none, app, keys,
 both) is derived where it is shown and never stored. `docs/lifecycles.md` gains no lifecycle, only
