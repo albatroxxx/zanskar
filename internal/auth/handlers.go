@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"hash/fnv"
 	"log/slog"
@@ -61,6 +62,12 @@ type Handler struct {
 	// ExternalLogin, when set, authenticates users against LDAP providers
 	// after local password authentication does not apply.
 	ExternalLogin ExternalAuthenticator
+	// Factors are an account's app and security keys together (ADR 0028).
+	// NewHandler gives one with keys off; the gateway sets its own.
+	Factors *Factors
+	// AdminsNeedKey reports the runtime setting Administrators must use a
+	// security key; nil is off.
+	AdminsNeedKey func() bool
 
 	loginLimiter *ipLimiter
 	// stepUpLimiter bounds code attempts per session on the step-up route.
@@ -116,6 +123,7 @@ func (h *Handler) mfaClear(sessionID string) {
 func NewHandler(users *user.Repo, sessions *Sessions, totp *TOTP, auditLog *audit.Log, log *slog.Logger) *Handler {
 	return &Handler{
 		Users: users, Sessions: sessions, TOTP: totp, Audit: auditLog, Log: log,
+		Factors:     NewFactors(totp.db, totp, NewKeys(totp.db, "", "")),
 		MaxFailures: 5, LockFor: 15 * time.Minute, MFAAttempts: 5,
 		loginLimiter:  newIPLimiter(20, 10),
 		stepUpLimiter: newIPLimiter(10, 5),
@@ -200,6 +208,7 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	// requires MFA can make enrollment the first thing a new user does.
 	mux.Handle("POST /api/v1/auth/mfa/totp/enroll", RequirePartialAuth(http.HandlerFunc(h.totpEnroll)))
 	mux.Handle("POST /api/v1/auth/mfa/totp/confirm", RequirePartialAuth(http.HandlerFunc(h.totpConfirm)))
+	h.registerKeyRoutes(mux)
 }
 
 type loginRequest struct {
@@ -407,7 +416,7 @@ func ReplaceSession(r *http.Request, sessions *Sessions, auditLog *audit.Log, lo
 func (h *Handler) completeLogin(w http.ResponseWriter, r *http.Request, u *user.User, actor audit.Actor) {
 	ip := ClientIP(r)
 	h.replaceSession(r)
-	enrolled, err := h.TOTP.Enrolled(r.Context(), u.ID)
+	enrolled, err := h.Factors.Enrolled(r.Context(), u.ID)
 	if err != nil {
 		httpx.Internal(w, r, h.Log, err)
 		return
@@ -647,11 +656,15 @@ func (h *Handler) logout(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) me(w http.ResponseWriter, r *http.Request) {
 	p, _ := FromContext(r.Context())
-	enrolled, err := h.TOTP.Enrolled(r.Context(), p.User.ID)
+	app, keys, err := h.Factors.Methods(r.Context(), p.User.ID)
 	if err != nil {
 		httpx.Internal(w, r, h.Log, err)
 		return
 	}
+	enrolled := app || keys > 0
+	// What the console offers at a second-factor prompt: the app's code, a
+	// key, or both; and why keys are off at this address, if they are.
+	factors := map[string]any{"app": app, "keys": keys, "keys_off": h.Factors.Keys.Off()}
 	// A partial session gets only what the login page needs to resume the
 	// owed step after a reload — the pending step and a CSRF token — never
 	// the profile or session, which stay behind MFA and behind a password
@@ -665,17 +678,21 @@ func (h *Handler) me(w http.ResponseWriter, r *http.Request) {
 			pending = "enroll"
 		}
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{
-			"pending":      pending,
-			"mfa_enrolled": enrolled,
-			"csrf_token":   h.Sessions.CSRFToken(p.Session.ID),
+			"pending":       pending,
+			"mfa_enrolled":  enrolled,
+			"second_factor": factors,
+			"csrf_token":    h.Sessions.CSRFToken(p.Session.ID),
 		})
 		return
 	}
+	// An administrator who must use a key and has none is asked to add one.
+	factors["key_owed"] = h.AdminsNeedKey != nil && h.AdminsNeedKey() && h.Factors.Keys.Off() == "" && keys == 0 && p.User.HasRole(user.RoleAdmin)
 	out := map[string]any{
-		"user":         p.User,
-		"csrf_token":   h.Sessions.CSRFToken(p.Session.ID),
-		"mfa_enrolled": enrolled,
-		"pending":      nil,
+		"user":          p.User,
+		"csrf_token":    h.Sessions.CSRFToken(p.Session.ID),
+		"mfa_enrolled":  enrolled,
+		"second_factor": factors,
+		"pending":       nil,
 		"session": map[string]any{
 			"id": p.Session.ID, "created_at": p.Session.CreatedAt, "expires_at": p.Session.ExpiresAt,
 		},
@@ -688,6 +705,9 @@ func (h *Handler) me(w http.ResponseWriter, r *http.Request) {
 
 type codeRequest struct {
 	Code string `json:"code"`
+	// Credential is a security key's answer, in place of a code, where a
+	// key is accepted (ADR 0028).
+	Credential json.RawMessage `json:"credential,omitempty"`
 }
 
 // passwordChangeOwed refuses the second-factor steps while a password an
@@ -695,6 +715,27 @@ type codeRequest struct {
 func (h *Handler) passwordChangeOwed(w http.ResponseWriter, r *http.Request, p *Principal) bool {
 	if p.User.MustResetOnLogin {
 		httpx.WriteError(w, r, http.StatusConflict, "password_change_required", "replace the password you were given first")
+		return true
+	}
+	return false
+}
+
+// factorOwed refuses to enrol an authenticator app on a sign-in that still
+// owes the second factor the account already has. Before security keys
+// that could only be an app, which refuses a second enrolment by itself; an
+// account with only keys has no app, and its password alone must not add
+// one and pass the sign-in with it (ADR 0028).
+func (h *Handler) factorOwed(w http.ResponseWriter, r *http.Request, p *Principal) bool {
+	if p.Session.MFAVerified {
+		return false
+	}
+	_, keys, err := h.Factors.Methods(r.Context(), p.User.ID)
+	if err != nil {
+		httpx.Internal(w, r, h.Log, err)
+		return true
+	}
+	if keys > 0 {
+		httpx.WriteError(w, r, http.StatusForbidden, "verify_first", "prove your second factor first")
 		return true
 	}
 	return false
@@ -759,6 +800,7 @@ func (h *Handler) checkCode(ctx context.Context, userID string, signIn bool, che
 // back to the password step (#205).
 func (h *Handler) endSignIn(w http.ResponseWriter, r *http.Request, p *Principal) {
 	h.mfaClear(p.Session.ID)
+	h.Factors.Keys.Forget(p.Session.ID)
 	_ = h.Sessions.Revoke(r.Context(), p.Session.ID)
 	h.Sessions.ClearCookie(w)
 }
@@ -779,46 +821,69 @@ func (h *Handler) totpVerify(w http.ResponseWriter, r *http.Request) {
 		refusal      error
 	)
 	verdict, err := h.checkCode(r.Context(), p.User.ID, true, func() error {
-		usedRecovery, refusal = h.TOTP.Verify(r.Context(), p.User.ID, req.Code)
+		usedRecovery, refusal = h.Factors.Verify(r.Context(), p.User.ID, req.Code)
 		return refusal
 	}, func(err error) bool {
 		return errors.Is(err, ErrTOTPBadCode) || errors.Is(err, ErrTOTPNotEnrolled)
 	})
+	if errors.Is(err, ErrKeyRequired) {
+		// A right-looking code from an account that must use its key: not a
+		// wrong code, so nothing is counted, but the sign-in does not pass.
+		h.record(r, ActorFor(r).Event(audit.UserMFAVerify, "user", p.User.ID, audit.Failure, map[string]any{"reason": "key_required", "session_id": p.Session.ID}))
+		httpx.WriteError(w, r, http.StatusForbidden, "key_required", "use your security key")
+		return
+	}
 	if err != nil {
 		httpx.Internal(w, r, h.Log, err)
 		return
 	}
 	if verdict != codeRight {
-		details := map[string]any{"reason": "bad_code", "session_id": p.Session.ID}
+		reason := "bad_code"
 		if errors.Is(refusal, ErrTOTPReused) {
 			// A right code seen once already: someone may have read it.
-			details["reason"] = "code_reused"
+			reason = "code_reused"
 		}
-		// MFAAttempts wrong codes end the sign-in, and so does a locked
-		// account: no code can complete it now.
-		var ended bool
-		switch verdict {
-		case codeLocked:
-			details["reason"], ended = "locked", true
-		case codeLocking:
-			details["locked_for"], ended = h.LockFor.String(), true
-		default:
-			ended = h.mfaFailure(p.Session.ID)
-		}
-		if ended {
-			h.endSignIn(w, r, p)
-			details["session_ended"] = true
-		}
-		h.record(r, ActorFor(r).Event(audit.UserMFAVerify, "user", p.User.ID, audit.Failure, details))
-		if ended {
-			// Its own code, so the console goes back to the password step
-			// instead of offering a code box that can no longer work.
-			httpx.WriteError(w, r, http.StatusUnauthorized, "sign_in_ended", "too many wrong codes; sign in again")
-			return
-		}
-		httpx.WriteError(w, r, http.StatusUnauthorized, "invalid_code", "invalid code")
+		h.secondFactorRefused(w, r, p, verdict, reason)
 		return
 	}
+	method := "totp"
+	if usedRecovery {
+		method = "recovery_code"
+	}
+	h.secondFactorPassed(w, r, p, method)
+}
+
+// secondFactorRefused answers a sign-in's wrong second factor, a code or a
+// key alike. MFAAttempts of them end the sign-in, and so does a locked
+// account: no answer can complete it now.
+func (h *Handler) secondFactorRefused(w http.ResponseWriter, r *http.Request, p *Principal, verdict codeVerdict, reason string) {
+	details := map[string]any{"reason": reason, "session_id": p.Session.ID}
+	var ended bool
+	switch verdict {
+	case codeLocked:
+		details["reason"], ended = "locked", true
+	case codeLocking:
+		details["locked_for"], ended = h.LockFor.String(), true
+	default:
+		ended = h.mfaFailure(p.Session.ID)
+	}
+	if ended {
+		h.endSignIn(w, r, p)
+		details["session_ended"] = true
+	}
+	h.record(r, ActorFor(r).Event(audit.UserMFAVerify, "user", p.User.ID, audit.Failure, details))
+	if ended {
+		// Its own code, so the console goes back to the password step
+		// instead of offering a code box that can no longer work.
+		httpx.WriteError(w, r, http.StatusUnauthorized, "sign_in_ended", "too many wrong codes; sign in again")
+		return
+	}
+	httpx.WriteError(w, r, http.StatusUnauthorized, "invalid_code", "invalid code")
+}
+
+// secondFactorPassed completes a sign-in whose second factor was right,
+// proved by method (totp, recovery_code or webauthn).
+func (h *Handler) secondFactorPassed(w http.ResponseWriter, r *http.Request, p *Principal, method string) {
 	h.mfaClear(p.Session.ID)
 	if err := h.Sessions.MarkMFAProved(r.Context(), p.Session.ID); err != nil {
 		httpx.Internal(w, r, h.Log, err)
@@ -827,17 +892,13 @@ func (h *Handler) totpVerify(w http.ResponseWriter, r *http.Request) {
 	if !p.Session.MFAVerified && !h.rotate(w, r, p) {
 		return
 	}
-	method := "totp"
-	if usedRecovery {
-		method = "recovery_code"
-	}
 	h.record(r, ActorFor(r).Event(audit.UserLogin, "user", p.User.ID, audit.Success, map[string]string{"stage": "complete", "mfa": method, "session_id": p.Session.ID}))
 	httpx.WriteJSON(w, http.StatusOK, loginResponse{Status: "ok", User: p.User, CSRFToken: h.Sessions.CSRFToken(p.Session.ID)})
 }
 
 func (h *Handler) totpEnroll(w http.ResponseWriter, r *http.Request) {
 	p, _ := FromContext(r.Context())
-	if h.passwordChangeOwed(w, r, p) {
+	if h.passwordChangeOwed(w, r, p) || h.factorOwed(w, r, p) {
 		return
 	}
 	// From a full session an authenticator takes the password again (L14):
@@ -903,7 +964,7 @@ func (h *Handler) totpEnroll(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) totpConfirm(w http.ResponseWriter, r *http.Request) {
 	p, _ := FromContext(r.Context())
-	if h.passwordChangeOwed(w, r, p) {
+	if h.passwordChangeOwed(w, r, p) || h.factorOwed(w, r, p) {
 		return
 	}
 	var req codeRequest
@@ -1030,20 +1091,48 @@ func (h *Handler) stepUp(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, http.StatusBadRequest, "bad_request", err.Error())
 		return
 	}
-	recovery, err := h.TOTP.Verify(r.Context(), p.User.ID, req.Code)
+	// A security key answers in place of a code (ADR 0028); either writes the
+	// same proof, and a key that is refused counts as a wrong code.
+	var (
+		recovery bool
+		err      error
+		method   = "totp"
+	)
+	if len(req.Credential) > 0 {
+		method = "webauthn"
+		_, err = h.Factors.Keys.FinishAssertion(r.Context(), p.Session.ID, p.User.ID, PurposeStepUp, req.Credential)
+	} else {
+		recovery, err = h.Factors.Verify(r.Context(), p.User.ID, req.Code)
+	}
 	switch {
 	case errors.Is(err, ErrTOTPNotEnrolled):
 		httpx.WriteError(w, r, http.StatusConflict, "mfa_not_enrolled", "enrol an authenticator first; this action asks for a code from it")
 		return
-	case errors.Is(err, ErrTOTPBadCode):
+	case errors.Is(err, ErrKeyRequired):
+		h.record(r, actor.Event(audit.UserMFAVerify, "user", p.User.ID, audit.Failure, map[string]any{"purpose": "step_up", "reason": "key_required"}))
+		httpx.WriteError(w, r, http.StatusForbidden, "key_required", "use your security key")
+		return
+	case errors.Is(err, ErrNoCeremony), errors.Is(err, ErrKeysOff), errors.Is(err, ErrNoKeys):
+		keyNotAsked(w, r, err, h.Factors.Keys.Off())
+		return
+	case errors.Is(err, ErrTOTPBadCode), errors.Is(err, ErrKeyBad):
 		reason := "wrong code"
-		if errors.Is(err, ErrTOTPReused) {
+		switch {
+		case errors.Is(err, ErrTOTPReused):
 			reason = "code already used"
+		case errors.Is(err, ErrKeyCloned):
+			reason = "key counter went back"
+		case errors.Is(err, ErrKeyBad):
+			reason = "key not accepted"
 		}
 		closed := h.stepUpFailed(p.Session.ID, now)
-		h.record(r, actor.Event(audit.UserMFAVerify, "user", p.User.ID, audit.Failure, map[string]any{"purpose": "step_up", "reason": reason, "closed": closed}))
+		h.record(r, actor.Event(audit.UserMFAVerify, "user", p.User.ID, audit.Failure, map[string]any{"purpose": "step_up", "method": method, "reason": reason, "closed": closed}))
 		if closed {
 			httpx.WriteError(w, r, http.StatusTooManyRequests, "step_up_closed", "too many wrong codes; try again later")
+			return
+		}
+		if method == "webauthn" {
+			httpx.WriteError(w, r, http.StatusUnprocessableEntity, "bad_key", "that key was not accepted")
 			return
 		}
 		httpx.WriteError(w, r, http.StatusUnprocessableEntity, "bad_code", "that code is not right")
@@ -1057,6 +1146,20 @@ func (h *Handler) stepUp(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.stepUpSucceeded(p.Session.ID)
-	h.record(r, actor.Event(audit.UserMFAVerify, "user", p.User.ID, audit.Success, map[string]any{"purpose": "step_up", "recovery_code_used": recovery}))
+	h.record(r, actor.Event(audit.UserMFAVerify, "user", p.User.ID, audit.Success, map[string]any{"purpose": "step_up", "method": method, "recovery_code_used": recovery}))
 	httpx.WriteJSON(w, http.StatusOK, map[string]bool{"proved": true})
+}
+
+// keyNotAsked answers a key's answer that no waiting challenge can take: the
+// challenge expired or was never begun, keys are off at this address, or
+// the account has none. None of them is a wrong answer.
+func keyNotAsked(w http.ResponseWriter, r *http.Request, err error, off string) {
+	switch {
+	case errors.Is(err, ErrKeysOff):
+		httpx.WriteError(w, r, http.StatusConflict, "keys_off", off)
+	case errors.Is(err, ErrNoKeys):
+		httpx.WriteError(w, r, http.StatusConflict, "no_keys", "this account has no security key")
+	default:
+		httpx.WriteError(w, r, http.StatusConflict, "key_request_expired", "the key took too long; try again")
+	}
 }

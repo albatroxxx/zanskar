@@ -136,7 +136,9 @@ func runAdminResetMFA(args []string) error {
 	if err != nil {
 		return err
 	}
-	revoked, resetErr := auth.ResetMFA(ctx, auth.NewTOTP(db, nil, cfg.Issuer), auth.NewSessions(db, nil, false), u.ID)
+	// The app, every security key and every recovery code (ADR 0028).
+	totp := auth.NewTOTP(db, nil, cfg.Issuer)
+	revoked, resetErr := auth.ResetMFA(ctx, auth.NewFactors(db, totp, auth.NewKeys(db, "", cfg.Issuer)), auth.NewSessions(db, nil, false), u.ID)
 	if resetErr != nil && !errors.Is(resetErr, auth.ErrSignOutAfterReset) {
 		return fmt.Errorf("reset authenticator: %w", resetErr)
 	}

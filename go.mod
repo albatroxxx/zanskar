@@ -23,6 +23,7 @@ require (
 	github.com/go-jose/go-jose/v4 v4.1.9
 	github.com/go-ldap/ldap/v3 v3.4.15
 	github.com/go-mysql-org/go-mysql v1.16.0
+	github.com/go-webauthn/webauthn v0.18.2
 	github.com/jackc/pgx/v5 v5.12.0
 	github.com/masterzen/winrm v0.0.0-20260407182533-5570be7f80cf
 	github.com/pkg/sftp v1.13.12
@@ -55,9 +56,14 @@ require (
 	github.com/boombuler/barcode v1.0.1-0.20190219062509-6c824513bacc // indirect
 	github.com/coreos/go-semver v0.3.1 // indirect
 	github.com/dustin/go-humanize v1.1.0 // indirect
+	github.com/fxamacker/cbor/v2 v2.9.4 // indirect
 	github.com/go-logr/logr v1.4.1 // indirect
+	github.com/go-viper/mapstructure/v2 v2.5.0 // indirect
+	github.com/go-webauthn/x v0.3.1 // indirect
 	github.com/goccy/go-json v0.10.6 // indirect
 	github.com/gofrs/uuid v4.4.0+incompatible // indirect
+	github.com/golang-jwt/jwt/v5 v5.3.1 // indirect
+	github.com/google/go-tpm v0.9.8 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/hashicorp/go-cleanhttp v0.5.2 // indirect
 	github.com/hashicorp/go-uuid v1.0.3 // indirect
@@ -75,6 +81,7 @@ require (
 	github.com/masterzen/simplexml v0.0.0-20190410153822-31eea3082786 // indirect
 	github.com/mattn/go-isatty v0.0.24 // indirect
 	github.com/ncruces/go-strftime v1.1.0 // indirect
+	github.com/philhofer/fwd v1.2.0 // indirect
 	github.com/pingcap/errors v0.11.5-0.20260310054046-9c8b3586e4b2 // indirect
 	github.com/pingcap/log v1.1.1-0.20260227082333-572e590d08f1 // indirect
 	github.com/pingcap/tidb/pkg/parser v0.0.0-20260504140133-511dba1dbe17 // indirect
@@ -82,6 +89,8 @@ require (
 	github.com/rogpeppe/go-internal v1.16.0 // indirect
 	github.com/shopspring/decimal v1.4.0 // indirect
 	github.com/tidwall/transform v0.0.0-20201103190739-32f242e2dbde // indirect
+	github.com/tinylib/msgp v1.6.4 // indirect
+	github.com/x448/float16 v0.8.4 // indirect
 	go.uber.org/atomic v1.11.0 // indirect
 	go.uber.org/multierr v1.11.0 // indirect
 	go.uber.org/zap v1.28.0 // indirect

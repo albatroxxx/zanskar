@@ -422,8 +422,10 @@ func postureWhere(kind PostureKind, now time.Time, providerMFA []string) (string
 			args = append(args, id)
 		}
 	}
+	// A second factor is a confirmed app or a security key (ADR 0028).
 	return `u.status = 'active'
 		AND NOT EXISTS (SELECT 1 FROM mfa_totp m WHERE m.user_id = u.id AND m.confirmed_at IS NOT NULL)
+		AND NOT EXISTS (SELECT 1 FROM webauthn_credentials k WHERE k.user_id = u.id)
 		AND ((u.idp_id IS NULL AND u.password_hash IS NOT NULL) OR (` + linked + `))`, args
 }
 

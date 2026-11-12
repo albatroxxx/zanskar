@@ -236,25 +236,36 @@ paths:
       description: >
         For the actions the console guards with a recent code (ADR 0032): records the time of
         the proof on the session, which the host-action routes check (five minutes). Limited
-        per session; every outcome is audited as `user.mfa.verify` with purpose `step_up`.
+        per session; every outcome is audited as `user.mfa.verify` with purpose `step_up` and
+        the `method`. A security key answers in place of a code (ADR 0028): begin with
+        `POST /auth/mfa/webauthn/begin` for purpose `step_up`, then send its answer as
+        `credential`; a key that is refused counts as a wrong code.
       requestBody:
         required: true
         content:
           application/json:
             schema:
               type: object
-              required: [code]
               properties:
                 code:
                   type: string
                   description: A six-digit authenticator code or a recovery code.
+                credential:
+                  $ref: "#/components/schemas/KeyCredential"
       responses:
         "200":
           description: Proved.
+        "403":
+          description: >-
+            `key_required`: the account must use its security key (runtime setting
+            `auth.admins_need_key`); an app's code is refused, a recovery code is not.
         "409":
-          description: No authenticator enrolled (`mfa_not_enrolled`).
+          description: >-
+            No second factor enrolled (`mfa_not_enrolled`); for a key, no challenge waiting or it
+            expired (`key_request_expired`), keys off at this address (`keys_off`), or no key
+            (`no_keys`).
         "422":
-          description: Wrong or already-used code (`bad_code`).
+          description: Wrong or already-used code (`bad_code`), or a key that was not accepted (`bad_key`).
         "429":
           description: >-
             Too many attempts on this session (`rate_limited`), or five wrong codes closed the
@@ -409,7 +420,11 @@ paths:
     post:
       tags: [auth]
       summary: Confirm TOTP enrollment
-      description: Proves possession of the authenticator. Returns one-time recovery codes, shown once.
+      description: >-
+        Proves possession of the authenticator. Returns one-time recovery codes, shown once, when
+        it is the account's first second factor; an account that has a security key keeps the codes
+        it has, and `recovery_codes` is null (ADR 0028). On a sign-in that still owes the second
+        factor of an account with a key, `403 verify_first`: the key is proved, not bypassed.
       requestBody:
         required: true
         content:
@@ -426,7 +441,7 @@ paths:
                 required: [recovery_codes]
                 properties:
                   recovery_codes:
-                    type: array
+                    type: [array, "null"]
                     items:
                       type: string
         "400":
@@ -451,6 +466,225 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
+  /auth/mfa/webauthn/begin:
+    post:
+      tags: [auth]
+      summary: Start a security key ceremony
+      description: |
+        Security keys and passkeys as a second factor (ADR 0028). Answers the options the
+        browser passes to `navigator.credentials.create` (purpose `register`) or
+        `navigator.credentials.get` (`sign_in`, `step_up`, `cli`), as `{"publicKey": {...}}`.
+        The challenge belongs to this session and purpose, waits two minutes and is used once.
+        `sign_in` is the second step of a sign-in in progress; `step_up` and `cli` need a full
+        session. `register` follows an authenticator app's rules: as the enrolment a sign-in
+        owes, only while the account has no second factor; from a full session with none, after
+        `current_password` (or a sign-in in the last five minutes, for an account a provider
+        signs in); beside a factor the account has, after a step-up.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [purpose]
+              properties:
+                purpose:
+                  type: string
+                  enum: [register, sign_in, step_up, cli]
+                current_password:
+                  type: string
+                  description: For `register` from a full session with no second factor yet.
+      responses:
+        "200":
+          description: The options for the browser.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [publicKey]
+                properties:
+                  publicKey:
+                    type: object
+                    additionalProperties: true
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          description: "`password_required`, a wrong password, or `reauth_required` for `register`."
+        "403":
+          description: >-
+            `verify_first` (registering on a sign-in that owes the factor the account has),
+            `step_up_required` (registering beside a factor), or `sign_in_incomplete`.
+        "409":
+          description: >-
+            `keys_off` (no `ZANSKAR_PUBLIC_URL`, or an IP address: the message says which),
+            `no_keys`, `too_many_keys` (ten at most), or `already_signed_in`.
+  /auth/mfa/webauthn/verify:
+    post:
+      tags: [auth]
+      summary: Complete a sign-in with a security key
+      description: >-
+        The second step of a sign-in, answered with the account's key: the session becomes full,
+        as with `POST /auth/mfa/totp/verify`. A key that is refused counts as a wrong code, against
+        the same limits. Audited as `user.login` with `mfa` `webauthn`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [credential]
+              properties:
+                credential:
+                  $ref: "#/components/schemas/KeyCredential"
+      responses:
+        "200":
+          description: Session is now fully authenticated.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Me"
+        "401":
+          description: "`invalid_code` (a key that was not accepted), or `sign_in_ended` as at a code."
+        "409":
+          description: "`key_request_expired`, `keys_off` or `no_keys`."
+  /auth/mfa/webauthn/register:
+    post:
+      tags: [auth]
+      summary: Register a security key
+      description: >-
+        Finishes `register`. As the enrolment a sign-in owes, it completes the sign-in; from a full
+        session it signs the account's other sessions out. An account's first second factor brings
+        its recovery codes, shown once. Audited as `user.key.register`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, credential]
+              properties:
+                name:
+                  type: string
+                  minLength: 1
+                  maxLength: 64
+                credential:
+                  $ref: "#/components/schemas/KeyCredential"
+      responses:
+        "200":
+          description: Registered.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [key, recovery_codes]
+                properties:
+                  key:
+                    $ref: "#/components/schemas/SecurityKey"
+                  recovery_codes:
+                    type: [array, "null"]
+                    items:
+                      type: string
+                  csrf_token:
+                    type: string
+        "400":
+          description: "`bad_name`, or a body that is not a registration."
+        "403":
+          description: "`verify_first` or `step_up_required`, as at begin."
+        "409":
+          description: "`key_request_expired`, `keys_off` or `too_many_keys`."
+        "422":
+          description: "`bad_key`: the browser's answer did not verify."
+  /auth/mfa/webauthn/keys:
+    get:
+      tags: [auth]
+      summary: Your security keys
+      responses:
+        "200":
+          description: The caller's keys, oldest first, and why keys are off at this address, if they are.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, app, keys_off]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/SecurityKey"
+                  app:
+                    type: boolean
+                    description: Whether the caller has a confirmed authenticator app.
+                  keys_off:
+                    type: string
+                    description: Empty when keys work here.
+  /auth/mfa/webauthn/keys/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+    patch:
+      tags: [auth]
+      summary: Rename one of your keys
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name:
+                  type: string
+                  minLength: 1
+                  maxLength: 64
+      responses:
+        "204":
+          description: Renamed. Audited as `user.key.rename`.
+        "400":
+          description: "`bad_name`."
+        "404":
+          $ref: "#/components/responses/NotFound"
+    delete:
+      tags: [auth]
+      summary: Remove one of your keys
+      description: >-
+        Needs a step-up in the last five minutes. While `auth.require_mfa` is on, the account's last
+        second factor is not removed. Audited as `user.key.remove`.
+      responses:
+        "204":
+          description: Removed.
+        "403":
+          description: "`step_up_required`."
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: "`last_factor`."
+  /auth/mfa/recovery-codes:
+    post:
+      tags: [auth]
+      summary: Replace your recovery codes
+      description: >-
+        Needs a step-up in the last five minutes. The old codes stop working at once; the new ones
+        are shown once. Audited as `user.mfa.recovery_codes`.
+      responses:
+        "200":
+          description: The new codes.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [recovery_codes]
+                properties:
+                  recovery_codes:
+                    type: array
+                    items:
+                      type: string
+        "403":
+          description: "`step_up_required`."
+        "409":
+          description: "`mfa_not_enrolled`: no second factor yet."
   /auth/logout:
     post:
       tags: [auth]
@@ -5812,6 +6046,45 @@ components:
           description: >
             The IANA zone every time in the console is shown in (runtime setting
             `display.time_zone`; by default the gateway host's zone). 1.9.0.
+        second_factor:
+          type: object
+          description: >-
+            What the account has as a second factor (ADR 0028): `mfa_enrolled` is `app` or any
+            `keys`. `keys_off` says why keys cannot work at this address, empty when they can;
+            `key_owed` is an administrator asked to add a key (`auth.admins_need_key`).
+          properties:
+            app:
+              type: boolean
+            keys:
+              type: integer
+            keys_off:
+              type: string
+            key_owed:
+              type: boolean
+
+    SecurityKey:
+      type: object
+      description: A security key or passkey registered as a second factor (ADR 0028).
+      required: [id, name, created_at, last_used_at, synced]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        created_at:
+          $ref: "#/components/schemas/Timestamp"
+        last_used_at:
+          type: [string, "null"]
+          format: date-time
+        synced:
+          type: boolean
+          description: A passkey a platform or password manager keeps in sync between devices.
+    KeyCredential:
+      type: object
+      additionalProperties: true
+      description: >-
+        The browser's PublicKeyCredential as JSON (`PublicKeyCredential.toJSON()`): `id`, `rawId`,
+        `type` and `response`, binary fields base64url.
 
     # ---------------------------------------------------------------- users and groups
     User:

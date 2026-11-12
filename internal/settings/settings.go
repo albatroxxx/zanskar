@@ -58,6 +58,10 @@ const (
 	// KeyRequireMFA keeps a password session partial until an authenticator
 	// is enrolled.
 	KeyRequireMFA = "auth.require_mfa"
+	// KeyAdminsNeedKey has an administrator who has a security key answer
+	// with it: codes from their authenticator app are refused, recovery
+	// codes still work, and one without a key is asked to add one (ADR 0028).
+	KeyAdminsNeedKey = "auth.admins_need_key"
 	// KeyGuacdAddr is the guacd host:port that relays RDP and VNC; empty
 	// disables desktop sessions.
 	KeyGuacdAddr = "desktop.guacd_addr"
@@ -191,6 +195,8 @@ var Definitions = []Definition{
 	{Key: KeyRequireMFA, Category: "Sign-in", Title: "Require an authenticator", Type: TypeBool, Default: "true", EnvVar: "ZANSKAR_REQUIRE_MFA",
 		Description: "For password sign-ins; single sign-on providers enforce their own."},
 	{Key: KeyApproveStepUp, Category: "Sign-in", Title: "Approving asks for a code", Type: TypeBool, Default: "true", StepUp: true},
+	{Key: KeyAdminsNeedKey, Category: "Sign-in", Title: "Administrators must use a security key", Type: TypeBool, Default: "false", StepUp: true,
+		Description: "Recovery codes still work."},
 	{Key: KeyUpdateCheck, Category: "Updates", Title: "Check for new versions", Type: TypeBool, Default: "true",
 		Description: "Daily; nothing is sent."},
 	{Key: KeyRemoveOldImages, Category: "Updates", Title: "Remove old images", Type: TypeBool, Default: "true",

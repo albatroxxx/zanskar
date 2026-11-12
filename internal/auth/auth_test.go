@@ -21,12 +21,14 @@ import (
 	"github.com/albatroxxx/zanskar/internal/crypto"
 	"github.com/albatroxxx/zanskar/internal/httpx"
 	"github.com/albatroxxx/zanskar/internal/keyring"
+	"github.com/albatroxxx/zanskar/internal/store"
 	"github.com/albatroxxx/zanskar/internal/store/storetest"
 	"github.com/albatroxxx/zanskar/internal/user"
 )
 
 type env struct {
 	srv      http.Handler
+	db       *store.DB
 	users    *user.Repo
 	sessions *Sessions
 	totp     *TOTP
@@ -45,6 +47,7 @@ func newEnv(t *testing.T) *env {
 	}
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	e := &env{
+		db:       db,
 		users:    user.NewRepo(db),
 		sessions: NewSessions(db, bytes.Repeat([]byte{1}, 32), false),
 		totp:     NewTOTP(db, ring, "Zanskar Test"),

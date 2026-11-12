@@ -204,8 +204,8 @@ issued:
 `totp.Enrolled`, takes "an app confirmed, or at least one key" instead. Its readers change with it,
 and the build checks each one: the *Require an authenticator* sign-in gate and its enrolment step,
 a grant's *Authenticator* condition, the command line's `mfa_enrolled`, the security-posture tile
-*No authenticator yet* and its `postureWhere` filter, the Users page's state glyph, and *Also ask
-for a Zanskar authenticator* on a provider.
+*No authenticator yet* and its `postureWhere` filter, and *Also ask for a Zanskar authenticator* on
+a provider.
 
 ### Lifecycles (ADR 0047)
 
@@ -225,7 +225,8 @@ a note under *authenticator* that keys count beside it, and the session lifecycl
   actions, API tokens, the command line): *Use your key* when the account has one and the address
   allows it, and the code field. Where keys cannot work (no public address, or an IP), the button
   is disabled with its reason on hover; no paragraph explains it.
-- **The Users page** shows how many keys a person has, and *Reset authenticator* removes them.
+- **The Users page**: *Reset authenticator* removes the app, every key and every recovery code; the
+  page shows no per-person count of keys.
 
 ### Administrators must use a security key
 
