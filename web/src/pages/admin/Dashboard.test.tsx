@@ -117,7 +117,7 @@ describe('the admin dashboard', () => {
     const apps = screen.getByText('Applications').closest('a')
     expect(apps?.getAttribute('href')).toBe('/admin/applications?status=active')
     expect(apps?.textContent).toContain('4')
-    expect(screen.getByText('3 of 4 instances healthy').closest('a')?.getAttribute('href')).toBe('/admin/autoscaling')
+    expect(screen.getByText('autoscaling group · 3 of 4 instances healthy').closest('a')?.getAttribute('href')).toBe('/admin/fabric')
     expect(screen.getByText(/Zanskar 1\.4\.0, up 2 hours under systemd/)).toBeDefined()
 
     // The host gauges: each ratio is a meter with its words beside it, the

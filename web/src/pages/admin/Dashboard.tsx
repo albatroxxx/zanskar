@@ -124,9 +124,13 @@ export function Dashboard() {
               <StatTile value={o && o.inventory.applications} label="Applications" icon={<TileIcon kind="app" />} to={drill.activeApplications} />
               <StatTile
                 value={o && o.autoscaling.groups}
-                label="Autoscaling groups"
+                label="Fabric"
                 icon={<TileIcon kind="stack" />}
-                detail={o && o.autoscaling.instances > 0 ? `${o.autoscaling.healthy_instances} of ${o.autoscaling.instances} instances healthy` : undefined}
+                detail={
+                  o && o.autoscaling.groups > 0
+                    ? `${o.autoscaling.groups === 1 ? 'autoscaling group' : 'autoscaling groups'}${o.autoscaling.instances > 0 ? ` · ${o.autoscaling.healthy_instances} of ${o.autoscaling.instances} instances healthy` : ''}`
+                    : undefined
+                }
                 meter={
                   o && o.autoscaling.instances > 0
                     ? {
@@ -135,7 +139,7 @@ export function Dashboard() {
                       }
                     : undefined
                 }
-                to="/admin/autoscaling"
+                to="/admin/fabric"
               />
             </div>
           </section>

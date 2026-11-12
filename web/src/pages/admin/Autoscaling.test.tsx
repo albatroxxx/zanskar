@@ -3,7 +3,15 @@ import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { api } from '../../api/client'
 import type { AutoscalingGroup, Credential } from '../../api/types'
-import { Autoscaling } from './Autoscaling'
+import { MemoryRouter } from 'react-router-dom'
+import { Fabric } from './Fabric'
+
+// The autoscaling groups are Fabric's first tab (ADR 0048).
+const Autoscaling = () => (
+  <MemoryRouter>
+    <Fabric />
+  </MemoryRouter>
+)
 
 afterEach(() => {
   cleanup()

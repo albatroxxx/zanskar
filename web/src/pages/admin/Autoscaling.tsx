@@ -3,7 +3,7 @@ import { capitalised, stateLabel } from '../../api/states'
 import { api, errorMessage } from '../../api/client'
 import { fmtTime, protocolName } from '../../api/format'
 import type { AsgAccessTest, AsgIAMDocs, AsgInstance, AutoscalingGroup, AwsIdentity, Credential, OSFamily, Protocol } from '../../api/types'
-import { Alert, Badge, Confirm, Empty, Field, Loading, Modal, PageHead, Tags } from '../../components/ui'
+import { Alert, Badge, Confirm, Empty, Field, Loading, Modal, Tags } from '../../components/ui'
 import { DeleteAsset } from './DeleteAsset'
 import { protocols, useList, type PortProtocol } from './lib'
 import { TagEditor } from '../../components/TagEditor'
@@ -16,18 +16,18 @@ interface SyncResponse { summary: SyncSummary; group: AutoscalingGroup; error?: 
 
 const defaultPorts: Record<PortProtocol, number> = { ssh: 22, rdp: 3389, vnc: 5900, winrm: 5986 }
 
-export function Autoscaling() {
+/**
+ * AutoscalingGroups is Fabric's Autoscaling tab (ADR 0048); the page's
+ * Enroll group button opens its form, so the page holds `adding`.
+ */
+export function AutoscalingGroups({ adding, setAdding }: { adding: boolean; setAdding: (v: boolean) => void }) {
   const { items, err, setErr, reload } = useList<AutoscalingGroup>('/autoscaling-groups')
   const creds = useList<Credential>('/credentials')
-  const [adding, setAdding] = useState(false)
   const [open, setOpen] = useState<AutoscalingGroup | null>(null)
   const [created, setCreated] = useState<AutoscalingGroup | null>(null)
 
   return (
     <>
-      <PageHead title="Autoscaling groups">
-        <button className="btn primary" onClick={() => setAdding(true)}>Enroll group</button>
-      </PageHead>
       {err && <Alert tone="danger" onDismiss={() => setErr('')}>{err}</Alert>}
       <IdentityCard />
       <div className="card table-wrap">

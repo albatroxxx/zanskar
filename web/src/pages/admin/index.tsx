@@ -1,5 +1,5 @@
 import { Navigate, Route } from 'react-router-dom'
-import { Dashboard, Targets, Databases, Applications, Autoscaling, Credentials, Policies, PolicyEditor, PolicyReview, Approvals, UsersGroups, IdentityProviders, Sessions, Settings, Logs } from './pages'
+import { Dashboard, Targets, Databases, Applications, Fabric, Credentials, Policies, PolicyEditor, PolicyReview, Approvals, UsersGroups, IdentityProviders, Sessions, Settings, Logs } from './pages'
 
 // Admin pages, one per file. Paths match the sidebar in App.tsx. The console
 // lands on the dashboard (ADR 0029); hosts moved to /admin/hosts.
@@ -9,7 +9,10 @@ export const adminRoutes = (
     <Route path="hosts" element={<Targets />} />
     <Route path="databases" element={<Databases />} />
     <Route path="applications" element={<Applications />} />
-    <Route path="autoscaling" element={<Autoscaling />} />
+    <Route path="fabric" element={<Fabric />} />
+    <Route path="fabric/:kind" element={<Fabric />} />
+    {/* Autoscaling groups moved into Fabric (ADR 0048). */}
+    <Route path="autoscaling" element={<Navigate to="/admin/fabric/autoscaling" replace />} />
     <Route path="credentials" element={<Credentials />} />
     <Route path="policies" element={<Policies />} />
     <Route path="policies/new" element={<PolicyEditor />} />
