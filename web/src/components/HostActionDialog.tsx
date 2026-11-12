@@ -62,8 +62,15 @@ export function HostActionDialog({ action, version, change, onClose }: { action:
   const kept = useRef(DEFAULT_WAIT)
   const [confirm, setConfirm] = useState('')
   const [code, setCode] = useState('')
-  // A security key proved the step-up here (ADR 0028): no code is needed.
+  // A security key proved the step-up here (ADR 0028): no code is needed
+  // until the proof's minutes run out, when the code field and the key come
+  // back (break-it review, 2026-11-12).
   const [keyProved, setKeyProved] = useState(false)
+  useEffect(() => {
+    if (!keyProved) return
+    const t = setTimeout(() => setKeyProved(false), (host?.step_up_minutes ?? 5) * 60_000)
+    return () => clearTimeout(t)
+  }, [keyProved, host?.step_up_minutes])
   // The minutes of the request in flight, null when none is.
   const [busy, setBusy] = useState<number | null>(null)
   const [err, setErr] = useState('')

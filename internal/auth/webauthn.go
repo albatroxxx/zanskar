@@ -40,6 +40,9 @@ var (
 	ErrTooManyKeys = errors.New("auth: too many security keys")
 	ErrKeyNotFound = errors.New("auth: no such security key")
 	ErrKeyName     = errors.New("auth: a key's name is 1 to 64 characters")
+	// ErrKeyTaken: this key is registered already, to this account or to
+	// another one.
+	ErrKeyTaken = errors.New("auth: this key is registered already")
 )
 
 // What a key proves, each a ceremony of its own: a challenge begun for one
@@ -364,6 +367,9 @@ func (k *Keys) insert(ctx context.Context, tx *sql.Tx, userID, name string, cred
 		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`),
 		key.ID, userID, name, cred.ID, cred.PublicKey, int64(cred.Authenticator.SignCount), cred.Authenticator.AAGUID, strings.Join(transports, ","),
 		cred.Flags.BackupEligible, cred.Flags.BackupState, cred.Flags.UserVerified, cred.AttestationType, store.TimeArg(now)); err != nil {
+		if store.IsUniqueViolation(err) {
+			return nil, ErrKeyTaken
+		}
 		return nil, err
 	}
 	return key, nil
@@ -420,8 +426,9 @@ func (k *Keys) FinishAssertion(ctx context.Context, sessionID, userID, purpose s
 	}
 	now := k.now()
 	if _, err := k.db.ExecContext(ctx, k.db.Rebind(
-		`UPDATE webauthn_credentials SET sign_count = ?, backup_state = ?, user_verified = ?, last_used_at = ? WHERE id = ? AND user_id = ?`),
-		int64(cred.Authenticator.SignCount), cred.Flags.BackupState, cred.Flags.UserVerified, store.TimeArg(now), id, userID); err != nil {
+		`UPDATE webauthn_credentials SET sign_count = CASE WHEN sign_count < ? THEN ? ELSE sign_count END,
+		 backup_state = ?, user_verified = ?, last_used_at = ? WHERE id = ? AND user_id = ?`),
+		int64(cred.Authenticator.SignCount), int64(cred.Authenticator.SignCount), cred.Flags.BackupState, cred.Flags.UserVerified, store.TimeArg(now), id, userID); err != nil {
 		return nil, err
 	}
 	var name string

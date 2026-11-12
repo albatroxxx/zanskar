@@ -212,6 +212,9 @@ func (h *Handler) keyRegister(w http.ResponseWriter, r *http.Request) {
 	case errors.Is(err, ErrTooManyKeys):
 		httpx.WriteError(w, r, http.StatusConflict, "too_many_keys", "ten keys at most; remove one first")
 		return
+	case errors.Is(err, ErrKeyTaken):
+		httpx.WriteError(w, r, http.StatusConflict, "key_taken", "this key is registered already")
+		return
 	case errors.Is(err, ErrNoCeremony), errors.Is(err, ErrKeysOff):
 		keyNotAsked(w, r, err, h.Factors.Keys.Off())
 		return

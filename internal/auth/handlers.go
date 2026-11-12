@@ -542,7 +542,7 @@ func (h *Handler) changePassword(w http.ResponseWriter, r *http.Request) {
 	// password-only session of an account with an authenticator could
 	// otherwise lock its owner out.
 	if !p.Session.MFAVerified {
-		enrolled, err := h.TOTP.Enrolled(r.Context(), p.User.ID)
+		enrolled, err := h.Factors.Enrolled(r.Context(), p.User.ID)
 		if err != nil {
 			httpx.Internal(w, r, h.Log, err)
 			return
@@ -604,7 +604,7 @@ func (h *Handler) changePassword(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteJSON(w, http.StatusOK, loginResponse{Status: "ok", User: p.User, CSRFToken: h.Sessions.CSRFToken(p.Session.ID)})
 		return
 	}
-	enrolled, err := h.TOTP.Enrolled(r.Context(), p.User.ID)
+	enrolled, err := h.Factors.Enrolled(r.Context(), p.User.ID)
 	if err != nil {
 		httpx.Internal(w, r, h.Log, err)
 		return
@@ -736,6 +736,26 @@ func (h *Handler) factorOwed(w http.ResponseWriter, r *http.Request, p *Principa
 	}
 	if keys > 0 {
 		httpx.WriteError(w, r, http.StatusForbidden, "verify_first", "prove your second factor first")
+		return true
+	}
+	return false
+}
+
+// keysNeedFreshProof refuses to add an authenticator app beside the keys an
+// account has unless the session proved a factor in the last minutes, as
+// adding another key asks (mayAddKey). With only the password, a stolen
+// session could otherwise add the thief's app, take the proof its
+// confirmation writes, remove the owner's keys, and so slip out of
+// Administrators must use a security key (break-it review, 2026-11-12).
+// It answers when it refuses.
+func (h *Handler) keysNeedFreshProof(w http.ResponseWriter, r *http.Request, p *Principal) bool {
+	_, keys, err := h.Factors.Methods(r.Context(), p.User.ID)
+	if err != nil {
+		httpx.Internal(w, r, h.Log, err)
+		return true
+	}
+	if keys > 0 && !p.StepUpFresh() {
+		httpx.WriteError(w, r, http.StatusForbidden, "step_up_required", "prove your second factor first: adding an authenticator asks for a recent one")
 		return true
 	}
 	return false
@@ -922,6 +942,9 @@ func (h *Handler) totpEnroll(w http.ResponseWriter, r *http.Request) {
 			httpx.WriteError(w, r, http.StatusConflict, "already_enrolled", "an authenticator is already enrolled")
 			return
 		}
+		if h.keysNeedFreshProof(w, r, p) {
+			return
+		}
 		if p.User.PasswordHash == "" {
 			if time.Since(p.Session.CreatedAt) > recentSignIn {
 				h.record(r, ActorFor(r).Event(audit.UserMFAEnroll, "user", p.User.ID, audit.Failure, map[string]string{"reason": "reauth_required"}))
@@ -976,6 +999,9 @@ func (h *Handler) totpConfirm(w http.ResponseWriter, r *http.Request) {
 	// full session that enrols is not signing in: the lock, which is about
 	// new sign-ins, does not stop it (M6), though its wrong codes count.
 	signIn := !p.Session.MFAVerified
+	if !signIn && h.keysNeedFreshProof(w, r, p) {
+		return
+	}
 	var codes []string
 	verdict, err := h.checkCode(r.Context(), p.User.ID, signIn, func() (err error) {
 		codes, err = h.TOTP.Confirm(r.Context(), p.User.ID, strings.TrimSpace(req.Code))

@@ -365,3 +365,77 @@ func TestKeyStorage(t *testing.T) {
 		}
 	})
 }
+
+// TestAResetPasswordDoesNotSkipTheKey (break-it review, 2026-11-12, High 1):
+// an administrator reset a key-only account's password. Whoever holds the
+// reset password signs in to a session that owes the key, and must not get
+// to choose the next password from it, nor pass the sign-in by it.
+func TestAResetPasswordDoesNotSkipTheKey(t *testing.T) {
+	e := newEnv(t)
+	e.keysOn(t)
+	u := e.createUser(t, "pat", "an old long passphrase", user.RoleAdmin)
+	// The key as the first factor, as the enrolment a sign-in owes.
+	enrolling := e.sessionFor(t, u, false)
+	if c := e.addKey(t, enrolling, newSoftKey(t), "Key"); c.code != 200 {
+		t.Fatalf("first key: %d %v", c.code, c.body)
+	}
+	hash, err := user.HashPassword("the reset passphrase")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := e.users.SetPasswordHash(context.Background(), u.ID, hash, true); err != nil {
+		t.Fatal(err)
+	}
+	part := e.sessionFor(t, u, false)
+	c := e.do("POST", "/api/v1/auth/password", map[string]string{"current_password": "the reset passphrase", "new_password": "the thief's long passphrase"}, part.cookie, csrfOf(part))
+	if c.code != 401 || c.body["code"] != "mfa_required" {
+		t.Fatalf("password change before the key: %d %v", c.code, c.body)
+	}
+}
+
+// TestAnAppBesideKeysNeedsAFreshProof (break-it review, 2026-11-12, High
+// 2): with only the password, a stale session added an app beside the
+// keys, and its confirmation wrote a fresh proof that let it remove the
+// keys. Beside keys, an app asks for a fresh proof first, at both steps.
+func TestAnAppBesideKeysNeedsAFreshProof(t *testing.T) {
+	e := newEnv(t)
+	e.keysOn(t)
+	u := e.bareUser(t, "rio", user.RoleAdmin)
+	key := newSoftKey(t)
+	if c := e.addKey(t, e.sessionFor(t, u, true), key, "Key"); c.code != 200 {
+		t.Fatalf("first key: %d %v", c.code, c.body)
+	}
+	stale := e.sessionFor(t, u, true)
+	for _, path := range []string{"/api/v1/auth/mfa/totp/enroll", "/api/v1/auth/mfa/totp/confirm"} {
+		body := map[string]string{}
+		if path != "/api/v1/auth/mfa/totp/enroll" {
+			body["code"] = "123456"
+		}
+		if c := e.do("POST", path, body, stale.cookie, csrfOf(stale)); c.code != 403 || c.body["code"] != "step_up_required" {
+			t.Fatalf("%s without a fresh proof: %d %v", path, c.code, c.body)
+		}
+	}
+	// With the key touched, the app can be added.
+	if s := e.do("POST", "/api/v1/auth/mfa/step-up", map[string]any{"credential": key.get(t, e.begin(t, stale, PurposeStepUp))}, stale.cookie, csrfOf(stale)); s.code != 200 {
+		t.Fatalf("step-up: %d %v", s.code, s.body)
+	}
+	if c := e.do("POST", "/api/v1/auth/mfa/totp/enroll", map[string]string{}, stale.cookie, csrfOf(stale)); c.code != 200 {
+		t.Fatalf("enrol after a fresh proof: %d %v", c.code, c.body)
+	}
+}
+
+// TestTheSameKeyOnTwoAccounts (break-it review, 2026-11-12): a key already
+// registered to another account is refused as such, not with a 500.
+func TestTheSameKeyOnTwoAccounts(t *testing.T) {
+	e := newEnv(t)
+	e.keysOn(t)
+	key := newSoftKey(t)
+	a := e.bareUser(t, "ann", user.RoleUser)
+	if c := e.addKey(t, e.sessionFor(t, a, true), key, "Key"); c.code != 200 {
+		t.Fatalf("first account: %d %v", c.code, c.body)
+	}
+	b := e.bareUser(t, "ben", user.RoleUser)
+	if c := e.addKey(t, e.sessionFor(t, b, true), key, "Key"); c.code != 409 || c.body["code"] != "key_taken" {
+		t.Fatalf("second account: %d %v", c.code, c.body)
+	}
+}

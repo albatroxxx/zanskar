@@ -424,7 +424,9 @@ paths:
         Proves possession of the authenticator. Returns one-time recovery codes, shown once, when
         it is the account's first second factor; an account that has a security key keeps the codes
         it has, and `recovery_codes` is null (ADR 0028). On a sign-in that still owes the second
-        factor of an account with a key, `403 verify_first`: the key is proved, not bypassed.
+        factor of an account with a key, `403 verify_first`: the key is proved, not bypassed. From a full session
+        of an account with a key, adding the app needs a step-up first, here and at
+        `POST /auth/mfa/totp/enroll` (`403 step_up_required`).
       requestBody:
         required: true
         content:

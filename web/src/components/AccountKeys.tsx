@@ -28,6 +28,9 @@ export function AccountKeys() {
   const [ask, setAsk] = useState<'step_up' | 'password' | null>(null)
   const [code, setCode] = useState('')
   const [password, setPassword] = useState('')
+  // The password as typed, read when the retried action runs: the action
+  // was made before it was asked for (break-it review, 2026-11-12).
+  const typed = useRef('')
   const pending = useRef<(() => Promise<void>) | null>(null)
 
   const fetchKeys = () => api.get<{ items: SecurityKey[]; keys_off: string }>('/auth/mfa/webauthn/keys')
@@ -58,6 +61,7 @@ export function AccountKeys() {
       setAsk(null)
       setCode('')
       setPassword('')
+      typed.current = ''
     } catch (e) {
       if (e instanceof ApiError && e.code === 'step_up_required') {
         pending.current = fn
@@ -78,7 +82,7 @@ export function AccountKeys() {
     e.preventDefault()
     const n = name.trim()
     void attempt(async () => {
-      const credential = await createKey(password || undefined)
+      const credential = await createKey(typed.current || undefined)
       const r = await api.post<{ recovery_codes: string[] | null }>('/auth/mfa/webauthn/register', { name: n, credential })
       setName('')
       if (r.recovery_codes?.length) setCodes(r.recovery_codes)
@@ -169,7 +173,7 @@ export function AccountKeys() {
       {ask === 'password' && (
         <form className="key-ask" onSubmit={(e) => { e.preventDefault(); void again() }}>
           <Field label="Current password">
-            <input type="password" autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} autoFocus />
+            <input type="password" autoComplete="current-password" value={password} onChange={(e) => { setPassword(e.target.value); typed.current = e.target.value }} autoFocus />
           </Field>
           <div className="actions">
             <button type="submit" className="btn sm primary" disabled={busy || !password}>Continue</button>

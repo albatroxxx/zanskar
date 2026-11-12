@@ -110,6 +110,27 @@ describe("the account dialog's security keys", () => {
     expect(screen.queryByLabelText('Authenticator or recovery code')).toBeNull()
   })
 
+  // Break-it review, 2026-11-12: the retried action was made before the
+  // password was asked for and sent an empty one for ever.
+  it('asks for the password for a first key and sends it', async () => {
+    serve([])
+    const post = vi.spyOn(api, 'post').mockImplementation(async (path: string, body?: unknown) => {
+      if (path === '/auth/mfa/webauthn/begin') {
+        if (!(body as { current_password?: string }).current_password) throw new ApiError(401, { code: 'password_required', message: 'enter your current password to add a key' }, '401')
+        return options as never
+      }
+      return { key: { id: 'k1' }, recovery_codes: ['AAAAA-BBBBB'] } as never
+    })
+    render(<AuthProvider><AccountKeys /></AuthProvider>)
+    const user = userEvent.setup()
+    await user.type(await screen.findByLabelText("New key's name"), 'Laptop')
+    await user.click(screen.getByRole('button', { name: 'Add key' }))
+    await user.type(await screen.findByLabelText('Current password'), 'my long passphrase')
+    await user.click(screen.getByRole('button', { name: 'Continue' }))
+    expect(await screen.findByText('AAAAA-BBBBB')).toBeDefined()
+    expect(post).toHaveBeenCalledWith('/auth/mfa/webauthn/begin', { purpose: 'register', current_password: 'my long passphrase' })
+  })
+
   it('renames one, and shows new recovery codes once', async () => {
     serve()
     const patch = vi.spyOn(api, 'patch').mockResolvedValue(undefined as never)
