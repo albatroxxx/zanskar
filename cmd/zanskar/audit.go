@@ -100,8 +100,8 @@ func reportVerify(res audit.VerifyResult) error {
 	}
 	if !res.Intact() {
 		if res.Broken != nil {
-			fmt.Fprintf(os.Stderr, "audit chain BROKEN: %s\n%d event(s) verified before the break; last good id %d hash %s\n",
-				res.Broken.Reason, res.Checked, res.LastID, res.LastHash)
+			fmt.Fprintf(os.Stderr, "audit chain BROKEN at event %d: %s\n%d event(s) verified before the break; last good id %d hash %s\n",
+				res.Broken.ID, res.Broken.Reason, res.Checked, res.LastID, res.LastHash)
 		}
 		for _, p := range res.Problems {
 			fmt.Fprintln(os.Stderr, "audit log problem:", p)

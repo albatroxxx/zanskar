@@ -308,7 +308,8 @@ func TestAuditVerifyAndReseal(t *testing.T) {
 			t.Fatal(err)
 		}
 	})
-	if _, stderr, err := output(t, func() error { return runAuditVerify(nil) }); err == nil || !strings.Contains(stderr, "BROKEN") {
+	// It names the event that broke, as the console does (testing board #174).
+	if _, stderr, err := output(t, func() error { return runAuditVerify(nil) }); err == nil || !strings.Contains(stderr, "BROKEN at event 2:") {
 		t.Fatalf("verify a tampered chain: %v %q", err, stderr)
 	}
 	if _, stderr, err := output(t, func() error { return runAuditReseal(nil) }); err == nil || !strings.Contains(stderr, "--yes") {
