@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { api, errorMessage } from '../../api/client'
 import { appTLS, dbTLS, engineName, fmtTime, protocolName } from '../../api/format'
-import type { CertificateProbe, Credential, DependencyRefusal, ProbeResponse, Protocol, Target } from '../../api/types'
+import type { AppEndpoint, CertificateProbe, Credential, DependencyRefusal, ProbeResponse, Protocol, Target } from '../../api/types'
 import { OSIcon, StateIcon } from '../../components/icons'
 import { Alert, Badge, Confirm, Modal, Tags } from '../../components/ui'
 import { DeleteAsset } from './DeleteAsset'
@@ -16,6 +16,17 @@ import { enginePorts, hostPorts, kindOf, TargetForm, targetBody } from './Target
  * test of its port, since host keys do not apply to it; an application shows its
  * upstream and how it is verified, and holds no credential at all (ADR 0034).
  */
+/** EndpointList is an application's other endpoints, name then address: in its drawer and under its row. */
+export function EndpointList({ endpoints }: { endpoints: AppEndpoint[] }) {
+  return (
+    <ul className="plain-list endpoint-list">
+      {endpoints.map((e) => (
+        <li key={e.url}><span>{e.name}</span> <span className="mono muted">{e.url}</span></li>
+      ))}
+    </ul>
+  )
+}
+
 export function TargetDetail({ target, credentials, onClose, onChanged, onDeleted }: { target: Target; credentials: Credential[]; onClose: () => void; onChanged: (t: Target) => void; onDeleted: () => void; onError: (m: string) => void }) {
   const [editing, setEditing] = useState(false)
   const [probe, setProbe] = useState<ProbeResponse | null>(null)
@@ -126,7 +137,7 @@ export function TargetDetail({ target, credentials, onClose, onChanged, onDelete
   const probed: Protocol[] = database ? ['database'] : protocols
 
   return (
-    <Modal title={t.name} onClose={onClose} width={720}>
+    <Modal title={t.name} onClose={onClose} width={learns ? 900 : 720}>
       {err && <Alert tone="danger" onDismiss={() => setErr('')}>{err}</Alert>}
       {t.host_key_status === 'changed' && (
         <Alert tone="danger">
@@ -174,13 +185,7 @@ export function TargetDetail({ target, credentials, onClose, onChanged, onDelete
             {(t.app_endpoints?.length ?? 0) > 0 && (
               <>
                 <dt>Other endpoints</dt>
-                <dd>
-                  <ul className="plain-list">
-                    {t.app_endpoints?.map((e) => (
-                      <li key={e.url}>{e.name} <span className="mono muted">{e.url}</span></li>
-                    ))}
-                  </ul>
-                </dd>
+                <dd><EndpointList endpoints={t.app_endpoints ?? []} /></dd>
               </>
             )}
             <dt>Upstream TLS</dt><dd>{appTLS(t).verified ? <Badge tone="ok">{appTLS(t).label}</Badge> : <Badge tone="warn">{appTLS(t).label}</Badge>}</dd>
@@ -424,7 +429,7 @@ function BlockedDependencies({ target, items, onAllow, onClear }: { target: Targ
               <tr key={`${hostport}|${x.why}|${x.what}|${x.from}`}>
                 <td className="mono">{hostport}</td>
                 <td>{x.what}</td>
-                <td className="muted from">{x.from || '—'}</td>
+                <td className="muted from" title={x.from || undefined}>{x.from || '—'}</td>
                 <td className="muted">{x.count} × · {fmtTime(x.last_seen)}</td>
                 <td>
                   {x.why === 'private' && <button className="btn sm" onClick={() => onAllow(hostport)}>Allow</button>}

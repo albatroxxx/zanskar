@@ -33,22 +33,39 @@ function mount() {
 }
 
 // The owner, 2026-11-11: "+1" after an upstream said there were more and
-// showed them only in a tooltip. A toggle lists every other endpoint in the row.
+// showed them only in a tooltip; 1.19.2's "+1 ▾" pill opened them inside the
+// cell and grew the row. 2026-11-12: Policies' disclosure after the address,
+// opening a row of its own beneath the application's.
 describe('Applications, other endpoints', () => {
-  it('lists every other endpoint behind a toggle in the row', async () => {
+  it('opens every other endpoint in a row beneath, by mouse or keyboard', async () => {
     mount()
+    const user = userEvent.setup()
     const row = (await screen.findByText('wiki')).closest('tr')!
-    const toggle = within(row).getByRole('button', { name: 'Show 2 other endpoints' })
+    const toggle = within(row).getByRole('button', { name: '2 other endpoints' })
+    expect(toggle.textContent).toBe('+2')
+    expect(toggle.className).toContain('expander')
     expect(toggle.getAttribute('aria-expanded')).toBe('false')
-    expect(within(row).queryByText('https://api.example')).toBeNull()
+    const id = toggle.getAttribute('aria-controls')!
+    expect(document.getElementById(id)).toBeNull()
+    // The address is the cell's own text, outside the button, so it can be selected.
+    expect(toggle.textContent).not.toContain('https://wiki.example')
+    expect(row.textContent).toContain('https://wiki.example')
 
-    await userEvent.setup().click(toggle)
+    await user.click(toggle)
     expect(toggle.getAttribute('aria-expanded')).toBe('true')
-    expect(toggle.getAttribute('aria-label')).toBe('Hide 2 other endpoints')
-    const items = within(row).getAllByRole('listitem').map((li) => li.textContent)
-    expect(items).toEqual(['api https://api.example', 'sso https://sso.example'])
+    expect(toggle.getAttribute('aria-label')).toBe('2 other endpoints')
+    const detail = document.getElementById(id)!
+    expect(detail.previousElementSibling).toBe(row)
+    expect(within(detail).getAllByRole('listitem').map((li) => li.textContent)).toEqual(['api https://api.example', 'sso https://sso.example'])
+    expect(within(row).queryByRole('listitem')).toBeNull()
 
-    // An application with no other endpoint has no toggle.
+    await user.click(toggle)
+    expect(document.getElementById(id)).toBeNull()
+    toggle.focus()
+    await user.keyboard('{Enter}')
+    expect(toggle.getAttribute('aria-expanded')).toBe('true')
+
+    // An application with no other endpoint has no disclosure.
     const plain = screen.getByText('plain').closest('tr')!
     expect(within(plain).queryByRole('button', { name: /other endpoint/ })).toBeNull()
   })

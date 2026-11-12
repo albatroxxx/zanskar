@@ -15,6 +15,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/elasticloadbalancingv2 v1.63.8
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.114.8
 	github.com/aws/aws-sdk-go-v2/service/sts v1.51.8
+	github.com/aws/smithy-go v1.28.8
 	github.com/coder/websocket v1.8.15
 	github.com/coreos/go-oidc/v3 v3.21.0
 	github.com/creack/pty v1.1.24
@@ -49,7 +50,6 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/signin v1.12.3 // indirect
 	github.com/aws/aws-sdk-go-v2/service/sso v1.39.3 // indirect
 	github.com/aws/aws-sdk-go-v2/service/ssooidc v1.44.3 // indirect
-	github.com/aws/smithy-go v1.28.8 // indirect
 	github.com/bodgit/ntlmssp v0.0.0-20240506230425-31973bb52d9b // indirect
 	github.com/bodgit/windows v1.0.1 // indirect
 	github.com/boombuler/barcode v1.0.1-0.20190219062509-6c824513bacc // indirect

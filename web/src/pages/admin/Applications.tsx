@@ -1,9 +1,9 @@
-import { useState } from 'react'
 import { appTLS } from '../../api/format'
 import type { Target } from '../../api/types'
 import { StateIcon } from '../../components/icons'
 import { Tags } from '../../components/ui'
-import { TargetsPage } from './TargetsPage'
+import { EndpointList } from './TargetDetail'
+import { TargetsPage, type RowDisclosure } from './TargetsPage'
 
 /**
  * Applications lists web applications opened in an isolated browser beside
@@ -19,51 +19,44 @@ export function Applications() {
       addLabel="Add application"
       empty="No applications yet."
       columns={['Upstream', 'TLS', 'Tags']}
-      cells={(t) => (
+      cells={(t, _credentials, row) => (
         <>
-          <UpstreamCell t={t} />
+          <UpstreamCell t={t} row={row} />
           <td><StateIcon state={appTLS(t).verified ? 'ok' : 'warn'} label={'Upstream: ' + appTLS(t).label} /></td>
           <td><Tags tags={t.tags} /></td>
         </>
       )}
+      detail={(t) => (t.app_endpoints?.length ? <EndpointList endpoints={t.app_endpoints} /> : null)}
     />
   )
 }
 
 /**
- * UpstreamCell is an application's upstream and, behind a toggle, every other
- * endpoint it reaches. The owner, 2026-11-11: "+1" in the list said there
- * were more and showed them only in a tooltip; the toggle lists them in the
- * row, name and address.
+ * UpstreamCell is an application's upstream and, after it, Policies'
+ * disclosure: a chevron and a count that open its other endpoints in a row
+ * beneath (2026-11-12, after the owner found 1.19.2's "+1 ▾" pill wanting).
+ * The address stays outside the button so it can still be selected and
+ * copied; the button's name stays put and aria-expanded says the state.
  */
-function UpstreamCell({ t }: { t: Target }) {
-  const [open, setOpen] = useState(false)
-  const endpoints = t.app_endpoints ?? []
-  const n = endpoints.length
+function UpstreamCell({ t, row }: { t: Target; row: RowDisclosure }) {
+  const n = t.app_endpoints?.length ?? 0
   return (
     <td className="mono">
       {t.app_upstream}
       {n > 0 && (
         <button
           type="button"
-          className="endpoints-toggle"
-          aria-expanded={open}
-          aria-label={`${open ? 'Hide' : 'Show'} ${n} other endpoint${n === 1 ? '' : 's'}`}
-          onClick={() => setOpen((o) => !o)}
+          className="expander inline"
+          aria-expanded={row.open}
+          aria-controls={row.detailId}
+          aria-label={`${n} other endpoint${n === 1 ? '' : 's'}`}
+          onClick={row.toggle}
         >
-          +{n} <span aria-hidden="true">{open ? '▴' : '▾'}</span>
+          <span className="chev" aria-hidden="true" />
+          +{n}
         </button>
       )}
       {t.app_dependencies === 'origins' && <span className="muted" title="dependencies: its origins only"> · origins only</span>}
-      {open && (
-        <ul className="app-endpoints">
-          {endpoints.map((e) => (
-            <li key={e.url}>
-              <span className="app-endpoint-name">{e.name}</span> {e.url}
-            </li>
-          ))}
-        </ul>
-      )}
     </td>
   )
 }

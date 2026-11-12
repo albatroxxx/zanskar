@@ -125,9 +125,14 @@ describe('TargetDetail, blocked dependencies', () => {
     expect(screen.getByText('script')).toBeDefined()
     expect(screen.getByRole('button', { name: 'Never allowed: link-local' })).toBeDefined()
     expect(screen.getByText('not an endpoint')).toBeDefined()
-    // a host, a kind and a time stay on one line each (live 2026-11-05: ":8/0", "docume/nt"); only the asking page may break
+    // Every cell reads whole (live 2026-11-05: ":8/0", "docume/nt"; 2026-11-12:
+    // "en.wikipedia.o/rg"); a long asking page is cut and its title holds it.
     expect(screen.getByRole('table').className).toContain('blocked')
-    expect(screen.getByText('cdn.corp:443').closest('tr')?.querySelector('td.from')?.textContent).toBe('http://wiki.corp')
+    const from = screen.getByText('cdn.corp:443').closest('tr')?.querySelector('td.from')
+    expect(from?.textContent).toBe('http://wiki.corp')
+    expect(from?.getAttribute('title')).toBe('http://wiki.corp')
+    // 900 px wide, so Allow shows without scrolling (live, 2026-11-12).
+    expect((screen.getByRole('dialog', { name: 'wiki' }) as HTMLElement).style.width).toBe('min(900px, 100%)')
     // A table of its own, under a heading, that scrolls sideways if it must:
     // in the details' second column it was cut off at the dialog's edge
     // (live, 2026-11-11).
@@ -158,6 +163,7 @@ describe('TargetDetail, blocked dependencies', () => {
     expect(screen.getByText('Its origins only')).toBeDefined()
     expect(screen.queryByText('Blocked')).toBeNull()
     expect(get).not.toHaveBeenCalledWith('/targets/w1/dependencies')
+    expect((screen.getByRole('dialog', { name: 'wiki' }) as HTMLElement).style.width).toBe('min(720px, 100%)')
   })
 })
 

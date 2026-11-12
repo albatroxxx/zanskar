@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type ReactNode } from 'react'
+import { Fragment, useCallback, useEffect, useState, type ReactNode } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { api } from '../../api/client'
 import type { AppsReadiness, Credential, Target } from '../../api/types'
@@ -15,7 +15,10 @@ import { TargetForm, type TargetKind } from './TargetForm'
  * one. Hosts and databases differ only in their words and in the columns
  * between a target's name and its Manage button.
  */
-export function TargetsPage({ kind, title, addLabel, empty, columns, cells }: {
+/** A row's disclosure, handed to its cells: Policies' pattern (2026-11-12). */
+export type RowDisclosure = { open: boolean; toggle: () => void; detailId: string }
+
+export function TargetsPage({ kind, title, addLabel, empty, columns, cells, detail }: {
   kind: TargetKind
   title: string
   addLabel: string
@@ -24,7 +27,9 @@ export function TargetsPage({ kind, title, addLabel, empty, columns, cells }: {
   /** Headers of the columns between Name and the Manage button. */
   columns: string[]
   /** One target's cells for those columns. The credentials are there to name what it is bound to. */
-  cells: (t: Target, credentials: Credential[]) => ReactNode
+  cells: (t: Target, credentials: Credential[], row: RowDisclosure) => ReactNode
+  /** What opens in a row under a target's (an application's other endpoints); null for nothing. */
+  detail?: (t: Target) => ReactNode
 }) {
   // The server does the matching (name or address, case-insensitive, wildcard
   // characters escaped — internal/target/repo.go), so search covers the whole
@@ -50,6 +55,7 @@ export function TargetsPage({ kind, title, addLabel, empty, columns, cells }: {
   const creds = useList<Credential>('/credentials')
   const [adding, setAdding] = useState(false)
   const [open, setOpen] = useState<Target | null>(null)
+  const [expanded, setExpanded] = useState<string[]>([])
   // Applications open only once the gateway can run the browser beside it
   // (ADR 0034). Until the prerequisites pass, the page is the checklist and
   // Check again; Add application appears once they do (2026-10-30). A
@@ -123,20 +129,33 @@ export function TargetsPage({ kind, title, addLabel, empty, columns, cells }: {
               </tr>
             </thead>
             <tbody>
-              {items.map((t) => (
-                <tr key={t.id}>
-                  <td>
-                    <strong>{t.name}</strong> {t.state === 'disabled' && <StateBadge lifecycle="target" state={t.state} />}
-                  </td>
-                  {cells(t, creds.items ?? [])}
-                  <td>
-                    {/* Manage, not Open: in the console it opens the record (details,
-                        edit, disable, delete), never a session to the target, which is what
-                        Open means in the access portal (2026-10-30). */}
-                    <button className="btn sm" onClick={() => setOpen(t)}>Manage</button>
-                  </td>
-                </tr>
-              ))}
+              {items.map((t) => {
+                const rowOpen = expanded.includes(t.id)
+                const detailId = `target-${t.id}-detail`
+                const toggle = () => setExpanded((o) => (o.includes(t.id) ? o.filter((x) => x !== t.id) : [...o, t.id]))
+                const more = rowOpen ? detail?.(t) : null
+                return (
+                  <Fragment key={t.id}>
+                    <tr>
+                      <td>
+                        <strong>{t.name}</strong> {t.state === 'disabled' && <StateBadge lifecycle="target" state={t.state} />}
+                      </td>
+                      {cells(t, creds.items ?? [], { open: rowOpen, toggle, detailId })}
+                      <td>
+                        {/* Manage, not Open: in the console it opens the record (details,
+                            edit, disable, delete), never a session to the target, which is what
+                            Open means in the access portal (2026-10-30). */}
+                        <button className="btn sm" onClick={() => setOpen(t)}>Manage</button>
+                      </td>
+                    </tr>
+                    {more && (
+                      <tr className="row-detail" id={detailId}>
+                        <td colSpan={columns.length + 2}>{more}</td>
+                      </tr>
+                    )}
+                  </Fragment>
+                )
+              })}
             </tbody>
           </table>
         )}

@@ -236,10 +236,13 @@ td .muted, .muted { color: var(--fg-muted); }
    boxes count against this scroll container's overflow and not the page's:
    without it a wide table widened the page past the clipped card. */
 .table-wrap { overflow-x: auto; position: relative; }
-/* The application's Blocked list in a dialog: a host, a kind and a time break
-   mid-word at this width (live 2026-11-05: ":8/0", "docume/nt"); the page it came from may break. */
+/* The application's Blocked list, in a dialog 900 px wide so the Allow
+   column shows without scrolling (live, 2026-11-12). Every cell reads
+   whole: a host, a kind and a time broke mid-word (2026-11-05: ":8/0",
+   "docume/nt"), and so did the page it came from ("en.wikipedia.o/rg");
+   a long one is cut with an ellipsis and its title holds it all. */
 table.blocked th, table.blocked td { white-space: nowrap; }
-table.blocked td.from { white-space: normal; overflow-wrap: anywhere; min-width: 18ch; }
+table.blocked td.from { max-width: 32ch; overflow: hidden; text-overflow: ellipsis; }
 /* An autoscaling group's instances: an id and a zone are names, read whole
    (live 2026-11-11: "i-" over "027fc5cef80dc5c3" over "7", "us-east-" over "1b"). */
 table.instances td.mono { white-space: nowrap; overflow-wrap: normal; }
@@ -301,12 +304,6 @@ td.actions > * + * { margin-left: 8px; }
 .field-head .glyph-btn svg { width: 14px; height: 14px; }
 .link-btn { align-self: flex-start; padding: 0; margin: -4px 0 12px; border: 0; background: none; color: var(--accent); font: inherit; font-size: 0.85rem; cursor: pointer; }
 .link-btn:hover { color: var(--accent-hover); }
-/* An application's other endpoints, behind a toggle in its row (2026-11-11). */
-.endpoints-toggle { margin-left: 6px; padding: 0 5px; border: 1px solid var(--line); border-radius: var(--radius); background: none; color: var(--accent); font: inherit; font-size: 0.82rem; cursor: pointer; }
-.endpoints-toggle:hover { border-color: var(--line-strong); }
-.app-endpoints { list-style: none; margin: 6px 0 0; padding: 0 0 0 10px; border-left: 2px solid var(--line); }
-.app-endpoints li { margin: 2px 0; }
-.app-endpoint-name { font-family: var(--font); color: var(--fg-muted); margin-right: 6px; }
 .field input, .field select, .field textarea { padding: 7px 10px; border: 1px solid var(--line-strong); border-radius: var(--radius); background: var(--bg-raised); width: 100%; }
 /* A number box is the size of a number, not the page's width (live, 2026-11-11). */
 .field input.narrow { max-width: 160px; }
@@ -369,6 +366,11 @@ tr[aria-current="true"] td { background: var(--accent-soft); }
 .endpoint-row { grid-template-columns: minmax(0, 1fr) minmax(0, 2fr) 2rem; }
 /* A list read as lines, without bullets: an application's endpoints. */
 .plain-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; }
+/* An application's other endpoints, name then address, the addresses aligned. */
+.endpoint-list { grid-template-columns: max-content minmax(0, 1fr); column-gap: 14px; }
+.endpoint-list > li { display: grid; grid-column: 1 / -1; grid-template-columns: subgrid; align-items: baseline; }
+.endpoint-list .mono { overflow-wrap: anywhere; }
+.row-detail .endpoint-list { font-size: 0.88rem; }
 .tag-head { font-size: 0.78rem; color: var(--fg-muted); }
 
 /* modal
@@ -807,9 +809,16 @@ tr[aria-current="true"] td { background: var(--accent-soft); }
 .expander .chev { flex: none; width: 7px; height: 7px; margin-top: 6px; border-right: 2px solid var(--fg-muted); border-bottom: 2px solid var(--fg-muted); transform: rotate(-45deg); transition: transform 0.12s; }
 .expander[aria-expanded="true"] .chev { transform: rotate(45deg); }
 @media (prefers-reduced-motion: reduce) { .expander .chev { transition: none; } }
+/* The same disclosure inline after a value (an application's upstream): quiet
+   until hovered, 24px tall for the pointer without growing the row. */
+.expander.inline { display: inline-flex; align-items: baseline; gap: 6px; margin: -3px 0 -3px 4px; padding: 3px 4px; border-radius: var(--radius); font-family: var(--font); font-size: 0.82rem; color: var(--fg-muted); white-space: nowrap; }
+.expander.inline .chev { align-self: center; margin-top: 0; }
+.expander.inline:hover { color: var(--fg); }
+.expander.inline:hover .chev { border-color: var(--fg); }
+.expander.inline:focus-visible { outline-offset: 1px; }
 .rollup-reach { display: block; font-size: 0.84rem; }
 .access-flags { display: flex; flex-wrap: wrap; gap: 4px; margin: 4px 0 2px; }
-.policy-detail > td { background: var(--bg-sunken); padding: 10px 14px 14px; }
+.policy-detail > td, .row-detail > td { background: var(--bg-sunken); padding: 10px 14px 14px; }
 .policy-who-full { margin: 0 0 8px; font-size: 0.88rem; }
 .grants-table { width: 100%; font-size: 0.86rem; }
 .grants-table th { font-size: 0.72rem; }
