@@ -63,7 +63,7 @@ and update the status of the old one.
 | [0042](0042-four-eyes-sessions.md) | Four eyes: a session waits until a second person watches it | Accepted |
 | [0043](0043-configuration-as-a-file.md) | The configuration as a file: exported by name, imported through the API | Accepted |
 | [0044](0044-api-tokens-and-terraform-provider.md) | API tokens for automation, and a Terraform provider over them | Accepted |
-| [0045](0045-kubernetes-clusters-as-targets.md) | Kubernetes clusters as targets: access through the gateway, as the person, every request on the record | Accepted, parked |
+| [0045](0045-kubernetes-clusters-as-targets.md) | Kubernetes clusters as targets: access through the gateway, as the person, every request on the record | Accepted, in progress |
 | [0046](0046-deleting-a-user-keeps-their-history.md) | Deleting a user keeps their history: sessions and recording views carry who the person was | Accepted |
 | [0047](0047-lifecycles-declared-once.md) | A lifecycle is declared once, and the state a person sees is the state the gateway computed | Accepted 2026-11-10 |
-| [0048](0048-fabric.md) | Fabric: what Zanskar reaches through a control plane, where the members come and go | Proposed |
+| [0048](0048-fabric.md) | Fabric: what Zanskar reaches through a control plane, where the members come and go | Accepted 2026-11-12 |

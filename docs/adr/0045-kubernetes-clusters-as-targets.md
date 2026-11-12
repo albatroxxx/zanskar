@@ -10,8 +10,10 @@ support as well, just like host, database, etc."), took the recommendations belo
 by default; bodies never recorded; *Clusters*, `kube`, `pod`; the inventory tile settled when
 phase 1 is built), and set the work aside for later. Nothing is built; the plan is the record.
 
-Amended by [ADR 0048](0048-fabric.md) (proposed 2026-11-12): clusters live in the console's *Fabric*
-section under the tab *Kubernetes*, not *Clusters*, and the dashboard counts them in its *Fabric* tile.
+Un-parked 2026-11-12 by [ADR 0048](0048-fabric.md), accepted the same day: clusters live in the
+console's *Fabric* section under the tab *Kubernetes*, not *Clusters*, the dashboard counts them in
+its *Fabric* tile, and phase 3 (EKS) is built before phase 2 (shells). Phase 1 is in progress on
+`feat/fabric`.
 
 ## Context
 
