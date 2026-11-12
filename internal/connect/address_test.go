@@ -17,6 +17,7 @@ import (
 	"github.com/albatroxxx/zanskar/internal/audit"
 	"github.com/albatroxxx/zanskar/internal/credential"
 	"github.com/albatroxxx/zanskar/internal/gateway"
+	"github.com/albatroxxx/zanskar/internal/gateway/guac"
 	"github.com/albatroxxx/zanskar/internal/target"
 )
 
@@ -100,8 +101,31 @@ func TestTerminalRefusesForbiddenName(t *testing.T) {
 	wantAddressRefused(t, r.connectFixture, r.targetID, "ssh")
 }
 
-// TestWinRMRefusesForbiddenName: refused before the upgrade, where WinRM
-// dials, and nothing reaches the listener.
+// refusedOverSocket reads a socket the gateway refused as it opened
+// (refuseOpen) and returns what came before the close: the end frame or
+// guacamole error that carries the words. The close must be the policy
+// violation the console shows.
+func refusedOverSocket(t *testing.T, ws *websocket.Conn) string {
+	t.Helper()
+	defer ws.CloseNow()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	var words strings.Builder
+	for {
+		_, data, err := ws.Read(ctx)
+		if err != nil {
+			var ce websocket.CloseError
+			if !errors.As(err, &ce) || ce.Code != websocket.StatusPolicyViolation {
+				t.Fatalf("closed with %v after %q, want a policy violation", err, words.String())
+			}
+			return words.String()
+		}
+		words.Write(data)
+	}
+}
+
+// TestWinRMRefusesForbiddenName: refused where WinRM dials, before the
+// session starts, in words the console shows; nothing reaches the listener.
 func TestWinRMRefusesForbiddenName(t *testing.T) {
 	r := newWinRMRig(t)
 	id := r.winTarget(t, "win-named", "admin", r.wsm.Fingerprint())
@@ -115,16 +139,12 @@ func TestWinRMRefusesForbiddenName(t *testing.T) {
 	r.setAddress(t, id, "localhost")
 	before := r.wsm.Requests.Load()
 
-	ws, resp, err := websocket.Dial(context.Background(), "ws"+strings.TrimPrefix(r.url, "http")+"/ws/winrm?cols=100&rows=30&ticket="+tok, r.wsOptions())
-	if resp != nil {
-		_ = resp.Body.Close()
+	ws, _, err := websocket.Dial(context.Background(), "ws"+strings.TrimPrefix(r.url, "http")+"/ws/winrm?cols=100&rows=30&ticket="+tok, r.wsOptions()) //nolint:bodyclose // the library closes the handshake body
+	if err != nil {
+		t.Fatal(err)
 	}
-	if err == nil {
-		ws.CloseNow()
-		t.Fatal("a session started on a name that resolves to loopback")
-	}
-	if resp == nil || resp.StatusCode != http.StatusUnprocessableEntity {
-		t.Fatalf("refused with %v %v, want 422", resp, err)
+	if words := refusedOverSocket(t, ws); !strings.Contains(words, `"t":"end"`) || !strings.Contains(words, addressRefusedMsg) {
+		t.Fatalf("refused with %q, want an end frame about the address", words)
 	}
 	if n := r.wsm.Requests.Load() - before; n != 0 {
 		t.Fatalf("%d request(s) reached the WinRM listener", n)
@@ -151,16 +171,12 @@ func TestDesktopRefusesForbiddenName(t *testing.T) {
 		tk := r.ticket(t, id, proto)
 		r.h.Prober = &target.Prober{}
 		r.setAddress(t, id, "localhost")
-		ws, resp, err := r.dial(ctx, tk)
-		if resp != nil {
-			_ = resp.Body.Close()
+		ws, _, err := r.dial(ctx, tk) //nolint:bodyclose // the library closes the handshake body
+		if err != nil {
+			t.Fatal(err)
 		}
-		if err == nil {
-			ws.CloseNow()
-			t.Fatalf("%s: a session started on a name that resolves to loopback", proto)
-		}
-		if resp == nil || resp.StatusCode != http.StatusUnprocessableEntity {
-			t.Fatalf("%s: refused with %v %v, want 422", proto, resp, err)
+		if words := refusedOverSocket(t, ws); words != guac.ErrorInstruction(addressRefusedMsg, guac.StatusSessionClosed) {
+			t.Fatalf("%s: refused with %q, want a guacamole error about the address", proto, words)
 		}
 		wantAddressRefused(t, r.connectFixture, id, proto)
 	}

@@ -150,12 +150,12 @@ func (h *Handler) desktop(w http.ResponseWriter, r *http.Request) {
 	}
 	guacdAddr := h.guacd()
 	if guacdAddr == "" {
-		httpx.WriteError(w, r, http.StatusNotImplemented, "protocol_unavailable", "desktop sessions are not configured on this gateway")
+		refuseOpen(w, r, true, session.EndError, http.StatusNotImplemented, "protocol_unavailable", "desktop sessions are not configured on this gateway")
 		return
 	}
 	ep, err := h.resolveGrant(r.Context(), g)
 	if err != nil || !ep.Active {
-		httpx.WriteError(w, r, http.StatusConflict, "target_unavailable", "target is no longer available")
+		refuseOpen(w, r, true, session.EndError, http.StatusConflict, "target_unavailable", "target is no longer available")
 		return
 	}
 	if proto == target.HTTP {
@@ -168,7 +168,7 @@ func (h *Handler) desktop(w http.ResponseWriter, r *http.Request) {
 	// a name that already leads somewhere forbidden; it cannot fix the
 	// answer guacd gets.
 	if _, err := h.checkAddress(r, g, ep); err != nil {
-		refuseAddress(w, r, err)
+		refuseAddress(w, r, true, err)
 		return
 	}
 
@@ -177,7 +177,7 @@ func (h *Handler) desktop(w http.ResponseWriter, r *http.Request) {
 		opened, err = h.Vault.Open(r.Context(), g.CredentialID)
 		if err != nil {
 			h.Log.Error("open credential", "id", g.CredentialID, "err", err)
-			httpx.WriteError(w, r, http.StatusConflict, "credential_unavailable", "credential could not be opened")
+			refuseOpen(w, r, true, session.EndError, http.StatusConflict, "credential_unavailable", "credential could not be opened")
 			return
 		}
 		defer opened.Close()
@@ -186,7 +186,7 @@ func (h *Handler) desktop(w http.ResponseWriter, r *http.Request) {
 	// filled in once the session id exists.
 	params, err := desktopParams(ep, proto, opened, g.UserSecret, g.Username, g.AllowFileTransfer, g.AllowClipboard, "")
 	if err != nil {
-		httpx.WriteError(w, r, http.StatusConflict, "target_unavailable", err.Error())
+		refuseOpen(w, r, true, session.EndError, http.StatusConflict, "target_unavailable", err.Error())
 		return
 	}
 	// Enforce the certificate pin at the gateway before handing off to guacd,
@@ -197,7 +197,7 @@ func (h *Handler) desktop(w http.ResponseWriter, r *http.Request) {
 			// now is a refused address, not a changed certificate.
 			if errors.Is(err, target.ErrAddressForbidden) {
 				h.addressRefused(r, g, ep, err)
-				refuseAddress(w, r, err)
+				refuseAddress(w, r, true, err)
 				return
 			}
 			h.Log.Warn("rdp certificate pin check failed", "target", ep.LiveKey, "err", err)
@@ -208,12 +208,12 @@ func (h *Handler) desktop(w http.ResponseWriter, r *http.Request) {
 				// The check could not reach the target, or it showed no
 				// certificate: not a mismatch, which is what this said
 				// for a host that was merely down (2026-11-03 live audit).
-				httpx.WriteError(w, r, http.StatusConflict, "target_unavailable", "could not reach the target to check its certificate")
+				refuseOpen(w, r, true, session.EndError, http.StatusConflict, "target_unavailable", "could not reach the target to check its certificate")
 				return
 			}
 			h.record(r, actorFor(g.UserID, ip).Event(audit.TargetTLSMismatch, "target", ep.LiveKey, audit.Failure,
 				map[string]string{"protocol": protocol.RDP, "expected": mm.want, "seen": mm.got}))
-			httpx.WriteError(w, r, http.StatusConflict, "certificate_mismatch", "the target's certificate does not match the pinned fingerprint")
+			refuseOpen(w, r, true, session.EndTrustLost, http.StatusConflict, "certificate_mismatch", "the target's certificate does not match the pinned fingerprint")
 			return
 		}
 	}

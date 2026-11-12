@@ -52,13 +52,13 @@ func (h *Handler) browser(w http.ResponseWriter, r *http.Request, g *ticket.Gran
 	// address the gateway resolved here under the rules every target obeys.
 	upstreamIP, err := h.checkAddress(r, g, ep)
 	if err != nil {
-		refuseAddress(w, r, err)
+		refuseAddress(w, r, true, err)
 		return
 	}
 	extras, unreachable, err := h.appEndpoints(r.Context(), ep)
 	if err != nil {
 		h.addressRefused(r, g, ep, err)
-		refuseAddress(w, r, err)
+		refuseAddress(w, r, true, err)
 		return
 	}
 	if h.AppsMaxSessions > 0 && h.Registry != nil && h.liveSessions(protocol.HTTP) >= h.AppsMaxSessions {

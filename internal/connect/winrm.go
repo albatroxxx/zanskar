@@ -14,6 +14,7 @@ import (
 	"github.com/albatroxxx/zanskar/internal/gateway/winrmgw"
 	"github.com/albatroxxx/zanskar/internal/httpx"
 	"github.com/albatroxxx/zanskar/internal/protocol"
+	"github.com/albatroxxx/zanskar/internal/session"
 	"github.com/albatroxxx/zanskar/internal/target"
 )
 
@@ -45,14 +46,14 @@ func (h *Handler) winrm(w http.ResponseWriter, r *http.Request) {
 
 	ep, err := h.resolveGrant(r.Context(), g)
 	if err != nil || !ep.Active {
-		httpx.WriteError(w, r, http.StatusConflict, "target_unavailable", "target is no longer available")
+		refuseOpen(w, r, false, session.EndError, http.StatusConflict, "target_unavailable", "target is no longer available")
 		return
 	}
 	// WinRM dials before the upgrade, so its address is checked here, before
 	// the credential is opened, and the client dials the checked address.
 	dialIP, err := h.checkAddress(r, g, ep)
 	if err != nil {
-		refuseAddress(w, r, err)
+		refuseAddress(w, r, false, err)
 		return
 	}
 
@@ -64,7 +65,7 @@ func (h *Handler) winrm(w http.ResponseWriter, r *http.Request) {
 		opened, err := h.Vault.Open(r.Context(), g.CredentialID)
 		if err != nil {
 			h.Log.Error("open credential", "id", g.CredentialID, "err", err)
-			httpx.WriteError(w, r, http.StatusConflict, "credential_unavailable", "credential could not be opened")
+			refuseOpen(w, r, false, session.EndError, http.StatusConflict, "credential_unavailable", "credential could not be opened")
 			return
 		}
 		defer opened.Close()
@@ -79,33 +80,33 @@ func (h *Handler) winrm(w http.ResponseWriter, r *http.Request) {
 	if port == 5985 || ep.WinRMTLSFingerprint == "" {
 		// connect() already refuses these; re-check here because the ticket
 		// was issued earlier and the target may have been re-probed since.
-		httpx.WriteError(w, r, http.StatusConflict, "certificate_unpinned", "winrm target is not pinned; probe it over HTTPS first")
+		refuseOpen(w, r, false, session.EndError, http.StatusConflict, "certificate_unpinned", "winrm target is not pinned; probe it over HTTPS first")
 		return
 	}
 	client, err := winrmgw.Dial(r.Context(), winrmgw.Endpoint{Address: ep.Address, IP: dialIP.String(), Port: port, UseTLS: true, PinnedFingerprint: ep.WinRMTLSFingerprint}, a, timeout)
 	if err != nil {
 		if errors.Is(err, winrmgw.ErrCertMismatch) {
 			h.record(r, actorFor(g.UserID, ip).Event(audit.TargetTLSMismatch, "target", ep.LiveKey, audit.Failure, map[string]string{"protocol": protocol.WinRM, "expected": ep.WinRMTLSFingerprint}))
-			httpx.WriteError(w, r, http.StatusConflict, "certificate_mismatch", "the target presented a different certificate; connection refused")
+			refuseOpen(w, r, false, session.EndTrustLost, http.StatusConflict, "certificate_mismatch", "the target presented a different certificate; connection refused")
 			return
 		}
 		if errors.Is(err, winrmgw.ErrNotAuthorized) {
 			h.Log.Warn("winrm authorization refused", "target", ep.LiveKey, "err", err)
-			httpx.WriteError(w, r, http.StatusConflict, "not_authorized", winrmAdminHint)
+			refuseOpen(w, r, false, session.EndError, http.StatusConflict, "not_authorized", winrmAdminHint)
 			return
 		}
 		h.Log.Warn("winrm dial failed", "target", ep.LiveKey, "err", err)
-		httpx.WriteError(w, r, http.StatusConflict, "target_unavailable", "could not connect to the target")
+		refuseOpen(w, r, false, session.EndError, http.StatusConflict, "target_unavailable", "could not connect to the target")
 		return
 	}
 	sh, err := client.Shell(r.Context())
 	if err != nil {
 		h.Log.Warn("winrm shell failed", "target", ep.LiveKey, "err", err)
 		if errors.Is(err, winrmgw.ErrNotAuthorized) {
-			httpx.WriteError(w, r, http.StatusConflict, "not_authorized", winrmAdminHint)
+			refuseOpen(w, r, false, session.EndError, http.StatusConflict, "not_authorized", winrmAdminHint)
 			return
 		}
-		httpx.WriteError(w, r, http.StatusConflict, "target_unavailable", "could not open a shell on the target")
+		refuseOpen(w, r, false, session.EndError, http.StatusConflict, "target_unavailable", "could not open a shell on the target")
 		return
 	}
 	defer func() { _ = sh.Close() }()

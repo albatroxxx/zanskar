@@ -42,7 +42,7 @@ func (h *Handler) database(w http.ResponseWriter, r *http.Request) {
 	// because verify-full checks the database's certificate against the
 	// name; it looks the name up again itself.
 	if _, err := h.checkAddress(r, g, ep); err != nil {
-		refuseAddress(w, r, err)
+		refuseAddress(w, r, false, err)
 		return
 	}
 

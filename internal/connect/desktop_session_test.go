@@ -277,15 +277,15 @@ func TestDesktopRefusesMismatchedRDPCertificate(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
-	ws, resp, err := r.dial(ctx, r.ticket(t, wrong, "rdp"))
-	if err == nil {
-		ws.CloseNow()
-		t.Fatal("a mismatched certificate opened a desktop session")
+	ws, _, err := r.dial(ctx, r.ticket(t, wrong, "rdp")) //nolint:bodyclose // the library closes the handshake body
+	if err != nil {
+		t.Fatal(err)
 	}
-	if resp == nil || resp.StatusCode != http.StatusConflict {
-		t.Fatalf("got %v, want 409 certificate_mismatch", resp)
+	// Told in words the console shows (testing board #182), not a failed
+	// handshake it could only call a lost connection.
+	if words := refusedOverSocket(t, ws); words != guac.ErrorInstruction("the target's certificate does not match the pinned fingerprint", guac.StatusSessionClosed) {
+		t.Fatalf("refused with %q, want a guacamole error naming the certificate", words)
 	}
-	_ = resp.Body.Close()
 	if n := r.accepted.Load(); n != 0 {
 		t.Fatalf("guacd was contacted %d time(s) for a refused session", n)
 	}
@@ -404,7 +404,13 @@ func TestDesktopRouteRefusals(t *testing.T) {
 	id := r.addTarget(t, "vnc-off", map[target.Protocol]int{target.VNC: 5900}, "")
 	tok := r.ticket(t, id, "vnc")
 	r.h.GuacdAddr = func() string { return "" }
-	refused("desktop sessions switched off", tok, http.StatusNotImplemented)
+	ws, _, err := r.dial(context.Background(), tok) //nolint:bodyclose // the library closes the handshake body
+	if err != nil {
+		t.Fatal(err)
+	}
+	if words := refusedOverSocket(t, ws); !strings.Contains(words, "desktop sessions are not configured on this gateway") {
+		t.Fatalf("desktop sessions switched off: refused with %q", words)
+	}
 }
 
 // TestDesktopRefusalIsNotALostTarget: a desktop the gateway refuses before
