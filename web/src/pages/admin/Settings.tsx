@@ -1,9 +1,10 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { ApiError, api, errorMessage } from '../../api/client'
 import { fmtTime, setDisplayZone } from '../../api/format'
 import { setConsoleTheme } from '../../styles/theme'
 import type { BootSetting, HostStatus, RuntimeSetting, SettingsListing, SystemMetrics, SystemStatus } from '../../api/types'
 import { HostActionDialog, type BootChange } from '../../components/HostActionDialog'
+import { KeyButton } from '../../components/KeyButton'
 import { TimeZonePicker } from '../../components/TimeZonePicker'
 import { Alert, Badge, Field, Loading, Modal, PageHead } from '../../components/ui'
 import { TLSCard } from './TLSCard'
@@ -119,6 +120,9 @@ function SettingRow({ setting, onChange }: { setting: RuntimeSetting; onChange: 
   // proves the code first.
   const [needCode, setNeedCode] = useState(false)
   const [code, setCode] = useState('')
+  // The action that asked for the code, which a security key (ADR 0028)
+  // proves the step-up for and then runs again.
+  const asked = useRef<(() => Promise<RuntimeSetting>) | null>(null)
   const dirty = value !== setting.value
 
   const run = async (fn: () => Promise<RuntimeSetting>) => {
@@ -139,6 +143,7 @@ function SettingRow({ setting, onChange }: { setting: RuntimeSetting; onChange: 
       setCode('')
     } catch (e) {
       if (e instanceof ApiError && e.code === 'step_up_required') {
+        asked.current = fn
         setNeedCode(true)
         setErr('')
       } else {
@@ -242,6 +247,7 @@ function SettingRow({ setting, onChange }: { setting: RuntimeSetting; onChange: 
           <input id={id + '-code'} inputMode="numeric" autoComplete="one-time-code" value={code} onChange={(e) => setCode(e.target.value)} autoFocus />
         </Field>
       )}
+      {needCode && <KeyButton className="btn sm" onDone={() => (asked.current ? run(asked.current) : undefined)} onError={setErr} />}
       {err && <Alert tone="danger" onDismiss={() => setErr('')}>{err}</Alert>}
       <div className="actions">
         <button type="button" className="btn primary sm" disabled={!dirty || busy || (needCode && !code.trim())} onClick={() => void save()}>{busy ? 'Saving…' : 'Save'}</button>

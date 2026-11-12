@@ -484,21 +484,21 @@ stateDiagram-v2
 | expired | swept | the hourly sweep, 24 h after the absolute expiry |
 | revoked | swept | the hourly sweep |
 
-- `mfa_verified_at` is the proof a code was typed; three windows read it (5 min for step-up, 15 min with a slide for the command line, 5 min from sign-in to enrol without a password).
+- `mfa_verified_at` is the proof a code was typed or a security key touched; three windows read it (5 min for step-up, 15 min with a slide for the command line, 5 min from sign-in to enrol without a password).
 - A disabled account's session is not revoked by the check that notices it; each status writer revokes.
 
 ## Authenticator
 
 No API field carries it. States: `none`, `enrolling`, `confirmed`.
 
-No row is `none`; a row with `confirmed_at` null is `enrolling`; `confirmed_at` set is `confirmed` (`Me.mfa_enrolled`).
+No row is `none`; a row with `confirmed_at` null is `enrolling`; `confirmed_at` set is `confirmed`.
 
 ```mermaid
 stateDiagram-v2
     [*] --> none
     none --> enrolling: user.mfa.enroll
     enrolling --> enrolling: user.mfa.enroll again, a fresh secret
-    enrolling --> confirmed: user.mfa.confirm (eight recovery codes made)
+    enrolling --> confirmed: user.mfa.confirm (eight recovery codes made when the account has no key)
     confirmed --> none: user.mfa.reset
     enrolling --> none: user.mfa.reset
 ```
@@ -507,12 +507,13 @@ stateDiagram-v2
 |---|---|---|
 | none | enrolling | user.mfa.enroll |
 | enrolling | enrolling | user.mfa.enroll again: a fresh secret |
-| enrolling | confirmed | user.mfa.confirm (eight recovery codes made) |
+| enrolling | confirmed | user.mfa.confirm (eight recovery codes made when the account has no key) |
 | confirmed | none | user.mfa.reset |
 | enrolling | none | user.mfa.reset |
 
-- Recovery codes have no count on the wire; their use is an audit detail.
-- "Enrolled" is read three ways: the raw row (sign-in, tokens, approvals, the command line), the provider-aware rule (the connect gate), and the posture SQL (the dashboard).
+- Security keys (ADR 0028) count beside the app: an account has a second factor when its app is `confirmed` or it has at least one key (`Me.mfa_enrolled`, `Me.second_factor`). A key is a plain row in `webauthn_credentials`, registered and removed, with no states of its own.
+- Recovery codes come with an account's first second factor of any kind; they have no count on the wire, and their use is an audit detail.
+- "Enrolled" is read three ways: `Factors.Enrolled` (sign-in, tokens, approvals, the command line), the provider-aware rule over it (the connect gate), and the posture SQL (the dashboard).
 
 ## Restart drain
 

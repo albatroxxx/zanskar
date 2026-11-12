@@ -5,10 +5,11 @@ import { fmtTime } from '../api/format'
 import { useAuth } from '../auth/AuthContext'
 import { canConnect } from '../auth/home'
 import { AccessNotices } from './AccessNotices'
+import { AccountKeys } from './AccountKeys'
 import { onBadgeCount, onBadgesChanged } from './badges'
 import { CornerBar, CornerThemeOnly } from './CornerBar'
 import { RestartNotice } from './RestartNotice'
-import { Badge, Modal } from './ui'
+import { Alert, Badge, Modal } from './ui'
 
 export interface NavItem {
   to: string
@@ -58,7 +59,7 @@ function NavBadge({ load, to, shared }: { load: () => Promise<number>; to: strin
 
 /** Shell is the sidebar layout shared by the user, admin and auditor portals. */
 export function Shell({ portal, items }: { portal: 'user' | 'admin' | 'audit'; items: NavItem[] }) {
-  const { user, logout, hasRole, refresh, mfaEnrolled } = useAuth()
+  const { user, logout, hasRole, refresh, mfaEnrolled, secondFactor } = useAuth()
   const [accountOpen, setAccountOpen] = useState(false)
   const nav = useNavigate()
   const sub = portal === 'user' ? 'access' : portal === 'admin' ? 'admin' : 'audit'
@@ -132,6 +133,12 @@ export function Shell({ portal, items }: { portal: 'user' | 'admin' | 'audit'; i
         {portal === 'admin' ? <CornerBar /> : <CornerThemeOnly />}
         {portal === 'user' && <AccessNotices />}
         {portal === 'admin' && <RestartNotice />}
+        {/* Administrators must use a security key (ADR 0028), and this one has none. */}
+        {secondFactor?.key_owed && (
+          <Alert tone="warn">
+            Add a security key. <button type="button" className="link-btn inline" onClick={() => setAccountOpen(true)}>Account</button>
+          </Alert>
+        )}
         {/* The admin and audit pages load on demand (ADR 0010), so the
             sign-in page does not carry the whole console. */}
         <Suspense fallback={<div className="empty">Loading…</div>}>
@@ -140,7 +147,7 @@ export function Shell({ portal, items }: { portal: 'user' | 'admin' | 'audit'; i
       </main>
       {/* At the root, not in the sidebar: the sticky sidebar is a stacking
           context, and a fixed dialog inside it paints under the main column. */}
-      {accountOpen && user && <AccountModal user={user} mfaEnrolled={mfaEnrolled} onClose={() => setAccountOpen(false)} />}
+      {accountOpen && user && <AccountModal user={user} app={secondFactor ? secondFactor.app : mfaEnrolled} onClose={() => setAccountOpen(false)} />}
     </div>
   )
 }
@@ -148,9 +155,9 @@ export function Shell({ portal, items }: { portal: 'user' | 'admin' | 'audit'; i
 /** AccountModal is the account behind the sidebar's username: what Zanskar
  *  knows today, and where an identity provider's fields (full name, email,
  *  department and the like) land once one is connected. */
-function AccountModal({ user, mfaEnrolled, onClose }: { user: User; mfaEnrolled: boolean; onClose: () => void }) {
+function AccountModal({ user, app, onClose }: { user: User; app: boolean; onClose: () => void }) {
   return (
-    <Modal title="Account" onClose={onClose} width={420}>
+    <Modal title="Account" onClose={onClose} width={480}>
       <dl className="kv">
         <dt>Username</dt>
         <dd className="mono">{user.username}</dd>
@@ -162,8 +169,8 @@ function AccountModal({ user, mfaEnrolled, onClose }: { user: User; mfaEnrolled:
         <dd>{user.roles.join(', ')}</dd>
         <dt>Status</dt>
         <dd>{user.status}</dd>
-        <dt>Authenticator</dt>
-        <dd>{mfaEnrolled ? <Badge tone="ok">enrolled</Badge> : <Badge>not enrolled</Badge>}</dd>
+        <dt>Authenticator app</dt>
+        <dd>{app ? <Badge tone="ok">enrolled</Badge> : <Badge>not enrolled</Badge>}</dd>
         {user.last_login_at && (
           <>
             <dt>Last sign-in</dt>
@@ -173,6 +180,7 @@ function AccountModal({ user, mfaEnrolled, onClose }: { user: User; mfaEnrolled:
         <dt>Created</dt>
         <dd>{fmtTime(user.created_at)}</dd>
       </dl>
+      <AccountKeys />
     </Modal>
   )
 }

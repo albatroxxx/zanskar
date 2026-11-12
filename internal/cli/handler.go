@@ -4,6 +4,7 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -34,18 +35,27 @@ const (
 	perMinute = 60
 )
 
-// MFA is the part of the authenticator store the command line uses.
+// MFA is the part of the second-factor store the command line uses: an
+// account's app and security keys together (ADR 0028).
 type MFA interface {
 	Enrolled(ctx context.Context, userID string) (bool, error)
 	Verify(ctx context.Context, userID, code string) (bool, error)
+}
+
+// KeyProver checks a security key's answer to a challenge begun for the
+// session (ADR 0028).
+type KeyProver interface {
+	FinishAssertion(ctx context.Context, sessionID, userID, purpose string, body []byte) (*auth.Key, error)
 }
 
 // Handler serves the console's command line.
 type Handler struct {
 	Sessions *auth.Sessions
 	MFA      MFA
-	Audit    *audit.Log
-	Log      *slog.Logger
+	// Keys, when set, opens the command line with a key as well as a code.
+	Keys  KeyProver
+	Audit *audit.Log
+	Log   *slog.Logger
 
 	now   func() time.Time
 	mux   http.Handler
@@ -134,7 +144,8 @@ func (h *Handler) status(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) unlock(w http.ResponseWriter, r *http.Request) {
 	p, _ := auth.FromContext(r.Context())
 	var in struct {
-		Code string `json:"code"`
+		Code       string          `json:"code"`
+		Credential json.RawMessage `json:"credential,omitempty"`
 	}
 	if err := httpx.DecodeJSON(r, &in); err != nil {
 		httpx.BadRequest(w, r, err.Error())
@@ -149,13 +160,30 @@ func (h *Handler) unlock(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, http.StatusTooManyRequests, "cli_locked", "too many wrong codes; the command line is closed for this sign-in for a while")
 		return
 	}
-	recovery, err := h.MFA.Verify(r.Context(), p.User.ID, in.Code)
+	var (
+		recovery bool
+		err      error
+		method   = "totp"
+	)
+	if len(in.Credential) > 0 && h.Keys != nil {
+		method = "webauthn"
+		_, err = h.Keys.FinishAssertion(r.Context(), p.Session.ID, p.User.ID, auth.PurposeCLI, in.Credential)
+	} else {
+		recovery, err = h.MFA.Verify(r.Context(), p.User.ID, in.Code)
+	}
 	switch {
+	case errors.Is(err, auth.ErrKeyRequired):
+		h.record(r, audit.CLIUnlock, audit.Failure, map[string]any{"reason": "key required"})
+		httpx.WriteError(w, r, http.StatusForbidden, "key_required", "use your security key")
+		return
+	case errors.Is(err, auth.ErrNoCeremony), errors.Is(err, auth.ErrKeysOff), errors.Is(err, auth.ErrNoKeys):
+		httpx.WriteError(w, r, http.StatusConflict, "key_request_expired", "the key took too long; try again")
+		return
 	case errors.Is(err, auth.ErrTOTPNotEnrolled):
 		h.record(r, audit.CLIUnlock, audit.Failure, map[string]any{"reason": "no authenticator enrolled"})
 		httpx.WriteError(w, r, http.StatusConflict, "mfa_not_enrolled", "enrol an authenticator first: the command line asks for a code from it")
 		return
-	case errors.Is(err, auth.ErrTOTPBadCode):
+	case errors.Is(err, auth.ErrTOTPBadCode), errors.Is(err, auth.ErrKeyBad):
 		h.mu.Lock()
 		s.fails++
 		closed := s.fails >= maxFails
@@ -164,11 +192,20 @@ func (h *Handler) unlock(w http.ResponseWriter, r *http.Request) {
 		}
 		h.mu.Unlock()
 		reason := "wrong code"
-		if errors.Is(err, auth.ErrTOTPReused) {
+		switch {
+		case errors.Is(err, auth.ErrTOTPReused):
 			reason = "code already used" // a right code seen once already: someone may have read it
+		case errors.Is(err, auth.ErrKeyCloned):
+			reason = "key counter went back"
+		case errors.Is(err, auth.ErrKeyBad):
+			reason = "key not accepted"
 		}
-		h.record(r, audit.CLIUnlock, audit.Failure, map[string]any{"reason": reason, "closed": closed})
+		h.record(r, audit.CLIUnlock, audit.Failure, map[string]any{"reason": reason, "method": method, "closed": closed})
 		// 422, not 401: to the console a 401 means the sign-in itself has ended.
+		if method == "webauthn" {
+			httpx.WriteError(w, r, http.StatusUnprocessableEntity, "bad_key", "that key was not accepted")
+			return
+		}
 		httpx.WriteError(w, r, http.StatusUnprocessableEntity, "bad_code", "that code is not right")
 		return
 	case err != nil:
@@ -182,7 +219,7 @@ func (h *Handler) unlock(w http.ResponseWriter, r *http.Request) {
 	h.mu.Lock()
 	s.fails, s.lastUse = 0, now
 	h.mu.Unlock()
-	h.record(r, audit.CLIUnlock, audit.Success, map[string]any{"recovery_code_used": recovery})
+	h.record(r, audit.CLIUnlock, audit.Success, map[string]any{"method": method, "recovery_code_used": recovery})
 	httpx.WriteJSON(w, http.StatusOK, map[string]bool{"unlocked": true})
 }
 

@@ -125,6 +125,10 @@ const actionLabels: Record<string, string> = {
   'user.mfa.confirm': 'Authenticator enrolled',
   'user.mfa.verify': 'Second factor checked',
   'user.mfa.reset': 'Authenticator reset',
+  'user.mfa.recovery_codes': 'Recovery codes replaced',
+  'user.key.register': 'Security key added',
+  'user.key.rename': 'Security key renamed',
+  'user.key.remove': 'Security key removed',
   'user.password.change': 'Password changed',
   'user.password.reset': 'Password reset',
   'user.roles.update': 'User roles updated',
@@ -142,6 +146,9 @@ export function humanAction(code: string): string {
 }
 
 /** What a failed action is called in the plural, for the common ones. */
+/** secondFactorWords names how a sign-in passed its second step. */
+const secondFactorWords: Record<string, string> = { totp: 'TOTP', webauthn: 'a security key', recovery_code: 'a recovery code' }
+
 const failedNoun: Record<string, string> = {
   'idp.sync': 'provider syncs',
   'user.login': 'sign-ins',
@@ -244,13 +251,20 @@ export function describe(ev: AuditEvent): string {
     case 'user.login':
       if (fail) return `failed to sign in${str(d.username) ? ` as ${str(d.username)}` : ''}${reason ? ` (${words(reason)})` : ''}`
       if (d.stage === 'password') return d.next === 'mfa_enrollment' ? 'entered a valid password; authenticator enrollment pending' : 'entered a valid password; second factor pending'
-      return str(d.mfa) && d.mfa !== 'none' ? `signed in with ${str(d.mfa).toUpperCase()}` : 'signed in'
+      return str(d.mfa) && d.mfa !== 'none' ? `signed in with ${secondFactorWords[str(d.mfa)] ?? str(d.mfa).toUpperCase()}` : 'signed in'
     case 'user.logout': return 'signed out'
     case 'user.mfa.enroll': return 'started enrolling an authenticator'
     case 'user.mfa.confirm': return fail ? 'failed to confirm an authenticator' : 'enrolled an authenticator'
     case 'user.mfa.verify':
-      if (!fail) return 'passed the second factor'
-      return reason === 'code_reused' ? 'failed the second factor (a code already used)' : 'failed the second factor'
+      if (!fail) return d.method === 'webauthn' ? 'passed the second factor with a security key' : 'passed the second factor'
+      if (reason === 'code_reused') return 'failed the second factor (a code already used)'
+      if (reason === 'key_counter_went_back' || reason === 'key counter went back') return "failed the second factor (the key's counter went back: a copy may exist)"
+      if (reason === 'key_required') return 'failed the second factor (a security key is required)'
+      return 'failed the second factor'
+    case 'user.mfa.recovery_codes': return 'replaced their recovery codes'
+    case 'user.key.register': return fail ? 'failed to add a security key' : `added the security key ${str(d.name)}`.trimEnd()
+    case 'user.key.rename': return 'renamed a security key'
+    case 'user.key.remove': return `removed the security key ${str(d.name)}`.trimEnd()
     case 'session.connect': return fail ? `was refused ${proto} access to ${name}${reason ? ` (${words(reason)})` : ''}` : `requested ${proto} access to ${name}`
     case 'session.start': return s ? `opened ${article(s.proto)} ${s.proto} session on ${s.target}` : `opened a session ${name}`
     case 'session.end': {

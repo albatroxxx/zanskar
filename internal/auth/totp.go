@@ -113,8 +113,10 @@ func (t *TOTP) Enroll(ctx context.Context, userID, username string) (*Enrollment
 	return &Enrollment{Secret: key.Secret(), URL: key.URL()}, nil
 }
 
-// Confirm validates the first code from the authenticator, marks the
-// enrollment confirmed and returns fresh recovery codes, shown once.
+// Confirm validates the first code from the authenticator and marks the
+// enrollment confirmed. An account with no security key gets fresh recovery
+// codes, shown once; one that has a key keeps the codes it got with its
+// first second factor, and nil is returned (ADR 0028).
 func (t *TOTP) Confirm(ctx context.Context, userID, code string) ([]string, error) {
 	secret, confirmed, err := t.secret(ctx, userID)
 	if err != nil {
@@ -127,29 +129,45 @@ func (t *TOTP) Confirm(ctx context.Context, userID, code string) ([]string, erro
 	if !ok {
 		return nil, ErrTOTPBadCode
 	}
-	codes, hashes, err := newRecoveryCodes()
-	if err != nil {
-		return nil, err
-	}
-	now := store.TimeArg(t.now())
 	tx, err := t.db.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, err
 	}
 	defer tx.Rollback() //nolint:errcheck
-	if _, err := tx.ExecContext(ctx, t.db.Rebind(`UPDATE mfa_totp SET confirmed_at = ?, last_step = ? WHERE user_id = ?`), now, step, userID); err != nil {
+	if _, err := tx.ExecContext(ctx, t.db.Rebind(`UPDATE mfa_totp SET confirmed_at = ?, last_step = ? WHERE user_id = ?`), store.TimeArg(t.now()), step, userID); err != nil {
 		return nil, err
 	}
-	if _, err := tx.ExecContext(ctx, t.db.Rebind(`DELETE FROM mfa_recovery_codes WHERE user_id = ?`), userID); err != nil {
+	var keys int
+	if err := tx.QueryRowContext(ctx, t.db.Rebind(`SELECT COUNT(*) FROM webauthn_credentials WHERE user_id = ?`), userID).Scan(&keys); err != nil {
 		return nil, err
 	}
-	for _, h := range hashes {
-		if _, err := tx.ExecContext(ctx, t.db.Rebind(`INSERT INTO mfa_recovery_codes (id, user_id, code_hash, created_at) VALUES (?, ?, ?, ?)`),
-			store.NewID(), userID, h, now); err != nil {
+	var codes []string
+	if keys == 0 {
+		if codes, err = replaceRecoveryCodes(ctx, t.db, tx, userID); err != nil {
 			return nil, err
 		}
 	}
 	return codes, tx.Commit()
+}
+
+// replaceRecoveryCodes gives the account a fresh set of recovery codes in tx,
+// dropping the ones it had, and returns them to show once.
+func replaceRecoveryCodes(ctx context.Context, db *store.DB, tx *sql.Tx, userID string) ([]string, error) {
+	codes, hashes, err := newRecoveryCodes()
+	if err != nil {
+		return nil, err
+	}
+	if _, err := tx.ExecContext(ctx, db.Rebind(`DELETE FROM mfa_recovery_codes WHERE user_id = ?`), userID); err != nil {
+		return nil, err
+	}
+	now := store.TimeArg(time.Now())
+	for _, h := range hashes {
+		if _, err := tx.ExecContext(ctx, db.Rebind(`INSERT INTO mfa_recovery_codes (id, user_id, code_hash, created_at) VALUES (?, ?, ?, ?)`),
+			store.NewID(), userID, h, now); err != nil {
+			return nil, err
+		}
+	}
+	return codes, nil
 }
 
 // Verify checks a login-time code. It accepts a TOTP code or an unused
@@ -312,11 +330,11 @@ func hashRecovery(code string) string {
 // recorded, and the caller says the sign-out did not.
 var ErrSignOutAfterReset = errors.New("authenticator reset, but signing the user out failed")
 
-// ResetMFA removes a user's authenticator and recovery codes, then signs the
-// user out everywhere: a session that proved MFA with the old authenticator
-// must not outlive it. It is the one implementation behind the console's
-// reset and `zanskar admin reset-mfa`, so whatever else a reset must clear
-// (security keys, ADR 0028) is added once.
+// ResetMFA removes a user's second factors (through Factors.Reset: the app,
+// every security key and every recovery code), then signs the user out
+// everywhere: a session that proved MFA with the old factor must not
+// outlive it. It is the one implementation behind the console's reset and
+// `zanskar admin reset-mfa`.
 func ResetMFA(ctx context.Context, mfa interface {
 	Reset(ctx context.Context, userID string) error
 }, sessions interface {

@@ -69,8 +69,9 @@ func TestCredentialRoutingSettingsAskForAStepUp(t *testing.T) {
 		}
 	}
 	// The approval step-up too (2026-11-03, idea 3): a stolen session that
-	// could switch it off could then approve without a code.
-	if strings.Join(stepUp, ",") != KeyApproveStepUp+","+KeyGuacdAddr+","+KeyDBProxyImage+","+KeyBrowserImage {
+	// could switch it off could then approve without a code. And the rule
+	// that administrators use their key (ADR 0028), for the same reason.
+	if strings.Join(stepUp, ",") != KeyApproveStepUp+","+KeyAdminsNeedKey+","+KeyGuacdAddr+","+KeyDBProxyImage+","+KeyBrowserImage {
 		t.Fatalf("settings marked step_up: %v", stepUp)
 	}
 }

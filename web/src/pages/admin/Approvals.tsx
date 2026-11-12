@@ -3,6 +3,7 @@ import { useSearchParams } from 'react-router-dom'
 import { ApiError, api, errorMessage } from '../../api/client'
 import { fmtTime, protocolName } from '../../api/format'
 import type { AccessRequest, Page } from '../../api/types'
+import { KeyButton } from '../../components/KeyButton'
 import { Alert, Badge, Field, Loading, Modal, PageHead } from '../../components/ui'
 import { badgesChanged, shareBadgeCount } from '../../components/badges'
 
@@ -60,11 +61,12 @@ export function Approvals() {
     setApproveErr('')
     setApproving(r)
   }
-  const approve = async (r: AccessRequest) => {
+  // viaKey: a security key just proved the step-up (ADR 0028), so no code is sent.
+  const approve = async (r: AccessRequest, viaKey = false) => {
     setBusy(r.id)
     setApproveErr('')
     try {
-      if (needCode) await api.post('/auth/mfa/step-up', { code: code.trim() })
+      if (needCode && !viaKey) await api.post('/auth/mfa/step-up', { code: code.trim() })
       await api.post(`/access-requests/${r.id}/approve`, { minutes: grant.minutes, note: grant.note })
       setApproving(null)
       load()
@@ -230,6 +232,7 @@ export function Approvals() {
                 <input id="ap-code" inputMode="numeric" autoComplete="one-time-code" value={code} onChange={(e) => setCode(e.target.value)} autoFocus />
               </Field>
             )}
+            {needCode && <KeyButton onDone={() => approve(approving, true)} onError={setApproveErr} />}
             {approveErr && <Alert tone="danger">{approveErr}</Alert>}
             <div className="actions">
               <button type="button" className="btn" onClick={() => setApproving(null)}>Cancel</button>

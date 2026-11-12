@@ -3,8 +3,10 @@ import { Navigate, useLocation } from 'react-router-dom'
 import QRCode from 'qrcode'
 import { useAuth } from '../auth/AuthContext'
 import { api, ApiError, errorMessage, signInEnded } from '../api/client'
+import { keyError, keysInBrowser } from '../api/webauthn'
 import { Alert, Field } from '../components/ui'
-import { RetryIcon, SignInIcon } from '../components/icons'
+import { KeyIcon, RetryIcon, SignInIcon } from '../components/icons'
+import { KeyButton } from '../components/KeyButton'
 import { safeReturnPath, signInError } from './loginErrors'
 
 type Step = 'password' | 'change' | 'verify' | 'enroll' | 'recovery'
@@ -188,6 +190,32 @@ export function Login() {
     }
   }
 
+  // A security key in place of the code (ADR 0028): it signs in, or, as
+  // the enrolment a sign-in owes, becomes the account's first factor.
+  const keySignedIn = () => setStep('password')
+  const addFirstKey = async () => {
+    setBusy(true)
+    setErr('')
+    try {
+      const codes = await auth.addKey('Security key')
+      if (codes.length > 0) {
+        setRecovery(codes)
+        setStep('recovery')
+      } else {
+        setStep('password')
+      }
+    } catch (e) {
+      afterKeyError(e)
+    } finally {
+      setBusy(false)
+    }
+  }
+  const afterKeyError = (e: unknown) => {
+    const said = keyError(e)
+    if (said) setErr(said)
+    else afterCodeError(e)
+  }
+
   const submitConfirm = async (e: FormEvent) => {
     e.preventDefault()
     setBusy(true)
@@ -296,8 +324,9 @@ export function Login() {
 
           {effectiveStep === 'verify' && (
             <form onSubmit={submitVerify}>
-              <Field label="Authenticator or recovery code">
-                <input id="totp" autoFocus inputMode="numeric" autoComplete="one-time-code" value={code} onChange={(e) => setCode(e.target.value)} required />
+              <KeyButton purpose="sign_in" className="btn sso-btn" finish={auth.verifyKey} onDone={keySignedIn} onError={setErr} />
+              <Field label={auth.secondFactor && !auth.secondFactor.app && auth.secondFactor.keys > 0 ? 'Recovery code' : 'Authenticator or recovery code'}>
+                <input id="totp" autoFocus={!auth.secondFactor?.keys} inputMode="numeric" autoComplete="one-time-code" value={code} onChange={(e) => setCode(e.target.value)} required />
               </Field>
               <div className="actions" style={{ justifyContent: 'space-between' }}>
                 <button type="button" className="btn ghost" onClick={() => void auth.logout().then(() => setStep('password'))}>Cancel</button>
@@ -326,6 +355,15 @@ export function Login() {
                 <button type="button" className="btn ghost" onClick={() => void auth.logout().then(() => setStep('password'))}>Cancel</button>
                 <button type="submit" className="btn primary" disabled={busy || !enroll}>Activate</button>
               </div>
+              {auth.secondFactor && !auth.secondFactor.keys_off && keysInBrowser() && (
+                <div className="sso">
+                  <div className="sso-divider" role="separator" aria-label="or"><span aria-hidden="true">or</span></div>
+                  <button type="button" className="btn sso-btn key-btn" disabled={busy} onClick={() => void addFirstKey()}>
+                    <KeyIcon />
+                    <span>Use a security key instead</span>
+                  </button>
+                </div>
+              )}
             </form>
           )}
 

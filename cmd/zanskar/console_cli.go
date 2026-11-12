@@ -16,12 +16,12 @@ import (
 // consoleCLI returns the console's command line (ADR 0027), or nothing when
 // ZANSKAR_CONSOLE_CLI=off: its routes then do not exist, and the console,
 // seeing them answer 404, does not show the button.
-func consoleCLI(cfg *config.Config, sessions *auth.Sessions, totp *auth.TOTP, auditLog *audit.Log, log *slog.Logger) server.Registrar {
+func consoleCLI(cfg *config.Config, sessions *auth.Sessions, factors *auth.Factors, auditLog *audit.Log, log *slog.Logger) server.Registrar {
 	if !cfg.ConsoleCLI {
 		log.Info("console command line is off (ZANSKAR_CONSOLE_CLI=off)")
 		return noRoutes{}
 	}
-	return &cli.Handler{Sessions: sessions, MFA: totp, Audit: auditLog, Log: log}
+	return &cli.Handler{Sessions: sessions, MFA: factors, Keys: factors.Keys, Audit: auditLog, Log: log}
 }
 
 type noRoutes struct{}

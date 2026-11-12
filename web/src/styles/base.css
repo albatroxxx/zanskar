@@ -304,6 +304,7 @@ td.actions > * + * { margin-left: 8px; }
 .field-head .glyph-btn svg { width: 14px; height: 14px; }
 .link-btn { align-self: flex-start; padding: 0; margin: -4px 0 12px; border: 0; background: none; color: var(--accent); font: inherit; font-size: 0.85rem; cursor: pointer; }
 .link-btn:hover { color: var(--accent-hover); }
+.link-btn.inline { margin: 0; align-self: auto; }
 .field input, .field select, .field textarea { padding: 7px 10px; border: 1px solid var(--line-strong); border-radius: var(--radius); background: var(--bg-raised); width: 100%; }
 /* A number box is the size of a number, not the page's width (live, 2026-11-11). */
 .field input.narrow { max-width: 160px; }
@@ -458,6 +459,19 @@ tr[aria-current="true"] td { background: var(--accent-soft); }
 .sso-btn svg { color: var(--accent); flex: none; }
 .sso-btn:hover { background: var(--bg-sunken); border-color: var(--fg-faint); }
 .sso-btn:active { transform: translateY(1px); }
+/* A security key beside a code field (ADR 0028). */
+.key-btn svg { color: var(--accent); flex: none; }
+/* The account dialog's security keys (ADR 0028). */
+.account-keys { margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--line); }
+.account-keys h3 { margin: 0 0 8px; font-size: 0.95rem; }
+.key-list li { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; padding: 4px 0; }
+.key-list .key-when { font-size: 0.82rem; }
+.key-list .key-actions { margin-left: auto; display: inline-flex; gap: 12px; }
+.account-keys .link-btn { margin: 0; }
+.key-add, .key-rename { display: flex; gap: 8px; margin: 10px 0; }
+.key-rename { flex: 1; margin: 0; }
+.key-add input, .key-rename input { flex: 1; min-width: 0; padding: 5px 8px; border: 1px solid var(--line-strong); border-radius: var(--radius); background: var(--bg-raised); }
+.key-ask, .key-codes { margin-top: 12px; }
 /* A provider the gateway cannot reach: its button greyed out, the reason in
    a tip over it, and a check again beside it (2026-11-11). */
 .sso-row { display: flex; gap: 8px; }

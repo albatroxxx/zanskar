@@ -1,7 +1,8 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { ApiError, api, setCsrf, signInEnded } from '../api/client'
 import { setDisplayZone } from '../api/format'
-import type { LoginResponse, Me, Role, User } from '../api/types'
+import type { LoginResponse, Me, Role, SecondFactor, User } from '../api/types'
+import { createKey } from '../api/webauthn'
 import { browser, providerSignOut } from './signOut'
 
 /**
@@ -22,6 +23,8 @@ interface AuthState {
   mfaEnrolled: boolean
   /** which partial step is owed after password login */
   pending: 'verify' | 'enroll' | 'password' | null
+  /** the account's app and security keys (ADR 0028), once the gateway has said */
+  secondFactor: SecondFactor | null
 }
 
 interface AuthContextValue extends AuthState {
@@ -30,6 +33,10 @@ interface AuthContextValue extends AuthState {
   verifyTotp: (code: string) => Promise<void>
   enrollTotp: () => Promise<{ secret: string; otpauth_url: string }>
   confirmTotp: (code: string) => Promise<string[]>
+  /** verifyKey completes a sign-in's second step with the key's answer. */
+  verifyKey: (credential: Record<string, unknown>) => Promise<void>
+  /** addKey registers a new key as the enrolment a sign-in owes; recovery codes come back. */
+  addKey: (name: string) => Promise<string[]>
   logout: () => Promise<void>
   refresh: () => Promise<void>
   forget: () => void
@@ -39,7 +46,7 @@ interface AuthContextValue extends AuthState {
 const AuthContext = createContext<AuthContextValue | null>(null)
 
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const [state, setState] = useState<AuthState>({ status: 'loading', user: null, mfaEnrolled: false, pending: null })
+  const [state, setState] = useState<AuthState>({ status: 'loading', user: null, mfaEnrolled: false, pending: null, secondFactor: null })
   const retry = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
   const again = useRef<() => Promise<void>>(async () => {})
 
@@ -52,10 +59,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         // A partial session (second factor still owed) survived a reload: resume
         // the correct step — enroll or verify — with its CSRF token restored,
         // rather than bouncing to a login the stale session would reject.
-        setState({ status: 'partial', user: null, mfaEnrolled: me.mfa_enrolled, pending: me.pending })
+        setState({ status: 'partial', user: null, mfaEnrolled: me.mfa_enrolled, pending: me.pending, secondFactor: me.second_factor ?? null })
       } else {
         setDisplayZone(me.time_zone)
-        setState({ status: 'full', user: me.user ?? null, mfaEnrolled: me.mfa_enrolled, pending: null })
+        setState({ status: 'full', user: me.user ?? null, mfaEnrolled: me.mfa_enrolled, pending: null, secondFactor: me.second_factor ?? null })
       }
     } catch (e) {
       // Only a 401 means signed out. Anything else (the restart the
@@ -64,7 +71,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       // not answering if nothing is known yet, and ask again (B22).
       if (e instanceof ApiError && e.status === 401) {
         setCsrf('')
-        setState({ status: 'anonymous', user: null, mfaEnrolled: false, pending: null })
+        setState({ status: 'anonymous', user: null, mfaEnrolled: false, pending: null, secondFactor: null })
         return
       }
       setState((s) => (s.status === 'loading' ? { ...s, status: 'unreachable' } : s))
@@ -81,17 +88,27 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return () => clearTimeout(t)
   }, [refresh])
 
+  // What a sign-in's second step can offer (the app, a key) is /auth/me's to
+  // say; a step that cannot learn it offers the code alone.
+  const learnSecondFactor = useCallback(() => {
+    api.get<Me>('/auth/me').then(
+      (me) => setState((s) => (s.status === 'partial' ? { ...s, secondFactor: me.second_factor ?? null } : s)),
+      () => {},
+    )
+  }, [])
+
   const login = useCallback(async (username: string, password: string) => {
     const res = await api.post<LoginResponse>('/auth/login', { username, password })
     if (res.csrf_token) setCsrf(res.csrf_token)
     if (res.status === 'ok') {
-      setState({ status: 'full', user: res.user ?? null, mfaEnrolled: false, pending: null })
+      setState({ status: 'full', user: res.user ?? null, mfaEnrolled: false, pending: null, secondFactor: null })
       await refresh()
     } else {
-      setState({ status: 'partial', user: null, mfaEnrolled: res.status === 'mfa_required', pending: res.status === 'mfa_required' ? 'verify' : res.status === 'password_change_required' ? 'password' : 'enroll' })
+      setState({ status: 'partial', user: null, mfaEnrolled: res.status === 'mfa_required', pending: res.status === 'mfa_required' ? 'verify' : res.status === 'password_change_required' ? 'password' : 'enroll', secondFactor: null })
+      learnSecondFactor()
     }
     return res
-  }, [refresh])
+  }, [refresh, learnSecondFactor])
 
   // The step after the change is whatever sign-in would have owed next.
   const changePassword = useCallback(async (current: string, next: string) => {
@@ -100,10 +117,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (res.status === 'ok') {
       await refresh()
     } else {
-      setState({ status: 'partial', user: null, mfaEnrolled: res.status === 'mfa_required', pending: res.status === 'mfa_required' ? 'verify' : 'enroll' })
+      setState({ status: 'partial', user: null, mfaEnrolled: res.status === 'mfa_required', pending: res.status === 'mfa_required' ? 'verify' : 'enroll', secondFactor: null })
+      learnSecondFactor()
     }
     return res
-  }, [refresh])
+  }, [refresh, learnSecondFactor])
 
   // A 401 other than a wrong code means the half-finished sign-in is gone
   // (too many wrong codes, or it expired): drop back to the password step
@@ -111,7 +129,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const dropIfEnded = useCallback((e: unknown) => {
     if (signInEnded(e)) {
       setCsrf('')
-      setState({ status: 'anonymous', user: null, mfaEnrolled: false, pending: null })
+      setState({ status: 'anonymous', user: null, mfaEnrolled: false, pending: null, secondFactor: null })
     }
   }, [])
 
@@ -143,13 +161,38 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return res.recovery_codes
   }, [refresh, dropIfEnded])
 
+  const verifyKey = useCallback(async (credential: Record<string, unknown>) => {
+    try {
+      const res = await api.post<LoginResponse>('/auth/mfa/webauthn/verify', { credential })
+      if (res.csrf_token) setCsrf(res.csrf_token)
+    } catch (e) {
+      dropIfEnded(e)
+      throw e
+    }
+    await refresh()
+  }, [refresh, dropIfEnded])
+
+  const addKey = useCallback(async (name: string) => {
+    let res: { recovery_codes: string[] | null; csrf_token?: string }
+    try {
+      const credential = await createKey()
+      res = await api.post<{ recovery_codes: string[] | null; csrf_token?: string }>('/auth/mfa/webauthn/register', { name, credential })
+    } catch (e) {
+      dropIfEnded(e)
+      throw e
+    }
+    if (res.csrf_token) setCsrf(res.csrf_token)
+    await refresh()
+    return res.recovery_codes ?? []
+  }, [refresh, dropIfEnded])
+
   const logout = useCallback(async () => {
     let redirect: unknown
     try {
       redirect = (await api.post<{ redirect?: string }>('/auth/logout'))?.redirect
     } finally {
       setCsrf('')
-      setState({ status: 'anonymous', user: null, mfaEnrolled: false, pending: null })
+      setState({ status: 'anonymous', user: null, mfaEnrolled: false, pending: null, secondFactor: null })
     }
     // A session from a single sign-on provider ends there too (ADR 0035):
     // the provider signs the person out and sends them back to /login.
@@ -163,16 +206,23 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const forget = useCallback(() => {
     clearTimeout(retry.current)
     setCsrf('')
-    setState({ status: 'anonymous', user: null, mfaEnrolled: false, pending: null })
+    setState({ status: 'anonymous', user: null, mfaEnrolled: false, pending: null, secondFactor: null })
   }, [])
 
   const hasRole = useCallback((...roles: Role[]) => !!state.user && roles.some((r) => state.user!.roles.includes(r)), [state.user])
 
   const value = useMemo<AuthContextValue>(
-    () => ({ ...state, login, changePassword, verifyTotp, enrollTotp, confirmTotp, logout, refresh, forget, hasRole }),
-    [state, login, changePassword, verifyTotp, enrollTotp, confirmTotp, logout, refresh, forget, hasRole],
+    () => ({ ...state, login, changePassword, verifyTotp, enrollTotp, confirmTotp, verifyKey, addKey, logout, refresh, forget, hasRole }),
+    [state, login, changePassword, verifyTotp, enrollTotp, confirmTotp, verifyKey, addKey, logout, refresh, forget, hasRole],
   )
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>
+}
+
+/** useOptionalAuth is the auth context, or null outside an AuthProvider:
+ *  for a control that offers more when it knows the account and still
+ *  renders without it. */
+export function useOptionalAuth(): AuthContextValue | null {
+  return useContext(AuthContext)
 }
 
 export function useAuth(): AuthContextValue {

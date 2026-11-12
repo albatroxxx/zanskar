@@ -50,23 +50,25 @@ var SessionLifecycle = states.New("sign-in session",
 	Derivation: "Usable while `revoked_at` is null, `expires_at` is ahead and `last_seen_at` is within the idle limit; `mfa_verified` tells partial from full. " +
 		"Idle expiry is known only to Lookup: nothing selects it, so an idle-ended row stays until the sweep.",
 	Notes: []string{
-		"`mfa_verified_at` is the proof a code was typed; three windows read it (5 min for step-up, 15 min with a slide for the command line, 5 min from sign-in to enrol without a password).",
+		"`mfa_verified_at` is the proof a code was typed or a security key touched; three windows read it (5 min for step-up, 15 min with a slide for the command line, 5 min from sign-in to enrol without a password).",
 		"A disabled account's session is not revoked by the check that notices it; each status writer revokes.",
 	},
 })
 
-// AuthenticatorLifecycle is the account's authenticator (mfa_totp).
+// AuthenticatorLifecycle is the account's authenticator app (mfa_totp).
+// Security keys (ADR 0028) are plain rows beside it with no lifecycle.
 var AuthenticatorLifecycle = states.New("authenticator",
 	[]string{"none", "enrolling", "confirmed"},
 	states.Move{From: "none", To: "enrolling", By: audit.UserMFAEnroll},
 	states.Move{From: "enrolling", To: "enrolling", By: audit.UserMFAEnroll + " again: a fresh secret"},
-	states.Move{From: "enrolling", To: "confirmed", By: audit.UserMFAConfirm + " (eight recovery codes made)"},
+	states.Move{From: "enrolling", To: "confirmed", By: audit.UserMFAConfirm + " (eight recovery codes made when the account has no key)"},
 	states.Move{From: "confirmed", To: "none", By: audit.UserMFAReset},
 	states.Move{From: "enrolling", To: "none", By: audit.UserMFAReset},
 ).Describe(states.Doc{
-	Derivation: "No row is `none`; a row with `confirmed_at` null is `enrolling`; `confirmed_at` set is `confirmed` (`Me.mfa_enrolled`).",
+	Derivation: "No row is `none`; a row with `confirmed_at` null is `enrolling`; `confirmed_at` set is `confirmed`.",
 	Notes: []string{
-		"Recovery codes have no count on the wire; their use is an audit detail.",
-		"\"Enrolled\" is read three ways: the raw row (sign-in, tokens, approvals, the command line), the provider-aware rule (the connect gate), and the posture SQL (the dashboard).",
+		"Security keys (ADR 0028) count beside the app: an account has a second factor when its app is `confirmed` or it has at least one key (`Me.mfa_enrolled`, `Me.second_factor`). A key is a plain row in `webauthn_credentials`, registered and removed, with no states of its own.",
+		"Recovery codes come with an account's first second factor of any kind; they have no count on the wire, and their use is an audit detail.",
+		"\"Enrolled\" is read three ways: `Factors.Enrolled` (sign-in, tokens, approvals, the command line), the provider-aware rule over it (the connect gate), and the posture SQL (the dashboard).",
 	},
 })

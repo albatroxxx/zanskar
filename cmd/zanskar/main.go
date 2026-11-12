@@ -288,10 +288,30 @@ func serve(ctx context.Context) error {
 		return err
 	}
 	totp := auth.NewTOTP(db, ring, cfg.Issuer)
+	// Security keys and passkeys beside the app (ADR 0028), at the public
+	// address only: its host is the relying party every key belongs to.
+	keys := auth.NewKeys(db, cfg.PublicURL, cfg.Issuer)
+	if off := keys.Off(); off != "" {
+		log.Info("security keys are off", "why", off)
+	}
+	factors := auth.NewFactors(db, totp, keys)
+	adminsNeedKey := func() bool { return runtime.Bool(settings.KeyAdminsNeedKey) }
+	factors.KeyRequired = func(ctx context.Context, userID string) (bool, error) {
+		if !adminsNeedKey() || keys.Off() != "" {
+			return false, nil
+		}
+		u, err := users.GetByID(ctx, userID)
+		if err != nil {
+			return false, err
+		}
+		return u.HasRole(user.RoleAdmin), nil
+	}
 	// API tokens for automation, scoped to the configuration API (ADR 0044).
 	apiTokens := apitoken.NewRepo(db)
 	authHandler := auth.NewHandler(users, sessions, totp, auditLog, log)
 	authHandler.RequireMFA = requireMFA
+	authHandler.Factors = factors
+	authHandler.AdminsNeedKey = adminsNeedKey
 	authHandler.TimeZone = func() string { return runtime.String(settings.KeyTimeZone) }
 	if !requireMFA() {
 		log.Warn("authenticator not required: password-only logins are allowed (auth.require_mfa)")
@@ -304,7 +324,7 @@ func serve(ctx context.Context) error {
 		return err
 	}
 	authHandler.ExternalLogin = ldapExternalAuth{ldap.NewLogin(idpRepo, provisioner, auditLog, log)}
-	oidcHandler := &oidc.Handler{Providers: idpRepo, Provisioner: provisioner, Sessions: sessions, Audit: auditLog, Log: log, StateKey: stateKey, MFAEnrolled: totp.Enrolled, RequireMFA: requireMFA,
+	oidcHandler := &oidc.Handler{Providers: idpRepo, Provisioner: provisioner, Sessions: sessions, Audit: auditLog, Log: log, StateKey: stateKey, MFAEnrolled: factors.Enrolled, RequireMFA: requireMFA,
 		BaseURL: cfg.PublicURL, ProxyTLS: cfg.TrustProxyTLS, Ring: ring}
 	authHandler.ProviderLogout = oidcHandler.LogoutURL
 	vault := credential.NewVault(db, ring)
@@ -358,7 +378,7 @@ func serve(ctx context.Context) error {
 	// The connect handler runs the bridges; the user, group and policy admin
 	// handlers hand it the changes that end live sessions (ADR 0013).
 	connectHandler := &connect.Handler{Targets: targets, Policies: policies, Access: accessReqs, Vault: vault, Sessions: sessionRepo, Tickets: ticket.NewStore(),
-		Registry: registry, Storage: storage, Audit: auditLog, Log: log, MFAEnrolled: idp.SecondFactor(users, idpRepo, totp.Enrolled), GuacdAddr: guacdAddr, Draining: restarter.Draining,
+		Registry: registry, Storage: storage, Audit: auditLog, Log: log, MFAEnrolled: idp.SecondFactor(users, idpRepo, factors.Enrolled), GuacdAddr: guacdAddr, Draining: restarter.Draining,
 		DockerPath: cfg.DockerPath, DBMaxSessions: cfg.DatabaseMaxSessions, DBProxyImage: func() string { return runtime.String(settings.KeyDBProxyImage) },
 		AppsMaxSessions: cfg.AppsMaxSessions, BrowserImage: func() string { return runtime.String(settings.KeyBrowserImage) }, StateDir: cfg.StateDir,
 		Prober: prober, ASGs: asgRepo, Cloud: cloudProviders,
@@ -410,10 +430,10 @@ func serve(ctx context.Context) error {
 		AuthMiddleware: &auth.Middleware{Sessions: sessions, Users: users, Log: log, Tokens: apiTokens},
 		Auth:           authHandler,
 		Handlers: []server.Registrar{
-			&adminapi.AdminHandler{Users: users, Sessions: sessions, TOTP: totp, Revoker: connectHandler, Audit: auditLog, Log: log, ProviderHolds: idpRepo.Holds, MFAOwners: idpRepo.MFAOwners},
+			&adminapi.AdminHandler{Users: users, Sessions: sessions, TOTP: factors, Revoker: connectHandler, Audit: auditLog, Log: log, ProviderHolds: idpRepo.Holds, MFAOwners: idpRepo.MFAOwners},
 			&group.AdminHandler{Groups: groups, Revoker: connectHandler, Audit: auditLog, Log: log},
 			&notify.Handler{Channels: notifyRepo, Notifier: notifier, Audit: auditLog, Log: log},
-			&apitoken.Handler{Repo: apiTokens, Audit: auditLog, Log: log, MFAEnrolled: totp.Enrolled},
+			&apitoken.Handler{Repo: apiTokens, Audit: auditLog, Log: log, MFAEnrolled: factors.Enrolled},
 			&configio.Handler{Audit: auditLog, Log: log},
 			&idpadmin.AdminHandler{Providers: idpRepo, Audit: auditLog, Log: log, LDAPTester: &ldap.Authenticator{}, Sync: userSync},
 			oidcHandler,
@@ -422,7 +442,7 @@ func serve(ctx context.Context) error {
 			&target.AdminHandler{Repo: targets, Prober: prober, Policies: policies, Requests: accessReqs, Live: registry, Revoker: connectHandler, Vault: vault, Audit: auditLog, Log: log},
 			&policy.AdminHandler{Repo: policies, Users: users, Inventory: policyInventory{targets: targets, groups: asgRepo}, Revoker: connectHandler, Directory: reviewDirectory{users: users, groups: groups}, Audit: auditLog, Log: log},
 			&access.Handler{Requests: accessReqs, Policies: policies, Targets: targets, ASGs: asgRepo, Revoker: connectHandler, Audit: auditLog, Log: log,
-				ApproveStepUp: func() bool { return runtime.Bool(settings.KeyApproveStepUp) }, MFAEnrolled: totp.Enrolled},
+				ApproveStepUp: func() bool { return runtime.Bool(settings.KeyApproveStepUp) }, MFAEnrolled: factors.Enrolled},
 			&asg.AdminHandler{Repo: asgRepo, Sync: syncer.SyncGroup, Identity: awsIdentity, Providers: asg.AWSFresh(), Policies: policies, Requests: accessReqs, Live: registry, Revoker: connectHandler, Vault: vault, Audit: auditLog, Log: log},
 			&session.Handler{Repo: sessionRepo, Audit: auditLog, AnchorKey: anchorKey, Registry: registry, Storage: storage, Log: log, IndexOutput: indexOutput},
 			&browsergw.Readiness{Guacd: func() string { return runtime.String(settings.KeyGuacdAddr) }, BrowserImage: func() string { return runtime.String(settings.KeyBrowserImage) }, Docker: cfg.DockerPath},
@@ -448,7 +468,7 @@ func serve(ctx context.Context) error {
 			&tlscert.Handler{Manager: tlsMgr, Mode: cfg.TLSMode, Audit: auditLog, Log: log},
 			connectHandler,
 			&connect.ShadowHandler{Registry: registry, Audit: auditLog, Log: log, GuacdAddr: guacdAddr},
-			consoleCLI(cfg, sessions, totp, auditLog, log),
+			consoleCLI(cfg, sessions, factors, auditLog, log),
 		},
 	}
 	if n, err := users.CountAdmins(ctx); err == nil && n == 0 {
