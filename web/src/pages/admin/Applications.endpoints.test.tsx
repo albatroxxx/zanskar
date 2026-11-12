@@ -35,14 +35,15 @@ function mount() {
 // The owner, 2026-11-11: "+1" after an upstream said there were more and
 // showed them only in a tooltip; 1.19.2's "+1 ▾" pill opened them inside the
 // cell and grew the row. 2026-11-12: Policies' disclosure after the address,
-// opening a row of its own beneath the application's.
+// opening a row of its own beneath the application's; the same day, "> +1"
+// became the chevron alone, its count in the button's name.
 describe('Applications, other endpoints', () => {
   it('opens every other endpoint in a row beneath, by mouse or keyboard', async () => {
     mount()
     const user = userEvent.setup()
     const row = (await screen.findByText('wiki')).closest('tr')!
     const toggle = within(row).getByRole('button', { name: '2 other endpoints' })
-    expect(toggle.textContent).toBe('+2')
+    expect(toggle.textContent).toBe('')
     expect(toggle.className).toContain('expander')
     expect(toggle.getAttribute('aria-expanded')).toBe('false')
     const id = toggle.getAttribute('aria-controls')!

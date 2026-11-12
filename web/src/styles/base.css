@@ -825,7 +825,7 @@ tr[aria-current="true"] td { background: var(--accent-soft); }
 @media (prefers-reduced-motion: reduce) { .expander .chev { transition: none; } }
 /* The same disclosure inline after a value (an application's upstream): quiet
    until hovered, 24px tall for the pointer without growing the row. */
-.expander.inline { display: inline-flex; align-items: baseline; gap: 6px; margin: -3px 0 -3px 4px; padding: 3px 4px; border-radius: var(--radius); font-family: var(--font); font-size: 0.82rem; color: var(--fg-muted); white-space: nowrap; }
+.expander.inline { display: inline-flex; align-items: center; justify-content: center; min-width: 24px; min-height: 24px; margin: -4px 0 -4px 4px; padding: 0; border-radius: var(--radius); vertical-align: middle; }
 .expander.inline .chev { align-self: center; margin-top: 0; }
 .expander.inline:hover { color: var(--fg); }
 .expander.inline:hover .chev { border-color: var(--fg); }

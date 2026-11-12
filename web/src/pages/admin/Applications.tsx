@@ -33,10 +33,11 @@ export function Applications() {
 
 /**
  * UpstreamCell is an application's upstream and, after it, Policies'
- * disclosure: a chevron and a count that open its other endpoints in a row
- * beneath (2026-11-12, after the owner found 1.19.2's "+1 ▾" pill wanting).
- * The address stays outside the button so it can still be selected and
- * copied; the button's name stays put and aria-expanded says the state.
+ * disclosure: a chevron that opens its other endpoints in a row beneath
+ * (2026-11-12, after the owner found 1.19.2's "+1 ▾" pill wanting, and then
+ * the count beside the chevron). The address stays outside the button so it
+ * can still be selected and copied; the button's name carries the count and
+ * aria-expanded says the state.
  */
 function UpstreamCell({ t, row }: { t: Target; row: RowDisclosure }) {
   const n = t.app_endpoints?.length ?? 0
@@ -53,7 +54,6 @@ function UpstreamCell({ t, row }: { t: Target; row: RowDisclosure }) {
           onClick={row.toggle}
         >
           <span className="chev" aria-hidden="true" />
-          +{n}
         </button>
       )}
       {t.app_dependencies === 'origins' && <span className="muted" title="dependencies: its origins only"> · origins only</span>}
