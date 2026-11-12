@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -204,6 +205,44 @@ func TestControllerDrainWaitsForBridges(t *testing.T) {
 	}
 	if l := logged.String(); !strings.Contains(l, "still finishing") || !strings.Contains(l, "stuck") {
 		t.Fatalf("log after a stuck bridge: %s", l)
+	}
+	reg.Remove("stuck")
+}
+
+// TestControllerStop: the service manager stopping the process ends every
+// live session with the restart's cause and waits for its bridge, refuses
+// new sessions meanwhile, and gives up when the shutdown's time is up
+// (testing board #164). It is not a restart the console asked for.
+func TestControllerStop(t *testing.T) {
+	reg := gateway.NewRegistry()
+	c := &Controller{Registry: reg, Log: slog.New(slog.NewTextHandler(io.Discard, nil)), Exit: func() { t.Error("Stop called Exit") }, Poll: 5 * time.Millisecond, Grace: 2 * time.Second}
+	ctx := reg.Add(context.Background(), gateway.Live{SessionID: "s1", Protocol: "ssh"})
+	var cause atomic.Value
+	go func() {
+		<-ctx.Done()
+		cause.Store(context.Cause(ctx))
+		time.Sleep(40 * time.Millisecond)
+		reg.Remove("s1")
+	}()
+	c.Stop(context.Background())
+	if got, _ := cause.Load().(error); !errors.Is(got, gateway.ErrGatewayRestart) {
+		t.Fatalf("session ended with %v, want the restart's cause", got)
+	}
+	if reg.Waiting() != 0 {
+		t.Fatal("Stop returned while the bridge was still finishing")
+	}
+	if !c.Draining() || c.Current() != nil {
+		t.Fatalf("draining %v, current %v: want new sessions refused and no console restart", c.Draining(), c.Current())
+	}
+
+	// A bridge that never finishes holds the stop only until its time is up.
+	reg.Add(context.Background(), gateway.Live{SessionID: "stuck", Protocol: "rdp"})
+	short, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	started := time.Now()
+	c.Stop(short)
+	if since := time.Since(started); since > time.Second {
+		t.Fatalf("Stop waited %v past its deadline", since)
 	}
 	reg.Remove("stuck")
 }
