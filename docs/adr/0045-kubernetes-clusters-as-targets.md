@@ -215,3 +215,41 @@ shows who lacks tooling.**
 4. **`port-forward`:** off by default per policy, or never.
 5. **Bodies:** never recorded (recommended), or the bodies of writes with secrets redacted.
 6. **Names.** *Clusters* in the console; protocols `kube` and `pod`.
+
+## Built (phase 1, 2026-11-13)
+
+What the first build of the API-as-the-person settled, where the decision above left room:
+
+1. **Scope across grants is the union.** When several grants admit a person to a cluster, the
+   session reaches every namespace any of them names (every namespace, when any admits every
+   namespace), and has `cluster_scope` or `port_forward` when any grant does. The clipboard and
+   file-transfer switches take the strictest grant; scope does not, because a grant that admits
+   a namespace admits it as a grant that admits a target does. `policy.Decision.Kube` carries it.
+2. **A change of terms ends the session.** The proxy holds the scope and the groups it acts as
+   for the session's life. The live re-check (ADR 0036) ends a `kube` session whose scope or
+   groups would now differ, as it ends a session whose clipboard would now be off; the person
+   connects again under the new terms.
+3. **Cluster-wide means cluster-wide.** A request whose path names no namespace (nodes, the
+   namespace list, `kubectl get pods -A`) needs `cluster_scope`, even for a grant that admits
+   every namespace, as decision 4 says. `/api/v1/namespaces/{ns}` alone reads as a request in
+   that namespace, so `kubectl get ns prod` works for a person granted prod. Paths outside the API
+   (`/api`, `/apis`, `/version`, `/openapi`) are answered 404 and forwarded nowhere.
+4. **Discovery is not recorded.** kubectl asks `/api`, `/apis/…` and `/openapi` a dozen times
+   before its first real request; those pass under every scope and write no line. Every request
+   that names a resource is one marker and one line, `{verb} {resource}[/{name}] [-n ns] → {status}`;
+   an upgraded stream writes a line when it opens and one when it ends, with its length and bytes.
+5. **An idle ceiling for a session without a socket.** A `kube` session whose policy sets no idle
+   time still ends after eight hours without a request: a kubeconfig left on a laptop is not a
+   standing credential. A bridge needs no such bound, since its socket ends with the browser tab.
+   A session with an upgraded stream open (an `exec` shell) does not idle out while the stream
+   carries bytes.
+6. **The token.** `zk8s_` and 32 random bytes, kept hashed, compared in constant time, read from
+   `Authorization: Bearer` only, refused the moment the session ends; a token that is not its
+   session's own is refused the same way. The session's own context ends every request in flight
+   and closes every upgraded stream.
+7. **The kubeconfig carries the gateway's certificate only when it is self-signed** (the managed
+   certificate before an upload): behind a certificate clients trust, or a proxy that terminates
+   TLS, it carries none. It is shown once in the portal's *Clusters* tab, to copy or download,
+   with the idle time and the end time when the policy sets a maximum.
+8. **Shared identity is audited.** `session.start` says `acts_as: person` or
+   `acts_as: shared identity`, beside the namespaces, `cluster_scope` and `port_forward`.

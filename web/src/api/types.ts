@@ -207,8 +207,10 @@ export interface ReachableTarget {
   private_ip?: string
   /** database engine when this is a database target (ADR 0017). */
   engine?: string
-  /** "target" for a static machine, "asg" for an autoscaling group, "application" for a web app (ADR 0034); missing means "target". */
-  kind?: 'target' | 'asg' | 'application'
+  /** "target" for a static machine, "asg" for an autoscaling group, "application" for a web app (ADR 0034), "cluster" for a Kubernetes cluster (ADR 0045); missing means "target". */
+  kind?: 'target' | 'asg' | 'application' | 'cluster'
+  /** A cluster's platform (ADR 0048): vanilla, eks, gke, aks. */
+  platform?: KubePlatform
   healthy_count?: number
   instance_count?: number
   /** An application's upstream, when the gateway chooses to show it; it opens through POST /connect like a desktop. */
@@ -540,13 +542,19 @@ export interface AuditOverview {
 }
 
 export interface ConnectResponse {
-  ticket: string
-  expires_at: string
-  ws_path: string
+  /** The one-time pass for the WebSocket that carries a bridge's session; a cluster session has none. */
+  ticket?: string
+  /** When the ticket lapses; for a cluster session, when it ends at the latest (its maximum), absent without one. */
+  expires_at?: string
+  ws_path?: string
   asg_id?: string
   asg_instance_id?: string
   /** e.g. "i-0abc · ap-south-1a" */
   instance_label?: string
+  /** A cluster session (ADR 0045) starts on connect: its id, the kubeconfig shown once, and the idle time it ends after. */
+  session_id?: string
+  kubeconfig?: string
+  idle_seconds?: number
 }
 
 export interface AutoscalingGroup {

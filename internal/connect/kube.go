@@ -34,8 +34,12 @@ import (
 // no such bound, since its socket ends with the browser tab.
 const kubeIdleCeiling = 8 * time.Hour
 
-// kubeTick is how often a kube session's idle time is checked.
-var kubeTick = 15 * time.Second
+// kubeTick is how often a kube session's idle time is checked; kubeNow is
+// the clock it is checked against. Tests shorten the one and move the other.
+var (
+	kubeTick = 15 * time.Second
+	kubeNow  = time.Now
+)
 
 // kubeOff says why no kube session can start on this gateway, or "".
 func (h *Handler) kubeOff() string {
@@ -194,7 +198,7 @@ loop:
 			reason, detail = session.EndMaxDuration, "ended after the policy's maximum of "+run.g.MaxSession.String()
 			break loop
 		case <-tick.C:
-			if time.Since(sess.LastActive()) >= idle && sess.Streams() == 0 {
+			if kubeNow().Sub(sess.LastActive()) >= idle && sess.Streams() == 0 {
 				reason, detail = session.EndIdleTimeout, "ended after "+idle.String()+" without a request"
 				break loop
 			}

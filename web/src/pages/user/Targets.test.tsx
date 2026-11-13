@@ -258,9 +258,9 @@ describe('Target tabs count what they hold', () => {
       </MemoryRouter>,
     )
     expect(await screen.findByRole('tab', { name: 'Hosts (2)' })).toBeDefined()
-    expect(screen.getAllByRole('tab').map((t) => t.textContent)).toEqual(['Hosts (2)', 'Databases (1)', 'Applications', 'Autoscaling (1)'])
+    expect(screen.getAllByRole('tab').map((t) => t.textContent)).toEqual(['Hosts (2)', 'Databases (1)', 'Applications', 'Clusters', 'Autoscaling (1)'])
     await userEvent.setup().type(screen.getByRole('searchbox', { name: 'Search targets by name or IP' }), 'linux')
-    expect(screen.getAllByRole('tab').map((t) => t.textContent)).toEqual(['Hosts (1)', 'Databases', 'Applications', 'Autoscaling'])
+    expect(screen.getAllByRole('tab').map((t) => t.textContent)).toEqual(['Hosts (1)', 'Databases', 'Applications', 'Clusters', 'Autoscaling'])
   })
 })
 
@@ -480,5 +480,55 @@ describe('Targets, grants that change while the page is open', () => {
     await waitFor(() => expect(reads('/me/access')).toBe(access + 1))
     expect(reads('/me/access-requests')).toBe(requests + 1)
     expect(get.mock.calls.filter(([p]) => String(p).startsWith('/me/sessions')).length).toBeGreaterThanOrEqual(2)
+  })
+})
+
+// A cluster (ADR 0045) has no socket: Kubeconfig asks /connect under kube
+// and the kubeconfig is shown once, to copy or download, with its terms.
+describe('Targets, clusters', () => {
+  const prod: ReachableTarget = {
+    kind: 'cluster', id: 'k1', name: 'prod', os_family: 'linux', tags: { env: 'prod' }, platform: 'eks',
+    capabilities: ['kube'], allowed_protocols: ['kube'], requires_approval: [], host_key_ready: true,
+  }
+
+  it('lists the cluster under Clusters and shows its kubeconfig once', async () => {
+    vi.spyOn(api, 'get').mockImplementation(async (p: string) => ({ items: p === '/me/targets' ? [prod] : [] }) as never)
+    const post = vi.spyOn(api, 'post').mockResolvedValue({ session_id: 's1', kubeconfig: 'apiVersion: v1\nkind: Config\n', idle_seconds: 900, expires_at: '2026-11-13T20:00:00Z' } as never)
+    render(
+      <MemoryRouter>
+        <Targets />
+      </MemoryRouter>,
+    )
+    expect(await screen.findByRole('tab', { name: 'Clusters (1)', selected: true })).toBeDefined()
+    // No address column: where kubectl goes is the gateway.
+    expect(screen.getAllByRole('columnheader').map((th) => th.textContent)).toEqual(['Name', 'Platform', 'Tags', 'Kubeconfig'])
+    expect(screen.getByRole('cell', { name: 'EKS' })).toBeDefined()
+
+    await userEvent.setup().click(screen.getByRole('button', { name: 'Kubeconfig' }))
+
+    expect(post).toHaveBeenCalledWith('/connect', { target_id: 'k1', protocol: 'kube' })
+    const dialog = await screen.findByRole('dialog', { name: 'Kubeconfig · prod' })
+    expect(within(dialog).getByText(/kind: Config/)).toBeDefined()
+    expect(within(dialog).getByText(/Idle 15 min · Ends /)).toBeDefined()
+    expect(within(dialog).getByRole('button', { name: 'Copy' })).toBeDefined()
+    expect(within(dialog).getByRole('button', { name: 'Download' })).toBeDefined()
+    await userEvent.setup().click(within(dialog).getByRole('button', { name: 'Close' }))
+    expect(screen.queryByRole('dialog')).toBeNull()
+  })
+
+  it('offers Request when the policy requires approval, and the request names kube', async () => {
+    vi.spyOn(api, 'get').mockImplementation(async (p: string) => ({ items: p === '/me/targets' ? [{ ...prod, requires_approval: ['kube'] }] : [] }) as never)
+    const post = vi.spyOn(api, 'post').mockResolvedValue({} as never)
+    render(
+      <MemoryRouter>
+        <Targets />
+      </MemoryRouter>,
+    )
+    const user = userEvent.setup()
+    await user.click(await screen.findByRole('button', { name: 'Request' }))
+    await user.type(screen.getByLabelText('Reason'), 'rollout')
+    await user.click(screen.getByRole('button', { name: 'Request access' }))
+    expect(post).toHaveBeenCalledWith('/me/access-requests', { target_id: 'k1', protocol: 'kube', reason: 'rollout', minutes: 60 })
+    expect(screen.queryByRole('button', { name: 'Kubeconfig' })).toBeNull()
   })
 })

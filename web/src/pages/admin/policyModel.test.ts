@@ -194,3 +194,34 @@ describe('summaries', () => {
     expect(targetsCell(g, (id) => id)).toBe('t1 (SSH), t2 (SSH), t3 (SSH) +2')
   })
 })
+
+// A Kubernetes grant's scope (ADR 0045) is typed as words and sent as the
+// API takes it, for a Kubernetes grant alone.
+describe('Kubernetes scope', () => {
+  it('reads namespaces typed with spaces or commas, and sends the switches only when on', () => {
+    const d = toDraft(newGrant('kubernetes'))
+    d.targets = { k1: ['kube'] }
+    d.namespaces = 'prod, staging data'
+    d.cluster_scope = true
+    expect(fromDraft(d, name).grant).toMatchObject({ kind: 'kubernetes', namespaces: ['prod', 'staging', 'data'], cluster_scope: true })
+    expect(fromDraft(d, name).grant).not.toHaveProperty('port_forward')
+    d.namespaces = ''
+    d.cluster_scope = false
+    expect(fromDraft(d, name).grant).not.toHaveProperty('namespaces')
+    expect(fromDraft(d, name).grant).not.toHaveProperty('cluster_scope')
+    d.namespaces = 'Prod Team'
+    expect(fromDraft(d, name).error).toContain('DNS label')
+  })
+
+  it('never leaves a host grant, and comes back into the draft', () => {
+    const host = toDraft({ ...newGrant('host'), namespaces: ['prod'], cluster_scope: true })
+    host.targets = { t1: ['ssh'] }
+    expect(fromDraft(host, name).grant).not.toHaveProperty('namespaces')
+    expect(fromDraft(host, name).grant).not.toHaveProperty('cluster_scope')
+    const g: PolicyGrant = { ...newGrant('kubernetes'), targets: [{ id: 'k1', protocols: ['kube'] }], namespaces: ['prod', 'data'], port_forward: true }
+    expect(toDraft(g)).toMatchObject({ namespaces: 'prod data', cluster_scope: false, port_forward: true })
+    expect(grantSummary(g, name)).toContain('ns prod, data')
+    expect(grantSummary(g, name)).toContain('port-forward')
+    expect(grantSummary({ ...g, namespaces: undefined }, name)).toContain('all namespaces')
+  })
+})

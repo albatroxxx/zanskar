@@ -57,19 +57,30 @@ func serve(t *testing.T, s *Session) *httptest.Server {
 	return srv
 }
 
-func get(t *testing.T, srv *httptest.Server, tok, path string, hdr map[string]string) *http.Response {
+// request is one GET with the session token, as kubectl would send it.
+func request(t *testing.T, srv *httptest.Server, tok, path string, hdr map[string]string) *http.Request {
 	t.Helper()
-	req, _ := http.NewRequest(http.MethodGet, srv.URL+"/k8s/s1"+path, nil)
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, srv.URL+"/k8s/s1"+path, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
 	req.Header.Set("Authorization", "Bearer "+tok)
 	for k, v := range hdr {
 		req.Header.Set(k, v)
 	}
-	res, err := srv.Client().Do(req)
+	return req
+}
+
+// fetch sends the request and returns the status and the whole body.
+func fetch(t *testing.T, srv *httptest.Server, tok, path string, hdr map[string]string) (int, []byte) {
+	t.Helper()
+	res, err := srv.Client().Do(request(t, srv, tok, path, hdr))
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = res.Body.Close() })
-	return res
+	defer func() { _ = res.Body.Close() }()
+	b, _ := io.ReadAll(res.Body)
+	return res.StatusCode, b
 }
 
 // Every request goes to the cluster as the person, with Zanskar's credential
@@ -78,17 +89,17 @@ func TestProxyForwardsAsThePerson(t *testing.T) {
 	f := &kubetest.API{Token: "sa-token"}
 	s, tok, rec := newSession(t, f, Identity{User: "alice", Groups: []string{"ops", "data"}}, Scope{Namespaces: []string{"prod"}})
 	srv := serve(t, s)
-	res := get(t, srv, tok, "/api/v1/namespaces/prod/pods?limit=5", map[string]string{
+	code, b := fetch(t, srv, tok, "/api/v1/namespaces/prod/pods?limit=5", map[string]string{
 		"Impersonate-User": "root", "Impersonate-Group": "system:masters", "Impersonate-Extra-Scopes": "everything", "Impersonate-Uid": "0",
 		"X-Remote-User": "root", "X-Forwarded-For": "1.2.3.4", "Cookie": "zanskar=abc", "X-Real-Ip": "1.2.3.4", "Accept": "application/json",
 	})
-	if res.StatusCode != 200 {
-		t.Fatalf("status %d", res.StatusCode)
+	if code != 200 {
+		t.Fatalf("status %d", code)
 	}
 	var body struct {
 		Metadata struct{ Path string } `json:"metadata"`
 	}
-	_ = json.NewDecoder(res.Body).Decode(&body)
+	_ = json.Unmarshal(b, &body)
 	if body.Metadata.Path != "/api/v1/namespaces/prod/pods" {
 		t.Fatalf("the cluster saw %q", body.Metadata.Path)
 	}
@@ -124,8 +135,8 @@ func TestProxySharedIdentity(t *testing.T) {
 	f := &kubetest.API{Token: "sa-token"}
 	s, tok, _ := newSession(t, f, Identity{}, Scope{ClusterScope: true})
 	srv := serve(t, s)
-	if res := get(t, srv, tok, "/api/v1/nodes", map[string]string{"Impersonate-User": "root"}); res.StatusCode != 200 {
-		t.Fatalf("status %d", res.StatusCode)
+	if code, _ := fetch(t, srv, tok, "/api/v1/nodes", map[string]string{"Impersonate-User": "root"}); code != 200 {
+		t.Fatalf("status %d", code)
 	}
 	if h := f.Last().Header; h.Get("Impersonate-User") != "" || len(h.Values("Impersonate-Group")) != 0 {
 		t.Fatalf("shared identity must impersonate nobody: %v", h)
@@ -139,20 +150,20 @@ func TestProxyRefusals(t *testing.T) {
 	s, tok, rec := newSession(t, f, Identity{User: "alice"}, Scope{Namespaces: []string{"prod"}})
 	srv := serve(t, s)
 	before := f.Count()
-	res := get(t, srv, tok, "/api/v1/nodes", nil)
+	code, b := fetch(t, srv, tok, "/api/v1/nodes", nil)
 	var st struct {
 		Kind, Status, Message, Reason string
 		Code                          int
 	}
-	_ = json.NewDecoder(res.Body).Decode(&st)
-	if res.StatusCode != 403 || st.Kind != "Status" || st.Reason != "Forbidden" || st.Code != 403 || !strings.Contains(st.Message, "covers the namespaces prod only") {
-		t.Fatalf("%d %+v", res.StatusCode, st)
+	_ = json.Unmarshal(b, &st)
+	if code != 403 || st.Kind != "Status" || st.Reason != "Forbidden" || st.Code != 403 || !strings.Contains(st.Message, "covers the namespaces prod only") {
+		t.Fatalf("%d %+v", code, st)
 	}
-	if res = get(t, srv, tok, "/metrics", nil); res.StatusCode != 404 {
-		t.Fatalf("outside the API: %d", res.StatusCode)
+	if code, _ = fetch(t, srv, tok, "/metrics", nil); code != 404 {
+		t.Fatalf("outside the API: %d", code)
 	}
-	if res = get(t, srv, tok, "/api/v1/namespaces/kube-system/pods", nil); res.StatusCode != 403 {
-		t.Fatalf("another namespace: %d", res.StatusCode)
+	if code, _ = fetch(t, srv, tok, "/api/v1/namespaces/kube-system/pods", nil); code != 403 {
+		t.Fatalf("another namespace: %d", code)
 	}
 	if f.Count() != before {
 		t.Fatal("a refused request reached the cluster")
@@ -163,8 +174,8 @@ func TestProxyRefusals(t *testing.T) {
 	// Discovery passes and is not recorded: kubectl asks for it a dozen
 	// times before its first real request.
 	for _, p := range []string{"/api", "/apis", "/api/v1", "/version"} {
-		if res = get(t, srv, tok, p, nil); res.StatusCode != 200 {
-			t.Fatalf("%s: %d", p, res.StatusCode)
+		if code, _ = fetch(t, srv, tok, p, nil); code != 200 {
+			t.Fatalf("%s: %d", p, code)
 		}
 	}
 	if got := rec.all(); len(got) != 2 {
@@ -227,7 +238,11 @@ func TestProxyWatchStreamsAndEndsWithTheSession(t *testing.T) {
 	f := &kubetest.API{Token: "sa-token", WatchEvents: 2}
 	s, tok, rec := newSession(t, f, Identity{User: "alice"}, Scope{Namespaces: []string{"prod"}})
 	srv := serve(t, s)
-	res := get(t, srv, tok, "/api/v1/namespaces/prod/pods?watch=true", nil)
+	res, err := srv.Client().Do(request(t, srv, tok, "/api/v1/namespaces/prod/pods?watch=true", nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = res.Body.Close() }()
 	if res.StatusCode != 200 {
 		t.Fatalf("status %d", res.StatusCode)
 	}
@@ -346,9 +361,9 @@ func TestProxyClusterDown(t *testing.T) {
 	}
 	_ = api
 	srv := serve(t, s)
-	res := get(t, srv, tok, "/api/v1/nodes", nil)
-	if res.StatusCode != 502 || !strings.Contains(rec.all()[0], "→ 502 (cluster unreachable)") {
-		t.Fatalf("%d %q", res.StatusCode, rec.all())
+	code, _ := fetch(t, srv, tok, "/api/v1/nodes", nil)
+	if code != 502 || !strings.Contains(rec.all()[0], "→ 502 (cluster unreachable)") {
+		t.Fatalf("%d %q", code, rec.all())
 	}
 }
 

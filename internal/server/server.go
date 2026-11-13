@@ -71,6 +71,9 @@ func New(cfg *config.Config, db *store.DB, log *slog.Logger, deps Deps) *Server 
 	mux.Handle("GET /api/v1/version", auth.RequireAuth(http.HandlerFunc(s.handleVersion)))
 	mux.HandleFunc("/api/", s.handleNotFound)
 	mux.HandleFunc("/ws/", s.handleNotFound)
+	// A Kubernetes session's endpoint (ADR 0045): kubectl at a path the
+	// connect handler does not serve gets a 404, not the console's page.
+	mux.HandleFunc("/k8s/", s.handleNotFound)
 	mux.Handle("/", spaHandler(web.FS()))
 	if deps.Theme != nil {
 		if h := themeScript(web.FS(), deps.Theme); h != nil {
@@ -254,7 +257,7 @@ func (s *Server) securityHeaders(next http.Handler) http.Handler {
 		h.Set("X-Frame-Options", "DENY")
 		h.Set("Referrer-Policy", "no-referrer")
 		h.Set("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
-		if p := r.URL.Path; strings.HasPrefix(p, "/api/") || strings.HasPrefix(p, "/ws/") || p == "/healthz" || p == "/readyz" {
+		if p := r.URL.Path; strings.HasPrefix(p, "/api/") || strings.HasPrefix(p, "/ws/") || strings.HasPrefix(p, "/k8s/") || p == "/healthz" || p == "/readyz" {
 			h.Set("Cache-Control", "no-store")
 			h.Set("Content-Security-Policy", "default-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
 		} else {

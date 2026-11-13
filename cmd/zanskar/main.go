@@ -39,6 +39,7 @@ import (
 	"github.com/albatroxxx/zanskar/internal/gateway"
 	"github.com/albatroxxx/zanskar/internal/gateway/browsergw"
 	"github.com/albatroxxx/zanskar/internal/gateway/containers"
+	"github.com/albatroxxx/zanskar/internal/gateway/kubegw"
 	"github.com/albatroxxx/zanskar/internal/group"
 	"github.com/albatroxxx/zanskar/internal/idp"
 	idpadmin "github.com/albatroxxx/zanskar/internal/idp/adminapi"
@@ -382,7 +383,17 @@ func serve(ctx context.Context) error {
 		DockerPath: cfg.DockerPath, DBMaxSessions: cfg.DatabaseMaxSessions, DBProxyImage: func() string { return runtime.String(settings.KeyDBProxyImage) },
 		AppsMaxSessions: cfg.AppsMaxSessions, BrowserImage: func() string { return runtime.String(settings.KeyBrowserImage) }, StateDir: cfg.StateDir,
 		Prober: prober, ASGs: asgRepo, Cloud: cloudProviders,
-		DiskFull: (&lifecycle.DiskGuard{DatabasePath: dbFileForMetrics(cfg.DBDSN), RecordingsPath: cfg.RecordingsDir}).Full}
+		DiskFull: (&lifecycle.DiskGuard{DatabasePath: dbFileForMetrics(cfg.DBDSN), RecordingsPath: cfg.RecordingsDir}).Full,
+		// Kubernetes sessions (ADR 0045): the kubeconfig names the public
+		// address, and carries the gateway's certificate only when it is
+		// the self-signed one (behind a proxy there is none to carry).
+		Kube: kubegw.NewSessions(), PublicURL: cfg.PublicURL, Groups: groups}
+	if tlsMgr != nil {
+		connectHandler.GatewayCert = func() (string, bool) {
+			info := tlsMgr.Active()
+			return info.CertPEM, info.SelfSigned
+		}
+	}
 	// A sign-in through an identity provider that removes the user from a
 	// mapped group ends what that group granted, as an admin's removal does.
 	provisioner.Revoker = connectHandler

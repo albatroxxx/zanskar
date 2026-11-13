@@ -11,7 +11,6 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"io"
-	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -165,14 +164,4 @@ func Start(t testing.TB, f *API) (apiServer, caPEM string) {
 	t.Cleanup(srv.Close)
 	ca := string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: srv.Certificate().Raw}))
 	return srv.URL, ca
-}
-
-// Dial opens a raw connection to the fake, for a test that speaks the wire.
-func Dial(t testing.TB, apiServer string) net.Conn {
-	t.Helper()
-	c, err := net.Dial("tcp", strings.TrimPrefix(apiServer, "https://"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	return c
 }

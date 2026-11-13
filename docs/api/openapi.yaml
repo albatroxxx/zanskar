@@ -1010,6 +1010,17 @@ paths:
         grant that gives the caller this target is an approval grant (ADR 0018), the caller needs
         an active grant: without one the request is refused with `403 approval_required` and the
         UI offers to request access instead.
+
+        Protocol `kube` (a Kubernetes cluster, ADR 0045) has no WebSocket: the session starts
+        here and the answer carries its kubeconfig instead of a ticket. It needs the gateway's
+        public address (`ZANSKAR_PUBLIC_URL`); without one the protocol is refused with
+        `501 protocol_unavailable`. Requests then go to `/k8s/{session_id}/…` with the
+        kubeconfig's token in `Authorization: Bearer`, are checked against the grant's
+        namespaces and `cluster_scope` (a refusal is a Kubernetes `Status` with code 403), and
+        are forwarded to the API server as the caller (`Impersonate-User`, `Impersonate-Group
+        zanskar:<group>`). The session ends after the policy's idle time without a request, at
+        its maximum, or when an administrator ends it; every request that names a resource is
+        one line of its recording.
       requestBody:
         required: true
         content:
@@ -8005,12 +8016,16 @@ components:
     # ---------------------------------------------------------------- user-facing targets and connect
     ReachableTarget:
       type: object
-      description: A target, autoscaling group or application the caller may reach, as returned by `GET /me/targets`.
+      description: A target, autoscaling group, application or Kubernetes cluster the caller may reach, as returned by `GET /me/targets`.
       required: [kind, id, name, os_family, tags, capabilities, allowed_protocols, host_key_ready]
       properties:
         kind:
           type: string
-          enum: [target, asg, application]
+          enum: [target, asg, application, cluster]
+        platform:
+          type: string
+          enum: [vanilla, eks, gke, aks]
+          description: A cluster's platform (ADR 0048); clusters only.
         id:
           type: string
         name:
@@ -8131,19 +8146,25 @@ components:
     ConnectTicket:
       type: object
       description: >
-        A one-time pass for the WebSocket that carries the session. The session id and the
-        policy's limits are not here: the session starts when the WebSocket opens, and its
-        first message carries them.
-      required: [ticket, expires_at, ws_path]
+        For a bridge (ssh, rdp, vnc, winrm, database, http): a one-time pass for the WebSocket
+        that carries the session. The session id and the policy's limits are not here: the
+        session starts when the WebSocket opens, and its first message carries them. For a
+        Kubernetes cluster (protocol `kube`, ADR 0045) there is no socket: the session starts
+        with this answer, and `session_id`, `kubeconfig` and `idle_seconds` are set in place of
+        the ticket.
       properties:
         ticket:
           type: string
           description: >
             One-time, 32 bytes of randomness, base64url. Present as `?ticket=` on the WebSocket
             URL. It works once, only from the address that asked for it, and only until
-            `expires_at`, 30 seconds after it was issued.
+            `expires_at`, 30 seconds after it was issued. Absent for a kube session.
         expires_at:
-          $ref: "#/components/schemas/Timestamp"
+          allOf:
+            - $ref: "#/components/schemas/Timestamp"
+          description: >
+            When the ticket lapses. For a kube session, when the session ends at the latest
+            (the policy's maximum); absent when the policy sets none.
         ws_path:
           type: string
           enum: [/ws/terminal, /ws/desktop, /ws/winrm, /ws/database]
@@ -8156,6 +8177,22 @@ components:
         instance_label:
           type: string
           description: The instance the session lands on, as "instance id · availability zone".
+        session_id:
+          type: string
+          description: A kube session's id, live from this answer; `GET /me/sessions` lists it.
+        kubeconfig:
+          type: string
+          description: >
+            A kube session's kubeconfig, shown once and never stored: one cluster whose server is
+            `https://<public url>/k8s/<session id>`, one user whose token is the session's
+            (`zk8s_…`), and the gateway's own certificate when it is self-signed. Every request
+            kubectl makes with it goes to the cluster as the caller, within the grant's
+            namespaces; the token is refused once the session ends.
+        idle_seconds:
+          type: integer
+          description: >
+            How long a kube session lives without a request before it ends by itself: the
+            policy's idle time, or eight hours when the policy sets none.
 
     # ---------------------------------------------------------------- sessions
     OwnSession:

@@ -48,6 +48,8 @@
   --proto-db-soft: #e0efe7;
   --proto-app: #8a4b1f;
   --proto-app-soft: #f6e8dc;
+  --proto-kube: #2f5f9e;
+  --proto-kube-soft: #e3ecf7;
 
   /* the terminal and desktop pages are always dark, whatever the theme */
   --terminal-bg: #181a1f;
@@ -118,6 +120,8 @@
     --proto-db-soft: #132a20;
     --proto-app: #e5a876;
     --proto-app-soft: #33241a;
+    --proto-kube: #8db4e8;
+    --proto-kube-soft: #18273b;
     --backdrop: rgba(0, 0, 0, 0.62);
     --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 8px 24px rgba(0, 0, 0, 0.35);
   }
@@ -149,6 +153,8 @@
   --proto-db-soft: #132a20;
   --proto-app: #e5a876;
   --proto-app-soft: #33241a;
+  --proto-kube: #8db4e8;
+  --proto-kube-soft: #18273b;
   --backdrop: rgba(0, 0, 0, 0.62);
   --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 8px 24px rgba(0, 0, 0, 0.35);
 }

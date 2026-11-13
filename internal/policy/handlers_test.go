@@ -29,7 +29,7 @@ import (
 type fakeInventory struct{}
 
 func (fakeInventory) TargetKind(_ context.Context, id string) (string, bool, error) {
-	k, ok := map[string]string{"web-1": protocol.KindHost, "web-2": protocol.KindHost, "orders": protocol.KindDatabase, "wiki": protocol.KindApplication}[id]
+	k, ok := map[string]string{"web-1": protocol.KindHost, "web-2": protocol.KindHost, "orders": protocol.KindDatabase, "wiki": protocol.KindApplication, "k1": protocol.KindKubernetes}[id]
 	return k, ok, nil
 }
 
@@ -304,5 +304,34 @@ func TestPolicyWithNoOneLeft(t *testing.T) {
 	}
 	if code, out := e.do("PUT", "/api/v1/access-policies/"+id, got); code != 200 || out["enabled"] != false {
 		t.Fatalf("saving it as read, switched off: %d %v", code, out)
+	}
+}
+
+// TestPolicyAPIKubeScope (ADR 0045): a Kubernetes grant's namespaces,
+// cluster scope and port-forward are written and read; on another kind they
+// are refused by name.
+func TestPolicyAPIKubeScope(t *testing.T) {
+	e := newHandlerEnv(t)
+	body := e.body()
+	body["grants"] = []map[string]any{{
+		"kind": "kubernetes", "targets": []map[string]any{{"id": "k1", "protocols": []string{"kube"}}},
+		"namespaces": []string{"prod", "staging"}, "cluster_scope": true,
+	}}
+	code, out := e.do("POST", "/api/v1/access-policies", body)
+	if code != http.StatusCreated {
+		t.Fatalf("create: %d %v", code, out)
+	}
+	g := out["grants"].([]any)[0].(map[string]any)
+	if ns, _ := g["namespaces"].([]any); len(ns) != 2 || ns[0] != "prod" || g["cluster_scope"] != true || g["port_forward"] != nil {
+		t.Fatalf("scope: %v", g)
+	}
+	id := out["id"].(string)
+	if code, out := e.do("GET", "/api/v1/access-policies/"+id, nil); code != http.StatusOK || out["grants"].([]any)[0].(map[string]any)["cluster_scope"] != true {
+		t.Fatalf("get: %d %v", code, out)
+	}
+	host := e.body()
+	host["grants"].([]map[string]any)[0]["namespaces"] = []string{"prod"}
+	if code, out := e.do("POST", "/api/v1/access-policies", host); code != http.StatusBadRequest || !strings.Contains(out["message"].(string), "Kubernetes grants only") {
+		t.Fatalf("namespaces on a host grant: %d %v", code, out)
 	}
 }

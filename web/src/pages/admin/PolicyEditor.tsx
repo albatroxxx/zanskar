@@ -394,6 +394,8 @@ function GrantCard({ index, draft: d, open, onToggleOpen, onChange, onRemove, on
                 ...(filesMove(d.kind) ? ([['allow_file_transfer', 'File transfer (SSH, RDP)']] as const) : []),
                 // Developer tools exist only in an application's browser (ADR 0037).
                 ...(d.kind === 'application' ? ([['allow_devtools', 'Developer tools']] as const) : []),
+                // A cluster's scope beyond its namespaces (ADR 0045): cluster-wide resources, port-forward.
+                ...(d.kind === 'kubernetes' ? ([['cluster_scope', 'Cluster scope'], ['port_forward', 'Port-forward']] as const) : []),
               ] as const).map(([k, label]) => (
                 <span key={k} className="field inline">
                   <input id={`${p}-${k}`} type="checkbox" checked={d[k]} onChange={(e) => up({ [k]: e.target.checked } as Partial<GrantDraft>)} />
@@ -401,6 +403,11 @@ function GrantCard({ index, draft: d, open, onToggleOpen, onChange, onRemove, on
                 </span>
               ))}
             </div>
+            {d.kind === 'kubernetes' && (
+              <Field label="Namespaces" hint="Empty = all">
+                <input id={`${p}-namespaces`} value={d.namespaces} onChange={(e) => up({ namespaces: e.target.value })} placeholder="prod staging" />
+              </Field>
+            )}
             <div className="form-grid">
               <Field label="Idle (minutes)"><input id={`${p}-idle`} inputMode="numeric" value={d.idle} onChange={(e) => up({ idle: e.target.value })} /></Field>
               <Field label="Maximum (minutes)"><input id={`${p}-max`} inputMode="numeric" value={d.max} onChange={(e) => up({ max: e.target.value })} placeholder="No limit" /></Field>
