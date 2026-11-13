@@ -192,6 +192,11 @@ func TestKubeSessionEndToEnd(t *testing.T) {
 	if rr := f.kubectl(sid, token, "/api/v1/namespaces/prod/pods"); rr.Code != 401 {
 		t.Fatalf("after the end: %d", rr.Code)
 	}
+	// The run ends the row before it lets the store go; a moment later it has.
+	deadline := time.Now().Add(2 * time.Second)
+	for f.h.Kube.Len() != 0 && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
 	if f.h.Kube.Len() != 0 {
 		t.Fatal("the session is still held")
 	}
@@ -230,6 +235,12 @@ func TestKubeSessionSharedIdentity(t *testing.T) {
 	if details["acts_as"] != "shared identity" {
 		t.Fatalf("start details: %v", details)
 	}
+	// A re-check compares the scope and nothing about groups, which the
+	// session does not act as: it keeps running (the first build ended it).
+	if n := f.h.Recheck(f.ctx, []string{f.alice.ID}); n != 0 {
+		t.Fatalf("a re-check ended %d shared-identity sessions", n)
+	}
+	f.stillLive(t, sid)
 }
 
 // Without a public address there is nothing to put in a kubeconfig: the

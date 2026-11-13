@@ -50,12 +50,14 @@ type Live struct {
 }
 
 // KubeTerms are what a Kubernetes session was admitted with: the namespaces
-// (empty: every one), cluster scope, port-forward, and the Zanskar groups
-// the session acts as in the cluster, sorted.
+// (empty: every one), cluster scope, port-forward, and, when the session
+// acts as the person (Impersonate), the Zanskar groups it acts as, sorted. A
+// shared-identity session acts as the credential and carries no groups.
 type KubeTerms struct {
 	Namespaces   []string
 	ClusterScope bool
 	PortForward  bool
+	Impersonate  bool
 	Groups       []string
 }
 

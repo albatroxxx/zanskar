@@ -127,7 +127,8 @@ func (h *Handler) startKube(r *http.Request, p *auth.Principal, ip string, ep *e
 		actsAs = "shared identity"
 	}
 	run.startDetails = map[string]any{"namespaces": scope.Namespaces, "cluster_scope": scope.ClusterScope, "port_forward": scope.PortForward, "acts_as": actsAs}
-	run.kube = &gateway.KubeTerms{Namespaces: scope.Namespaces, ClusterScope: scope.ClusterScope, PortForward: scope.PortForward, Groups: identity.Groups}
+	run.kube = &gateway.KubeTerms{Namespaces: scope.Namespaces, ClusterScope: scope.ClusterScope, PortForward: scope.PortForward,
+		Impersonate: ep.KubeImpersonate, Groups: identity.Groups}
 	rec, row, ok := run.asciicast(ep.Name, 120, 40)
 	if !ok {
 		return nil, "recording_unavailable", "the session's recording could not be started", nil
@@ -250,8 +251,9 @@ func (h *Handler) kubeGroups(ctx context.Context, userID string, d policy.Decisi
 }
 
 // kubeTermsHold reports whether a live kube session's terms are what a fresh
-// decision gives: the scope and the groups. A change ends the session, since
-// the proxy holds both for its life (revoke.go).
+// decision gives: the scope and, for a session acting as the person, the
+// groups. A change ends the session, since the proxy holds both for its
+// life (revoke.go). A shared-identity session has no groups to compare.
 func kubeTermsHold(l *gateway.KubeTerms, d policy.Decision, groups []string) bool {
 	if l == nil {
 		return true
@@ -261,7 +263,13 @@ func kubeTermsHold(l *gateway.KubeTerms, d policy.Decision, groups []string) boo
 	if want == nil {
 		want = &policy.KubeScope{}
 	}
-	if !have.Equal(want) || len(l.Groups) != len(groups) {
+	if !have.Equal(want) {
+		return false
+	}
+	if !l.Impersonate {
+		return true
+	}
+	if len(l.Groups) != len(groups) {
 		return false
 	}
 	for i := range groups {
