@@ -1,10 +1,10 @@
 import { useEffect, useState } from 'react'
-import { Navigate, useNavigate, useParams } from 'react-router-dom'
+import { Navigate, useParams } from 'react-router-dom'
 import { api } from '../../api/client'
 import { platformName } from '../../api/format'
 import type { AdminOverview, KubePlatform } from '../../api/types'
 import { TileIcon } from '../../components/icons'
-import { PageHead, StatTile, Tabs } from '../../components/ui'
+import { PageHead, StatTile } from '../../components/ui'
 import { Kubernetes } from './Kubernetes'
 
 // Fabric (ADR 0048): Kubernetes clusters, reached through the gateway as
@@ -12,7 +12,7 @@ import { Kubernetes } from './Kubernetes'
 // owner, 2026-11-13: everything in it is Kubernetes, so the section's own
 // name says nothing); the route and the code keep the section's name. A
 // tab per platform (each its own thing, Vanilla since all four are
-// Kubernetes), and a tile per platform above them that opens its tab;
+// Kubernetes); the tiles are the tabs, the open one filled in the accent;
 // /admin/fabric/<platform> names the open one. Autoscaling groups were the first tab for a day (2026-11-12) and
 // went back to their own page: a person opens an instance as they open a
 // host, so the groups belong beside the hosts.
@@ -25,7 +25,6 @@ export const platforms: { key: KubePlatform; icon: 'k8s' | 'eks' | 'gke' | 'aks'
 
 export function Fabric() {
   const { kind = 'vanilla' } = useParams()
-  const nav = useNavigate()
   const [adding, setAdding] = useState(false)
   const [counts, setCounts] = useState<AdminOverview['inventory'] | null>(null)
   useEffect(() => {
@@ -44,12 +43,11 @@ export function Fabric() {
       <PageHead title="Kubernetes">
         <button className="btn primary" onClick={() => setAdding(true)}>Add cluster</button>
       </PageHead>
-      <div className="stat-grid platforms">
+      <nav className="stat-grid platforms" aria-label="Platforms">
         {platforms.map((p) => (
           <StatTile key={p.key} value={counts ? (counts.clusters_by_platform[p.key] ?? 0) : null} label={platformName(p.key)} icon={<TileIcon kind={p.icon} />} to={`/admin/fabric/${p.key}`} selected={p.key === open.key} />
         ))}
-      </div>
-      <Tabs<KubePlatform> label="Platforms" value={open.key} onChange={(k) => nav(`/admin/fabric/${k}`)} tabs={platforms.map((p) => ({ key: p.key, label: platformName(p.key) }))} />
+      </nav>
       <Kubernetes key={open.key} platform={open.key} adding={adding} setAdding={setAdding} />
     </>
   )

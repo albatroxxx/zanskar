@@ -42,8 +42,9 @@ describe('Fabric', () => {
   it('opens on Vanilla, listing only its clusters', async () => {
     const get = at('/admin/fabric')
     expect(await screen.findByRole('heading', { name: 'Kubernetes' })).toBeDefined()
-    expect(screen.getByRole('tab', { name: 'Vanilla', selected: true })).toBeDefined()
-    expect(screen.getAllByRole('tab').map((t) => t.textContent)).toEqual(['Vanilla', 'EKS', 'GKE', 'AKS'])
+    // The tiles are the tabs: the open one says so, and there is no tab row beneath.
+    expect(await screen.findByRole('link', { name: /Vanilla/, current: 'page' })).toBeDefined()
+    expect(screen.queryByRole('tablist')).toBeNull()
     expect(screen.getByRole('button', { name: 'Add cluster' })).toBeDefined()
     expect(get).toHaveBeenCalledWith('/targets?limit=500&kind=kubernetes&platform=vanilla')
     expect(screen.queryByRole('button', { name: /remove filter/ })).toBeNull()
@@ -58,7 +59,7 @@ describe('Fabric', () => {
     expect(tiles[0].getAttribute('aria-current')).toBe('page')
     expect(tiles[1].getAttribute('aria-current')).toBeNull()
     tiles[1].click()
-    expect(await screen.findByRole('tab', { name: 'EKS', selected: true })).toBeDefined()
+    await screen.findByRole('link', { name: /EKS/, current: 'page' })
     expect(tiles[1].getAttribute('aria-current')).toBe('page')
     expect(tiles[0].getAttribute('aria-current')).toBeNull()
     expect(screen.getByTestId('where').textContent).toBe('/admin/fabric/eks')
@@ -73,7 +74,7 @@ describe('Fabric', () => {
 
   it('leads an address it does not have back to the section', async () => {
     at('/admin/fabric/nothing')
-    expect(await screen.findByRole('tab', { name: 'Vanilla', selected: true })).toBeDefined()
+    expect(await screen.findByRole('link', { name: /Vanilla/, current: 'page' })).toBeDefined()
     expect(screen.getByTestId('where').textContent).toBe('/admin/fabric')
   })
 })

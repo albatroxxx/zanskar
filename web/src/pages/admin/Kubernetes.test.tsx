@@ -40,7 +40,7 @@ describe('Kubernetes', () => {
         </Routes>
       </MemoryRouter>,
     )
-    expect(await screen.findByRole('tab', { name: 'GKE', selected: true })).toBeDefined()
+    expect(await screen.findByRole('link', { name: /GKE/, current: 'page' })).toBeDefined()
     const row = (await screen.findByText('prod-sa')).closest('tr')!
     expect(get).toHaveBeenCalledWith('/targets?limit=500&kind=kubernetes&platform=gke')
     expect(within(row).getByText('https://k8s.example:6443')).toBeDefined()
