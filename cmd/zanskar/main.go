@@ -450,7 +450,7 @@ func serve(ctx context.Context) error {
 			&idpadmin.AdminHandler{Providers: idpRepo, Audit: auditLog, Log: log, LDAPTester: &ldap.Authenticator{}, Sync: userSync},
 			oidcHandler,
 			scimHandler,
-			&credential.AdminHandler{Vault: vault, Audit: auditLog, Log: log},
+			&credential.AdminHandler{Vault: vault, Identity: awsIdentity, Audit: auditLog, Log: log},
 			&target.AdminHandler{Repo: targets, Prober: prober, Policies: policies, Requests: accessReqs, Live: registry, Revoker: connectHandler, Vault: vault, Groups: groups, Audit: auditLog, Log: log},
 			&policy.AdminHandler{Repo: policies, Users: users, Inventory: policyInventory{targets: targets, groups: asgRepo}, Revoker: connectHandler, Directory: reviewDirectory{users: users, groups: groups}, Audit: auditLog, Log: log},
 			&access.Handler{Requests: accessReqs, Policies: policies, Targets: targets, ASGs: asgRepo, Revoker: connectHandler, Audit: auditLog, Log: log,

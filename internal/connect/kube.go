@@ -3,16 +3,15 @@
 package connect
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"net/http"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/albatroxxx/zanskar/internal/auth"
-	"github.com/albatroxxx/zanskar/internal/credential"
 	"github.com/albatroxxx/zanskar/internal/gateway"
 	"github.com/albatroxxx/zanskar/internal/gateway/kubegw"
 	"github.com/albatroxxx/zanskar/internal/policy"
@@ -70,25 +69,17 @@ func (h *Handler) startKube(r *http.Request, p *auth.Principal, ip string, ep *e
 	if credID == "" {
 		return nil, "no_credential", "no credential is configured for kube on this target", nil
 	}
-	cred, err := h.Vault.Get(ctx, credID)
-	if err != nil {
-		return nil, "", "", err
-	}
-	if cred.Mode != credential.ModeVaulted || (cred.Type != credential.TypeKubeToken && cred.Type != credential.TypeKubeClientCert) {
-		return nil, "credential_mode_unavailable", "a cluster takes a service-account token or a client certificate held by Zanskar", nil
-	}
-	opened, err := h.Vault.Open(ctx, credID)
-	if err != nil {
+	// The slot's credential as the proxy takes it: a token or certificate
+	// opened from the vault, or an EKS role's minted bearers (ADR 0045, 8).
+	kc, closeCred, err := target.ResolveKubeCredential(ctx, h.Vault, &target.Target{KubePlatform: ep.KubePlatform, Credentials: ep.Credentials})
+	switch {
+	case errors.Is(err, target.ErrKubeCredential):
+		return nil, "credential_mode_unavailable", strings.TrimPrefix(err.Error(), target.ErrKubeCredential.Error()+": "), nil
+	case err != nil:
 		h.Log.Error("open credential", "id", credID, "err", err)
 		return nil, "credential_unavailable", "credential could not be opened", nil
 	}
-	defer opened.Close()
-	kc, err := target.KubeCredential(opened)
-	if err != nil {
-		return nil, "credential_mode_unavailable", err.Error(), nil
-	}
-	// Close zeroes what Open decrypted; the session keeps its own copy.
-	kc.CertPEM = bytes.Clone(kc.CertPEM)
+	defer closeCred()
 	// The terms the session runs with, in a grant like a bridge's, so the
 	// row, the recording and the registry entry are made the same way.
 	g := &ticket.Grant{UserID: p.User.ID, Username: p.User.Username, SessionID: p.Session.ID, TargetID: ep.TargetID,

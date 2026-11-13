@@ -32,6 +32,7 @@ func NewVault(db *store.DB, ring *keyring.Ring) *Vault {
 const cols = `id, name, type, mode, username, domain, public_key, key_version, created_by,
 	created_at, updated_at, rotated_at, secret_enc IS NOT NULL, certificate_ttl_seconds, certificate_principals,
 	pending_public_key, pending_created_at, retired_public_key, retired_at,
+	aws_region, aws_role_arn, aws_external_id, eks_cluster,
 	(SELECT COUNT(*) FROM target_credentials tc WHERE tc.credential_id = credentials.id),
 	(SELECT COUNT(*) FROM asg_credentials ac WHERE ac.credential_id = credentials.id)`
 
@@ -59,11 +60,12 @@ func (v *Vault) Create(ctx context.Context, c *Credential, s *Secret, createdBy 
 	}
 	_, err = v.db.ExecContext(ctx, v.db.Rebind(`INSERT INTO credentials
 		(id, name, type, mode, username, domain, secret_enc, public_key, key_version, created_by, created_at, updated_at,
-		 certificate_ttl_seconds, certificate_principals)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`),
+		 certificate_ttl_seconds, certificate_principals, aws_region, aws_role_arn, aws_external_id, eks_cluster)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`),
 		c.ID, c.Name, string(c.Type), string(c.Mode), nullStr(c.Username), nullStr(c.Domain),
 		sealed, nullStr(c.PublicKey), keyVersion, nullStr(createdBy), store.TimeArg(now), store.TimeArg(now),
-		nullInt(c.CertificateTTLSeconds), principalsJSON(c.CertificatePrincipals))
+		nullInt(c.CertificateTTLSeconds), principalsJSON(c.CertificatePrincipals),
+		nullStr(c.AWSRegion), nullStr(c.AWSRoleARN), nullStr(c.AWSExternalID), nullStr(c.EKSCluster))
 	if err != nil {
 		if store.IsUniqueViolation(err) {
 			return ErrDuplicate
@@ -118,6 +120,10 @@ type Metadata struct {
 	// CertificateTTLSeconds and CertificatePrincipals apply to ssh_ca only.
 	CertificateTTLSeconds int
 	CertificatePrincipals []string
+	// AWSRegion, AWSRoleARN and EKSCluster apply to kube_eks only; the
+	// ExternalId is minted once and never changes, since the trust policy
+	// that carries it was pasted by hand.
+	AWSRegion, AWSRoleARN, EKSCluster string
 }
 
 // Update changes metadata only.
@@ -132,9 +138,14 @@ func (v *Vault) Update(ctx context.Context, id string, m Metadata) (*Credential,
 	if err := validateCertificateSettings(c); err != nil {
 		return nil, err
 	}
+	c.AWSRegion, c.AWSRoleARN, c.EKSCluster = m.AWSRegion, m.AWSRoleARN, m.EKSCluster
+	if err := validateEKSSettings(c); err != nil {
+		return nil, err
+	}
 	// Re-run the type rules against the current secret state: a vaulted
-	// password credential must keep a username, and so on.
-	if c.Mode == ModeVaulted && c.Type != TypeSSHCA && strings.TrimSpace(username) == "" {
+	// password credential must keep a username, and so on. A cluster's
+	// credential names no user (ADR 0045).
+	if c.Mode == ModeVaulted && c.Type != TypeSSHCA && !c.Type.IsKube() && strings.TrimSpace(username) == "" {
 		return nil, fmt.Errorf("%w: username required", ErrInvalid)
 	}
 	if c.Type == TypeDomain && strings.TrimSpace(domain) == "" {
@@ -147,9 +158,10 @@ func (v *Vault) Update(ctx context.Context, id string, m Metadata) (*Credential,
 		username = ""
 	}
 	res, err := v.db.ExecContext(ctx, v.db.Rebind(`UPDATE credentials SET name = ?, username = ?, domain = ?,
-		certificate_ttl_seconds = ?, certificate_principals = ?, updated_at = ? WHERE id = ?`),
+		certificate_ttl_seconds = ?, certificate_principals = ?, aws_region = ?, aws_role_arn = ?, eks_cluster = ?, updated_at = ? WHERE id = ?`),
 		strings.TrimSpace(name), nullStr(strings.TrimSpace(username)), nullStr(strings.TrimSpace(domain)),
-		nullInt(c.CertificateTTLSeconds), principalsJSON(c.CertificatePrincipals), store.TimeArg(time.Now()), id)
+		nullInt(c.CertificateTTLSeconds), principalsJSON(c.CertificatePrincipals),
+		nullStr(c.AWSRegion), nullStr(c.AWSRoleARN), nullStr(c.EKSCluster), store.TimeArg(time.Now()), id)
 	if err != nil {
 		if store.IsUniqueViolation(err) {
 			return nil, ErrDuplicate
@@ -164,7 +176,7 @@ func (v *Vault) Update(ctx context.Context, id string, m Metadata) (*Credential,
 
 // rotatable refuses a credential whose secret is not replaced in place.
 func rotatable(c *Credential) error {
-	if c.Mode != ModeVaulted || c.Type == TypeEC2InstanceConnect {
+	if c.Mode != ModeVaulted || c.Type == TypeEC2InstanceConnect || c.Type == TypeKubeEKS {
 		return fmt.Errorf("%w: nothing to rotate for %s/%s", ErrInvalid, c.Type, c.Mode)
 	}
 	if c.Type == TypeSSHCA {
@@ -487,10 +499,13 @@ func scan(s store.Scanner) (*Credential, error) {
 		hasSecret                 bool
 		pendingPub, retiredPub    sql.NullString
 		pendingAt, retiredAt      store.NullTime
+		region, roleARN, extID    sql.NullString
+		eksCluster                sql.NullString
 	)
 	err := s.Scan(&c.ID, &c.Name, &typ, &mode, &username, &domain, &pub, &keyVersion, &by,
 		&created, &updated, &rotated, &hasSecret, &certTTL, &principals,
-		&pendingPub, &pendingAt, &retiredPub, &retiredAt, &c.InUseBy.Targets, &c.InUseBy.AutoscalingGroups)
+		&pendingPub, &pendingAt, &retiredPub, &retiredAt, &region, &roleARN, &extID, &eksCluster,
+		&c.InUseBy.Targets, &c.InUseBy.AutoscalingGroups)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound
@@ -501,6 +516,7 @@ func scan(s store.Scanner) (*Credential, error) {
 	c.Username, c.Domain, c.PublicKey, c.CreatedBy = username.String, domain.String, pub.String, by.String
 	c.KeyVersion, c.HasSecret = int(keyVersion.Int64), hasSecret
 	c.CertificateTTLSeconds = int(certTTL.Int64)
+	c.AWSRegion, c.AWSRoleARN, c.AWSExternalID, c.EKSCluster = region.String, roleARN.String, extID.String, eksCluster.String
 	// An empty allowlist lets a certificate name any login user, so one
 	// that cannot be read must not pass for empty (B12): the credential is
 	// unusable until the row is repaired.

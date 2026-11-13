@@ -3,13 +3,17 @@
 package target
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/albatroxxx/zanskar/internal/audit"
+	"github.com/albatroxxx/zanskar/internal/cloud"
 	"github.com/albatroxxx/zanskar/internal/credential"
 	"github.com/albatroxxx/zanskar/internal/gateway/kubegw"
 	"github.com/albatroxxx/zanskar/internal/group"
@@ -53,11 +57,6 @@ func (h *AdminHandler) kubeTest(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, http.StatusConflict, "not_a_cluster", "target is not a Kubernetes cluster")
 		return
 	}
-	credID := t.Credentials[Kube]
-	if credID == "" || h.Vault == nil {
-		httpx.WriteError(w, r, http.StatusConflict, "no_credential", "no credential is bound to the cluster's kube slot")
-		return
-	}
 	// The test goes to the address checked here, as a session does.
 	dialIP, err := h.Prober.Resolve(r.Context(), t.Address)
 	if err != nil {
@@ -65,17 +64,20 @@ func (h *AdminHandler) kubeTest(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, http.StatusUnprocessableEntity, "address_forbidden", addressRefusal(err))
 		return
 	}
-	opened, err := h.Vault.Open(r.Context(), credID)
-	if err != nil {
+	cred, closeCred, err := ResolveKubeCredential(r.Context(), h.Vault, t)
+	switch {
+	case errors.Is(err, ErrKubeCredential):
+		code := "credential_unsuitable"
+		if t.Credentials[Kube] == "" {
+			code = "no_credential"
+		}
+		httpx.WriteError(w, r, http.StatusConflict, code, strings.TrimPrefix(err.Error(), ErrKubeCredential.Error()+": "))
+		return
+	case err != nil:
 		httpx.Internal(w, r, h.Log, err)
 		return
 	}
-	defer opened.Close()
-	cred, err := KubeCredential(opened)
-	if err != nil {
-		httpx.WriteError(w, r, http.StatusConflict, "credential_unsuitable", err.Error())
-		return
-	}
+	defer closeCred()
 	ctx, cancel := context.WithTimeout(r.Context(), KubeTestTimeout)
 	defer cancel()
 	c, err := kubegw.New(kubegw.Endpoint{APIServer: t.KubeAPIServer, CA: t.KubeCA, DialIP: dialIP}, cred)
@@ -118,16 +120,73 @@ func runKubeTest(ctx context.Context, c *kubegw.Client) (*KubeTest, error) {
 	return &KubeTest{Version: v.GitVersion, ImpersonateUsers: users, ImpersonateGroup: groups, Namespaces: ns, NamespacesListed: true}, nil
 }
 
-// KubeCredential turns an opened credential into what the cluster client
-// takes: a token, or a certificate with its key.
-func KubeCredential(o *credential.Opened) (kubegw.Credential, error) {
-	switch o.Type {
-	case credential.TypeKubeToken:
-		return kubegw.Credential{Token: o.Password}, nil
-	case credential.TypeKubeClientCert:
-		return kubegw.Credential{CertPEM: o.PrivateKey}, nil
+// ErrKubeCredential is what keeps the kube slot's credential from being
+// used, said to the person at connect and to the administrator at test;
+// never an internal error.
+var ErrKubeCredential = errors.New("target: the cluster's credential cannot be used")
+
+// KubeSlotAccepts says whether a credential of type ct may hold the kube
+// slot of a cluster on platform p (ADR 0045, 8): an EKS cluster takes the
+// role that reaches it and nothing else; every other platform takes a token
+// or a client certificate, the standard path, which GKE and AKS take too
+// until adapters of their own exist.
+func KubeSlotAccepts(platform string, ct credential.Type) error {
+	switch {
+	case !ct.IsKube():
+		return fmt.Errorf("%w: the kube slot takes a kube_token, kube_client_cert or kube_eks credential, not %s", ErrInvalid, ct)
+	case platform == PlatformEKS && ct != credential.TypeKubeEKS:
+		return fmt.Errorf("%w: an EKS cluster takes a kube_eks credential, the role that reaches it", ErrInvalid)
+	case platform != PlatformEKS && ct == credential.TypeKubeEKS:
+		return fmt.Errorf("%w: a kube_eks credential is for a cluster whose platform is eks", ErrInvalid)
 	}
-	return kubegw.Credential{}, errors.New("the kube slot needs a kube_token or kube_client_cert credential")
+	return nil
+}
+
+// KubeTokener mints the bearer an EKS cluster accepts; cloud.EKS is one.
+type KubeTokener interface {
+	Token(context.Context) (string, error)
+}
+
+// NewEKS is cloud.NewEKS; tests swap it for a minter that never reaches AWS.
+var NewEKS = func(ctx context.Context, a cloud.EKSAccess) (KubeTokener, error) { return cloud.NewEKS(ctx, a) }
+
+// ResolveKubeCredential turns the credential on the cluster's kube slot into
+// what the client takes: a token or a certificate opened from the vault, or
+// for an EKS role a source of bearers minted as the role. close releases
+// what was opened and may be called as soon as the client is built, since
+// the client keeps its own copy. A refusal wraps ErrKubeCredential.
+func ResolveKubeCredential(ctx context.Context, vault *credential.Vault, t *Target) (kubegw.Credential, func(), error) {
+	none := func() {}
+	credID := t.Credentials[Kube]
+	if credID == "" || vault == nil {
+		return kubegw.Credential{}, none, fmt.Errorf("%w: no credential is bound to the cluster's kube slot", ErrKubeCredential)
+	}
+	c, err := vault.Get(ctx, credID)
+	if err != nil {
+		return kubegw.Credential{}, none, err
+	}
+	if c.Mode != credential.ModeVaulted {
+		return kubegw.Credential{}, none, fmt.Errorf("%w: a cluster's credential is held by Zanskar", ErrKubeCredential)
+	}
+	if err := KubeSlotAccepts(t.KubePlatform, c.Type); err != nil {
+		return kubegw.Credential{}, none, fmt.Errorf("%w: %s", ErrKubeCredential, strings.TrimPrefix(err.Error(), ErrInvalid.Error()+": "))
+	}
+	if c.Type == credential.TypeKubeEKS {
+		e, err := NewEKS(ctx, cloud.EKSAccess{AWSAccess: cloud.AWSAccess{Region: c.AWSRegion, RoleARN: c.AWSRoleARN, ExternalID: c.AWSExternalID}, Cluster: c.EKSCluster})
+		if err != nil {
+			return kubegw.Credential{}, none, err
+		}
+		return kubegw.Credential{Bearer: e.Token}, none, nil
+	}
+	opened, err := vault.Open(ctx, credID)
+	if err != nil {
+		return kubegw.Credential{}, none, err
+	}
+	if c.Type == credential.TypeKubeToken {
+		return kubegw.Credential{Token: opened.Password}, opened.Close, nil
+	}
+	// Close zeroes what Open decrypted; the client keeps its own copy.
+	return kubegw.Credential{CertPEM: bytes.Clone(opened.PrivateKey)}, opened.Close, nil
 }
 
 // kubeManifest answers GET /targets/{id}/kube/manifest: the RBAC the cluster
@@ -148,9 +207,44 @@ func (h *AdminHandler) kubeManifest(w http.ResponseWriter, r *http.Request) {
 		h.fail(w, r, err)
 		return
 	}
+	text := kubegw.Manifest(groups)
+	if t.KubePlatform == PlatformEKS {
+		// The role's mapping, printed with the role when the slot holds it
+		// (ADR 0045, 8); the administrator fills the blanks otherwise.
+		mapping := "aws eks create-access-entry --cluster-name <cluster> --principal-arn <role arn> --type STANDARD --username " + cloud.EKSUsername
+		if id := t.Credentials[Kube]; id != "" && h.Vault != nil {
+			if c, err := h.Vault.Get(r.Context(), id); err == nil && c.Type == credential.TypeKubeEKS {
+				mapping = cloud.EKSAccessEntry(c.AWSRegion, c.EKSCluster, c.AWSRoleARN) + "\nor, on the aws-auth ConfigMap, under mapRoles:\n" + cloud.EKSAwsAuth(c.AWSRoleARN)
+			}
+		}
+		text = kubegw.ManifestEKS(groups, cloud.EKSUsername, mapping)
+	}
 	w.Header().Set("Content-Type", "application/yaml; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
-	_, _ = w.Write([]byte(kubegw.Manifest(groups)))
+	_, _ = w.Write([]byte(text))
+}
+
+// kubeSlotAllowed refuses, before anything is saved, a kube slot holding a
+// credential the cluster's platform does not take (KubeSlotAccepts).
+func (h *AdminHandler) kubeSlotAllowed(w http.ResponseWriter, r *http.Request, t *Target) bool {
+	id := t.Credentials[Kube]
+	if id == "" || h.Vault == nil {
+		return true
+	}
+	c, err := h.Vault.Get(r.Context(), id)
+	if err != nil {
+		if errors.Is(err, credential.ErrNotFound) {
+			httpx.BadRequest(w, r, "credential does not exist")
+			return false
+		}
+		httpx.Internal(w, r, h.Log, err)
+		return false
+	}
+	if err := KubeSlotAccepts(t.KubePlatform, c.Type); err != nil {
+		httpx.BadRequest(w, r, strings.TrimPrefix(err.Error(), ErrInvalid.Error()+": "))
+		return false
+	}
+	return true
 }
 
 // kubeGroups names the groups whose policies hold a kubernetes grant that

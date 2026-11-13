@@ -157,7 +157,7 @@ func (h *AdminHandler) create(w http.ResponseWriter, r *http.Request) {
 	p, _ := auth.FromContext(r.Context())
 	t := &Target{CreatedBy: &p.User.ID}
 	body.apply(t)
-	if !h.addressAllowed(w, r, audit.TargetCreate, "", t) {
+	if !h.addressAllowed(w, r, audit.TargetCreate, "", t) || !h.kubeSlotAllowed(w, r, t) {
 		return
 	}
 	if err := h.Repo.Create(r.Context(), t); err != nil {
@@ -195,7 +195,7 @@ func (h *AdminHandler) update(w http.ResponseWriter, r *http.Request) {
 	before := map[string]any{"name": t.Name, "address": t.Address, "status": t.Status}
 	beforeOrigins, beforeDeps, beforePrivate := origins(t), t.AppDependencies, t.AppPrivate.Entries()
 	body.apply(t)
-	if !h.addressAllowed(w, r, audit.TargetUpdate, t.ID, t) {
+	if !h.addressAllowed(w, r, audit.TargetUpdate, t.ID, t) || !h.kubeSlotAllowed(w, r, t) {
 		return
 	}
 	if err := h.Repo.Update(r.Context(), t); err != nil {
@@ -649,6 +649,18 @@ func (h *AdminHandler) setCredential(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		body.CredentialID = cid
+	}
+	if proto == Kube {
+		// The kube slot takes what the cluster's platform takes (ADR 0045, 8).
+		t, err := h.Repo.Get(r.Context(), id)
+		if err != nil {
+			h.fail(w, r, err)
+			return
+		}
+		t.Credentials[Kube] = body.CredentialID
+		if !h.kubeSlotAllowed(w, r, t) {
+			return
+		}
 	}
 	if err := h.Repo.SetCredential(r.Context(), id, proto, body.CredentialID); err != nil {
 		h.fail(w, r, err)

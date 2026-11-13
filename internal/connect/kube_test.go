@@ -3,7 +3,9 @@
 package connect
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -14,6 +16,7 @@ import (
 	"time"
 
 	"github.com/albatroxxx/zanskar/internal/audit"
+	"github.com/albatroxxx/zanskar/internal/cloud"
 	"github.com/albatroxxx/zanskar/internal/credential"
 	"github.com/albatroxxx/zanskar/internal/gateway"
 	"github.com/albatroxxx/zanskar/internal/gateway/kubegw"
@@ -241,6 +244,63 @@ func TestKubeSessionSharedIdentity(t *testing.T) {
 		t.Fatalf("a re-check ended %d shared-identity sessions", n)
 	}
 	f.stillLive(t, sid)
+}
+
+// eksMinter stands in for the role's token source (ADR 0045, 8).
+type eksMinter struct {
+	token string
+	err   error
+}
+
+func (m *eksMinter) Token(context.Context) (string, error) { return m.token, m.err }
+
+// An EKS cluster's session carries a token minted as the role, asked for on
+// each request, and the person is impersonated through it as through a
+// service account's token. A token AWS will not mint ends the request, not
+// the session, with a sentence naming the gateway's credential.
+func TestKubeSessionEKS(t *testing.T) {
+	f := newKubeFixture(t)
+	minter := &eksMinter{token: "sa-token"}
+	prev := target.NewEKS
+	target.NewEKS = func(_ context.Context, a cloud.EKSAccess) (target.KubeTokener, error) {
+		if a.Cluster != "prod" || a.RoleARN == "" || a.ExternalID == "" {
+			t.Errorf("the minter was given %+v", a)
+		}
+		return minter, nil
+	}
+	t.Cleanup(func() { target.NewEKS = prev })
+	role := &credential.Credential{Name: "prod-role", Type: credential.TypeKubeEKS, Mode: credential.ModeVaulted,
+		AWSRegion: "eu-west-2", AWSRoleARN: "arn:aws:iam::123456789012:role/zanskar-eks", EKSCluster: "prod"}
+	if err := f.h.Vault.Create(f.ctx, role, nil, f.alice.ID); err != nil {
+		t.Fatal(err)
+	}
+	f.cluster.KubePlatform = target.PlatformEKS
+	f.cluster.Credentials[target.Kube] = role.ID
+	if err := f.h.Targets.Update(f.ctx, f.cluster); err != nil {
+		t.Fatal(err)
+	}
+	sid, token, _ := f.connectKube(t)
+	if rr := f.kubectl(sid, token, "/api/v1/namespaces/prod/pods"); rr.Code != 200 {
+		t.Fatalf("pods: %d %s", rr.Code, rr.Body.String())
+	}
+	if h := f.api.Last().Header; h.Get("Authorization") != "Bearer sa-token" || h.Get("Impersonate-User") != "alice" {
+		t.Fatalf("the cluster saw %v", h)
+	}
+	minter.err = errors.New("AccessDenied: sts:AssumeRole")
+	rr := f.kubectl(sid, token, "/api/v1/namespaces/prod/pods")
+	if rr.Code != 502 || !strings.Contains(rr.Body.String(), "could not be minted") {
+		t.Fatalf("mint refused: %d %s", rr.Code, rr.Body.String())
+	}
+	f.stillLive(t, sid)
+	// A vanilla cluster whose slot holds the role is refused at connect, as
+	// the slot itself refuses it when bound through the API.
+	f.cluster.KubePlatform = target.PlatformVanilla
+	if err := f.h.Targets.Update(f.ctx, f.cluster); err != nil {
+		t.Fatal(err)
+	}
+	if code, out := f.connect(t, map[string]any{"target_id": f.cluster.ID, "protocol": "kube"}); code != http.StatusNotImplemented || out["code"] != "credential_mode_unavailable" || !strings.Contains(out["message"].(string), "platform is eks") {
+		t.Fatalf("role on a vanilla cluster: %d %v", code, out)
+	}
 }
 
 // Without a public address there is nothing to put in a kubeconfig: the

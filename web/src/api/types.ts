@@ -260,7 +260,7 @@ export interface ReachableInstance {
   healthy: boolean
 }
 
-export type CredentialType = 'password' | 'ssh_key' | 'ssh_ca' | 'domain' | 'ec2_instance_connect' | 'kube_token' | 'kube_client_cert'
+export type CredentialType = 'password' | 'ssh_key' | 'ssh_ca' | 'domain' | 'ec2_instance_connect' | 'kube_token' | 'kube_client_cert' | 'kube_eks'
 export type CredentialMode = 'vaulted' | 'user_supplied' | 'passthrough'
 
 export interface Credential {
@@ -285,6 +285,36 @@ export interface Credential {
   rotation?: { pending_public_key?: string; pending_since?: string; retired_public_key?: string; retired_at?: string }
   /** ssh_ca only: where the rotation stands, none, prepared or cut_over (ADR 0047). */
   rotation_state?: StateOf<'authority_rotation'>
+  /** kube_eks only (ADR 0045, 8): the region, the role the gateway assumes, the ExternalId it minted for the trust policy, and the cluster. */
+  aws_region?: string
+  aws_role_arn?: string
+  aws_external_id?: string
+  eks_cluster?: string
+}
+
+/** GET /credentials/{id}/eks/setup: what the administrator pastes into AWS and the cluster for an EKS role. */
+export interface EKSSetup {
+  gateway_principal?: string
+  principal_source: 'environment' | 'detected' | 'none'
+  principal_error?: string
+  external_id: string
+  role_name: string
+  /** Absent until the gateway's principal is known. */
+  trust_policy?: string
+  permissions_policy: string
+  /** The role mapped to `username` in the cluster: an access entry (authentication mode API), or an aws-auth mapRoles line (CONFIG_MAP). */
+  access_entry: string
+  aws_auth: string
+  username: string
+}
+
+/** POST /credentials/{id}/eks/describe: the role assumed and the cluster described, or which stage failed. */
+export interface EKSCheck {
+  ok: boolean
+  stage?: 'assume' | 'describe'
+  error?: string
+  assumed_arn?: string
+  cluster?: { name: string; arn: string; endpoint: string; ca_pem: string; version: string; status: string; authentication_mode: string }
 }
 
 /** POST /targets/{id}/probe-certificate: one real login with a certificate from the bound authority, then disconnect. */

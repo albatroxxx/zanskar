@@ -41,6 +41,7 @@ const actionLabels: Record<string, string> = {
   'credential.rotate.prepare': 'Authority next key prepared',
   'credential.rotate.cancel': 'Authority prepared key discarded',
   'credential.rotate.retire': 'Authority old key retired',
+  'credential.test': 'Cluster role tested',
   'cli.command': 'Command line used',
   'cli.unlock': 'Command line opened',
   'file.download': 'File downloaded',

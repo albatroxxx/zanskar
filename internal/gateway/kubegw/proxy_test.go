@@ -6,10 +6,12 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -364,6 +366,47 @@ func TestProxyClusterDown(t *testing.T) {
 	code, _ := fetch(t, srv, tok, "/api/v1/nodes", nil)
 	if code != 502 || !strings.Contains(rec.all()[0], "→ 502 (cluster unreachable)") {
 		t.Fatalf("%d %q", code, rec.all())
+	}
+}
+
+// A credential whose token is minted (an EKS role, ADR 0045 8) is asked for
+// the bearer of each request; one it cannot mint is a 502 that names the
+// gateway's credential, written to the recording, and nothing reaches the
+// cluster.
+func TestProxyBearerSource(t *testing.T) {
+	f := &kubetest.API{Token: "k8s-aws-v1.(fake)"}
+	api, ca := kubetest.Start(t, f)
+	var fail bool
+	var minted int
+	bearer := func(context.Context) (string, error) {
+		minted++
+		if fail {
+			return "", errors.New("AccessDenied: sts:AssumeRole")
+		}
+		return "k8s-aws-v1.(fake)", nil
+	}
+	rec := &lines{}
+	s, tok, err := NewSession(Options{SessionID: "s1", Endpoint: Endpoint{APIServer: api, CA: ca}, Credential: Credential{Bearer: bearer},
+		Identity: Identity{User: "alice"}, Scope: Scope{Namespaces: []string{"prod"}}, Record: rec.add})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	srv := serve(t, s)
+	if code, _ := fetch(t, srv, tok, "/api/v1/namespaces/prod/pods", nil); code != 200 || minted != 1 {
+		t.Fatalf("minted bearer: %d, %d mints", code, minted)
+	}
+	if f.Last().Header.Get("Authorization") != "Bearer k8s-aws-v1.(fake)" {
+		t.Fatalf("the cluster saw %q", f.Last().Header.Get("Authorization"))
+	}
+	fail = true
+	before := f.Count()
+	code, body := fetch(t, srv, tok, "/api/v1/namespaces/prod/pods", nil)
+	if code != 502 || !strings.Contains(string(body), "could not be minted") || f.Count() != before {
+		t.Fatalf("mint failed: %d %s (%d requests reached the cluster)", code, body, f.Count()-before)
+	}
+	if all := rec.all(); !slices.ContainsFunc(all, func(l string) bool { return strings.Contains(l, "502 (token could not be minted)") }) {
+		t.Fatalf("recording: %v", all)
 	}
 }
 

@@ -3,6 +3,7 @@
 package credential
 
 import (
+	"context"
 	"errors"
 	"log/slog"
 	"net/http"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/albatroxxx/zanskar/internal/audit"
 	"github.com/albatroxxx/zanskar/internal/auth"
+	"github.com/albatroxxx/zanskar/internal/cloud"
 	"github.com/albatroxxx/zanskar/internal/httpx"
 	"github.com/albatroxxx/zanskar/internal/user"
 )
@@ -21,6 +23,12 @@ type AdminHandler struct {
 	Vault *Vault
 	Audit *audit.Log
 	Log   *slog.Logger
+	// Identity resolves the AWS principal the gateway runs as, for the trust
+	// policy an EKS role must carry (ADR 0045, 8); nil when unknown.
+	Identity *cloud.GatewayIdentity
+	// EKS reaches a cluster as the role; nil uses the real one. Tests swap
+	// it for a fake.
+	EKS func(context.Context, cloud.EKSAccess) (EKSClient, error)
 }
 
 // Register mounts the routes behind the admin role.
@@ -38,6 +46,10 @@ func (h *AdminHandler) Register(mux *http.ServeMux) {
 	mux.Handle("POST /api/v1/credentials/{id}/rotate/cut-over", admin(http.HandlerFunc(h.cutOver)))
 	mux.Handle("DELETE /api/v1/credentials/{id}/rotate", admin(http.HandlerFunc(h.cancelRotation)))
 	mux.Handle("POST /api/v1/credentials/{id}/rotate/retire", admin(http.HandlerFunc(h.retire)))
+	// An EKS role (ADR 0045, 8): what the administrator pastes into AWS and
+	// the cluster, and the test that the role reaches the cluster.
+	mux.Handle("GET /api/v1/credentials/{id}/eks/setup", admin(http.HandlerFunc(h.eksSetup)))
+	mux.Handle("POST /api/v1/credentials/{id}/eks/describe", admin(http.HandlerFunc(h.eksDescribe)))
 }
 
 // writeRequest is the write-only body. Secret fields are never echoed back.
@@ -55,6 +67,10 @@ type writeRequest struct {
 	// ssh_ca only (ADR 0022). Pointers so an update body can leave them alone.
 	CertificateTTLSeconds *int      `json:"certificate_ttl_seconds,omitempty"`
 	CertificatePrincipals *[]string `json:"certificate_principals,omitempty"`
+	// kube_eks only (ADR 0045, 8). The ExternalId is minted by the gateway.
+	AWSRegion  string `json:"aws_region,omitempty"`
+	AWSRoleARN string `json:"aws_role_arn,omitempty"`
+	EKSCluster string `json:"eks_cluster,omitempty"`
 }
 
 func (r *writeRequest) secret() *Secret {
@@ -77,7 +93,8 @@ func (h *AdminHandler) create(w http.ResponseWriter, r *http.Request) {
 		httpx.BadRequest(w, r, err.Error())
 		return
 	}
-	c := &Credential{Name: req.Name, Type: req.Type, Mode: req.Mode, Domain: req.Domain}
+	c := &Credential{Name: req.Name, Type: req.Type, Mode: req.Mode, Domain: req.Domain,
+		AWSRegion: req.AWSRegion, AWSRoleARN: req.AWSRoleARN, EKSCluster: req.EKSCluster}
 	if req.Username != nil {
 		c.Username = *req.Username
 	}
@@ -170,7 +187,13 @@ func (h *AdminHandler) update(w http.ResponseWriter, r *http.Request) {
 		req.Domain = existing.Domain
 	}
 	m := Metadata{Name: req.Name, Username: username, Domain: req.Domain,
-		CertificateTTLSeconds: existing.CertificateTTLSeconds, CertificatePrincipals: existing.CertificatePrincipals}
+		CertificateTTLSeconds: existing.CertificateTTLSeconds, CertificatePrincipals: existing.CertificatePrincipals,
+		AWSRegion: existing.AWSRegion, AWSRoleARN: existing.AWSRoleARN, EKSCluster: existing.EKSCluster}
+	for src, dst := range map[string]*string{req.AWSRegion: &m.AWSRegion, req.AWSRoleARN: &m.AWSRoleARN, req.EKSCluster: &m.EKSCluster} {
+		if src != "" {
+			*dst = src
+		}
+	}
 	if req.CertificateTTLSeconds != nil {
 		m.CertificateTTLSeconds = *req.CertificateTTLSeconds
 	}

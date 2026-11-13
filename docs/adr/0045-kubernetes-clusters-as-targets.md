@@ -259,3 +259,19 @@ What the first build of the API-as-the-person settled, where the decision above 
    that dropped them would import a grant to every namespace and turn a shared identity into
    impersonation; their tests read the receiving gateway's own answer, since two exports that
    both lost a field would still match.
+10. **EKS, through a role (phase 3, built 2026-11-13).** The credential type `kube_eks` names
+    the region, the role, the cluster and an ExternalId the gateway mints; it holds no secret.
+    The token the cluster accepts is the one aws-iam-authenticator defined, a presigned STS
+    `GetCallerIdentity` with the cluster's name in a signed header, minted as the role for each
+    request and reused for twelve of the fifteen minutes the cluster accepts it, so an 8 h
+    session never carries a stale one; a token AWS will not mint ends the request with a 502 that
+    names the gateway's credential, not the cluster. The kube slot of a cluster whose platform is
+    `eks` takes `kube_eks` and nothing else; every other platform takes a token or a certificate,
+    the standard path, which GKE and AKS take too until adapters of their own exist. The role's
+    page prints the three pastes (trust policy with the gateway's principal, permissions policy,
+    the access-entry or `aws-auth` mapping to the user `zanskar`), tests the role (the stage that
+    failed is named: `assume` or `describe`), and the Add cluster form fills the API server and
+    CA from `DescribeCluster`. The RBAC manifest for an EKS cluster binds `kind: User` `zanskar`
+    and prints the mapping instead of a ServiceAccount. `ListClusters` is in the client, not yet
+    in the console. Not run against a real EKS cluster yet: the AWS test environment is torn
+    down; the owner's gateway has the instance role.

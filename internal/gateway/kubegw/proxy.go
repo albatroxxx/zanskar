@@ -9,6 +9,7 @@ import (
 	"crypto/subtle"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -209,12 +210,11 @@ func (s *Session) rewrite(pr *httputil.ProxyRequest) {
 			h.Del(k)
 		}
 	}
+	// Zanskar's own bearer is set in RoundTrip, where a token that cannot
+	// be minted can refuse the request.
 	h.Del("Authorization")
 	h.Del("Cookie")
 	h.Del("X-Real-Ip")
-	if s.cred.Token != "" {
-		h.Set("Authorization", "Bearer "+s.cred.Token)
-	}
 	if s.identity.User != "" {
 		h.Set("Impersonate-User", s.identity.User)
 		groups := make([]string, 0, len(s.identity.Groups)+1)
@@ -239,8 +239,26 @@ func (s *Session) modifyResponse(res *http.Response) error {
 	return nil
 }
 
+// errMint is a token the credential could not mint (an EKS role AWS
+// refused): the request is not sent, and the person is told it is the
+// gateway's credential that failed, not the cluster.
+type errMint struct{ err error }
+
+func (e errMint) Error() string { return "kubegw: token: " + e.err.Error() }
+func (e errMint) Unwrap() error { return e.err }
+
 func (s *Session) errorHandler(w http.ResponseWriter, r *http.Request, err error) {
-	if label, _ := r.Context().Value(labelKey).(string); label != "" {
+	label, _ := r.Context().Value(labelKey).(string)
+	var mint errMint
+	if errors.As(err, &mint) {
+		if label != "" {
+			s.line(label + " → 502 (token could not be minted)")
+		}
+		s.log.Warn("kube: the cluster's token could not be minted", "session", s.ID, "err", mint.err)
+		writeStatus(w, http.StatusBadGateway, "ServiceUnavailable", "Zanskar: the gateway's token for the cluster could not be minted; an administrator can test the cluster's credential")
+		return
+	}
+	if label != "" {
 		s.line(label + " → 502 (cluster unreachable)")
 	}
 	if r.Context().Err() == nil {
@@ -260,6 +278,13 @@ func (s *Session) line(text string) {
 type roundTripper struct{ s *Session }
 
 func (t roundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
+	tok, err := t.s.cred.bearer(req.Context())
+	if err != nil {
+		return nil, errMint{err}
+	}
+	if tok != "" {
+		req.Header.Set("Authorization", "Bearer "+tok)
+	}
 	res, err := t.s.tr.RoundTrip(req)
 	if err != nil {
 		return nil, err

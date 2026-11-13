@@ -6,12 +6,14 @@ import (
 	"context"
 	"encoding/json"
 	"encoding/pem"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
 	"github.com/albatroxxx/zanskar/internal/audit"
+	"github.com/albatroxxx/zanskar/internal/cloud"
 	"github.com/albatroxxx/zanskar/internal/credential"
 	"github.com/albatroxxx/zanskar/internal/group"
 	"github.com/albatroxxx/zanskar/internal/policy"
@@ -99,12 +101,15 @@ func TestKubernetesTestAndManifest(t *testing.T) {
 	if code, body := e.do("POST", "/api/v1/targets/"+id+"/kube/test", nil, e.admin); code != 409 || body["code"] != "credential_refused" {
 		t.Fatalf("wrong token: %d %v", code, body)
 	}
-	// A password on the slot is not a cluster credential.
+	// A password is not a cluster credential: the slot refuses it, and keeps
+	// what it held.
 	pw := &credential.Credential{Name: "pw", Type: credential.TypePassword, Mode: credential.ModeVaulted, Username: "u"}
 	_ = e.vault.Create(ctx, pw, &credential.Secret{Password: "p"}, "")
-	e.do("PUT", "/api/v1/targets/"+id+"/credentials/kube", map[string]string{"credential_id": pw.ID}, e.admin)
-	if code, body := e.do("POST", "/api/v1/targets/"+id+"/kube/test", nil, e.admin); code != 409 || body["code"] != "credential_unsuitable" {
+	if code, body := e.do("PUT", "/api/v1/targets/"+id+"/credentials/kube", map[string]string{"credential_id": pw.ID}, e.admin); code != 400 || !strings.Contains(body["message"].(string), "kube slot takes") {
 		t.Fatalf("password on the slot: %d %v", code, body)
+	}
+	if code, body := e.do("GET", "/api/v1/targets/"+id, nil, e.admin); code != 200 || body["credentials"].(map[string]any)["kube"] != wrong.ID {
+		t.Fatalf("the slot changed: %d %v", code, body["credentials"])
 	}
 
 	// The manifest names the groups whose policies grant the cluster, by
@@ -143,5 +148,81 @@ func TestKubernetesTestAndManifest(t *testing.T) {
 	}
 	if strings.Contains(m, "zanskar:other") {
 		t.Error("a group whose policy grants only hosts is listed")
+	}
+}
+
+// fakeMinter mints what the fake cluster accepts, or fails as AWS would.
+type fakeMinter struct {
+	token string
+	err   error
+}
+
+func (m fakeMinter) Token(context.Context) (string, error) { return m.token, m.err }
+
+// TestKubernetesEKS (ADR 0045, 8): an EKS cluster's kube slot takes the role
+// that reaches it and nothing else, a vanilla cluster refuses that role, the
+// test runs with a token minted as the role, and the manifest binds the user
+// the cluster maps the role to, with the mapping step printed.
+func TestKubernetesEKS(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	srv, ca := fakeCluster(t, "k8s-aws-v1.(fake)")
+	prev := NewEKS
+	NewEKS = func(_ context.Context, a cloud.EKSAccess) (KubeTokener, error) {
+		if a.Cluster != "prod" || a.Region != "eu-west-2" || a.ExternalID == "" {
+			return nil, errors.New("the credential's role was not what the minter was given")
+		}
+		return fakeMinter{token: "k8s-aws-v1.(fake)"}, nil
+	}
+	t.Cleanup(func() { NewEKS = prev })
+
+	role := &credential.Credential{Name: "prod-role", Type: credential.TypeKubeEKS, Mode: credential.ModeVaulted,
+		AWSRegion: "eu-west-2", AWSRoleARN: "arn:aws:iam::123456789012:role/zanskar-eks", EKSCluster: "prod"}
+	if err := e.vault.Create(ctx, role, nil, ""); err != nil {
+		t.Fatal(err)
+	}
+	tok := &credential.Credential{Name: "sa", Type: credential.TypeKubeToken, Mode: credential.ModeVaulted}
+	if err := e.vault.Create(ctx, tok, &credential.Secret{Password: "sa-token"}, ""); err != nil {
+		t.Fatal(err)
+	}
+	// The role in the body on create, as the Add form sends it.
+	code, body := e.do("POST", "/api/v1/targets", map[string]any{"name": "prod-eks", "kube_api_server": srv.URL, "kube_ca": ca, "kube_platform": "eks",
+		"credentials": map[string]string{"kube": role.ID}}, e.admin)
+	if code != 201 || body["kube_platform"] != "eks" {
+		t.Fatalf("create: %d %v", code, body)
+	}
+	id := body["id"].(string)
+	// A token on an EKS cluster, or the role on a vanilla one: refused.
+	if code, body := e.do("PUT", "/api/v1/targets/"+id+"/credentials/kube", map[string]string{"credential_id": tok.ID}, e.admin); code != 400 || !strings.Contains(body["message"].(string), "kube_eks") {
+		t.Fatalf("token on eks: %d %v", code, body)
+	}
+	if code, body := e.do("POST", "/api/v1/targets", map[string]any{"name": "plain", "kube_api_server": srv.URL, "credentials": map[string]string{"kube": role.ID}}, e.admin); code != 400 || !strings.Contains(body["message"].(string), "platform is eks") {
+		t.Fatalf("role on vanilla: %d %v", code, body)
+	}
+	// The test reaches the cluster with the minted token.
+	code, body = e.do("POST", "/api/v1/targets/"+id+"/kube/test", nil, e.admin)
+	if code != 200 || body["version"] != "v1.31.1" {
+		t.Fatalf("test: %d %v", code, body)
+	}
+	// The manifest binds the user, not a service account, and prints the mapping.
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/targets/"+id+"/kube/manifest", nil)
+	req.AddCookie(e.admin)
+	rec := httptest.NewRecorder()
+	e.srv.ServeHTTP(rec, req)
+	m := rec.Body.String()
+	for _, want := range []string{"kind: User\n    name: zanskar", "create-access-entry --region eu-west-2 --cluster-name prod --principal-arn arn:aws:iam::123456789012:role/zanskar-eks", "rolearn: arn:aws:iam::123456789012:role/zanskar-eks"} {
+		if !strings.Contains(m, want) {
+			t.Errorf("manifest lacks %q:\n%s", want, m)
+		}
+	}
+	if strings.Contains(m, "ServiceAccount") || strings.Contains(m, "create token") {
+		t.Errorf("an EKS manifest names a service account:\n%s", m)
+	}
+	// A minter AWS refuses: the test says the credential failed, not the cluster.
+	NewEKS = func(context.Context, cloud.EKSAccess) (KubeTokener, error) {
+		return fakeMinter{err: errors.New("AccessDenied")}, nil
+	}
+	if code, body := e.do("POST", "/api/v1/targets/"+id+"/kube/test", nil, e.admin); code != 502 || !strings.Contains(body["message"].(string), "AccessDenied") {
+		t.Fatalf("minter refused: %d %v", code, body)
 	}
 }

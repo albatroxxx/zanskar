@@ -2,7 +2,7 @@ import { count, protocolName } from '../../api/format'
 import { useEffect, useState, type FormEvent } from 'react'
 import { api } from '../../api/client'
 import { errorMessage } from '../../api/client'
-import type { AppEndpoint, KubePlatform, OSFamily, Protocol, RetentionPolicy, Target } from '../../api/types'
+import type { AppEndpoint, Credential, EKSCheck, KubePlatform, OSFamily, Protocol, RetentionPolicy, Target } from '../../api/types'
 import { useSubmit } from '../../components/submit'
 import { Alert, Field, Modal, Tabs } from '../../components/ui'
 import { EndpointEditor } from './EndpointEditor'
@@ -76,7 +76,7 @@ const emptyForm = {
   name: '', address: '', os_family: 'linux' as OSFamily,
   engine: 'postgres', engine_version: '', database_name: '', tls_mode: 'verify-full', tls_ca: '',
   app_upstream: '', endpoints: [] as AppEndpoint[], dependencies: 'public' as 'public' | 'origins', private_networks: '', private_hosts: '',
-  kube_api_server: '', kube_ca: '', kube_impersonate: true, kube_platform: 'vanilla' as KubePlatform,
+  kube_api_server: '', kube_ca: '', kube_impersonate: true, kube_platform: 'vanilla' as KubePlatform, eks_credential: '',
   ...defaultPorts, database: enginePorts.postgres, tags: [] as TagRow[], notes: '', retention: '',
 }
 
@@ -106,6 +106,7 @@ export function TargetForm({ initial, kind, platform, onClose, onSaved }: { init
           kube_ca: initial.kube_ca ?? '',
           kube_impersonate: initial.kube_impersonate ?? true,
           kube_platform: initial.kube_platform ?? 'vanilla',
+          eks_credential: initial.credentials?.kube ?? '',
           endpoints: (initial.app_endpoints ?? []).map((e) => ({ ...e })),
           dependencies: initial.app_dependencies ?? 'public',
           private_networks: (initial.app_private?.networks ?? []).join('\n'),
@@ -130,6 +131,34 @@ export function TargetForm({ initial, kind, platform, onClose, onSaved }: { init
   const changed = protocols.filter((p) => f[p].trim() !== defaultPorts[p])
   const shownPorts = protocols.filter((p) => set_.main.includes(p) || (moreOpen && set_.more.includes(p)) || changed.includes(p))
   const hiddenMore = set_.more.filter((p) => !shownPorts.includes(p))
+  // An EKS cluster is reached through a role (ADR 0045, 8): the kube slot
+  // takes a kube_eks credential, chosen here, and describing the cluster
+  // through it fills the API server and CA.
+  const eks = k === 'kubernetes' && f.kube_platform === 'eks'
+  const [roles, setRoles] = useState<Credential[] | null>(null)
+  const [describing, setDescribing] = useState(false)
+  useEffect(() => {
+    if (!eks || roles !== null) return
+    api.get<{ items?: Credential[] }>('/credentials?limit=500')
+      .then((r) => setRoles((r?.items ?? []).filter((c) => c.type === 'kube_eks')))
+      .catch(() => setRoles([]))
+  }, [eks, roles])
+  const describe = async () => {
+    setDescribing(true)
+    setErr('')
+    try {
+      const res = await api.post<EKSCheck>(`/credentials/${f.eks_credential}/eks/describe`, {})
+      if (!res.ok || !res.cluster) {
+        setErr(`${res.stage === 'assume' ? 'The role was not assumed' : 'The cluster was not described'}: ${res.error ?? ''}`)
+        return
+      }
+      setF({ ...f, kube_api_server: res.cluster.endpoint, kube_ca: res.cluster.ca_pem })
+    } catch (e) {
+      setErr(errorMessage(e))
+    } finally {
+      setDescribing(false)
+    }
+  }
   const [globalRetention, setGlobalRetention] = useState<string>('')
   useEffect(() => {
     api
@@ -210,7 +239,7 @@ export function TargetForm({ initial, kind, platform, onClose, onSaved }: { init
         tags,
         status: initial?.status ?? 'active',
         notes: f.notes,
-        credentials: initial?.credentials ?? {},
+        credentials: { ...(initial?.credentials ?? {}), ...(eks && f.eks_credential ? { kube: f.eks_credential } : {}) },
       }
       let t: Target
       try {
@@ -257,8 +286,21 @@ export function TargetForm({ initial, kind, platform, onClose, onSaved }: { init
                     <option value="aks">AKS</option>
                   </select>
                 </Field>
+                {eks && (
+                  <Field label="EKS role" info="A kube_eks credential; Describe fills the API server and CA from it.">
+                    <div className="actions">
+                      <select id="t-eks-credential" value={f.eks_credential} onChange={set('eks_credential')} required>
+                        <option value="">{roles === null ? 'Loading…' : roles.length === 0 ? 'No EKS role credential yet' : 'Choose'}</option>
+                        {(roles ?? []).map((c) => (
+                          <option key={c.id} value={c.id}>{c.name} · {c.eks_cluster} ({c.aws_region})</option>
+                        ))}
+                      </select>
+                      <button type="button" className="btn sm" onClick={() => void describe()} disabled={!f.eks_credential || describing}>{describing ? 'Describing…' : 'Describe'}</button>
+                    </div>
+                  </Field>
+                )}
                 <Field label="API server">
-                  <input id="t-kube-api-server" value={f.kube_api_server} onChange={set('kube_api_server')} required placeholder="https://k8s.internal:6443" />
+                  <input id="t-kube-api-server" value={f.kube_api_server} onChange={set('kube_api_server')} required placeholder={eks ? 'From Describe, or https://….eks.amazonaws.com' : 'https://k8s.internal:6443'} />
                 </Field>
                 <Field label="Sessions act as">
                   <select id="t-kube-impersonate" value={f.kube_impersonate ? 'person' : 'credential'} onChange={(e) => setF({ ...f, kube_impersonate: e.target.value === 'person' })}>

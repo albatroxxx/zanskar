@@ -32,6 +32,26 @@ func ValidGroupName(name string) bool { return groupNameRe.MatchString(name) }
 // zanskar:<group>. A group whose name cannot be an RBAC resourceName is
 // left out and named in the comment.
 func Manifest(groups []string) string {
+	account := "apiVersion: v1\nkind: ServiceAccount\nmetadata:\n  name: " + ServiceAccount + "\n  namespace: kube-system\n---\n"
+	subject := "  - kind: ServiceAccount\n    name: " + ServiceAccount + "\n    namespace: kube-system\n"
+	trailer := "---\n# Token for the kube_token credential:\n#   kubectl -n kube-system create token " + ServiceAccount + " --duration=8760h\n"
+	return manifest(groups, account, subject, trailer)
+}
+
+// ManifestEKS is the same RBAC for an EKS cluster reached through a role
+// (ADR 0045, 8): no ServiceAccount, since the cluster maps the role to a
+// user by its access entry or aws-auth line, which the binding names.
+// mapping is that step, printed for the administrator who has not done it.
+func ManifestEKS(groups []string, user, mapping string) string {
+	subject := "  - kind: User\n    name: " + user + "\n    apiGroup: rbac.authorization.k8s.io\n"
+	trailer := "---\n# The cluster maps Zanskar's role to the user " + user + ":\n"
+	for _, l := range strings.Split(mapping, "\n") {
+		trailer += "#   " + l + "\n"
+	}
+	return manifest(groups, "", subject, trailer)
+}
+
+func manifest(groups []string, account, subject, trailer string) string {
 	var ok, skipped []string
 	for _, g := range groups {
 		if groupNameRe.MatchString(g) {
@@ -49,7 +69,7 @@ func Manifest(groups []string) string {
 	if len(skipped) > 0 {
 		fmt.Fprintf(&b, "# Not listed (not valid RBAC names): %s\n", strings.Join(skipped, ", "))
 	}
-	b.WriteString("apiVersion: v1\nkind: ServiceAccount\nmetadata:\n  name: " + ServiceAccount + "\n  namespace: kube-system\n---\n")
+	b.WriteString(account)
 	b.WriteString("apiVersion: rbac.authorization.k8s.io/v1\nkind: ClusterRole\nmetadata:\n  name: zanskar-impersonator\nrules:\n")
 	b.WriteString("  - apiGroups: [\"\"]\n    resources: [\"users\"]\n    verbs: [\"impersonate\"]\n")
 	b.WriteString("  - apiGroups: [\"\"]\n    resources: [\"groups\"]\n    verbs: [\"impersonate\"]\n    resourceNames:\n")
@@ -58,8 +78,7 @@ func Manifest(groups []string) string {
 	}
 	b.WriteString("---\napiVersion: rbac.authorization.k8s.io/v1\nkind: ClusterRoleBinding\nmetadata:\n  name: zanskar-impersonator\n")
 	b.WriteString("roleRef:\n  apiGroup: rbac.authorization.k8s.io\n  kind: ClusterRole\n  name: zanskar-impersonator\n")
-	b.WriteString("subjects:\n  - kind: ServiceAccount\n    name: " + ServiceAccount + "\n    namespace: kube-system\n")
-	b.WriteString("---\n# Token for the kube_token credential:\n")
-	b.WriteString("#   kubectl -n kube-system create token " + ServiceAccount + " --duration=8760h\n")
+	b.WriteString("subjects:\n" + subject)
+	b.WriteString(trailer)
 	return b.String()
 }

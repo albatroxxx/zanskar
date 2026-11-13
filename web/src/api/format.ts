@@ -144,6 +144,7 @@ export const credentialTypes: { v: CredentialType; label: string }[] = [
   { v: 'ec2_instance_connect', label: 'EC2 Instance Connect' },
   { v: 'kube_token', label: 'Kubernetes service account token' },
   { v: 'kube_client_cert', label: 'Kubernetes client certificate' },
+  { v: 'kube_eks', label: 'EKS role' },
 ]
 
 /** credentialTypeName is how a credential's type reads, the same on the

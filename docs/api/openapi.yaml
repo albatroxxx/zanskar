@@ -2972,6 +2972,54 @@ paths:
           description: Cleared.
         "404":
           $ref: "#/components/responses/NotFound"
+  /credentials/{id}/eks/setup:
+    get:
+      tags: [admin]
+      summary: What an EKS role needs pasted into AWS and the cluster
+      description: >
+        For a `kube_eks` credential (ADR 0045, 8): the role's trust policy, naming the gateway's
+        AWS principal and the ExternalId the gateway minted (absent while the principal is
+        unknown, as a policy with a placeholder looks finished and is not); the permissions
+        policy, to describe the one cluster and list the region's; and the step that maps the role
+        to the Kubernetes user the RBAC manifest binds, as an access entry (authentication mode
+        API) or an aws-auth line (CONFIG_MAP). `409 not_eks` for any other credential type.
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EKSSetup"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+  /credentials/{id}/eks/describe:
+    post:
+      tags: [admin]
+      summary: Test an EKS role against its cluster
+      description: >
+        Assumes the role with the gateway's own AWS identity and describes the cluster. The answer
+        is 200 whatever the outcome, as an autoscaling group's access test is: `ok` with the
+        cluster's endpoint, CA and authentication mode, or the stage that failed (`assume`, the
+        trust policy or ExternalId; `describe`, the permissions policy or no such cluster in the
+        region) and why. The Add cluster form fills `kube_api_server` and `kube_ca` from it.
+        Audited as `credential.test`. `409 not_eks` for any other credential type.
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EKSCheck"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
   /credentials/{id}/rotate:
     post:
       tags: [admin]
@@ -6017,8 +6065,78 @@ components:
       description: >-
         `kube_token` is a Kubernetes service account's bearer token and `kube_client_cert` a client
         certificate with its key, one PEM text (ADR 0045); both are Zanskar's own identity in a
-        cluster and are always vaulted.
-      enum: [password, ssh_key, ssh_ca, domain, ec2_instance_connect, kube_token, kube_client_cert]
+        cluster and are always vaulted. `kube_eks` is an EKS cluster reached through a role (ADR
+        0045, 8): `aws_region`, `aws_role_arn`, `eks_cluster`, and an `aws_external_id` the gateway
+        mints for the role's trust policy; it holds no secret, the token the cluster accepts being
+        minted per session as the role. The kube slot of a cluster whose `kube_platform` is `eks`
+        takes `kube_eks` and nothing else; every other platform takes the other two.
+      enum: [password, ssh_key, ssh_ca, domain, ec2_instance_connect, kube_token, kube_client_cert, kube_eks]
+    EKSSetup:
+      type: object
+      required: [principal_source, external_id, role_name, permissions_policy, access_entry, aws_auth, username]
+      properties:
+        gateway_principal:
+          type: string
+          description: The IAM role ARN the gateway runs as, which the trust policy names.
+        principal_source:
+          type: string
+          enum: [environment, detected, none]
+        principal_error:
+          type: string
+          description: Why there is no principal, in a sentence.
+        external_id:
+          type: string
+        role_name:
+          type: string
+          description: A suggested name for the role.
+        trust_policy:
+          type: string
+          description: Absent until the gateway's principal is known.
+        permissions_policy:
+          type: string
+        access_entry:
+          type: string
+          description: The `aws eks create-access-entry` command mapping the role to `username`.
+        aws_auth:
+          type: string
+          description: The same mapping as an `aws-auth` mapRoles entry, for a cluster on the ConfigMap.
+        username:
+          type: string
+          description: The Kubernetes user the role is mapped to and the RBAC manifest binds.
+    EKSCheck:
+      type: object
+      required: [ok]
+      properties:
+        ok:
+          type: boolean
+        stage:
+          type: string
+          enum: [assume, describe]
+          description: The stage that failed; absent when `ok`.
+        error:
+          type: string
+        assumed_arn:
+          type: string
+        cluster:
+          type: object
+          description: What the cluster says of itself, when described.
+          properties:
+            name:
+              type: string
+            arn:
+              type: string
+            endpoint:
+              type: string
+            ca_pem:
+              type: string
+              description: The cluster's certificate authority, PEM, for `kube_ca`.
+            version:
+              type: string
+            status:
+              type: string
+            authentication_mode:
+              type: string
+              description: API, API_AND_CONFIG_MAP or CONFIG_MAP, which says whether the role is mapped by an access entry or the aws-auth ConfigMap.
     CredentialMode:
       type: string
       enum: [vaulted, user_supplied, passthrough]
@@ -6797,6 +6915,18 @@ components:
               type: string
             retired_at:
               $ref: "#/components/schemas/Timestamp"
+        aws_region:
+          type: string
+          description: "`kube_eks` only: the cluster's region."
+        aws_role_arn:
+          type: string
+          description: "`kube_eks` only: the IAM role the gateway assumes to reach the cluster."
+        aws_external_id:
+          type: string
+          description: "`kube_eks` only: the ExternalId the gateway minted, which the role's trust policy must carry (`GET /credentials/{id}/eks/setup`)."
+        eks_cluster:
+          type: string
+          description: "`kube_eks` only: the cluster's name in the region."
     CredentialWrite:
       type: object
       required: [name, type, mode]
@@ -6825,6 +6955,15 @@ components:
           type: string
           writeOnly: true
           description: PEM or OpenSSH private key for `ssh_key` or `ssh_ca`. Omit to have Zanskar generate one.
+        aws_region:
+          type: string
+          description: "`kube_eks` only, required: the cluster's region, such as `eu-west-2`."
+        aws_role_arn:
+          type: string
+          description: "`kube_eks` only, required: an IAM role ARN. No secret travels with it; the role's trust policy admits the gateway's principal with the minted ExternalId."
+        eks_cluster:
+          type: string
+          description: "`kube_eks` only, required: the cluster's name (1-100 letters, digits, hyphens or underscores)."
         private_key_passphrase:
           type: string
           writeOnly: true

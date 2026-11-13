@@ -22,11 +22,22 @@ import (
 	"time"
 )
 
-// Credential is Zanskar's own identity in the cluster: a bearer token, or a
-// client certificate and its key (one PEM text). Exactly one is set.
+// Credential is Zanskar's own identity in the cluster: a bearer token, a
+// client certificate and its key (one PEM text), or a source of bearers for
+// a credential whose token is minted and expires (an EKS role, ADR 0045 8),
+// asked for the token of each request. Exactly one is set.
 type Credential struct {
 	Token   string
 	CertPEM []byte
+	Bearer  func(context.Context) (string, error)
+}
+
+// bearer is the token a request carries now, or "" for a certificate.
+func (c Credential) bearer(ctx context.Context) (string, error) {
+	if c.Bearer != nil {
+		return c.Bearer(ctx)
+	}
+	return c.Token, nil
 }
 
 // Endpoint is a cluster as the gateway reaches it.
@@ -102,9 +113,9 @@ func Transport(ep Endpoint, cred Credential) (*http.Transport, error) {
 
 // Client reaches one cluster as Zanskar.
 type Client struct {
-	base  string
-	token string
-	http  *http.Client
+	base string
+	cred Credential
+	http *http.Client
 }
 
 // New returns a client for the endpoint with the credential.
@@ -113,7 +124,7 @@ func New(ep Endpoint, cred Credential) (*Client, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Client{base: strings.TrimSuffix(ep.APIServer, "/"), token: cred.Token, http: &http.Client{Transport: tr, Timeout: 20 * time.Second}}, nil
+	return &Client{base: strings.TrimSuffix(ep.APIServer, "/"), cred: cred, http: &http.Client{Transport: tr, Timeout: 20 * time.Second}}, nil
 }
 
 // Close releases the client's connections.
@@ -137,8 +148,12 @@ func (c *Client) do(ctx context.Context, method, path string, body any) (int, []
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
-	if c.token != "" {
-		req.Header.Set("Authorization", "Bearer "+c.token)
+	tok, err := c.cred.bearer(ctx)
+	if err != nil {
+		return 0, nil, err
+	}
+	if tok != "" {
+		req.Header.Set("Authorization", "Bearer "+tok)
 	}
 	res, err := c.http.Do(req)
 	if err != nil {
