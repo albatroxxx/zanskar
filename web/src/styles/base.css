@@ -116,9 +116,8 @@ tr.off td { color: var(--fg-muted); }
    value only when the label already says what needs attention, never alone. */
 .stat-section { margin: 20px 0 10px; color: var(--fg-muted); font-size: 0.82rem; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; }
 .stat-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(172px, 1fr)); gap: 12px; }
-/* The platform tiles are the section's tabs (the owner, 2026-11-13): squares, the open one filled faintly in the accent. */
-.stat-grid.platforms { grid-template-columns: repeat(4, 150px); margin: 14px 0 18px; }
-.stat-grid.platforms .stat-tile { aspect-ratio: 1; display: flex; flex-direction: column; justify-content: flex-end; }
+/* The platform tiles are the section's tabs (the owner, 2026-11-13): four across the page, the open one filled faintly in the accent. Squares were tried and left half the width empty. */
+.stat-grid.platforms { grid-template-columns: repeat(4, 1fr); margin: 14px 0 18px; }
 /* A list of checks, a status line each (the applications' prerequisites). */
 .checks { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 12px; }
 .stat-tile { display: block; position: relative; background: var(--bg-raised); border: 1px solid var(--line); border-radius: var(--radius-lg); padding: 14px 16px; color: inherit; text-decoration: none; }
