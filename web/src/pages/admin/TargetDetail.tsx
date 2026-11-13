@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { api, errorMessage } from '../../api/client'
-import { appTLS, dbTLS, engineName, fmtTime, protocolName } from '../../api/format'
+import { appTLS, dbTLS, engineName, fmtTime, platformName, protocolName } from '../../api/format'
 import type { AppEndpoint, CertificateProbe, Credential, DependencyRefusal, KubeTest, ProbeResponse, Protocol, Target } from '../../api/types'
 import { OSIcon, StateIcon } from '../../components/icons'
 import { Alert, Badge, Confirm, Modal, Tags } from '../../components/ui'
@@ -195,6 +195,7 @@ export function TargetDetail({ target, credentials, onClose, onChanged, onDelete
           </>
         ) : cluster ? (
           <>
+            <dt>Platform</dt><dd>{platformName(t.kube_platform)}</dd>
             <dt>API server</dt><dd className="mono">{t.kube_api_server}</dd>
             <dt>Sessions act as</dt><dd>{t.kube_impersonate === false ? <Badge tone="warn">the credential (shared identity)</Badge> : 'the person'}</dd>
             <dt>CA</dt><dd>{t.kube_ca ? 'Enrolled bundle' : 'System roots'}</dd>

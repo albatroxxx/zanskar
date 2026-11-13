@@ -25,7 +25,7 @@ func NewRepo(db *store.DB) *Repo { return &Repo{db: db} }
 const cols = `id, name, address, os_family, ports, capabilities, host_key_fingerprint, host_key_status,
 	tls_fingerprint, tags, status, notes, created_by, created_at, updated_at, last_probed_at, winrm_tls_fingerprint,
 	engine, engine_version, retention_days, database_name, tls_mode, tls_ca, tls_fingerprint_pending, winrm_tls_fingerprint_pending,
-	app_upstream, app_endpoints, app_dependencies, app_private, kube_api_server, kube_ca, kube_impersonate`
+	app_upstream, app_endpoints, app_dependencies, app_private, kube_api_server, kube_ca, kube_impersonate, kube_platform`
 
 // Create validates and inserts t, including its credential mapping.
 func (r *Repo) Create(ctx context.Context, t *Target) error {
@@ -45,12 +45,12 @@ func (r *Repo) Create(ctx context.Context, t *Target) error {
 	}
 	defer tx.Rollback() //nolint:errcheck
 	_, err = tx.ExecContext(ctx, r.db.Rebind(`INSERT INTO targets
-		(id, name, address, os_family, ports, capabilities, host_key_status, tags, status, notes, created_by, created_at, updated_at, engine, engine_version, retention_days, database_name, tls_mode, tls_ca, app_upstream, app_endpoints, app_dependencies, app_private, kube_api_server, kube_ca, kube_impersonate)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`),
+		(id, name, address, os_family, ports, capabilities, host_key_status, tags, status, notes, created_by, created_at, updated_at, engine, engine_version, retention_days, database_name, tls_mode, tls_ca, app_upstream, app_endpoints, app_dependencies, app_private, kube_api_server, kube_ca, kube_impersonate, kube_platform)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`),
 		t.ID, t.Name, t.Address, string(t.OSFamily), ports, capsJSON, string(HostKeyUnknown), tags, t.Status, t.Notes,
 		nullStr(t.CreatedBy), store.TimeArg(now), store.TimeArg(now), t.Engine, t.EngineVersion, nullInt(t.RetentionDays), t.DatabaseName, t.TLSMode, t.TLSCA,
 		emptyNull(t.AppUpstream), endpointsJSON(t.AppEndpoints), emptyNull(t.AppDependencies), privateJSON(t.AppPrivate),
-		emptyNull(t.KubeAPIServer), emptyNull(t.KubeCA), kubeImpersonateArg(t))
+		emptyNull(t.KubeAPIServer), emptyNull(t.KubeCA), kubeImpersonateArg(t), emptyNull(t.KubePlatform))
 	if err != nil {
 		return mapErr(err)
 	}
@@ -304,11 +304,11 @@ func (r *Repo) Update(ctx context.Context, t *Target) error {
 	res, err := tx.ExecContext(ctx, r.db.Rebind(`UPDATE targets SET name = ?, address = ?, os_family = ?, ports = ?, capabilities = ?,
 		tags = ?, status = ?, notes = ?, engine = ?, engine_version = ?, retention_days = ?, database_name = ?, tls_mode = ?, tls_ca = ?,
 		app_upstream = ?, app_endpoints = ?, app_dependencies = ?, app_private = ?, kube_api_server = ?, kube_ca = ?, kube_impersonate = ?,
-		updated_at = ? WHERE id = ? AND deleted_at IS NULL`),
+		kube_platform = ?, updated_at = ? WHERE id = ? AND deleted_at IS NULL`),
 		t.Name, t.Address, string(t.OSFamily), mustJSON(t.Ports), mustJSON(t.Capabilities), mustJSON(t.Tags), t.Status, t.Notes,
 		t.Engine, t.EngineVersion, nullInt(t.RetentionDays), t.DatabaseName, t.TLSMode, t.TLSCA,
 		emptyNull(t.AppUpstream), endpointsJSON(t.AppEndpoints), emptyNull(t.AppDependencies), privateJSON(t.AppPrivate),
-		emptyNull(t.KubeAPIServer), emptyNull(t.KubeCA), kubeImpersonateArg(t), store.TimeArg(now), t.ID)
+		emptyNull(t.KubeAPIServer), emptyNull(t.KubeCA), kubeImpersonateArg(t), emptyNull(t.KubePlatform), store.TimeArg(now), t.ID)
 	if err != nil {
 		return mapErr(err)
 	}
@@ -657,11 +657,12 @@ func scanTarget(s store.Scanner) (*Target, error) {
 		appEndpoints, appPriv   []byte
 		kubeServer, kubeCA      sql.NullString
 		kubeImpersonate         sql.NullInt64
+		kubePlatform            sql.NullString
 		created, updated, probe store.NullTime
 	)
 	err := s.Scan(&t.ID, &t.Name, &t.Address, &osFamily, &ports, &capsRaw, &hk, &hkStatus, &tlsFP, &tagsRaw,
 		&t.Status, &t.Notes, &createdBy, &created, &updated, &probe, &winrmFP, &engine, &engineVer, &retention, &dbName, &tlsMode, &tlsCA, &tlsPend, &winrmPend,
-		&appUpstream, &appEndpoints, &appDeps, &appPriv, &kubeServer, &kubeCA, &kubeImpersonate)
+		&appUpstream, &appEndpoints, &appDeps, &appPriv, &kubeServer, &kubeCA, &kubeImpersonate, &kubePlatform)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound
@@ -673,6 +674,10 @@ func scanTarget(s store.Scanner) (*Target, error) {
 	t.AppUpstream, t.AppDependencies = appUpstream.String, appDeps.String
 	t.KubeAPIServer, t.KubeCA = kubeServer.String, kubeCA.String
 	if kubeServer.String != "" {
+		t.KubePlatform = kubePlatform.String
+		if t.KubePlatform == "" {
+			t.KubePlatform = PlatformVanilla
+		}
 		imp := !kubeImpersonate.Valid || kubeImpersonate.Int64 != 0
 		t.KubeImpersonate = &imp
 	}

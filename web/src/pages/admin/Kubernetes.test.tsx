@@ -45,7 +45,8 @@ describe('Kubernetes', () => {
     expect(get).toHaveBeenCalledWith('/targets?limit=500&kind=kubernetes')
     expect(within(row).getByText('https://k8s.example:6443')).toBeDefined()
     expect(within(row).getByText('the person')).toBeDefined()
-    expect(screen.getAllByRole('columnheader').map((th) => th.textContent)).toEqual(['Name', 'API server', 'Acts as', 'Credential', 'Tags', 'Actions'])
+    expect(screen.getAllByRole('columnheader').map((th) => th.textContent)).toEqual(['Name', 'Platform', 'API server', 'Acts as', 'Credential', 'Tags', 'Actions'])
+    expect(within(row).getByText('Kubernetes')).toBeDefined()
     // One head: Fabric's, with its Add button; the tab's page shows none of its own.
     expect(screen.getAllByRole('heading', { level: 1 }).map((h) => h.textContent)).toEqual(['Fabric'])
 
@@ -53,13 +54,14 @@ describe('Kubernetes', () => {
     await user.click(screen.getByRole('button', { name: 'Add cluster' }))
     const form = screen.getByRole('dialog', { name: 'Add cluster' })
     await user.type(within(form).getByLabelText('Name'), 'staging')
+    await user.selectOptions(within(form).getByLabelText('Platform'), 'gke')
     await user.type(within(form).getByLabelText('API server'), 'https://staging.example:6443')
     await user.selectOptions(within(form).getByLabelText('Sessions act as'), 'credential')
     await user.type(within(form).getByLabelText('CA bundle (PEM)'), '-----BEGIN CERTIFICATE-----')
     await user.click(within(form).getByRole('button', { name: 'Create' }))
     await waitFor(() => expect(post).toHaveBeenCalled())
     const body = post.mock.calls[0][1] as Record<string, unknown>
-    expect(body).toMatchObject({ name: 'staging', address: '', os_family: 'other', kube_api_server: 'https://staging.example:6443', kube_ca: '-----BEGIN CERTIFICATE-----', kube_impersonate: false, engine: '', app_upstream: '' })
+    expect(body).toMatchObject({ name: 'staging', address: '', os_family: 'other', kube_api_server: 'https://staging.example:6443', kube_ca: '-----BEGIN CERTIFICATE-----', kube_impersonate: false, kube_platform: 'gke', engine: '', app_upstream: '' })
   })
 
   it('tests the cluster from its drawer and prints the RBAC manifest', async () => {

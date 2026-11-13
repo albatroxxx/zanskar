@@ -2,7 +2,7 @@ import { count, protocolName } from '../../api/format'
 import { useEffect, useState, type FormEvent } from 'react'
 import { api } from '../../api/client'
 import { errorMessage } from '../../api/client'
-import type { AppEndpoint, OSFamily, Protocol, RetentionPolicy, Target } from '../../api/types'
+import type { AppEndpoint, KubePlatform, OSFamily, Protocol, RetentionPolicy, Target } from '../../api/types'
 import { useSubmit } from '../../components/submit'
 import { Alert, Field, Modal, Tabs } from '../../components/ui'
 import { EndpointEditor } from './EndpointEditor'
@@ -39,6 +39,7 @@ export function targetBody(t: Target, patch: Partial<Target> = {}) {
     kube_api_server: u.kube_api_server ?? '',
     kube_ca: u.kube_ca ?? '',
     kube_impersonate: u.kube_impersonate ?? null,
+    kube_platform: u.kube_platform ?? '',
     retention_days: u.retention_days ?? null,
     ports: u.ports,
     capabilities: u.capabilities,
@@ -75,7 +76,7 @@ const emptyForm = {
   name: '', address: '', os_family: 'linux' as OSFamily,
   engine: 'postgres', engine_version: '', database_name: '', tls_mode: 'verify-full', tls_ca: '',
   app_upstream: '', endpoints: [] as AppEndpoint[], dependencies: 'public' as 'public' | 'origins', private_networks: '', private_hosts: '',
-  kube_api_server: '', kube_ca: '', kube_impersonate: true,
+  kube_api_server: '', kube_ca: '', kube_impersonate: true, kube_platform: 'vanilla' as KubePlatform,
   ...defaultPorts, database: enginePorts.postgres, tags: [] as TagRow[], notes: '', retention: '',
 }
 
@@ -104,6 +105,7 @@ export function TargetForm({ initial, kind, onClose, onSaved }: { initial?: Targ
           kube_api_server: initial.kube_api_server ?? '',
           kube_ca: initial.kube_ca ?? '',
           kube_impersonate: initial.kube_impersonate ?? true,
+          kube_platform: initial.kube_platform ?? 'vanilla',
           endpoints: (initial.app_endpoints ?? []).map((e) => ({ ...e })),
           dependencies: initial.app_dependencies ?? 'public',
           private_networks: (initial.app_private?.networks ?? []).join('\n'),
@@ -201,6 +203,7 @@ export function TargetForm({ initial, kind, onClose, onSaved }: { initial?: Targ
         kube_api_server: cluster ? f.kube_api_server.trim() : '',
         kube_ca: cluster ? f.kube_ca.trim() : '',
         kube_impersonate: cluster ? f.kube_impersonate : null,
+        kube_platform: cluster ? f.kube_platform : '',
         retention_days: application ? null : retention,
         ports,
         capabilities: initial?.capabilities ?? [],
@@ -246,6 +249,14 @@ export function TargetForm({ initial, kind, onClose, onSaved }: { initial?: Targ
               </>
             ) : k === 'kubernetes' ? (
               <>
+                <Field label="Platform">
+                  <select id="t-kube-platform" value={f.kube_platform} onChange={(e) => setF({ ...f, kube_platform: e.target.value as KubePlatform })}>
+                    <option value="vanilla">Kubernetes</option>
+                    <option value="eks">EKS</option>
+                    <option value="gke">GKE</option>
+                    <option value="aks">AKS</option>
+                  </select>
+                </Field>
                 <Field label="API server">
                   <input id="t-kube-api-server" value={f.kube_api_server} onChange={set('kube_api_server')} required placeholder="https://k8s.internal:6443" />
                 </Field>

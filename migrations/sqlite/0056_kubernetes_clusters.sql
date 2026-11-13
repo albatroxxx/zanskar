@@ -16,6 +16,7 @@
 ALTER TABLE targets ADD COLUMN kube_api_server TEXT;
 ALTER TABLE targets ADD COLUMN kube_ca TEXT;
 ALTER TABLE targets ADD COLUMN kube_impersonate INTEGER;
+ALTER TABLE targets ADD COLUMN kube_platform TEXT;
 
 CREATE TABLE credentials_new (
     id                      TEXT PRIMARY KEY,

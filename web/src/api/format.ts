@@ -155,6 +155,16 @@ export function credentialTypeName(type: string): string {
   return credentialTypes.find((t) => t.v === type)?.label ?? type.replace(/_/g, ' ')
 }
 
+/** platformName is how a cluster's platform reads: vanilla is said as Kubernetes, the clouds by their acronyms. */
+export function platformName(p?: string | null): string {
+  switch (p) {
+    case 'eks': return 'EKS'
+    case 'gke': return 'GKE'
+    case 'aks': return 'AKS'
+    default: return 'Kubernetes'
+  }
+}
+
 export function engineName(engine?: string | null, version?: string | null): string {
   if (!engine) return ''
   const name = engineNames[engine] ?? engine

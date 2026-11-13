@@ -8,6 +8,7 @@
 ALTER TABLE targets ADD COLUMN kube_api_server TEXT;
 ALTER TABLE targets ADD COLUMN kube_ca TEXT;
 ALTER TABLE targets ADD COLUMN kube_impersonate INTEGER;
+ALTER TABLE targets ADD COLUMN kube_platform TEXT;
 
 ALTER TABLE credentials DROP CONSTRAINT credentials_type_check;
 ALTER TABLE credentials ADD CONSTRAINT credentials_type_check

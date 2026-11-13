@@ -1,3 +1,4 @@
+import { platformName } from '../../api/format'
 import type { Credential, Target } from '../../api/types'
 import { StateIcon } from '../../components/icons'
 import { Badge, Tags } from '../../components/ui'
@@ -16,9 +17,10 @@ export function Kubernetes({ adding, setAdding }: { adding: boolean; setAdding: 
       title="Clusters"
       addLabel="Add cluster"
       empty="No clusters yet."
-      columns={['API server', 'Acts as', 'Credential', 'Tags']}
+      columns={['Platform', 'API server', 'Acts as', 'Credential', 'Tags']}
       cells={(t, credentials) => (
         <>
+          <td>{platformName(t.kube_platform)}</td>
           <td className="mono">{t.kube_api_server}</td>
           <td>{t.kube_impersonate === false ? <Badge tone="warn">shared identity</Badge> : 'the person'}</td>
           <td>{credentialCell(t, credentials)}</td>

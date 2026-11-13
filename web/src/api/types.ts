@@ -139,6 +139,8 @@ export interface Target {
   kube_api_server?: string
   kube_ca?: string
   kube_impersonate?: boolean
+  /** How Zanskar's token for the cluster is minted (ADR 0048): vanilla, as enrolled; eks, gke, aks, through the cloud's role. */
+  kube_platform?: KubePlatform
   ports: Partial<Record<Protocol, number>>
   capabilities: Protocol[]
   host_key_fingerprint: string | null
@@ -308,6 +310,7 @@ export interface GroupMember { user_id: string; username: string; display_name: 
 export interface TimeWindow { days: string[]; from: string; to: string; tz: string }
 /** What a policy grant covers (ADR 0036); each kind serves its own protocols. */
 export type TargetKind = 'host' | 'database' | 'application' | 'autoscaling' | 'kubernetes'
+export type KubePlatform = 'vanilla' | 'eks' | 'gke' | 'aks'
 
 /** What a cluster's test found (ADR 0045): the API server's version, whether Zanskar's credential may impersonate, and the namespaces it could list. */
 export interface KubeTest {

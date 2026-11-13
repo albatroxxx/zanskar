@@ -89,6 +89,7 @@ type Write struct {
 	KubeAPIServer   string              `json:"kube_api_server"`  // Kubernetes clusters (ADR 0045)
 	KubeCA          string              `json:"kube_ca"`          // Kubernetes clusters
 	KubeImpersonate *bool               `json:"kube_impersonate"` // Kubernetes clusters; nil is the default, on
+	KubePlatform    string              `json:"kube_platform"`    // Kubernetes clusters: vanilla (default), eks, gke, aks
 	OSFamily        OSFamily            `json:"os_family"`
 	Ports           map[Protocol]int    `json:"ports"`
 	Capabilities    []Protocol          `json:"capabilities"`
@@ -104,7 +105,7 @@ func (w Write) apply(t *Target) {
 	t.RetentionDays = w.RetentionDays
 	t.DatabaseName, t.TLSMode, t.TLSCA = w.DatabaseName, w.TLSMode, w.TLSCA
 	t.AppUpstream, t.AppEndpoints, t.AppDependencies, t.AppPrivate = w.AppUpstream, w.AppEndpoints, w.AppDependencies, w.AppPrivate
-	t.KubeAPIServer, t.KubeCA, t.KubeImpersonate = w.KubeAPIServer, w.KubeCA, w.KubeImpersonate
+	t.KubeAPIServer, t.KubeCA, t.KubeImpersonate, t.KubePlatform = w.KubeAPIServer, w.KubeCA, w.KubeImpersonate, w.KubePlatform
 	t.Ports, t.Capabilities, t.Tags = w.Ports, w.Capabilities, w.Tags
 	t.Status, t.Notes, t.Credentials = w.Status, w.Notes, w.Credentials
 }

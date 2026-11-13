@@ -239,6 +239,12 @@ type Target struct {
 	// KubeCA is the PEM bundle the API server's certificate is verified
 	// against; empty means the system roots.
 	KubeCA string `json:"kube_ca,omitempty"`
+	// KubePlatform says which way Zanskar's token for the cluster is minted
+	// (ADR 0048, 2): PlatformVanilla, a token or a client certificate as
+	// enrolled; PlatformEKS, PlatformGKE, PlatformAKS, the cloud's own way
+	// through a role, each an adapter beside the standard path (ADR 0045,
+	// 8). Empty reads as vanilla.
+	KubePlatform string `json:"kube_platform,omitempty"`
 	// KubeImpersonate, the default, sends every request as the person
 	// (Impersonate-User and the person's Zanskar groups), so the cluster's
 	// RBAC decides and its audit log names them. Off, every session acts as
@@ -560,6 +566,13 @@ func (t *Target) Validate() error {
 			on := true
 			t.KubeImpersonate = &on
 		}
+		t.KubePlatform = strings.ToLower(strings.TrimSpace(t.KubePlatform))
+		if t.KubePlatform == "" {
+			t.KubePlatform = PlatformVanilla
+		}
+		if !slices.Contains(Platforms, t.KubePlatform) {
+			return fmt.Errorf("%w: kube_platform must be one of %s", ErrInvalid, strings.Join(Platforms, ", "))
+		}
 		t.KubeCA = strings.TrimSpace(t.KubeCA)
 		if t.KubeCA != "" {
 			if err := validCABundle(t.KubeCA); err != nil {
@@ -578,6 +591,9 @@ func (t *Target) Validate() error {
 		}
 		if t.KubeImpersonate != nil {
 			return fmt.Errorf("%w: kube_impersonate belongs to a Kubernetes cluster, which needs kube_api_server", ErrInvalid)
+		}
+		if t.KubePlatform != "" {
+			return fmt.Errorf("%w: kube_platform belongs to a Kubernetes cluster, which needs kube_api_server", ErrInvalid)
 		}
 	}
 	if t.AppUpstream == "" && len(t.AppEndpoints) > 0 {
@@ -739,6 +755,17 @@ func (t *Target) IsApplication() bool { return t.AppUpstream != "" }
 
 // IsKubernetes reports whether the target is a Kubernetes cluster (ADR 0045).
 func (t *Target) IsKubernetes() bool { return t.KubeAPIServer != "" }
+
+// Kubernetes platforms (ADR 0048, 2).
+const (
+	PlatformVanilla = "vanilla"
+	PlatformEKS     = "eks"
+	PlatformGKE     = "gke"
+	PlatformAKS     = "aks"
+)
+
+// Platforms lists them in the order the console offers them.
+var Platforms = []string{PlatformVanilla, PlatformEKS, PlatformGKE, PlatformAKS}
 
 // Impersonates reports whether a cluster's sessions act as the person
 // (the default) rather than as the credential (a shared identity).
