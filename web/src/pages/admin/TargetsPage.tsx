@@ -1,8 +1,7 @@
 import { Fragment, useCallback, useEffect, useState, type ReactNode } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { api } from '../../api/client'
-import { platformName } from '../../api/format'
-import type { AppsReadiness, Credential, Target } from '../../api/types'
+import type { KubePlatform, AppsReadiness, Credential, Target } from '../../api/types'
 import { FilterChips } from '../../components/FilterChips'
 import { StateIcon } from '../../components/icons'
 import { Alert, Empty, Loading, PageHead, StateBadge } from '../../components/ui'
@@ -19,7 +18,7 @@ import { TargetForm, type TargetKind } from './TargetForm'
 /** A row's disclosure, handed to its cells: Policies' pattern (2026-11-12). */
 export type RowDisclosure = { open: boolean; toggle: () => void; detailId: string }
 
-export function TargetsPage({ kind, title, addLabel, empty, columns, cells, detail, adding: addingProp, setAdding: setAddingProp, headless }: {
+export function TargetsPage({ kind, title, addLabel, empty, columns, cells, detail, adding: addingProp, setAdding: setAddingProp, headless, platform }: {
   kind: TargetKind
   title: string
   addLabel: string
@@ -35,6 +34,8 @@ export function TargetsPage({ kind, title, addLabel, empty, columns, cells, deta
   adding?: boolean
   setAdding?: (v: boolean) => void
   headless?: boolean
+  /** Fabric's tab: the clusters of one platform, and the one a cluster added here is of. */
+  platform?: KubePlatform
 }) {
   // The server does the matching (name or address, case-insensitive, wildcard
   // characters escaped — internal/target/repo.go), so search covers the whole
@@ -48,8 +49,6 @@ export function TargetsPage({ kind, title, addLabel, empty, columns, cells, deta
   const [sp, setSp] = useSearchParams()
   const attention = kind === 'host' && sp.get('attention') === '1'
   const activeOnly = sp.get('status') === 'active'
-  // A Fabric tile narrows the clusters to one platform (ADR 0048).
-  const platform = kind === 'kubernetes' ? sp.get('platform') ?? undefined : undefined
   const drop = (key: string) => {
     const next = new URLSearchParams(sp)
     next.delete(key)
@@ -123,12 +122,11 @@ export function TargetsPage({ kind, title, addLabel, empty, columns, cells, deta
         <FilterChips chips={[
           ...(attention ? [{ label: 'Needing attention', onClear: () => drop('attention') }] : []),
           ...(activeOnly ? [{ label: 'Active only', onClear: () => drop('status') }] : []),
-          ...(platform ? [{ label: platformName(platform), onClear: () => drop('platform') }] : []),
         ]} />
         {items === null ? (
           err ? null : <Loading />
         ) : items.length === 0 ? (
-          <Empty>{dq || attention || activeOnly || platform ? `No ${noun} match.` : empty}</Empty>
+          <Empty>{dq || attention || activeOnly ? `No ${noun} match.` : empty}</Empty>
         ) : (
           <table>
             <thead>
@@ -175,6 +173,7 @@ export function TargetsPage({ kind, title, addLabel, empty, columns, cells, deta
       {adding && (
         <TargetForm
           kind={kind}
+          platform={platform}
           onClose={() => setAdding(false)}
           onSaved={() => {
             setAdding(false)

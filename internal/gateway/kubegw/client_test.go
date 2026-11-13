@@ -140,7 +140,7 @@ func TestManifest(t *testing.T) {
 	m := Manifest([]string{"ops", "data team", "sre"})
 	for _, want := range []string{
 		`"system:authenticated"`, `"zanskar:ops"`, `"zanskar:sre"`,
-		"Not listed, their names cannot be RBAC resource names: data team",
+		"Not listed (not valid RBAC names): data team",
 		"verbs: [\"impersonate\"]", "kind: ClusterRoleBinding", "create token zanskar",
 	} {
 		if !strings.Contains(m, want) {

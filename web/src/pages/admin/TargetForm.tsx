@@ -88,7 +88,7 @@ const emptyForm = {
  * gateway (ADR 0034). Each kind then shows only its own fields (manual QA
  * finding R33). Autoscaling groups have their own page.
  */
-export function TargetForm({ initial, kind, onClose, onSaved }: { initial?: Target; kind?: TargetKind; onClose: () => void; onSaved: (t: Target) => void }) {
+export function TargetForm({ initial, kind, platform, onClose, onSaved }: { initial?: Target; kind?: TargetKind; platform?: KubePlatform; onClose: () => void; onSaved: (t: Target) => void }) {
   const [k, setK] = useState<TargetKind | null>(initial ? kindOf(initial) : (kind ?? null))
   const [f, setF] = useState(
     initial
@@ -119,7 +119,7 @@ export function TargetForm({ initial, kind, onClose, onSaved }: { initial?: Targ
           notes: initial.notes,
           retention: initial.retention_days ? String(initial.retention_days) : '',
         }
-      : emptyForm,
+      : { ...emptyForm, kube_platform: platform ?? emptyForm.kube_platform },
   )
   const { busy, err, setErr, submit } = useSubmit()
   const set = (key: keyof typeof emptyForm) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => setF({ ...f, [key]: e.target.value })
@@ -251,7 +251,7 @@ export function TargetForm({ initial, kind, onClose, onSaved }: { initial?: Targ
               <>
                 <Field label="Platform">
                   <select id="t-kube-platform" value={f.kube_platform} onChange={(e) => setF({ ...f, kube_platform: e.target.value as KubePlatform })}>
-                    <option value="vanilla">Kubernetes</option>
+                    <option value="vanilla">Vanilla</option>
                     <option value="eks">EKS</option>
                     <option value="gke">GKE</option>
                     <option value="aks">AKS</option>

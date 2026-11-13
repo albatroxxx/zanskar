@@ -25,36 +25,37 @@ function serve(targets: Target[]) {
   return vi.spyOn(api, 'get').mockImplementation(async (path: string) => ({ items: path.startsWith('/credentials') ? [sa] : targets }) as never)
 }
 
-// A Kubernetes cluster (ADR 0045) is Fabric's second tab (ADR 0048): listed
-// by its API server and who its sessions act as, added as a cluster, and
-// tested against the cluster from its drawer, where the RBAC it needs is
-// printed.
+// A Kubernetes cluster (ADR 0045) lives on Fabric's tab for its platform
+// (ADR 0048): listed by its API server and who its sessions act as, added
+// as a cluster of that platform, and tested against the cluster from its
+// drawer, where the RBAC it needs is printed.
 describe('Kubernetes', () => {
-  it('lists clusters under Fabric and adds one by its API server', async () => {
+  it('lists a platform\'s clusters under its tab and adds one of that platform', async () => {
     const get = serve([cluster])
     const post = vi.spyOn(api, 'post').mockResolvedValue({ ...cluster, id: 'k2', name: 'staging' } as never)
     render(
-      <MemoryRouter initialEntries={['/admin/fabric/kubernetes']}>
+      <MemoryRouter initialEntries={['/admin/fabric/gke']}>
         <Routes>
           <Route path="/admin/fabric/:kind" element={<Fabric />} />
         </Routes>
       </MemoryRouter>,
     )
-    expect(await screen.findByRole('tab', { name: 'Kubernetes', selected: true })).toBeDefined()
+    expect(await screen.findByRole('tab', { name: 'GKE', selected: true })).toBeDefined()
     const row = (await screen.findByText('prod-sa')).closest('tr')!
-    expect(get).toHaveBeenCalledWith('/targets?limit=500&kind=kubernetes')
+    expect(get).toHaveBeenCalledWith('/targets?limit=500&kind=kubernetes&platform=gke')
     expect(within(row).getByText('https://k8s.example:6443')).toBeDefined()
     expect(within(row).getByText('the person')).toBeDefined()
-    expect(screen.getAllByRole('columnheader').map((th) => th.textContent)).toEqual(['Name', 'Platform', 'API server', 'Acts as', 'Credential', 'Tags', 'Actions'])
-    expect(within(row).getByText('Kubernetes')).toBeDefined()
+    // No platform column: the tab says it.
+    expect(screen.getAllByRole('columnheader').map((th) => th.textContent)).toEqual(['Name', 'API server', 'Acts as', 'Credential', 'Tags', 'Actions'])
     // One head: Fabric's, with its Add button; the tab's page shows none of its own.
     expect(screen.getAllByRole('heading', { level: 1 }).map((h) => h.textContent)).toEqual(['Fabric'])
 
     const user = userEvent.setup()
     await user.click(screen.getByRole('button', { name: 'Add cluster' }))
     const form = screen.getByRole('dialog', { name: 'Add cluster' })
+    // The tab's platform, chosen already.
+    expect((within(form).getByLabelText('Platform') as HTMLSelectElement).value).toBe('gke')
     await user.type(within(form).getByLabelText('Name'), 'staging')
-    await user.selectOptions(within(form).getByLabelText('Platform'), 'gke')
     await user.type(within(form).getByLabelText('API server'), 'https://staging.example:6443')
     await user.selectOptions(within(form).getByLabelText('Sessions act as'), 'credential')
     await user.type(within(form).getByLabelText('CA bundle (PEM)'), '-----BEGIN CERTIFICATE-----')
@@ -62,20 +63,6 @@ describe('Kubernetes', () => {
     await waitFor(() => expect(post).toHaveBeenCalled())
     const body = post.mock.calls[0][1] as Record<string, unknown>
     expect(body).toMatchObject({ name: 'staging', address: '', os_family: 'other', kube_api_server: 'https://staging.example:6443', kube_ca: '-----BEGIN CERTIFICATE-----', kube_impersonate: false, kube_platform: 'gke', engine: '', app_upstream: '' })
-  })
-
-  it('narrows the list to a platform from the address, as a chip', async () => {
-    const get = serve([cluster])
-    render(
-      <MemoryRouter initialEntries={['/admin/fabric/kubernetes?platform=eks']}>
-        <Routes>
-          <Route path="/admin/fabric/:kind" element={<Fabric />} />
-        </Routes>
-      </MemoryRouter>,
-    )
-    await screen.findByRole('tab', { name: 'Kubernetes', selected: true })
-    await waitFor(() => expect(get).toHaveBeenCalledWith('/targets?limit=500&kind=kubernetes&platform=eks'))
-    expect(await screen.findByRole('button', { name: 'EKS: remove filter' })).toBeDefined()
   })
 
   it('tests the cluster from its drawer and prints the RBAC manifest', async () => {

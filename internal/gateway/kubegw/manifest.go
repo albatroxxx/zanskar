@@ -39,11 +39,11 @@ func Manifest(groups []string) string {
 	sort.Strings(ok)
 	ok = append([]string{"system:authenticated"}, ok...)
 	var b strings.Builder
-	b.WriteString("# Zanskar's identity in this cluster (ADR 0045): it may act as a person and as\n")
-	b.WriteString("# the Zanskar groups below, and nothing else. Bind your own roles to the groups\n")
-	b.WriteString("# (kind: Group, name: zanskar:<group>) to say what each may do.\n")
+	// What an operator pastes carries what the YAML cannot say for itself,
+	// and no more: whose it is, and the one thing left out.
+	b.WriteString("# Zanskar: impersonation only. Bind your roles to the groups zanskar:<group>.\n")
 	if len(skipped) > 0 {
-		fmt.Fprintf(&b, "# Not listed, their names cannot be RBAC resource names: %s\n", strings.Join(skipped, ", "))
+		fmt.Fprintf(&b, "# Not listed (not valid RBAC names): %s\n", strings.Join(skipped, ", "))
 	}
 	b.WriteString("apiVersion: v1\nkind: ServiceAccount\nmetadata:\n  name: " + ServiceAccount + "\n  namespace: kube-system\n---\n")
 	b.WriteString("apiVersion: rbac.authorization.k8s.io/v1\nkind: ClusterRole\nmetadata:\n  name: zanskar-impersonator\nrules:\n")
@@ -55,7 +55,7 @@ func Manifest(groups []string) string {
 	b.WriteString("---\napiVersion: rbac.authorization.k8s.io/v1\nkind: ClusterRoleBinding\nmetadata:\n  name: zanskar-impersonator\n")
 	b.WriteString("roleRef:\n  apiGroup: rbac.authorization.k8s.io\n  kind: ClusterRole\n  name: zanskar-impersonator\n")
 	b.WriteString("subjects:\n  - kind: ServiceAccount\n    name: " + ServiceAccount + "\n    namespace: kube-system\n")
-	b.WriteString("---\n# A long-lived token for the account, to paste into Zanskar as a kube_token credential:\n")
+	b.WriteString("---\n# Token for the kube_token credential:\n")
 	b.WriteString("#   kubectl -n kube-system create token " + ServiceAccount + " --duration=8760h\n")
 	return b.String()
 }
