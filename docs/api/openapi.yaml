@@ -2723,6 +2723,12 @@ paths:
             type: string
             enum: [host, database, application, kubernetes]
           description: Only hosts, only database targets (ADR 0017), only applications (ADR 0034), or only Kubernetes clusters (ADR 0045).
+        - name: platform
+          in: query
+          schema:
+            type: string
+            enum: [vanilla, eks, gke, aks]
+          description: Only Kubernetes clusters of this platform (ADR 0048); use with `kind=kubernetes`.
         - name: os_family
           in: query
           schema:
@@ -8832,6 +8838,14 @@ components:
             applications:
               type: integer
               description: Active applications (ADR 0034).
+            clusters:
+              type: integer
+              description: Active Kubernetes clusters (ADR 0048).
+            clusters_by_platform:
+              type: object
+              additionalProperties:
+                type: integer
+              description: Active clusters per platform (`vanilla`, `eks`, `gke`, `aks`); a platform with none is absent.
         autoscaling:
           type: object
           required: [groups, instances, healthy_instances]

@@ -122,7 +122,12 @@ func (h *AdminHandler) list(w http.ResponseWriter, r *http.Request) {
 		tags[k] = v
 	}
 	f := ListFilter{Tags: tags, Kind: r.URL.Query().Get("kind"), Status: r.URL.Query().Get("status"),
-		OSFamily: r.URL.Query().Get("os_family"), Query: r.URL.Query().Get("q"), Attention: r.URL.Query().Get("attention") == "true"}
+		OSFamily: r.URL.Query().Get("os_family"), Query: r.URL.Query().Get("q"), Attention: r.URL.Query().Get("attention") == "true",
+		Platform: r.URL.Query().Get("platform")}
+	if f.Platform != "" && !slices.Contains(Platforms, f.Platform) {
+		httpx.BadRequest(w, r, "platform must be one of "+strings.Join(Platforms, ", "))
+		return
+	}
 	switch f.Kind {
 	case "", KindHost, KindDatabase, KindApplication, KindKubernetes:
 	default:

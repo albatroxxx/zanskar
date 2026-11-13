@@ -116,6 +116,7 @@ tr.off td { color: var(--fg-muted); }
    value only when the label already says what needs attention, never alone. */
 .stat-section { margin: 20px 0 10px; color: var(--fg-muted); font-size: 0.82rem; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; }
 .stat-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(172px, 1fr)); gap: 12px; }
+.stat-grid.platforms { grid-template-columns: repeat(4, 1fr); margin: 14px 0 18px; }
 /* A list of checks, a status line each (the applications' prerequisites). */
 .checks { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 12px; }
 .stat-tile { display: block; position: relative; background: var(--bg-raised); border: 1px solid var(--line); border-radius: var(--radius-lg); padding: 14px 16px; color: inherit; text-decoration: none; }

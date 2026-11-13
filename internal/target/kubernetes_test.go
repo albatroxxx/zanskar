@@ -105,6 +105,43 @@ func TestKubernetesTargetOnEachBackend(t *testing.T) {
 		if n := names(KindHost); len(n) != 1 || n[0] != "web" {
 			t.Fatalf("kind=host lists %v, a cluster is not a host", n)
 		}
+		// The platform filter and the inventory's per-platform counts, which
+		// Fabric's tiles read; a cluster from before the column is vanilla.
+		eks := &Target{Name: "eks-1", KubeAPIServer: "https://eks.example", KubePlatform: "EKS"}
+		if err := r.Create(ctx, eks); err != nil || eks.KubePlatform != PlatformEKS {
+			t.Fatalf("eks: %v %q", err, eks.KubePlatform)
+		}
+		byPlatform := func(p string) []string {
+			out, _, err := r.List(ctx, "", 50, ListFilter{Kind: KindKubernetes, Platform: p})
+			if err != nil {
+				t.Fatal(err)
+			}
+			var n []string
+			for _, x := range out {
+				n = append(n, x.Name)
+			}
+			return n
+		}
+		if n := byPlatform(PlatformEKS); len(n) != 1 || n[0] != "eks-1" {
+			t.Fatalf("platform=eks lists %v", n)
+		}
+		if n := byPlatform(PlatformVanilla); len(n) != 1 || n[0] != "prod" {
+			t.Fatalf("platform=vanilla lists %v", n)
+		}
+		if _, err := db.ExecContext(ctx, db.Rebind("UPDATE targets SET kube_platform = NULL WHERE id = ?"), c.ID); err != nil {
+			t.Fatal(err)
+		}
+		if n := byPlatform(PlatformVanilla); len(n) != 1 || n[0] != "prod" {
+			t.Fatalf("a cluster from before the column must read as vanilla: %v", n)
+		}
+		inv, err := r.CountInventory(ctx)
+		if err != nil || inv.Clusters != 2 || inv.ByPlatform[PlatformVanilla] != 1 || inv.ByPlatform[PlatformEKS] != 1 {
+			t.Fatalf("inventory: %v %+v", err, inv)
+		}
+		if got, _ := r.Get(ctx, c.ID); got.KubePlatform != PlatformVanilla {
+			t.Fatalf("a NULL platform reads as %q", got.KubePlatform)
+		}
+
 		// Impersonation turned back on is stored as on, not as unset.
 		on := true
 		got.KubeImpersonate = &on

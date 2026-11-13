@@ -88,9 +88,11 @@ func (r *Repo) getWhere(ctx context.Context, where string, arg any) (*Target, er
 // ListFilter narrows List. Zero values match everything.
 type ListFilter struct {
 	Tags     map[string]string
-	Kind     string // "host" | "database" | "application"
+	Kind     string // "host" | "database" | "application" | "kubernetes"
 	Status   string // "active" | "disabled"
 	OSFamily string
+	// Platform narrows clusters to one Kubernetes platform (ADR 0048, 2).
+	Platform string
 	Query    string // case-insensitive substring of name or address
 	// Attention narrows to the targets that wait on an administrator's
 	// decision, as CountAttention counts them.
@@ -173,12 +175,15 @@ type Inventory struct {
 	Databases    int            `json:"databases"`
 	ByEngine     map[string]int `json:"databases_by_engine"`
 	Applications int            `json:"applications"`
+	// Clusters, and how many of each platform, for Fabric's tiles (ADR 0048).
+	Clusters   int            `json:"clusters"`
+	ByPlatform map[string]int `json:"clusters_by_platform"`
 }
 
 // CountInventory returns the Inventory in three counts, one after the other
 // (single-connection SQLite).
 func (r *Repo) CountInventory(ctx context.Context) (Inventory, error) {
-	inv := Inventory{HostsByOS: map[string]int{}, ByEngine: map[string]int{}}
+	inv := Inventory{HostsByOS: map[string]int{}, ByEngine: map[string]int{}, ByPlatform: map[string]int{}}
 	count := func(column, kind string, into map[string]int) (int, error) {
 		rows, err := r.db.QueryContext(ctx, `SELECT `+column+`, COUNT(*) FROM targets
 			WHERE deleted_at IS NULL AND status = 'active'`+kindClauses[kind]+` GROUP BY `+column)
@@ -209,6 +214,9 @@ func (r *Repo) CountInventory(ctx context.Context) (Inventory, error) {
 	if err != nil {
 		return Inventory{}, err
 	}
+	if inv.Clusters, err = count("COALESCE(kube_platform, 'vanilla')", KindKubernetes, inv.ByPlatform); err != nil {
+		return Inventory{}, err
+	}
 	return inv, nil
 }
 
@@ -226,6 +234,11 @@ func (r *Repo) List(ctx context.Context, afterName string, limit int, f ListFilt
 	if f.OSFamily != "" {
 		q += ` AND os_family = ?`
 		args = append(args, f.OSFamily)
+	}
+	if f.Platform != "" {
+		// A cluster stored before the column reads as vanilla.
+		q += ` AND COALESCE(kube_platform, 'vanilla') = ?`
+		args = append(args, f.Platform)
 	}
 	if f.Attention {
 		q += ` AND ` + attentionPredicate + ` AND status = '` + StatusActive + `'`

@@ -15,7 +15,11 @@ function Where() {
 }
 
 function at(path: string) {
-  vi.spyOn(api, 'get').mockResolvedValue({ items: [] } as never)
+  vi.spyOn(api, 'get').mockImplementation(async (p: string) =>
+    (p === '/admin/overview'
+      ? { inventory: { hosts: 0, hosts_by_os: {}, databases: 0, databases_by_engine: {}, applications: 0, clusters: 3, clusters_by_platform: { vanilla: 2, eks: 1 } } }
+      : { items: [] }) as never,
+  )
   render(
     <MemoryRouter initialEntries={[path]}>
       <Suspense fallback={null}>
@@ -43,6 +47,18 @@ describe('Fabric', () => {
     at('/admin/fabric/autoscaling')
     expect(await screen.findByRole('heading', { name: 'Autoscaling groups' })).toBeDefined()
     expect(screen.getByTestId('where').textContent).toBe('/admin/autoscaling')
+  })
+
+  it('shows a tile per platform, each counting its clusters and narrowing the list to it', async () => {
+    at('/admin/fabric')
+    const tiles = await screen.findAllByRole('link', { name: /Kubernetes|EKS|GKE|AKS/ })
+    expect(tiles.map((a) => a.textContent)).toEqual(['2Kubernetes', '1EKS', '0GKE', '0AKS'])
+    expect(tiles.map((a) => a.getAttribute('href'))).toEqual([
+      '/admin/fabric/kubernetes?platform=vanilla',
+      '/admin/fabric/kubernetes?platform=eks',
+      '/admin/fabric/kubernetes?platform=gke',
+      '/admin/fabric/kubernetes?platform=aks',
+    ])
   })
 
   it('leads a kind it does not have back to the section', async () => {

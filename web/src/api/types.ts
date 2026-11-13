@@ -498,6 +498,8 @@ export interface AdminOverview {
     databases: number
     databases_by_engine: Record<string, number>
     applications: number
+  clusters: number
+  clusters_by_platform: Partial<Record<KubePlatform, number>>
   }
   autoscaling: {
     groups: number

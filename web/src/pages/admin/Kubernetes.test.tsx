@@ -64,6 +64,20 @@ describe('Kubernetes', () => {
     expect(body).toMatchObject({ name: 'staging', address: '', os_family: 'other', kube_api_server: 'https://staging.example:6443', kube_ca: '-----BEGIN CERTIFICATE-----', kube_impersonate: false, kube_platform: 'gke', engine: '', app_upstream: '' })
   })
 
+  it('narrows the list to a platform from the address, as a chip', async () => {
+    const get = serve([cluster])
+    render(
+      <MemoryRouter initialEntries={['/admin/fabric/kubernetes?platform=eks']}>
+        <Routes>
+          <Route path="/admin/fabric/:kind" element={<Fabric />} />
+        </Routes>
+      </MemoryRouter>,
+    )
+    await screen.findByRole('tab', { name: 'Kubernetes', selected: true })
+    await waitFor(() => expect(get).toHaveBeenCalledWith('/targets?limit=500&kind=kubernetes&platform=eks'))
+    expect(await screen.findByRole('button', { name: 'EKS: remove filter' })).toBeDefined()
+  })
+
   it('tests the cluster from its drawer and prints the RBAC manifest', async () => {
     const result: KubeTest = { version: 'v1.31.1', impersonate_users: true, impersonate_groups: false, namespaces: ['prod', 'ops'], namespaces_listed: true }
     const post = vi.spyOn(api, 'post').mockResolvedValue(result as never)
