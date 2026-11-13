@@ -95,7 +95,12 @@ type EKS struct {
 	eks     eksAPI
 	sts     stsAPI
 	presign stsPresigner
-	now     func() time.Time
+	// creds is what the presigner signs with: the role's temporary
+	// credentials, cached by the SDK until they expire. A token signed with
+	// them is replayed by the cluster against STS, so it is good for no
+	// longer than they are.
+	creds aws.CredentialsProvider
+	now   func() time.Time
 
 	mu      sync.Mutex
 	token   string
@@ -118,18 +123,33 @@ func NewEKS(ctx context.Context, a EKSAccess) (*EKS, error) {
 // static ones and never reach AWS.
 func newEKS(cfg aws.Config, cluster string) *EKS {
 	stsc := sts.NewFromConfig(cfg)
-	return &EKS{cluster: cluster, eks: eks.NewFromConfig(cfg), sts: stsc, presign: sts.NewPresignClient(stsc), now: time.Now}
+	return &EKS{cluster: cluster, eks: eks.NewFromConfig(cfg), sts: stsc, presign: sts.NewPresignClient(stsc), creds: cfg.Credentials, now: time.Now}
 }
 
 // Token is a bearer the cluster accepts for the role: the cached one while
 // it has time left, else one minted now. Minting is a local signature; it
 // reaches AWS only when the role's temporary credentials must be renewed.
+// The cached token ends before the credentials it was signed with do: a
+// token minted late in the role's session would otherwise outlive them and
+// be refused by the cluster until the cache rolled.
 func (e *EKS) Token(ctx context.Context) (string, error) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	now := e.now()
 	if e.token != "" && now.Before(e.expires) {
 		return e.token, nil
+	}
+	expires := now.Add(eksTokenAccepted - eksTokenMargin)
+	if e.creds != nil {
+		c, err := e.creds.Retrieve(ctx)
+		if err != nil {
+			return "", fmt.Errorf("cloud: eks token: %w", err)
+		}
+		if c.CanExpire && c.Expires.Add(-eksTokenMargin).Before(expires) {
+			// Handed out until the margin before the credentials end; a
+			// token signed inside that margin is handed out once.
+			expires = c.Expires.Add(-eksTokenMargin)
+		}
 	}
 	req, err := e.presign.PresignGetCallerIdentity(ctx, &sts.GetCallerIdentityInput{}, func(po *sts.PresignOptions) {
 		po.ClientOptions = append(po.ClientOptions, func(o *sts.Options) {
@@ -142,7 +162,7 @@ func (e *EKS) Token(ctx context.Context) (string, error) {
 		return "", fmt.Errorf("cloud: eks token: %w", err)
 	}
 	e.token = eksTokenPrefix + base64.RawURLEncoding.EncodeToString([]byte(req.URL))
-	e.expires = now.Add(eksTokenAccepted - eksTokenMargin)
+	e.expires = expires
 	return e.token, nil
 }
 

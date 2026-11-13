@@ -189,10 +189,14 @@ func (h *AdminHandler) update(w http.ResponseWriter, r *http.Request) {
 	m := Metadata{Name: req.Name, Username: username, Domain: req.Domain,
 		CertificateTTLSeconds: existing.CertificateTTLSeconds, CertificatePrincipals: existing.CertificatePrincipals,
 		AWSRegion: existing.AWSRegion, AWSRoleARN: existing.AWSRoleARN, EKSCluster: existing.EKSCluster}
-	for src, dst := range map[string]*string{req.AWSRegion: &m.AWSRegion, req.AWSRoleARN: &m.AWSRoleARN, req.EKSCluster: &m.EKSCluster} {
-		if src != "" {
-			*dst = src
-		}
+	if req.AWSRegion != "" {
+		m.AWSRegion = req.AWSRegion
+	}
+	if req.AWSRoleARN != "" {
+		m.AWSRoleARN = req.AWSRoleARN
+	}
+	if req.EKSCluster != "" {
+		m.EKSCluster = req.EKSCluster
 	}
 	if req.CertificateTTLSeconds != nil {
 		m.CertificateTTLSeconds = *req.CertificateTTLSeconds

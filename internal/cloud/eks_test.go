@@ -92,6 +92,36 @@ func TestEKSTokenCached(t *testing.T) {
 	}
 }
 
+// expiringCreds is the role's temporary credentials with an end.
+type expiringCreds struct{ expires time.Time }
+
+func (c expiringCreds) Retrieve(context.Context) (aws.Credentials, error) {
+	return aws.Credentials{AccessKeyID: "ASIATEST", SecretAccessKey: "secret", SessionToken: "session", CanExpire: true, Expires: c.expires}, nil
+}
+
+// A token signed with the role's temporary credentials is good for no longer
+// than they are: minted five minutes before they end, it is handed out for
+// two (the margin before), then minted anew (2026-11-13, advisor).
+func TestEKSTokenEndsWithTheCredentials(t *testing.T) {
+	now := time.Date(2026, 11, 13, 10, 0, 0, 0, time.UTC)
+	cfg := aws.Config{Region: "eu-west-2", Credentials: expiringCreds{expires: now.Add(5 * time.Minute)}}
+	e := newEKS(cfg, "prod")
+	cp := &countingPresigner{stsPresigner: e.presign}
+	e.presign = cp
+	e.now = func() time.Time { return now }
+	if _, err := e.Token(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	now = now.Add(90 * time.Second)
+	if _, _ = e.Token(context.Background()); cp.n != 1 {
+		t.Fatalf("a token with time left was minted anew (%d signatures)", cp.n)
+	}
+	now = now.Add(60 * time.Second) // 2.5 min in: inside the margin before the credentials end
+	if _, err := e.Token(context.Background()); err != nil || cp.n != 2 {
+		t.Fatalf("a token outliving its credentials was handed out (%d signatures, %v)", cp.n, err)
+	}
+}
+
 type fakeEKSAPI struct {
 	cluster *ekstypes.Cluster
 	err     error
