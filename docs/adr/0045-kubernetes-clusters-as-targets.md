@@ -253,3 +253,9 @@ What the first build of the API-as-the-person settled, where the decision above 
    with the idle time and the end time when the policy sets a maximum.
 8. **Shared identity is audited.** `session.start` says `acts_as: person` or
    `acts_as: shared identity`, beside the namespaces, `cluster_scope` and `port_forward`.
+9. **The scope travels whole.** The configuration file (ADR 0043) and the Terraform provider
+   (ADR 0044) carry a cluster's `kube_api_server`, `kube_ca`, `kube_platform` and
+   `kube_impersonate`, and a grant's `namespaces`, `cluster_scope` and `port_forward`. A carrier
+   that dropped them would import a grant to every namespace and turn a shared identity into
+   impersonation; their tests read the receiving gateway's own answer, since two exports that
+   both lost a field would still match.

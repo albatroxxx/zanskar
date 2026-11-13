@@ -260,6 +260,17 @@ func withDefaults(t Target) Target {
 	if t.Status == "" {
 		t.Status = "active"
 	}
+	if t.KubeAPIServer != "" {
+		// A cluster's row says which way its sessions act and how its
+		// token is minted (target.Target); a file may leave the defaults out.
+		if t.KubePlatform == "" {
+			t.KubePlatform = "vanilla"
+		}
+		if t.KubeImpersonate == nil {
+			on := true
+			t.KubeImpersonate = &on
+		}
+	}
 	return t
 }
 

@@ -371,6 +371,92 @@ resource "zanskar_access_policy" "prod" {
 	})
 }
 
+// A Kubernetes cluster and a grant scoped to two namespaces (ADR 0045). The
+// scope and the cluster's fields must survive every write the provider
+// makes: a provider that dropped them would widen the grant to every
+// namespace and turn the cluster into a host. The gateway's own answer is
+// checked, not only Terraform's state.
+func TestAccKubernetes(t *testing.T) {
+	url, token := gateway(t)
+	cfg := func(desc, env string) string {
+		return providerBlock(url, token) + fmt.Sprintf(`
+resource "zanskar_group" "sre" {
+  name = "acc-sre"
+}
+resource "zanskar_target" "cluster" {
+  name             = "acc-prod-cluster"
+  kube_api_server  = "https://10.50.0.20:6443"
+  kube_impersonate = false
+  tags             = { env = %q }
+}
+resource "zanskar_target" "box" {
+  name      = "acc-k8s-box"
+  address   = "10.50.0.5"
+  os_family = "linux"
+  tags      = { env = %q }
+}
+resource "zanskar_access_policy" "cluster" {
+  name        = "acc-cluster"
+  description = %q
+  subjects    = [{ kind = "group", id = zanskar_group.sre.id }]
+  grants = [{
+    kind          = "kubernetes"
+    targets       = [{ id = zanskar_target.cluster.id, protocols = ["kube"] }]
+    namespaces    = ["prod", "staging"]
+    cluster_scope = true
+  }]
+}
+`, env, env, desc)
+	}
+	c, err := NewClient(url, token, "", "test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	held := func(s *terraform.State) error {
+		ctx := context.Background()
+		var p apiPolicy
+		if err := c.do(ctx, http.MethodGet, "/access-policies/"+s.RootModule().Resources["zanskar_access_policy.cluster"].Primary.ID, nil, &p); err != nil {
+			return err
+		}
+		if len(p.Grants) != 1 || !slices.Equal(p.Grants[0].Namespaces, []string{"prod", "staging"}) || !p.Grants[0].ClusterScope || p.Grants[0].PortForward {
+			return fmt.Errorf("the gateway holds the grant as %+v", p.Grants)
+		}
+		var tg apiTarget
+		if err := c.do(ctx, http.MethodGet, "/targets/"+s.RootModule().Resources["zanskar_target.cluster"].Primary.ID, nil, &tg); err != nil {
+			return err
+		}
+		if tg.KubeAPIServer != "https://10.50.0.20:6443" || tg.KubeImpersonate == nil || *tg.KubeImpersonate || tg.KubePlatform != "vanilla" {
+			return fmt.Errorf("the gateway holds the cluster as %+v", tg)
+		}
+		return nil
+	}
+	resource.Test(t, resource.TestCase{
+		ProtoV6ProviderFactories: factories,
+		Steps: []resource.TestStep{
+			{Config: cfg("clusters", "staging"), Check: resource.ComposeAggregateTestCheckFunc(
+				resource.TestCheckResourceAttr("zanskar_target.cluster", "address", "10.50.0.20"),
+				resource.TestCheckResourceAttr("zanskar_target.cluster", "kube_platform", "vanilla"),
+				resource.TestCheckResourceAttr("zanskar_target.cluster", "kube_impersonate", "false"),
+				resource.TestCheckNoResourceAttr("zanskar_target.box", "kube_impersonate"),
+				resource.TestCheckResourceAttr("zanskar_access_policy.cluster", "grants.0.namespaces.#", "2"),
+				resource.TestCheckResourceAttr("zanskar_access_policy.cluster", "grants.0.namespaces.1", "staging"),
+				resource.TestCheckResourceAttr("zanskar_access_policy.cluster", "grants.0.cluster_scope", "true"),
+				resource.TestCheckResourceAttr("zanskar_access_policy.cluster", "grants.0.port_forward", "false"),
+				held,
+			)},
+			// A description and a tag changed: updates that must keep the
+			// scope and the cluster as they are.
+			{Config: cfg("clusters, on call", "prod"), Check: resource.ComposeAggregateTestCheckFunc(
+				resource.TestCheckResourceAttr("zanskar_target.cluster", "tags.env", "prod"),
+				resource.TestCheckResourceAttr("zanskar_access_policy.cluster", "description", "clusters, on call"),
+				held,
+			)},
+			{ResourceName: "zanskar_target.cluster", ImportState: true, ImportStateVerify: true},
+			{ResourceName: "zanskar_access_policy.cluster", ImportState: true, ImportStateVerify: true},
+		},
+	})
+}
+
 // Refused by the gateway, the provider says why: a token that does not
 // stand, and a policy the gateway will not take.
 func TestAccRefusals(t *testing.T) {

@@ -562,12 +562,21 @@ func cmdTargetShow(x *run) error {
 	if err := x.api.get(pathf("/targets/%s", id), &t); err != nil {
 		return err
 	}
-	x.out.pairs([][2]string{
+	rows := [][2]string{
 		{"name", str(t, "name")}, {"address", str(t, "address")}, {"os", str(t, "os_family")}, {"engine", str(t, "engine")},
 		{"ports", str(t, "ports")}, {"offers", str(t, "capabilities")}, {"host key", str(t, "host_key_status")},
 		{"fingerprint", str(t, "host_key_fingerprint")}, {"tags", str(t, "tags")}, {"status", str(t, "status")},
-		{"last probed", when(t, "last_probed_at")}, {"notes", str(t, "notes")}, {"id", str(t, "id")},
-	})
+		{"last probed", when(t, "last_probed_at")}, {"notes", str(t, "notes")},
+	}
+	if api := str(t, "kube_api_server"); api != "" {
+		// A Kubernetes cluster (ADR 0045): where it is reached and as whom.
+		acts := "the person"
+		if str(t, "kube_impersonate") == "no" {
+			acts = "the credential (shared identity)"
+		}
+		rows = append(rows, [2]string{"api server", api}, [2]string{"platform", str(t, "kube_platform")}, [2]string{"acts as", acts})
+	}
+	x.out.pairs(append(rows, [2]string{"id", str(t, "id")}))
 	return nil
 }
 
@@ -859,6 +868,13 @@ func grantPairs(g policy.Grant, targets, asgs map[string]string) [][2]string {
 	}
 	if g.Kind == protocol.KindApplication {
 		rows = append(rows, [2]string{"dev tools", yesNo(g.AllowDevTools)})
+	}
+	if g.Kind == protocol.KindKubernetes {
+		ns := "all"
+		if len(g.Namespaces) > 0 {
+			ns = strings.Join(g.Namespaces, ", ")
+		}
+		rows = append(rows, [2]string{"namespaces", ns}, [2]string{"cluster scope", yesNo(g.ClusterScope)}, [2]string{"port-forward", yesNo(g.PortForward)})
 	}
 	return append(rows, [][2]string{
 		{"idle timeout", fmt.Sprintf("%d min", g.IdleTimeoutMinutes)}, {"max session", most},
