@@ -20,6 +20,10 @@ const ServiceAccount = "zanskar"
 
 var groupNameRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,62}$`)
 
+// ValidGroupName reports whether a Zanskar group's name can be an RBAC
+// resource name, so the manifest binds it and a session may act as it.
+func ValidGroupName(name string) bool { return groupNameRe.MatchString(name) }
+
 // Manifest is the RBAC the cluster needs and nothing else (ADR 0009,
 // agentless): a ClusterRole that may impersonate users and the groups
 // Zanskar knows, a ServiceAccount to hold Zanskar's credential and the

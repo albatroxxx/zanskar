@@ -75,6 +75,20 @@ func (h *Handler) Recheck(ctx context.Context, userIDs []string) int {
 		}
 		if code != "" || (l.AllowClipboard && !d.AllowClipboard) || (l.AllowFileTransfer && !d.AllowFileTransfer) || (l.AllowDevTools && !d.AllowDevTools) {
 			withdrawn = append(withdrawn, l)
+			continue
+		}
+		// A Kubernetes session holds its scope and the groups it acts as
+		// for its life (ADR 0045): a change to either ends it, and the
+		// person connects again under the new terms.
+		if l.Kube != nil {
+			groups, err := h.kubeGroups(ctx, l.UserID, d)
+			if err != nil {
+				h.Log.Warn("access changed; live session kept, it could not be checked", "session", l.SessionID, "err", err)
+				continue
+			}
+			if !kubeTermsHold(l.Kube, d, groups) {
+				withdrawn = append(withdrawn, l)
+			}
 		}
 	}
 	n := h.revoke(withdrawn)

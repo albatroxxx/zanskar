@@ -315,3 +315,45 @@ func TestEvaluateDevTools(t *testing.T) {
 		t.Fatalf("off by default: %+v", d)
 	}
 }
+
+func TestEvaluateKubeScope(t *testing.T) {
+	ref := TargetRef{Kind: protocol.KindKubernetes, ID: "k1"}
+	kube := func(name string, ns []string, cluster, pf bool) *Policy {
+		g := Grant{Kind: protocol.KindKubernetes, Targets: []GrantTarget{{ID: "k1", Protocols: []string{"kube"}}}, Access: AccessStanding, SignIn: SignInTarget,
+			Namespaces: ns, ClusterScope: cluster, PortForward: pf}
+		p := valid(g)
+		p.Name, p.ID = name, "id-"+name
+		p.Grants[0].ID = name + "-g"
+		if err := p.Validate(); err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		return p
+	}
+	now := time.Now()
+	// One grant: its scope.
+	d := Evaluate([]*Policy{kube("data", []string{"prod", "data"}, false, false)}, ref, "kube", now)
+	if !d.Allowed || d.Kube == nil || strings.Join(d.Kube.Namespaces, ",") != "data,prod" || d.Kube.ClusterScope || d.Kube.PortForward {
+		t.Fatalf("one grant: %+v", d.Kube)
+	}
+	// Two grants: the union, unlike the clipboard switches, which take the strictest.
+	d = Evaluate([]*Policy{kube("data", []string{"prod", "data"}, false, false), kube("ops", []string{"ops", "prod"}, true, false)}, ref, "kube", now)
+	if strings.Join(d.Kube.Namespaces, ",") != "data,ops,prod" || !d.Kube.ClusterScope || d.Kube.PortForward {
+		t.Fatalf("two grants: %+v", d.Kube)
+	}
+	if !d.Kube.Covers("ops") || d.Kube.Covers("kube-system") {
+		t.Fatal("Covers must read the list")
+	}
+	// A grant admitting every namespace admits every namespace whatever the other names.
+	d = Evaluate([]*Policy{kube("data", []string{"prod"}, false, false), kube("all", nil, false, true)}, ref, "kube", now)
+	if len(d.Kube.Namespaces) != 0 || !d.Kube.Covers("anything") || !d.Kube.PortForward {
+		t.Fatalf("every namespace: %+v", d.Kube)
+	}
+	// Equal is by content, order aside; another kind carries no scope.
+	if !(&KubeScope{Namespaces: []string{"a", "b"}}).Equal(&KubeScope{Namespaces: []string{"b", "a"}}) || (&KubeScope{}).Equal(&KubeScope{ClusterScope: true}) || (&KubeScope{}).Equal(nil) {
+		t.Fatal("Equal")
+	}
+	host := valid(Grant{Kind: protocol.KindHost, Targets: []GrantTarget{{ID: "h1", Protocols: []string{"ssh"}}}, Access: AccessStanding, SignIn: SignInTarget})
+	if d := Evaluate([]*Policy{host}, TargetRef{Kind: protocol.KindHost, ID: "h1"}, "ssh", now); !d.Allowed || d.Kube != nil {
+		t.Fatalf("a host carries no scope: %+v", d)
+	}
+}

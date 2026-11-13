@@ -508,6 +508,72 @@ type Decision struct {
 	// SignInOwn is set, the person's own login is asked for.
 	SignInTarget bool `json:"sign_in_target"`
 	SignInOwn    bool `json:"sign_in_own"`
+	// Kube is a Kubernetes session's scope (ADR 0045, 4): what the deciding
+	// grants admit between them. Unlike the clipboard switches, which take
+	// the strictest grant, scope is the union: a grant that admits a
+	// namespace admits it whatever another grant says, as a grant that
+	// admits a target does. Nil for every other kind.
+	Kube *KubeScope `json:"kube,omitempty"`
+}
+
+// KubeScope is what a Kubernetes session may reach (ADR 0045, 4).
+type KubeScope struct {
+	// Namespaces the session may reach; empty means every namespace.
+	Namespaces []string `json:"namespaces"`
+	// ClusterScope admits cluster-wide requests: cluster-scoped resources
+	// and lists across namespaces.
+	ClusterScope bool `json:"cluster_scope"`
+	// PortForward admits port-forward.
+	PortForward bool `json:"port_forward"`
+}
+
+// Covers reports whether the scope admits a request in ns.
+func (s *KubeScope) Covers(ns string) bool {
+	return len(s.Namespaces) == 0 || slices.Contains(s.Namespaces, ns)
+}
+
+// Equal reports whether two scopes admit the same.
+func (s *KubeScope) Equal(o *KubeScope) bool {
+	if s == nil || o == nil {
+		return s == o
+	}
+	if s.ClusterScope != o.ClusterScope || s.PortForward != o.PortForward || len(s.Namespaces) != len(o.Namespaces) {
+		return false
+	}
+	for _, ns := range s.Namespaces {
+		if !slices.Contains(o.Namespaces, ns) {
+			return false
+		}
+	}
+	return true
+}
+
+// kubeScope is the union of the deciding grants' scopes: every namespace
+// when any grant admits every namespace, else the namespaces named, once
+// each and sorted; cluster scope and port-forward when any grant admits
+// them.
+func kubeScope(set []decider) *KubeScope {
+	s := &KubeScope{}
+	all := false
+	for _, c := range set {
+		g := c.g
+		s.ClusterScope = s.ClusterScope || g.ClusterScope
+		s.PortForward = s.PortForward || g.PortForward
+		if len(g.Namespaces) == 0 {
+			all = true
+			continue
+		}
+		for _, ns := range g.Namespaces {
+			if !slices.Contains(s.Namespaces, ns) {
+				s.Namespaces = append(s.Namespaces, ns)
+			}
+		}
+	}
+	if all {
+		s.Namespaces = nil
+	}
+	slices.Sort(s.Namespaces)
+	return s
 }
 
 // Evaluate decides access from the caller's policies, given in name order.
@@ -594,6 +660,9 @@ func evaluate(policies []*Policy, t TargetRef, proto string, now time.Time, wind
 	}
 	d.Policy, d.GrantID = best.p, best.g.ID
 	d.IdleTimeout = time.Duration(best.g.IdleTimeoutMinutes) * time.Minute
+	if t.Kind == protocol.KindKubernetes {
+		d.Kube = kubeScope(set)
+	}
 	return d
 }
 
