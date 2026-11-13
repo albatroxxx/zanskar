@@ -8,10 +8,12 @@ import { PageHead, StatTile, Tabs } from '../../components/ui'
 import { Kubernetes } from './Kubernetes'
 
 // Fabric (ADR 0048): Kubernetes clusters, reached through the gateway as
-// the person. A tab per platform (the owner, 2026-11-13: each its own
-// thing, Vanilla since all four are Kubernetes), and a tile per platform
-// above them that opens its tab; /admin/fabric/<platform> names the open
-// one. Autoscaling groups were the first tab for a day (2026-11-12) and
+// the person. It reads Kubernetes in the sidebar and as the heading (the
+// owner, 2026-11-13: everything in it is Kubernetes, so the section's own
+// name says nothing); the route and the code keep the section's name. A
+// tab per platform (each its own thing, Vanilla since all four are
+// Kubernetes), and a tile per platform above them that opens its tab;
+// /admin/fabric/<platform> names the open one. Autoscaling groups were the first tab for a day (2026-11-12) and
 // went back to their own page: a person opens an instance as they open a
 // host, so the groups belong beside the hosts.
 export const platforms: { key: KubePlatform; icon: 'k8s' | 'eks' | 'gke' | 'aks' }[] = [
@@ -39,7 +41,7 @@ export function Fabric() {
   if (!open) return <Navigate to="/admin/fabric" replace />
   return (
     <>
-      <PageHead title="Fabric">
+      <PageHead title="Kubernetes">
         <button className="btn primary" onClick={() => setAdding(true)}>Add cluster</button>
       </PageHead>
       <div className="stat-grid platforms">

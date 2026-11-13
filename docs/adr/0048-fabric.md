@@ -131,4 +131,9 @@ Sizes are for one engineer, with tests.
    recommended.
 5. **Autoscaling out of Fabric, platforms as a column (2026-11-13):** the owner's call, with the
    recommendation that EKS, GKE and AKS be a platform on one list rather than tabs. GKE and AKS
-   follow EKS's shape when asked for.
+   follow EKS's shape when asked for. Later the same day the owner made each platform a tab of
+   its own, with a tile above that opens it, and named the plain one *Vanilla*.
+6. **The section reads *Kubernetes* (2026-11-13):** the owner: "everything inside it is
+   Kubernetes", so *Fabric* says nothing to a person. The sidebar item and the heading read
+   Kubernetes; the route (`/admin/fabric`), the code and this ADR keep the section's name, which
+   costs nothing and leaves room should another kind ever join.

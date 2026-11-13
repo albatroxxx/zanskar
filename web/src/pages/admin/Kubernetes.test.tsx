@@ -47,8 +47,8 @@ describe('Kubernetes', () => {
     expect(within(row).getByText('the person')).toBeDefined()
     // No platform column: the tab says it.
     expect(screen.getAllByRole('columnheader').map((th) => th.textContent)).toEqual(['Name', 'API server', 'Acts as', 'Credential', 'Tags', 'Actions'])
-    // One head: Fabric's, with its Add button; the tab's page shows none of its own.
-    expect(screen.getAllByRole('heading', { level: 1 }).map((h) => h.textContent)).toEqual(['Fabric'])
+    // One head, the section's, with its Add button; the tab's page shows none of its own.
+    expect(screen.getAllByRole('heading', { level: 1 }).map((h) => h.textContent)).toEqual(['Kubernetes'])
 
     const user = userEvent.setup()
     await user.click(screen.getByRole('button', { name: 'Add cluster' }))

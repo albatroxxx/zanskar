@@ -169,7 +169,7 @@ export default function App() {
                 { to: '/admin/databases', label: 'Databases' },
                 { to: '/admin/applications', label: 'Applications' },
                 { to: '/admin/autoscaling', label: 'Autoscaling' },
-                { to: '/admin/fabric', label: 'Fabric' },
+                { to: '/admin/fabric', label: 'Kubernetes' },
                 { to: '/admin/credentials', label: 'Credentials' },
                 { to: '/admin/policies', label: 'Policies' },
                 { to: '/admin/approvals', label: 'Approvals', badge: pendingApprovals, badgeShared: true },

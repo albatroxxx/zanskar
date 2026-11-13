@@ -41,7 +41,7 @@ function at(path: string) {
 describe('Fabric', () => {
   it('opens on Vanilla, listing only its clusters', async () => {
     const get = at('/admin/fabric')
-    expect(await screen.findByRole('heading', { name: 'Fabric' })).toBeDefined()
+    expect(await screen.findByRole('heading', { name: 'Kubernetes' })).toBeDefined()
     expect(screen.getByRole('tab', { name: 'Vanilla', selected: true })).toBeDefined()
     expect(screen.getAllByRole('tab').map((t) => t.textContent)).toEqual(['Vanilla', 'EKS', 'GKE', 'AKS'])
     expect(screen.getByRole('button', { name: 'Add cluster' })).toBeDefined()
