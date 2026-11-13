@@ -10,9 +10,11 @@ in Fabric section, we will include the dynamically created resources, for exampl
 Docker containers, ECS clusters, and the access for them will be managed from the Zanskar portal."
 The owner then narrowed it: "Let's only add services which fit the criteria, like Kubernetes
 (EKS)", and confirmed nobody else is building Kubernetes ("teammates are not working on it. we
-need to put work on them now"). So Fabric holds autoscaling groups and Kubernetes clusters, EKS
-as Kubernetes' cloud adapter; Docker hosts and ECS clusters are not in scope (see 7). F0 is
-built; F1 (Kubernetes, the API as the person) follows on the same branch.
+need to put work on them now"). Amended 2026-11-13, the owner's second thought: "keep autoscaling back to its previous status
+quo and keep Kubernetes (vanilla), EKS, GKE, AKS in Fabric". So Fabric holds Kubernetes clusters,
+vanilla and managed, and nothing else; the autoscaling groups are their own page again, as they
+were; Docker hosts and ECS clusters are not in scope (see 7). F0 was built and reverted the next
+day; F1 (Kubernetes, the API as the person) is in progress on the same branch.
 
 ## Context
 
@@ -43,18 +45,24 @@ and a **scope** within it (a group, namespaces, container labels, services).
 
 ## Decision
 
-1. **Fabric is a section of the console for control planes and their members.** One item in the
-   admin navigation, *Fabric*, opens a page with a tab per kind: *Autoscaling* first, then
-   *Kubernetes* once it is built (no tab before its kind exists). The navigation
-   stays as long as it is: Autoscaling's item becomes Fabric's, and `/admin/autoscaling` redirects
-   to `/admin/fabric/autoscaling`. The dashboard's inventory keeps four tiles: *Fabric* replaces
-   *Autoscaling groups*, its detail counting each kind. This settles ADR 0045's open question 3.
-   Considered and not taken: a navigation group with a heading and a sub-item per kind, which
-   adds a line per kind to an already long list.
+1. **Fabric is the console's section for Kubernetes clusters.** One item in the admin
+   navigation, *Fabric*, opens a page with one tab, *Kubernetes*, listing every cluster: a
+   *Platform* column says vanilla, EKS, GKE or AKS. The autoscaling groups are not in it: a
+   person opens an autoscaling instance as they open a host (SSH, RDP), so the groups belong
+   beside the hosts, on their own page as before. Fabric held them for one day (F0, 2026-11-12)
+   and the owner moved them back; `/admin/fabric/autoscaling` leads to `/admin/autoscaling`. The
+   dashboard's tile stays *Autoscaling groups*; clusters are counted where ADR 0045's open
+   question 3 settles them when their count is wanted.
 
-2. **Names.** The tabs are *Autoscaling* and *Kubernetes*. ADR 0045 named Kubernetes clusters
-   *Clusters*; beside other control planes that word says too little, so it is amended to
-   *Kubernetes*. The protocols ADR 0045 chose (`kube`, `pod`) stand.
+2. **Names, and the platforms.** The tab is *Kubernetes*; ADR 0045 named the clusters
+   *Clusters*, and the section's own name now says that, so the tab says what kind of cluster.
+   EKS, GKE and AKS are not kinds of their own: they are the same API with a different way of
+   minting Zanskar's token (ADR 0045, 8, adapters beside the standard path). A cluster carries a
+   `kube_platform` (`vanilla`, the default, `eks`, `gke`, `aks`), which the Add form asks first
+   and which decides the credential it takes: a token or a client certificate for vanilla, a
+   cloud role for the others. One list, one grant kind, whatever the platform. Separate tabs per
+   platform were considered: four lists of the same thing, and a policy names a cluster
+   regardless. The protocols ADR 0045 chose (`kube`, `pod`) stand.
 
 3. **The model every kind shares.** A Fabric resource is a target whose kind is derived, as every
    kind is (`internal/protocol/protocol.go:53`), from the control plane's field: an autoscaling
@@ -95,9 +103,9 @@ and a **scope** within it (a group, namespaces, container labels, services).
 
 Sizes are for one engineer, with tests.
 
-- **F0 — the section (two days; built).** *Fabric* in the navigation and its page with the
-  *Autoscaling* tab; the redirect; the dashboard tile; the guide. Nothing else changes, including
-  the portal (see the open decisions).
+- **F0 — the section (two days; built 2026-11-12, autoscaling moved back out 2026-11-13).**
+  *Fabric* in the navigation and its page; the guide. Nothing else changes, including the portal
+  (decision 4 below).
 - **F1 — Kubernetes, the API as the person (about three weeks).** ADR 0045 phase 1.
 - **F2 — Kubernetes shells (about two weeks).** ADR 0045 phase 2, after F3.
 - **F3 — EKS adapter (about one and a half weeks).** ADR 0045 phase 3, built right after F1
@@ -110,7 +118,7 @@ Sizes are for one engineer, with tests.
 - Each new kind is a cross-cutting change: the kind derivation copied in seven places, the closed
   protocol list and its CHECK constraints, a grant type (ADR 0036), lifecycle declarations and
   their labels (ADR 0047), configio, Terraform, OpenAPI and the CLI. The phase sizes include it.
-- Autoscaling moves in the console; its API paths, events and grants do not change.
+- Autoscaling groups stay where they were; nothing about them changes.
 
 ## Decisions taken, 2026-11-12
 
@@ -121,3 +129,6 @@ Sizes are for one engineer, with tests.
 4. **The user portal:** its tabs stay per kind (Hosts, Databases, Applications, Autoscaling, then
    Kubernetes), since people connect to things and not to the console's grouping. Taken as
    recommended.
+5. **Autoscaling out of Fabric, platforms as a column (2026-11-13):** the owner's call, with the
+   recommendation that EKS, GKE and AKS be a platform on one list rather than tabs. GKE and AKS
+   follow EKS's shape when asked for.

@@ -28,20 +28,26 @@ function at(path: string) {
   )
 }
 
-// Fabric (ADR 0048) holds what Zanskar reaches through a control plane; the
-// autoscaling groups are its first tab, and their old address leads there.
+// Fabric (ADR 0048) holds the Kubernetes clusters. Autoscaling groups were
+// its first tab for a day and went back to their own page (2026-11-13), so
+// the tab's old address leads there.
 describe('Fabric', () => {
-  it('opens on the Autoscaling tab, where the old address leads', async () => {
-    at('/admin/autoscaling')
+  it('opens on Kubernetes', async () => {
+    at('/admin/fabric')
     expect(await screen.findByRole('heading', { name: 'Fabric' })).toBeDefined()
-    expect(screen.getByRole('tab', { name: 'Autoscaling', selected: true })).toBeDefined()
-    expect(screen.getByRole('button', { name: 'Enroll group' })).toBeDefined()
-    expect(screen.getByTestId('where').textContent).toBe('/admin/fabric/autoscaling')
+    expect(screen.getByRole('tab', { name: 'Kubernetes', selected: true })).toBeDefined()
+    expect(screen.getByRole('button', { name: 'Add cluster' })).toBeDefined()
+  })
+
+  it('sends the old autoscaling tab back to the autoscaling page', async () => {
+    at('/admin/fabric/autoscaling')
+    expect(await screen.findByRole('heading', { name: 'Autoscaling groups' })).toBeDefined()
+    expect(screen.getByTestId('where').textContent).toBe('/admin/autoscaling')
   })
 
   it('leads a kind it does not have back to the section', async () => {
     at('/admin/fabric/nothing')
-    expect(await screen.findByRole('tab', { name: 'Autoscaling', selected: true })).toBeDefined()
+    expect(await screen.findByRole('tab', { name: 'Kubernetes', selected: true })).toBeDefined()
     expect(screen.getByTestId('where').textContent).toBe('/admin/fabric')
   })
 })

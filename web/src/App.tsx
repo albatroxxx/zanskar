@@ -168,6 +168,7 @@ export default function App() {
                 { to: '/admin/hosts', label: 'Hosts' },
                 { to: '/admin/databases', label: 'Databases' },
                 { to: '/admin/applications', label: 'Applications' },
+                { to: '/admin/autoscaling', label: 'Autoscaling' },
                 { to: '/admin/fabric', label: 'Fabric' },
                 { to: '/admin/credentials', label: 'Credentials' },
                 { to: '/admin/policies', label: 'Policies' },
