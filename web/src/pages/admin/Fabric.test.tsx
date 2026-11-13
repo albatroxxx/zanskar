@@ -54,8 +54,13 @@ describe('Fabric', () => {
     const tiles = await screen.findAllByRole('link', { name: /Vanilla|EKS|GKE|AKS/ })
     expect(tiles.map((a) => a.textContent)).toEqual(['2Vanilla', '1EKS', '0GKE', '0AKS'])
     expect(tiles.map((a) => a.getAttribute('href'))).toEqual(['/admin/fabric/vanilla', '/admin/fabric/eks', '/admin/fabric/gke', '/admin/fabric/aks'])
+    // The open platform's tile is the selected one, and says so.
+    expect(tiles[0].getAttribute('aria-current')).toBe('page')
+    expect(tiles[1].getAttribute('aria-current')).toBeNull()
     tiles[1].click()
     expect(await screen.findByRole('tab', { name: 'EKS', selected: true })).toBeDefined()
+    expect(tiles[1].getAttribute('aria-current')).toBe('page')
+    expect(tiles[0].getAttribute('aria-current')).toBeNull()
     expect(screen.getByTestId('where').textContent).toBe('/admin/fabric/eks')
     expect(get).toHaveBeenCalledWith('/targets?limit=500&kind=kubernetes&platform=eks')
   })

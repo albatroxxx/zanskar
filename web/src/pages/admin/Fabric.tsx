@@ -46,7 +46,7 @@ export function Fabric() {
       </PageHead>
       <div className="stat-grid platforms">
         {platforms.map((p) => (
-          <StatTile key={p.key} value={counts ? (counts.clusters_by_platform[p.key] ?? 0) : null} label={platformName(p.key)} icon={<TileIcon kind={p.icon} />} to={`/admin/fabric/${p.key}`} />
+          <StatTile key={p.key} value={counts ? (counts.clusters_by_platform[p.key] ?? 0) : null} label={platformName(p.key)} icon={<TileIcon kind={p.icon} />} to={`/admin/fabric/${p.key}`} selected={p.key === open.key} />
         ))}
       </div>
       <Tabs<KubePlatform> label="Platforms" value={open.key} onChange={(k) => nav(`/admin/fabric/${k}`)} tabs={platforms.map((p) => ({ key: p.key, label: platformName(p.key) }))} />
