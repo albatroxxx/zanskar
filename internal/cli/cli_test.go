@@ -132,7 +132,10 @@ func (e *env) fakeAPI(mux *http.ServeMux) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = io.WriteString(w, `{}`)
 	})))
-	reply("GET /api/v1/targets", 200, `{"items":[{"id":"t1","name":"web-01","address":"10.0.0.5","os_family":"linux","host_key_status":"trusted","tags":{"env":"prod"}},{"id":"t2","name":"orders-db","address":"db.internal","os_family":"linux","engine":"postgres","tags":{"env":"staging"}}]}`)
+	// The third target is a Kubernetes cluster acting as a shared identity (ADR 0045).
+	cluster := `{"id":"t3","name":"prod-cluster","address":"10.0.0.20","os_family":"other","kube_api_server":"https://10.0.0.20:6443","kube_platform":"vanilla","kube_impersonate":false,"capabilities":["kube","pod"],"status":"active","tags":{"env":"prod"}}`
+	reply("GET /api/v1/targets", 200, `{"items":[{"id":"t1","name":"web-01","address":"10.0.0.5","os_family":"linux","host_key_status":"trusted","tags":{"env":"prod"}},{"id":"t2","name":"orders-db","address":"db.internal","os_family":"linux","engine":"postgres","tags":{"env":"staging"}},`+cluster+`]}`)
+	reply("GET /api/v1/targets/{id}", 200, cluster)
 	reply("POST /api/v1/targets/{id}/probe", 200, `{"host_key_fingerprint":"SHA256:abc","capabilities":["ssh"]}`)
 	// Built from the policy package's types (ADR 0036), so the reply has the
 	// shape the API sends: an audience and grants, each with its conditions.
@@ -149,6 +152,10 @@ func (e *env) fakeAPI(mux *http.ServeMux) {
 				{ID: "gr-2", Kind: "host", Targets: []policy.GrantTarget{{ID: "t1", Protocols: []string{"ssh", "vnc"}}, {ID: "t-retired", Protocols: []string{"ssh"}}},
 					Tags:   &policy.TagMatch{Match: map[string][]string{"tier": {"web"}, "env": {"prod", "staging"}}, Protocols: []string{"ssh"}},
 					Access: policy.AccessStanding, SignIn: policy.SignInOwn, AllowClipboard: true, IdleTimeoutMinutes: 15, TimeWindows: []policy.TimeWindow{}},
+				// A Kubernetes grant carries its scope (ADR 0045).
+				{ID: "gr-k", Kind: "kubernetes", Targets: []policy.GrantTarget{{ID: "t3", Protocols: []string{"kube"}}},
+					Access: policy.AccessStanding, SignIn: policy.SignInTarget, RequireMFA: true, IdleTimeoutMinutes: 15, TimeWindows: []policy.TimeWindow{},
+					Namespaces: []string{"prod", "staging"}, ClusterScope: true},
 			}},
 		// A group deleted leaves its policies with no one in them (ADR 0036).
 		{ID: "p2", Name: "old", Enabled: false, Subjects: []policy.Subject{},
@@ -357,8 +364,9 @@ func TestCommandsOverTheAPI(t *testing.T) {
 		{"request deny 9c1d2e3f", "", "ok", []string{"Denied"}},
 		{"request revoke 9c1d2e3f", "", "confirm", []string{"withdraws alice's access to orders-db"}},
 		{"request revoke 9c1d2e3f", "alice", "ok", []string{"Revoked"}},
-		{"targets --search web", "", "ok", []string{"web-01", "postgres"}},
+		{"targets --search web", "", "ok", []string{"web-01", "postgres", "prod-cluster", "kubernetes"}},
 		{"targets --tag env", "", "error", []string{"key=value"}},
+		{"target show prod-cluster", "", "ok", []string{"api server   https://10.0.0.20:6443", "platform     vanilla", "acts as      the credential (shared identity)", "offers       kube, pod"}},
 		{"target probe web-01", "", "ok", []string{"Probed web-01", "SHA256:abc", "Trust is unchanged"}},
 		{"policies", "", "ok", []string{"NAME         WHO", "prod-db-jit", "dba +1 user", "database (1 target, role=db) · host SSH, VNC", "standing, approval", "on",
 			"old", "no one", "autoscaling SSH, RDP (1 group)", "off"}},
@@ -366,7 +374,8 @@ func TestCommandsOverTheAPI(t *testing.T) {
 			"Grant 1 · database", "targets        orders-db\n", "tags           role=db\n", "access         approval", "needs MFA      yes",
 			"max session    60 min", "idle timeout   10 min", "windows        mon,tue,wed,thu,fri 08:00-20:00 Europe/Berlin", "retention      365 days", "sign-in        as the target sets it",
 			"Grant 2 · host", "targets        web-01 (SSH, VNC), t-retired (SSH)", "tags           env=prod|staging tier=web (SSH)", "access         standing",
-			"sign-in        their own login", "clipboard      yes", "file transfer  no", "max session    none", "windows        any time", "retention      the global setting", "gr-2"}},
+			"sign-in        their own login", "clipboard      yes", "file transfer  no", "max session    none", "windows        any time", "retention      the global setting", "gr-2",
+			"Grant 3 · kubernetes", "targets        prod-cluster", "namespaces     prod, staging", "cluster scope  yes", "port-forward   no"}},
 		{"policy show old", "", "ok", []string{"Applies to no one", "Grant 1 · autoscaling", "web-fleet (RDP, SSH)", "sat all day UTC"}},
 		{"asgs", "", "ok", []string{"web-fleet", "aws eu-west-2"}},
 		{"asg sync web-fleet", "", "ok", []string{"Synced web-fleet"}},
