@@ -123,9 +123,9 @@ func (h *AdminHandler) list(w http.ResponseWriter, r *http.Request) {
 	f := ListFilter{Tags: tags, Kind: r.URL.Query().Get("kind"), Status: r.URL.Query().Get("status"),
 		OSFamily: r.URL.Query().Get("os_family"), Query: r.URL.Query().Get("q"), Attention: r.URL.Query().Get("attention") == "true"}
 	switch f.Kind {
-	case "", KindHost, KindDatabase, KindApplication:
+	case "", KindHost, KindDatabase, KindApplication, KindKubernetes:
 	default:
-		httpx.BadRequest(w, r, "kind must be host, database or application")
+		httpx.BadRequest(w, r, "kind must be host, database, application or kubernetes")
 		return
 	}
 	switch f.Status {

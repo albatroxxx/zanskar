@@ -98,7 +98,7 @@ func TestListRejectsBadFilters(t *testing.T) {
 		t.Fatalf("bad status: %d %v", code, out)
 	}
 	code, out = e.do("GET", "/api/v1/targets?kind=printer", nil, e.admin)
-	if code != 400 || out["message"] != "kind must be host, database or application" {
+	if code != 400 || out["message"] != "kind must be host, database, application or kubernetes" {
 		t.Fatalf("bad kind: %d %v", code, out)
 	}
 }

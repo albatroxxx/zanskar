@@ -147,9 +147,13 @@ export function TargetDetail({ target, credentials, onClose, onChanged, onDelete
   // RDP, VNC and WinRM slots; and by the probe alone, a port closed at the
   // moment of probing would hide its slot (review, same day).
   const usual = (hostPorts[t.os_family] ?? hostPorts.other).main
+  // A cluster has one slot, kube, holding Zanskar's identity there (ADR
+  // 0045); a pod shell uses it.
   const slotProtocols: Protocol[] = database
     ? ['database']
-    : protocols.filter((p) => usual.includes(p) || t.capabilities.includes(p) || !!t.ports[p] || !!t.credentials?.[p])
+    : cluster
+      ? ['kube']
+      : protocols.filter((p) => usual.includes(p) || t.capabilities.includes(p) || !!t.ports[p] || !!t.credentials?.[p])
   // What a probe reached: a host's protocols, or a database's own port.
   const probed: Protocol[] = database ? ['database'] : protocols
 
@@ -302,9 +306,9 @@ export function TargetDetail({ target, credentials, onClose, onChanged, onDelete
           host slots (ssh, rdp, vnc, winrm) do not apply to it. */}
       {!application && (
         <>
-          <h2 style={{ marginTop: 18 }}>{database ? 'Database credential' : 'Credentials per protocol'}</h2>
+          <h2 style={{ marginTop: 18 }}>{database ? 'Database credential' : cluster ? 'Cluster credential' : 'Credentials per protocol'}</h2>
           <CredentialBindings
-            slots={slotProtocols.map((p) => ({ protocol: p, label: p === 'database' ? `Database (${engineName(t.engine)})` : protocolName(p) }))}
+            slots={slotProtocols.map((p) => ({ protocol: p, label: p === 'database' ? `Database (${engineName(t.engine)})` : p === 'kube' ? 'Kubernetes' : protocolName(p) }))}
             current={t.credentials}
             credentials={credentials}
             onSave={saveBindings}

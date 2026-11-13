@@ -12,7 +12,8 @@ export function Kubernetes({ adding, setAdding }: { adding: boolean; setAdding: 
   return (
     <TargetsPage
       kind="kubernetes"
-      title="Kubernetes"
+      // The title names what the list holds (the search box and the empty match read it); Fabric shows the head.
+      title="Clusters"
       addLabel="Add cluster"
       empty="No clusters yet."
       columns={['API server', 'Acts as', 'Credential', 'Tags']}
