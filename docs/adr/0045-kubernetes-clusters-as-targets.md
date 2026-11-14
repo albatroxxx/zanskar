@@ -287,3 +287,15 @@ What the first build of the API-as-the-person settled, where the decision above 
     through encoded slashes, encoded or plain dot segments or doubled slashes are refused by the
     gateway behind the real server mux, and nothing of them reaches the cluster (break-it,
     2026-11-14).
+13. **Run against a real cluster (kind, Kubernetes v1.37.0, 2026-11-14).** The printed manifest
+    applied as is, a service-account token on the kube slot, a policy granting the group `ops` the
+    namespace `demo`: `kubectl` through the gateway created a pod, waited for it, ran `exec` over
+    WebSocket (recorded as a stream with its byte counts), read events and Table output, and was
+    refused `kube-system`, `nodes`, `-A` and `port-forward` with the gateway's sentences; the
+    cluster's audit saw the person and `zanskar:ops`. Two findings, fixed: the cluster test asked
+    whether it may impersonate groups without naming one, and RBAC answers a nameless review of a
+    grant by `resourceNames` "no", so it reported `impersonate_groups: false` while impersonation
+    worked (it asks for `system:authenticated` now); and `kubectl auth whoami` and `auth can-i`,
+    reviews of the caller alone at paths that name no namespace, were refused as cluster-wide
+    (every scope admits the three self-subject reviews now; a review of someone else stays
+    cluster-wide).

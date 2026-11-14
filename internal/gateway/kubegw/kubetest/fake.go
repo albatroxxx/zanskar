@@ -82,13 +82,17 @@ func (f *API) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		var in struct {
 			Spec struct {
 				ResourceAttributes struct {
-					Verb, Resource string
+					Verb, Resource, Name string
 				} `json:"resourceAttributes"`
 			} `json:"spec"`
 		}
 		_ = json.NewDecoder(r.Body).Decode(&in)
+		// Groups are granted by name, as the printed manifest grants them:
+		// a review that names none is refused, as a real cluster refuses it.
+		ra := in.Spec.ResourceAttributes
+		allowed := ra.Verb == "impersonate" && f.Allow[ra.Resource] && (ra.Resource != "groups" || ra.Name == "system:authenticated")
 		w.WriteHeader(http.StatusCreated)
-		_ = json.NewEncoder(w).Encode(map[string]any{"status": map[string]bool{"allowed": in.Spec.ResourceAttributes.Verb == "impersonate" && f.Allow[in.Spec.ResourceAttributes.Resource]}})
+		_ = json.NewEncoder(w).Encode(map[string]any{"status": map[string]bool{"allowed": allowed}})
 	case r.URL.Path == "/api/v1/namespaces" && r.URL.Query().Get("watch") == "":
 		if f.NSDeny {
 			w.WriteHeader(http.StatusForbidden)

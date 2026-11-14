@@ -200,18 +200,25 @@ func (c *Client) Version(ctx context.Context) (*Version, error) {
 // the credential may impersonate users and groups: what every session as the
 // person needs (ADR 0045, 2).
 func (c *Client) MayImpersonate(ctx context.Context) (users, groups bool, err error) {
-	users, err = c.selfAccess(ctx, "impersonate", "users")
+	users, err = c.selfAccess(ctx, "impersonate", "users", "")
 	if err != nil {
 		return false, false, err
 	}
-	groups, err = c.selfAccess(ctx, "impersonate", "groups")
+	// The manifest grants groups by name (resourceNames), as it should, and
+	// RBAC answers a nameless review of a named grant "no": the one group
+	// every session carries is asked for (kind v1.37, 2026-11-14).
+	groups, err = c.selfAccess(ctx, "impersonate", "groups", "system:authenticated")
 	return users, groups, err
 }
 
-func (c *Client) selfAccess(ctx context.Context, verb, resource string) (bool, error) {
+func (c *Client) selfAccess(ctx context.Context, verb, resource, name string) (bool, error) {
+	attrs := map[string]string{"verb": verb, "resource": resource}
+	if name != "" {
+		attrs["name"] = name
+	}
 	review := map[string]any{
 		"apiVersion": "authorization.k8s.io/v1", "kind": "SelfSubjectAccessReview",
-		"spec": map[string]any{"resourceAttributes": map[string]string{"verb": verb, "resource": resource}},
+		"spec": map[string]any{"resourceAttributes": attrs},
 	}
 	code, b, err := c.do(ctx, http.MethodPost, "/apis/authorization.k8s.io/v1/selfsubjectaccessreviews", review)
 	if err != nil {

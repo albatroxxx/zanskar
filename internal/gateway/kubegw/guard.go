@@ -151,6 +151,12 @@ func (s Scope) Allow(r Request) (ok bool, why string) {
 	if r.Verb == "portforward" && !s.PortForward {
 		return false, "Zanskar: your access to this cluster does not include port-forward"
 	}
+	if r.SelfReview() {
+		// kubectl auth whoami and auth can-i ask about the caller alone,
+		// at paths that name no namespace; the cluster answers for the
+		// person impersonated. Recorded, as any request is.
+		return true, ""
+	}
 	if r.Namespace == "" {
 		if s.ClusterScope {
 			return true, ""
@@ -164,6 +170,21 @@ func (s Scope) Allow(r Request) (ok bool, why string) {
 		return false, "Zanskar: your access to this cluster covers the namespaces " + strings.Join(s.Namespaces, ", ") + " only, not " + r.Namespace
 	}
 	return true, ""
+}
+
+// SelfReview reports whether the request is one of the API's reviews of the
+// caller's own identity or access (SelfSubjectReview, SelfSubjectAccessReview,
+// SelfSubjectRulesReview): about the person and nothing else, so every scope
+// admits it (kind v1.37, 2026-11-14: auth whoami and auth can-i were refused
+// as cluster-wide).
+func (r Request) SelfReview() bool {
+	switch {
+	case r.Group == "authentication.k8s.io" && r.Resource == "selfsubjectreviews":
+		return true
+	case r.Group == "authorization.k8s.io" && (r.Resource == "selfsubjectaccessreviews" || r.Resource == "selfsubjectrulesreviews"):
+		return true
+	}
+	return false
 }
 
 // Label is the request as the recording and the live watcher show it:

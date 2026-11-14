@@ -41,6 +41,12 @@ func TestGuard(t *testing.T) {
 		{"DELETE", "/apis/apps/v1/namespaces/data/deployments", "", prod, true, "deletecollection deployments -n data", ""},
 		{"GET", "/api/v1/namespaces/prod/services/web/proxy/healthz", "", prod, true, "proxy services/web -n prod", ""},
 		{"POST", "/api/v1/namespaces/prod/pods/web-1/exec", "command=sh", prod, true, "exec pods/web-1 -n prod", ""},
+		// Reviews of the caller alone (auth whoami, auth can-i) pass under any
+		// scope; a review of someone else is cluster-wide (kind v1.37, 2026-11-14).
+		{"POST", "/apis/authentication.k8s.io/v1/selfsubjectreviews", "", prod, true, "create selfsubjectreviews", ""},
+		{"POST", "/apis/authorization.k8s.io/v1/selfsubjectaccessreviews", "", prod, true, "create selfsubjectaccessreviews", ""},
+		{"POST", "/apis/authorization.k8s.io/v1/selfsubjectrulesreviews", "", prod, true, "create selfsubjectrulesreviews", ""},
+		{"POST", "/apis/authorization.k8s.io/v1/subjectaccessreviews", "", prod, false, "create subjectaccessreviews", "name one (-n)"},
 		// The namespace object itself reads as a request in it.
 		{"GET", "/api/v1/namespaces/prod", "", prod, true, "get namespaces -n prod", ""},
 		// Outside the granted namespaces.
