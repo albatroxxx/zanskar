@@ -246,6 +246,62 @@ func TestKubeSessionSharedIdentity(t *testing.T) {
 	f.stillLive(t, sid)
 }
 
+// The cluster refusing the gateway's credential mid-session (the service
+// account's token rotated away) answers the person a 502 that names the
+// gateway's credential, not a 401 that reads as their kubeconfig; the
+// session stays for the administrator to fix the credential under.
+func TestKubeSessionCredentialRefused(t *testing.T) {
+	f := newKubeFixture(t)
+	sid, token, _ := f.connectKube(t)
+	if rr := f.kubectl(sid, token, "/api/v1/namespaces/prod/pods"); rr.Code != 200 {
+		t.Fatalf("pods: %d", rr.Code)
+	}
+	f.api.Token = "rotated"
+	rr := f.kubectl(sid, token, "/api/v1/namespaces/prod/pods")
+	if rr.Code != 502 || !strings.Contains(rr.Body.String(), "refused the gateway's credential") {
+		t.Fatalf("after the rotation: %d %s", rr.Code, rr.Body.String())
+	}
+	f.stillLive(t, sid)
+}
+
+// Paths that try to leave the namespace through encoding or dot segments
+// (break-it, 2026-11-14): each is refused by the gateway, and nothing of it
+// reaches the cluster. The real server mux is in front, as in production.
+func TestKubeProxyPathProbes(t *testing.T) {
+	f := newKubeFixture(t)
+	sid, token, _ := f.connectKube(t)
+	for _, probe := range []string{
+		"/api/v1/namespaces/prod/pods/..%2F..%2Fkube-system%2Fpods",
+		"/api/v1/namespaces/prod%2F..%2Fkube-system/pods",
+		"/api/v1/namespaces/prod/pods/%2e%2e/%2e%2e/kube-system/pods",
+		"/api/v1/namespaces/prod/../kube-system/pods",
+		"/api/v1/namespaces/prod//pods",
+		"/api/v1/namespaces/./pods",
+		"/api/v1/namespaces/kube-system/pods%3Fnamespace=prod",
+		"/api/v1/namespaces/prod/pods?fieldSelector=metadata.namespace%3Dkube-system",
+		"/api/v1/pods?fieldSelector=metadata.namespace%3Dprod",
+		"/%2E%2E/version",
+		"/api/v1/namespaces/prod/pods/x/../../kube-system/pods",
+	} {
+		before := f.api.Count()
+		rr := f.kubectl(sid, token, probe)
+		reached := f.api.Count() - before
+		switch probe {
+		case "/api/v1/namespaces/prod/pods?fieldSelector=metadata.namespace%3Dkube-system":
+			// A field selector cannot widen a namespaced list: the path
+			// names prod, the cluster answers for prod. It is forwarded.
+			if rr.Code != 200 || reached != 1 || f.api.Last().Path != "/api/v1/namespaces/prod/pods" {
+				t.Errorf("%s: %d, %d reached, %s", probe, rr.Code, reached, f.api.Last().Path)
+			}
+		default:
+			if rr.Code == 200 || reached != 0 {
+				t.Errorf("%s: %d, %d requests reached the cluster", probe, rr.Code, reached)
+			}
+		}
+	}
+	f.stillLive(t, sid)
+}
+
 // eksMinter stands in for the role's token source (ADR 0045, 8).
 type eksMinter struct {
 	token string

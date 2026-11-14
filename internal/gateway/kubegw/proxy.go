@@ -3,6 +3,7 @@
 package kubegw
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
@@ -228,6 +229,18 @@ func (s *Session) rewrite(pr *httputil.ProxyRequest) {
 
 func (s *Session) modifyResponse(res *http.Response) error {
 	label, _ := res.Request.Context().Value(labelKey).(string)
+	if res.StatusCode == http.StatusUnauthorized {
+		// The cluster refused Zanskar's own credential: a rotated token, a
+		// role no longer mapped. Nothing the person did, and the API's 401
+		// would read as their kubeconfig being wrong, so it is said as the
+		// gateway's fault and logged for the administrator.
+		s.log.Warn("kube: the cluster refused the gateway's credential", "session", s.ID)
+		if label != "" {
+			s.line(label + " → 502 (cluster refused the gateway's credential)")
+		}
+		replaceStatus(res, http.StatusBadGateway, "ServiceUnavailable", "Zanskar: the cluster refused the gateway's credential; an administrator can test the cluster's credential")
+		return nil
+	}
 	if label == "" {
 		return nil
 	}
@@ -237,6 +250,22 @@ func (s *Session) modifyResponse(res *http.Response) error {
 	}
 	s.line(fmt.Sprintf("%s → %d", label, res.StatusCode))
 	return nil
+}
+
+// replaceStatus makes res a Kubernetes Status answer of Zanskar's own in
+// place of what the cluster sent, whose body is dropped.
+func replaceStatus(res *http.Response, code int, reason, msg string) {
+	if res.Body != nil {
+		_ = res.Body.Close()
+	}
+	b, _ := json.Marshal(map[string]any{
+		"kind": "Status", "apiVersion": "v1", "metadata": map[string]any{},
+		"status": "Failure", "message": msg, "reason": reason, "code": code,
+	})
+	res.StatusCode, res.Status = code, fmt.Sprintf("%d %s", code, http.StatusText(code))
+	res.Header = http.Header{"Content-Type": {"application/json"}, "Cache-Control": {"no-store"}}
+	res.Body, res.ContentLength = io.NopCloser(bytes.NewReader(b)), int64(len(b))
+	res.TransferEncoding = nil
 }
 
 // errMint is a token the credential could not mint (an EKS role AWS

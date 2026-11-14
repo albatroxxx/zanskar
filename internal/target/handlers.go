@@ -194,6 +194,7 @@ func (h *AdminHandler) update(w http.ResponseWriter, r *http.Request) {
 	}
 	before := map[string]any{"name": t.Name, "address": t.Address, "status": t.Status}
 	beforeOrigins, beforeDeps, beforePrivate := origins(t), t.AppDependencies, t.AppPrivate.Entries()
+	beforeCluster := clusterTerms(t)
 	body.apply(t)
 	if !h.addressAllowed(w, r, audit.TargetUpdate, t.ID, t) || !h.kubeSlotAllowed(w, r, t) {
 		return
@@ -232,10 +233,17 @@ func (h *AdminHandler) update(w http.ResponseWriter, r *http.Request) {
 	if len(privateRemoved) > 0 {
 		details["private_removed"] = privateRemoved
 	}
+	// A cluster's sessions hold its endpoint, CA, platform and the way they
+	// act for their life (ADR 0045): a change to any ends them, and the
+	// person connects again under the new terms.
+	clusterChanged := beforeCluster != "" && beforeCluster != clusterTerms(t)
+	if clusterChanged {
+		details["cluster_changed"] = true
+	}
 	// A target taken out of service, or moved to an address nobody has
 	// trusted yet, keeps no session: what was admitted to the old target
 	// ends now rather than at its own limits.
-	if h.Revoker != nil && ((before["status"] == StatusActive && t.Status == StatusDisabled) || before["address"] != t.Address || len(removed) > 0 || narrowed || len(privateRemoved) > 0) {
+	if h.Revoker != nil && ((before["status"] == StatusActive && t.Status == StatusDisabled) || before["address"] != t.Address || len(removed) > 0 || narrowed || len(privateRemoved) > 0 || clusterChanged) {
 		details["live_sessions_ended"] = h.Revoker.TargetDisabled(t.ID)
 	}
 	h.record(r, audit.TargetUpdate, t.ID, audit.Success, details)
@@ -666,7 +674,13 @@ func (h *AdminHandler) setCredential(w http.ResponseWriter, r *http.Request) {
 		h.fail(w, r, err)
 		return
 	}
-	h.record(r, audit.TargetCredentialSet, id, audit.Success, map[string]any{"protocol": proto, "credential_id": body.CredentialID})
+	details := map[string]any{"protocol": proto, "credential_id": body.CredentialID}
+	if proto == Kube && h.Revoker != nil {
+		// A cluster's sessions hold the credential they started with (ADR
+		// 0045): one bound anew ends them, so the old one is let go of.
+		details["live_sessions_ended"] = h.Revoker.TargetDisabled(id)
+	}
+	h.record(r, audit.TargetCredentialSet, id, audit.Success, details)
 	t, err := h.Repo.Get(r.Context(), id)
 	if err != nil {
 		h.fail(w, r, err)
@@ -685,7 +699,11 @@ func (h *AdminHandler) unsetCredential(w http.ResponseWriter, r *http.Request) {
 		h.fail(w, r, err)
 		return
 	}
-	h.record(r, audit.TargetCredentialUnset, id, audit.Success, map[string]any{"protocol": proto})
+	details := map[string]any{"protocol": proto}
+	if proto == Kube && h.Revoker != nil {
+		details["live_sessions_ended"] = h.Revoker.TargetDisabled(id)
+	}
+	h.record(r, audit.TargetCredentialUnset, id, audit.Success, details)
 	w.WriteHeader(http.StatusNoContent)
 }
 

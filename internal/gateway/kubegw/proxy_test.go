@@ -410,6 +410,36 @@ func TestProxyBearerSource(t *testing.T) {
 	}
 }
 
+// The cluster refusing Zanskar's own credential (a rotated token) is said
+// as the gateway's fault, a 502 with a sentence, and recorded: the API's 401
+// would read as the person's kubeconfig being wrong.
+func TestProxyClusterRefusesTheCredential(t *testing.T) {
+	f := &kubetest.API{Token: "sa-token"}
+	api, ca := kubetest.Start(t, f)
+	rec := &lines{}
+	s, tok, err := NewSession(Options{SessionID: "s1", Endpoint: Endpoint{APIServer: api, CA: ca}, Credential: Credential{Token: "rotated-away"},
+		Identity: Identity{User: "alice"}, Scope: Scope{Namespaces: []string{"prod"}}, Record: rec.add})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	srv := serve(t, s)
+	code, body := fetch(t, srv, tok, "/api/v1/namespaces/prod/pods", nil)
+	if code != 502 || !strings.Contains(string(body), "refused the gateway's credential") || strings.Contains(string(body), "Unauthorized") {
+		t.Fatalf("refused credential: %d %s", code, body)
+	}
+	if all := rec.all(); !slices.ContainsFunc(all, func(l string) bool { return strings.Contains(l, "502 (cluster refused the gateway's credential)") }) {
+		t.Fatalf("recording: %v", all)
+	}
+	// Discovery too, without a line.
+	if code, _ := fetch(t, srv, tok, "/api", nil); code != 502 {
+		t.Fatalf("discovery: %d", code)
+	}
+	if n := len(rec.all()); n != 1 {
+		t.Fatalf("discovery wrote a line: %v", rec.all())
+	}
+}
+
 func TestKubeconfig(t *testing.T) {
 	k := Kubeconfig(KubeconfigOptions{Name: "Prod Cluster (EU)", Server: "https://gw.example/k8s/s1", Token: "zk8s_abc", CAPEM: "-----BEGIN CERTIFICATE-----\nAA==\n-----END CERTIFICATE-----\n"})
 	for _, want := range []string{"name: zanskar-prod-cluster-eu\n", "server: https://gw.example/k8s/s1\n", "certificate-authority-data: ", "token: zk8s_abc\n", "current-context: zanskar-prod-cluster-eu\n"} {

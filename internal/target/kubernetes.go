@@ -224,6 +224,15 @@ func (h *AdminHandler) kubeManifest(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write([]byte(text))
 }
 
+// clusterTerms is what a cluster's live sessions hold for their life, as one
+// comparable text; "" for anything that is not a cluster.
+func clusterTerms(t *Target) string {
+	if !t.IsKubernetes() {
+		return ""
+	}
+	return fmt.Sprintf("%s\n%s\n%s\n%t", t.KubeAPIServer, t.KubeCA, t.KubePlatform, t.Impersonates())
+}
+
 // kubeSlotAllowed refuses, before anything is saved, a kube slot holding a
 // credential the cluster's platform does not take (KubeSlotAccepts).
 func (h *AdminHandler) kubeSlotAllowed(w http.ResponseWriter, r *http.Request, t *Target) bool {

@@ -151,6 +151,63 @@ func TestKubernetesTestAndManifest(t *testing.T) {
 	}
 }
 
+// A cluster's live sessions hold its endpoint, CA, platform, the way they
+// act and the credential they started with (ADR 0045): a change to any of
+// these ends them; a tag or a note does not.
+func TestKubernetesEditEndsSessions(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	srv, ca := fakeCluster(t, "sa-token")
+	code, body := e.do("POST", "/api/v1/targets", map[string]any{"name": "prod-k8s", "kube_api_server": srv.URL, "kube_ca": ca}, e.admin)
+	if code != 201 {
+		t.Fatal(body)
+	}
+	id := body["id"].(string)
+	put := func(patch map[string]any) {
+		t.Helper()
+		b := map[string]any{"name": "prod-k8s", "kube_api_server": srv.URL, "kube_ca": ca, "kube_platform": "vanilla", "kube_impersonate": true, "tags": map[string]string{}, "notes": ""}
+		for k, v := range patch {
+			b[k] = v
+		}
+		if code, out := e.do("PUT", "/api/v1/targets/"+id, b, e.admin); code != 200 {
+			t.Fatalf("update %v: %d %v", patch, code, out)
+		}
+	}
+	e.revoker.disabled = nil
+	put(map[string]any{"tags": map[string]string{"env": "prod"}, "notes": "renamed nothing"})
+	if len(e.revoker.disabled) != 0 {
+		t.Fatalf("a tag ended the sessions: %v", e.revoker.disabled)
+	}
+	for name, patch := range map[string]map[string]any{
+		"the CA":       {"kube_ca": ""},
+		"the way":      {"kube_impersonate": false},
+		"the platform": {"kube_platform": "gke"},
+		"the endpoint": {"kube_api_server": "https://10.0.0.9:6443"},
+	} {
+		e.revoker.disabled = nil
+		put(patch)
+		if len(e.revoker.disabled) != 1 || e.revoker.disabled[0] != id {
+			t.Errorf("%s changed: sessions ended for %v", name, e.revoker.disabled)
+		}
+		put(nil)
+	}
+	// The credential on the slot, bound or unbound.
+	tok := &credential.Credential{Name: "sa", Type: credential.TypeKubeToken, Mode: credential.ModeVaulted}
+	if err := e.vault.Create(ctx, tok, &credential.Secret{Password: "sa-token"}, ""); err != nil {
+		t.Fatal(err)
+	}
+	e.revoker.disabled = nil
+	if code, out := e.do("PUT", "/api/v1/targets/"+id+"/credentials/kube", map[string]string{"credential_id": tok.ID}, e.admin); code != 200 {
+		t.Fatalf("bind: %d %v", code, out)
+	}
+	if code, _ := e.do("DELETE", "/api/v1/targets/"+id+"/credentials/kube", nil, e.admin); code != 204 {
+		t.Fatalf("unbind: %d", code)
+	}
+	if len(e.revoker.disabled) != 2 {
+		t.Fatalf("slot changes ended sessions %d times, want 2", len(e.revoker.disabled))
+	}
+}
+
 // fakeMinter mints what the fake cluster accepts, or fails as AWS would.
 type fakeMinter struct {
 	token string

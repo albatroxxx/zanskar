@@ -275,3 +275,15 @@ What the first build of the API-as-the-person settled, where the decision above 
     and prints the mapping instead of a ServiceAccount. `ListClusters` is in the client, not yet
     in the console. Not run against a real EKS cluster yet: the AWS test environment is torn
     down; the owner's gateway has the instance role.
+11. **The gateway's credential failing is said as the gateway's fault.** A cluster that refuses
+    Zanskar's own credential (a token rotated away, a role no longer mapped) answers the person a
+    502 with a sentence naming the gateway's credential, logged for the administrator, where the
+    API's 401 would have read as their kubeconfig being wrong. The session stays, to be used
+    again once the credential is fixed. The same sentence covers a token AWS would not mint.
+12. **An edit to the cluster ends its sessions.** A session holds the endpoint, CA, platform, the
+    way it acts and the credential it started with for its life, so a change to any of them, or
+    a credential bound or unbound on the kube slot, ends the cluster's live sessions as a
+    disabled target's are; a tag or a note does not. Paths that try to leave the namespace
+    through encoded slashes, encoded or plain dot segments or doubled slashes are refused by the
+    gateway behind the real server mux, and nothing of them reaches the cluster (break-it,
+    2026-11-14).
