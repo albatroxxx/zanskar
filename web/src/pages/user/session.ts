@@ -36,9 +36,12 @@ export interface SessionState {
  *  instance's ticket, under the same target and protocol, naming the
  *  instance it left. */
 export function switchedState(from: SessionState, res: ConnectResponse): SessionState {
+  // A failover moves a bridged session, which always answers a ticket and a
+  // path; only a cluster session (ADR 0045) answers neither, and it never
+  // fails over.
   return {
-    ticket: res.ticket,
-    ws_path: res.ws_path,
+    ticket: res.ticket ?? '',
+    ws_path: res.ws_path ?? '',
     target: from.target,
     target_id: from.target_id,
     protocol: from.protocol,
