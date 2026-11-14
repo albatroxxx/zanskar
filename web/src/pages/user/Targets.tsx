@@ -1,11 +1,11 @@
 import { useEffect, useState, type FormEvent } from 'react'
 import { api, errorMessage } from '../../api/client'
 import { accessDrill, expiresSoon, expiringSoonMs } from '../../api/drilldown'
-import type { AccessRequest, Page, Protocol, ReachableInstance, ReachableTarget, Session } from '../../api/types'
+import type { AccessRequest, ConnectResponse, Page, Protocol, ReachableInstance, ReachableTarget, Session } from '../../api/types'
 import { DatabaseIcon, OSIcon, StateIcon } from '../../components/icons'
 import { Alert, Badge, Empty, Field, Loading, Modal, PageHead, StatTile, Tabs, Tags } from '../../components/ui'
 import { badgesChanged } from '../../components/badges'
-import { engineName, protocolName } from '../../api/format'
+import { engineName, fmtTime, platformName, protocolName } from '../../api/format'
 import { fmtAgo } from './Failover'
 import { SessionLink } from './connect'
 
@@ -28,12 +28,14 @@ export function Targets() {
   const [items, setItems] = useState<ReachableTarget[] | null>(null)
   const [err, setErr] = useState('')
   const [notice, setNotice] = useState('')
-  const [tab, setTab] = useState<'static' | 'database' | 'application' | 'asg'>('static')
+  const [tab, setTab] = useState<'static' | 'database' | 'application' | 'cluster' | 'asg'>('static')
   const [chooser, setChooser] = useState<{ group: ReachableTarget; protocol: Protocol; instances: ReachableInstance[] | null } | null>(null)
   // Active grants, as a set of "targetId:protocol", so a gated protocol the user
   // already holds a grant for shows Connect rather than Request.
   const [grants, setGrants] = useState<Set<string>>(new Set())
   const [reqModal, setReqModal] = useState<{ target: ReachableTarget; protocol: Protocol } | null>(null)
+  // A cluster session's kubeconfig (ADR 0045), shown once.
+  const [kubeconfig, setKubeconfig] = useState<{ target: ReachableTarget; res: ConnectResponse } | null>(null)
   const [reqForm, setReqForm] = useState({ reason: '', minutes: 60 })
   const [busy, setBusy] = useState('')
   // Live filter over the already-loaded reachable list: matching is instant, no
@@ -121,9 +123,9 @@ export function Targets() {
         // Land on a tab that has something in it. Opening on an empty Hosts
         // tab while Databases holds entries reads as "you have no access"
         // (manual QA finding 2).
-        const kind = (t: ReachableTarget) => (t.kind === 'asg' ? 'asg' : t.kind === 'application' ? 'application' : t.engine ? 'database' : 'static')
+        const kind = (t: ReachableTarget) => (t.kind === 'asg' ? 'asg' : t.kind === 'application' ? 'application' : t.kind === 'cluster' ? 'cluster' : t.engine ? 'database' : 'static')
         if (!p.items.some((t) => kind(t) === 'static')) {
-          const first = (['database', 'application', 'asg'] as const).find((k) => p.items.some((t) => kind(t) === k))
+          const first = (['database', 'application', 'cluster', 'asg'] as const).find((k) => p.items.some((t) => kind(t) === k))
           if (first) setTab(first)
         }
       })
@@ -172,7 +174,32 @@ export function Targets() {
     }
   }
 
-  const kindOf = (t: ReachableTarget) => (t.kind === 'asg' ? 'asg' : t.kind === 'application' ? 'application' : t.engine ? 'database' : 'target')
+  // A cluster session (ADR 0045) has no socket: it starts here, and the
+  // kubeconfig is shown once, to copy or download; the open-sessions count
+  // moves with it.
+  const openKubeconfig = async (t: ReachableTarget) => {
+    setBusy('kube:' + t.id)
+    setErr('')
+    try {
+      const res = await api.post<ConnectResponse>('/connect', { target_id: t.id, protocol: 'kube' })
+      setKubeconfig({ target: t, res })
+      void countOpen()
+    } catch (e) {
+      setErr(errorMessage(e))
+    } finally {
+      setBusy('')
+    }
+  }
+  const download = (name: string, text: string) => {
+    const url = URL.createObjectURL(new Blob([text], { type: 'application/yaml' }))
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `${name}.kubeconfig`
+    a.click()
+    URL.revokeObjectURL(url)
+  }
+
+  const kindOf = (t: ReachableTarget) => (t.kind === 'asg' ? 'asg' : t.kind === 'application' ? 'application' : t.kind === 'cluster' ? 'cluster' : t.engine ? 'database' : 'target')
   const term = search.trim().toLowerCase()
   const matches = (t: ReachableTarget) => term === '' || t.name.toLowerCase().includes(term) || (t.private_ip?.toLowerCase().includes(term) ?? false)
   const shown = items?.filter(matches) ?? null
@@ -180,6 +207,7 @@ export function Targets() {
   const databases = shown?.filter((t) => kindOf(t) === 'database') ?? null
   const applications = shown?.filter((t) => kindOf(t) === 'application') ?? null
   const groups = shown?.filter((t) => kindOf(t) === 'asg') ?? null
+  const clusters = shown?.filter((t) => kindOf(t) === 'cluster') ?? null
   // Every tab says how many it holds, the same way, once there are any; a
   // search narrows the counts with the lists.
   const counted = (label: string, list: ReachableTarget[] | null) => (list && list.length > 0 ? `${label} (${list.length})` : label)
@@ -284,6 +312,7 @@ export function Targets() {
           { key: 'static', label: counted('Hosts', statics) },
           { key: 'database', label: counted('Databases', databases) },
           { key: 'application', label: counted('Applications', applications) },
+          { key: 'cluster', label: counted('Clusters', clusters) },
           { key: 'asg', label: counted('Autoscaling', groups) },
         ]}
       />
@@ -415,6 +444,43 @@ export function Targets() {
         </div>
       )}
 
+      {tab === 'cluster' && (
+        <div className="card table-wrap">
+          {clusters === null ? (
+            <Loading />
+          ) : clusters.length === 0 ? (
+            <Empty>{emptyFor('clusters', 'No clusters are assigned to you.')}</Empty>
+          ) : (
+            <table>
+              <thead>
+                <tr>
+                  <th>Name</th>
+                  <th>Platform</th>
+                  <th>Tags</th>
+                  <th>Kubeconfig</th>
+                </tr>
+              </thead>
+              <tbody>
+                {clusters.map((t) => (
+                  <tr key={t.id}>
+                    <td><strong>{t.name}</strong></td>
+                    <td>{platformName(t.platform)}</td>
+                    <td><Tags tags={t.tags} /></td>
+                    <td>
+                      {gated(t, 'kube') ? (
+                        <button className="btn sm" onClick={() => setReqModal({ target: t, protocol: 'kube' })}>Request</button>
+                      ) : (
+                        <button className="btn sm proto-kube" disabled={busy === 'kube:' + t.id} onClick={() => void openKubeconfig(t)}>Kubeconfig</button>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      )}
+
       {tab === 'asg' && (
         <div className="card table-wrap">
           {groups === null ? (
@@ -488,6 +554,23 @@ export function Targets() {
                 <button className="btn primary connect-newest" style={{ marginLeft: 8 }} disabled>Connect to newest healthy</button>
               )}
             </span>
+          </div>
+        </Modal>
+      )}
+
+      {kubeconfig && (
+        <Modal title={`Kubeconfig · ${kubeconfig.target.name}`} onClose={() => setKubeconfig(null)} width={720}>
+          <pre className="mono" style={{ whiteSpace: 'pre', overflow: 'auto', maxHeight: '50vh' }}>{kubeconfig.res.kubeconfig}</pre>
+          <p className="muted">
+            {[
+              kubeconfig.res.idle_seconds ? `Idle ${Math.round(kubeconfig.res.idle_seconds / 60)} min` : '',
+              kubeconfig.res.expires_at ? `Ends ${fmtTime(kubeconfig.res.expires_at)}` : '',
+            ].filter(Boolean).join(' · ')}
+          </p>
+          <div className="actions">
+            <button className="btn" onClick={() => void navigator.clipboard.writeText(kubeconfig.res.kubeconfig ?? '')}>Copy</button>
+            <button className="btn" onClick={() => download(kubeconfig.target.name, kubeconfig.res.kubeconfig ?? '')}>Download</button>
+            <button className="btn primary" onClick={() => setKubeconfig(null)}>Close</button>
           </div>
         </Modal>
       )}

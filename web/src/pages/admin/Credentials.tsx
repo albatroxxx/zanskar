@@ -6,7 +6,11 @@ import { useSubmit } from '../../components/submit'
 import { Alert, Confirm, Empty, Field, FormModal, Loading, PageHead } from '../../components/ui'
 import { useList } from './lib'
 import { CAInstall, CASetup, DEFAULT_CERT_TTL, parsePrincipals } from './SSHCA'
+import { EKSSetup } from './EKSSetup'
 import { StateIcon } from '../../components/icons'
+
+/** storesNothing: types with no secret in the vault, by design. */
+const storesNothing = (t: CredentialType) => t === 'ec2_instance_connect' || t === 'kube_eks'
 
 function inUse(c: Credential) {
   return (c.in_use_by?.targets ?? 0) + (c.in_use_by?.autoscaling_groups ?? 0)
@@ -26,6 +30,7 @@ export function Credentials() {
   const [deleting, setDeleting] = useState<Credential | null>(null)
   const [generated, setGenerated] = useState<Credential | null>(null)
   const [ca, setCa] = useState<Credential | null>(null)
+  const [eks, setEks] = useState<Credential | null>(null)
 
   return (
     <>
@@ -74,15 +79,18 @@ export function Credentials() {
                   {/* EC2 Instance Connect never stores a secret: the gateway
                       pushes a one-time key for each session. It read as an
                       amber "No secret stored" warning (2026-11-11). */}
-                  <td>{c.has_secret ? <StateIcon state="ok" label="Secret stored" /> : c.type === 'ec2_instance_connect' ? <StateIcon state="info" label="Nothing stored" /> : <StateIcon state="warn" label="No secret stored" />}</td>
+                  <td>{c.has_secret ? <StateIcon state="ok" label="Secret stored" /> : storesNothing(c.type) ? <StateIcon state="info" label="Nothing stored" /> : <StateIcon state="warn" label="No secret stored" />}</td>
                   <td className="muted">{c.rotated_at ? fmtTime(c.rotated_at) : 'never'}</td>
                   <td>{inUse(c)}</td>
                   <td className="actions">
                     {c.type === 'ssh_ca' && (
                       <button className="btn sm" onClick={() => setCa(c)}>Setup</button>
                     )}
+                    {c.type === 'kube_eks' && (
+                      <button className="btn sm" onClick={() => setEks(c)}>Setup</button>
+                    )}
                     {/* An authority is rotated in two steps from its Setup panel (ADR 0022); the in-place form does not apply. */}
-                    {c.mode === 'vaulted' && c.type !== 'ec2_instance_connect' && c.type !== 'ssh_ca' && (
+                    {c.mode === 'vaulted' && !storesNothing(c.type) && c.type !== 'ssh_ca' && (
                       <button className="btn sm" onClick={() => setRotating(c)}>Rotate</button>
                     )}
                     <button className="btn sm danger" onClick={() => setDeleting(c)} disabled={inUse(c) > 0} title={inUse(c) > 0 ? 'unassign it from targets first' : ''}>Delete</button>
@@ -103,6 +111,7 @@ export function Credentials() {
           }}
         />
       )}
+      {eks && <EKSSetup credential={eks} onClose={() => setEks(null)} />}
       {ca && (
         <CASetup
           credential={ca}
@@ -174,6 +183,20 @@ function SecretFields({ type, f, set, put }: { type: CredentialType; f: Record<s
       })
       .catch(() => setFileNote({ text: `Could not read ${file.name}.`, err: true }))
   }
+  if (type === 'kube_token') {
+    return (
+      <Field label="Token">
+        <input id="c-password" type="password" autoComplete="off" value={f.password} onChange={set('password')} required />
+      </Field>
+    )
+  }
+  if (type === 'kube_client_cert') {
+    return (
+      <Field label="Certificate and key (PEM)">
+        <textarea id="c-private-key" value={f.private_key} onChange={set('private_key')} required placeholder="-----BEGIN CERTIFICATE-----" />
+      </Field>
+    )
+  }
   if (type === 'password' || type === 'domain') {
     return (
       <Field label="Password">
@@ -202,7 +225,7 @@ function SecretFields({ type, f, set, put }: { type: CredentialType; f: Record<s
 }
 
 function CredentialForm({ onClose, onSaved }: { onClose: () => void; onSaved: (c: Credential, generated: boolean) => void }) {
-  const [f, setF] = useState<Record<string, string>>({ name: '', type: 'password', username: '', domain: '', password: '', private_key: '', passphrase: '', ttl: '', principals: '' })
+  const [f, setF] = useState<Record<string, string>>({ name: '', type: 'password', username: '', domain: '', password: '', private_key: '', passphrase: '', ttl: '', principals: '', aws_region: '', aws_role_arn: '', eks_cluster: '' })
   const [generate, setGenerate] = useState(false)
   // A certificate authority is normally generated here; pasting an existing
   // CA key is the exception.
@@ -215,8 +238,9 @@ function CredentialForm({ onClose, onSaved }: { onClose: () => void; onSaved: (c
   // a target's slot (manual QA finding R35).
   const type = f.type as CredentialType
   const mode = 'vaulted'
-  const needsSecret = type !== 'ec2_instance_connect'
-  const needsUser = type !== 'ssh_ca'
+  const needsSecret = !storesNothing(type)
+  // A cluster credential is Zanskar's own identity there; it names no user.
+  const needsUser = type !== 'ssh_ca' && type !== 'kube_token' && type !== 'kube_client_cert' && type !== 'kube_eks'
   const isCA = type === 'ssh_ca'
 
   const save = () =>
@@ -229,6 +253,11 @@ function CredentialForm({ onClose, onSaved }: { onClose: () => void; onSaved: (c
       const body: Record<string, unknown> = { name: f.name.trim(), type, mode }
       if (needsUser || (isCA && f.username.trim())) body.username = f.username.trim()
       if (type === 'domain') body.domain = f.domain.trim()
+      if (type === 'kube_eks') {
+        body.aws_region = f.aws_region.trim()
+        body.aws_role_arn = f.aws_role_arn.trim()
+        body.eks_cluster = f.eks_cluster.trim()
+      }
       if (isCA) {
         const n = f.ttl.trim() ? Number(f.ttl) : 0
         if (f.ttl.trim() && (!Number.isInteger(n) || n < 60 || n > 3600)) {
@@ -240,7 +269,7 @@ function CredentialForm({ onClose, onSaved }: { onClose: () => void; onSaved: (c
         if (principals.length) body.certificate_principals = principals
       }
       if (needsSecret && !(isCA && generateCA)) {
-        if (type === 'password' || type === 'domain') body.password = f.password
+        if (type === 'password' || type === 'domain' || type === 'kube_token') body.password = f.password
         else {
           body.private_key = f.private_key
           if (f.passphrase) body.private_key_passphrase = f.passphrase
@@ -275,6 +304,21 @@ function CredentialForm({ onClose, onSaved }: { onClose: () => void; onSaved: (c
             </Field>
           )}
         </div>
+      )}
+      {type === 'kube_eks' && (
+        <>
+          <div className="form-grid">
+            <Field label="Region">
+              <input id="c-aws-region" value={f.aws_region} onChange={set('aws_region')} required placeholder="eu-west-2" />
+            </Field>
+            <Field label="Cluster name">
+              <input id="c-eks-cluster" value={f.eks_cluster} onChange={set('eks_cluster')} required />
+            </Field>
+          </div>
+          <Field label="Role ARN" info="The trust policy and permissions come after, from Setup.">
+            <input id="c-aws-role-arn" value={f.aws_role_arn} onChange={set('aws_role_arn')} required placeholder="arn:aws:iam::123456789012:role/zanskar-eks" />
+          </Field>
+        </>
       )}
       {type === 'ssh_key' && (
         <div className="field inline">

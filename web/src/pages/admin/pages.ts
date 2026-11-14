@@ -9,6 +9,7 @@ export const Targets = lazy(() => import('./Targets').then((m) => ({ default: m.
 export const Databases = lazy(() => import('./Databases').then((m) => ({ default: m.Databases })))
 export const Applications = lazy(() => import('./Applications').then((m) => ({ default: m.Applications })))
 export const Autoscaling = lazy(() => import('./Autoscaling').then((m) => ({ default: m.Autoscaling })))
+export const Fabric = lazy(() => import('./Fabric').then((m) => ({ default: m.Fabric })))
 export const Credentials = lazy(() => import('./Credentials').then((m) => ({ default: m.Credentials })))
 export const Policies = lazy(() => import('./Policies').then((m) => ({ default: m.Policies })))
 export const PolicyEditor = lazy(() => import('./PolicyEditor').then((m) => ({ default: m.PolicyEditor })))

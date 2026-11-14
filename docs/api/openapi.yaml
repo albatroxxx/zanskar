@@ -1010,6 +1010,17 @@ paths:
         grant that gives the caller this target is an approval grant (ADR 0018), the caller needs
         an active grant: without one the request is refused with `403 approval_required` and the
         UI offers to request access instead.
+
+        Protocol `kube` (a Kubernetes cluster, ADR 0045) has no WebSocket: the session starts
+        here and the answer carries its kubeconfig instead of a ticket. It needs the gateway's
+        public address (`ZANSKAR_PUBLIC_URL`); without one the protocol is refused with
+        `501 protocol_unavailable`. Requests then go to `/k8s/{session_id}/…` with the
+        kubeconfig's token in `Authorization: Bearer`, are checked against the grant's
+        namespaces and `cluster_scope` (a refusal is a Kubernetes `Status` with code 403), and
+        are forwarded to the API server as the caller (`Impersonate-User`, `Impersonate-Group
+        zanskar:<group>`). The session ends after the policy's idle time without a request, at
+        its maximum, or when an administrator ends it; every request that names a resource is
+        one line of its recording.
       requestBody:
         required: true
         content:
@@ -2721,8 +2732,14 @@ paths:
           in: query
           schema:
             type: string
-            enum: [host, database, application]
-          description: Only hosts, only database targets (ADR 0017), or only applications (ADR 0034).
+            enum: [host, database, application, kubernetes]
+          description: Only hosts, only database targets (ADR 0017), only applications (ADR 0034), or only Kubernetes clusters (ADR 0045).
+        - name: platform
+          in: query
+          schema:
+            type: string
+            enum: [vanilla, eks, gke, aks]
+          description: Only Kubernetes clusters of this platform (ADR 0048); use with `kind=kubernetes`.
         - name: os_family
           in: query
           schema:
@@ -2955,6 +2972,54 @@ paths:
           description: Cleared.
         "404":
           $ref: "#/components/responses/NotFound"
+  /credentials/{id}/eks/setup:
+    get:
+      tags: [admin]
+      summary: What an EKS role needs pasted into AWS and the cluster
+      description: >
+        For a `kube_eks` credential (ADR 0045, 8): the role's trust policy, naming the gateway's
+        AWS principal and the ExternalId the gateway minted (absent while the principal is
+        unknown, as a policy with a placeholder looks finished and is not); the permissions
+        policy, to describe the one cluster and list the region's; and the step that maps the role
+        to the Kubernetes user the RBAC manifest binds, as an access entry (authentication mode
+        API) or an aws-auth line (CONFIG_MAP). `409 not_eks` for any other credential type.
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EKSSetup"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+  /credentials/{id}/eks/describe:
+    post:
+      tags: [admin]
+      summary: Test an EKS role against its cluster
+      description: >
+        Assumes the role with the gateway's own AWS identity and describes the cluster. The answer
+        is 200 whatever the outcome, as an autoscaling group's access test is: `ok` with the
+        cluster's endpoint, CA and authentication mode, or the stage that failed (`assume`, the
+        trust policy or ExternalId; `describe`, the permissions policy or no such cluster in the
+        region) and why. The Add cluster form fills `kube_api_server` and `kube_ca` from it.
+        Audited as `credential.test`. `409 not_eks` for any other credential type.
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EKSCheck"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
   /credentials/{id}/rotate:
     post:
       tags: [admin]
@@ -3195,6 +3260,85 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
 
+  /targets/{id}/kube/test:
+    post:
+      tags: [admin]
+      summary: Test a Kubernetes cluster
+      description: >
+        The cluster's probe (ADR 0045): with the credential bound to its `kube` slot, asks the API
+        server its version, whether the credential may impersonate users and groups (a
+        SelfSubjectAccessReview each), and lists the namespaces it may list. Nothing is recorded
+        on the target. Audited as `target.probe`.
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: What the cluster answered.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [version, impersonate_users, impersonate_groups, namespaces, namespaces_listed]
+                properties:
+                  version:
+                    type: string
+                    description: The API server's `gitVersion`.
+                  impersonate_users:
+                    type: boolean
+                  impersonate_groups:
+                    type: boolean
+                  namespaces:
+                    type: array
+                    items:
+                      type: string
+                  namespaces_listed:
+                    type: boolean
+                    description: False when the credential may not list namespaces, which impersonation alone does not grant.
+        "409":
+          description: >-
+            `not_a_cluster`, `no_credential` (nothing on the kube slot), `credential_unsuitable`
+            (not a kube_token or kube_client_cert), `credential_refused` (the cluster answered
+            401), or `cluster_unusable` (the CA bundle or client certificate cannot be used).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "422":
+          description: The cluster's address is one the gateway does not connect to (`address_forbidden`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "502":
+          description: The API server could not be reached or did not answer as one (`cluster_unreachable`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /targets/{id}/kube/manifest:
+    get:
+      tags: [admin]
+      summary: The RBAC a Kubernetes cluster needs
+      description: >
+        YAML to apply in the cluster (ADR 0045, 2): a ServiceAccount for Zanskar's credential, a
+        ClusterRole that may impersonate users and the `zanskar:<group>` groups whose policies
+        grant this cluster, and their binding. The administrator binds their own roles to those
+        groups. Not audited: it holds no secret and changes nothing.
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: The manifest.
+          content:
+            application/yaml:
+              schema:
+                type: string
+        "409":
+          description: The target is not a Kubernetes cluster (`not_a_cluster`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
   /targets/{id}/certificate/trust:
     post:
       tags: [admin]
@@ -5915,10 +6059,84 @@ components:
         How a target is reached. `database` is brokered access to a database target (ADR 0017);
         `http` is a web application opened in an isolated browser beside the gateway and
         streamed like a desktop (ADR 0034); it takes a ticket and connects on `/ws/desktop`.
-      enum: [ssh, rdp, vnc, winrm, database, http]
+      enum: [ssh, rdp, vnc, winrm, database, http, kube, pod]
     CredentialType:
       type: string
-      enum: [password, ssh_key, ssh_ca, domain, ec2_instance_connect]
+      description: >-
+        `kube_token` is a Kubernetes service account's bearer token and `kube_client_cert` a client
+        certificate with its key, one PEM text (ADR 0045); both are Zanskar's own identity in a
+        cluster and are always vaulted. `kube_eks` is an EKS cluster reached through a role (ADR
+        0045, 8): `aws_region`, `aws_role_arn`, `eks_cluster`, and an `aws_external_id` the gateway
+        mints for the role's trust policy; it holds no secret, the token the cluster accepts being
+        minted per session as the role. The kube slot of a cluster whose `kube_platform` is `eks`
+        takes `kube_eks` and nothing else; every other platform takes the other two.
+      enum: [password, ssh_key, ssh_ca, domain, ec2_instance_connect, kube_token, kube_client_cert, kube_eks]
+    EKSSetup:
+      type: object
+      required: [principal_source, external_id, role_name, permissions_policy, access_entry, aws_auth, username]
+      properties:
+        gateway_principal:
+          type: string
+          description: The IAM role ARN the gateway runs as, which the trust policy names.
+        principal_source:
+          type: string
+          enum: [environment, detected, none]
+        principal_error:
+          type: string
+          description: Why there is no principal, in a sentence.
+        external_id:
+          type: string
+        role_name:
+          type: string
+          description: A suggested name for the role.
+        trust_policy:
+          type: string
+          description: Absent until the gateway's principal is known.
+        permissions_policy:
+          type: string
+        access_entry:
+          type: string
+          description: The `aws eks create-access-entry` command mapping the role to `username`.
+        aws_auth:
+          type: string
+          description: The same mapping as an `aws-auth` mapRoles entry, for a cluster on the ConfigMap.
+        username:
+          type: string
+          description: The Kubernetes user the role is mapped to and the RBAC manifest binds.
+    EKSCheck:
+      type: object
+      required: [ok]
+      properties:
+        ok:
+          type: boolean
+        stage:
+          type: string
+          enum: [assume, describe]
+          description: The stage that failed; absent when `ok`.
+        error:
+          type: string
+        assumed_arn:
+          type: string
+        cluster:
+          type: object
+          description: What the cluster says of itself, when described.
+          properties:
+            name:
+              type: string
+            arn:
+              type: string
+            endpoint:
+              type: string
+            ca_pem:
+              type: string
+              description: The cluster's certificate authority, PEM, for `kube_ca`.
+            version:
+              type: string
+            status:
+              type: string
+            authentication_mode:
+              type: string
+              description: API, API_AND_CONFIG_MAP or CONFIG_MAP, which says whether the role is mapped by an access entry or the aws-auth ConfigMap.
     CredentialMode:
       type: string
       enum: [vaulted, user_supplied, passthrough]
@@ -6697,6 +6915,18 @@ components:
               type: string
             retired_at:
               $ref: "#/components/schemas/Timestamp"
+        aws_region:
+          type: string
+          description: "`kube_eks` only: the cluster's region."
+        aws_role_arn:
+          type: string
+          description: "`kube_eks` only: the IAM role the gateway assumes to reach the cluster."
+        aws_external_id:
+          type: string
+          description: "`kube_eks` only: the ExternalId the gateway minted, which the role's trust policy must carry (`GET /credentials/{id}/eks/setup`)."
+        eks_cluster:
+          type: string
+          description: "`kube_eks` only: the cluster's name in the region."
     CredentialWrite:
       type: object
       required: [name, type, mode]
@@ -6725,6 +6955,15 @@ components:
           type: string
           writeOnly: true
           description: PEM or OpenSSH private key for `ssh_key` or `ssh_ca`. Omit to have Zanskar generate one.
+        aws_region:
+          type: string
+          description: "`kube_eks` only, required: the cluster's region, such as `eu-west-2`."
+        aws_role_arn:
+          type: string
+          description: "`kube_eks` only, required: an IAM role ARN. No secret travels with it; the role's trust policy admits the gateway's principal with the minted ExternalId."
+        eks_cluster:
+          type: string
+          description: "`kube_eks` only, required: the cluster's name (1-100 letters, digits, hyphens or underscores)."
         private_key_passphrase:
           type: string
           writeOnly: true
@@ -6809,6 +7048,24 @@ components:
             Opening a page is held to the origins either way. Absent on a host or a database.
         app_private:
           $ref: "#/components/schemas/AppPrivate"
+        kube_api_server:
+          type: string
+          description: >-
+            Set, the target is a Kubernetes cluster (ADR 0045): its API server, `https://host[:port]`.
+            `address` is the server's host. Absent on every other kind.
+        kube_ca:
+          type: string
+          description: The PEM bundle the API server's certificate is verified against; absent, the system roots.
+        kube_platform:
+          type: string
+          enum: [vanilla, eks, gke, aks]
+          description: How Zanskar's token for the cluster is minted (ADR 0048); `vanilla`, the default, as enrolled.
+        kube_impersonate:
+          type: boolean
+          description: >-
+            Default true: every request goes to the cluster as the person (`Impersonate-User`, their
+            Zanskar groups), so the cluster's RBAC decides and its audit log names them. False, every
+            session acts as the credential itself, which the console calls a shared identity.
         os_family:
           $ref: "#/components/schemas/OsFamily"
         ports:
@@ -6936,6 +7193,23 @@ components:
             address, on any port, and from `app_private`; `origins`, from the upstream and the
             endpoints only. Going from `public` to `origins` ends the sessions open on the
             application. Refused on a host or a database.
+        kube_api_server:
+          type: string
+          description: >-
+            Makes the target a Kubernetes cluster (ADR 0045): the API server, `https://host[:port]`,
+            no path. Exclusive with `engine` and `app_upstream`; `address` is set from it.
+        kube_ca:
+          type: string
+          description: PEM bundle the API server's certificate is verified against; empty for the system roots.
+        kube_impersonate:
+          type: boolean
+          default: true
+          description: Act as the person (the default) or as the credential (a shared identity). Clusters only.
+        kube_platform:
+          type: string
+          enum: [vanilla, eks, gke, aks]
+          default: vanilla
+          description: Vanilla takes a kube_token or kube_client_cert on the kube slot; eks, gke and aks a cloud role (adapters, ADR 0045 8). Clusters only.
         app_private:
           allOf:
             - $ref: "#/components/schemas/AppPrivate"
@@ -7086,7 +7360,7 @@ components:
         other a `host`; an autoscaling group is `autoscaling`. Each kind serves its own protocols
         and no others: `host` and `autoscaling` ssh, rdp, vnc and winrm; `database` database;
         `application` http.
-      enum: [host, database, application, autoscaling]
+      enum: [host, database, application, autoscaling, kubernetes]
     PolicyReview:
       type: object
       required: [policy, subjects, due]
@@ -7279,6 +7553,22 @@ components:
             narrowed by an edit, does not end a running session; its maximum bounds it instead.
           items:
             $ref: "#/components/schemas/TimeWindow"
+        namespaces:
+          type: array
+          items:
+            type: string
+          maxItems: 64
+          description: >-
+            A Kubernetes grant's namespaces (ADR 0045); empty or absent, every namespace. The gateway
+            refuses a request outside them before the cluster sees it. Kubernetes grants only.
+        cluster_scope:
+          type: boolean
+          default: false
+          description: Admits cluster-wide resources (nodes, namespaces, CRDs) and listing across namespaces. Kubernetes grants only.
+        port_forward:
+          type: boolean
+          default: false
+          description: Admits `kubectl port-forward`. Kubernetes grants only.
         retention_days:
           type: [integer, "null"]
           minimum: 1
@@ -7865,12 +8155,16 @@ components:
     # ---------------------------------------------------------------- user-facing targets and connect
     ReachableTarget:
       type: object
-      description: A target, autoscaling group or application the caller may reach, as returned by `GET /me/targets`.
+      description: A target, autoscaling group, application or Kubernetes cluster the caller may reach, as returned by `GET /me/targets`.
       required: [kind, id, name, os_family, tags, capabilities, allowed_protocols, host_key_ready]
       properties:
         kind:
           type: string
-          enum: [target, asg, application]
+          enum: [target, asg, application, cluster]
+        platform:
+          type: string
+          enum: [vanilla, eks, gke, aks]
+          description: A cluster's platform (ADR 0048); clusters only.
         id:
           type: string
         name:
@@ -7991,19 +8285,25 @@ components:
     ConnectTicket:
       type: object
       description: >
-        A one-time pass for the WebSocket that carries the session. The session id and the
-        policy's limits are not here: the session starts when the WebSocket opens, and its
-        first message carries them.
-      required: [ticket, expires_at, ws_path]
+        For a bridge (ssh, rdp, vnc, winrm, database, http): a one-time pass for the WebSocket
+        that carries the session. The session id and the policy's limits are not here: the
+        session starts when the WebSocket opens, and its first message carries them. For a
+        Kubernetes cluster (protocol `kube`, ADR 0045) there is no socket: the session starts
+        with this answer, and `session_id`, `kubeconfig` and `idle_seconds` are set in place of
+        the ticket.
       properties:
         ticket:
           type: string
           description: >
             One-time, 32 bytes of randomness, base64url. Present as `?ticket=` on the WebSocket
             URL. It works once, only from the address that asked for it, and only until
-            `expires_at`, 30 seconds after it was issued.
+            `expires_at`, 30 seconds after it was issued. Absent for a kube session.
         expires_at:
-          $ref: "#/components/schemas/Timestamp"
+          allOf:
+            - $ref: "#/components/schemas/Timestamp"
+          description: >
+            When the ticket lapses. For a kube session, when the session ends at the latest
+            (the policy's maximum); absent when the policy sets none.
         ws_path:
           type: string
           enum: [/ws/terminal, /ws/desktop, /ws/winrm, /ws/database]
@@ -8016,6 +8316,22 @@ components:
         instance_label:
           type: string
           description: The instance the session lands on, as "instance id · availability zone".
+        session_id:
+          type: string
+          description: A kube session's id, live from this answer; `GET /me/sessions` lists it.
+        kubeconfig:
+          type: string
+          description: >
+            A kube session's kubeconfig, shown once and never stored: one cluster whose server is
+            `https://<public url>/k8s/<session id>`, one user whose token is the session's
+            (`zk8s_…`), and the gateway's own certificate when it is self-signed. Every request
+            kubectl makes with it goes to the cluster as the caller, within the grant's
+            namespaces; the token is refused once the session ends.
+        idle_seconds:
+          type: integer
+          description: >
+            How long a kube session lives without a request before it ends by itself: the
+            policy's idle time, or eight hours when the policy sets none.
 
     # ---------------------------------------------------------------- sessions
     OwnSession:
@@ -8698,6 +9014,14 @@ components:
             applications:
               type: integer
               description: Active applications (ADR 0034).
+            clusters:
+              type: integer
+              description: Active Kubernetes clusters (ADR 0048).
+            clusters_by_platform:
+              type: object
+              additionalProperties:
+                type: integer
+              description: Active clusters per platform (`vanilla`, `eks`, `gke`, `aks`); a platform with none is absent.
         autoscaling:
           type: object
           required: [groups, instances, healthy_instances]

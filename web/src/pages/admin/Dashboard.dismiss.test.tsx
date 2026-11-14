@@ -26,7 +26,7 @@ const overview = (failing: number): AdminOverview => ({
   sessions: { open: 0, started_24h: 0 },
   pending_requests: 0,
   targets: { active: 0, host_key_pending: 0, host_key_changed: 0, certificate_pending: 0, needing_attention: 0 },
-  inventory: { hosts: 0, hosts_by_os: {}, databases: 0, databases_by_engine: {}, applications: 0 },
+  inventory: { hosts: 0, hosts_by_os: {}, databases: 0, databases_by_engine: {}, applications: 0, clusters: 0, clusters_by_platform: {} },
   autoscaling: { groups: 0, instances: 0, healthy_instances: 0 },
   audit_24h: { events: 0, failures: 0, failed_logins: 0, refused_connects: 0 },
   integrity: { audit_chain: null, recordings_lost_7d: 0, directories: { listed: 2, failing, not_run: 0, held_back: 0 }, export: { sinks: 0, behind: 0 } },

@@ -8,13 +8,10 @@ package asg
 import (
 	"bytes"
 	"context"
-	"crypto/rand"
 	"database/sql"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"regexp"
 	"strings"
 	"time"
 
@@ -85,16 +82,10 @@ var (
 
 // externalIDRe is the shape NewExternalID produces; an ExternalId supplied
 // on create (from an IAM preview) must match it.
-var externalIDRe = regexp.MustCompile(`^zanskar-[0-9a-f]{32}$`)
+var externalIDRe = cloud.ExternalIDRe
 
 // NewExternalID returns a random 32-hex ExternalId for the role trust policy.
-func NewExternalID() string {
-	b := make([]byte, 16)
-	if _, err := rand.Read(b); err != nil {
-		panic(err)
-	}
-	return "zanskar-" + hex.EncodeToString(b)
-}
+func NewExternalID() string { return cloud.NewExternalID() }
 
 // Validate checks a group before storing it.
 func (g *Group) Validate() error {
@@ -249,21 +240,13 @@ func (g *Group) PermissionsPolicy() string {
 	return renderPolicy(doc)
 }
 
-// roleARNRe is an IAM role ARN in any of the three AWS partitions.
-var roleARNRe = regexp.MustCompile(`^arn:aws(-us-gov|-cn)?:iam::[0-9]{12}:role/[A-Za-z0-9+=,.@_/-]+$`)
+// roleARNRe is an IAM role ARN in any of the three AWS partitions; the shape
+// is the cloud package's, shared with the EKS role (ADR 0045, 8).
+var roleARNRe = cloud.RoleARNRe
 
 // partition is the AWS partition a region belongs to, which every ARN in
 // it names: GovCloud and China are their own.
-func partition(region string) string {
-	switch {
-	case strings.HasPrefix(region, "us-gov-"):
-		return "aws-us-gov"
-	case strings.HasPrefix(region, "cn-"):
-		return "aws-cn"
-	default:
-		return "aws"
-	}
-}
+func partition(region string) string { return cloud.Partition(region) }
 
 // SuggestedRoleName is the role name the guided enrolment proposes.
 func (g *Group) SuggestedRoleName() string {

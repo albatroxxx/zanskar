@@ -85,6 +85,38 @@ describe('Credentials list', () => {
   })
 })
 
+// The EKS role's Setup (ADR 0045, 8): what the administrator pastes, the
+// trust policy withheld while the gateway's principal is unknown, and the
+// test that names the stage that failed.
+describe('EKS role setup', () => {
+  const role = credential({ id: 'r1', name: 'prod-role', type: 'kube_eks', has_secret: false, username: undefined, aws_region: 'eu-west-2', aws_role_arn: 'arn:aws:iam::123456789012:role/zanskar-eks', aws_external_id: 'zanskar-0123', eks_cluster: 'prod' })
+
+  it('stores nothing, offers Setup and no Rotate, and shows the pastes with the test result', async () => {
+    const get = vi.spyOn(api, 'get').mockImplementation(async (path: string) => {
+      if (path.endsWith('/eks/setup')) {
+        return { principal_source: 'none', principal_error: 'not running on AWS', external_id: 'zanskar-0123', role_name: 'zanskar-eks-prod', permissions_policy: '{"eks:DescribeCluster"}',
+          access_entry: 'aws eks create-access-entry --cluster-name prod --principal-arn arn:aws:iam::123456789012:role/zanskar-eks --type STANDARD --username zanskar', aws_auth: '- rolearn: arn\n  username: zanskar', username: 'zanskar' } as never
+      }
+      return (path.startsWith('/credentials') ? { items: [role] } : { items: [] }) as never
+    })
+    const post = vi.spyOn(api, 'post').mockResolvedValue({ ok: false, stage: 'assume', error: 'AccessDenied: sts:AssumeRole' } as never)
+    render(<Credentials />)
+    const row = (await screen.findByText('prod-role')).closest('tr')!
+    expect(within(row).getByLabelText('Nothing stored')).toBeDefined()
+    expect(within(row).queryByRole('button', { name: 'Rotate' })).toBeNull()
+    const user = userEvent.setup()
+    await user.click(within(row).getByRole('button', { name: 'Setup' }))
+    const dialog = await screen.findByRole('dialog', { name: 'prod-role: EKS role' })
+    await within(dialog).findByText(/create-access-entry --cluster-name prod/)
+    expect(within(dialog).getByText(/principal is not known/)).toBeDefined()
+    expect(within(dialog).getByRole('button', { name: 'Copy permissions policy' })).toBeDefined()
+    expect(get).toHaveBeenCalledWith('/credentials/r1/eks/setup')
+    await user.click(within(dialog).getByRole('button', { name: 'Test' }))
+    await within(dialog).findByText(/Not assumed: AccessDenied/)
+    expect(post).toHaveBeenCalledWith('/credentials/r1/eks/describe', {})
+  })
+})
+
 describe('Adding a credential', () => {
   it('sends a password credential as vaulted, with the password only in the request', async () => {
     const post = vi.spyOn(api, 'post').mockResolvedValue(credential({ id: 'new' }) as never)
@@ -100,6 +132,23 @@ describe('Adding a credential', () => {
     expect(post.mock.calls[0]).toEqual(['/credentials', { name: 'deploy', type: 'password', mode: 'vaulted', username: 'deploy', password: 'hunter2 hunter2' }])
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
     expect(document.body.textContent).not.toContain('hunter2')
+  })
+
+  // An EKS role (ADR 0045, 8) is the region, the role and the cluster: no
+  // secret and no user travel; the gateway mints the ExternalId.
+  it('sends an EKS role with its region, role and cluster and nothing secret', async () => {
+    const post = vi.spyOn(api, 'post').mockResolvedValue(credential({ id: 'new', type: 'kube_eks', has_secret: false }) as never)
+    const { user, form } = await openAdd()
+    await user.selectOptions(within(form).getByLabelText('Type'), 'kube_eks')
+    expect(within(form).queryByLabelText('Username on the target')).toBeNull()
+    expect(within(form).queryByLabelText('Password')).toBeNull()
+    await user.type(within(form).getByLabelText('Name'), 'prod-role')
+    await user.type(within(form).getByLabelText('Region'), ' eu-west-2')
+    await user.type(within(form).getByLabelText('Cluster name'), 'prod')
+    await user.type(within(form).getByLabelText('Role ARN'), 'arn:aws:iam::123456789012:role/zanskar-eks')
+    await user.click(within(form).getByRole('button', { name: 'Create' }))
+    await waitFor(() => expect(post).toHaveBeenCalledTimes(1))
+    expect(post.mock.calls[0]).toEqual(['/credentials', { name: 'prod-role', type: 'kube_eks', mode: 'vaulted', aws_region: 'eu-west-2', aws_role_arn: 'arn:aws:iam::123456789012:role/zanskar-eks', eks_cluster: 'prod' }])
   })
 
   it('asks for a domain with a domain account, and a key or a passphrase with a key', async () => {

@@ -15,6 +15,7 @@ package policy
 import (
 	"errors"
 	"fmt"
+	"regexp"
 	"slices"
 	"strings"
 	"time"
@@ -92,6 +93,26 @@ type Grant struct {
 	MaxSessionMinutes  *int         `json:"max_session_minutes"`
 	TimeWindows        []TimeWindow `json:"time_windows"`
 	RetentionDays      *int         `json:"retention_days"`
+	// A Kubernetes grant's scope (ADR 0045), which the gateway holds the
+	// line on before the cluster's RBAC does: Namespaces the sessions may
+	// reach (empty means every namespace); ClusterScope admits cluster-wide
+	// resources (nodes, namespaces, CRDs) and listing across namespaces;
+	// PortForward admits port-forward. Both off by default. Kubernetes only.
+	Namespaces   []string `json:"namespaces,omitempty"`
+	ClusterScope bool     `json:"cluster_scope,omitempty"`
+	PortForward  bool     `json:"port_forward,omitempty"`
+}
+
+// MaxGrantNamespaces bounds a grant's namespace list.
+const MaxGrantNamespaces = 64
+
+// namespaceRe is a DNS label, which is what a namespace name is.
+var namespaceRe = regexp.MustCompile(`^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$`)
+
+// CoversNamespace reports whether the grant admits a request in ns: every
+// namespace when the list is empty, else one it names.
+func (g *Grant) CoversNamespace(ns string) bool {
+	return len(g.Namespaces) == 0 || slices.Contains(g.Namespaces, ns)
 }
 
 // TimeWindow is a recurring weekly window in a named zone.
@@ -195,6 +216,24 @@ func (g *Grant) validate() error {
 	}
 	if g.AllowDevTools && g.Kind != protocol.KindApplication {
 		return fmt.Errorf("%w: developer tools are for application grants only", ErrInvalidInput)
+	}
+	if g.Kind != protocol.KindKubernetes && (len(g.Namespaces) > 0 || g.ClusterScope || g.PortForward) {
+		return fmt.Errorf("%w: namespaces, cluster_scope and port_forward are for Kubernetes grants only", ErrInvalidInput)
+	}
+	if len(g.Namespaces) > MaxGrantNamespaces {
+		return fmt.Errorf("%w: at most %d namespaces", ErrInvalidInput, MaxGrantNamespaces)
+	}
+	seenNS := map[string]bool{}
+	for i, ns := range g.Namespaces {
+		ns = strings.TrimSpace(ns)
+		if !namespaceRe.MatchString(ns) {
+			return fmt.Errorf("%w: namespace %q is not a valid name", ErrInvalidInput, ns)
+		}
+		if seenNS[ns] {
+			return fmt.Errorf("%w: namespace %s is named twice", ErrInvalidInput, ns)
+		}
+		seenNS[ns] = true
+		g.Namespaces[i] = ns
 	}
 	// Files move over SSH (the terminal's SFTP panel) and RDP (the session's
 	// drive), never into a database client or an application's browser,
@@ -368,6 +407,9 @@ func (g *Grant) selects(t TargetRef) bool {
 }
 
 // matches: every key present with one of its values.
+// Matches reports whether a target carrying tags is one the rule selects.
+func (m *TagMatch) Matches(tags map[string]string) bool { return m.matches(tags) }
+
 func (m *TagMatch) matches(tags map[string]string) bool {
 	if len(m.Match) == 0 {
 		return false
@@ -466,6 +508,72 @@ type Decision struct {
 	// SignInOwn is set, the person's own login is asked for.
 	SignInTarget bool `json:"sign_in_target"`
 	SignInOwn    bool `json:"sign_in_own"`
+	// Kube is a Kubernetes session's scope (ADR 0045, 4): what the deciding
+	// grants admit between them. Unlike the clipboard switches, which take
+	// the strictest grant, scope is the union: a grant that admits a
+	// namespace admits it whatever another grant says, as a grant that
+	// admits a target does. Nil for every other kind.
+	Kube *KubeScope `json:"kube,omitempty"`
+}
+
+// KubeScope is what a Kubernetes session may reach (ADR 0045, 4).
+type KubeScope struct {
+	// Namespaces the session may reach; empty means every namespace.
+	Namespaces []string `json:"namespaces"`
+	// ClusterScope admits cluster-wide requests: cluster-scoped resources
+	// and lists across namespaces.
+	ClusterScope bool `json:"cluster_scope"`
+	// PortForward admits port-forward.
+	PortForward bool `json:"port_forward"`
+}
+
+// Covers reports whether the scope admits a request in ns.
+func (s *KubeScope) Covers(ns string) bool {
+	return len(s.Namespaces) == 0 || slices.Contains(s.Namespaces, ns)
+}
+
+// Equal reports whether two scopes admit the same.
+func (s *KubeScope) Equal(o *KubeScope) bool {
+	if s == nil || o == nil {
+		return s == o
+	}
+	if s.ClusterScope != o.ClusterScope || s.PortForward != o.PortForward || len(s.Namespaces) != len(o.Namespaces) {
+		return false
+	}
+	for _, ns := range s.Namespaces {
+		if !slices.Contains(o.Namespaces, ns) {
+			return false
+		}
+	}
+	return true
+}
+
+// kubeScope is the union of the deciding grants' scopes: every namespace
+// when any grant admits every namespace, else the namespaces named, once
+// each and sorted; cluster scope and port-forward when any grant admits
+// them.
+func kubeScope(set []decider) *KubeScope {
+	s := &KubeScope{}
+	all := false
+	for _, c := range set {
+		g := c.g
+		s.ClusterScope = s.ClusterScope || g.ClusterScope
+		s.PortForward = s.PortForward || g.PortForward
+		if len(g.Namespaces) == 0 {
+			all = true
+			continue
+		}
+		for _, ns := range g.Namespaces {
+			if !slices.Contains(s.Namespaces, ns) {
+				s.Namespaces = append(s.Namespaces, ns)
+			}
+		}
+	}
+	if all {
+		s.Namespaces = nil
+	}
+	slices.Sort(s.Namespaces)
+	return s
 }
 
 // Evaluate decides access from the caller's policies, given in name order.
@@ -552,6 +660,9 @@ func evaluate(policies []*Policy, t TargetRef, proto string, now time.Time, wind
 	}
 	d.Policy, d.GrantID = best.p, best.g.ID
 	d.IdleTimeout = time.Duration(best.g.IdleTimeoutMinutes) * time.Minute
+	if t.Kind == protocol.KindKubernetes {
+		d.Kube = kubeScope(set)
+	}
 	return d
 }
 

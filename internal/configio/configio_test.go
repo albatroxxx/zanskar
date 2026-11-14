@@ -88,7 +88,44 @@ func newGW(t *testing.T) *gw {
 		&credential.Secret{Password: "s3cret-pw"}, ""); err != nil {
 		t.Fatal(err)
 	}
+	// A cluster's service-account token (ADR 0045), for the kube slot.
+	if err := vault.Create(ctx, &credential.Credential{Name: "cluster-sa", Type: credential.TypeKubeToken, Mode: credential.ModeVaulted},
+		&credential.Secret{Password: "sa-token-of-the-test"}, ""); err != nil {
+		t.Fatal(err)
+	}
 	return g
+}
+
+// credID is a vaulted credential's id, by name.
+func (g *gw) credID(t *testing.T, name string) string {
+	t.Helper()
+	var id string
+	if err := g.db.QueryRowContext(context.Background(), `SELECT id FROM credentials WHERE name = ?`, name).Scan(&id); err != nil {
+		t.Fatal(err)
+	}
+	return id
+}
+
+// named is the object of that name in the list at path, as the API answers it.
+func (g *gw) named(t *testing.T, path, name string) map[string]any {
+	t.Helper()
+	code, out := g.do(t, "GET", path+"?limit=100", nil)
+	if code != 200 {
+		t.Fatalf("GET %s: %d %s", path, code, out)
+	}
+	var page struct {
+		Items []map[string]any `json:"items"`
+	}
+	if err := json.Unmarshal(out, &page); err != nil {
+		t.Fatal(err)
+	}
+	for _, it := range page.Items {
+		if it["name"] == name {
+			return it
+		}
+	}
+	t.Fatalf("%s has no %q:\n%s", path, name, out)
+	return nil
 }
 
 func (g *gw) do(t *testing.T, method, path string, body []byte) (int, []byte) {
@@ -120,10 +157,7 @@ func (g *gw) json(t *testing.T, method, path string, v any) map[string]any {
 // second import changes nothing; secrets never travel.
 func TestExportImportRoundTrip(t *testing.T) {
 	a := newGW(t)
-	var credID string
-	if err := a.db.QueryRowContext(context.Background(), `SELECT id FROM credentials WHERE name = 'linux-key'`).Scan(&credID); err != nil {
-		t.Fatal(err)
-	}
+	credID := a.credID(t, "linux-key")
 	var annID string
 	_ = a.db.QueryRowContext(context.Background(), `SELECT id FROM users WHERE username = 'ann'`).Scan(&annID)
 	grp := a.json(t, "POST", "/api/v1/groups", map[string]any{"name": "ops", "description": "on call", "user_ids": []string{annID}})
@@ -133,32 +167,41 @@ func TestExportImportRoundTrip(t *testing.T) {
 		"grants": []map[string]any{{"kind": "host", "targets": []map[string]any{{"id": web["id"], "protocols": []string{"ssh"}}}, "allow_clipboard": true}}})
 	// An application held to its origins (2026-11-03): the word travels.
 	a.json(t, "POST", "/api/v1/targets", map[string]any{"name": "wiki", "app_upstream": "http://wiki.corp", "app_dependencies": "origins"})
+	// A Kubernetes cluster acting as a shared identity, and a grant scoped to
+	// one namespace (ADR 0045). Both must travel whole: a file that dropped
+	// the scope would import a grant to every namespace, and one that dropped
+	// kube_impersonate would turn a shared identity into impersonation.
+	cluster := a.json(t, "POST", "/api/v1/targets", map[string]any{"name": "prod-cluster", "kube_api_server": "https://10.0.0.20:6443", "kube_impersonate": false,
+		"credentials": map[string]string{"kube": a.credID(t, "cluster-sa")}})
+	a.json(t, "POST", "/api/v1/access-policies", map[string]any{"name": "ops-cluster", "subjects": []map[string]string{{"kind": "group", "id": grp["id"].(string)}},
+		"grants": []map[string]any{{"kind": "kubernetes", "targets": []map[string]any{{"id": cluster["id"], "protocols": []string{"kube"}}}, "namespaces": []string{"prod"}, "cluster_scope": true}}})
 
 	code, file := a.do(t, "GET", "/api/v1/admin/config/export", nil)
 	if code != 200 {
 		t.Fatalf("export: %d %s", code, file)
 	}
 	text := string(file)
-	for _, want := range []string{"zanskar: 1", "name: ops", "- ann", "name: web-1", "ssh: linux-key", "env: prod", "name: ops-web", "group: ops", "name: web-1", "allow_clipboard: true", "app_upstream: http://wiki.corp", "app_dependencies: origins"} {
+	for _, want := range []string{"zanskar: 1", "name: ops", "- ann", "name: web-1", "ssh: linux-key", "env: prod", "name: ops-web", "group: ops", "name: web-1", "allow_clipboard: true", "app_upstream: http://wiki.corp", "app_dependencies: origins",
+		"kube_api_server: https://10.0.0.20:6443", "kube_impersonate: false", "kube_platform: vanilla", "kube: cluster-sa", "kind: kubernetes", "namespaces: [prod]", "cluster_scope: true"} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("the export lacks %q:\n%s", want, text)
 		}
 	}
-	if strings.Contains(text, "s3cret") || strings.Contains(text, credID) || strings.Contains(text, web["id"].(string)) {
+	if strings.Contains(text, "s3cret") || strings.Contains(text, "sa-token") || strings.Contains(text, credID) || strings.Contains(text, web["id"].(string)) {
 		t.Fatalf("the export carries a secret or an id:\n%s", text)
 	}
 
 	b := newGW(t)
 	// The plan first: everything is new, nothing changed yet.
 	code, out := b.do(t, "POST", "/api/v1/admin/config/import", file)
-	if code != 200 || !strings.Contains(string(out), `"applied":false`) || strings.Count(string(out), `"action":"create"`) != 4 {
+	if code != 200 || !strings.Contains(string(out), `"applied":false`) || strings.Count(string(out), `"action":"create"`) != 6 {
 		t.Fatalf("plan: %d %s", code, out)
 	}
 	if n := count(t, b.db, "targets"); n != 0 {
 		t.Fatalf("a plan changed something: %d targets", n)
 	}
 	code, out = b.do(t, "POST", "/api/v1/admin/config/import?apply=true", file)
-	if code != 200 || strings.Count(string(out), `"applied":true`) != 5 {
+	if code != 200 || strings.Count(string(out), `"applied":true`) != 7 {
 		t.Fatalf("apply: %d %s", code, out)
 	}
 	// B now exports what A did.
@@ -166,13 +209,22 @@ func TestExportImportRoundTrip(t *testing.T) {
 	if strip(string(again)) != strip(text) {
 		t.Fatalf("the round trip differs:\n--- A\n%s\n--- B\n%s", text, again)
 	}
+	// B's own view of the cluster and the grant, not only its export: two
+	// exports that both dropped a field would still match.
+	if c := b.named(t, "/api/v1/targets", "prod-cluster"); c["kube_api_server"] != "https://10.0.0.20:6443" || c["kube_impersonate"] != false || c["kube_platform"] != "vanilla" {
+		t.Fatalf("B's cluster: %v", c)
+	}
+	grant := b.named(t, "/api/v1/access-policies", "ops-cluster")["grants"].([]any)[0].(map[string]any)
+	if ns, _ := json.Marshal(grant["namespaces"]); string(ns) != `["prod"]` || grant["cluster_scope"] != true || grant["port_forward"] == true {
+		t.Fatalf("B's grant: %v", grant)
+	}
 	// A second import changes nothing.
 	_, out = b.do(t, "POST", "/api/v1/admin/config/import?apply=true", file)
 	if strings.Contains(string(out), `"action":"create"`) || strings.Contains(string(out), `"action":"update"`) {
 		t.Fatalf("a second import changed things: %s", out)
 	}
 	// Every change went through the API, so each is in the log as usual.
-	if evs, _, _ := b.audit.List(context.Background(), audit.Filter{Action: audit.TargetCreate}); len(evs) != 2 {
+	if evs, _, _ := b.audit.List(context.Background(), audit.Filter{Action: audit.TargetCreate}); len(evs) != 3 {
 		t.Fatalf("target.create events: %d", len(evs))
 	}
 	if evs, _, _ := b.audit.List(context.Background(), audit.Filter{Action: audit.ConfigImport}); len(evs) != 2 {

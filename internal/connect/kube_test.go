@@ -1,0 +1,438 @@
+// SPDX-License-Identifier: Apache-2.0
+
+package connect
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strings"
+	"sync/atomic"
+	"testing"
+	"time"
+
+	"github.com/albatroxxx/zanskar/internal/audit"
+	"github.com/albatroxxx/zanskar/internal/cloud"
+	"github.com/albatroxxx/zanskar/internal/credential"
+	"github.com/albatroxxx/zanskar/internal/gateway"
+	"github.com/albatroxxx/zanskar/internal/gateway/kubegw"
+	"github.com/albatroxxx/zanskar/internal/gateway/kubegw/kubetest"
+	"github.com/albatroxxx/zanskar/internal/policy"
+	"github.com/albatroxxx/zanskar/internal/policy/policytest"
+	"github.com/albatroxxx/zanskar/internal/protocol"
+	"github.com/albatroxxx/zanskar/internal/recording"
+	"github.com/albatroxxx/zanskar/internal/target"
+)
+
+const gatewayPEM = "-----BEGIN CERTIFICATE-----\nAA==\n-----END CERTIFICATE-----\n"
+
+// kubeFixture is the connect fixture with a cluster enrolled behind a fake
+// API server, a service-account token in the vault, and a policy granting
+// ops the prod namespace on it.
+type kubeFixture struct {
+	*connectFixture
+	api     *kubetest.API
+	cluster *target.Target
+	policy  *policy.Policy
+	recDir  string
+}
+
+func newKubeFixture(t *testing.T) *kubeFixture {
+	t.Helper()
+	f := newConnectFixture(t)
+	dir := t.TempDir()
+	f.h.Registry = gateway.NewRegistry()
+	f.h.Storage = &recording.LocalStorage{Dir: dir}
+	f.h.Kube = kubegw.NewSessions()
+	f.h.PublicURL = "https://gw.example"
+	f.h.Groups = f.groups
+	f.h.GatewayCert = func() (string, bool) { return gatewayPEM, true }
+	// No session outlives its test: a session left live would keep its
+	// goroutine reading the package clock the next test moves (CI, PR #336:
+	// a data race between tests).
+	t.Cleanup(func() {
+		f.h.Registry.TerminateUser(f.alice.ID)
+		for i := 0; i < 300 && f.h.Kube.Len() > 0; i++ {
+			time.Sleep(10 * time.Millisecond)
+		}
+	})
+	api := &kubetest.API{Token: "sa-token", Version: "v1.31.0"}
+	apiServer, ca := kubetest.Start(t, api)
+	cred := &credential.Credential{Name: "sa", Type: credential.TypeKubeToken, Mode: credential.ModeVaulted}
+	if err := f.h.Vault.Create(f.ctx, cred, &credential.Secret{Password: "sa-token"}, f.alice.ID); err != nil {
+		t.Fatal(err)
+	}
+	tg := &target.Target{Name: "Prod Cluster", OSFamily: target.Linux, KubeAPIServer: apiServer, KubeCA: ca,
+		Tags: map[string]string{"env": "k8s"}, Credentials: map[target.Protocol]string{target.Kube: cred.ID}}
+	if err := f.h.Targets.Create(f.ctx, tg); err != nil {
+		t.Fatal(err)
+	}
+	g := policytest.Named(protocol.KindKubernetes, []string{tg.ID}, "kube")
+	g.Namespaces = []string{"prod"}
+	p := policytest.Policy("k8s", []policy.Subject{policytest.Group(f.opsID)}, g)
+	if err := f.h.Policies.Create(f.ctx, p); err != nil {
+		t.Fatal(err)
+	}
+	return &kubeFixture{connectFixture: f, api: api, cluster: tg, policy: p, recDir: dir}
+}
+
+// connectKube starts a kube session and returns its id and token.
+func (f *kubeFixture) connectKube(t *testing.T) (sid, token string, out map[string]any) {
+	t.Helper()
+	code, out := f.connect(t, map[string]any{"target_id": f.cluster.ID, "protocol": "kube"})
+	if code != http.StatusOK {
+		t.Fatalf("connect: %d %v", code, out)
+	}
+	sid, _ = out["session_id"].(string)
+	kc, _ := out["kubeconfig"].(string)
+	for _, l := range strings.Split(kc, "\n") {
+		if v, ok := strings.CutPrefix(strings.TrimSpace(l), "token: "); ok {
+			token = v
+		}
+	}
+	if sid == "" || token == "" {
+		t.Fatalf("connect answered no session or token: %v", out)
+	}
+	return sid, token, out
+}
+
+// kubectl sends one request as kubectl would, with the session token.
+func (f *kubeFixture) kubectl(sid, token, path string) *httptest.ResponseRecorder {
+	req := httptest.NewRequest(http.MethodGet, "/k8s/"+sid+path, nil)
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	req.RemoteAddr = "198.51.100.7:5000"
+	rr := httptest.NewRecorder()
+	f.srv.ServeHTTP(rr, req)
+	return rr
+}
+
+// cast reads the session's recording.
+func (f *kubeFixture) cast(t *testing.T) string {
+	t.Helper()
+	var text string
+	_ = filepath.WalkDir(f.recDir, func(p string, d os.DirEntry, err error) error {
+		if err == nil && !d.IsDir() && strings.HasSuffix(p, ".cast") {
+			b, _ := os.ReadFile(p) // #nosec G304 -- the test's own temp dir
+			text += string(b)
+		}
+		return nil
+	})
+	return text
+}
+
+// A kube session (ADR 0045, 3): connect answers a kubeconfig at once, the
+// session is live and watched, requests go to the cluster as the person
+// within the scope, and an administrator's terminate ends it, token and all.
+func TestKubeSessionEndToEnd(t *testing.T) {
+	f := newKubeFixture(t)
+	sid, token, out := f.connectKube(t)
+	kc := out["kubeconfig"].(string)
+	for _, want := range []string{"server: https://gw.example/k8s/" + sid + "\n", "certificate-authority-data: ", "token: zk8s_", "current-context: zanskar-prod-cluster\n"} {
+		if !strings.Contains(kc, want) {
+			t.Errorf("kubeconfig lacks %q:\n%s", want, kc)
+		}
+	}
+	if _, has := out["ticket"]; has {
+		t.Error("a kube session has no ticket")
+	}
+	if out["idle_seconds"] != float64(900) || out["expires_at"] != nil {
+		t.Errorf("terms: idle %v expires %v", out["idle_seconds"], out["expires_at"])
+	}
+	s, err := f.h.Sessions.Get(f.ctx, sid)
+	if err != nil || s.EndedAt != nil || s.Protocol != "kube" || s.TargetID != f.cluster.ID {
+		t.Fatalf("row: %+v %v", s, err)
+	}
+	l, ok := f.h.Registry.Get(sid)
+	if !ok || l.Tap == nil || l.Kube == nil || strings.Join(l.Kube.Namespaces, ",") != "prod" || strings.Join(l.Kube.Groups, ",") != "ops" || l.Kube.ClusterScope {
+		t.Fatalf("registry: %v %+v", ok, l.Kube)
+	}
+	evs, _, err := f.auditLog.List(f.ctx, audit.Filter{Action: "session.start", ObjectID: sid})
+	if err != nil || len(evs) != 1 {
+		t.Fatalf("start event: %v %d", err, len(evs))
+	}
+	var details map[string]any
+	_ = json.Unmarshal(evs[0].Details, &details)
+	if ns, _ := details["namespaces"].([]any); len(ns) != 1 || ns[0] != "prod" || details["acts_as"] != "person" || details["protocol"] != "kube" {
+		t.Fatalf("start details: %v", details)
+	}
+
+	// Through the gateway as the person, within the scope.
+	live, _, unsubscribe := l.Tap.Subscribe()
+	defer unsubscribe()
+	if rr := f.kubectl(sid, token, "/api/v1/namespaces/prod/pods"); rr.Code != 200 {
+		t.Fatalf("pods: %d %s", rr.Code, rr.Body.String())
+	}
+	h := f.api.Last().Header
+	if h.Get("Authorization") != "Bearer sa-token" || h.Get("Impersonate-User") != "alice" || strings.Join(h.Values("Impersonate-Group"), ",") != "system:authenticated,zanskar:ops" {
+		t.Fatalf("the cluster saw %v", h)
+	}
+	if rr := f.kubectl(sid, token, "/api/v1/nodes"); rr.Code != 403 || !strings.Contains(rr.Body.String(), `"reason":"Forbidden"`) {
+		t.Fatalf("nodes: %d %s", rr.Code, rr.Body.String())
+	}
+	if rr := f.kubectl(sid, token+"x", "/api/v1/namespaces/prod/pods"); rr.Code != 401 {
+		t.Fatalf("wrong token: %d", rr.Code)
+	}
+	if rr := f.kubectl(sid, "", "/api/v1/namespaces/prod/pods"); rr.Code != 401 {
+		t.Fatalf("no token: %d", rr.Code)
+	}
+	if rr := f.kubectl("nosuch", token, "/api/v1/namespaces/prod/pods"); rr.Code != 401 {
+		t.Fatalf("another session: %d", rr.Code)
+	}
+	// A watcher sees the requests as they happen.
+	select {
+	case b := <-live:
+		if !strings.Contains(string(b), "list pods -n prod → 200") {
+			t.Fatalf("tap carried %q", b)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("the tap carried nothing")
+	}
+
+	// An administrator ends it: the token is refused and the recording closed.
+	if !f.h.Registry.Terminate(sid) {
+		t.Fatal("terminate")
+	}
+	if row, audited := f.endedWith(t, sid); row != "admin_terminated" || audited != "admin_terminated" {
+		t.Fatalf("ended as %s / %s", row, audited)
+	}
+	if rr := f.kubectl(sid, token, "/api/v1/namespaces/prod/pods"); rr.Code != 401 {
+		t.Fatalf("after the end: %d", rr.Code)
+	}
+	// The run ends the row before it lets the store go; a moment later it has.
+	deadline := time.Now().Add(2 * time.Second)
+	for f.h.Kube.Len() != 0 && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	if f.h.Kube.Len() != 0 {
+		t.Fatal("the session is still held")
+	}
+	s, _ = f.h.Sessions.Get(f.ctx, sid)
+	rec, err := f.h.Sessions.GetRecording(f.ctx, s.RecordingID)
+	if err != nil || rec.FinishedAt == nil || rec.SizeBytes == 0 {
+		t.Fatalf("recording: %+v %v", rec, err)
+	}
+	cast := f.cast(t)
+	for _, want := range []string{`"m","list pods -n prod → 200"`, `"o","list pods -n prod → 200\r\n"`, "list nodes → 403 (gateway: outside the access)"} {
+		if !strings.Contains(cast, want) {
+			t.Errorf("recording lacks %q:\n%s", want, cast)
+		}
+	}
+}
+
+// With kube_impersonate off the session is the credential itself, and the
+// audit says so.
+func TestKubeSessionSharedIdentity(t *testing.T) {
+	f := newKubeFixture(t)
+	off := false
+	f.cluster.KubeImpersonate = &off
+	if err := f.h.Targets.Update(f.ctx, f.cluster); err != nil {
+		t.Fatal(err)
+	}
+	sid, token, _ := f.connectKube(t)
+	if rr := f.kubectl(sid, token, "/api/v1/namespaces/prod/pods"); rr.Code != 200 {
+		t.Fatalf("pods: %d", rr.Code)
+	}
+	if h := f.api.Last().Header; h.Get("Impersonate-User") != "" || len(h.Values("Impersonate-Group")) != 0 {
+		t.Fatalf("shared identity impersonated: %v", h)
+	}
+	evs, _, _ := f.auditLog.List(f.ctx, audit.Filter{Action: "session.start", ObjectID: sid})
+	var details map[string]any
+	_ = json.Unmarshal(evs[0].Details, &details)
+	if details["acts_as"] != "shared identity" {
+		t.Fatalf("start details: %v", details)
+	}
+	// A re-check compares the scope and nothing about groups, which the
+	// session does not act as: it keeps running (the first build ended it).
+	if n := f.h.Recheck(f.ctx, []string{f.alice.ID}); n != 0 {
+		t.Fatalf("a re-check ended %d shared-identity sessions", n)
+	}
+	f.stillLive(t, sid)
+}
+
+// The cluster refusing the gateway's credential mid-session (the service
+// account's token rotated away) answers the person a 502 that names the
+// gateway's credential, not a 401 that reads as their kubeconfig; the
+// session stays for the administrator to fix the credential under.
+func TestKubeSessionCredentialRefused(t *testing.T) {
+	f := newKubeFixture(t)
+	sid, token, _ := f.connectKube(t)
+	if rr := f.kubectl(sid, token, "/api/v1/namespaces/prod/pods"); rr.Code != 200 {
+		t.Fatalf("pods: %d", rr.Code)
+	}
+	f.api.SetToken("rotated")
+	rr := f.kubectl(sid, token, "/api/v1/namespaces/prod/pods")
+	if rr.Code != 502 || !strings.Contains(rr.Body.String(), "refused the gateway's credential") {
+		t.Fatalf("after the rotation: %d %s", rr.Code, rr.Body.String())
+	}
+	f.stillLive(t, sid)
+}
+
+// Paths that try to leave the namespace through encoding or dot segments
+// (break-it, 2026-11-14): each is refused by the gateway, and nothing of it
+// reaches the cluster. The real server mux is in front, as in production.
+func TestKubeProxyPathProbes(t *testing.T) {
+	f := newKubeFixture(t)
+	sid, token, _ := f.connectKube(t)
+	for _, probe := range []string{
+		"/api/v1/namespaces/prod/pods/..%2F..%2Fkube-system%2Fpods",
+		"/api/v1/namespaces/prod%2F..%2Fkube-system/pods",
+		"/api/v1/namespaces/prod/pods/%2e%2e/%2e%2e/kube-system/pods",
+		"/api/v1/namespaces/prod/../kube-system/pods",
+		"/api/v1/namespaces/prod//pods",
+		"/api/v1/namespaces/./pods",
+		"/api/v1/namespaces/kube-system/pods%3Fnamespace=prod",
+		"/api/v1/namespaces/prod/pods?fieldSelector=metadata.namespace%3Dkube-system",
+		"/api/v1/pods?fieldSelector=metadata.namespace%3Dprod",
+		"/%2E%2E/version",
+		"/api/v1/namespaces/prod/pods/x/../../kube-system/pods",
+	} {
+		before := f.api.Count()
+		rr := f.kubectl(sid, token, probe)
+		reached := f.api.Count() - before
+		switch probe {
+		case "/api/v1/namespaces/prod/pods?fieldSelector=metadata.namespace%3Dkube-system":
+			// A field selector cannot widen a namespaced list: the path
+			// names prod, the cluster answers for prod. It is forwarded.
+			if rr.Code != 200 || reached != 1 || f.api.Last().Path != "/api/v1/namespaces/prod/pods" {
+				t.Errorf("%s: %d, %d reached, %s", probe, rr.Code, reached, f.api.Last().Path)
+			}
+		default:
+			if rr.Code == 200 || reached != 0 {
+				t.Errorf("%s: %d, %d requests reached the cluster", probe, rr.Code, reached)
+			}
+		}
+	}
+	f.stillLive(t, sid)
+}
+
+// eksMinter stands in for the role's token source (ADR 0045, 8).
+type eksMinter struct {
+	token string
+	err   error
+}
+
+func (m *eksMinter) Token(context.Context) (string, error) { return m.token, m.err }
+
+// An EKS cluster's session carries a token minted as the role, asked for on
+// each request, and the person is impersonated through it as through a
+// service account's token. A token AWS will not mint ends the request, not
+// the session, with a sentence naming the gateway's credential.
+func TestKubeSessionEKS(t *testing.T) {
+	f := newKubeFixture(t)
+	minter := &eksMinter{token: "sa-token"}
+	prev := target.NewEKS
+	target.NewEKS = func(_ context.Context, a cloud.EKSAccess) (target.KubeTokener, error) {
+		if a.Cluster != "prod" || a.RoleARN == "" || a.ExternalID == "" {
+			t.Errorf("the minter was given %+v", a)
+		}
+		return minter, nil
+	}
+	t.Cleanup(func() { target.NewEKS = prev })
+	role := &credential.Credential{Name: "prod-role", Type: credential.TypeKubeEKS, Mode: credential.ModeVaulted,
+		AWSRegion: "eu-west-2", AWSRoleARN: "arn:aws:iam::123456789012:role/zanskar-eks", EKSCluster: "prod"}
+	if err := f.h.Vault.Create(f.ctx, role, nil, f.alice.ID); err != nil {
+		t.Fatal(err)
+	}
+	f.cluster.KubePlatform = target.PlatformEKS
+	f.cluster.Credentials[target.Kube] = role.ID
+	if err := f.h.Targets.Update(f.ctx, f.cluster); err != nil {
+		t.Fatal(err)
+	}
+	sid, token, _ := f.connectKube(t)
+	if rr := f.kubectl(sid, token, "/api/v1/namespaces/prod/pods"); rr.Code != 200 {
+		t.Fatalf("pods: %d %s", rr.Code, rr.Body.String())
+	}
+	if h := f.api.Last().Header; h.Get("Authorization") != "Bearer sa-token" || h.Get("Impersonate-User") != "alice" {
+		t.Fatalf("the cluster saw %v", h)
+	}
+	minter.err = errors.New("AccessDenied: sts:AssumeRole")
+	rr := f.kubectl(sid, token, "/api/v1/namespaces/prod/pods")
+	if rr.Code != 502 || !strings.Contains(rr.Body.String(), "could not be minted") {
+		t.Fatalf("mint refused: %d %s", rr.Code, rr.Body.String())
+	}
+	f.stillLive(t, sid)
+	// A vanilla cluster whose slot holds the role is refused at connect, as
+	// the slot itself refuses it when bound through the API.
+	f.cluster.KubePlatform = target.PlatformVanilla
+	if err := f.h.Targets.Update(f.ctx, f.cluster); err != nil {
+		t.Fatal(err)
+	}
+	if code, out := f.connect(t, map[string]any{"target_id": f.cluster.ID, "protocol": "kube"}); code != http.StatusNotImplemented || out["code"] != "credential_mode_unavailable" || !strings.Contains(out["message"].(string), "platform is eks") {
+		t.Fatalf("role on a vanilla cluster: %d %v", code, out)
+	}
+}
+
+// Without a public address there is nothing to put in a kubeconfig: the
+// protocol is off, with the reason.
+func TestKubeSessionNeedsPublicURL(t *testing.T) {
+	f := newKubeFixture(t)
+	f.h.PublicURL = ""
+	code, out := f.connect(t, map[string]any{"target_id": f.cluster.ID, "protocol": "kube"})
+	if code != http.StatusNotImplemented || out["code"] != "protocol_unavailable" || !strings.Contains(out["message"].(string), "ZANSKAR_PUBLIC_URL") {
+		t.Fatalf("%d %v", code, out)
+	}
+	if ev := f.lastConnectEvent(t); ev.Outcome != audit.Failure {
+		t.Fatalf("connect event: %+v", ev)
+	}
+	// A pod shell is phase 2.
+	if code, out := f.connect(t, map[string]any{"target_id": f.cluster.ID, "protocol": "pod"}); code != http.StatusNotImplemented {
+		t.Fatalf("pod: %d %v", code, out)
+	}
+}
+
+// Without a request for the policy's idle time the session ends by itself.
+func TestKubeSessionIdlesOut(t *testing.T) {
+	f := newKubeFixture(t)
+	// The run reads the clock on every tick, so the clock is set before the
+	// session starts and moved through an atomic.
+	var skew atomic.Int64
+	tick, now := kubeTick, kubeNow
+	kubeTick = 20 * time.Millisecond
+	kubeNow = func() time.Time { return time.Now().Add(time.Duration(skew.Load())) }
+	t.Cleanup(func() { kubeTick, kubeNow = tick, now })
+	sid, token, _ := f.connectKube(t)
+	if rr := f.kubectl(sid, token, "/api/v1/namespaces/prod/pods"); rr.Code != 200 {
+		t.Fatalf("pods: %d", rr.Code)
+	}
+	time.Sleep(60 * time.Millisecond)
+	f.stillLive(t, sid)
+	// Sixteen minutes pass with no request (the grant's idle time is fifteen).
+	skew.Store(int64(16 * time.Minute))
+	if row, _ := f.endedWith(t, sid); row != "idle_timeout" {
+		t.Fatalf("ended as %s", row)
+	}
+	if rr := f.kubectl(sid, token, "/api/v1/namespaces/prod/pods"); rr.Code != 401 {
+		t.Fatalf("after idling out: %d", rr.Code)
+	}
+	s, _ := f.h.Sessions.Get(f.ctx, sid)
+	if !strings.Contains(s.EndDetail, "15m0s without a request") {
+		t.Fatalf("detail %q", s.EndDetail)
+	}
+}
+
+// A grant whose scope changes ends the sessions running on it; one that does
+// not keeps them (ADR 0045, with the clipboard precedent).
+func TestKubeSessionEndsWhenTheScopeChanges(t *testing.T) {
+	f := newKubeFixture(t)
+	sid, _, _ := f.connectKube(t)
+	if n := f.h.Recheck(f.ctx, []string{f.alice.ID}); n != 0 {
+		t.Fatalf("an unchanged policy ended %d sessions", n)
+	}
+	f.stillLive(t, sid)
+	f.policy.Grants[0].Namespaces = []string{"prod", "staging"}
+	if err := f.h.Policies.Update(f.ctx, f.policy); err != nil {
+		t.Fatal(err)
+	}
+	if n := f.h.Recheck(f.ctx, []string{f.alice.ID}); n != 1 {
+		t.Fatalf("a widened scope ended %d sessions, want 1", n)
+	}
+	if row, _ := f.endedWith(t, sid); row != "policy_revoked" {
+		t.Fatalf("ended as %s", row)
+	}
+}

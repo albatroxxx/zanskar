@@ -3,10 +3,15 @@
 package cloud
 
 import (
+	"bytes"
 	"context"
+	"crypto/rand"
 	"encoding/base64"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -63,15 +68,50 @@ type AWS struct {
 	sts stsAPI // with the assumed role's credentials, for Check
 }
 
-// NewAWS builds a provider that assumes the role lazily and caches the
-// temporary credentials until they expire.
-func NewAWS(ctx context.Context, a AWSAccess) (*AWS, error) {
+// The shapes an administrator types for a role (ADR 0023), checked where
+// they are stored: an IAM role ARN in the aws, aws-us-gov and aws-cn
+// partitions; the ExternalId Zanskar minted, which the trust policy carries.
+var (
+	RoleARNRe    = regexp.MustCompile(`^arn:aws(-us-gov|-cn)?:iam::[0-9]{12}:role/[A-Za-z0-9+=,.@_/-]+$`)
+	ExternalIDRe = regexp.MustCompile(`^zanskar-[0-9a-f]{32}$`)
+	regionRe     = regexp.MustCompile(`^[a-z]{2}(-[a-z]+)+-[0-9]$`)
+)
+
+// ValidRegion reports whether s is shaped like an AWS region (eu-west-2,
+// us-gov-west-1); the SDK tells a region that does not exist.
+func ValidRegion(s string) bool { return regionRe.MatchString(s) }
+
+// NewExternalID returns a random ExternalId for a role's trust policy,
+// zanskar- and 32 hex characters, which defeats the confused deputy problem.
+func NewExternalID() string {
+	var b [16]byte
+	_, _ = rand.Read(b[:])
+	return "zanskar-" + hex.EncodeToString(b[:])
+}
+
+// RenderPolicy is an IAM document as the console shows it and the CLI
+// takes it: indented JSON, nothing escaped for HTML.
+func RenderPolicy(doc any) string {
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	enc.SetIndent("", "  ")
+	if err := enc.Encode(doc); err != nil {
+		return ""
+	}
+	return strings.TrimRight(buf.String(), "\n")
+}
+
+// assumedConfig is the SDK configuration that acts as the role: the
+// gateway's own credentials assume it lazily, with the ExternalId, and the
+// temporary credentials are cached until they expire.
+func assumedConfig(ctx context.Context, a AWSAccess) (aws.Config, error) {
 	if a.Region == "" || a.RoleARN == "" || a.ExternalID == "" {
-		return nil, errors.New("cloud: region, role arn and external id are required")
+		return aws.Config{}, errors.New("cloud: region, role arn and external id are required")
 	}
 	base, err := awsconfig.LoadDefaultConfig(ctx, awsconfig.WithRegion(a.Region))
 	if err != nil {
-		return nil, fmt.Errorf("cloud: aws base config: %w", err)
+		return aws.Config{}, fmt.Errorf("cloud: aws base config: %w", err)
 	}
 	provider := stscreds.NewAssumeRoleProvider(sts.NewFromConfig(base), a.RoleARN, func(o *stscreds.AssumeRoleOptions) {
 		o.ExternalID = aws.String(a.ExternalID)
@@ -80,6 +120,16 @@ func NewAWS(ctx context.Context, a AWSAccess) (*AWS, error) {
 	})
 	cfg := base.Copy()
 	cfg.Credentials = aws.NewCredentialsCache(provider)
+	return cfg, nil
+}
+
+// NewAWS builds a provider that assumes the role lazily and caches the
+// temporary credentials until they expire.
+func NewAWS(ctx context.Context, a AWSAccess) (*AWS, error) {
+	cfg, err := assumedConfig(ctx, a)
+	if err != nil {
+		return nil, err
+	}
 	return &AWS{
 		asg: autoscaling.NewFromConfig(cfg),
 		ec2: ec2.NewFromConfig(cfg),

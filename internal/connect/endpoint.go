@@ -53,6 +53,14 @@ type endpoint struct {
 	AppDependencies string
 	AppPrivate      *target.AppPrivate
 
+	// A Kubernetes cluster (ADR 0045): its API server, the CA it is verified
+	// against, whether sessions act as the person, and its platform, which
+	// says what its kube slot's credential is (ADR 0045, 8).
+	KubeAPIServer   string
+	KubeCA          string
+	KubeImpersonate bool
+	KubePlatform    string
+
 	// Exactly one of TargetID or (ASGID, ASGInstanceID) is set.
 	TargetID      string
 	ASGID         string
@@ -91,6 +99,8 @@ func (e *endpoint) policyRef() policy.TargetRef {
 		kind = protocol.KindDatabase
 	case e.AppUpstream != "":
 		kind = protocol.KindApplication
+	case e.KubeAPIServer != "":
+		kind = protocol.KindKubernetes
 	}
 	return policy.TargetRef{Kind: kind, ID: e.TargetID, ASGID: e.ASGID, Tags: e.Tags}
 }
@@ -98,7 +108,8 @@ func (e *endpoint) policyRef() policy.TargetRef {
 func fromTarget(t *target.Target) *endpoint {
 	e := &endpoint{Name: t.Name, Address: t.Address, Ports: t.Ports, Tags: t.Tags, Credentials: t.Credentials,
 		HostKeyTrusted: t.HostKeyStatus == target.HostKeyTrusted, Active: t.Status == "active", TargetID: t.ID, LiveKey: t.ID,
-		Engine: t.Engine, EngineVersion: t.EngineVersion, DatabaseName: t.DatabaseName, TLSMode: t.TLSMode, TLSCA: t.TLSCA, AppUpstream: t.AppUpstream, AppEndpoints: t.AppEndpoints, AppDependencies: t.AppDependencies, AppPrivate: t.AppPrivate}
+		Engine: t.Engine, EngineVersion: t.EngineVersion, DatabaseName: t.DatabaseName, TLSMode: t.TLSMode, TLSCA: t.TLSCA, AppUpstream: t.AppUpstream, AppEndpoints: t.AppEndpoints, AppDependencies: t.AppDependencies, AppPrivate: t.AppPrivate,
+		KubeAPIServer: t.KubeAPIServer, KubeCA: t.KubeCA, KubeImpersonate: t.Impersonates(), KubePlatform: t.KubePlatform}
 	if t.RetentionDays != nil {
 		e.RetentionDays = *t.RetentionDays
 	}

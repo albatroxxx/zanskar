@@ -13,6 +13,13 @@ CLAUDE.md at the root is the short form the tools read; this is the same set wit
 - Handlers use `internal/httpx` (`WriteJSON`, `WriteError`, `DecodeJSON`, `Paging`, `Page`) and
   are guarded by `auth.RequireAuth` / `auth.RequireRole`. A refusal has a code and a sentence a
   person can act on; the request id is in every error.
+- A field added to a target or a grant has two more copies beside the OpenAPI schema: the
+  configuration file (`internal/configio`, its document and API structs) and the Terraform
+  provider (`terraform-provider-zanskar/internal/provider`: API struct, write body, model,
+  attribute type and schema). A copy forgotten fails open on a round trip, since the field comes
+  back as its default (2026-11-13: a grant's `namespaces` came back as every namespace). Their
+  tests read the receiving gateway's own answer, not only its export, because two exports that
+  both lost a field still match.
 - Comments say why, in sentences, often with the date and the finding that led to the code
   ("live, 2026-11-03: …"). A reader of the code should not need the commit log.
 - Dependencies are bumped in batches (Dependabot groups), the third-party notices regenerated

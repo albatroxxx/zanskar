@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { api, errorMessage } from '../../api/client'
-import { appTLS, dbTLS, engineName, fmtTime, protocolName } from '../../api/format'
-import type { AppEndpoint, CertificateProbe, Credential, DependencyRefusal, ProbeResponse, Protocol, Target } from '../../api/types'
+import { appTLS, dbTLS, engineName, fmtTime, platformName, protocolName } from '../../api/format'
+import type { AppEndpoint, CertificateProbe, Credential, DependencyRefusal, KubeTest, ProbeResponse, Protocol, Target } from '../../api/types'
 import { OSIcon, StateIcon } from '../../components/icons'
 import { Alert, Badge, Confirm, Modal, Tags } from '../../components/ui'
 import { DeleteAsset } from './DeleteAsset'
@@ -46,7 +46,10 @@ export function TargetDetail({ target, credentials, onClose, onChanged, onDelete
   const kind = kindOf(t)
   const database = kind === 'database'
   const application = kind === 'application'
+  const cluster = kind === 'kubernetes'
   const host = kind === 'host'
+  const [kubeTest, setKubeTest] = useState<KubeTest | null>(null)
+  const [manifest, setManifest] = useState<string | null>(null)
   const learns = application && t.app_dependencies !== 'origins'
   useEffect(() => {
     if (!learns) return
@@ -64,6 +67,20 @@ export function TargetDetail({ target, credentials, onClose, onChanged, onDelete
       setErr(errorMessage(e))
     }
   }
+
+  const doKubeTest = () =>
+    run(async () => {
+      setProbing(true)
+      try {
+        setKubeTest(await api.post<KubeTest>(`/targets/${t.id}/kube/test`))
+      } finally {
+        setProbing(false)
+      }
+    })
+  const showManifest = () =>
+    run(async () => {
+      setManifest(await api.text(`/targets/${t.id}/kube/manifest`))
+    })
 
   const doProbe = () =>
     run(async () => {
@@ -130,9 +147,13 @@ export function TargetDetail({ target, credentials, onClose, onChanged, onDelete
   // RDP, VNC and WinRM slots; and by the probe alone, a port closed at the
   // moment of probing would hide its slot (review, same day).
   const usual = (hostPorts[t.os_family] ?? hostPorts.other).main
+  // A cluster has one slot, kube, holding Zanskar's identity there (ADR
+  // 0045); a pod shell uses it.
   const slotProtocols: Protocol[] = database
     ? ['database']
-    : protocols.filter((p) => usual.includes(p) || t.capabilities.includes(p) || !!t.ports[p] || !!t.credentials?.[p])
+    : cluster
+      ? ['kube']
+      : protocols.filter((p) => usual.includes(p) || t.capabilities.includes(p) || !!t.ports[p] || !!t.credentials?.[p])
   // What a probe reached: a host's protocols, or a database's own port.
   const probed: Protocol[] = database ? ['database'] : protocols
 
@@ -171,6 +192,23 @@ export function TargetDetail({ target, credentials, onClose, onChanged, onDelete
             <dd>
               {dbTLS(t.tls_mode).verified ? <Badge tone="ok">{dbTLS(t.tls_mode).label} against the CA bundle</Badge> : <Badge tone="warn">{dbTLS(t.tls_mode).label}</Badge>}
             </dd>
+          </>
+        ) : cluster ? (
+          <>
+            <dt>Platform</dt><dd>{platformName(t.kube_platform)}</dd>
+            <dt>API server</dt><dd className="mono">{t.kube_api_server}</dd>
+            <dt>Sessions act as</dt><dd>{t.kube_impersonate === false ? <Badge tone="warn">the credential (shared identity)</Badge> : 'the person'}</dd>
+            <dt>CA</dt><dd>{t.kube_ca ? 'Enrolled bundle' : 'System roots'}</dd>
+            {kubeTest && (
+              <>
+                <dt>Version</dt><dd className="mono">{kubeTest.version}</dd>
+                <dt>May impersonate</dt>
+                <dd>
+                  {kubeTest.impersonate_users && kubeTest.impersonate_groups ? <Badge tone="ok">users and groups</Badge> : <Badge tone="warn">{kubeTest.impersonate_users ? 'users only' : kubeTest.impersonate_groups ? 'groups only' : 'neither'}</Badge>}
+                </dd>
+                <dt>Namespaces</dt><dd>{kubeTest.namespaces_listed ? (kubeTest.namespaces.length ? kubeTest.namespaces.join(', ') : 'none') : <span className="muted">not listable with this credential</span>}</dd>
+              </>
+            )}
           </>
         ) : application ? (
           <>
@@ -269,9 +307,9 @@ export function TargetDetail({ target, credentials, onClose, onChanged, onDelete
           host slots (ssh, rdp, vnc, winrm) do not apply to it. */}
       {!application && (
         <>
-          <h2 style={{ marginTop: 18 }}>{database ? 'Database credential' : 'Credentials per protocol'}</h2>
+          <h2 style={{ marginTop: 18 }}>{database ? 'Database credential' : cluster ? 'Cluster credential' : 'Credentials per protocol'}</h2>
           <CredentialBindings
-            slots={slotProtocols.map((p) => ({ protocol: p, label: p === 'database' ? `Database (${engineName(t.engine)})` : protocolName(p) }))}
+            slots={slotProtocols.map((p) => ({ protocol: p, label: p === 'database' ? `Database (${engineName(t.engine)})` : p === 'kube' ? 'Kubernetes' : protocolName(p) }))}
             current={t.credentials}
             credentials={credentials}
             onSave={saveBindings}
@@ -339,6 +377,12 @@ export function TargetDetail({ target, credentials, onClose, onChanged, onDelete
           {database && (
             <button className="btn" onClick={() => void doProbe()} disabled={probing}>{probing ? 'Testing…' : 'Test connection'}</button>
           )}
+          {cluster && (
+            <>
+              <button className="btn" onClick={() => void doKubeTest()} disabled={probing}>{probing ? 'Testing…' : 'Test'}</button>
+              <button className="btn" onClick={() => void showManifest()}>RBAC manifest</button>
+            </>
+          )}
           {canTrust && (
             <button className="btn primary" onClick={() => setConfirm('trust')}>Trust host key</button>
           )}
@@ -398,6 +442,14 @@ export function TargetDetail({ target, credentials, onClose, onChanged, onDelete
         />
       )}
       {confirm === 'delete' && <DeleteAsset name={t.name} path={`/targets/${t.id}`} onClose={() => setConfirm(null)} onDeleted={onDeleted} />}
+      {manifest !== null && (
+        <Modal title="RBAC manifest" onClose={() => setManifest(null)} width={720}>
+          <pre className="mono" style={{ whiteSpace: 'pre', overflow: 'auto', maxHeight: '60vh' }}>{manifest}</pre>
+          <div className="actions">
+            <button className="btn" onClick={() => void navigator.clipboard.writeText(manifest)}>Copy</button>
+          </div>
+        </Modal>
+      )}
     </Modal>
   )
 }

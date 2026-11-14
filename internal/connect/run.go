@@ -44,6 +44,9 @@ type sessionRun struct {
 	tell func(msg string)
 	// watch pings the browser while the bridge runs (watchClient); set by live.
 	watch *clientWatch
+	// kube is a Kubernetes session's terms, carried into the registry so a
+	// re-check can compare them (ADR 0045); nil for a bridge.
+	kube *gateway.KubeTerms
 }
 
 // startingSet holds the sessions between their row and their bridge's
@@ -117,7 +120,9 @@ func (h *Handler) startRun(r *http.Request, ws *websocket.Conn, g *ticket.Grant,
 		Protocol: g.Protocol, CredentialID: g.CredentialID, ClientIP: ip, UserAgent: r.UserAgent(), FailoverFromSessionID: g.FailoverFrom}
 	if err := h.Sessions.Start(r.Context(), s); err != nil {
 		h.Log.Error("start session", "err", err)
-		_ = ws.Close(websocket.StatusInternalError, "could not start session")
+		if ws != nil {
+			_ = ws.Close(websocket.StatusInternalError, "could not start session")
+		}
 		return nil, false
 	}
 	h.markStarting(s.ID)
@@ -163,7 +168,9 @@ func (run *sessionRun) end(reason, msg string, more map[string]string) {
 		if run.tell != nil {
 			run.tell(msg)
 		}
-		_ = run.ws.Close(websocket.StatusPolicyViolation, msg)
+		if run.ws != nil {
+			_ = run.ws.Close(websocket.StatusPolicyViolation, msg)
+		}
 	}
 }
 
@@ -221,15 +228,20 @@ func (run *sessionRun) register(rec recorder, format, uri string) (*session.Reco
 // live puts the session in the registry and returns the context its bridge
 // runs under, which a terminate or a revocation cancels; call done when the
 // bridge returns. Registered, the session is no longer starting: the registry
-// holds it from here.
+// holds it from here. A session without a socket (a Kubernetes session) has
+// no browser to ping.
 func (run *sessionRun) live() (ctx context.Context, done func()) {
 	ctx = run.h.Registry.Add(run.r.Context(), gateway.Live{SessionID: run.s.ID, UserID: run.g.UserID, TargetID: run.ep.LiveKey,
 		Protocol: run.g.Protocol, PolicyID: run.g.PolicyID, AllowClipboard: run.g.AllowClipboard, AllowFileTransfer: run.g.AllowFileTransfer,
-		AllowDevTools: run.g.AllowDevTools})
+		AllowDevTools: run.g.AllowDevTools, Kube: run.kube})
 	run.h.starting.m.Delete(run.s.ID)
-	run.watch = watchClient(run.ws)
+	if run.ws != nil {
+		run.watch = watchClient(run.ws)
+	}
 	return ctx, func() {
-		run.watch.Stop()
+		if run.watch != nil {
+			run.watch.Stop()
+		}
 		run.h.Registry.Remove(run.s.ID)
 	}
 }
@@ -260,7 +272,9 @@ func (run *sessionRun) finish(rec recorder, row *session.Recording, reason strin
 		more["detail"] = clientLostDetail
 	}
 	run.end(reason, "", more)
-	_ = run.ws.Close(websocket.StatusNormalClosure, reason)
+	if run.ws != nil {
+		_ = run.ws.Close(websocket.StatusNormalClosure, reason)
+	}
 }
 
 // framer is a recording that counts the frames it carried: a desktop's.

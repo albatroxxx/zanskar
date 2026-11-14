@@ -718,7 +718,7 @@ certificate, no DNS record, nothing installed on the client.
 ## Autoscaling groups on AWS
 
 Zanskar reads an autoscaling group through a role in your AWS account that only this gateway
-can assume (ADR 0011, 0023). Enrolment is guided from **Autoscaling groups → Enroll group**:
+can assume (ADR 0011, 0023). Enrolment is guided from **Autoscaling → Enroll group**:
 
 1. **The gateway's identity.** The page shows the principal this gateway runs as. On EC2
    with an instance profile, or on EKS with IRSA, it is detected at start from STS and

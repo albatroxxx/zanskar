@@ -11,6 +11,7 @@ export const kinds: { kind: TargetKind; label: string }[] = [
   { kind: 'database', label: 'Database' },
   { kind: 'application', label: 'Application' },
   { kind: 'autoscaling', label: 'Autoscaling' },
+  { kind: 'kubernetes', label: 'Kubernetes' },
 ]
 
 /** What each kind serves; a grant offers nothing else. */
@@ -19,12 +20,14 @@ export const kindProtocols: Record<TargetKind, Protocol[]> = {
   autoscaling: ['ssh', 'rdp', 'vnc', 'winrm'],
   database: ['database'],
   application: ['http'],
+  kubernetes: ['kube', 'pod'],
 }
 
-/** A target's kind: an engine makes it a database, an upstream an application. */
-export function kindOf(t: Pick<Target, 'engine' | 'app_upstream'>): TargetKind {
+/** A target's kind: an engine makes it a database, an upstream an application, an API server a Kubernetes cluster. */
+export function kindOf(t: Pick<Target, 'engine' | 'app_upstream' | 'kube_api_server'>): TargetKind {
   if (t.engine) return 'database'
   if (t.app_upstream) return 'application'
+  if (t.kube_api_server) return 'kubernetes'
   return 'host'
 }
 
@@ -34,7 +37,7 @@ export function kindOf(t: Pick<Target, 'engine' | 'app_upstream'>): TargetKind {
  * serves. An autoscaling group offers its declared capabilities.
  */
 export function chipsFor(kind: TargetKind, t: Pick<Target, 'capabilities' | 'os_family'> | Pick<AutoscalingGroup, 'capabilities' | 'os_family'>): Protocol[] {
-  if (kind === 'database' || kind === 'application') return kindProtocols[kind]
+  if (kind === 'database' || kind === 'application' || kind === 'kubernetes') return kindProtocols[kind]
   const served = kindProtocols[kind]
   const caps = (t.capabilities ?? []).filter((p) => served.includes(p))
   if (caps.length) return caps
@@ -159,6 +162,11 @@ export function grantSummary(g: PolicyGrant, nameOf: (id: string) => string): st
   if (g.allow_clipboard) parts.push('clipboard')
   if (g.allow_file_transfer) parts.push('files')
   if (g.allow_devtools) parts.push('dev tools')
+  if (g.kind === 'kubernetes') {
+    parts.push(g.namespaces?.length ? `ns ${g.namespaces.join(', ')}` : 'all namespaces')
+    if (g.cluster_scope) parts.push('cluster scope')
+    if (g.port_forward) parts.push('port-forward')
+  }
   parts.push(`${g.idle_timeout_minutes}m`)
   if (g.time_windows.length) parts.push(g.time_windows.length === 1 ? '1 window' : `${g.time_windows.length} windows`)
   return parts.join(' · ')
@@ -177,6 +185,10 @@ export interface GrantDraft {
   allow_clipboard: boolean
   allow_file_transfer: boolean
   allow_devtools: boolean
+  /** A Kubernetes grant's scope (ADR 0045): namespaces as typed, separated by spaces or commas (empty: all). */
+  namespaces: string
+  cluster_scope: boolean
+  port_forward: boolean
   idle: string
   max: string
   retention: string
@@ -223,6 +235,7 @@ export function toDraft(g: PolicyGrant): GrantDraft {
     tagProtocols: g.tags ? [...g.tags.protocols] : g.kind === 'database' || g.kind === 'application' ? kindProtocols[g.kind] : ['ssh'],
     access: g.access, sign_in: g.sign_in, require_mfa: g.require_mfa, allow_clipboard: g.allow_clipboard,
     allow_file_transfer: g.allow_file_transfer, allow_devtools: !!g.allow_devtools, idle: String(g.idle_timeout_minutes),
+    namespaces: (g.namespaces ?? []).join(' '), cluster_scope: !!g.cluster_scope, port_forward: !!g.port_forward,
     max: g.max_session_minutes ? String(g.max_session_minutes) : '', retention: g.retention_days ? String(g.retention_days) : '',
     windows: g.time_windows.map((w) => ({ ...w, days: [...w.days] })),
   }
@@ -256,6 +269,8 @@ export function fromDraft(d: GrantDraft, nameOf: (id: string) => string, offered
   if (max !== null && (!Number.isInteger(max) || max < 1 || max > 10080)) return { error: 'maximum session must be 1-10080 minutes' }
   const retention = d.retention.trim() ? Number(d.retention) : null
   if (retention !== null && (!Number.isInteger(retention) || retention < 1 || retention > 3650)) return { error: 'keep recordings must be 1-3650 days' }
+  const namespaces = d.kind === 'kubernetes' ? d.namespaces.split(/[\s,]+/).filter(Boolean) : []
+  if (namespaces.some((ns) => !/^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$/.test(ns))) return { error: 'a namespace is a DNS label: lowercase letters, digits and hyphens' }
   return {
     grant: {
       ...(d.id ? { id: d.id } : {}),
@@ -263,6 +278,9 @@ export function fromDraft(d: GrantDraft, nameOf: (id: string) => string, offered
       access: d.access, sign_in: d.kind === 'application' ? 'target' : d.sign_in, require_mfa: d.require_mfa,
       allow_clipboard: d.allow_clipboard, allow_file_transfer: filesMove(d.kind) && d.allow_file_transfer, idle_timeout_minutes: idle,
       ...(d.kind === 'application' && d.allow_devtools ? { allow_devtools: true } : {}),
+      ...(namespaces.length ? { namespaces } : {}),
+      ...(d.kind === 'kubernetes' && d.cluster_scope ? { cluster_scope: true } : {}),
+      ...(d.kind === 'kubernetes' && d.port_forward ? { port_forward: true } : {}),
       max_session_minutes: max, time_windows: d.windows.map((w) => ({ ...w, tz: w.tz || 'UTC' })), retention_days: retention,
     },
   }

@@ -24,7 +24,9 @@ import (
 	"github.com/albatroxxx/zanskar/internal/auth"
 	"github.com/albatroxxx/zanskar/internal/credential"
 	"github.com/albatroxxx/zanskar/internal/gateway"
+	"github.com/albatroxxx/zanskar/internal/gateway/kubegw"
 	"github.com/albatroxxx/zanskar/internal/gateway/sshgw"
+	"github.com/albatroxxx/zanskar/internal/group"
 	"github.com/albatroxxx/zanskar/internal/httpx"
 	"github.com/albatroxxx/zanskar/internal/policy"
 	"github.com/albatroxxx/zanskar/internal/protocol"
@@ -107,6 +109,18 @@ type Handler struct {
 	// Files holds live SSH sessions that permit SFTP file transfer (ADR 0016);
 	// initialised in Register.
 	Files *fileRegistry
+	// Kube holds the open Kubernetes sessions the /k8s/{id}/ route serves
+	// (ADR 0045); nil leaves cluster sessions off. PublicURL is the https
+	// origin a kubeconfig names as the server (ZANSKAR_PUBLIC_URL); empty,
+	// cluster sessions are off and connect says why. GatewayCert returns
+	// the certificate the gateway serves and whether it is self-signed, the
+	// one case a kubeconfig must carry it; nil behind a proxy.
+	Kube        *kubegw.Sessions
+	PublicURL   string
+	GatewayCert func() (pem string, selfSigned bool)
+	// Groups resolves the person's groups, which a Kubernetes session acts
+	// as in the cluster; nil sends none.
+	Groups *group.Repo
 }
 
 // Register mounts the routes. Every REST route here is for accounts that may
@@ -131,11 +145,14 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /ws/desktop", h.desktop)
 	mux.HandleFunc("GET /ws/winrm", h.winrm)
 	mux.HandleFunc("GET /ws/database", h.database)
+	// A Kubernetes session's endpoint (ADR 0045): every method, the API
+	// path after the session id, the session token its only credential.
+	mux.HandleFunc("/k8s/{id}/", h.kubeProxy)
 }
 
 // reachableTarget is what a user sees in their target list.
 type reachableTarget struct {
-	Kind         string            `json:"kind"` // target | asg | application
+	Kind         string            `json:"kind"` // target | asg | application | cluster
 	ID           string            `json:"id"`
 	Name         string            `json:"name"`
 	OSFamily     target.OSFamily   `json:"os_family"`
@@ -161,7 +178,8 @@ type reachableTarget struct {
 	// ULA) IP, to help users tell their machines apart. A public address or a
 	// hostname is never surfaced to users; empty then.
 	PrivateIP    string `json:"private_ip,omitempty"`
-	Engine       string `json:"engine,omitempty"` // database targets (ADR 0017)
+	Engine       string `json:"engine,omitempty"`   // database targets (ADR 0017)
+	Platform     string `json:"platform,omitempty"` // clusters (ADR 0045): vanilla, eks, gke, aks
 	HealthyCount int    `json:"healthy_count,omitempty"`
 	InstanceCnt  int    `json:"instance_count,omitempty"`
 }
@@ -225,6 +243,20 @@ func (h *Handler) myTargets(w http.ResponseWriter, r *http.Request) {
 				out = append(out, reachableTarget{
 					Kind: "application", ID: t.ID, Name: t.Name, OSFamily: t.OSFamily, Tags: t.Tags, Capabilities: []target.Protocol{},
 					Allowed: allowed, RequiresApproval: needApproval, HostKeyReady: true,
+				})
+				continue
+			}
+			if t.IsKubernetes() {
+				// A cluster (ADR 0045) is reached over kube alone for now:
+				// a kubeconfig from the portal, no socket. Its address is
+				// withheld as a host's is.
+				allowed, needApproval, _, _ := reach(pols, policy.TargetRef{Kind: t.Kind(), ID: t.ID, Tags: t.Tags}, []target.Protocol{target.Kube}, now)
+				if len(allowed) == 0 {
+					continue
+				}
+				out = append(out, reachableTarget{
+					Kind: "cluster", ID: t.ID, Name: t.Name, OSFamily: t.OSFamily, Tags: t.Tags, Capabilities: []target.Protocol{target.Kube},
+					Allowed: allowed, RequiresApproval: needApproval, HostKeyReady: true, Platform: t.KubePlatform,
 				})
 				continue
 			}
@@ -327,12 +359,25 @@ type connectRequest struct {
 }
 
 type connectResponse struct {
-	Ticket        string    `json:"ticket"`
-	ExpiresAt     time.Time `json:"expires_at"`
-	Path          string    `json:"ws_path"`
-	ASGID         string    `json:"asg_id,omitempty"`
-	ASGInstanceID string    `json:"asg_instance_id,omitempty"`
-	InstanceLabel string    `json:"instance_label,omitempty"`
+	Ticket string `json:"ticket,omitempty"`
+	// ExpiresAt is when the ticket lapses; for a Kubernetes session, when
+	// the session ends at the latest (its maximum), absent without one.
+	ExpiresAt     *time.Time `json:"expires_at,omitempty"`
+	Path          string     `json:"ws_path,omitempty"`
+	ASGID         string     `json:"asg_id,omitempty"`
+	ASGInstanceID string     `json:"asg_instance_id,omitempty"`
+	InstanceLabel string     `json:"instance_label,omitempty"`
+	// A Kubernetes session (ADR 0045) starts on connect: its id, the
+	// kubeconfig shown once, and the idle time it ends after.
+	SessionID   string `json:"session_id,omitempty"`
+	Kubeconfig  string `json:"kubeconfig,omitempty"`
+	IdleSeconds int    `json:"idle_seconds,omitempty"`
+}
+
+// ticketExpiry is when a ticket just issued lapses.
+func ticketExpiry() *time.Time {
+	t := time.Now().Add(ticket.TTL)
+	return &t
 }
 
 // userCredential is what a user_supplied credential mode asks for: a
@@ -391,6 +436,13 @@ func (h *Handler) connect(w http.ResponseWriter, r *http.Request) {
 			deny(http.StatusNotImplemented, "protocol_unavailable", "desktop sessions are not configured on this gateway")
 			return
 		}
+	case target.Kube:
+		// A cluster session (ADR 0045) has no socket: it starts here and
+		// answers a kubeconfig; it needs the gateway's public address.
+		if msg := h.kubeOff(); msg != "" {
+			deny(http.StatusNotImplemented, "protocol_unavailable", msg)
+			return
+		}
 	default:
 		deny(http.StatusNotImplemented, "protocol_unavailable", "protocol not available")
 		return
@@ -418,7 +470,15 @@ func (h *Handler) connect(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
-	res, code, msg, err := h.issueTicket(r.Context(), p, auth.ClientIP(r), ep, proto, req.Credential, "")
+	var (
+		res       *connectResponse
+		code, msg string
+	)
+	if proto == target.Kube {
+		res, code, msg, err = h.startKube(r, p, auth.ClientIP(r), ep)
+	} else {
+		res, code, msg, err = h.issueTicket(r.Context(), p, auth.ClientIP(r), ep, proto, req.Credential, "")
+	}
 	if err != nil {
 		httpx.Internal(w, r, h.Log, err)
 		return
@@ -458,6 +518,11 @@ func (h *Handler) issueTicket(ctx context.Context, p *auth.Principal, ip string,
 			return nil, "instance_unhealthy", "the instance is no longer healthy", nil
 		}
 		return nil, "target_disabled", "target is disabled", nil
+	}
+	if proto == target.Kube || proto == target.Pod {
+		// A cluster session starts on connect (startKube); a pod shell is
+		// not built yet (ADR 0045, phase 2).
+		return nil, "protocol_unavailable", "protocol not available", nil
 	}
 	if ep.ASGID != "" && proto == target.Database {
 		return nil, "protocol_unavailable", "database access is configured per endpoint, not per autoscaling group", nil
@@ -577,7 +642,7 @@ func (h *Handler) issueTicket(ctx context.Context, p *auth.Principal, ip string,
 	if err != nil {
 		return nil, "", "", err
 	}
-	return &connectResponse{Ticket: tok, ExpiresAt: time.Now().Add(ticket.TTL), Path: ticketPathFor(proto),
+	return &connectResponse{Ticket: tok, ExpiresAt: ticketExpiry(), Path: ticketPathFor(proto),
 		ASGID: ep.ASGID, ASGInstanceID: ep.ASGInstanceID, InstanceLabel: ep.Label}, "", "", nil
 }
 
@@ -597,7 +662,7 @@ func (h *Handler) issueCredentialless(p *auth.Principal, ep *endpoint, proto tar
 	if err != nil {
 		return nil, "", "", err
 	}
-	return &connectResponse{Ticket: tok, ExpiresAt: time.Now().Add(ticket.TTL), Path: ticketPathFor(proto)}, "", "", nil
+	return &connectResponse{Ticket: tok, ExpiresAt: ticketExpiry(), Path: ticketPathFor(proto)}, "", "", nil
 }
 
 func codeStatus(code string) int {

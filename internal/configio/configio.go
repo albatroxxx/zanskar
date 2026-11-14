@@ -109,6 +109,10 @@ type (
 		AppEndpoints    []Endpoint        `json:"app_endpoints"`
 		AppDependencies string            `json:"app_dependencies"`
 		AppPrivate      *Private          `json:"app_private"`
+		KubeAPIServer   string            `json:"kube_api_server"`
+		KubeCA          string            `json:"kube_ca"`
+		KubePlatform    string            `json:"kube_platform"`
+		KubeImpersonate *bool             `json:"kube_impersonate"`
 		Ports           map[string]int    `json:"ports"`
 		Capabilities    []string          `json:"capabilities"`
 		Tags            map[string]string `json:"tags"`
@@ -140,6 +144,9 @@ type (
 		MaxSessionMinutes  *int             `json:"max_session_minutes"`
 		TimeWindows        []TimeWindow     `json:"time_windows"`
 		RetentionDays      *int             `json:"retention_days"`
+		Namespaces         []string         `json:"namespaces,omitempty"`
+		ClusterScope       bool             `json:"cluster_scope,omitempty"`
+		PortForward        bool             `json:"port_forward,omitempty"`
 	}
 	apiPolicy struct {
 		ID          string       `json:"id,omitempty"`
@@ -249,8 +256,9 @@ func (s *state) targetDoc(t apiTarget) Target {
 		creds[proto] = s.byID[id]
 	}
 	return Target{Name: t.Name, Address: t.Address, OSFamily: t.OSFamily, Engine: t.Engine, EngineVersion: t.EngineVersion, DatabaseName: t.DatabaseName,
-		TLSMode: t.TLSMode, TLSCA: t.TLSCA, AppUpstream: t.AppUpstream, AppEndpoints: t.AppEndpoints, AppDependencies: t.AppDependencies, AppPrivate: t.AppPrivate, Ports: emptyNil(t.Ports), Tags: emptyNil(t.Tags),
-		Status: t.Status, Notes: t.Notes, RetentionDays: t.RetentionDays, Credentials: emptyNil(creds)}
+		TLSMode: t.TLSMode, TLSCA: t.TLSCA, AppUpstream: t.AppUpstream, AppEndpoints: t.AppEndpoints, AppDependencies: t.AppDependencies, AppPrivate: t.AppPrivate,
+		KubeAPIServer: t.KubeAPIServer, KubeCA: t.KubeCA, KubePlatform: t.KubePlatform, KubeImpersonate: t.KubeImpersonate,
+		Ports: emptyNil(t.Ports), Tags: emptyNil(t.Tags), Status: t.Status, Notes: t.Notes, RetentionDays: t.RetentionDays, Credentials: emptyNil(creds)}
 }
 
 func (s *state) policyDoc(p apiPolicy) Policy {
@@ -265,7 +273,8 @@ func (s *state) policyDoc(p apiPolicy) Policy {
 	for _, g := range p.Grants {
 		dg := Grant{Kind: g.Kind, Tags: g.Tags, Access: g.Access, SignIn: g.SignIn, RequireMFA: g.RequireMFA, AllowClipboard: g.AllowClipboard,
 			AllowFileTransfer: g.AllowFileTransfer, AllowDevTools: g.AllowDevTools, IdleTimeoutMinutes: g.IdleTimeoutMinutes,
-			MaxSessionMinutes: g.MaxSessionMinutes, TimeWindows: g.TimeWindows, RetentionDays: g.RetentionDays}
+			MaxSessionMinutes: g.MaxSessionMinutes, TimeWindows: g.TimeWindows, RetentionDays: g.RetentionDays,
+			Namespaces: g.Namespaces, ClusterScope: g.ClusterScope, PortForward: g.PortForward}
 		for _, gt := range g.Targets {
 			dg.Targets = append(dg.Targets, GrantTarget{Name: s.byID[gt.ID], Protocols: gt.Protocols})
 		}
@@ -303,6 +312,7 @@ func (s *state) writeTarget(t Target) (map[string]any, string) {
 	}
 	return map[string]any{"name": t.Name, "address": t.Address, "os_family": t.OSFamily, "engine": t.Engine, "engine_version": t.EngineVersion,
 		"database_name": t.DatabaseName, "tls_mode": t.TLSMode, "tls_ca": t.TLSCA, "app_upstream": t.AppUpstream, "app_endpoints": t.AppEndpoints, "app_dependencies": t.AppDependencies, "app_private": t.AppPrivate,
+		"kube_api_server": t.KubeAPIServer, "kube_ca": t.KubeCA, "kube_platform": t.KubePlatform, "kube_impersonate": t.KubeImpersonate,
 		"ports": t.Ports, "tags": t.Tags, "status": status, "notes": t.Notes, "retention_days": t.RetentionDays, "credentials": creds}, ""
 }
 
@@ -337,7 +347,8 @@ func (s *state) writePolicy(p Policy, old *apiPolicy) (apiPolicy, string) {
 		}
 		ag := apiGrant{Kind: g.Kind, Targets: []apiGrantTarget{}, Tags: g.Tags, Access: g.Access, SignIn: g.SignIn, RequireMFA: g.RequireMFA,
 			AllowClipboard: g.AllowClipboard, AllowFileTransfer: g.AllowFileTransfer, AllowDevTools: g.AllowDevTools,
-			IdleTimeoutMinutes: g.IdleTimeoutMinutes, MaxSessionMinutes: g.MaxSessionMinutes, TimeWindows: g.TimeWindows, RetentionDays: g.RetentionDays}
+			IdleTimeoutMinutes: g.IdleTimeoutMinutes, MaxSessionMinutes: g.MaxSessionMinutes, TimeWindows: g.TimeWindows, RetentionDays: g.RetentionDays,
+			Namespaces: g.Namespaces, ClusterScope: g.ClusterScope, PortForward: g.PortForward}
 		if ag.TimeWindows == nil {
 			ag.TimeWindows = []TimeWindow{}
 		}

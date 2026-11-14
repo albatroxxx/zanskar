@@ -142,6 +142,9 @@ export const credentialTypes: { v: CredentialType; label: string }[] = [
   { v: 'ssh_ca', label: 'SSH certificate authority' },
   { v: 'domain', label: 'Windows domain account' },
   { v: 'ec2_instance_connect', label: 'EC2 Instance Connect' },
+  { v: 'kube_token', label: 'Kubernetes service account token' },
+  { v: 'kube_client_cert', label: 'Kubernetes client certificate' },
+  { v: 'kube_eks', label: 'EKS role' },
 ]
 
 /** credentialTypeName is how a credential's type reads, the same on the
@@ -151,6 +154,16 @@ export const credentialTypes: { v: CredentialType; label: string }[] = [
  *  underscores. */
 export function credentialTypeName(type: string): string {
   return credentialTypes.find((t) => t.v === type)?.label ?? type.replace(/_/g, ' ')
+}
+
+/** platformName is how a cluster's platform reads: Vanilla for Kubernetes as it comes (all four are Kubernetes), the clouds by their acronyms. */
+export function platformName(p?: string | null): string {
+  switch (p) {
+    case 'eks': return 'EKS'
+    case 'gke': return 'GKE'
+    case 'aks': return 'AKS'
+    default: return 'Vanilla'
+  }
 }
 
 export function engineName(engine?: string | null, version?: string | null): string {
@@ -166,6 +179,8 @@ export function protocolName(p: string): string {
   switch (p) {
     case 'winrm': return 'WinRM'
     case 'database': return 'database'
+    case 'kube': return 'Kubernetes'
+    case 'pod': return 'pod shell'
     default: return p.toUpperCase()
   }
 }

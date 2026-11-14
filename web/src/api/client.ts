@@ -178,6 +178,12 @@ async function upload<T>(path: string, body: BodyInit, contentType = 'applicatio
 
 export const api = {
   get: <T>(path: string) => request<T>('GET', path),
+  /** text reads a reply that is not JSON (a cluster's RBAC manifest, YAML), as it came. */
+  text: async (path: string): Promise<string> => {
+    const res = await read(path)
+    if (!res.ok) raise(res, parseBody(res.text), path)
+    return res.text
+  },
   /** cached is get for what changes slowly: an answer under `keep` ms old is
    *  given again without a request; any change forgets it, and a refused
    *  read is not kept. It goes through get, so a test's stand-in for get

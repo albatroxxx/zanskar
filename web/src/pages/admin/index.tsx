@@ -1,5 +1,5 @@
 import { Navigate, Route } from 'react-router-dom'
-import { Dashboard, Targets, Databases, Applications, Autoscaling, Credentials, Policies, PolicyEditor, PolicyReview, Approvals, UsersGroups, IdentityProviders, Sessions, Settings, Logs } from './pages'
+import { Dashboard, Targets, Databases, Applications, Autoscaling, Fabric, Credentials, Policies, PolicyEditor, PolicyReview, Approvals, UsersGroups, IdentityProviders, Sessions, Settings, Logs } from './pages'
 
 // Admin pages, one per file. Paths match the sidebar in App.tsx. The console
 // lands on the dashboard (ADR 0029); hosts moved to /admin/hosts.
@@ -10,6 +10,9 @@ export const adminRoutes = (
     <Route path="databases" element={<Databases />} />
     <Route path="applications" element={<Applications />} />
     <Route path="autoscaling" element={<Autoscaling />} />
+    {/* Fabric holds the Kubernetes clusters (ADR 0048); its page sends an old autoscaling tab address back. */}
+    <Route path="fabric" element={<Fabric />} />
+    <Route path="fabric/:kind" element={<Fabric />} />
     <Route path="credentials" element={<Credentials />} />
     <Route path="policies" element={<Policies />} />
     <Route path="policies/new" element={<PolicyEditor />} />

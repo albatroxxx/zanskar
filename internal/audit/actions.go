@@ -53,6 +53,8 @@ const (
 	CredentialRotatePrepare = "credential.rotate.prepare"
 	CredentialRotateCancel  = "credential.rotate.cancel"
 	CredentialRotateRetire  = "credential.rotate.retire"
+	// CredentialTest: an EKS role assumed and its cluster described (ADR 0045, 8).
+	CredentialTest = "credential.test"
 
 	// The console command line (ADR 0027).
 	CLICommand = "cli.command"

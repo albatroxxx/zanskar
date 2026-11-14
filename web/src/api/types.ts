@@ -69,7 +69,7 @@ export interface Page<T> { items: T[]; next_cursor?: string }
 export interface ApiErrorBody { code: string; message: string; request_id?: string }
 
 /** How a target is reached; `http` is a web application opened in an isolated browser beside the gateway (ADR 0034). */
-export type Protocol = 'ssh' | 'rdp' | 'vnc' | 'winrm' | 'database' | 'http'
+export type Protocol = 'ssh' | 'rdp' | 'vnc' | 'winrm' | 'database' | 'http' | 'kube' | 'pod'
 export type OSFamily = 'linux' | 'windows' | 'other'
 export type HostKeyStatus = 'unknown' | 'pending' | 'trusted' | 'changed'
 /** A Windows listener's pinned certificate: none seen, pinned, or changed since (ADR 0047). */
@@ -135,6 +135,12 @@ export interface Target {
   app_dependencies?: 'public' | 'origins'
   /** The private networks (CIDRs) and hosts (host:port) the dependencies may reach, under 'public'; absent for none. */
   app_private?: AppPrivate
+  /** Kubernetes clusters (ADR 0045): the API server's https URL, the CA it is verified against, and whether sessions act as the person. */
+  kube_api_server?: string
+  kube_ca?: string
+  kube_impersonate?: boolean
+  /** How Zanskar's token for the cluster is minted (ADR 0048): vanilla, as enrolled; eks, gke, aks, through the cloud's role. */
+  kube_platform?: KubePlatform
   ports: Partial<Record<Protocol, number>>
   capabilities: Protocol[]
   host_key_fingerprint: string | null
@@ -201,8 +207,10 @@ export interface ReachableTarget {
   private_ip?: string
   /** database engine when this is a database target (ADR 0017). */
   engine?: string
-  /** "target" for a static machine, "asg" for an autoscaling group, "application" for a web app (ADR 0034); missing means "target". */
-  kind?: 'target' | 'asg' | 'application'
+  /** "target" for a static machine, "asg" for an autoscaling group, "application" for a web app (ADR 0034), "cluster" for a Kubernetes cluster (ADR 0045); missing means "target". */
+  kind?: 'target' | 'asg' | 'application' | 'cluster'
+  /** A cluster's platform (ADR 0048): vanilla, eks, gke, aks. */
+  platform?: KubePlatform
   healthy_count?: number
   instance_count?: number
   /** An application's upstream, when the gateway chooses to show it; it opens through POST /connect like a desktop. */
@@ -252,7 +260,7 @@ export interface ReachableInstance {
   healthy: boolean
 }
 
-export type CredentialType = 'password' | 'ssh_key' | 'ssh_ca' | 'domain' | 'ec2_instance_connect'
+export type CredentialType = 'password' | 'ssh_key' | 'ssh_ca' | 'domain' | 'ec2_instance_connect' | 'kube_token' | 'kube_client_cert' | 'kube_eks'
 export type CredentialMode = 'vaulted' | 'user_supplied' | 'passthrough'
 
 export interface Credential {
@@ -277,6 +285,36 @@ export interface Credential {
   rotation?: { pending_public_key?: string; pending_since?: string; retired_public_key?: string; retired_at?: string }
   /** ssh_ca only: where the rotation stands, none, prepared or cut_over (ADR 0047). */
   rotation_state?: StateOf<'authority_rotation'>
+  /** kube_eks only (ADR 0045, 8): the region, the role the gateway assumes, the ExternalId it minted for the trust policy, and the cluster. */
+  aws_region?: string
+  aws_role_arn?: string
+  aws_external_id?: string
+  eks_cluster?: string
+}
+
+/** GET /credentials/{id}/eks/setup: what the administrator pastes into AWS and the cluster for an EKS role. */
+export interface EKSSetup {
+  gateway_principal?: string
+  principal_source: 'environment' | 'detected' | 'none'
+  principal_error?: string
+  external_id: string
+  role_name: string
+  /** Absent until the gateway's principal is known. */
+  trust_policy?: string
+  permissions_policy: string
+  /** The role mapped to `username` in the cluster: an access entry (authentication mode API), or an aws-auth mapRoles line (CONFIG_MAP). */
+  access_entry: string
+  aws_auth: string
+  username: string
+}
+
+/** POST /credentials/{id}/eks/describe: the role assumed and the cluster described, or which stage failed. */
+export interface EKSCheck {
+  ok: boolean
+  stage?: 'assume' | 'describe'
+  error?: string
+  assumed_arn?: string
+  cluster?: { name: string; arn: string; endpoint: string; ca_pem: string; version: string; status: string; authentication_mode: string }
 }
 
 /** POST /targets/{id}/probe-certificate: one real login with a certificate from the bound authority, then disconnect. */
@@ -303,7 +341,17 @@ export interface GroupMember { user_id: string; username: string; display_name: 
 
 export interface TimeWindow { days: string[]; from: string; to: string; tz: string }
 /** What a policy grant covers (ADR 0036); each kind serves its own protocols. */
-export type TargetKind = 'host' | 'database' | 'application' | 'autoscaling'
+export type TargetKind = 'host' | 'database' | 'application' | 'autoscaling' | 'kubernetes'
+export type KubePlatform = 'vanilla' | 'eks' | 'gke' | 'aks'
+
+/** What a cluster's test found (ADR 0045): the API server's version, whether Zanskar's credential may impersonate, and the namespaces it could list. */
+export interface KubeTest {
+  version: string
+  impersonate_users: boolean
+  impersonate_groups: boolean
+  namespaces: string[]
+  namespaces_listed: boolean
+}
 
 /** One group or user a policy applies to. */
 export interface PolicySubject { kind: 'group' | 'user'; id: string }
@@ -333,6 +381,10 @@ export interface PolicyGrant {
   max_session_minutes: number | null
   time_windows: TimeWindow[]
   retention_days: number | null
+  /** A Kubernetes grant's scope (ADR 0045): the namespaces it reaches (empty: all), cluster-wide resources, port-forward. */
+  namespaces?: string[]
+  cluster_scope?: boolean
+  port_forward?: boolean
 }
 
 /** An access policy: an audience and the grants it holds (ADR 0036). */
@@ -478,6 +530,8 @@ export interface AdminOverview {
     databases: number
     databases_by_engine: Record<string, number>
     applications: number
+  clusters: number
+  clusters_by_platform: Partial<Record<KubePlatform, number>>
   }
   autoscaling: {
     groups: number
@@ -518,13 +572,19 @@ export interface AuditOverview {
 }
 
 export interface ConnectResponse {
-  ticket: string
-  expires_at: string
-  ws_path: string
+  /** The one-time pass for the WebSocket that carries a bridge's session; a cluster session has none. */
+  ticket?: string
+  /** When the ticket lapses; for a cluster session, when it ends at the latest (its maximum), absent without one. */
+  expires_at?: string
+  ws_path?: string
   asg_id?: string
   asg_instance_id?: string
   /** e.g. "i-0abc · ap-south-1a" */
   instance_label?: string
+  /** A cluster session (ADR 0045) starts on connect: its id, the kubeconfig shown once, and the idle time it ends after. */
+  session_id?: string
+  kubeconfig?: string
+  idle_seconds?: number
 }
 
 export interface AutoscalingGroup {

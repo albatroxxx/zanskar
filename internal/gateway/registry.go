@@ -31,7 +31,11 @@ type Live struct {
 	// re-check ends the session when it would now be off, as for the
 	// clipboard (ADR 0037).
 	AllowDevTools bool
-	StartedAt     time.Time
+	// Kube is a Kubernetes session's scope and the groups it acts as, fixed
+	// when it starts (ADR 0045); a re-check ends the session when either
+	// would now differ, since the proxy holds them for its whole life.
+	Kube      *KubeTerms
+	StartedAt time.Time
 	// Tap carries the output stream for shadowing. Terminal protocols get
 	// one automatically in Add; desktop sessions are shadowed through guacd
 	// instead (see GuacID).
@@ -43,6 +47,18 @@ type Live struct {
 	// ended is set by the first terminate, so two changes that withdraw
 	// the same session at once count it once between them.
 	ended bool
+}
+
+// KubeTerms are what a Kubernetes session was admitted with: the namespaces
+// (empty: every one), cluster scope, port-forward, and, when the session
+// acts as the person (Impersonate), the Zanskar groups it acts as, sorted. A
+// shared-identity session acts as the credential and carries no groups.
+type KubeTerms struct {
+	Namespaces   []string
+	ClusterScope bool
+	PortForward  bool
+	Impersonate  bool
+	Groups       []string
 }
 
 // Cancellation causes. Bridges read them with CancelReason to record why a

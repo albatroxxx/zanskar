@@ -1,7 +1,7 @@
 import { Fragment, useCallback, useEffect, useState, type ReactNode } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { api } from '../../api/client'
-import type { AppsReadiness, Credential, Target } from '../../api/types'
+import type { KubePlatform, AppsReadiness, Credential, Target } from '../../api/types'
 import { FilterChips } from '../../components/FilterChips'
 import { StateIcon } from '../../components/icons'
 import { Alert, Empty, Loading, PageHead, StateBadge } from '../../components/ui'
@@ -18,7 +18,7 @@ import { TargetForm, type TargetKind } from './TargetForm'
 /** A row's disclosure, handed to its cells: Policies' pattern (2026-11-12). */
 export type RowDisclosure = { open: boolean; toggle: () => void; detailId: string }
 
-export function TargetsPage({ kind, title, addLabel, empty, columns, cells, detail }: {
+export function TargetsPage({ kind, title, addLabel, empty, columns, cells, detail, adding: addingProp, setAdding: setAddingProp, headless, platform }: {
   kind: TargetKind
   title: string
   addLabel: string
@@ -30,6 +30,12 @@ export function TargetsPage({ kind, title, addLabel, empty, columns, cells, deta
   cells: (t: Target, credentials: Credential[], row: RowDisclosure) => ReactNode
   /** What opens in a row under a target's (an application's other endpoints); null for nothing. */
   detail?: (t: Target) => ReactNode
+  /** A page inside Fabric (ADR 0048): the section's head and Add button own the form, so the page shows no head of its own. */
+  adding?: boolean
+  setAdding?: (v: boolean) => void
+  headless?: boolean
+  /** Fabric's tab: the clusters of one platform, and the one a cluster added here is of. */
+  platform?: KubePlatform
 }) {
   // The server does the matching (name or address, case-insensitive, wildcard
   // characters escaped — internal/target/repo.go), so search covers the whole
@@ -49,11 +55,13 @@ export function TargetsPage({ kind, title, addLabel, empty, columns, cells, deta
     setSp(next, { replace: true })
   }
   const { items, err, setErr, reload } = useList<Target>('/targets', {
-    kind, q: dq, attention: attention ? 'true' : undefined, status: activeOnly ? 'active' : undefined,
+    kind, q: dq, attention: attention ? 'true' : undefined, status: activeOnly ? 'active' : undefined, platform,
   })
   const noun = title.toLowerCase()
   const creds = useList<Credential>('/credentials')
-  const [adding, setAdding] = useState(false)
+  const [ownAdding, setOwnAdding] = useState(false)
+  const adding = addingProp ?? ownAdding
+  const setAdding = setAddingProp ?? setOwnAdding
   const [open, setOpen] = useState<Target | null>(null)
   const [expanded, setExpanded] = useState<string[]>([])
   // Applications open only once the gateway can run the browser beside it
@@ -77,9 +85,11 @@ export function TargetsPage({ kind, title, addLabel, empty, columns, cells, deta
 
   return (
     <>
-      <PageHead title={title}>
-        {!blocked && <button className="btn primary" onClick={() => setAdding(true)}>{addLabel}</button>}
-      </PageHead>
+      {!headless && (
+        <PageHead title={title}>
+          {!blocked && <button className="btn primary" onClick={() => setAdding(true)}>{addLabel}</button>}
+        </PageHead>
+      )}
       {err && <Alert tone="danger" onDismiss={() => setErr('')}>{err}</Alert>}
       {readiness && readiness !== 'unknown' && !readiness.ready && (
         <div className="card" aria-labelledby="apps-readiness">
@@ -163,6 +173,7 @@ export function TargetsPage({ kind, title, addLabel, empty, columns, cells, deta
       {adding && (
         <TargetForm
           kind={kind}
+          platform={platform}
           onClose={() => setAdding(false)}
           onSaved={() => {
             setAdding(false)

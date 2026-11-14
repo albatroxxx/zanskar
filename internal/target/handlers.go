@@ -40,6 +40,9 @@ type AdminHandler struct {
 	// Vault resolves the user_supplied sentinel when a slot is set to
 	// prompt; nil disables the sentinel.
 	Vault *credential.Vault
+	// Groups names the groups a cluster's RBAC manifest lists (ADR 0045);
+	// nil prints the manifest with none.
+	Groups GroupNamer
 	// Revoker ends the live sessions a disable, an address change or a
 	// changed pin withdraws (ADR 0013); nil leaves them to their own limits.
 	Revoker gateway.Revoker
@@ -62,6 +65,9 @@ func (h *AdminHandler) Register(mux *http.ServeMux) {
 	mux.Handle("POST /api/v1/targets/{id}/probe-certificate", admin(http.HandlerFunc(h.probeCertificate)))
 	mux.Handle("POST /api/v1/targets/{id}/host-key/trust", admin(http.HandlerFunc(h.trustHostKey)))
 	mux.Handle("POST /api/v1/targets/{id}/certificate/trust", admin(http.HandlerFunc(h.trustCertificate)))
+	// A Kubernetes cluster (ADR 0045): its test is its probe, and the RBAC it needs is printed.
+	mux.Handle("POST /api/v1/targets/{id}/kube/test", admin(http.HandlerFunc(h.kubeTest)))
+	mux.Handle("GET /api/v1/targets/{id}/kube/manifest", admin(http.HandlerFunc(h.kubeManifest)))
 	mux.Handle("PUT /api/v1/targets/{id}/credentials/{protocol}", admin(http.HandlerFunc(h.setCredential)))
 	mux.Handle("DELETE /api/v1/targets/{id}/credentials/{protocol}", admin(http.HandlerFunc(h.unsetCredential)))
 }
@@ -80,6 +86,10 @@ type Write struct {
 	AppEndpoints    []AppEndpoint       `json:"app_endpoints"`    // application targets (ADR 0037, amended)
 	AppDependencies string              `json:"app_dependencies"` // application targets: public (default) or origins
 	AppPrivate      *AppPrivate         `json:"app_private"`      // application targets: private networks and hosts the dependencies may reach
+	KubeAPIServer   string              `json:"kube_api_server"`  // Kubernetes clusters (ADR 0045)
+	KubeCA          string              `json:"kube_ca"`          // Kubernetes clusters
+	KubeImpersonate *bool               `json:"kube_impersonate"` // Kubernetes clusters; nil is the default, on
+	KubePlatform    string              `json:"kube_platform"`    // Kubernetes clusters: vanilla (default), eks, gke, aks
 	OSFamily        OSFamily            `json:"os_family"`
 	Ports           map[Protocol]int    `json:"ports"`
 	Capabilities    []Protocol          `json:"capabilities"`
@@ -95,6 +105,7 @@ func (w Write) apply(t *Target) {
 	t.RetentionDays = w.RetentionDays
 	t.DatabaseName, t.TLSMode, t.TLSCA = w.DatabaseName, w.TLSMode, w.TLSCA
 	t.AppUpstream, t.AppEndpoints, t.AppDependencies, t.AppPrivate = w.AppUpstream, w.AppEndpoints, w.AppDependencies, w.AppPrivate
+	t.KubeAPIServer, t.KubeCA, t.KubeImpersonate, t.KubePlatform = w.KubeAPIServer, w.KubeCA, w.KubeImpersonate, w.KubePlatform
 	t.Ports, t.Capabilities, t.Tags = w.Ports, w.Capabilities, w.Tags
 	t.Status, t.Notes, t.Credentials = w.Status, w.Notes, w.Credentials
 }
@@ -111,11 +122,16 @@ func (h *AdminHandler) list(w http.ResponseWriter, r *http.Request) {
 		tags[k] = v
 	}
 	f := ListFilter{Tags: tags, Kind: r.URL.Query().Get("kind"), Status: r.URL.Query().Get("status"),
-		OSFamily: r.URL.Query().Get("os_family"), Query: r.URL.Query().Get("q"), Attention: r.URL.Query().Get("attention") == "true"}
+		OSFamily: r.URL.Query().Get("os_family"), Query: r.URL.Query().Get("q"), Attention: r.URL.Query().Get("attention") == "true",
+		Platform: r.URL.Query().Get("platform")}
+	if f.Platform != "" && !slices.Contains(Platforms, f.Platform) {
+		httpx.BadRequest(w, r, "platform must be one of "+strings.Join(Platforms, ", "))
+		return
+	}
 	switch f.Kind {
-	case "", KindHost, KindDatabase, KindApplication:
+	case "", KindHost, KindDatabase, KindApplication, KindKubernetes:
 	default:
-		httpx.BadRequest(w, r, "kind must be host, database or application")
+		httpx.BadRequest(w, r, "kind must be host, database, application or kubernetes")
 		return
 	}
 	switch f.Status {
@@ -141,7 +157,7 @@ func (h *AdminHandler) create(w http.ResponseWriter, r *http.Request) {
 	p, _ := auth.FromContext(r.Context())
 	t := &Target{CreatedBy: &p.User.ID}
 	body.apply(t)
-	if !h.addressAllowed(w, r, audit.TargetCreate, "", t) {
+	if !h.addressAllowed(w, r, audit.TargetCreate, "", t) || !h.kubeSlotAllowed(w, r, t) {
 		return
 	}
 	if err := h.Repo.Create(r.Context(), t); err != nil {
@@ -178,8 +194,9 @@ func (h *AdminHandler) update(w http.ResponseWriter, r *http.Request) {
 	}
 	before := map[string]any{"name": t.Name, "address": t.Address, "status": t.Status}
 	beforeOrigins, beforeDeps, beforePrivate := origins(t), t.AppDependencies, t.AppPrivate.Entries()
+	beforeCluster := clusterTerms(t)
 	body.apply(t)
-	if !h.addressAllowed(w, r, audit.TargetUpdate, t.ID, t) {
+	if !h.addressAllowed(w, r, audit.TargetUpdate, t.ID, t) || !h.kubeSlotAllowed(w, r, t) {
 		return
 	}
 	if err := h.Repo.Update(r.Context(), t); err != nil {
@@ -216,10 +233,17 @@ func (h *AdminHandler) update(w http.ResponseWriter, r *http.Request) {
 	if len(privateRemoved) > 0 {
 		details["private_removed"] = privateRemoved
 	}
+	// A cluster's sessions hold its endpoint, CA, platform and the way they
+	// act for their life (ADR 0045): a change to any ends them, and the
+	// person connects again under the new terms.
+	clusterChanged := beforeCluster != "" && beforeCluster != clusterTerms(t)
+	if clusterChanged {
+		details["cluster_changed"] = true
+	}
 	// A target taken out of service, or moved to an address nobody has
 	// trusted yet, keeps no session: what was admitted to the old target
 	// ends now rather than at its own limits.
-	if h.Revoker != nil && ((before["status"] == StatusActive && t.Status == StatusDisabled) || before["address"] != t.Address || len(removed) > 0 || narrowed || len(privateRemoved) > 0) {
+	if h.Revoker != nil && ((before["status"] == StatusActive && t.Status == StatusDisabled) || before["address"] != t.Address || len(removed) > 0 || narrowed || len(privateRemoved) > 0 || clusterChanged) {
 		details["live_sessions_ended"] = h.Revoker.TargetDisabled(t.ID)
 	}
 	h.record(r, audit.TargetUpdate, t.ID, audit.Success, details)
@@ -634,11 +658,29 @@ func (h *AdminHandler) setCredential(w http.ResponseWriter, r *http.Request) {
 		}
 		body.CredentialID = cid
 	}
+	if proto == Kube {
+		// The kube slot takes what the cluster's platform takes (ADR 0045, 8).
+		t, err := h.Repo.Get(r.Context(), id)
+		if err != nil {
+			h.fail(w, r, err)
+			return
+		}
+		t.Credentials[Kube] = body.CredentialID
+		if !h.kubeSlotAllowed(w, r, t) {
+			return
+		}
+	}
 	if err := h.Repo.SetCredential(r.Context(), id, proto, body.CredentialID); err != nil {
 		h.fail(w, r, err)
 		return
 	}
-	h.record(r, audit.TargetCredentialSet, id, audit.Success, map[string]any{"protocol": proto, "credential_id": body.CredentialID})
+	details := map[string]any{"protocol": proto, "credential_id": body.CredentialID}
+	if proto == Kube && h.Revoker != nil {
+		// A cluster's sessions hold the credential they started with (ADR
+		// 0045): one bound anew ends them, so the old one is let go of.
+		details["live_sessions_ended"] = h.Revoker.TargetDisabled(id)
+	}
+	h.record(r, audit.TargetCredentialSet, id, audit.Success, details)
 	t, err := h.Repo.Get(r.Context(), id)
 	if err != nil {
 		h.fail(w, r, err)
@@ -657,7 +699,11 @@ func (h *AdminHandler) unsetCredential(w http.ResponseWriter, r *http.Request) {
 		h.fail(w, r, err)
 		return
 	}
-	h.record(r, audit.TargetCredentialUnset, id, audit.Success, map[string]any{"protocol": proto})
+	details := map[string]any{"protocol": proto}
+	if proto == Kube && h.Revoker != nil {
+		details["live_sessions_ended"] = h.Revoker.TargetDisabled(id)
+	}
+	h.record(r, audit.TargetCredentialUnset, id, audit.Success, details)
 	w.WriteHeader(http.StatusNoContent)
 }
 

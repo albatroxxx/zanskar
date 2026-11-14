@@ -103,6 +103,11 @@ type grantInput struct {
 	MaxSessionMinutes  *int         `json:"max_session_minutes"`
 	TimeWindows        []TimeWindow `json:"time_windows"`
 	RetentionDays      *int         `json:"retention_days"`
+	// A Kubernetes grant's scope (ADR 0045); Validate refuses them on any
+	// other kind.
+	Namespaces   []string `json:"namespaces"`
+	ClusterScope bool     `json:"cluster_scope"`
+	PortForward  bool     `json:"port_forward"`
 }
 
 func (in *input) apply(p *Policy) {
@@ -117,6 +122,7 @@ func (in *input) apply(p *Policy) {
 			ID: g.ID, Kind: g.Kind, Targets: g.Targets, Tags: g.Tags, Access: g.Access, SignIn: g.SignIn,
 			RequireMFA: g.RequireMFA == nil || *g.RequireMFA, AllowClipboard: g.AllowClipboard, AllowFileTransfer: g.AllowFileTransfer,
 			AllowDevTools: g.AllowDevTools, IdleTimeoutMinutes: g.IdleTimeoutMinutes, MaxSessionMinutes: g.MaxSessionMinutes, TimeWindows: g.TimeWindows, RetentionDays: g.RetentionDays,
+			Namespaces: g.Namespaces, ClusterScope: g.ClusterScope, PortForward: g.PortForward,
 		})
 	}
 }

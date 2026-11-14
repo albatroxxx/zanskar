@@ -12,6 +12,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/boolplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/listdefault"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/listplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/mapdefault"
@@ -23,9 +24,9 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types/basetypes"
 )
 
-// A target is a host, a database or an application, as the API has them:
-// one object, its kind told by its fields (engine for a database,
-// app_upstream for an application).
+// A target is a host, a database, an application or a Kubernetes cluster, as
+// the API has them: one object, its kind told by its fields (engine for a
+// database, app_upstream for an application, kube_api_server for a cluster).
 
 type apiEndpoint struct {
 	Name string `json:"name"`
@@ -47,6 +48,10 @@ type apiTarget struct {
 	AppEndpoints    []apiEndpoint     `json:"app_endpoints"`
 	AppDependencies string            `json:"app_dependencies"`
 	AppPrivate      *apiPrivate       `json:"app_private,omitempty"`
+	KubeAPIServer   string            `json:"kube_api_server"`
+	KubeCA          string            `json:"kube_ca"`
+	KubePlatform    string            `json:"kube_platform"`
+	KubeImpersonate *bool             `json:"kube_impersonate"`
 	OSFamily        string            `json:"os_family"`
 	Ports           map[string]int    `json:"ports"`
 	Capabilities    []string          `json:"capabilities"`
@@ -58,7 +63,8 @@ type apiTarget struct {
 }
 
 // targetWrite is the body POST and PUT take: exactly these fields, every
-// one (a PUT replaces the target).
+// one (a PUT replaces the target). A cluster's fields are among them: a
+// write that left them out would turn the cluster into a host.
 type targetWrite struct {
 	Name            string            `json:"name"`
 	Address         string            `json:"address"`
@@ -72,6 +78,10 @@ type targetWrite struct {
 	AppEndpoints    []apiEndpoint     `json:"app_endpoints"`
 	AppDependencies string            `json:"app_dependencies"`
 	AppPrivate      *apiPrivate       `json:"app_private,omitempty"`
+	KubeAPIServer   string            `json:"kube_api_server"`
+	KubeCA          string            `json:"kube_ca"`
+	KubePlatform    string            `json:"kube_platform"`
+	KubeImpersonate *bool             `json:"kube_impersonate,omitempty"`
 	OSFamily        string            `json:"os_family"`
 	Ports           map[string]int    `json:"ports"`
 	Capabilities    []string          `json:"capabilities"`
@@ -84,6 +94,7 @@ type targetWrite struct {
 func (t *apiTarget) write() targetWrite {
 	return targetWrite{Name: t.Name, Address: t.Address, Engine: t.Engine, EngineVersion: t.EngineVersion, RetentionDays: t.RetentionDays,
 		DatabaseName: t.DatabaseName, TLSMode: t.TLSMode, TLSCA: t.TLSCA, AppUpstream: t.AppUpstream, AppEndpoints: t.AppEndpoints, AppDependencies: t.AppDependencies, AppPrivate: t.AppPrivate,
+		KubeAPIServer: t.KubeAPIServer, KubeCA: t.KubeCA, KubePlatform: t.KubePlatform, KubeImpersonate: t.KubeImpersonate,
 		OSFamily: t.OSFamily, Ports: t.Ports, Capabilities: t.Capabilities, Tags: t.Tags, Status: t.Status, Notes: t.Notes, Credentials: t.Credentials}
 }
 
@@ -101,6 +112,10 @@ type targetModel struct {
 	AppEndpoints    types.List   `tfsdk:"app_endpoints"`
 	AppDependencies types.String `tfsdk:"app_dependencies"`
 	AppPrivate      types.Object `tfsdk:"app_private"`
+	KubeAPIServer   types.String `tfsdk:"kube_api_server"`
+	KubeCA          types.String `tfsdk:"kube_ca"`
+	KubePlatform    types.String `tfsdk:"kube_platform"`
+	KubeImpersonate types.Bool   `tfsdk:"kube_impersonate"`
 	Ports           types.Map    `tfsdk:"ports"`
 	Tags            types.Map    `tfsdk:"tags"`
 	Credentials     types.Map    `tfsdk:"credentials"`
@@ -150,6 +165,13 @@ func (m *targetModel) from(ctx context.Context, t *apiTarget) diag.Diagnostics {
 		obj, d3 := types.ObjectValue(privateType.AttrTypes, map[string]attr.Value{"networks": nets, "hosts": hosts})
 		diags.Append(d3...)
 		m.AppPrivate = obj
+	}
+	m.KubeAPIServer, m.KubeCA, m.KubePlatform = types.StringValue(t.KubeAPIServer), types.StringValue(t.KubeCA), types.StringValue(t.KubePlatform)
+	// Three-valued on the gateway: a cluster answers true or false, every
+	// other kind nothing.
+	m.KubeImpersonate = types.BoolNull()
+	if t.KubeImpersonate != nil {
+		m.KubeImpersonate = types.BoolValue(*t.KubeImpersonate)
 	}
 	m.Status, m.Notes, m.HostKeyStatus = types.StringValue(t.Status), types.StringValue(t.Notes), types.StringValue(t.HostKeyStatus)
 	m.RetentionDays = types.Int64Null()
@@ -234,6 +256,18 @@ func (m *targetModel) onto(ctx context.Context, w *targetWrite) diag.Diagnostics
 			w.AppPrivate = p
 		}
 	}
+	str(m.KubeAPIServer, &w.KubeAPIServer)
+	str(m.KubeCA, &w.KubeCA)
+	str(m.KubePlatform, &w.KubePlatform)
+	if !m.KubeImpersonate.IsUnknown() {
+		// Null asks for the gateway's default (as the person); the gateway
+		// refuses the field on anything but a cluster, so a host sends none.
+		w.KubeImpersonate = nil
+		if !m.KubeImpersonate.IsNull() {
+			v := m.KubeImpersonate.ValueBool()
+			w.KubeImpersonate = &v
+		}
+	}
 	str(m.Status, &w.Status)
 	str(m.Notes, &w.Notes)
 	if !m.RetentionDays.IsUnknown() {
@@ -286,7 +320,7 @@ func (r *targetResource) Schema(_ context.Context, _ resource.SchemaRequest, res
 		return schema.StringAttribute{Optional: true, Computed: true, Default: stringdefault.StaticString(""), Description: desc}
 	}
 	resp.Schema = schema.Schema{
-		Description: "A Zanskar target: a host (SSH, RDP, VNC, WinRM), a database (engine set) or an application (app_upstream set). Its credentials stay in the vault and are named by id (data.zanskar_credential).",
+		Description: "A Zanskar target: a host (SSH, RDP, VNC, WinRM), a database (engine set), an application (app_upstream set) or a Kubernetes cluster (kube_api_server set). Its credentials stay in the vault and are named by id (data.zanskar_credential).",
 		Attributes: map[string]schema.Attribute{
 			"id":             schema.StringAttribute{Computed: true, PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()}},
 			"name":           schema.StringAttribute{Required: true, Description: "Unique name."},
@@ -315,6 +349,11 @@ func (r *targetResource) Schema(_ context.Context, _ resource.SchemaRequest, res
 					"hosts":    schema.ListAttribute{ElementType: types.StringType, Optional: true, Description: "host:port pairs; an IP literal must be private."},
 				},
 			},
+			"kube_api_server": empty("For a Kubernetes cluster: its API server, https://host[:port]. The gateway sets address from it."),
+			"kube_ca":         empty("For a cluster: the PEM bundle the API server's certificate is checked against; empty, the system roots."),
+			"kube_platform":   gateway("For a cluster: vanilla (the gateway's default), eks, gke or aks."),
+			"kube_impersonate": schema.BoolAttribute{Optional: true, Computed: true, PlanModifiers: []planmodifier.Bool{boolplanmodifier.UseStateForUnknown()},
+				Description: "For a cluster: sessions act as the person (true, the gateway's default) or as the credential, a shared identity (false). Absent on every other kind."},
 			"ports": schema.MapAttribute{ElementType: types.Int64Type, Optional: true, Computed: true,
 				PlanModifiers: []planmodifier.Map{mapplanmodifier.UseStateForUnknown()},
 				Description:   "Ports by protocol (ssh, rdp, vnc, winrm, database); the gateway fills the usual ones."},

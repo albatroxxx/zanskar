@@ -116,12 +116,16 @@ tr.off td { color: var(--fg-muted); }
    value only when the label already says what needs attention, never alone. */
 .stat-section { margin: 20px 0 10px; color: var(--fg-muted); font-size: 0.82rem; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; }
 .stat-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(172px, 1fr)); gap: 12px; }
+/* The platform tiles are the section's tabs (the owner, 2026-11-13): four across the page, the open one filled faintly in the accent. Squares were tried and left half the width empty. */
+.stat-grid.platforms { grid-template-columns: repeat(4, 1fr); margin: 14px 0 18px; }
 /* A list of checks, a status line each (the applications' prerequisites). */
 .checks { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 12px; }
 .stat-tile { display: block; position: relative; background: var(--bg-raised); border: 1px solid var(--line); border-radius: var(--radius-lg); padding: 14px 16px; color: inherit; text-decoration: none; }
 .stat-tile .ticon { position: absolute; top: 12px; right: 14px; color: var(--fg-faint); }
 .stat-tile .meter { margin-top: 8px; }
 a.stat-tile:hover { border-color: var(--fg-faint); }
+.stat-tile.selected, a.stat-tile.selected:hover { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); background: var(--accent-soft); }
+.stat-tile.selected .ticon { color: var(--accent); }
 .stat-tile .value { font-size: 1.7rem; font-weight: 600; font-variant-numeric: tabular-nums; line-height: 1.2; }
 .stat-tile.warn .value { color: var(--warn); }
 .stat-tile.danger .value { color: var(--danger); }
@@ -292,6 +296,8 @@ td.actions > * + * { margin-left: 8px; }
 .btn.proto-database:hover { background: var(--proto-db); color: var(--accent-fg); border-color: transparent; }
 .btn.proto-app { background: var(--proto-app-soft); color: var(--proto-app); border-color: transparent; font-weight: 600; text-decoration: none; }
 .btn.proto-app:hover { background: var(--proto-app); color: var(--accent-fg); border-color: transparent; }
+.btn.proto-kube { background: var(--proto-kube-soft); color: var(--proto-kube); border-color: transparent; font-weight: 600; }
+.btn.proto-kube:hover { background: var(--proto-kube); color: var(--accent-fg); border-color: transparent; }
 .btn.danger { color: var(--danger); border-color: var(--danger); }
 .btn.sm { padding: 4px 9px; font-size: 0.82rem; }
 .btn.ghost { border-color: transparent; background: transparent; }

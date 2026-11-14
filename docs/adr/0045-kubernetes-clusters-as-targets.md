@@ -10,6 +10,11 @@ support as well, just like host, database, etc."), took the recommendations belo
 by default; bodies never recorded; *Clusters*, `kube`, `pod`; the inventory tile settled when
 phase 1 is built), and set the work aside for later. Nothing is built; the plan is the record.
 
+Un-parked 2026-11-12 by [ADR 0048](0048-fabric.md), accepted the same day: clusters live in the
+console's *Fabric* section under the tab *Kubernetes*, not *Clusters*, the dashboard counts them in
+its *Fabric* tile, and phase 3 (EKS) is built before phase 2 (shells). Phase 1 is in progress on
+`feat/fabric`.
+
 ## Context
 
 Zanskar brokers hosts (SSH, RDP, VNC, WinRM), databases (ADR 0017) and web applications (ADR
@@ -210,3 +215,87 @@ shows who lacks tooling.**
 4. **`port-forward`:** off by default per policy, or never.
 5. **Bodies:** never recorded (recommended), or the bodies of writes with secrets redacted.
 6. **Names.** *Clusters* in the console; protocols `kube` and `pod`.
+
+## Built (phase 1, 2026-11-13)
+
+What the first build of the API-as-the-person settled, where the decision above left room:
+
+1. **Scope across grants is the union.** When several grants admit a person to a cluster, the
+   session reaches every namespace any of them names (every namespace, when any admits every
+   namespace), and has `cluster_scope` or `port_forward` when any grant does. The clipboard and
+   file-transfer switches take the strictest grant; scope does not, because a grant that admits
+   a namespace admits it as a grant that admits a target does. `policy.Decision.Kube` carries it.
+2. **A change of terms ends the session.** The proxy holds the scope and the groups it acts as
+   for the session's life. The live re-check (ADR 0036) ends a `kube` session whose scope or
+   groups would now differ, as it ends a session whose clipboard would now be off; the person
+   connects again under the new terms.
+3. **Cluster-wide means cluster-wide.** A request whose path names no namespace (nodes, the
+   namespace list, `kubectl get pods -A`) needs `cluster_scope`, even for a grant that admits
+   every namespace, as decision 4 says. `/api/v1/namespaces/{ns}` alone reads as a request in
+   that namespace, so `kubectl get ns prod` works for a person granted prod. Paths outside the API
+   (`/api`, `/apis`, `/version`, `/openapi`) are answered 404 and forwarded nowhere.
+4. **Discovery is not recorded.** kubectl asks `/api`, `/apis/…` and `/openapi` a dozen times
+   before its first real request; those pass under every scope and write no line. Every request
+   that names a resource is one marker and one line, `{verb} {resource}[/{name}] [-n ns] → {status}`;
+   an upgraded stream writes a line when it opens and one when it ends, with its length and bytes.
+5. **An idle ceiling for a session without a socket.** A `kube` session whose policy sets no idle
+   time still ends after eight hours without a request: a kubeconfig left on a laptop is not a
+   standing credential. A bridge needs no such bound, since its socket ends with the browser tab.
+   A session with an upgraded stream open (an `exec` shell) does not idle out while the stream
+   carries bytes.
+6. **The token.** `zk8s_` and 32 random bytes, kept hashed, compared in constant time, read from
+   `Authorization: Bearer` only, refused the moment the session ends; a token that is not its
+   session's own is refused the same way. The session's own context ends every request in flight
+   and closes every upgraded stream.
+7. **The kubeconfig carries the gateway's certificate only when it is self-signed** (the managed
+   certificate before an upload): behind a certificate clients trust, or a proxy that terminates
+   TLS, it carries none. It is shown once in the portal's *Clusters* tab, to copy or download,
+   with the idle time and the end time when the policy sets a maximum.
+8. **Shared identity is audited.** `session.start` says `acts_as: person` or
+   `acts_as: shared identity`, beside the namespaces, `cluster_scope` and `port_forward`.
+9. **The scope travels whole.** The configuration file (ADR 0043) and the Terraform provider
+   (ADR 0044) carry a cluster's `kube_api_server`, `kube_ca`, `kube_platform` and
+   `kube_impersonate`, and a grant's `namespaces`, `cluster_scope` and `port_forward`. A carrier
+   that dropped them would import a grant to every namespace and turn a shared identity into
+   impersonation; their tests read the receiving gateway's own answer, since two exports that
+   both lost a field would still match.
+10. **EKS, through a role (phase 3, built 2026-11-13).** The credential type `kube_eks` names
+    the region, the role, the cluster and an ExternalId the gateway mints; it holds no secret.
+    The token the cluster accepts is the one aws-iam-authenticator defined, a presigned STS
+    `GetCallerIdentity` with the cluster's name in a signed header, minted as the role for each
+    request and reused for twelve of the fifteen minutes the cluster accepts it, so an 8 h
+    session never carries a stale one; a token AWS will not mint ends the request with a 502 that
+    names the gateway's credential, not the cluster. The kube slot of a cluster whose platform is
+    `eks` takes `kube_eks` and nothing else; every other platform takes a token or a certificate,
+    the standard path, which GKE and AKS take too until adapters of their own exist. The role's
+    page prints the three pastes (trust policy with the gateway's principal, permissions policy,
+    the access-entry or `aws-auth` mapping to the user `zanskar`), tests the role (the stage that
+    failed is named: `assume` or `describe`), and the Add cluster form fills the API server and
+    CA from `DescribeCluster`. The RBAC manifest for an EKS cluster binds `kind: User` `zanskar`
+    and prints the mapping instead of a ServiceAccount. `ListClusters` is in the client, not yet
+    in the console. Not run against a real EKS cluster yet: the AWS test environment is torn
+    down; the owner's gateway has the instance role.
+11. **The gateway's credential failing is said as the gateway's fault.** A cluster that refuses
+    Zanskar's own credential (a token rotated away, a role no longer mapped) answers the person a
+    502 with a sentence naming the gateway's credential, logged for the administrator, where the
+    API's 401 would have read as their kubeconfig being wrong. The session stays, to be used
+    again once the credential is fixed. The same sentence covers a token AWS would not mint.
+12. **An edit to the cluster ends its sessions.** A session holds the endpoint, CA, platform, the
+    way it acts and the credential it started with for its life, so a change to any of them, or
+    a credential bound or unbound on the kube slot, ends the cluster's live sessions as a
+    disabled target's are; a tag or a note does not. Paths that try to leave the namespace
+    through encoded slashes, encoded or plain dot segments or doubled slashes are refused by the
+    gateway behind the real server mux, and nothing of them reaches the cluster (break-it,
+    2026-11-14).
+13. **Run against a real cluster (kind, Kubernetes v1.37.0, 2026-11-14).** The printed manifest
+    applied as is, a service-account token on the kube slot, a policy granting the group `ops` the
+    namespace `demo`: `kubectl` through the gateway created a pod, waited for it, ran `exec` over
+    WebSocket (recorded as a stream with its byte counts), read events and Table output, and was
+    refused `kube-system`, `nodes`, `-A` and `port-forward` with the gateway's sentences; the
+    cluster's audit saw the person and `zanskar:ops`. Two findings, fixed: the cluster test asked
+    whether it may impersonate groups without naming one, and RBAC answers a nameless review of a
+    grant by `resourceNames` "no", so it reported `impersonate_groups: false` while impersonation
+    worked (it asks for `system:authenticated` now); and `kubectl auth whoami` and `auth can-i`,
+    reviews of the caller alone at paths that name no namespace, were refused as cluster-wide
+    (every scope admits the three self-subject reviews now; a review of someone else stays
+    cluster-wide).

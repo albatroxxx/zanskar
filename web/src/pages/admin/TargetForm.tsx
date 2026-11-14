@@ -2,7 +2,7 @@ import { count, protocolName } from '../../api/format'
 import { useEffect, useState, type FormEvent } from 'react'
 import { api } from '../../api/client'
 import { errorMessage } from '../../api/client'
-import type { AppEndpoint, OSFamily, Protocol, RetentionPolicy, Target } from '../../api/types'
+import type { AppEndpoint, Credential, EKSCheck, KubePlatform, OSFamily, Protocol, RetentionPolicy, Target } from '../../api/types'
 import { useSubmit } from '../../components/submit'
 import { Alert, Field, Modal, Tabs } from '../../components/ui'
 import { EndpointEditor } from './EndpointEditor'
@@ -11,11 +11,11 @@ import { protocols, type PortProtocol } from './lib'
 import { TagEditor } from '../../components/TagEditor'
 import { rowsToTags, tagRows, type TagRow } from '../../components/tags'
 
-export type TargetKind = 'host' | 'database' | 'application'
+export type TargetKind = 'host' | 'database' | 'application' | 'kubernetes'
 
-/** kindOf says what kind of target t is: an application has an upstream, a database an engine. */
-export function kindOf(t: Pick<Target, 'engine' | 'app_upstream'>): TargetKind {
-  return t.app_upstream ? 'application' : t.engine ? 'database' : 'host'
+/** kindOf says what kind of target t is: an application has an upstream, a database an engine, a cluster an API server. */
+export function kindOf(t: Pick<Target, 'engine' | 'app_upstream' | 'kube_api_server'>): TargetKind {
+  return t.app_upstream ? 'application' : t.engine ? 'database' : t.kube_api_server ? 'kubernetes' : 'host'
 }
 
 /** Body of POST/PUT /targets: every editable field travels on each write. */
@@ -36,6 +36,10 @@ export function targetBody(t: Target, patch: Partial<Target> = {}) {
     app_endpoints: u.app_endpoints ?? [],
     app_dependencies: u.app_dependencies ?? '',
     app_private: u.app_private ?? null,
+    kube_api_server: u.kube_api_server ?? '',
+    kube_ca: u.kube_ca ?? '',
+    kube_impersonate: u.kube_impersonate ?? null,
+    kube_platform: u.kube_platform ?? '',
     retention_days: u.retention_days ?? null,
     ports: u.ports,
     capabilities: u.capabilities,
@@ -72,6 +76,7 @@ const emptyForm = {
   name: '', address: '', os_family: 'linux' as OSFamily,
   engine: 'postgres', engine_version: '', database_name: '', tls_mode: 'verify-full', tls_ca: '',
   app_upstream: '', endpoints: [] as AppEndpoint[], dependencies: 'public' as 'public' | 'origins', private_networks: '', private_hosts: '',
+  kube_api_server: '', kube_ca: '', kube_impersonate: true, kube_platform: 'vanilla' as KubePlatform, eks_credential: '',
   ...defaultPorts, database: enginePorts.postgres, tags: [] as TagRow[], notes: '', retention: '',
 }
 
@@ -83,7 +88,7 @@ const emptyForm = {
  * gateway (ADR 0034). Each kind then shows only its own fields (manual QA
  * finding R33). Autoscaling groups have their own page.
  */
-export function TargetForm({ initial, kind, onClose, onSaved }: { initial?: Target; kind?: TargetKind; onClose: () => void; onSaved: (t: Target) => void }) {
+export function TargetForm({ initial, kind, platform, onClose, onSaved }: { initial?: Target; kind?: TargetKind; platform?: KubePlatform; onClose: () => void; onSaved: (t: Target) => void }) {
   const [k, setK] = useState<TargetKind | null>(initial ? kindOf(initial) : (kind ?? null))
   const [f, setF] = useState(
     initial
@@ -97,6 +102,11 @@ export function TargetForm({ initial, kind, onClose, onSaved }: { initial?: Targ
           tls_mode: initial.tls_mode || 'verify-full',
           tls_ca: initial.tls_ca ?? '',
           app_upstream: initial.app_upstream ?? '',
+          kube_api_server: initial.kube_api_server ?? '',
+          kube_ca: initial.kube_ca ?? '',
+          kube_impersonate: initial.kube_impersonate ?? true,
+          kube_platform: initial.kube_platform ?? 'vanilla',
+          eks_credential: initial.credentials?.kube ?? '',
           endpoints: (initial.app_endpoints ?? []).map((e) => ({ ...e })),
           dependencies: initial.app_dependencies ?? 'public',
           private_networks: (initial.app_private?.networks ?? []).join('\n'),
@@ -110,7 +120,7 @@ export function TargetForm({ initial, kind, onClose, onSaved }: { initial?: Targ
           notes: initial.notes,
           retention: initial.retention_days ? String(initial.retention_days) : '',
         }
-      : emptyForm,
+      : { ...emptyForm, kube_platform: platform ?? emptyForm.kube_platform },
   )
   const { busy, err, setErr, submit } = useSubmit()
   const set = (key: keyof typeof emptyForm) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => setF({ ...f, [key]: e.target.value })
@@ -121,6 +131,34 @@ export function TargetForm({ initial, kind, onClose, onSaved }: { initial?: Targ
   const changed = protocols.filter((p) => f[p].trim() !== defaultPorts[p])
   const shownPorts = protocols.filter((p) => set_.main.includes(p) || (moreOpen && set_.more.includes(p)) || changed.includes(p))
   const hiddenMore = set_.more.filter((p) => !shownPorts.includes(p))
+  // An EKS cluster is reached through a role (ADR 0045, 8): the kube slot
+  // takes a kube_eks credential, chosen here, and describing the cluster
+  // through it fills the API server and CA.
+  const eks = k === 'kubernetes' && f.kube_platform === 'eks'
+  const [roles, setRoles] = useState<Credential[] | null>(null)
+  const [describing, setDescribing] = useState(false)
+  useEffect(() => {
+    if (!eks || roles !== null) return
+    api.get<{ items?: Credential[] }>('/credentials?limit=500')
+      .then((r) => setRoles((r?.items ?? []).filter((c) => c.type === 'kube_eks')))
+      .catch(() => setRoles([]))
+  }, [eks, roles])
+  const describe = async () => {
+    setDescribing(true)
+    setErr('')
+    try {
+      const res = await api.post<EKSCheck>(`/credentials/${f.eks_credential}/eks/describe`, {})
+      if (!res.ok || !res.cluster) {
+        setErr(`${res.stage === 'assume' ? 'The role was not assumed' : 'The cluster was not described'}: ${res.error ?? ''}`)
+        return
+      }
+      setF({ ...f, kube_api_server: res.cluster.endpoint, kube_ca: res.cluster.ca_pem })
+    } catch (e) {
+      setErr(errorMessage(e))
+    } finally {
+      setDescribing(false)
+    }
+  }
   const [globalRetention, setGlobalRetention] = useState<string>('')
   useEffect(() => {
     api
@@ -175,12 +213,13 @@ export function TargetForm({ initial, kind, onClose, onSaved }: { initial?: Targ
     void submit(async () => {
       const database = k === 'database'
       const application = k === 'application'
+      const cluster = k === 'kubernetes'
       const secure = application && secureOrigins
       const body = {
         name: f.name.trim(),
-        // An application's address is its upstream's host; the server derives it.
-        address: application ? '' : f.address.trim(),
-        os_family: database || application ? 'other' : f.os_family,
+        // An application's address is its upstream's host, a cluster's its API server's; the server derives it.
+        address: application || cluster ? '' : f.address.trim(),
+        os_family: database || application || cluster ? 'other' : f.os_family,
         engine: database ? f.engine : '',
         engine_version: database ? f.engine_version.trim() : '',
         database_name: database ? f.database_name.trim() : '',
@@ -190,13 +229,17 @@ export function TargetForm({ initial, kind, onClose, onSaved }: { initial?: Targ
         app_endpoints: endpoints.body,
         app_dependencies: application ? f.dependencies : '',
         app_private: application ? privateBody(f.private_networks, f.private_hosts) : null,
+        kube_api_server: cluster ? f.kube_api_server.trim() : '',
+        kube_ca: cluster ? f.kube_ca.trim() : '',
+        kube_impersonate: cluster ? f.kube_impersonate : null,
+        kube_platform: cluster ? f.kube_platform : '',
         retention_days: application ? null : retention,
         ports,
         capabilities: initial?.capabilities ?? [],
         tags,
         status: initial?.status ?? 'active',
         notes: f.notes,
-        credentials: initial?.credentials ?? {},
+        credentials: { ...(initial?.credentials ?? {}), ...(eks && f.eks_credential ? { kube: f.eks_credential } : {}) },
       }
       let t: Target
       try {
@@ -210,7 +253,7 @@ export function TargetForm({ initial, kind, onClose, onSaved }: { initial?: Targ
     })
   }
 
-  const title = initial ? `Edit ${initial.name}` : k === 'database' ? 'Add database' : k === 'host' ? 'Add host' : k === 'application' ? 'Add application' : 'Add target'
+  const title = initial ? `Edit ${initial.name}` : k === 'database' ? 'Add database' : k === 'host' ? 'Add host' : k === 'application' ? 'Add application' : k === 'kubernetes' ? 'Add cluster' : 'Add target'
   // The CA bundle applies when any origin is https, the upstream or another.
   const secureOrigins = [f.app_upstream, ...f.endpoints.map((e) => e.url)].some((u) => u.trim().toLowerCase().startsWith('https://'))
   return (
@@ -218,7 +261,7 @@ export function TargetForm({ initial, kind, onClose, onSaved }: { initial?: Targ
       {err && <Alert tone="danger" onDismiss={() => setErr('')}>{err}</Alert>}
       {!initial && !kind && (
         <>
-          <Tabs label="Kind of target" value={k ?? ''} onChange={setK} tabs={[{ key: 'host', label: 'Host' }, { key: 'database', label: 'Database' }, { key: 'application', label: 'Application' }]} />
+          <Tabs label="Kind of target" value={k ?? ''} onChange={setK} tabs={[{ key: 'host', label: 'Host' }, { key: 'database', label: 'Database' }, { key: 'application', label: 'Application' }, { key: 'kubernetes', label: 'Kubernetes' }]} />
         </>
       )}
       {k && (
@@ -231,6 +274,39 @@ export function TargetForm({ initial, kind, onClose, onSaved }: { initial?: Targ
               <>
                 <Field label="Upstream">
                   <input id="t-upstream" value={f.app_upstream} onChange={set('app_upstream')} required placeholder="https://wiki.internal:8443" />
+                </Field>
+              </>
+            ) : k === 'kubernetes' ? (
+              <>
+                <Field label="Platform">
+                  <select id="t-kube-platform" value={f.kube_platform} onChange={(e) => setF({ ...f, kube_platform: e.target.value as KubePlatform })}>
+                    <option value="vanilla">Vanilla</option>
+                    <option value="eks">EKS</option>
+                    <option value="gke">GKE</option>
+                    <option value="aks">AKS</option>
+                  </select>
+                </Field>
+                {eks && (
+                  <Field label="EKS role" info="A kube_eks credential; Describe fills the API server and CA from it.">
+                    <div className="actions">
+                      <select id="t-eks-credential" value={f.eks_credential} onChange={set('eks_credential')} required>
+                        <option value="">{roles === null ? 'Loading…' : roles.length === 0 ? 'No EKS role credential yet' : 'Choose'}</option>
+                        {(roles ?? []).map((c) => (
+                          <option key={c.id} value={c.id}>{c.name} · {c.eks_cluster} ({c.aws_region})</option>
+                        ))}
+                      </select>
+                      <button type="button" className="btn sm" onClick={() => void describe()} disabled={!f.eks_credential || describing}>{describing ? 'Describing…' : 'Describe'}</button>
+                    </div>
+                  </Field>
+                )}
+                <Field label="API server">
+                  <input id="t-kube-api-server" value={f.kube_api_server} onChange={set('kube_api_server')} required placeholder={eks ? 'From Describe, or https://….eks.amazonaws.com' : 'https://k8s.internal:6443'} />
+                </Field>
+                <Field label="Sessions act as">
+                  <select id="t-kube-impersonate" value={f.kube_impersonate ? 'person' : 'credential'} onChange={(e) => setF({ ...f, kube_impersonate: e.target.value === 'person' })}>
+                    <option value="person">The person</option>
+                    <option value="credential">The credential (shared identity)</option>
+                  </select>
                 </Field>
               </>
             ) : k === 'host' ? (
@@ -305,6 +381,11 @@ export function TargetForm({ initial, kind, onClose, onSaved }: { initial?: Targ
                 </Field>
               )}
             </>
+          )}
+          {k === 'kubernetes' && (
+            <Field label="CA bundle (PEM)">
+              <textarea id="t-kube-ca" value={f.kube_ca} onChange={set('kube_ca')} placeholder="System roots" />
+            </Field>
           )}
           {k === 'application' && (
             <Field label="Other endpoints" info="Bookmarks in its browser; pages open nowhere else.">

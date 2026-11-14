@@ -22,6 +22,7 @@ import (
 	"github.com/albatroxxx/zanskar/internal/credential"
 	"github.com/albatroxxx/zanskar/internal/crypto"
 	"github.com/albatroxxx/zanskar/internal/gateway"
+	"github.com/albatroxxx/zanskar/internal/group"
 	"github.com/albatroxxx/zanskar/internal/keyring"
 	"github.com/albatroxxx/zanskar/internal/policy"
 	"github.com/albatroxxx/zanskar/internal/policy/policytest"
@@ -72,7 +73,7 @@ func newEnvWith(t *testing.T, prober *Prober) *env {
 	vault := credential.NewVault(db, ring)
 	revoker := &fakeRevoker{}
 	requests := &fakeRequests{}
-	h := &AdminHandler{Repo: NewRepo(db), Prober: prober, Policies: policies, Requests: requests, Live: live, Revoker: revoker, Vault: vault, Audit: auditLog, Log: log}
+	h := &AdminHandler{Repo: NewRepo(db), Prober: prober, Policies: policies, Requests: requests, Live: live, Revoker: revoker, Vault: vault, Groups: group.NewRepo(db), Audit: auditLog, Log: log}
 	mux := http.NewServeMux()
 	h.Register(mux)
 	mw := &auth.Middleware{Sessions: sessions, Users: users, Log: log}

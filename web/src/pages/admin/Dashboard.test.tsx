@@ -15,7 +15,7 @@ const overview: AdminOverview = {
   sessions: { open: 2, started_24h: 7 },
   pending_requests: 3,
   targets: { active: 5, host_key_pending: 1, host_key_changed: 1, certificate_pending: 1, needing_attention: 2 },
-  inventory: { hosts: 3, hosts_by_os: { linux: 2, windows: 1 }, databases: 2, databases_by_engine: { postgres: 1, mysql: 1 }, applications: 4 },
+  inventory: { hosts: 3, hosts_by_os: { linux: 2, windows: 1 }, databases: 2, databases_by_engine: { postgres: 1, mysql: 1 }, applications: 4, clusters: 0, clusters_by_platform: {} },
   autoscaling: { groups: 1, instances: 4, healthy_instances: 3 },
   audit_24h: { events: 41, failures: 4, failed_logins: 2, refused_connects: 1 },
   posture: { standing_no_mfa: { grants: 3, policies: 2 }, admins: 2, dormant: 4, not_enrolled: 1 },

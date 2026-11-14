@@ -1,4 +1,4 @@
-import { cleanup, render, screen } from '@testing-library/react'
+import { cleanup, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { ApiError, api } from '../../api/client'
@@ -214,6 +214,55 @@ describe('TargetForm kind', () => {
 
     expect(screen.getByRole('tab', { name: 'Database', selected: true })).toBeDefined()
     expect(screen.getByLabelText('Engine')).toBeDefined()
+  })
+})
+
+// An EKS cluster (ADR 0045, 8) names the role that reaches it; describing the
+// cluster through the role fills the API server and CA, and the role goes
+// on the kube slot with the create.
+describe('TargetForm EKS cluster', () => {
+  it('offers the EKS roles, fills the endpoint from Describe and binds the role on create', async () => {
+    vi.spyOn(api, 'get').mockImplementation(async (path: string) => {
+      if (path.startsWith('/credentials')) {
+        return { items: [
+          { id: 'r1', name: 'prod-role', type: 'kube_eks', mode: 'vaulted', has_secret: false, aws_region: 'eu-west-2', eks_cluster: 'prod', created_at: '', updated_at: '' },
+          { id: 'sa', name: 'sa', type: 'kube_token', mode: 'vaulted', has_secret: true, created_at: '', updated_at: '' },
+        ] } as never
+      }
+      return {} as never
+    })
+    const post = vi.spyOn(api, 'post').mockImplementation(async (path: string) => {
+      if (path === '/credentials/r1/eks/describe') {
+        return { ok: true, cluster: { name: 'prod', endpoint: 'https://ABC.gr7.eu-west-2.eks.amazonaws.com', ca_pem: '-----BEGIN CERTIFICATE-----\nMA==\n-----END CERTIFICATE-----\n', version: '1.31', status: 'ACTIVE', authentication_mode: 'API' } } as never
+      }
+      return { id: 't9' } as never
+    })
+    const user = userEvent.setup()
+    render(<TargetForm kind="kubernetes" platform="eks" onClose={() => {}} onSaved={() => {}} />)
+    await screen.findByRole('group', { name: 'EKS role' })
+    await screen.findByText('prod-role · prod (eu-west-2)')
+    const roles = document.getElementById('t-eks-credential') as HTMLSelectElement
+    expect(screen.queryByText(/^sa /)).toBeNull()
+    await user.selectOptions(roles, 'r1')
+    await user.click(screen.getByRole('button', { name: 'Describe' }))
+    await waitFor(() => expect((document.getElementById('t-kube-api-server') as HTMLInputElement).value).toBe('https://ABC.gr7.eu-west-2.eks.amazonaws.com'))
+    expect((document.getElementById('t-kube-ca') as HTMLTextAreaElement).value).toContain('BEGIN CERTIFICATE')
+    await user.type(document.getElementById('t-name')!, 'prod-eks')
+    await user.click(screen.getByRole('button', { name: 'Create' }))
+    await waitFor(() => expect(post).toHaveBeenCalledWith('/targets', expect.objectContaining({ kube_platform: 'eks', credentials: { kube: 'r1' }, kube_api_server: 'https://ABC.gr7.eu-west-2.eks.amazonaws.com' })))
+  })
+
+  it('says which stage failed when the role does not reach the cluster', async () => {
+    vi.spyOn(api, 'get').mockResolvedValue({ items: [{ id: 'r1', name: 'prod-role', type: 'kube_eks', mode: 'vaulted', has_secret: false, aws_region: 'eu-west-2', eks_cluster: 'prod', created_at: '', updated_at: '' }] } as never)
+    vi.spyOn(api, 'post').mockResolvedValue({ ok: false, stage: 'describe', error: 'AccessDeniedException: eks:DescribeCluster' } as never)
+    const user = userEvent.setup()
+    render(<TargetForm kind="kubernetes" platform="eks" onClose={() => {}} onSaved={() => {}} />)
+    await screen.findByRole('group', { name: 'EKS role' })
+    await screen.findByText('prod-role · prod (eu-west-2)')
+    await user.selectOptions(document.getElementById('t-eks-credential')!, 'r1')
+    await user.click(screen.getByRole('button', { name: 'Describe' }))
+    await screen.findByText(/The cluster was not described: AccessDeniedException/)
+    expect((document.getElementById('t-kube-api-server') as HTMLInputElement).value).toBe('')
   })
 })
 

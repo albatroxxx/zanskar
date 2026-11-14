@@ -63,6 +63,11 @@ type apiGrant struct {
 	MaxSessionMinutes  *int             `json:"max_session_minutes"`
 	TimeWindows        []apiWindow      `json:"time_windows"`
 	RetentionDays      *int             `json:"retention_days"`
+	// A Kubernetes grant's scope (ADR 0045), carried whole: a write that
+	// left it out would widen the grant to every namespace.
+	Namespaces   []string `json:"namespaces"`
+	ClusterScope bool     `json:"cluster_scope"`
+	PortForward  bool     `json:"port_forward"`
 }
 
 // apiPolicy is a policy as the API answers it.
@@ -95,6 +100,7 @@ var (
 		"allow_file_transfer": types.BoolType, "allow_devtools": types.BoolType,
 		"idle_timeout_minutes": types.Int64Type, "max_session_minutes": types.Int64Type, "time_windows": types.ListType{ElemType: windowType},
 		"retention_days": types.Int64Type,
+		"namespaces":     types.ListType{ElemType: types.StringType}, "cluster_scope": types.BoolType, "port_forward": types.BoolType,
 	}}
 )
 
@@ -144,6 +150,9 @@ type grantModel struct {
 	MaxSessionMinutes  types.Int64  `tfsdk:"max_session_minutes"`
 	TimeWindows        types.List   `tfsdk:"time_windows"`
 	RetentionDays      types.Int64  `tfsdk:"retention_days"`
+	Namespaces         []string     `tfsdk:"namespaces"`
+	ClusterScope       types.Bool   `tfsdk:"cluster_scope"`
+	PortForward        types.Bool   `tfsdk:"port_forward"`
 }
 
 // objectAsOptions reads a known object into a struct.
@@ -192,7 +201,8 @@ func (m *policyModel) write(ctx context.Context) (policyWrite, diag.Diagnostics)
 		ag := apiGrant{Kind: g.Kind.ValueString(), Access: g.Access.ValueString(), SignIn: g.SignIn.ValueString(),
 			AllowClipboard: g.AllowClipboard.ValueBool(), AllowFileTransfer: g.AllowFileTransfer.ValueBool(), AllowDevTools: g.AllowDevTools.ValueBool(),
 			IdleTimeoutMinutes: int(g.IdleTimeoutMinutes.ValueInt64()),
-			MaxSessionMinutes:  intPtr(g.MaxSessionMinutes), RetentionDays: intPtr(g.RetentionDays), Targets: []apiGrantTarget{}, TimeWindows: []apiWindow{}}
+			MaxSessionMinutes:  intPtr(g.MaxSessionMinutes), RetentionDays: intPtr(g.RetentionDays), Targets: []apiGrantTarget{}, TimeWindows: []apiWindow{},
+			Namespaces: orEmpty(g.Namespaces), ClusterScope: g.ClusterScope.ValueBool(), PortForward: g.PortForward.ValueBool()}
 		if known(g.ID) {
 			ag.ID = g.ID.ValueString()
 		}
@@ -233,7 +243,8 @@ func (m *policyModel) from(ctx context.Context, p *apiPolicy) diag.Diagnostics {
 		gm := grantModel{ID: types.StringValue(g.ID), Kind: types.StringValue(g.Kind), Access: types.StringValue(g.Access), SignIn: types.StringValue(g.SignIn),
 			RequireMFA: types.BoolValue(g.RequireMFA == nil || *g.RequireMFA), AllowClipboard: types.BoolValue(g.AllowClipboard),
 			AllowFileTransfer: types.BoolValue(g.AllowFileTransfer), AllowDevTools: types.BoolValue(g.AllowDevTools),
-			IdleTimeoutMinutes: types.Int64Value(int64(g.IdleTimeoutMinutes)), MaxSessionMinutes: int64Of(g.MaxSessionMinutes), RetentionDays: int64Of(g.RetentionDays)}
+			IdleTimeoutMinutes: types.Int64Value(int64(g.IdleTimeoutMinutes)), MaxSessionMinutes: int64Of(g.MaxSessionMinutes), RetentionDays: int64Of(g.RetentionDays),
+			Namespaces: orEmpty(g.Namespaces), ClusterScope: types.BoolValue(g.ClusterScope), PortForward: types.BoolValue(g.PortForward)}
 		targets := make([]grantTargetModel, 0, len(g.Targets))
 		for _, t := range g.Targets {
 			targets = append(targets, grantTargetModel{ID: types.StringValue(t.ID), Protocols: orEmpty(t.Protocols)})
@@ -291,7 +302,7 @@ func (r *policyResource) Schema(_ context.Context, _ resource.SchemaRequest, res
 			},
 			"grants": schema.ListNestedAttribute{
 				Required:    true,
-				Description: "What the audience reaches, each grant of one kind: host, autoscaling, database or application.",
+				Description: "What the audience reaches, each grant of one kind: host, autoscaling, database, application or kubernetes.",
 				NestedObject: schema.NestedAttributeObject{Attributes: map[string]schema.Attribute{
 					"id":   schema.StringAttribute{Computed: true, PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()}},
 					"kind": schema.StringAttribute{Required: true},
@@ -330,6 +341,11 @@ func (r *policyResource) Schema(_ context.Context, _ resource.SchemaRequest, res
 						}},
 					},
 					"retention_days": schema.Int64Attribute{Optional: true},
+					"namespaces": schema.ListAttribute{ElementType: types.StringType, Optional: true, Computed: true,
+						Default:     listdefault.StaticValue(types.ListValueMust(types.StringType, []attr.Value{})),
+						Description: "Kubernetes only: the namespaces the grant reaches; none is every namespace."},
+					"cluster_scope": falseDefault("Kubernetes only: cluster-wide resources (nodes, namespaces) and lists across namespaces."),
+					"port_forward":  falseDefault("Kubernetes only: port-forward."),
 				}},
 			},
 		},

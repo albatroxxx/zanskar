@@ -8,15 +8,18 @@ package credential
 import (
 	"crypto/ed25519"
 	"crypto/rand"
+	"crypto/tls"
 	"encoding/pem"
 	"errors"
 	"fmt"
+	"regexp"
 	"slices"
 	"strings"
 	"time"
 
 	"golang.org/x/crypto/ssh"
 
+	"github.com/albatroxxx/zanskar/internal/cloud"
 	"github.com/albatroxxx/zanskar/internal/textsafe"
 )
 
@@ -30,15 +33,32 @@ const (
 	TypeSSHCA              Type = "ssh_ca"
 	TypeDomain             Type = "domain"
 	TypeEC2InstanceConnect Type = "ec2_instance_connect"
+	// TypeKubeToken is a Kubernetes service account's bearer token;
+	// TypeKubeClientCert a client certificate and its key, PEM (ADR 0045).
+	// Either is Zanskar's own identity in the cluster, which needs only the
+	// right to impersonate.
+	TypeKubeToken      Type = "kube_token"
+	TypeKubeClientCert Type = "kube_client_cert"
+	// TypeKubeEKS is an EKS cluster reached through a role (ADR 0045, 8):
+	// the region, the role the gateway's own AWS identity assumes, the
+	// ExternalId its trust policy carries, and the cluster. It holds no
+	// secret; the token the cluster accepts is minted per session.
+	TypeKubeEKS Type = "kube_eks"
 )
 
 // ValidType reports whether t is known.
 func ValidType(t Type) bool {
 	switch t {
-	case TypePassword, TypeSSHKey, TypeSSHCA, TypeDomain, TypeEC2InstanceConnect:
+	case TypePassword, TypeSSHKey, TypeSSHCA, TypeDomain, TypeEC2InstanceConnect, TypeKubeToken, TypeKubeClientCert, TypeKubeEKS:
 		return true
 	}
 	return false
+}
+
+// IsKube reports whether t is a cluster's credential, Zanskar's own
+// identity there, which the kube slot takes and nothing else does.
+func (t Type) IsKube() bool {
+	return t == TypeKubeToken || t == TypeKubeClientCert || t == TypeKubeEKS
 }
 
 // Mode says where the secret comes from at connect time.
@@ -84,6 +104,14 @@ type Credential struct {
 	// RotationState names where the rotation stands (ADR 0047): none,
 	// prepared or cut_over. ssh_ca only; derived when read.
 	RotationState RotationState `json:"rotation_state,omitempty"`
+	// An EKS role (kube_eks only, ADR 0045 8): the region, the role Zanskar
+	// assumes, the ExternalId minted here for its trust policy, and the
+	// cluster's name, which the token carries. None of these is a secret;
+	// the ExternalId is shown so the administrator can paste the policy.
+	AWSRegion     string `json:"aws_region,omitempty"`
+	AWSRoleARN    string `json:"aws_role_arn,omitempty"`
+	AWSExternalID string `json:"aws_external_id,omitempty"`
+	EKSCluster    string `json:"eks_cluster,omitempty"`
 }
 
 // Rotation is a certificate authority's two-phase key rotation (ADR 0022).
@@ -187,7 +215,15 @@ func validateAndPrepare(c *Credential, s *Secret) (*prepared, error) {
 	if c.Type == TypeEC2InstanceConnect && c.Mode != ModeVaulted {
 		return nil, fmt.Errorf("%w: ec2_instance_connect is always vaulted (there is no secret to supply)", ErrInvalid)
 	}
+	if c.Type.IsKube() && c.Mode != ModeVaulted {
+		// The cluster's credential is Zanskar's own identity there, never
+		// the person's (ADR 0045): the person is impersonated through it.
+		return nil, fmt.Errorf("%w: %s is always vaulted", ErrInvalid, c.Type)
+	}
 	if err := validateCertificateSettings(c); err != nil {
+		return nil, err
+	}
+	if err := validateEKSSettings(c); err != nil {
 		return nil, err
 	}
 	if c.Mode != ModeVaulted {
@@ -240,12 +276,80 @@ func validateAndPrepare(c *Credential, s *Secret) (*prepared, error) {
 		}
 		c.PublicKey = ""
 		return &prepared{}, nil
+	case TypeKubeToken:
+		// The token travels in the password field, as the one secret the
+		// type holds; it names no user, the cluster knows the account.
+		if s.Password == "" {
+			return nil, fmt.Errorf("%w: password (the bearer token) required", ErrInvalid)
+		}
+		if s.PrivateKey != "" {
+			return nil, fmt.Errorf("%w: private_key not allowed for type %s", ErrInvalid, c.Type)
+		}
+		if strings.ContainsAny(s.Password, " \t\r\n") {
+			return nil, fmt.Errorf("%w: a bearer token has no spaces or line breaks", ErrInvalid)
+		}
+		c.Username, c.PublicKey = "", ""
+		return &prepared{plaintext: []byte(s.Password)}, nil
+	case TypeKubeEKS:
+		// The role is the credential; AWS holds the secret and the token
+		// is minted per session (cloud.EKS).
+		if s.Password != "" || s.PrivateKey != "" {
+			return nil, fmt.Errorf("%w: kube_eks stores no secret; the role is assumed with the gateway's own AWS identity", ErrInvalid)
+		}
+		c.Username, c.PublicKey = "", ""
+		return &prepared{}, nil
+	case TypeKubeClientCert:
+		// The certificate goes in private_key with its key, one PEM text,
+		// as kubectl's client-certificate-data and client-key-data joined.
+		if s.Password != "" {
+			return nil, fmt.Errorf("%w: password not allowed for type %s", ErrInvalid, c.Type)
+		}
+		if s.PrivateKey == "" {
+			return nil, fmt.Errorf("%w: private_key (the client certificate and its key, PEM) required", ErrInvalid)
+		}
+		if _, err := tls.X509KeyPair([]byte(s.PrivateKey), []byte(s.PrivateKey)); err != nil {
+			return nil, fmt.Errorf("%w: the PEM must hold a certificate and the key it belongs to: %w", ErrInvalid, err)
+		}
+		c.Username, c.PublicKey = "", ""
+		return &prepared{plaintext: []byte(s.PrivateKey)}, nil
 	}
 	return nil, ErrInvalid
 }
 
 // validateCertificateSettings normalises the ssh_ca-only fields and refuses
 // them on every other type, so a stray value can never look meaningful.
+// EKS cluster names: EKS takes 1-100 characters, letters, digits, hyphens
+// and underscores, starting with a letter or digit.
+var eksClusterRe = regexp.MustCompile(`^[0-9A-Za-z][A-Za-z0-9_-]{0,99}$`)
+
+// validateEKSSettings checks the role an EKS credential names, and that no
+// other type carries one. The ExternalId is minted when absent, as an
+// autoscaling group's is; one supplied must be Zanskar's shape.
+func validateEKSSettings(c *Credential) error {
+	c.AWSRegion, c.AWSRoleARN, c.AWSExternalID, c.EKSCluster = strings.TrimSpace(c.AWSRegion), strings.TrimSpace(c.AWSRoleARN), strings.TrimSpace(c.AWSExternalID), strings.TrimSpace(c.EKSCluster)
+	if c.Type != TypeKubeEKS {
+		if c.AWSRegion != "" || c.AWSRoleARN != "" || c.AWSExternalID != "" || c.EKSCluster != "" {
+			return fmt.Errorf("%w: aws_region, aws_role_arn, aws_external_id and eks_cluster are for kube_eks only", ErrInvalid)
+		}
+		return nil
+	}
+	if !cloud.ValidRegion(c.AWSRegion) {
+		return fmt.Errorf("%w: aws_region must be an AWS region, such as eu-west-2", ErrInvalid)
+	}
+	if !cloud.RoleARNRe.MatchString(c.AWSRoleARN) {
+		return fmt.Errorf("%w: aws_role_arn must be an IAM role ARN (arn:aws:iam::<account>:role/<name>; aws-us-gov and aws-cn as well)", ErrInvalid)
+	}
+	if !eksClusterRe.MatchString(c.EKSCluster) {
+		return fmt.Errorf("%w: eks_cluster must be the cluster's name: 1-100 letters, digits, hyphens or underscores", ErrInvalid)
+	}
+	if c.AWSExternalID == "" {
+		c.AWSExternalID = cloud.NewExternalID()
+	} else if !cloud.ExternalIDRe.MatchString(c.AWSExternalID) {
+		return fmt.Errorf("%w: aws_external_id must be one Zanskar generated (zanskar-<32 hex>)", ErrInvalid)
+	}
+	return nil
+}
+
 func validateCertificateSettings(c *Credential) error {
 	if c.Type != TypeSSHCA {
 		if c.CertificateTTLSeconds != 0 || len(c.CertificatePrincipals) != 0 {

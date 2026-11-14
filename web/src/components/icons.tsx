@@ -138,7 +138,7 @@ export function StateIcon({ state, label }: { state: 'warn' | 'danger' | 'ok' | 
 
 /** TileIcon is a tile's identity mark: decorative (the caption carries the
  *  meaning), muted, one simple shape per kind. */
-export function TileIcon({ kind }: { kind: 'approvals' | 'attention' | 'key' | 'ban' | 'session' | 'clock' | 'list' | 'server' | 'db' | 'stack' | 'app' | 'shield' | 'phone' | 'moon' | 'admin' }) {
+export function TileIcon({ kind }: { kind: 'approvals' | 'attention' | 'key' | 'ban' | 'session' | 'clock' | 'list' | 'server' | 'db' | 'stack' | 'app' | 'shield' | 'phone' | 'moon' | 'admin' | 'k8s' | 'eks' | 'gke' | 'aks' }) {
   const shape = (() => {
     switch (kind) {
       case 'app':
@@ -256,6 +256,45 @@ export function TileIcon({ kind }: { kind: 'approvals' | 'attention' | 'key' | '
           <>
             <rect x="7" y="4" width="14" height="9" rx="1.5" />
             <path d="M4 8v9a2 2 0 0 0 2 2h11" />
+          </>
+        )
+      // The four platforms (ADR 0048), each a plain glyph in the console's
+      // own line: a wheel for Kubernetes, and the clouds' own shapes drawn
+      // simply. The vendors' marks are theirs; the names beside the tiles
+      // say which is which.
+      case 'k8s':
+        // A seven-spoked wheel.
+        return (
+          <>
+            <circle cx="12" cy="12" r="8.5" />
+            <circle cx="12" cy="12" r="2" />
+            <path d="M12 3.5v6M12 14.5v6M3.5 12h6M14.5 12h6M6 6l4.3 4.3M13.7 13.7 18 18M18 6l-4.3 4.3M10.3 13.7 6 18" />
+          </>
+        )
+      case 'eks':
+        // A hexagon, the shape AWS's container services share.
+        return (
+          <>
+            <path d="M12 3l7.8 4.5v9L12 21l-7.8-4.5v-9z" />
+            <path d="M12 8v8M8.5 10l7 4M15.5 10l-7 4" />
+          </>
+        )
+      case 'gke':
+        // A hexagon with a ring: a cluster held in a cloud.
+        return (
+          <>
+            <path d="M12 3l7.8 4.5v9L12 21l-7.8-4.5v-9z" />
+            <circle cx="12" cy="12" r="3.5" />
+          </>
+        )
+      case 'aks':
+        // Three joined blocks: a cluster of nodes.
+        return (
+          <>
+            <rect x="3" y="9" width="6" height="6" rx="1" />
+            <rect x="9" y="4" width="6" height="6" rx="1" />
+            <rect x="9" y="14" width="6" height="6" rx="1" />
+            <rect x="15" y="9" width="6" height="6" rx="1" />
           </>
         )
     }

@@ -69,7 +69,7 @@ export function Badge({ tone, children }: { tone?: 'ok' | 'warn' | 'danger' | 'a
  *  label, not a sentence; a tone only underlines what it already says, so it
  *  shows only on a non-zero count. "—" while the value is still loading. A
  *  value already written out (a size: "31.2 MB") is shown as it is. */
-export function StatTile({ value, label, detail, icon, meter, trend, to, tone }: {
+export function StatTile({ value, label, detail, icon, meter, trend, to, tone, selected }: {
   value: number | string | null
   label: string
   detail?: ReactNode
@@ -81,10 +81,12 @@ export function StatTile({ value, label, detail, icon, meter, trend, to, tone }:
   trend?: Trend
   to: string
   tone?: 'warn' | 'danger'
+  /** The tile that stands for where the page is: marked in the accent, and said to a screen reader. */
+  selected?: boolean
 }) {
   const pct = meter ? Math.round(Math.max(0, Math.min(1, meter.fraction)) * 100) : 0
   return (
-    <Link className={'stat-tile' + (tone && value ? ' ' + tone : '')} to={to}>
+    <Link className={'stat-tile' + (tone && value ? ' ' + tone : '') + (selected ? ' selected' : '')} to={to} aria-current={selected ? 'page' : undefined}>
       {icon && <span className="ticon">{icon}</span>}
       <div className="value">{value ?? '—'}</div>
       <div className="label">{label}</div>

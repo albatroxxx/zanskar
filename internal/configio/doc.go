@@ -62,12 +62,23 @@ type Target struct {
 	AppDependencies string `yaml:"app_dependencies,omitempty"`
 	// AppPrivate: the private networks and hosts the dependencies may
 	// reach, under public.
-	AppPrivate    *Private          `yaml:"app_private,omitempty"`
-	Ports         map[string]int    `yaml:"ports,omitempty"`
-	Tags          map[string]string `yaml:"tags,omitempty"`
-	Status        string            `yaml:"status,omitempty"`
-	Notes         string            `yaml:"notes,omitempty"`
-	RetentionDays *int              `yaml:"retention_days,omitempty"`
+	AppPrivate *Private `yaml:"app_private,omitempty"`
+	// KubeAPIServer makes the target a Kubernetes cluster (ADR 0045); the
+	// address is its host. KubeCA is the PEM bundle its certificate is
+	// checked against (empty, the system roots); KubePlatform how the token
+	// is minted (vanilla, eks, gke, aks); KubeImpersonate whether sessions
+	// act as the person (the default) or as the credential, a shared
+	// identity. An export writes all three, so a reader sees which way the
+	// cluster's sessions act, and a file leaving them out gets the defaults.
+	KubeAPIServer   string            `yaml:"kube_api_server,omitempty"`
+	KubeCA          string            `yaml:"kube_ca,omitempty"`
+	KubePlatform    string            `yaml:"kube_platform,omitempty"`
+	KubeImpersonate *bool             `yaml:"kube_impersonate,omitempty"`
+	Ports           map[string]int    `yaml:"ports,omitempty"`
+	Tags            map[string]string `yaml:"tags,omitempty"`
+	Status          string            `yaml:"status,omitempty"`
+	Notes           string            `yaml:"notes,omitempty"`
+	RetentionDays   *int              `yaml:"retention_days,omitempty"`
 	// Credentials names the credential each protocol signs in with.
 	Credentials map[string]string `yaml:"credentials,omitempty"`
 }
@@ -117,6 +128,13 @@ type Grant struct {
 	MaxSessionMinutes  *int         `yaml:"max_session_minutes,omitempty"`
 	TimeWindows        []TimeWindow `yaml:"time_windows,omitempty"`
 	RetentionDays      *int         `yaml:"retention_days,omitempty"`
+	// A Kubernetes grant's scope (ADR 0045): the namespaces it reaches
+	// (none is every namespace), whether it reaches cluster-wide resources
+	// and may port-forward. Carried whole: a file that lost them would
+	// import a grant to every namespace.
+	Namespaces   []string `yaml:"namespaces,omitempty,flow"`
+	ClusterScope bool     `yaml:"cluster_scope,omitempty"`
+	PortForward  bool     `yaml:"port_forward,omitempty"`
 }
 
 // Policy is an audience and its grants (ADR 0036).
