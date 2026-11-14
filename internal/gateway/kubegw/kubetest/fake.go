@@ -67,11 +67,20 @@ func (f *API) Count() int {
 	return len(f.reqs)
 }
 
+// SetToken changes the token the fake accepts while it serves, as a rotation
+// in the cluster would.
+func (f *API) SetToken(token string) {
+	f.mu.Lock()
+	f.Token = token
+	f.mu.Unlock()
+}
+
 func (f *API) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	f.mu.Lock()
 	f.reqs = append(f.reqs, Request{Method: r.Method, Path: r.URL.Path, Query: r.URL.RawQuery, Header: r.Header.Clone(), Proto: r.Proto})
+	token := f.Token
 	f.mu.Unlock()
-	if r.Header.Get("Authorization") != "Bearer "+f.Token {
+	if r.Header.Get("Authorization") != "Bearer "+token {
 		w.WriteHeader(http.StatusUnauthorized)
 		return
 	}

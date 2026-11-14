@@ -170,6 +170,9 @@ func effectiveIdle(idle time.Duration) time.Duration {
 func (h *Handler) runKube(ctx context.Context, run *sessionRun, sess *kubegw.Session, rec recorder, row *session.Recording, done func()) {
 	defer done()
 	defer h.Kube.Remove(run.s.ID)
+	// The clock and the tick are read once, when the session starts: a
+	// test moves them before its session and reads nothing of another's.
+	now, tickEvery := kubeNow, kubeTick
 	idle := effectiveIdle(run.g.IdleTimeout)
 	var maxC <-chan time.Time
 	if run.g.MaxSession > 0 {
@@ -177,7 +180,7 @@ func (h *Handler) runKube(ctx context.Context, run *sessionRun, sess *kubegw.Ses
 		defer t.Stop()
 		maxC = t.C
 	}
-	tick := time.NewTicker(kubeTick)
+	tick := time.NewTicker(tickEvery)
 	defer tick.Stop()
 	var reason, detail string
 loop:
@@ -190,7 +193,7 @@ loop:
 			reason, detail = session.EndMaxDuration, "ended after the policy's maximum of "+run.g.MaxSession.String()
 			break loop
 		case <-tick.C:
-			if kubeNow().Sub(sess.LastActive()) >= idle && sess.Streams() == 0 {
+			if now().Sub(sess.LastActive()) >= idle && sess.Streams() == 0 {
 				reason, detail = session.EndIdleTimeout, "ended after "+idle.String()+" without a request"
 				break loop
 			}

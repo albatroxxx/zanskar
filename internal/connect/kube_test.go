@@ -51,6 +51,15 @@ func newKubeFixture(t *testing.T) *kubeFixture {
 	f.h.PublicURL = "https://gw.example"
 	f.h.Groups = f.groups
 	f.h.GatewayCert = func() (string, bool) { return gatewayPEM, true }
+	// No session outlives its test: a session left live would keep its
+	// goroutine reading the package clock the next test moves (CI, PR #336:
+	// a data race between tests).
+	t.Cleanup(func() {
+		f.h.Registry.TerminateUser(f.alice.ID)
+		for i := 0; i < 300 && f.h.Kube.Len() > 0; i++ {
+			time.Sleep(10 * time.Millisecond)
+		}
+	})
 	api := &kubetest.API{Token: "sa-token", Version: "v1.31.0"}
 	apiServer, ca := kubetest.Start(t, api)
 	cred := &credential.Credential{Name: "sa", Type: credential.TypeKubeToken, Mode: credential.ModeVaulted}
@@ -256,7 +265,7 @@ func TestKubeSessionCredentialRefused(t *testing.T) {
 	if rr := f.kubectl(sid, token, "/api/v1/namespaces/prod/pods"); rr.Code != 200 {
 		t.Fatalf("pods: %d", rr.Code)
 	}
-	f.api.Token = "rotated"
+	f.api.SetToken("rotated")
 	rr := f.kubectl(sid, token, "/api/v1/namespaces/prod/pods")
 	if rr.Code != 502 || !strings.Contains(rr.Body.String(), "refused the gateway's credential") {
 		t.Fatalf("after the rotation: %d %s", rr.Code, rr.Body.String())
