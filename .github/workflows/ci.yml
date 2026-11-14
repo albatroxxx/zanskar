@@ -81,7 +81,10 @@ jobs:
         # code. hack/ holds test tools (fakessh, wsclient) that no release builds.
         run: |
           pkgs=$(go list ./... | grep -v '/hack/' | paste -sd, -)
-          go test -race -coverpkg="$pkgs" -coverprofile=coverage.out ./...
+          # The connect package alone runs over seven minutes here under the
+          # race detector and whole-module coverage (443 s on 1.20.1, more
+          # with cluster sessions); go test's default of ten is too close.
+          go test -race -timeout 30m -coverpkg="$pkgs" -coverprofile=coverage.out ./...
       - name: Coverage floor (80% of statements)
         # The same count the badge publishes: each block once, covered if any
         # test reached it. Best Practices Silver asks for 80%; a change that
