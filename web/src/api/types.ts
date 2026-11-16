@@ -2,7 +2,7 @@
 
 import type { StateOf } from './states'
 
-export type Role = 'admin' | 'auditor' | 'user'
+export type Role = 'admin' | 'auditor' | 'approver' | 'user'
 
 export interface User {
   id: string
@@ -69,7 +69,7 @@ export interface Page<T> { items: T[]; next_cursor?: string }
 export interface ApiErrorBody { code: string; message: string; request_id?: string }
 
 /** How a target is reached; `http` is a web application opened in an isolated browser beside the gateway (ADR 0034). */
-export type Protocol = 'ssh' | 'rdp' | 'vnc' | 'winrm' | 'database' | 'http' | 'kube' | 'pod'
+export type Protocol = 'ssh' | 'rdp' | 'vnc' | 'winrm' | 'database' | 'http' | 'kube' | 'pod' | 'cloud'
 export type OSFamily = 'linux' | 'windows' | 'other'
 export type HostKeyStatus = 'unknown' | 'pending' | 'trusted' | 'changed'
 /** A Windows listener's pinned certificate: none seen, pinned, or changed since (ADR 0047). */
@@ -341,7 +341,7 @@ export interface GroupMember { user_id: string; username: string; display_name: 
 
 export interface TimeWindow { days: string[]; from: string; to: string; tz: string }
 /** What a policy grant covers (ADR 0036); each kind serves its own protocols. */
-export type TargetKind = 'host' | 'database' | 'application' | 'autoscaling' | 'kubernetes'
+export type TargetKind = 'host' | 'database' | 'application' | 'autoscaling' | 'kubernetes' | 'cloud'
 export type KubePlatform = 'vanilla' | 'eks' | 'gke' | 'aks'
 
 /** What a cluster's test found (ADR 0045): the API server's version, whether Zanskar's credential may impersonate, and the namespaces it could list. */

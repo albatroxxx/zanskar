@@ -60,6 +60,8 @@ info:
     - `auditor`: reads the audit log, verifies the hash chain, and views recordings, but cannot
       change configuration. Every recording view and audit query is itself recorded in
       `recording_views` and in the audit log, whichever role performs it.
+    - `approver`: decides the access requests a policy grant names them for (ADR 0049); holds no
+      access and no review of its own.
     - `user`: sees the targets their groups' policies grant and opens sessions to them.
 
     Endpoints are tagged by the role that may call them. A caller holding several roles may call
@@ -2732,7 +2734,7 @@ paths:
           in: query
           schema:
             type: string
-            enum: [host, database, application, kubernetes]
+            enum: [host, database, application, kubernetes, cloud]
           description: Only hosts, only database targets (ADR 0017), only applications (ADR 0034), or only Kubernetes clusters (ADR 0045).
         - name: platform
           in: query
@@ -6059,7 +6061,7 @@ components:
         How a target is reached. `database` is brokered access to a database target (ADR 0017);
         `http` is a web application opened in an isolated browser beside the gateway and
         streamed like a desktop (ADR 0034); it takes a ticket and connects on `/ws/desktop`.
-      enum: [ssh, rdp, vnc, winrm, database, http, kube, pod]
+      enum: [ssh, rdp, vnc, winrm, database, http, kube, pod, cloud]
     CredentialType:
       type: string
       description: >-
@@ -7705,7 +7707,7 @@ components:
 
     AccessRequestStatus:
       type: string
-      enum: [pending, approved, denied, expired, revoked]
+      enum: [pending, approved, denied, expired, revoked, cancelled]
     APIToken:
       type: object
       description: An API token as listed (ADR 0044); never its secret.

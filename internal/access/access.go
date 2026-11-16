@@ -17,11 +17,12 @@ import (
 type Status string
 
 const (
-	StatusPending  Status = "pending"
-	StatusApproved Status = "approved"
-	StatusDenied   Status = "denied"
-	StatusExpired  Status = "expired"
-	StatusRevoked  Status = "revoked"
+	StatusPending   Status = "pending"
+	StatusApproved  Status = "approved"
+	StatusDenied    Status = "denied"
+	StatusExpired   Status = "expired"
+	StatusRevoked   Status = "revoked"
+	StatusCancelled Status = "cancelled" // withdrawn by the requester while pending (ADR 0049)
 )
 
 // DefaultMaxGrantMinutes caps a grant when the eligible policy sets no

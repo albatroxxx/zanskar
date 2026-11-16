@@ -39,6 +39,7 @@ const (
 	HTTP     Protocol = protocol.HTTP
 	Kube     Protocol = protocol.Kube
 	Pod      Protocol = protocol.Pod
+	Cloud    Protocol = protocol.Cloud
 )
 
 // Protocols lists the host protocols probed in a stable order. Database is not
@@ -58,12 +59,12 @@ var DefaultPorts = map[Protocol]int{SSH: 22, RDP: 3389, VNC: 5900, WinRM: 5986}
 // target's port defaults from its engine (ADR 0017).
 var EngineDefaultPorts = map[string]int{protocol.Postgres: 5432, protocol.MySQL: 3306, protocol.MariaDB: 3306}
 
-// ValidProtocol reports whether p is known. Database, HTTP, Kube and Pod are
-// not probed and carry no port of their own: a database's port comes from its
-// engine, an application's from its upstream, a cluster's from its API
-// server's URL.
+// ValidProtocol reports whether p is known. Database, HTTP, Kube, Pod and
+// Cloud are not probed and carry no port of their own: a database's port
+// comes from its engine, an application's from its upstream, a cluster's from
+// its API server's URL, and a cloud role has no port at all (ADR 0050).
 func ValidProtocol(p Protocol) bool {
-	if p == Database || p == HTTP || p == Kube || p == Pod {
+	if p == Database || p == HTTP || p == Kube || p == Pod || p == Cloud {
 		return true
 	}
 	_, ok := DefaultPorts[p]

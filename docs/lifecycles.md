@@ -224,7 +224,7 @@ stateDiagram-v2
 
 ## Access request
 
-Field `state` on `AccessRequest`. States: `pending`, `approved`, `denied`, `expired`, `revoked`.
+Field `state` on `AccessRequest`. States: `pending`, `approved`, `denied`, `expired`, `revoked`, `cancelled`.
 
 The stored `status`, except that `approved` with `expires_at` at or before now reads `expired`: the sweeper writes `expired` once a minute, and the clock is the truth in between. A grant is active while `state` is `approved`.
 
@@ -233,6 +233,7 @@ stateDiagram-v2
     [*] --> pending
     pending --> approved: access.request.approve
     pending --> denied: access.request.deny
+    pending --> cancelled: access.request.cancel
     pending --> revoked: the target or group is deleted (target.delete)
     approved --> revoked: access.request.revoke
     approved --> revoked: the target or group is deleted (target.delete)
@@ -240,19 +241,21 @@ stateDiagram-v2
     denied --> [*]
     expired --> [*]
     revoked --> [*]
+    cancelled --> [*]
 ```
 
 | From | To | By |
 |---|---|---|
 | pending | approved | access.request.approve |
 | pending | denied | access.request.deny |
+| pending | cancelled | access.request.cancel |
 | pending | revoked | the target or group is deleted (target.delete) |
 | approved | revoked | access.request.revoke |
 | approved | revoked | the target or group is deleted (target.delete) |
 | approved | expired | access.grant.expire |
 
 - Revoke applies to an active grant only; a lapsed one answers 409 with the state named.
-- A pending request never expires on its own and cannot be withdrawn by the requester.
+- A pending request never expires on its own; its requester may cancel it (ADR 0049).
 
 ## API token
 

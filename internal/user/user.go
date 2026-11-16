@@ -11,23 +11,24 @@ import (
 	"time"
 )
 
-// Role is one of the three Zanskar roles (ADR 0006).
+// Role is one of the four Zanskar roles (ADR 0006; approver, ADR 0049).
 type Role string
 
 // Roles.
 const (
-	RoleAdmin   Role = "admin"
-	RoleAuditor Role = "auditor"
-	RoleUser    Role = "user"
+	RoleAdmin    Role = "admin"
+	RoleAuditor  Role = "auditor"
+	RoleApprover Role = "approver" // decides the requests a grant names them for (ADR 0049); connects and reviews nothing
+	RoleUser     Role = "user"
 )
 
 // ValidRole reports whether r is a known role.
 func ValidRole(r Role) bool {
-	return r == RoleAdmin || r == RoleAuditor || r == RoleUser
+	return r == RoleAdmin || r == RoleAuditor || r == RoleApprover || r == RoleUser
 }
 
 // NormalizeRoles is roles as they are kept: each once, in the order admin,
-// auditor, user, and admin alone when it is there. An administrator reviews
+// auditor, approver, user, and admin alone when it is there. An administrator reviews
 // what an auditor reviews and connects as a user does, so beside admin the
 // other two say nothing more (2026-11-03: the console offered all three
 // ticked at once). Roles it does not know are kept, for ValidRole to refuse.
@@ -36,7 +37,7 @@ func NormalizeRoles(roles []Role) []Role {
 		return []Role{RoleAdmin}
 	}
 	out := []Role{}
-	for _, r := range []Role{RoleAuditor, RoleUser} {
+	for _, r := range []Role{RoleAuditor, RoleApprover, RoleUser} {
 		if slices.Contains(roles, r) {
 			out = append(out, r)
 		}

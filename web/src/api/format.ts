@@ -181,6 +181,7 @@ export function protocolName(p: string): string {
     case 'database': return 'database'
     case 'kube': return 'Kubernetes'
     case 'pod': return 'pod shell'
+    case 'cloud': return 'Cloud'
     default: return p.toUpperCase()
   }
 }

@@ -22,6 +22,7 @@ const (
 	HTTP     = "http"     // a web application opened in an isolated browser beside the gateway (ADR 0034)
 	Kube     = "kube"     // a Kubernetes cluster's API, through the gateway as the person (ADR 0045)
 	Pod      = "pod"      // a shell into a container of a Kubernetes cluster (ADR 0045)
+	Cloud    = "cloud"    // a role in a cloud account, assumed by the gateway for the person (ADR 0050)
 )
 
 // Terminal reports whether p is a text shell, whose output a tap can fan
@@ -33,7 +34,7 @@ func Terminal(p string) bool { return p == SSH || p == WinRM || p == Pod }
 // the same way (2026-11-11: watching a database session was refused while
 // its recording played fine), or a cluster session, whose text is one line
 // per request (ADR 0045).
-func Tapped(p string) bool { return Terminal(p) || p == Database || p == Kube }
+func Tapped(p string) bool { return Terminal(p) || p == Database || p == Kube || p == Cloud }
 
 // Desktop reports whether p is a remote desktop drawn through guacd.
 func Desktop(p string) bool { return p == RDP || p == VNC }
@@ -51,6 +52,8 @@ func Name(p string) string {
 		return "Kubernetes"
 	case Pod:
 		return "pod shell"
+	case Cloud:
+		return "Cloud"
 	default:
 		return strings.ToUpper(p)
 	}
@@ -65,18 +68,20 @@ const (
 
 // Kinds of thing an access policy grants (ADR 0036). A target's kind is
 // derived, never stored: an engine makes it a database, an upstream an
-// application, an API server a Kubernetes cluster (ADR 0045), anything else
-// a host. Autoscaling groups are a kind of their own.
+// application, an API server a Kubernetes cluster (ADR 0045), a role ARN a
+// cloud account's role (ADR 0050), anything else a host. Autoscaling groups
+// are a kind of their own.
 const (
 	KindHost        = "host"
 	KindDatabase    = "database"
 	KindApplication = "application"
 	KindAutoscaling = "autoscaling"
 	KindKubernetes  = "kubernetes"
+	KindCloud       = "cloud"
 )
 
 // Kinds lists every kind, in the order the console offers them.
-var Kinds = []string{KindHost, KindDatabase, KindApplication, KindAutoscaling, KindKubernetes}
+var Kinds = []string{KindHost, KindDatabase, KindApplication, KindAutoscaling, KindKubernetes, KindCloud}
 
 // kindProtocols is what each kind can serve. A grant offers only these, so a
 // policy can no longer say ssh to a database.
@@ -86,6 +91,7 @@ var kindProtocols = map[string][]string{
 	KindDatabase:    {Database},
 	KindApplication: {HTTP},
 	KindKubernetes:  {Kube, Pod},
+	KindCloud:       {Cloud},
 }
 
 // ValidKind reports whether k is a kind.

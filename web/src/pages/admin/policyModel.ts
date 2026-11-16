@@ -21,6 +21,7 @@ export const kindProtocols: Record<TargetKind, Protocol[]> = {
   database: ['database'],
   application: ['http'],
   kubernetes: ['kube', 'pod'],
+  cloud: ['cloud'],
 }
 
 /** A target's kind: an engine makes it a database, an upstream an application, an API server a Kubernetes cluster. */

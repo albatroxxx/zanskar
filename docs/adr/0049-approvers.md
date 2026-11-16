@@ -4,7 +4,8 @@ Date: 2026-11-16
 
 ## Status
 
-Proposed. Amends [ADR 0006](0006-roles-admin-auditor-user.md) (three roles) and
+Accepted 2026-11-16: the owner took every recommendation below ("use your recommendation") and
+asked for the build to start. Amends [ADR 0006](0006-roles-admin-auditor-user.md) (three roles) and
 [ADR 0018](0018-just-in-time-access-approvals.md) (approver model v1: any admin). Written with
 [ADR 0050](0050-cloud-accounts-as-targets.md), which needs it: elevated access to a cloud account
 is the request that most wants a named approver.

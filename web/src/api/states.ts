@@ -57,6 +57,7 @@ export const stateLabels = {
     denied: { label: 'denied', tone: 'danger' },
     expired: { label: 'expired' },
     revoked: { label: 'revoked' },
+    cancelled: { label: 'cancelled' },
   },
   api_token: {
     active: { label: 'active', tone: 'ok' },

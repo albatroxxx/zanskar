@@ -10,6 +10,7 @@ import type { AuditEvent, AuditTallies } from '../../api/types'
 const actionLabels: Record<string, string> = {
   'access.grant.expire': 'Access grant expired',
   'access.request.approve': 'Access request approved',
+  'access.request.cancel': 'Access request cancelled',
   'access.request.create': 'Access requested',
   'access.request.deny': 'Access request denied',
   'access.request.revoke': 'Access request revoked',
@@ -89,6 +90,8 @@ const actionLabels: Record<string, string> = {
   'session.failover': 'Session failed over',
   'session.shadow.start': 'Started watching a session',
   'session.shadow.end': 'Stopped watching a session',
+  'session.cloud.console': 'Console sign-in issued',
+  'session.cloud.credentials': 'Command-line credentials issued',
   'settings.update': 'Settings updated',
   'settings.reset': 'Settings reset',
   'settings.boot_request': 'Install settings change requested',
@@ -277,6 +280,8 @@ export function describe(ev: AuditEvent): string {
     case 'session.shadow.start': return s ? `started watching ${s.user}'s ${s.proto} session on ${s.target}` : `started watching session ${name}`
     case 'session.shadow.end': return s ? `stopped watching ${s.user}'s session on ${s.target}` : `stopped watching session ${name}`
     case 'session.failover': return s ? `moved the ${s.proto} session on ${s.target} to another instance` : `failed over session ${name}`
+    case 'session.cloud.console': return s ? `opened the console of ${s.target}` : `opened a cloud console (session ${name})`
+    case 'session.cloud.credentials': return s ? `took command-line credentials for ${s.target}` : `took command-line credentials (session ${name})`
     case 'recording.view': return s ? `played the recording of ${s.user} on ${s.target} (${s.proto})` : `played recording ${name}`
     case 'recording.search': {
       // Live, 2026-11-11: it read "search recording", the one row that was
@@ -301,6 +306,7 @@ export function describe(ev: AuditEvent): string {
     case 'access.request.create': return s ? `requested ${s.proto} access to ${s.target}` : 'requested access'
     case 'access.request.approve': return s ? `approved ${s.user}'s request for ${s.proto} access to ${s.target}` : 'approved an access request'
     case 'access.request.deny': return s ? `denied ${s.user}'s request for ${s.proto} access to ${s.target}` : 'denied an access request'
+    case 'access.request.cancel': return s ? `cancelled their request for ${s.proto} access to ${s.target}` : 'cancelled an access request'
     case 'access.request.revoke': return s ? `revoked ${s.user}'s ${s.proto} access to ${s.target}` : 'revoked an access grant'
     case 'access.grant.expire': return s ? `ended ${s.user}'s ${s.proto} access to ${s.target} (time limit reached)` : 'ended an access grant (time limit reached)'
     case 'target.hostkey.trust': return `trusted the host key of target ${name}`

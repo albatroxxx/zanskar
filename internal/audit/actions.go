@@ -14,6 +14,7 @@ const (
 	// Just-in-time access requests and the grants they become (ADR 0018).
 	AccessGrantExpire    = "access.grant.expire"
 	AccessRequestApprove = "access.request.approve"
+	AccessRequestCancel  = "access.request.cancel" // the requester withdrew it while pending (ADR 0049)
 	AccessRequestCreate  = "access.request.create"
 	AccessRequestDeny    = "access.request.deny"
 	AccessRequestRevoke  = "access.request.revoke"
@@ -140,6 +141,10 @@ const (
 	SessionFailover    = "session.failover"
 	SessionShadowStart = "session.shadow.start"
 	SessionShadowEnd   = "session.shadow.end"
+	// A cloud session (ADR 0050) hands out a console sign-in and command-line
+	// credentials; each issue is an event, never carrying what was issued.
+	SessionCloudConsole     = "session.cloud.console"
+	SessionCloudCredentials = "session.cloud.credentials"
 
 	// Runtime settings.
 	SettingsUpdate = "settings.update"

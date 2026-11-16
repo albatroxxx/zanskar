@@ -240,7 +240,7 @@ func (h *Handler) myActive(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) adminList(w http.ResponseWriter, r *http.Request) {
 	status := Status(r.URL.Query().Get("status"))
 	switch status {
-	case "", StatusPending, StatusApproved, StatusDenied, StatusExpired, StatusRevoked:
+	case "", StatusPending, StatusApproved, StatusDenied, StatusExpired, StatusRevoked, StatusCancelled:
 	default:
 		httpx.BadRequest(w, r, "unknown status filter")
 		return
