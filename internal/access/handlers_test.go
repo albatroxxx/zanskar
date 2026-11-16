@@ -17,6 +17,7 @@ import (
 	"github.com/albatroxxx/zanskar/internal/asg"
 	"github.com/albatroxxx/zanskar/internal/audit"
 	"github.com/albatroxxx/zanskar/internal/auth"
+	"github.com/albatroxxx/zanskar/internal/group"
 	"github.com/albatroxxx/zanskar/internal/policy"
 	"github.com/albatroxxx/zanskar/internal/policy/policytest"
 	"github.com/albatroxxx/zanskar/internal/protocol"
@@ -29,6 +30,8 @@ type env struct {
 	srv      http.Handler
 	requests *Repo
 	policies *policy.Repo
+	users    *user.Repo
+	groups   *group.Repo
 	revoker  *fakeRevoker
 	target   string
 	group    string // an autoscaling group with the same tags as the target
@@ -58,12 +61,13 @@ func newEnv(t *testing.T) *env {
 
 	auditLog := audit.NewLog(db)
 	asgs := asg.NewRepo(db)
+	groups := group.NewRepo(db)
 	revoker := &fakeRevoker{}
-	h := &Handler{Requests: requests, Policies: policies, Targets: targets, ASGs: asgs, Revoker: revoker, Audit: auditLog, Log: log}
+	h := &Handler{Requests: requests, Policies: policies, Targets: targets, ASGs: asgs, Users: users, Groups: groups, Revoker: revoker, Audit: auditLog, Log: log}
 	mux := http.NewServeMux()
 	h.Register(mux)
 	mw := &auth.Middleware{Sessions: sessions, Users: users, Log: log}
-	e := &env{srv: mw.Authenticate(mw.CSRF(mux)), requests: requests, policies: policies, revoker: revoker, audit: auditLog, ids: map[string]string{},
+	e := &env{srv: mw.Authenticate(mw.CSRF(mux)), requests: requests, policies: policies, users: users, groups: groups, revoker: revoker, audit: auditLog, ids: map[string]string{},
 		h: h, sessions: sessions, sessIDs: map[string]string{}}
 
 	login := func(name string, roles ...user.Role) (*http.Cookie, string) {

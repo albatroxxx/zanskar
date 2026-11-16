@@ -192,6 +192,32 @@ func (r *Repo) Revoke(ctx context.Context, id, note string) (*Request, error) {
 	return r.Get(ctx, id)
 }
 
+// Cancel withdraws a pending request (ADR 0049, 8): the requester's own
+// move, which the handler checks. ErrState unless it is pending.
+func (r *Repo) Cancel(ctx context.Context, id string) (*Request, error) {
+	now := time.Now().UTC()
+	res, err := r.db.ExecContext(ctx, r.db.Rebind(`UPDATE access_requests
+		SET status = ?, updated_at = ? WHERE id = ? AND status = ?`),
+		string(StatusCancelled), store.TimeArg(now), id, string(StatusPending))
+	if err != nil {
+		return nil, err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return nil, r.missOrState(ctx, id, StatusCancelled)
+	}
+	return r.Get(ctx, id)
+}
+
+// ListDecidedBy returns the requests approverID approved or denied, newest
+// first, whatever became of them since; status narrows them ("" is any).
+// An approver's history (ADR 0049, 5).
+func (r *Repo) ListDecidedBy(ctx context.Context, approverID string, status Status) ([]*Request, error) {
+	if status == "" {
+		return r.query(ctx, `WHERE r.approver_user_id = ? AND r.status <> ? ORDER BY r.created_at DESC LIMIT 500`, approverID, string(StatusPending))
+	}
+	return r.query(ctx, `WHERE r.approver_user_id = ? AND r.status = ? ORDER BY r.created_at DESC LIMIT 500`, approverID, string(status))
+}
+
 // OpenForTarget counts the pending and approved requests for the target or
 // the autoscaling group: those its deletion would close.
 func (r *Repo) OpenForTarget(ctx context.Context, targetID, asgID string) (int, error) {
@@ -304,6 +330,7 @@ func scan(s store.Scanner) (*Request, error) {
 	req.DecidedAt, req.ExpiresAt = decided.Ptr(), expires.Ptr()
 	req.CreatedAt, req.UpdatedAt = created.Time, updated.Time
 	req.State = StateOf(req.Status, req.ExpiresAt, time.Now())
+	req.Approvers = []ApproverRef{}
 	return &req, nil
 }
 

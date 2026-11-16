@@ -67,6 +67,13 @@ type Request struct {
 	ExpiresAt        *time.Time `json:"expires_at,omitempty"`
 	CreatedAt        time.Time  `json:"created_at"`
 	UpdatedAt        time.Time  `json:"updated_at"`
+	// Approvers are the groups and users a grant names to decide this
+	// request (ADR 0049), resolved from the policies as they stand when
+	// read; Named says whether anyone is, else any administrator decides.
+	// Filled for a pending request in a list and for any request read on
+	// its own; empty otherwise.
+	Approvers []ApproverRef `json:"approvers"`
+	Named     bool          `json:"named"`
 }
 
 // Active reports whether this is an approved grant still within its window.

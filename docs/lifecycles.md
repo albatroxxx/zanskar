@@ -256,6 +256,7 @@ stateDiagram-v2
 
 - Revoke applies to an active grant only; a lapsed one answers 409 with the state named.
 - A pending request never expires on its own; its requester may cancel it (ADR 0049).
+- Where the grant names approvers they alone approve and deny, never their own request; an administrator revokes any grant, and the requester may end their own, which is a revoke by them (ADR 0049).
 
 ## API token
 
