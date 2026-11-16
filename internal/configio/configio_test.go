@@ -173,8 +173,11 @@ func TestExportImportRoundTrip(t *testing.T) {
 	// kube_impersonate would turn a shared identity into impersonation.
 	cluster := a.json(t, "POST", "/api/v1/targets", map[string]any{"name": "prod-cluster", "kube_api_server": "https://10.0.0.20:6443", "kube_impersonate": false,
 		"credentials": map[string]string{"kube": a.credID(t, "cluster-sa")}})
+	// An approval grant naming its approvers (ADR 0049) travels whole too: a
+	// file that dropped them would import a grant any administrator decides.
 	a.json(t, "POST", "/api/v1/access-policies", map[string]any{"name": "ops-cluster", "subjects": []map[string]string{{"kind": "group", "id": grp["id"].(string)}},
-		"grants": []map[string]any{{"kind": "kubernetes", "targets": []map[string]any{{"id": cluster["id"], "protocols": []string{"kube"}}}, "namespaces": []string{"prod"}, "cluster_scope": true}}})
+		"grants": []map[string]any{{"kind": "kubernetes", "targets": []map[string]any{{"id": cluster["id"], "protocols": []string{"kube"}}}, "namespaces": []string{"prod"}, "cluster_scope": true,
+			"access": "approval", "approvers": []map[string]string{{"kind": "group", "id": grp["id"].(string)}}}}})
 
 	code, file := a.do(t, "GET", "/api/v1/admin/config/export", nil)
 	if code != 200 {
@@ -182,7 +185,8 @@ func TestExportImportRoundTrip(t *testing.T) {
 	}
 	text := string(file)
 	for _, want := range []string{"zanskar: 1", "name: ops", "- ann", "name: web-1", "ssh: linux-key", "env: prod", "name: ops-web", "group: ops", "name: web-1", "allow_clipboard: true", "app_upstream: http://wiki.corp", "app_dependencies: origins",
-		"kube_api_server: https://10.0.0.20:6443", "kube_impersonate: false", "kube_platform: vanilla", "kube: cluster-sa", "kind: kubernetes", "namespaces: [prod]", "cluster_scope: true"} {
+		"kube_api_server: https://10.0.0.20:6443", "kube_impersonate: false", "kube_platform: vanilla", "kube: cluster-sa", "kind: kubernetes", "namespaces: [prod]", "cluster_scope: true",
+		"access: approval", "approvers:"} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("the export lacks %q:\n%s", want, text)
 		}
@@ -217,6 +221,9 @@ func TestExportImportRoundTrip(t *testing.T) {
 	grant := b.named(t, "/api/v1/access-policies", "ops-cluster")["grants"].([]any)[0].(map[string]any)
 	if ns, _ := json.Marshal(grant["namespaces"]); string(ns) != `["prod"]` || grant["cluster_scope"] != true || grant["port_forward"] == true {
 		t.Fatalf("B's grant: %v", grant)
+	}
+	if approvers, _ := grant["approvers"].([]any); len(approvers) != 1 || approvers[0].(map[string]any)["kind"] != "group" || approvers[0].(map[string]any)["id"] != b.named(t, "/api/v1/groups", "ops")["id"] {
+		t.Fatalf("B's grant approvers: %v", grant["approvers"])
 	}
 	// A second import changes nothing.
 	_, out = b.do(t, "POST", "/api/v1/admin/config/import?apply=true", file)

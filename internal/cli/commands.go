@@ -111,7 +111,7 @@ func commands() []*command {
 
 		{name: "policies", group: "Access", summary: "Access policies.", example: "policies", exec: cmdPolicies},
 		{name: "policy show", group: "Access", args: []string{"<name>"}, summary: "One policy in full.", example: "policy show prod-db-jit", exec: cmdPolicyShow},
-		{name: "requests", group: "Access", flags: []flag{{"pending", "", "only requests waiting for a decision"}}, summary: "Access requests, newest first.", example: "requests --pending", exec: cmdRequests},
+		{name: "requests", group: "Access", flags: []flag{{"pending", "", "only requests waiting for a decision"}, {"mine", "", "only the requests you are named to decide, and those you decided (ADR 0049)"}}, summary: "Access requests, newest first.", example: "requests --pending", exec: cmdRequests},
 		{name: "request approve", group: "Access", args: []string{"<id>"}, rest: "[note]", summary: "Approve a request; the note is shown to the requester.", example: "request approve 9c1d2e3f ok for the incident", exec: cmdDecide("approve")},
 		{name: "request deny", group: "Access", args: []string{"<id>"}, rest: "[note]", summary: "Deny a request; the note is shown to the requester.", example: "request deny 9c1d2e3f use the staging copy", exec: cmdDecide("deny")},
 		{name: "request revoke", group: "Access", args: []string{"<id>"}, summary: "Withdraw an approved request before it expires.", example: "request revoke 9c1d2e3f", plan: planRevoke, exec: cmdDecide("revoke")},
@@ -964,9 +964,18 @@ func yesNo(b bool) string {
 }
 
 func cmdRequests(x *run) error {
-	path := "/access-requests"
+	// The queue as the API scopes it (ADR 0049): everything for an
+	// administrator, or --mine for what the caller is named to decide.
+	q := url.Values{}
 	if x.has("pending") {
-		path += "?status=pending"
+		q.Set("status", "pending")
+	}
+	if x.has("mine") {
+		q.Set("scope", "mine")
+	}
+	path := "/access-requests"
+	if len(q) > 0 {
+		path += "?" + q.Encode()
 	}
 	items, err := x.listAll(path, 200)
 	if err != nil {
@@ -974,10 +983,30 @@ func cmdRequests(x *run) error {
 	}
 	rows := make([][]string, 0, len(items))
 	for _, r := range items {
-		rows = append(rows, []string{short(str(r, "id")), str(r, "username"), str(r, "target_name"), protocol.Name(str(r, "protocol")), str(r, "requested_minutes") + "m", str(r, "status"), str(r, "reason")})
+		rows = append(rows, []string{short(str(r, "id")), str(r, "username"), str(r, "target_name"), protocol.Name(str(r, "protocol")), str(r, "requested_minutes") + "m", str(r, "status"), approversOf(r), str(r, "reason")})
 	}
-	x.out.table([]string{"ID", "USER", "TARGET", "PROTOCOL", "FOR", "STATUS", "REASON"}, rows)
+	x.out.table([]string{"ID", "USER", "TARGET", "PROTOCOL", "FOR", "STATUS", "APPROVERS", "REASON"}, rows)
 	return nil
+}
+
+// approversOf is a request's named approvers for the table (ADR 0049):
+// their names joined, or "any admin" when nobody is named.
+func approversOf(r obj) string {
+	list, _ := r["approvers"].([]any)
+	if len(list) == 0 {
+		return "any admin"
+	}
+	names := make([]string, 0, len(list))
+	for _, a := range list {
+		if m, ok := a.(map[string]any); ok {
+			if n := str(m, "name"); n != "" {
+				names = append(names, n)
+			} else {
+				names = append(names, short(str(m, "id")))
+			}
+		}
+	}
+	return strings.Join(names, ", ")
 }
 
 func (x *run) requestID() (string, error) {

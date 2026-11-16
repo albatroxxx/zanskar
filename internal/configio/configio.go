@@ -147,6 +147,7 @@ type (
 		Namespaces         []string         `json:"namespaces,omitempty"`
 		ClusterScope       bool             `json:"cluster_scope,omitempty"`
 		PortForward        bool             `json:"port_forward,omitempty"`
+		Approvers          []apiSubject     `json:"approvers,omitempty"`
 	}
 	apiPolicy struct {
 		ID          string       `json:"id,omitempty"`
@@ -278,9 +279,37 @@ func (s *state) policyDoc(p apiPolicy) Policy {
 		for _, gt := range g.Targets {
 			dg.Targets = append(dg.Targets, GrantTarget{Name: s.byID[gt.ID], Protocols: gt.Protocols})
 		}
+		for _, a := range g.Approvers {
+			if a.Kind == "group" {
+				dg.Approvers = append(dg.Approvers, Subject{Group: s.byID[a.ID]})
+			} else {
+				dg.Approvers = append(dg.Approvers, Subject{User: s.byID[a.ID]})
+			}
+		}
 		out.Grants = append(out.Grants, dg)
 	}
 	return out
+}
+
+// subjectID is a file's group or user, by name, as the API wants it; the
+// second value says what is wrong when it is not here.
+func (s *state) subjectID(sub Subject, what string) (apiSubject, string) {
+	switch {
+	case sub.Group != "" && sub.User == "":
+		g, ok := s.groups[sub.Group]
+		if !ok {
+			return apiSubject{}, fmt.Sprintf("group %q does not exist", sub.Group)
+		}
+		return apiSubject{Kind: "group", ID: g.ID}, ""
+	case sub.User != "" && sub.Group == "":
+		id, ok := s.users[sub.User]
+		if !ok {
+			return apiSubject{}, fmt.Sprintf("user %q does not exist on this gateway", sub.User)
+		}
+		return apiSubject{Kind: "user", ID: id}, ""
+	default:
+		return apiSubject{}, what + " names exactly one of group or user"
+	}
 }
 
 // Change is one thing an import does, or would.
@@ -369,6 +398,13 @@ func (s *state) writePolicy(p Policy, old *apiPolicy) (apiPolicy, string) {
 				return out, fmt.Sprintf("grant %d names %q, which does not exist", i+1, gt.Name)
 			}
 			ag.Targets = append(ag.Targets, apiGrantTarget{ID: id, Protocols: gt.Protocols})
+		}
+		for _, a := range g.Approvers {
+			sub, problem := s.subjectID(a, fmt.Sprintf("grant %d: an approver", i+1))
+			if problem != "" {
+				return out, fmt.Sprintf("grant %d: approver: %s", i+1, problem)
+			}
+			ag.Approvers = append(ag.Approvers, sub)
 		}
 		out.Grants = append(out.Grants, ag)
 	}

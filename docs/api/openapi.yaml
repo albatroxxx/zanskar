@@ -113,6 +113,12 @@ tags:
     description: Endpoints for the `admin` role.
   - name: auditor
     description: Read-only review endpoints, callable by `auditor` and `admin`.
+  - name: approver
+    description: >-
+      The approval queue and its decisions (ADR 0049), callable by `approver` and `admin`. The
+      route admits the role; which request a caller may decide is the handler's check: where a
+      grant names approvers they alone approve and deny, never their own request, and an
+      administrator revokes any grant; where none is named, any administrator decides.
   - name: websocket
     description: Session transport endpoints (documented, not callable as REST).
 
@@ -925,6 +931,15 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
+        "422":
+          description: >-
+            `no_approver`: a grant names approvers for this request and none but the caller could
+            decide it (ADR 0049); the message names the policy. An administrator names another
+            approver, or none.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
     get:
       tags: [user]
       summary: List the caller's own access requests
@@ -943,6 +958,56 @@ paths:
                         type: array
                         items:
                           $ref: "#/components/schemas/AccessRequest"
+  /me/access-requests/{id}/cancel:
+    parameters:
+      - $ref: "#/components/parameters/Id"
+    post:
+      tags: [user]
+      summary: Withdraw the caller's own pending request
+      description: >-
+        A pending request of the caller's becomes `cancelled` (ADR 0049); the event is
+        `access.request.cancel`. Another person's request is not found.
+      responses:
+        "200":
+          description: Cancelled.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AccessRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: The request is not pending; the message names its state.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /me/access-requests/{id}/end:
+    parameters:
+      - $ref: "#/components/parameters/Id"
+    post:
+      tags: [user]
+      summary: End the caller's own active grant
+      description: >-
+        A revoke by the requester (ADR 0049): the grant becomes `revoked`, the approver's note is
+        kept, and the sessions it admitted end as `policy_revoked` unless standing access still
+        covers them. The event is `access.request.revoke` with the requester as actor and `by:
+        requester` in its details. Another person's grant is not found.
+      responses:
+        "200":
+          description: Ended.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AccessRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: The request is not an active grant; the message names its state.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
   /me/access:
     get:
       tags: [user]
@@ -3561,15 +3626,26 @@ paths:
 
   /access-requests:
     get:
-      tags: [admin]
+      tags: [admin, approver]
       summary: List access requests
-      description: The approval queue and its history. Filter by `status` to show, for example, only what is pending.
+      description: >-
+        The approval queue and its history. Filter by `status` to show, for example, only what is
+        pending. An administrator without `scope` sees every request; `scope=mine` (an approver's
+        view, whether or not they ask for it; an administrator's when asked) is the pending requests
+        the caller is named to decide and the requests they decided (ADR 0049). A pending request
+        carries its `approvers` and `named`.
       parameters:
         - name: status
           in: query
           description: Restrict to one lifecycle state.
           schema:
             $ref: "#/components/schemas/AccessRequestStatus"
+        - name: scope
+          in: query
+          description: "`mine`: what the caller is named to decide, and what they decided."
+          schema:
+            type: string
+            enum: [mine]
       responses:
         "200":
           description: Access requests, newest first (up to 500).
@@ -3590,12 +3666,13 @@ paths:
     parameters:
       - $ref: "#/components/parameters/Id"
     get:
-      tags: [admin]
+      tags: [admin, approver]
       summary: One access request
       description: >-
-        A single request, whatever its status, with the names resolved as in the list. A
-        notification's link opens it (ADR 0039 amendment): approve it while it waits, or see
-        who decided it and when.
+        A single request, whatever its status, with the names resolved as in the list and its
+        `approvers` and `named` filled. A notification's link opens it (ADR 0039 amendment):
+        approve it while it waits, or see who decided it and when. An approver reads the requests
+        they are named for or decided.
       responses:
         "200":
           description: The request.
@@ -3603,13 +3680,19 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/AccessRequest"
+        "403":
+          description: "`forbidden`: the approver is named for neither this request nor its decision."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
         "404":
           $ref: "#/components/responses/NotFound"
   /access-requests/{id}/approve:
     parameters:
       - $ref: "#/components/parameters/Id"
     post:
-      tags: [admin]
+      tags: [admin, approver]
       summary: Approve a pending request
       description: >-
         Turns a pending request into a time-bounded grant. Eligibility and the duration cap are
@@ -3640,9 +3723,12 @@ paths:
                 $ref: "#/components/schemas/Error"
         "403":
           description: >-
-            `step_up_required`: the setting *Approving asks for a code* is on, the approver has an
-            authenticator, and the session has not proved a code in the last 5 minutes. Prove one at
-            `POST /auth/mfa/step-up` and approve again. The request stays pending.
+            Who may decide (ADR 0049): `approvers_named`, the request has named approvers and an
+            administrator is not one of them; `forbidden`, the caller is not named for it (or no
+            one is, and the caller is not an administrator); `own_request`, nobody decides their
+            own. `step_up_required`: the setting *Approving asks for a code* is on, the approver
+            has an authenticator, and the session has not proved a code in the last 5 minutes.
+            Prove one at `POST /auth/mfa/step-up` and approve again. The request stays pending.
           content:
             application/json:
               schema:
@@ -3661,7 +3747,7 @@ paths:
     parameters:
       - $ref: "#/components/parameters/Id"
     post:
-      tags: [admin]
+      tags: [admin, approver]
       summary: Deny a pending request
       requestBody:
         required: false
@@ -3676,6 +3762,12 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/AccessRequest"
+        "403":
+          description: "`approvers_named`, `forbidden` or `own_request`, as for approve (ADR 0049)."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
         "404":
           $ref: "#/components/responses/NotFound"
         "409":
@@ -3688,9 +3780,13 @@ paths:
     parameters:
       - $ref: "#/components/parameters/Id"
     post:
-      tags: [admin]
+      tags: [admin, approver]
       summary: Revoke an active grant
-      description: Ends an approved grant early. `/connect` stops issuing tickets for it at once, and the sessions the grant admitted end as `policy_revoked` unless standing access still covers them; the audit event counts them as `live_sessions_ended`.
+      description: >-
+        Ends an approved grant early. `/connect` stops issuing tickets for it at once, and the
+        sessions the grant admitted end as `policy_revoked` unless standing access still covers
+        them; the audit event counts them as `live_sessions_ended`. An administrator revokes any
+        grant; an approver, the grants they are named for, never their own (ADR 0049).
       requestBody:
         required: false
         content:
@@ -3704,6 +3800,12 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/AccessRequest"
+        "403":
+          description: "`forbidden`: the approver is not named for this request; `own_request`: it is their own."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
         "404":
           $ref: "#/components/responses/NotFound"
         "409":
@@ -7582,6 +7684,18 @@ components:
           type: boolean
           default: false
           description: Admits `kubectl port-forward`. Kubernetes grants only.
+        approvers:
+          type: array
+          maxItems: 32
+          description: >-
+            The groups and users who decide the requests this grant makes people eligible for
+            (ADR 0049), none twice; `approval` grants only (`400 approvers_without_approval`
+            otherwise). A user named must hold the approver role (`422 not_an_approver`) and exist
+            (`422 invalid_approver`); a group is not inspected, and a member without the role
+            decides nothing. Empty or absent leaves the decision to any administrator. Where a
+            request is covered by several approval grants, its approvers are the union of theirs.
+          items:
+            $ref: "#/components/schemas/PolicySubject"
         retention_days:
           type: [integer, "null"]
           minimum: 1
@@ -7812,7 +7926,28 @@ components:
           $ref: "#/components/schemas/AccessRequestStatus"
         approver_user_id:
           type: string
-          description: The admin who approved or denied the request.
+          description: The administrator or approver who approved or denied the request.
+        approvers:
+          type: array
+          description: >-
+            Who is named to decide this request (ADR 0049): the designation of the approval grants
+            that cover it, each a group or a user with its name resolved when read. Filled for a
+            pending request in a list and for any request read on its own; empty otherwise.
+          items:
+            type: object
+            required: [kind, id]
+            properties:
+              kind:
+                type: string
+                enum: [group, user]
+              id:
+                type: string
+              name:
+                type: string
+                description: The group's name or the user's username; absent when it is gone.
+        named:
+          type: boolean
+          description: Whether anyone is named to decide it; false leaves it to any administrator.
         decision_note:
           type: string
           description: Optional note the approver left with the decision.

@@ -68,6 +68,10 @@ type apiGrant struct {
 	Namespaces   []string `json:"namespaces"`
 	ClusterScope bool     `json:"cluster_scope"`
 	PortForward  bool     `json:"port_forward"`
+	// Approvers decide an approval grant's requests (ADR 0049), carried
+	// whole: a write that left them out would hand the decision back to any
+	// administrator.
+	Approvers []apiSubject `json:"approvers"`
 }
 
 // apiPolicy is a policy as the API answers it.
@@ -101,6 +105,7 @@ var (
 		"idle_timeout_minutes": types.Int64Type, "max_session_minutes": types.Int64Type, "time_windows": types.ListType{ElemType: windowType},
 		"retention_days": types.Int64Type,
 		"namespaces":     types.ListType{ElemType: types.StringType}, "cluster_scope": types.BoolType, "port_forward": types.BoolType,
+		"approvers": types.ListType{ElemType: subjectType},
 	}}
 )
 
@@ -153,6 +158,7 @@ type grantModel struct {
 	Namespaces         []string     `tfsdk:"namespaces"`
 	ClusterScope       types.Bool   `tfsdk:"cluster_scope"`
 	PortForward        types.Bool   `tfsdk:"port_forward"`
+	Approvers          types.List   `tfsdk:"approvers"`
 }
 
 // objectAsOptions reads a known object into a struct.
@@ -202,9 +208,14 @@ func (m *policyModel) write(ctx context.Context) (policyWrite, diag.Diagnostics)
 			AllowClipboard: g.AllowClipboard.ValueBool(), AllowFileTransfer: g.AllowFileTransfer.ValueBool(), AllowDevTools: g.AllowDevTools.ValueBool(),
 			IdleTimeoutMinutes: int(g.IdleTimeoutMinutes.ValueInt64()),
 			MaxSessionMinutes:  intPtr(g.MaxSessionMinutes), RetentionDays: intPtr(g.RetentionDays), Targets: []apiGrantTarget{}, TimeWindows: []apiWindow{},
-			Namespaces: orEmpty(g.Namespaces), ClusterScope: g.ClusterScope.ValueBool(), PortForward: g.PortForward.ValueBool()}
+			Namespaces: orEmpty(g.Namespaces), ClusterScope: g.ClusterScope.ValueBool(), PortForward: g.PortForward.ValueBool(), Approvers: []apiSubject{}}
 		if known(g.ID) {
 			ag.ID = g.ID.ValueString()
+		}
+		var approvers []subjectModel
+		diags.Append(g.Approvers.ElementsAs(ctx, &approvers, false)...)
+		for _, a := range approvers {
+			ag.Approvers = append(ag.Approvers, apiSubject{Kind: a.Kind.ValueString(), ID: a.ID.ValueString()})
 		}
 		mfa := !known(g.RequireMFA) || g.RequireMFA.ValueBool()
 		ag.RequireMFA = &mfa
@@ -245,6 +256,12 @@ func (m *policyModel) from(ctx context.Context, p *apiPolicy) diag.Diagnostics {
 			AllowFileTransfer: types.BoolValue(g.AllowFileTransfer), AllowDevTools: types.BoolValue(g.AllowDevTools),
 			IdleTimeoutMinutes: types.Int64Value(int64(g.IdleTimeoutMinutes)), MaxSessionMinutes: int64Of(g.MaxSessionMinutes), RetentionDays: int64Of(g.RetentionDays),
 			Namespaces: orEmpty(g.Namespaces), ClusterScope: types.BoolValue(g.ClusterScope), PortForward: types.BoolValue(g.PortForward)}
+		approvers := make([]subjectModel, 0, len(g.Approvers))
+		for _, a := range g.Approvers {
+			approvers = append(approvers, subjectModel{Kind: types.StringValue(a.Kind), ID: types.StringValue(a.ID)})
+		}
+		gm.Approvers, d = types.ListValueFrom(ctx, subjectType, approvers)
+		diags.Append(d...)
 		targets := make([]grantTargetModel, 0, len(g.Targets))
 		for _, t := range g.Targets {
 			targets = append(targets, grantTargetModel{ID: types.StringValue(t.ID), Protocols: orEmpty(t.Protocols)})
@@ -346,6 +363,14 @@ func (r *policyResource) Schema(_ context.Context, _ resource.SchemaRequest, res
 						Description: "Kubernetes only: the namespaces the grant reaches; none is every namespace."},
 					"cluster_scope": falseDefault("Kubernetes only: cluster-wide resources (nodes, namespaces) and lists across namespaces."),
 					"port_forward":  falseDefault("Kubernetes only: port-forward."),
+					"approvers": schema.ListNestedAttribute{
+						Optional: true, Computed: true, Default: listdefault.StaticValue(types.ListValueMust(subjectType, []attr.Value{})),
+						Description: "Approval grants only: the groups and users who decide its requests (ADR 0049); none leaves them to any administrator.",
+						NestedObject: schema.NestedAttributeObject{Attributes: map[string]schema.Attribute{
+							"kind": schema.StringAttribute{Required: true, Description: "group or user."},
+							"id":   schema.StringAttribute{Required: true},
+						}},
+					},
 				}},
 			},
 		},

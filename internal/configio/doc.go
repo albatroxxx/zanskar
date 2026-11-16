@@ -135,6 +135,10 @@ type Grant struct {
 	Namespaces   []string `yaml:"namespaces,omitempty,flow"`
 	ClusterScope bool     `yaml:"cluster_scope,omitempty"`
 	PortForward  bool     `yaml:"port_forward,omitempty"`
+	// Approvers are the groups and people who decide an approval grant's
+	// requests (ADR 0049), by name as subjects are. Carried whole: a file
+	// that lost them would import a grant any administrator decides.
+	Approvers []Subject `yaml:"approvers,omitempty"`
 }
 
 // Policy is an audience and its grants (ADR 0036).
