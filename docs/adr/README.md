@@ -67,3 +67,5 @@ and update the status of the old one.
 | [0046](0046-deleting-a-user-keeps-their-history.md) | Deleting a user keeps their history: sessions and recording views carry who the person was | Accepted |
 | [0047](0047-lifecycles-declared-once.md) | A lifecycle is declared once, and the state a person sees is the state the gateway computed | Accepted 2026-11-10 |
 | [0048](0048-fabric.md) | Fabric: what Zanskar reaches through a control plane, where the members come and go | Accepted 2026-11-12 |
+| [0049](0049-approvers.md) | Approvers: a fourth role, and a grant that names who decides | Proposed 2026-11-16 |
+| [0050](0050-cloud-accounts-as-targets.md) | Cloud accounts as targets: temporary elevated access to AWS, approved, bounded, on the record | Proposed 2026-11-16 |
