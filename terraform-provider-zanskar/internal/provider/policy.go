@@ -72,6 +72,10 @@ type apiGrant struct {
 	// whole: a write that left them out would hand the decision back to any
 	// administrator.
 	Approvers []apiSubject `json:"approvers"`
+	// A cloud grant's switches (ADR 0050): sent only when set, since the
+	// gateway refuses them on any other kind and defaults both on.
+	CloudConsole *bool `json:"cloud_console,omitempty"`
+	CloudCLI     *bool `json:"cloud_cli,omitempty"`
 }
 
 // apiPolicy is a policy as the API answers it.
@@ -105,7 +109,8 @@ var (
 		"idle_timeout_minutes": types.Int64Type, "max_session_minutes": types.Int64Type, "time_windows": types.ListType{ElemType: windowType},
 		"retention_days": types.Int64Type,
 		"namespaces":     types.ListType{ElemType: types.StringType}, "cluster_scope": types.BoolType, "port_forward": types.BoolType,
-		"approvers": types.ListType{ElemType: subjectType},
+		"approvers":     types.ListType{ElemType: subjectType},
+		"cloud_console": types.BoolType, "cloud_cli": types.BoolType,
 	}}
 )
 
@@ -159,6 +164,25 @@ type grantModel struct {
 	ClusterScope       types.Bool   `tfsdk:"cluster_scope"`
 	PortForward        types.Bool   `tfsdk:"port_forward"`
 	Approvers          types.List   `tfsdk:"approvers"`
+	CloudConsole       types.Bool   `tfsdk:"cloud_console"`
+	CloudCLI           types.Bool   `tfsdk:"cloud_cli"`
+}
+
+// boolPtr is a three-valued bool as the API takes it: nil when unset.
+func boolPtr(v types.Bool) *bool {
+	if !known(v) {
+		return nil
+	}
+	b := v.ValueBool()
+	return &b
+}
+
+// boolOf is a three-valued bool as the API answered it.
+func boolOf(p *bool) types.Bool {
+	if p == nil {
+		return types.BoolNull()
+	}
+	return types.BoolValue(*p)
 }
 
 // objectAsOptions reads a known object into a struct.
@@ -208,7 +232,8 @@ func (m *policyModel) write(ctx context.Context) (policyWrite, diag.Diagnostics)
 			AllowClipboard: g.AllowClipboard.ValueBool(), AllowFileTransfer: g.AllowFileTransfer.ValueBool(), AllowDevTools: g.AllowDevTools.ValueBool(),
 			IdleTimeoutMinutes: int(g.IdleTimeoutMinutes.ValueInt64()),
 			MaxSessionMinutes:  intPtr(g.MaxSessionMinutes), RetentionDays: intPtr(g.RetentionDays), Targets: []apiGrantTarget{}, TimeWindows: []apiWindow{},
-			Namespaces: orEmpty(g.Namespaces), ClusterScope: g.ClusterScope.ValueBool(), PortForward: g.PortForward.ValueBool(), Approvers: []apiSubject{}}
+			Namespaces: orEmpty(g.Namespaces), ClusterScope: g.ClusterScope.ValueBool(), PortForward: g.PortForward.ValueBool(), Approvers: []apiSubject{},
+			CloudConsole: boolPtr(g.CloudConsole), CloudCLI: boolPtr(g.CloudCLI)}
 		if known(g.ID) {
 			ag.ID = g.ID.ValueString()
 		}
@@ -255,7 +280,8 @@ func (m *policyModel) from(ctx context.Context, p *apiPolicy) diag.Diagnostics {
 			RequireMFA: types.BoolValue(g.RequireMFA == nil || *g.RequireMFA), AllowClipboard: types.BoolValue(g.AllowClipboard),
 			AllowFileTransfer: types.BoolValue(g.AllowFileTransfer), AllowDevTools: types.BoolValue(g.AllowDevTools),
 			IdleTimeoutMinutes: types.Int64Value(int64(g.IdleTimeoutMinutes)), MaxSessionMinutes: int64Of(g.MaxSessionMinutes), RetentionDays: int64Of(g.RetentionDays),
-			Namespaces: orEmpty(g.Namespaces), ClusterScope: types.BoolValue(g.ClusterScope), PortForward: types.BoolValue(g.PortForward)}
+			Namespaces: orEmpty(g.Namespaces), ClusterScope: types.BoolValue(g.ClusterScope), PortForward: types.BoolValue(g.PortForward),
+			CloudConsole: boolOf(g.CloudConsole), CloudCLI: boolOf(g.CloudCLI)}
 		approvers := make([]subjectModel, 0, len(g.Approvers))
 		for _, a := range g.Approvers {
 			approvers = append(approvers, subjectModel{Kind: types.StringValue(a.Kind), ID: types.StringValue(a.ID)})
@@ -319,7 +345,7 @@ func (r *policyResource) Schema(_ context.Context, _ resource.SchemaRequest, res
 			},
 			"grants": schema.ListNestedAttribute{
 				Required:    true,
-				Description: "What the audience reaches, each grant of one kind: host, autoscaling, database, application or kubernetes.",
+				Description: "What the audience reaches, each grant of one kind: host, autoscaling, database, application, kubernetes or cloud.",
 				NestedObject: schema.NestedAttributeObject{Attributes: map[string]schema.Attribute{
 					"id":   schema.StringAttribute{Computed: true, PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()}},
 					"kind": schema.StringAttribute{Required: true},
@@ -371,6 +397,8 @@ func (r *policyResource) Schema(_ context.Context, _ resource.SchemaRequest, res
 							"id":   schema.StringAttribute{Required: true},
 						}},
 					},
+					"cloud_console": schema.BoolAttribute{Optional: true, Computed: true, Description: "Cloud only: sessions may open the account's console (the gateway's default, true). Absent on every other kind."},
+					"cloud_cli":     schema.BoolAttribute{Optional: true, Computed: true, Description: "Cloud only: sessions may take command-line credentials (the gateway's default, true). Absent on every other kind."},
 				}},
 			},
 		},

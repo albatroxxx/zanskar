@@ -91,6 +91,7 @@ const actionLabels: Record<string, string> = {
   'session.shadow.start': 'Started watching a session',
   'session.shadow.end': 'Stopped watching a session',
   'session.cloud.console': 'Console sign-in issued',
+  'target.cloud.test': 'Cloud role tested',
   'session.cloud.credentials': 'Command-line credentials issued',
   'settings.update': 'Settings updated',
   'settings.reset': 'Settings reset',
@@ -281,6 +282,7 @@ export function describe(ev: AuditEvent): string {
     case 'session.shadow.end': return s ? `stopped watching ${s.user}'s session on ${s.target}` : `stopped watching session ${name}`
     case 'session.failover': return s ? `moved the ${s.proto} session on ${s.target} to another instance` : `failed over session ${name}`
     case 'session.cloud.console': return s ? `opened the console of ${s.target}` : `opened a cloud console (session ${name})`
+    case 'target.cloud.test': return `tested the cloud role of target ${name}`
     case 'session.cloud.credentials': return s ? `took command-line credentials for ${s.target}` : `took command-line credentials (session ${name})`
     case 'recording.view': return s ? `played the recording of ${s.user} on ${s.target} (${s.proto})` : `played recording ${name}`
     case 'recording.search': {

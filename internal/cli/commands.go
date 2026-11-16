@@ -542,6 +542,8 @@ func cmdTargets(x *run) error {
 			kind = "application"
 		} else if str(t, "kube_api_server") != "" {
 			kind = "kubernetes"
+		} else if str(t, "cloud_role_arn") != "" {
+			kind = "cloud"
 		}
 		rows = append(rows, []string{str(t, "name"), str(t, "address"), kind, str(t, "host_key_status"), str(t, "tags")})
 	}
@@ -575,6 +577,15 @@ func cmdTargetShow(x *run) error {
 			acts = "the credential (shared identity)"
 		}
 		rows = append(rows, [2]string{"api server", api}, [2]string{"platform", str(t, "kube_platform")}, [2]string{"acts as", acts})
+	}
+	if role := str(t, "cloud_role_arn"); role != "" {
+		// A cloud account's role (ADR 0050): whose account, which role, how
+		// long a session runs, where the console opens.
+		account := str(t, "cloud_account_id")
+		if alias := str(t, "cloud_account_alias"); alias != "" {
+			account = alias + " (" + account + ")"
+		}
+		rows = append(rows, [2]string{"account", account}, [2]string{"role", role}, [2]string{"max session", str(t, "cloud_max_minutes") + " min"}, [2]string{"region", str(t, "cloud_region")})
 	}
 	x.out.pairs(append(rows, [2]string{"id", str(t, "id")}))
 	return nil
@@ -875,6 +886,9 @@ func grantPairs(g policy.Grant, targets, asgs map[string]string) [][2]string {
 			ns = strings.Join(g.Namespaces, ", ")
 		}
 		rows = append(rows, [2]string{"namespaces", ns}, [2]string{"cluster scope", yesNo(g.ClusterScope)}, [2]string{"port-forward", yesNo(g.PortForward)})
+	}
+	if g.Kind == protocol.KindCloud {
+		rows = append(rows, [2]string{"console", yesNo(g.ConsoleAllowed())}, [2]string{"command line", yesNo(g.CLIAllowed())})
 	}
 	return append(rows, [][2]string{
 		{"idle timeout", fmt.Sprintf("%d min", g.IdleTimeoutMinutes)}, {"max session", most},

@@ -22,6 +22,7 @@ import (
 	"github.com/albatroxxx/zanskar/internal/asg"
 	"github.com/albatroxxx/zanskar/internal/audit"
 	"github.com/albatroxxx/zanskar/internal/auth"
+	"github.com/albatroxxx/zanskar/internal/cloud"
 	"github.com/albatroxxx/zanskar/internal/credential"
 	"github.com/albatroxxx/zanskar/internal/gateway"
 	"github.com/albatroxxx/zanskar/internal/gateway/kubegw"
@@ -121,7 +122,17 @@ type Handler struct {
 	// Groups resolves the person's groups, which a Kubernetes session acts
 	// as in the cluster; nil sends none.
 	Groups *group.Repo
+	// Cloud sessions (ADR 0050): NewMinter builds what assumes a role in a
+	// region (nil: STS with the gateway's own identity); Federation is the
+	// exchange a console sign-in goes through (nil: AWS's endpoint); clouds
+	// holds the live sessions the /api/v1/cloud/{id}/ routes serve.
+	NewMinter  func(ctx context.Context, region string) (cloud.RoleMinter, error)
+	Federation *cloud.Federation
+	clouds     cloudSessions
 }
+
+// CloudSessions is how many cloud sessions are live here; tests wait on it.
+func (h *Handler) CloudSessions() int { return h.clouds.Len() }
 
 // Register mounts the routes. Every REST route here is for accounts that may
 // connect (user or admin); an auditor-only account is review-only and gets
@@ -148,6 +159,11 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	// A Kubernetes session's endpoint (ADR 0045): every method, the API
 	// path after the session id, the session token its only credential.
 	mux.HandleFunc("/k8s/{id}/", h.kubeProxy)
+	// A cloud session's endpoints (ADR 0050): the command line's credentials,
+	// the session token their only credential; the console sign-in, for the
+	// session's own person signed in to the portal.
+	mux.HandleFunc("GET /api/v1/cloud/{id}/credentials", h.cloudCredentials)
+	mux.Handle("POST /api/v1/cloud/{id}/console", auth.RequireConnect(http.HandlerFunc(h.cloudConsole)))
 }
 
 // reachableTarget is what a user sees in their target list.
@@ -177,11 +193,21 @@ type reachableTarget struct {
 	// PrivateIP is shown only when the target's address is a private (RFC1918 /
 	// ULA) IP, to help users tell their machines apart. A public address or a
 	// hostname is never surfaced to users; empty then.
-	PrivateIP    string `json:"private_ip,omitempty"`
-	Engine       string `json:"engine,omitempty"`   // database targets (ADR 0017)
-	Platform     string `json:"platform,omitempty"` // clusters (ADR 0045): vanilla, eks, gke, aks
-	HealthyCount int    `json:"healthy_count,omitempty"`
-	InstanceCnt  int    `json:"instance_count,omitempty"`
+	PrivateIP string `json:"private_ip,omitempty"`
+	Engine    string `json:"engine,omitempty"`   // database targets (ADR 0017)
+	Platform  string `json:"platform,omitempty"` // clusters (ADR 0045): vanilla, eks, gke, aks; cloud roles (ADR 0050): aws
+	// Unavailable says why no session can start on this gateway for a
+	// cluster or a cloud role (the public address unset), so the portal
+	// greys the button and says so before a click; "" when one can.
+	Unavailable string `json:"unavailable,omitempty"`
+	// A cloud account's role (ADR 0050): the account as people know it, its
+	// id, the role's name and the region, for the portal's Cloud tab.
+	CloudAccount   string `json:"cloud_account,omitempty"`
+	CloudAccountID string `json:"cloud_account_id,omitempty"`
+	CloudRole      string `json:"cloud_role,omitempty"`
+	CloudRegion    string `json:"cloud_region,omitempty"`
+	HealthyCount   int    `json:"healthy_count,omitempty"`
+	InstanceCnt    int    `json:"instance_count,omitempty"`
 }
 
 func (h *Handler) myTargets(w http.ResponseWriter, r *http.Request) {
@@ -256,7 +282,22 @@ func (h *Handler) myTargets(w http.ResponseWriter, r *http.Request) {
 				}
 				out = append(out, reachableTarget{
 					Kind: "cluster", ID: t.ID, Name: t.Name, OSFamily: t.OSFamily, Tags: t.Tags, Capabilities: []target.Protocol{target.Kube},
-					Allowed: allowed, RequiresApproval: needApproval, HostKeyReady: true, Platform: t.KubePlatform,
+					Allowed: allowed, RequiresApproval: needApproval, HostKeyReady: true, Platform: t.KubePlatform, Unavailable: h.kubeOff(),
+				})
+				continue
+			}
+			if t.IsCloud() {
+				// A cloud account's role (ADR 0050) is reached over cloud
+				// alone: a session from the portal, no socket. The portal
+				// shows the account and the role; the ARN stays here.
+				allowed, needApproval, _, _ := reach(pols, policy.TargetRef{Kind: t.Kind(), ID: t.ID, Tags: t.Tags}, []target.Protocol{target.Cloud}, now)
+				if len(allowed) == 0 {
+					continue
+				}
+				out = append(out, reachableTarget{
+					Kind: "cloud", ID: t.ID, Name: t.Name, OSFamily: t.OSFamily, Tags: t.Tags, Capabilities: []target.Protocol{target.Cloud},
+					Allowed: allowed, RequiresApproval: needApproval, HostKeyReady: true, Platform: t.CloudPlatform, Unavailable: h.cloudOff(),
+					CloudAccount: t.CloudAccountLabel(), CloudAccountID: t.CloudAccountID, CloudRole: t.CloudRoleName(), CloudRegion: t.CloudRegion,
 				})
 				continue
 			}
@@ -372,6 +413,9 @@ type connectResponse struct {
 	SessionID   string `json:"session_id,omitempty"`
 	Kubeconfig  string `json:"kubeconfig,omitempty"`
 	IdleSeconds int    `json:"idle_seconds,omitempty"`
+	// A cloud session (ADR 0050) starts on connect too: its token, the
+	// profile stanza and what the portal shows.
+	Cloud *cloudConnect `json:"cloud,omitempty"`
 }
 
 // ticketExpiry is when a ticket just issued lapses.
@@ -443,6 +487,13 @@ func (h *Handler) connect(w http.ResponseWriter, r *http.Request) {
 			deny(http.StatusNotImplemented, "protocol_unavailable", msg)
 			return
 		}
+	case target.Cloud:
+		// A cloud session (ADR 0050) starts here too and answers its
+		// handle; the profile and the console form name the public address.
+		if msg := h.cloudOff(); msg != "" {
+			deny(http.StatusNotImplemented, "protocol_unavailable", msg)
+			return
+		}
 	default:
 		deny(http.StatusNotImplemented, "protocol_unavailable", "protocol not available")
 		return
@@ -474,9 +525,12 @@ func (h *Handler) connect(w http.ResponseWriter, r *http.Request) {
 		res       *connectResponse
 		code, msg string
 	)
-	if proto == target.Kube {
+	switch proto {
+	case target.Kube:
 		res, code, msg, err = h.startKube(r, p, auth.ClientIP(r), ep)
-	} else {
+	case target.Cloud:
+		res, code, msg, err = h.startCloud(r, p, auth.ClientIP(r), ep)
+	default:
 		res, code, msg, err = h.issueTicket(r.Context(), p, auth.ClientIP(r), ep, proto, req.Credential, "")
 	}
 	if err != nil {

@@ -13,6 +13,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/boolplanmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/int64planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/listdefault"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/listplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/mapdefault"
@@ -35,95 +36,120 @@ type apiEndpoint struct {
 
 // apiTarget is a target as the API answers it.
 type apiTarget struct {
-	ID              string            `json:"id"`
-	Name            string            `json:"name"`
-	Address         string            `json:"address"`
-	Engine          string            `json:"engine"`
-	EngineVersion   string            `json:"engine_version"`
-	RetentionDays   *int              `json:"retention_days"`
-	DatabaseName    string            `json:"database_name"`
-	TLSMode         string            `json:"tls_mode"`
-	TLSCA           string            `json:"tls_ca"`
-	AppUpstream     string            `json:"app_upstream"`
-	AppEndpoints    []apiEndpoint     `json:"app_endpoints"`
-	AppDependencies string            `json:"app_dependencies"`
-	AppPrivate      *apiPrivate       `json:"app_private,omitempty"`
-	KubeAPIServer   string            `json:"kube_api_server"`
-	KubeCA          string            `json:"kube_ca"`
-	KubePlatform    string            `json:"kube_platform"`
-	KubeImpersonate *bool             `json:"kube_impersonate"`
-	OSFamily        string            `json:"os_family"`
-	Ports           map[string]int    `json:"ports"`
-	Capabilities    []string          `json:"capabilities"`
-	Tags            map[string]string `json:"tags"`
-	Status          string            `json:"status"`
-	Notes           string            `json:"notes"`
-	Credentials     map[string]string `json:"credentials"`
-	HostKeyStatus   string            `json:"host_key_status"`
+	ID              string        `json:"id"`
+	Name            string        `json:"name"`
+	Address         string        `json:"address"`
+	Engine          string        `json:"engine"`
+	EngineVersion   string        `json:"engine_version"`
+	RetentionDays   *int          `json:"retention_days"`
+	DatabaseName    string        `json:"database_name"`
+	TLSMode         string        `json:"tls_mode"`
+	TLSCA           string        `json:"tls_ca"`
+	AppUpstream     string        `json:"app_upstream"`
+	AppEndpoints    []apiEndpoint `json:"app_endpoints"`
+	AppDependencies string        `json:"app_dependencies"`
+	AppPrivate      *apiPrivate   `json:"app_private,omitempty"`
+	KubeAPIServer   string        `json:"kube_api_server"`
+	KubeCA          string        `json:"kube_ca"`
+	KubePlatform    string        `json:"kube_platform"`
+	KubeImpersonate *bool         `json:"kube_impersonate"`
+	// A cloud account's role (ADR 0050), carried whole: a write that left
+	// the fields out would turn the role into a host.
+	CloudPlatform     string            `json:"cloud_platform"`
+	CloudAccountID    string            `json:"cloud_account_id"`
+	CloudAccountAlias string            `json:"cloud_account_alias"`
+	CloudRoleARN      string            `json:"cloud_role_arn"`
+	CloudExternalID   string            `json:"cloud_external_id"`
+	CloudMaxMinutes   int               `json:"cloud_max_minutes"`
+	CloudRegion       string            `json:"cloud_region"`
+	OSFamily          string            `json:"os_family"`
+	Ports             map[string]int    `json:"ports"`
+	Capabilities      []string          `json:"capabilities"`
+	Tags              map[string]string `json:"tags"`
+	Status            string            `json:"status"`
+	Notes             string            `json:"notes"`
+	Credentials       map[string]string `json:"credentials"`
+	HostKeyStatus     string            `json:"host_key_status"`
 }
 
 // targetWrite is the body POST and PUT take: exactly these fields, every
 // one (a PUT replaces the target). A cluster's fields are among them: a
 // write that left them out would turn the cluster into a host.
 type targetWrite struct {
-	Name            string            `json:"name"`
-	Address         string            `json:"address"`
-	Engine          string            `json:"engine"`
-	EngineVersion   string            `json:"engine_version"`
-	RetentionDays   *int              `json:"retention_days"`
-	DatabaseName    string            `json:"database_name"`
-	TLSMode         string            `json:"tls_mode"`
-	TLSCA           string            `json:"tls_ca"`
-	AppUpstream     string            `json:"app_upstream"`
-	AppEndpoints    []apiEndpoint     `json:"app_endpoints"`
-	AppDependencies string            `json:"app_dependencies"`
-	AppPrivate      *apiPrivate       `json:"app_private,omitempty"`
-	KubeAPIServer   string            `json:"kube_api_server"`
-	KubeCA          string            `json:"kube_ca"`
-	KubePlatform    string            `json:"kube_platform"`
-	KubeImpersonate *bool             `json:"kube_impersonate,omitempty"`
-	OSFamily        string            `json:"os_family"`
-	Ports           map[string]int    `json:"ports"`
-	Capabilities    []string          `json:"capabilities"`
-	Tags            map[string]string `json:"tags"`
-	Status          string            `json:"status"`
-	Notes           string            `json:"notes"`
-	Credentials     map[string]string `json:"credentials"`
+	Name              string            `json:"name"`
+	Address           string            `json:"address"`
+	Engine            string            `json:"engine"`
+	EngineVersion     string            `json:"engine_version"`
+	RetentionDays     *int              `json:"retention_days"`
+	DatabaseName      string            `json:"database_name"`
+	TLSMode           string            `json:"tls_mode"`
+	TLSCA             string            `json:"tls_ca"`
+	AppUpstream       string            `json:"app_upstream"`
+	AppEndpoints      []apiEndpoint     `json:"app_endpoints"`
+	AppDependencies   string            `json:"app_dependencies"`
+	AppPrivate        *apiPrivate       `json:"app_private,omitempty"`
+	KubeAPIServer     string            `json:"kube_api_server"`
+	KubeCA            string            `json:"kube_ca"`
+	KubePlatform      string            `json:"kube_platform"`
+	KubeImpersonate   *bool             `json:"kube_impersonate,omitempty"`
+	CloudPlatform     string            `json:"cloud_platform"`
+	CloudAccountID    string            `json:"cloud_account_id"`
+	CloudAccountAlias string            `json:"cloud_account_alias"`
+	CloudRoleARN      string            `json:"cloud_role_arn"`
+	CloudExternalID   string            `json:"cloud_external_id"`
+	CloudMaxMinutes   int               `json:"cloud_max_minutes"`
+	CloudRegion       string            `json:"cloud_region"`
+	OSFamily          string            `json:"os_family"`
+	Ports             map[string]int    `json:"ports"`
+	Capabilities      []string          `json:"capabilities"`
+	Tags              map[string]string `json:"tags"`
+	Status            string            `json:"status"`
+	Notes             string            `json:"notes"`
+	Credentials       map[string]string `json:"credentials"`
 }
 
 func (t *apiTarget) write() targetWrite {
 	return targetWrite{Name: t.Name, Address: t.Address, Engine: t.Engine, EngineVersion: t.EngineVersion, RetentionDays: t.RetentionDays,
 		DatabaseName: t.DatabaseName, TLSMode: t.TLSMode, TLSCA: t.TLSCA, AppUpstream: t.AppUpstream, AppEndpoints: t.AppEndpoints, AppDependencies: t.AppDependencies, AppPrivate: t.AppPrivate,
 		KubeAPIServer: t.KubeAPIServer, KubeCA: t.KubeCA, KubePlatform: t.KubePlatform, KubeImpersonate: t.KubeImpersonate,
+		CloudPlatform: t.CloudPlatform, CloudAccountID: t.CloudAccountID, CloudAccountAlias: t.CloudAccountAlias, CloudRoleARN: t.CloudRoleARN,
+		CloudExternalID: t.CloudExternalID, CloudMaxMinutes: t.CloudMaxMinutes, CloudRegion: t.CloudRegion,
 		OSFamily: t.OSFamily, Ports: t.Ports, Capabilities: t.Capabilities, Tags: t.Tags, Status: t.Status, Notes: t.Notes, Credentials: t.Credentials}
 }
 
 type targetModel struct {
-	ID              types.String `tfsdk:"id"`
-	Name            types.String `tfsdk:"name"`
-	Address         types.String `tfsdk:"address"`
-	OSFamily        types.String `tfsdk:"os_family"`
-	Engine          types.String `tfsdk:"engine"`
-	EngineVersion   types.String `tfsdk:"engine_version"`
-	DatabaseName    types.String `tfsdk:"database_name"`
-	TLSMode         types.String `tfsdk:"tls_mode"`
-	TLSCA           types.String `tfsdk:"tls_ca"`
-	AppUpstream     types.String `tfsdk:"app_upstream"`
-	AppEndpoints    types.List   `tfsdk:"app_endpoints"`
-	AppDependencies types.String `tfsdk:"app_dependencies"`
-	AppPrivate      types.Object `tfsdk:"app_private"`
-	KubeAPIServer   types.String `tfsdk:"kube_api_server"`
-	KubeCA          types.String `tfsdk:"kube_ca"`
-	KubePlatform    types.String `tfsdk:"kube_platform"`
-	KubeImpersonate types.Bool   `tfsdk:"kube_impersonate"`
-	Ports           types.Map    `tfsdk:"ports"`
-	Tags            types.Map    `tfsdk:"tags"`
-	Credentials     types.Map    `tfsdk:"credentials"`
-	Status          types.String `tfsdk:"status"`
-	Notes           types.String `tfsdk:"notes"`
-	RetentionDays   types.Int64  `tfsdk:"retention_days"`
-	Capabilities    types.List   `tfsdk:"capabilities"`
-	HostKeyStatus   types.String `tfsdk:"host_key_status"`
+	ID                types.String `tfsdk:"id"`
+	Name              types.String `tfsdk:"name"`
+	Address           types.String `tfsdk:"address"`
+	OSFamily          types.String `tfsdk:"os_family"`
+	Engine            types.String `tfsdk:"engine"`
+	EngineVersion     types.String `tfsdk:"engine_version"`
+	DatabaseName      types.String `tfsdk:"database_name"`
+	TLSMode           types.String `tfsdk:"tls_mode"`
+	TLSCA             types.String `tfsdk:"tls_ca"`
+	AppUpstream       types.String `tfsdk:"app_upstream"`
+	AppEndpoints      types.List   `tfsdk:"app_endpoints"`
+	AppDependencies   types.String `tfsdk:"app_dependencies"`
+	AppPrivate        types.Object `tfsdk:"app_private"`
+	KubeAPIServer     types.String `tfsdk:"kube_api_server"`
+	KubeCA            types.String `tfsdk:"kube_ca"`
+	KubePlatform      types.String `tfsdk:"kube_platform"`
+	KubeImpersonate   types.Bool   `tfsdk:"kube_impersonate"`
+	CloudPlatform     types.String `tfsdk:"cloud_platform"`
+	CloudAccountID    types.String `tfsdk:"cloud_account_id"`
+	CloudAccountAlias types.String `tfsdk:"cloud_account_alias"`
+	CloudRoleARN      types.String `tfsdk:"cloud_role_arn"`
+	CloudExternalID   types.String `tfsdk:"cloud_external_id"`
+	CloudMaxMinutes   types.Int64  `tfsdk:"cloud_max_minutes"`
+	CloudRegion       types.String `tfsdk:"cloud_region"`
+	Ports             types.Map    `tfsdk:"ports"`
+	Tags              types.Map    `tfsdk:"tags"`
+	Credentials       types.Map    `tfsdk:"credentials"`
+	Status            types.String `tfsdk:"status"`
+	Notes             types.String `tfsdk:"notes"`
+	RetentionDays     types.Int64  `tfsdk:"retention_days"`
+	Capabilities      types.List   `tfsdk:"capabilities"`
+	HostKeyStatus     types.String `tfsdk:"host_key_status"`
 }
 
 var endpointType = types.ObjectType{AttrTypes: map[string]attr.Type{"name": types.StringType, "url": types.StringType}}
@@ -172,6 +198,13 @@ func (m *targetModel) from(ctx context.Context, t *apiTarget) diag.Diagnostics {
 	m.KubeImpersonate = types.BoolNull()
 	if t.KubeImpersonate != nil {
 		m.KubeImpersonate = types.BoolValue(*t.KubeImpersonate)
+	}
+	m.CloudPlatform, m.CloudAccountID, m.CloudAccountAlias = types.StringValue(t.CloudPlatform), types.StringValue(t.CloudAccountID), types.StringValue(t.CloudAccountAlias)
+	m.CloudRoleARN, m.CloudExternalID, m.CloudRegion = types.StringValue(t.CloudRoleARN), types.StringValue(t.CloudExternalID), types.StringValue(t.CloudRegion)
+	// A role answers its maximum; every other kind nothing.
+	m.CloudMaxMinutes = types.Int64Null()
+	if t.CloudRoleARN != "" {
+		m.CloudMaxMinutes = types.Int64Value(int64(t.CloudMaxMinutes))
 	}
 	m.Status, m.Notes, m.HostKeyStatus = types.StringValue(t.Status), types.StringValue(t.Notes), types.StringValue(t.HostKeyStatus)
 	m.RetentionDays = types.Int64Null()
@@ -259,6 +292,20 @@ func (m *targetModel) onto(ctx context.Context, w *targetWrite) diag.Diagnostics
 	str(m.KubeAPIServer, &w.KubeAPIServer)
 	str(m.KubeCA, &w.KubeCA)
 	str(m.KubePlatform, &w.KubePlatform)
+	str(m.CloudPlatform, &w.CloudPlatform)
+	str(m.CloudAccountID, &w.CloudAccountID)
+	str(m.CloudAccountAlias, &w.CloudAccountAlias)
+	str(m.CloudRoleARN, &w.CloudRoleARN)
+	str(m.CloudExternalID, &w.CloudExternalID)
+	str(m.CloudRegion, &w.CloudRegion)
+	if !m.CloudMaxMinutes.IsUnknown() {
+		// Null asks for the gateway's default (60); the gateway refuses the
+		// field on anything but a role, so a host sends none.
+		w.CloudMaxMinutes = 0
+		if !m.CloudMaxMinutes.IsNull() {
+			w.CloudMaxMinutes = int(m.CloudMaxMinutes.ValueInt64())
+		}
+	}
 	if !m.KubeImpersonate.IsUnknown() {
 		// Null asks for the gateway's default (as the person); the gateway
 		// refuses the field on anything but a cluster, so a host sends none.
@@ -320,7 +367,7 @@ func (r *targetResource) Schema(_ context.Context, _ resource.SchemaRequest, res
 		return schema.StringAttribute{Optional: true, Computed: true, Default: stringdefault.StaticString(""), Description: desc}
 	}
 	resp.Schema = schema.Schema{
-		Description: "A Zanskar target: a host (SSH, RDP, VNC, WinRM), a database (engine set), an application (app_upstream set) or a Kubernetes cluster (kube_api_server set). Its credentials stay in the vault and are named by id (data.zanskar_credential).",
+		Description: "A Zanskar target: a host (SSH, RDP, VNC, WinRM), a database (engine set), an application (app_upstream set), a Kubernetes cluster (kube_api_server set) or a cloud account's role (cloud_role_arn set). Its credentials stay in the vault and are named by id (data.zanskar_credential).",
 		Attributes: map[string]schema.Attribute{
 			"id":             schema.StringAttribute{Computed: true, PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()}},
 			"name":           schema.StringAttribute{Required: true, Description: "Unique name."},
@@ -354,6 +401,15 @@ func (r *targetResource) Schema(_ context.Context, _ resource.SchemaRequest, res
 			"kube_platform":   gateway("For a cluster: vanilla (the gateway's default), eks, gke or aks."),
 			"kube_impersonate": schema.BoolAttribute{Optional: true, Computed: true, PlanModifiers: []planmodifier.Bool{boolplanmodifier.UseStateForUnknown()},
 				Description: "For a cluster: sessions act as the person (true, the gateway's default) or as the credential, a shared identity (false). Absent on every other kind."},
+			"cloud_platform":      gateway("For a cloud account's role: aws (the gateway's default)."),
+			"cloud_account_id":    gateway("For a role: the 12-digit account; the gateway fills it from cloud_role_arn."),
+			"cloud_account_alias": empty("For a role: how people know the account."),
+			"cloud_role_arn":      empty("For a cloud account's role: the IAM role ARN the gateway assumes for the person. The gateway sets address from it."),
+			"cloud_external_id": schema.StringAttribute{Computed: true, PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()},
+				Description: "For a role: the ExternalId its trust policy carries, minted by the gateway once and fixed."},
+			"cloud_max_minutes": schema.Int64Attribute{Optional: true, Computed: true, PlanModifiers: []planmodifier.Int64{int64planmodifier.UseStateForUnknown()},
+				Description: "For a role: the longest a session runs, 15-720 minutes (the gateway's default, 60). Absent on every other kind."},
+			"cloud_region": empty("For a role: the region where the console opens and STS is reached; empty is global."),
 			"ports": schema.MapAttribute{ElementType: types.Int64Type, Optional: true, Computed: true,
 				PlanModifiers: []planmodifier.Map{mapplanmodifier.UseStateForUnknown()},
 				Description:   "Ports by protocol (ssh, rdp, vnc, winrm, database); the gateway fills the usual ones."},

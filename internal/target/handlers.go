@@ -15,6 +15,7 @@ import (
 
 	"github.com/albatroxxx/zanskar/internal/audit"
 	"github.com/albatroxxx/zanskar/internal/auth"
+	"github.com/albatroxxx/zanskar/internal/cloud"
 	"github.com/albatroxxx/zanskar/internal/credential"
 	"github.com/albatroxxx/zanskar/internal/gateway"
 	"github.com/albatroxxx/zanskar/internal/gateway/sshgw"
@@ -46,8 +47,12 @@ type AdminHandler struct {
 	// Revoker ends the live sessions a disable, an address change or a
 	// changed pin withdraws (ADR 0013); nil leaves them to their own limits.
 	Revoker gateway.Revoker
-	Audit   *audit.Log
-	Log     *slog.Logger
+	// Identity is the gateway's own AWS principal, which a cloud role's
+	// trust policy names (ADR 0050); nil, or unknown yet, leaves the Setup
+	// pending.
+	Identity *cloud.GatewayIdentity
+	Audit    *audit.Log
+	Log      *slog.Logger
 }
 
 // Register mounts the routes; every one requires the admin role.
@@ -68,35 +73,47 @@ func (h *AdminHandler) Register(mux *http.ServeMux) {
 	// A Kubernetes cluster (ADR 0045): its test is its probe, and the RBAC it needs is printed.
 	mux.Handle("POST /api/v1/targets/{id}/kube/test", admin(http.HandlerFunc(h.kubeTest)))
 	mux.Handle("GET /api/v1/targets/{id}/kube/manifest", admin(http.HandlerFunc(h.kubeManifest)))
+	// A cloud account's role (ADR 0050): what its account must trust, and a test that assumes it once.
+	mux.Handle("GET /api/v1/targets/{id}/cloud/setup", admin(http.HandlerFunc(h.cloudSetup)))
+	mux.Handle("POST /api/v1/targets/{id}/cloud/test", admin(http.HandlerFunc(h.cloudTest)))
 	mux.Handle("PUT /api/v1/targets/{id}/credentials/{protocol}", admin(http.HandlerFunc(h.setCredential)))
 	mux.Handle("DELETE /api/v1/targets/{id}/credentials/{protocol}", admin(http.HandlerFunc(h.unsetCredential)))
 }
 
 // Write is the request body for create and update.
 type Write struct {
-	Name            string              `json:"name"`
-	Address         string              `json:"address"`
-	Engine          string              `json:"engine"`           // database targets (ADR 0017)
-	EngineVersion   string              `json:"engine_version"`   // database targets
-	RetentionDays   *int                `json:"retention_days"`   // recording retention override; null defers
-	DatabaseName    string              `json:"database_name"`    // database targets
-	TLSMode         string              `json:"tls_mode"`         // database targets
-	TLSCA           string              `json:"tls_ca"`           // database and application targets
-	AppUpstream     string              `json:"app_upstream"`     // application targets (ADR 0034)
-	AppEndpoints    []AppEndpoint       `json:"app_endpoints"`    // application targets (ADR 0037, amended)
-	AppDependencies string              `json:"app_dependencies"` // application targets: public (default) or origins
-	AppPrivate      *AppPrivate         `json:"app_private"`      // application targets: private networks and hosts the dependencies may reach
-	KubeAPIServer   string              `json:"kube_api_server"`  // Kubernetes clusters (ADR 0045)
-	KubeCA          string              `json:"kube_ca"`          // Kubernetes clusters
-	KubeImpersonate *bool               `json:"kube_impersonate"` // Kubernetes clusters; nil is the default, on
-	KubePlatform    string              `json:"kube_platform"`    // Kubernetes clusters: vanilla (default), eks, gke, aks
-	OSFamily        OSFamily            `json:"os_family"`
-	Ports           map[Protocol]int    `json:"ports"`
-	Capabilities    []Protocol          `json:"capabilities"`
-	Tags            map[string]string   `json:"tags"`
-	Status          string              `json:"status"`
-	Notes           string              `json:"notes"`
-	Credentials     map[Protocol]string `json:"credentials"`
+	Name            string        `json:"name"`
+	Address         string        `json:"address"`
+	Engine          string        `json:"engine"`           // database targets (ADR 0017)
+	EngineVersion   string        `json:"engine_version"`   // database targets
+	RetentionDays   *int          `json:"retention_days"`   // recording retention override; null defers
+	DatabaseName    string        `json:"database_name"`    // database targets
+	TLSMode         string        `json:"tls_mode"`         // database targets
+	TLSCA           string        `json:"tls_ca"`           // database and application targets
+	AppUpstream     string        `json:"app_upstream"`     // application targets (ADR 0034)
+	AppEndpoints    []AppEndpoint `json:"app_endpoints"`    // application targets (ADR 0037, amended)
+	AppDependencies string        `json:"app_dependencies"` // application targets: public (default) or origins
+	AppPrivate      *AppPrivate   `json:"app_private"`      // application targets: private networks and hosts the dependencies may reach
+	KubeAPIServer   string        `json:"kube_api_server"`  // Kubernetes clusters (ADR 0045)
+	KubeCA          string        `json:"kube_ca"`          // Kubernetes clusters
+	KubeImpersonate *bool         `json:"kube_impersonate"` // Kubernetes clusters; nil is the default, on
+	KubePlatform    string        `json:"kube_platform"`    // Kubernetes clusters: vanilla (default), eks, gke, aks
+	// A cloud account's role (ADR 0050): the platform (aws), the account, how people know it, the role, the
+	// ExternalId (minted on create, fixed after), the longest session (15-720 minutes, 60 unless set), the region.
+	CloudPlatform     string              `json:"cloud_platform"`
+	CloudAccountID    string              `json:"cloud_account_id"`
+	CloudAccountAlias string              `json:"cloud_account_alias"`
+	CloudRoleARN      string              `json:"cloud_role_arn"`
+	CloudExternalID   string              `json:"cloud_external_id"`
+	CloudMaxMinutes   int                 `json:"cloud_max_minutes"`
+	CloudRegion       string              `json:"cloud_region"`
+	OSFamily          OSFamily            `json:"os_family"`
+	Ports             map[Protocol]int    `json:"ports"`
+	Capabilities      []Protocol          `json:"capabilities"`
+	Tags              map[string]string   `json:"tags"`
+	Status            string              `json:"status"`
+	Notes             string              `json:"notes"`
+	Credentials       map[Protocol]string `json:"credentials"`
 }
 
 func (w Write) apply(t *Target) {
@@ -106,6 +123,8 @@ func (w Write) apply(t *Target) {
 	t.DatabaseName, t.TLSMode, t.TLSCA = w.DatabaseName, w.TLSMode, w.TLSCA
 	t.AppUpstream, t.AppEndpoints, t.AppDependencies, t.AppPrivate = w.AppUpstream, w.AppEndpoints, w.AppDependencies, w.AppPrivate
 	t.KubeAPIServer, t.KubeCA, t.KubeImpersonate, t.KubePlatform = w.KubeAPIServer, w.KubeCA, w.KubeImpersonate, w.KubePlatform
+	t.CloudPlatform, t.CloudAccountID, t.CloudAccountAlias, t.CloudRoleARN = w.CloudPlatform, w.CloudAccountID, w.CloudAccountAlias, w.CloudRoleARN
+	t.CloudExternalID, t.CloudMaxMinutes, t.CloudRegion = w.CloudExternalID, w.CloudMaxMinutes, w.CloudRegion
 	t.Ports, t.Capabilities, t.Tags = w.Ports, w.Capabilities, w.Tags
 	t.Status, t.Notes, t.Credentials = w.Status, w.Notes, w.Credentials
 }
@@ -129,9 +148,9 @@ func (h *AdminHandler) list(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	switch f.Kind {
-	case "", KindHost, KindDatabase, KindApplication, KindKubernetes:
+	case "", KindHost, KindDatabase, KindApplication, KindKubernetes, KindCloud:
 	default:
-		httpx.BadRequest(w, r, "kind must be host, database, application or kubernetes")
+		httpx.BadRequest(w, r, "kind must be host, database, application, kubernetes or cloud")
 		return
 	}
 	switch f.Status {
@@ -195,7 +214,21 @@ func (h *AdminHandler) update(w http.ResponseWriter, r *http.Request) {
 	before := map[string]any{"name": t.Name, "address": t.Address, "status": t.Status}
 	beforeOrigins, beforeDeps, beforePrivate := origins(t), t.AppDependencies, t.AppPrivate.Entries()
 	beforeCluster := clusterTerms(t)
+	beforeCloud, beforeExternalID := cloudTerms(t), t.CloudExternalID
 	body.apply(t)
+	// A role's ExternalId is minted once and fixed (ADR 0050): the trust
+	// policy in the account carries it, so a write that leaves it out keeps
+	// it and a write that changes it is refused.
+	if t.IsCloud() && beforeExternalID != "" {
+		switch t.CloudExternalID {
+		case "":
+			t.CloudExternalID = beforeExternalID
+		case beforeExternalID:
+		default:
+			httpx.WriteError(w, r, http.StatusBadRequest, "external_id_fixed", "the role's ExternalId is fixed once minted; enrol the role again for a new one")
+			return
+		}
+	}
 	if !h.addressAllowed(w, r, audit.TargetUpdate, t.ID, t) || !h.kubeSlotAllowed(w, r, t) {
 		return
 	}
@@ -240,10 +273,16 @@ func (h *AdminHandler) update(w http.ResponseWriter, r *http.Request) {
 	if clusterChanged {
 		details["cluster_changed"] = true
 	}
+	// A cloud role's sessions hold the account, the role and the ExternalId
+	// they started with (ADR 0050): a change to any ends them.
+	cloudChanged := beforeCloud != "" && beforeCloud != cloudTerms(t)
+	if cloudChanged {
+		details["cloud_changed"] = true
+	}
 	// A target taken out of service, or moved to an address nobody has
 	// trusted yet, keeps no session: what was admitted to the old target
 	// ends now rather than at its own limits.
-	if h.Revoker != nil && ((before["status"] == StatusActive && t.Status == StatusDisabled) || before["address"] != t.Address || len(removed) > 0 || narrowed || len(privateRemoved) > 0 || clusterChanged) {
+	if h.Revoker != nil && ((before["status"] == StatusActive && t.Status == StatusDisabled) || before["address"] != t.Address || len(removed) > 0 || narrowed || len(privateRemoved) > 0 || clusterChanged || cloudChanged) {
 		details["live_sessions_ended"] = h.Revoker.TargetDisabled(t.ID)
 	}
 	h.record(r, audit.TargetUpdate, t.ID, audit.Success, details)
@@ -649,6 +688,12 @@ func (h *AdminHandler) setCredential(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id, proto := r.PathValue("id"), Protocol(r.PathValue("protocol"))
+	if proto == Cloud {
+		// A cloud account's role binds no credential (ADR 0050, 1): the
+		// trust is its trust policy.
+		httpx.WriteError(w, r, http.StatusBadRequest, "no_credential_slot", "a cloud account's role binds no credential; its trust policy is the trust")
+		return
+	}
 	if body.CredentialID == credential.UserSuppliedSentinel && h.Vault != nil {
 		p, _ := auth.FromContext(r.Context())
 		cid, err := h.Vault.EnsureUserSupplied(r.Context(), p.User.ID)
@@ -767,6 +812,8 @@ func (h *AdminHandler) fail(w http.ResponseWriter, r *http.Request, err error) {
 		httpx.WriteError(w, r, http.StatusNotFound, "not_found", "target not found")
 	case errors.Is(err, ErrDuplicate):
 		httpx.WriteError(w, r, http.StatusConflict, "conflict", "a target with that name exists")
+	case errors.Is(err, ErrNoCredentialSlot):
+		httpx.WriteError(w, r, http.StatusBadRequest, "no_credential_slot", strings.TrimPrefix(err.Error(), "target: invalid: "))
 	case errors.Is(err, ErrInvalid):
 		httpx.BadRequest(w, r, strings.TrimPrefix(err.Error(), "target: invalid: "))
 	case errors.Is(err, ErrInvalidCredential):

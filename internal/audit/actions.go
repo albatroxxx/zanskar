@@ -145,6 +145,9 @@ const (
 	// credentials; each issue is an event, never carrying what was issued.
 	SessionCloudConsole     = "session.cloud.console"
 	SessionCloudCredentials = "session.cloud.credentials"
+	// TargetCloudTest: an administrator tested a cloud account's role, the
+	// gateway assuming it once (ADR 0050).
+	TargetCloudTest = "target.cloud.test"
 
 	// Runtime settings.
 	SettingsUpdate = "settings.update"

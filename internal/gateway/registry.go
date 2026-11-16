@@ -34,7 +34,12 @@ type Live struct {
 	// Kube is a Kubernetes session's scope and the groups it acts as, fixed
 	// when it starts (ADR 0045); a re-check ends the session when either
 	// would now differ, since the proxy holds them for its whole life.
-	Kube      *KubeTerms
+	Kube *KubeTerms
+	// Cloud is a cloud session's switches, fixed when it starts (ADR 0050);
+	// a re-check ends the session when either would now be off. It also
+	// carries when a console sign-in it issued runs out, for the session's
+	// detail, since the gateway cannot cut that short.
+	Cloud     *CloudTerms
 	StartedAt time.Time
 	// Tap carries the output stream for shadowing. Terminal protocols get
 	// one automatically in Add; desktop sessions are shadowed through guacd
@@ -59,6 +64,15 @@ type KubeTerms struct {
 	PortForward  bool
 	Impersonate  bool
 	Groups       []string
+}
+
+// CloudTerms is what a cloud session (ADR 0050) runs with: whether the
+// console and the command line are open to it, and, once a console sign-in
+// was issued, when that console session ends by itself.
+type CloudTerms struct {
+	Console      bool
+	CLI          bool
+	ConsoleUntil *time.Time
 }
 
 // Cancellation causes. Bridges read them with CancelReason to record why a
@@ -175,6 +189,19 @@ func (r *Registry) SetGuacID(sessionID, guacID string) {
 	defer r.mu.Unlock()
 	if l, ok := r.live[sessionID]; ok {
 		l.GuacID = guacID
+	}
+}
+
+// SetCloudConsoleUntil records when the console session a cloud session
+// issued runs out (ADR 0050); the latest issue wins, since each sign-in
+// opens a console session of its own.
+func (r *Registry) SetCloudConsoleUntil(sessionID string, until time.Time) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if l, ok := r.live[sessionID]; ok && l.Cloud != nil {
+		terms := *l.Cloud
+		terms.ConsoleUntil = &until
+		l.Cloud = &terms
 	}
 }
 

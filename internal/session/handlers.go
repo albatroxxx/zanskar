@@ -135,6 +135,14 @@ func (h *Handler) getSession(w http.ResponseWriter, r *http.Request) {
 	if !h.withRetention(w, r, s) {
 		return
 	}
+	// A live cloud session's console end is the gateway's to know (ADR
+	// 0050): the registry holds it beside the session.
+	if h.Registry != nil {
+		if l, ok := h.Registry.Get(s.ID); ok && l.Cloud != nil && l.Cloud.ConsoleUntil != nil {
+			until := *l.Cloud.ConsoleUntil
+			s.CloudConsoleUntil = &until
+		}
+	}
 	httpx.WriteJSON(w, http.StatusOK, s)
 }
 

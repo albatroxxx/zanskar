@@ -47,6 +47,8 @@ type sessionRun struct {
 	// kube is a Kubernetes session's terms, carried into the registry so a
 	// re-check can compare them (ADR 0045); nil for a bridge.
 	kube *gateway.KubeTerms
+	// cloud is a cloud session's switches, likewise (ADR 0050).
+	cloud *gateway.CloudTerms
 }
 
 // startingSet holds the sessions between their row and their bridge's
@@ -233,7 +235,7 @@ func (run *sessionRun) register(rec recorder, format, uri string) (*session.Reco
 func (run *sessionRun) live() (ctx context.Context, done func()) {
 	ctx = run.h.Registry.Add(run.r.Context(), gateway.Live{SessionID: run.s.ID, UserID: run.g.UserID, TargetID: run.ep.LiveKey,
 		Protocol: run.g.Protocol, PolicyID: run.g.PolicyID, AllowClipboard: run.g.AllowClipboard, AllowFileTransfer: run.g.AllowFileTransfer,
-		AllowDevTools: run.g.AllowDevTools, Kube: run.kube})
+		AllowDevTools: run.g.AllowDevTools, Kube: run.kube, Cloud: run.cloud})
 	run.h.starting.m.Delete(run.s.ID)
 	if run.ws != nil {
 		run.watch = watchClient(run.ws)

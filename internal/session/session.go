@@ -79,6 +79,10 @@ type Session struct {
 	// RecordingState is the recording's own state (RecordingStateOf), for
 	// reviewers; empty when the session has none they may see.
 	RecordingState RecordingState `json:"recording_state,omitempty"`
+	// CloudConsoleUntil is when a live cloud session's console sign-in runs
+	// out by itself (ADR 0050): what a terminate cannot take back, said. Set
+	// from the registry for a session this gateway holds; absent otherwise.
+	CloudConsoleUntil *time.Time `json:"cloud_console_until,omitempty"`
 
 	recOwnUntil, recFinished *time.Time
 }
