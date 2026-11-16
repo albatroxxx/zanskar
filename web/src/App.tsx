@@ -179,6 +179,7 @@ export default function App() {
                 { to: '/admin/applications', label: 'Applications' },
                 { to: '/admin/autoscaling', label: 'Autoscaling' },
                 { to: '/admin/kubernetes', label: 'Kubernetes' },
+                { to: '/admin/cloud', label: 'Cloud accounts' },
                 { to: '/admin/credentials', label: 'Credentials' },
                 { to: '/admin/policies', label: 'Policies' },
                 { to: '/admin/approvals', label: 'Approvals', badge: pendingApprovals, badgeShared: true },

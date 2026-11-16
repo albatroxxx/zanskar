@@ -166,6 +166,14 @@ export function platformName(p?: string | null): string {
   }
 }
 
+/** cloudPlatformName is how a cloud account's platform reads (ADR 0050). */
+export function cloudPlatformName(p?: string | null): string {
+  switch (p) {
+    case 'aws': return 'AWS'
+    default: return (p ?? '').toUpperCase()
+  }
+}
+
 export function engineName(engine?: string | null, version?: string | null): string {
   if (!engine) return ''
   const name = engineNames[engine] ?? engine

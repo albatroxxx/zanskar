@@ -18,7 +18,7 @@ import { TargetForm, type TargetKind } from './TargetForm'
 /** A row's disclosure, handed to its cells: Policies' pattern (2026-11-12). */
 export type RowDisclosure = { open: boolean; toggle: () => void; detailId: string }
 
-export function TargetsPage({ kind, title, addLabel, empty, columns, cells, detail, adding: addingProp, setAdding: setAddingProp, headless, platform }: {
+export function TargetsPage({ kind, title, addLabel, empty, columns, cells, detail, adding: addingProp, setAdding: setAddingProp, headless, platform, group }: {
   kind: TargetKind
   title: string
   addLabel: string
@@ -36,6 +36,8 @@ export function TargetsPage({ kind, title, addLabel, empty, columns, cells, deta
   headless?: boolean
   /** Fabric's tab: the clusters of one platform, and the one a cluster added here is of. */
   platform?: KubePlatform
+  /** Rows under a header each (ADR 0050: a cloud account's roles under the account); the list is ordered by it, then by name. */
+  group?: (t: Target) => { key: string; label: ReactNode }
 }) {
   // The server does the matching (name or address, case-insensitive, wildcard
   // characters escaped — internal/target/repo.go), so search covers the whole
@@ -82,6 +84,7 @@ export function TargetsPage({ kind, title, addLabel, empty, columns, cells, deta
     if (kind === 'application') check(false)
   }, [kind, check])
   const blocked = readiness !== 'unknown' && !readiness?.ready
+  const ordered = items && group ? [...items].sort((a, b) => group(a).key.localeCompare(group(b).key) || a.name.localeCompare(b.name)) : items
 
   return (
     <>
@@ -139,13 +142,20 @@ export function TargetsPage({ kind, title, addLabel, empty, columns, cells, deta
               </tr>
             </thead>
             <tbody>
-              {items.map((t) => {
+              {(ordered ?? []).map((t, i, all) => {
                 const rowOpen = expanded.includes(t.id)
                 const detailId = `target-${t.id}-detail`
                 const toggle = () => setExpanded((o) => (o.includes(t.id) ? o.filter((x) => x !== t.id) : [...o, t.id]))
                 const more = rowOpen ? detail?.(t) : null
+                const g = group?.(t)
+                const heads = g && (i === 0 || group!(all[i - 1]).key !== g.key)
                 return (
                   <Fragment key={t.id}>
+                    {heads && (
+                      <tr className="row-group">
+                        <th colSpan={columns.length + 2} scope="colgroup">{g.label}</th>
+                      </tr>
+                    )}
                     <tr>
                       <td>
                         <strong>{t.name}</strong> {t.state === 'disabled' && <StateBadge lifecycle="target" state={t.state} />}

@@ -1,6 +1,6 @@
 import { Navigate, Route } from 'react-router-dom'
 import { FabricMoved } from './FabricMoved'
-import { Dashboard, Targets, Databases, Applications, Autoscaling, Fabric, Credentials, Policies, PolicyEditor, PolicyReview, Approvals, UsersGroups, IdentityProviders, Sessions, Settings, Logs } from './pages'
+import { Dashboard, Targets, Databases, Applications, Autoscaling, Fabric, Cloud, Credentials, Policies, PolicyEditor, PolicyReview, Approvals, UsersGroups, IdentityProviders, Sessions, Settings, Logs } from './pages'
 
 // Admin pages, one per file. Paths match the sidebar in App.tsx. The console
 // lands on the dashboard (ADR 0029); hosts moved to /admin/hosts.
@@ -14,6 +14,8 @@ export const adminRoutes = (
     {/* Kubernetes (Fabric in the code, ADR 0048) holds the clusters; its page sends an old autoscaling tab address back. */}
     <Route path="kubernetes" element={<Fabric />} />
     <Route path="kubernetes/:kind" element={<Fabric />} />
+    {/* Cloud accounts (ADR 0050): a role in an account is a target. */}
+    <Route path="cloud" element={<Cloud />} />
     {/* The section's address until 2.0.0 (2026-11-16); a bookmarked tab keeps its platform. */}
     <Route path="fabric" element={<FabricMoved />} />
     <Route path="fabric/:kind" element={<FabricMoved />} />

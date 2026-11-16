@@ -141,6 +141,14 @@ export interface Target {
   kube_impersonate?: boolean
   /** How Zanskar's token for the cluster is minted (ADR 0048): vanilla, as enrolled; eks, gke, aks, through the cloud's role. */
   kube_platform?: KubePlatform
+  /** A role in a cloud account (ADR 0050): the account, the role the gateway assumes with the ExternalId it minted, how long a session may run, where the console opens. */
+  cloud_platform?: CloudPlatform
+  cloud_account_id?: string
+  cloud_account_alias?: string
+  cloud_role_arn?: string
+  cloud_external_id?: string
+  cloud_max_minutes?: number
+  cloud_region?: string
   ports: Partial<Record<Protocol, number>>
   capabilities: Protocol[]
   host_key_fingerprint: string | null
@@ -208,9 +216,11 @@ export interface ReachableTarget {
   /** database engine when this is a database target (ADR 0017). */
   engine?: string
   /** "target" for a static machine, "asg" for an autoscaling group, "application" for a web app (ADR 0034), "cluster" for a Kubernetes cluster (ADR 0045); missing means "target". */
-  kind?: 'target' | 'asg' | 'application' | 'cluster'
+  kind?: 'target' | 'asg' | 'application' | 'cluster' | 'cloud'
   /** A cluster's platform (ADR 0048): vanilla, eks, gke, aks. */
   platform?: KubePlatform
+  /** A role in a cloud account (ADR 0050): where it is, and which of the two doors the grants open. */
+  cloud?: { account_id: string; account_alias?: string; role_name: string; region?: string; console: boolean; cli: boolean }
   healthy_count?: number
   instance_count?: number
   /** An application's upstream, when the gateway chooses to show it; it opens through POST /connect like a desktop. */
@@ -349,6 +359,8 @@ export interface TimeWindow { days: string[]; from: string; to: string; tz: stri
 /** What a policy grant covers (ADR 0036); each kind serves its own protocols. */
 export type TargetKind = 'host' | 'database' | 'application' | 'autoscaling' | 'kubernetes' | 'cloud'
 export type KubePlatform = 'vanilla' | 'eks' | 'gke' | 'aks'
+/** The cloud a role lives in (ADR 0050); AWS alone for now, the column is for the others. */
+export type CloudPlatform = 'aws'
 
 /** What a cluster's test found (ADR 0045): the API server's version, whether Zanskar's credential may impersonate, and the namespaces it could list. */
 export interface KubeTest {
@@ -393,6 +405,9 @@ export interface PolicyGrant {
   namespaces?: string[]
   cluster_scope?: boolean
   port_forward?: boolean
+  /** A cloud grant's doors (ADR 0050): the console sign-in and command-line credentials, both open unless said otherwise. */
+  cloud_console?: boolean
+  cloud_cli?: boolean
 }
 
 /** An access policy: an audience and the grants it holds (ADR 0036). */
@@ -439,6 +454,8 @@ export interface Session {
   end_detail?: string
   failover_from_session_id?: string
   recording_id?: string
+  /** A cloud session (ADR 0050): a console sign-in issued runs until this, whatever ends the session. */
+  cloud_console_until?: string
   /** Reviewers only: retention has deleted the recording's file. */
   recording_purged?: boolean
   /** Reviewers only: when retention deletes the recording by age; absent with no age limit. */
@@ -540,6 +557,9 @@ export interface AdminOverview {
     applications: number
   clusters: number
   clusters_by_platform: Partial<Record<KubePlatform, number>>
+    /** Cloud roles enrolled, and the accounts they are in (ADR 0050). */
+    cloud_roles?: number
+    cloud_accounts?: number
   }
   autoscaling: {
     groups: number
@@ -593,6 +613,51 @@ export interface ConnectResponse {
   session_id?: string
   kubeconfig?: string
   idle_seconds?: number
+  /** A cloud session (ADR 0050) starts on connect: its bearer and the command-line profile, shown once, and which doors are open. */
+  cloud?: CloudSession
+}
+
+/** What a cloud session hands the person once (ADR 0050). */
+export interface CloudSession {
+  token: string
+  credentials_url: string
+  /** The ~/.aws/config stanza, complete. */
+  profile: string
+  console: boolean
+  cli: boolean
+  account_id: string
+  account_alias?: string
+  role_name: string
+  region?: string
+  expires_at: string
+}
+
+/** GET /targets/{id}/cloud/setup: what to paste so the role trusts this gateway; pending while the gateway's principal is unknown. */
+export interface CloudSetup {
+  principal: string | null
+  pending: boolean
+  external_id: string
+  trust_policy: string
+  cli: string
+  cloudformation: string
+}
+
+/** POST /targets/{id}/cloud/test: the role assumed for the target's minutes, or which stage refused. */
+export interface CloudTest {
+  ok: boolean
+  assumed_arn?: string
+  stage: 'assume' | 'identity' | 'duration' | 'lookup' | ''
+  message: string
+  /** Whether the role may read the account's CloudTrail for the session's activity; null when not tried. */
+  lookup_events: boolean | null
+}
+
+/** POST /cloud/{session}/console: the sign-in form the portal posts into a new tab; never a URL. */
+export interface CloudConsole {
+  action: string
+  fields: Record<string, string>
+  console_until: string
+  duration_honoured: boolean
 }
 
 export interface AutoscalingGroup {

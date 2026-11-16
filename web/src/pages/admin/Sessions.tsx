@@ -90,7 +90,11 @@ export function Sessions() {
                   <td>{protocolName(s.protocol)}</td>
                   <td className="mono muted">{s.client_ip}</td>
                   <td>{fmtDuration(s.started_at, s.ended_at)}</td>
-                  <td><EndReason state={s.state} reason={s.end_reason} detail={s.end_detail} /></td>
+                  <td>
+                    <EndReason state={s.state} reason={s.end_reason} detail={s.end_detail} />
+                    {/* A cloud console sign-in runs on after the session ends (ADR 0050); the time is said. */}
+                    {s.cloud_console_until && <div className="muted">Console until {fmtTime(s.cloud_console_until)}</div>}
+                  </td>
                   <td>
                     {!s.recording_id ? (
                       <span className="muted">—</span>

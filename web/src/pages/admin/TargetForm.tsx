@@ -11,11 +11,11 @@ import { protocols, type PortProtocol } from './lib'
 import { TagEditor } from '../../components/TagEditor'
 import { rowsToTags, tagRows, type TagRow } from '../../components/tags'
 
-export type TargetKind = 'host' | 'database' | 'application' | 'kubernetes'
+export type TargetKind = 'host' | 'database' | 'application' | 'kubernetes' | 'cloud'
 
-/** kindOf says what kind of target t is: an application has an upstream, a database an engine, a cluster an API server. */
-export function kindOf(t: Pick<Target, 'engine' | 'app_upstream' | 'kube_api_server'>): TargetKind {
-  return t.app_upstream ? 'application' : t.engine ? 'database' : t.kube_api_server ? 'kubernetes' : 'host'
+/** kindOf says what kind of target t is: an application has an upstream, a database an engine, a cluster an API server, a cloud role a role ARN (ADR 0050). */
+export function kindOf(t: Pick<Target, 'engine' | 'app_upstream' | 'kube_api_server' | 'cloud_role_arn'>): TargetKind {
+  return t.app_upstream ? 'application' : t.engine ? 'database' : t.kube_api_server ? 'kubernetes' : t.cloud_role_arn ? 'cloud' : 'host'
 }
 
 /** Body of POST/PUT /targets: every editable field travels on each write. */
@@ -40,6 +40,13 @@ export function targetBody(t: Target, patch: Partial<Target> = {}) {
     kube_ca: u.kube_ca ?? '',
     kube_impersonate: u.kube_impersonate ?? null,
     kube_platform: u.kube_platform ?? '',
+    cloud_platform: u.cloud_platform ?? '',
+    cloud_account_id: u.cloud_account_id ?? '',
+    cloud_account_alias: u.cloud_account_alias ?? '',
+    cloud_role_arn: u.cloud_role_arn ?? '',
+    cloud_external_id: u.cloud_external_id ?? '',
+    cloud_max_minutes: u.cloud_max_minutes ?? null,
+    cloud_region: u.cloud_region ?? '',
     retention_days: u.retention_days ?? null,
     ports: u.ports,
     capabilities: u.capabilities,
@@ -77,6 +84,7 @@ const emptyForm = {
   engine: 'postgres', engine_version: '', database_name: '', tls_mode: 'verify-full', tls_ca: '',
   app_upstream: '', endpoints: [] as AppEndpoint[], dependencies: 'public' as 'public' | 'origins', private_networks: '', private_hosts: '',
   kube_api_server: '', kube_ca: '', kube_impersonate: true, kube_platform: 'vanilla' as KubePlatform, eks_credential: '',
+  cloud_account_id: '', cloud_account_alias: '', cloud_role_arn: '', cloud_max_minutes: '60', cloud_region: '',
   ...defaultPorts, database: enginePorts.postgres, tags: [] as TagRow[], notes: '', retention: '',
 }
 
@@ -107,6 +115,11 @@ export function TargetForm({ initial, kind, platform, onClose, onSaved }: { init
           kube_impersonate: initial.kube_impersonate ?? true,
           kube_platform: initial.kube_platform ?? 'vanilla',
           eks_credential: initial.credentials?.kube ?? '',
+          cloud_account_id: initial.cloud_account_id ?? '',
+          cloud_account_alias: initial.cloud_account_alias ?? '',
+          cloud_role_arn: initial.cloud_role_arn ?? '',
+          cloud_max_minutes: initial.cloud_max_minutes ? String(initial.cloud_max_minutes) : '60',
+          cloud_region: initial.cloud_region ?? '',
           endpoints: (initial.app_endpoints ?? []).map((e) => ({ ...e })),
           dependencies: initial.app_dependencies ?? 'public',
           private_networks: (initial.app_private?.networks ?? []).join('\n'),
@@ -210,16 +223,39 @@ export function TargetForm({ initial, kind, platform, onClose, onSaved }: { init
       setErr(endpoints.error)
       return
     }
+    // A cloud role (ADR 0050): the account is twelve digits, the role is in it, and a session is 15 minutes to 12 hours.
+    if (k === 'cloud') {
+      const account = f.cloud_account_id.trim()
+      if (!/^\d{12}$/.test(account)) {
+        setErr('account ID is 12 digits')
+        return
+      }
+      const m = /^arn:aws[a-z-]*:iam::(\d{12}):role\/.+$/.exec(f.cloud_role_arn.trim())
+      if (!m) {
+        setErr('role ARN is arn:aws:iam::<account>:role/<name>')
+        return
+      }
+      if (m[1] !== account) {
+        setErr('role ARN is in another account')
+        return
+      }
+      const mins = Number(f.cloud_max_minutes)
+      if (!Number.isInteger(mins) || mins < 15 || mins > 720) {
+        setErr('max must be 15-720 minutes')
+        return
+      }
+    }
     void submit(async () => {
       const database = k === 'database'
       const application = k === 'application'
       const cluster = k === 'kubernetes'
+      const cloud = k === 'cloud'
       const secure = application && secureOrigins
       const body = {
         name: f.name.trim(),
-        // An application's address is its upstream's host, a cluster's its API server's; the server derives it.
-        address: application || cluster ? '' : f.address.trim(),
-        os_family: database || application || cluster ? 'other' : f.os_family,
+        // An application's address is its upstream's host, a cluster's its API server's, a cloud role has none; the server derives it.
+        address: application || cluster || cloud ? '' : f.address.trim(),
+        os_family: database || application || cluster || cloud ? 'other' : f.os_family,
         engine: database ? f.engine : '',
         engine_version: database ? f.engine_version.trim() : '',
         database_name: database ? f.database_name.trim() : '',
@@ -233,6 +269,14 @@ export function TargetForm({ initial, kind, platform, onClose, onSaved }: { init
         kube_ca: cluster ? f.kube_ca.trim() : '',
         kube_impersonate: cluster ? f.kube_impersonate : null,
         kube_platform: cluster ? f.kube_platform : '',
+        cloud_platform: cloud ? 'aws' : '',
+        cloud_account_id: cloud ? f.cloud_account_id.trim() : '',
+        cloud_account_alias: cloud ? f.cloud_account_alias.trim() : '',
+        cloud_role_arn: cloud ? f.cloud_role_arn.trim() : '',
+        // The ExternalId is the gateway's to mint; an edit carries the one it has.
+        cloud_external_id: cloud ? (initial?.cloud_external_id ?? '') : '',
+        cloud_max_minutes: cloud ? Number(f.cloud_max_minutes) : null,
+        cloud_region: cloud ? f.cloud_region.trim() : '',
         retention_days: application ? null : retention,
         ports,
         capabilities: initial?.capabilities ?? [],
@@ -253,7 +297,7 @@ export function TargetForm({ initial, kind, platform, onClose, onSaved }: { init
     })
   }
 
-  const title = initial ? `Edit ${initial.name}` : k === 'database' ? 'Add database' : k === 'host' ? 'Add host' : k === 'application' ? 'Add application' : k === 'kubernetes' ? 'Add cluster' : 'Add target'
+  const title = initial ? `Edit ${initial.name}` : k === 'database' ? 'Add database' : k === 'host' ? 'Add host' : k === 'application' ? 'Add application' : k === 'kubernetes' ? 'Add cluster' : k === 'cloud' ? 'Add role' : 'Add target'
   // The CA bundle applies when any origin is https, the upstream or another.
   const secureOrigins = [f.app_upstream, ...f.endpoints.map((e) => e.url)].some((u) => u.trim().toLowerCase().startsWith('https://'))
   return (
@@ -261,7 +305,7 @@ export function TargetForm({ initial, kind, platform, onClose, onSaved }: { init
       {err && <Alert tone="danger" onDismiss={() => setErr('')}>{err}</Alert>}
       {!initial && !kind && (
         <>
-          <Tabs label="Kind of target" value={k ?? ''} onChange={setK} tabs={[{ key: 'host', label: 'Host' }, { key: 'database', label: 'Database' }, { key: 'application', label: 'Application' }, { key: 'kubernetes', label: 'Kubernetes' }]} />
+          <Tabs label="Kind of target" value={k ?? ''} onChange={setK} tabs={[{ key: 'host', label: 'Host' }, { key: 'database', label: 'Database' }, { key: 'application', label: 'Application' }, { key: 'kubernetes', label: 'Kubernetes' }, { key: 'cloud', label: 'Cloud account' }]} />
         </>
       )}
       {k && (
@@ -308,6 +352,29 @@ export function TargetForm({ initial, kind, platform, onClose, onSaved }: { init
                     <option value="credential">The credential (shared identity)</option>
                   </select>
                 </Field>
+              </>
+            ) : k === 'cloud' ? (
+              <>
+                <Field label="Account ID">
+                  <input id="t-cloud-account" inputMode="numeric" value={f.cloud_account_id} onChange={set('cloud_account_id')} required placeholder="123456789012" />
+                </Field>
+                <Field label="Alias">
+                  <input id="t-cloud-alias" value={f.cloud_account_alias} onChange={set('cloud_account_alias')} placeholder="prod" />
+                </Field>
+                <Field label="Role ARN" hint={initial && (f.cloud_role_arn.trim() !== (initial.cloud_role_arn ?? '') || f.cloud_account_id.trim() !== (initial.cloud_account_id ?? '')) ? 'Saving ends its open sessions.' : undefined}>
+                  <input id="t-cloud-role" value={f.cloud_role_arn} onChange={set('cloud_role_arn')} required placeholder="arn:aws:iam::123456789012:role/ZanskarAdmin" />
+                </Field>
+                <Field label="Max (minutes)" hint="15 to 720">
+                  <input id="t-cloud-max" inputMode="numeric" value={f.cloud_max_minutes} onChange={set('cloud_max_minutes')} />
+                </Field>
+                <Field label="Region">
+                  <input id="t-cloud-region" value={f.cloud_region} onChange={set('cloud_region')} placeholder="eu-west-1" />
+                </Field>
+                {initial?.cloud_external_id && (
+                  <Field label="External ID">
+                    <input id="t-cloud-external-id" value={initial.cloud_external_id} readOnly />
+                  </Field>
+                )}
               </>
             ) : k === 'host' ? (
               <>
@@ -415,7 +482,7 @@ export function TargetForm({ initial, kind, platform, onClose, onSaved }: { init
               <textarea id="t-tls-ca" value={f.tls_ca} onChange={set('tls_ca')} placeholder="System roots" />
             </Field>
           )}
-          {k !== 'application' && (
+          {k !== 'application' && k !== 'cloud' && (
             <Field label="Recording retention (days)" info="Empty: the grant's, then global.">
               <input id="t-retention" inputMode="numeric" value={f.retention} onChange={set('retention')} placeholder={globalRetention ? `Global: ${globalRetention}` : 'Global'} />
             </Field>
