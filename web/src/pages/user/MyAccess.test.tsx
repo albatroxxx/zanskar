@@ -42,7 +42,9 @@ describe('MyAccess', () => {
     // One phrasing in the Granted column: what was granted, then "(asked N)";
     // nothing granted is a dash, not a second phrasing ("60 min asked").
     expect(within(pending).getByText('— (asked 60)')).toBeDefined()
-    expect(within(pending).queryByRole('button')).toBeNull()
+    // A waiting request can be withdrawn, not extended (ADR 0049).
+    expect(within(pending).queryByRole('button', { name: 'Extend…' })).toBeNull()
+    expect(within(pending).getByRole('button', { name: 'Cancel' })).toBeDefined()
 
     expect(within(rows[1]).getByText('approved')).toBeDefined()
     expect(within(rows[1]).getByText('30 min')).toBeDefined()

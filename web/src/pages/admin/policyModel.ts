@@ -84,9 +84,11 @@ export function newGrant(kind: TargetKind = 'host', conditionsFrom?: PolicyGrant
     allow_file_transfer: false, idle_timeout_minutes: 15, max_session_minutes: null, time_windows: [], retention_days: null,
   }
   if (!conditionsFrom) return base
-  const { access, sign_in, require_mfa, allow_clipboard, allow_file_transfer, idle_timeout_minutes, max_session_minutes, time_windows, retention_days } = conditionsFrom
+  const { access, approvers, sign_in, require_mfa, allow_clipboard, allow_file_transfer, idle_timeout_minutes, max_session_minutes, time_windows, retention_days } = conditionsFrom
   return {
     ...base, access, sign_in: kind === 'application' ? 'target' : sign_in, require_mfa, allow_clipboard, allow_file_transfer: filesMove(kind) && allow_file_transfer,
+    // Who decides is a condition too (ADR 0049), so "same conditions" keeps it.
+    ...(access === 'approval' && approvers?.length ? { approvers: approvers.map((a) => ({ ...a })) } : {}),
     ...(kind === 'application' && conditionsFrom.allow_devtools ? { allow_devtools: true } : {}),
     idle_timeout_minutes, max_session_minutes, time_windows: time_windows.map((w) => ({ ...w, days: [...w.days] })), retention_days,
   }
@@ -158,6 +160,8 @@ export function grantSummary(g: PolicyGrant, nameOf: (id: string) => string): st
   if (g.targets.length) parts.push(g.targets.map((t) => (implicit ? nameOf(t.id) : `${nameOf(t.id)} (${protos(t.protocols)})`)).join(', '))
   if (g.tags) parts.push(implicit ? matchPhrase(g.tags.match) : `${matchPhrase(g.tags.match)} (${protos(g.tags.protocols)})`)
   parts.push(g.access === 'approval' ? 'Approval' : 'Standing')
+  // Named approvers decide an approval grant's requests (ADR 0049); unnamed, an administrator does.
+  if (g.access === 'approval' && g.approvers?.length) parts.push(g.approvers.length === 1 ? '1 approver' : `${g.approvers.length} approvers`)
   if (g.require_mfa) parts.push('MFA')
   if (g.sign_in === 'own') parts.push('own login')
   if (g.allow_clipboard) parts.push('clipboard')
@@ -181,6 +185,9 @@ export interface GrantDraft {
   tagRows: TagRow[]
   tagProtocols: Protocol[]
   access: 'standing' | 'approval'
+  /** Who decides an approval grant's requests (ADR 0049): group ids and user ids; kept while standing, sent only for approval. */
+  approverGroups: string[]
+  approverUsers: string[]
   sign_in: 'target' | 'own'
   require_mfa: boolean
   allow_clipboard: boolean
@@ -235,6 +242,8 @@ export function toDraft(g: PolicyGrant): GrantDraft {
     tagRows: matchToRows(g.tags?.match),
     tagProtocols: g.tags ? [...g.tags.protocols] : g.kind === 'database' || g.kind === 'application' ? kindProtocols[g.kind] : ['ssh'],
     access: g.access, sign_in: g.sign_in, require_mfa: g.require_mfa, allow_clipboard: g.allow_clipboard,
+    approverGroups: (g.approvers ?? []).filter((a) => a.kind === 'group').map((a) => a.id),
+    approverUsers: (g.approvers ?? []).filter((a) => a.kind === 'user').map((a) => a.id),
     allow_file_transfer: g.allow_file_transfer, allow_devtools: !!g.allow_devtools, idle: String(g.idle_timeout_minutes),
     namespaces: (g.namespaces ?? []).join(' '), cluster_scope: !!g.cluster_scope, port_forward: !!g.port_forward,
     max: g.max_session_minutes ? String(g.max_session_minutes) : '', retention: g.retention_days ? String(g.retention_days) : '',
@@ -272,11 +281,15 @@ export function fromDraft(d: GrantDraft, nameOf: (id: string) => string, offered
   if (retention !== null && (!Number.isInteger(retention) || retention < 1 || retention > 3650)) return { error: 'keep recordings must be 1-3650 days' }
   const namespaces = d.kind === 'kubernetes' ? d.namespaces.split(/[\s,]+/).filter(Boolean) : []
   if (namespaces.some((ns) => !/^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$/.test(ns))) return { error: 'a namespace is a DNS label: lowercase letters, digits and hyphens' }
+  // Approvers belong to an approval grant alone (ADR 0049); a standing grant
+  // keeps what was picked, unsent, for the switch back.
+  const approvers = d.access === 'approval' ? [...d.approverGroups.map((id) => ({ kind: 'group' as const, id })), ...d.approverUsers.map((id) => ({ kind: 'user' as const, id }))] : []
+  if (approvers.length > 32) return { error: 'at most 32 approvers' }
   return {
     grant: {
       ...(d.id ? { id: d.id } : {}),
       kind: d.kind, targets, ...(hasTags ? { tags: { match, protocols: tagProtocols } } : {}),
-      access: d.access, sign_in: d.kind === 'application' ? 'target' : d.sign_in, require_mfa: d.require_mfa,
+      access: d.access, ...(approvers.length ? { approvers } : {}), sign_in: d.kind === 'application' ? 'target' : d.sign_in, require_mfa: d.require_mfa,
       allow_clipboard: d.allow_clipboard, allow_file_transfer: filesMove(d.kind) && d.allow_file_transfer, idle_timeout_minutes: idle,
       ...(d.kind === 'application' && d.allow_devtools ? { allow_devtools: true } : {}),
       ...(namespaces.length ? { namespaces } : {}),

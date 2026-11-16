@@ -5,7 +5,7 @@ import { expiresSoon } from '../../api/drilldown'
 import { fmtTime, protocolName } from '../../api/format'
 import type { AccessRequest, AccessStatus, Page } from '../../api/types'
 import { FilterChips } from '../../components/FilterChips'
-import { Alert, Badge, Empty, Field, Loading, Modal, PageHead } from '../../components/ui'
+import { Alert, Badge, Confirm, Empty, Field, Loading, Modal, PageHead } from '../../components/ui'
 import { badgesChanged } from '../../components/badges'
 
 const tone: Record<AccessStatus, 'ok' | 'warn' | 'danger' | undefined> = {
@@ -14,7 +14,15 @@ const tone: Record<AccessStatus, 'ok' | 'warn' | 'danger' | undefined> = {
   denied: 'danger',
   expired: undefined,
   revoked: undefined,
+  cancelled: undefined,
 }
+
+/** The two moves a requester may make themselves (ADR 0049): withdraw a
+ *  request that waits, or end a grant that runs. */
+const moves = {
+  cancel: { title: 'Cancel request?', label: 'Cancel request', danger: false },
+  end: { title: 'End access?', label: 'End access', danger: true },
+} as const
 
 /** MyAccess lists the caller's just-in-time access requests and active grants (ADR 0018). */
 export function MyAccess() {
@@ -26,6 +34,8 @@ export function MyAccess() {
   const [extending, setExtending] = useState<AccessRequest | null>(null)
   const [ext, setExt] = useState({ minutes: 60, reason: '' })
   const [busy, setBusy] = useState(false)
+  // A cancel or an end waits for a word, then posts to its route.
+  const [moving, setMoving] = useState<{ r: AccessRequest; move: keyof typeof moves } | null>(null)
   const [params, setParams] = useSearchParams()
 
   const load = () =>
@@ -121,13 +131,36 @@ export function MyAccess() {
                   <td><Badge tone={tone[r.status]}>{r.status}</Badge></td>
                   <td>{r.approved_minutes ? <>{r.approved_minutes} min{r.approved_minutes !== r.requested_minutes && <span className="muted"> (asked {r.requested_minutes})</span>}</> : <span className="muted">— (asked {r.requested_minutes})</span>}</td>
                   <td className="muted">{r.status === 'approved' && r.expires_at ? fmtTime(r.expires_at) : '—'}</td>
-                  <td>{active(r) && <button className="btn sm" onClick={() => openExtend(r)}>Extend…</button>}</td>
+                  <td style={{ whiteSpace: 'nowrap' }}>
+                    {r.status === 'pending' && <button className="btn sm" onClick={() => setMoving({ r, move: 'cancel' })}>Cancel</button>}
+                    {active(r) && (
+                      <>
+                        <button className="btn sm" onClick={() => openExtend(r)}>Extend…</button>{' '}
+                        <button className="btn sm danger" onClick={() => setMoving({ r, move: 'end' })}>End</button>
+                      </>
+                    )}
+                  </td>
                 </tr>
               ))}
             </tbody>
           </table>
         )}
       </div>
+
+      {moving && (
+        <Confirm
+          title={moves[moving.move].title}
+          body={<p className="muted">{protocolName(moving.r.protocol)} · {name(moving.r)}</p>}
+          confirmLabel={moves[moving.move].label}
+          danger={moves[moving.move].danger}
+          onClose={() => setMoving(null)}
+          onConfirm={async () => {
+            await api.post(`/me/access-requests/${moving.r.id}/${moving.move}`, {})
+            badgesChanged()
+            void load()
+          }}
+        />
+      )}
 
       {extending && (
         <Modal title={`Extend access to ${name(extending)}`} onClose={() => setExtending(null)}>

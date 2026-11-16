@@ -217,7 +217,10 @@ export interface ReachableTarget {
   app_upstream?: string
 }
 
-export type AccessStatus = 'pending' | 'approved' | 'denied' | 'expired' | 'revoked'
+export type AccessStatus = 'pending' | 'approved' | 'denied' | 'expired' | 'revoked' | 'cancelled'
+
+/** One of the people a request waits for (ADR 0049): a group or a user the eligible grants name, resolved at read time. */
+export interface RequestApprover { kind: 'group' | 'user'; id: string; name: string }
 
 /** A just-in-time access request and, once approved, the time-bounded grant (ADR 0018). */
 export interface AccessRequest {
@@ -249,6 +252,9 @@ export interface AccessRequest {
   expires_at?: string
   created_at: string
   updated_at: string
+  /** Who may decide it (ADR 0049): the approvers the eligible grants name. named says whether any grant names one; unnamed, an administrator decides. */
+  approvers?: RequestApprover[]
+  named?: boolean
 }
 
 /** A healthy autoscaling instance a user may connect to. No addresses are exposed. */
@@ -370,6 +376,8 @@ export interface PolicyGrant {
   targets: GrantTarget[]
   tags?: TagMatch
   access: 'standing' | 'approval'
+  /** Who decides an approval grant's requests (ADR 0049): groups and users; none, and an administrator decides. */
+  approvers?: PolicySubject[]
   /** target: the target's own credential setting decides; own: the person's own login. */
   sign_in: 'target' | 'own'
   require_mfa: boolean

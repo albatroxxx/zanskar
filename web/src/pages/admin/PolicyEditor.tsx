@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { protocolName } from '../../api/format'
-import { api, errorMessage } from '../../api/client'
+import { ApiError, api, errorMessage } from '../../api/client'
 import type { AutoscalingGroup, Group, Policy, PolicyGrant, PolicySubject, Protocol, Target, TargetKind, TimeWindow, User } from '../../api/types'
 import { canConnect } from '../../auth/home'
 import { PickList } from '../../components/PickList'
@@ -56,6 +56,9 @@ export function PolicyEditor() {
   const [grants, setGrants] = useState<GrantDraft[]>([toDraft(newGrant())])
   const [open, setOpen] = useState<number[]>([0])
   const [err, setErr] = useState('')
+  // The gateway's word on a named approver who may not approve (ADR 0049):
+  // shown beside the approvers of each approval grant, where the fix is.
+  const [approverErr, setApproverErr] = useState('')
   const [busy, setBusy] = useState(false)
 
   useEffect(() => {
@@ -102,11 +105,16 @@ export function PolicyEditor() {
     const subjects: PolicySubject[] = [...groupIDs.map((gid) => ({ kind: 'group' as const, id: gid })), ...userIDs.map((uid) => ({ kind: 'user' as const, id: uid }))]
     const body = { name: name.trim(), description, enabled, subjects, grants: out }
     setBusy(true)
+    setApproverErr('')
     try {
       if (id) await api.put(`/access-policies/${id}`, body)
       else await api.post('/access-policies', body)
       nav('/admin/policies')
     } catch (e) {
+      if (e instanceof ApiError && e.code === 'not_an_approver') {
+        setApproverErr(errorMessage(e))
+        setOpen((o) => [...new Set([...o, ...grants.flatMap((d, i) => (d.access === 'approval' && (d.approverGroups.length || d.approverUsers.length) ? [i] : []))])])
+      }
       fail(errorMessage(e))
     } finally {
       setBusy(false)
@@ -168,6 +176,9 @@ export function PolicyEditor() {
           }}
           targets={targets.items ?? []}
           asgs={asgs.items ?? []}
+          groups={groups.items ?? []}
+          users={users.items ?? []}
+          approverErr={approverErr}
           nameOf={nameOf}
         />
       ))}
@@ -206,8 +217,12 @@ export function PolicyEditor() {
   )
 }
 
+/** canApprove mirrors the gateway's rule (ADR 0049): a user named as an
+ *  approver holds the approver role, or is an administrator. */
+const canApprove = (u: User) => u.roles.includes('approver') || u.roles.includes('admin')
+
 /** GrantCard edits one grant: kind, what it covers, and its conditions. */
-function GrantCard({ index, draft: d, open, onToggleOpen, onChange, onRemove, onDuplicate, targets, asgs, nameOf }: {
+function GrantCard({ index, draft: d, open, onToggleOpen, onChange, onRemove, onDuplicate, targets, asgs, groups, users, approverErr, nameOf }: {
   index: number
   draft: GrantDraft
   open: boolean
@@ -217,10 +232,21 @@ function GrantCard({ index, draft: d, open, onToggleOpen, onChange, onRemove, on
   onDuplicate: () => void
   targets: Target[]
   asgs: AutoscalingGroup[]
+  groups: Group[]
+  users: User[]
+  approverErr?: string
   nameOf: (id: string) => string
 }) {
   const p = `pe-g${index}`
   const up = (patch: Partial<GrantDraft>) => onChange({ ...d, ...patch })
+  // The people an approval grant may name (ADR 0049): approvers and
+  // administrators. One named that no longer qualifies stays listed, marked,
+  // so it can be seen and removed rather than refused in silence.
+  const approverOptions = [
+    ...users.filter(canApprove).map(personOption),
+    ...users.filter((u) => !canApprove(u) && d.approverUsers.includes(u.id)).map((u) => ({ ...personOption(u), detail: 'not an approver', inactive: true })),
+  ]
+  const namesApprovers = d.approverGroups.length > 0 || d.approverUsers.length > 0
   const implicit = d.kind === 'database' || d.kind === 'application'
   const ofKind = useMemo(
     () => (d.kind === 'autoscaling' ? [] : targets.filter((t) => kindOf(t) === d.kind)),
@@ -372,6 +398,21 @@ function GrantCard({ index, draft: d, open, onToggleOpen, onChange, onRemove, on
                   ))}
                 </div>
               </Field>
+              {d.access === 'approval' && (
+                <Field label="Approvers" hint="None: an administrator decides">
+                  <>
+                    <PickList label="approver groups" idPrefix={`${p}-ag`} selected={d.approverGroups}
+                      onToggle={(gid) => up({ approverGroups: toggle(d.approverGroups, gid) })}
+                      onSelect={(ids, on) => up({ approverGroups: pickMany(d.approverGroups, ids, on) })}
+                      options={groups.map((g) => ({ id: g.id, label: g.name, detail: g.member_count !== undefined ? `${g.member_count} ${g.member_count === 1 ? 'member' : 'members'}` : undefined }))} />
+                    <PickList label="approvers" idPrefix={`${p}-au`} selected={d.approverUsers}
+                      onToggle={(uid) => up({ approverUsers: toggle(d.approverUsers, uid) })}
+                      onSelect={(ids, on) => up({ approverUsers: pickMany(d.approverUsers, ids, on) })}
+                      options={approverOptions} empty="No approvers yet" />
+                    {approverErr && namesApprovers && <Alert tone="danger">{approverErr}</Alert>}
+                  </>
+                </Field>
+              )}
               {d.kind !== 'application' && (
                 <Field label="Sign in with">
                   <div className="seg" role="radiogroup" aria-label={`Grant ${index + 1} sign-in`}>
