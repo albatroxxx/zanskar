@@ -238,6 +238,19 @@ func TestPolicyAPIRefusals(t *testing.T) {
 			b["grants"] = []map[string]any{{"kind": "autoscaling", "targets": []map[string]any{{"id": "no-fleet", "protocols": []string{"ssh"}}}}}
 		}, 422, "unknown_target", "no-fleet is not a live autoscaling"},
 		{"a grant id on a new policy", func(b map[string]any) { b["grants"].([]map[string]any)[0]["id"] = "g-123" }, 422, "unknown_grant", "carry no id"},
+		// Approvers (ADR 0049): approval grants only, and a user named must
+		// hold the role.
+		{"approvers on a standing grant", func(b map[string]any) {
+			b["grants"].([]map[string]any)[0]["approvers"] = []map[string]string{{"kind": "group", "id": e.group}}
+		}, 400, "approvers_without_approval", "approval grant"},
+		{"an approver without the role", func(b map[string]any) {
+			g := b["grants"].([]map[string]any)[0]
+			g["access"], g["approvers"] = "approval", []map[string]string{{"kind": "user", "id": e.ben.ID}}
+		}, 422, "not_an_approver", "ben does not hold the approver role"},
+		{"an approver that does not exist", func(b map[string]any) {
+			g := b["grants"].([]map[string]any)[0]
+			g["access"], g["approvers"] = "approval", []map[string]string{{"kind": "user", "id": "nobody"}}
+		}, 422, "invalid_approver", "not found"},
 		// Four eyes was removed in 1.16.0: asked for, it is refused by name,
 		// not dropped in silence.
 		{"four eyes", func(b map[string]any) { b["grants"].([]map[string]any)[0]["require_watcher"] = true }, 400, "four_eyes_removed", "removed in 1.16.0"},

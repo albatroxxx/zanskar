@@ -101,10 +101,20 @@ type Grant struct {
 	Namespaces   []string `json:"namespaces,omitempty"`
 	ClusterScope bool     `json:"cluster_scope,omitempty"`
 	PortForward  bool     `json:"port_forward,omitempty"`
+	// Approvers are the groups and users who decide the requests this
+	// grant makes people eligible for (ADR 0049): the same shape as a
+	// policy's subjects, 0 to MaxGrantApprovers, approval grants only.
+	// Empty leaves the decision to any administrator, as before. Kept last
+	// in the struct so the cloud grant's fields (ADR 0050) sit beside the
+	// Kubernetes ones above.
+	Approvers []Subject `json:"approvers,omitempty"`
 }
 
 // MaxGrantNamespaces bounds a grant's namespace list.
 const MaxGrantNamespaces = 64
+
+// MaxGrantApprovers bounds a grant's approvers (ADR 0049).
+const MaxGrantApprovers = 32
 
 // namespaceRe is a DNS label, which is what a namespace name is.
 var namespaceRe = regexp.MustCompile(`^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$`)
@@ -152,6 +162,9 @@ var (
 	// the API names with codes of their own.
 	ErrProtocolNotForKind = errors.New("protocol not served by the kind")
 	ErrUnknownSubject     = errors.New("subject not found")
+	// ErrApproversWithoutApproval: a standing grant named approvers, who
+	// would have nothing to decide (ADR 0049).
+	ErrApproversWithoutApproval = errors.New("approvers on a standing grant")
 )
 
 var dayIndex = map[string]time.Weekday{"sun": time.Sunday, "mon": time.Monday, "tue": time.Tuesday, "wed": time.Wednesday, "thu": time.Thursday, "fri": time.Friday, "sat": time.Saturday}
@@ -277,6 +290,9 @@ func (g *Grant) validate() error {
 	default:
 		return fmt.Errorf("%w: access must be standing or approval", ErrInvalidInput)
 	}
+	if err := g.validateApprovers(); err != nil {
+		return err
+	}
 	switch g.SignIn {
 	case "":
 		g.SignIn = SignInTarget
@@ -308,6 +324,61 @@ func (g *Grant) validate() error {
 		g.TimeWindows = []TimeWindow{}
 	}
 	return nil
+}
+
+// validateApprovers checks the grant's approvers (ADR 0049): approval grants
+// only, each a group or a user by id, none twice, at most MaxGrantApprovers.
+// Whether a user approver holds the role is the handler's check, which has
+// the users.
+func (g *Grant) validateApprovers() error {
+	if len(g.Approvers) == 0 {
+		g.Approvers = nil
+		return nil
+	}
+	if g.Access != AccessApproval {
+		return fmt.Errorf("%w: %w: approvers decide requests, which only an approval grant has", ErrInvalidInput, ErrApproversWithoutApproval)
+	}
+	if len(g.Approvers) > MaxGrantApprovers {
+		return fmt.Errorf("%w: at most %d approvers", ErrInvalidInput, MaxGrantApprovers)
+	}
+	seen := map[Subject]bool{}
+	for _, a := range g.Approvers {
+		if (a.Kind != SubjectGroup && a.Kind != SubjectUser) || a.ID == "" {
+			return fmt.Errorf("%w: an approver is a group or a user, by id", ErrInvalidInput)
+		}
+		if seen[a] {
+			return fmt.Errorf("%w: approver %s %s is named twice", ErrInvalidInput, a.Kind, a.ID)
+		}
+		seen[a] = true
+	}
+	return nil
+}
+
+// ApproversOf is the union of the approvers of the approval grants, among
+// those given, that cover ref and proto (ADR 0049): who decides a request
+// for them. Enabled policies only; each subject once, in the order first
+// seen; nil when no covering grant names anyone.
+func ApproversOf(policies []*Policy, ref TargetRef, proto string) []Subject {
+	var out []Subject
+	seen := map[Subject]bool{}
+	for _, p := range policies {
+		if !p.Enabled {
+			continue
+		}
+		for i := range p.Grants {
+			g := &p.Grants[i]
+			if g.Access != AccessApproval || !g.Covers(ref, proto) {
+				continue
+			}
+			for _, a := range g.Approvers {
+				if !seen[a] {
+					seen[a] = true
+					out = append(out, a)
+				}
+			}
+		}
+	}
+	return out
 }
 
 // validProtocols checks a protocol list against what the grant's kind serves.
