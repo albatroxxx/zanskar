@@ -17,6 +17,14 @@ describe('homeFor', () => {
     expect(homeFor({ roles: ['auditor'] })).toBe('/audit')
   })
 
+  // ADR 0049: an account that only decides lands on its approvals; one that
+  // also connects lands on the access portal, where the approvals are a link.
+  it('lands an approver who cannot connect on the approvals, and one who can on the access portal', () => {
+    expect(homeFor({ roles: ['approver'] })).toBe('/approvals')
+    expect(homeFor({ roles: ['approver', 'user'] })).toBe('/')
+    expect(homeFor({ roles: ['approver', 'auditor'] })).toBe('/audit')
+  })
+
   it('sends an unknown account to the sign-in fallback', () => {
     expect(homeFor(null)).toBe('/')
     expect(homeFor({ roles: [] })).toBe('/')

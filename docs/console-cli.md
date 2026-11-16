@@ -100,7 +100,7 @@ zanskar> session terminate 3f9a1c20
 
 People who can sign in.
 
-- `--role <role>`: admin, auditor or user
+- `--role <role>`: admin, auditor, approver or user
 
 ```
 zanskar> users --role admin

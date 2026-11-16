@@ -98,7 +98,7 @@ func commands() []*command {
 		{name: "session show", group: "Sessions", args: []string{"<id>"}, summary: "One session in full. The id can be the first 8 characters shown by sessions.", example: "session show 3f9a1c20", exec: cmdSessionShow},
 		{name: "session terminate", group: "Sessions", args: []string{"<id>"}, summary: "End a live session now. Its recording stops at that moment.", example: "session terminate 3f9a1c20", plan: planSessionTerminate, exec: cmdSessionTerminate},
 
-		{name: "users", group: "Users", flags: []flag{{"role", "<role>", "admin, auditor or user"}}, summary: "People who can sign in.", example: "users --role admin", exec: cmdUsers},
+		{name: "users", group: "Users", flags: []flag{{"role", "<role>", "admin, auditor, approver or user"}}, summary: "People who can sign in.", example: "users --role admin", exec: cmdUsers},
 		{name: "user show", group: "Users", args: []string{"<username>"}, summary: "One user in full.", example: "user show alice", exec: cmdUserShow},
 		{name: "user disable", group: "Users", args: []string{"<username>"}, summary: "Stop a user signing in, and sign them out everywhere.", example: "user disable alice", plan: planUser("disable"), exec: cmdUserStatus("disabled")},
 		{name: "user enable", group: "Users", args: []string{"<username>"}, summary: "Let a disabled user sign in again.", example: "user enable alice", exec: cmdUserStatus("active")},

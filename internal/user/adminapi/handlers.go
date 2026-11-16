@@ -502,7 +502,8 @@ func sameRoles(a, b []user.Role) bool {
 func privileged(roles []user.Role) []user.Role {
 	var out []user.Role
 	for _, role := range roles {
-		if role == user.RoleAdmin || role == user.RoleAuditor {
+		// Granting admin, auditor or approver is on the record (ADR 0006; ADR 0049).
+		if role == user.RoleAdmin || role == user.RoleAuditor || role == user.RoleApprover {
 			out = append(out, role)
 		}
 	}

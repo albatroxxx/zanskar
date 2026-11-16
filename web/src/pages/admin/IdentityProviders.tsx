@@ -56,6 +56,8 @@ interface IdPConfig {
   ldap?: LDAPConfig
   default_roles?: Role[]
   group_mapping?: Record<string, string>
+  /** External groups whose members hold the approver role (ADR 0049). */
+  approver_groups?: string[]
   auto_provision?: boolean
   /** List the directory on a schedule: joiners get accounts, leavers are disabled (ADR 0035). */
   sync_users?: boolean
@@ -400,6 +402,7 @@ function ProviderModal({ existing, onClose, onSaved, onDeleted }: { existing: Pr
   const [syncMinutes, setSyncMinutes] = useState(String(existing?.config?.sync_minutes || 15))
   const [roles, setRoles] = useState<Role[]>(normalizeRoles(existing?.config?.default_roles ?? ['user']))
   const [mapping, setMapping] = useState<MappingRow[]>(mappingRows(existing?.config?.group_mapping))
+  const [approverGroups, setApproverGroups] = useState<string[]>(existing?.config?.approver_groups ?? [])
   const [oidc, setOidc] = useState<OIDCConfig>(existing?.config?.oidc ?? {})
   const [ldap, setLdap] = useState<LDAPConfig>(existing?.config?.ldap ?? {})
   const [scopes, setScopes] = useState(csv(existing?.config?.oidc?.scopes))
@@ -421,6 +424,7 @@ function ProviderModal({ existing, onClose, onSaved, onDeleted }: { existing: Pr
         setSyncMinutes(String(p.config?.sync_minutes || 15))
         setRoles(normalizeRoles(p.config?.default_roles ?? ['user']))
         setMapping(mappingRows(p.config?.group_mapping))
+        setApproverGroups(p.config?.approver_groups ?? [])
         setOidc(p.config?.oidc ?? {})
         setLdap(p.config?.ldap ?? {})
         setScopes(csv(p.config?.oidc?.scopes))
@@ -436,6 +440,8 @@ function ProviderModal({ existing, onClose, onSaved, onDeleted }: { existing: Pr
     const { mapping: gm, error } = rowsToMapping(mapping)
     if (error) return { error }
     const config: IdPConfig = { default_roles: roles, group_mapping: gm, auto_provision: autoProvision }
+    const approvers = approverGroups.map((g) => g.trim()).filter(Boolean)
+    if (approvers.length) config.approver_groups = approvers
     if (arrival === 'scim') config.scim = true
     if (arrival === 'list') {
       const minutes = Number(syncMinutes)
@@ -568,6 +574,9 @@ function ProviderModal({ existing, onClose, onSaved, onDeleted }: { existing: Pr
         <Field label="Group mapping" hint={type === 'ldap' ? "Use the group's full DN; a plain name matches that name in any OU." : undefined}>
           <GroupMappingEditor rows={mapping} groups={groups} onChange={setMapping} placeholder={type === 'ldap' ? 'cn=ops,ou=groups,dc=…' : 'ops-team'} />
         </Field>
+        <Field label="Approver groups">
+          <ApproverGroupsEditor rows={approverGroups} onChange={setApproverGroups} placeholder={type === 'ldap' ? 'cn=approvers,ou=groups,dc=…' : 'approvers'} />
+        </Field>
 
         <div className="actions" style={{ justifyContent: 'space-between' }}>
           {/* Delete lives where a provider is opened, as a host's does in its
@@ -596,6 +605,26 @@ function ProviderModal({ existing, onClose, onSaved, onDeleted }: { existing: Pr
         />
       )}
     </Modal>
+  )
+}
+
+/**
+ * ApproverGroupsEditor lists the provider's groups whose members hold the
+ * approver role (ADR 0049), one row each, written as mapping keys are.
+ */
+function ApproverGroupsEditor({ rows, onChange, placeholder }: { rows: string[]; onChange: (rows: string[]) => void; placeholder: string }) {
+  return (
+    <div className="tag-editor">
+      {rows.map((g, i) => (
+        <div className="tag-row" key={i}>
+          <input id={`idp-approver${i}`} aria-label={`Approver group ${i + 1}`} value={g} autoComplete="off" placeholder={placeholder} onChange={(e) => onChange(rows.map((r, j) => (j === i ? e.target.value : r)))} />
+          <RemoveButton label={`Remove approver group ${g.trim() || i + 1}`} onClick={() => onChange(rows.filter((_, j) => j !== i))} />
+        </div>
+      ))}
+      <div>
+        <button type="button" className="btn sm" onClick={() => onChange([...rows, ''])}>Add approver group</button>
+      </div>
+    </div>
   )
 }
 

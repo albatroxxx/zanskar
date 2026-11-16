@@ -2,12 +2,12 @@ import { useRef } from 'react'
 import { normalizeRoles } from '../api/roles'
 import type { Role } from '../api/types'
 
-const order: Role[] = ['admin', 'auditor', 'user']
+const order: Role[] = ['admin', 'auditor', 'approver', 'user']
 
 /**
  * RolePicker ticks an account's roles (2026-11-03: with admin ticked, the
  * auditor and user boxes still asked to be ticked too). Admin includes the
- * other two, so ticking it shows them ticked and greyed out, with a word on
+ * other three, so ticking it shows them ticked and greyed out, with a word on
  * why; unticking it gives back what was chosen before it. What it hands
  * onChange is always as the gateway keeps it.
  */
@@ -49,7 +49,7 @@ export function RolePicker({ value, onChange, idPrefix }: { value: Role[]; onCha
           )
         })}
       </div>
-      {admin && <span className="hint" id={note}>Admin includes auditor and user.</span>}
+      {admin && <span className="hint" id={note}>Admin includes auditor, approver and user.</span>}
     </div>
   )
 }

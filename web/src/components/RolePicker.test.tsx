@@ -33,15 +33,15 @@ describe('the role picker', () => {
     render(<Harness start={['user']} seen={seen} />)
     const user = userEvent.setup()
     expect(box('auditor').disabled).toBe(false)
-    expect(screen.queryByText('Admin includes auditor and user.')).toBeNull()
+    expect(screen.queryByText('Admin includes auditor, approver and user.')).toBeNull()
     await user.click(box('admin'))
     expect(seen).toHaveBeenLastCalledWith(['admin'])
-    for (const r of ['auditor', 'user'] as Role[]) {
+    for (const r of ['auditor', 'approver', 'user'] as Role[]) {
       expect(box(r).checked).toBe(true)
       expect(box(r).disabled).toBe(true)
       expect(box(r).getAttribute('aria-describedby')).toBe('t-role-note')
     }
-    expect(screen.getByText('Admin includes auditor and user.').id).toBe('t-role-note')
+    expect(screen.getByText('Admin includes auditor, approver and user.').id).toBe('t-role-note')
     expect(box('admin').getAttribute('aria-describedby')).toBeNull()
   })
 
@@ -74,12 +74,24 @@ describe('the role picker', () => {
     await user.click(box('user'))
     expect(seen).toHaveBeenLastCalledWith(['auditor'])
   })
+
+  // ADR 0049: the fourth role is offered between auditor and user, and is
+  // kept in that place.
+  it('offers approver, between auditor and user', async () => {
+    const seen = vi.fn()
+    render(<Harness start={['user']} seen={seen} />)
+    const boxes = screen.getAllByRole('checkbox').map((b) => (b as HTMLInputElement).id)
+    expect(boxes).toEqual(['t-role-admin', 't-role-auditor', 't-role-approver', 't-role-user'])
+    await userEvent.setup().click(box('approver'))
+    expect(seen).toHaveBeenLastCalledWith(['approver', 'user'])
+  })
 })
 
 describe('normalizeRoles', () => {
   it('keeps admin alone, and the others each once in order', () => {
     expect(normalizeRoles(['user', 'admin', 'auditor'])).toEqual(['admin'])
     expect(normalizeRoles(['user', 'auditor', 'user'])).toEqual(['auditor', 'user'])
+    expect(normalizeRoles(['user', 'approver', 'auditor'])).toEqual(['auditor', 'approver', 'user'])
     expect(normalizeRoles([])).toEqual([])
   })
 })

@@ -6045,7 +6045,7 @@ components:
       description: RFC 3339, UTC.
     Role:
       type: string
-      enum: [admin, auditor, user]
+      enum: [admin, auditor, approver, user]
     UserStatus:
       type: string
       enum: [active, disabled, locked]
@@ -6667,6 +6667,17 @@ components:
           additionalProperties:
             type: string
           description: External group (claim value, or LDAP group DN or name) to Zanskar group id, applied at each sign-in.
+        approver_groups:
+          type: array
+          maxItems: 32
+          items:
+            type: string
+            maxLength: 256
+          description: |
+            External groups (written as `group_mapping` keys are) whose members hold the `approver` role
+            (ADR 0049). A provider that lists any owns the role for the accounts that sign in through it:
+            each sign-in grants it to a member of one and withdraws it from a holder in none. Not applied by
+            the directory sync or a SCIM push, which carry no groups.
         auto_provision:
           type: boolean
           description: Create an account for a person the provider asserts and Zanskar does not know, at sign-in or by the sync.
