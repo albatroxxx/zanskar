@@ -137,3 +137,9 @@ Sizes are for one engineer, with tests.
    Kubernetes", so *Fabric* says nothing to a person. The sidebar item and the heading read
    Kubernetes; the route (`/admin/fabric`), the code and this ADR keep the section's name, which
    costs nothing and leaves room should another kind ever join.
+7. **The address reads Kubernetes too (2026-11-16):** the owner: the section lands at
+   `/admin/fabric` but should land at `/admin/kubernetes`, what the sidebar says. The route is
+   `/admin/kubernetes`, a tab `/admin/kubernetes/<platform>`; `/admin/fabric` and its tab addresses
+   lead to the new ones, the platform kept, as `/admin/fabric/autoscaling` led to its page. The
+   code (`Fabric.tsx`, the comments in `internal/target`) and this ADR keep the section's name,
+   which still costs nothing; the user portal is untouched (decision 4).

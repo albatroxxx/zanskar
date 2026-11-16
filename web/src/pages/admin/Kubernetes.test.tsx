@@ -34,9 +34,9 @@ describe('Kubernetes', () => {
     const get = serve([cluster])
     const post = vi.spyOn(api, 'post').mockResolvedValue({ ...cluster, id: 'k2', name: 'staging' } as never)
     render(
-      <MemoryRouter initialEntries={['/admin/fabric/gke']}>
+      <MemoryRouter initialEntries={['/admin/kubernetes/gke']}>
         <Routes>
-          <Route path="/admin/fabric/:kind" element={<Fabric />} />
+          <Route path="/admin/kubernetes/:kind" element={<Fabric />} />
         </Routes>
       </MemoryRouter>,
     )
