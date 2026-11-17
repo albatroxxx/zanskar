@@ -890,9 +890,13 @@ func grantPairs(g policy.Grant, targets, asgs map[string]string) [][2]string {
 	}
 	if g.Kind == protocol.KindCloud {
 		rows = append(rows, [2]string{"console", yesNo(g.ConsoleAllowed())}, [2]string{"command line", yesNo(g.CLIAllowed())})
+	} else {
+		// A cloud session has no idle (ADR 0050, 3): the gateway sees no
+		// request stream, so the row would state a limit that never applies.
+		rows = append(rows, [2]string{"idle timeout", fmt.Sprintf("%d min", g.IdleTimeoutMinutes)})
 	}
 	return append(rows, [][2]string{
-		{"idle timeout", fmt.Sprintf("%d min", g.IdleTimeoutMinutes)}, {"max session", most},
+		{"max session", most},
 		{"windows", windowsText(g.TimeWindows)}, {"retention", keep}, {"id", g.ID},
 	}...)
 }

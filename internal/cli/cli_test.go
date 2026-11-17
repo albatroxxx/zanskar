@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -462,6 +463,38 @@ func TestCommandsOverTheAPI(t *testing.T) {
 
 // TestConfirmationIsSingleUseAndExpires: an answer only counts for the line
 // that was prompted, once, within the time allowed.
+// TestPolicyShowHidesIdleForACloudGrant (review 2026-11-17, L5): the CLI
+// printed an idle timeout for a cloud grant, where the editor and the
+// summary hide it (ADR 0050, 3: the gateway sees no request stream, so no
+// idle applies). The grant's rows name its two doors and the maximum, never
+// an idle; every other kind keeps its row.
+func TestPolicyShowHidesIdleForACloudGrant(t *testing.T) {
+	names := func(rows [][2]string) []string {
+		out := make([]string, 0, len(rows))
+		for _, r := range rows {
+			out = append(out, r[0])
+		}
+		return out
+	}
+	on, off := true, false
+	cloud := policy.Grant{ID: "gr-c", Kind: "cloud", IdleTimeoutMinutes: 15, CloudConsole: &on, CloudCLI: &off}
+	got := names(grantPairs(cloud, map[string]string{}, map[string]string{}))
+	for _, want := range []string{"console", "command line", "max session"} {
+		if !slices.Contains(got, want) {
+			t.Errorf("a cloud grant's rows lack %q: %v", want, got)
+		}
+	}
+	if slices.Contains(got, "idle timeout") {
+		t.Errorf("a cloud grant's rows state an idle timeout: %v", got)
+	}
+	for _, kind := range []string{"host", "database", "application", "kubernetes", "autoscaling"} {
+		g := policy.Grant{ID: "gr", Kind: kind, IdleTimeoutMinutes: 15}
+		if got := names(grantPairs(g, map[string]string{}, map[string]string{})); !slices.Contains(got, "idle timeout") || !slices.Contains(got, "max session") {
+			t.Errorf("a %s grant's rows: %v", kind, got)
+		}
+	}
+}
+
 func TestConfirmationIsSingleUseAndExpires(t *testing.T) {
 	e := newEnv(t)
 	e.unlock()
