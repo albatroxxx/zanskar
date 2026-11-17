@@ -96,6 +96,7 @@ func TestCloudTargetValidate(t *testing.T) {
 		{"with an api server", Target{Name: "x", CloudRoleARN: adminRole, KubeAPIServer: "https://k8s"}, "not two of these"},
 		{"a host port", Target{Name: "x", CloudRoleARN: adminRole, Ports: map[Protocol]int{SSH: 22}}, "has no ssh port"},
 		{"a credential on the slot", Target{Name: "x", CloudRoleARN: adminRole, Credentials: map[Protocol]string{Cloud: "c1"}}, "binds no credential"},
+		{"a credential on another slot", Target{Name: "x", CloudRoleARN: adminRole, Credentials: map[Protocol]string{SSH: "c1"}}, "binds no credential"},
 		{"an account without a role", Target{Name: "x", Address: "10.0.0.1", OSFamily: Linux, CloudAccountID: "123456789012"}, "cloud_account_id belongs to a cloud account's role"},
 		{"an alias without a role", Target{Name: "x", Address: "10.0.0.1", OSFamily: Linux, CloudAccountAlias: "prod"}, "cloud_account_alias belongs to"},
 		{"a maximum without a role", Target{Name: "x", Address: "10.0.0.1", OSFamily: Linux, CloudMaxMinutes: 60}, "cloud_max_minutes belongs to"},
@@ -470,6 +471,16 @@ func TestCloudTargetAPI(t *testing.T) {
 	if code, out := e.do("POST", "/api/v1/targets", body(map[string]any{"name": "with a slot", "credentials": map[string]string{"cloud": pw.ID}}), e.admin); code != 400 || out["code"] != "no_credential_slot" {
 		t.Fatalf("create with a slot: %d %v", code, out)
 	}
+	// Nor any other slot (L6): an ssh credential on a role dials nothing.
+	if code, out := e.do("PUT", "/api/v1/targets/"+id+"/credentials/ssh", map[string]string{"credential_id": pw.ID}, e.admin); code != 400 || out["code"] != "no_credential_slot" {
+		t.Fatalf("ssh slot on a role: %d %v", code, out)
+	}
+	if code, out := e.do("POST", "/api/v1/targets", body(map[string]any{"name": "with an ssh slot", "credentials": map[string]string{"ssh": pw.ID}}), e.admin); code != 400 || out["code"] != "no_credential_slot" {
+		t.Fatalf("create with an ssh slot: %d %v", code, out)
+	}
+	if code, out := e.do("GET", "/api/v1/targets/"+id, nil, e.admin); code != 200 || len(out["credentials"].(map[string]any)) != 0 {
+		t.Fatalf("a slot was bound: %d %v", code, out["credentials"])
+	}
 
 	// The ExternalId is fixed: left out it stays, changed it is refused.
 	put := func(patch map[string]any) (int, map[string]any) {
@@ -496,6 +507,19 @@ func TestCloudTargetAPI(t *testing.T) {
 	if code, out := put(map[string]any{"cloud_account_id": "210987654321"}); code != 400 || !strings.Contains(out["message"].(string), "is not the role's account") {
 		t.Fatalf("account not the role's: %d %v", code, out)
 	}
+	// A region edit moves the derived address (the STS host) and keeps the
+	// sessions: a role has no host key to reset (C6).
+	e.revoker.disabled = nil
+	if code, out := put(map[string]any{"cloud_region": "eu-central-1"}); code != 200 || out["address"] != "sts.eu-central-1.amazonaws.com" || out["cloud_region"] != "eu-central-1" {
+		t.Fatalf("region edit: %d %v", code, out)
+	}
+	if len(e.revoker.disabled) != 0 {
+		t.Fatalf("a region edit ended the sessions: %v", e.revoker.disabled)
+	}
+	if d := details(t, e, audit.TargetUpdate); d["trust_reset"] != nil || d["cloud_changed"] != nil || d["live_sessions_ended"] != nil {
+		t.Fatalf("a region edit's details: %v", d)
+	}
+	put(nil)
 	// The role, and the account with it: each ends the live sessions.
 	for name, patch := range map[string]map[string]any{
 		"the role":    {"cloud_role_arn": readRole},

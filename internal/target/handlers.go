@@ -243,7 +243,13 @@ func (h *AdminHandler) update(w http.ResponseWriter, r *http.Request) {
 		before["private"], after["private"] = beforePrivate, t.AppPrivate.Entries()
 	}
 	details := map[string]any{"before": before, "after": after}
-	if before["address"] != t.Address {
+	// A cloud role's address is derived from its region (the STS host), and
+	// a role has no host key to reset nor a dialled address to move: what
+	// ends its sessions is cloudTerms below, so a region edit keeps them
+	// (review 2026-11-17, C6). A host turned into a role has no terms yet to
+	// decide, so its address branch still fires.
+	addressMoved := before["address"] != t.Address && beforeCloud == ""
+	if addressMoved {
 		// Repo.Update cleared the host key and certificate pins with it.
 		details["trust_reset"] = true
 	}
@@ -282,7 +288,7 @@ func (h *AdminHandler) update(w http.ResponseWriter, r *http.Request) {
 	// A target taken out of service, or moved to an address nobody has
 	// trusted yet, keeps no session: what was admitted to the old target
 	// ends now rather than at its own limits.
-	if h.Revoker != nil && ((before["status"] == StatusActive && t.Status == StatusDisabled) || before["address"] != t.Address || len(removed) > 0 || narrowed || len(privateRemoved) > 0 || clusterChanged || cloudChanged) {
+	if h.Revoker != nil && ((before["status"] == StatusActive && t.Status == StatusDisabled) || addressMoved || len(removed) > 0 || narrowed || len(privateRemoved) > 0 || clusterChanged || cloudChanged) {
 		details["live_sessions_ended"] = h.Revoker.TargetDisabled(t.ID)
 	}
 	h.record(r, audit.TargetUpdate, t.ID, audit.Success, details)
@@ -689,8 +695,19 @@ func (h *AdminHandler) setCredential(w http.ResponseWriter, r *http.Request) {
 	}
 	id, proto := r.PathValue("id"), Protocol(r.PathValue("protocol"))
 	if proto == Cloud {
-		// A cloud account's role binds no credential (ADR 0050, 1): the
-		// trust is its trust policy.
+		// The cloud slot exists on nothing: a cloud account's role binds no
+		// credential (ADR 0050, 1), the trust is its trust policy.
+		httpx.WriteError(w, r, http.StatusBadRequest, "no_credential_slot", "a cloud account's role binds no credential; its trust policy is the trust")
+		return
+	}
+	t, err := h.Repo.Get(r.Context(), id)
+	if err != nil {
+		h.fail(w, r, err)
+		return
+	}
+	if t.IsCloud() {
+		// Nor any other slot on a role: a credential bound to a target that
+		// dials nothing (review 2026-11-17, L6).
 		httpx.WriteError(w, r, http.StatusBadRequest, "no_credential_slot", "a cloud account's role binds no credential; its trust policy is the trust")
 		return
 	}
@@ -705,11 +722,6 @@ func (h *AdminHandler) setCredential(w http.ResponseWriter, r *http.Request) {
 	}
 	if proto == Kube {
 		// The kube slot takes what the cluster's platform takes (ADR 0045, 8).
-		t, err := h.Repo.Get(r.Context(), id)
-		if err != nil {
-			h.fail(w, r, err)
-			return
-		}
 		t.Credentials[Kube] = body.CredentialID
 		if !h.kubeSlotAllowed(w, r, t) {
 			return
@@ -726,7 +738,7 @@ func (h *AdminHandler) setCredential(w http.ResponseWriter, r *http.Request) {
 		details["live_sessions_ended"] = h.Revoker.TargetDisabled(id)
 	}
 	h.record(r, audit.TargetCredentialSet, id, audit.Success, details)
-	t, err := h.Repo.Get(r.Context(), id)
+	t, err = h.Repo.Get(r.Context(), id)
 	if err != nil {
 		h.fail(w, r, err)
 		return

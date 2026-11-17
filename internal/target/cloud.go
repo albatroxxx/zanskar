@@ -135,7 +135,9 @@ func (t *Target) validateCloud() error {
 	for p := range t.Ports {
 		return fmt.Errorf("%w: a cloud account's role has no %s port; nothing is dialled", ErrInvalid, p)
 	}
-	if _, bound := t.Credentials[Cloud]; bound {
+	// No credential on any slot (ADR 0050, 1; review 2026-11-17, L6): the
+	// role dials nothing a credential could open.
+	if len(t.Credentials) > 0 {
 		return ErrNoCredentialSlot
 	}
 	// What the gateway reaches for the role: STS, in the region or globally.
