@@ -272,6 +272,17 @@ func withDefaults(t Target) Target {
 			t.KubeImpersonate = &on
 		}
 	}
+	if t.CloudRoleARN != "" {
+		// A role's row says its platform and its longest session (ADR
+		// 0050); a file may leave the defaults out. The ExternalId has no
+		// default: the gateway mints one when the file carries none.
+		if t.CloudPlatform == "" {
+			t.CloudPlatform = "aws"
+		}
+		if t.CloudMaxMinutes == 0 {
+			t.CloudMaxMinutes = 60
+		}
+	}
 	return t
 }
 

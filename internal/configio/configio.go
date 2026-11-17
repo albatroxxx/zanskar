@@ -97,30 +97,39 @@ type (
 		Description string `json:"description"`
 	}
 	apiTarget struct {
-		ID              string            `json:"id"`
-		Name            string            `json:"name"`
-		Address         string            `json:"address"`
-		OSFamily        string            `json:"os_family"`
-		Engine          string            `json:"engine"`
-		EngineVersion   string            `json:"engine_version"`
-		DatabaseName    string            `json:"database_name"`
-		TLSMode         string            `json:"tls_mode"`
-		TLSCA           string            `json:"tls_ca"`
-		AppUpstream     string            `json:"app_upstream"`
-		AppEndpoints    []Endpoint        `json:"app_endpoints"`
-		AppDependencies string            `json:"app_dependencies"`
-		AppPrivate      *Private          `json:"app_private"`
-		KubeAPIServer   string            `json:"kube_api_server"`
-		KubeCA          string            `json:"kube_ca"`
-		KubePlatform    string            `json:"kube_platform"`
-		KubeImpersonate *bool             `json:"kube_impersonate"`
-		Ports           map[string]int    `json:"ports"`
-		Capabilities    []string          `json:"capabilities"`
-		Tags            map[string]string `json:"tags"`
-		Status          string            `json:"status"`
-		Notes           string            `json:"notes"`
-		RetentionDays   *int              `json:"retention_days"`
-		Credentials     map[string]string `json:"credentials"`
+		ID              string     `json:"id"`
+		Name            string     `json:"name"`
+		Address         string     `json:"address"`
+		OSFamily        string     `json:"os_family"`
+		Engine          string     `json:"engine"`
+		EngineVersion   string     `json:"engine_version"`
+		DatabaseName    string     `json:"database_name"`
+		TLSMode         string     `json:"tls_mode"`
+		TLSCA           string     `json:"tls_ca"`
+		AppUpstream     string     `json:"app_upstream"`
+		AppEndpoints    []Endpoint `json:"app_endpoints"`
+		AppDependencies string     `json:"app_dependencies"`
+		AppPrivate      *Private   `json:"app_private"`
+		KubeAPIServer   string     `json:"kube_api_server"`
+		KubeCA          string     `json:"kube_ca"`
+		KubePlatform    string     `json:"kube_platform"`
+		KubeImpersonate *bool      `json:"kube_impersonate"`
+		// A cloud account's role (ADR 0050), the seven fields whole: a copy
+		// forgotten here would import the role as a host.
+		CloudPlatform     string            `json:"cloud_platform"`
+		CloudAccountID    string            `json:"cloud_account_id"`
+		CloudAccountAlias string            `json:"cloud_account_alias"`
+		CloudRoleARN      string            `json:"cloud_role_arn"`
+		CloudExternalID   string            `json:"cloud_external_id"`
+		CloudMaxMinutes   int               `json:"cloud_max_minutes"`
+		CloudRegion       string            `json:"cloud_region"`
+		Ports             map[string]int    `json:"ports"`
+		Capabilities      []string          `json:"capabilities"`
+		Tags              map[string]string `json:"tags"`
+		Status            string            `json:"status"`
+		Notes             string            `json:"notes"`
+		RetentionDays     *int              `json:"retention_days"`
+		Credentials       map[string]string `json:"credentials"`
 	}
 	apiSubject struct {
 		Kind string `json:"kind"`
@@ -149,6 +158,10 @@ type (
 		ClusterScope       bool             `json:"cluster_scope,omitempty"`
 		PortForward        bool             `json:"port_forward,omitempty"`
 		Approvers          []apiSubject     `json:"approvers,omitempty"`
+		// A cloud grant's switches (ADR 0050): sent only when set, since the
+		// gateway refuses them on any other kind.
+		CloudConsole *bool `json:"cloud_console,omitempty"`
+		CloudCLI     *bool `json:"cloud_cli,omitempty"`
 	}
 	apiPolicy struct {
 		ID          string       `json:"id,omitempty"`
@@ -269,6 +282,8 @@ func (s *state) targetDoc(t apiTarget) Target {
 	return Target{Name: t.Name, Address: t.Address, OSFamily: t.OSFamily, Engine: t.Engine, EngineVersion: t.EngineVersion, DatabaseName: t.DatabaseName,
 		TLSMode: t.TLSMode, TLSCA: t.TLSCA, AppUpstream: t.AppUpstream, AppEndpoints: t.AppEndpoints, AppDependencies: t.AppDependencies, AppPrivate: t.AppPrivate,
 		KubeAPIServer: t.KubeAPIServer, KubeCA: t.KubeCA, KubePlatform: t.KubePlatform, KubeImpersonate: t.KubeImpersonate,
+		CloudPlatform: t.CloudPlatform, CloudAccountID: t.CloudAccountID, CloudAccountAlias: t.CloudAccountAlias, CloudRoleARN: t.CloudRoleARN,
+		CloudExternalID: t.CloudExternalID, CloudMaxMinutes: t.CloudMaxMinutes, CloudRegion: t.CloudRegion,
 		Ports: emptyNil(t.Ports), Tags: emptyNil(t.Tags), Status: t.Status, Notes: t.Notes, RetentionDays: t.RetentionDays, Credentials: emptyNil(creds)}
 }
 
@@ -285,7 +300,7 @@ func (s *state) policyDoc(p apiPolicy) Policy {
 		dg := Grant{Kind: g.Kind, Tags: g.Tags, Access: g.Access, SignIn: g.SignIn, RequireMFA: g.RequireMFA, AllowClipboard: g.AllowClipboard,
 			AllowFileTransfer: g.AllowFileTransfer, AllowDevTools: g.AllowDevTools, IdleTimeoutMinutes: g.IdleTimeoutMinutes,
 			MaxSessionMinutes: g.MaxSessionMinutes, TimeWindows: g.TimeWindows, RetentionDays: g.RetentionDays,
-			Namespaces: g.Namespaces, ClusterScope: g.ClusterScope, PortForward: g.PortForward}
+			Namespaces: g.Namespaces, ClusterScope: g.ClusterScope, PortForward: g.PortForward, CloudConsole: g.CloudConsole, CloudCLI: g.CloudCLI}
 		for _, gt := range g.Targets {
 			dg.Targets = append(dg.Targets, GrantTarget{Name: s.byID[gt.ID], Protocols: gt.Protocols})
 		}
@@ -361,6 +376,8 @@ func (s *state) writeTarget(t Target) (map[string]any, string) {
 	return map[string]any{"name": t.Name, "address": t.Address, "os_family": t.OSFamily, "engine": t.Engine, "engine_version": t.EngineVersion,
 		"database_name": t.DatabaseName, "tls_mode": t.TLSMode, "tls_ca": t.TLSCA, "app_upstream": t.AppUpstream, "app_endpoints": t.AppEndpoints, "app_dependencies": t.AppDependencies, "app_private": t.AppPrivate,
 		"kube_api_server": t.KubeAPIServer, "kube_ca": t.KubeCA, "kube_platform": t.KubePlatform, "kube_impersonate": t.KubeImpersonate,
+		"cloud_platform": t.CloudPlatform, "cloud_account_id": t.CloudAccountID, "cloud_account_alias": t.CloudAccountAlias, "cloud_role_arn": t.CloudRoleARN,
+		"cloud_external_id": t.CloudExternalID, "cloud_max_minutes": t.CloudMaxMinutes, "cloud_region": t.CloudRegion,
 		"ports": t.Ports, "tags": t.Tags, "status": status, "notes": t.Notes, "retention_days": t.RetentionDays, "credentials": creds}, ""
 }
 
@@ -396,7 +413,7 @@ func (s *state) writePolicy(p Policy, old *apiPolicy) (apiPolicy, string) {
 		ag := apiGrant{Kind: g.Kind, Targets: []apiGrantTarget{}, Tags: g.Tags, Access: g.Access, SignIn: g.SignIn, RequireMFA: g.RequireMFA,
 			AllowClipboard: g.AllowClipboard, AllowFileTransfer: g.AllowFileTransfer, AllowDevTools: g.AllowDevTools,
 			IdleTimeoutMinutes: g.IdleTimeoutMinutes, MaxSessionMinutes: g.MaxSessionMinutes, TimeWindows: g.TimeWindows, RetentionDays: g.RetentionDays,
-			Namespaces: g.Namespaces, ClusterScope: g.ClusterScope, PortForward: g.PortForward}
+			Namespaces: g.Namespaces, ClusterScope: g.ClusterScope, PortForward: g.PortForward, CloudConsole: g.CloudConsole, CloudCLI: g.CloudCLI}
 		if ag.TimeWindows == nil {
 			ag.TimeWindows = []TimeWindow{}
 		}

@@ -134,12 +134,24 @@ func (e *env) fakeAPI(mux *http.ServeMux) {
 	})))
 	// The third target is a Kubernetes cluster acting as a shared identity (ADR 0045).
 	cluster := `{"id":"t3","name":"prod-cluster","address":"10.0.0.20","os_family":"other","kube_api_server":"https://10.0.0.20:6443","kube_platform":"vanilla","kube_impersonate":false,"capabilities":["kube","pod"],"status":"active","tags":{"env":"prod"}}`
-	reply("GET /api/v1/targets", 200, `{"items":[{"id":"t1","name":"web-01","address":"10.0.0.5","os_family":"linux","host_key_status":"trusted","tags":{"env":"prod"}},{"id":"t2","name":"orders-db","address":"db.internal","os_family":"linux","engine":"postgres","tags":{"env":"staging"}},`+cluster+`]}`)
-	reply("GET /api/v1/targets/{id}", 200, cluster)
+	// The fourth is a cloud account's role (ADR 0050).
+	role := `{"id":"t4","name":"prod-admin","address":"sts.eu-west-1.amazonaws.com","os_family":"other","cloud_platform":"aws","cloud_account_id":"123456789012","cloud_account_alias":"prod","cloud_role_arn":"arn:aws:iam::123456789012:role/Admin","cloud_external_id":"zanskar-00000000000000000000000000000000","cloud_max_minutes":60,"cloud_region":"eu-west-1","capabilities":["cloud"],"status":"active","tags":{"account":"prod"}}`
+	reply("GET /api/v1/targets", 200, `{"items":[{"id":"t1","name":"web-01","address":"10.0.0.5","os_family":"linux","host_key_status":"trusted","tags":{"env":"prod"}},{"id":"t2","name":"orders-db","address":"db.internal","os_family":"linux","engine":"postgres","tags":{"env":"staging"}},`+cluster+`,`+role+`]}`)
+	mux.Handle("GET /api/v1/targets/{id}", admin(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		e.mu.Lock()
+		e.calls = append(e.calls, r.Method+" "+r.URL.Path)
+		e.mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		if r.PathValue("id") == "t4" {
+			_, _ = io.WriteString(w, role)
+			return
+		}
+		_, _ = io.WriteString(w, cluster)
+	})))
 	reply("POST /api/v1/targets/{id}/probe", 200, `{"host_key_fingerprint":"SHA256:abc","capabilities":["ssh"]}`)
 	// Built from the policy package's types (ADR 0036), so the reply has the
 	// shape the API sends: an audience and grants, each with its conditions.
-	most, keep := 60, 365
+	most, keep, on, off := 60, 365, true, false
 	pols, _ := json.Marshal(map[string]any{"items": []policy.Policy{
 		{ID: "p1", Name: "prod-db-jit", Enabled: true, CreatedAt: time.Date(2026, 10, 1, 8, 0, 0, 0, time.UTC), UpdatedAt: time.Date(2026, 10, 30, 9, 15, 0, 0, time.UTC),
 			Subjects: []policy.Subject{{Kind: policy.SubjectGroup, ID: "grp-dba"}, {Kind: policy.SubjectUser, ID: "u1"}},
@@ -156,6 +168,10 @@ func (e *env) fakeAPI(mux *http.ServeMux) {
 				{ID: "gr-k", Kind: "kubernetes", Targets: []policy.GrantTarget{{ID: "t3", Protocols: []string{"kube"}}},
 					Access: policy.AccessStanding, SignIn: policy.SignInTarget, RequireMFA: true, IdleTimeoutMinutes: 15, TimeWindows: []policy.TimeWindow{},
 					Namespaces: []string{"prod", "staging"}, ClusterScope: true},
+				// A cloud grant carries its two switches (ADR 0050).
+				{ID: "gr-c", Kind: "cloud", Targets: []policy.GrantTarget{{ID: "t4", Protocols: []string{"cloud"}}},
+					Access: policy.AccessStanding, SignIn: policy.SignInTarget, RequireMFA: true, IdleTimeoutMinutes: 15, TimeWindows: []policy.TimeWindow{},
+					CloudConsole: &on, CloudCLI: &off},
 			}},
 		// A group deleted leaves its policies with no one in them (ADR 0036).
 		{ID: "p2", Name: "old", Enabled: false, Subjects: []policy.Subject{},
@@ -365,9 +381,11 @@ func TestCommandsOverTheAPI(t *testing.T) {
 		{"request deny 9c1d2e3f", "", "ok", []string{"Denied"}},
 		{"request revoke 9c1d2e3f", "", "confirm", []string{"withdraws alice's access to orders-db"}},
 		{"request revoke 9c1d2e3f", "alice", "ok", []string{"Revoked"}},
-		{"targets --search web", "", "ok", []string{"web-01", "postgres", "prod-cluster", "kubernetes"}},
+		{"targets --search web", "", "ok", []string{"web-01", "postgres", "prod-cluster", "kubernetes", "prod-admin", "cloud"}},
 		{"targets --tag env", "", "error", []string{"key=value"}},
 		{"target show prod-cluster", "", "ok", []string{"api server   https://10.0.0.20:6443", "platform     vanilla", "acts as      the credential (shared identity)", "offers       kube, pod"}},
+		// A cloud account's role (ADR 0050): whose account, which role, how long, where.
+		{"target show prod-admin", "", "ok", []string{"account      prod (123456789012)", "role         arn:aws:iam::123456789012:role/Admin", "max session  60 min", "region       eu-west-1", "offers       cloud"}},
 		{"target probe web-01", "", "ok", []string{"Probed web-01", "SHA256:abc", "Trust is unchanged"}},
 		{"policies", "", "ok", []string{"NAME         WHO", "prod-db-jit", "dba +1 user", "database (1 target, role=db) · host SSH, VNC", "standing, approval", "on",
 			"old", "no one", "autoscaling SSH, RDP (1 group)", "off"}},
@@ -376,7 +394,8 @@ func TestCommandsOverTheAPI(t *testing.T) {
 			"max session    60 min", "idle timeout   10 min", "windows        mon,tue,wed,thu,fri 08:00-20:00 Europe/Berlin", "retention      365 days", "sign-in        as the target sets it",
 			"Grant 2 · host", "targets        web-01 (SSH, VNC), t-retired (SSH)", "tags           env=prod|staging tier=web (SSH)", "access         standing",
 			"sign-in        their own login", "clipboard      yes", "file transfer  no", "max session    none", "windows        any time", "retention      the global setting", "gr-2",
-			"Grant 3 · kubernetes", "targets        prod-cluster", "namespaces     prod, staging", "cluster scope  yes", "port-forward   no"}},
+			"Grant 3 · kubernetes", "targets        prod-cluster", "namespaces     prod, staging", "cluster scope  yes", "port-forward   no",
+			"Grant 4 · cloud", "targets        prod-admin", "console        yes", "command line   no"}},
 		{"policy show old", "", "ok", []string{"Applies to no one", "Grant 1 · autoscaling", "web-fleet (RDP, SSH)", "sat all day UTC"}},
 		{"asgs", "", "ok", []string{"web-fleet", "aws eu-west-2"}},
 		{"asg sync web-fleet", "", "ok", []string{"Synced web-fleet"}},

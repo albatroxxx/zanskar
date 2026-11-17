@@ -536,13 +536,14 @@ func cmdTargets(x *run) error {
 			continue
 		}
 		kind := str(t, "os_family")
-		if e := str(t, "engine"); e != "" {
-			kind = e
-		} else if str(t, "app_upstream") != "" {
+		switch {
+		case str(t, "engine") != "":
+			kind = str(t, "engine")
+		case str(t, "app_upstream") != "":
 			kind = "application"
-		} else if str(t, "kube_api_server") != "" {
+		case str(t, "kube_api_server") != "":
 			kind = "kubernetes"
-		} else if str(t, "cloud_role_arn") != "" {
+		case str(t, "cloud_role_arn") != "":
 			kind = "cloud"
 		}
 		rows = append(rows, []string{str(t, "name"), str(t, "address"), kind, str(t, "host_key_status"), str(t, "tags")})

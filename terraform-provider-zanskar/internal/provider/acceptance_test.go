@@ -457,6 +457,99 @@ resource "zanskar_access_policy" "cluster" {
 	})
 }
 
+// A cloud account's role and a grant with the command line shut (ADR 0050).
+// The role's seven fields and the grant's two switches must survive every
+// write the provider makes: a provider that dropped them would turn the
+// role into a host and open the command line. The gateway's own answer is
+// checked, not only Terraform's state; the ExternalId the gateway minted is
+// read back and kept.
+func TestAccCloud(t *testing.T) {
+	url, token := gateway(t)
+	cfg := func(desc, alias string) string {
+		return providerBlock(url, token) + fmt.Sprintf(`
+resource "zanskar_group" "cloud" {
+  name = "acc-cloud"
+}
+resource "zanskar_target" "role" {
+  name                = "acc-prod-admin"
+  cloud_role_arn      = "arn:aws:iam::123456789012:role/Admin"
+  cloud_account_alias = %q
+  cloud_max_minutes   = 90
+  cloud_region        = "eu-west-1"
+}
+resource "zanskar_target" "box" {
+  name      = "acc-cloud-box"
+  address   = "10.60.0.5"
+  os_family = "linux"
+}
+resource "zanskar_access_policy" "cloud" {
+  name        = "acc-cloud"
+  description = %q
+  subjects    = [{ kind = "group", id = zanskar_group.cloud.id }]
+  grants = [{
+    kind      = "cloud"
+    targets   = [{ id = zanskar_target.role.id, protocols = ["cloud"] }]
+    cloud_cli = false
+  }]
+}
+`, alias, desc)
+	}
+	c, err := NewClient(url, token, "", "test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var externalID string
+	held := func(s *terraform.State) error {
+		ctx := context.Background()
+		var p apiPolicy
+		if err := c.do(ctx, http.MethodGet, "/access-policies/"+s.RootModule().Resources["zanskar_access_policy.cloud"].Primary.ID, nil, &p); err != nil {
+			return err
+		}
+		if len(p.Grants) != 1 || p.Grants[0].CloudConsole == nil || !*p.Grants[0].CloudConsole || p.Grants[0].CloudCLI == nil || *p.Grants[0].CloudCLI {
+			return fmt.Errorf("the gateway holds the grant as %+v", p.Grants)
+		}
+		var tg apiTarget
+		if err := c.do(ctx, http.MethodGet, "/targets/"+s.RootModule().Resources["zanskar_target.role"].Primary.ID, nil, &tg); err != nil {
+			return err
+		}
+		if tg.CloudRoleARN != "arn:aws:iam::123456789012:role/Admin" || tg.CloudAccountID != "123456789012" || tg.CloudPlatform != "aws" || tg.CloudMaxMinutes != 90 || tg.CloudRegion != "eu-west-1" || !strings.HasPrefix(tg.CloudExternalID, "zanskar-") {
+			return fmt.Errorf("the gateway holds the role as %+v", tg)
+		}
+		if externalID == "" {
+			externalID = tg.CloudExternalID
+		} else if tg.CloudExternalID != externalID {
+			return fmt.Errorf("the ExternalId changed on an update: %s, was %s", tg.CloudExternalID, externalID)
+		}
+		return nil
+	}
+	resource.Test(t, resource.TestCase{
+		ProtoV6ProviderFactories: factories,
+		Steps: []resource.TestStep{
+			{Config: cfg("cloud accounts", "prod"), Check: resource.ComposeAggregateTestCheckFunc(
+				resource.TestCheckResourceAttr("zanskar_target.role", "address", "sts.eu-west-1.amazonaws.com"),
+				resource.TestCheckResourceAttr("zanskar_target.role", "cloud_platform", "aws"),
+				resource.TestCheckResourceAttr("zanskar_target.role", "cloud_account_id", "123456789012"),
+				resource.TestCheckResourceAttr("zanskar_target.role", "cloud_max_minutes", "90"),
+				resource.TestMatchResourceAttr("zanskar_target.role", "cloud_external_id", regexpMust(`^zanskar-[0-9a-f]{32}$`)),
+				resource.TestCheckNoResourceAttr("zanskar_target.box", "cloud_max_minutes"),
+				resource.TestCheckResourceAttr("zanskar_target.box", "cloud_role_arn", ""),
+				resource.TestCheckResourceAttr("zanskar_access_policy.cloud", "grants.0.cloud_console", "true"),
+				resource.TestCheckResourceAttr("zanskar_access_policy.cloud", "grants.0.cloud_cli", "false"),
+				held,
+			)},
+			// A description and the alias changed: updates that must keep the
+			// ExternalId, the switches and the rest of the role as they are.
+			{Config: cfg("cloud accounts, on call", "production"), Check: resource.ComposeAggregateTestCheckFunc(
+				resource.TestCheckResourceAttr("zanskar_target.role", "cloud_account_alias", "production"),
+				resource.TestCheckResourceAttr("zanskar_access_policy.cloud", "description", "cloud accounts, on call"),
+				held,
+			)},
+			{ResourceName: "zanskar_target.role", ImportState: true, ImportStateVerify: true},
+			{ResourceName: "zanskar_access_policy.cloud", ImportState: true, ImportStateVerify: true},
+		},
+	})
+}
+
 // Refused by the gateway, the provider says why: a token that does not
 // stand, and a policy the gateway will not take.
 func TestAccRefusals(t *testing.T) {

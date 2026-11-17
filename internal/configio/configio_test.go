@@ -199,6 +199,14 @@ func TestExportImportRoundTrip(t *testing.T) {
 	a.json(t, "POST", "/api/v1/access-policies", map[string]any{"name": "ops-cluster", "subjects": []map[string]string{{"kind": "group", "id": grp["id"].(string)}},
 		"grants": []map[string]any{{"kind": "kubernetes", "targets": []map[string]any{{"id": cluster["id"], "protocols": []string{"kube"}}}, "namespaces": []string{"prod"}, "cluster_scope": true,
 			"access": "approval", "approvers": []map[string]string{{"kind": "group", "id": grp["id"].(string)}}}}})
+	// A cloud account's role and a grant with the command line shut (ADR
+	// 0050). The role's ExternalId travels, so a gateway rebuilt from the
+	// file keeps the account's trust policy valid; a file that dropped the
+	// shut switch would import a grant that opens the command line.
+	role := a.json(t, "POST", "/api/v1/targets", map[string]any{"name": "prod-admin", "cloud_role_arn": "arn:aws:iam::123456789012:role/Admin", "cloud_account_alias": "prod",
+		"cloud_max_minutes": 90, "cloud_region": "eu-west-1"})
+	a.json(t, "POST", "/api/v1/access-policies", map[string]any{"name": "ops-aws", "subjects": []map[string]string{{"kind": "group", "id": grp["id"].(string)}},
+		"grants": []map[string]any{{"kind": "cloud", "targets": []map[string]any{{"id": role["id"], "protocols": []string{"cloud"}}}, "cloud_cli": false}}})
 
 	code, file := a.do(t, "GET", "/api/v1/admin/config/export", nil)
 	if code != 200 {
@@ -207,7 +215,9 @@ func TestExportImportRoundTrip(t *testing.T) {
 	text := string(file)
 	for _, want := range []string{"zanskar: 1", "name: ops", "- ann", "name: web-1", "ssh: linux-key", "env: prod", "name: ops-web", "group: ops", "name: web-1", "allow_clipboard: true", "app_upstream: http://wiki.corp", "app_dependencies: origins",
 		"kube_api_server: https://10.0.0.20:6443", "kube_impersonate: false", "kube_platform: vanilla", "kube: cluster-sa", "kind: kubernetes", "namespaces: [prod]", "cluster_scope: true",
-		"access: approval", "approvers:"} {
+		"access: approval", "approvers:",
+		"name: prod-admin", "address: sts.eu-west-1.amazonaws.com", "cloud_platform: aws", "cloud_account_id: \"123456789012\"", "cloud_account_alias: prod", "cloud_role_arn: arn:aws:iam::123456789012:role/Admin",
+		"cloud_external_id: " + role["cloud_external_id"].(string), "cloud_max_minutes: 90", "cloud_region: eu-west-1", "kind: cloud", "cloud_console: true", "cloud_cli: false"} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("the export lacks %q:\n%s", want, text)
 		}
@@ -219,14 +229,14 @@ func TestExportImportRoundTrip(t *testing.T) {
 	b := newGW(t)
 	// The plan first: everything is new, nothing changed yet.
 	code, out := b.do(t, "POST", "/api/v1/admin/config/import", file)
-	if code != 200 || !strings.Contains(string(out), `"applied":false`) || strings.Count(string(out), `"action":"create"`) != 6 {
+	if code != 200 || !strings.Contains(string(out), `"applied":false`) || strings.Count(string(out), `"action":"create"`) != 8 {
 		t.Fatalf("plan: %d %s", code, out)
 	}
 	if n := count(t, b.db, "targets"); n != 0 {
 		t.Fatalf("a plan changed something: %d targets", n)
 	}
 	code, out = b.do(t, "POST", "/api/v1/admin/config/import?apply=true", file)
-	if code != 200 || strings.Count(string(out), `"applied":true`) != 7 {
+	if code != 200 || strings.Count(string(out), `"applied":true`) != 9 {
 		t.Fatalf("apply: %d %s", code, out)
 	}
 	// B now exports what A did.
@@ -246,13 +256,21 @@ func TestExportImportRoundTrip(t *testing.T) {
 	if approvers, _ := grant["approvers"].([]any); len(approvers) != 1 || approvers[0].(map[string]any)["kind"] != "group" || approvers[0].(map[string]any)["id"] != b.named(t, "/api/v1/groups", "ops")["id"] {
 		t.Fatalf("B's grant approvers: %v", grant["approvers"])
 	}
+	// B's role carries A's ExternalId and the maximum, and B's cloud grant
+	// keeps the command line shut.
+	if r := b.named(t, "/api/v1/targets", "prod-admin"); r["cloud_external_id"] != role["cloud_external_id"] || r["cloud_max_minutes"] != float64(90) || r["cloud_account_id"] != "123456789012" || r["cloud_region"] != "eu-west-1" || r["cloud_platform"] != "aws" {
+		t.Fatalf("B's role: %v", r)
+	}
+	if g := b.named(t, "/api/v1/access-policies", "ops-aws")["grants"].([]any)[0].(map[string]any); g["cloud_console"] != true || g["cloud_cli"] != false {
+		t.Fatalf("B's cloud grant: %v", g)
+	}
 	// A second import changes nothing.
 	_, out = b.do(t, "POST", "/api/v1/admin/config/import?apply=true", file)
 	if strings.Contains(string(out), `"action":"create"`) || strings.Contains(string(out), `"action":"update"`) {
 		t.Fatalf("a second import changed things: %s", out)
 	}
 	// Every change went through the API, so each is in the log as usual.
-	if evs, _, _ := b.audit.List(context.Background(), audit.Filter{Action: audit.TargetCreate}); len(evs) != 3 {
+	if evs, _, _ := b.audit.List(context.Background(), audit.Filter{Action: audit.TargetCreate}); len(evs) != 4 {
 		t.Fatalf("target.create events: %d", len(evs))
 	}
 	if evs, _, _ := b.audit.List(context.Background(), audit.Filter{Action: audit.ConfigImport}); len(evs) != 2 {
