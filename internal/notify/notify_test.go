@@ -321,8 +321,8 @@ func TestChannelInputIsChecked(t *testing.T) {
 	}
 }
 
-// fakeSMTP is enough of a mail server for one message: no TLS, which the
-// sender allows only for this host's own server.
+// fakeSMTP is enough of a mail server for a few messages, one connection at
+// a time: no TLS, which the sender allows only for this host's own server.
 func fakeSMTP(t *testing.T) (port int, got func() string) {
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -331,11 +331,7 @@ func fakeSMTP(t *testing.T) (port int, got func() string) {
 	t.Cleanup(func() { _ = ln.Close() })
 	var mu sync.Mutex
 	var msg strings.Builder
-	go func() {
-		c, err := ln.Accept()
-		if err != nil {
-			return
-		}
+	serve := func(c net.Conn) {
 		defer func() { _ = c.Close() }()
 		r := bufio.NewReader(c)
 		say := func(s string) { _, _ = fmt.Fprintf(c, "%s\r\n", s) }
@@ -369,6 +365,17 @@ func fakeSMTP(t *testing.T) (port int, got func() string) {
 			default:
 				say("250 ok")
 			}
+		}
+	}
+	// One connection after another: a message per recipient (ADR 0049,
+	// review R7) arrives as several, and got returns them end to end.
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			serve(c)
 		}
 	}()
 	return ln.Addr().(*net.TCPAddr).Port, func() string { mu.Lock(); defer mu.Unlock(); return msg.String() }

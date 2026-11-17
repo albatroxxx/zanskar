@@ -29,6 +29,7 @@ var ErrNoMailServer = errors.New("notify: no mail server is set")
 
 // AccessRequested tells the approvers at to that who asked for proto access
 // to target, with the link that opens the request in the approvals view.
+// One message per address: an approver is not shown the others' addresses.
 func (d *Direct) AccessRequested(ctx context.Context, to []string, who, proto, target, requestID string) error {
 	if d == nil || d.Sender == nil || d.Server == nil {
 		return ErrNoMailServer
@@ -48,7 +49,16 @@ func (d *Direct) AccessRequested(ctx context.Context, to []string, who, proto, t
 		Link:    strings.TrimRight(d.Base, "/") + "/approvals?request=" + url.QueryEscape(requestID)}
 	m.Text = m.Subject + ". Open it to approve or deny."
 	m.Subject, m.Text = clean(m.Subject), clean(m.Text)
+	var errs []error
+	for _, rcpt := range to {
+		errs = append(errs, d.sendOne(ctx, srv, rcpt, m))
+	}
+	return errors.Join(errs...)
+}
+
+// sendOne sends m to one address, within the send timeout.
+func (d *Direct) sendOne(ctx context.Context, srv *Server, rcpt string, m Message) error {
 	ctx, cancel := context.WithTimeout(ctx, sendTimeout)
 	defer cancel()
-	return d.Sender.SendThrough(ctx, srv, to, m)
+	return d.Sender.SendThrough(ctx, srv, []string{rcpt}, m)
 }

@@ -11,9 +11,10 @@ import (
 )
 
 // TestDirectAccessRequested: a direct message (ADR 0049) goes through the
-// gateway's mail server to the people named, with the approvals link and
-// without an event number; with no server set, nothing is sent and the
-// caller hears why.
+// gateway's mail server to the people named, one message each so nobody
+// reads another's address (review R7), with the approvals link and without
+// an event number; with no server set, nothing is sent and the caller hears
+// why.
 func TestDirectAccessRequested(t *testing.T) {
 	port, got := fakeSMTP(t)
 	d := &Direct{Sender: &Sender{}, Base: "https://gw.example.com/",
@@ -26,15 +27,18 @@ func TestDirectAccessRequested(t *testing.T) {
 	deadline := time.Now().Add(3 * time.Second)
 	var mail string
 	for time.Now().Before(deadline) {
-		if mail = got(); strings.Contains(mail, "Zanskar,") {
+		if mail = got(); strings.Count(mail, "Zanskar,") == 2 {
 			break
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	for _, want := range []string{"To: carol@example.com, dan@example.com\r\n", "alice asks for SSH access to web-1. Open it to approve or deny.", "https://gw.example.com/approvals?request=r-1", "\r\n-- \r\nZanskar, 20"} {
+	for _, want := range []string{"To: carol@example.com\r\n", "To: dan@example.com\r\n", "alice asks for SSH access to web-1. Open it to approve or deny.", "https://gw.example.com/approvals?request=r-1", "\r\n-- \r\nZanskar, 20"} {
 		if !strings.Contains(mail, want) {
 			t.Fatalf("the mail lacks %q:\n%s", want, mail)
 		}
+	}
+	if strings.Contains(mail, "carol@example.com, dan@example.com") || strings.Count(mail, "Subject:") != 2 {
+		t.Fatalf("one message per recipient, never two addresses in one To:\n%s", mail)
 	}
 	if strings.Contains(mail, "event") {
 		t.Fatalf("a direct message follows no event:\n%s", mail)

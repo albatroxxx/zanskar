@@ -449,15 +449,17 @@ func TestCancelAndEnd(t *testing.T) {
 }
 
 // TestApproversAreMailed: a request with named approvers mails each of them
-// who has an address, through the gateway's mail server, with the link to
-// the approvals view; the requester and those without an address are left
-// out (ADR 0049, 6).
+// who has an address, one message each, through the gateway's mail server,
+// with the link to the approvals view; the requester and those without an
+// address are left out (ADR 0049, 6).
 func TestApproversAreMailed(t *testing.T) {
 	e := newEnv(t)
 	e.nameApprovers(t)
 	ctx := context.Background()
-	if err := e.users.Update(ctx, e.ids["carol"], "carol", "carol@example.com", user.StatusActive); err != nil {
-		t.Fatal(err)
+	for _, who := range []string{"carol", "dan"} {
+		if err := e.users.Update(ctx, e.ids[who], who, who+"@example.com", user.StatusActive); err != nil {
+			t.Fatal(err)
+		}
 	}
 	port, got := fakeSMTP(t)
 	e.h.Mail = &notify.Direct{Sender: &notify.Sender{}, Base: "https://gw.example.com/",
@@ -468,23 +470,27 @@ func TestApproversAreMailed(t *testing.T) {
 	deadline := time.Now().Add(5 * time.Second)
 	var mail string
 	for time.Now().Before(deadline) {
-		if mail = got(); strings.Contains(mail, "Zanskar,") {
+		if mail = got(); strings.Count(mail, "Zanskar,") == 2 {
 			break
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
-	for _, want := range []string{"To: carol@example.com\r\n", "alice asks for SSH access to web-1", "https://gw.example.com/approvals?request=" + id} {
+	for _, want := range []string{"To: carol@example.com\r\n", "To: dan@example.com\r\n", "alice asks for SSH access to web-1", "https://gw.example.com/approvals?request=" + id} {
 		if !strings.Contains(mail, want) {
 			t.Fatalf("the mail lacks %q:\n%s", want, mail)
 		}
 	}
-	if strings.Contains(mail, "dan") || strings.Contains(mail, "event 0") {
+	// One message each: carol is not shown dan's address nor dan carol's.
+	if strings.Contains(mail, "carol@example.com, dan@example.com") || strings.Count(mail, "Subject:") != 2 {
+		t.Fatalf("one message per approver:\n%s", mail)
+	}
+	if strings.Contains(mail, "erin") || strings.Contains(mail, "event 0") {
 		t.Fatalf("the mail names an approver without an address, or an event it has not:\n%s", mail)
 	}
 }
 
-// fakeSMTP is enough of a mail server for one message: no TLS, which the
-// sender allows only for this host's own server.
+// fakeSMTP is enough of a mail server for a few messages, one connection at
+// a time: no TLS, which the sender allows only for this host's own server.
 func fakeSMTP(t *testing.T) (port int, got func() string) {
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -493,11 +499,7 @@ func fakeSMTP(t *testing.T) (port int, got func() string) {
 	t.Cleanup(func() { _ = ln.Close() })
 	var mu sync.Mutex
 	var msg strings.Builder
-	go func() {
-		c, err := ln.Accept()
-		if err != nil {
-			return
-		}
+	serve := func(c net.Conn) {
 		defer func() { _ = c.Close() }()
 		r := bufio.NewReader(c)
 		say := func(s string) { _, _ = fmt.Fprintf(c, "%s\r\n", s) }
@@ -531,6 +533,17 @@ func fakeSMTP(t *testing.T) (port int, got func() string) {
 			default:
 				say("250 ok")
 			}
+		}
+	}
+	// One connection after another: a message per recipient (ADR 0049,
+	// review R7) arrives as several, and got returns them end to end.
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			serve(c)
 		}
 	}()
 	return ln.Addr().(*net.TCPAddr).Port, func() string {
