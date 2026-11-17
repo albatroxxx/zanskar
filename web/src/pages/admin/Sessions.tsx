@@ -38,6 +38,10 @@ export function Sessions() {
   const { items, err, setErr, reload } = useList<Session>('/sessions', { open: openOnly ? 'true' : undefined, username: applied || undefined, from: from || undefined })
   const [terminating, setTerminating] = useState<Session | null>(null)
   const [reason, setReason] = useState('')
+  // When a cloud session's command line stops after a terminate asked now: its
+  // credentials run on for up to fifteen minutes (ADR 0050). Fixed when the
+  // dialog opens, not at every render.
+  const [cliBy, setCliBy] = useState('')
   // A live cloud session's activity, read from CloudTrail on demand (ADR
   // 0050, phase C): the count of the last read stays beside the button.
   const [activity, setActivity] = useState<Record<string, string>>({})
@@ -130,7 +134,7 @@ export function Sessions() {
                           </>
                         )}
                         {admin && (
-                          <button className="btn sm danger" onClick={() => setTerminating(s)}>
+                          <button className="btn sm danger" onClick={() => { setCliBy(new Date(Date.now() + 15 * 60_000).toISOString()); setTerminating(s) }}>
                             Terminate
                           </button>
                         )}
@@ -148,11 +152,27 @@ export function Sessions() {
           title="Terminate this session?"
           body={
             <div>
-              {/* Terminate ends the session, not the access (live, 2026-11-04: an
-                  administrator expected the portal to go back to Request). */}
-              <p>
-                The session closes now; access stays.
-              </p>
+              {terminating.protocol === 'cloud' ? (
+                // What a cloud session handed out runs on (ADR 0050): the command
+                // line's credentials for up to fifteen minutes, the console to its
+                // end. The two times, nothing else.
+                <dl className="kv">
+                  <dt>Command line</dt>
+                  <dd>by {fmtTime(cliBy)}</dd>
+                  {terminating.cloud_console_until && (
+                    <>
+                      <dt>Console</dt>
+                      <dd>by {fmtTime(terminating.cloud_console_until)}</dd>
+                    </>
+                  )}
+                </dl>
+              ) : (
+                /* Terminate ends the session, not the access (live, 2026-11-04: an
+                   administrator expected the portal to go back to Request). */
+                <p>
+                  The session closes now; access stays.
+                </p>
+              )}
               <Field label="Reason (optional)">
                 <input id="s-reason" value={reason} onChange={(e) => setReason(e.target.value)} />
               </Field>

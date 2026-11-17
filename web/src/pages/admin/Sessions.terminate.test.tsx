@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router-dom'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { api } from '../../api/client'
+import { fmtTime } from '../../api/format'
 import type { Session } from '../../api/types'
 import { Sessions } from './Sessions'
 
@@ -16,8 +17,8 @@ const live: Session = {
   client_ip: '127.0.0.1', started_at: '2026-10-06T10:00:00Z', state: 'live', recording_id: 'r1',
 }
 
-function mount() {
-  const get = vi.spyOn(api, 'get').mockResolvedValue({ items: [live] } as never)
+function mount(items: Session[] = [live]) {
+  const get = vi.spyOn(api, 'get').mockResolvedValue({ items } as never)
   const post = vi.spyOn(api, 'post').mockResolvedValue({} as never)
   render(
     <MemoryRouter initialEntries={['/admin/sessions']}>
@@ -60,5 +61,36 @@ describe('Sessions, Terminate', () => {
     await user.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Terminate' }))
     // The dialog shows it and the page keeps it once the dialog is gone.
     expect((await screen.findAllByText(/session already ended/)).length).toBeGreaterThan(0)
+  })
+
+  // A cloud session's terminate cannot take back what was handed out (ADR
+  // 0050; review 2026-11-17, C5): the dialog gives the two end times, the
+  // command line's within fifteen minutes and the console's when a sign-in
+  // was issued, in place of "closes now".
+  it('gives the two end times for a cloud session, and the sentence for the rest', async () => {
+    const until = '2026-10-06T11:00:00Z'
+    const cloud: Session = { ...live, id: 'c1', target_name: 'prod-admin', protocol: 'cloud', cloud_console_until: until }
+    const quiet: Session = { ...live, id: 'c2', target_name: 'dev-read', protocol: 'cloud' }
+    mount([live, cloud, quiet])
+    const user = userEvent.setup()
+    const rowOf = async (name: string) => (await screen.findByText(name)).closest('tr')!
+    await user.click(within(await rowOf('prod-admin')).getByRole('button', { name: 'Terminate' }))
+    let dialog = screen.getByRole('dialog')
+    expect(within(dialog).queryByText(/closes now/)).toBeNull()
+    expect(within(dialog).getByText('Command line').nextElementSibling?.textContent).toMatch(/^by .+\d/)
+    expect(within(dialog).getByText('Console').nextElementSibling?.textContent).toBe(`by ${fmtTime(until)}`)
+    await user.click(within(dialog).getByRole('button', { name: 'Cancel' }))
+
+    // No console issued: the command line alone.
+    await user.click(within(await rowOf('dev-read')).getByRole('button', { name: 'Terminate' }))
+    dialog = screen.getByRole('dialog')
+    expect(within(dialog).getByText('Command line')).toBeDefined()
+    expect(within(dialog).queryByText('Console')).toBeNull()
+    await user.click(within(dialog).getByRole('button', { name: 'Cancel' }))
+
+    await user.click(within(await rowOf('web-01')).getByRole('button', { name: 'Terminate' }))
+    dialog = screen.getByRole('dialog')
+    expect(within(dialog).getByText('The session closes now; access stays.')).toBeDefined()
+    expect(within(dialog).queryByText('Command line')).toBeNull()
   })
 })
