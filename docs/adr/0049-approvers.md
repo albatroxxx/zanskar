@@ -5,7 +5,12 @@ Date: 2026-11-16
 ## Status
 
 Accepted 2026-11-16: the owner took every recommendation below ("use your recommendation") and
-asked for the build to start. Amends [ADR 0006](0006-roles-admin-auditor-user.md) (three roles) and
+asked for the build to start. Built 2026-11-17 on the batch after 2.0.0, decision 7 included
+(the requester's cancel and end); the guide's *Approving* section describes it as built. Two
+details differ from the text below: the console's Deny carries no note (the API and the command
+line take one), and the policy editor offers only people who hold the role, marking one who lost
+it *not an approver* and one deleted *not found*, since a save naming a deleted user is refused.
+Amends [ADR 0006](0006-roles-admin-auditor-user.md) (three roles) and
 [ADR 0018](0018-just-in-time-access-approvals.md) (approver model v1: any admin). Written with
 [ADR 0050](0050-cloud-accounts-as-targets.md), which needs it: elevated access to a cloud account
 is the request that most wants a named approver.

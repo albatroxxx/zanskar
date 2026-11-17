@@ -6,7 +6,17 @@ Date: 2026-11-16
 
 Accepted 2026-11-16: the owner took every recommendation below ("use your recommendation") and
 asked for the build to start: phases B and C after ADR 0049, and phase D (Identity Center mode) when
-an organization asks for it, as decision 6 recommends. Needs [ADR 0049](0049-approvers.md) (approvers) first. Follows the shape of
+an organization asks for it, as decision 6 recommends. Phases B and C built 2026-11-17 on the batch
+after 2.0.0; phase D deferred. As built, where it differs from the text below: the Setup prints
+four pastes (the trust policy, the activity policy with `cloudtrail:LookupEvents`, the CLI that
+puts both on a role, the CloudFormation); `cloud_max_minutes` has a floor of 15, AWS's shortest
+session; a cloud grant hides clipboard and the sign-in choice as well as idle; a change of either
+switch, either way, ends the session; the console falls back to one hour when the role's maximum
+allows less, and the recording says so; the activity's last read waits the 15 minutes after the
+session with the recording open, and a gateway that does not come back leaves it to the sweep.
+No record of the duration measurement the plan asks for is in the repository; each sign-in logs
+whether AWS honoured the asked duration (`duration_honoured`) meanwhile. Needs
+[ADR 0049](0049-approvers.md) (approvers) first. Follows the shape of
 [ADR 0045](0045-kubernetes-clusters-as-targets.md) and [ADR 0048](0048-fabric.md): a new kind of
 target, derived, with a platform column, reached through a role the gateway assumes as autoscaling
 groups (ADR 0023) and EKS clusters are.
