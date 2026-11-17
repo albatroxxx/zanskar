@@ -395,25 +395,33 @@ func CloudTrustPolicy(gatewayPrincipal, externalID string) string {
 // CloudRoleCLI puts the trust policy on the role: on one that exists, as
 // the usual case is (the role carries the permissions the person will act
 // with, which are the account's business), or as a new role to which the
-// administrator then attaches them.
-func CloudRoleCLI(roleName, trustPolicy string) string {
+// administrator then attaches them. Either way the activity policy goes on
+// as an inline policy (phase C): the one statement the gateway's own read
+// of CloudTrail needs.
+func CloudRoleCLI(roleName, trustPolicy, activityPolicy string) string {
 	return "cat > zanskar-trust.json <<'EOF'\n" + trustPolicy + "\nEOF\n" +
+		"cat > zanskar-activity.json <<'EOF'\n" + activityPolicy + "\nEOF\n" +
 		"# an existing role: replace its trust policy\n" +
 		"aws iam update-assume-role-policy --role-name " + roleName + " --policy-document file://zanskar-trust.json\n" +
 		"# or a new role, to which you then attach the permissions it should carry\n" +
 		"aws iam create-role --role-name " + roleName + " --assume-role-policy-document file://zanskar-trust.json \\\n" +
-		"  --description 'Zanskar gateway: assumed for approved people' --max-session-duration 43200\n"
+		"  --description 'Zanskar gateway: assumed for approved people' --max-session-duration 43200\n" +
+		"# either way: the session's activity is read from CloudTrail\n" +
+		"aws iam put-role-policy --role-name " + roleName + " --policy-name " + ActivityPolicyName + " --policy-document file://zanskar-activity.json\n"
 }
 
 // CloudRoleCloudFormation is a new role as a CloudFormation template, its
-// permissions left for the administrator to add (ManagedPolicyArns).
-func CloudRoleCloudFormation(roleName, trustPolicy string) string {
+// permissions left for the administrator to add (ManagedPolicyArns), the
+// activity policy inline. JSON policy documents are valid YAML, so they are
+// embedded as they are.
+func CloudRoleCloudFormation(roleName, trustPolicy, activityPolicy string) string {
 	return "AWSTemplateFormatVersion: \"2010-09-09\"\n" +
 		"Description: " + yamlString("Zanskar gateway: a role assumed for approved people") + "\n" +
 		"Resources:\n  ZanskarRole:\n    Type: AWS::IAM::Role\n    Properties:\n      RoleName: " + roleName + "\n" +
 		"      MaxSessionDuration: 43200\n" +
 		"      AssumeRolePolicyDocument:\n" + indentLines(trustPolicy, "        ") +
 		"      ManagedPolicyArns: []  # the permissions the role should carry\n" +
+		"      Policies:\n        - PolicyName: " + ActivityPolicyName + "\n          PolicyDocument:\n" + indentLines(activityPolicy, "            ") +
 		"Outputs:\n  RoleArn:\n    Value: !GetAtt ZanskarRole.Arn\n"
 }
 

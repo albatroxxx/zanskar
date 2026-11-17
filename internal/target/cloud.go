@@ -163,16 +163,20 @@ func cloudTerms(t *Target) string {
 // CloudSetup is what the role's account needs from its administrator (ADR
 // 0050, 1): the trust policy naming this gateway's principal and the
 // ExternalId, allowing sts:AssumeRole, sts:SetSourceIdentity and
-// sts:TagSession; the CLI and the CloudFormation that put it on the role.
-// Pending with an empty policy while the gateway does not know its own
-// principal yet (the autoscaling page's rule, ADR 0023).
+// sts:TagSession; the permissions policy that lets the gateway read the
+// session's activity from CloudTrail (phase C, one statement,
+// cloudtrail:LookupEvents); the CLI and the CloudFormation that put both on
+// the role. Pending with an empty trust policy while the gateway does not
+// know its own principal yet (the autoscaling page's rule, ADR 0023); the
+// permissions policy names no principal and is always given.
 type CloudSetup struct {
-	Principal      *string `json:"principal"`
-	Pending        bool    `json:"pending"`
-	ExternalID     string  `json:"external_id"`
-	TrustPolicy    string  `json:"trust_policy"`
-	CLI            string  `json:"cli"`
-	CloudFormation string  `json:"cloudformation"`
+	Principal         *string `json:"principal"`
+	Pending           bool    `json:"pending"`
+	ExternalID        string  `json:"external_id"`
+	TrustPolicy       string  `json:"trust_policy"`
+	PermissionsPolicy string  `json:"permissions_policy"`
+	CLI               string  `json:"cli"`
+	CloudFormation    string  `json:"cloudformation"`
 }
 
 // cloudSetup answers GET /targets/{id}/cloud/setup.
@@ -195,12 +199,13 @@ func (h *AdminHandler) cloudSetupFor(ctx context.Context, t *Target) CloudSetup 
 		principal = h.Identity.Get(ctx).Principal
 	}
 	trust := cloud.CloudTrustPolicy(principal, t.CloudExternalID)
-	out := CloudSetup{Pending: trust == "", ExternalID: t.CloudExternalID, TrustPolicy: trust}
+	activity := cloud.ActivityPermissionsPolicy()
+	out := CloudSetup{Pending: trust == "", ExternalID: t.CloudExternalID, TrustPolicy: trust, PermissionsPolicy: activity}
 	if trust != "" {
 		out.Principal = &principal
 		name := t.CloudRoleName()
-		out.CLI = cloud.CloudRoleCLI(name, trust)
-		out.CloudFormation = cloud.CloudRoleCloudFormation(name, trust)
+		out.CLI = cloud.CloudRoleCLI(name, trust, activity)
+		out.CloudFormation = cloud.CloudRoleCloudFormation(name, trust, activity)
 	}
 	return out
 }
@@ -208,8 +213,10 @@ func (h *AdminHandler) cloudSetupFor(ctx context.Context, t *Target) CloudSetup 
 // CloudTest is what a role's test found (ADR 0050, 1): whether the gateway
 // assumed it for the target's maximum, with the source identity and the
 // tags a session carries, and as which ARN; else the stage that refused and
-// why. LookupEvents is whether the role may read CloudTrail, which phase C
-// fills; null until then.
+// why. LookupEvents is whether the role may read the account's CloudTrail
+// for a session's activity (phase C): false is an answer, not a failure,
+// since the activity is then simply not read; null when the test did not
+// get that far.
 type CloudTest struct {
 	OK           bool   `json:"ok"`
 	AssumedARN   string `json:"assumed_arn,omitempty"`
@@ -219,20 +226,25 @@ type CloudTest struct {
 }
 
 // Stages a cloud test names: the mint (assume), a duration above the role's
-// maximum (duration), the credentials' first call (identity); lookup is
-// phase C's CloudTrail check.
+// maximum (duration), the credentials' first call (identity), and the
+// CloudTrail call that failed otherwise than by a refusal (lookup).
 const (
 	CloudStageAssume   = "assume"
 	CloudStageDuration = "duration"
 	CloudStageIdentity = "identity"
+	CloudStageLookup   = "lookup"
 )
 
-// CloudTestTimeout bounds a role test, two calls to STS.
-const CloudTestTimeout = 20 * time.Second
+// CloudTestTimeout bounds a role test: two calls to STS and one to CloudTrail.
+const CloudTestTimeout = 30 * time.Second
 
 // NewRoleMinter builds the minter a test and a session assume the role
-// with; tests swap it for one that never reaches AWS.
-var NewRoleMinter = func(ctx context.Context, region string) (cloud.RoleMinter, error) { return cloud.NewSTS(ctx, region) }
+// with; tests swap it for one that never reaches AWS. NewTrailReader builds
+// what the test reads CloudTrail with, likewise.
+var (
+	NewRoleMinter                     = func(ctx context.Context, region string) (cloud.RoleMinter, error) { return cloud.NewSTS(ctx, region) }
+	NewTrailReader cloud.TrailFactory = cloud.NewTrailReader
+)
 
 // cloudTest answers POST /targets/{id}/cloud/test: the role's probe. Nothing
 // is recorded on the target; the outcome is an event.
@@ -253,20 +265,22 @@ func (h *AdminHandler) cloudTest(w http.ResponseWriter, r *http.Request) {
 		httpx.Internal(w, r, h.Log, err)
 		return
 	}
-	res := RunCloudTest(ctx, minter, t)
+	res := RunCloudTest(ctx, minter, NewTrailReader, t)
 	outcome := audit.Success
 	if !res.OK {
 		outcome = audit.Failure
 	}
 	h.record(r, audit.TargetCloudTest, t.ID, outcome, map[string]any{"account": t.CloudAccountID, "role": t.CloudRoleARN,
-		"max_minutes": t.CloudMaxMinutes, "stage": res.Stage, "assumed_arn": res.AssumedARN})
+		"max_minutes": t.CloudMaxMinutes, "stage": res.Stage, "assumed_arn": res.AssumedARN, "lookup_events": res.LookupEvents})
 	httpx.WriteJSON(w, http.StatusOK, res)
 }
 
 // RunCloudTest assumes the role once as a session would, for the target's
-// maximum, then asks STS who the credentials are, and names what refused.
-// LookupEvents stays null: phase C reads CloudTrail.
-func RunCloudTest(ctx context.Context, minter cloud.RoleMinter, t *Target) CloudTest {
+// maximum, then asks STS who the credentials are, then asks CloudTrail for
+// one event of the last minute with the same credentials (phase C), and
+// names what refused. CloudTrail refusing is an answer: the role is usable
+// and the session's activity is not read.
+func RunCloudTest(ctx context.Context, minter cloud.RoleMinter, trails cloud.TrailFactory, t *Target) CloudTest {
 	var nonce [4]byte
 	_, _ = rand.Read(nonce[:])
 	creds, err := minter.Mint(ctx, cloud.MintRequest{RoleARN: t.CloudRoleARN, ExternalID: t.CloudExternalID,
@@ -292,5 +306,20 @@ func RunCloudTest(ctx context.Context, minter cloud.RoleMinter, t *Target) Cloud
 	if arn == "" {
 		arn = creds.AssumedARN
 	}
-	return CloudTest{OK: true, AssumedARN: arn, Message: "assumed for " + (time.Duration(t.CloudMaxMinutes) * time.Minute).String()}
+	assumed := "assumed for " + (time.Duration(t.CloudMaxMinutes) * time.Minute).String()
+	// Whether the role may read CloudTrail: one call, the credentials' own.
+	trail, err := trails(ctx, t.CloudRegion, creds)
+	if err != nil {
+		return CloudTest{Stage: CloudStageLookup, AssumedARN: arn, Message: "the role was assumed, but CloudTrail could not be reached (" + err.Error() + ")"}
+	}
+	switch err := cloud.LookupAllowed(ctx, trail, time.Now()); {
+	case err == nil:
+		yes := true
+		return CloudTest{OK: true, AssumedARN: arn, LookupEvents: &yes, Message: assumed}
+	case errors.Is(err, cloud.ErrLookupDenied):
+		no := false
+		return CloudTest{OK: true, AssumedARN: arn, LookupEvents: &no, Message: assumed + "; the role lacks cloudtrail:LookupEvents, so a session's activity is not read (the Setup's activity policy adds it)"}
+	default:
+		return CloudTest{Stage: CloudStageLookup, AssumedARN: arn, Message: "the role was assumed, but CloudTrail could not be read (" + err.Error() + ")"}
+	}
 }

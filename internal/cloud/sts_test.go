@@ -308,13 +308,13 @@ func TestCloudTrustDocuments(t *testing.T) {
 		strings.Join(st.Action, ",") != "sts:AssumeRole,sts:SetSourceIdentity,sts:TagSession" || st.Condition["StringEquals"]["sts:ExternalId"] != "zanskar-"+strings.Repeat("b", 32) {
 		t.Fatalf("trust policy: %s", trust)
 	}
-	cli := CloudRoleCLI("Admin", trust)
+	cli := CloudRoleCLI("Admin", trust, ActivityPermissionsPolicy())
 	for _, want := range []string{"update-assume-role-policy --role-name Admin", "create-role --role-name Admin", "--max-session-duration 43200", trust} {
 		if !strings.Contains(cli, want) {
 			t.Errorf("cli lacks %q:\n%s", want, cli)
 		}
 	}
-	cf := CloudRoleCloudFormation("Admin", trust)
+	cf := CloudRoleCloudFormation("Admin", trust, ActivityPermissionsPolicy())
 	for _, want := range []string{"RoleName: Admin", "MaxSessionDuration: 43200", "AssumeRolePolicyDocument:", `        "Version": "2012-10-17"`, "ManagedPolicyArns: []"} {
 		if !strings.Contains(cf, want) {
 			t.Errorf("cloudformation lacks %q:\n%s", want, cf)

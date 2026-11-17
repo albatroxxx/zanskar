@@ -12,6 +12,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/cloudtrail"
+	"github.com/aws/smithy-go"
+
 	"github.com/albatroxxx/zanskar/internal/audit"
 	"github.com/albatroxxx/zanskar/internal/cloud"
 	"github.com/albatroxxx/zanskar/internal/credential"
@@ -198,9 +202,41 @@ func (m *fakeRoleMinter) CallerIdentity(context.Context, cloud.Credentials) (str
 	return m.arn, m.identityErr
 }
 
-// Setup (ADR 0050, 1): pending with no policy while the gateway's principal
-// is unknown, never a placeholder; with one, the trust policy naming it and
-// the ExternalId, and the two pastes naming the role.
+// fakeTrail is CloudTrail as the role test calls it (phase C): an empty
+// answer, or the error it is told, the last call kept.
+type fakeTrail struct {
+	mu    sync.Mutex
+	err   error
+	last  *cloudtrail.LookupEventsInput
+	creds cloud.Credentials
+}
+
+func (f *fakeTrail) LookupEvents(_ context.Context, in *cloudtrail.LookupEventsInput, _ ...func(*cloudtrail.Options)) (*cloudtrail.LookupEventsOutput, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.last = in
+	if f.err != nil {
+		return nil, f.err
+	}
+	return &cloudtrail.LookupEventsOutput{}, nil
+}
+
+// factory builds the fake for any region, keeping the credentials it was
+// handed, so the test sees the role's own are used.
+func (f *fakeTrail) factory() cloud.TrailFactory {
+	return func(_ context.Context, _ string, c cloud.Credentials) (cloud.TrailReader, error) {
+		f.mu.Lock()
+		defer f.mu.Unlock()
+		f.creds = c
+		return f, nil
+	}
+}
+
+// Setup (ADR 0050, 1): pending with no trust policy while the gateway's
+// principal is unknown, never a placeholder; with one, the trust policy
+// naming it and the ExternalId, and the two pastes naming the role. The
+// activity policy (phase C) names no principal and is given either way; the
+// pastes put it on the role.
 func TestCloudSetup(t *testing.T) {
 	ctx := context.Background()
 	tg := &Target{Name: "prod admin", CloudRoleARN: adminRole}
@@ -211,8 +247,17 @@ func TestCloudSetup(t *testing.T) {
 	if !pending.Pending || pending.Principal != nil || pending.TrustPolicy != "" || pending.CLI != "" || pending.CloudFormation != "" || pending.ExternalID != tg.CloudExternalID {
 		t.Fatalf("pending: %+v", pending)
 	}
+	if pending.PermissionsPolicy != cloud.ActivityPermissionsPolicy() || !strings.Contains(pending.PermissionsPolicy, `"cloudtrail:LookupEvents"`) {
+		t.Fatalf("the activity policy waits for nothing: %q", pending.PermissionsPolicy)
+	}
+	var doc struct {
+		Statement []struct{ Effect, Action, Resource string }
+	}
+	if err := json.Unmarshal([]byte(pending.PermissionsPolicy), &doc); err != nil || len(doc.Statement) != 1 || doc.Statement[0].Action != "cloudtrail:LookupEvents" || doc.Statement[0].Resource != "*" || doc.Statement[0].Effect != "Allow" {
+		t.Fatalf("permissions policy: %v\n%s", err, pending.PermissionsPolicy)
+	}
 	b, _ := json.Marshal(pending)
-	if !strings.Contains(string(b), `"principal":null`) || !strings.Contains(string(b), `"trust_policy":""`) {
+	if !strings.Contains(string(b), `"principal":null`) || !strings.Contains(string(b), `"trust_policy":""`) || !strings.Contains(string(b), `"permissions_policy":"{`) {
 		t.Fatalf("pending JSON: %s", b)
 	}
 	ready := (&AdminHandler{Identity: cloud.NewGatewayIdentity("arn:aws:iam::111111111111:role/zanskar-gw")}).cloudSetupFor(ctx, tg)
@@ -227,11 +272,20 @@ func TestCloudSetup(t *testing.T) {
 	if !strings.Contains(ready.CLI, "--role-name Admin") || !strings.Contains(ready.CloudFormation, "RoleName: Admin") {
 		t.Fatalf("pastes:\n%s\n%s", ready.CLI, ready.CloudFormation)
 	}
+	if !strings.Contains(ready.CLI, "aws iam put-role-policy --role-name Admin --policy-name ZanskarActivity") || !strings.Contains(ready.CLI, `"cloudtrail:LookupEvents"`) {
+		t.Fatalf("the CLI does not put the activity policy on the role:\n%s", ready.CLI)
+	}
+	if !strings.Contains(ready.CloudFormation, "Policies:\n        - PolicyName: ZanskarActivity\n") || !strings.Contains(ready.CloudFormation, `"cloudtrail:LookupEvents"`) {
+		t.Fatalf("the CloudFormation lacks the activity policy:\n%s", ready.CloudFormation)
+	}
 }
 
 // RunCloudTest (ADR 0050, 1): the mint as a session makes it, with a test
 // source identity and tag; the stage that refused, named; GetCallerIdentity
-// as the second stage; CloudTrail not tried yet (null).
+// as the second stage; then CloudTrail asked once, with the same
+// credentials, for one event of the last minute (phase C): allowed is
+// lookup_events true, refused is false with ok still true and the message
+// saying the activity is not read, any other failure is stage lookup.
 func TestRunCloudTestStages(t *testing.T) {
 	ctx := context.Background()
 	tg := &Target{Name: "prod admin", CloudRoleARN: adminRole, CloudMaxMinutes: 90}
@@ -239,11 +293,12 @@ func TestRunCloudTestStages(t *testing.T) {
 		t.Fatal(err)
 	}
 	m := &fakeRoleMinter{arn: "arn:aws:sts::123456789012:assumed-role/Admin/zanskar-test-deadbeef"}
-	res := RunCloudTest(ctx, m, tg)
-	if !res.OK || res.Stage != "" || res.AssumedARN != m.arn || res.LookupEvents != nil || !strings.Contains(res.Message, "1h30m") {
+	trail := &fakeTrail{}
+	res := RunCloudTest(ctx, m, trail.factory(), tg)
+	if !res.OK || res.Stage != "" || res.AssumedARN != m.arn || res.LookupEvents == nil || !*res.LookupEvents || !strings.Contains(res.Message, "1h30m") || strings.Contains(res.Message, "LookupEvents") {
 		t.Fatalf("ok: %+v", res)
 	}
-	if b, _ := json.Marshal(res); !strings.Contains(string(b), `"lookup_events":null`) || !strings.Contains(string(b), `"stage":""`) {
+	if b, _ := json.Marshal(res); !strings.Contains(string(b), `"lookup_events":true`) || !strings.Contains(string(b), `"stage":""`) {
 		t.Fatalf("JSON: %s", b)
 	}
 	req := m.last
@@ -253,31 +308,61 @@ func TestRunCloudTestStages(t *testing.T) {
 	if !regexp.MustCompile(`^zanskar-test-[0-9a-f]{8}$`).MatchString(req.SessionName) {
 		t.Fatalf("session name %q", req.SessionName)
 	}
+	// The CloudTrail call: the mint's credentials, one event, the last minute, nothing by name.
+	if trail.creds.AccessKeyID != "ASIAFAKE" || aws.ToInt32(trail.last.MaxResults) != 1 || len(trail.last.LookupAttributes) != 0 ||
+		trail.last.EndTime.Sub(*trail.last.StartTime) != time.Minute || time.Since(*trail.last.EndTime) > 5*time.Second {
+		t.Fatalf("the lookup: creds %q, %+v", trail.creds.AccessKeyID, trail.last)
+	}
 
 	m.mintErr = errors.New("cloud: the role could not be assumed: User is not authorized")
 	m.mintErr = errors.Join(cloud.ErrMintRefused, m.mintErr)
-	res = RunCloudTest(ctx, m, tg)
-	if res.OK || res.Stage != CloudStageAssume || !strings.Contains(res.Message, tg.CloudExternalID) || !strings.Contains(res.Message, "sts:TagSession") {
+	res = RunCloudTest(ctx, m, trail.factory(), tg)
+	if res.OK || res.Stage != CloudStageAssume || !strings.Contains(res.Message, tg.CloudExternalID) || !strings.Contains(res.Message, "sts:TagSession") || res.LookupEvents != nil {
 		t.Fatalf("assume refused: %+v", res)
 	}
+	if b, _ := json.Marshal(res); !strings.Contains(string(b), `"lookup_events":null`) {
+		t.Fatalf("a refusal before CloudTrail leaves lookup_events null: %s", b)
+	}
 	m.mintErr = errors.Join(cloud.ErrMintDuration, errors.New("exceeds the MaxSessionDuration"))
-	res = RunCloudTest(ctx, m, tg)
+	res = RunCloudTest(ctx, m, trail.factory(), tg)
 	if res.OK || res.Stage != CloudStageDuration || !strings.Contains(res.Message, "below 90 minutes") || !strings.Contains(res.Message, "lower cloud_max_minutes") {
 		t.Fatalf("duration refused: %+v", res)
 	}
 	m.mintErr = errors.New("dial tcp: i/o timeout")
-	if res = RunCloudTest(ctx, m, tg); res.OK || res.Stage != CloudStageAssume || res.Message != "dial tcp: i/o timeout" {
+	if res = RunCloudTest(ctx, m, trail.factory(), tg); res.OK || res.Stage != CloudStageAssume || res.Message != "dial tcp: i/o timeout" {
 		t.Fatalf("network: %+v", res)
 	}
 	m.mintErr, m.identityErr = nil, errors.New("cloud: GetCallerIdentity: AccessDenied: explicit deny")
-	res = RunCloudTest(ctx, m, tg)
-	if res.OK || res.Stage != CloudStageIdentity || !strings.Contains(res.AssumedARN, "assumed-role/Admin/zanskar-test-") || !strings.Contains(res.Message, "permissions boundary") {
+	res = RunCloudTest(ctx, m, trail.factory(), tg)
+	if res.OK || res.Stage != CloudStageIdentity || !strings.Contains(res.AssumedARN, "assumed-role/Admin/zanskar-test-") || !strings.Contains(res.Message, "permissions boundary") || res.LookupEvents != nil {
 		t.Fatalf("identity refused: %+v", res)
 	}
 	// STS answering no ARN falls back to the mint's.
 	m.identityErr, m.arn = nil, ""
-	if res = RunCloudTest(ctx, m, tg); !res.OK || !strings.Contains(res.AssumedARN, "assumed-role/Admin/zanskar-test-") {
+	if res = RunCloudTest(ctx, m, trail.factory(), tg); !res.OK || !strings.Contains(res.AssumedARN, "assumed-role/Admin/zanskar-test-") {
 		t.Fatalf("no arn from identity: %+v", res)
+	}
+	// CloudTrail refusing is an answer: the role works, the activity is not read.
+	trail.err = &smithy.GenericAPIError{Code: "AccessDeniedException", Message: "User is not authorized to perform: cloudtrail:LookupEvents"}
+	res = RunCloudTest(ctx, m, trail.factory(), tg)
+	if !res.OK || res.Stage != "" || res.LookupEvents == nil || *res.LookupEvents || !strings.Contains(res.Message, "lacks cloudtrail:LookupEvents") || !strings.Contains(res.Message, "activity is not read") || !strings.Contains(res.Message, "1h30m") {
+		t.Fatalf("lookup refused: %+v", res)
+	}
+	if b, _ := json.Marshal(res); !strings.Contains(string(b), `"lookup_events":false`) {
+		t.Fatalf("JSON: %s", b)
+	}
+	// Anything else of CloudTrail is a failed stage of its own, the ARN kept.
+	trail.err = errors.New("dial tcp: i/o timeout")
+	res = RunCloudTest(ctx, m, trail.factory(), tg)
+	if res.OK || res.Stage != CloudStageLookup || res.LookupEvents != nil || !strings.Contains(res.AssumedARN, "assumed-role/Admin/") || !strings.Contains(res.Message, "could not be read (dial tcp: i/o timeout)") {
+		t.Fatalf("lookup failed: %+v", res)
+	}
+	trail.err = nil
+	broken := func(context.Context, string, cloud.Credentials) (cloud.TrailReader, error) {
+		return nil, errors.New("no region")
+	}
+	if res = RunCloudTest(ctx, m, broken, tg); res.OK || res.Stage != CloudStageLookup || !strings.Contains(res.Message, "could not be reached (no region)") {
+		t.Fatalf("no client: %+v", res)
 	}
 }
 
@@ -290,9 +375,11 @@ func TestCloudTargetAPI(t *testing.T) {
 	e := newEnv(t)
 	ctx := context.Background()
 	m := &fakeRoleMinter{arn: "arn:aws:sts::123456789012:assumed-role/Admin/zanskar-test-00000000"}
-	prev := NewRoleMinter
+	trail := &fakeTrail{}
+	prev, prevTrail := NewRoleMinter, NewTrailReader
 	NewRoleMinter = func(context.Context, string) (cloud.RoleMinter, error) { return m, nil }
-	t.Cleanup(func() { NewRoleMinter = prev })
+	NewTrailReader = trail.factory()
+	t.Cleanup(func() { NewRoleMinter, NewTrailReader = prev, prevTrail })
 
 	body := func(patch map[string]any) map[string]any {
 		b := map[string]any{"name": "prod admin", "address": "", "os_family": "other", "cloud_platform": "aws", "cloud_account_id": "123456789012",
@@ -321,10 +408,14 @@ func TestCloudTargetAPI(t *testing.T) {
 		t.Fatalf("kind=host: %d %v", code, out)
 	}
 
-	// Setup: pending here (no identity on this handler), with the ExternalId.
+	// Setup: pending here (no identity on this handler), with the ExternalId
+	// and the activity policy, which waits for no principal.
 	code, out = e.do("GET", "/api/v1/targets/"+id+"/cloud/setup", nil, e.admin)
 	if code != 200 || out["pending"] != true || out["principal"] != nil || out["trust_policy"] != "" || out["external_id"] != externalID {
 		t.Fatalf("setup: %d %v", code, out)
+	}
+	if pol, _ := out["permissions_policy"].(string); !strings.Contains(pol, `"cloudtrail:LookupEvents"`) {
+		t.Fatalf("setup without the activity policy: %v", out)
 	}
 	code, host := e.do("POST", "/api/v1/targets", map[string]any{"name": "box", "address": "10.0.0.1", "os_family": "linux"}, e.admin)
 	if code != 201 {
@@ -340,22 +431,26 @@ func TestCloudTargetAPI(t *testing.T) {
 	// Test: the role assumed with the target's ExternalId and maximum; the
 	// outcome is an event with the stage.
 	code, out = e.do("POST", "/api/v1/targets/"+id+"/cloud/test", nil, e.admin)
-	if code != 200 || out["ok"] != true || out["assumed_arn"] != m.arn || out["stage"] != "" {
+	if code != 200 || out["ok"] != true || out["assumed_arn"] != m.arn || out["stage"] != "" || out["lookup_events"] != true {
 		t.Fatalf("test: %d %v", code, out)
-	}
-	if v, has := out["lookup_events"]; !has || v != nil {
-		t.Fatalf("lookup_events must be null until phase C: %v", out)
 	}
 	if m.last.ExternalID != externalID || m.last.Duration != time.Hour {
 		t.Fatalf("the test's mint: %+v", m.last)
 	}
+	// CloudTrail refusing: the test still passes, lookup_events false.
+	trail.err = &smithy.GenericAPIError{Code: "AccessDeniedException", Message: "not authorized"}
+	if code, out := e.do("POST", "/api/v1/targets/"+id+"/cloud/test", nil, e.admin); code != 200 || out["ok"] != true || out["lookup_events"] != false || !strings.Contains(out["message"].(string), "activity is not read") {
+		t.Fatalf("lookup refused: %d %v", code, out)
+	}
+	trail.err = nil
 	m.mintErr = errors.Join(cloud.ErrMintRefused, errors.New("denied"))
-	if code, out := e.do("POST", "/api/v1/targets/"+id+"/cloud/test", nil, e.admin); code != 200 || out["ok"] != false || out["stage"] != "assume" {
+	if code, out := e.do("POST", "/api/v1/targets/"+id+"/cloud/test", nil, e.admin); code != 200 || out["ok"] != false || out["stage"] != "assume" || out["lookup_events"] != nil {
 		t.Fatalf("refused test: %d %v", code, out)
 	}
 	m.mintErr = nil
 	tests := auditActions(t, e, audit.TargetCloudTest)
-	if len(tests) != 2 || tests[0].Outcome != audit.Failure || tests[1].Outcome != audit.Success || !strings.Contains(string(tests[0].Details), `"stage":"assume"`) {
+	if len(tests) != 3 || tests[0].Outcome != audit.Failure || tests[1].Outcome != audit.Success || tests[2].Outcome != audit.Success ||
+		!strings.Contains(string(tests[0].Details), `"stage":"assume"`) || !strings.Contains(string(tests[1].Details), `"lookup_events":false`) || !strings.Contains(string(tests[2].Details), `"lookup_events":true`) {
 		t.Fatalf("test events: %+v", tests)
 	}
 
