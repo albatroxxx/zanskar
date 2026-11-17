@@ -28,7 +28,8 @@ import (
 // the policies as they stand then (as eligibility is, ADR 0018 SEC-2).
 // Nobody named: any administrator decides, as before. Someone named: the
 // named decide, never their own request; an administrator sees the request
-// and may revoke the grant, and does not approve or deny it.
+// and may revoke the grant, and approves or denies it only when a grant
+// names them too (an administrator who should decide joins the approvers).
 
 // ApproverRef is one named approver as the queue shows it: the designation
 // on the grant, with its name resolved when read.
