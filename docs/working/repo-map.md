@@ -11,12 +11,14 @@ internal/
   sshca, crypto
   target, asg, cloud    hosts, databases, applications, Kubernetes clusters, cloud account roles
                         (target/cloud.go, ADR 0050); autoscaling groups; the gateway's own cloud
-                        identity, the EKS token and the per-session role mint (cloud/sts.go)
+                        identity, the EKS token, the per-session role mint (cloud/sts.go) and the
+                        CloudTrail reader for a cloud session's activity (cloud/cloudtrail.go)
   policy, access        access policies and grants; just-in-time requests and approvals
   connect, ticket,      session start (tickets, preflight, the WebSocket handlers per protocol;
                         kube.go and cloud.go are the sessions without a socket),
-  session, recording,   the session store and activity, recordings (asciicast, guac), their
-  recstorage            storage (local, S3) and retention
+  session, recording,   the session store and activity, recordings (asciicast, guac; append.go adds
+  recstorage            the line a cloud recording gets when no gateway came back to finish it),
+                        their storage (local, S3) and retention
   gateway/              what carries a session: sshgw, winrmgw, guac (desktops through guacd),
                         dbgw + mysqlrelay (databases), browsergw + apprelay (applications:
                         the isolated browser, the relay with its SOCKS and inspecting proxy),
