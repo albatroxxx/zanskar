@@ -5,7 +5,8 @@ Date: 2026-11-16
 ## Status
 
 Accepted 2026-11-16: the owner took every recommendation below ("use your recommendation") and
-asked for the build to start, phases B, C and D in order after ADR 0049. Needs [ADR 0049](0049-approvers.md) (approvers) first. Follows the shape of
+asked for the build to start: phases B and C after ADR 0049, and phase D (Identity Center mode) when
+an organization asks for it, as decision 6 recommends. Needs [ADR 0049](0049-approvers.md) (approvers) first. Follows the shape of
 [ADR 0045](0045-kubernetes-clusters-as-targets.md) and [ADR 0048](0048-fabric.md): a new kind of
 target, derived, with a platform column, reached through a role the gateway assumes as autoscaling
 groups (ADR 0023) and EKS clusters are.
