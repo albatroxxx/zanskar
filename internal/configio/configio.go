@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"maps"
 	"net/http"
 	"net/http/httptest"
@@ -168,6 +169,15 @@ type state struct {
 	targets                  map[string]apiTarget
 	policies                 map[string]apiPolicy
 	byID                     map[string]string // any id -> its name
+	// log hears what an export leaves out; nil says nothing.
+	log *slog.Logger
+}
+
+// warn logs at warn when the state has a logger.
+func (s *state) warn(msg string, args ...any) {
+	if s.log != nil {
+		s.log.Warn(msg, args...)
+	}
 }
 
 func read(a api) (*state, error) {
@@ -271,7 +281,7 @@ func (s *state) policyDoc(p apiPolicy) Policy {
 			out.Subjects = append(out.Subjects, Subject{User: s.byID[sub.ID]})
 		}
 	}
-	for _, g := range p.Grants {
+	for i, g := range p.Grants {
 		dg := Grant{Kind: g.Kind, Tags: g.Tags, Access: g.Access, SignIn: g.SignIn, RequireMFA: g.RequireMFA, AllowClipboard: g.AllowClipboard,
 			AllowFileTransfer: g.AllowFileTransfer, AllowDevTools: g.AllowDevTools, IdleTimeoutMinutes: g.IdleTimeoutMinutes,
 			MaxSessionMinutes: g.MaxSessionMinutes, TimeWindows: g.TimeWindows, RetentionDays: g.RetentionDays,
@@ -280,10 +290,19 @@ func (s *state) policyDoc(p apiPolicy) Policy {
 			dg.Targets = append(dg.Targets, GrantTarget{Name: s.byID[gt.ID], Protocols: gt.Protocols})
 		}
 		for _, a := range g.Approvers {
+			name, ok := s.byID[a.ID]
+			if !ok {
+				// A user or group deleted since the grant named them (the
+				// grants JSON keeps the id): left out of the file rather than
+				// written as an empty name the import would refuse, and said
+				// here, since the file then names one approver fewer.
+				s.warn("config export: an approver the gateway cannot name was left out", "policy", p.Name, "grant", i+1, "kind", a.Kind, "id", a.ID)
+				continue
+			}
 			if a.Kind == "group" {
-				dg.Approvers = append(dg.Approvers, Subject{Group: s.byID[a.ID]})
+				dg.Approvers = append(dg.Approvers, Subject{Group: name})
 			} else {
-				dg.Approvers = append(dg.Approvers, Subject{User: s.byID[a.ID]})
+				dg.Approvers = append(dg.Approvers, Subject{User: name})
 			}
 		}
 		out.Grants = append(out.Grants, dg)

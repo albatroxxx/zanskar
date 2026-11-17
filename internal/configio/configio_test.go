@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/albatroxxx/zanskar/internal/audit"
@@ -36,13 +37,33 @@ type gw struct {
 	csrf   string
 	audit  *audit.Log
 	userCk *http.Cookie
+	logs   *syncBuf // what the gateway logged
+}
+
+// syncBuf is a buffer the handlers may write to from any goroutine.
+type syncBuf struct {
+	mu sync.Mutex
+	b  bytes.Buffer
+}
+
+func (s *syncBuf) Write(p []byte) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.b.Write(p)
+}
+
+func (s *syncBuf) String() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.b.String()
 }
 
 func newGW(t *testing.T) *gw {
 	t.Helper()
 	ctx := context.Background()
 	db := storetest.Open(t)
-	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	logs := &syncBuf{}
+	log := slog.New(slog.NewTextHandler(logs, nil))
 	kek, _ := crypto.NewLocalKEK(bytes.Repeat([]byte{9}, 32))
 	ring, err := keyring.Open(ctx, db, kek)
 	if err != nil {
@@ -68,7 +89,7 @@ func newGW(t *testing.T) *gw {
 	mux.HandleFunc("GET /api/v1/autoscaling-groups", func(w http.ResponseWriter, _ *http.Request) { _, _ = io.WriteString(w, `{"items":[]}`) })
 	ci.UseMux(mux)
 	mw := &auth.Middleware{Sessions: sessions, Users: users, Log: log}
-	g := &gw{db: db, srv: mw.Authenticate(mw.CSRF(mux)), audit: al}
+	g := &gw{db: db, srv: mw.Authenticate(mw.CSRF(mux)), audit: al, logs: logs}
 	for name, role := range map[string]user.Role{"root": user.RoleAdmin, "ann": user.RoleUser} {
 		u := &user.User{Username: name, DisplayName: name, Roles: []user.Role{role}}
 		if err := users.Create(ctx, u); err != nil {
@@ -314,4 +335,47 @@ func strip(s string) string {
 		}
 	}
 	return strings.Join(out, "\n")
+}
+
+// TestExportLeavesOutAnApproverItCannotName (review R3): a grant keeps the
+// id of an approver deleted since it named them; the export leaves that one
+// out and says so in the log, rather than writing an empty name the import
+// would refuse. The file still imports.
+func TestExportLeavesOutAnApproverItCannotName(t *testing.T) {
+	a := newGW(t)
+	ctx := context.Background()
+	users := user.NewRepo(a.db)
+	gone := &user.User{Username: "gone", DisplayName: "Gone", Roles: []user.Role{user.RoleApprover}}
+	if err := users.Create(ctx, gone); err != nil {
+		t.Fatal(err)
+	}
+	grp := a.json(t, "POST", "/api/v1/groups", map[string]any{"name": "ops", "description": "on call"})
+	a.json(t, "POST", "/api/v1/access-policies", map[string]any{"name": "ops-prod", "subjects": []map[string]string{{"kind": "group", "id": grp["id"].(string)}},
+		"grants": []map[string]any{{"kind": "host", "tags": map[string]any{"match": map[string][]string{"env": {"prod"}}, "protocols": []string{"ssh"}},
+			"access": "approval", "approvers": []map[string]string{{"kind": "group", "id": grp["id"].(string)}, {"kind": "user", "id": gone.ID}}}}})
+	if err := users.Delete(ctx, gone.ID); err != nil {
+		t.Fatal(err)
+	}
+	code, file := a.do(t, "GET", "/api/v1/admin/config/export", nil)
+	if code != 200 {
+		t.Fatalf("export: %d %s", code, file)
+	}
+	text := string(file)
+	if !strings.Contains(text, "approvers:") || !strings.Contains(text, "- group: ops") || strings.Count(text, "- group: ops") != 2 {
+		t.Fatalf("the export should name the group as audience and approver:\n%s", text)
+	}
+	if strings.Contains(text, `user: ""`) || strings.Contains(text, "user: ''") || strings.Contains(text, "- user:") || strings.Contains(text, gone.ID) {
+		t.Fatalf("the export carries the deleted approver:\n%s", text)
+	}
+	if logs := a.logs.String(); !strings.Contains(logs, "left out") || !strings.Contains(logs, "policy=ops-prod") || !strings.Contains(logs, "id="+gone.ID) {
+		t.Fatalf("the export should say in the log what it left out:\n%s", logs)
+	}
+	b := newGW(t)
+	if code, out := b.do(t, "POST", "/api/v1/admin/config/import?apply=true", file); code != 200 || strings.Contains(string(out), `"problem"`) {
+		t.Fatalf("import of the export: %d %s", code, out)
+	}
+	grant := b.named(t, "/api/v1/access-policies", "ops-prod")["grants"].([]any)[0].(map[string]any)
+	if approvers, _ := grant["approvers"].([]any); len(approvers) != 1 || approvers[0].(map[string]any)["kind"] != "group" {
+		t.Fatalf("B's grant approvers: %v", grant["approvers"])
+	}
 }

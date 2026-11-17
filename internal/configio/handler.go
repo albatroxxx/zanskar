@@ -55,6 +55,7 @@ func (h *Handler) export(w http.ResponseWriter, r *http.Request) {
 		httpx.Internal(w, r, h.Log, err)
 		return
 	}
+	s.log = h.Log
 	d := s.export()
 	d.ExportedAt = time.Now().UTC().Format(time.RFC3339)
 	var b bytes.Buffer
