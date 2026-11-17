@@ -71,7 +71,6 @@ type cloudSession struct {
 	ep       *endpoint
 	terms    policy.CloudTerms
 	minter   cloud.RoleMinter
-	startsAt time.Time
 	endsAt   time.Time
 	record   func(line string)
 
@@ -110,12 +109,13 @@ func (c *cloudSession) mintRequest(d time.Duration) cloud.MintRequest {
 }
 
 // cloudConnect is what connect answers for a cloud session beside the
-// session id: the token and the profile stanza when the command line is
-// open, and what the portal shows.
+// session id: the token and the profile stanza, filled when the command
+// line is open and empty when it is not (the portal's type has them always;
+// a token nothing would take is not handed out), and what the portal shows.
 type cloudConnect struct {
-	Token          string    `json:"token,omitempty"`
-	CredentialsURL string    `json:"credentials_url,omitempty"`
-	Profile        string    `json:"profile,omitempty"`
+	Token          string    `json:"token"`
+	CredentialsURL string    `json:"credentials_url"`
+	Profile        string    `json:"profile"`
 	Console        bool      `json:"console"`
 	CLI            bool      `json:"cli"`
 	AccountID      string    `json:"account_id"`
@@ -208,7 +208,7 @@ func (h *Handler) startCloud(r *http.Request, p *auth.Principal, ip string, ep *
 	}
 	token := CloudTokenPrefix + base64.RawURLEncoding.EncodeToString(raw[:])
 	sess := &cloudSession{id: run.s.ID, hash: sha256.Sum256([]byte(token)), userID: p.User.ID, username: p.User.Username, ep: ep,
-		terms: terms, minter: minter, startsAt: now, endsAt: endsAt, record: record}
+		terms: terms, minter: minter, endsAt: endsAt, record: record}
 	h.clouds.add(sess)
 	record("session started as " + assumedRoleARN(ep.CloudRoleARN, cloud.SessionNameFor(sess.id)) + ", until " + clock(endsAt))
 	go h.runCloud(sctx, run, sess, rec, row, done)
@@ -276,6 +276,8 @@ func clock(t time.Time) string { return t.UTC().Format("15:04 UTC") }
 func (h *Handler) runCloud(ctx context.Context, run *sessionRun, sess *cloudSession, rec recorder, row *session.Recording, done func()) {
 	defer done()
 	defer h.clouds.remove(sess.id)
+	// The end is a wall-clock moment, armed on the real clock: a test that
+	// moves cloudNow back before its connect brings the end near.
 	timer := time.NewTimer(time.Until(sess.endsAt))
 	defer timer.Stop()
 	var reason, detail string
@@ -347,7 +349,7 @@ func (c *cloudSession) consoleCredentials(ctx context.Context) (cloud.Credential
 	if closed {
 		return cloud.Credentials{}, 0, errCloudEnded
 	}
-	d := time.Until(c.endsAt).Round(time.Second)
+	d := c.endsAt.Sub(cloudNow()).Round(time.Second)
 	if d < cloud.MintMinDuration {
 		d = cloud.MintMinDuration
 	}
@@ -421,8 +423,15 @@ func (h *Handler) cloudCredentials(w http.ResponseWriter, r *http.Request) {
 		h.record(r, actorFor(sess.userID, auth.ClientIP(r)).Event(audit.SessionCloudCredentials, "access_session", id, audit.Success,
 			map[string]any{"target_id": sess.ep.TargetID, "account": sess.ep.CloudAccountID, "role": sess.ep.CloudRoleARN, "until": creds.Expires.UTC().Format(time.RFC3339)}))
 	}
+	// The client is told to come back by the session's end at the latest,
+	// where it is refused; STS issues nothing shorter than fifteen minutes,
+	// so the credentials themselves run on to their own end (ADR 0050, 3).
+	expiration := creds.Expires
+	if expiration.After(sess.endsAt) {
+		expiration = sess.endsAt
+	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"Version": 1, "AccessKeyId": creds.AccessKeyID, "SecretAccessKey": creds.SecretAccessKey,
-		"SessionToken": creds.SessionToken, "Expiration": creds.Expires.UTC().Format(time.RFC3339)})
+		"SessionToken": creds.SessionToken, "Expiration": expiration.UTC().Format(time.RFC3339)})
 }
 
 // mintReason is a mint error as the person may read it: Zanskar's words,
@@ -493,6 +502,9 @@ func (h *Handler) cloudConsole(w http.ResponseWriter, r *http.Request) {
 	}
 	sess.setConsoleUntil(until)
 	h.Registry.SetCloudConsoleUntil(id, until)
+	// Whether AWS took the duration decides how long a console may outlive
+	// an hour (ADR 0050's measurement); the log keeps the answer per issue.
+	h.Log.Debug("console sign-in issued", "session", id, "duration_honoured", honoured, "asked", d.String(), "until", until.UTC().Format(time.RFC3339))
 	sess.record("console sign-in issued (runs until " + clock(until) + ")")
 	h.record(r, actor.Event(audit.SessionCloudConsole, "access_session", id, audit.Success,
 		map[string]any{"target_id": sess.ep.TargetID, "account": sess.ep.CloudAccountID, "role": sess.ep.CloudRoleARN,
@@ -501,8 +513,10 @@ func (h *Handler) cloudConsole(w http.ResponseWriter, r *http.Request) {
 }
 
 // cloudTermsHold reports whether a live cloud session's switches are what a
-// fresh decision gives: a switch now off ends the session, as the clipboard
-// does (revoke.go).
+// fresh decision gives. A switch changed either way ends the session (ADR
+// 0050, 3), as a Kubernetes scope change does: the session was issued under
+// the old terms (a token, or none), and the person connects again under the
+// new ones.
 func cloudTermsHold(l *gateway.CloudTerms, d policy.Decision) bool {
 	if l == nil {
 		return true
@@ -511,5 +525,5 @@ func cloudTermsHold(l *gateway.CloudTerms, d policy.Decision) bool {
 	if d.Cloud != nil {
 		want = *d.Cloud
 	}
-	return !(l.Console && !want.Console) && !(l.CLI && !want.CLI)
+	return l.Console == want.Console && l.CLI == want.CLI
 }

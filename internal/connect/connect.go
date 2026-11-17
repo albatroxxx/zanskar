@@ -168,7 +168,7 @@ func (h *Handler) Register(mux *http.ServeMux) {
 
 // reachableTarget is what a user sees in their target list.
 type reachableTarget struct {
-	Kind         string            `json:"kind"` // target | asg | application | cluster
+	Kind         string            `json:"kind"` // target | asg | application | cluster | cloud
 	ID           string            `json:"id"`
 	Name         string            `json:"name"`
 	OSFamily     target.OSFamily   `json:"os_family"`
@@ -195,19 +195,28 @@ type reachableTarget struct {
 	// hostname is never surfaced to users; empty then.
 	PrivateIP string `json:"private_ip,omitempty"`
 	Engine    string `json:"engine,omitempty"`   // database targets (ADR 0017)
-	Platform  string `json:"platform,omitempty"` // clusters (ADR 0045): vanilla, eks, gke, aks; cloud roles (ADR 0050): aws
+	Platform  string `json:"platform,omitempty"` // clusters (ADR 0045): vanilla, eks, gke, aks
 	// Unavailable says why no session can start on this gateway for a
 	// cluster or a cloud role (the public address unset), so the portal
 	// greys the button and says so before a click; "" when one can.
 	Unavailable string `json:"unavailable,omitempty"`
-	// A cloud account's role (ADR 0050): the account as people know it, its
-	// id, the role's name and the region, for the portal's Cloud tab.
-	CloudAccount   string `json:"cloud_account,omitempty"`
-	CloudAccountID string `json:"cloud_account_id,omitempty"`
-	CloudRole      string `json:"cloud_role,omitempty"`
-	CloudRegion    string `json:"cloud_region,omitempty"`
-	HealthyCount   int    `json:"healthy_count,omitempty"`
-	InstanceCnt    int    `json:"instance_count,omitempty"`
+	// Cloud is a cloud account's role (ADR 0050), for the portal's Cloud tab;
+	// nil on every other kind.
+	Cloud        *reachableCloud `json:"cloud,omitempty"`
+	HealthyCount int             `json:"healthy_count,omitempty"`
+	InstanceCnt  int             `json:"instance_count,omitempty"`
+}
+
+// reachableCloud is what the portal shows of a role (ADR 0050): where it is,
+// and which of the two doors the caller's grants open, the strictest across
+// the grants that admit them (policy.Decision.Cloud). The ARN stays here.
+type reachableCloud struct {
+	AccountID    string `json:"account_id"`
+	AccountAlias string `json:"account_alias,omitempty"`
+	RoleName     string `json:"role_name"`
+	Region       string `json:"region,omitempty"`
+	Console      bool   `json:"console"`
+	CLI          bool   `json:"cli"`
 }
 
 func (h *Handler) myTargets(w http.ResponseWriter, r *http.Request) {
@@ -289,15 +298,26 @@ func (h *Handler) myTargets(w http.ResponseWriter, r *http.Request) {
 			if t.IsCloud() {
 				// A cloud account's role (ADR 0050) is reached over cloud
 				// alone: a session from the portal, no socket. The portal
-				// shows the account and the role; the ARN stays here.
-				allowed, needApproval, _, _ := reach(pols, policy.TargetRef{Kind: t.Kind(), ID: t.ID, Tags: t.Tags}, []target.Protocol{target.Cloud}, now)
-				if len(allowed) == 0 {
+				// shows the account, the role and which doors the grants
+				// open; the ARN stays here. One protocol, so the decision
+				// is read once, for its switches too.
+				d := policy.Evaluate(pols, policy.TargetRef{Kind: t.Kind(), ID: t.ID, Tags: t.Tags}, string(target.Cloud), now)
+				if !d.Allowed {
 					continue
+				}
+				var needApproval []string
+				if d.RequireApproval {
+					needApproval = []string{string(target.Cloud)}
+				}
+				terms := policy.CloudTerms{Console: true, CLI: true}
+				if d.Cloud != nil {
+					terms = *d.Cloud
 				}
 				out = append(out, reachableTarget{
 					Kind: "cloud", ID: t.ID, Name: t.Name, OSFamily: t.OSFamily, Tags: t.Tags, Capabilities: []target.Protocol{target.Cloud},
-					Allowed: allowed, RequiresApproval: needApproval, HostKeyReady: true, Platform: t.CloudPlatform, Unavailable: h.cloudOff(),
-					CloudAccount: t.CloudAccountLabel(), CloudAccountID: t.CloudAccountID, CloudRole: t.CloudRoleName(), CloudRegion: t.CloudRegion,
+					Allowed: []string{string(target.Cloud)}, RequiresApproval: needApproval, HostKeyReady: true, Unavailable: h.cloudOff(),
+					Cloud: &reachableCloud{AccountID: t.CloudAccountID, AccountAlias: t.CloudAccountAlias, RoleName: t.CloudRoleName(), Region: t.CloudRegion,
+						Console: terms.Console, CLI: terms.CLI},
 				})
 				continue
 			}

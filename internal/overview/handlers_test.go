@@ -94,6 +94,11 @@ func seed(t *testing.T, e *env) {
 		{Name: "web 2", Address: "10.0.0.6", OSFamily: "linux"},
 		{Name: "win 1", Address: "10.0.0.7", OSFamily: "windows"},
 		{Name: "orders pg", Address: "10.0.0.8", Engine: "postgres", TLSMode: "require", Ports: map[target.Protocol]int{"database": 5432}},
+		// Two roles in one account and a disabled one elsewhere (ADR 0050):
+		// the tile counts active roles, and the accounts they are in.
+		{Name: "prod admin", CloudRoleARN: "arn:aws:iam::123456789012:role/Admin"},
+		{Name: "prod read", CloudRoleARN: "arn:aws:iam::123456789012:role/ReadOnly"},
+		{Name: "old admin", CloudRoleARN: "arn:aws:iam::210987654321:role/Admin", Status: target.StatusDisabled},
 	} {
 		if err := e.targets.Create(ctx, tg); err != nil {
 			t.Fatal(err)
@@ -240,6 +245,12 @@ func TestAdminOverview(t *testing.T) {
 	}
 	if got := num(t, out, "inventory", "databases_by_engine", "postgres"); got != 1 {
 		t.Errorf("inventory.databases_by_engine.postgres = %v, want 1", got)
+	}
+	if got := num(t, out, "inventory", "cloud_roles"); got != 2 {
+		t.Errorf("inventory.cloud_roles = %v, want 2 (the disabled one left out)", got)
+	}
+	if got := num(t, out, "inventory", "cloud_accounts"); got != 1 {
+		t.Errorf("inventory.cloud_accounts = %v, want 1", got)
 	}
 	if got := num(t, out, "autoscaling", "groups"); got != 1 {
 		t.Errorf("autoscaling.groups = %v, want 1", got)
