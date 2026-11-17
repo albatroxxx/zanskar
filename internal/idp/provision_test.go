@@ -509,16 +509,18 @@ func TestResolveWithdrawsApproverHeldAlone(t *testing.T) {
 	if err != nil || !r.Created || len(r.User.Roles) != 1 || r.User.Roles[0] != user.RoleApprover {
 		t.Fatalf("first sign-in: %+v %v", r, err)
 	}
+	// Out of the group with no other role, the account becomes a plain user
+	// rather than one with no portal at all (the owner's call, 2026-11-17).
 	r, err = e.pv.Resolve(ctx, p, Identity{ExternalID: "sub-1", Username: "fay", Groups: []string{"dev-team"}})
-	if err != nil || !r.ApproverWithdrawn || len(r.User.Roles) != 0 {
+	if err != nil || !r.ApproverWithdrawn || !r.UserGranted || len(r.User.Roles) != 1 || r.User.Roles[0] != user.RoleUser {
 		t.Fatalf("out of the group, approver held alone: %+v %v", r, err)
 	}
 	evs := r.Events("192.0.2.9", p, Identity{ExternalID: "sub-1"})
-	if len(evs) != 1 || evs[0].Action != audit.UserRolesUpdate || !bytes.Contains(evs[0].Details, []byte(`"roles_withdrawn":["approver"]`)) {
-		t.Fatalf("withdrawal event: %v", actions(evs))
+	if len(evs) != 1 || evs[0].Action != audit.UserRolesUpdate || !bytes.Contains(evs[0].Details, []byte(`"roles_withdrawn":["approver"]`)) || !bytes.Contains(evs[0].Details, []byte(`"roles_granted":["user"]`)) {
+		t.Fatalf("withdrawal event: %v %s", actions(evs), evs[0].Details)
 	}
-	// Back in the group: granted again, approver alone.
-	if r, err = e.pv.Resolve(ctx, p, Identity{ExternalID: "sub-1", Username: "fay", Groups: []string{"approvers"}}); err != nil || !r.ApproverGranted || len(r.User.Roles) != 1 || r.User.Roles[0] != user.RoleApprover {
+	// Back in the group: approver again, beside the user role it was left with.
+	if r, err = e.pv.Resolve(ctx, p, Identity{ExternalID: "sub-1", Username: "fay", Groups: []string{"approvers"}}); err != nil || !r.ApproverGranted || r.UserGranted || len(r.User.Roles) != 2 || !r.User.HasRole(user.RoleApprover) || !r.User.HasRole(user.RoleUser) {
 		t.Fatalf("back in the group: %+v %v", r, err)
 	}
 }

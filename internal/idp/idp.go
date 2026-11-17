@@ -641,8 +641,9 @@ type Resolution struct {
 	LiveSessionsEnded int
 	// ApproverGranted and ApproverWithdrawn: this sign-in gave the account
 	// the approver role, or took it, by the provider's approver groups
-	// (ADR 0049, 7). Never both.
-	ApproverGranted, ApproverWithdrawn bool
+	// (ADR 0049, 7). Never both. UserGranted says the withdrawal left no
+	// role and the account became a plain user.
+	ApproverGranted, ApproverWithdrawn, UserGranted bool
 }
 
 // ErrNotProvisioned is returned when auto-provisioning is off and there is
@@ -736,9 +737,10 @@ func approverWanted(p *Opened, id Identity) bool {
 
 // syncApprover brings the account's approver role in line with the
 // provider's approver groups (ADR 0049, 7): granted to a member of one,
-// withdrawn from a holder in none, to no role at all when it was the only
-// one (the account then opens no portal until a role is given). An
-// administrator holds every role, so nothing is done for one. A refusal to
+// withdrawn from a holder in none; an account left with no role becomes a
+// plain user (the owner's call, 2026-11-17: a person the provider still signs
+// in should still open the portal). An administrator holds every role, so
+// nothing is done for one. A refusal to
 // change the roles leaves them as they are and the sign-in goes on; the
 // result says only what did change.
 func (pv *Provisioner) syncApprover(ctx context.Context, p *Opened, id Identity, u *user.User, res *Resolution) {
@@ -753,8 +755,13 @@ func (pv *Provisioner) syncApprover(ctx context.Context, p *Opened, id Identity,
 		}
 	case !want && has:
 		roles := slices.DeleteFunc(slices.Clone(u.Roles), func(r user.Role) bool { return r == user.RoleApprover })
+		fell := len(roles) == 0
+		if fell {
+			roles = []user.Role{user.RoleUser}
+		}
 		if pv.Users.SetRoles(ctx, u.ID, roles) == nil {
 			res.ApproverWithdrawn = true
+			res.UserGranted = fell
 		}
 	}
 }
@@ -945,6 +952,9 @@ func (r Resolution) Events(ip string, p *Opened, id Identity) []audit.Event {
 			d["roles_granted"] = []user.Role{user.RoleApprover}
 		} else {
 			d["roles_withdrawn"] = []user.Role{user.RoleApprover}
+			if r.UserGranted {
+				d["roles_granted"] = []user.Role{user.RoleUser}
+			}
 		}
 		out = append(out, actor.Event(audit.UserRolesUpdate, "user", r.User.ID, audit.Success, d))
 	}
