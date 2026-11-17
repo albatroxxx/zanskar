@@ -236,7 +236,7 @@ func plan(s *state, d Document) []Change {
 		switch {
 		case !exists:
 			c.Action = "create"
-		case yamlOf(s.policyDoc(old)) == yamlOf(p):
+		case yamlOf(s.policyDoc(old)) == yamlOf(withGrantDefaults(p)):
 			c.Action = "unchanged"
 		default:
 			c.Action = "update"
@@ -244,6 +244,30 @@ func plan(s *state, d Document) []Change {
 		out = append(out, c)
 	}
 	return out
+}
+
+// withGrantDefaults fills what a file may leave out of a grant and an export
+// writes: a cloud grant's two switches, both on (ADR 0050). Without it a file
+// that left them out planned an update on every import, since the gateway
+// stores them said.
+func withGrantDefaults(p Policy) Policy {
+	grants := make([]Grant, len(p.Grants))
+	copy(grants, p.Grants)
+	for i := range grants {
+		if grants[i].Kind != "cloud" {
+			continue
+		}
+		if grants[i].CloudConsole == nil {
+			on := true
+			grants[i].CloudConsole = &on
+		}
+		if grants[i].CloudCLI == nil {
+			on := true
+			grants[i].CloudCLI = &on
+		}
+	}
+	p.Grants = grants
+	return p
 }
 
 func sorted(xs []string) []string {

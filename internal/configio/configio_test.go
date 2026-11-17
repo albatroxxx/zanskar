@@ -278,6 +278,57 @@ func TestExportImportRoundTrip(t *testing.T) {
 	}
 }
 
+// A hand-written file may leave a cloud role's platform and maximum and a
+// cloud grant's switches out (ADR 0050): the import fills the defaults the
+// gateway stores said, and a second import of the same file changes nothing.
+// Without the grant's defaults the plan read the gateway's stored true/true
+// against the file's nothing and planned an update every time (2026-11-17).
+// The rest a file spells as an export does (a grant's access, sign-in,
+// authenticator and idle time; a target's derived address and os_family),
+// the rule every kind has had since ADR 0043.
+func TestImportFillsCloudDefaults(t *testing.T) {
+	b := newGW(t)
+	file := []byte(`zanskar: 1
+groups:
+  - name: ops
+targets:
+  - name: prod-admin
+    address: sts.amazonaws.com
+    os_family: other
+    cloud_account_id: "123456789012"
+    cloud_role_arn: arn:aws:iam::123456789012:role/Admin
+    cloud_external_id: zanskar-0123456789abcdef0123456789abcdef
+policies:
+  - name: ops-aws
+    enabled: true
+    subjects:
+      - group: ops
+    grants:
+      - kind: cloud
+        targets:
+          - name: prod-admin
+            protocols: [cloud]
+        access: standing
+        sign_in: target
+        require_mfa: true
+        idle_timeout_minutes: 15
+`)
+	code, out := b.do(t, "POST", "/api/v1/admin/config/import?apply=true", file)
+	if code != 200 || strings.Count(string(out), `"action":"create"`) != 3 {
+		t.Fatalf("apply: %d %s", code, out)
+	}
+	if r := b.named(t, "/api/v1/targets", "prod-admin"); r["cloud_platform"] != "aws" || r["cloud_max_minutes"] != float64(60) || r["cloud_external_id"] != "zanskar-0123456789abcdef0123456789abcdef" || r["cloud_account_id"] != "123456789012" {
+		t.Fatalf("the role: %v", r)
+	}
+	if g := b.named(t, "/api/v1/access-policies", "ops-aws")["grants"].([]any)[0].(map[string]any); g["cloud_console"] != true || g["cloud_cli"] != true {
+		t.Fatalf("the grant: %v", g)
+	}
+	_, out = b.do(t, "POST", "/api/v1/admin/config/import", file)
+	if strings.Count(string(out), `"action":"unchanged"`) != 3 || strings.Contains(string(out), `"action":"update"`) {
+		t.Fatalf("a second import of the same file: %s", out)
+	}
+}
+
 // A file naming what this gateway lacks is refused whole, before anything
 // changes; the API's own rules (a forbidden address) refuse the rest.
 func TestImportRefusals(t *testing.T) {
