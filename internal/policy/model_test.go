@@ -68,6 +68,19 @@ func TestValidate(t *testing.T) {
 		{"ssh on a cluster", func(p *Policy) {
 			p.Grants[0] = Grant{Kind: protocol.KindKubernetes, Targets: []GrantTarget{{ID: "k1", Protocols: []string{"ssh"}}}}
 		}, `a kubernetes does not serve "ssh"`},
+		// A cloud grant's switches (ADR 0050, 2): its own, and never both off.
+		{"console switch on a host", func(p *Policy) { off := false; p.Grants[0].CloudConsole = &off }, "for cloud grants only"},
+		{"command-line switch on a cluster", func(p *Policy) {
+			on := true
+			p.Grants[0] = Grant{Kind: protocol.KindKubernetes, Targets: []GrantTarget{{ID: "k1", Protocols: []string{"kube"}}}, CloudCLI: &on}
+		}, "for cloud grants only"},
+		{"both doors shut", func(p *Policy) {
+			off := false
+			p.Grants[0] = Grant{Kind: protocol.KindCloud, Targets: []GrantTarget{{ID: "c1", Protocols: []string{"cloud"}}}, CloudConsole: &off, CloudCLI: &off}
+		}, "needs the console or the command line on"},
+		{"ssh on a cloud role", func(p *Policy) {
+			p.Grants[0] = Grant{Kind: protocol.KindCloud, Targets: []GrantTarget{{ID: "c1", Protocols: []string{"ssh"}}}}
+		}, `a cloud does not serve "ssh"`},
 		{"a protocol twice", func(p *Policy) { p.Grants[0].Targets[0].Protocols = []string{"ssh", "ssh"} }, "given twice"},
 		{"tags with no key", func(p *Policy) { p.Grants[0].Tags = tags(map[string][]string{}, "ssh") }, "at least one key"},
 		{"a tag with no value", func(p *Policy) { p.Grants[0].Tags = tags(map[string][]string{"env": {}}, "ssh") }, "needs 1-16 values"},
@@ -355,5 +368,59 @@ func TestEvaluateKubeScope(t *testing.T) {
 	host := valid(Grant{Kind: protocol.KindHost, Targets: []GrantTarget{{ID: "h1", Protocols: []string{"ssh"}}}, Access: AccessStanding, SignIn: SignInTarget})
 	if d := Evaluate([]*Policy{host}, TargetRef{Kind: protocol.KindHost, ID: "h1"}, "ssh", now); !d.Allowed || d.Kube != nil {
 		t.Fatalf("a host carries no scope: %+v", d)
+	}
+}
+
+// TestEvaluateCloudTerms (ADR 0050, 2): a cloud grant's console and
+// command-line switches default on and are stored said; where grants
+// overlap, a session has each only if every deciding grant allows it, the
+// strictest as for the clipboard (and unlike a Kubernetes scope's union).
+func TestEvaluateCloudTerms(t *testing.T) {
+	ref := TargetRef{Kind: protocol.KindCloud, ID: "c1"}
+	role := func(name string, console, cli *bool) *Policy {
+		g := Grant{Kind: protocol.KindCloud, Targets: []GrantTarget{{ID: "c1", Protocols: []string{"cloud"}}}, Access: AccessStanding, SignIn: SignInTarget,
+			CloudConsole: console, CloudCLI: cli}
+		p := valid(g)
+		p.Name, p.ID, p.Grants[0].ID = name, "id-"+name, name+"-a"
+		if err := p.Validate(); err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		return p
+	}
+	off, on := false, true
+	now := time.Now()
+
+	// One grant that says nothing: both on, and said in the grant.
+	both := role("both", nil, nil)
+	if g := both.Grants[0]; g.CloudConsole == nil || !*g.CloudConsole || g.CloudCLI == nil || !*g.CloudCLI || !g.ConsoleAllowed() || !g.CLIAllowed() {
+		t.Fatalf("defaults not stored said: %+v", g)
+	}
+	d := Evaluate([]*Policy{both}, ref, "cloud", now)
+	if !d.Allowed || d.Cloud == nil || !d.Cloud.Console || !d.Cloud.CLI {
+		t.Fatalf("one grant: %+v", d.Cloud)
+	}
+	// Two grants: the console off in one, the command line off in the
+	// other; the session has neither, since each door needs every grant.
+	noConsole, noCLI := role("a-no-console", &off, &on), role("b-no-cli", &on, &off)
+	if d := Evaluate([]*Policy{noConsole, noCLI}, ref, "cloud", now); !d.Allowed || d.Cloud.Console || d.Cloud.CLI || len(d.Grants) != 2 {
+		t.Fatalf("two grants, strictest: %+v of %d grants", d.Cloud, len(d.Grants))
+	}
+	if d := Evaluate([]*Policy{both, noCLI}, ref, "cloud", now); !d.Cloud.Console || d.Cloud.CLI {
+		t.Fatalf("one open, one shut: %+v", d.Cloud)
+	}
+	// An approval grant lends nothing to standing access: its shut door
+	// does not shut the standing grant's.
+	gated := role("c-gated", &off, &on)
+	gated.Grants[0].Access = AccessApproval
+	if d := Evaluate([]*Policy{gated, both}, ref, "cloud", now); d.RequireApproval || !d.Cloud.Console {
+		t.Fatalf("an approval grant shut a standing door: %+v", d)
+	}
+	if d := Evaluate([]*Policy{gated}, ref, "cloud", now); !d.Allowed || !d.RequireApproval || d.Cloud.Console || !d.Cloud.CLI {
+		t.Fatalf("only an approval grant: %+v %+v", d, d.Cloud)
+	}
+	// Another kind carries no switches.
+	host := valid(Grant{Kind: protocol.KindHost, Targets: []GrantTarget{{ID: "h1", Protocols: []string{"ssh"}}}, Access: AccessStanding, SignIn: SignInTarget})
+	if d := Evaluate([]*Policy{host}, TargetRef{Kind: protocol.KindHost, ID: "h1"}, "ssh", now); !d.Allowed || d.Cloud != nil {
+		t.Fatalf("a host carries no switches: %+v", d)
 	}
 }

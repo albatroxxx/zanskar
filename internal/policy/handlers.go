@@ -110,6 +110,12 @@ type grantInput struct {
 	PortForward  bool     `json:"port_forward"`
 	// Approvers decide the requests an approval grant admits (ADR 0049).
 	Approvers []Subject `json:"approvers"`
+	// A cloud grant's switches (ADR 0050); nil takes the default, on, and
+	// Validate refuses them on any other kind. The body refuses unknown
+	// fields, so a carrier forgotten here refused the console's cloud
+	// grants outright (2026-11-17, found by the API test).
+	CloudConsole *bool `json:"cloud_console"`
+	CloudCLI     *bool `json:"cloud_cli"`
 }
 
 func (in *input) apply(p *Policy) {
@@ -125,6 +131,7 @@ func (in *input) apply(p *Policy) {
 			RequireMFA: g.RequireMFA == nil || *g.RequireMFA, AllowClipboard: g.AllowClipboard, AllowFileTransfer: g.AllowFileTransfer,
 			AllowDevTools: g.AllowDevTools, IdleTimeoutMinutes: g.IdleTimeoutMinutes, MaxSessionMinutes: g.MaxSessionMinutes, TimeWindows: g.TimeWindows, RetentionDays: g.RetentionDays,
 			Namespaces: g.Namespaces, ClusterScope: g.ClusterScope, PortForward: g.PortForward, Approvers: g.Approvers,
+			CloudConsole: g.CloudConsole, CloudCLI: g.CloudCLI,
 		})
 	}
 }
