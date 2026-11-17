@@ -266,6 +266,31 @@ func TestFederationSignIn(t *testing.T) {
 	}
 }
 
+// TestFederationErrorCarriesNoCredentials (review 2026-11-17, C2): the
+// endpoint unreachable, the error named the whole request URL, whose Session
+// query is the credentials JSON (the secret key and the session token in
+// clear), so a log line or a %v of the error would have printed a live
+// role's credentials. The error names the dial failure alone.
+func TestFederationErrorCarriesNoCredentials(t *testing.T) {
+	srv := httptest.NewServer(http.NotFoundHandler())
+	srv.Close() // a port nothing listens on: the dial is refused
+	f := &Federation{Endpoint: srv.URL + "/federation", Client: &http.Client{Timeout: 2 * time.Second}}
+	creds := Credentials{AccessKeyID: "ASIAFAKEKEY", SecretAccessKey: "SECRETSECRETSECRET", SessionToken: "TOKENTOKENTOKEN"}
+	_, _, err := f.SignIn(context.Background(), creds, time.Hour, "https://gw.example", "")
+	if !errors.Is(err, ErrFederation) {
+		t.Fatalf("want a federation error, got %v", err)
+	}
+	text := err.Error()
+	for _, secret := range []string{creds.SecretAccessKey, creds.SessionToken, "Session=", "sessionKey", srv.URL} {
+		if strings.Contains(text, secret) {
+			t.Fatalf("the error carries %q: %s", secret, text)
+		}
+	}
+	if !strings.Contains(text, "connection refused") && !strings.Contains(text, "connect") {
+		t.Fatalf("the error should still name the dial failure: %s", text)
+	}
+}
+
 // The destinations and STS hosts follow the region and its partition.
 func TestConsoleDestinationAndSTSHost(t *testing.T) {
 	for _, tc := range []struct{ region, console, sts string }{

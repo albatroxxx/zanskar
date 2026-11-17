@@ -322,6 +322,13 @@ func signinToken(ctx context.Context, client *http.Client, endpoint, session str
 		}
 		res, err := client.Do(req)
 		if err != nil {
+			// A *url.Error prints the URL, and the URL's Session query is the
+			// credentials: the dial or timeout error alone is kept, never
+			// the address (review 2026-11-17, C2).
+			var ue *url.Error
+			if errors.As(err, &ue) {
+				err = ue.Err
+			}
 			return "", 0, fmt.Errorf("%w: %w", ErrFederation, err)
 		}
 		defer func() { _ = res.Body.Close() }()
