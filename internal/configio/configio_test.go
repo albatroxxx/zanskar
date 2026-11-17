@@ -329,6 +329,47 @@ policies:
 	}
 }
 
+// TestImportPlansAHandWrittenRoleUnchanged (review 2026-11-17, C7): a file
+// with a role's name, ARN, region and tags alone, as a hand writes it,
+// planned an update on every import, since the gateway derives the address
+// (the STS host), the account from the ARN, os other and mints the
+// ExternalId, none of which the file spells. The second import plans
+// nothing; a file that then changes the region plans the update it should.
+func TestImportPlansAHandWrittenRoleUnchanged(t *testing.T) {
+	b := newGW(t)
+	file := []byte(`zanskar: 1
+targets:
+  - name: prod-read
+    cloud_role_arn: arn:aws:iam::123456789012:role/ReadOnly
+    cloud_region: eu-west-1
+    tags:
+      account: prod
+`)
+	code, out := b.do(t, "POST", "/api/v1/admin/config/import?apply=true", file)
+	if code != 200 || strings.Count(string(out), `"action":"create"`) != 1 {
+		t.Fatalf("apply: %d %s", code, out)
+	}
+	r := b.named(t, "/api/v1/targets", "prod-read")
+	if r["address"] != "sts.eu-west-1.amazonaws.com" || r["os_family"] != "other" || r["cloud_account_id"] != "123456789012" || r["cloud_external_id"] == "" {
+		t.Fatalf("the role as stored: %v", r)
+	}
+	_, out = b.do(t, "POST", "/api/v1/admin/config/import", file)
+	if !strings.Contains(string(out), `"action":"unchanged"`) || strings.Contains(string(out), `"action":"update"`) {
+		t.Fatalf("a second import of the same file: %s", out)
+	}
+	// Applied again, nothing moves: the ExternalId the gateway minted stays.
+	if _, out := b.do(t, "POST", "/api/v1/admin/config/import?apply=true", file); strings.Contains(string(out), `"action":"update"`) {
+		t.Fatalf("a second apply: %s", out)
+	}
+	if again := b.named(t, "/api/v1/targets", "prod-read"); again["cloud_external_id"] != r["cloud_external_id"] {
+		t.Fatalf("the ExternalId moved: %v -> %v", r["cloud_external_id"], again["cloud_external_id"])
+	}
+	moved := []byte(strings.Replace(string(file), "eu-west-1", "eu-central-1", 1))
+	if _, out := b.do(t, "POST", "/api/v1/admin/config/import", moved); !strings.Contains(string(out), `"action":"update"`) {
+		t.Fatalf("a changed region plans no update: %s", out)
+	}
+}
+
 // A file naming what this gateway lacks is refused whole, before anything
 // changes; the API's own rules (a forbidden address) refuse the rest.
 func TestImportRefusals(t *testing.T) {

@@ -17,6 +17,7 @@ import (
 
 	"github.com/albatroxxx/zanskar/internal/audit"
 	"github.com/albatroxxx/zanskar/internal/auth"
+	"github.com/albatroxxx/zanskar/internal/cloud"
 	"github.com/albatroxxx/zanskar/internal/httpx"
 	"github.com/albatroxxx/zanskar/internal/user"
 )
@@ -211,7 +212,7 @@ func plan(s *state, d Document) []Change {
 		case !exists:
 			c.Action = "create"
 			future.targets[t.Name] = apiTarget{ID: "(new)", Name: t.Name}
-		case yamlOf(s.targetDoc(old)) == yamlOf(withDefaults(t)):
+		case yamlOf(s.targetDoc(old)) == yamlOf(withDefaults(t).keepingExternalID(old)):
 			c.Action = "unchanged"
 		default:
 			c.Action = "update"
@@ -299,13 +300,34 @@ func withDefaults(t Target) Target {
 	if t.CloudRoleARN != "" {
 		// A role's row says its platform and its longest session (ADR
 		// 0050); a file may leave the defaults out. The ExternalId has no
-		// default: the gateway mints one when the file carries none.
+		// default: the gateway mints one when the file carries none. The
+		// gateway derives the rest from the ARN and the region (the account,
+		// the STS host as the address, os other), so a hand-written file
+		// without them is compared as the gateway stores it (review
+		// 2026-11-17, C7).
 		if t.CloudPlatform == "" {
 			t.CloudPlatform = "aws"
 		}
 		if t.CloudMaxMinutes == 0 {
 			t.CloudMaxMinutes = 60
 		}
+		if t.CloudAccountID == "" {
+			t.CloudAccountID = cloud.AccountOf(t.CloudRoleARN)
+		}
+		t.Address = cloud.STSHost(t.CloudRegion)
+		if t.OSFamily == "" {
+			t.OSFamily = "other"
+		}
+	}
+	return t
+}
+
+// keepingExternalID reads an empty cloud_external_id as "keep the gateway's",
+// which is what the write does (the API keeps the stored one when the body's
+// is empty), so the compare does not plan an update for it (C7).
+func (t Target) keepingExternalID(old apiTarget) Target {
+	if t.CloudRoleARN != "" && t.CloudExternalID == "" {
+		t.CloudExternalID = old.CloudExternalID
 	}
 	return t
 }
