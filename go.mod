@@ -10,6 +10,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/config v1.33.15
 	github.com/aws/aws-sdk-go-v2/credentials v1.20.15
 	github.com/aws/aws-sdk-go-v2/service/autoscaling v1.79.4
+	github.com/aws/aws-sdk-go-v2/service/cloudtrail v1.65.12
 	github.com/aws/aws-sdk-go-v2/service/ec2 v1.344.1
 	github.com/aws/aws-sdk-go-v2/service/ec2instanceconnect v1.44.5
 	github.com/aws/aws-sdk-go-v2/service/eks v1.105.6
