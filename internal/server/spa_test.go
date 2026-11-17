@@ -77,3 +77,28 @@ func TestCSPConnectsOnlyToItsOwnOrigin(t *testing.T) {
 		}
 	}
 }
+
+// TestCSPFormActionNamesTheConsoleSignIn (review 2026-11-17, C1): the
+// portal POSTs a cloud session's console sign-in to AWS's federation
+// endpoint from a page under this policy, and form-action 'self' alone made
+// every browser refuse it in silence. The directive names the sign-in host
+// and the console hosts its login answer redirects to (Chrome checks the
+// redirect chain), and nothing else; no other directive names an AWS host,
+// so scripts, styles, frames and connections stay on our origin.
+func TestCSPFormActionNamesTheConsoleSignIn(t *testing.T) {
+	dirs := map[string]string{}
+	for d := range strings.SplitSeq(uiCSP, ";") {
+		d = strings.TrimSpace(d)
+		name, rest, _ := strings.Cut(d, " ")
+		dirs[name] = rest
+	}
+	want := "'self' https://signin.aws.amazon.com https://*.signin.aws.amazon.com https://console.aws.amazon.com https://*.console.aws.amazon.com"
+	if dirs["form-action"] != want {
+		t.Fatalf("form-action %q, want %q", dirs["form-action"], want)
+	}
+	for name, v := range dirs {
+		if name != "form-action" && strings.Contains(v, "amazon") {
+			t.Fatalf("%s %q names an AWS host; only the sign-in form goes there", name, v)
+		}
+	}
+}

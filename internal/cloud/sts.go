@@ -254,6 +254,11 @@ func tagValue(s string) string {
 
 // FederationEndpoint is AWS's sign-in federation endpoint, where temporary
 // credentials become a console sign-in (the custom identity broker flow).
+// The portal POSTs the sign-in form here from a page under the console's
+// Content-Security-Policy, whose form-action names this host and the console
+// hosts the login redirects to (internal/server/spa.go, uiCSP): a change here
+// or in ConsoleDestination must follow there, or the browser refuses the POST
+// in silence.
 const FederationEndpoint = "https://signin.aws.amazon.com/federation"
 
 // Federation exchanges a role's credentials for a console sign-in. Endpoint
