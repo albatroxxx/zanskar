@@ -36,6 +36,7 @@ import (
 	"github.com/albatroxxx/zanskar/internal/sshca"
 	"github.com/albatroxxx/zanskar/internal/target"
 	"github.com/albatroxxx/zanskar/internal/ticket"
+	"github.com/albatroxxx/zanskar/internal/user"
 )
 
 // Handler wires the connect flow.
@@ -129,10 +130,31 @@ type Handler struct {
 	NewMinter  func(ctx context.Context, region string) (cloud.RoleMinter, error)
 	Federation *cloud.Federation
 	clouds     cloudSessions
+	// NewTrail builds what reads CloudTrail with minted credentials for a
+	// session's activity (phase C; nil: the SDK's client); awaiting holds the
+	// sessions whose recording stays open after their end for the last read,
+	// which Awaiting tells the sweep.
+	NewTrail cloud.TrailFactory
+	awaiting startingSet
 }
 
 // CloudSessions is how many cloud sessions are live here; tests wait on it.
 func (h *Handler) CloudSessions() int { return h.clouds.Len() }
+
+// Awaiting reports whether the session's recording is held open here for
+// its activity's last read (ADR 0050, phase C): this gateway's still, as
+// far as the sweep is concerned.
+func (h *Handler) Awaiting(id string) bool {
+	_, ok := h.awaiting.m.Load(id)
+	return ok
+}
+
+// AwaitingActivity is how many such recordings are held; tests wait on it.
+func (h *Handler) AwaitingActivity() int {
+	n := 0
+	h.awaiting.m.Range(func(any, any) bool { n++; return true })
+	return n
+}
 
 // Register mounts the routes. Every REST route here is for accounts that may
 // connect (user or admin); an auditor-only account is review-only and gets
@@ -164,6 +186,11 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	// session's own person signed in to the portal.
 	mux.HandleFunc("GET /api/v1/cloud/{id}/credentials", h.cloudCredentials)
 	mux.Handle("POST /api/v1/cloud/{id}/console", auth.RequireConnect(http.HandlerFunc(h.cloudConsole)))
+	// A cloud session's activity read from CloudTrail on demand (ADR 0050,
+	// phase C): a reviewer's route, as the Sessions routes are guarded
+	// (admins and auditors read, ADR 0006); it lives here because the live
+	// session does.
+	mux.Handle("POST /api/v1/sessions/{id}/activity", auth.RequireRole(user.RoleAdmin, user.RoleAuditor)(http.HandlerFunc(h.cloudActivity)))
 }
 
 // reachableTarget is what a user sees in their target list.

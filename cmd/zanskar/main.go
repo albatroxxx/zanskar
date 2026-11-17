@@ -594,7 +594,9 @@ func serve(ctx context.Context) error {
 		if _, ok := registry.Get(id); ok {
 			return true
 		}
-		return connectHandler.Starting(id)
+		// A cloud session's recording is held open after its end for the
+		// activity's last read (ADR 0050, phase C): this gateway's still.
+		return connectHandler.Starting(id) || connectHandler.Awaiting(id)
 	}
 	go func() {
 		t := time.NewTicker(5 * time.Minute)

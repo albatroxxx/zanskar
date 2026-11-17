@@ -3530,10 +3530,11 @@ paths:
       description: >
         The trust policy the role's account pastes (ADR 0050, 1): this gateway's principal, the
         actions a session's mint needs (`sts:AssumeRole`, `sts:SetSourceIdentity`,
-        `sts:TagSession`) and the ExternalId condition, with the AWS CLI lines and the
-        CloudFormation template that put it on the role. While the gateway's own principal is
-        unknown the answer is `pending` with an empty `trust_policy`, never a placeholder. Not
-        audited: it holds no secret and changes nothing.
+        `sts:TagSession`) and the ExternalId condition; the permissions policy the gateway's read
+        of a session's activity needs (phase C: `cloudtrail:LookupEvents`); and the AWS CLI lines
+        and the CloudFormation template that put both on the role. While the gateway's own
+        principal is unknown the answer is `pending` with an empty `trust_policy`, never a
+        placeholder. Not audited: it holds no secret and changes nothing.
       parameters:
         - $ref: "#/components/parameters/Id"
       responses:
@@ -3561,8 +3562,11 @@ paths:
         credentials are. The answer names the stage that refused: `assume` (the trust policy, the
         ExternalId, or `sts:SetSourceIdentity`/`sts:TagSession` missing), `duration` (above the
         role's maximum session; lower `cloud_max_minutes`), `identity` (the credentials cannot
-        call `sts:GetCallerIdentity`). `lookup_events` is null until phase C reads CloudTrail.
-        Nothing is recorded on the target. Audited as `target.cloud.test`.
+        call `sts:GetCallerIdentity`), `lookup` (CloudTrail failed otherwise than by a refusal).
+        Then one `LookupEvents` call with the same credentials says whether the role may read the
+        account's CloudTrail for a session's activity (phase C): `lookup_events` true or false,
+        `ok` true either way, the message saying when the activity is not read. Nothing is
+        recorded on the target. Audited as `target.cloud.test`.
       parameters:
         - $ref: "#/components/parameters/Id"
       responses:
@@ -4477,6 +4481,51 @@ paths:
           $ref: "#/components/responses/NotFound"
         "409":
           description: Session already ended (`already_ended`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /sessions/{id}/activity:
+    post:
+      tags: [auditor]
+      summary: Read a live cloud session's activity now
+      description: >
+        A cloud session's activity (ADR 0050, phase C): the gateway assumes the enrolled role under
+        its own session name (`zanskar-gateway-audit`), asks CloudTrail's `LookupEvents` for the
+        session's role session name over the session so far, and appends what is new to the
+        session's recording as lines (time, service and call, read-only or write, the resources
+        named) under a header saying how many and that events arrive up to 15 minutes late. The
+        same read runs once more by itself 15 minutes after the session ends, before its recording
+        is finished. For administrators and auditors alike. Audited as `session.cloud.activity`
+        with the count; a refusal is audited as a failure.
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: The events appended by this read and the end of the window it covered.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CloudActivity"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: The session is not a cloud session (`not_cloud`), or is open but not live on this gateway (`not_live`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "410":
+          description: The session has ended (`session_ended`); its activity is in the recording.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "502":
+          description: >-
+            CloudTrail could not be read: the role lacks `cloudtrail:LookupEvents` (`lookup_denied`;
+            the Setup's activity policy adds it), or AWS refused or could not be reached
+            (`activity_failed`). Said on the recording as `activity not read`.
           content:
             application/json:
               schema:
@@ -8820,7 +8869,7 @@ components:
     CloudSetup:
       type: object
       description: What a cloud account's role must trust (ADR 0050, 1), from `GET /targets/{id}/cloud/setup`.
-      required: [principal, pending, external_id, trust_policy, cli, cloudformation]
+      required: [principal, pending, external_id, trust_policy, permissions_policy, cli, cloudformation]
       properties:
         principal:
           type: [string, "null"]
@@ -8834,12 +8883,19 @@ components:
         trust_policy:
           type: string
           description: The trust policy as JSON, allowing `sts:AssumeRole`, `sts:SetSourceIdentity` and `sts:TagSession` to the principal with the ExternalId condition.
+        permissions_policy:
+          type: string
+          description: >-
+            An IAM policy document with one statement allowing `cloudtrail:LookupEvents` on `*` (the
+            action takes no resource), which the gateway's read of a session's activity needs (phase
+            C). Names no principal, so it is given whether pending or not; `cli` puts it on the role
+            as the inline policy `ZanskarActivity`, `cloudformation` carries it under `Policies`.
         cli:
           type: string
-          description: AWS CLI lines that put the trust policy on the role, or create it.
+          description: AWS CLI lines that put the trust policy on the role, or create it, and put the activity policy on it.
         cloudformation:
           type: string
-          description: A CloudFormation template for a new role carrying the trust policy.
+          description: A CloudFormation template for a new role carrying the trust policy and the activity policy.
     CloudTest:
       type: object
       description: What a role's test found (ADR 0050, 1), from `POST /targets/{id}/cloud/test`.
@@ -8853,13 +8909,31 @@ components:
         stage:
           type: string
           enum: [assume, identity, duration, lookup, ""]
-          description: The stage that refused, or empty when every stage passed.
+          description: >-
+            The stage that refused, or empty when every stage passed. `lookup` is CloudTrail failing
+            otherwise than by a refusal (unreachable, throttled); a refusal is `lookup_events: false`
+            with `ok` true.
         message:
           type: string
           description: What happened, in a sentence a person can act on.
         lookup_events:
           type: [boolean, "null"]
-          description: Whether the role may read the account's CloudTrail for the session's activity (phase C); null when not tried.
+          description: >-
+            Whether the role may read the account's CloudTrail for a session's activity (phase C),
+            tried with the assumed credentials after `identity`: one `LookupEvents` call, one event
+            at most, over the last minute. False is an answer, not a failure: the activity is then
+            not read, and the message says so. Null when an earlier stage refused.
+    CloudActivity:
+      type: object
+      description: One read of a live cloud session's activity (ADR 0050, phase C), from `POST /sessions/{id}/activity`.
+      required: [events, read_until]
+      properties:
+        events:
+          type: integer
+          description: How many events this read appended to the recording; those already on it are not counted again.
+        read_until:
+          $ref: "#/components/schemas/Timestamp"
+          description: The end of the window read; the next read starts 15 minutes before it, since events arrive late, and keeps each event once.
     CloudConsole:
       type: object
       description: >-

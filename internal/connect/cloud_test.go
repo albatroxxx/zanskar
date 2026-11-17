@@ -17,7 +17,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/cloudtrail"
+	cttypes "github.com/aws/aws-sdk-go-v2/service/cloudtrail/types"
+	"github.com/aws/smithy-go"
+
 	"github.com/albatroxxx/zanskar/internal/audit"
+	"github.com/albatroxxx/zanskar/internal/auth"
 	"github.com/albatroxxx/zanskar/internal/cloud"
 	"github.com/albatroxxx/zanskar/internal/gateway"
 	"github.com/albatroxxx/zanskar/internal/policy"
@@ -26,6 +32,7 @@ import (
 	"github.com/albatroxxx/zanskar/internal/recording"
 	"github.com/albatroxxx/zanskar/internal/session"
 	"github.com/albatroxxx/zanskar/internal/target"
+	"github.com/albatroxxx/zanskar/internal/user"
 )
 
 const (
@@ -120,13 +127,74 @@ func (f *fakeFederation) call(i int) map[string]string {
 	return f.calls[i]
 }
 
+// fakeTrail is CloudTrail as a session's activity reads see it (phase C):
+// the events it holds for the session, answered whole on every call, the
+// calls it took, an error when told, and the credentials each read came
+// with.
+type fakeTrail struct {
+	mu     sync.Mutex
+	events []cttypes.Event
+	calls  []*cloudtrail.LookupEventsInput
+	creds  []cloud.Credentials
+	err    error
+}
+
+func (f *fakeTrail) LookupEvents(_ context.Context, in *cloudtrail.LookupEventsInput, _ ...func(*cloudtrail.Options)) (*cloudtrail.LookupEventsOutput, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.calls = append(f.calls, in)
+	if f.err != nil {
+		return nil, f.err
+	}
+	return &cloudtrail.LookupEventsOutput{Events: f.events}, nil
+}
+
+func (f *fakeTrail) set(events ...cttypes.Event) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.events = events
+}
+
+func (f *fakeTrail) fail(err error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.err = err
+}
+
+func (f *fakeTrail) count() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return len(f.calls)
+}
+
+func (f *fakeTrail) call(i int) *cloudtrail.LookupEventsInput {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.calls[i]
+}
+
+// trailEvent is one CloudTrail event as LookupEvents answers it, its raw
+// JSON carrying something that must never reach the record.
+func trailEvent(id string, at time.Time, source, name, readOnly string, resources ...string) cttypes.Event {
+	e := cttypes.Event{EventId: aws.String(id), EventTime: aws.Time(at), EventSource: aws.String(source), EventName: aws.String(name),
+		Username: aws.String("zanskar-session"), CloudTrailEvent: aws.String(`{"requestParameters":{"raw":"never-on-the-record"}}`)}
+	if readOnly != "" {
+		e.ReadOnly = aws.String(readOnly)
+	}
+	for _, r := range resources {
+		e.Resources = append(e.Resources, cttypes.Resource{ResourceName: aws.String(r)})
+	}
+	return e
+}
+
 // cloudFixture is the connect fixture with a cloud account's role enrolled,
-// a fake STS and a fake federation endpoint, and a policy granting ops the
-// role with both doors open.
+// a fake STS, a fake federation endpoint and a fake CloudTrail, and a policy
+// granting ops the role with both doors open.
 type cloudFixture struct {
 	*connectFixture
 	minter *fakeMinter
 	fed    *fakeFederation
+	trail  *fakeTrail
 	role   *target.Target
 	policy *policy.Policy
 	recDir string
@@ -150,17 +218,27 @@ func newCloudFixture(t *testing.T) *cloudFixture {
 	fed.srv = httptest.NewServer(fed)
 	t.Cleanup(fed.srv.Close)
 	f.h.Federation = &cloud.Federation{Endpoint: fed.srv.URL, Client: fed.srv.Client()}
+	trail := &fakeTrail{}
+	f.h.NewTrail = func(_ context.Context, region string, c cloud.Credentials) (cloud.TrailReader, error) {
+		if region != "eu-west-1" {
+			t.Errorf("CloudTrail was asked for region %q", region)
+		}
+		trail.mu.Lock()
+		trail.creds = append(trail.creds, c)
+		trail.mu.Unlock()
+		return trail, nil
+	}
+	// The last activity read waits a moment here, not CloudTrail's fifteen
+	// minutes; the restore runs after the wait below, once every recording
+	// is finished.
+	prevLateness := cloudActivityLateness
+	cloudActivityLateness = 50 * time.Millisecond
+	t.Cleanup(func() { cloudActivityLateness = prevLateness })
+	cf := &cloudFixture{connectFixture: f, minter: minter, fed: fed, trail: trail, recDir: dir}
 	// No session outlives its test: one left live would keep its goroutine
 	// reading the package clock the next test moves (the kube fixture's
-	// lesson, PR #336).
-	t.Cleanup(func() {
-		for _, l := range f.h.Registry.List() {
-			f.h.Registry.Terminate(l.SessionID)
-		}
-		for i := 0; i < 300 && f.h.CloudSessions() > 0; i++ {
-			time.Sleep(10 * time.Millisecond)
-		}
-	})
+	// lesson, PR #336). Nor does a recording awaiting its last read.
+	t.Cleanup(cf.quiesce)
 	tg := &target.Target{Name: "Prod Admin", CloudRoleARN: testRoleARN, CloudAccountAlias: "prod", CloudRegion: "eu-west-1", Tags: map[string]string{"account": "prod"}}
 	if err := f.h.Targets.Create(f.ctx, tg); err != nil {
 		t.Fatal(err)
@@ -169,7 +247,63 @@ func newCloudFixture(t *testing.T) *cloudFixture {
 	if err := f.h.Policies.Create(f.ctx, p); err != nil {
 		t.Fatal(err)
 	}
-	return &cloudFixture{connectFixture: f, minter: minter, fed: fed, role: tg, policy: p, recDir: dir}
+	cf.role, cf.policy = tg, p
+	return cf
+}
+
+// quiesce ends every session the gateway holds and waits for their
+// goroutines, the recordings awaiting their last read among them, so nothing
+// of this test reads a package variable the next one sets.
+func (f *cloudFixture) quiesce() {
+	for _, l := range f.h.Registry.List() {
+		f.h.Registry.Terminate(l.SessionID)
+	}
+	for i := 0; i < 300 && f.h.CloudSessions() > 0; i++ {
+		time.Sleep(10 * time.Millisecond)
+	}
+	for i := 0; i < 600 && f.h.AwaitingActivity() > 0; i++ {
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+// signInAs creates an account with the roles given and returns its session
+// cookie and CSRF token: a reviewer, for the activity route.
+func (f *connectFixture) signInAs(t *testing.T, username string, roles ...user.Role) (*http.Cookie, string) {
+	t.Helper()
+	u := &user.User{Username: username, DisplayName: username, Roles: roles}
+	if err := f.users.Create(f.ctx, u); err != nil {
+		t.Fatal(err)
+	}
+	tok, sess, err := f.sessions.Create(f.ctx, u.ID, "203.0.113.9", "test", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return &http.Cookie{Name: auth.CookieName, Value: tok}, f.sessions.CSRFToken(sess.ID)
+}
+
+// activity asks for the session's activity as the holder of cookie.
+func (f *cloudFixture) activity(sid string, cookie *http.Cookie, csrf string) (*httptest.ResponseRecorder, map[string]any) {
+	rr := f.do(http.MethodPost, "/api/v1/sessions/"+sid+"/activity", "application/json", strings.NewReader("{}"), cookie, csrf)
+	var out map[string]any
+	_ = json.Unmarshal(rr.Body.Bytes(), &out)
+	return rr, out
+}
+
+// finished waits for the session's recording to be finished, which a cloud
+// session's is after its last activity read, and returns it.
+func (f *cloudFixture) finished(t *testing.T, sid string) *session.Recording {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if s, err := f.h.Sessions.Get(f.ctx, sid); err == nil && s.RecordingID != "" {
+			if rec, err := f.h.Sessions.GetRecording(f.ctx, s.RecordingID); err == nil && rec.FinishedAt != nil {
+				return rec
+			}
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("the recording of %s never finished", sid)
+	return nil
 }
 
 // switches sets the policy's cloud grant to the doors given.
@@ -266,13 +400,19 @@ func (f *cloudFixture) released(t *testing.T) {
 }
 
 // moveClock makes the package clock movable for one test: set it before
-// the session starts, move it through the skew.
-func moveClock(t *testing.T) *atomic.Int64 {
+// the session starts, move it through the skew. The clock is put back only
+// once the fixture's sessions and their last reads are gone: this cleanup
+// runs before the fixture's, and a last read in flight reads the clock
+// (2026-11-17, the race the activity read brought).
+func moveClock(t *testing.T, f *cloudFixture) *atomic.Int64 {
 	t.Helper()
 	var skew atomic.Int64
 	prev := cloudNow
 	cloudNow = func() time.Time { return time.Now().Add(time.Duration(skew.Load())) }
-	t.Cleanup(func() { cloudNow = prev })
+	t.Cleanup(func() {
+		f.quiesce()
+		cloudNow = prev
+	})
 	return &skew
 }
 
@@ -412,10 +552,11 @@ func TestCloudSessionEndToEnd(t *testing.T) {
 	if rr, out := f.console(sid, f.cookie, f.csrf); rr.Code != 410 || out["code"] != "session_ended" {
 		t.Fatalf("console after the end: %d %v", rr.Code, out)
 	}
-	s, _ = f.h.Sessions.Get(f.ctx, sid)
-	rec, err := f.h.Sessions.GetRecording(f.ctx, s.RecordingID)
-	if err != nil || rec.FinishedAt == nil || rec.SizeBytes == 0 {
-		t.Fatalf("recording: %+v %v", rec, err)
+	// The row ended at once; the recording finishes after the activity's
+	// last read (phase C), which found nothing here.
+	rec := f.finished(t, sid)
+	if rec.SizeBytes == 0 || rec.SHA256 == "" || rec.State != session.RecordingFinished {
+		t.Fatalf("recording: %+v", rec)
 	}
 	cast := f.cast(t)
 	for _, want := range []string{
@@ -423,6 +564,8 @@ func TestCloudSessionEndToEnd(t *testing.T) {
 		"command-line credentials issued until " + clock(exp),
 		"console sign-in issued (runs until " + clock(until) + ")",
 		"terminated; command-line credentials end by " + clock(exp) + ", console by " + clock(until),
+		"activity from CloudTrail: none yet",
+		"activity complete",
 	} {
 		if !strings.Contains(cast, want) {
 			t.Errorf("recording lacks %q:\n%s", want, cast)
@@ -440,7 +583,7 @@ func TestCloudSessionEndToEnd(t *testing.T) {
 // past the session's end (ADR 0050, 3).
 func TestCloudCredentialsReuseRemintAndCap(t *testing.T) {
 	f := newCloudFixture(t)
-	skew := moveClock(t)
+	skew := moveClock(t, f)
 	sid, token, c := f.connectCloud(t)
 	first, _ := f.credentials(sid, token)
 	if first.Code != 200 || f.minter.count() != 1 {
@@ -482,6 +625,7 @@ func TestCloudCredentialsReuseRemintAndCap(t *testing.T) {
 	f.h.Registry.Terminate(sid)
 	f.endedWith(t, sid)
 	f.released(t)
+	f.finished(t, sid)
 	// Each line is a marker and an output event; the output events count.
 	if n := strings.Count(f.cast(t), `"o","command-line credentials issued until`); n != 3 {
 		t.Fatalf("%d issue lines, want one per mint (3)", n)
@@ -493,7 +637,7 @@ func TestCloudCredentialsReuseRemintAndCap(t *testing.T) {
 // near by moving the clock back before the connect.
 func TestCloudSessionEndsAtMaximum(t *testing.T) {
 	f := newCloudFixture(t)
-	skew := moveClock(t)
+	skew := moveClock(t, f)
 	skew.Store(-int64(time.Hour - 300*time.Millisecond))
 	sid, _, _ := f.connectCloud(t)
 	row, audited := f.endedWith(t, sid)
@@ -665,6 +809,8 @@ func TestCloudConsoleFallbackAndRefusals(t *testing.T) {
 	f.endedWith(t, sid)
 	f.endedWith(t, sid2)
 	f.released(t)
+	f.finished(t, sid)
+	f.finished(t, sid2)
 	cast := f.cast(t)
 	for _, want := range []string{"console sign-in refused: AWS's sign-in endpoint refused the exchange", "console sign-in refused: the role refused the gateway", "command-line credentials refused: the role refused the gateway"} {
 		if !strings.Contains(cast, want) {
@@ -815,6 +961,284 @@ func TestMyTargetsCloud(t *testing.T) {
 	}
 	if items := f.myCloudItems(t); len(items) != 0 {
 		t.Fatalf("a disabled role is listed: %v", items)
+	}
+}
+
+// A reviewer reads a live cloud session's activity on demand (ADR 0050,
+// phase C): an administrator and an auditor alike, a user not at all. The
+// role is assumed under the gateway's own session name for it; LookupEvents
+// asks by the session's name from its start; the events go on the recording
+// as lines under a header saying how many and how late CloudTrail may be;
+// the answer counts them; what is on the record already is not appended
+// again, and the raw event never is. Each read is audited to the reviewer.
+// Not a cloud session is 409, an ended one 410, an unknown one 404.
+func TestCloudActivityOnDemand(t *testing.T) {
+	f := newCloudFixture(t)
+	sid, _, _ := f.connectCloud(t)
+	admin, adminCSRF := f.signInAs(t, "root", user.RoleAdmin)
+	auditor, auditorCSRF := f.signInAs(t, "eve", user.RoleAuditor)
+	at := time.Now().Add(-time.Minute).Truncate(time.Second)
+	f.trail.set(
+		trailEvent("e2", at.Add(30*time.Second), "ec2.amazonaws.com", "TerminateInstances", "false", "i-0abc", "i-0def"),
+		trailEvent("e1", at, "s3.amazonaws.com", "ListBuckets", "true"),
+	)
+	rr, out := f.activity(sid, admin, adminCSRF)
+	if rr.Code != 200 || out["events"] != float64(2) {
+		t.Fatalf("admin reads: %d %v", rr.Code, out)
+	}
+	until, err := time.Parse(time.RFC3339Nano, out["read_until"].(string))
+	if err != nil || time.Since(until) > 5*time.Second || until.After(time.Now()) {
+		t.Fatalf("read_until %v (%v)", out["read_until"], err)
+	}
+	// The gateway's own mint, then the lookup by the session's name over
+	// the session so far, with the minted credentials.
+	mint := f.minter.last()
+	if mint.SessionName != "zanskar-gateway-audit" || mint.SourceIdentity != "zanskar-gateway" || mint.Tags["zanskar:purpose"] != "audit" || mint.Duration != 15*time.Minute ||
+		mint.RoleARN != testRoleARN || mint.ExternalID != f.role.CloudExternalID || len(mint.Tags) != 1 {
+		t.Fatalf("the audit mint: %+v", mint)
+	}
+	if f.trail.count() != 1 {
+		t.Fatalf("%d lookups", f.trail.count())
+	}
+	call := f.trail.call(0)
+	if len(call.LookupAttributes) != 1 || string(call.LookupAttributes[0].AttributeKey) != "Username" || aws.ToString(call.LookupAttributes[0].AttributeValue) != "zanskar-"+sid ||
+		time.Since(*call.StartTime) > 5*time.Second || !call.EndTime.Equal(until) || aws.ToInt32(call.MaxResults) != 50 {
+		t.Fatalf("the lookup: %+v", call)
+	}
+	if f.trail.creds[0].AccessKeyID != "ASIA000000000A" {
+		t.Fatalf("the lookup ran with %q, not the audit mint's credentials", f.trail.creds[0].AccessKeyID)
+	}
+	// The auditor reads too: nothing new, nothing appended twice.
+	if rr, out := f.activity(sid, auditor, auditorCSRF); rr.Code != 200 || out["events"] != float64(0) {
+		t.Fatalf("auditor reads: %d %v", rr.Code, out)
+	}
+	// A user may not, whoever's session it is.
+	if rr, _ := f.activity(sid, f.cookie, f.csrf); rr.Code != 403 {
+		t.Fatalf("a user reads: %d", rr.Code)
+	}
+	// Not a cloud session; no such session.
+	ssh := &session.Session{UserID: f.alice.ID, TargetID: f.ids["ok"], Protocol: "ssh", ClientIP: "10.0.0.1"}
+	if err := f.h.Sessions.Start(f.ctx, ssh); err != nil {
+		t.Fatal(err)
+	}
+	if rr, out := f.activity(ssh.ID, admin, adminCSRF); rr.Code != 409 || out["code"] != "not_cloud" {
+		t.Fatalf("an ssh session: %d %v", rr.Code, out)
+	}
+	if rr, out := f.activity("nosuch", admin, adminCSRF); rr.Code != 404 || out["code"] != "not_found" {
+		t.Fatalf("no such session: %d %v", rr.Code, out)
+	}
+	evs := f.events(t, audit.SessionCloudActivity, sid)
+	if len(evs) != 2 || evs[0].Outcome != audit.Success || evs[1].Outcome != audit.Success {
+		t.Fatalf("activity events: %+v", evs)
+	}
+	var d map[string]any
+	_ = json.Unmarshal(evs[0].Details, &d)
+	if (d["events"] != float64(2) && d["events"] != float64(0)) || d["read_until"] == nil || d["target_id"] != f.role.ID {
+		t.Fatalf("event details: %v", d)
+	}
+	// Ended: 410, and the recording holds each event once.
+	f.h.Registry.Terminate(sid)
+	f.endedWith(t, sid)
+	f.released(t)
+	if rr, out := f.activity(sid, admin, adminCSRF); rr.Code != 410 || out["code"] != "session_ended" {
+		t.Fatalf("after the end: %d %v", rr.Code, out)
+	}
+	f.finished(t, sid)
+	cast := f.cast(t)
+	lines := []string{
+		at.UTC().Format("15:04:05 UTC") + "  s3 ListBuckets  read-only  -",
+		at.Add(30*time.Second).UTC().Format("15:04:05 UTC") + "  ec2 TerminateInstances  write  i-0abc, i-0def",
+		"activity from CloudTrail, 2 events (events arrive up to 15 minutes late)",
+		"activity complete",
+	}
+	for _, want := range lines {
+		if n := strings.Count(cast, `"m","`+want+`"`); n != 1 {
+			t.Errorf("recording carries %q %d times, want once:\n%s", want, n, cast)
+		}
+	}
+	// The events are in time order under their header.
+	if strings.Index(cast, lines[2]) > strings.Index(cast, lines[0]) || strings.Index(cast, lines[0]) > strings.Index(cast, lines[1]) {
+		t.Errorf("order:\n%s", cast)
+	}
+	// The auditor's read and the last read found nothing new.
+	if n := strings.Count(cast, `"m","activity from CloudTrail: none yet"`); n != 2 {
+		t.Errorf("none yet %d times, want 2:\n%s", n, cast)
+	}
+	if strings.Contains(cast, "never-on-the-record") || strings.Contains(cast, "requestParameters") {
+		t.Fatal("the raw event reached the recording")
+	}
+}
+
+// After the session its last read waits the lateness, appends what arrived
+// late, says the record is complete and finishes the recording through the
+// run's close; the row ended at once, the token is refused meanwhile, the
+// sweep is told the recording is this gateway's, and the recording reads as
+// still recording, not lost, in the window. Nothing already on the record
+// is appended twice; the gateway's own read is audited as the system's.
+func TestCloudActivityFinalRead(t *testing.T) {
+	f := newCloudFixture(t)
+	// Long enough for the checks inside the window to run under -race on a
+	// loaded machine; the fixture's own 50 ms is for tests that only wait.
+	cloudActivityLateness = 1500 * time.Millisecond
+	sid, token, _ := f.connectCloud(t)
+	admin, csrf := f.signInAs(t, "root", user.RoleAdmin)
+	at := time.Now().Add(-time.Minute).Truncate(time.Second)
+	first := trailEvent("e1", at, "s3.amazonaws.com", "ListBuckets", "true")
+	f.trail.set(first)
+	if rr, out := f.activity(sid, admin, csrf); rr.Code != 200 || out["events"] != float64(1) {
+		t.Fatalf("first read: %d %v", rr.Code, out)
+	}
+	// A call CloudTrail delivers after the session's end.
+	f.trail.set(first, trailEvent("e2", at.Add(10*time.Second), "iam.amazonaws.com", "CreateUser", "false", "mallory"))
+	f.h.Registry.Terminate(sid)
+	f.endedWith(t, sid)
+	f.released(t)
+	// Inside the window: the row is ended and the token refused, the
+	// recording open and held here, still being written as far as its
+	// state goes.
+	s, err := f.h.Sessions.Get(f.ctx, sid)
+	if err != nil || s.EndedAt == nil || s.RecordingState != session.RecordingWriting {
+		t.Fatalf("row inside the window: %+v %v", s, err)
+	}
+	if rec, err := f.h.Sessions.GetRecording(f.ctx, s.RecordingID); err != nil || rec.FinishedAt != nil || rec.State != session.RecordingWriting {
+		t.Fatalf("recording inside the window: %+v %v", rec, err)
+	}
+	if !f.h.Awaiting(sid) || f.h.AwaitingActivity() != 1 {
+		t.Fatalf("awaiting: %v %d", f.h.Awaiting(sid), f.h.AwaitingActivity())
+	}
+	if rr, out := f.credentials(sid, token); rr.Code != 410 || out["code"] != "session_ended" {
+		t.Fatalf("credentials inside the window: %d %v", rr.Code, out)
+	}
+	if rr, out := f.activity(sid, admin, csrf); rr.Code != 410 || out["code"] != "session_ended" {
+		t.Fatalf("a read inside the window: %d %v", rr.Code, out)
+	}
+	// The window closes: the late event is on the record, the first not
+	// again, the recording finished and no longer held.
+	rec := f.finished(t, sid)
+	if rec.State != session.RecordingFinished || rec.SizeBytes == 0 || f.h.Awaiting(sid) {
+		t.Fatalf("after the window: %+v held %v", rec, f.h.Awaiting(sid))
+	}
+	if s, _ := f.h.Sessions.Get(f.ctx, sid); s.RecordingState != session.RecordingFinished {
+		t.Fatalf("row after the window: %+v", s)
+	}
+	cast := f.cast(t)
+	line1 := at.UTC().Format("15:04:05 UTC") + "  s3 ListBuckets  read-only  -"
+	line2 := at.Add(10*time.Second).UTC().Format("15:04:05 UTC") + "  iam CreateUser  write  mallory"
+	for _, want := range []string{line1, line2, "activity complete"} {
+		if n := strings.Count(cast, `"m","`+want+`"`); n != 1 {
+			t.Errorf("recording carries %q %d times, want once:\n%s", want, n, cast)
+		}
+	}
+	// Each read found one event, and said so; the terminate line comes
+	// before the last read, which comes before the close.
+	if strings.Count(cast, `"m","activity from CloudTrail, 1 event (events arrive up to 15 minutes late)"`) != 2 {
+		t.Errorf("headers:\n%s", cast)
+	}
+	if ti, hi, ci := strings.Index(cast, `"m","terminated`), strings.LastIndex(cast, "activity from CloudTrail, 1 event"), strings.Index(cast, "activity complete"); ti >= hi || hi >= ci {
+		t.Errorf("order %d %d %d:\n%s", ti, hi, ci, cast)
+	}
+	// The last read's window runs from the session's start: the overlap of
+	// fifteen minutes reaches back past it.
+	if f.trail.count() != 2 || !f.trail.call(1).StartTime.Equal(*f.trail.call(0).StartTime) || !f.trail.call(1).EndTime.After(*f.trail.call(0).EndTime) {
+		t.Fatalf("the windows: %+v %+v", f.trail.call(0), f.trail.call(1))
+	}
+	evs := f.events(t, audit.SessionCloudActivity, sid)
+	if len(evs) != 2 || evs[0].ActorUserID != "" || evs[0].ActorIP != "system" || evs[0].Outcome != audit.Success {
+		t.Fatalf("the gateway's read: %+v", evs)
+	}
+	var d map[string]any
+	_ = json.Unmarshal(evs[0].Details, &d)
+	if d["events"] != float64(1) || d["by"] != "the gateway, after the session" || d["read_until"] == nil {
+		t.Fatalf("the gateway's read details: %v", d)
+	}
+}
+
+// A drain cuts the wait short: the gateway about to restart reads what there
+// is, says the record is not in full, and finishes the recording, so a
+// graceful restart stores it rather than leave it to the next process.
+func TestCloudActivityDrainCutsTheWaitShort(t *testing.T) {
+	f := newCloudFixture(t)
+	cloudActivityLateness = 10 * time.Second
+	prevPoll := cloudDrainPoll
+	cloudDrainPoll = 10 * time.Millisecond
+	t.Cleanup(func() { cloudDrainPoll = prevPoll })
+	var draining atomic.Bool
+	f.h.Draining = draining.Load
+	sid, _, _ := f.connectCloud(t)
+	f.h.Registry.Terminate(sid)
+	f.endedWith(t, sid)
+	draining.Store(true)
+	start := time.Now()
+	f.finished(t, sid)
+	if time.Since(start) > 3*time.Second {
+		t.Fatal("the drain did not cut the wait short")
+	}
+	cast := f.cast(t)
+	for _, want := range []string{"activity from CloudTrail: none yet", "activity not read in full: gateway restarting"} {
+		if !strings.Contains(cast, `"m","`+want+`"`) {
+			t.Errorf("recording lacks %q:\n%s", want, cast)
+		}
+	}
+	if strings.Contains(cast, "activity complete") {
+		t.Errorf("a cut-short read claims completeness:\n%s", cast)
+	}
+}
+
+// A read CloudTrail refuses or fails is said on the record in Zanskar's
+// words and audited as a failure, and the route says why: the role lacking
+// the statement (lookup_denied), anything else (activity_failed); the
+// session runs on. The last read refused is said too, and the recording
+// finishes all the same.
+func TestCloudActivityRefusals(t *testing.T) {
+	f := newCloudFixture(t)
+	sid, _, _ := f.connectCloud(t)
+	admin, csrf := f.signInAs(t, "root", user.RoleAdmin)
+	denied := &smithy.GenericAPIError{Code: "AccessDeniedException", Message: "User is not authorized to perform: cloudtrail:LookupEvents"}
+	f.trail.fail(denied)
+	if rr, out := f.activity(sid, admin, csrf); rr.Code != 502 || out["code"] != "lookup_denied" || !strings.Contains(out["message"].(string), "lacks cloudtrail:LookupEvents") {
+		t.Fatalf("denied: %d %v", rr.Code, out)
+	}
+	f.trail.fail(errors.New("dial tcp: i/o timeout"))
+	if rr, out := f.activity(sid, admin, csrf); rr.Code != 502 || out["code"] != "activity_failed" || !strings.Contains(out["message"].(string), "AWS could not be reached") {
+		t.Fatalf("network: %d %v", rr.Code, out)
+	}
+	f.trail.fail(nil)
+	f.minter.fail(errors.Join(cloud.ErrMintRefused, errors.New("AccessDenied")))
+	if rr, out := f.activity(sid, admin, csrf); rr.Code != 502 || out["code"] != "activity_failed" || !strings.Contains(out["message"].(string), "trust policy may have changed") {
+		t.Fatalf("mint refused: %d %v", rr.Code, out)
+	}
+	f.minter.fail(nil)
+	f.stillLive(t, sid)
+	evs := f.events(t, audit.SessionCloudActivity, sid)
+	if len(evs) != 3 {
+		t.Fatalf("%d events, want 3 failures", len(evs))
+	}
+	for _, ev := range evs {
+		if ev.Outcome != audit.Failure || !strings.Contains(string(ev.Details), `"error"`) || strings.Contains(string(ev.Details), "User is not authorized") {
+			t.Fatalf("failure event: %+v", ev)
+		}
+	}
+	// The last read refused: said, and the recording finished anyway.
+	f.trail.fail(denied)
+	f.h.Registry.Terminate(sid)
+	f.endedWith(t, sid)
+	f.finished(t, sid)
+	cast := f.cast(t)
+	for want, n := range map[string]int{
+		"activity not read: the role lacks cloudtrail:LookupEvents":                          2,
+		"activity not read: AWS could not be reached":                                        1,
+		"activity not read: the role refused the gateway; its trust policy may have changed": 1,
+		"activity complete": 1,
+	} {
+		if got := strings.Count(cast, `"m","`+want+`"`); got != n {
+			t.Errorf("%q %d times, want %d:\n%s", want, got, n, cast)
+		}
+	}
+	if strings.Contains(cast, "User is not authorized") {
+		t.Fatal("AWS's words reached the recording")
+	}
+	if evs := f.events(t, audit.SessionCloudActivity, sid); len(evs) != 4 || evs[0].ActorIP != "system" || evs[0].Outcome != audit.Failure {
+		t.Fatalf("the last read's event: %+v", evs)
 	}
 }
 

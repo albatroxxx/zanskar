@@ -21,6 +21,7 @@ import (
 	"github.com/albatroxxx/zanskar/internal/gateway"
 	"github.com/albatroxxx/zanskar/internal/httpx"
 	"github.com/albatroxxx/zanskar/internal/policy"
+	"github.com/albatroxxx/zanskar/internal/recording"
 	"github.com/albatroxxx/zanskar/internal/session"
 	"github.com/albatroxxx/zanskar/internal/target"
 	"github.com/albatroxxx/zanskar/internal/ticket"
@@ -52,6 +53,22 @@ const (
 // cloudNow is the clock cloud sessions read; tests move it.
 var cloudNow = time.Now
 
+// Phase C (ADR 0050, 4): a session's activity is what CloudTrail holds under
+// its role session name, read on a reviewer's demand while it runs and once
+// more after it, since CloudTrail delivers an event up to fifteen minutes
+// late. The recording stays open for that last read.
+var (
+	// cloudActivityLateness is how long after the end the last read waits;
+	// tests shorten it. The overlap between reads is the real lateness.
+	cloudActivityLateness = session.CloudActivityLateness
+	// cloudDrainPoll is how often the wait looks for a drain.
+	cloudDrainPoll = time.Second
+)
+
+// cloudActivityTimeout bounds one read: a mint and up to forty pages at two
+// a second.
+const cloudActivityTimeout = 45 * time.Second
+
 // cloudOff says why no cloud session can start on this gateway, or "". The
 // profile stanza's credentials URL and the console form's Issuer name the
 // public address, so without it nothing a session hands out would work.
@@ -71,13 +88,27 @@ type cloudSession struct {
 	ep       *endpoint
 	terms    policy.CloudTerms
 	minter   cloud.RoleMinter
-	endsAt   time.Time
-	record   func(line string)
+	// startedAt is where the first activity read begins; endsAt where the
+	// session ends by itself.
+	startedAt time.Time
+	endsAt    time.Time
+	record    func(line string)
+	// activity is what the session's reads of CloudTrail hold between them.
+	activity cloudActivity
 
 	mu           sync.Mutex
 	cli          cloud.Credentials
 	consoleUntil *time.Time
 	closed       bool
+}
+
+// cloudActivity is the state between a session's activity reads (phase C):
+// the ids already on the record and the end of the last window read. Reads
+// are one at a time.
+type cloudActivity struct {
+	mu        sync.Mutex
+	seen      map[string]bool
+	readUntil time.Time
 }
 
 // cloudSessions holds the live cloud sessions by id.
@@ -208,7 +239,7 @@ func (h *Handler) startCloud(r *http.Request, p *auth.Principal, ip string, ep *
 	}
 	token := CloudTokenPrefix + base64.RawURLEncoding.EncodeToString(raw[:])
 	sess := &cloudSession{id: run.s.ID, hash: sha256.Sum256([]byte(token)), userID: p.User.ID, username: p.User.Username, ep: ep,
-		terms: terms, minter: minter, endsAt: endsAt, record: record}
+		terms: terms, minter: minter, startedAt: now, endsAt: endsAt, record: record}
 	h.clouds.add(sess)
 	record("session started as " + assumedRoleARN(ep.CloudRoleARN, cloud.SessionNameFor(sess.id)) + ", until " + clock(endsAt))
 	go h.runCloud(sctx, run, sess, rec, row, done)
@@ -271,11 +302,10 @@ func profileWord(s string) string {
 func clock(t time.Time) string { return t.UTC().Format("15:04 UTC") }
 
 // runCloud keeps the session until the registry ends it or its duration
-// passes, then closes it: the token is refused, the recording closed, the
-// row ended and the end audited, saying what the gateway cannot take back.
-func (h *Handler) runCloud(ctx context.Context, run *sessionRun, sess *cloudSession, rec recorder, row *session.Recording, done func()) {
-	defer done()
-	defer h.clouds.remove(sess.id)
+// passes, then closes it: the token is refused, the row ended and the end
+// audited, saying what the gateway cannot take back. The recording stays
+// open for the activity's last read (phase C) and is finished after it.
+func (h *Handler) runCloud(ctx context.Context, run *sessionRun, sess *cloudSession, rec *recording.Asciicast, row *session.Recording, done func()) {
 	// The end is a wall-clock moment, armed on the real clock: a test that
 	// moves cloudNow back before its connect brings the end near.
 	timer := time.NewTimer(time.Until(sess.endsAt))
@@ -299,8 +329,176 @@ func (h *Handler) runCloud(ctx context.Context, run *sessionRun, sess *cloudSess
 	} else if remains != "" {
 		sess.record("ended; " + remains)
 	}
-	run.finishRecording(rec, row)
+	// The session ends now: the registry forgets it, the token is refused,
+	// the row closes and the end is audited, as before phase C.
+	done()
+	h.clouds.remove(sess.id)
 	run.end(reason, "", map[string]string{"detail": detail})
+	h.finishCloudRecording(run, sess, rec, row)
+}
+
+// finishCloudRecording keeps a cloud session's recording open after its end
+// for the lateness CloudTrail allows itself, reads the activity once more,
+// says the record is complete and finishes the recording (phase C). The
+// session is in the awaiting set meanwhile, which tells the sweep the
+// recording is this gateway's; a gateway that goes away inside the window
+// leaves the recording to the next process's sweep, which finishes it with
+// the line "activity not read: gateway restarted" (session.Sweeper). A drain
+// cuts the wait short and reads what there is, so a graceful restart
+// finishes and stores the recording itself rather than leave it behind.
+func (h *Handler) finishCloudRecording(run *sessionRun, sess *cloudSession, rec *recording.Asciicast, row *session.Recording) {
+	h.awaiting.m.Store(sess.id, time.Now())
+	defer h.awaiting.m.Delete(sess.id)
+	// What the session wrote is in storage before the wait: a crash inside
+	// the window loses the activity, not the session.
+	if err := rec.Flush(); err != nil {
+		h.Log.Warn("flush recording", "session", sess.id, "err", err)
+	}
+	timer := time.NewTimer(cloudActivityLateness)
+	defer timer.Stop()
+	poll := time.NewTicker(cloudDrainPoll)
+	defer poll.Stop()
+	early := false
+wait:
+	for {
+		select {
+		case <-timer.C:
+			break wait
+		case <-poll.C:
+			if h.draining() {
+				early = true
+				break wait
+			}
+		}
+	}
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(run.r.Context()), cloudActivityTimeout)
+	defer cancel()
+	n, until, err := h.readActivity(ctx, sess)
+	details := map[string]any{"target_id": sess.ep.TargetID, "by": "the gateway, after the session"}
+	outcome := audit.Success
+	if err != nil {
+		outcome, details["error"] = audit.Failure, activityReason(err)
+	} else {
+		details["events"], details["read_until"] = n, until.UTC().Format(time.RFC3339)
+	}
+	h.record(run.r, audit.Actor{IP: "system"}.Event(audit.SessionCloudActivity, "access_session", sess.id, outcome, details))
+	if early {
+		sess.record("activity not read in full: gateway restarting")
+	} else {
+		sess.record("activity complete")
+	}
+	run.finishRecording(rec, row)
+}
+
+// readActivity reads what CloudTrail holds of the session since the last
+// read, less the lateness (an event may arrive after the window that covered
+// its time was read; the seen set keeps each once), up to now, and writes it
+// to the recording: a header with the count and one line an event, or why
+// nothing was read. It returns the count and the end of the window read.
+func (h *Handler) readActivity(ctx context.Context, sess *cloudSession) (int, time.Time, error) {
+	sess.activity.mu.Lock()
+	defer sess.activity.mu.Unlock()
+	now := cloudNow()
+	from := sess.startedAt
+	if last := sess.activity.readUntil; !last.IsZero() && last.Add(-session.CloudActivityLateness).After(from) {
+		from = last.Add(-session.CloudActivityLateness)
+	}
+	if sess.activity.seen == nil {
+		sess.activity.seen = map[string]bool{}
+	}
+	reader := &cloud.ActivityReader{Minter: sess.minter, NewTrail: h.NewTrail, Log: h.Log}
+	events, err := reader.Read(ctx, cloud.ActivityRequest{RoleARN: sess.ep.CloudRoleARN, ExternalID: sess.ep.CloudExternalID, Region: sess.ep.CloudRegion,
+		SessionName: cloud.SessionNameFor(sess.id), From: from, To: now, Seen: sess.activity.seen})
+	if err != nil {
+		reason := activityReason(err)
+		sess.record("activity not read: " + reason)
+		// A role without the statement is the account's choice, logged
+		// low; anything else is worth a look.
+		if errors.Is(err, cloud.ErrLookupDenied) {
+			h.Log.Debug("activity not read", "session", sess.id, "reason", reason)
+		} else {
+			h.Log.Warn("activity not read", "session", sess.id, "reason", reason)
+		}
+		return 0, sess.activity.readUntil, err
+	}
+	sess.activity.readUntil = now
+	if len(events) == 0 {
+		sess.record("activity from CloudTrail: none yet")
+		return 0, now, nil
+	}
+	count := fmt.Sprintf("%d events", len(events))
+	if len(events) == 1 {
+		count = "1 event"
+	}
+	sess.record("activity from CloudTrail, " + count + " (events arrive up to 15 minutes late)")
+	for _, ev := range events {
+		sess.record(cloud.ActivityLine(ev))
+	}
+	return len(events), now, nil
+}
+
+// activityReason is a read's error as the recording and the reviewer read
+// it: Zanskar's words, never AWS's request ids.
+func activityReason(err error) string {
+	switch {
+	case errors.Is(err, cloud.ErrLookupDenied):
+		return "the role lacks cloudtrail:LookupEvents"
+	case errors.Is(err, cloud.ErrLookupThrottled):
+		return "CloudTrail throttled the read"
+	case errors.Is(err, context.DeadlineExceeded):
+		return "CloudTrail did not answer in time"
+	}
+	return mintReason(err)
+}
+
+// cloudActivityResponse is what an on-demand read answers.
+type cloudActivityResponse struct {
+	Events    int       `json:"events"`
+	ReadUntil time.Time `json:"read_until"`
+}
+
+// cloudActivity serves POST /api/v1/sessions/{id}/activity for a reviewer:
+// the live cloud session's activity read now and appended to its recording,
+// the count answered. A session that is not a cloud one (409 not_cloud) or
+// has ended (410: its activity is in the recording) is told apart from one
+// unknown (404) or not held here (409 not_live).
+func (h *Handler) cloudActivity(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	p, _ := auth.FromContext(r.Context())
+	actor := audit.Actor{UserID: p.User.ID, IP: auth.ClientIP(r)}
+	sess, ok := h.clouds.lookup(id)
+	if !ok {
+		s, err := h.Sessions.Get(r.Context(), id)
+		switch {
+		case errors.Is(err, session.ErrNotFound):
+			httpx.WriteError(w, r, http.StatusNotFound, "not_found", "no session has that id")
+		case err != nil:
+			httpx.Internal(w, r, h.Log, err)
+		case s.Protocol != string(target.Cloud):
+			httpx.WriteError(w, r, http.StatusConflict, "not_cloud", "activity is read for a cloud session; this is "+s.Protocol)
+		case s.EndedAt != nil:
+			httpx.WriteError(w, r, http.StatusGone, "session_ended", "the session has ended; its activity is in the recording")
+		default:
+			httpx.WriteError(w, r, http.StatusConflict, "not_live", "the session is not live on this gateway")
+		}
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), cloudActivityTimeout)
+	defer cancel()
+	n, until, err := h.readActivity(ctx, sess)
+	if err != nil {
+		reason := activityReason(err)
+		h.record(r, actor.Event(audit.SessionCloudActivity, "access_session", id, audit.Failure, map[string]any{"target_id": sess.ep.TargetID, "error": reason}))
+		code := "activity_failed"
+		if errors.Is(err, cloud.ErrLookupDenied) {
+			code = "lookup_denied"
+		}
+		httpx.WriteError(w, r, http.StatusBadGateway, code, "Zanskar: the activity could not be read ("+reason+")")
+		return
+	}
+	h.record(r, actor.Event(audit.SessionCloudActivity, "access_session", id, audit.Success,
+		map[string]any{"target_id": sess.ep.TargetID, "events": n, "read_until": until.UTC().Format(time.RFC3339)}))
+	httpx.WriteJSON(w, http.StatusOK, cloudActivityResponse{Events: n, ReadUntil: until})
 }
 
 // close marks the session ended and says what outlives it: the command-line

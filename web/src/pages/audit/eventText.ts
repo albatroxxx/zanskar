@@ -93,6 +93,7 @@ const actionLabels: Record<string, string> = {
   'session.cloud.console': 'Console sign-in issued',
   'target.cloud.test': 'Cloud role tested',
   'session.cloud.credentials': 'Command-line credentials issued',
+  'session.cloud.activity': 'Cloud activity read',
   'settings.update': 'Settings updated',
   'settings.reset': 'Settings reset',
   'settings.boot_request': 'Install settings change requested',
@@ -284,6 +285,14 @@ export function describe(ev: AuditEvent): string {
     case 'session.cloud.console': return s ? `opened the console of ${s.target}` : `opened a cloud console (session ${name})`
     case 'target.cloud.test': return `tested the cloud role of target ${name}`
     case 'session.cloud.credentials': return s ? `took command-line credentials for ${s.target}` : `took command-line credentials (session ${name})`
+    case 'session.cloud.activity': {
+      // A reviewer's read during the session, the gateway's own after it,
+      // or the sweep's note that none was made (ADR 0050, phase C).
+      const what = s ? `the activity of ${s.user}'s session on ${s.target}` : `the activity of session ${name}`
+      if (fail) return `could not read ${what}${str(d.error) ? ` (${str(d.error)})` : ''}`
+      const n = typeof d.events === 'number' ? d.events : undefined
+      return `read ${what}${n === undefined ? '' : ` (${n} ${n === 1 ? 'event' : 'events'})`}`
+    }
     case 'recording.view': return s ? `played the recording of ${s.user} on ${s.target} (${s.proto})` : `played recording ${name}`
     case 'recording.search': {
       // Live, 2026-11-11: it read "search recording", the one row that was
