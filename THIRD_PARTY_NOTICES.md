@@ -10437,7 +10437,7 @@ THE SOFTWARE.
 
 ### golang.org/x/crypto
 
-* Version: `v0.58.0`
+* Version: `v0.59.0`
 
 ```
 Copyright 2009 The Go Authors.
@@ -10545,7 +10545,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 ### golang.org/x/sync
 
-* Version: `v0.24.0`
+* Version: `v0.25.0`
 
 ```
 Copyright 2009 The Go Authors.
@@ -10581,7 +10581,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 ### golang.org/x/sys
 
-* Version: `v0.49.0`
+* Version: `v0.50.0`
 
 ```
 Copyright 2009 The Go Authors.
@@ -10617,7 +10617,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 ### golang.org/x/term
 
-* Version: `v0.47.0`
+* Version: `v0.48.0`
 
 ```
 Copyright 2009 The Go Authors.
@@ -10653,7 +10653,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 ### golang.org/x/text
 
-* Version: `v0.43.0`
+* Version: `v0.44.0`
 
 ```
 Copyright 2009 The Go Authors.
