@@ -4,7 +4,7 @@ import { api, errorMessage, query } from '../../api/client'
 import { fmtDuration, fmtTime, protocolName } from '../../api/format'
 import { ranges, sinceFor } from '../../api/ranges'
 import { sessionTarget, sessionUser } from '../../api/labels'
-import type { Session } from '../../api/types'
+import type { CloudActivity, Session } from '../../api/types'
 import { recordingGone } from '../../api/states'
 import { Alert, Confirm, Empty, Field, Loading, PageHead, EndReason, StateBadge, TabLink } from '../../components/ui'
 import { useRecordingsPath } from '../audit/paths'
@@ -38,6 +38,21 @@ export function Sessions() {
   const { items, err, setErr, reload } = useList<Session>('/sessions', { open: openOnly ? 'true' : undefined, username: applied || undefined, from: from || undefined })
   const [terminating, setTerminating] = useState<Session | null>(null)
   const [reason, setReason] = useState('')
+  // A live cloud session's activity, read from CloudTrail on demand (ADR
+  // 0050, phase C): the count of the last read stays beside the button.
+  const [activity, setActivity] = useState<Record<string, string>>({})
+  const [reading, setReading] = useState('')
+  const readActivity = async (s: Session) => {
+    setReading(s.id)
+    try {
+      const r = await api.post<CloudActivity>(`/sessions/${s.id}/activity`)
+      setActivity((a) => ({ ...a, [s.id]: r.events === 0 ? 'none yet' : r.events === 1 ? '1 event' : `${r.events} events` }))
+    } catch (e) {
+      setErr(errorMessage(e))
+    } finally {
+      setReading('')
+    }
+  }
 
   return (
     <>
@@ -108,6 +123,12 @@ export function Sessions() {
                     {s.state === 'live' && (
                       <span className="actions">
                         <TabLink className="btn sm" to={`/audit/shadow/${s.id}?protocol=${s.protocol}&target=${encodeURIComponent(sessionTarget(s))}`} label="Watch" title="Watch live, read-only" />
+                        {s.protocol === 'cloud' && (
+                          <>
+                            <button className="btn sm" disabled={reading === s.id} onClick={() => void readActivity(s)}>Activity</button>
+                            {activity[s.id] && <span className="muted">{activity[s.id]}</span>}
+                          </>
+                        )}
                         {admin && (
                           <button className="btn sm danger" onClick={() => setTerminating(s)}>
                             Terminate

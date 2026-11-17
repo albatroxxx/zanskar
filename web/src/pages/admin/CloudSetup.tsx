@@ -8,8 +8,9 @@ import { accountLabel } from './cloudNames'
 /**
  * CloudSetup is a cloud role's pastes (ADR 0050): the trust policy that lets
  * this gateway, and nothing else, assume the role with the ExternalId Zanskar
- * minted, and the one-line CLI and the CloudFormation that create the role
- * with it. The trust policy waits for the gateway's principal, as the
+ * minted, the activity policy that lets it read the session's activity from
+ * CloudTrail (phase C), and the CLI and the CloudFormation that put both on
+ * the role. The trust policy waits for the gateway's principal, as the
  * autoscaling and EKS pages' do (ADR 0023): a policy with a placeholder looks
  * finished and is not.
  */
@@ -62,9 +63,13 @@ export function CloudSetup({ target, onClose }: { target: Target; onClose: () =>
           ) : (
             <>
               <Paste text={setup.trust_policy} name="trust policy" />
-              <h3>2 · Create the role</h3>
+              {/* The activity read (ADR 0050, phase C) needs one statement of the role. */}
+              <h3>2 · Activity policy</h3>
+              <p className="muted">Without it, Activity is not read.</p>
+              <Paste text={setup.permissions_policy} name="activity policy" />
+              <h3>3 · Create the role</h3>
               <Paste text={setup.cli} name="CLI" />
-              <h3>3 · CloudFormation</h3>
+              <h3>4 · CloudFormation</h3>
               <Paste text={setup.cloudformation} name="CloudFormation" />
             </>
           )}

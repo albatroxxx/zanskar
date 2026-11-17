@@ -104,7 +104,7 @@ describe('Cloud accounts', () => {
   })
 
   it('shows the role without a credential slot, and prints the pastes once the principal is known', async () => {
-    const pending: CloudSetup = { principal: null, pending: true, external_id: prodAdmin.cloud_external_id!, trust_policy: '', cli: '', cloudformation: '' }
+    const pending: CloudSetup = { principal: null, pending: true, external_id: prodAdmin.cloud_external_id!, trust_policy: '', permissions_policy: '{"Action":"cloudtrail:LookupEvents"}', cli: '', cloudformation: '' }
     const ready: CloudSetup = { ...pending, principal: 'arn:aws:iam::999999999999:role/Zanskar-Gateway-Role', pending: false, trust_policy: '{"Version":"2012-10-17"}', cli: 'aws iam create-role', cloudformation: 'AWSTemplateFormatVersion' }
     const get = vi.spyOn(api, 'get').mockResolvedValueOnce(pending as never).mockResolvedValueOnce(ready as never)
     drawer(prodAdmin)
@@ -124,6 +124,11 @@ describe('Cloud accounts', () => {
     expect(await within(dialog).findByText('{"Version":"2012-10-17"}')).toBeDefined()
     expect(within(dialog).getByText('arn:aws:iam::999999999999:role/Zanskar-Gateway-Role')).toBeDefined()
     expect(within(dialog).getByRole('button', { name: 'Copy trust policy' })).toBeDefined()
+    // The activity policy (phase C) sits under the trust policy, with its one-clause consequence.
+    expect(within(dialog).getAllByRole('heading', { level: 3 }).map((h) => h.textContent)).toEqual(['1 · Trust policy', '2 · Activity policy', '3 · Create the role', '4 · CloudFormation'])
+    expect(within(dialog).getByText('{"Action":"cloudtrail:LookupEvents"}')).toBeDefined()
+    expect(within(dialog).getByText('Without it, Activity is not read.')).toBeDefined()
+    expect(within(dialog).getByRole('button', { name: 'Copy activity policy' })).toBeDefined()
     expect(within(dialog).getByRole('button', { name: 'Copy CLI' })).toBeDefined()
     expect(within(dialog).getByRole('button', { name: 'Copy CloudFormation' })).toBeDefined()
   })

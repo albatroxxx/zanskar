@@ -640,8 +640,16 @@ export interface CloudSetup {
   pending: boolean
   external_id: string
   trust_policy: string
+  /** The one statement that lets the gateway read a session's activity from CloudTrail (phase C); given whether pending or not. */
+  permissions_policy: string
   cli: string
   cloudformation: string
+}
+
+/** POST /sessions/{id}/activity: a live cloud session's activity read from CloudTrail now and appended to its recording. */
+export interface CloudActivity {
+  events: number
+  read_until: string
 }
 
 /** POST /targets/{id}/cloud/test: the role assumed for the target's minutes, or which stage refused. */
