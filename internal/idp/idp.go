@@ -277,6 +277,12 @@ func Validate(p *Provider, c *Config) error {
 		if o.ClientID == "" || o.ClientSecret == "" {
 			return fmt.Errorf("%w: client_id and client_secret required", ErrInvalidInput)
 		}
+		// Without a groups claim no sign-in asserts a group, so approver
+		// groups would withdraw the role from everyone who signs in; refused
+		// here rather than found out at the next sign-in (review R5).
+		if len(c.ApproverGroups) > 0 && o.GroupsClaim == "" {
+			return fmt.Errorf("%w: approver_groups require groups_claim", ErrInvalidInput)
+		}
 		if len(o.Scopes) == 0 {
 			o.Scopes = []string{"openid", "profile", "email"}
 		}
@@ -730,9 +736,11 @@ func approverWanted(p *Opened, id Identity) bool {
 
 // syncApprover brings the account's approver role in line with the
 // provider's approver groups (ADR 0049, 7): granted to a member of one,
-// withdrawn from a holder in none. An administrator holds every role, so
-// nothing is done for one. A refusal to change the roles leaves them as they
-// are and the sign-in goes on; the result says only what did change.
+// withdrawn from a holder in none, to no role at all when it was the only
+// one (the account then opens no portal until a role is given). An
+// administrator holds every role, so nothing is done for one. A refusal to
+// change the roles leaves them as they are and the sign-in goes on; the
+// result says only what did change.
 func (pv *Provisioner) syncApprover(ctx context.Context, p *Opened, id Identity, u *user.User, res *Resolution) {
 	if u.HasRole(user.RoleAdmin) {
 		return
@@ -745,7 +753,7 @@ func (pv *Provisioner) syncApprover(ctx context.Context, p *Opened, id Identity,
 		}
 	case !want && has:
 		roles := slices.DeleteFunc(slices.Clone(u.Roles), func(r user.Role) bool { return r == user.RoleApprover })
-		if len(roles) > 0 && pv.Users.SetRoles(ctx, u.ID, roles) == nil {
+		if pv.Users.SetRoles(ctx, u.ID, roles) == nil {
 			res.ApproverWithdrawn = true
 		}
 	}

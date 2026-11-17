@@ -495,6 +495,34 @@ func TestResolveApproverGroups(t *testing.T) {
 	}
 }
 
+// TestResolveWithdrawsApproverHeldAlone (review R11): an account holding
+// approver and nothing else (the provider's default role) loses it when it
+// is in none of the approver groups, as one holding user beside it does; the
+// withdrawal is on the record and the account is left with no role.
+func TestResolveWithdrawsApproverHeldAlone(t *testing.T) {
+	e := newProvisionEnv(t)
+	ctx := context.Background()
+	p := e.provider(t, "corp", true)
+	p.Config.DefaultRoles = []user.Role{user.RoleApprover}
+	p.Config.ApproverGroups = []string{"approvers"}
+	r, err := e.pv.Resolve(ctx, p, Identity{ExternalID: "sub-1", Username: "fay", Groups: []string{"approvers"}})
+	if err != nil || !r.Created || len(r.User.Roles) != 1 || r.User.Roles[0] != user.RoleApprover {
+		t.Fatalf("first sign-in: %+v %v", r, err)
+	}
+	r, err = e.pv.Resolve(ctx, p, Identity{ExternalID: "sub-1", Username: "fay", Groups: []string{"dev-team"}})
+	if err != nil || !r.ApproverWithdrawn || len(r.User.Roles) != 0 {
+		t.Fatalf("out of the group, approver held alone: %+v %v", r, err)
+	}
+	evs := r.Events("192.0.2.9", p, Identity{ExternalID: "sub-1"})
+	if len(evs) != 1 || evs[0].Action != audit.UserRolesUpdate || !bytes.Contains(evs[0].Details, []byte(`"roles_withdrawn":["approver"]`)) {
+		t.Fatalf("withdrawal event: %v", actions(evs))
+	}
+	// Back in the group: granted again, approver alone.
+	if r, err = e.pv.Resolve(ctx, p, Identity{ExternalID: "sub-1", Username: "fay", Groups: []string{"approvers"}}); err != nil || !r.ApproverGranted || len(r.User.Roles) != 1 || r.User.Roles[0] != user.RoleApprover {
+		t.Fatalf("back in the group: %+v %v", r, err)
+	}
+}
+
 // TestResolveLeavesApproverWhenProviderListsNoGroups: a provider with no
 // approver groups does not own the role; what an administrator set by hand
 // stays through every sign-in.

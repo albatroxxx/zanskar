@@ -99,8 +99,11 @@ unchanged.
 **7. The role at scale.** A provider that owns the person (ADR 0035) gains **Approver groups**: the
 external groups (OIDC claim values, SCIM groups, LDAP group DNs, as `GroupMapping` keys are) whose
 members hold the approver role, granted and withdrawn on every sync and sign-in as mapped group
-membership is. Local accounts take the role from the user form. Admin and auditor stay as they are:
-nobody asked for them from groups.
+membership is. Approver groups apply where the provider hands over group membership, which is at
+sign-in (an OIDC provider's groups claim, which the setting therefore requires; an LDAP user's
+`memberOf`); the directory sync and SCIM carry no groups, so a SCIM-only provider's approvers
+take the role by hand or through an LDAP or OIDC sign-in. Local accounts take the role from the
+user form. Admin and auditor stay as they are: nobody asked for them from groups.
 
 **8. Two small moves the requester may get, if the owner wants them** (decision 7 below): to
 **cancel** a pending request (`pending → cancelled`, `access.request.cancel`) and to **end** their

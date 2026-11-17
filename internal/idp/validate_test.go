@@ -169,11 +169,33 @@ func TestKeycloakRealm(t *testing.T) {
 	}
 }
 
+// TestApproverGroupsNeedAGroupsClaim (review R5): an OIDC provider with no
+// groups claim asserts no group at sign-in, so approver groups on it would
+// withdraw the role from everyone who signs in; they are refused when saved.
+// LDAP asserts memberOf without a setting, so nothing is asked of it.
+func TestApproverGroupsNeedAGroupsClaim(t *testing.T) {
+	c := okOIDC()
+	c.ApproverGroups = []string{"approvers"}
+	if err := Validate(&Provider{Name: "corp", Type: TypeOIDC}, c); !errors.Is(err, ErrInvalidInput) || !strings.Contains(err.Error(), "groups_claim") {
+		t.Fatalf("approver groups without a groups claim: %v", err)
+	}
+	c.OIDC.GroupsClaim = "groups"
+	if err := Validate(&Provider{Name: "corp", Type: TypeOIDC}, c); err != nil {
+		t.Fatalf("with a groups claim: %v", err)
+	}
+	l := okLDAP()
+	l.ApproverGroups = []string{"cn=approvers,ou=groups,dc=corp"}
+	if err := Validate(&Provider{Name: "ad", Type: TypeLDAP}, l); err != nil {
+		t.Fatalf("ldap: %v", err)
+	}
+}
+
 // TestApproverGroupsCleaned (ADR 0049, 7): the groups whose members hold the
 // approver role are trimmed, kept once each ignoring case (they are matched
 // that way), and bounded: 32 of them, 256 characters each.
 func TestApproverGroupsCleaned(t *testing.T) {
 	c := okOIDC()
+	c.OIDC.GroupsClaim = "groups" // approver groups need one (review R5)
 	c.ApproverGroups = []string{" approvers ", "", "Approvers", "cn=approvers,ou=groups,dc=corp"}
 	if err := Validate(&Provider{Name: "corp", Type: TypeOIDC}, c); err != nil {
 		t.Fatal(err)
