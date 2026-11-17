@@ -520,48 +520,80 @@ func (c *cloudSession) close() string {
 
 // cliCredentials is the command line's credentials: the cached ones while
 // they have more than the margin left, else a fresh mint, said to be fresh.
+// The mint runs with the lock released, so a terminate never waits on AWS
+// (review 2026-11-17, L2); a session that closed meanwhile takes nothing
+// from it. Two callers arriving on an empty cache mint twice, which is
+// harmless: both answers are the role's for fifteen minutes.
 func (c *cloudSession) cliCredentials(ctx context.Context) (cloud.Credentials, bool, error) {
 	c.mu.Lock()
-	defer c.mu.Unlock()
 	if c.closed {
+		c.mu.Unlock()
 		return cloud.Credentials{}, false, errCloudEnded
 	}
 	now := cloudNow()
 	if c.cli.AccessKeyID != "" && now.Add(cloudCLIMargin).Before(c.cli.Expires) {
-		return c.cli, false, nil
+		creds := c.cli
+		c.mu.Unlock()
+		return creds, false, nil
 	}
+	c.mu.Unlock()
 	creds, err := c.minter.Mint(ctx, c.mintRequest(cloudCLIDuration))
 	if err != nil {
 		return cloud.Credentials{}, false, err
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.closed {
+		// Ended during the mint: close() named what it held, and credentials
+		// it never named are not handed out.
+		return cloud.Credentials{}, false, errCloudEnded
 	}
 	c.cli = creds
 	return creds, true, nil
 }
 
 // consoleCredentials mints for the console: the session's remaining time,
-// within what STS allows.
-func (c *cloudSession) consoleCredentials(ctx context.Context) (cloud.Credentials, time.Duration, error) {
+// within what STS allows. A role whose maximum session is below that refuses
+// the mint (ErrMintDuration); the console is then minted for an hour, the
+// least a role's maximum can be, and shortened says so (ADR 0050's fallback:
+// the grant's longer duration applies to the command line alone). A shorter
+// refusal is the role's to explain. Nothing is held across the mint; the
+// caller re-checks the session with setConsoleUntil.
+func (c *cloudSession) consoleCredentials(ctx context.Context) (creds cloud.Credentials, d time.Duration, shortened bool, err error) {
 	c.mu.Lock()
 	closed := c.closed
 	c.mu.Unlock()
 	if closed {
-		return cloud.Credentials{}, 0, errCloudEnded
+		return cloud.Credentials{}, 0, false, errCloudEnded
 	}
-	d := c.endsAt.Sub(cloudNow()).Round(time.Second)
+	d = c.endsAt.Sub(cloudNow()).Round(time.Second)
 	if d < cloud.MintMinDuration {
 		d = cloud.MintMinDuration
 	}
 	if d > cloud.MintMaxDuration {
 		d = cloud.MintMaxDuration
 	}
-	creds, err := c.minter.Mint(ctx, c.mintRequest(d))
-	return creds, d, err
+	creds, err = c.minter.Mint(ctx, c.mintRequest(d))
+	if errors.Is(err, cloud.ErrMintDuration) && d > time.Hour {
+		d = time.Hour
+		creds, err = c.minter.Mint(ctx, c.mintRequest(d))
+		return creds, d, err == nil, err
+	}
+	return creds, d, false, err
 }
 
-func (c *cloudSession) setConsoleUntil(t time.Time) {
+// setConsoleUntil records the console's end, or reports false when the
+// session closed while the sign-in was being issued: close() has already
+// said what outlives the session, and a console it never named is not
+// handed out (review 2026-11-17, C4).
+func (c *cloudSession) setConsoleUntil(t time.Time) bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if c.closed {
+		return false
+	}
 	c.consoleUntil = &t
+	return true
 }
 
 var errCloudEnded = errors.New("cloud: the session has ended")
@@ -676,7 +708,7 @@ func (h *Handler) cloudConsole(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	actor := actorFor(sess.userID, auth.ClientIP(r))
-	creds, d, err := sess.consoleCredentials(r.Context())
+	creds, d, shortened, err := sess.consoleCredentials(r.Context())
 	if err != nil {
 		if errors.Is(err, errCloudEnded) {
 			httpx.WriteError(w, r, http.StatusGone, "session_ended", "the session has ended; connect again")
@@ -698,12 +730,25 @@ func (h *Handler) cloudConsole(w http.ResponseWriter, r *http.Request) {
 	if until.IsZero() {
 		until = cloudNow().Add(d)
 	}
-	sess.setConsoleUntil(until)
+	// The session may have ended during the two calls above (a terminate, a
+	// policy change): its close() has said what outlives it, and a console
+	// it did not name is discarded, never handed out (C4).
+	if !sess.setConsoleUntil(until) {
+		httpx.WriteError(w, r, http.StatusGone, "session_ended", "the session has ended; connect again")
+		return
+	}
 	h.Registry.SetCloudConsoleUntil(id, until)
+	// The session's duration was honoured when AWS took it and the role
+	// allowed it; the fallback to an hour (L7) says it was not.
+	honoured = honoured && !shortened
 	// Whether AWS took the duration decides how long a console may outlive
 	// an hour (ADR 0050's measurement); the log keeps the answer per issue.
-	h.Log.Debug("console sign-in issued", "session", id, "duration_honoured", honoured, "asked", d.String(), "until", until.UTC().Format(time.RFC3339))
-	sess.record("console sign-in issued (runs until " + clock(until) + ")")
+	h.Log.Debug("console sign-in issued", "session", id, "duration_honoured", honoured, "shortened", shortened, "asked", d.String(), "until", until.UTC().Format(time.RFC3339))
+	line := "console sign-in issued (runs until " + clock(until) + ")"
+	if shortened {
+		line = "console sign-in issued (runs until " + clock(until) + "; the role allowed less than the session)"
+	}
+	sess.record(line)
 	h.record(r, actor.Event(audit.SessionCloudConsole, "access_session", id, audit.Success,
 		map[string]any{"target_id": sess.ep.TargetID, "account": sess.ep.CloudAccountID, "role": sess.ep.CloudRoleARN,
 			"console_until": until.UTC().Format(time.RFC3339), "duration_honoured": honoured}))

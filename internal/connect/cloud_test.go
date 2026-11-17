@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -49,18 +50,41 @@ type fakeMinter struct {
 	requests []cloud.MintRequest
 	err      error
 	n        int
+	// maxDuration, when set, is the role's maximum session: a longer mint
+	// is refused as STS refuses it (L7). block, when set, holds every mint
+	// until it is closed, as a slow STS would (L2).
+	maxDuration time.Duration
+	block       chan struct{}
 }
 
 func (m *fakeMinter) Mint(_ context.Context, req cloud.MintRequest) (cloud.Credentials, error) {
 	m.mu.Lock()
-	defer m.mu.Unlock()
 	m.requests = append(m.requests, req)
-	if m.err != nil {
-		return cloud.Credentials{}, m.err
+	err, block := m.err, m.block
+	if err == nil && m.maxDuration != 0 && req.Duration > m.maxDuration {
+		err = fmt.Errorf("%w: 1 validation error detected: Value '%d' at 'durationSeconds' failed", cloud.ErrMintDuration, int(req.Duration/time.Second))
 	}
-	m.n++
-	return cloud.Credentials{AccessKeyID: "ASIA" + strings.Repeat("0", 9) + string(rune('A'+m.n-1)), SecretAccessKey: "secret-" + string(rune('A'+m.n-1)), SessionToken: "token-" + string(rune('A'+m.n-1)),
+	var n int
+	if err == nil {
+		m.n++
+		n = m.n
+	}
+	m.mu.Unlock()
+	if block != nil {
+		<-block
+	}
+	if err != nil {
+		return cloud.Credentials{}, err
+	}
+	return cloud.Credentials{AccessKeyID: "ASIA" + strings.Repeat("0", 9) + string(rune('A'+n-1)), SecretAccessKey: "secret-" + string(rune('A'+n-1)), SessionToken: "token-" + string(rune('A'+n-1)),
 		Expires: cloudNow().Add(req.Duration), AssumedARN: testAssumeOK + req.SessionName}, nil
+}
+
+// limit sets the role's maximum session; 0 lifts it.
+func (m *fakeMinter) limit(d time.Duration) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.maxDuration = d
 }
 
 func (m *fakeMinter) CallerIdentity(_ context.Context, c cloud.Credentials) (string, error) {
@@ -93,6 +117,9 @@ type fakeFederation struct {
 	refuseDuration bool
 	status         int
 	srv            *httptest.Server
+	// during, when set, runs while the gateway waits on the endpoint: what
+	// another hand does meanwhile (C4).
+	during func()
 }
 
 func (f *fakeFederation) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -103,8 +130,11 @@ func (f *fakeFederation) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	f.mu.Lock()
 	f.calls = append(f.calls, call)
-	refuse, status := f.refuseDuration && q.Get("SessionDuration") != "", f.status
+	refuse, status, during := f.refuseDuration && q.Get("SessionDuration") != "", f.status, f.during
 	f.mu.Unlock()
+	if during != nil {
+		during()
+	}
 	switch {
 	case status != 0:
 		w.WriteHeader(status)
@@ -816,6 +846,172 @@ func TestCloudConsoleFallbackAndRefusals(t *testing.T) {
 		if !strings.Contains(cast, want) {
 			t.Errorf("recording lacks %q:\n%s", want, cast)
 		}
+	}
+}
+
+// TestCloudConsoleDiscardedWhenTheSessionEndsMidIssue (review 2026-11-17,
+// C4): a terminate landing between the console's mint and its answer found
+// the session's close() with no console to name, and the sign-in was handed
+// out all the same, for up to twelve hours, with the finished recording
+// silent about it. The sign-in is discarded: 410, nothing on the record, no
+// success audited, and the terminate line names no console.
+func TestCloudConsoleDiscardedWhenTheSessionEndsMidIssue(t *testing.T) {
+	f := newCloudFixture(t)
+	sid, _, _ := f.connectCloud(t)
+	f.fed.mu.Lock()
+	f.fed.during = func() {
+		// The administrator's terminate, while AWS is answering: the session
+		// is gone before the answer arrives.
+		f.h.Registry.Terminate(sid)
+		for i := 0; i < 500 && f.h.CloudSessions() > 0; i++ {
+			time.Sleep(5 * time.Millisecond)
+		}
+	}
+	f.fed.mu.Unlock()
+	rr, out := f.console(sid, f.cookie, f.csrf)
+	if rr.Code != 410 || out["code"] != "session_ended" || out["fields"] != nil {
+		t.Fatalf("console with the session ending meanwhile: %d %v", rr.Code, out)
+	}
+	if f.fed.count() != 1 || f.minter.count() != 1 {
+		t.Fatalf("the sign-in was issued (%d federation calls, %d mints) and then refused", f.fed.count(), f.minter.count())
+	}
+	if row, _ := f.endedWith(t, sid); row != session.EndAdminTerminated {
+		t.Fatalf("ended as %s", row)
+	}
+	for _, ev := range f.events(t, audit.SessionCloudConsole, sid) {
+		if ev.Outcome == audit.Success {
+			t.Fatalf("a console sign-in nobody received was audited as issued: %s", ev.Details)
+		}
+	}
+	f.finished(t, sid)
+	cast := f.cast(t)
+	if strings.Contains(cast, "console sign-in issued") || strings.Contains(cast, "console by") {
+		t.Fatalf("the recording names a console that was discarded:\n%s", cast)
+	}
+	if !strings.Contains(cast, `"terminated"`) && !strings.Contains(cast, "terminated\r\n") {
+		t.Fatalf("the recording lacks the terminate:\n%s", cast)
+	}
+}
+
+// TestCloudTerminateDoesNotWaitOnTheCommandLineMint (review 2026-11-17,
+// L2): the command line's mint held the session's lock, so a terminate
+// waited on AWS. The mint runs outside the lock; the session ends at once,
+// and the credentials the mint then answers are refused (410), never handed
+// out nor named on the record.
+func TestCloudTerminateDoesNotWaitOnTheCommandLineMint(t *testing.T) {
+	f := newCloudFixture(t)
+	sid, token, _ := f.connectCloud(t)
+	block := make(chan struct{})
+	f.minter.mu.Lock()
+	f.minter.block = block
+	f.minter.mu.Unlock()
+	type answer struct {
+		rr  *httptest.ResponseRecorder
+		out map[string]any
+	}
+	answered := make(chan answer, 1)
+	go func() {
+		rr, out := f.credentials(sid, token)
+		answered <- answer{rr, out}
+	}()
+	for i := 0; i < 500 && f.minter.count() == 0; i++ {
+		time.Sleep(5 * time.Millisecond)
+	}
+	if f.minter.count() != 1 {
+		t.Fatal("the mint never started")
+	}
+	// STS has not answered; the terminate must not wait for it.
+	if !f.h.Registry.Terminate(sid) {
+		t.Fatal("terminate")
+	}
+	if row, _ := f.endedWith(t, sid); row != session.EndAdminTerminated {
+		t.Fatalf("ended as %s", row)
+	}
+	f.released(t)
+	select {
+	case a := <-answered:
+		t.Fatalf("the credentials answered before STS did: %d %v", a.rr.Code, a.out)
+	default:
+	}
+	close(block)
+	select {
+	case a := <-answered:
+		if a.rr.Code != 410 || a.out["code"] != "session_ended" || a.out["AccessKeyId"] != nil {
+			t.Fatalf("credentials minted for an ended session: %d %v", a.rr.Code, a.out)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the credentials never answered")
+	}
+	f.finished(t, sid)
+	if cast := f.cast(t); strings.Contains(cast, "command-line credentials issued") || strings.Contains(cast, "command-line credentials end by") {
+		t.Fatalf("the recording names credentials nobody received:\n%s", cast)
+	}
+}
+
+// TestCloudConsoleFallsBackToAnHour (ADR 0050's plan; review 2026-11-17,
+// L7): a role whose maximum session is below the session's remaining time
+// refuses the console's mint, and every Open console was a 502 while the
+// command line worked. The console is minted again for an hour, the least a
+// role's maximum can be; console_until follows, duration_honoured says no,
+// and the recording says the role allowed less. A role allowing the whole
+// session is honoured on the first mint; a refusal below the hour is the
+// role's to explain, 502 as before.
+func TestCloudConsoleFallsBackToAnHour(t *testing.T) {
+	f := newCloudFixture(t)
+	f.role.CloudMaxMinutes = 120
+	if err := f.h.Targets.Update(f.ctx, f.role); err != nil {
+		t.Fatal(err)
+	}
+	sid, _, c := f.connectCloud(t)
+	if ends, _ := time.Parse(time.RFC3339Nano, c["expires_at"].(string)); ends.Before(time.Now().Add(119 * time.Minute)) {
+		t.Fatalf("the session is not two hours: %v", c["expires_at"])
+	}
+	f.minter.limit(time.Hour)
+	rr, out := f.console(sid, f.cookie, f.csrf)
+	if rr.Code != 200 || out["duration_honoured"] != false {
+		t.Fatalf("fallback: %d %v", rr.Code, out)
+	}
+	if n := f.minter.count(); n != 2 || f.minter.requests[0].Duration < 119*time.Minute || f.minter.requests[1].Duration != time.Hour {
+		t.Fatalf("mints: %d %+v, want the session's two hours then one hour", n, f.minter.requests)
+	}
+	until, err := time.Parse(time.RFC3339Nano, out["console_until"].(string))
+	if err != nil || until.Before(time.Now().Add(59*time.Minute)) || until.After(time.Now().Add(61*time.Minute)) {
+		t.Fatalf("console_until %v, want an hour from now", out["console_until"])
+	}
+	if f.fed.count() != 1 || f.fed.call(0)["SessionDuration"] != "3600" {
+		t.Fatalf("the federation was asked %v, want the hour", f.fed.calls)
+	}
+	evs := f.events(t, audit.SessionCloudConsole, sid)
+	if len(evs) != 1 || evs[0].Outcome != audit.Success || !strings.Contains(string(evs[0].Details), `"duration_honoured":false`) {
+		t.Fatalf("fallback event: %+v", evs)
+	}
+	// The role allowing the whole session: honoured on the first mint.
+	f.minter.limit(0)
+	rr, out = f.console(sid, f.cookie, f.csrf)
+	if rr.Code != 200 || out["duration_honoured"] != true || f.minter.count() != 3 || f.minter.last().Duration < 118*time.Minute {
+		t.Fatalf("honoured: %d %v after %d mints (last %v)", rr.Code, out, f.minter.count(), f.minter.last().Duration)
+	}
+	// A role allowing less than the hour: the fallback cannot help, 502.
+	f.minter.limit(30 * time.Minute)
+	if rr, out := f.console(sid, f.cookie, f.csrf); rr.Code != 502 || out["code"] != "mint_failed" || f.minter.count() != 5 {
+		t.Fatalf("below the hour: %d %v after %d mints", rr.Code, out, f.minter.count())
+	}
+	f.minter.limit(0)
+	f.h.Registry.Terminate(sid)
+	f.endedWith(t, sid)
+	f.released(t)
+	f.finished(t, sid)
+	cast := f.cast(t)
+	for _, want := range []string{
+		"console sign-in issued (runs until " + clock(until) + "; the role allowed less than the session)",
+		"console sign-in refused: the role's maximum session is shorter than asked",
+	} {
+		if !strings.Contains(cast, want) {
+			t.Errorf("recording lacks %q:\n%s", want, cast)
+		}
+	}
+	if n := strings.Count(cast, `"o","console sign-in issued (runs until`); n != 2 {
+		t.Fatalf("%d issue lines, want 2", n)
 	}
 }
 
