@@ -71,6 +71,7 @@ func approverNamesOf(out map[string]any) []string {
 func TestNamedApproversDecide(t *testing.T) {
 	e := newEnv(t)
 	n := e.nameApprovers(t)
+	ctx := context.Background()
 	code, out := e.do("POST", "/api/v1/me/access-requests", map[string]any{"target_id": e.target, "protocol": "ssh", "reason": "deploy", "minutes": 30}, e.alice, e.aliceCSR)
 	if code != http.StatusCreated || out["named"] != true || strings.Join(approverNamesOf(out), ",") != "approvers,dan" {
 		t.Fatalf("request: %d %v", code, out)
@@ -101,7 +102,9 @@ func TestNamedApproversDecide(t *testing.T) {
 	if code, out = e.do("POST", "/api/v1/access-requests/"+id+"/approve", nil, n.erin, n.erSR); code != http.StatusForbidden || out["code"] != "forbidden" {
 		t.Fatalf("erin approve: %d %v", code, out)
 	}
-	if code, out = e.do("GET", "/api/v1/access-requests/"+id, nil, n.erin, n.erSR); code != http.StatusForbidden {
+	// Outside her scope the request is not found, as another person's is
+	// for its requester: the id alone tells her nothing.
+	if code, out = e.do("GET", "/api/v1/access-requests/"+id, nil, n.erin, n.erSR); code != http.StatusNotFound || out["code"] != "not_found" {
 		t.Fatalf("erin reads a request she is not named for: %d %v", code, out)
 	}
 	// A user without the role never reaches the queue.
@@ -122,13 +125,33 @@ func TestNamedApproversDecide(t *testing.T) {
 	if code != 200 || out["status"] != "approved" || out["approver_username"] != "carol" || out["approved_minutes"] != float64(45) {
 		t.Fatalf("carol approve: %d %v", code, out)
 	}
-	// Her history holds it; dan's does not.
-	code, out = e.do("GET", "/api/v1/access-requests?scope=mine", nil, n.carol, n.carolSR)
-	if code != 200 || len(out["items"].([]any)) != 1 || out["items"].([]any)[0].(map[string]any)["status"] != "approved" {
-		t.Fatalf("carol's history: %d %v", code, out)
+	// The active grant is in the view of everyone who may revoke it (ADR
+	// 0049, 5): carol, who approved it, and dan, named on the same grant.
+	for who, c := range map[string]struct {
+		cookie *http.Cookie
+		csrf   string
+	}{"carol": {n.carol, n.carolSR}, "dan": {n.dan, n.danSR}} {
+		for _, q := range []string{"?scope=mine", "?scope=mine&status=approved"} {
+			code, out = e.do("GET", "/api/v1/access-requests"+q, nil, c.cookie, c.csrf)
+			if code != 200 || len(out["items"].([]any)) != 1 || out["items"].([]any)[0].(map[string]any)["status"] != "approved" {
+				t.Fatalf("%s's active grants %s: %d %v", who, q, code, out)
+			}
+		}
 	}
-	if code, out = e.do("GET", "/api/v1/access-requests?scope=mine", nil, n.dan, n.danSR); code != 200 || len(out["items"].([]any)) != 0 {
-		t.Fatalf("dan's history: %d %v", code, out)
+	// carol un-named by a policy edit: the grant she approved leaves her
+	// view while it runs (she may not revoke it), and is her history once it
+	// no longer does.
+	n.policy.Grants[0].Approvers = []policy.Subject{policytest.User(e.ids["dan"])}
+	if err := e.policies.Update(ctx, n.policy); err != nil {
+		t.Fatal(err)
+	}
+	for _, q := range []string{"?scope=mine", "?scope=mine&status=approved"} {
+		if code, out = e.do("GET", "/api/v1/access-requests"+q, nil, n.carol, n.carolSR); code != 200 || len(out["items"].([]any)) != 0 {
+			t.Fatalf("carol's view once un-named %s: %d %v", q, code, out)
+		}
+	}
+	if code, out = e.do("POST", "/api/v1/access-requests/"+id+"/revoke", nil, n.carol, n.carolSR); code != http.StatusForbidden {
+		t.Fatalf("carol revokes once un-named: %d %v", code, out)
 	}
 	// dan, named directly, may revoke what carol granted; erin may not; the
 	// administrator always may.
@@ -137,6 +160,10 @@ func TestNamedApproversDecide(t *testing.T) {
 	}
 	if code, out = e.do("POST", "/api/v1/access-requests/"+id+"/revoke", nil, n.dan, n.danSR); code != 200 || out["status"] != "revoked" {
 		t.Fatalf("dan revoke: %d %v", code, out)
+	}
+	code, out = e.do("GET", "/api/v1/access-requests?scope=mine", nil, n.carol, n.carolSR)
+	if code != 200 || len(out["items"].([]any)) != 1 || out["items"].([]any)[0].(map[string]any)["status"] != "revoked" {
+		t.Fatalf("carol's history: %d %v", code, out)
 	}
 	// Second round: the administrator revokes a named grant.
 	id = e.request(t)
@@ -192,8 +219,10 @@ func TestNobodyDecidesTheirOwn(t *testing.T) {
 	ask := func() (int, map[string]any) {
 		return e.do("POST", "/api/v1/me/access-requests", map[string]any{"target_id": e.target, "protocol": "rdp", "reason": "patch", "minutes": 30}, n.dan, n.danSR)
 	}
+	// The refusal names the policy and nothing else: not the approvers (a
+	// user is told no other person's name) and no next step.
 	code, out := ask()
-	if code != http.StatusUnprocessableEntity || out["code"] != "no_approver" || !strings.Contains(out["message"].(string), "dan-alone") {
+	if code != http.StatusUnprocessableEntity || out["code"] != "no_approver" || out["message"] != "nobody else is named to approve this request (policy dan-alone)" {
 		t.Fatalf("a request only its author could approve: %d %v", code, out)
 	}
 	// With carol's group named too, the request waits for her; dan is
@@ -236,6 +265,137 @@ func TestNamedWithoutTheRoleDecidesNothing(t *testing.T) {
 	code, out := e.do("POST", "/api/v1/me/access-requests", map[string]any{"target_id": e.target, "protocol": "rdp", "reason": "patch", "minutes": 30}, e.alice, e.aliceCSR)
 	if code != http.StatusUnprocessableEntity || out["code"] != "no_approver" {
 		t.Fatalf("named without the role: %d %v", code, out)
+	}
+}
+
+// TestMayDecide: a request says whether the caller who reads it may decide
+// it now (ADR 0049, 1 and 4): an administrator where nobody is named; where
+// someone is, the named who are not the requester, an administrator among
+// them when a grant names them (the console draws its buttons from this).
+func TestMayDecide(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	// Nobody named: the administrator's.
+	id := e.request(t)
+	code, out := e.do("GET", "/api/v1/access-requests/"+id, nil, e.admin, e.adminCSR)
+	if code != 200 || out["named"] != false || out["may_decide"] != true {
+		t.Fatalf("unnamed, admin: %d %v", code, out)
+	}
+	// Named for carol's group and dan: not the administrator's any more;
+	// dan's, in his view.
+	n := e.nameApprovers(t)
+	if code, out = e.do("GET", "/api/v1/access-requests/"+id, nil, e.admin, e.adminCSR); code != 200 || out["named"] != true || out["may_decide"] != false {
+		t.Fatalf("named, admin: %d %v", code, out)
+	}
+	code, out = e.do("GET", "/api/v1/access-requests?status=pending", nil, e.admin, e.adminCSR)
+	if code != 200 || out["items"].([]any)[0].(map[string]any)["may_decide"] != false {
+		t.Fatalf("named, admin queue: %d %v", code, out)
+	}
+	code, out = e.do("GET", "/api/v1/access-requests", nil, n.dan, n.danSR)
+	if code != 200 || len(out["items"].([]any)) != 1 || out["items"].([]any)[0].(map[string]any)["may_decide"] != true {
+		t.Fatalf("named, dan's queue: %d %v", code, out)
+	}
+	// The requester never: dan asks under a grant naming him and carol's
+	// group; his view says it is not his to decide, carol's says it is hers.
+	self := policytest.Approval(policytest.Tagged(protocol.KindHost, map[string]string{"env": "prod"}, "vnc"), 60)
+	self.Approvers = []policy.Subject{policytest.User(e.ids["dan"]), policytest.Group(n.group)}
+	if err := e.policies.Create(ctx, policytest.Policy("dan-and-carol", []policy.Subject{policytest.User(e.ids["dan"])}, self)); err != nil {
+		t.Fatal(err)
+	}
+	code, out = e.do("POST", "/api/v1/me/access-requests", map[string]any{"target_id": e.target, "protocol": "vnc", "reason": "patch", "minutes": 30}, n.dan, n.danSR)
+	if code != http.StatusCreated || out["may_decide"] != false {
+		t.Fatalf("dan's own request: %d %v", code, out)
+	}
+	own := out["id"].(string)
+	for who, c := range map[string]struct {
+		cookie *http.Cookie
+		csrf   string
+		want   bool
+	}{"dan": {n.dan, n.danSR, false}, "carol": {n.carol, n.carolSR, true}} {
+		if code, out = e.do("GET", "/api/v1/access-requests/"+own, nil, c.cookie, c.csrf); code != 200 || out["may_decide"] != c.want {
+			t.Fatalf("%s reads dan's own request: %d %v", who, code, out)
+		}
+	}
+	// A grant naming the administrator: they decide it, from either view,
+	// as the ADR has an administrator who should decide join the approvers.
+	root := policytest.Approval(policytest.Tagged(protocol.KindHost, map[string]string{"env": "prod"}, "rdp"), 60)
+	root.Approvers = []policy.Subject{policytest.User(e.ids["root"])}
+	if err := e.policies.Create(ctx, policytest.Policy("root-named", []policy.Subject{policytest.User(e.ids["alice"])}, root)); err != nil {
+		t.Fatal(err)
+	}
+	code, out = e.do("POST", "/api/v1/me/access-requests", map[string]any{"target_id": e.target, "protocol": "rdp", "reason": "patch", "minutes": 30}, e.alice, e.aliceCSR)
+	if code != http.StatusCreated || out["named"] != true || strings.Join(approverNamesOf(out), ",") != "root" {
+		t.Fatalf("request naming the administrator: %d %v", code, out)
+	}
+	named := out["id"].(string)
+	if code, out = e.do("GET", "/api/v1/access-requests/"+named, nil, e.admin, e.adminCSR); code != 200 || out["may_decide"] != true {
+		t.Fatalf("named administrator reads it: %d %v", code, out)
+	}
+	code, out = e.do("GET", "/api/v1/access-requests?scope=mine&status=pending", nil, e.admin, e.adminCSR)
+	if code != 200 || len(out["items"].([]any)) != 1 || out["items"].([]any)[0].(map[string]any)["id"] != named || out["items"].([]any)[0].(map[string]any)["may_decide"] != true {
+		t.Fatalf("named administrator's own view: %d %v", code, out)
+	}
+	if code, out = e.do("POST", "/api/v1/access-requests/"+named+"/approve", nil, e.admin, e.adminCSR); code != 200 || out["status"] != "approved" || out["approver_username"] != "root" {
+		t.Fatalf("named administrator approves: %d %v", code, out)
+	}
+	// Decided: nobody may decide it any more.
+	if code, out = e.do("GET", "/api/v1/access-requests/"+named, nil, e.admin, e.adminCSR); code != 200 || out["may_decide"] != false {
+		t.Fatalf("a decided request: %d %v", code, out)
+	}
+}
+
+// TestDisabledApproverDecidesNothing: a disabled account is not among a
+// request's deciders, so a request only it could approve is refused when
+// made, and it is not written to.
+func TestDisabledApproverDecidesNothing(t *testing.T) {
+	e := newEnv(t)
+	n := e.nameApprovers(t)
+	ctx := context.Background()
+	for _, who := range []string{"carol", "dan"} {
+		if err := e.users.Update(ctx, e.ids[who], who, who+"@example.com", user.StatusActive); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// carol's group alone is named for rdp; with carol disabled nobody is.
+	alone := policytest.Approval(policytest.Tagged(protocol.KindHost, map[string]string{"env": "prod"}, "rdp"), 60)
+	alone.Approvers = []policy.Subject{policytest.Group(n.group)}
+	if err := e.policies.Create(ctx, policytest.Policy("carol-alone", []policy.Subject{policytest.User(e.ids["alice"])}, alone)); err != nil {
+		t.Fatal(err)
+	}
+	ask := func() (int, map[string]any) {
+		return e.do("POST", "/api/v1/me/access-requests", map[string]any{"target_id": e.target, "protocol": "rdp", "reason": "patch", "minutes": 30}, e.alice, e.aliceCSR)
+	}
+	if err := e.users.Update(ctx, e.ids["carol"], "carol", "carol@example.com", user.StatusDisabled); err != nil {
+		t.Fatal(err)
+	}
+	if code, out := ask(); code != http.StatusUnprocessableEntity || out["code"] != "no_approver" {
+		t.Fatalf("the only approver disabled: %d %v", code, out)
+	}
+	// Over ssh dan is named too: the request is made, and the mail reaches
+	// dan alone.
+	port, got := fakeSMTP(t)
+	e.h.Mail = &notify.Direct{Sender: &notify.Sender{}, Base: "https://gw.example.com/",
+		Server: func(context.Context) (*notify.Server, error) {
+			return &notify.Server{Host: "127.0.0.1", Port: port, From: "gw@example.com"}, nil
+		}}
+	e.request(t)
+	deadline := time.Now().Add(5 * time.Second)
+	var mail string
+	for time.Now().Before(deadline) {
+		if mail = got(); strings.Contains(mail, "Zanskar,") {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if !strings.Contains(mail, "To: dan@example.com\r\n") || strings.Contains(mail, "carol@") {
+		t.Fatalf("the mail should reach dan alone:\n%s", mail)
+	}
+	// Enabled again, carol counts: the rdp request is made.
+	if err := e.users.Update(ctx, e.ids["carol"], "carol", "carol@example.com", user.StatusActive); err != nil {
+		t.Fatal(err)
+	}
+	if code, out := ask(); code != http.StatusCreated {
+		t.Fatalf("the approver enabled again: %d %v", code, out)
 	}
 }
 

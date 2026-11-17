@@ -61,14 +61,17 @@ func (d deciders) others(userID string) int {
 }
 
 // names caches what one listing resolves, so a group fifty requests name is
-// read once.
+// read once: users and groups by id, a group's members, and a requester's
+// policies (the queue is read every half minute, on SQLite's one connection).
 type names struct {
-	users  map[string]*user.User
-	groups map[string]*group.Group
+	users    map[string]*user.User
+	groups   map[string]*group.Group
+	members  map[string][]group.Member
+	policies map[string][]*policy.Policy
 }
 
 func newNames() *names {
-	return &names{users: map[string]*user.User{}, groups: map[string]*group.Group{}}
+	return &names{users: map[string]*user.User{}, groups: map[string]*group.Group{}, members: map[string][]group.Member{}, policies: map[string][]*policy.Policy{}}
 }
 
 // userByID reads a user once per listing; nil for one that is gone.
@@ -103,10 +106,51 @@ func (h *Handler) groupByID(ctx context.Context, n *names, id string) (*group.Gr
 	return g, nil
 }
 
+// membersOf reads a group's members once per listing.
+func (h *Handler) membersOf(ctx context.Context, n *names, id string) ([]group.Member, error) {
+	if m, ok := n.members[id]; ok {
+		return m, nil
+	}
+	m, err := h.Groups.Members(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	n.members[id] = m
+	return m, nil
+}
+
+// policiesFor reads a requester's policies once per listing.
+func (h *Handler) policiesFor(ctx context.Context, n *names, userID string) ([]*policy.Policy, error) {
+	if p, ok := n.policies[userID]; ok {
+		return p, nil
+	}
+	p, err := h.Policies.ForUser(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	n.policies[userID] = p
+	return p, nil
+}
+
 // decidesFor reports whether u may be counted among a request's deciders:
-// named is not enough, the role is needed too (ADR 0049, 3).
+// named is not enough, the role is needed too (ADR 0049, 3), and the
+// account must be active; a disabled one decides nothing and is not written
+// to.
 func decidesFor(u *user.User) bool {
-	return u != nil && (u.HasRole(user.RoleApprover) || u.HasRole(user.RoleAdmin))
+	return u != nil && u.Status == user.StatusActive && (u.HasRole(user.RoleApprover) || u.HasRole(user.RoleAdmin))
+}
+
+// decidableBy answers whether u may approve or deny req now (ADR 0049, 4):
+// a pending request nobody is named for, for an administrator; a pending
+// request u is named for, unless it is u's own.
+func (d deciders) decidableBy(u *user.User, req *Request) bool {
+	if req.Status != StatusPending {
+		return false
+	}
+	if d.isNamed() {
+		return d.users[u.ID] && req.UserID != u.ID
+	}
+	return u.HasRole(user.RoleAdmin)
 }
 
 // resolve finds who decides a request for ref and proto under pols. Without
@@ -153,7 +197,7 @@ func (h *Handler) resolve(ctx context.Context, n *names, pols []*policy.Policy, 
 			}
 			if g != nil {
 				a.Name = g.Name
-				members, err := h.Groups.Members(ctx, s.ID)
+				members, err := h.membersOf(ctx, n, s.ID)
 				if err != nil {
 					return d, err
 				}
@@ -211,16 +255,17 @@ func (h *Handler) decidersOf(ctx context.Context, n *names, req *Request) (decid
 	if err != nil {
 		return deciders{}, err
 	}
-	pols, err := h.Policies.ForUser(ctx, req.UserID)
+	pols, err := h.policiesFor(ctx, n, req.UserID)
 	if err != nil {
 		return deciders{}, err
 	}
 	return h.resolve(ctx, n, pols, ref, req.Protocol)
 }
 
-// decorate fills Approvers and Named on the requests: every pending one,
-// and every one when all is set (a single request read on its own).
-func (h *Handler) decorate(ctx context.Context, n *names, reqs []*Request, all bool) (map[string]deciders, error) {
+// decorate fills Approvers, Named and MayDecide (for the caller, pr) on the
+// requests: every pending one, and every one when all is set (a single
+// request read on its own).
+func (h *Handler) decorate(ctx context.Context, n *names, pr *auth.Principal, reqs []*Request, all bool) (map[string]deciders, error) {
 	out := map[string]deciders{}
 	for _, req := range reqs {
 		if !all && req.Status != StatusPending {
@@ -230,7 +275,7 @@ func (h *Handler) decorate(ctx context.Context, n *names, reqs []*Request, all b
 		if err != nil {
 			return nil, err
 		}
-		req.Approvers, req.Named = append([]ApproverRef{}, d.named...), d.isNamed()
+		req.Approvers, req.Named, req.MayDecide = append([]ApproverRef{}, d.named...), d.isNamed(), d.decidableBy(pr.User, req)
 		out[req.ID] = d
 	}
 	return out, nil
@@ -309,7 +354,7 @@ func (h *Handler) requireOthers(w http.ResponseWriter, r *http.Request, pr *auth
 		return true
 	}
 	httpx.WriteError(w, r, http.StatusUnprocessableEntity, "no_approver",
-		"nobody else is named to approve this request (policy "+strings.Join(d.policies, ", ")+" names "+strings.Join(approverNames(d), ", ")+"); ask an administrator to name an approver")
+		"nobody else is named to approve this request (policy "+strings.Join(d.policies, ", ")+")")
 	return false
 }
 
@@ -350,8 +395,9 @@ func (h *Handler) mailApprovers(ctx context.Context, d deciders, requester *user
 // list is the approval queue and its history. An administrator without
 // scope sees every request; scope=mine, the approver's view (and an
 // administrator's when asked), is the pending requests the caller is named
-// for and the requests they decided. An approver gets scope=mine whether
-// or not they ask.
+// for, the active grants whose deciders they are now (the ones they may
+// revoke, ADR 0049, 5) and the requests they decided that no longer run. An
+// approver gets scope=mine whether or not they ask.
 func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 	pr, _ := auth.FromContext(r.Context())
 	status := Status(r.URL.Query().Get("status"))
@@ -377,38 +423,72 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 			h.fail(w, r, err)
 			return
 		}
-		if _, err := h.decorate(r.Context(), n, items, false); err != nil {
+		if _, err := h.decorate(r.Context(), n, pr, items, false); err != nil {
 			h.fail(w, r, err)
 			return
 		}
 		httpx.WriteJSON(w, http.StatusOK, httpx.Page[*Request]{Items: items})
 		return
 	}
-	out := []*Request{}
+	out, seen := []*Request{}, map[string]bool{}
+	add := func(req *Request) {
+		if !seen[req.ID] {
+			seen[req.ID] = true
+			out = append(out, req)
+		}
+	}
+	now := time.Now().UTC()
 	if status == "" || status == StatusPending {
 		pending, err := h.Requests.List(r.Context(), StatusPending)
 		if err != nil {
 			h.fail(w, r, err)
 			return
 		}
-		ds, err := h.decorate(r.Context(), n, pending, false)
+		ds, err := h.decorate(r.Context(), n, pr, pending, false)
 		if err != nil {
 			h.fail(w, r, err)
 			return
 		}
 		for _, req := range pending {
 			if ds[req.ID].users[pr.User.ID] {
-				out = append(out, req)
+				add(req)
 			}
 		}
 	}
-	if status != StatusPending {
+	if status == "" || status == StatusApproved {
+		// The grants the caller may revoke: active, with the caller among
+		// their deciders as the policies stand now, whoever approved them.
+		approved, err := h.Requests.List(r.Context(), StatusApproved)
+		if err != nil {
+			h.fail(w, r, err)
+			return
+		}
+		for _, req := range approved {
+			if !req.Active(now) {
+				continue
+			}
+			d, err := h.decidersOf(r.Context(), n, req)
+			if err != nil {
+				h.fail(w, r, err)
+				return
+			}
+			if d.users[pr.User.ID] {
+				add(req)
+			}
+		}
+	}
+	if status != StatusPending && status != StatusApproved {
+		// The history: what the caller decided, once it no longer runs.
 		decided, err := h.Requests.ListDecidedBy(r.Context(), pr.User.ID, status)
 		if err != nil {
 			h.fail(w, r, err)
 			return
 		}
-		out = append(out, decided...)
+		for _, req := range decided {
+			if !req.Active(now) {
+				add(req)
+			}
+		}
 	}
 	slices.SortFunc(out, func(a, b *Request) int { return b.CreatedAt.Compare(a.CreatedAt) })
 	httpx.WriteJSON(w, http.StatusOK, httpx.Page[*Request]{Items: out})
@@ -416,7 +496,8 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 
 // one is a single request, for the link a notification carries: it opens
 // the request whether it still waits or was decided meanwhile. An approver
-// sees the requests they are named for or decided.
+// sees the requests they are named for or decided; another is not found, as
+// own answers for another person's, so the id tells nothing.
 func (h *Handler) one(w http.ResponseWriter, r *http.Request) {
 	pr, _ := auth.FromContext(r.Context())
 	req, err := h.Requests.Get(r.Context(), r.PathValue("id"))
@@ -424,13 +505,13 @@ func (h *Handler) one(w http.ResponseWriter, r *http.Request) {
 		h.fail(w, r, err)
 		return
 	}
-	ds, err := h.decorate(r.Context(), newNames(), []*Request{req}, true)
+	ds, err := h.decorate(r.Context(), newNames(), pr, []*Request{req}, true)
 	if err != nil {
 		h.fail(w, r, err)
 		return
 	}
 	if !pr.User.HasRole(user.RoleAdmin) && !ds[req.ID].users[pr.User.ID] && req.ApproverUserID != pr.User.ID {
-		httpx.WriteError(w, r, http.StatusForbidden, "forbidden", "you are not named to decide this request")
+		httpx.WriteError(w, r, http.StatusNotFound, "not_found", "access request not found")
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, req)

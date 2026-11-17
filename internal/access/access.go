@@ -71,9 +71,12 @@ type Request struct {
 	// request (ADR 0049), resolved from the policies as they stand when
 	// read; Named says whether anyone is, else any administrator decides.
 	// Filled for a pending request in a list and for any request read on
-	// its own; empty otherwise.
+	// its own; empty otherwise. MayDecide says whether the caller who read
+	// it may approve or deny it now: an administrator where nobody is
+	// named, a named decider who is not the requester where someone is.
 	Approvers []ApproverRef `json:"approvers"`
 	Named     bool          `json:"named"`
+	MayDecide bool          `json:"may_decide"`
 }
 
 // Active reports whether this is an approved grant still within its window.

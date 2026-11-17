@@ -3632,8 +3632,10 @@ paths:
         The approval queue and its history. Filter by `status` to show, for example, only what is
         pending. An administrator without `scope` sees every request; `scope=mine` (an approver's
         view, whether or not they ask for it; an administrator's when asked) is the pending requests
-        the caller is named to decide and the requests they decided (ADR 0049). A pending request
-        carries its `approvers` and `named`.
+        the caller is named to decide, the active grants whose deciders include the caller as the
+        policies stand now (the ones they may revoke, whoever approved them), and the requests they
+        decided that no longer run (ADR 0049). A pending request carries its `approvers`, `named`
+        and `may_decide`.
       parameters:
         - name: status
           in: query
@@ -3642,7 +3644,10 @@ paths:
             $ref: "#/components/schemas/AccessRequestStatus"
         - name: scope
           in: query
-          description: "`mine`: what the caller is named to decide, and what they decided."
+          description: >-
+            `mine`: the pending requests the caller is named to decide, the active grants they may
+            revoke, and the requests they decided once those no longer run. With `status=approved`,
+            the active grants alone.
           schema:
             type: string
             enum: [mine]
@@ -3670,9 +3675,10 @@ paths:
       summary: One access request
       description: >-
         A single request, whatever its status, with the names resolved as in the list and its
-        `approvers` and `named` filled. A notification's link opens it (ADR 0039 amendment):
-        approve it while it waits, or see who decided it and when. An approver reads the requests
-        they are named for or decided.
+        `approvers`, `named` and `may_decide` filled. A notification's link opens it (ADR 0039
+        amendment): approve it while it waits, or see who decided it and when. An approver reads
+        the requests they are named for or decided; any other is not found, as a requester's read
+        of another person's is.
       responses:
         "200":
           description: The request.
@@ -3680,12 +3686,6 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/AccessRequest"
-        "403":
-          description: "`forbidden`: the approver is named for neither this request nor its decision."
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
         "404":
           $ref: "#/components/responses/NotFound"
   /access-requests/{id}/approve:
@@ -7948,6 +7948,13 @@ components:
         named:
           type: boolean
           description: Whether anyone is named to decide it; false leaves it to any administrator.
+        may_decide:
+          type: boolean
+          description: >-
+            Whether the caller who read it may approve or deny it now (ADR 0049): a pending request
+            nobody is named for, for an administrator; a pending request the caller is named for,
+            an administrator among the named included, unless it is the caller's own. False once
+            decided. The console draws Approve and Deny from this.
         decision_note:
           type: string
           description: Optional note the approver left with the decision.
