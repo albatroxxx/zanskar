@@ -34,10 +34,13 @@ describe('PolicyEditor, a cloud grant', () => {
     )
     const user = userEvent.setup()
     expect(screen.getByLabelText('Idle (minutes)')).toBeDefined()
+    expect(screen.getByRole('checkbox', { name: 'Clipboard' })).toBeDefined()
     await user.click(screen.getByRole('radio', { name: 'Cloud account' }))
     expect((screen.getByRole('checkbox', { name: 'Console' }) as HTMLInputElement).checked).toBe(true)
     expect((screen.getByRole('checkbox', { name: 'Command line' }) as HTMLInputElement).checked).toBe(true)
     expect(screen.queryByLabelText('Idle (minutes)')).toBeNull()
+    // No clipboard either (review 2026-11-17, L9): the gateway mediates no stream a clipboard rule could hold.
+    expect(screen.queryByRole('checkbox', { name: 'Clipboard' })).toBeNull()
     expect(screen.getByLabelText('Session (minutes)')).toBeDefined()
     expect(screen.queryByText('Sign in with')).toBeNull()
     // The role is listed under its account; no protocol chips, the protocol is implied.
@@ -46,10 +49,12 @@ describe('PolicyEditor, a cloud grant', () => {
   })
 
   it('sends both doors, the implied protocol and the target credential', () => {
-    const d = { ...toDraft(newGrant('cloud')), targets: { c1: [] as never[] }, cloud_console: false, max: '120' }
+    const d = { ...toDraft(newGrant('cloud')), targets: { c1: [] as never[] }, cloud_console: false, max: '120', allow_clipboard: true }
     const { grant, error } = fromDraft(d, () => 'prod-admin')
     expect(error).toBeUndefined()
-    expect(grant).toMatchObject({ kind: 'cloud', targets: [{ id: 'c1', protocols: ['cloud'] }], cloud_console: false, cloud_cli: true, sign_in: 'target', max_session_minutes: 120 })
+    // The clipboard rule is never sent for a cloud grant, whatever a copied draft held.
+    expect(grant).toMatchObject({ kind: 'cloud', targets: [{ id: 'c1', protocols: ['cloud'] }], cloud_console: false, cloud_cli: true, sign_in: 'target', max_session_minutes: 120, allow_clipboard: false })
+    expect(newGrant('cloud', { ...grant!, allow_clipboard: true }).allow_clipboard).toBe(false)
     expect(toDraft(grant!)).toMatchObject({ cloud_console: false, cloud_cli: true })
     // Read back from a 2.0 server that never said: both open.
     expect(toDraft({ ...grant!, cloud_console: undefined, cloud_cli: undefined })).toMatchObject({ cloud_console: true, cloud_cli: true })

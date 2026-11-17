@@ -93,7 +93,7 @@ export function newGrant(kind: TargetKind = 'host', conditionsFrom?: PolicyGrant
   if (!conditionsFrom) return base
   const { access, approvers, sign_in, require_mfa, allow_clipboard, allow_file_transfer, idle_timeout_minutes, max_session_minutes, time_windows, retention_days } = conditionsFrom
   return {
-    ...base, access, sign_in: kind === 'application' || kind === 'cloud' ? 'target' : sign_in, require_mfa, allow_clipboard, allow_file_transfer: filesMove(kind) && allow_file_transfer,
+    ...base, access, sign_in: kind === 'application' || kind === 'cloud' ? 'target' : sign_in, require_mfa, allow_clipboard: kind !== 'cloud' && allow_clipboard, allow_file_transfer: filesMove(kind) && allow_file_transfer,
     // Who decides is a condition too (ADR 0049), so "same conditions" keeps it.
     ...(access === 'approval' && approvers?.length ? { approvers: approvers.map((a) => ({ ...a })) } : {}),
     ...(kind === 'application' && conditionsFrom.allow_devtools ? { allow_devtools: true } : {}),
@@ -308,7 +308,7 @@ export function fromDraft(d: GrantDraft, nameOf: (id: string) => string, offered
       ...(d.id ? { id: d.id } : {}),
       kind: d.kind, targets, ...(hasTags ? { tags: { match, protocols: tagProtocols } } : {}),
       access: d.access, ...(approvers.length ? { approvers } : {}), sign_in: d.kind === 'application' || d.kind === 'cloud' ? 'target' : d.sign_in, require_mfa: d.require_mfa,
-      allow_clipboard: d.allow_clipboard, allow_file_transfer: filesMove(d.kind) && d.allow_file_transfer, idle_timeout_minutes: idle,
+      allow_clipboard: d.kind !== 'cloud' && d.allow_clipboard, allow_file_transfer: filesMove(d.kind) && d.allow_file_transfer, idle_timeout_minutes: idle,
       ...(d.kind === 'application' && d.allow_devtools ? { allow_devtools: true } : {}),
       ...(namespaces.length ? { namespaces } : {}),
       ...(d.kind === 'kubernetes' && d.cluster_scope ? { cluster_scope: true } : {}),

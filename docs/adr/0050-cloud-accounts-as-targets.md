@@ -170,7 +170,8 @@ A kind is copied in these places, each to touch (the list ADR 0048 promised):
 flow of an approval-gated target as today); the protocol CHECKs in both engines (migration 0059);
 grant kind and switches in `internal/policy` and the editor; `configio` carriers and defaults; the
 Terraform provider's target and grant schemas; OpenAPI's kind, platform and protocol enums and the
-new routes; the admin overview's `cloud_accounts` count and the dashboard tile; `format.ts` labels
+new routes; the admin overview's `cloud_accounts` count (no dashboard tile, by the owner's dashboard
+rule of 2026-11-03); `format.ts` labels
 (protocol *Cloud*, platform *AWS*); the lifecycle labels (no new state: a cloud session is a
 session); the guide's *Cloud accounts* section and the 2.x release note's posture line.
 

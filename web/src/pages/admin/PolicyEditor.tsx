@@ -438,7 +438,8 @@ function GrantCard({ index, draft: d, open, onToggleOpen, onChange, onRemove, on
             <div className="actions">
               {([
                 ['require_mfa', 'Authenticator'],
-                ['allow_clipboard', 'Clipboard'],
+                // A cloud session's clipboard is the person's own browser's: the gateway mediates no stream (ADR 0050).
+                ...(d.kind !== 'cloud' ? ([['allow_clipboard', 'Clipboard']] as const) : []),
                 // Files move over SSH and RDP only: a database client or an
                 // application's browser has no way to carry them (2026-11-02).
                 ...(filesMove(d.kind) ? ([['allow_file_transfer', 'File transfer (SSH, RDP)']] as const) : []),

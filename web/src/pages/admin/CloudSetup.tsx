@@ -67,7 +67,8 @@ export function CloudSetup({ target, onClose }: { target: Target; onClose: () =>
               <h3>2 · Activity policy</h3>
               <p className="muted">Without it, Activity is not read.</p>
               <Paste text={setup.permissions_policy} name="activity policy" />
-              <h3>3 · Create the role</h3>
+              {/* The CLI puts both policies on a role that exists, or makes one: not "create". */}
+              <h3>3 · Put both on the role</h3>
               <Paste text={setup.cli} name="CLI" />
               <h3>4 · CloudFormation</h3>
               <Paste text={setup.cloudformation} name="CloudFormation" />
