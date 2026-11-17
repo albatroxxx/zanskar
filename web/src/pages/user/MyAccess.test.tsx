@@ -14,8 +14,10 @@ afterEach(() => {
 const soon = new Date(Date.now() + 30 * 60_000).toISOString()
 const ago = new Date(Date.now() - 60_000).toISOString()
 
+/** request is a fixture as the gateway sends it: state follows status
+ *  unless the case says otherwise (ADR 0047). */
 function request(over: Partial<AccessRequest>): AccessRequest {
-  return { id: 'r1', user_id: 'u1', target_id: 't1', target_name: 'db-1', protocol: 'ssh', reason: 'incident 42', status: 'pending', requested_minutes: 60, created_at: '2026-10-26T08:00:00Z', ...over } as AccessRequest
+  return { id: 'r1', user_id: 'u1', target_id: 't1', target_name: 'db-1', protocol: 'ssh', reason: 'incident 42', status: 'pending', state: over.status ?? 'pending', requested_minutes: 60, created_at: '2026-10-26T08:00:00Z', ...over } as AccessRequest
 }
 
 function show(path = '/access') {
@@ -31,7 +33,9 @@ describe('MyAccess', () => {
     vi.spyOn(api, 'get').mockResolvedValue({ items: [
       request({}),
       request({ id: 'r2', status: 'approved', approved_minutes: 30, expires_at: soon, decision_note: 'keep it short' }),
-      request({ id: 'r3', status: 'approved', approved_minutes: 60, expires_at: ago }),
+      // Approved, past its window: the gateway's state says expired before
+      // the sweeper writes it (ADR 0047); the page reads that, not the clock.
+      request({ id: 'r3', status: 'approved', state: 'expired', approved_minutes: 60, expires_at: ago }),
       request({ id: 'r4', status: 'denied', target_name: undefined, asg_name: 'fleet', protocol: 'rdp', extends_request_id: 'r2' }),
     ] } as never)
     show()
@@ -51,9 +55,13 @@ describe('MyAccess', () => {
     expect(within(rows[1]).getByText('(asked 60)')).toBeDefined()
     expect(within(rows[1]).getByText('Note: keep it short')).toBeDefined()
     expect(within(rows[1]).getByRole('button', { name: 'Extend…' })).toBeDefined()
-    // Approved but already over: nothing to extend. Granted what was asked,
-    // so no "(asked N)" beside it.
+    // Approved but already over: nothing to extend, and the badge says
+    // expired, not approved (review R9). Granted what was asked, so no
+    // "(asked N)" beside it.
     expect(within(rows[2]).queryByRole('button')).toBeNull()
+    expect(within(rows[2]).getByText('expired')).toBeDefined()
+    expect(within(rows[2]).queryByText('approved')).toBeNull()
+    expect(within(rows[2]).getByText('—')).toBeDefined()
     expect(within(rows[2]).getByText('60 min')).toBeDefined()
     expect(within(rows[2]).queryByText(/asked/)).toBeNull()
     expect(within(rows[3]).getByText('fleet')).toBeDefined()

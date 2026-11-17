@@ -18,11 +18,11 @@ afterEach(() => {
 
 const pending: AccessRequest = {
   id: 'r1', user_id: 'u1', username: 'bob', target_id: 't1', target_name: 'web-1', protocol: 'ssh', reason: 'deploy',
-  requested_minutes: 60, status: 'pending', state: 'pending', created_at: '2026-11-03T10:00:00Z', updated_at: '2026-11-03T10:00:00Z',
+  requested_minutes: 60, status: 'pending', state: 'pending', created_at: '2026-11-03T10:00:00Z', updated_at: '2026-11-03T10:00:00Z', may_decide: true,
 }
 const other: AccessRequest = { ...pending, id: 'r3', username: 'dan', target_name: 'db-1' }
 const decided: AccessRequest = {
-  ...pending, id: 'r9', status: 'approved', approver_username: 'root', decided_at: '2026-11-03T10:05:00Z', approved_minutes: 60,
+  ...pending, id: 'r9', status: 'approved', state: 'approved', approver_username: 'root', decided_at: '2026-11-03T10:05:00Z', approved_minutes: 60, may_decide: false,
 }
 
 const stepUp = () => new ApiError(403, { code: 'step_up_required', message: 'prove your authenticator first' }, '403')

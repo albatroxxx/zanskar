@@ -3,25 +3,17 @@ import { useSearchParams } from 'react-router-dom'
 import { api, errorMessage } from '../../api/client'
 import { expiresSoon } from '../../api/drilldown'
 import { fmtTime, protocolName } from '../../api/format'
-import type { AccessRequest, AccessStatus, Page } from '../../api/types'
+import type { AccessRequest, Page } from '../../api/types'
 import { FilterChips } from '../../components/FilterChips'
-import { Alert, Badge, Confirm, Empty, Field, Loading, Modal, PageHead } from '../../components/ui'
+import { Alert, Badge, Confirm, Empty, Field, Loading, Modal, PageHead, StateBadge } from '../../components/ui'
 import { badgesChanged } from '../../components/badges'
 
-const tone: Record<AccessStatus, 'ok' | 'warn' | 'danger' | undefined> = {
-  approved: 'ok',
-  pending: 'warn',
-  denied: 'danger',
-  expired: undefined,
-  revoked: undefined,
-  cancelled: undefined,
-}
-
 /** The two moves a requester may make themselves (ADR 0049): withdraw a
- *  request that waits, or end a grant that runs. */
+ *  request that waits, or end a grant that runs. Cancelling keeps the
+ *  request with Keep, so the dialog does not offer Cancel twice. */
 const moves = {
-  cancel: { title: 'Cancel request?', label: 'Cancel request', danger: false },
-  end: { title: 'End access?', label: 'End access', danger: true },
+  cancel: { title: 'Cancel request?', label: 'Cancel request', dismiss: 'Keep', danger: false },
+  end: { title: 'End access?', label: 'End access', dismiss: 'Cancel', danger: true },
 } as const
 
 /** MyAccess lists the caller's just-in-time access requests and active grants (ADR 0018). */
@@ -49,11 +41,13 @@ export function MyAccess() {
   }, [])
 
   const now = Date.now()
-  const active = (r: AccessRequest) => r.status === 'approved' && !!r.expires_at && new Date(r.expires_at).getTime() > now
+  // The gateway's state is the word (ADR 0047): a grant is active while it
+  // reads approved; one past its window reads expired.
+  const active = (r: AccessRequest) => r.state === 'approved' && !!r.expires_at
   // show=pending or show=expiring, from the Targets page's strip
   // (2026-10-30), narrows to the requests it counted.
   const show = params.get('show') === 'pending' || params.get('show') === 'expiring' ? params.get('show') : null
-  const shown = reqs?.filter((r) => (show === 'pending' ? r.status === 'pending' : show === 'expiring' ? active(r) && expiresSoon(r.expires_at, now) : true)) ?? null
+  const shown = reqs?.filter((r) => (show === 'pending' ? r.state === 'pending' : show === 'expiring' ? active(r) && expiresSoon(r.expires_at, now) : true)) ?? null
   const openExtend = (r: AccessRequest) => {
     setExt({ minutes: r.approved_minutes || r.requested_minutes, reason: `Extension: ${r.reason}` })
     setExtending(r)
@@ -128,11 +122,11 @@ export function MyAccess() {
                   <td><strong>{name(r)}</strong></td>
                   <td>{protocolName(r.protocol)}</td>
                   <td>{r.reason}{r.extends_request_id && <> <Badge tone="warn">extension</Badge></>}{r.decision_note && <div className="muted">Note: {r.decision_note}</div>}</td>
-                  <td><Badge tone={tone[r.status]}>{r.status}</Badge></td>
+                  <td><StateBadge lifecycle="access_request" state={r.state} /></td>
                   <td>{r.approved_minutes ? <>{r.approved_minutes} min{r.approved_minutes !== r.requested_minutes && <span className="muted"> (asked {r.requested_minutes})</span>}</> : <span className="muted">— (asked {r.requested_minutes})</span>}</td>
-                  <td className="muted">{r.status === 'approved' && r.expires_at ? fmtTime(r.expires_at) : '—'}</td>
+                  <td className="muted">{active(r) && r.expires_at ? fmtTime(r.expires_at) : '—'}</td>
                   <td style={{ whiteSpace: 'nowrap' }}>
-                    {r.status === 'pending' && <button className="btn sm" onClick={() => setMoving({ r, move: 'cancel' })}>Cancel</button>}
+                    {r.state === 'pending' && <button className="btn sm" onClick={() => setMoving({ r, move: 'cancel' })}>Cancel</button>}
                     {active(r) && (
                       <>
                         <button className="btn sm" onClick={() => openExtend(r)}>Extend…</button>{' '}
@@ -152,6 +146,7 @@ export function MyAccess() {
           title={moves[moving.move].title}
           body={<p className="muted">{protocolName(moving.r.protocol)} · {name(moving.r)}</p>}
           confirmLabel={moves[moving.move].label}
+          dismissLabel={moves[moving.move].dismiss}
           danger={moves[moving.move].danger}
           onClose={() => setMoving(null)}
           onConfirm={async () => {

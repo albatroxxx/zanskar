@@ -33,6 +33,9 @@ describe('MyAccess, the requester\'s own moves', () => {
     await user.click(within(row).getByRole('button', { name: 'Cancel' }))
     const dialog = screen.getByRole('dialog', { name: 'Cancel request?' })
     expect(within(dialog).getByText('SSH · db-1')).toBeDefined()
+    // The way out is Keep, so Cancel does not sit beside Cancel request (review R13).
+    expect(within(dialog).getByRole('button', { name: 'Keep' })).toBeDefined()
+    expect(within(dialog).queryByRole('button', { name: 'Cancel' })).toBeNull()
     await user.click(within(dialog).getByRole('button', { name: 'Cancel request' }))
     await waitFor(() => expect(post).toHaveBeenCalledWith('/me/access-requests/r1/cancel', {}))
     await waitFor(() => expect(get).toHaveBeenCalledTimes(2))
@@ -45,7 +48,9 @@ describe('MyAccess, the requester\'s own moves', () => {
     const row = (await screen.findByText('approved')).closest('tr')!
     expect(within(row).getByRole('button', { name: 'Extend…' })).toBeDefined()
     await user.click(within(row).getByRole('button', { name: 'End' }))
-    await user.click(within(screen.getByRole('dialog', { name: 'End access?' })).getByRole('button', { name: 'End access' }))
+    const dialog = screen.getByRole('dialog', { name: 'End access?' })
+    expect(within(dialog).getByRole('button', { name: 'Cancel' })).toBeDefined()
+    await user.click(within(dialog).getByRole('button', { name: 'End access' }))
     await waitFor(() => expect(post).toHaveBeenCalledWith('/me/access-requests/r2/end', {}))
   })
 

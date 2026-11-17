@@ -241,10 +241,18 @@ function GrantCard({ index, draft: d, open, onToggleOpen, onChange, onRemove, on
   const up = (patch: Partial<GrantDraft>) => onChange({ ...d, ...patch })
   // The people an approval grant may name (ADR 0049): approvers and
   // administrators. One named that no longer qualifies stays listed, marked,
-  // so it can be seen and removed rather than refused in silence.
+  // so it can be seen and removed rather than refused in silence; so does a
+  // user or group the grant names that no longer exists (the gateway refuses
+  // to save it, and the row is where it is unticked).
+  const ghost = (id: string) => ({ id, label: id.slice(0, 8), detail: 'not found', inactive: true })
   const approverOptions = [
     ...users.filter(canApprove).map(personOption),
     ...users.filter((u) => !canApprove(u) && d.approverUsers.includes(u.id)).map((u) => ({ ...personOption(u), detail: 'not an approver', inactive: true })),
+    ...d.approverUsers.filter((uid) => !users.some((u) => u.id === uid)).map(ghost),
+  ]
+  const approverGroupOptions = [
+    ...groups.map((g) => ({ id: g.id, label: g.name, detail: g.member_count !== undefined ? `${g.member_count} ${g.member_count === 1 ? 'member' : 'members'}` : undefined })),
+    ...d.approverGroups.filter((gid) => !groups.some((g) => g.id === gid)).map(ghost),
   ]
   const namesApprovers = d.approverGroups.length > 0 || d.approverUsers.length > 0
   const implicit = isImplicit(d.kind)
@@ -404,7 +412,7 @@ function GrantCard({ index, draft: d, open, onToggleOpen, onChange, onRemove, on
                     <PickList label="approver groups" idPrefix={`${p}-ag`} selected={d.approverGroups}
                       onToggle={(gid) => up({ approverGroups: toggle(d.approverGroups, gid) })}
                       onSelect={(ids, on) => up({ approverGroups: pickMany(d.approverGroups, ids, on) })}
-                      options={groups.map((g) => ({ id: g.id, label: g.name, detail: g.member_count !== undefined ? `${g.member_count} ${g.member_count === 1 ? 'member' : 'members'}` : undefined }))} />
+                      options={approverGroupOptions} />
                     <PickList label="approvers" idPrefix={`${p}-au`} selected={d.approverUsers}
                       onToggle={(uid) => up({ approverUsers: toggle(d.approverUsers, uid) })}
                       onSelect={(ids, on) => up({ approverUsers: pickMany(d.approverUsers, ids, on) })}

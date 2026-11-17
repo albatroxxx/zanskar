@@ -17,12 +17,13 @@ const ana = { id: 'u9', username: 'ana', display_name: 'Ana', status: 'active', 
 const bobs: AccessRequest = {
   id: 'r1', user_id: 'u1', username: 'bob', target_id: 't1', target_name: 'web-1', protocol: 'ssh', reason: 'deploy',
   requested_minutes: 60, status: 'pending', state: 'pending', created_at: '2026-11-16T10:00:00Z', updated_at: '2026-11-16T10:00:00Z',
-  named: true, approvers: [{ kind: 'group', id: 'g1', name: 'ops' }, { kind: 'user', id: 'u9', name: 'ana' }],
+  named: true, approvers: [{ kind: 'group', id: 'g1', name: 'ops' }, { kind: 'user', id: 'u9', name: 'ana' }], may_decide: true,
 }
-// Ana's own request, in her scope because the grant names her too.
-const own: AccessRequest = { ...bobs, id: 'r2', user_id: 'u9', username: 'ana', reason: 'hotfix' }
-const active: AccessRequest = { ...bobs, id: 'r3', username: 'carol', status: 'approved', state: 'approved', approved_minutes: 30, expires_at: '2026-11-16T12:00:00Z' }
-const past: AccessRequest = { ...bobs, id: 'r4', username: 'dan', status: 'denied', state: 'denied', decision_note: 'not today', decided_at: '2026-11-15T09:00:00Z' }
+// Ana's own request, in her scope because the grant names her too; the
+// gateway says it is not hers to decide.
+const own: AccessRequest = { ...bobs, id: 'r2', user_id: 'u9', username: 'ana', reason: 'hotfix', may_decide: false }
+const active: AccessRequest = { ...bobs, id: 'r3', username: 'carol', status: 'approved', state: 'approved', approved_minutes: 30, expires_at: '2026-11-16T12:00:00Z', may_decide: false }
+const past: AccessRequest = { ...bobs, id: 'r4', username: 'dan', status: 'denied', state: 'denied', decision_note: 'not today', decided_at: '2026-11-15T09:00:00Z', may_decide: false }
 
 /** mount signs ana in and answers her scope: the two status lists the queue
  *  reads, and the whole scope the history reads. */

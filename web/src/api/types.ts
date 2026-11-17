@@ -229,8 +229,8 @@ export interface ReachableTarget {
 
 export type AccessStatus = 'pending' | 'approved' | 'denied' | 'expired' | 'revoked' | 'cancelled'
 
-/** One of the people a request waits for (ADR 0049): a group or a user the eligible grants name, resolved at read time. */
-export interface RequestApprover { kind: 'group' | 'user'; id: string; name: string }
+/** One of the people a request waits for (ADR 0049): a group or a user the eligible grants name, resolved at read time; name is absent when it is gone. */
+export interface RequestApprover { kind: 'group' | 'user'; id: string; name?: string }
 
 /** A just-in-time access request and, once approved, the time-bounded grant (ADR 0018). */
 export interface AccessRequest {
@@ -265,6 +265,8 @@ export interface AccessRequest {
   /** Who may decide it (ADR 0049): the approvers the eligible grants name. named says whether any grant names one; unnamed, an administrator decides. */
   approvers?: RequestApprover[]
   named?: boolean
+  /** Whether the caller who read it may approve or deny it now (ADR 0049); the queue draws Approve and Deny from this. */
+  may_decide?: boolean
 }
 
 /** A healthy autoscaling instance a user may connect to. No addresses are exposed. */

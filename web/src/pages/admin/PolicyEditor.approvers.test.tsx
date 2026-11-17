@@ -42,6 +42,35 @@ function grantOf(post: ReturnType<typeof vi.spyOn>) {
   return body.grants[0]
 }
 
+/** A saved policy whose approval grant names a user and a group that have
+ *  since been deleted (review R3): the grants JSON keeps their ids. */
+const stale = {
+  id: 'p1', name: 'prod', description: '', enabled: true, subjects: [{ kind: 'group', id: 'g1' }], created_at: '2026-11-01T10:00:00Z', updated_at: '2026-11-01T10:00:00Z',
+  grants: [{ id: 'gr1', kind: 'host', targets: [{ id: 't1', protocols: ['ssh'] }], access: 'approval', sign_in: 'target', require_mfa: true, allow_clipboard: false, allow_file_transfer: false,
+    idle_timeout_minutes: 15, max_session_minutes: null, time_windows: [], retention_days: null,
+    approvers: [{ kind: 'user', id: 'u1' }, { kind: 'user', id: 'u-gone-1234' }, { kind: 'group', id: 'g-gone-5678' }] }],
+}
+
+function mountEdit() {
+  vi.spyOn(api, 'get').mockImplementation(async (path: string) => {
+    if (path === '/access-policies/p1') return stale as never
+    if (path.startsWith('/groups')) return { items: groups } as never
+    if (path.startsWith('/users')) return { items: users } as never
+    if (path.startsWith('/targets')) return { items: targets } as never
+    return { items: [] } as never
+  })
+  const put = vi.spyOn(api, 'put').mockResolvedValue({ id: 'p1' } as never)
+  render(
+    <MemoryRouter initialEntries={['/admin/policies/p1']}>
+      <Routes>
+        <Route path="/admin/policies/:id" element={<PolicyEditor />} />
+        <Route path="/admin/policies" element={<p>back at the list</p>} />
+      </Routes>
+    </MemoryRouter>,
+  )
+  return put
+}
+
 /** begin names the policy and gives it an audience (a new policy needs
  *  someone), then hands back the first grant's card. */
 async function begin(user: ReturnType<typeof userEvent.setup>) {
@@ -90,6 +119,28 @@ describe('the grant editor\'s approvers', () => {
     const g = grantOf(post)
     expect(g.access).toBe('standing')
     expect('approvers' in g).toBe(false)
+  })
+
+  // Review R3: a user or group the grant names that no longer exists would be
+  // sent back and refused (422 invalid_approver) with nothing to untick; the
+  // editor lists it as a row of its own, marked, so it can be removed.
+  it('lists an approver that no longer exists as a not-found row, which can be unticked and saved away', async () => {
+    const put = mountEdit()
+    const user = userEvent.setup()
+    const card = await screen.findByRole('region', { name: 'Grant 1' })
+    const gone = within(card).getByLabelText('u-gone-1') as HTMLInputElement
+    const goneGroup = within(card).getByLabelText('g-gone-5') as HTMLInputElement
+    expect(gone.checked).toBe(true)
+    expect(goneGroup.checked).toBe(true)
+    expect(within(card).getAllByText('not found').length).toBe(2)
+    // ana, who exists, stays a plain ticked row.
+    expect((within(card).getByLabelText('ana') as HTMLInputElement).checked).toBe(true)
+    await user.click(gone)
+    await user.click(goneGroup)
+    await user.click(screen.getByRole('button', { name: 'Save' }))
+    await waitFor(() => expect(put).toHaveBeenCalledTimes(1))
+    expect(put.mock.calls[0][0]).toBe('/access-policies/p1')
+    expect(grantOf(put).approvers).toEqual([{ kind: 'user', id: 'u1' }])
   })
 
   it('shows the gateway\'s refusal of a named approver beside the approvers', async () => {

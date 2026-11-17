@@ -203,11 +203,13 @@ export default function App() {
         <Route path="*" element={<NotFound home="/admin" />} />
       </Route>
       {/* The approver's portal (ADR 0049): the requests the grants name them
-          for. Administrators decide from their own Approvals page. */}
+          for. An administrator is admitted wherever an approver is: one a
+          grant names follows the same mail link here; otherwise they decide
+          from their own Approvals page. */}
       <Route
         path="/approvals"
         element={
-          <Guard roles={['approver']}>
+          <Guard roles={['approver', 'admin']}>
             <Shell portal="approvals" items={[{ to: '/approvals', label: 'Approvals', end: true, badge: pendingForMe, badgeShared: true }]} />
           </Guard>
         }

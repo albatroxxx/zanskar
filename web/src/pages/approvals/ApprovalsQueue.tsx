@@ -39,10 +39,11 @@ export function ApprovalsQueue({ scope, badgePath, meID, onChange }: { scope: Sc
   const [linked, setLinked] = useState<{ request?: AccessRequest; err?: string } | null>(null)
   const openedLink = useRef('')
 
-  // decidable says whether the caller may decide a pending request here: an
-  // administrator decides what no approver is named for; a named approver
-  // decides what is in their scope, never their own (ADR 0049).
-  const decidable = (r: AccessRequest) => (scope === 'all' ? !r.named : r.user_id !== meID)
+  // decidable is the gateway's word on whether the caller may decide a
+  // pending request (ADR 0049): an administrator what no approver is named
+  // for, a named approver (an administrator among them) what is in their
+  // scope, never their own. The console does not work it out again.
+  const decidable = (r: AccessRequest) => !!r.may_decide
 
   const changed = () => {
     load()
@@ -183,7 +184,7 @@ export function ApprovalsQueue({ scope, badgePath, meID, onChange }: { scope: Sc
                         <button className="btn sm primary" disabled={busy === r.id} onClick={() => openApprove(r)}>Approve…</button>{' '}
                         <button className="btn sm danger" disabled={busy === r.id} onClick={() => void act(r.id, 'deny')}>Deny</button>
                       </>
-                    ) : scope === 'mine' ? (
+                    ) : scope === 'mine' && r.user_id === meID ? (
                       <Badge>yours</Badge>
                     ) : null}
                   </td>

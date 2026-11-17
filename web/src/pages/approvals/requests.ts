@@ -19,18 +19,21 @@ export const who = (r: AccessRequest) => r.username || r.user_id
 export const what = (r: AccessRequest) => r.target_name || r.asg_name || r.target_id || r.asg_id || '—'
 
 /** approverNames is the Approvers cell: the groups and people the eligible
- *  grants name, or a dash when an administrator decides. */
+ *  grants name, or a dash when an administrator decides. One since deleted
+ *  has no name; its id stands in. */
 export function approverNames(r: AccessRequest): string {
-  return r.approvers?.length ? r.approvers.map((a) => a.name).join(', ') : '—'
+  return r.approvers?.length ? r.approvers.map((a) => a.name || a.id).join(', ') : '—'
 }
 
-/** decided says what became of a linked request that no longer waits here. */
+/** decided says what became of a linked request that no longer waits here,
+ *  from its state as the gateway holds it now (ADR 0047): an approval past
+ *  its window has expired, whatever the row says. */
 export function decided(r: AccessRequest): string {
   const whom = who(r)
   const thing = r.target_name || r.asg_name || r.target_id || r.asg_id || 'a target'
   const by = r.approver_username ? ` by ${r.approver_username}` : ''
   const when = r.decided_at ? ` ${fmtTime(r.decided_at)}` : ''
-  switch (r.status) {
+  switch (r.state) {
     case 'pending':
       return r.named ? `${whom}'s request for ${thing} waits for ${approverNames(r)}.` : `${whom}'s request for ${thing} waits below.`
     case 'approved':
@@ -42,6 +45,6 @@ export function decided(r: AccessRequest): string {
     case 'cancelled':
       return `${whom} cancelled the request for ${thing}${when}.`
     default:
-      return `${whom}'s request for ${thing} has ${r.status}.`
+      return `${whom}'s request for ${thing} has ${r.state}.`
   }
 }
