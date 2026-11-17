@@ -36,11 +36,19 @@ function stillRuns(res?: ConnectResponse): boolean {
   return !!res?.cloud && new Date(res.cloud.expires_at).getTime() > Date.now()
 }
 
+/** federationAction is the one address a console sign-in is posted to (ADR
+ *  0038: the console navigates to no address an API returned; the gateway's
+ *  answer is checked against it, never followed). */
+export const federationAction = 'https://signin.aws.amazon.com/federation'
+
 /** openTab opens the tab a console sign-in will land in, on the click itself:
- *  opened after the gateway has answered, the browser holds it back as a pop-up. */
+ *  opened after the gateway has answered, the browser holds it back as a pop-up.
+ *  The tab gets no opener: the AWS page must not reach this one. */
 function openTab(name: string): Window | null {
   try {
-    return window.open('', name) ?? null
+    const w = window.open('', name) ?? null
+    if (w) w.opener = null
+    return w
   } catch {
     return null
   }
@@ -48,11 +56,11 @@ function openTab(name: string): Window | null {
 
 /** postInto submits the sign-in form the gateway built into the tab: a POST,
  *  so the sign-in token is never a URL the browser keeps (ADR 0050). */
-function postInto(tab: Window | null, name: string, c: CloudConsole) {
+function postInto(tab: Window, name: string, c: CloudConsole) {
   const form = document.createElement('form')
   form.method = 'post'
   form.action = c.action
-  form.target = tab ? name : '_blank'
+  form.target = name
   for (const [k, v] of Object.entries(c.fields)) {
     const i = document.createElement('input')
     i.type = 'hidden'
@@ -257,10 +265,15 @@ export function Targets() {
     return res
   }
   const openConsole = async (t: ReachableTarget) => {
-    setBusy('console:' + t.id)
     setErr('')
     const name = `zanskar-console-${t.id}`
     const win = openTab(name)
+    if (!win) {
+      // Nothing to land in: no session is started for a sign-in nobody would see.
+      setErr('Pop-up blocked.')
+      return
+    }
+    setBusy('console:' + t.id)
     try {
       let res = await cloudSession(t)
       let form: CloudConsole
@@ -272,9 +285,10 @@ export function Targets() {
         res = await cloudSession(t, true)
         form = await api.post<CloudConsole>(`/cloud/${res.session_id}/console`, {})
       }
+      if (form.action !== federationAction) throw new Error('Refused: the sign-in address is not AWS’s.')
       postInto(win, name, form)
     } catch (e) {
-      win?.close()
+      win.close()
       setErr(errorMessage(e))
     } finally {
       setBusy('')

@@ -42,6 +42,13 @@ function submitted() {
   return forms
 }
 
+/** aTab is the window the click opens for the sign-in, as a browser would hand it over (jsdom opens nothing). */
+function aTab() {
+  const tab = { opener: window as unknown, close: vi.fn(), closed: false }
+  vi.spyOn(window, 'open').mockReturnValue(tab as unknown as Window)
+  return tab
+}
+
 // A cloud role (ADR 0050) in the portal: the roles under their accounts, a
 // door each for the console and the command line as the grant opens them,
 // Request where approval gates it. The console sign-in is a POST into a tab
@@ -49,7 +56,7 @@ function submitted() {
 describe('Targets, cloud roles', () => {
   it('lists the roles under their accounts and opens the console by posting into a new tab', async () => {
     show([prodAdmin, prodRead, devCli])
-    vi.spyOn(window, 'open').mockReturnValue(null)
+    const tab = aTab()
     const post = vi.spyOn(api, 'post').mockImplementation(async (p: string) => (p === '/connect' ? session : signin) as never)
     const forms = submitted()
     const user = userEvent.setup()
@@ -61,10 +68,13 @@ describe('Targets, cloud roles', () => {
 
     await user.click(within(row).getByRole('button', { name: 'Open the console of prod-admin, opens in a new tab' }))
     await waitFor(() => expect(forms).toHaveLength(1))
+    expect(window.open).toHaveBeenCalledWith('', 'zanskar-console-c1')
+    // The tab reaches nothing of this page (L4).
+    expect(tab.opener).toBeNull()
     expect(post).toHaveBeenNthCalledWith(1, '/connect', { target_id: 'c1', protocol: 'cloud' })
     expect(post).toHaveBeenNthCalledWith(2, '/cloud/s1/console', {})
     const form = forms[0]
-    expect([form.method, form.action, form.target]).toEqual(['post', 'https://signin.aws.amazon.com/federation', '_blank'])
+    expect([form.method, form.action, form.target]).toEqual(['post', 'https://signin.aws.amazon.com/federation', 'zanskar-console-c1'])
     const fields = Object.fromEntries([...form.querySelectorAll('input')].map((i) => [i.name, [i.type, i.value]]))
     expect(fields).toEqual({ Action: ['hidden', 'login'], Issuer: ['hidden', 'https://gw.example'], Destination: ['hidden', 'https://eu-west-1.console.aws.amazon.com/'], SigninToken: ['hidden', 'tok'] })
     // Nothing of the sign-in is written where the eye can read it.
@@ -92,7 +102,7 @@ describe('Targets, cloud roles', () => {
 
   it('starts another session when the remembered one has ended', async () => {
     show([prodAdmin])
-    vi.spyOn(window, 'open').mockReturnValue(null)
+    aTab()
     let consoles = 0
     const post = vi.spyOn(api, 'post').mockImplementation(async (p: string) => {
       if (p === '/connect') return { ...session, session_id: `s${++consoles}` } as never
@@ -120,5 +130,36 @@ describe('Targets, cloud roles', () => {
     await user.type(screen.getByLabelText('Reason'), 'incident 42')
     await user.click(screen.getByRole('button', { name: 'Request access' }))
     expect(post).toHaveBeenCalledWith('/me/access-requests', { target_id: 'c4', protocol: 'cloud', reason: 'incident 42', minutes: 60 })
+  })
+
+  // The sign-in goes to AWS's federation endpoint and nowhere else (ADR 0038;
+  // review 2026-11-17, L3): an address the gateway answered that is not it is
+  // refused here, the tab closed, nothing posted.
+  it('refuses a sign-in address that is not the federation endpoint', async () => {
+    show([prodAdmin])
+    const tab = aTab()
+    vi.spyOn(api, 'post').mockImplementation(async (p: string) => (p === '/connect' ? session : { ...signin, action: 'https://signin.aws.amazon.com.evil.example/federation' }) as never)
+    const forms = submitted()
+    const user = userEvent.setup()
+    await user.click(await screen.findByRole('tab', { name: 'Cloud (1)' }))
+    await user.click(screen.getByRole('button', { name: 'Open the console of prod-admin, opens in a new tab' }))
+    expect(await screen.findByText('Refused: the sign-in address is not AWS’s.')).toBeDefined()
+    expect(forms).toHaveLength(0)
+    expect(tab.close).toHaveBeenCalled()
+  })
+
+  // A blocked pop-up (L8): said, and no session is started for a sign-in
+  // nobody would see.
+  it('says when the pop-up was blocked, and starts nothing', async () => {
+    show([prodAdmin])
+    vi.spyOn(window, 'open').mockReturnValue(null)
+    const post = vi.spyOn(api, 'post')
+    const forms = submitted()
+    const user = userEvent.setup()
+    await user.click(await screen.findByRole('tab', { name: 'Cloud (1)' }))
+    await user.click(screen.getByRole('button', { name: 'Open the console of prod-admin, opens in a new tab' }))
+    expect(await screen.findByText('Pop-up blocked.')).toBeDefined()
+    expect(post).not.toHaveBeenCalled()
+    expect(forms).toHaveLength(0)
   })
 })
