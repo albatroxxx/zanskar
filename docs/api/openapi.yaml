@@ -7584,10 +7584,11 @@ components:
           type: string
           description: >-
             Makes the target a cloud account's role (ADR 0050): an IAM role ARN
-            (`arn:aws:iam::<account>:role/<name>`; aws-us-gov and aws-cn as well). Exclusive with
-            `engine`, `app_upstream` and `kube_api_server`; `address`, `os_family` and
-            `capabilities` are set from it. Ports are refused, and a credential on the `cloud`
-            slot is `400 no_credential_slot`.
+            (`arn:aws:iam::<account>:role/<name>`) in the `aws` partition; a GovCloud or China
+            role, or a region of theirs, is `400` until their sign-in and console endpoints are
+            built. Exclusive with `engine`, `app_upstream` and `kube_api_server`; `address`,
+            `os_family` and `capabilities` are set from it. Ports are refused, and a credential
+            on the `cloud` slot is `400 no_credential_slot`.
         cloud_platform:
           type: string
           enum: [aws]

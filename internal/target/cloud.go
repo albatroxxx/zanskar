@@ -77,7 +77,14 @@ func (t *Target) validateCloud() error {
 		return fmt.Errorf("%w: a target is a host, a database, an application, a Kubernetes cluster or a cloud account's role, not two of these", ErrInvalid)
 	}
 	if !cloud.RoleARNRe.MatchString(t.CloudRoleARN) {
-		return fmt.Errorf("%w: cloud_role_arn must be an IAM role ARN (arn:aws:iam::<account>:role/<name>; aws-us-gov and aws-cn as well)", ErrInvalid)
+		return fmt.Errorf("%w: cloud_role_arn must be an IAM role ARN (arn:aws:iam::<account>:role/<name>)", ErrInvalid)
+	}
+	// The aws partition alone for now (ADR 0050, 1): GovCloud and China have
+	// sign-in and console endpoints of their own, which are not built, and a
+	// role there would be sent to the commercial ones (review 2026-11-17, C3).
+	// The partition is read from the ARN and from the region alike.
+	if p := cloud.PartitionOfARN(t.CloudRoleARN); p != "aws" {
+		return fmt.Errorf("%w: the role's partition %s is not supported yet; aws alone", ErrInvalid, p)
 	}
 	t.CloudPlatform = strings.ToLower(strings.TrimSpace(t.CloudPlatform))
 	if t.CloudPlatform == "" {
@@ -121,6 +128,9 @@ func (t *Target) validateCloud() error {
 	t.CloudRegion = strings.ToLower(strings.TrimSpace(t.CloudRegion))
 	if t.CloudRegion != "" && !cloud.ValidRegion(t.CloudRegion) {
 		return fmt.Errorf("%w: cloud_region must be an AWS region (eu-west-1)", ErrInvalid)
+	}
+	if p := cloud.Partition(t.CloudRegion); p != "aws" {
+		return fmt.Errorf("%w: the region's partition %s is not supported yet; aws alone", ErrInvalid, p)
 	}
 	for p := range t.Ports {
 		return fmt.Errorf("%w: a cloud account's role has no %s port; nothing is dialled", ErrInvalid, p)

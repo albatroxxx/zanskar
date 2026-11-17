@@ -458,6 +458,16 @@ func AccountOf(arn string) string {
 	return parts[4]
 }
 
+// PartitionOfARN is the partition an ARN names (aws, aws-us-gov, aws-cn),
+// "" when it is not an ARN.
+func PartitionOfARN(arn string) string {
+	parts := strings.Split(arn, ":")
+	if len(parts) < 6 || parts[0] != "arn" {
+		return ""
+	}
+	return parts[1]
+}
+
 func yamlString(s string) string {
 	b, _ := json.Marshal(s)
 	return string(b)

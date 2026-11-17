@@ -85,6 +85,11 @@ func TestCloudTargetValidate(t *testing.T) {
 		{"a maximum below 15", Target{Name: "x", CloudRoleARN: adminRole, CloudMaxMinutes: 14}, "cloud_max_minutes must be 15-720"},
 		{"a maximum above 720", Target{Name: "x", CloudRoleARN: adminRole, CloudMaxMinutes: 721}, "cloud_max_minutes must be 15-720"},
 		{"a region that is not one", Target{Name: "x", CloudRoleARN: adminRole, CloudRegion: "mars"}, "cloud_region must be an AWS region"},
+		// The aws partition alone (C3): a GovCloud or China role would be sent to the commercial sign-in endpoint.
+		{"a GovCloud role", Target{Name: "x", CloudRoleARN: "arn:aws-us-gov:iam::123456789012:role/Ops", CloudRegion: "us-gov-west-1"}, "partition aws-us-gov is not supported yet; aws alone"},
+		{"a China role", Target{Name: "x", CloudRoleARN: "arn:aws-cn:iam::123456789012:role/Ops"}, "partition aws-cn is not supported yet; aws alone"},
+		{"a GovCloud region on a commercial role", Target{Name: "x", CloudRoleARN: adminRole, CloudRegion: "us-gov-west-1"}, "region's partition aws-us-gov is not supported yet"},
+		{"a China region on a commercial role", Target{Name: "x", CloudRoleARN: adminRole, CloudRegion: "cn-north-1"}, "region's partition aws-cn is not supported yet"},
 		{"a platform not built", Target{Name: "x", CloudRoleARN: adminRole, CloudPlatform: "gcp"}, "cloud_platform must be one of aws"},
 		{"with an engine", Target{Name: "x", CloudRoleARN: adminRole, Engine: "postgres"}, "not two of these"},
 		{"with an upstream", Target{Name: "x", CloudRoleARN: adminRole, AppUpstream: "http://app"}, "not two of these"},

@@ -74,7 +74,9 @@ account names the person and the session. The release notes say this first, in b
 `cloud_account_id`, `cloud_account_alias`, `cloud_role_arn`, `cloud_external_id`,
 `cloud_max_minutes` (default 60, at most 720, never above the role's own maximum, which Test
 reads), `cloud_region` (where the console opens). Tags carry the grouping (`account=prod`,
-`role=readonly`). The console's list groups roles under their account. A role-mode target has no credential slot (phase D's
+`role=readonly`). The console's list groups roles under their account. The `aws` partition alone
+for now; GovCloud and China need their own sign-in and console endpoints, and a role or region of
+theirs is refused at enrolment until they are built. A role-mode target has no credential slot (phase D's
 Identity Center mode puts its steward credential on the slot): the trust is the role's trust
 policy, as for an autoscaling group, and the target's **Setup** prints it with the gateway's
 principal and the ExternalId condition, allowing `sts:AssumeRole`, `sts:SetSourceIdentity` and
