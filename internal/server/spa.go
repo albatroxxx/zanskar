@@ -18,7 +18,7 @@ import (
 // audit, S1). Keep in step with web/src/App.tsx.
 var consoleRoots = map[string]bool{
 	"": true, "login": true, "home": true, "connect": true, "access": true, "sessions": true,
-	"activity": true, "terminal": true, "desktop": true, "admin": true, "audit": true,
+	"activity": true, "terminal": true, "desktop": true, "admin": true, "audit": true, "approvals": true,
 }
 
 // isConsolePath reports whether p, already cleaned, is a page of the console.
