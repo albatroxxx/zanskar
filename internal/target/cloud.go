@@ -218,13 +218,16 @@ type CloudTest struct {
 	LookupEvents *bool  `json:"lookup_events"`
 }
 
-// Stages a cloud test names.
+// Stages a cloud test names: the mint (assume), a duration above the role's
+// maximum (duration), the credentials' first call (identity); lookup is
+// phase C's CloudTrail check.
 const (
 	CloudStageAssume   = "assume"
 	CloudStageDuration = "duration"
+	CloudStageIdentity = "identity"
 )
 
-// CloudTestTimeout bounds a role test, one call to STS.
+// CloudTestTimeout bounds a role test, two calls to STS.
 const CloudTestTimeout = 20 * time.Second
 
 // NewRoleMinter builds the minter a test and a session assume the role
@@ -261,7 +264,8 @@ func (h *AdminHandler) cloudTest(w http.ResponseWriter, r *http.Request) {
 }
 
 // RunCloudTest assumes the role once as a session would, for the target's
-// maximum, and names what refused it.
+// maximum, then asks STS who the credentials are, and names what refused.
+// LookupEvents stays null: phase C reads CloudTrail.
 func RunCloudTest(ctx context.Context, minter cloud.RoleMinter, t *Target) CloudTest {
 	var nonce [4]byte
 	_, _ = rand.Read(nonce[:])
@@ -278,5 +282,15 @@ func RunCloudTest(ctx context.Context, minter cloud.RoleMinter, t *Target) Cloud
 	case err != nil:
 		return CloudTest{Stage: CloudStageAssume, Message: err.Error()}
 	}
-	return CloudTest{OK: true, AssumedARN: creds.AssumedARN, Message: "assumed for " + (time.Duration(t.CloudMaxMinutes) * time.Minute).String()}
+	// The credentials' first call: a role assumed whose credentials cannot
+	// even say who they are has a permissions boundary or a deny-all policy.
+	arn, err := minter.CallerIdentity(ctx, creds)
+	if err != nil {
+		return CloudTest{Stage: CloudStageIdentity, AssumedARN: creds.AssumedARN,
+			Message: "the role was assumed, but its credentials could not call sts:GetCallerIdentity; check the role's permissions boundary and policies (" + err.Error() + ")"}
+	}
+	if arn == "" {
+		arn = creds.AssumedARN
+	}
+	return CloudTest{OK: true, AssumedARN: arn, Message: "assumed for " + (time.Duration(t.CloudMaxMinutes) * time.Minute).String()}
 }

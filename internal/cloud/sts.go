@@ -16,6 +16,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
 	ststypes "github.com/aws/aws-sdk-go-v2/service/sts/types"
 	"github.com/aws/smithy-go"
@@ -49,9 +50,13 @@ type Credentials struct {
 }
 
 // RoleMinter assumes an enrolled role. STS is the real one; tests use a fake
-// that never reaches AWS.
+// that never reaches AWS. CallerIdentity asks STS who the minted credentials
+// are (GetCallerIdentity), the second stage of a role's test: a role assumed
+// whose credentials then fail the simplest call has a permissions boundary
+// or a policy that denies everything, which the mint alone would not show.
 type RoleMinter interface {
 	Mint(ctx context.Context, req MintRequest) (Credentials, error)
+	CallerIdentity(ctx context.Context, c Credentials) (string, error)
 }
 
 // Mint refusals, told apart so the console names the stage.
@@ -74,12 +79,19 @@ type stsAssumer interface {
 	AssumeRole(context.Context, *sts.AssumeRoleInput, ...func(*sts.Options)) (*sts.AssumeRoleOutput, error)
 }
 
+type stsIdentifier interface {
+	GetCallerIdentity(context.Context, *sts.GetCallerIdentityInput, ...func(*sts.Options)) (*sts.GetCallerIdentityOutput, error)
+}
+
 // STS mints with the gateway's own AWS identity (the instance profile, the
 // environment, a mounted profile), as the autoscaling and EKS roles are
 // assumed; not through a chained role, which would cap every session at an
 // hour (AWS: role chaining).
 type STS struct {
 	client stsAssumer
+	// as builds the client that acts with minted credentials, for
+	// CallerIdentity; tests replace it with one that never reaches AWS.
+	as func(c Credentials) stsIdentifier
 }
 
 // NewSTS returns a minter in region: the target's, or the gateway's own when
@@ -96,7 +108,28 @@ func NewSTS(ctx context.Context, region string) (*STS, error) {
 	if base.Region == "" {
 		base.Region = "us-east-1"
 	}
-	return &STS{client: sts.NewFromConfig(base)}, nil
+	return &STS{client: sts.NewFromConfig(base), as: func(c Credentials) stsIdentifier {
+		return sts.NewFromConfig(base, func(o *sts.Options) {
+			o.Credentials = credentials.NewStaticCredentialsProvider(c.AccessKeyID, c.SecretAccessKey, c.SessionToken)
+		})
+	}}, nil
+}
+
+// CallerIdentity asks STS, with the minted credentials, who they are: the
+// assumed-role ARN, which a test shows; an error names what refused.
+func (s *STS) CallerIdentity(ctx context.Context, c Credentials) (string, error) {
+	if s.as == nil {
+		return "", errors.New("cloud: no client for the minted credentials")
+	}
+	out, err := s.as(c).GetCallerIdentity(ctx, &sts.GetCallerIdentityInput{})
+	if err != nil {
+		var ae smithy.APIError
+		if errors.As(err, &ae) {
+			return "", fmt.Errorf("cloud: GetCallerIdentity: %s: %s", ae.ErrorCode(), ae.ErrorMessage())
+		}
+		return "", fmt.Errorf("cloud: GetCallerIdentity: %w", err)
+	}
+	return aws.ToString(out.Arn), nil
 }
 
 // Mint assumes the role once for the request.
@@ -183,9 +216,13 @@ func SourceIdentityFor(username string) string {
 }
 
 // SessionNameFor is the role session name of a Zanskar session: zanskar- and
-// the session id, within STS's 64 characters, so CloudTrail's userName and
-// the assumed-role ARN name the session on the record.
+// the first 48 characters of the session id (the whole of a 32-character
+// id), within STS's 64, so CloudTrail's userName and the assumed-role ARN
+// name the session on the record.
 func SessionNameFor(sessionID string) string {
+	if len(sessionID) > 48 {
+		sessionID = sessionID[:48]
+	}
 	return SourceIdentityFor("zanskar-" + sessionID)
 }
 
@@ -280,7 +317,7 @@ func signinToken(ctx context.Context, client *http.Client, endpoint, session str
 		}
 		res, err := client.Do(req)
 		if err != nil {
-			return "", 0, fmt.Errorf("%w: %v", ErrFederation, err)
+			return "", 0, fmt.Errorf("%w: %w", ErrFederation, err)
 		}
 		defer func() { _ = res.Body.Close() }()
 		body, _ := io.ReadAll(io.LimitReader(res.Body, 1<<16))
