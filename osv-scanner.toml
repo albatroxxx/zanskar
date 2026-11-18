@@ -1,13 +1,5 @@
 # OSV-Scanner configuration, read by the CI `osv` job and OpenSSF Scorecard's
-# Vulnerabilities check.
+# Vulnerabilities check. The scanner reads the file beside each lockfile: Go
+# module advisories are triaged here, npm ones in web/osv-scanner.toml.
 # Every entry needs a reason a reviewer can verify, and is revisited when the
-# dependency changes.
-
-[[IgnoredVulns]]
-id = "GHSA-fc5q-39xc-vjpf"
-reason = """picomatch 4.0.7 (ReDoS through repeated extglobs) reaches web/ only as a \
-devDependency of vite and vitest, which run on the developer's and CI's own \
-machines over the repository's own glob patterns; nothing of it is in the \
-built console or the binary (npm ls picomatch: vite, tinyglobby, fdir, vitest, \
-all dev). No fixed version exists as of 2026-11-18; revisited when vite or \
-vitest take a picomatch above 4.0.7."""
+# dependency changes. Nothing is ignored for go.mod at present (2026-11-18).
