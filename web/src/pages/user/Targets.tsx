@@ -56,7 +56,7 @@ function openTab(name: string): Window | null {
 
 /** postInto submits the sign-in form the gateway built into the tab: a POST,
  *  so the sign-in token is never a URL the browser keeps (ADR 0050). */
-function postInto(tab: Window, name: string, c: CloudConsole) {
+function postInto(name: string, c: CloudConsole) {
   const form = document.createElement('form')
   form.method = 'post'
   form.action = c.action
@@ -286,7 +286,7 @@ export function Targets() {
         form = await api.post<CloudConsole>(`/cloud/${res.session_id}/console`, {})
       }
       if (form.action !== federationAction) throw new Error('Refused: the sign-in address is not AWS’s.')
-      postInto(win, name, form)
+      postInto(name, form)
     } catch (e) {
       win.close()
       setErr(errorMessage(e))
