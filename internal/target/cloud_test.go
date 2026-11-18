@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"regexp"
 	"strings"
 	"sync"
@@ -333,6 +334,13 @@ func TestRunCloudTestStages(t *testing.T) {
 	res = RunCloudTest(ctx, m, trail.factory(), tg)
 	if res.OK || res.Stage != CloudStageDuration || !strings.Contains(res.Message, "below 90 minutes") || !strings.Contains(res.Message, "lower cloud_max_minutes") {
 		t.Fatalf("duration refused: %+v", res)
+	}
+	// The gateway itself chained (IRSA): the duration stage names the gateway,
+	// not the role, and says what to set.
+	m.mintErr = fmt.Errorf("%w (%w): exceeds the 1 hour session limit for roles assumed by role chaining", cloud.ErrMintDuration, cloud.ErrMintChained)
+	res = RunCloudTest(ctx, m, trail.factory(), tg)
+	if res.OK || res.Stage != CloudStageDuration || !strings.Contains(res.Message, "gateway's own AWS identity") || !strings.Contains(res.Message, "60 or less") || strings.Contains(res.Message, "role's maximum") {
+		t.Fatalf("chained refusal: %+v", res)
 	}
 	m.mintErr = errors.New("dial tcp: i/o timeout")
 	if res = RunCloudTest(ctx, m, trail.factory(), tg); res.OK || res.Stage != CloudStageAssume || res.Message != "dial tcp: i/o timeout" {

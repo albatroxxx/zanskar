@@ -477,7 +477,7 @@ func (h *Handler) cloudActivity(w http.ResponseWriter, r *http.Request) {
 		case s.Protocol != string(target.Cloud):
 			httpx.WriteError(w, r, http.StatusConflict, "not_cloud", "activity is read for a cloud session; this is "+s.Protocol)
 		case s.EndedAt != nil:
-			httpx.WriteError(w, r, http.StatusGone, "session_ended", "the session has ended; its activity is in the recording")
+			httpx.WriteError(w, r, http.StatusGone, "session_ended", "the session has ended; the gateway reads its activity into the recording 15 minutes after the end")
 		default:
 			httpx.WriteError(w, r, http.StatusConflict, "not_live", "the session is not live on this gateway")
 		}

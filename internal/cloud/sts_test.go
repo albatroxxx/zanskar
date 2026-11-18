@@ -140,11 +140,17 @@ func TestSTSMintRequestAndRefusals(t *testing.T) {
 		{"the trust policy", "AccessDenied", "User is not authorized to perform: sts:AssumeRole", ErrMintRefused},
 		{"a missing sts:TagSession", "AccessDeniedException", "not authorized to perform: sts:TagSession", ErrMintRefused},
 		{"above the role's maximum", "ValidationError", "The requested DurationSeconds exceeds the MaxSessionDuration set for this role.", ErrMintDuration},
+		{"the gateway itself chained", "ValidationError", "The requested DurationSeconds exceeds the 1 hour session limit for roles assumed by role chaining.", ErrMintChained},
 	} {
 		fa.err = &smithy.GenericAPIError{Code: tc.code, Message: tc.msg}
 		_, err := s.Mint(ctx, req)
 		if !errors.Is(err, tc.want) || !strings.Contains(err.Error(), tc.msg) {
 			t.Errorf("%s: %v", tc.name, err)
+		}
+		// A chained refusal is a duration refusal too, so the console's
+		// one-hour fallback applies to it.
+		if errors.Is(tc.want, ErrMintChained) && !errors.Is(err, ErrMintDuration) {
+			t.Errorf("%s: not a duration refusal: %v", tc.name, err)
 		}
 	}
 	// Anything else passes as it is: the network, a malformed answer.

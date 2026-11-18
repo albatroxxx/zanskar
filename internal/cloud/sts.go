@@ -67,6 +67,11 @@ var (
 	ErrMintRefused = errors.New("cloud: the role could not be assumed")
 	// ErrMintDuration is a DurationSeconds above the role's maximum session.
 	ErrMintDuration = errors.New("cloud: the duration exceeds the role's maximum session")
+	// ErrMintChained is the duration refusal whose cause is the gateway
+	// itself: its AWS identity is an assumed role (IRSA, a container role), so
+	// STS caps the chained session at an hour whatever the role allows. It
+	// always comes wrapped in ErrMintDuration.
+	ErrMintChained = errors.New("cloud: the gateway's own identity is an assumed role, and AWS caps a chained session at an hour")
 )
 
 // Mint limits, AWS's: a session of 15 minutes to 12 hours.
@@ -176,6 +181,9 @@ func classifyMint(err error) error {
 		case "AccessDenied", "AccessDeniedException":
 			return fmt.Errorf("%w: %s", ErrMintRefused, ae.ErrorMessage())
 		case "ValidationError":
+			if strings.Contains(ae.ErrorMessage(), "role chaining") {
+				return fmt.Errorf("%w (%w): %s", ErrMintDuration, ErrMintChained, ae.ErrorMessage())
+			}
 			if strings.Contains(ae.ErrorMessage(), "DurationSeconds") {
 				return fmt.Errorf("%w: %s", ErrMintDuration, ae.ErrorMessage())
 			}

@@ -299,6 +299,10 @@ func RunCloudTest(ctx context.Context, minter cloud.RoleMinter, trails cloud.Tra
 		SessionName: "zanskar-test-" + hex.EncodeToString(nonce[:]), SourceIdentity: "zanskar-test",
 		Duration: time.Duration(t.CloudMaxMinutes) * time.Minute, Tags: map[string]string{"zanskar:test": "1"}})
 	switch {
+	case errors.Is(err, cloud.ErrMintChained):
+		// The role allows it; the gateway's own identity does not (IRSA, a
+		// container role): STS caps a chained session at an hour.
+		return CloudTest{Stage: CloudStageDuration, Message: fmt.Sprintf("this gateway's own AWS identity is an assumed role, so AWS caps its sessions at an hour whatever the role allows; set cloud_max_minutes to 60 or less, or run the gateway under an instance profile (%d minutes asked)", t.CloudMaxMinutes)}
 	case errors.Is(err, cloud.ErrMintDuration):
 		return CloudTest{Stage: CloudStageDuration, Message: fmt.Sprintf("the role's maximum session is below %d minutes; lower cloud_max_minutes to what the role allows (%s)",
 			t.CloudMaxMinutes, strings.TrimPrefix(err.Error(), cloud.ErrMintDuration.Error()+": "))}
