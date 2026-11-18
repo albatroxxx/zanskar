@@ -318,7 +318,7 @@ export function Targets() {
   const clouds = shown?.filter((t) => kindOf(t) === 'cloud') ?? null
   // Roles under their account, accounts and roles each by name.
   const cloudGroups = clouds
-    ? [...new Set(clouds.map(cloudAccount))].sort().map((label) => [label, clouds.filter((t) => cloudAccount(t) === label).sort((a, b) => a.name.localeCompare(b.name))] as const)
+    ? [...new Set(clouds.map(cloudAccount))].sort((a, b) => a.localeCompare(b)).map((label) => [label, clouds.filter((t) => cloudAccount(t) === label).sort((a, b) => a.name.localeCompare(b.name))] as const)
     : null
   // Every tab says how many it holds, the same way, once there are any; a
   // search narrows the counts with the lists.

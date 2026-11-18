@@ -89,6 +89,18 @@ describe('Targets, cloud roles', () => {
     expect(post.mock.calls.filter(([p]) => p === '/connect')).toHaveLength(1)
   })
 
+  it('orders the accounts by name, not by code point', async () => {
+    // A plain .sort() put "Zeta" before "alpha" (SonarCloud S2871, 2026-11-18);
+    // the accounts read in the order a person expects.
+    const zeta: ReachableTarget = { ...base, id: 'c5', name: 'zeta-admin', tags: {}, cloud: { account_id: '444444444444', account_alias: 'Zeta', role_name: 'Admin', console: true, cli: true } }
+    const alpha: ReachableTarget = { ...base, id: 'c6', name: 'alpha-admin', tags: {}, cloud: { account_id: '333333333333', account_alias: 'alpha', role_name: 'Admin', console: true, cli: true } }
+    show([zeta, alpha])
+    const user = userEvent.setup()
+    await user.click(await screen.findByRole('tab', { name: 'Cloud (2)' }))
+    const accounts = screen.getAllByRole('columnheader').map((th) => th.textContent).filter((t) => t?.includes(' · '))
+    expect(accounts).toEqual(['alpha · 333333333333', 'Zeta · 444444444444'])
+  })
+
   it('closes the door a grant leaves shut', async () => {
     show([prodAdmin, prodRead, devCli])
     const user = userEvent.setup()
