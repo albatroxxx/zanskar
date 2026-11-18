@@ -65,6 +65,9 @@ func (rig *sweepRig) cloudRecording(t *testing.T, endedAgo time.Duration, blob [
 
 // castBlob is a cloud session's recording as the run flushed it before the
 // wait: a header an hour old and the session's first line.
+// castBlob carries the moment it was made, so a test takes it once and
+// compares against that copy: taken twice across a second boundary the two
+// differ (CI, 2026-11-18).
 func castBlob() []byte {
 	return []byte(fmt.Sprintf(`{"version":2,"width":120,"height":40,"timestamp":%d}`, time.Now().Add(-time.Hour).Unix()) + "\n" +
 		`[0.5,"m","session started"]` + "\n" + `[0.5,"o","session started\r\n"]` + "\n")
@@ -85,9 +88,10 @@ func TestSweeperFinishesRecordingsAwaitingActivity(t *testing.T) {
 		ctx := context.Background()
 		rig := newSweepRig(t, db)
 		log := slog.New(slog.NewTextHandler(io.Discard, nil))
-		old, oldRec := rig.cloudRecording(t, 30*time.Minute, castBlob())
-		young, youngRec := rig.cloudRecording(t, time.Minute, castBlob())
-		held, heldRec := rig.cloudRecording(t, 40*time.Minute, castBlob())
+		cast := castBlob()
+		old, oldRec := rig.cloudRecording(t, 30*time.Minute, cast)
+		young, youngRec := rig.cloudRecording(t, time.Minute, cast)
+		held, heldRec := rig.cloudRecording(t, 40*time.Minute, cast)
 		gone, goneRec := rig.cloudRecording(t, 45*time.Minute, nil)
 		// A host session ended with its recording unfinished is lost, not
 		// awaiting anything: the rig's ended ssh session gets one.
@@ -141,7 +145,7 @@ func TestSweeperFinishesRecordingsAwaitingActivity(t *testing.T) {
 				t.Errorf("%s was finished", name)
 			}
 		}
-		if b, _ := io.ReadAll(must(rig.st.Open(ctx, "file://"+filepath.Join(rig.st.Dir, young+".cast")))); string(b) != string(castBlob()) {
+		if b, _ := io.ReadAll(must(rig.st.Open(ctx, "file://"+filepath.Join(rig.st.Dir, young+".cast")))); string(b) != string(cast) {
 			t.Fatalf("young's recording was touched:\n%s", b)
 		}
 		if evs := rig.events(t, audit.SessionCloudActivity, old); len(evs) != 1 || evs[0].actorIP != "system" || evs[0].details["error"] != "the gateway lost track of this session" ||
@@ -179,14 +183,14 @@ func TestSweeperFinishesRecordingsAwaitingActivity(t *testing.T) {
 		if _, _, finished := rig.recordingState(t, sshRec.ID); finished {
 			t.Error("the host session's lost recording was finished")
 		}
-		if b, _ := io.ReadAll(must(rig.st.Open(ctx, "file://"+filepath.Join(rig.st.Dir, young+".cast")))); string(b) != string(castBlob()) {
+		if b, _ := io.ReadAll(must(rig.st.Open(ctx, "file://"+filepath.Join(rig.st.Dir, young+".cast")))); string(b) != string(cast) {
 			t.Fatalf("a storage without Append wrote a line:\n%s", b)
 		}
 		if evs := rig.events(t, audit.SessionCloudActivity, young); len(evs) != 1 || evs[0].details["error"] != "gateway restarted" || evs[0].details["recording"] != "the storage takes no line after the close; finished from what storage holds" {
 			t.Fatalf("young's event: %+v", evs)
 		}
 		// With a storage that appends, the startup line says the gateway restarted.
-		late, lateRec := rig.cloudRecording(t, 2*time.Minute, castBlob())
+		late, lateRec := rig.cloudRecording(t, 2*time.Minute, cast)
 		(&Sweeper{Repo: rig.r, Storage: rig.st, Audit: audit.NewLog(db), Log: log}).Startup(ctx, time.Now())
 		if _, _, finished := rig.recordingState(t, lateRec); !finished {
 			t.Fatal("late was not finished at startup")
@@ -230,8 +234,9 @@ func TestRecordingStateInsideTheActivityWindow(t *testing.T) {
 			t.Errorf("%s: %v, want %v", tc.name, got, tc.want)
 		}
 	}
-	young, youngRec := rig.cloudRecording(t, time.Minute, castBlob())
-	old, oldRec := rig.cloudRecording(t, 25*time.Minute, castBlob())
+	cast := castBlob()
+	young, youngRec := rig.cloudRecording(t, time.Minute, cast)
+	old, oldRec := rig.cloudRecording(t, 25*time.Minute, cast)
 	sshRec := &Recording{SessionID: rig.old, Format: "asciicast", StorageURI: "file://" + filepath.Join(rig.st.Dir, "ssh.cast")}
 	if err := rig.r.CreateRecording(ctx, sshRec); err != nil {
 		t.Fatal(err)
